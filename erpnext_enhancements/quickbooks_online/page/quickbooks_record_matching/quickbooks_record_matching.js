@@ -1448,7 +1448,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		dialog.set_primary_action(__("Apply {0} changes", [changes.length]), () => {
 			frappe.confirm(__("Apply the {0} rows that will change? Links can merge the import's copies away, as the Link button does.", [changes.length]), () => {
 				dialog.hide();
-				applyImport(data.token, changes.map((row) => row.index), data.apply_chunk || 10);
+				applyImport(data.token, changes, data.apply_chunk || 10);
 			});
 		});
 		dialog.get_primary_btn().prop("disabled", !changes.length);
@@ -1456,11 +1456,35 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		dialog.show();
 	}
 
-	function applyImport(token, indexes, size) {
+	/**
+	 * Send the previewed changes to apply_matching_import, one request after another. Links,
+	 * Keeps and notes go `size` at a time; a Retry is a round trip to Intuit and goes alone,
+	 * as the page's own Retry does, so ten of them can never outrun the gateway together.
+	 * Not runInChunks: the chunks are not of one size, and a failed request is reported
+	 * against the preview's own rows, which carry the sheet and row number.
+	 */
+	function applyImport(token, rows, size) {
+		const chunks = [];
+		let batch = [];
+		rows.forEach((row) => {
+			if (row.decision === "Retry") {
+				chunks.push([row]);
+				return;
+			}
+			batch.push(row);
+			if (batch.length >= size) {
+				chunks.push(batch);
+				batch = [];
+			}
+		});
+		if (batch.length) {
+			chunks.push(batch);
+		}
 		const results = [];
-		let offset = 0;
+		let done = 0;
 		const next = () => {
-			if (offset >= indexes.length) {
+			const chunk = chunks.shift();
+			if (!chunk) {
 				reportImport(results);
 				load();
 				if (state.txn.rows.length) {
@@ -1468,20 +1492,25 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				}
 				return;
 			}
-			const chunk = indexes.slice(offset, offset + size);
-			frappe.dom.freeze(__("Applying {0}–{1} of {2}…", [offset + 1, offset + chunk.length, indexes.length]));
-			offset += chunk.length;
+			frappe.dom.freeze(__("Applying {0}–{1} of {2}…", [done + 1, done + chunk.length, rows.length]));
+			done += chunk.length;
 			frappe.call({
 				method: API + "apply_matching_import",
-				args: { token, indexes: chunk },
+				args: { token, indexes: chunk.map((row) => row.index) },
 				callback(response) {
 					results.push(...(response.message || []));
 					frappe.dom.unfreeze();
 					next();
 				},
 				error() {
-					chunk.forEach((index) =>
-						results.push({ index, ok: false, message: __("The request failed; import the file again to see whether it landed.") }),
+					chunk.forEach((row) =>
+						results.push(
+							Object.assign({}, row, {
+								ok: false,
+								skipped: false,
+								message: __("The request failed; import the file again to see whether it landed."),
+							}),
+						),
 					);
 					frappe.dom.unfreeze();
 					next();
@@ -1499,12 +1528,12 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		const list = (items) => "<ul>" + items.map((r) => `<li>${where(r)}${r.qbo_id ? ` (${esc(r.qbo_type)} #${esc(r.qbo_id)})` : ""}: ${esc(r.message || "")}</li>`).join("") + "</ul>";
 		let message = `<p>${__("{0} applied.", [ok.length])}</p>`;
 		if (skipped.length) {
-			message += `<p>${__("{0} skipped because they changed after the preview:", [skipped.length])}</p>${list(skipped)}`;
+			message += `<p>${__("{0} skipped, because they changed after the preview or were already done:", [skipped.length])}</p>${list(skipped)}`;
 		}
 		if (failed.length) {
 			message += `<p>${__("{0} failed:", [failed.length])}</p>${list(failed)}`;
 		}
-		const merges = ok.filter((r) => /NOT merged/.test(r.message || ""));
+		const merges = ok.filter((r) => r.merge_failed);
 		if (merges.length) {
 			message += `<p>${__("{0} linked, but the import's copy could not be merged:", [merges.length])}</p>${list(merges)}`;
 		}

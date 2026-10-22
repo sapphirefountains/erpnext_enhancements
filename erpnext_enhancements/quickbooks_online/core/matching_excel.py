@@ -67,6 +67,7 @@ import html
 import io
 import re
 import secrets
+import time
 
 import frappe
 from frappe.utils import cint, now_datetime
@@ -113,12 +114,14 @@ EXPORT_STATUSES = (
 SUGGESTION_COLUMNS = 5
 #: Rows per ``master_queue`` / ``parked_transactions`` call while exporting.
 EXPORT_PAGE = matching.MAX_PAGE_LENGTH
-#: Rows per apply request the page sends. A Link can fold a duplicate away with rename_doc
-#: and a Retry is a round trip to Intuit, so a chunk stays small enough for the gateway.
+#: Rows per apply request the page sends. A Link can fold a duplicate away with rename_doc,
+#: so a chunk stays small enough for the gateway; a Retry is a round trip to Intuit, and the
+#: page sends each one alone, as its own Retry button does.
 APPLY_CHUNK = 10
 MAX_IMPORT_ROWS = 20000
 MAX_IMPORT_BYTES = 15 * 1024 * 1024
 JOB_TTL = 6 * 3600
+EXPORT_TIMEOUT = 1500
 PLAN_TTL = 6 * 3600
 
 #: (key, header, width, hidden, editable). The import finds columns by header text.
@@ -514,7 +517,7 @@ def parse_workbook(content) -> dict:
 		allowed = MASTER_DECISIONS if kind == "master" else TXN_DECISIONS
 		for number, values in enumerate(cells, start=2):
 
-			def cell(key, values=values):
+			def cell(key, values=values, columns=columns):
 				position = columns.get(key)
 				return values[position] if position is not None and position < len(values) else None
 
@@ -813,20 +816,21 @@ def _set_state(key, value, ttl) -> None:
 
 
 def collect_export(status=None, entity_types=None, include_parked=True) -> list:
-	"""The workbook's sheets: the Masters queue under the page's own filter, page by page
-	through ``matching.master_queue`` so the rows are exactly the ones the page shows."""
+	"""The workbook's sheets: the Masters queue under the page's own filter, built by the
+	page's own ``matching.build_master_rows`` so the rows are the ones the page shows.
+
+	The mapping rows are read **once**, then built ``EXPORT_PAGE`` at a time. Paging the queue
+	by offset would skip rows: the export takes minutes, and every row someone decides on the
+	page meanwhile leaves a *Needs decision* filter and pulls the rows behind it forward, past
+	an offset already read."""
 	status = status if status in EXPORT_STATUSES else "Needs decision"
 	chosen = [entity for entity in (entity_types or []) if entity in MASTER_ENTITIES] or list(MASTER_ENTITIES)
 	by_type: dict = {entity: [] for entity in chosen}
-	start = 0
-	while True:
-		page = matching.master_queue(entity_types=chosen, status=status, start=start, page_length=EXPORT_PAGE)
-		for row in page.get("rows") or []:
+	where, params = matching._master_where(chosen, status, None)
+	mapping_rows = matching.master_mapping_rows(where, params)
+	for offset in range(0, len(mapping_rows), EXPORT_PAGE):
+		for row in matching.build_master_rows(mapping_rows[offset : offset + EXPORT_PAGE]):
 			by_type.setdefault(row.get("entity_type"), []).append(master_sheet_row(row))
-		served = cint(page.get("page_length")) or EXPORT_PAGE
-		start += served
-		if not page.get("rows") or start >= cint(page.get("total")):
-			break
 	sheets = [
 		(SHEET_TITLES.get(entity, entity), MASTER_COLUMNS, rows, MASTER_DECISIONS)
 		for entity, rows in by_type.items()
@@ -855,7 +859,7 @@ def start_export(status=None, entity_types=None, include_parked=True) -> dict:
 	frappe.enqueue(
 		"erpnext_enhancements.quickbooks_online.core.matching_excel.run_export",
 		queue="long",
-		timeout=1500,
+		timeout=EXPORT_TIMEOUT,
 		token=token,
 		for_user=user,
 		status=status,
@@ -868,7 +872,7 @@ def start_export(status=None, entity_types=None, include_parked=True) -> dict:
 def run_export(token, for_user, status=None, entity_types=None, include_parked=True) -> None:
 	"""The background job: build the workbook, save it as a private File, record the URL."""
 	key = _job_key(for_user, token)
-	_set_state(key, {"status": "running"}, JOB_TTL)
+	_set_state(key, {"status": "running", "started": time.time()}, JOB_TTL)
 	try:
 		sheets = collect_export(status=status, entity_types=entity_types, include_parked=include_parked)
 		stamp = now_datetime()
@@ -909,7 +913,15 @@ def run_export(token, for_user, status=None, entity_types=None, include_parked=T
 
 
 def export_status(token) -> dict:
-	return frappe.cache.get_value(_job_key(frappe.session.user, token)) or {"status": "unknown"}
+	"""The job's state for its own requester. A job still ``running`` past its RQ timeout was
+	killed -- a deploy restarts the workers -- and is reported as lost rather than polled on."""
+	state = frappe.cache.get_value(_job_key(frappe.session.user, token)) or {"status": "unknown"}
+	if state.get("status") == "running" and time.time() - (state.get("started") or 0) > EXPORT_TIMEOUT + 60:
+		return {
+			"status": "failed",
+			"error": "The export job stopped (a deploy restarts the workers). Export again.",
+		}
+	return state
 
 
 # ---------------------------------------------------------------------------
@@ -993,8 +1005,9 @@ def _save_note(mapping_name, row, user) -> None:
 	).insert(ignore_permissions=True)
 
 
-def _run_action(row, result, user) -> str:
-	"""Run one row's decision through the page's own code path; returns what happened."""
+def _run_action(row, result, user) -> tuple[str, bool]:
+	"""Run one row's decision through the page's own code path; returns what happened and
+	whether a merge ERPNext refused left the import's copy in place."""
 	action = result["action"]
 	if action == LINK:
 		outcome = matching.decide(
@@ -1010,38 +1023,41 @@ def _run_action(row, result, user) -> str:
 		if merge.get("status") == "merged":
 			text_out += f" Merged the import's copy {merge.get('from')} into it."
 		elif merge.get("status") == "failed":
-			text_out += f" The import's copy {merge.get('from')} was NOT merged: {merge.get('error')}"
-		return text_out
+			text_out += f" The import's copy {merge.get('from')} was not merged: {merge.get('error')}"
+			return text_out, True
+		return text_out, False
 	if action == KEEP:
 		matching.confirm(row["qbo_type"], row["qbo_id"], user=user)
-		return "Marked reviewed."
+		return "Marked reviewed.", False
 	if action == RETRY:
 		from erpnext_enhancements.quickbooks_online.core.sync import sync_entity
 
 		outcome = (sync_entity(row["qbo_type"], row["qbo_id"]) or {}).get("result") or {}
 		if outcome.get("action") == "manual_review":
-			return f"Re-synced; still parked: {outcome.get('reason') or 'see the page'}."
-		return f"Re-synced: {outcome.get('action') or 'done'}."
-	return ""
+			return f"Re-synced; still parked: {outcome.get('reason') or 'see the page'}.", False
+		return f"Re-synced: {outcome.get('action') or 'done'}.", False
+	return "", False
 
 
 def apply(token, indexes) -> list:
-	"""Apply the previewed rows at ``indexes`` (the page sends ``APPLY_CHUNK`` at a time).
-	Each row is classified again first, so only a row that is *still* a change runs; one
-	failure never stops the rest. Returns one result per index, in order."""
+	"""Apply the previewed rows at ``indexes`` (the page sends a few at a time). One failure
+	never stops the rest. Returns one result per index, in order.
+
+	Each row is classified again **immediately before it runs**, not once for the chunk: a Link
+	earlier in the same request can merge an import copy away, and ``rename_doc`` re-points
+	every other mapping that pointed at it, so a row judged before that ran would be applied
+	on a verdict that no longer holds."""
 	user = frappe.session.user
 	plan = frappe.cache.get_value(_plan_key(user, token))
 	if not plan:
 		frappe.throw("This preview has expired. Import the file again to get a fresh preview.")
 	rows = plan.get("rows") or []
-	chosen = []
+	out = []
 	for index in indexes or []:
 		index = cint(index)
-		if 0 <= index < len(rows):
-			chosen.append((index, rows[index]))
-	results = classify([row for _index, row in chosen]) if chosen else []
-	out = []
-	for (index, row), result in zip(chosen, results, strict=True):
+		if not 0 <= index < len(rows):
+			continue
+		row = rows[index]
 		base = {
 			"index": index,
 			"sheet": row["sheet"],
@@ -1049,23 +1065,42 @@ def apply(token, indexes) -> list:
 			"qbo_type": row["qbo_type"],
 			"qbo_id": row["qbo_id"],
 		}
+		result = classify([row])[0]
 		if result["category"] != CHANGE:
 			out.append(
 				dict(base, ok=False, skipped=True, category=result["category"], message=result["message"])
 			)
 			continue
-		try:
-			frappe.db.savepoint("qbo_match_excel_apply")
-			message = _run_action(row, result, user) if result["action"] else ""
-			if result["save_note"]:
-				_save_note(row["row_id"], row, user)
-				message = f"{message} Note saved.".strip()
-			frappe.db.commit()
-			out.append(dict(base, ok=True, message=message))
-		except Exception as exc:
+		message, merge_failed = "", False
+		if result["action"]:
 			try:
-				frappe.db.rollback(save_point="qbo_match_excel_apply")
-			except Exception:
-				frappe.db.rollback()
-			out.append(dict(base, ok=False, skipped=False, message=matching.clean_error(exc)))
+				frappe.db.savepoint("qbo_match_excel_apply")
+				message, merge_failed = _run_action(row, result, user)
+				frappe.db.commit()
+			except Exception as exc:
+				_rollback("qbo_match_excel_apply")
+				out.append(dict(base, ok=False, skipped=False, message=matching.clean_error(exc)))
+				continue
+		if result["save_note"]:
+			# Its own step: decide/confirm have committed by now, so a note that fails must
+			# not report a decision that landed as failed.
+			try:
+				frappe.db.savepoint("qbo_match_excel_note")
+				_save_note(row["row_id"], row, user)
+				frappe.db.commit()
+				message = f"{message} Note saved.".strip()
+			except Exception as exc:
+				_rollback("qbo_match_excel_note")
+				message = f"{message} The note was NOT saved: {matching.clean_error(exc)}".strip()
+				if not result["action"]:
+					out.append(dict(base, ok=False, skipped=False, message=message))
+					continue
+		out.append(dict(base, ok=True, merge_failed=merge_failed, message=message))
 	return out
+
+
+def _rollback(save_point) -> None:
+	try:
+		frappe.db.rollback(save_point=save_point)
+	except Exception:
+		frappe.db.rollback()

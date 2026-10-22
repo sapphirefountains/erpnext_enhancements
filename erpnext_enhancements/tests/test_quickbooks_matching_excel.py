@@ -262,22 +262,37 @@ def test_a_parked_transaction_version_ignores_what_the_parked_list_never_reads()
 	assert gone["draft"] == "Sales Invoice ACC-SINV-1 (gone)"
 
 
-def test_collect_export_pages_through_the_queue_by_the_length_served(monkeypatch):
-	"""It pages by the page_length the server reports serving, like the page, so a clamp
-	can never skip rows -- and groups the rows into a sheet per master type."""
+def test_collect_export_reads_the_queue_once_and_builds_it_in_batches(monkeypatch):
+	"""The export takes minutes and people keep deciding rows on the page meanwhile, and each
+	decided row leaves *Needs decision*. Paging by offset would then skip the rows pulled
+	forward past an offset already read, so the mapping rows are read ONCE, then built in
+	batches by the page's own row builder -- and grouped into a sheet per master type."""
 	matching_excel, _ = _excel()
 	rows = [
 		_master_row(mapping=f"M{n}", qbo_id=str(n), entity_type="Vendor" if n % 2 else "Customer")
 		for n in range(7)
 	]
-	calls = []
+	reads, batches = [], []
 
-	def queue(entity_types=None, status=None, search=None, start=0, page_length=50):
-		calls.append((status, start))
-		return {"rows": rows[start : start + 3], "total": len(rows), "page_length": 3}
+	def mapping_rows(where, params, *, start=None, page_length=None):
+		reads.append((params.get("types"), start, page_length))
+		return list(range(len(rows)))
+
+	def build(batch):
+		batches.append(list(batch))
+		return [rows[i] for i in batch]
 
 	parked = [_txn_row(mapping=f"T{n}", qbo_id=str(n)) for n in range(2)]
-	monkeypatch.setattr(matching_excel.matching, "master_queue", queue)
+	monkeypatch.setattr(matching_excel, "EXPORT_PAGE", 3)
+	monkeypatch.setattr(matching_excel.matching, "master_mapping_rows", mapping_rows)
+	monkeypatch.setattr(matching_excel.matching, "build_master_rows", build)
+	wheres = []
+	original_where = matching_excel.matching._master_where
+	monkeypatch.setattr(
+		matching_excel.matching,
+		"_master_where",
+		lambda types, status, search: wheres.append(status) or original_where(types, status, search),
+	)
 	monkeypatch.setattr(
 		matching_excel.matching,
 		"parked_transactions",
@@ -288,8 +303,9 @@ def test_collect_export_pages_through_the_queue_by_the_length_served(monkeypatch
 		},
 	)
 	sheets = matching_excel.collect_export(status="Bogus", entity_types=["Vendor", "Customer", "Nope"])
-	assert [call[1] for call in calls] == [0, 3, 6]
-	assert {call[0] for call in calls} == {"Needs decision"}, "an unknown filter falls back to the default"
+	assert reads == [(("Vendor", "Customer"), None, None)], "one unpaged read of the chosen types"
+	assert batches == [[0, 1, 2], [3, 4, 5], [6]]
+	assert wheres == ["Needs decision"], "an unknown filter falls back to the default"
 	titles = {title: len(sheet_rows) for title, _c, sheet_rows, _d in sheets}
 	assert titles == {"Vendors": 3, "Customers": 4, "Parked transactions": 2}
 	without = matching_excel.collect_export(status="All", entity_types=None, include_parked=False)
@@ -767,6 +783,69 @@ def test_one_failing_row_never_stops_the_rest_and_its_note_is_not_saved(monkeypa
 	assert "qbo_match_excel_apply" in rollbacks
 
 
+def test_a_merge_earlier_in_the_same_chunk_makes_a_later_row_stale(monkeypatch):
+	"""rename_doc re-points every mapping that pointed at the merged copy. A row judged before
+	that ran must be judged again, or it is applied on facts Meg never saw."""
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+	original_decide = matching_excel.matching.decide
+
+	def decide_and_merge(entity_type, qbo_id, erpnext_name, **kwargs):
+		outcome = original_decide(entity_type, qbo_id, erpnext_name, **kwargs)
+		ledger.mappings["MAP-2"]["erpnext_name"] = erpnext_name  # MAP-2 followed the merged copy
+		return outcome
+
+	monkeypatch.setattr(matching_excel.matching, "decide", decide_and_merge)
+	content = _meg_file(matching_excel)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	assert preview["summary"]["change"] == 3
+	results = matching_excel.apply(preview["token"], [row["index"] for row in preview["rows"]])
+	moved = next(r for r in results if r["qbo_id"] == "57")
+	assert moved["skipped"] and moved["category"] == "stale"
+	assert ("confirm", "57") not in ledger.calls
+
+
+def test_a_note_that_fails_never_reports_a_landed_decision_as_failed(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+
+	def broken_note(mapping, row, user):
+		raise Exception("Comment is too long")
+
+	monkeypatch.setattr(matching_excel, "_save_note", broken_note)
+	content = _meg_file(matching_excel)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	results = matching_excel.apply(preview["token"], [row["index"] for row in preview["rows"]])
+	linked = results[0]
+	assert linked["ok"], "the link committed; the row is not a failure"
+	assert "Linked to Supplier ABC Supply Co" in linked["message"]
+	assert "The note was NOT saved: Comment is too long" in linked["message"]
+	assert ledger.mappings["MAP-1"]["erpnext_name"] == "ABC Supply Co"
+
+
+def test_a_refused_merge_is_flagged_for_the_report(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+	original_decide = matching_excel.matching.decide
+
+	def decide_refused(*args, **kwargs):
+		outcome = original_decide(*args, **kwargs)
+		return dict(outcome, merge={"status": "failed", "from": "ABC Supply-1", "error": "currency differs"})
+
+	monkeypatch.setattr(matching_excel.matching, "decide", decide_refused)
+	content = _meg_file(matching_excel)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	results = matching_excel.apply(preview["token"], [preview["rows"][0]["index"]])
+	assert results[0]["ok"] and results[0]["merge_failed"]
+	assert "was not merged: currency differs" in results[0]["message"]
+
+
 def test_apply_refuses_an_expired_preview(monkeypatch):
 	matching_excel, frappe = _excel()
 	_wire(monkeypatch, matching_excel, frappe, Ledger())
@@ -874,6 +953,19 @@ def test_export_status_is_keyed_on_the_caller(monkeypatch):
 	assert matching_excel.export_status("t1") == {"status": "unknown"}, "Nik cannot read Lisa's export"
 
 
+def test_a_job_killed_mid_export_reads_as_lost_not_running(monkeypatch):
+	"""A deploy restarts the workers; a job still 'running' past its RQ timeout is gone."""
+	matching_excel, frappe = _excel()
+	cache = _wire(monkeypatch, matching_excel, frappe, Ledger())
+	monkeypatch.setattr(matching_excel.time, "time", lambda: 10_000.0)
+	key = matching_excel._job_key("nik@example.com", "t1")
+	cache[key] = {"status": "running", "started": 10_000.0 - 60}
+	assert matching_excel.export_status("t1")["status"] == "running"
+	cache[key] = {"status": "running", "started": 10_000.0 - matching_excel.EXPORT_TIMEOUT - 120}
+	lost = matching_excel.export_status("t1")
+	assert lost["status"] == "failed" and "Export again" in lost["error"]
+
+
 # ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
@@ -908,6 +1000,10 @@ def test_the_page_offers_the_server_export_filters_and_apply_chunk():
 	assert "Unmapped" not in matching_excel.EXPORT_STATUSES, "unmapped rows have no Row ID to come back by"
 	assert "apply_chunk" in js and "FileUploader" in js
 	assert "allow_toggle_private: false" in js and "make_attachments_public: false" in js
+	# A Retry is a round trip to Intuit: it goes alone, as the page's own Retry does.
+	assert 'row.decision === "Retry"' in js and "chunks.push([row])" in js
+	# The report reads the server's flag, not the wording of a message.
+	assert "r.merge_failed" in js and "NOT merged/" not in js
 
 
 def test_ci_runs_this_suite_with_openpyxl():

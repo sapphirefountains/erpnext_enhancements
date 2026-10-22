@@ -142,8 +142,9 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
 `preview_matching_import`, `apply_matching_import`, behind the same operator gate.
 
 - **Export** is a background job (`queue="long"`); the page polls the token. The workbook has an
-  Instructions sheet, a sheet per master type with the Masters tab's rows (built by paging
-  `master_queue`, so they are the page's rows), and a Parked transactions sheet. Yellow columns:
+  Instructions sheet, a sheet per master type with the Masters tab's rows (read once with
+  `matching.master_mapping_rows` and built by the page's own `build_master_rows`; offset paging
+  would skip rows that people decide on the page while the job runs), and a Parked transactions sheet. Yellow columns:
   **Decision** (Link / Keep / Retry, the page's three; blank = leave it), **Link to** (a per-row
   dropdown of the row's suggestion IDs, pre-filled with the best), **Fill blank fields from QBO**,
   **Notes**. Hidden: Row ID, Row version, `modified`, the exported link and status, the suggestion
@@ -151,8 +152,9 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
 - **Import** reads the uploaded private File, finds columns by header text (Meg may sort, reorder
   and add sheets), and previews each row as *change*, *unchanged* (already done), *stale* (changed
   in ERPNext since the export) or *invalid*. **Nothing is written until Apply**, which sends
-  `APPLY_CHUNK` rows per request; each row is classified again and only a row still a *change*
-  runs, through `matching.decide` / `matching.confirm` / `sync.sync_entity`.
+  `APPLY_CHUNK` rows per request (a Retry alone, as the page's own Retry); each row is classified
+  again immediately before it runs -- a Link earlier in the same request can merge a copy and
+  re-point other mappings -- and only a row still a *change* runs, through `matching.decide` / `matching.confirm` / `sync.sync_entity`.
 - **Idempotent.** "Already done" is checked before "stale", so a second import of the same file
   finds every row unchanged; a note is already saved when an existing Comment on the mapping
   contains its text.

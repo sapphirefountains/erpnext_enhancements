@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     one again and runs only a row that is still a change, through `matching.decide` (Link, with its merge
     policy), `matching.confirm` (Keep) and `sync.sync_entity` (Retry) -- the page's own code -- and reports what
     applied, what was skipped because it moved after the preview, and what failed.
+  - **Each row is judged again immediately before it runs, not once per request**: a Link earlier in the same
+    request can merge an import copy away, and `rename_doc` re-points every other mapping that pointed at it. A
+    Retry goes in a request of its own, as the page's Retry does, so ten round trips to Intuit cannot outrun the
+    gateway together. A note that fails to save after its decision committed is reported on a row that applied,
+    never as a failure. A refused merge comes back as a `merge_failed` flag, not a phrase the page matches.
+  - **The export reads the queue once** (`matching.master_mapping_rows`, split out of `master_queue` with
+    `build_master_rows`) and builds it 500 rows at a time. Paging by offset would skip rows: the job takes minutes,
+    and each row someone decides on the page meanwhile leaves *Needs decision* and pulls the rows behind it past
+    an offset already read. A job a deploy kills reads as lost once it outlives its RQ timeout, not as running.
   - Nik's three calls: the decisions are the page's three, not new ones (Keep on a record the import created
     already means "keep the new record"; blank is "ignore"); a note is saved as a Comment on the row's QuickBooks
     Sync Mapping, with or without a decision; and two QBO records linked to one ERPNext record -- the usual QBO

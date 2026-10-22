@@ -577,6 +577,39 @@ def _master_where(entity_types, status, search):
 	return " and ".join(clauses), params
 
 
+def master_mapping_rows(where, params, *, start=None, page_length=None) -> list:
+	"""The mapping rows behind the queue, in the queue's order: one page, or -- with no
+	``page_length`` -- every row at once. The Excel export takes them all in one read, because
+	paging by offset over a filter that rows leave as people decide them would skip rows."""
+	# The clause text is assembled from literals in _master_where; every value is bound.
+	limit = ""
+	if page_length is not None:
+		limit = " limit %(start)s, %(page_length)s"
+		params = dict(params, start=start or 0, page_length=page_length)
+	return frappe.db.sql(
+		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
+		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on,"
+		" modified from `tabQuickBooks Sync Mapping` where "
+		+ where
+		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
+		+ limit,
+		params,
+		as_dict=True,
+	)
+
+
+def build_master_rows(rows) -> list:
+	"""Page rows for mapping rows: the payloads and current titles batched, then a candidate
+	search per row (``_master_row``)."""
+	settings = frappe.get_single("QuickBooks Online Settings")
+	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
+	titles = _record_titles([(row.erpnext_doctype, row.erpnext_name) for row in rows])
+	return [
+		_master_row(row, payloads.get((row.qbo_entity_type, str(row.qbo_id))) or {}, titles, settings)
+		for row in rows
+	]
+
+
 def master_queue(
 	entity_types=None, status=None, search=None, start=0, page_length=DEFAULT_PAGE_LENGTH
 ) -> dict:
@@ -589,30 +622,12 @@ def master_queue(
 		return _unmapped_queue(entity_types, start, page_length)
 
 	where, params = _master_where(entity_types, status, search)
-	# The clause text is assembled from literals in _master_where; every value is bound.
-	rows = frappe.db.sql(
-		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
-		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on,"
-		" modified from `tabQuickBooks Sync Mapping` where "
-		+ where
-		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
-		+ " limit %(start)s, %(page_length)s",
-		dict(params, start=start, page_length=page_length),
-		as_dict=True,
-	)
+	rows = master_mapping_rows(where, params, start=start, page_length=page_length)
 	total = cint(
 		frappe.db.sql("select count(*) from `tabQuickBooks Sync Mapping` where " + where, params)[0][0]
 	)
-
-	settings = frappe.get_single("QuickBooks Online Settings")
-	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
-	titles = _record_titles([(row.erpnext_doctype, row.erpnext_name) for row in rows])
-	items = [
-		_master_row(row, payloads.get((row.qbo_entity_type, str(row.qbo_id))) or {}, titles, settings)
-		for row in rows
-	]
 	return {
-		"rows": items,
+		"rows": build_master_rows(rows),
 		"total": total,
 		"start": start,
 		"page_length": page_length,
