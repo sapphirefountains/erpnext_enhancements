@@ -88,6 +88,19 @@ KIND_ORDER = {"behind": 0, "over": 1, "conflicts": 2, "overdue": 3}
 # ---------------------------------------------------------------------- pure helpers
 
 
+def given_day(value, default=None):
+	"""A request's day as a date. ``default`` when none was given (``project_planner.given``: blank, null);
+	a clear error, not a 500, for one that is not a date (a typo in an address, a scrape): ``_as_date``
+	raises ``ValueError``, which Frappe answers with a traceback. The message does not echo the value."""
+	value = pp.given(value)
+	if value is None:
+		return default
+	try:
+		return engine._as_date(value)
+	except (TypeError, ValueError):
+		frappe.throw(_("That is not a date. Use the form YYYY-MM-DD."))
+
+
 def months_choice(value):
 	"""``value`` as one of :data:`MONTH_CHOICES`; anything else, text included, is the default."""
 	try:
@@ -112,6 +125,12 @@ def default_summary_week(today, first_weekday):
 	today = engine._as_date(today)
 	start = pp.week_start(today, first_weekday)
 	return start if (today - start).days <= 1 else start + datetime.timedelta(days=7)
+
+
+def week_holding(today, first_weekday):
+	"""The first day of the week that holds ``today``. What the Monday job describes and claims, however late
+	it runs: unlike :func:`default_summary_week` it never looks ahead."""
+	return pp.week_start(engine._as_date(today), first_weekday)
 
 
 def plural(count, one, many):
@@ -564,11 +583,34 @@ def _read_crewed(names):
 	return crewed
 
 
-def _conflicts(today, exclude=(), cached=True):
+def draft_projects(names):
+	"""The subset of project ``names`` whose schedule is not Published (D8): Draft, or blank, which reads
+	Draft (``project_planner.schedule_status``). Whatever list a project is on: the weekly summary's rule is
+	about the booking's own project, because the availability engine books a Draft project's *stored* tasks
+	like any other, and a project that is not an Active customer job (On Hold, say) is booked too.
+
+	None before P3's columns exist (every schedule then reads as published, as the Lookahead's does); a name
+	that is not a Project (a deleted one) is not in the answer. One bound query per :data:`CHUNK` names."""
+	names = sorted({n for n in names or () if n})
+	if not names or not pp._has_schedule_columns():
+		return set()
+	drafts = set()
+	for chunk in _chunks(names):
+		for row in frappe.db.sql(
+			"SELECT name, custom_schedule_status FROM `tabProject` WHERE name IN %(names)s",
+			{"names": tuple(chunk)},
+			as_dict=True,
+		):
+			if pp.schedule_status(row.get("custom_schedule_status")) != pp.SCHEDULE_PUBLISHED:
+				drafts.add(row.get("name"))
+	return drafts
+
+
+def _conflicts(today, published_only=False, cached=True):
 	"""``[{date, label, message, projects}]``: the Conflict center's list for the next two weeks that nobody
 	has kept with a reason, or None when the pass fails (the rest of the Overview is worth showing without
-	it). ``exclude`` drops every conflict that involves one of those projects (the weekly summary leaves out
-	a Draft schedule's, whose tasks the engine still books).
+	it). ``published_only`` (the weekly summary) drops every conflict that involves a project whose schedule
+	is not Published (:func:`draft_projects`), listed or not.
 
 	It is the one costly part of a read, and it does not depend on the window, so a manager stepping through
 	months or flipping the picker would otherwise pay for it each click: the unfiltered list is kept for
@@ -606,7 +648,9 @@ def _conflicts(today, exclude=(), cached=True):
 				frappe.cache.set_value(key, found, expires_in_sec=CONFLICT_CACHE_SECONDS)
 			except Exception:
 				pass
-	hidden = set(exclude or ())
+	if not published_only:
+		return found
+	hidden = draft_projects({project for c in found for project in c.get("projects") or ()})
 	return [c for c in found if not hidden.intersection(c.get("projects") or ())]
 
 
@@ -625,15 +669,16 @@ def _actuals(hours_tasks):
 def collect(draft=True, published_only=False, with_conflicts=True, today=None, cached_conflicts=True):
 	"""Everything the Overview and the weekly summary are drawn from.
 
-	``{today, listed, jobs, shown, over, conflicts, drafts_named, draft_projects, truncated, overlay}``:
+	``{today, listed, jobs, shown, over, conflicts, drafts_named, drafts_listed, truncated, overlay}``:
 	``jobs`` are :func:`build_job` rows in project-name order; ``shown`` maps a job to its schedulable
 	tasks; ``listed`` is ``project_planner._projects``' list (for the page's filters); ``overlay`` is the
 	drafts read (None without ``draft``); ``truncated`` is True when the task cap cut the read.
-	``published_only`` (the weekly summary) leaves a Draft schedule out of ``jobs``, names it in
-	``drafts_named`` (``draft_projects`` are the same projects' names), and drops the conflicts that
-	involve one: a Draft schedule is private until it is published (D8), so the summary never describes
-	one, and the engine still books a Draft project's stored tasks, so anything read from the engine has to
-	be filtered by those names too."""
+	``published_only`` (the weekly summary) leaves a Draft schedule out of ``jobs`` and names it in
+	``drafts_named`` (``drafts_listed`` are the same listed jobs' names), and drops the conflicts that
+	involve any project whose schedule is not Published (:func:`draft_projects`, whether or not it is a
+	listed job): a Draft schedule is private until it is published (D8), so the summary never describes
+	one, and the engine books a Draft project's stored tasks like any other, so anything read from the
+	engine is filtered by the booking's own project."""
 	today = engine._as_date(today) or getdate(nowdate())
 	listed = pp._projects(set())
 	overlay = None
@@ -642,12 +687,12 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None, c
 			overlay = pp._draft_overlay()
 		except Exception:
 			frappe.log_error(title="Overview: drafts could not be read", message=frappe.get_traceback())
-	drafts_named, draft_projects = [], set()
+	drafts_named, drafts_listed = [], set()
 	if published_only:
 		drafted = [p for p in listed if (p.get("schedule") or {}).get("status") == pp.SCHEDULE_DRAFT]
 		drafts_named = [p["title"] for p in drafted]
-		draft_projects = {p["name"] for p in drafted}
-		listed_jobs = [p for p in listed if p["name"] not in draft_projects]
+		drafts_listed = {p["name"] for p in drafted}
+		listed_jobs = [p for p in listed if p["name"] not in drafts_listed]
 	else:
 		listed_jobs = listed
 	names = {p["name"] for p in listed_jobs}
@@ -679,7 +724,7 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None, c
 	hours = [t for job in jobs for t in job["hours_tasks"]]
 	actuals = _actuals(hours) if hours else {}
 	over = {job["name"]: running_over(job["hours_tasks"], actuals) for job in jobs}
-	conflicts = _conflicts(today, draft_projects, cached_conflicts) if with_conflicts else None
+	conflicts = _conflicts(today, published_only, cached_conflicts) if with_conflicts else None
 	return {
 		"today": today,
 		"listed": listed,
@@ -688,7 +733,7 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None, c
 		"over": over,
 		"conflicts": conflicts,
 		"drafts_named": drafts_named,
-		"draft_projects": draft_projects,
+		"drafts_listed": drafts_listed,
 		"truncated": truncated,
 		"overlay": overlay,
 	}
@@ -747,7 +792,7 @@ def get_overview(start=None, months=DEFAULT_MONTHS, draft=1):
 	drafts (the caller's own, and everyone's on a Draft schedule), as the page always reads."""
 	pp._require_planner()
 	months = months_choice(months)
-	first, last = month_window(pp.given(start) or nowdate(), months)
+	first, last = month_window(given_day(start, getdate(nowdate())), months)
 	found = collect(draft=bool(cint(pp.given(draft))))
 	answer = overview_payload(found, first, last, months)
 	answer["can_edit"] = bool(frappe.has_permission("Task", "write"))

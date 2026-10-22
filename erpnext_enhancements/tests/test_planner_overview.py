@@ -130,6 +130,32 @@ class TestWindowsAndWeeks(unittest.TestCase):
 		self.assertEqual(ov.default_summary_week(D(2026, 10, 27), monday_first), D(2026, 10, 26))
 		self.assertEqual(ov.default_summary_week(D(2026, 10, 28), monday_first), D(2026, 11, 2))
 
+	def test_the_week_that_holds_today_never_looks_ahead(self):
+		sunday, monday = 6, 0
+		# Sunday-first: Sun Oct 25 to Sat Oct 31 are one week, every day of it.
+		for day in range(25, 32):
+			self.assertEqual(ov.week_holding(D(2026, 10, day), sunday), D(2026, 10, 25), day)
+		self.assertEqual(ov.week_holding(D(2026, 11, 1), sunday), D(2026, 11, 1))
+		# Monday-first: the same Tuesday is in the week that began Monday Oct 26.
+		self.assertEqual(ov.week_holding(D(2026, 10, 27), monday), D(2026, 10, 26))
+		self.assertEqual(ov.week_holding("2026-10-31", monday), D(2026, 10, 26))
+		# And that is NOT what a print defaults to on a Tuesday.
+		self.assertNotEqual(
+			ov.week_holding(D(2026, 10, 27), sunday), ov.default_summary_week(D(2026, 10, 27), sunday)
+		)
+
+	def test_a_requests_day_is_a_date_or_a_clear_error(self):
+		today = D(2026, 10, 21)
+		self.assertEqual(ov.given_day("2026-10-05"), D(2026, 10, 5))
+		self.assertEqual(ov.given_day("2026-10-05 08:00:00"), D(2026, 10, 5))
+		self.assertEqual(ov.given_day(D(2026, 10, 5)), D(2026, 10, 5))
+		self.assertEqual(ov.given_day(None, today), today)
+		self.assertEqual(ov.given_day("", today), today)
+		self.assertIsNone(ov.given_day(None))
+		for bad in ("garbage", "2026-02-30", "2026/10/05x", [1], {"a": 1}):
+			with self.assertRaises(h._Throw, msg=repr(bad)):
+				ov.given_day(bad, today)
+
 	def test_plural_words_the_count(self):
 		self.assertEqual(ov.plural(1, "{0} task", "{0} tasks"), "1 task")
 		self.assertEqual(ov.plural(0, "{0} task", "{0} tasks"), "0 tasks")
@@ -657,22 +683,22 @@ class TestCollect(unittest.TestCase):
 		self.assertTrue(answer["conflicts_ok"])
 		self.assertEqual(answer["behind_days"], ov.BEHIND_DAYS)
 
-	def test_a_draft_schedules_conflicts_are_left_out_of_the_summary(self):
+	def test_the_summary_asks_for_published_conflicts_only_and_fresh(self):
 		seen = {}
 
-		def conflicts(today, exclude=(), cached=True):
-			seen.update(exclude=set(exclude), cached=cached)
+		def conflicts(today, published_only=False, cached=True):
+			seen.update(published_only=published_only, cached=cached)
 			return []
 
 		with mock.patch.object(ov, "_conflicts", conflicts):
 			found = ov.collect(draft=False, published_only=True, cached_conflicts=False)
-		self.assertEqual(seen, {"exclude": {"PRJ-2"}, "cached": False})
-		self.assertEqual(found["draft_projects"], {"PRJ-2"})
+		self.assertEqual(seen, {"published_only": True, "cached": False})
+		self.assertEqual(found["drafts_listed"], {"PRJ-2"})
 		# The Overview, on screen, draws drafts and so leaves nothing out; it uses the cache.
 		with mock.patch.object(ov, "_conflicts", conflicts):
 			found = ov.collect(draft=False)
-		self.assertEqual(seen, {"exclude": set(), "cached": True})
-		self.assertEqual(found["draft_projects"], set())
+		self.assertEqual(seen, {"published_only": False, "cached": True})
+		self.assertEqual(found["drafts_listed"], set())
 
 	def test_a_cut_task_read_is_said_in_the_answer(self):
 		with mock.patch.object(ov, "_read_task_rows", lambda names: ([], True)):
@@ -789,12 +815,52 @@ class TestTheConflictsRead(unittest.TestCase):
 		ov._conflicts(TODAY, cached=False)
 		self.assertEqual((self.passes, self.store), (2, {}))
 
-	def test_projects_can_be_left_out_of_the_one_cached_list(self):
-		both = ov._conflicts(TODAY)
-		self.assertEqual(len(both), 2)
-		self.assertEqual([c["message"] for c in ov._conflicts(TODAY, {"PRJ-2"})], ["Lisa: over her hours"])
-		self.assertEqual(ov._conflicts(TODAY, {"PRJ-1"}), [])
+	def test_the_summary_drops_any_conflict_touching_a_project_that_is_not_published(self):
+		"""Read off each conflict's own projects, whether or not the page lists them as jobs: PRJ-2 here is a
+		Draft schedule, PRJ-3 has no schedule state (reads Draft), PRJ-1 is Published."""
+		h.frappe.sql_rows = {
+			"FROM `tabProject` WHERE name IN": [
+				{"name": "PRJ-1", "custom_schedule_status": "Published"},
+				{"name": "PRJ-2", "custom_schedule_status": "Draft"},
+			]
+		}
+		with mock.patch.object(h.api, "_has_schedule_columns", lambda: True):
+			both = ov._conflicts(TODAY)
+			self.assertEqual(len(both), 2)
+			self.assertEqual(
+				[c["message"] for c in ov._conflicts(TODAY, published_only=True)], ["Lisa: over her hours"]
+			)
+			h.frappe.sql_rows["FROM `tabProject` WHERE name IN"][0]["custom_schedule_status"] = ""
+			self.assertEqual(ov._conflicts(TODAY, published_only=True), [])
+		# One cached pass served the unfiltered list and both filtered reads.
 		self.assertEqual(self.passes, 1)
+
+	def test_before_the_schedule_columns_exist_nothing_is_dropped(self):
+		with mock.patch.object(h.api, "_has_schedule_columns", lambda: False):
+			self.assertEqual(len(ov._conflicts(TODAY, published_only=True)), 2)
+
+	def test_the_published_filter_is_one_bound_query_and_a_conflict_with_no_project_survives(self):
+		from erpnext_enhancements.api import planner_conflicts
+
+		def collect(start, end, planner):
+			return [
+				{
+					"date": "2026-10-09",
+					"resource_label": "Austin",
+					"message": "Austin: on a day off",
+					"acknowledged": None,
+					"items": [{"doctype": "Task"}],
+				}
+			]
+
+		h.frappe.queries.clear()
+		with (
+			mock.patch.object(planner_conflicts, "_collect", collect),
+			mock.patch.object(h.api, "_has_schedule_columns", lambda: True),
+		):
+			got = ov._conflicts(TODAY, published_only=True, cached=False)
+		self.assertEqual([c["message"] for c in got], ["Austin: on a day off"])
+		self.assertEqual([q for kind, q in h.frappe.queries if kind == "sql"], [])
 
 	def test_a_cache_that_is_down_is_no_cache(self):
 		def boom(*a, **k):
@@ -811,6 +877,53 @@ class TestTheConflictsRead(unittest.TestCase):
 			self.assertIsNone(ov._conflicts(TODAY))
 		self.assertEqual(len(h.frappe.errors), 1)
 		self.assertEqual(self.store, {})
+
+
+class TestDraftProjects(unittest.TestCase):
+	"""'Is this project's schedule published?', asked of any project name, whatever list it is on."""
+
+	ROWS = [
+		{"name": "PRJ-PUB", "custom_schedule_status": "Published"},
+		{"name": "PRJ-DRAFT", "custom_schedule_status": "Draft"},
+		{"name": "PRJ-BLANK", "custom_schedule_status": None},
+		{"name": "PRJ-EMPTY", "custom_schedule_status": ""},
+		{"name": "PRJ-ODD", "custom_schedule_status": "Something else"},
+	]
+
+	def setUp(self):
+		h._reset()
+		h.frappe.sql_rows = {"FROM `tabProject` WHERE name IN": self.ROWS}
+		patch = mock.patch.object(h.api, "_has_schedule_columns", lambda: True)
+		patch.start()
+		self.addCleanup(patch.stop)
+
+	def test_draft_blank_and_unknown_read_draft_published_does_not(self):
+		names = {"PRJ-PUB", "PRJ-DRAFT", "PRJ-BLANK", "PRJ-EMPTY", "PRJ-ODD"}
+		self.assertEqual(ov.draft_projects(names), {"PRJ-DRAFT", "PRJ-BLANK", "PRJ-EMPTY", "PRJ-ODD"})
+
+	def test_no_names_asks_nothing(self):
+		h.frappe.queries.clear()
+		self.assertEqual(ov.draft_projects(set()), set())
+		self.assertEqual(ov.draft_projects([None, ""]), set())
+		self.assertEqual(h.frappe.queries, [])
+
+	def test_a_name_that_is_not_a_project_is_not_a_draft(self):
+		self.assertEqual(ov.draft_projects({"PRJ-GONE"}) & {"PRJ-GONE"}, set())
+
+	def test_before_the_columns_exist_nothing_is_a_draft_and_nothing_is_asked(self):
+		h.frappe.queries.clear()
+		with mock.patch.object(h.api, "_has_schedule_columns", lambda: False):
+			self.assertEqual(ov.draft_projects({"PRJ-DRAFT"}), set())
+		self.assertEqual(h.frappe.queries, [])
+
+	def test_one_bound_query_per_chunk(self):
+		h.frappe.queries.clear()
+		many = {f"PRJ-{i:04d}" for i in range(ov.CHUNK + 1)}
+		ov.draft_projects(many)
+		queries = [q for kind, q in h.frappe.queries if kind == "sql"]
+		self.assertEqual(len(queries), 2)
+		self.assertTrue(all("WHERE name IN %(names)s" in q for q in queries))
+		self.assertTrue(all("PRJ-" not in q for q in queries))
 
 
 class TestTheQueries(unittest.TestCase):
@@ -904,6 +1017,21 @@ class TestEndpoints(unittest.TestCase):
 
 	def test_a_wild_months_value_is_the_default(self):
 		self.assertEqual(ov.get_overview("2026-10-21", "forty")["months"], 6)
+
+	def test_a_start_that_is_not_a_day_is_a_clear_error_not_a_500(self):
+		for bad in ("garbage", "2026-13-45", "not-a-date", "20261021x", ["2026-10-21"], 7):
+			with self.assertRaises(h._Throw, msg=repr(bad)) as caught:
+				ov.get_overview(bad)
+			self.assertIn("YYYY-MM-DD", str(caught.exception))
+			self.assertNotIn("garbage", str(caught.exception))
+
+	def test_a_start_that_is_blank_is_today(self):
+		for blank in (None, "", "null", "undefined", "  "):
+			answer = ov.get_overview(blank, 3)
+			self.assertEqual((answer["start"], answer["end"]), ("2026-10-01", "2026-12-31"), repr(blank))
+
+	def test_a_start_with_a_time_on_it_is_its_day(self):
+		self.assertEqual(ov.get_overview("2026-11-20 14:30:00", 3)["start"], "2026-11-01")
 
 	def test_the_preview_is_for_managers(self):
 		h.frappe.roles = ["Projects User"]

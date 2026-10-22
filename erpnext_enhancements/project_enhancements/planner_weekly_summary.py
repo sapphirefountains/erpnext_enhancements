@@ -20,8 +20,10 @@ Things this module is careful about, some of which look like bugs:
   nobody, reaches no calendar. The summary never describes one; it names the jobs that are still Draft
   at the foot, so a manager knows a plan exists. The Overview tab, on screen, does draw them (hatched).
 * **"Next week" is the week ahead, not the next calendar week.** :func:`planner_overview.
-  default_summary_week` picks the week holding today while it is a day old (the Monday email, a Sunday
-  print), else the following week.
+  default_summary_week` picks the week holding today while it is a day old (a Sunday print), else the
+  following week. **The scheduled email is the exception**: it always describes and claims the week
+  holding today (:func:`planner_overview.week_holding`), so a run that is late, because the scheduler was
+  down on Monday, is still this week's summary and cannot spend the next Monday's key.
 * **"What moved" is read from ``tabVersion``, not guessed.** A Task's start or end changed in the last
   seven days, folded to its first old value and last new value (a task moved and moved back is not
   listed), for schedulable work on the jobs above only. A job published in those days says so. If the
@@ -68,8 +70,9 @@ JOB_LINES = 12
 MOVED_LINES = 5
 #: The look-back for "what moved", in days.
 MOVED_DAYS = 7
-#: The most Version rows read for it.
+#: The most Version rows of the summary's own tasks read for it, and the most Task version *names* looked at.
 MOVED_ROWS = 2000
+MOVED_SCAN = 20000
 DATE_FIELDS = {"exp_start_date": "start", "exp_end_date": "end"}
 
 
@@ -193,14 +196,15 @@ def _crew_labels(names):
 		return {}
 
 
-def _places(first, last, skip=()):
+def _places(first, last):
 	"""``([(label, [segment...])], [label...])``: everyone booked in the week, in the engine's order, and
 	the labels of those with nothing booked. One Google-free engine pass.
 
-	``skip`` are the projects the summary must not describe (the Draft schedules). The engine books a Draft
-	project's *stored* tasks like any other, so its bookings are dropped here by project, or this section
-	would print a plan the rest of the page promises not to."""
-	skip = set(skip or ())
+	**A booking is described only if its own project's schedule is Published** (blank reads Draft,
+	:func:`planner_overview.draft_projects`). The engine books a Draft project's *stored* tasks like any
+	other, and a project that is not an Active customer job (On Hold, say) is booked too, so the rule is
+	read off each booking's project, not off the list of jobs the page draws; this section would otherwise
+	print a plan the rest of the summary promises not to."""
 	computed = engine._compute(first, last, google=False)
 	people = {r["name"]: r.get("label") or r["name"] for r in computed.get("resources") or []}
 	stops = [
@@ -208,9 +212,10 @@ def _places(first, last, skip=()):
 		for cells in (computed.get("days") or {}).values()
 		for cell in cells.values()
 		for b in cell.get("bookings") or []
-		if b.get("kind") in ("task", "rental") and b.get("project") not in skip
+		if b.get("kind") in ("task", "rental")
 	]
-	titles = pp._project_titles(b.get("project") for b in stops)
+	skip = overview.draft_projects({b.get("project") for b in stops})
+	titles = pp._project_titles(b.get("project") for b in stops if b.get("project") not in skip)
 	booked, free = [], []
 	for name, label in people.items():
 		entries = []
@@ -241,34 +246,46 @@ def _places(first, last, skip=()):
 
 def _moved(found, since):
 	"""``({project: [moved_line]}, cut)`` for the schedulable work on the summary's jobs, from the Version
-	log. The read is limited to the summary's own projects in SQL (a bulk edit elsewhere cannot crowd it
-	out), takes the **newest** :data:`MOVED_ROWS` rows and folds them oldest first; ``cut`` says the log was
-	longer than that, so an old move may be missing."""
+	log, in two steps so the indexes do the work and no ``data`` blob is read for a row nobody asked for.
+
+	Step one reads only the *names* of the Task versions in the window (``ref_doctype`` and ``creation``,
+	newest first, no ``data``, no ``LIKE``): on production about 140 rows a week, in a millisecond or two.
+	Python keeps the ones on the summary's own tasks, newest :data:`MOVED_ROWS` of them. Step two fetches
+	those versions' ``data`` by primary key (a ``LIKE`` over a few hundred rows already in hand, not over
+	the table), and they are folded oldest first. ``cut`` says the log was longer than a step's cap, so an
+	old move may be missing."""
 	index = {t["name"]: (project, t) for project, work in found["shown"].items() for t in work}
 	if not index:
 		return {}, False
-	rows = frappe.db.sql(
+	versions = frappe.db.sql(
 		"""
-		SELECT v.docname, v.data
+		SELECT v.name, v.docname
 		FROM `tabVersion` v
-		INNER JOIN `tabTask` t ON t.name = v.docname
 		WHERE v.ref_doctype = 'Task' AND v.creation >= %(since)s
-			AND t.project IN %(projects)s
-			AND (v.data LIKE %(start)s OR v.data LIKE %(end)s)
 		ORDER BY v.creation DESC
 		LIMIT %(limit)s
 		""",
-		{
-			"since": since,
-			"projects": tuple(sorted({project for project, _t in index.values()})),
-			"start": '%"exp_start_date"%',
-			"end": '%"exp_end_date"%',
-			"limit": MOVED_ROWS,
-		},
+		{"since": since, "limit": MOVED_SCAN},
 		as_dict=True,
 	)
-	cut = len(rows) >= MOVED_ROWS
-	rows = list(reversed(rows))
+	cut = len(versions) >= MOVED_SCAN
+	mine = [v.get("name") for v in versions if v.get("docname") in index]
+	if len(mine) > MOVED_ROWS:
+		cut, mine = True, mine[:MOVED_ROWS]
+	newest_first = {name: position for position, name in enumerate(mine)}
+	rows = []
+	for chunk in overview._chunks(mine):
+		rows += frappe.db.sql(
+			"""
+			SELECT v.name, v.docname, v.data
+			FROM `tabVersion` v
+			WHERE v.name IN %(versions)s
+				AND (v.data LIKE %(start)s OR v.data LIKE %(end)s)
+			""",
+			{"versions": tuple(chunk), "start": '%"exp_start_date"%', "end": '%"exp_end_date"%'},
+			as_dict=True,
+		)
+	rows.sort(key=lambda r: -newest_first.get(r.get("name"), 0))
 	folded = fold_date_changes([(r.get("docname"), r.get("data")) for r in rows if r.get("docname") in index])
 	out = {}
 	for task, changes in folded.items():
@@ -286,11 +303,8 @@ def build_summary(start=None, today=None):
 	ahead when not given). See the module docstring."""
 	today = getdate(today or nowdate())
 	first_weekday = pp._site_first_weekday()
-	first = (
-		pp.week_start(getdate(start), first_weekday)
-		if start
-		else overview.default_summary_week(today, first_weekday)
-	)
+	day = overview.given_day(start)  # a clear error for a day that is not one, never a 500
+	first = pp.week_start(day, first_weekday) if day else overview.default_summary_week(today, first_weekday)
 	last = first + datetime.timedelta(days=6)
 	found = overview.collect(
 		draft=False, published_only=True, with_conflicts=True, today=today, cached_conflicts=False
@@ -331,7 +345,7 @@ def build_summary(start=None, today=None):
 			}
 		)
 
-	people, free = _places(first, last, found["draft_projects"])
+	people, free = _places(first, last)
 	since = frappe.utils.add_days(frappe.utils.now_datetime(), -MOVED_DAYS)
 	moved_by_job, moved_cut = _moved(found, since)
 	moved = [
@@ -690,6 +704,12 @@ def send_weekly_summary():
 	Does nothing, before any query, while ``weekly_summary_email`` is off (the default) or nobody is
 	named. At most once per week (:func:`_claim`). Never raises.
 
+	**It always describes and claims the week that holds today** (:func:`planner_overview.week_holding`),
+	not the "week ahead" a print defaults to. Run on Monday that is the same week; run late (the scheduler was
+	down Monday, so it runs Tuesday or after) it is still *this* week's summary, claimed under this week's
+	key, and the next Monday finds its own key free. The week-ahead rule would have sent a Tuesday catch-up
+	about next week, claimed next week's key, and silenced the following Monday.
+
 	The order matters: the read and the email are built first (they only read, so a failure there spends
 	nothing and the next run that week can still send), then the week is claimed and committed, then the mail
 	goes. A week already claimed is skipped before the costly read."""
@@ -700,7 +720,7 @@ def send_weekly_summary():
 		if not to:
 			return
 		today = getdate(nowdate())
-		first = overview.default_summary_week(today, pp._site_first_weekday())
+		first = overview.week_holding(today, pp._site_first_weekday())
 		if frappe.db.exists(LOG_DOCTYPE, f"{CLAIM_PREFIX}|{first}"):
 			return
 		data = build_summary(first, today)
@@ -721,18 +741,45 @@ def send_weekly_summary():
 
 def send_preview(user, start=None):
 	"""Email ``user`` the summary email for the week holding ``start`` (the week ahead by default), with
-	the switch off or on: no claim, nobody else gets it. ``{"sent": bool, "message": str}``."""
-	data = build_summary(start)
-	to = notices.email_of(user)
-	subject, html = summary_email(
-		data,
-		subject_prefix=_("Preview: "),
-		note=_(
-			"This is a preview sent to you alone. Nobody else was emailed, and the Monday email is unaffected."
-		),
-	)
-	frappe.sendmail(recipients=[to], subject=subject, message=html)
+	the switch off or on: no claim, nobody else gets it.
+
+	``{"sent": bool, "message": str, "reason": str}``; ``reason`` is ``""`` when sent, ``"no_email"`` when
+	the person has no usable address (Administrator, say: nothing is built and nothing is sent) and
+	``"failed"`` when building or sending raised (logged; the message points at the Error Log). It always
+	answers, so the Settings form's button always has a branch to show instead of a raw error. A ``start``
+	that is not a day is a clear error, raised before any of that."""
+	overview.given_day(start)
+	addresses = parse_recipients(notices.email_of(user))[0]
+	if not addresses:
+		return {
+			"sent": False,
+			"reason": "no_email",
+			"message": _(
+				"{0} has no email address on their User record, so there is nowhere to send the preview."
+			).format(user),
+		}
+	to = addresses[0]
+	try:
+		data = build_summary(start)
+		subject, html = summary_email(
+			data,
+			subject_prefix=_("Preview: "),
+			note=_(
+				"This is a preview sent to you alone. Nobody else was emailed, and the Monday email is unaffected."
+			),
+		)
+		frappe.sendmail(recipients=[to], subject=subject, message=html)
+	except Exception:
+		frappe.log_error(
+			title="Project Planner: weekly summary preview failed", message=frappe.get_traceback()
+		)
+		return {
+			"sent": False,
+			"reason": "failed",
+			"message": _("The preview could not be built or sent. The Error Log has the details."),
+		}
 	return {
 		"sent": True,
+		"reason": "",
 		"message": _("Sent to {0}: the summary for the week of {1}.").format(to, day_text(data["first"])),
 	}

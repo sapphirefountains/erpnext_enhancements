@@ -48,9 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (the Monday email, a Sunday-night print), else the following week. It describes **Published** schedules
     only: a Draft schedule is private until it is published (D8), so the summary names it at the foot and
     says nothing more. That includes the sections read from the availability engine, which books a Draft
-    project's *stored* tasks like any other: the by-person lines and the conflicts drop every booking and
-    conflict of a Draft project by name. The Version read is limited to the summary's own projects in SQL,
-    takes the newest 2,000 rows and says so when the log was longer.
+    project's *stored* tasks like any other (and books a project the page does not list as a job, such as
+    one On Hold): each booking and each conflict is judged by **its own project's schedule state** (Draft or
+    blank reads Draft), not by the list of jobs the page draws, so the by-person lines and the conflicts
+    drop every one whose project is not Published. "What moved" reads in two steps so the indexes do the
+    work: the names of the Task versions in the seven days (no `data` blob, no `LIKE`; about 140 rows a
+    week on production, in a millisecond or two), then the `data` of the few that are the summary's own
+    tasks, by primary key. The newest 2,000 are kept, and it says so when the log was longer.
   - **The Monday email is OFF** (D16). *Project Planner Settings > Telling managers* has **Email the weekly
     summary on Mondays** (a Check, default 0) and **Send it to** (addresses, separated by commas or new
     lines; a line that is not an address refuses the save, by name). `send_weekly_summary` is scheduled
@@ -60,9 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     week, through a `Planner Digest Log` row keyed `weekly-summary|<first day>` committed before the mail is sent, not
     through redis: the production deploy `FLUSHDB`s both redis instances, so a cache marker would have
     mailed everyone again after every merge. A send that fails after the claim is not retried (a missed
-    Monday is better than two), and a failure is logged, never raised. *Send me a weekly summary preview* on
-    the Settings form emails the caller alone the email as it would go (the box need not be ticked, no week
-    is claimed), so Nik can read it before anybody is named.
+    Monday is better than two), and a failure is logged, never raised. **The scheduled run always describes
+    and claims the week that holds today**, not the week ahead a print defaults to: run on Monday that is
+    the same week, and run late (the scheduler was down Monday, so it runs Tuesday or after) it is still
+    this week's summary under this week's key, so the following Monday finds its own key free and sends.
+    *Send me a weekly summary preview* on the Settings form emails the caller alone the email as it would
+    go (the box need not be ticked, no week is claimed), so Nik can read it before anybody is named. It
+    always answers: a caller whose User record has no usable address (Administrator) gets
+    `{sent: false, reason: "no_email"}` and nothing is built, a build or send that raises is logged and
+    answered `{sent: false, reason: "failed"}`, so the form's "No preview sent" branch always has something
+    to say.
   - **The landing** (Nik, 2026-10-22). An **Executive Team** member's desktop *first* visit opens the
     Overview instead of the Lookahead; after that the per-device last-used tab applies like everyone
     else's. The Overview joins P8's remembered tabs (`PP8.tabs`); the role is read from the boot, nothing is
