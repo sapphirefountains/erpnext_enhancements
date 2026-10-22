@@ -71,7 +71,7 @@ let kitCopies = 0;
 const SCANNER_KIT = path.join(APP, "public", "js", "scanner_kit", "index.js");
 const JSQR_PATH = "/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js";
 let scannerKit = null;
-// The reorder boxes (v1.720.0), the real modules (imported once before the scenarios), installed on a
+// The reorder boxes (v1.725.0), the real modules (imported once before the scenarios), installed on a
 // Desk made with { reorder: true } when a page asks for "reorder_levels.bundle.js". The DOM wiring is
 // recorded, not run: this Desk has no real elements (see scripts/test_reorder_levels.mjs for those).
 const REORDER_DIR = path.join(APP, "public", "js", "reorder_levels");
@@ -1726,7 +1726,7 @@ async function inventory(settings, opts) {
 
 const isa = (desk) => desk.wrapper("inventory-scanner-audit").inventory_scanner;
 
-// The reorder boxes on the item card (v1.720.0): the page asks the editor for the scanned item's rule at
+// The reorder boxes on the item card (v1.725.0): the page asks the editor for the scanned item's rule at
 // the active location, draws its cell in the card's own slot, hands focus back to the counted-quantity
 // box after Enter, and never makes a history entry of any of it.
 const reorderAnswer = ({ item_codes, warehouse }) => ({

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The reorder boxes on the audit screens (v1.720.0) under node: the pure decisions (logic.js), the
+ * The reorder boxes on the audit screens (v1.725.0) under node: the pure decisions (logic.js), the
  * editor's state and saves against a model of the server (editor.js), the cell markup, and the DOM
  * wiring (dom.js) over a model of the few DOM calls it makes.
  *

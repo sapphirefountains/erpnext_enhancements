@@ -1,5 +1,5 @@
 /*
- * The reorder boxes on the audit screens (v1.720.0): "Reorder at" and "Buy" under an item, edited in
+ * The reorder boxes on the audit screens (v1.725.0): "Reorder at" and "Buy" under an item, edited in
  * place. Loaded with reorder_levels.bundle.js by the Bin Manager and the Inventory Scanner Audit.
  * Every selector is under .ro (a Desk Page's stylesheet is global once loaded); colours come from the
  * app tokens (--sf-*) with Frappe's own variables behind them, so dark mode follows.

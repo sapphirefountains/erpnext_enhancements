@@ -3508,7 +3508,7 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
-      # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.720.0,
+      # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
       # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
       # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write
       # permission is checked before anything else, an item with no rule gets one only on a bin that

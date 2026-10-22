@@ -1,5 +1,5 @@
 /*
- * Reorder levels on the audit screens (v1.720.0): the shared editor behind the reorder boxes on the
+ * Reorder levels on the audit screens (v1.725.0): the shared editor behind the reorder boxes on the
  * Bin Manager and the Inventory Scanner Audit (public/js/reorder_levels/), as one esbuild bundle with
  * a content-hashed name.
  *

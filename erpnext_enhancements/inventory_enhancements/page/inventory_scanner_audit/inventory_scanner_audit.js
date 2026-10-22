@@ -85,7 +85,7 @@ function isa_scanner(then) {
 	}
 }
 
-// The reorder boxes (v1.720.0): the shared editor behind the Bin Manager's Reorder column, here on the
+// The reorder boxes (v1.725.0): the shared editor behind the Bin Manager's Reorder column, here on the
 // card of the item just scanned. Optional like the scanner kit: `then` gets it, or null when it did not
 // arrive, and the card is the card it always was.
 function isa_reorder(then) {

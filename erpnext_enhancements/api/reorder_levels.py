@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Reorder levels on the two inventory audit screens (v1.720.0).
+"""Reorder levels on the two inventory audit screens (v1.725.0).
 
 Nik, 2026-10-22: "From the Inventory audit screen include the reorder threshold amount so each
 items reorder amount can be adjusted easily without leaving the screen." Both screens that are

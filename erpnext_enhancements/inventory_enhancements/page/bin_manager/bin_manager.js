@@ -51,7 +51,7 @@ frappe.pages["bin-manager"].on_page_show = function (wrapper) {
 };
 
 const BM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "bin_manager.bundle.js"];
-// The reorder boxes (v1.720.0): asked for apart from the page's own files, and optional. A page whose
+// The reorder boxes (v1.725.0): asked for apart from the page's own files, and optional. A page whose
 // copy of them did not load shows no Reorder column and works as before.
 const BM_REORDER_ASSETS = ["reorder_levels.bundle.js", "reorder_levels.bundle.css"];
 const BM_PAGE = "bin-manager";
@@ -113,7 +113,7 @@ class BinManagerPage {
 		};
 	}
 
-	// The reorder boxes (v1.720.0): the shared editor, once its bundle has arrived, wired to this page's
+	// The reorder boxes (v1.725.0): the shared editor, once its bundle has arrived, wired to this page's
 	// root. Everything about them is optional: with no bundle there is no Reorder column.
 	load_reorder_bundle() {
 		new Promise((resolve) => {

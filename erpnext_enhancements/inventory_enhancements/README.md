@@ -597,7 +597,7 @@ The page's decisions are `public/js/bin_manager/logic.js` and its state and call
 `public/js/bin_manager/controller.js` (`bin_manager.bundle.js`, `window.sf_bin_manager`); the page
 script draws and wires, and its CSS is `bin_manager.css`, every selector under `.bm-`.
 
-### Reorder levels on both audit screens (v1.720.0)
+### Reorder levels on both audit screens (v1.725.0)
 
 Nik, 2026-10-22: the reorder amount "adjusted easily without leaving the screen". The Bin Manager's
 **Reorder** column and the Inventory Scanner Audit's item card show an item's reorder rule and edit it

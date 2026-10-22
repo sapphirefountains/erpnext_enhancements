@@ -1,5 +1,5 @@
 /*
- * The reorder cells' DOM (v1.720.0): wiring a root's boxes to a ReorderEditor, and painting an item's
+ * The reorder cells' DOM (v1.725.0): wiring a root's boxes to a ReorderEditor, and painting an item's
  * entry and status into its cell without disturbing a box the person is typing in. Plain DOM only
  * (no jQuery), so the node harness can run it over a model of the few calls it makes.
  *

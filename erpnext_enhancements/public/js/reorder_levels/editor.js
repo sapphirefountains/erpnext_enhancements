@@ -1,5 +1,5 @@
 /*
- * The reorder editor (v1.720.0): the state behind the reorder cells on an audit screen, and its
+ * The reorder editor (v1.725.0): the state behind the reorder cells on an audit screen, and its
  * server calls, with no DOM. A page hands it an `env`, asks it for each item's cell
  * (`cell_html`), and wires its boxes (dom.js); the node harness hands it a model instead.
  *

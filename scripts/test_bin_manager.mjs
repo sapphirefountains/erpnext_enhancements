@@ -26,7 +26,7 @@ const APP = path.join(HERE, "..", "erpnext_enhancements");
 const logic = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/logic.js")).href);
 const { Controller } = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/controller.js")).href);
 const PAGE_JS = path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js");
-// The reorder boxes (v1.720.0), the real modules, for the page test that gives the page its bundle.
+// The reorder boxes (v1.725.0), the real modules, for the page test that gives the page its bundle.
 const reorder_logic = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/logic.js")).href);
 const { ReorderEditor, cell_html } = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/editor.js")).href);
 const reorder_dom = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/dom.js")).href);
