@@ -7,9 +7,10 @@
   files in this directory are a checked-in copy kept as the source of truth / backup
   — edit them here and paste back into the Custom HTML Block in the UI to deploy.
 
-  This file is the static shell: a tabbed container (Priority Overview, Active
-  Internal Projects, Completed Projects, Portfolio Gantt, Dashboard), a search box,
-  "New Project" / "New Master Project" quick-create buttons, the Gantt-only filter
+  This file is the static shell: a tabbed container (Priority Overview, Portfolio Gantt,
+  and — behind the "View More" button — Active Internal Projects, Completed Projects and
+  Summary), a search box, one "+" button whose menu holds "New Project" / "New Master
+  Project", the Gantt-only filter
   controls (project / status dropdowns, "Show Tasks", view-mode buttons, Today), and
   an empty #dashboard-content target. projects_dashboard.js
   fetches data via the project_dashboard page's whitelisted methods and renders the
@@ -22,16 +23,20 @@
                 <a class="nav-link active" href="javascript:void(0)" data-route="priority-overview">Priority Overview</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link" href="javascript:void(0)" data-route="active-internal-projects">Active Internal Projects</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="javascript:void(0)" data-route="completed-projects">Completed Projects</a>
-            </li>
-            <li class="nav-item">
                 <a class="nav-link" href="javascript:void(0)" data-route="portfolio-gantt">Portfolio Gantt</a>
             </li>
-            <li class="nav-item">
-                <a class="nav-link" href="javascript:void(0)" data-route="dashboard">Dashboard</a>
+            <!-- Revealed by "View More"; hidden until then (see pg-more-tab in the CSS) -->
+            <li class="nav-item pg-more-tab" hidden>
+                <a class="nav-link" href="javascript:void(0)" data-route="active-internal-projects">Active Internal Projects</a>
+            </li>
+            <li class="nav-item pg-more-tab" hidden>
+                <a class="nav-link" href="javascript:void(0)" data-route="completed-projects">Completed Projects</a>
+            </li>
+            <li class="nav-item pg-more-tab" hidden>
+                <a class="nav-link" href="javascript:void(0)" data-route="summary">Summary</a>
+            </li>
+            <li class="nav-item pg-view-more-item">
+                <button type="button" class="btn btn-sm btn-link pg-view-more" id="btn-view-more" aria-expanded="false">View More</button>
             </li>
         </ul>
     </div>
@@ -49,8 +54,13 @@
             </div>
 
             <div class="col-12 col-md-8 p-0 mb-2 mb-md-0 text-md-right" id="dashboard-actions">
-                <button type="button" class="btn btn-sm btn-primary" id="btn-new-project"><i class="fa fa-plus mr-1"></i>New Project</button>
-                <button type="button" class="btn btn-sm btn-default border ml-2" id="btn-new-master-project"><i class="fa fa-plus mr-1"></i>New Master Project</button>
+                <div class="pg-new-menu" id="pg-new-menu">
+                    <button type="button" class="btn btn-sm btn-primary pg-new-toggle" id="btn-new" title="New" aria-label="New" aria-haspopup="menu" aria-expanded="false">+</button>
+                    <div class="pg-new-list" id="pg-new-list" role="menu" hidden>
+                        <button type="button" class="pg-new-item" role="menuitem" id="btn-new-project">New Project</button>
+                        <button type="button" class="pg-new-item" role="menuitem" id="btn-new-master-project">New Master Project</button>
+                    </div>
+                </div>
             </div>
 
             <div class="col-12 p-0" id="gantt-controls" style="display: none;">
