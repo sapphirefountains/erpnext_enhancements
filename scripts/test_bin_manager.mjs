@@ -26,6 +26,10 @@ const APP = path.join(HERE, "..", "erpnext_enhancements");
 const logic = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/logic.js")).href);
 const { Controller } = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/controller.js")).href);
 const PAGE_JS = path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js");
+// The reorder boxes (v1.720.0), the real modules, for the page test that gives the page its bundle.
+const reorder_logic = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/logic.js")).href);
+const { ReorderEditor, cell_html } = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/editor.js")).href);
+const reorder_dom = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/dom.js")).href);
 
 let checks = 0;
 let failures = 0;
@@ -113,6 +117,13 @@ function makeServer(options) {
 				if (fixture.items) loc.items = JSON.parse(JSON.stringify(fixture.items));
 				return loc;
 			}
+			if (name === "get_reorder_levels") {
+				const levels = {};
+				JSON.parse(args.item_codes).forEach((code) => {
+					levels[code] = { item_code: code, has_rule: true, row_warehouse: args.warehouse, warehouse_label: "x", elsewhere: false, level: 2, qty: 5, modified: "m" };
+				});
+				return { levels, can_edit: true };
+			}
 			if (name === "get_recent") return [];
 			if (name === "search_items") return [{ item_code: "PDT-0009", item_name: "VALVE", is_stock_item: 1, on_hand_here: 0 }];
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
@@ -128,7 +139,7 @@ function makeServer(options) {
 			return { log, message: `${name} done`, repeated: false };
 		});
 	};
-	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item/.test(c.method));
+	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels/.test(c.method));
 	return server;
 }
 
@@ -653,6 +664,19 @@ function loadPage(options) {
 			},
 		},
 		sf_bin_manager: Object.assign({ version: 1, Controller }, logic),
+		// The reorder bundle, when the test asks for it: the real modules over this stand-in's root, which
+		// has no querySelectorAll (nothing is drawn into a real DOM here).
+		sf_reorder: (options || {}).reorder
+			? {
+					version: 1,
+					ReorderEditor,
+					cell_html,
+					bind: reorder_dom.bind,
+					paint: (root, ...rest) => reorder_dom.paint(Object.assign(root, { querySelectorAll: () => [] }), ...rest),
+					read_boxes: reorder_dom.read_boxes,
+					logic: reorder_logic,
+			  }
+			: undefined,
 		history: {
 			get state() {
 				return world.state();
@@ -665,7 +689,7 @@ function loadPage(options) {
 		location: { reload: () => {} },
 	};
 	const __ = (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args && args[i] !== undefined ? args[i] : m));
-	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console });
+	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console, document: { activeElement: null } });
 	vm.runInContext(fs.readFileSync(PAGE_JS, "utf-8"), context, { filename: PAGE_JS });
 	const page = pages["bin-manager"];
 	world.page = {
@@ -684,6 +708,42 @@ function loadPage(options) {
 	};
 	return { server, world, registry, page, click };
 }
+
+test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
+	const { server, world, registry, page, click } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	check("asked for the reorder files apart from its own", registry.requires.map((r) => r[0]), ["sf_kit.bundle.js", "reorder_levels.bundle.js"]);
+	check("the editor is made", !!page.bin_manager.reorder, true);
+	const before = world.entries.length;
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("one entry for the bin, none for the reorder read", world.entries.length, before + 1);
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("a Reorder column", /<th scope="col">Reorder<\/th>/.test(html), true);
+	check("a cell for each item", (html.match(/data-ro-item="PDT-000[12]"/g) || []).length, 2);
+	const reads = () => server.calls.filter((c) => c.method.endsWith("get_reorder_levels"));
+	check("one read, for this bin's items", [reads().length, JSON.parse(reads()[0].args.item_codes), reads()[0].args.warehouse], [1, ["PDT-0001", "PDT-0002"], BIN_A]);
+	check("not a write", server.writes().length, 0);
+	page.bin_manager.render();
+	page.bin_manager.render();
+	await settle();
+	check("drawing the same list again does not ask again", reads().length, 1);
+	await page.bin_manager.ctl.load_location();
+	await settle();
+	check("a reloaded list is read once more", reads().length, 2);
+});
+
+test("the real page without the reorder bundle: no column, no read", async () => {
+	const { server, world, registry, page, click } = loadPage();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("no editor", page.bin_manager.reorder, null);
+	check("no column", /Reorder/.test(registry.found[".bm-items"][0].innerHTML), false);
+	check("no read", server.calls.filter((c) => c.method.endsWith("get_reorder_levels")).length, 0);
+});
 
 test("the real page: loads its bundles, a bin click is one entry, a dialog is none", async () => {
 	const { server, world, registry, page, click } = loadPage();

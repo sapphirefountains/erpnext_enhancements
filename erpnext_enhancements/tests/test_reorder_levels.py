@@ -686,6 +686,9 @@ class TestTheSource(unittest.TestCase):
 		bins = BIN_PAGE.read_text(encoding="utf-8")
 		self.assertIn('"reorder_levels.bundle.js", "reorder_levels.bundle.css"', bins)
 		self.assertIn("this.reorder ?", bins, "the column exists only with the editor")
+		self.assertRegex(
+			bins, r"catch \(e\) \{\s+resolve\(\);", "a throwing require must not wedge the ready chain"
+		)
 		self.assertIn("sync_reorder(loc)", bins)
 		# the page's own files are still the first require, exactly as test_bin_manager pins
 		self.assertIn(

@@ -36,6 +36,7 @@ export class ReorderEditor {
 		this.status = {}; // item_code -> { state: "saving" | "saved" | "error", message }
 		this.busy = {};
 		this.dirty = {};
+		this.saves = {}; // item_code -> how many saves have landed: a read that began before one must not undo it
 		this.seq = 0;
 	}
 
@@ -67,11 +68,13 @@ export class ReorderEditor {
 			this.status = {};
 			this.busy = {};
 			this.dirty = {};
+			this.saves = {};
 			this.ready = false;
 			this.error = "";
 		}
 		const seq = ++this.seq;
 		const list = Array.from(new Set((codes || []).filter(Boolean)));
+		const saves_then = Object.assign({}, this.saves);
 		if (!list.length) {
 			this.ready = true;
 			this.env.paint_all();
@@ -85,7 +88,8 @@ export class ReorderEditor {
 					const levels = (out && out.levels) || {};
 					// An item mid-save keeps the entry its save is about to replace.
 					list.forEach((code) => {
-						if (!this.busy[code]) {
+						// Not an item mid-save, and not one saved since this read began: its answer is older than ours.
+						if (!this.busy[code] && (this.saves[code] || 0) === (saves_then[code] || 0)) {
 							if (levels[code]) this.entries[code] = levels[code];
 							else delete this.entries[code];
 						}
@@ -134,6 +138,7 @@ export class ReorderEditor {
 		return this.env.call(req.method, req.args, { quiet: true }).then(
 			(out) => {
 				if (out && out.entry) this.entries[item_code] = out.entry;
+				this.saves[item_code] = (this.saves[item_code] || 0) + 1;
 				this.finish(item_code);
 				this.set_status(item_code, "saved", (out && out.saved) === false ? this.tr("No change.") : this.tr("Saved."));
 				this.env.later(() => {

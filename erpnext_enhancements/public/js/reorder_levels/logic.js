@@ -23,10 +23,12 @@ export function number_text(value) {
 }
 
 // What was typed: { ok: true, value: number | null } (null = blank) or { ok: false }. Digits with
-// one optional point and thousands commas; no sign, no exponent, no "Infinity".
+// one optional point and properly grouped thousands commas; no sign, no exponent, no "Infinity".
 export function parse_amount(text) {
 	const raw = String(text === null || text === undefined ? "" : text).trim();
 	if (raw === "") return { ok: true, value: null };
+	// Commas only as thousands separators: "2,5" is not 25.
+	if (raw.includes(",") && !/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(raw)) return { ok: false };
 	const plain = raw.replace(/,/g, "");
 	if (!/^(\d+\.?\d*|\.\d+)$/.test(plain)) return { ok: false };
 	const value = Number(plain);

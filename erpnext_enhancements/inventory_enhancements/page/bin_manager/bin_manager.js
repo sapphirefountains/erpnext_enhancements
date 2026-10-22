@@ -77,7 +77,18 @@ class BinManagerPage {
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
 		// After the page's own files, never instead of them: a failed reorder bundle must not hold the bins.
-		this.ready = this.ready.then(() => new Promise((resolve) => frappe.require(BM_REORDER_ASSETS, resolve))).then(() => this.start_reorder());
+		this.ready = this.ready
+			.then(
+				() =>
+					new Promise((resolve) => {
+						try {
+							frappe.require(BM_REORDER_ASSETS, resolve);
+						} catch (e) {
+							resolve();
+						}
+					})
+			)
+			.then(() => this.start_reorder());
 		page.set_secondary_action(__("Refresh"), () => this.ctl && this.ctl.refresh(), "refresh");
 		this.bind();
 	}
@@ -390,6 +401,9 @@ class BinManagerPage {
 
 	draw_items(loc) {
 		const el = this.$root.find(".bm-items")[0];
+		// A redraw replaces the table, and with it a reorder box being typed in: leave it until the box is left.
+		const active = document.activeElement;
+		if (this.reorder && el && active && active.classList && active.classList.contains("ro-input") && el.contains(active)) return;
 		const st = this.ctl.state;
 		if (!loc) {
 			if (st.location_error) this.failed(el, st.location_error, () => this.ctl.load_location(), __("Could not load this bin."));

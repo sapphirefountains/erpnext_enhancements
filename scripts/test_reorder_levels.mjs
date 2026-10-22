@@ -83,6 +83,8 @@ test("parse_amount reads digits only", () => {
 	check("leading point", logic.parse_amount(".5"), { ok: true, value: 0.5 });
 	check("trailing point", logic.parse_amount("3."), { ok: true, value: 3 });
 	check("thousands comma", logic.parse_amount("1,200"), { ok: true, value: 1200 });
+	check("grouped thousands with a decimal", logic.parse_amount("1,200.5"), { ok: true, value: 1200.5 });
+	for (const euro of ["2,5", "1,00", "12,34", "1,2,3", ",5", "1,2000"]) check(`a comma that is not a thousands separator: ${euro}`, logic.parse_amount(euro), { ok: false });
 	for (const bad of ["-2", "1e3", "Infinity", "NaN", "abc", "1.2.3", "+4", "0x10", "--"]) {
 		check(`refuses ${bad}`, logic.parse_amount(bad), { ok: false });
 	}
@@ -220,6 +222,26 @@ test("load reads once, keeps what is on screen for the same warehouse, and start
 	await again;
 	await ed.load(ROOM, ["A"]);
 	check("another warehouse starts over", Object.keys(ed.entries).length, 1);
+});
+
+test("a read that began before a save does not undo it", async () => {
+	const world = makeWorld();
+	const ed = new ReorderEditor(world.env);
+	await ed.load(BIN, ["A"]);
+	// a read goes out and is answered from before the save, but arrives after it
+	let release;
+	world.hold.set("get_reorder_levels", new Promise((r) => (release = r)));
+	const old = JSON.parse(JSON.stringify(world.entries.A));
+	const reading = ed.load(BIN, ["A"]);
+	await settle();
+	world.boxes.set("A", { level: "6", qty: "12" });
+	await ed.commit("A");
+	check("saved", ed.view("A").entry.level, 6);
+	world.entries.A = JSON.parse(JSON.stringify(old)); // the read's answer is the old numbers
+	release();
+	await reading;
+	check("the saved numbers stay", ed.view("A").entry.level, 6);
+	check("and the new stamp", ed.view("A").entry.modified !== old.modified, true);
 });
 
 test("a read that has been replaced is dropped, and a failed read is said in place", async () => {
