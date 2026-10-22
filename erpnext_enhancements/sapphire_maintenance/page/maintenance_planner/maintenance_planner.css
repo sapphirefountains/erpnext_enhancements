@@ -2157,3 +2157,20 @@ body.mp-drag-active * {
 		animation: none;
 	}
 }
+
+/* Simple mode (the MPS block; docs/planner-simple-mode.md). While it shows, the planner's own chrome is
+ * hidden and the kit draws the screen (planner_kit.bundle.css, .pk-simple-*). A class, so the next screen
+ * shows exactly what it showed before. */
+.mp-wrap.mp-simple-on > :not(.mp-simple) {
+	display: none !important;
+}
+
+.mp-simple {
+	max-width: 1100px;
+	padding-bottom: 24px;
+}
+
+.mp-simple-note {
+	padding: 12px 0;
+	color: var(--sf-text-muted);
+}

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.718.0] - 2026-10-22
+
+### Added
+- **Simple mode for both planners: every job (or site), what is done and what is coming up, on one quiet page.**
+  Nik, 2026-10-22: "Add an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and
+  easily see all the data in a simple view, both historical data and future data." Designed with him first; his
+  fourteen answers (S1–S14) and the production figures behind them are `docs/planner-simple-mode.md`. The planner
+  UX redesign's main complaint was "too much to learn", so this is the opposite of a sixth tab: one switch, one
+  search box, a card per job.
+  - **A switch, not a tab** (S1). *Simple* is the first button in each planner's bar, and on the phone's Today
+    header. On, it opens `/desk/project-planner/simple` or `/desk/maintenance-planner/simple`, a screen with its own
+    history entry, so Back returns to where the person was; the planner's chrome is hidden by one class and its
+    shortcuts stand down. Off, it returns to the full planner.
+  - **Remembered per device** (S7), like the last-used tab: a phone and a desktop each keep their own. On the
+    Project Planner `simple` is one of the device's tabs, and switching off goes to the tab the device showed when
+    it was switched on (through the bare address, so the first-visit rules apply when there is none). The
+    Maintenance Planner keeps its last view per person, so its Simple mode is a device flag in the browser, written
+    only when it changes and read on a bare address before the person's own view. A link that names a filter or a
+    technician never opens Simple mode: it is a planning board's link.
+  - **One card per job** (`api/planner_simple.get_simple_jobs`; S6, S9–S11, S13): every customer job ever, any
+    status (640 on production), with work coming up first and soonest, then the rest by last activity; 20 at a
+    time with *Show more jobs*; search across all of them by number, name, customer or PM. **Done** on the left,
+    grey, newest first; **Coming up** on the right, bold, late first; three of each and *Show all N*, and *N not
+    scheduled* for undated open work. On a phone Coming up comes first. A job's items are the planner's display rule
+    (D6); **a job with no phase or crew work lists its own top-level groups**, "N of M done", because the 565
+    finished jobs on production predate the Phase 100–700 templates and have one assigned task between them, so the
+    rule alone would have shown 565 empty cards. Late is by end date, never by the Overdue status (1,005 open tasks
+    carry it); on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the
+    assignees, closed ToDos included (that is who did it), drawn as initials with the names on hover.
+  - **One card per site** (`get_simple_sites`; S12, S14): every project with a maintenance contract or a
+    Maintenance Record. Its records (done once submitted or in review, as the Maintenance Planner says), its
+    contract's projected visits for the next 120 days, marked *planned*, and its project's completed tasks.
+    Records only exist from 2026-10-06 and are drafted a week ahead, so without the projections every site would
+    look finished, and without the old tasks it would have three weeks of history (Highlands has 73 visits back to
+    2019 as tasks). A projection that fails is logged and the site still answers.
+  - **The screen is the planner kit's** (`planner_kit/simple.js`, `.pk-simple-*` in `planner_kit.bundle.css`), so
+    both planners draw the same thing. It writes nothing; a click opens the record as a normal Desk route. Its own
+    controls (the search, Show all, Show more) take no history entry; the search reads again 300 ms after the last
+    key, an answer for an older read is dropped, and a failed read says so with Try again (a quiet GET, so Frappe
+    shows no dialog of its own).
+  - **The tour and "?".** The first-visit tours are capped at six steps and the Executive Team's editor tour already
+    has six, so the switch is a sentence in each tour's last step rather than a seventh; "?" lists *Simple* beside
+    the tabs, and Simple mode's own "?" explains the cards and the marks.
+
+### Notes
+- Reads only: no DocType, Custom Field, fixture or patch, so `bench migrate` does nothing new. The deploy ships the
+  rebuilt planner kit bundle (content-hashed) and the two page scripts.
+- `tests/test_planner_simple.py` (its own CI step) pins the card rules, the bound reads, the role gates and the
+  wiring, and runs `scripts/test_planner_simple.js`; the Project Planner's landing, switch and Back/Forward are new
+  cases in `scripts/test_planner_today.js`. Four existing tests that pin the device-tab list and the "?" chips now
+  include Simple.
+
 ## [1.716.0] - 2026-10-22
 
 ### Added

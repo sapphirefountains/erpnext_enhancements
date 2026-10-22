@@ -1837,6 +1837,288 @@ a.pk-stop-addr {
 	}
 }
 
+/* ======================================================================================== */
+/* Simple mode (planner_kit/simple.js; docs/planner-simple-mode.md): a card per job or site,   */
+/* Done on the left in grey, Coming up on the right in bold, one search box. Both planners.    */
+/* ======================================================================================== */
+
+.pk-simple {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+}
+
+.pk-simple-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+
+.pk-simple-heading {
+	margin: 0;
+	margin-right: auto;
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-search {
+	flex: 0 1 320px;
+	min-width: 0;
+}
+
+/* The switch is on: it reads as pressed, in the focus color, and a press turns it off. */
+.pk-simple-switch {
+	border-color: var(--sf-focus);
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-status-line {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+
+.pk-simple-card {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+}
+
+.pk-simple-title {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-simple-name {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--sf-link);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-simple-name:hover {
+	text-decoration: underline;
+}
+
+.pk-simple-status {
+	padding: 0 var(--sf-space-5);
+	border-radius: var(--sf-radius-pill);
+	background: color-mix(in srgb, var(--sf-good) 12%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-xs);
+}
+
+.pk-simple-status.pk-simple-finished {
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+}
+
+.pk-simple-facts {
+	flex: 1 1 100%;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-halves {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.pk-simple-half {
+	min-width: 0;
+	padding: var(--sf-space-10) var(--sf-space-15);
+}
+
+.pk-simple-half + .pk-simple-half {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-simple-head {
+	margin: 0 0 var(--sf-space-5);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.pk-simple-count {
+	font-weight: var(--sf-weight-regular);
+}
+
+.pk-simple-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pk-simple-item {
+	display: block;
+}
+
+.pk-simple-row {
+	display: grid;
+	grid-template-columns: 1.2em 7.5em minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: var(--sf-space-5);
+	width: 100%;
+	padding: var(--sf-space-5) 0;
+	border: none;
+	border-radius: var(--sf-radius-none);
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-simple-row:hover {
+	background: color-mix(in srgb, var(--sf-focus) 6%, var(--sf-surface));
+}
+
+.pk-simple-row:focus-visible,
+.pk-simple-name:focus-visible,
+.pk-simple-all:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-simple-mark {
+	color: var(--sf-text-muted);
+	text-align: center;
+}
+
+.pk-simple-when {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	white-space: nowrap;
+}
+
+.pk-simple-what {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.pk-simple-phase,
+.pk-simple-note {
+	margin-left: var(--sf-space-5);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-regular);
+}
+
+.pk-simple-who {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	white-space: nowrap;
+}
+
+/* Done is history: grey. Coming up is what matters next: bold. Late says so in words and in red text. */
+.pk-simple-done .pk-simple-what,
+.pk-simple-closed .pk-simple-what {
+	color: var(--sf-text-muted);
+}
+
+.pk-simple-open .pk-simple-what,
+.pk-simple-late .pk-simple-what,
+.pk-simple-unscheduled .pk-simple-what {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-late .pk-simple-mark,
+.pk-simple-late .pk-simple-when,
+.pk-simple-late .pk-simple-note {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pk-simple-done .pk-simple-mark {
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.pk-simple-empty {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-5);
+}
+
+.pk-simple-all {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--sf-link);
+	font-size: var(--sf-text-sm);
+	cursor: pointer;
+}
+
+.pk-simple-tail {
+	display: flex;
+	justify-content: center;
+}
+
+.pk-simple-finished .pk-simple-name {
+	color: var(--sf-text);
+}
+
+/* A phone: the halves stack (the script puts Coming up first), and every control is a thumb's size. */
+@media (max-width: 767px) {
+	.pk-simple-search {
+		flex: 1 1 100%;
+	}
+
+	.pk-simple-halves {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.pk-simple-half + .pk-simple-half {
+		border-left: none;
+		border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	}
+
+	.pk-simple-row {
+		grid-template-columns: 1.2em 6em minmax(0, 1fr);
+		min-height: var(--sf-touch-min);
+	}
+
+	.pk-simple-who {
+		grid-column: 3;
+	}
+
+	.pk-simple-name,
+	.pk-simple-all,
+	.pk-simple-switch,
+	.pk-simple-help,
+	.pk-simple-more {
+		min-height: var(--sf-touch-min);
+	}
+}
+
 /* The drawer and the sheet do not slide in for someone who asked for less motion. */
 @media (prefers-reduced-motion: reduce) {
 	.pk-drawer.pk-open,
