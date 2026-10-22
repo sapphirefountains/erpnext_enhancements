@@ -1560,13 +1560,19 @@ body.desktop-page .desktop-icon .icon-title,
 }
 
 /* ==========================================================================
-   ACTIVITY FEED — FIRST TAB ONLY (TASK-2026-00353)
+   ACTIVITY FEED — ONE TAB ONLY (TASK-2026-00353; Project's Comments tab, v1.716.2)
 
-   Frappe renders the timeline into `.form-footer`, a SIBLING of the tab panes
-   rather than a child of one, so it sits below whichever tab is open. Read the
-   Details tab and the conversation is where it belongs; open Contacts, or
-   Budget, or Dispatch, and the same wall of comments is still underneath,
-   pushing the thing you came for off the screen.
+   Frappe renders the timeline into `.form-footer`, which sits below the tab
+   panes rather than inside one, so it follows you onto whichever tab is open.
+   Open Contacts, or Budget, or Dispatch, and the same wall of comments is
+   still underneath, pushing the thing you came for off the screen.
+
+   WHERE IT IS: in Frappe v16 the footer is a sibling of `.layout-main-section`
+   inside `.layout-main-section-wrapper` (form.js builds it on
+   `page.main.parent()`), NOT inside `.form-page`. This rule used to be
+   `.form-page.ee-activity-off-tab .form-footer`, which matches nothing, and the
+   feature did nothing on v16 from v1.259.4 until v1.716.2. The class now goes on
+   the wrapper.
 
    The class is toggled by global_enhancements/activity_first_tab_only.js. It is
    a class and not an inline style so the rule lives here with the rest of the
@@ -1585,8 +1591,9 @@ body.desktop-page .desktop-icon .icon-title,
    loser is. Without it this rule loses to a selector with a third of its
    specificity and the whole feature is inert — which is how it shipped in
    v1.259.4 and stayed inert until v1.299.2. Both declarations are important,
-   so specificity decides, and `.form-page.ee-activity-off-tab .form-footer`
-   (0,3,0) beats `.form-footer` (0,1,0).
+   so specificity decides, and
+   `.layout-main-section-wrapper.ee-activity-off-tab .form-footer` (0,3,0) beats
+   `.form-footer` (0,1,0).
 
    Do not "clean this up" by narrowing the blanket rule instead: it exists
    because something was hiding the comment box on some doctypes, and that
@@ -1601,7 +1608,7 @@ body.desktop-page .desktop-icon .icon-title,
    on a footer that already lives in a `.tab-pane`; that guard is what keeps this
    selector safe, so keep the two halves in step.
    ========================================================================== */
-.form-page.ee-activity-off-tab .form-footer {
+.layout-main-section-wrapper.ee-activity-off-tab .form-footer {
     display: none !important;
 }
 
