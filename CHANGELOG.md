@@ -41,12 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     contract's projected visits for the next 120 days, marked *planned*, and its project's completed tasks.
     Records only exist from 2026-10-06 and are drafted a week ahead, so without the projections every site would
     look finished, and without the old tasks it would have three weeks of history (Highlands has 73 visits back to
-    2019 as tasks). A projection that fails is logged and the site still answers.
+    2019 as tasks). Only the page's sites' contracts are projected (`maintenance_planner._projections` takes an
+    optional `projects` list; the Maintenance Planner's own calls are unchanged), so a search does not project
+    every contract. A projection that fails is logged and the site still answers.
   - **The screen is the planner kit's** (`planner_kit/simple.js`, `.pk-simple-*` in `planner_kit.bundle.css`), so
     both planners draw the same thing. It writes nothing; a click opens the record as a normal Desk route. Its own
     controls (the search, Show all, Show more) take no history entry; the search reads again 300 ms after the last
     key, an answer for an older read is dropped, and a failed read says so with Try again (a quiet GET, so Frappe
-    shows no dialog of its own).
+    shows no dialog of its own). A refresh (Back onto Simple mode) reads as many cards as are shown, up to 1,000,
+    more than every job on production, so nothing the person scrolled to disappears.
   - **The tour and "?".** The first-visit tours are capped at six steps and the Executive Team's editor tour already
     has six, so the switch is a sentence in each tour's last step rather than a seventh; "?" lists *Simple* beside
     the tabs, and Simple mode's own "?" explains the cards and the marks.

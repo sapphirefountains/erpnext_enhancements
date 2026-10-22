@@ -43,12 +43,14 @@ from frappe.utils import add_days, cint, getdate, nowdate
 from erpnext_enhancements.api import maintenance_planner as mp
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.api.planner_lookahead import nearest_phase
+from erpnext_enhancements.api.planner_overview import _chunks
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 
 #: Cards one answer carries, unless the page asks for more (a refresh of every card it shows), up to
-#: :data:`MAX_PAGE_LENGTH`.
+#: :data:`MAX_PAGE_LENGTH`: more than every customer job on production (640, 2026-10-22), so a refresh after
+#: many *Show more* presses never drops cards the person has scrolled to.
 PAGE_LENGTH = 20
-MAX_PAGE_LENGTH = 100
+MAX_PAGE_LENGTH = 1000
 #: The longest search text read; anything past it is cut.
 SEARCH_MAX = 140
 #: Task statuses never read: a canceled task is gone from the plan, a template is not work.
@@ -59,8 +61,6 @@ DONE_STATUSES = ("Completed", "Invoiced")
 PROJECTION_DAYS = 120
 #: The most names a card says for one item.
 WHO_MAX = 4
-#: A query chunk: the most names one IN list carries.
-CHUNK = 500
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -376,12 +376,6 @@ def build_site_card(project, visits, projected, history, today, who=None):
 # ---------------------------------------------------------------------- reads
 
 
-def _chunks(names):
-	names = sorted({n for n in names or () if n})
-	for index in range(0, len(names), CHUNK):
-		yield names[index : index + CHUNK]
-
-
 def _owner_sql():
 	"""``(expression, join)`` for a project's PM as a name, when the column exists."""
 	try:
@@ -657,7 +651,10 @@ def _projected(projects, today):
 		return {}
 	out = {}
 	try:
-		entries = mp._projections(today, getdate(add_days(today, PROJECTION_DAYS)), today)
+		entries = mp._projections(
+			today, getdate(add_days(today, PROJECTION_DAYS)), today, projects=sorted(projects)
+		)
+		entries = [entry for entry in entries if entry.get("project") in projects]
 		mp._decorate(entries)
 	except Exception:
 		frappe.log_error(

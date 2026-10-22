@@ -227,10 +227,16 @@ test("a card: Done and Coming up, three of each, Show all and Show fewer, Coming
 	const phone = mod.card_html(c, "2026-10-22", new Set(), true);
 	check("Coming up comes first on a phone", phone.indexOf('class="pk-simple-half pk-simple-coming"') < phone.indexOf('class="pk-simple-half pk-simple-done"'), true);
 	const open = mod.card_html(c, "2026-10-22", new Set(["PRJ-1|done", "PRJ-1|coming"]), false);
-	check("opened: every item, the waiting one too, and Show fewer", [open.includes("Done 5"), open.includes("Pull wire"), open.split("Show fewer").length - 1], [true, true, 1]);
+	check("opened: every item, the waiting one too, and Show fewer on each half", [open.includes("Done 5"), open.includes("Pull wire"), open.split("Show fewer").length - 1], [true, true, 2]);
 	const empty = mod.card_html(card({ finished: true, status: "Completed" }), "2026-10-22", new Set(), false);
 	check("a finished card: its class, Nothing done yet, Finished", [empty.includes("pk-simple-card pk-simple-finished"), empty.includes("Nothing done yet"), empty.includes("Finished")], [true, true, true]);
 	check("an open card with nothing ahead", mod.card_html(card(), "2026-10-22", new Set(), false).includes("Nothing booked"), true);
+	// One item and one not scheduled: Show all 2 opens it, and Show fewer puts it away again.
+	const small = card({ coming: [item({ name: "C1" })], unscheduled: [item({ name: "U1", label: "Pull wire", state: "unscheduled", date: null })] });
+	check("a small half: Show all 2", mod.card_html(small, "2026-10-22", new Set(), false).includes("Show all 2"), true);
+	const opened = mod.card_html(small, "2026-10-22", new Set(["PRJ-1|coming"]), false);
+	check("opened, it lists the waiting one and offers Show fewer", [opened.includes("Pull wire"), opened.includes("Show fewer")], [true, true]);
+	check("a half with nothing hidden offers neither", [/Show (all|fewer)/.test(mod.card_html(card({ coming: [item()] }), "2026-10-22", new Set(["PRJ-1|coming"]), false))], [false]);
 });
 
 test("the help: for jobs and for sites, words only", () => {
@@ -301,8 +307,11 @@ test("mounted: an older answer is dropped; the search reads again after a pause 
 	flush(timers);
 	check("the same words again read nothing", reads.length, 3);
 	let stopped = false;
-	box.fire("keydown", { stopPropagation: () => (stopped = true) });
+	box.fire("keydown", { key: "w", stopPropagation: () => (stopped = true) });
 	check("keys typed in the box never reach the planner's shortcuts", stopped, true);
+	stopped = false;
+	box.fire("keydown", { key: "Escape", stopPropagation: () => (stopped = true) });
+	check("Esc still reaches the kit and the Desk (a drawer closes)", stopped, false);
 	pending[2](answer([]));
 	await settle();
 	check("nothing matched, said with the search", s.cards().innerHTML.includes("Nothing matches “sonnen”."), true);

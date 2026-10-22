@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -104,7 +105,7 @@ class TestTheSmallRules(unittest.TestCase):
 			self.assertEqual(ps.page_start(given), want, repr(given))
 
 	def test_a_page_length_is_the_default_unless_one_to_the_most(self):
-		for given, want in ((None, 20), ("", 20), ("5", 5), (0, 1), (500, 100), ("all", 20)):
+		for given, want in ((None, 20), ("", 20), ("5", 5), (0, 1), (500, 500), (5000, 1000), ("all", 20)):
 			self.assertEqual(ps.page_length(given), want, repr(given))
 
 	def test_the_search_is_trimmed_squeezed_and_capped(self):
@@ -551,17 +552,36 @@ class TestTheEndpoints(unittest.TestCase):
 	def test_the_projection_window_and_its_sites_only(self):
 		got = {}
 
-		def projections(start, end, today):
+		def projections(start, end, today, projects=None):
 			got["window"] = (start, end)
+			got["projects"] = projects
 			return [{"project": "PRJ-9", "key": "a"}, {"project": "PRJ-OTHER", "key": "b"}]
 
 		with (
 			mock.patch.object(ps.mp, "_projections", projections),
-			mock.patch.object(ps.mp, "_decorate", lambda entries: None),
+			mock.patch.object(ps.mp, "_decorate", lambda entries: got.setdefault("decorated", list(entries))),
 		):
 			out = ps._projected({"PRJ-9"}, TODAY)
 		self.assertEqual(list(out), ["PRJ-9"])
 		self.assertEqual(got["window"], (TODAY, TODAY + datetime.timedelta(days=ps.PROJECTION_DAYS)))
+		# Only the page's sites' contracts are projected, and only their entries decorated.
+		self.assertEqual(got["projects"], ["PRJ-9"])
+		self.assertEqual([e["key"] for e in got["decorated"]], ["a"])
+
+	def test_the_maintenance_planner_projects_only_the_contracts_asked_for(self):
+		self.assertEqual(ps.mp._projections(TODAY, TODAY, TODAY, projects=[]), [])
+		h.frappe.tables["Sapphire Maintenance Contract"] = [
+			{"name": "C2", "status": "Active", "project": "PRJ-OTHER"}
+		]
+		contract_module = (
+			"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract."
+			"sapphire_maintenance_contract"
+		)
+		stub = types.SimpleNamespace(iter_seasonal_visits=lambda contract: [])
+		with mock.patch.dict(sys.modules, {contract_module: stub}):
+			self.assertEqual(ps.mp._projections(TODAY, TODAY, TODAY, projects=["PRJ-9"]), [])
+		asked = [q for doctype, q in h.frappe.queries if doctype == "Sapphire Maintenance Contract"]
+		self.assertEqual(asked[-1]["filters"], {"status": "Active", "project": ["in", ["PRJ-9"]]})
 
 	def test_both_are_plain_whitelisted_reads(self):
 		source = SIMPLE_PATH.read_text(encoding="utf-8")
@@ -654,8 +674,8 @@ class TestTheWiring(unittest.TestCase):
 		drawn |= {f"pk-simple-{s}" for s in ("done", "closed", "late", "open", "unscheduled")}
 		drawn -= {"pk-simple-"}
 		styled = set(re.findall(r"\.(pk-simple(?:-[a-z0-9]+)*)", css))
-		hooks = {"pk-simple-half"}  # styled; drawn inside a template string with its key
-		self.assertEqual(sorted(drawn - styled - {"pk-simple-retry", "pk-simple-card"} - hooks), [])
+		# Try again is a plain Desk button (btn btn-default btn-xs); its class is only the click hook.
+		self.assertEqual(sorted(drawn - styled), ["pk-simple-retry"])
 		self.assertEqual(sorted(styled - drawn), [])
 
 	def test_the_pages_hide_their_chrome_with_one_rule(self):

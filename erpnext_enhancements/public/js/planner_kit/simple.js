@@ -105,7 +105,8 @@ function half_html(card, key, items, extra, open, today) {
 				t("Show all {0}", [total])
 			)}</button>`
 		);
-	} else if (open && total > SHOWN) {
+	} else if (open && total > Math.min(items.length, SHOWN)) {
+		// Whatever the closed half would leave out (the first SHOWN, never the not-scheduled ones) can be put away again.
 		notes.push(
 			`<button type="button" class="pk-simple-all" data-pk-simple-all="${escape(card.name)}" data-pk-simple-half="${key}" aria-expanded="true">${escape(
 				t("Show fewer")
@@ -280,8 +281,8 @@ export function create_simple(env) {
 			}, SEARCH_MS);
 		});
 		search.addEventListener("keydown", (e) => {
-			// The planners' own shortcuts never act on what is typed here.
-			e.stopPropagation();
+			// The planners' own shortcuts never act on what is typed here. Esc still reaches the kit and the Desk.
+			if (e.key !== "Escape") e.stopPropagation();
 		});
 		toggle.addEventListener("click", () => typeof o.off === "function" && o.off());
 		help.addEventListener("click", () => typeof o.help === "function" && o.help());

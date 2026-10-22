@@ -7600,7 +7600,7 @@ const MPS_METHODS = {
 			open: (doctype, name) => frappe.set_route("Form", doctype, name),
 			off: () => this.mps_leave(),
 			help: () => kit.legend(kit.simple.legend_sections("sites"), { title: __("How Simple mode works"), owner: MP6A.owner }),
-			is_phone: () => !!(window.matchMedia && window.matchMedia(`(max-width: ${MPTB.phone_max}px)`).matches),
+			is_phone: () => this.tour_is_phone(),
 		});
 	},
 
