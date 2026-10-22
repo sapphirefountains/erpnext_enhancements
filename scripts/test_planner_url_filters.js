@@ -414,8 +414,8 @@ function projectPlanner(desk, init) {
 		pp.renders += 1;
 	};
 	pp.load_route = () => pp.loads.push({ view: "route", resource: pp.route_resource, filters: f3(pp) });
-	// The Utilization view (v1.687.0) loads the Crew Utilization report's rows; recorded like the rest.
-	pp.load_utilization = () => pp.loads.push({ view: pp.view, anchor: pp.anchor, filters: f3(pp) });
+	// Capacity (P7) loads the heatmap and the Crew Utilization report's rows; recorded like the rest.
+	pp.load_capacity = () => pp.loads.push({ view: pp.view, anchor: pp.anchor, filters: f3(pp), asked: pp.capacity_asked });
 	pp.p6c_kit = () => null;
 	pp.p6c_sync_controls = () => {};
 	desk.handlers["project-planner"] = () => pp.handle_route();
@@ -579,37 +579,120 @@ test("Project Planner: Back and Forward walk the screens, each with the filters 
 	check("with no query", desk.here(), "/desk/project/PRJ-00001");
 });
 
-test("Project Planner: Utilization is a view, a route of its own with the filters in the address", () => {
+test("Project Planner: Capacity is the Crew tab's other screen, an address of its own with the filters in it", () => {
 	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?group=Field" });
 	const pp = projectPlanner(desk);
 	desk.land();
-	pp.go("utilization", "2026-10-12");
-	check("its own screen, carrying the filters", desk.here(), "/desk/project-planner/utilization/2026-10-12?group=Field");
-	check("the view is Utilization", [pp.view, pp.anchor], ["utilization", "2026-10-12"]);
-	check("loaded as Utilization, for the group", pp.loads[pp.loads.length - 1], {
-		view: "utilization",
+	pp.go("capacity", "2026-10-12");
+	check("its own entry, on the Crew path, carrying the filters", desk.here(), "/desk/project-planner/crew/2026-10-12?group=Field&capacity=1");
+	check("the view is Capacity", [pp.view, pp.anchor], ["capacity", "2026-10-12"]);
+	check("loaded as Capacity, for the group", pp.loads[pp.loads.length - 1], {
+		view: "capacity",
 		anchor: "2026-10-12",
 		filters: { project: "", pm: "", group: "Field" },
+		asked: "",
 	});
+	check("the flag is the address's: consumed, so the next route does not carry it", (desk.frappe.route_options || {}).capacity, undefined);
 	pp.pick_filter("group", "Design");
-	check("a filter picked there rewrites its address in place", desk.here(), "/desk/project-planner/utilization/2026-10-12?group=Design");
-	check("one entry for the week, one for Utilization", desk.entries.length, 2);
+	check("a filter picked there rewrites its address in place, the flag kept", desk.here(), "/desk/project-planner/crew/2026-10-12?group=Design&capacity=1");
+	check("one entry for the week, one for Capacity", desk.entries.length, 2);
+	pp.go("crew", "2026-10-12");
+	check("Board is an entry too, the same path without the flag", desk.here(), "/desk/project-planner/crew/2026-10-12?group=Design");
+	check("the view is the Board", pp.view, "crew");
+	check("three entries", desk.entries.length, 3);
+	desk.back();
+	check("Back: Capacity, with its group", [pp.view, f3(pp).group], ["capacity", "Design"]);
 	desk.back();
 	check("Back: the week, with the group it had", [pp.view, f3(pp).group], ["week", "Field"]);
 	desk.forward();
-	check("Forward: Utilization again, with its group", [pp.view, f3(pp).group], ["utilization", "Design"]);
+	desk.forward();
+	check("Forward twice: the Board again", [pp.view, desk.here()], ["crew", "/desk/project-planner/crew/2026-10-12?group=Design"]);
+	pp.go("week", "2026-10-12");
+	check("the next view carries the filters and not the flag", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?group=Design");
 });
 
-test("Project Planner: a link to Utilization opens it on the link's filters", () => {
+test("Project Planner: the old Heatmap and Utilization addresses are replaced by Capacity, filters kept", () => {
 	const desk = makeDesk({ start: "/desk/project-planner/utilization/2026-10-01?project=PRJ-00001&group=PM" });
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk);
 	desk.land();
-	check("the view and the month", [pp.view, pp.anchor], ["utilization", "2026-10-01"]);
+	check("the old address is replaced, not pushed", desk.urls(), [
+		"/desk/project-planner/crew/2026-10-01?project=PRJ-00001&group=PM&capacity=utilization",
+	]);
+	check("Capacity, for the day the link gave", [pp.view, pp.anchor], ["capacity", "2026-10-01"]);
 	check("the link's filters, the others All", f3(pp), { project: "PRJ-00001", pm: "", group: "PM" });
-	check("the address as it came", desk.here(), "/desk/project-planner/utilization/2026-10-01?project=PRJ-00001&group=PM");
+	check("it says it was asked for Utilization", pp.loads[pp.loads.length - 1].asked, "utilization");
 	pp.go("week", "2026-10-01");
 	check("the next calendar view keeps the project the link named", desk.here(), "/desk/project-planner/calendar/week/2026-10-01?project=PRJ-00001&group=PM");
+	desk.back();
+	check("Back: Capacity again, not the old address", [pp.view, desk.route.join("/")], ["capacity", "project-planner/crew/2026-10-01"]);
+	check("the old address is in no entry of the history", desk.urls().some((url) => url.includes("/utilization/")), false);
+
+	const heat = makeDesk({ start: "/desk/project-planner/heatmap/2026-10-12?group=Field" });
+	const pp2 = projectPlanner(heat);
+	heat.land();
+	check("Heatmap's address lands on Capacity (no Utilization asked)", [heat.urls(), pp2.view, pp2.loads[pp2.loads.length - 1].asked], [
+		["/desk/project-planner/crew/2026-10-12?group=Field&capacity=1"],
+		"capacity",
+		"",
+	]);
+});
+
+test("Project Planner: Back and Forward step between the Crew tab's two screens and the Gantt", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/crew/2026-10-12?capacity=1" });
+	const pp = projectPlanner(desk);
+	// The Gantt (P6) draws a chart of its own; here it is a recorded load.
+	pp.ppg_load = () => pp.loads.push({ view: pp.view, project: pp.ppg_state().project });
+	pp.ppg_destroy = () => null;
+	desk.land();
+	check("landed on Capacity", [pp.view, desk.here()], ["capacity", "/desk/project-planner/crew/2026-10-12?capacity=1"]);
+	pp.go("gantt", pp.anchor);
+	check("the Gantt is its own entry, without the Capacity flag", [pp.view, desk.route.slice(0, 2), desk.here().includes("capacity")], ["gantt", ["project-planner", "gantt"], false]);
+	pp.go("crew", pp.anchor);
+	// The Gantt has no date of its own, so the day it leaves is today.
+	check("the Board is the Crew path without the flag", [pp.view, desk.here()], ["crew", "/desk/project-planner/crew/2026-10-14"]);
+	desk.back();
+	check("Back: the Gantt", pp.view, "gantt");
+	desk.back();
+	check("Back: Capacity, with its flag", [pp.view, desk.here()], ["capacity", "/desk/project-planner/crew/2026-10-12?capacity=1"]);
+	desk.forward();
+	desk.forward();
+	check("Forward twice: the Board", pp.view, "crew");
+	pp.go("capacity", pp.anchor);
+	check("Capacity again is a new entry", [pp.view, desk.entries.length], ["capacity", 4]);
+});
+
+test("Project Planner: a link's filters survive the landing on a device whose tab is Capacity", () => {
+	for (const remembered of ["capacity", "heatmap"]) {
+		const desk = makeDesk({ start: "/desk/project-planner?group=Field" });
+		const pp = projectPlanner(desk);
+		// A bare address that names a filter (the Project form's link, a shared link): the router has copied the
+		// query into route_options, and the landing may only add to it.
+		desk.route = ["project-planner"];
+		desk.frappe.route_options = { group: "Field" };
+		pp.p8_is_phone = () => false;
+		pp.p8_tab = () => remembered;
+		check(`${remembered}: the landing took the address over`, pp.p8_landing(), true);
+		check(`${remembered}: Capacity, on the Crew path, with the link's filter and the flag`, desk.here(), `/desk/project-planner/crew/${desk.today}?group=Field&capacity=1`);
+		check(`${remembered}: replaced, not pushed`, desk.entries.length, 1);
+	}
+});
+
+test("Project Planner: ?capacity= on the Crew address says Capacity; anything else is the Board", () => {
+	const cases = [
+		["1", "capacity"],
+		["true", "capacity"],
+		["utilization", "capacity"],
+		["0", "crew"],
+		["nonsense", "crew"],
+		["", "crew"],
+	];
+	cases.forEach(([value, view]) => {
+		const desk = makeDesk({ start: `/desk/project-planner/crew/2026-10-12${value === "" ? "" : `?capacity=${value}`}` });
+		const pp = projectPlanner(desk);
+		desk.land();
+		check(`capacity=${value || "(none)"}`, pp.view, view);
+	});
 });
 
 test("Project Planner: malformed or unknown values are ignored", () => {

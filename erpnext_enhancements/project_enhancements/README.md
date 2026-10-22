@@ -908,10 +908,10 @@ shop" is one setting), through each located task, rental crew task and maintenan
 - **Qualification gaps**: a task's *Qualifications needed* that no crew member holds as a current
   Employee Credential (Valid or Expiring, not expired by the task's last day) shows as a chip.
   It is a warning only.
-- **Heatmap** (`/app/project-planner/heatmap/<date>`): 8 weeks of booked vs available per person,
-  with pencil load hatched. It runs the engine with `google=False`, so cached and estimated drive
-  times only and never a fan-out of Routes calls. Weeks start on the site's **first weekday**
-  (Sunday on production), the same as the calendar.
+- **Heatmap**, now the top of **Capacity** (`/app/project-planner/crew/<date>?capacity=1`, see "The Crew
+  tab" below): 8 weeks of booked vs available per person, with pencil load hatched. It runs the engine
+  with `google=False`, so cached and estimated drive times only and never a fan-out of Routes calls.
+  Weeks start on the site's **first weekday** (Sunday on production), the same as the calendar.
 - **Overdue tray**: open, dated tasks on Active projects that ended before today, grouped by
   project, with bulk *Reschedule to…*, *Mark done* and *Cancel* (`bulk_update`: one savepoint per
   task, failures reported per task, writes "Canceled" with one l). ERPNext refuses to complete a
@@ -1128,7 +1128,7 @@ so it had grown into one long flat row. v1.687.0 made it **one bar** with four m
 approved 2026-10-21) folds those four into two, and gives both planners the same structure:
 
 ```
-‹ Today ›  title   [Month] Week Crew Heatmap Utilization   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+‹ Today ›  title   [Lookahead] Gantt Crew Calendar   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
 ```
 
 - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
@@ -1176,7 +1176,7 @@ approved 2026-10-21) folds those four into two, and gives both planners the same
 | Undo | More ▸ Tools, and a small ↶ icon while there is something to undo | the same |
 | Print, Print crew sheet | **More ▸ Print** | More ▸ Print (*Print this view*, *selection only*, *Day Board*) |
 | Move by (calendar or working days) | the Move… panel's first field | the same |
-| Utilization (button to the report) | the fifth **view**, `/project-planner/utilization/<date>` | (none: the Project Planner's view counts visits already) |
+| Utilization (button to the report) | the table under the heatmap on **Capacity** (the Crew tab's second screen, P7) | (none: the Project Planner's view counts visits already) |
 | First-time tip banners | the first section of "?" | the same |
 | Draft mode's bottom bar | a strip **under the toolbar**: "Holding your changes: N not published yet", Publish, Discard; since P4 also a line per project with drafts (*Publish…* on a Draft schedule) | "Draft mode on: N changes not published yet", Publish, Discard |
 
@@ -1186,19 +1186,44 @@ tools** (with the alerts' total), which opens `planner_kit.toolbar.sheet`: the f
 help, refresh (and the Day Board, on the Maintenance Planner). It takes the kit's one history entry,
 so the phone's Back closes it.
 
-**Utilization** reads the Crew Utilization report itself (`frappe.desk.query_report.run`, so the
-report's roles decide who sees it and the figures always match): the month holding the date, a row
-per person per week, with capacity, booked and clocked hours and the two percentages, a week past
-capacity carrying an *Over* chip and one at 75% or more *Near full*. ‹ › step a month. Group narrows
-it; Project and Project manager do not apply to a person's week, so they are hidden there and kept in
-the address for the next calendar view. *Open the full report* opens the report on the same month and
-group. It is not a saved-view view (`planner_views_prefs.SCHEMA` is unchanged), so "last used" keeps
-the calendar view before it.
+**The Crew tab (P7 of the planner UX redesign).** Two screens under one tab, switched by *Board | Capacity*
+in a header of their own, each its own history entry:
+
+- **Board** (`/project-planner/crew/<date>`): a task is a bar along a person's row, counted in days. The
+  chips of one task on neighboring days are drawn joined (`pp-span-prev` / `pp-span-next`) and each reads
+  *Day 2 of 5*; a chip is still the unit that is dragged, resized and tapped, so every move is unchanged.
+  *Show hours* (a browser preference, off) adds the hours or the time slot beside the days. A task with no
+  hours still books a full day (the engine's rule, `crew_availability.full_day_hours`), so the day cell
+  says *Full*, *3h free* or *Off* as before. The tray (*Not scheduled*, *Needs crew*) sits beside the board
+  on a laptop and above it on a phone. *Day n of N* counts the **task's** working days from its own dates,
+  the same count as the calendar card's *5 days* (`duration_text`), not how many of those days this person is
+  booked: someone on a Monday to Wednesday pattern has chips on three days of a task both views call five.
+  **It is not yet one true bar:** a multi-day task is still one chip per day, drawn joined, because the chip
+  is what is dragged, resized and tapped; a single spanning bar is a possible follow-up.
+- **Capacity** (`/project-planner/crew/<date>?capacity=1`): it replaces the Heatmap and Utilization views.
+  The eight-week heatmap is on top and the Crew Utilization report's rows are under it for the same eight
+  weeks (whole weeks, so the month view's clipped first and last weeks are gone). ‹ › step four weeks.
+  The two sections load and draw on their own. The table reads the report itself
+  (`frappe.desk.query_report.run`, so the report's roles decide who sees it and the figures always match),
+  one row per person per week with capacity, booked and clocked hours and the two percentages, a week past
+  capacity carrying an *Over* chip and one at 75% or more *Near full*. Its section is there only for
+  someone the boot says the report is open to (`allowed_reports` and `can_get_report("Task")`); everyone
+  else sees the heatmap alone. A refusal from the server, or arriving by the old Utilization address
+  without access, draws the no-access panel instead. Group narrows both; Project and Project manager do
+  not apply to a person's week, so they are hidden there and kept in the address. *Open the full report*
+  opens the report on the same weeks and group.
+
+Capacity is an internal view (`PP.capacity_view`) and a route of the Crew tab, never a path of its own. The
+old `/heatmap/<date>` and `/utilization/<date>` addresses are replaced (never pushed) by
+`/crew/<date>?capacity=1` (`?capacity=utilization` for the old Utilization address, which scrolls to the
+table), carrying their filters. `?capacity=` is the address's, like the filters: the page consumes it from
+`route_options`, so no later route writes it again. A saved view or "last used" view that says `heatmap`
+(`planner_views_prefs.SCHEMA` still accepts it) opens Capacity, and `capacity` is saved as itself.
 
 The page side is `PPTB_METHODS` / `MPTB_METHODS` and `PPU_METHODS`; `tests/test_planner_toolbar.py`
 runs `scripts/test_planner_toolbar.js` (the kit module on a fake DOM and a fake browser, and both
 pages' blocks with an explicit list of every old control) and `scripts/test_planner_url_filters.js`
-covers the Utilization view's address.
+covers the address of Capacity and the redirects from the old ones.
 
 ### Planner kit
 

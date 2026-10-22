@@ -433,16 +433,17 @@ class TestThePageScript(unittest.TestCase):
 		server = (APP / "api" / "planner_views_prefs.py").read_text(encoding="utf-8")
 		match = re.search(r'"view": \("enum", \(([^)]*)\)\),\n\t\t"project": \("text",\),', server)
 		self.assertTrue(match)
-		views = ["week", "month", "crew", "heatmap", "lookahead"]
+		views = ["week", "month", "crew", "heatmap", "capacity", "lookahead"]
 		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), views)
 		page = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
 		self.assertEqual(re.findall(r'"([^"]+)"', page.group(1)), views)
-		# The tabs a device remembers are the page's own list: those, plus Today, plus the Gantt (P6, whose
-		# project the device keeps beside it; never in the server's row, which has no project to open).
+		# The tabs a device remembers are the page's own list: those (Capacity is P7's; the old "heatmap" is
+		# still read), plus Today, plus the Gantt (P6, whose project the device keeps beside it; never in the
+		# server's row, which has no project to open).
 		tabs = re.search(r"tabs: \[(.*?)\]", self.block)
 		self.assertEqual(
 			re.findall(r'"([^"]+)"', tabs.group(1)),
-			["week", "month", "crew", "heatmap", "today", "lookahead", "gantt"],
+			["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt"],
 		)
 
 	def test_every_class_it_uses_is_styled(self):
