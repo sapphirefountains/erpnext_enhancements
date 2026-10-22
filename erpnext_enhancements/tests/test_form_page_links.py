@@ -82,9 +82,10 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn('frappe.ui.form.on("Project"', code)
 		self.assertIn('__("Open in Project Planner")', code)
 		self.assertIn('__("View")', code)
-		self.assertIn("const options = { project: frm.doc.name };", code)
-		self.assertIn('frappe.set_route("project-planner", options);', code)
-		self.assertIn('frappe.set_route("project-planner", "lookahead", starts, options);', code)
+		# P6: the project's Gantt, with the project as the filter too (the Lookahead is a tab away).
+		self.assertIn(
+			'frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name })', code
+		)
 		self.assertIn('pages["project-planner"]', code)
 		self.assertIn("frm.is_new()", code)
 
