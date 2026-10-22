@@ -936,19 +936,28 @@ def test_run_export_saves_a_private_file_and_reports_failure_without_raising(mon
 			saved.update(data)
 			self.file_url = "/private/files/x.xlsx"
 			self.file_name = data["file_name"]
+			self.folder = data.get("folder")
 
 		def insert(self, ignore_permissions=False):
 			saved["ignore_permissions"] = ignore_permissions
 			return self
 
+		def get(self, field, default=None):
+			return getattr(self, field, default)
+
+		def db_set(self, values, value=None, update_modified=True):
+			saved.setdefault("tagged", []).append(values)
+
 	monkeypatch.setattr(frappe, "get_doc", lambda data: FakeFile(data), raising=False)
 	monkeypatch.setattr(
 		frappe, "log_error", lambda **kwargs: saved.setdefault("logged", kwargs), raising=False
 	)
+	monkeypatch.setattr(matching_excel, "ensure_folder", lambda: matching_excel.FILE_FOLDER)
 	matching_excel.run_export("t1", "nik@example.com", status="All")
 	state = cache[matching_excel._job_key("nik@example.com", "t1")]
 	assert state["status"] == "done" and state["file_url"] == "/private/files/x.xlsx"
 	assert saved["is_private"] == 1 and saved["file_name"].endswith(".xlsx")
+	assert saved["tagged"] == [{"folder": matching_excel.FILE_FOLDER, "attached_to_field": matching_excel.FILE_TAG}]
 	assert openpyxl.load_workbook(io.BytesIO(saved["content"])).sheetnames[:2] == ["Instructions", "Vendors"]
 
 	def boom(**kwargs):
@@ -1181,49 +1190,152 @@ def test_the_key_columns_are_locked_and_only_the_yellow_cells_are_editable():
 	assert workbook[matching_excel.META_SHEET].protection.sheet
 
 
-def test_exports_and_uploads_live_in_one_folder_that_a_daily_job_empties(monkeypatch):
+class _StoredFile:
+	"""A File row with the fields the upload check and the clean-up read."""
+
+	def __init__(self, name, **fields):
+		self.name = name
+		self.owner = "nik@example.com"
+		self.is_private = 1
+		self.attached_to_doctype = None
+		self.attached_to_name = None
+		self.attached_to_field = None
+		self.folder = "Home"
+		self.file_name = f"{name}.xlsx"
+		self.file_size = 1000
+		self.creation = "2026-10-01"
+		self.is_folder = 0
+		self.__dict__.update(fields)
+		self.writes = []
+
+	def get(self, field, default=None):
+		return getattr(self, field, default)
+
+	def db_set(self, values, value=None, update_modified=True):
+		values = values if isinstance(values, dict) else {values: value}
+		self.writes.append(values)
+		self.__dict__.update(values)
+
+	def get_content(self):
+		return b"bytes"
+
+
+def _wire_files(monkeypatch, matching_excel, frappe, files):
+	_wire(monkeypatch, matching_excel, frappe, Ledger())
+	monkeypatch.setattr(matching_excel, "ensure_folder", lambda: matching_excel.FILE_FOLDER)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: files[name], raising=False)
+	monkeypatch.setattr(frappe, "has_permission", lambda *args, **kwargs: True, raising=False)
+	monkeypatch.setattr(frappe, "PermissionError", PermissionError, raising=False)
+
+
+def test_an_own_fresh_upload_is_accepted_and_tagged_for_the_clean_up(monkeypatch):
+	matching_excel, frappe = _excel()
+	upload = _StoredFile("UPLOAD")
+	_wire_files(monkeypatch, matching_excel, frappe, {"UPLOAD": upload})
+	assert matching_excel._read_upload("UPLOAD") == b"bytes"
+	assert upload.writes == [
+		{"folder": matching_excel.FILE_FOLDER, "attached_to_field": matching_excel.FILE_TAG}
+	]
+	matching_excel._read_upload("UPLOAD")
+	assert len(upload.writes) == 1, "a re-preview of the same file writes nothing"
+
+
+@pytest.mark.parametrize(
+	"fields, fragment",
+	[
+		({"owner": "lisa@example.com"}, "uploaded by someone else"),
+		({"attached_to_doctype": "Customer", "attached_to_name": "Acme"}, "attached to a document"),
+		({"attached_to_name": "Acme"}, "attached to a document"),
+		({"is_private": 0}, "is public"),
+	],
+)
+def test_a_file_the_caller_did_not_upload_for_this_is_refused_and_never_moved(monkeypatch, fields, fragment):
+	"""Accepting a File tags it for a job that deletes it in a week. The page only sends a fresh
+	upload, but the endpoint is reachable directly with any File the caller can read."""
+	matching_excel, frappe = _excel()
+	stranger = _StoredFile("OTHER", **fields)
+	_wire_files(monkeypatch, matching_excel, frappe, {"OTHER": stranger})
+	with pytest.raises(Exception, match=fragment):
+		matching_excel._read_upload("OTHER")
+	assert stranger.writes == [], "refused before anything was moved or tagged"
+	assert stranger.folder == "Home"
+
+
+def test_run_export_tags_the_file_it_makes(monkeypatch):
 	matching_excel, frappe = _excel()
 	_wire(monkeypatch, matching_excel, frappe, Ledger())
-	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
-	moved = {}
+	monkeypatch.setattr(matching_excel, "ensure_folder", lambda: matching_excel.FILE_FOLDER)
+	monkeypatch.setattr(matching_excel, "collect_export", lambda **kwargs: [])
+	made = []
 
-	class Upload:
-		folder = "Home"
-		file_name = "Meg's work.xlsx"
-		file_size = 1000
+	def get_doc(data):
+		made.append(_StoredFile("EXPORT", folder=data["folder"], file_url="/private/files/e.xlsx"))
+		made[-1].insert = lambda ignore_permissions=False: made[-1]
+		return made[-1]
 
-		def db_set(self, field, value, update_modified=True):
-			moved[field] = value
+	monkeypatch.setattr(frappe, "get_doc", get_doc, raising=False)
+	matching_excel.run_export("t9", "nik@example.com")
+	assert made[0].attached_to_field == matching_excel.FILE_TAG
+	assert made[0].folder == matching_excel.FILE_FOLDER
 
-		def get_content(self):
-			return b"bytes"
 
-	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: Upload(), raising=False)
-	monkeypatch.setattr(frappe, "has_permission", lambda *args, **kwargs: True, raising=False)
-	assert matching_excel._read_upload("FILE-1") == b"bytes"
-	assert moved == {"folder": matching_excel.FILE_FOLDER}, "the upload joins the exports' folder"
-
+def test_the_clean_up_deletes_only_tagged_unattached_old_files(monkeypatch):
+	"""The folder alone is not a licence to delete: anything can be moved into it."""
+	matching_excel, frappe = _excel()
+	tagged = {"folder": matching_excel.FILE_FOLDER, "attached_to_field": matching_excel.FILE_TAG}
+	files = {
+		"OLD-EXPORT": _StoredFile("OLD-EXPORT", **tagged),
+		"OLD-STUCK": _StoredFile("OLD-STUCK", **tagged),
+		"NEW-EXPORT": _StoredFile("NEW-EXPORT", creation="2026-10-21", **tagged),
+		"UNTRACKED": _StoredFile("UNTRACKED", folder=matching_excel.FILE_FOLDER),
+		"ATTACHED": _StoredFile("ATTACHED", attached_to_doctype="Customer", **tagged),
+		"ELSEWHERE": _StoredFile("ELSEWHERE", attached_to_field=matching_excel.FILE_TAG),
+	}
+	_wire_files(monkeypatch, matching_excel, frappe, files)
 	frappe_utils = __import__("sys").modules["frappe.utils"]
-	monkeypatch.setattr(frappe_utils, "add_days", lambda value, days: f"{value}{days:+d}d", raising=False)
-	monkeypatch.setattr(matching_excel, "now_datetime", lambda: "NOW")
-	asked, deleted = {}, []
+	monkeypatch.setattr(frappe_utils, "add_days", lambda value, days: "2026-10-15", raising=False)
+
+	def matches(file, field, condition):
+		value = file.get(field)
+		if isinstance(condition, list):
+			op, target = condition
+			if op == "is":
+				return not value if target == "not set" else bool(value)
+			if op == "<":
+				return value < target
+			raise AssertionError(op)
+		return value == condition
 
 	def get_all(doctype, filters=None, pluck=None, **kwargs):
-		asked.update(filters)
-		return ["OLD-1", "OLD-2"]
+		assert doctype == "File" and pluck == "name"
+		return [n for n, f in files.items() if all(matches(f, k, v) for k, v in filters.items())]
+
+	deleted = []
 
 	def delete_doc(doctype, name, ignore_permissions=False):
-		if name == "OLD-2":
+		if name == "OLD-STUCK":
 			raise Exception("locked")
-		deleted.append((doctype, name, ignore_permissions))
+		deleted.append(name)
 
 	monkeypatch.setattr(frappe, "get_all", get_all, raising=False)
 	monkeypatch.setattr(frappe, "delete_doc", delete_doc, raising=False)
 	assert matching_excel.delete_old_files() == 1, "one that will not delete is left for tomorrow"
-	assert asked == {"folder": matching_excel.FILE_FOLDER, "is_folder": 0, "creation": ["<", "NOW-7d"]}
-	assert deleted == [("File", "OLD-1", True)]
+	assert deleted == ["OLD-EXPORT"]
 	hooks = (APP / "hooks.py").read_text(encoding="utf-8")
 	assert '"erpnext_enhancements.quickbooks_online.core.matching_excel.delete_old_files"' in hooks
+
+
+def test_an_export_marker_sheet_with_a_blank_value_is_reported_not_a_crash():
+	matching_excel, _ = _excel()
+	workbook = openpyxl.load_workbook(io.BytesIO(_workbook(matching_excel, masters=[_master_row()])))
+	marker = workbook[matching_excel.META_SHEET]
+	marker["B1"] = None  # format_version with no value: a one-cell row
+	marker["B2"] = None
+	out = io.BytesIO()
+	workbook.save(out)
+	parsed = matching_excel.parse_workbook(out.getvalue())
+	assert parsed["rows"] == []
+	assert "was not made by the Record Matching export" in parsed["errors"][0]
 
 
 def test_the_page_settles_on_the_promise_and_outlasts_the_export_job():

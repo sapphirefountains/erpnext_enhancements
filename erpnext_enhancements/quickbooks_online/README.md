@@ -170,8 +170,10 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
   on master QBO types, whatever headers a sheet has; key columns locked by sheet protection (no
   password, filtering and widths allowed); sheet dimensions reset before reading; a 100 MB
   expanded-size cap. The page settles every request on the `frappe.call` promise.
-- **Files:** exports and uploads live in `Home/QuickBooks Matching Excel`; the daily
-  `matching_excel.delete_old_files` deletes those older than 7 days.
+- **Files:** exports and uploads live in `Home/QuickBooks Matching Excel`, tagged
+  `attached_to_field = "qbo_matching_excel"`. The daily `matching_excel.delete_old_files` deletes only
+  tagged, unattached Files older than 7 days, never a File that merely sits in the folder. Preview
+  accepts only the caller's own private, unattached upload, since accepting one tags it for deletion.
 
 ## Scheduler / webhook entry points
 

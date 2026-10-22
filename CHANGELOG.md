@@ -66,7 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - *Files are cleaned up.* Exports and uploaded imports go into one File folder, `Home/QuickBooks Matching
       Excel`, and a new **daily** scheduler job (`matching_excel.delete_old_files`) deletes those older than
       **7 days**. They hold customer and vendor names, emails and links, and nothing else ever removes an
-      unattached private File.
+      unattached private File. The job deletes **only** Files this feature made or accepted: each carries a tag
+      (`attached_to_field = "qbo_matching_excel"`, which Frappe reads only with an `attached_to_doctype`, so an
+      unattached File never has it otherwise) and is still attached to nothing. A File that is merely in the folder
+      is left alone.
+    - *Preview accepts only your own upload.* Accepting a File tags it for that job, so preview refuses another
+      person's file, a document's attachment or a public file. The page only ever sends a fresh upload, but the
+      endpoint can be called directly with any `.xlsx` the caller can read. An `_export` sheet with a blank value
+      now reports "not made by the export" instead of crashing the preview.
     - *Key columns are locked.* Each data sheet is protected, with no password: only the yellow cells are
       unlocked. Filtering and column widths still work; sorting is off, since it would move locked cells. The Row
       ID / QBO type / QBO ID cross-check stays as the backstop.

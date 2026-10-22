@@ -132,6 +132,11 @@ MAX_EXPANDED_BYTES = 100 * 1024 * 1024
 FILE_FOLDER_NAME = "QuickBooks Matching Excel"
 FILE_FOLDER = f"Home/{FILE_FOLDER_NAME}"
 FILE_MAX_AGE_DAYS = 7
+#: The mark on every File this feature made or accepted, and the ONLY thing the clean-up
+#: deletes by. The folder alone is not enough: anything can be moved into a folder. Stored in
+#: ``attached_to_field``, which Frappe reads only together with ``attached_to_doctype`` -- on an
+#: unattached File nothing else ever sets it, so it cannot collide with a real attachment.
+FILE_TAG = "qbo_matching_excel"
 #: A string cell starting with one of these is a formula to Excel or to whatever the sheet
 #: is pasted into; see ``_put``.
 FORMULA_LEADS = ("=", "+", "-", "@")
@@ -551,12 +556,24 @@ def parse_workbook(content) -> dict:
 				"This file is not a Record Matching export. Export from the page and work in that file."
 			],
 		}
+	not_export = {
+		"rows": [],
+		"errors": [
+			"This file was not made by the Record Matching export. Export from the page and work in that file."
+		],
+	}
 	meta = {}
 	marker = workbook[META_SHEET]
 	marker.reset_dimensions()
-	for key, value, *_rest in marker.iter_rows(values_only=True):
-		if key:
-			meta[text(key)] = text(value)
+	try:
+		for values in marker.iter_rows(values_only=True):
+			values = tuple(values or ())
+			if values and values[0]:
+				meta[text(values[0])] = text(values[1]) if len(values) > 1 else ""
+	except Exception:
+		return not_export
+	if not meta.get("format_version"):
+		return not_export
 	if meta.get("format_version") != FORMAT_VERSION:
 		return {"rows": [], "errors": ["This export is from a different version of the page. Export again."]}
 
@@ -950,16 +967,31 @@ def ensure_folder() -> str:
 	return FILE_FOLDER
 
 
+def _track(file_doc) -> None:
+	"""Put a File this feature made or accepted into its folder, with its tag."""
+	if file_doc.folder != FILE_FOLDER or file_doc.get("attached_to_field") != FILE_TAG:
+		file_doc.db_set({"folder": ensure_folder(), "attached_to_field": FILE_TAG}, update_modified=False)
+
+
 def delete_old_files() -> int:
 	"""Daily (hooks.py): delete exports and uploaded imports older than ``FILE_MAX_AGE_DAYS``.
 	They carry customer and vendor names, emails and links, and an unattached private File is
-	otherwise kept forever. One that will not delete is left for tomorrow, never raised."""
+	otherwise kept forever. One that will not delete is left for tomorrow, never raised.
+
+	Only Files carrying ``FILE_TAG`` and still attached to nothing are candidates -- never a File
+	merely sitting in the folder, which anyone may have moved there."""
 	from frappe.utils import add_days
 
 	cutoff = add_days(now_datetime(), -FILE_MAX_AGE_DAYS)
 	names = frappe.get_all(
 		"File",
-		filters={"folder": FILE_FOLDER, "is_folder": 0, "creation": ["<", cutoff]},
+		filters={
+			"folder": FILE_FOLDER,
+			"attached_to_field": FILE_TAG,
+			"attached_to_doctype": ["is", "not set"],
+			"is_folder": 0,
+			"creation": ["<", cutoff],
+		},
 		pluck="name",
 	)
 	deleted = 0
@@ -1059,6 +1091,7 @@ def run_export(token, for_user, status=None, entity_types=None, include_parked=T
 				"content": content,
 			}
 		).insert(ignore_permissions=True)
+		_track(file_doc)
 		frappe.db.commit()
 		_set_state(
 			key,
@@ -1095,18 +1128,36 @@ def export_status(token) -> dict:
 
 
 def _read_upload(file_name):
-	"""The uploaded File's bytes, after checking the caller may read it -- the upload went
-	through Frappe's own File handling; this only reads what it stored."""
+	"""The uploaded File's bytes. The upload went through Frappe's own File handling; this
+	only reads what it stored -- and only a File the caller uploaded for this: their own,
+	private, attached to nothing. Accepting it tags it for the daily clean-up, so accepting
+	anything else (another person's file, a document's attachment) would hand that file to a
+	job that deletes it in a week. The page only ever sends a fresh upload; the endpoint is
+	reachable directly, which is why the check is here."""
 	file_doc = frappe.get_doc("File", file_name)
 	if not frappe.has_permission("File", "read", doc=file_doc):
 		frappe.throw("You cannot read that file.", frappe.PermissionError)
+	if file_doc.get("attached_to_doctype") or file_doc.get("attached_to_name"):
+		frappe.throw(
+			"That file is attached to a document. Upload the worked workbook itself with Import from Excel.",
+			frappe.PermissionError,
+		)
+	if file_doc.owner != frappe.session.user:
+		frappe.throw(
+			"That file was uploaded by someone else. Upload the workbook yourself with Import from Excel.",
+			frappe.PermissionError,
+		)
+	if not cint(file_doc.is_private):
+		frappe.throw(
+			"That file is public. Upload the workbook again as a private file.", frappe.PermissionError
+		)
 	if not str(file_doc.file_name or "").lower().endswith(".xlsx"):
 		frappe.throw("Upload the Excel workbook (.xlsx) the export produced.")
 	if cint(file_doc.file_size) > MAX_IMPORT_BYTES:
 		frappe.throw("That file is too large to be a Record Matching export.")
-	if file_doc.folder != FILE_FOLDER:
-		# Into the folder the daily clean-up empties: an upload is the same data as an export.
-		file_doc.db_set("folder", ensure_folder(), update_modified=False)
+	# Into the folder the daily clean-up empties, with the tag it deletes by: an upload is
+	# the same data as an export.
+	_track(file_doc)
 	content = file_doc.get_content()
 	return content.encode("utf-8") if isinstance(content, str) else content
 
