@@ -29,6 +29,45 @@
 .dashboard-tabs .nav-link { font-weight: 600; color: var(--text-muted); }
 .dashboard-tabs .nav-link.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
 
+/* "View More": the extra tabs stay out of the bar until it is pressed. The
+   attribute alone is not enough, a later display rule would win, so say it. */
+.dashboard-tabs [hidden],
+.pg-new-menu [hidden] { display: none !important; }
+.pg-view-more-item { margin-left: auto; display: flex; align-items: center; }
+.pg-view-more { font-weight: 600; color: var(--text-muted); text-decoration: none; }
+.pg-view-more:hover, .pg-view-more:focus { color: var(--text-color); text-decoration: none; }
+.pg-view-more::after { content: " \25BE"; }
+.pg-view-more[aria-expanded="true"]::after { content: " \25B4"; }
+
+/* The one "+" button: New Project / New Master Project. */
+.pg-new-menu { position: relative; display: inline-block; }
+.pg-new-toggle { min-width: 32px; font-size: 18px; line-height: 1; font-weight: 600; padding-top: 3px; padding-bottom: 5px; }
+.pg-new-list {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 1050;
+    min-width: 190px;
+    padding: 6px 0;
+    text-align: left;
+    background: var(--popover-bg, var(--card-bg));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.pg-new-item {
+    display: block;
+    width: 100%;
+    padding: 8px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--text-color);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.pg-new-item:hover, .pg-new-item:focus { background-color: var(--fg-hover-color); outline: none; }
+
 /* Status Badges — saturated brand colours read on both themes; text colour is
    chosen for contrast against each fill. Success, danger and warning are the
    app's --sf-* status fills with their own label colours; the rest stay literal. */
@@ -183,6 +222,8 @@
     .pg-toolbar .view-mode-group { width: 100%; display: flex; }
     .pg-toolbar .view-mode-group .btn { flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
     .pg-legend { margin-left: 0; width: 100%; gap: 10px; }
+    /* the + sits at the left edge here (the actions cell is only right-aligned from md up) */
+    .pg-new-list { left: 0; right: auto; }
     .pg-widget-host { height: 60vh; min-height: 320px; }
     /* touch targets */
     .pg-check { padding: 4px 0; }
@@ -235,4 +276,20 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 }
 .column-selector-item:hover { background-color: var(--fg-hover-color); }
 .column-selector-item input { margin: 0; }
+.column-selector-divider { height: 1px; margin: 6px 0; background: var(--border-color); }
+.column-selector-action {
+    display: block;
+    width: 100%;
+    padding: 6px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--text-color);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.column-selector-action:hover, .column-selector-action:focus { background-color: var(--fg-hover-color); outline: none; }
+/* The Columns button as an icon: a square, the three dots drawn in currentColor. */
+.column-selector-toggle.column-selector-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 28px; padding: 0; }
+.column-selector-toggle.column-selector-icon svg { display: block; width: 16px; height: 16px; }
 .hidden-column { display: none !important; }
