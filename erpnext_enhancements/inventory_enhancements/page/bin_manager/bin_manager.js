@@ -528,6 +528,14 @@ class BinManagerPage {
 
 	// A dialog whose primary action is one save. Its reference is minted when it opens and sent again
 	// on a retry the server may already have saved (logic.keep_ref); a refusal is shown inside it.
+	//
+	// THE VALUES ARE THE ARGUMENT, NEVER A SECOND READING (TASK-2026-02912, "rejects 0 as a valid
+	// quantity"). Frappe's primary button reads the dialog once (FieldGroup.get_values) and passes the
+	// result to the action; and while it reads, a required field whose value is falsy (`!f.value`: a typed
+	// 0) is refreshed, which sets the box from `me.value || null` and so BLANKS the 0. A page that calls
+	// get_values()/get_value() again then finds no quantity and says "Enter the quantity you counted,
+	// 0 or more." to a person who just typed 0. So the action uses `picked`, and puts a refused 0 back in
+	// its box (restore_zeros) so the person sees what they typed.
 	save_dialog({ kind, row, title, fields, primary_label, values, on_build }) {
 		let ref = this.ctl.new_ref();
 		let busy = false;
@@ -535,13 +543,13 @@ class BinManagerPage {
 			title,
 			fields: [{ fieldtype: "HTML", fieldname: "bm_msg" }].concat(fields || []),
 			primary_action_label: primary_label,
-			primary_action: () => {
+			primary_action: (picked) => {
 				if (busy) return;
 				busy = true;
 				this.dialog_message(d, "");
 				const button = d.get_primary_btn();
 				button.prop("disabled", true);
-				this.ctl.submit(kind, row, values ? values(d) : d.get_values(true) || {}, ref).then(
+				this.ctl.submit(kind, row, values ? values(d, picked) : picked || d.get_values(true) || {}, ref).then(
 					() => {
 						busy = false;
 						button.prop("disabled", false);
@@ -551,6 +559,7 @@ class BinManagerPage {
 						busy = false;
 						button.prop("disabled", false);
 						if (!err.keep_ref) ref = this.ctl.new_ref();
+						this.restore_zeros(d, picked);
 						this.dialog_message(d, err.message || __("The server refused this request."));
 					}
 				);
@@ -559,6 +568,14 @@ class BinManagerPage {
 		if (on_build) on_build(d);
 		d.show();
 		return d;
+	}
+
+	// Frappe blanked every required box holding a 0 while it read the dialog (see save_dialog): put the
+	// zeros back, so a refusal does not also empty the box.
+	restore_zeros(d, picked) {
+		Object.keys(picked || {}).forEach((name) => {
+			if (picked[name] === 0 && d.fields_dict[name]) d.set_value(name, 0);
+		});
 	}
 
 	dialog_message(d, text) {
@@ -666,9 +683,9 @@ class BinManagerPage {
 					description: __("Ticked when everything here moves. Stock left behind keeps this bin's claim on the item."),
 				},
 			],
-			values: (d) => ({
+			values: (d, picked) => ({
 				to_warehouse: chosen && chosen.warehouse,
-				qty: d.get_value("qty"),
+				qty: picked && picked.qty !== undefined ? picked.qty : d.get_value("qty"),
 				make_home: this.bm.make_home_offered(perms, chosen && chosen.warehouse) && !!d.get_value("make_home"),
 			}),
 			on_build: (d) => {

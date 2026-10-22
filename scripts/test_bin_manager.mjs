@@ -609,6 +609,21 @@ function loadPage(options) {
 		get_values() {
 			return Object.assign({}, this.values);
 		}
+		// What Frappe v16 does when the primary button is clicked (ui/dialog.js set_primary_action and
+		// ui/field_group.js get_values): the values are read ONCE and passed to the action as its first
+		// argument; and for a required field whose value is falsy (`!f.value`, which a typed 0 is) the
+		// field is refreshed, which sets the box from `me.value || null`: a 0 is blanked in the box. A
+		// later d.get_values() therefore no longer has it. A page that re-reads the dialog instead of
+		// using the argument loses every 0.
+		click_primary() {
+			const picked = {};
+			for (const f of this.opts.fields || []) {
+				const v = this.values[f.fieldname];
+				if (v !== null && v !== undefined && String(v).trim() !== "") picked[f.fieldname] = v;
+				if (f.reqd && !v) delete this.values[f.fieldname];
+			}
+			return this.opts.primary_action(picked);
+		}
 		get_value(k) {
 			return this.values[k];
 		}
@@ -713,6 +728,60 @@ function loadPage(options) {
 	};
 	return { server, world, registry, page, click, document };
 }
+
+const msgOf = (d) => d.fields_dict.bm_msg.$wrapper.__state.html || "";
+
+// TASK-2026-02912: "Bin Manager rejects 0 as a valid quantity". The cause: Frappe's dialog blanks a typed 0
+// in a required field while it reads the values for the primary action, and the page read them again.
+test("the real page: a count of 0 is sent, because the dialog's own reading of its values is used", async () => {
+	const { server, world, registry, page, click } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	d.values.qty = 0;
+	await d.click_primary();
+	await settle();
+	const write = server.writes().pop();
+	check("set_count was called", !!write && write.method.endsWith("bin_assignments.set_count"), true);
+	check("with a quantity of 0, not a missing one", write && write.args.qty, 0);
+	check("the dialog closed on success", d.shown, false);
+	check("no complaint about the quantity", /Enter the quantity/.test(msgOf(d)), false);
+
+	// blank is still refused (nothing is sent), and so is a negative number
+	for (const typed of ["", null, undefined, -1, "abc"]) {
+		click({ "data-act": "count", "data-item": "PDT-0001" });
+		const e = registry.dialogs.pop();
+		e.values.qty = typed;
+		const before = server.writes().length;
+		await e.click_primary();
+		await settle();
+		check(`${JSON.stringify(typed)} is refused and sends nothing`, server.writes().length, before);
+		check(`${JSON.stringify(typed)}: in the dialog's words`, /Enter the quantity you counted, 0 or more\./.test(msgOf(e)), true);
+	}
+
+	// a refused 0 (the server says no) stays in the box: Frappe blanked it while reading the dialog
+	server.fail.set("set_count", [{ status: 417, message: "Correcting a count needs the Stock Manager role.", exc_type: "PermissionError" }]);
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const r = registry.dialogs.pop();
+	r.values.qty = 0;
+	await r.click_primary();
+	await settle();
+	check("the server's sentence is shown", /Stock Manager role/.test(msgOf(r)), true);
+	check("and the 0 is back in its box", r.values.qty, 0);
+	check("the dialog stays open", r.shown !== false, true);
+
+	// a move of 0 is meaningless and is refused in words, never treated as a missing number
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const m = registry.dialogs.pop();
+	m.values.qty = 0;
+	m.values.to_warehouse = BIN_B;
+	const writes = server.writes().length;
+	await m.click_primary();
+	await settle();
+	check("a move of 0 sends nothing", server.writes().length, writes);
+	check("and says why", /Enter how many to move, more than 0\./.test(msgOf(m)), true);
+});
 
 test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
 	const { server, world, registry, page, click } = loadPage({ reorder: true });

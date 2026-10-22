@@ -71,6 +71,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     node) and `scripts/test_reorder_levels.mjs`; one CI step. The real page scripts are run with and without
     the bundle in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js` (the scanner page).
 
+### Fixed
+- **The Bin Manager's Change quantity no longer says "Enter the quantity you counted, 0 or more." to a person who
+  typed 0** (TASK-2026-02912, "Bin Manager rejects 0 as a valid quantity"; Nik chose *error after Save* and the
+  sentence is that one). The code accepted 0 everywhere that matters (`logic.check_values`, `rules.check_count`,
+  `set_count`, all with tests); the cause was in how the dialog was read. Frappe's primary button reads the
+  dialog once (`FieldGroup.get_values`) and hands the result to the action, and in that read a required field
+  whose value is falsy (`!f.value`, which a typed 0 is) is refreshed, which sets the box from `me.value || null`
+  and blanks the 0. `save_dialog` ignored that result and called `d.get_values(true)` again, found no quantity,
+  and refused. `bin_manager.js` `save_dialog` now uses the values it is handed (the Move dialog's quantity too),
+  and a count the server refuses puts the 0 back in the box. A count to 0 is valid; a Move or Send to boneyard
+  of 0 is still refused in words ("Enter how many to move, more than 0."), a blank box and a negative number
+  still are, and the reorder rule's refusal of a level of 0 is a different thing and unchanged.
+  `scripts/test_bin_manager.mjs`: the dialog stand-in now does what Frappe v16 does on a click (one reading,
+  then the blanking), and the test fails on the old code.
+
 ## [1.719.0] - 2026-10-22
 
 ### Changed
