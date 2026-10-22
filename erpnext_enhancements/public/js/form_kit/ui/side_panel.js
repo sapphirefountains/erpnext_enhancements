@@ -101,6 +101,8 @@ export class SidePanel extends RecordEditor {
 		// P8.1: a DocType's step blocks go with the record (editor.js open_extension).
 		this.leave_extension();
 		this.ext = null;
+		// v1.711.0: a panel that is between records takes no dropped file (record_tools.js bind_drop).
+		if (this.record_tools && typeof this.record_tools.unbind_drop === "function") this.record_tools.unbind_drop();
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.retired = this.retired.filter((queue) => queue.has_unsaved());
 		this.flow = null;
