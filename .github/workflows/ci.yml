@@ -1897,7 +1897,7 @@ jobs:
       # limit. Own frappe stub (and FAC's BaseTool), so its own step; unittest classes.
       - name: Guided Item AI suggest (schema, no PDT/SRV numbers, rules + guard, graceful failure)
         run: python -m unittest erpnext_enhancements.tests.test_item_suggest -v
-      # Supplier Finder (v1.724.0): who sells an item, ranked by purchase evidence. The pure rules
+      # Supplier Finder (v1.726.0): who sells an item, ranked by purchase evidence. The pure rules
       # (inventory_enhancements/supplier_search_rules.py) hold the matching (word starts, model and
       # part numbers squashed, synonyms, strict then partial), the group match, duplicate suppliers
       # folded into one row, and the order: bought, then quoted/listed, then group or name only. Its

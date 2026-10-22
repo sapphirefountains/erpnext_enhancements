@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.724.0] - 2026-10-22
+## [1.726.0] - 2026-10-22
 
 ### Added
 - **Find a Supplier (`/desk/supplier-finder`): who sells this, or has sold it to us.** Nik, 2026-10-22: "say I know

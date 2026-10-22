@@ -1,4 +1,4 @@
-"""Bench-free tests for the Supplier Finder's endpoint and assistant tool (v1.724.0).
+"""Bench-free tests for the Supplier Finder's endpoint and assistant tool (v1.726.0).
 
 ``api/supplier_search.py`` runs against a ``frappe`` stub installed in ``setUpModule``. Its reads
 (the catalog, the suppliers, the groups, the evidence) are replaced per test, and the model is a

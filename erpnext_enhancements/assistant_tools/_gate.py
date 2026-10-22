@@ -124,7 +124,7 @@ EXPLICIT_READONLY = {
     # AI Model Usage row. It never allocates a PDT-/SRV- number (the block list does) and
     # never invents a vendor part number; api.item_suggest holds it to both.
     "item_naming_suggest",
-    # v1.724.0 -- the Supplier Finder: who sells an item, ranked by purchase evidence. Read-only:
+    # v1.726.0 -- the Supplier Finder: who sells an item, ranked by purchase evidence. Read-only:
     # SQL reads plus a pure rules module. With `expand` it makes one Gemini call (the AI Model
     # Usage row is its only write) that sees the search text and the Supplier Group names only.
     "supplier_search",

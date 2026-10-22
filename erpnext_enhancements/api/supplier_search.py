@@ -1,4 +1,4 @@
-"""Supplier Finder: who sells this, or has sold it to us (v1.724.0).
+"""Supplier Finder: who sells this, or has sold it to us (v1.726.0).
 
 Nik, 2026-10-22: "say I know we need a pump, but I don't remember all our pump suppliers ...
 what if we have two pump categories and one pump supplier I'm looking for is in a different
