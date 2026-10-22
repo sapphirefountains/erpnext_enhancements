@@ -696,6 +696,30 @@ class TestFixtures(unittest.TestCase):
 		status = self.records["Project-custom_schedule_status"]
 		self.assertEqual((status["options"], status["default"]), ("Draft\nPublished", "Draft"))
 
+	def test_the_planner_schedule_section_is_hidden_on_the_project_form(self):
+		# Nik, 2026-10-22: "hide the planner schedule from the form view of Projects". The whole
+		# section goes (status, published on, baseline set on) -- hiding the Section Break hides
+		# what it holds -- but the fields stay: the planner reads and writes them straight from the
+		# database, and a hidden field still takes its default on a new Project.
+		section = self.records["Project-custom_schedule_state_section"]
+		self.assertEqual(section["hidden"], 1)
+		self.assertEqual(section["label"], "Planner schedule")
+		for name in ("Project-custom_schedule_status", "Project-custom_schedule_published_on"):
+			self.assertIn(name, self.records)
+		# Only that section: the Schedule tab keeps its Gantt, and the tab itself stays.
+		for name in (
+			"Project-custom_schedule",
+			"Project-custom_gantt_chart_section",
+			"Project-custom_gantt_chart_html",
+		):
+			self.assertEqual(self.records[name]["hidden"], 0, name)
+
+	def test_no_form_script_shows_the_planner_schedule_section_again(self):
+		root = FIXTURE.parent.parent / "public" / "js"
+		for path in root.rglob("*.js"):
+			text = path.read_text(encoding="utf-8", errors="ignore")
+			self.assertNotIn("custom_schedule_state_section", text, path.name)
+
 	def test_the_anchors_exist(self):
 		setters = json.loads(PROPERTY_SETTERS.read_text(encoding="utf-8"))
 		order = {

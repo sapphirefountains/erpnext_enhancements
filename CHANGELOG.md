@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.716.2] - 2026-10-22
+
+### Changed
+- **The "Planner schedule" section is hidden on the Project form.** Nik, 2026-10-22: "hide the planner schedule
+  from the form view of Projects as well." Asked which block he meant, he answered: just the *Planner schedule*
+  section on the Schedule tab, the one holding *Schedule status* (Draft or Published), *Schedule published on* and
+  *Baseline set on*. It is now `hidden: 1` on the `Project-custom_schedule_state_section` Custom Field, which
+  hides the whole section. The Schedule tab keeps its Gantt chart, dates, rent schedule and notes, and
+  *View > Open in Project Planner* is untouched.
+  - **Hidden, not deleted.** Every field stays in the database and the fixture, so the planner still reads and
+    writes `custom_schedule_status`, `custom_schedule_published_on` and `custom_baseline_set_on` exactly as before
+    (Publish schedule, Set baseline, the Draft/Published gate on crew views), and a new Project still starts
+    `Draft`. Nothing but the form changed; no patch is needed, because fixture sync updates the existing record in
+    place and the record is a complete one (no key dropped).
+  - **On deploy:** `bench migrate` re-applies `fixtures/custom_field.json`, flipping `hidden` on that one Custom
+    Field. No Property Setter, schema or data change.
+  - **Pinned** in `tests/test_planner_publish_baseline.py` (`TestFixtures`): the section is hidden, the Gantt
+    section and its HTML field and the Schedule tab are not, and no form script un-hides it.
+
 ## [1.716.0] - 2026-10-22
 
 ### Added
