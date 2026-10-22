@@ -256,6 +256,10 @@ EXACT_SURFACE = {
         "save_guided_view",
         "remember_guided_section",
         "mark_guided_intro_seen",
+        # v1.728.0: the Bin Manager's and the Scanner Audit's reorder switch (the caller's own row; GET and
+        # POST; tested in test_inventory_screen_prefs).
+        "get_inventory_prefs",
+        "set_show_reorder",
     },
     # The Opportunity board (form kit P6). Part C (v1.675.0) added bulk_update, which changes many
     # deals at once and so must check write permission and the `modified` lock deal by deal, through
