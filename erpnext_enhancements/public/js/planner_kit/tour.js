@@ -82,6 +82,14 @@ export function create_tour(env) {
 		return el;
 	}
 
+	function modal_open() {
+		try {
+			return !!(doc.querySelector && doc.querySelector(".modal.show"));
+		} catch (e) {
+			return false;
+		}
+	}
+
 	function visible_buttons(card) {
 		return Array.from(card.querySelectorAll("button")).filter((el) => !el.disabled && !el.hidden);
 	}
@@ -195,6 +203,9 @@ export function create_tour(env) {
 
 		const on_key = (e) => {
 			if (current !== handle) return;
+			// A dialog that opened over the tour (a session-expired notice, another feature's pop-up) is above it
+			// (z-index) and owns the keyboard: its Esc and Tab are its own, and focus is not pulled out of it.
+			if (modal_open()) return;
 			const key = e.key;
 			if (key === "Escape" || key === "Esc") {
 				e.preventDefault();

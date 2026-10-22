@@ -431,6 +431,26 @@ test("The kit: Tab stays inside, a stray focus is pulled back, the arrows step, 
 	check("once it is closed the page hears keys again", page_keys, ["t"]);
 });
 
+test("The kit: a dialog that opens over the tour owns the keyboard (its Esc, its Tab)", () => {
+	const { doc, tour } = tourEnv();
+	const handle = tour.open({ steps: STEPS });
+	const modal = doc.createElement("div");
+	modal.className = "modal show";
+	const field = doc.createElement("button");
+	modal.appendChild(field);
+	doc.body.appendChild(modal);
+	field.focus();
+	let ev = key(field, "Tab");
+	check("Tab in the dialog is not pulled back into the tour", [ev.defaultPrevented, doc.activeElement === field], [false, true]);
+	ev = key(field, "Escape");
+	check("Esc in the dialog does not skip the tour behind it", [ev.defaultPrevented, tour.is_open()], [false, true]);
+	ev = key(field, "ArrowRight");
+	check("nor do the arrows step it", handle.index(), 0);
+	doc.body.removeChild(modal);
+	key(handle.element().querySelector(".pk-tour-next"), "Escape");
+	check("once the dialog is gone the tour has its keys again", tour.is_open(), false);
+});
+
 test("The kit: every word is text, and a second tour replaces the first", () => {
 	const { doc, tour } = tourEnv();
 	const hostile = '<img src=x onerror="boom()"> & "quoted"';
