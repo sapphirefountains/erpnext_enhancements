@@ -6125,12 +6125,218 @@ function fakeGoogleMaps(options) {
 	return log;
 }
 
+// ------------------------------------------------------------------ Visit Wizard: sizes and the tab strip
+
+// 1" and 3" chlorine tablets are two Items of one Size Family (v1.712.0): the server's
+// size_choices, as get_visit_bootstrap returns them.
+const TABLET_SIZES = {
+	"Chlorine Tablets": [
+		{ item: "TAB-1", item_name: 'CHLORINE TABLETS, 1"', size: '1"' },
+		{ item: "TAB-3", item_name: 'CHLORINE TABLETS, 3"', size: '3"' },
+	],
+};
+
+function withSizes(sizes) {
+	const handler = server.handlers.get_visit_bootstrap;
+	server.handlers.get_visit_bootstrap = (args) => ({ ...handler(args), sizes });
+}
+
+function tabletVisit(extra) {
+	return visit({
+		consumables: [
+			{ name: "c1", serial_no: "SN-A", item: "TAB-1", item_name: 'CHLORINE TABLETS, 1"', uom: "tablet" },
+			{ name: "c2", serial_no: "SN-A", item: "ACID", item_name: "ACID, GALLON" },
+		],
+		...(extra || {}),
+	});
+}
+
+// The feature tab strip as the browser measures it: the open tab sits at a fixed place in the
+// strip's content. Its scrollLeft is a plain number, as the page writes it.
+function fakeStrip({ width = 300, left = 0, active = null } = {}) {
+	const strip = {
+		scrollLeft: left,
+		clientWidth: width,
+		getBoundingClientRect: () => ({ left: 0 }),
+		querySelector: () =>
+			active && {
+				getBoundingClientRect: () => ({ left: active.at - strip.scrollLeft, width: active.width }),
+			},
+	};
+	return strip;
+}
+
+const keptScroll = () => JSON.parse(globalThis.window.localStorage.getItem("vz-tabs-scroll") || "null");
+
+async function visitWizardSizesSuite() {
+	console.log("Visit Wizard: tablet sizes and the tab strip");
+
+	await test("a size tap records that size's item, and only a real change is saved", async () => {
+		visitServer({ "MNT-1": tabletVisit() });
+		withSizes(TABLET_SIZES);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		assert.deepEqual(w.sizes, TABLET_SIZES);
+		const row = w.doc.consumables[0];
+		w.consumable_card(row);
+		press('data-item="TAB-1"'); // the size it already is
+		await tick(5000);
+		assert.equal(server.sent("save_visit").length, 0, "the size already recorded is not a change");
+		press('data-item="TAB-3"');
+		assert.equal(row.item, "TAB-3");
+		assert.equal(row.item_name, 'CHLORINE TABLETS, 3"', "the title names the size at once");
+		await tick(5000);
+		const saves = server.sent("save_visit");
+		assert.equal(saves.length, 1);
+		assert.deepEqual(JSON.parse(saves[0].args.patch).rows.consumables, [{ name: "c1", item: "TAB-3" }]);
+	});
+
+	await test("a size put back from the phone is named as that size, not the server's", async () => {
+		visitServer({ "MNT-1": tabletVisit() });
+		withSizes(TABLET_SIZES);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		const row = w.doc.consumables[0];
+		// What vz_reconcile does with a kept size change: `item` back on, the name untouched.
+		row.item = "TAB-3";
+		w.consumable_card(row);
+		assert.equal(row.item_name, 'CHLORINE TABLETS, 3"');
+	});
+
+	await test("a product in one size, or no sizes known, shows no size choice", async () => {
+		visitServer({ "MNT-1": tabletVisit() });
+		withSizes(TABLET_SIZES);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		const radios = () => clicks.filter((c) => c.src.includes('role="radio"')).length;
+		w.consumable_card(w.doc.consumables[1]); // ACID
+		assert.equal(radios(), 0);
+		w.sizes = {};
+		w.consumable_card(w.doc.consumables[0]);
+		assert.equal(radios(), 0, "an older server sends no sizes: the line is as it was");
+	});
+
+	await test("a submitted visit's size cannot be changed", async () => {
+		visitServer({ "MNT-1": tabletVisit({ docstatus: 1 }) });
+		withSizes(TABLET_SIZES);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		const row = w.doc.consumables[0];
+		w.consumable_card(row);
+		press('data-item="TAB-3"');
+		assert.equal(row.item, "TAB-1");
+	});
+
+	await test("the tab strip comes back where it was left, on the next step and after a reload", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		p.install();
+		await settle();
+		const open = { at: 450, width: 80 };
+		wizard().remember_tabs_scroll(fakeStrip({ left: 400, active: open }));
+		await tick(300);
+		assert.deepEqual(keptScroll(), { record: "MNT-1", left: 400 });
+		// The next step draws a new strip, scrolled to the start.
+		const next = fakeStrip({ active: open });
+		wizard().restore_tabs_scroll(next);
+		assert.equal(next.scrollLeft, 400);
+		// Reloaded mid-visit: the page forgets, the phone does not.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		p.install();
+		await settle();
+		const reloaded = fakeStrip({ active: open });
+		wizard().restore_tabs_scroll(reloaded);
+		assert.equal(reloaded.scrollLeft, 400);
+	});
+
+	await test("the open tab is brought into view, and the strip moves no further than that", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		p.install();
+		await settle();
+		const w = wizard();
+		w.remember_tabs_scroll(fakeStrip({ left: 400 }));
+		// Back to an earlier fountain, scrolled off to the left.
+		const earlier = fakeStrip({ active: { at: 100, width: 80 } });
+		w.restore_tabs_scroll(earlier);
+		assert.equal(earlier.scrollLeft, 84, "its left edge, with a little room");
+		w.remember_tabs_scroll(fakeStrip({ left: 400 }));
+		// Next onto a fountain past the right edge.
+		const later = fakeStrip({ active: { at: 900, width: 80 } });
+		w.restore_tabs_scroll(later);
+		assert.equal(later.scrollLeft, 900 + 80 - 300 + 16, "its right edge, with a little room");
+		assert.deepEqual(w._tabs_scroll, { record: "MNT-1", left: 696 }, "and that is what is remembered");
+	});
+
+	await test("a strip drawn while the page is hidden does not wipe the remembered place", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		p.install();
+		await settle();
+		const w = wizard();
+		w.remember_tabs_scroll(fakeStrip({ left: 400 }));
+		const hidden = fakeStrip({ width: 0 });
+		w.restore_tabs_scroll(hidden);
+		w.remember_tabs_scroll(hidden);
+		await tick(300);
+		const shown = fakeStrip();
+		w.restore_tabs_scroll(shown);
+		assert.equal(shown.scrollLeft, 400);
+		assert.deepEqual(keptScroll(), { record: "MNT-1", left: 400 });
+	});
+
+	await test("another visit's strip starts at the start", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit(), "MNT-2": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		p.install();
+		await settle();
+		wizard().remember_tabs_scroll(fakeStrip({ left: 400 }));
+		await tick(300);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2/readings/SN-A");
+		p.install();
+		await settle();
+		const strip = fakeStrip();
+		wizard().restore_tabs_scroll(strip);
+		assert.equal(strip.scrollLeft, 0);
+	});
+
+	await test("storage that is blocked keeps the place for the page, and breaks nothing", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-A");
+		await settle();
+		globalThis.window.localStorage = {
+			getItem() {
+				throw new Error("SecurityError");
+			},
+			setItem() {
+				throw new Error("QuotaExceededError");
+			},
+		};
+		const w = wizard();
+		w.remember_tabs_scroll(fakeStrip({ left: 250 }));
+		await tick(300);
+		const strip = fakeStrip();
+		w.restore_tabs_scroll(strip);
+		assert.equal(strip.scrollLeft, 250);
+		delete globalThis.window.localStorage;
+	});
+}
+
 // ------------------------------------------------------------------ main
 
 const which = process.argv[2];
 if (!which || which === "visit-wizard") {
 	await visitWizardSuite();
 	await visitWizardKeptSuite();
+	await visitWizardSizesSuite();
 }
 if (!which || which === "plan-a-trip") await planATripSuite();
 

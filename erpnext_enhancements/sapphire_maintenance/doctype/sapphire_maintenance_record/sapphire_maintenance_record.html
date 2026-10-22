@@ -193,7 +193,7 @@
                     {% for item in used_consumables %}
                     <tr>
                         {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ item.serial_no or _('Whole site') }}</td>{% endif %}
-                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ item.item }}</td>
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ item.item_name or item.item }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ item.qty }}</td>
                     </tr>
                     {% endfor %}

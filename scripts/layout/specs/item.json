@@ -27,6 +27,8 @@
   "custom_maintenance_billing_section",
   "custom_maintenance_billing",
   "custom_price_per_dose",
+  "custom_size_family",
+  "custom_size",
   {
    "section": "section_break_zlmj"
   },
