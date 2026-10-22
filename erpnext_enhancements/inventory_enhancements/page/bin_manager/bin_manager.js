@@ -460,7 +460,7 @@ class BinManagerPage {
 							.join(" ")
 					: "";
 				return `<tr>
-					<td class="bm-item"><div class="bm-item-name">${this.esc(r.item_name)}</div><div class="bm-item-code">${this.esc(r.item_code)}</div></td>
+					<td class="bm-item">${this.item_cell(r, perms)}</td>
 					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
 					${this.reorder ? `<td class="bm-reorder">${window.sf_reorder.cell_html((v) => this.esc(v), (t) => __(t), this.reorder.view(r.item_code), r.item_code, r.item_name)}</td>` : ""}
 					<td class="bm-why">${chips}</td>
@@ -478,6 +478,18 @@ class BinManagerPage {
 			</tr></thead>
 			<tbody>${rows}</tbody>
 		</table>`;
+	}
+
+	// The item's name and code, as one link to its Item record where the person may open Items (TASK-2026-02918).
+	// A real anchor to the Desk form, so the Desk's own link handling routes it in place with a history entry
+	// (Back returns to the bin), Ctrl/Cmd/middle click opens a new tab, and the keyboard reaches it. The href is
+	// frappe.utils.get_form_link (/desk/item/<encoded code>, never /app, which is a full page load on v16); the
+	// text is escaped like every other cell. It sits outside every [data-act], so it triggers no row action.
+	item_cell(r, perms) {
+		const text = `<span class="bm-item-name">${this.esc(r.item_name)}</span><span class="bm-item-code">${this.esc(r.item_code)}</span>`;
+		if (perms && perms.can_open_items === false) return `<div class="bm-item-plain">${text}</div>`;
+		const href = frappe.utils.get_form_link("Item", r.item_code);
+		return `<a class="bm-item-link" href="${this.esc(href)}" title="${this.esc(__("Open the Item"))}">${text}</a>`;
 	}
 
 	draw_recent() {
@@ -566,6 +578,8 @@ class BinManagerPage {
 							return;
 						}
 						d.hide();
+						// A toast as well as the notice above the list: the dialog is gone and the row has changed.
+						if (out && out.message) frappe.show_alert({ message: this.safe(out.message), indicator: "green" }, 6);
 					},
 					(err) => {
 						busy = false;
@@ -672,10 +686,27 @@ class BinManagerPage {
 		const perms = this.perms();
 		let chosen = null;
 		let make_home = this.bm.make_home_after_qty(null, row.on_hand, row.on_hand);
+		// "Make <bin> this item's bin" starts hidden, and Frappe builds a control's input only while the control
+		// is shown (ControlBaseInput.refresh_input: make_input() is inside `if (disp_status != "None")`, and a
+		// hidden df is "None"). So its $input does not exist when the dialog is built, and listening on it then
+		// threw, which stopped the dialog from ever opening: the Move button did nothing (TASK-2026-02919,
+		// Parker's report, on every release since v1.693.0). The listener is attached the first time the box
+		// is shown, once its input exists. A programmatic set_value does not fire a DOM `change`, so only the
+		// person's own tick counts as touching it.
+		let home_bound = false;
+		const bind_home = (d) => {
+			const input = d.fields_dict.make_home.$input;
+			if (home_bound || !input) return;
+			home_bound = true;
+			input.on("change", () => {
+				make_home = this.bm.make_home_touched(input.prop("checked"));
+			});
+		};
 		const sync_home = (d) => {
 			const offered = this.bm.make_home_offered(perms, chosen && chosen.warehouse);
 			d.set_df_property("make_home", "hidden", offered ? 0 : 1);
 			if (!offered) return;
+			bind_home(d);
 			d.set_df_property("make_home", "label", __("Make {0} this item's bin", [this.safe(chosen.warehouse_name)]));
 			if (!!d.get_value("make_home") !== make_home.value) d.set_value("make_home", make_home.value ? 1 : 0);
 		};
@@ -749,9 +780,6 @@ class BinManagerPage {
 				d.fields_dict.qty.$input.on("input change", () => {
 					make_home = this.bm.make_home_after_qty(make_home, d.fields_dict.qty.$input.val(), row.on_hand);
 					sync_home(d);
-				});
-				d.fields_dict.make_home.$input.on("change", () => {
-					make_home = this.bm.make_home_touched(d.fields_dict.make_home.$input.prop("checked"));
 				});
 				draw_dest(d);
 				sync_home(d);

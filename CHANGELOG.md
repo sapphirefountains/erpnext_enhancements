@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.727.2] - 2026-10-22
+
+### Fixed
+- **The Bin Manager's Move button opens its dialog again** (TASK-2026-02919, Parker's report ER-2026-1323788:
+  "in the bin manager clicking the move button on an item doesn't have any function", release 1.727.1). The
+  task text guessed a missing click handler; the handler was there. `move_dialog` listened for changes on the
+  "Make <bin> this item's bin" box's `$input` while building the dialog, but that box starts hidden and Frappe
+  builds a control's input only while the control is shown (`ControlBaseInput.refresh_input` calls
+  `make_input()` inside `if (disp_status != "None")`, and a hidden field's status is "None"). So `$input` was
+  `undefined`, the page threw a `TypeError` before `d.show()`, and the click looked dead. It has been so since
+  the Bin Manager was built (v1.693.0, `9275f8b2`); no recent change caused it. It never showed in the tests
+  because the dialog stand-in gave every field an input. The listener is now attached the first time the box
+  is shown. Move was already the existing `bin_assignments.move_to` (the one Stock Scan uses) with its
+  checks: a move of 0 or more than is here is refused in words, the picker never lists the bin being managed,
+  the quantity starts at everything here, the button is off while the save is out, and a tap after a lost reply
+  is the same save.
+  - A move, a send to the boneyard and a count now **change the row on screen at once** (before the list is
+    read again, which settles it) and show a **green toast** as well as the notice above the list.
+  - `scripts/test_bin_manager.mjs`: the dialog stand-in builds no input for a hidden field, as Frappe does, so
+    the Move tests throw on the old code; new tests walk the whole move.
+
+### Added
+- **An item's name in the Bin Manager links to its Item record** (TASK-2026-02918). A real anchor to the Desk
+  form (`/desk/item/<code>`, from `frappe.utils.get_form_link`, never `/app`, which is a full page load on
+  v16): a click goes in place with a history entry so Back returns to the bin, Ctrl/Cmd or middle click opens
+  a tab, and the keyboard reaches it. The code is URL-encoded and the text escaped. It sits outside every row
+  action. Shown only to people who may read Items (`manager_boot.can_open_items`).
+
 ## [1.727.1] - 2026-10-22
 
 ### Fixed

@@ -228,9 +228,24 @@ export function permissions(boot) {
 		can_count: !!b.can_count,
 		can_move: !!b.can_move,
 		can_create_items: !!b.can_create_items,
+		// Whether an item's name links to its Item record: Item read. A boot that does not say is "yes".
+		can_open_items: b.can_open_items !== false,
 		boneyard: b.boneyard_warehouse || null,
 		boneyard_name: b.boneyard_name || b.boneyard_warehouse || null,
 	};
+}
+
+// What a save has already done to the row on screen, before the list is read again (the read follows and is
+// the truth): a move or a boneyard trip takes the quantity off, a count sets it. Mutates and returns the row
+// the page holds, so the list's identity (and with it the reorder boxes' read) does not change.
+export function apply_local(kind, row, values) {
+	if (!row) return row;
+	const qty = number((values || {}).qty);
+	if (!Number.isFinite(qty)) return row;
+	const on_hand = Number(row.on_hand) || 0;
+	if (kind === "move" || kind === "boneyard") row.on_hand = Math.max(on_hand - qty, 0);
+	else if (kind === "count") row.on_hand = Math.max(qty, 0);
+	return row;
 }
 
 // The buttons a row shows, in order. `warehouse` is the bin on screen.

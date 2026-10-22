@@ -964,6 +964,8 @@ def manager_boot():
 	* ``can_count`` -- Stock Reconciliation create **and** submit (:func:`set_count` posts one as
 	  the user); ``can_move`` -- Stock Entry create and submit (a move posts a transfer).
 	* ``can_create_items`` -- Item create, which the quick Item is inserted with.
+	* ``can_open_items`` -- Item read: the page links an item's name to its Item record only for those who
+	  can open it.
 	* ``boneyard_warehouse`` / ``boneyard_name`` -- from Inventory Scanner Settings, read here so
 	  the page never reads a Settings Single from the browser (a non-System-Manager would be
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
@@ -1004,6 +1006,8 @@ def manager_boot():
 			frappe.has_permission("Stock Entry", "create") and frappe.has_permission("Stock Entry", "submit")
 		),
 		"can_create_items": bool(frappe.has_permission("Item", "create")),
+		# Whether an item's name links to its Item record (TASK-2026-02918).
+		"can_open_items": bool(frappe.has_permission("Item", "read")),
 		"boneyard_warehouse": boneyard,
 		"boneyard_name": (boneyard_row.warehouse_name or boneyard_row.name) if boneyard_row else None,
 		"undo_window_minutes": cint(settings.get("undo_window_minutes")),

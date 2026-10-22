@@ -141,7 +141,7 @@ function makeServer(options) {
 				from_warehouse: args.from_warehouse || null,
 				can_undo: name !== "undo",
 			};
-			return { log, message: `${name} done`, repeated: false };
+			return { log, message: `${name} done`, repeated: !!server.repeat };
 		});
 	};
 	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels/.test(c.method));
@@ -590,7 +590,7 @@ function makeJQuery(registry) {
 function loadPage(options) {
 	const server = makeServer(options);
 	const world = makeWorld(server);
-	const registry = { dialogs: [], requires: [] };
+	const registry = { dialogs: [], requires: [], alerts: [] };
 	const $ = makeJQuery(registry);
 	const pages = { "bin-manager": {} };
 	class Dialog {
@@ -602,7 +602,13 @@ function loadPage(options) {
 			this.shown = false;
 			this.btn = $("<button>");
 			this.fields_dict = {};
-			for (const f of opts.fields || []) this.fields_dict[f.fieldname] = { $wrapper: $("<div>"), $input: $("<input>") };
+			// Frappe v16 builds a control's input only while the control is shown (ControlBaseInput.refresh_input:
+			// make_input() sits inside `if (disp_status != "None")`, and df.hidden is "None"): a field declared
+			// hidden has NO $input until set_df_property(name, "hidden", 0) shows it. A page that attaches a
+			// listener to a hidden field's $input at build time throws, and the dialog is never shown.
+			for (const f of opts.fields || []) {
+				this.fields_dict[f.fieldname] = { $wrapper: $("<div>"), $input: f.hidden ? undefined : $("<input>") };
+			}
 			registry.dialogs.push(this);
 		}
 		show() {
@@ -638,6 +644,7 @@ function loadPage(options) {
 		}
 		set_df_property(f, k, v) {
 			this.props[`${f}.${k}`] = v;
+			if (k === "hidden" && !v && this.fields_dict[f] && !this.fields_dict[f].$input) this.fields_dict[f].$input = $("<input>");
 		}
 		get_primary_btn() {
 			return this.btn;
@@ -666,10 +673,13 @@ function loadPage(options) {
 		},
 		// frappe.utils.escape_html, as v16 writes it: the five characters, & first.
 		utils: {
+			// v16: `/desk/<slug>/<encoded name>` (a /desk path is routed in place by the Desk's link handler).
+			get_form_link: (doctype, name) => `/desk/${String(doctype).toLowerCase().replace(/ /g, "-")}/${encodeURIComponent(name)}`,
 			escape_html: (s) =>
 				String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
 		},
 		datetime: { comment_when: () => "just now" },
+		show_alert: (opts, seconds) => registry.alerts.push(Object.assign({}, opts, { seconds })),
 	};
 	const esc = (v) =>
 		v === null || v === undefined
@@ -871,6 +881,153 @@ test("the real page: a count that needs no cost never asks, and a count to zero 
 });
 
 const page_notice = (registry) => (registry.found && registry.found[".bm-notice"] ? registry.found[".bm-notice"][0].innerHTML || "" : "");
+
+// TASK-2026-02919 (Parker: "in the bin manager clicking the move button on an item doesn't have any function").
+// The button was wired. move_dialog listened on the "Make <bin> this item's bin" box's $input while building the
+// dialog, and Frappe builds no input for a field declared hidden (it is made only when the field is shown), so
+// the page threw before d.show() and the button did nothing. This stand-in builds no $input for a hidden field,
+// as Frappe does (see the Dialog class above): on the old code every test below throws at that line.
+const pickDestination = (d, warehouse) => {
+	const pick = d.fields_dict.dest_list.$wrapper.__state.handlers.find((h) => h.selector === "[data-bm-dest]");
+	pick.fn({ currentTarget: { getAttribute: () => warehouse } });
+};
+
+test("the real page: Move opens, picks a bin that is not this one, and moves through the existing endpoint", async () => {
+	const { server, world, registry, click, page } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const entries = world.entries.length;
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	check("the dialog opened (it threw before it was shown)", [!!d, d && d.shown], [true, true]);
+	check("a dialog is not a history entry", world.entries.length, entries);
+	check("the box that starts hidden has no input yet, as in Frappe", d.fields_dict.make_home.$input, undefined);
+	check("the quantity starts at everything here", d.values.qty, 4);
+	const listed = d.fields_dict.dest_list.$wrapper.__state.html;
+	check("the picker lists other bins and never the source bin", [listed.includes(BIN_B), listed.includes(`data-bm-dest="${BIN_A}"`)], [true, false]);
+
+	// no destination yet: said in words, nothing sent
+	const before = server.writes().length;
+	await d.click_primary();
+	await settle();
+	check("no bin picked: refused in words, nothing sent", [/Pick the bin to move it to\./.test(msgOf(d)), server.writes().length], [true, before]);
+
+	pickDestination(d, BIN_B);
+	check("a bin is picked: the make-home box is shown and its input exists", [!!d.fields_dict.make_home.$input, d.props["make_home.hidden"]], [true, 0]);
+	check("its change listener is bound, once", d.fields_dict.make_home.$input.__state.handlers.filter((h) => h.evt === "change").length, 1);
+	check("everything moves, so it is ticked by default", d.values.make_home, 1);
+	pickDestination(d, BIN_B);
+	check("picking again does not bind it twice", d.fields_dict.make_home.$input.__state.handlers.filter((h) => h.evt === "change").length, 1);
+
+	// more than is here, and zero: refused in words (the server checks again)
+	for (const [qty, words] of [[5, /Only 4 Unit is here\./], [0, /Enter how many to move, more than 0\./]]) {
+		d.values.qty = qty;
+		await d.click_primary();
+		await settle();
+		check(`a move of ${qty} is refused in words, nothing sent`, [words.test(msgOf(d)), server.writes().length], [true, before]);
+	}
+
+	// the move: the endpoint Stock Scan uses, the row changes at once (before the list is read again), a toast
+	let release;
+	server.delay.set("get_location", new Promise((resolve) => (release = resolve)));
+	d.values.qty = 4;
+	await d.click_primary();
+	await settle();
+	const move = server.writes().slice(-1)[0];
+	check("move_to is called with the item, both bins, the quantity and make_home", [move.method.endsWith("bin_assignments.move_to"), move.args.item_code, move.args.from_warehouse, move.args.to_warehouse, move.args.qty, move.args.make_home], [true, "PDT-0001", BIN_A, BIN_B, 4, 1]);
+	check("with a reference of its own", /^bm-/.test(move.args.client_ref), true);
+	check("the dialog closed and a green toast says what happened", [d.shown, registry.alerts.length, registry.alerts[0] && registry.alerts[0].indicator, /move_to done/.test((registry.alerts[0] || {}).message || "")], [false, 1, "green", true]);
+	check("the row shows 0 on hand at once, before the list has been read again", /<td class="bm-qty">0 Unit<\/td>/.test(registry.found[".bm-items"][0].innerHTML), true);
+	release();
+	await settle();
+	check("then the list is read again", server.calls.filter((c) => c.method.endsWith("get_location")).length >= 2, true);
+	check("no history entry for any of it", world.entries.length, entries);
+	check("no page error", page.bin_manager.ctl !== null, true);
+});
+
+test("the real page: a repeated save (already made) does not take the quantity off the row a second time", async () => {
+	const { server, world, registry, click } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	pickDestination(d, BIN_B);
+	d.values.qty = 1;
+	let release;
+	server.delay.set("get_location", new Promise((resolve) => (release = resolve)));
+	server.repeat = true;
+	await d.click_primary();
+	await settle();
+	check("a repeated answer leaves the row as it was until the list is read", /<td class="bm-qty">4 Unit<\/td>/.test(registry.found[".bm-items"][0].innerHTML), true);
+	release();
+	await settle();
+});
+
+test("the real page: a move posts once, the button is off while it is out, and a retry after a lost reply is the same save", async () => {
+	const { server, world, registry, click } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	pickDestination(d, BIN_B);
+	d.values.qty = 2;
+	// the reply never comes
+	server.fail.set("move_to", [{ status: 0, message: "Could not reach the server." }]);
+	await d.click_primary();
+	await settle();
+	const first = server.writes().slice(-1)[0];
+	check("lost reply: the dialog stays open with the sentence, the button is back", [d.shown, /Could not reach/.test(msgOf(d)), d.get_primary_btn().__state.props.disabled], [true, true, false]);
+	await d.click_primary();
+	await settle();
+	const second = server.writes().slice(-1)[0];
+	check("the tap again is the same save: same reference, so the server returns the first", [server.writes().length, second.args.client_ref], [2, first.args.client_ref]);
+
+	// while a save is out the button is disabled and a second tap is not a second save
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const e = registry.dialogs.pop();
+	pickDestination(e, BIN_B);
+	e.values.qty = 1;
+	let release;
+	server.delay.set("move_to", new Promise((resolve) => (release = resolve)));
+	const sentBefore = server.writes().length;
+	const tapped = e.click_primary();
+	await settle();
+	check("posting: the button is disabled", e.get_primary_btn().__state.props.disabled, true);
+	await e.click_primary();
+	check("a second tap while it is out sends nothing", server.writes().length, sentBefore + 1);
+	release();
+	await tapped;
+	await settle();
+	check("one move was sent", server.writes().length, sentBefore + 1);
+});
+
+test("the real page: an item's name links to its Item record, escaped, outside every row action", async () => {
+	const hostile = 'X"><img src=x onerror=1>&';
+	const { registry, click, world } = loadPage({
+		items: [
+			{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", on_hand: 4, on_order: 0, assigned: true, is_default: false, undecided: false },
+			{ item_code: hostile, item_name: "<b>Bold</b> & Co", stock_uom: "Unit", on_hand: 1, on_order: 0, assigned: true, is_default: false, undecided: false },
+		],
+	});
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("a real anchor to the Desk form (never /app)", [html.includes('<a class="bm-item-link" href="/desk/item/PDT-0001"'), /href="\/app\//.test(html)], [true, false]);
+	check("the code is URL-encoded in the address", html.includes(`href="/desk/item/${encodeURIComponent(hostile).replace(/&/g, "&amp;")}"`), true);
+	check("and the text is escaped: no raw tag, no raw quote", [/<img|<b>Bold/.test(html), html.includes("&lt;b&gt;Bold&lt;/b&gt; &amp; Co")], [false, true]);
+	check("the link is not a row action (no data-act on it)", /<a class="bm-item-link"[^>]*data-act/.test(html), false);
+	check("it can be reached by keyboard (a plain anchor, no tabindex)", /<a class="bm-item-link"[^>]*tabindex/.test(html), false);
+	check("it says what it opens", /<a class="bm-item-link"[^>]*title="Open the Item"/.test(html), true);
+	void click;
+});
+
+test("the real page: without Item read there is no link, only the text", async () => {
+	const { registry, world } = loadPage({ boot: { ...BOOT, can_open_items: false } });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("no anchor for an item, and the name is still shown", [html.includes("bm-item-link"), /PUMP, 1 HP/.test(html)], [false, true]);
+});
 
 test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
 	const { server, world, registry, page, click } = loadPage({ reorder: true });
