@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.717.0] - 2026-10-22
+
+### Added
+- **A sidebar you hide stays hidden on every page until you show it again** (Nik, 2026-10-22: "if they toggle
+  the sidebar once and then hide the menu picker on the left side, it should globally do that until they change
+  it back"). Decided with him the same day: the left Desk sidebar is "the menu picker"; two settings, one for the
+  left navigation and one for the record sidebar; kept **in this browser only** (localStorage), not on the user's
+  record; a phone ignores both. New `global_enhancements/sidebar_memory.js` (global bundle) and a block at the end of
+  `desk_enhancements.bundle.css`.
+  - **The record sidebar and the Training rail.** frappe v16.50.0 has no in-page toggle for the right-hand
+    sidebar of a form at all, only the Desk Settings checkbox, which is server-side and all-or-nothing. Every
+    form, and every Training page, now has a small panel icon in the page head (*Hide sidebar* / *Show sidebar*).
+    One click saves the choice and sets `ee-page-sidebar-hidden` on `<html>`; the stylesheet hides
+    `.layout-side-section.right` (the form's) and `.tn-host .layout-side-section` (the Training rail) under it. The
+    class is set when the bundle evaluates, before the desk draws a page, so a sidebar you hid is never painted and
+    then removed, and every page opened afterwards follows it. A new, unsaved record has no sidebar, so the button
+    is out of sight there until it is saved. The Training rail tells the module it mounted
+    (`ee-page-sidebar-ready`, one line in `desk_nav.js`) so the button is there on its first show.
+  - **Only from 992px up.** Below that the form's sidebar is frappe's responsive layout and the Training rail is a
+    stacked "Training menu" disclosure; hiding either would leave a phone with no way back, so the stylesheet
+    applies nothing there and the button is out of sight.
+  - **The left Desk sidebar, across tabs.** frappe already saves this one (`desk-sidebar-collapsed`, written by
+    `Sidebar.close()`/`open()`) and re-reads it on every redraw of the sidebar, so a route change needs nothing and
+    this file deliberately does not re-apply it: a second writer would fight frappe, which forces an empty
+    workspace's sidebar open on purpose. What frappe does not do is notice another tab changing the key; the module
+    listens for the `storage` event and folds or opens the live sidebar to match, on a desktop only (below 768px
+    the sidebar is a drawer that neither reads nor writes the key).
+  - Storage that throws (a private window, blocked site data) is caught; the toggle still works for the life of
+    the page. The toggle is one click, a page-head button, and changes nothing about Back/Forward: no route is
+    touched.
+
+### Removed
+- **`enforce_sidebar_expanded()` in `erpnext_enhancements.js`**, an old script that removed `body.sidebar-collapsed`
+  on every desktop class change and window resize and zeroed `frappe.boot.user.sidebar_collapsed`, so that a
+  person's collapse could never hold. Nothing in frappe v16.50.0 styles on that class, so it did little visible
+  harm, but it was a second opinion fighting the desk's own state on every resize, and it contradicted the feature
+  above. `tests/test_sidebar_memory.py` fails the build if it returns.
+
+### Tests
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (38 checks:
+  the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
+  get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
+  that throws; a route change never touches the left sidebar). `tests/test_sidebar_memory.py` holds the seams it
+  cannot see (the stylesheet's selectors are the ones the script's class names produce, nothing hides below 992px,
+  the always-expand script stays deleted). Both run in CI.
+
 ## [1.716.1] - 2026-10-22
 
 ### Fixed
