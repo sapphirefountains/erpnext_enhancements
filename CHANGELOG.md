@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above. `tests/test_sidebar_memory.py` fails the build if it returns.
 
 ### Tests
-- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (38 checks:
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (39 checks:
   the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
   get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
   that throws; a route change never touches the left sidebar). `tests/test_sidebar_memory.py` holds the seams it
