@@ -340,6 +340,28 @@ change made on the page is undone at the next migrate. Neither entry point impor
 `assistant_tools` (tools are resolved from the hook by dotted path, as FAC does), both are
 inert without FAC, and neither can raise.
 
+## FAC 3.0.0's `list_documents` count (`fac_list_documents_count.py`, v1.727.1)
+
+FAC 3.0.0's `list_documents` counts its rows with `fields=["count(name) as count"]`, which
+Frappe 16 refuses, so every call wrote an Error Log row ("list_documents: count query failed for
+<DocType>") and returned `total_count: null`. Fixed upstream in **FAC v3.1.0**. Upgrading FAC is
+the real fix, and this module stops working on its own when that happens.
+
+FAC 3.0.0 cannot override a core tool: a hook tool with the same name is listed but never run,
+because `ToolRegistry.get_tool` prefers plugin tools. So `monkeypatches.ensure_applied` swaps the
+`frappe` global inside that one FAC module for a stand-in. The stand-in passes everything through
+except that count call, which it answers the way the Desk list view counts: the same permission-checked
+`get_list`, selecting `name`, wrapped in `COUNT(*)`. Like the Desk, it gives the count one second on
+MariaDB; past that, `total_count` is `null`, as it was before the fix. A virtual DocType's count goes
+to its controller unchanged. Every call now runs that real count, which costs nothing at Sapphire's
+size. It does nothing unless the module's source hashes to the pinned 3.0.0 file and its `frappe` is
+still the real module. It never raises. When it stands down, it writes the reason, and only the
+reason, to the app log once per process: at WARNING for "source-mismatch" (an upgraded bench), at
+ERROR otherwise.
+
+**Delete this module, and its `_patch_fac_list_documents_count` entry in `monkeypatches.py`, once
+`frappe_assistant_core` is upgraded past 3.0.0.** A Task on PRJ-00580 tracks the removal.
+
 ## Relationship to Triton
 
 Triton confirmation-gates writes in its own chat UI (`PendingAction` + `IntegrationAuditLog`);

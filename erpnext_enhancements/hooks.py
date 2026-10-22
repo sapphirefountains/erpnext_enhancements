@@ -3488,7 +3488,7 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently three:
+# monkeypatches.py for what/why — currently four:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
@@ -3499,7 +3499,12 @@ assistant_skills = [
 #   3. templates, scripts and print formats never read knowledge base drafts
 #      (2026-10-01): their globals read tables with no permission check. Wraps
 #      Database.execute_query and File.get_content, and keeps drafts out of the
-#      document cache; see knowledge_base/template_guard.py.
+#      document cache; see knowledge_base/template_guard.py;
+#   4. the AI connector's list_documents counts its results in a form Frappe 16
+#      accepts (v1.727.1). FAC 3.0.0's string `count(name)` logged an Error Log
+#      row on every call. Inert unless FAC's module is byte-for-byte 3.0.0's, so
+#      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
+#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py.
 # Also applied from before_request and before_job (monkeypatches.ensure_applied):
 # hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches

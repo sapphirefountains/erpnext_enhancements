@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.727.1] - 2026-10-22
+
+### Fixed
+- **The AI connector's `list_documents` no longer writes an Error Log row on every call, and its `total_count` is
+  filled in again.** Nik, 2026-10-22: "go ahead and fix this." Every `list_documents` call from Triton or any other
+  MCP client wrote one Error Log row titled "list_documents: count query failed for <DocType>". That day the rows
+  came for Task, Customer, Project, Sales Invoice and Sales Order. The documents still came back. Only the total was
+  lost: `total_count` was `null`, and `has_more` was a guess from the page size.
+  - **The upstream bug.** Frappe Assistant Core 3.0.0, the connector app on prod, counts the rows with
+    `frappe.get_list(doctype, filters=..., fields=["count(name) as count"], limit=1, ignore_permissions=False)`.
+    Frappe 16 refuses a SQL function written as a string field ("SQL functions are not allowed as strings in
+    SELECT", `frappe/database/query.py` `_validate_select_field`). This is the same rule the CLAUDE.md gotcha
+    describes for this app's own code. FAC catches the error and logs it.
+  - **Fixed upstream in FAC v3.1.0** (commit `2b834b0`, 2026-09-24). Prod still runs 3.0.0
+    (`tabInstalled Application`; the traceback's line 389 is 3.0.0's count call). Prod held 128 of these rows
+    between 2026-09-23 and 2026-10-22. **Upgrading FAC is the real fix.** This patch holds the line until then and
+    switches itself off when FAC changes. **Once FAC is upgraded, delete `ai_governance/fac_list_documents_count.py`
+    and its entry in `monkeypatches._PATCHES`.** From then on it is dead code that logs "source-mismatch" once per
+    worker. A Task on PRJ-00580 tracks the removal.
+  - **Why a monkeypatch, not a replacement tool.** FAC 3.0.0 has no supported way to override a core tool. An app
+    tool named `list_documents` would be *listed* in place of FAC's, because `ToolRegistry.get_available_tools`
+    lets hook tools overwrite plugin tools. But it would never *run*, because `ToolRegistry.get_tool` checks plugin
+    tools first. Clients would read our schema and execute FAC's code.
+  - **What it does** (`ai_governance/fac_list_documents_count.py`). It replaces the module global `frappe` inside
+    FAC's `list_documents` module, and nowhere else, with a stand-in. The stand-in passes every attribute read and
+    write through to the real `frappe`, except one call: `get_list` with exactly `fields=["count(name) as count"]`.
+    That call is answered the way Frappe 16's Desk list view counts (`frappe.desk.reportview.get_count`): the same
+    `get_list` query, with the caller's own `filters` and `ignore_permissions=False`, selecting only `name`, wrapped
+    in `SELECT COUNT(*) FROM (...)`. DocPerms, user permissions and `permission_query_conditions` therefore apply
+    exactly as they do to the listed rows. The answer comes back as `[{"count": n}]`, the shape FAC reads, so the
+    tool's output is unchanged apart from `total_count`.
+  - **Every call now runs a real count.** Under 3.0.0 the count failed before it reached the database. Now each
+    `list_documents` call runs one more query: `COUNT(*)` over the permission-filtered rows. At Sapphire's data size
+    that costs nothing. As on the Desk when a page size is given, the count gets one second on MariaDB
+    (`SET STATEMENT max_statement_time=1 FOR`). Past that, `total_count` comes back `null`, which is what 3.0.0
+    returned anyway, and nothing is logged. Any other count error still reaches FAC's own handler and its Error Log
+    row, as before.
+  - **Virtual DocTypes are left alone.** A virtual DocType has no table, and its controller ignores `run=0`, so
+    there is nothing to count. `frappe.model.utils.is_virtual_doctype` is checked first, and that count call goes to
+    the controller exactly as FAC wrote it, once.
+  - **Why the Desk's form and not the dict form `{"COUNT": "name", "as": "count"}`.** FAC itself went back and forth.
+    It shipped the dict form, then replaced it in August 2026 with the string form because the dict form raised
+    "Unknown column 'table.scalar'" on MariaDB when the filters included `docstatus`. That is every submittable
+    DocType, and `list_documents` adds `docstatus=1` to those by default. In September it went back to the dict
+    form, with the string form as a fallback. Whether 16.50 still has that problem could not be checked without
+    running code on prod. The Desk's count runs on every list view on prod every day, `docstatus` filters included.
+  - **When it does nothing.** It never raises, and it leaves FAC alone unless every check passes:
+    - FAC must be importable;
+    - the source of FAC's `list_documents` module must be byte-for-byte 3.0.0's. The sha256 is pinned, and
+      checked against the v3.0.0 tag: v3.1.0 and v3.2.1 do not match. So an upgrade, a hotfix or a local edit all
+      switch it off;
+    - the module's `frappe` must still be the real module.
+
+    The first time it stands down in a process, it writes the reason, and only the reason, to the app's file
+    log. "source-mismatch" is logged at WARNING: it is the expected state on every worker of an upgraded bench,
+    and frappe's file logger drops WARNING on a production site. "failed" and "foreign-frappe" are logged at
+    ERROR, because they mean something unexpected happened to code we read. Nothing here logs arguments, filters
+    or results. A mismatch on prod *before* an upgrade is therefore silent, so check for it after deploy: the
+    count's Error Log rows should stop. FAC is imported by dotted path only after `find_spec` finds it, so sites
+    without FAC never touch it, and the FAC-optional invariant test still holds.
+  - **Applied in every web request and background job.** `monkeypatches.ensure_applied` already runs from
+    `before_request` and `before_job`, because v16 serves hooks from the redis cache, so the bottom of `hooks.py`
+    does not run in every worker. MCP calls are ordinary web requests, so the patch is in place before FAC first
+    imports the module in a fresh worker.
+  - **Not changed.** Existing Error Log rows stay. Nik can clear them. No data is written. The write gate,
+    `_safe_execute` and every other FAC tool are untouched.
+  - Tests: `tests/test_fac_list_documents_count.py` (bench-free, its own CI step). Its `frappe` stub validates
+    every string field with Frappe 16.50's own `_validate_select_field` rule, whose two regexes
+    (`FUNCTION_CALL_PATTERN`, `ALLOWED_FIELD_PATTERN`) are copied verbatim from the v16.50.0 tag. The FAC side is a
+    throwaway `frappe_assistant_core` package whose module makes the same two calls (written for the test; FAC's
+    AGPL source is not copied in). The tests check that:
+    - unpatched, the stub reproduces the bug;
+    - patched, every field sent passes `ALLOWED_FIELD_PATTERN`, including for DocType names with spaces and
+      hyphens;
+    - the count keeps the caller's filters and permission flag, drops `limit` and runs under the one-second cap;
+    - a timeout gives `null` with no Error Log, and other errors still reach FAC's handler;
+    - a virtual DocType's call goes to its controller once, unchanged;
+    - the listing call passes through untouched;
+    - the guard leaves FAC's module untouched on a hash mismatch, without FAC, and when another `frappe` is
+      present, logs at the intended levels and never raises.
+
 ## [1.727.0] - 2026-10-22
 
 ### Added
