@@ -28,8 +28,9 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`, `start_matching_export`, `get_matching_export_status`, `preview_matching_import`, `apply_matching_import` |
 | `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `confirm_many`, `merge_plan`, `similar_records`, `latest_payloads` |
+| `core/matching_excel.py` | The Record Matching page's Excel round trip (v1.721.0): the export workbook (background job), the import preview and the re-checked apply -- see [Excel round trip](#excel-round-trip-v17210) | `start_export`, `run_export`, `export_status`, `build_workbook`, `parse_workbook`, `classify_row`, `classify`, `preview`, `apply`, `row_version` |
 | `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`, `download_attachable`), `QuickBooksAPIError`, `QuickBooksDownloadTicketError` |
 | `core/attachments.py` | Mirror QBO `Attachable` files onto their ERPNext docs as private Files (WI-071); self-protecting daily pass, fresh-ticket batching | `sync_attachments`, `reset_attachable`, `DOWNLOAD_URI_BATCH`, `MAX_ATTEMPTS`, `STALE_ATTEMPT_SECONDS`, `SAVE_TIMEOUT_SECONDS` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
@@ -45,7 +46,7 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
 | `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh; the Record Matching button routes to the page below |
-| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `confirm_matches` / `sync_entity`; tick boxes, 50–500 rows per page |
+| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `confirm_matches` / `sync_entity`; tick boxes, 50–500 rows per page; Export to Excel / Import from Excel |
 
 ## Doctypes
 
@@ -132,6 +133,34 @@ rows, or the whole page, one request after another).
 (`latest_payloads`), never one per row: `tabQuickBooks Raw Payload` holds ~433k rows and until
 v1.474.0 had no index on `qbo_id` (it does now — `search_index` on the doctype). Candidate
 lookups and title lookups are likewise batched per doctype.
+
+## Excel round trip (v1.721.0)
+
+The page's **Export to Excel** and **Import from Excel** buttons let someone work the queue in a
+spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
+`core/matching_excel.py`; endpoints `start_matching_export`, `get_matching_export_status`,
+`preview_matching_import`, `apply_matching_import`, behind the same operator gate.
+
+- **Export** is a background job (`queue="long"`); the page polls the token. The workbook has an
+  Instructions sheet, a sheet per master type with the Masters tab's rows (built by paging
+  `master_queue`, so they are the page's rows), and a Parked transactions sheet. Yellow columns:
+  **Decision** (Link / Keep / Retry, the page's three; blank = leave it), **Link to** (a per-row
+  dropdown of the row's suggestion IDs, pre-filled with the best), **Fill blank fields from QBO**,
+  **Notes**. Hidden: Row ID, Row version, `modified`, the exported link and status, the suggestion
+  IDs the dropdown reads. Unmapped payloads are not exported: they have no Row ID to come back by.
+- **Import** reads the uploaded private File, finds columns by header text (Meg may sort, reorder
+  and add sheets), and previews each row as *change*, *unchanged* (already done), *stale* (changed
+  in ERPNext since the export) or *invalid*. **Nothing is written until Apply**, which sends
+  `APPLY_CHUNK` rows per request; each row is classified again and only a row still a *change*
+  runs, through `matching.decide` / `matching.confirm` / `sync.sync_entity`.
+- **Idempotent.** "Already done" is checked before "stale", so a second import of the same file
+  finds every row unchanged; a note is already saved when an existing Comment on the mapping
+  contains its text.
+- **The stale check is a fingerprint** (`row_version`) of the link, `match_status`,
+  `conflict_status` and `reviewed_on` -- not `modified`, which moves on every CDC touch. A moved
+  `modified` is a warning only.
+- **Two rows linking one ERPNext record** is a warning on both and both apply (Nik, 2026-10-22);
+  notes are saved as a Comment on the Sync Mapping row.
 
 ## Scheduler / webhook entry points
 

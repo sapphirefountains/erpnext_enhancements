@@ -540,6 +540,8 @@ def _master_row(row, payload, titles, settings) -> dict:
 		"suggestions": suggestions,
 		"reviewed_by": row.reviewed_by,
 		"reviewed_on": str(row.reviewed_on) if row.reviewed_on else None,
+		# The Excel export's staleness check reads it (matching_excel.row_version).
+		"modified": str(row.modified) if getattr(row, "modified", None) else None,
 		"unmapped": False,
 	}
 
@@ -590,8 +592,8 @@ def master_queue(
 	# The clause text is assembled from literals in _master_where; every value is bound.
 	rows = frappe.db.sql(
 		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
-		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on"
-		" from `tabQuickBooks Sync Mapping` where "
+		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on,"
+		" modified from `tabQuickBooks Sync Mapping` where "
 		+ where
 		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
 		+ " limit %(start)s, %(page_length)s",
@@ -707,6 +709,7 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 			"match_rule",
 			"owned_fields",
 			"last_synced_at",
+			"modified",
 		],
 		order_by="qbo_entity_type asc, last_synced_at desc, qbo_id asc",
 		limit_start=start,
@@ -742,6 +745,7 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 				"issues": parse_review_notes(row.owned_fields)["issues"],
 				"match_rule": row.match_rule,
 				"last_synced_at": str(row.last_synced_at) if row.last_synced_at else None,
+				"modified": str(row.modified) if getattr(row, "modified", None) else None,
 			}
 		)
 	return {

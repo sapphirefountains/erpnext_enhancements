@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.721.0] - 2026-10-22
+
+### Added
+- **The QuickBooks Record Matching page exports to Excel and imports the worked file back.** Nik, 2026-10-22: "I
+  need an excel export of the QuickBooks Record Matching screens so Meg can work on them in Excel and later I can
+  take her work and reimport it into ERPNext". Two buttons on the page (`core/matching_excel.py`, four endpoints
+  in `core/api.py`, all behind the page's own System Manager / Accounts Manager gate):
+  - **Export to Excel** asks which rows (the page's status filters, *Needs decision* by default, less *Unmapped
+    payloads*, which have no mapping row to come back to), which record types, and whether to add the parked
+    transactions. It builds one workbook: an Instructions sheet in plain words, a sheet per master type with the
+    same rows, facts and up to five suggestions the Masters tab shows, and a Parked transactions sheet. Meg fills
+    yellow columns: **Decision** (a dropdown of the page's own Link / Keep / Retry; blank leaves the row alone),
+    **Link to** (a per-row dropdown of that row's suggestion IDs, pre-filled with the best one as the page's picker
+    is; any other ID may be typed), **Fill blank fields from QBO** and **Notes**. Hidden columns carry the mapping's
+    Row ID, a Row version and `modified`. The export is a background job the page polls: the full queue is ~2,700
+    rows on production, each with a matcher call, a similar-name query and a title lookup, which one web request
+    would race the gateway timeout with. The file is a private File owned by the person who asked.
+  - **Import from Excel** uploads through Frappe's own uploader (private, .xlsx only) and shows a **preview, never
+    an apply**: per row, *will change* (what exactly -- the new link, the import copy that merges away, the blank
+    fields it fills, the note), *already done*, *changed in ERPNext since the export*, or *cannot be applied* (an
+    unknown Row ID, edited key cells, a decision the row cannot take, a Link target that does not exist as the
+    record type the QBO record belongs to). **Apply** sends the rows ten at a time; the server classifies each
+    one again and runs only a row that is still a change, through `matching.decide` (Link, with its merge
+    policy), `matching.confirm` (Keep) and `sync.sync_entity` (Retry) -- the page's own code -- and reports what
+    applied, what was skipped because it moved after the preview, and what failed.
+  - Nik's three calls: the decisions are the page's three, not new ones (Keep on a record the import created
+    already means "keep the new record"; blank is "ignore"); a note is saved as a Comment on the row's QuickBooks
+    Sync Mapping, with or without a decision; and two QBO records linked to one ERPNext record -- the usual QBO
+    duplicate -- is a warning on both rows, not a refusal.
+  - **Why "already done" is decided before "changed since the export".** Applying a row changes it, so a second
+    import of the same file would otherwise report every row stale; it checks first whether the row already holds
+    the decision's outcome (linked to that record and decided; reviewed; no longer parked; the note's text already
+    in a comment). Importing the same file twice changes nothing the second time.
+  - **Why the staleness check is not `modified`.** The Row version fingerprints what a decision depends on -- the
+    link, `match_status`, `conflict_status`, `reviewed_on` -- because `modified` moves on every CDC touch of the QBO
+    record, and keying on it would throw away Meg's afternoon because a phone number changed in QuickBooks. A moved
+    `modified` is shown as a warning instead. `reviewed_on` is the one that matters most and `modified` would have
+    missed it: `_stamp_reviewed` writes it with `update_modified=False`. An unlinked row's doctype and a parked
+    transaction's review fields are left out, since the page rows they are exported from never carry them.
+  - Built with openpyxl, which ships with Frappe (`openpyxl~=3.1.5` on v16), for the dropdowns: v16's
+    `frappe.utils.xlsxutils.make_xlsx` writes one plain sheet through xlsxwriter. `matching.master_queue` and
+    `parked_transactions` now also return each row's `modified`.
+  Tests: `tests/test_quickbooks_matching_excel.py` (new; its own pytest step in `ci.yml`, which installs the real
+  openpyxl) -- export shaping and the version fingerprint, the workbook's hidden columns and dropdowns, parsing by
+  header, the preview's every category, apply re-checking each row, one failure not stopping the rest, and the
+  same file imported twice changing nothing. `tests/test_whitelist_placement.py` names the four endpoints.
+
 ## [1.716.1] - 2026-10-22
 
 ### Fixed
