@@ -515,6 +515,7 @@ def _pct(value, width=6):
 
 def _render_context(doc):
 	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
+	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for
 	from erpnext_enhancements.project_enhancements.esign.initials import (
 		INITIALS_CAPTIONS,
 		initial_markup,
@@ -534,6 +535,9 @@ def _render_context(doc):
 	# unchanged.
 	signature = signed_signature_for(doc)
 	initials = signed_initials(signature)
+	# The Service Fee per month/quarter/year (v1.724.0): the linked maintenance contract's
+	# Recurring Amount, else the Annual Fee split, else None and the line is left out.
+	fee = period_fee_for(doc) if doc.get("template_key") == "maintenance" else None
 
 	def _sig(party="client", width=30):
 		markup = signature_markup(signature, party=party, width=width, blank=_blank)
@@ -555,7 +559,7 @@ def _render_context(doc):
 	def _summary():
 		# "What you are agreeing to, in short": this contract's own terms in plain words,
 		# placed by the template after its title. See contract_summary.py.
-		return summary_html(doc)
+		return summary_html(doc, period_fee=fee)
 
 	return {
 		"doc": doc,
@@ -576,6 +580,7 @@ def _render_context(doc):
 		"signature": signature or frappe._dict(),
 		"phases": phases,
 		"service_options": options,
+		"period_fee": fee,
 		# WI-075 sub-phase L. The hold points this project actually contracted for, so §9.4
 		# prints the rows a system can later ask about instead of six checkboxes nobody ticks.
 		# Resolved at RENDER time on purpose: the rendered body becomes `agreement_html` when

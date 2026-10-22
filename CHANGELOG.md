@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.724.0] - 2026-10-22
+
+### Added
+- **The maintenance agreement prints its per-period Service Fee.** Nik, 2026-10-22: "add a monthly (per-period)
+  fee line to the maintenance agreement template, filled from the linked maintenance contract's Recurring Amount
+  when set, plus fix SF-MAINT-2026-0018 so Day Dairy prints $1,490 per month." Service Plan Selection priced only
+  per visit, per event and the Annual Service Fee Total, so `recurring_amount`, the amount the recurring-billing
+  job actually invoices, appeared nowhere on the agreement. Day Dairy's agreement printed no fee at all.
+  - **The line.** "Service Fee: **$1,490.00 per month**, billed May through September." Per month, quarter or
+    year follows the agreement's Invoicing Frequency. The season is the maintenance contract's Bill From / Bill
+    Through, shown only for Monthly billing, as invoicing applies it. The summary at the top gains a matching
+    "Service fee:" row. Both come from one figure resolved in `_render_context`, so they cannot disagree. The
+    template queries nothing.
+  - **Where the figure comes from** (`project_enhancements/maintenance_fee.py`), first match wins:
+    1. The Recurring Amount of the Sapphire Maintenance Contract whose `project_contract` is this agreement
+       (Active first, then the newest; Canceled ignored). It is used only when that contract bills on the
+       agreement's own cadence, because a Recurring Amount is "per period" of *its* cadence, and a monthly
+       amount beside a Quarterly tick in §4.2 would contradict the page.
+    2. The Annual Maintenance Fee ÷ `billed_periods_per_year`, the same split and season the maintenance
+       contract derives for itself.
+    3. Nothing: the line is left out. It never prints $0.00 or a blank.
+  - **No line for a plan priced per visit.** Per Visit invoicing gets no line. Neither does an agreement whose
+    ticked Standard Maintenance has a per-visit rate, whatever it is invoiced on. Its Annual Fee is rate ×
+    visits, so splitting it would print a flat price nobody agreed to: Hardware Apartments ($690 a visit,
+    $17,940 a year) would have read "$1,495.00 per month".
+  - **Annual Service Fee Total** still prints whenever it is set. When a Service Fee prints and no annual total
+    is set, the blank "(if applicable)" line beside a stated fee is left out (Day Dairy). With neither figure,
+    the paper form keeps its blank. A ticked Standard Maintenance with no per-visit rate reads "base rate in the
+    Service Fee below" instead of a blank rate.
+  - **An agreement with no fee renders byte for byte as before.** The test suite rebuilds the v1.611.1 body
+    from the new one and compares the two renders, so the change reaches only agreements that have a figure.
+- **Patch `refresh_maintenance_agreement_fee_line`** brings the change to the live Contract Template, which
+  `seed_contract_templates` (insert-only) never updates. It follows the same rules as the v1.611.1 layout
+  refresh:
+  - It replaces the body only when its SHA-256 is a body this repo shipped: v1.611.1, which matched prod byte
+    for byte on 2026-10-22, or v1.609.0 / v1.611.0. A body edited on the site is logged and left alone.
+  - It freezes paper-signed copies first.
+  - It waits while a signing link is out.
+  - It resets no contract's terms, cannot raise, and finds the body current on a second run.
+
+  Signed agreements cannot change: an e-signed contract prints its request's `agreement_html`, and one marked
+  signed on paper prints `executed_html`. On prod the only signed maintenance agreement, SF-MAINT-2026-0001, was
+  frozen in v1.611.0, and no signing link was out.
+
+### Notes
+- **What changes on prod at deploy:** Day Dairy (SF-MAINT-2026-0018, from MNT-CON-2026-00002) and
+  SF-MAINT-2026-0010 ($7,920 a month, May to September, the same figure its Exhibit A states) gain the line.
+  SF-MAINT-2026-0021 (Capitol) prices $559 a visit, so it gets no line, although its maintenance contract
+  bills a flat $1,118 a month. That mismatch is for whoever priced it. Every other maintenance agreement renders
+  as before.
+- **Day Dairy's Exhibit A still says $1,330.00 per month**, so until it is edited the agreement states both
+  figures. Editing it is a production data change put to Nik separately, not part of this release.
+- A Service Fee from the maintenance contract is read at render time, like everything else on an unsigned
+  agreement. If the Recurring Amount is changed while a signing link is out, the e-sign drift check flags the
+  signed copy (`document_drifted`).
+
 ## [1.719.0] - 2026-10-22
 
 ### Changed
