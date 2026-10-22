@@ -3759,3 +3759,99 @@ body.p6b-resizing .ppl-bar {
 		max-height: none;
 	}
 }
+
+/* ======================================================================================== */
+/* P6: the Gantt tab, one project start to finish (PPG).                                    */
+/* ======================================================================================== */
+
+/* The bar over the chart: the project picker, its schedule (Draft with Publish…, or Published and
+ * when), the baseline's date, Reset baseline, Build out ▾, then Day / Week / Month. */
+.ppg-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppg-head .ppg-project {
+	width: auto;
+	max-width: 320px;
+	font-weight: 600;
+}
+
+.ppg-bits {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.ppg-state {
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.ppg-state.ppg-draft {
+	color: var(--sf-link);
+}
+
+.ppg-state.ppg-published {
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.ppg-baseline,
+.ppg-note {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.ppg-zoom {
+	font-size: 12px;
+}
+
+/* The chart takes the height of the screen below the toolbar, as a Gantt needs room to scroll. */
+.ppg-chart {
+	height: calc(100vh - 260px);
+	min-height: 360px;
+}
+
+.ppg-empty {
+	color: var(--sf-text-muted);
+	padding: 24px 8px;
+}
+
+/* The bars (the widget's task lines, classed by the page's task_class template). The chart's canvas is
+ * the widget's, so these only add a mark to the widget's own bar: a draft is dashed, a pencil hatched,
+ * finished work faded, an overdue task outlined in the danger tone, and a bar the planner may not move
+ * does not offer to. */
+.ppg-chart .gantt_task_line.ppg-drafted {
+	border-style: dashed;
+	border-width: 2px;
+}
+
+.ppg-chart .gantt_task_line.ppg-pencil {
+	background-image: repeating-linear-gradient(
+		45deg,
+		transparent 0 4px,
+		color-mix(in srgb, var(--sf-white) 40%, transparent) 4px 7px
+	);
+}
+
+.ppg-chart .gantt_task_line.ppg-finished {
+	opacity: 0.55;
+}
+
+.ppg-chart .gantt_task_line.ppg-overdue {
+	border-color: var(--sf-danger);
+}
+
+.ppg-chart .gantt_task_line.ppg-locked {
+	cursor: default;
+}
+
+.ppg-chart .gantt_row.ppg-group-row .gantt_tree_content {
+	font-weight: 600;
+}

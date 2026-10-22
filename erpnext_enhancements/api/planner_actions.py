@@ -32,6 +32,9 @@ needs the server is here:
   add, the second half of a split): it deletes it only when nothing has been attached since, and
   never with ``force``. For a split it also puts the first half back, and the tasks the split had
   moved onto the second half go back onto the first (Phase 6E).
+* :func:`add_dependency` / :func:`remove_dependency` (P6, the Gantt tab's link-by-drag) make one task
+  wait on another, or stop: through ``_load``'s checks, with the "starts before" line asking for a
+  reason as a save does, and with ERPNext's calendar-day push held back, because no date changed.
 * :func:`search_planner` finds tasks, projects and people for the search box, customer jobs only;
   ``planner="maintenance"`` finds visits, sites and technicians for the Maintenance Planner.
 
@@ -2256,6 +2259,175 @@ def remove_built_out_tasks(tasks, phases=None):
 	for name in phases_removed:
 		frappe.delete_doc("Task", name)
 	return {"removed": removed, "phases": phases_removed, "gone": gone}
+
+
+# ---------------------------------------------------------------------- dependencies (P6)
+
+
+def link_problem(task, depends_on, rows, waiting):
+	"""Why ``task`` cannot wait on ``depends_on``, as a sentence, or None when it can.
+
+	``rows`` maps a Task name to its row (``project``, ``is_group``, ``subject``); ``waiting`` holds the
+	tasks that already wait on ``task``, at any depth (:func:`project_planner.successors`). Pure, so the
+	rules are tested without a bench:
+
+	* both ends are stored tasks: a drafted new task (``draft-new:…``) has no row to link yet;
+	* not the same task, and both of the same project (ERPNext moves dependents only within one);
+	* neither is a group: ERPNext lists a group's children in the group's own ``depends_on``
+	  (``Task.populate_depends_on``), so a phase "waits on" its tasks already and a link to or from one
+	  would be rewritten or refused on the next save;
+	* no loop: the task it would wait on must not already wait on it.
+	"""
+	for name in (task, depends_on):
+		if pp.is_draft_ref(name):
+			return _("A task that is still a draft cannot be linked yet. Publish the schedule first.")
+	if task == depends_on:
+		return _("A task cannot wait on itself.")
+	row, pred = rows.get(task), rows.get(depends_on)
+	if not row or not pred:
+		return _("Task {0} was not found.").format(depends_on if row else task)
+	if (row.get("project") or "") != (pred.get("project") or "") or not row.get("project"):
+		return _("Only tasks of the same project can be linked.")
+	for name, entry in ((task, row), (depends_on, pred)):
+		if cint(entry.get("is_group")):
+			subject = entry.get("subject") or name
+			return _("{0} is a phase or group. Link the tasks in it instead.").format(subject)
+	if depends_on in set(waiting or ()):
+		return _("{0} already waits on {1}, so this link would make a loop.").format(
+			pred.get("subject") or depends_on, row.get("subject") or task
+		)
+	return None
+
+
+def _link_rows(names):
+	"""``{name: row}`` for :func:`link_problem` and the "starts before" check, as ``pp._task_rows`` reads
+	a task plus ``is_group``."""
+	rows = pp._task_rows(names)
+	for row in frappe.get_all(
+		"Task", filters={"name": ["in", sorted(rows)]}, fields=["name", "is_group"], limit_page_length=0
+	):
+		rows[row.get("name")]["is_group"] = row.get("is_group")
+	return rows
+
+
+def _drafted_states(names):
+	"""``{name: state}`` for the tasks in ``names`` that a Draft row has moved (the caller's, or anyone's
+	on a Draft schedule): a link on a draft schedule is judged against the drafted days."""
+	out = {}
+	rows, _duplicates = pp._draft_rows()
+	for row in rows:
+		if row.get("task") in names and not pp.is_new_row(row):
+			doc, problem = pp._drafted_doc(row)
+			if not problem:
+				out[row.get("task")] = pp._state(doc)
+	return out
+
+
+def _rebase_drafts(task, before, after):
+	"""A link changes no date, crew or anything else a draft holds, so the task's Draft rows drafted
+	against the task as it was are moved on to the save, not left looking out of date."""
+	for row in frappe.get_all(
+		pp.DRAFT_DOCTYPE,
+		filters={"task": task, "status": pp.DRAFT},
+		fields=["name", "base_modified"],
+		limit_page_length=0,
+	):
+		if pp.same_moment(row.get("base_modified"), before):
+			frappe.db.set_value(
+				pp.DRAFT_DOCTYPE, row.get("name"), "base_modified", after, update_modified=False
+			)
+
+
+def _save_links(doc):
+	"""Save a change to ``doc.depends_on`` only. Its days did not change, so ERPNext's own
+	``reschedule_dependent_tasks`` (calendar days, P4's merge blocker) is told not to run."""
+	before = doc.modified
+	doc.flags.ignore_reschedule = True
+	try:
+		from erpnext.projects.doctype.task.task import CircularReferenceError
+	except ImportError:  # pragma: no cover - ERPNext is always installed beside this app
+		CircularReferenceError = frappe.ValidationError
+	try:
+		warnings = pp._save(doc)
+	except CircularReferenceError:
+		frappe.throw(_("This link would make a loop of tasks waiting on each other."))
+	_rebase_drafts(doc.name, before, doc.modified)
+	return warnings
+
+
+@frappe.whitelist(methods=["POST"])
+def add_dependency(task, depends_on, modified, reason=None):
+	"""``task`` waits on ``depends_on`` (finish to start): the Gantt tab's link drawn from one bar's
+	end dot onto another (P6, §4.3).
+
+	Through the planner's rules, as ``save_task``: the planner role and write permission on ``task``,
+	the "changed since the planner loaded" check on ``modified``, no Fountain Move task (its schedule is
+	the Maintenance Planner's) and no rental crew task. When ``task`` would start before ``depends_on``
+	ends (on their drafted days, where a Draft row moves either), the answer is
+	``{"needs_reason": True, "conflicts": {"Dependencies": [line]}}`` and nothing is saved; with a
+	``reason`` it is saved and the reason goes on the task's timeline. Nothing moves: no date changes,
+	so nobody is notified, and ERPNext's own calendar-day push is held back (:func:`_save_links`).
+
+	A link is not drafted on a Draft schedule. It holds no dates and tells nobody, which is all a draft
+	holds back; the task's Draft rows stay current (:func:`_rebase_drafts`).
+
+	Returns ``{"name", "modified", "warnings", "conflicts", "linked", "task", "depends_on"}``;
+	``linked`` is False when the link was already there.
+	"""
+	task, depends_on = pp.given(task), pp.given(depends_on)
+	if pp.is_draft_ref(task) or pp.is_draft_ref(depends_on):
+		frappe.throw(link_problem(task, depends_on, {}, ()))
+	doc = pp._load(task, modified)
+	_refuse_rental(doc, _("linked"))
+	if not frappe.db.exists("Task", depends_on):
+		frappe.throw(_("Task {0} was not found.").format(depends_on))
+	frappe.has_permission("Task", "read", doc=depends_on, throw=True)
+	rows = _link_rows([task, depends_on])
+	problem = link_problem(task, depends_on, rows, pp.successors(task))
+	if problem:
+		frappe.throw(problem)
+	answer = {"name": doc.name, "task": doc.name, "depends_on": depends_on, "warnings": [], "conflicts": {}}
+	if any(row.get("task") == depends_on for row in doc.get("depends_on") or []):
+		return dict(answer, modified=str(doc.modified), linked=False)
+	drafted = _drafted_states({task, depends_on})
+	state = drafted.get(task) or pp._state(doc)
+	pred = drafted.get(depends_on) or rows[depends_on]
+	lines = [] if engine.is_tentative(state) else pp.dependency_conflicts(state, [pred])
+	conflicts = {pp.DEPENDENCY_KEY: lines} if lines else {}
+	reason = (reason or "").strip()
+	if conflicts and not reason:
+		return {"needs_reason": True, "conflicts": conflicts}
+	doc.append("depends_on", {"task": depends_on})
+	warnings = _save_links(doc)
+	if conflicts:
+		text = _("Linked on the Project Planner over a conflict: {0}. Reason: {1}")
+		_comment_reason(doc, text, conflicts, reason)
+	return dict(answer, modified=str(doc.modified), warnings=warnings, conflicts=conflicts, linked=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_dependency(task, depends_on, modified):
+	"""``task`` no longer waits on ``depends_on``: a link removed on the Gantt tab, or the Undo of
+	:func:`add_dependency`. The same checks on ``task``; a group's own rows are ERPNext's (each child in
+	its group's ``depends_on``) and are refused. Removing a wait never creates a conflict, so there is no
+	reason to ask for. Returns ``{"name", "modified", "warnings", "removed", "task", "depends_on"}``;
+	``removed`` is False when there was no such link."""
+	task, depends_on = pp.given(task), pp.given(depends_on)
+	if pp.is_draft_ref(task):
+		frappe.throw(link_problem(task, depends_on, {}, ()))
+	doc = pp._load(task, modified)
+	_refuse_rental(doc, _("changed"))
+	if cint(doc.get("is_group")):
+		frappe.throw(
+			_("{0} is a phase or group. Its tasks are ERPNext's to list.").format(doc.subject or doc.name)
+		)
+	answer = {"name": doc.name, "task": doc.name, "depends_on": depends_on, "warnings": []}
+	keep = [row for row in doc.get("depends_on") or [] if row.get("task") != depends_on]
+	if len(keep) == len(doc.get("depends_on") or []):
+		return dict(answer, modified=str(doc.modified), removed=False)
+	doc.set("depends_on", keep)
+	warnings = _save_links(doc)
+	return dict(answer, modified=str(doc.modified), warnings=warnings, removed=True)
 
 
 # ---------------------------------------------------------------------- search
