@@ -103,6 +103,16 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 			}
 			.column-selector-item:hover { background-color: var(--fg-hover-color); }
 			.column-selector-item input { margin: 0; }
+			.column-selector-divider { height: 1px; margin: 6px 0; background: var(--border-color); }
+			.column-selector-action {
+				display: block; width: 100%; padding: 6px 14px; border: 0;
+				background: transparent; text-align: left; white-space: nowrap; cursor: pointer;
+			}
+			.column-selector-action:hover { background-color: var(--fg-hover-color); }
+			.column-selector-toggle.column-selector-icon {
+				display: inline-flex; align-items: center; justify-content: center;
+				width: 32px; height: 28px; padding: 0;
+			}
 			.hidden-column { display: none !important; }
 		`).appendTo("head");
 	}
@@ -111,15 +121,31 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 	 * Renders the "Columns" dropdown button into `container`.
 	 * @param {JQuery} container Element to append the button to.
 	 * @param {Function} onChange Called after a column is toggled.
+	 * @param {{icon?: boolean, actions?: Array<{label: string, onClick: Function}>}} [options]
+	 *   `icon` draws the button as the three-dot icon (tooltip and aria-label "Columns")
+	 *   instead of the word, and `actions` adds buttons under the checkboxes (the
+	 *   dashboard puts "Reset widths" there). The word button stays the default.
 	 */
-	render_button(container, onChange) {
+	render_button(container, onChange, options) {
+		const opts = options || {};
 		this._inject_styles();
+
+		// Inline SVG on purpose: this renders inside a Custom HTML Block's shadow root, where
+		// frappe.utils.icon()'s `<use href="#icon-...">` cannot reach the page's sprite.
+		const dots =
+			'<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false">' +
+			'<circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>';
+		const label = __("Columns");
 
 		const wrapper = $(`
 			<div class="dashboard-column-selector">
-				<button type="button" class="btn btn-sm btn-default column-selector-toggle">
-					<i class="fa fa-columns mr-1"></i> Columns
-				</button>
+				<button type="button" class="btn btn-sm btn-default column-selector-toggle ${
+					opts.icon ? "column-selector-icon" : ""
+				}" aria-haspopup="true" aria-expanded="false" ${
+					opts.icon
+						? `title="${frappe.utils.escape_html(label)}" aria-label="${frappe.utils.escape_html(label)}"`
+						: ""
+				}>${opts.icon ? dots : `<i class="fa fa-columns mr-1"></i> ${frappe.utils.escape_html(label)}`}</button>
 				<div class="column-selector-menu"></div>
 			</div>
 		`).appendTo(container);
@@ -149,20 +175,62 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 		});
 
 		const toggle = wrapper.find(".column-selector-toggle");
+
+		const actions = Array.isArray(opts.actions) ? opts.actions : [];
+		if (actions.length) {
+			menu.append('<div class="column-selector-divider"></div>');
+			actions.forEach((action) => {
+				const btn = $(
+					`<button type="button" class="column-selector-action">${frappe.utils.escape_html(
+						action.label
+					)}</button>`
+				);
+				btn.on("click", () => {
+					close();
+					if (typeof action.onClick === "function") action.onClick();
+				});
+				menu.append(btn);
+			});
+		}
+
+		let closeHandler = null;
+		const close = () => {
+			menu.hide();
+			toggle.attr("aria-expanded", "false");
+			if (closeHandler) {
+				$(document).off("click.columnSelector", closeHandler);
+				closeHandler = null;
+			}
+		};
+
 		toggle.on("click", (e) => {
 			e.stopPropagation();
 			const isOpen = menu.is(":visible");
-			// Close any other open column menus first
-			$(".column-selector-menu").hide();
-			if (!isOpen) {
-				menu.show();
-				const closeHandler = (ev) => {
-					if (!$(ev.target).closest(".dashboard-column-selector").length) {
-						menu.hide();
-						$(document).off("click.columnSelector", closeHandler);
-					}
-				};
-				$(document).on("click.columnSelector", closeHandler);
+			// Close any other open column menus first. The dashboard draws inside a shadow
+			// root, so look in the root this button is in, not only the page's document.
+			$(wrapper[0].getRootNode()).find(".column-selector-menu").not(menu).hide();
+			if (isOpen) {
+				close();
+				return;
+			}
+			menu.show();
+			toggle.attr("aria-expanded", "true");
+			closeHandler = (ev) => {
+				// composedPath sees through the shadow boundary, where ev.target is only the host.
+				const oe = ev.originalEvent || ev;
+				const path = typeof oe.composedPath === "function" ? oe.composedPath() : [];
+				const inside = path.length
+					? path.indexOf(wrapper[0]) !== -1
+					: $(ev.target).closest(".dashboard-column-selector").length > 0;
+				if (!inside) close();
+			};
+			$(document).on("click.columnSelector", closeHandler);
+		});
+
+		wrapper.on("keydown", (e) => {
+			if (e.key === "Escape" && menu.is(":visible")) {
+				close();
+				toggle.trigger("focus");
 			}
 		});
 

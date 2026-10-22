@@ -27,11 +27,16 @@
  *                           view persists per user in localStorage.
  *                           Read-only for now (drag-editing returns with the
  *                           widget's per-embed edit opt-in milestone);
- *   - Dashboard           — native module overview computed client-side from the
+ *   - Summary             — native module overview computed client-side from the
  *                           fetched project_data: headline number cards + CSS-bar
- *                           breakdowns (status / type / completion).
- * The toolbar also carries "New Project" / "New Master Project" quick-create buttons.
- * Table edits persist back via the same whitelisted methods.
+ *                           breakdowns (status / type / completion). It is what the
+ *                           "Dashboard" tab used to show; that tab is gone.
+ * The tab bar leads with Priority Overview and Portfolio Gantt. A "View More" button
+ * reveals Active Internal Projects, Completed Projects and Summary as further tabs (and
+ * hides them again); the choice is kept in localStorage (chb_projects_dashboard_more_v1).
+ * The toolbar carries one "+" button whose menu holds "New Project" / "New Master Project".
+ * The list tabs' Columns control is an icon button (tooltip "Columns"); "Reset widths"
+ * is an item in its menu. Table edits persist back via the same whitelisted methods.
  *
  * The workspace runs this script again, with a fresh root, only when it renders the
  * page: the first visit, and coming back from a different workspace. Coming back
@@ -242,15 +247,19 @@
         if (!selector) return;
         let toolbar = $('<div class="dashboard-list-toolbar"></div>');
         container.append(toolbar);
+        // The Columns button is an icon (three dots, tooltip "Columns"). "Reset widths" lives in
+        // its menu rather than as a button of its own: dragging a column edge is still undoable.
+        const actions = [];
         if (column_resizers[current_tab]) {
-            let reset_btn = $('<button type="button" class="btn btn-sm btn-default dashboard-reset-widths" title="Reset column widths to default"><i class="fa fa-arrows-h mr-1"></i> Reset widths</button>');
-            reset_btn.on('click', () => {
-                column_resizers[current_tab].reset(container);
-                render_current_tab();
+            actions.push({
+                label: __("Reset column widths"),
+                onClick: () => {
+                    column_resizers[current_tab].reset(container);
+                    render_current_tab();
+                },
             });
-            toolbar.append(reset_btn);
         }
-        selector.render_button(toolbar, () => selector.apply(container));
+        selector.render_button(toolbar, () => selector.apply(container), { icon: true, actions });
     }
 
     // Project ID header is non-sortable; built inline to sit beside Project Name.
@@ -1602,7 +1611,7 @@
             if (current_tab === "priority-overview") render_priority_overview();
             else if (current_tab === "active-internal-projects") render_active_internal();
             else if (current_tab === "completed-projects") render_completed_projects();
-            else if (current_tab === "dashboard") render_dashboard();
+            else if (current_tab === "summary") render_dashboard();
 
             setTimeout(apply_search_filter, 50);
         }
@@ -1627,24 +1636,114 @@
 
     $root.find('.nav-link').click(function(e) {
         e.preventDefault();
-        $root.find('.nav-link').removeClass('active');
-        $(this).addClass('active');
-        current_tab = $(this).data('route');
-        
-        if (current_tab === "portfolio-gantt") {
-            $root.find('#gantt-controls').show();
-            $root.find('#standard-controls').hide();
-        } else {
-            $root.find('#gantt-controls').hide();
-            $root.find('#standard-controls').show();
-        }
-        
-        render_current_tab();
+        show_tab($(this).data('route'));
     });
 
-    // Header actions: quick-create a Project or Master Project.
-    $root.find('#btn-new-project').on('click', () => frappe.new_doc('Project'));
-    $root.find('#btn-new-master-project').on('click', () => frappe.new_doc('Master Project'));
+    // ----- VIEW MORE -----
+    //
+    // Active Internal Projects, Completed Projects and the Summary are tabs that stay out of
+    // the bar until "View More" is pressed; pressing it again hides them. The choice is kept
+    // per browser with the rest of this block's saved view (localStorage, like the Gantt's
+    // filters), never in frappe user_settings, which sit in Redis only. If a hidden tab is
+    // the one on screen when it is collapsed, the block falls back to Priority Overview.
+    const MORE_TABS = ["active-internal-projects", "completed-projects", "summary"];
+    const VIEW_MORE_KEY = "chb_projects_dashboard_more_v1";
+
+    function load_view_more() {
+        try {
+            return localStorage.getItem(VIEW_MORE_KEY) === "1";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function save_view_more(open) {
+        try {
+            localStorage.setItem(VIEW_MORE_KEY, open ? "1" : "0");
+        } catch (e) {
+            // storage disabled/full — the choice just won't persist
+        }
+    }
+
+    function show_tab(route) {
+        $root.find('.nav-link').removeClass('active');
+        $root.find(`.nav-link[data-route="${route}"]`).addClass('active');
+        current_tab = route;
+        const on_gantt = route === "portfolio-gantt";
+        $root.find('#gantt-controls').toggle(on_gantt);
+        $root.find('#standard-controls').toggle(!on_gantt);
+        render_current_tab();
+    }
+
+    function set_view_more(open, persist) {
+        const $btn = $root.find('#btn-view-more');
+        $root.find('.pg-more-tab').prop('hidden', !open);
+        $btn.attr('aria-expanded', open ? 'true' : 'false').text(open ? __("View Less") : __("View More"));
+        if (persist) save_view_more(open);
+        // collapsing while a hidden tab is showing would strand the user on a tab with no tab
+        if (!open && MORE_TABS.includes(current_tab)) show_tab("priority-overview");
+    }
+
+    $root.find('#btn-view-more').on('click', function() {
+        set_view_more($(this).attr('aria-expanded') !== 'true', true);
+    });
+    set_view_more(load_view_more(), false);
+
+    // ----- HEADER ACTIONS: one "+" button -----
+    //
+    // The "+" opens a small menu: New Project, New Master Project. Each item does what its
+    // button did before (frappe.new_doc, which opens the new form on its own history entry,
+    // so Back returns here). Escape or a click elsewhere closes the menu.
+    (function init_new_menu() {
+        const $wrap = $root.find('#pg-new-menu');
+        const $toggle = $root.find('#btn-new');
+        const $list = $root.find('#pg-new-list');
+        if (!$wrap.length) return;
+
+        const close = () => {
+            $list.prop('hidden', true);
+            $toggle.attr('aria-expanded', 'false');
+        };
+        const open = () => {
+            $list.prop('hidden', false);
+            $toggle.attr('aria-expanded', 'true');
+            $list.find('.pg-new-item').first().trigger('focus');
+        };
+
+        $toggle.on('click', function(e) {
+            e.stopPropagation();
+            if ($list.prop('hidden')) open(); else close();
+        });
+        $wrap.on('keydown', function(e) {
+            if (e.key === 'Escape' && !$list.prop('hidden')) {
+                close();
+                $toggle.trigger('focus');
+            } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !$list.prop('hidden')) {
+                e.preventDefault();
+                const items = $list.find('.pg-new-item').get();
+                const at = items.indexOf($(e.target).closest('.pg-new-item')[0]);
+                const next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+                items[next].focus();
+            }
+        });
+
+        // The workspace can draw the page again (a different root), so this document-level
+        // listener retires itself once its button has left the page.
+        const outside = (ev) => {
+            if (!$wrap[0].isConnected) {
+                $(document).off('click', outside);
+                return;
+            }
+            // composedPath sees through the shadow boundary, where ev.target is only the host
+            const oe = ev.originalEvent || ev;
+            const path = typeof oe.composedPath === 'function' ? oe.composedPath() : [];
+            if (path.indexOf($wrap[0]) === -1) close();
+        };
+        $(document).on('click', outside);
+
+        $root.find('#btn-new-project').on('click', () => { close(); frappe.new_doc('Project'); });
+        $root.find('#btn-new-master-project').on('click', () => { close(); frappe.new_doc('Master Project'); });
+    })();
 
     // Init
     fetch_initial_data();
