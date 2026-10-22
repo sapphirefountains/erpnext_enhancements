@@ -3515,6 +3515,18 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
+      # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
+      # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
+      # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write
+      # permission is checked before anything else, an item with no rule gets one only on a bin that
+      # holds stock, the same numbers again save nothing, and the write is Item.save() as the user --
+      # no SQL on the child table, no ignore_permissions (read from the source). Then
+      # scripts/test_reorder_levels.mjs under node: a blur that changes nothing sends nothing, a level
+      # with no quantity is refused in words before a request, two quick blurs are two saves in turn,
+      # a refused save leaves the typed text in its box, a focused box is never overwritten, and
+      # nothing the editor does touches history (Back/Forward). Own frappe stub, own step.
+      - name: Reorder levels on the audit screens (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_reorder_levels -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.725.0] - 2026-10-22
+
+### Added
+- **Reorder level and quantity, editable in place on both inventory audit screens.** Nik, 2026-10-22: "From the
+  Inventory audit screen include the reorder threshold amount so each items reorder amount can be adjusted
+  easily without leaving the screen." He chose *both* screens that answer to that name. The **Bin Manager** has
+  a new **Reorder** column on each item of a bin, and the **Inventory Scanner Audit** shows the same two boxes
+  on the card of the item just scanned. "Threshold" could mean the trigger or the amount to buy, so there are
+  two boxes, **Reorder at** (ERPNext's `warehouse_reorder_level`: buy more when the stock falls to it) and
+  **Buy** (`warehouse_reorder_qty`: how many).
+  - **Saving.** A box saves when you leave it or press Enter, with a line under it that says *Saving…*, then
+    *Saved.*, or why not (in the words of ERPNext's refusal, or of this page's, such as "Say how many to buy each
+    time the stock falls to the reorder level."). Text that is not a number, is negative, or is above 100,000
+    is refused before any request and stays in the box to be corrected. A box left at the number it already
+    had saves nothing. Escape puts the boxes back. Two quick edits of one item go out one after the other.
+    Nothing is a history entry, so Back and Forward are the pages' own. On the scanner page Enter hands focus
+    to the counted-quantity box, so the next wedge scan is not lost.
+  - **A rule needs both numbers, both above 0, and is switched off by removing it** (independent review of
+    #1338: `Stock Settings` auto re-order is on, so every rule written here drives the nightly Material
+    Requests, which ERPNext submits). A new rule is made only when *Reorder at* and *Buy* are both given; with
+    one, the line under the boxes says "Enter both to create a reorder rule." and nothing is created. A level
+    of 0 is never saved (it raises a request whenever stock reaches 0). Clearing a box of an existing rule asks
+    "Remove this reorder rule?"; yes removes that one row through the Item document
+    (`remove_reorder_rule`), no puts the boxes back. A rule already on file with a level of 0 (one bin has it)
+    is left alone until someone edits it, and the edit then needs a level above 0.
+  - **A new rule checks stock where its neighbours do.** `warehouse_group` is what ERPNext counts the
+    projected stock of against the level, and the first version wrote the bin itself, so a rule made here
+    would order an item that has plenty on the shelf next door. It is now derived: among the existing rules on
+    warehouses at the same depth of the tree, under the nearest group above the new one that has any, the
+    most common `warehouse_group` (ties by name), ignoring rules that check their own bin. On this site that is
+    `Inventory - SF` for a bin under a Row and `All Warehouses - SF` for `Inventory Room - SF`; with no
+    neighbours at all, the parent group. Existing rules are never changed. (The guided Item flow's
+    `item_flow.save_stock` writes the same flaw, one row today on Bin A1-3-3; left as it is, a follow-up.)
+  - **Ceiling and units.** No level or quantity above 100,000 (`stock_scan_rules.MAX_QTY`, the Stock Scan
+    page's own ceiling) on either side of the wire: a barcode scanned into a focused box and followed by the
+    scanner's Enter is twelve digits. An item whose unit is counted in whole numbers
+    (`UOM.must_be_whole_number`) takes whole numbers only. "2,5" is refused, not read as 25.
+  - **Which rule.** Prod today (2026-10-22): 116 items have a reorder rule, one each, 83 of them on `Inventory
+    Room - SF` and 33 on a bin; no custom field stands in for it. An item shows the rule on the bin being
+    looked at; otherwise its own rule wherever it sits, labelled ("Rule is on Inventory Room") and edited
+    there; an item with none gets a Purchase rule made on the bin, the first time both numbers are given.
+  - **Who.** Anyone who can use the screen sees the rule. The boxes are inputs only for a person who may
+    write an Item (`Item` write); everyone else sees the numbers as text.
+  - **The endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` and
+    `set_reorder_level(item_code, warehouse, modified, level, qty, view_warehouse)`. The write is one
+    `Item.save()` as the user, so ERPNext's own validation runs (a level with no quantity, a second rule for
+    one warehouse; `remove_reorder_rule` is one `Item.remove` and `Item.save()`) and Item permission is the framework's, checked before anything else; never SQL on the child
+    table, never `ignore_permissions`. It carries the Item's `modified`: a page that is out of date writes
+    nothing, says so, and shows the current numbers. A resend, or numbers that are already those, saves nothing
+    and leaves the Item's `modified` alone.
+  - **Phones.** The boxes are 16px type (iOS zooms the page into anything smaller), 44px tall, and wrap to two
+    lines before a 375px screen would overflow; the Bin Manager's table already stacks its cells there.
+  - **Where it lives.** `public/js/reorder_levels/` (`logic.js` the decisions, `editor.js` the state and the
+    saves, `dom.js` the wiring), shipped as `reorder_levels.bundle.js` and `.css`, which each page asks for
+    apart from its own files, after them, and does without if they do not arrive or are slow: the Bin Manager
+    draws its bins first and the column joins when the bundle is here. A redraw of the bin that lands while a
+    reorder box has focus waits and runs when the box is left, so a half-typed number is not wiped and the
+    list does not stay stale.
+  - **Production.** Nothing is written by the deploy: no patch, no fixture, no migration step. Changes to rules
+    happen only when a person edits a box.
+  - Tests: `tests/test_reorder_levels.py` (the endpoints on a stub of Frappe, the source, and the editor under
+    node) and `scripts/test_reorder_levels.mjs`; one CI step. The real page scripts are run with and without
+    the bundle in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js` (the scanner page).
+
+### Fixed
+- **The Bin Manager's Change quantity no longer says "Enter the quantity you counted, 0 or more." to a person who
+  typed 0** (TASK-2026-02912, "Bin Manager rejects 0 as a valid quantity"; Nik chose *error after Save* and the
+  sentence is that one). The code accepted 0 everywhere that matters (`logic.check_values`, `rules.check_count`,
+  `set_count`, all with tests); the cause was in how the dialog was read. Frappe's primary button reads the
+  dialog once (`FieldGroup.get_values`) and hands the result to the action, and in that read a required field
+  whose value is falsy (`!f.value`, which a typed 0 is) is refreshed, which sets the box from `me.value || null`
+  and blanks the 0. `save_dialog` ignored that result and called `d.get_values(true)` again, found no quantity,
+  and refused. `bin_manager.js` `save_dialog` now uses the values it is handed (the Move dialog's quantity too),
+  and a count the server refuses puts the 0 back in the box. A count to 0 is valid; a Move or Send to boneyard
+  of 0 is still refused in words ("Enter how many to move, more than 0."), a blank box and a negative number
+  still are, and the reorder rule's refusal of a level of 0 is a different thing and unchanged.
+  `scripts/test_bin_manager.mjs`: the dialog stand-in now does what Frappe v16 does on a click (one reading,
+  then the blanking), and the test fails on the old code.
+
 ## [1.724.0] - 2026-10-22
 
 ### Added

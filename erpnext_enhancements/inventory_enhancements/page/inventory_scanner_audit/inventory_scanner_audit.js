@@ -85,6 +85,19 @@ function isa_scanner(then) {
 	}
 }
 
+// The reorder boxes (v1.725.0): the shared editor behind the Bin Manager's Reorder column, here on the
+// card of the item just scanned. Optional like the scanner kit: `then` gets it, or null when it did not
+// arrive, and the card is the card it always was.
+function isa_reorder(then) {
+	const ro = () => (window.sf_reorder && window.sf_reorder.version >= 1 ? window.sf_reorder : null);
+	if (ro()) return then(ro());
+	try {
+		frappe.require(['reorder_levels.bundle.js', 'reorder_levels.bundle.css'], () => then(ro()));
+	} catch (e) {
+		then(null);
+	}
+}
+
 // No scanner kit: each sheet is a plain dialog with no entry of its own, so Back leaves the
 // count, and the camera button stays hidden. Scanning, Find Item and the count all work.
 function isa_bare_sheets() {
@@ -151,10 +164,62 @@ class InventoryScanner {
 		// Bumped whenever the clerk starts, cancels or finishes a count: a start-up reply asked for
 		// before the last bump knows nothing of that count and must not set the session (see boot).
 		this.sessionTouched = 0;
+		this.reorder = null; // the reorder editor, once its bundle has arrived
 		this.injectStyles();
 		this.buildSkeleton();
 		isa_scanner((kit) => this.scannerArrived(kit));
+		isa_reorder((ro) => this.reorderArrived(ro));
 		this.boot();
+	}
+
+	// The card's reorder boxes. The editor reads the item's rule for the active location when a card
+	// is drawn, and saves through api.reorder_levels; nothing here pushes a history entry.
+	reorderArrived(ro) {
+		if (!ro) return;
+		const root = () => this.$pending[0];
+		const esc = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+		try {
+			this.reorder = new ro.ReorderEditor({
+				call: (method, args, opts) => isa_kit().then((sf) => sf.call(method, args, opts)),
+				read: (code) => ro.read_boxes(root(), code),
+				paint: (code, force) => ro.paint(root(), this.reorder, esc, (t) => __(t), code, document.activeElement, !!force, this.reorderLabels()),
+				paint_all: () => ro.paint(root(), this.reorder, esc, (t) => __(t), null, document.activeElement, false, this.reorderLabels()),
+				later: (fn, ms) => setTimeout(fn, ms),
+				tr: (text) => __(text),
+				confirm: (text, yes, no) => frappe.confirm(text, yes, no),
+			});
+			// Enter in a reorder box leaves it, and the wedge scanner's next read would go nowhere: the focus
+			// goes to the counted-quantity box, where the clerk was before they stopped to look at the rule.
+			ro.bind(root(), this.reorder, { after_enter: () => this.$pending.find('.isa-qty').focus() });
+		} catch (e) {
+			this.reorder = null;
+			return;
+		}
+		// A card already drawn before the bundle arrived gets its boxes now, in its own slot: the
+		// card is not redrawn, so a count already typed into it stays.
+		const p = this.state.pendingItem;
+		if (p) {
+			this.$pending.find('.isa-reorder').html(this.reorderCell(p));
+			this.loadReorder();
+		}
+	}
+
+	// The rule of the item on the card, for the warehouse being counted.
+	loadReorder() {
+		const p = this.state.pendingItem;
+		if (this.reorder && p) this.reorder.load(this.activeWarehouse() || '', [p.item_code]);
+	}
+
+	reorderLabels() {
+		const p = this.state.pendingItem;
+		return p ? { [p.item_code]: p.item_name || p.item_code } : {};
+	}
+
+	// The reorder cell of the item on the card, as markup ('' with no editor).
+	reorderCell(p) {
+		if (!this.reorder) return '';
+		const esc = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+		return window.sf_reorder.cell_html(esc, (t) => __(t), this.reorder.view(p.item_code), p.item_code, p.item_name || p.item_code);
 	}
 
 	scannerArrived(kit) {
@@ -401,6 +466,7 @@ class InventoryScanner {
 				<div class="isa-sys">${frappe.utils.escape_html(p.item_code)}${
 					hasSys ? ` · ${__('System')}: <b>${format_number(p.system_qty)}</b> ${uom}` : ''
 				}</div>
+				<div class="isa-reorder">${this.reorderCell(p)}</div>
 				<div class="isa-qtyrow">
 					<input type="number" inputmode="decimal" step="any" class="isa-qty" placeholder="${__('Counted qty')}" />
 					<span class="isa-uom">${uom}</span>
@@ -444,6 +510,7 @@ class InventoryScanner {
 		});
 		this.$pending.find('.isa-add').on('click', () => this.addCount());
 		setTimeout(() => $qty.focus(), 50);
+		this.loadReorder();
 	}
 
 	renderSession() {
@@ -840,6 +907,8 @@ class InventoryScanner {
 .isa-card{border:1px solid var(--border-color);border-radius:12px;padding:14px;margin-bottom:10px;background:var(--control-bg,var(--bg-color));}
 .isa-card h4{margin:0 0 2px;font-size:16px;}
 .isa-sys{font-size:13px;color:var(--text-muted);margin-bottom:10px;}
+.isa-reorder{margin:0 0 12px;}
+.isa-reorder:empty{display:none;}
 .isa-qtyrow{display:flex;align-items:center;gap:10px;}
 .isa-qty{flex:1 1 auto;min-width:0;font-size:22px;text-align:center;padding:12px;border:2px solid var(--primary);border-radius:10px;background:var(--control-bg,var(--bg-color));color:var(--text-color);}
 .isa-uom{font-size:14px;color:var(--text-muted);}

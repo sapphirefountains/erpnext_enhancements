@@ -152,6 +152,10 @@
 	font-weight: var(--sf-weight-bold, 600);
 }
 
+.bm-table .bm-reorder {
+	min-width: 15em;
+}
+
 .bm-row-actions {
 	text-align: right;
 }
@@ -264,5 +268,9 @@
 	.bm-table .bm-qty,
 	.bm-row-actions {
 		text-align: left;
+	}
+	.bm-table .bm-reorder {
+		min-width: 0;
+		padding: 4px 0 8px;
 	}
 }
