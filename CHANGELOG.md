@@ -51,6 +51,25 @@ Three changes to the Project form, all Nik's, 2026-10-22.
 (`Project-custom_schedule_state_section`, `Project-custom_production_section`). No patch, Property Setter, schema or
 data change. The feed change is a JS change in the global bundle.
 
+## [1.716.1] - 2026-10-22
+
+### Fixed
+- **The Project Planner's Crew tray now scrolls by itself.** Nik, 2026-10-22: "On the Crew page of the Project
+  Planner the side bar of the tasks, should scroll independently of the other scroll so that way you can select a
+  task or view a task without needing to scroll the entire page." The Not scheduled and Needs crew trays sit in a
+  260px column beside the Crew board (P7), and the column was part of the page's flow: a long list meant
+  scrolling the whole page, and the board went with it. On a wide screen the column is now
+  `position: sticky` under Frappe's navbar and page head (`top: 120px`), at most the board's own cap (the
+  viewport less 150px) tall, so the row is no taller than the board, with `overflow-y: auto` and `overscroll-behavior: contain`, so a wheel or a swipe inside it moves only
+  the tray, and one on the board (which already scrolls inside its own box) never moves the tray. Dragging a task
+  out of it onto a day works as before, and a drag held near the tray's top or bottom edge scrolls the tray, as
+  it does the board and the people panel (`p6a_edge_scroll`). On a phone the tray goes back above the board in
+  plain flow, and a printout carries the whole tray; Lookahead, Gantt, Calendar, Overview and Capacity do not
+  use the Crew layout and are unchanged. The 120px is a literal because the page's stylesheet may read only
+  `--sf-*` tokens; it is Frappe's 48px navbar and 60px page head, plus air.
+  Tests: `TestProjectPlanner` in `tests/test_s3_page_css.py` pins the sticky tray, its offset and cap, the phone
+  and print resets, and the edge-scroll hook.
+
 ## [1.716.0] - 2026-10-22
 
 ### Added
