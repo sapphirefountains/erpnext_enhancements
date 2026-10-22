@@ -2381,3 +2381,124 @@ body.ge-page-active .triton-fab {
 .ge-tools-actions {
 	min-height: var(--sf-touch-min);
 }
+
+/* ---- The head band's chips and the files section (v1.711.0) ----
+   Nik, 2026-10-21: "surface attachments and show stage of opportunity at the top header". The stage
+   chip is sf_kit's chip (it carries its own fill and edge, so it holds on the navy band); the files
+   chip is a button, 44px tall, because it is the only way to the files section on a phone without
+   scrolling past every step. */
+.ge-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	margin-top: var(--sf-space-10);
+}
+.ge-chips:not(:has(.ge-stage-chip:not(:empty), .ge-files-chip:not([hidden]))) {
+	display: none;
+}
+.ge-stage-chip:empty {
+	display: none;
+}
+.ge-band .ge-stage-chip .sf-chip {
+	font-size: var(--sf-text-sm);
+	padding: 3px var(--sf-space-15);
+}
+.ge-files-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	background: transparent;
+	border: var(--sf-border-hairline) solid var(--sf-on-band-muted);
+	border-radius: var(--sf-radius-pill);
+	color: var(--sf-on-band);
+	font: inherit;
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+}
+.ge-files-chip[hidden] {
+	display: none;
+}
+.ge-files-chip:hover {
+	border-color: var(--sf-on-band);
+}
+.ge-files-chip:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+/* A paperclip, drawn with the border so it needs no icon font or emoji. */
+.ge-files-chip-icon {
+	width: 7px;
+	height: 14px;
+	border: 2px solid currentColor;
+	border-radius: 4px;
+	transform: rotate(35deg);
+}
+
+.ge-files {
+	margin-top: var(--sf-space-15);
+	min-width: 0;
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+}
+.ge-files[hidden] {
+	display: none;
+}
+.ge-files-summary {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	cursor: pointer;
+	list-style: none;
+}
+.ge-files-summary::-webkit-details-marker {
+	display: none;
+}
+.ge-files-summary::after {
+	content: "+";
+	margin-left: auto;
+	color: var(--sf-text-muted);
+}
+.ge-files-group[open] > .ge-files-summary::after {
+	content: "\2212";
+}
+.ge-files-summary:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+.ge-files-title {
+	margin: 0;
+	color: var(--sf-heading);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-files-count {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ge-files-body {
+	padding: 0 var(--sf-space-15) var(--sf-space-15);
+}
+/* A file dragged over the page: the files section is where it lands. */
+.ge-app.is-dropping-files .ge-files,
+.fk-panel.is-dropping-files {
+	outline: 3px dashed var(--sf-focus);
+	outline-offset: -3px;
+}
+@media (max-width: 767px) {
+	.ge-files {
+		border-left: 0;
+		border-right: 0;
+	}
+	/* One tap target per file: the name takes the row, Remove drops under it. */
+	.ge-files .ge-tools-item-btn {
+		flex: 1 0 100%;
+	}
+}

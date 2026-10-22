@@ -92,6 +92,15 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     A field whose label is another field's value, as the form's script relabels it (ERPNext's
     ``set_dynamic_field_label``: Opportunity's ``party_name`` reads "Customer", "Lead" or
     "Prospect"). The page relabels it as the other field changes.
+``header``  ``{"status": {"field", "label", "tones"?: {value: tone}}}``
+    What the guided page's head band says about the record besides its name (v1.711.0). ``status``
+    names the field whose value the band shows as a chip, under ``label`` (what a screen reader
+    announces and the chip's tooltip: Opportunity's stage is its ``status`` field, which the
+    board's columns are made from, so the chip shows the very word a column carries). The chip
+    follows the field as it changes, saved or not. ``tones`` colours a value with one of sf_kit's
+    chip tones (``CHIP_TONES``); a value not listed is neutral, so a stage added later still shows.
+    A DocType without ``header`` gets no chip. The attachments chip and section are not config:
+    every guided DocType gets them.
 """
 
 from erpnext_enhancements.form_kit.config import item, opportunity
@@ -130,6 +139,7 @@ CONFIG_KEYS = {
 	"queries",
 	"query_waivers",
 	"label_from",
+	"header",
 	"open_by_default",
 }
 STAGES_KEYS = {"field", "default", "lists", "labels"}
@@ -139,6 +149,9 @@ MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag",
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
 QUERY_KEYS = {"query", "filters", "by", "cases", "links", "source"}
 QUERY_LINKS = ("directory",)
+#: sf_kit's chip tones (public/js/sf_kit/chip.js CHIP_TONES); tests/test_guided_header holds this equal.
+CHIP_TONES = ("design", "build", "service", "rent", "neutral", "danger", "warn", "good")
+HEADER_STATUS_KEYS = {"field", "label", "tones"}
 
 
 def get_config(doctype):
@@ -248,6 +261,20 @@ def check(config):
 			or not str(rule.get("source") or "").strip()
 		):
 			problems.append(f"label_from.{fieldname} needs a field and a source")
+	header = config.get("header")
+	if header is not None:
+		if set(header) - {"status"}:
+			problems.append(f"unknown header keys {sorted(set(header) - {'status'})}")
+		status = header.get("status") or {}
+		unknown = set(status) - HEADER_STATUS_KEYS
+		if unknown:
+			problems.append(f"unknown header.status keys {sorted(unknown)}")
+		for key in ("field", "label"):
+			if not str(status.get(key) or "").strip():
+				problems.append(f"header.status needs {key}")
+		for value, tone in (status.get("tones") or {}).items():
+			if tone not in CHIP_TONES:
+				problems.append(f"header.status.tones.{value} is {tone!r}, not a chip tone")
 	seen_keys, seen_sections, seen_fields = set(), set(), set()
 	for index, step in enumerate(config.get("steps") or []):
 		key = step.get("key")
