@@ -173,13 +173,18 @@ class TestAddWithoutAPurchaseOrder(_Base):
 			self.add(rate=5)
 
 	def test_the_item_and_the_price_lists_are_not_written(self):
+		import copy
+
+		before = copy.deepcopy(base._table("Item"))
 		self.add(rate=5)
-		kinds = (
-			{kind for kind, *_ in STATE["writes"]}
-			if STATE["writes"] and isinstance(STATE["writes"][0], tuple)
-			else set()
+		self.count(ref=2, rate=5)
+		self.assertEqual(base._table("Item"), before, "the Item master is untouched")
+		self.assertEqual(base._table("Item Price"), {})
+		written = {doctype for _kind, doctype, _ignore in STATE["writes"]}
+		self.assertFalse(written & {"Item", "Item Price", "Price List"}, written)
+		self.assertNotIn(
+			("insert", "Stock Entry", True), STATE["writes"], "posted as the user, never ignoring permissions"
 		)
-		self.assertFalse(kinds & {"Item", "Item Price", "Price List"}, kinds)
 
 
 class TestACountUpFromAnEmptyBin(_Base):

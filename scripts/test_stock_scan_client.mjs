@@ -1227,6 +1227,7 @@ async function appUnitCost() {
 	let next = null;
 	let release = null;
 	let cost = false; // true: the item has a cost on record, so the server never asks
+	let stubborn = false; // true: the server asks even when a rate came with the save (it should never)
 	const prompt = (suggestion) => ({
 		needs_valuation_rate: true, item_code: "PDT-0008", item_name: "Widget", uom: "Each",
 		suggestion: suggestion === undefined ? 6.5 : suggestion,
@@ -1252,7 +1253,7 @@ async function appUnitCost() {
 				await new Promise((resolve) => (release = resolve));
 				release = null;
 			}
-			if (!cost && !body.rate) message = prompt(suggestion);
+			if (!cost && (!body.rate || stubborn)) message = prompt(suggestion);
 			else {
 				message = {
 					log: { name: `SCAN-2026-${String(++n).padStart(5, "0")}`, status: "Posted", action: "Add Without PO", item_code: "PDT-0008", item_name: "Widget", stock_uom: "Each", qty: body.qty, warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", can_undo: 1, posted_at: `${today} 10:00:00`, rate: body.rate || null },
@@ -1413,6 +1414,17 @@ async function appUnitCost() {
 		t.button("Cancel").click();
 		await settle();
 		check("cancel: closes the prompt, posts nothing", [U.sheetDepth(), adds().length - n1], [0, 0]);
+
+		// A server that asks again after a price was sent is said so in the sheet, never stacked with a second.
+		stubborn = true;
+		t = await open();
+		await t.ask();
+		t.type("5");
+		t.button("Add with this cost").click();
+		await settle();
+		check("asked again after a price: one sheet, the reason in it, nothing saved", [U.sheetDepth(), /still has no cost/.test(t.text()), t.app.recent.length], [1, true, 0]);
+		stubborn = false;
+		U.closeAllSheets();
 
 		// 8. An item with a cost on record is never asked.
 		cost = true;

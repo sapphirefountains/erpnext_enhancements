@@ -1852,7 +1852,10 @@ export class StockScanApp {
 				// Not a save: the item has no cost on record, ERPNext would refuse the posting, and the server
 				// has posted nothing. Ask what one costs and send this save again with the answer.
 				this.updateStepper();
-				this.askUnitCost(v, method, args, result);
+				// Asked again after a price was sent: the server is not taking it. Say so in the sheet that
+				// sent it rather than stacking another question on it.
+				if (sheetUi) sheetUi.showError("The server still has no cost for this item. Ask a stock manager to set its Valuation Rate.");
+				else this.askUnitCost(v, method, args, result);
 				return;
 			}
 			if (ui && ui.onDone) ui.onDone();

@@ -751,7 +751,10 @@ def _suggested_unit_cost(item_code, company):
 
 
 def _receipt_cost(item, location, entered):
-	"""``(rate, prompt)`` for stock that is being added to ``location`` at a cost.
+	"""``(rate, prompt, typed)`` for stock that is being added to ``location`` at a cost.
+
+	``typed`` is True when the rate is the ``entered`` one (no cost was on record), which the caller
+	writes down; it is False for a cost on record and for a prompt.
 
 	A cost already on record wins, and an ``entered`` one is then ignored: this never lets a screen
 	restate what an item with a history costs. With none on record, a valid ``entered`` cost is
@@ -763,22 +766,26 @@ def _receipt_cost(item, location, entered):
 	"""
 	rate = _receipt_rate(item.name, location.name, location.company)
 	if rate > 0:
-		return rate, None
+		return rate, None, False
 	typed, problem = rules.check_unit_cost(entered, item.stock_uom)
 	if problem:
 		frappe.throw(problem)
 	if typed:
-		return typed, None
+		return typed, None, True
 	suggestion, source = _suggested_unit_cost(item.name, location.company)
-	return 0.0, {
-		"needs_valuation_rate": True,
-		"item_code": item.name,
-		"item_name": item.item_name or item.name,
-		"uom": item.stock_uom,
-		"suggestion": suggestion,
-		"source": source,
-		"max_rate": rules.MAX_UNIT_COST,
-	}
+	return (
+		0.0,
+		{
+			"needs_valuation_rate": True,
+			"item_code": item.name,
+			"item_name": item.item_name or item.name,
+			"uom": item.stock_uom,
+			"suggestion": suggestion,
+			"source": source,
+			"max_rate": rules.MAX_UNIT_COST,
+		},
+		False,
+	)
 
 
 def _project(project, company, required=False):
@@ -1032,8 +1039,7 @@ def add(
 	# nothing here, and the ledger by project is right.
 	offset_setting = settings.get("take_expense_account") if project else settings.get("add_offset_account")
 	_require("Stock Entry", "create", "submit")
-	typed_cost = _receipt_rate(item.name, location.name, location.company) <= 0
-	rate, prompt = _receipt_cost(item, location, rate)
+	rate, prompt, typed_cost = _receipt_cost(item, location, rate)
 	if prompt:
 		return prompt
 

@@ -822,8 +822,7 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None):
 		# From an empty bin there is no rate for ERPNext to keep. One on record is used; with none the
 		# page is asked for a unit cost (TASK-2026-02914), after the permission above so a person who
 		# cannot post the count is not asked for a price.
-		typed_cost = scan._receipt_rate(item.name, location.name, location.company) <= 0
-		cost, prompt = scan._receipt_cost(item, location, rate)
+		cost, prompt, typed_cost = scan._receipt_cost(item, location, rate)
 		if prompt:
 			return prompt
 	rate = cost
