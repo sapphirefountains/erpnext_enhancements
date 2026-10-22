@@ -417,6 +417,7 @@ def blanks(doc, steps):
 	"""
 	body = frappe.db.get_value("Contract Template", doc.get("contract_template"), "body") or ""
 	referenced = set(re.findall(r"\bdoc\.([a-z_][a-z0-9_]*)", body))
+	optional = _printed_only_when_set(doc, body)
 	out = []
 	for index, step in enumerate(steps):
 		for field in step["fields"]:
@@ -425,7 +426,7 @@ def blanks(doc, steps):
 				continue
 			if field["fieldtype"] == "Table" or not shown(field.get("depends_on"), doc):
 				continue
-			if name in PRINTED_ONLY_WHEN_SET:
+			if name in optional:
 				continue
 			value = doc.get(name)
 			if value in (None, "") or (field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)):
@@ -451,6 +452,19 @@ def blanks(doc, steps):
 	return out
 
 
+def _printed_only_when_set(doc, body):
+	"""``PRINTED_ONLY_WHEN_SET`` for this contract, plus the maintenance Annual Fee while it is blank and a
+	Service Fee prints: the template then leaves the Annual Service Fee Total line out (v1.724.0). Only for
+	a ``body`` that has the fee line, as in ``project_contract._render_context``."""
+	if doc.get("template_key") != "maintenance" or flt(doc.get("annual_maintenance_fee")):
+		return PRINTED_ONLY_WHEN_SET
+	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for, template_prints_fee
+
+	if template_prints_fee(body) and period_fee_for(doc):
+		return PRINTED_ONLY_WHEN_SET | {"annual_maintenance_fee"}
+	return PRINTED_ONLY_WHEN_SET
+
+
 def _step_index(steps, fieldname):
 	for index, step in enumerate(steps):
 		if any(field.get("fieldname") == fieldname for field in step["fields"]):
@@ -465,13 +479,14 @@ def progress(doc, steps, body):
 	bar fills as the blank lines in the preview disappear.
 	"""
 	referenced = set(_DOC_FIELD.findall(body or ""))
+	optional = _printed_only_when_set(doc, body)
 	total = filled = 0
 	for step in steps:
 		for field in step["fields"]:
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or field["fieldtype"] == "Table" or name not in referenced:
 				continue
-			if not shown(field.get("depends_on"), doc) or name in PRINTED_ONLY_WHEN_SET:
+			if not shown(field.get("depends_on"), doc) or name in optional:
 				continue
 			total += 1
 			value = doc.get(name)

@@ -1471,3 +1471,8 @@ erpnext_enhancements.patches.publish_active_job_schedules
 # default that has none (project_planner_settings.materialize_defaults): never over a stored value, no validate, and a Single
 # never saved is made whole. Switches nothing on. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_weekly_summary_setting
+# Maintenance agreement Service Fee line (v1.724.0): Service Plan Selection prints the per-period fee (the linked
+# maintenance contract's Recurring Amount, else the Annual Fee split) and drops the blank Annual total beside it. Replaces
+# the live body only when it is exactly a shipped body (v1.611.1 on prod, SHA-256); freezes paper-signed copies first and
+# waits while a signing link is out. Resets no terms. Cannot raise, safe twice.
+erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line
