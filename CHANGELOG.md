@@ -55,7 +55,7 @@ Three changes to the Project form, all Nik's, 2026-10-22.
     `Project: custom_comments`); the tab is found by the id Frappe gives its link (`project-custom_comments-tab`).
     **Every other doctype is unchanged: the feed stays on every tab, which is what it has really done all along.**
     The original "first tab of every tabbed form" rule is still in the code behind `FIRST_TAB_FOR_ALL = false`.
-    Turning that on would change every tabbed form on the site at once (Task, Customer, Opportunity's neighbours,
+    Turning that on would change every tabbed form on the site at once (Task, Customer,
     and so on) for the first time, so it is Nik's call and not a side effect of a Project change.
     A footer that a doctype already moves inside a tab pane (ERPNext's CRM doctypes) is left alone as before.
   - **Pinned** in `tests/test_project_form_hides.py`, which runs `scripts/test_activity_home_tab.js`: the real script
