@@ -1,4 +1,4 @@
-"""Bench-free tests for ``ai_governance/fac_list_documents_count.py`` (v1.728.0).
+"""Bench-free tests for ``ai_governance/fac_list_documents_count.py`` (v1.727.1).
 
 FAC 3.0.0's ``list_documents`` counts with ``fields=["count(name) as count"]``; Frappe 16 refuses
 a SQL function written as a string, so every call wrote an Error Log row. The fix swaps the
@@ -6,16 +6,19 @@ a SQL function written as a string, so every call wrote an Error Log row. The fi
 Desk list view does.
 
 There is no bench and no FAC in CI, so this suite builds both: a ``frappe`` stub whose
-``get_list`` refuses a function-in-a-string the way Frappe 16's ``_validate_select_field`` does,
-and a throwaway ``frappe_assistant_core`` package on disk whose ``list_documents`` module makes
+``get_list`` validates every string field with Frappe 16.50's own ``_validate_select_field`` rule
+(its two regexes are copied verbatim below), and a throwaway ``frappe_assistant_core`` package on disk whose ``list_documents`` module makes
 the same two calls FAC 3.0.0 makes (written for this test; FAC's own AGPL source is not copied
 here). The pinned sha256 is swapped for the fake module's for the duration of a test.
 
 What it proves:
 
 * the stub reproduces the bug (unpatched: ``total_count`` None, one Error Log);
-* patched, the count never sends a string function to ``get_list``, keeps the caller's filters
-  and ``ignore_permissions``, drops ``limit``, and fills ``total_count`` with no Error Log;
+* patched, every field the count sends to ``get_list`` passes v16's ``ALLOWED_FIELD_PATTERN``
+  (for DocType names with spaces and hyphens too), the count keeps the caller's filters and
+  ``ignore_permissions``, drops ``limit``, runs under the Desk's one-second cap, and fills
+  ``total_count`` with no Error Log; a timeout gives ``None`` and no Error Log;
+* a virtual DocType's count goes to its controller unchanged, once, and nothing is counted;
 * the listing call itself passes through untouched;
 * the guard is inert -- module untouched -- when the source hash does not match, when FAC is not
   installed, and when the module's ``frappe`` is not the real one; it never raises;
@@ -27,7 +30,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_fac_list_documents_count
 import ast
 import hashlib
 import importlib
-import os
+import re
 import shutil
 import sys
 import tempfile
@@ -40,6 +43,23 @@ APP_DIR = Path(__file__).resolve().parent.parent
 PATCH_MODULE = "erpnext_enhancements.ai_governance.fac_list_documents_count"
 TARGET_MODULE = "frappe_assistant_core.plugins.core.tools.list_documents"
 PERMITTED_ROWS = 7
+
+# Copied verbatim from frappe/database/query.py at tag v16.50.0 (what prod runs), where
+# _validate_select_field rejects FUNCTION_CALL_PATTERN and then accepts only ALLOWED_FIELD_PATTERN.
+FUNCTION_CALL_PATTERN = re.compile(r"^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\(", flags=re.ASCII)
+ALLOWED_FIELD_PATTERN = re.compile(
+	r"^(?:(`[\w\s-]+`|\w+)\.)?(`\w+`|\w+)(?:\s+as\s+(?:`[\w\s-]+`|'[\w\s:-]+'|\w+))?$",
+	flags=re.IGNORECASE,
+)
+
+
+def validate_select_field(field):
+	"""Frappe 16.50's ``_validate_select_field``, minus its ``*`` and all-digits shortcuts."""
+	if FUNCTION_CALL_PATTERN.match(field):
+		raise Exception(f"SQL functions are not allowed as strings in SELECT: {field}")
+	if not ALLOWED_FIELD_PATTERN.match(field):
+		raise Exception(f"Invalid field format for SELECT: {field}")
+
 
 FAKE_LIST_DOCUMENTS = """\
 import frappe
@@ -69,6 +89,13 @@ def run(doctype, filters):
 	return {"data": documents, "total_count": total_count}
 """
 
+STUB_SUBMODULES = (
+	"frappe.query_builder",
+	"frappe.query_builder.functions",
+	"frappe.model",
+	"frappe.model.utils",
+)
+
 _saved_modules = {}
 _fake_root = None
 
@@ -82,18 +109,20 @@ class _Query:
 
 
 class _CountSelect:
-	def __init__(self, subquery, frappe_stub):
+	def __init__(self, subquery):
 		self.subquery = subquery
-		self.frappe_stub = frappe_stub
 		self.selected = None
 
 	def select(self, term):
 		self.selected = term
 		return self
 
-	def run(self):
-		self.frappe_stub.calls.append(("count", self.subquery, self.selected))
-		return [(PERMITTED_ROWS,)]
+	def walk(self):
+		return "SELECT COUNT(*) FROM (<subquery>)", {"count_select": self}
+
+
+class _StatementTimeout(Exception):
+	pass
 
 
 class _Count:
@@ -107,11 +136,13 @@ def _build_frappe_stub():
 	frappe_stub.error_logs = []
 	frappe_stub.log_lines = []
 
+	frappe_stub.timeout = False
+	frappe_stub.virtual = set()
+
 	def get_list(doctype, *args, **kwargs):
 		for field in kwargs.get("fields") or []:
-			if isinstance(field, str) and "(" in field:
-				# frappe/database/query.py _validate_select_field, v16.
-				raise Exception(f"SQL functions are not allowed as strings in SELECT: {field}")
+			if isinstance(field, str):
+				validate_select_field(field)
 		frappe_stub.calls.append(("get_list", doctype, args, kwargs))
 		if kwargs.get("run", 1) in (0, False):
 			return _Query(doctype, kwargs)
@@ -121,14 +152,27 @@ def _build_frappe_stub():
 		frappe_stub.error_logs.append(title)
 
 	class _Logger:
-		# ERROR is the lowest level frappe's file logger writes on a production site.
+		def warning(self, message):
+			frappe_stub.log_lines.append(("WARNING", message))
+
 		def error(self, message):
-			frappe_stub.log_lines.append(message)
+			frappe_stub.log_lines.append(("ERROR", message))
+
+	def sql(query, params):
+		frappe_stub.calls.append(("sql", query, params))
+		if frappe_stub.timeout:
+			raise _StatementTimeout(1969, "Query execution was interrupted (max_statement_time exceeded)")
+		return [(PERMITTED_ROWS,)]
 
 	frappe_stub.get_list = get_list
 	frappe_stub.log_error = log_error
 	frappe_stub.logger = lambda name=None: _Logger()
-	frappe_stub.qb = types.SimpleNamespace(from_=lambda subquery: _CountSelect(subquery, frappe_stub))
+	frappe_stub.qb = types.SimpleNamespace(from_=_CountSelect)
+	frappe_stub.db = types.SimpleNamespace(
+		db_type="mariadb",
+		sql=sql,
+		is_statement_timeout=lambda e: bool(e.args) and e.args[0] == 1969,
+	)
 	frappe_stub.session = types.SimpleNamespace(user="tester@example.com")
 
 	query_builder = types.ModuleType("frappe.query_builder")
@@ -136,7 +180,18 @@ def _build_frappe_stub():
 	functions.Count = _Count
 	query_builder.functions = functions
 	frappe_stub.query_builder = query_builder
-	return frappe_stub, query_builder, functions
+
+	model = types.ModuleType("frappe.model")
+	model_utils = types.ModuleType("frappe.model.utils")
+	model_utils.is_virtual_doctype = lambda doctype: doctype in frappe_stub.virtual
+	model.utils = model_utils
+	frappe_stub.model = model
+	return frappe_stub, {
+		"frappe.query_builder": query_builder,
+		"frappe.query_builder.functions": functions,
+		"frappe.model": model,
+		"frappe.model.utils": model_utils,
+	}
 
 
 def _write_fake_fac(root):
@@ -155,7 +210,7 @@ def _forget_fake_fac():
 
 def setUpModule():
 	global _fake_root
-	for name in ("frappe", "frappe.query_builder", "frappe.query_builder.functions", PATCH_MODULE):
+	for name in ("frappe", *STUB_SUBMODULES, PATCH_MODULE):
 		_saved_modules[name] = sys.modules.pop(name, None)
 	_forget_fake_fac()
 	_fake_root = tempfile.mkdtemp(prefix="fake_fac_")
@@ -181,10 +236,9 @@ def _fake_source_hash():
 
 class _Base(unittest.TestCase):
 	def setUp(self):
-		self.frappe, query_builder, functions = _build_frappe_stub()
+		self.frappe, submodules = _build_frappe_stub()
 		sys.modules["frappe"] = self.frappe
-		sys.modules["frappe.query_builder"] = query_builder
-		sys.modules["frappe.query_builder.functions"] = functions
+		sys.modules.update(submodules)
 		sys.modules.pop(PATCH_MODULE, None)
 		_forget_fake_fac()
 		importlib.invalidate_caches()
@@ -195,6 +249,9 @@ class _Base(unittest.TestCase):
 
 	def target(self):
 		return importlib.import_module(TARGET_MODULE)
+
+	def calls(self, kind):
+		return [call for call in self.frappe.calls if call[0] == kind]
 
 
 class TestStubReproducesTheBug(_Base):
@@ -213,20 +270,26 @@ class TestAppliedCount(_Base):
 		self.assertEqual(self.frappe.error_logs, [])
 		self.assertEqual(result["data"], [{"name": "Sales Invoice-0001"}])
 
-	def test_no_string_function_reaches_get_list(self):
+	def test_count_field_passes_v16_select_validation(self):
+		# The stub would already have raised; this states the rule for the names that stretch it.
+		for doctype in ("Task", "Sales Invoice", "Sapphire Maintenance Template", "Item-Variant_Map"):
+			field = self.patch.count_field(doctype)
+			self.assertIsNone(FUNCTION_CALL_PATTERN.match(field), field)
+			self.assertIsNotNone(ALLOWED_FIELD_PATTERN.match(field), field)
+
+	def test_every_field_sent_passes_v16_select_validation(self):
 		self.patch.apply()
-		self.target().run("Task", {"status": "Open"})
-		for call in self.frappe.calls:
-			if call[0] != "get_list":
-				continue
-			for field in call[3].get("fields") or []:
-				self.assertFalse(isinstance(field, str) and "(" in field, field)
+		self.target().run("Sales Invoice", {"docstatus": 1})
+		fields = [field for call in self.calls("get_list") for field in call[3].get("fields") or []]
+		self.assertIn("`tabSales Invoice`.name", fields)
+		for field in fields:
+			self.assertIsNotNone(ALLOWED_FIELD_PATTERN.match(field), field)
 
 	def test_count_keeps_filters_and_permission_rules(self):
 		self.patch.apply()
 		filters = {"docstatus": 1, "customer": "Acme"}
 		self.target().run("Sales Invoice", filters)
-		get_lists = [call for call in self.frappe.calls if call[0] == "get_list"]
+		get_lists = self.calls("get_list")
 		self.assertEqual(len(get_lists), 2)
 		_, doctype, args, kwargs = get_lists[1]
 		self.assertEqual(doctype, "Sales Invoice")
@@ -238,18 +301,44 @@ class TestAppliedCount(_Base):
 		self.assertEqual(kwargs["run"], 0)
 		self.assertNotIn("limit", kwargs)
 
-		counts = [call for call in self.frappe.calls if call[0] == "count"]
+		counts = self.calls("sql")
 		self.assertEqual(len(counts), 1)
-		_, subquery, selected = counts[0]
-		self.assertIsInstance(subquery, _Query)
-		self.assertIs(subquery.kwargs, kwargs)
-		self.assertIsInstance(selected, _Count)
-		self.assertEqual(selected.arg, "*")
+		_, query, params = counts[0]
+		self.assertTrue(query.startswith("SET STATEMENT max_statement_time=1 FOR SELECT COUNT(*)"), query)
+		count_select = params["count_select"]
+		self.assertIsInstance(count_select.subquery, _Query)
+		self.assertIs(count_select.subquery.kwargs, kwargs)
+		self.assertIsInstance(count_select.selected, _Count)
+		self.assertEqual(count_select.selected.arg, "*")
+
+	def test_no_timeout_clause_off_mariadb(self):
+		self.frappe.db.db_type = "postgres"
+		stand_in = self.patch._CountSafeFrappe(self.frappe)
+		stand_in.get_list("ToDo", filters={}, fields=["count(name) as count"], limit=1)
+		self.assertTrue(self.calls("sql")[0][1].startswith("SELECT COUNT(*)"))
+
+	def test_a_count_that_times_out_is_none_without_an_error_log(self):
+		self.frappe.timeout = True
+		self.patch.apply()
+		result = self.target().run("Sales Invoice", {"docstatus": 1})
+		self.assertIsNone(result["total_count"])
+		self.assertEqual(self.frappe.error_logs, [])
+		self.assertEqual(result["data"], [{"name": "Sales Invoice-0001"}])
+
+	def test_other_count_errors_still_reach_fac(self):
+		def broken_sql(query, params):
+			raise RuntimeError("table gone")
+
+		self.frappe.db.sql = broken_sql
+		self.patch.apply()
+		result = self.target().run("Task", {})
+		self.assertIsNone(result["total_count"])
+		self.assertEqual(self.frappe.error_logs, ["list_documents: count query failed for Task"])
 
 	def test_listing_call_passes_through_untouched(self):
 		self.patch.apply()
 		self.target().run("Task", {"status": "Open"})
-		_, doctype, args, kwargs = next(call for call in self.frappe.calls if call[0] == "get_list")
+		_, doctype, args, kwargs = self.calls("get_list")[0]
 		self.assertEqual(doctype, "Task")
 		self.assertEqual(
 			kwargs,
@@ -271,23 +360,27 @@ class TestAppliedCount(_Base):
 			)
 			self.assertIs(self.frappe.calls[0][3]["ignore_permissions"], value)
 
-	def test_virtual_doctype_count_goes_through_as_written(self):
-		# A virtual DocType's controller ignores run=0 and returns rows, so there is no query to count:
-		# the stand-in hands FAC's own call to frappe unchanged rather than failing on it.
-		real_get_list = self.frappe.get_list
+	def test_virtual_doctype_count_goes_to_its_controller_once_as_written(self):
+		# A virtual DocType has no table: its controller ignores run=0, so there is nothing to count.
+		# FAC's own call goes through unchanged, exactly once, and no count query is built.
+		self.frappe.virtual.add("Virtual Thing")
+		controller_calls = []
 
-		def virtual_get_list(doctype, *args, **kwargs):
-			if kwargs.get("run", 1) in (0, False):
-				self.frappe.calls.append(("get_list", doctype, args, kwargs))
-				return [{"name": "row"}]
-			return real_get_list(doctype, *args, **kwargs)
+		def controller_get_list(doctype, *args, **kwargs):
+			controller_calls.append((doctype, args, kwargs))
+			return ({"count": 3},)  # a controller may return any sequence
 
-		self.frappe.get_list = virtual_get_list
+		self.frappe.get_list = controller_get_list
 		stand_in = self.patch._CountSafeFrappe(self.frappe)
-		with self.assertRaises(Exception) as raised:
-			stand_in.get_list("Virtual Thing", filters={}, fields=["count(name) as count"], limit=1)
-		self.assertIn("SQL functions are not allowed as strings", str(raised.exception))
-		self.assertEqual([call for call in self.frappe.calls if call[0] == "count"], [])
+		result = stand_in.get_list(
+			"Virtual Thing", filters={"a": 1}, fields=["count(name) as count"], limit=1
+		)
+		self.assertEqual(result, ({"count": 3},))
+		self.assertEqual(
+			controller_calls,
+			[("Virtual Thing", (), {"filters": {"a": 1}, "fields": ["count(name) as count"], "limit": 1})],
+		)
+		self.assertEqual(self.calls("sql"), [])
 
 	def test_other_fields_are_not_rewritten(self):
 		stand_in = self.patch._CountSafeFrappe(self.frappe)
@@ -334,7 +427,11 @@ class TestGuardIsInert(_Base):
 		self.assert_untouched()
 		result = self.target().run("Task", {"status": "Open"})
 		self.assertIsNone(result["total_count"])
-		self.assertEqual(self.frappe.log_lines, ["FAC list_documents count fix not applied: source-mismatch"])
+		# WARNING, which a production site's file logger drops: an upgraded bench must not log this
+		# on every worker start.
+		self.assertEqual(
+			self.frappe.log_lines, [("WARNING", "FAC list_documents count fix not applied: source-mismatch")]
+		)
 
 	def test_fac_not_installed(self):
 		with mock.patch.object(self.patch.importlib.util, "find_spec", return_value=None):
@@ -348,11 +445,16 @@ class TestGuardIsInert(_Base):
 		module.frappe = someone_else
 		self.assertEqual(self.patch.apply(), self.patch.FOREIGN_FRAPPE)
 		self.assertIs(module.frappe, someone_else)
+		self.assertEqual(
+			self.frappe.log_lines, [("ERROR", "FAC list_documents count fix not applied: foreign-frappe")]
+		)
 
 	def test_never_raises(self):
 		with mock.patch.object(self.patch.importlib, "import_module", side_effect=ImportError("boom")):
 			self.assertEqual(self.patch.apply(), self.patch.FAILED)
-		self.assertEqual(self.frappe.log_lines, ["FAC list_documents count fix not applied: failed"])
+		self.assertEqual(
+			self.frappe.log_lines, [("ERROR", "FAC list_documents count fix not applied: failed")]
+		)
 
 	def test_logger_failure_never_raises(self):
 		self.frappe.logger = mock.Mock(side_effect=RuntimeError("no logger"))

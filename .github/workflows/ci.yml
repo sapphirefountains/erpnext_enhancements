@@ -284,7 +284,7 @@ jobs:
       # Its own step: it installs its own frappe stub (whose get_list refuses a SQL function in a
       # string, as Frappe 16 does) and a throwaway frappe_assistant_core package on sys.path, and
       # either would cross-talk with the stub set the assistant-tool step above installs.
-      # v1.728.0: FAC 3.0.0's list_documents counted with "count(name) as count" and wrote an
+      # v1.727.1: FAC 3.0.0's list_documents counted with "count(name) as count" and wrote an
       # Error Log row on every call. Fails the build if the stand-in ever sends a string function
       # to get_list, loses the caller's filters or ignore_permissions, rewrites the listing call,
       # or touches FAC's module when its source is not the pinned 3.0.0 file.

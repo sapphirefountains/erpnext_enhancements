@@ -15,6 +15,8 @@ CLAUDE.md). FAC catches the error, writes an Error Log row titled
 UPSTREAM. Fixed in FAC v3.1.0 (commit 2b834b0, 2026-09-24), which tries the dict form
 ``{"COUNT": "name", "as": "count"}`` first. Prod still runs 3.0.0, and FAC is a separate app
 this repo cannot edit. Upgrading FAC is the real fix; this module holds the line until then.
+**Delete this module (and its entry in ``monkeypatches._PATCHES``) once FAC is upgraded**: from
+then on it is dead code that only logs "source-mismatch" once per worker.
 
 WHY A MONKEYPATCH. FAC 3.0.0 has no supported way to replace a core tool. An app tool with the
 same name would be *listed* in place of the core one (``ToolRegistry.get_available_tools``
@@ -31,6 +33,12 @@ and ``permission_query_conditions`` all apply exactly as they do to the rows the
 The answer comes back in the shape FAC reads, ``[{"count": n}]``, so callers see the same
 output with ``total_count`` filled in.
 
+Two cases are left as they were. A virtual DocType has no table to count, so its count call goes
+to its controller exactly as FAC wrote it, once. And, as on the Desk, the count gets one second
+(``max_statement_time``) on MariaDB: past that it comes back ``None``, which is what FAC returned
+before, minus the Error Log row. Every ``list_documents`` call now runs a real count, which is
+nothing at Sapphire's data size; the cap is there so it never becomes the slow part.
+
 WHEN IT DOES NOTHING. It is inert unless every check passes, and it never raises:
 
 * FAC is not importable on this bench;
@@ -39,8 +47,10 @@ WHEN IT DOES NOTHING. It is inert unless every check passes, and it never raises
   point: the stand-in is only known to be correct against code we have read;
 * the module's ``frappe`` is not the real ``frappe`` module (someone else got there first).
 
-It tells the app log once per process why it stood down, by reason only. Nothing here logs
-arguments, filters or results.
+It tells the app log once per process why it stood down, by reason only: WARNING for
+"source-mismatch", the expected state after a FAC upgrade (frappe's file logger drops WARNING on a
+production site, so an upgraded bench does not log it on every worker start), and ERROR for the
+states nobody expects ("failed", "foreign-frappe"). Nothing here logs arguments, filters or results.
 
 FAC-OPTIONAL. Like ``fac_tool_categories``, nothing here has an import statement for
 ``frappe_assistant_core``: the target is resolved by dotted path only after
@@ -83,6 +93,15 @@ FAILED = "failed"
 _state = None
 
 
+#: Seconds the count may run on MariaDB before it gives up, as ``reportview.get_count`` does.
+COUNT_TIMEOUT_SECONDS = 1
+
+
+def count_field(doctype):
+	"""The one field the count query selects: the table-qualified ``name``, as the Desk writes it."""
+	return f"`tab{doctype}`.name"
+
+
 def permitted_count(real_frappe, doctype, kwargs):
 	"""How many rows ``real_frappe.get_list(doctype, **kwargs)`` could return, with no limit.
 
@@ -91,22 +110,38 @@ def permitted_count(real_frappe, doctype, kwargs):
 	``limit`` and ``order_by`` are set here; ``filters``, ``ignore_permissions`` and anything else
 	the caller passed go through unchanged, so the count obeys the same rules as the listing.
 
-	Returns ``None`` when ``get_list`` hands back rows instead of a query: a virtual DocType's
-	controller ignores ``run=0``, and there is no SQL to count.
+	Like the Desk when it is given a limit, the count runs under a one-second
+	``max_statement_time`` on MariaDB and returns ``None`` when it times out. Not for virtual
+	DocTypes: their controller ignores ``run=0``.
 	"""
 	from frappe.query_builder.functions import Count
 
 	query_kwargs = {key: value for key, value in kwargs.items() if key not in ("fields", "limit", "order_by")}
 	rows = real_frappe.get_list(
 		doctype,
-		fields=[f"`tab{doctype}`.name"],
+		fields=[count_field(doctype)],
 		order_by=None,
 		run=0,
 		**query_kwargs,
 	)
-	if isinstance(rows, list):
-		return None
-	return real_frappe.qb.from_(rows).select(Count("*")).run()[0][0]
+	count_sql, count_params = real_frappe.qb.from_(rows).select(Count("*")).walk()
+	timeout_clause = (
+		f"SET STATEMENT max_statement_time={COUNT_TIMEOUT_SECONDS} FOR "
+		if real_frappe.db.db_type == "mariadb"
+		else ""
+	)
+	try:
+		return real_frappe.db.sql(timeout_clause + count_sql, count_params)[0][0]
+	except Exception as e:
+		if real_frappe.db.is_statement_timeout(e):
+			return None
+		raise
+
+
+def is_virtual(doctype):
+	from frappe.model.utils import is_virtual_doctype
+
+	return bool(is_virtual_doctype(doctype))
 
 
 class _CountSafeFrappe:
@@ -129,11 +164,9 @@ class _CountSafeFrappe:
 		setattr(self._ee_frappe, name, value)
 
 	def get_list(self, *args, **kwargs):
-		if args and kwargs.get("fields") == LEGACY_COUNT_FIELDS:
-			count = permitted_count(self._ee_frappe, args[0], kwargs)
-			if count is not None:
-				return [{"count": count}]
-		# Everything else, and a count we cannot answer, goes to frappe exactly as FAC wrote it.
+		if args and kwargs.get("fields") == LEGACY_COUNT_FIELDS and not is_virtual(args[0]):
+			return [{"count": permitted_count(self._ee_frappe, args[0], kwargs)}]
+		# Everything else, a virtual DocType's count included, goes to frappe exactly as FAC wrote it.
 		return self._ee_frappe.get_list(*args, **kwargs)
 
 
@@ -173,10 +206,13 @@ def apply():
 		_state = FAILED
 	if _state not in (APPLIED, NO_FAC):
 		try:
-			# ERROR, not INFO: frappe's file logger drops anything below ERROR on a production site
-			# (frappe/utils/logger.py default_log_level), and an inert fix nobody can see is the failure
-			# this line exists to expose. File log only, never the Error Log doctype.
-			frappe.logger("erpnext_enhancements").error(f"FAC list_documents count fix not applied: {_state}")
+			# File log only, never the Error Log doctype. SOURCE_MISMATCH is what every worker of an
+			# upgraded bench reports, so it stays at WARNING, which frappe's file logger drops on a
+			# production site (frappe/utils/logger.py default_log_level is ERROR). The other two mean
+			# something unexpected happened to code we read, so they are written.
+			logger = frappe.logger("erpnext_enhancements")
+			log = logger.warning if _state == SOURCE_MISMATCH else logger.error
+			log(f"FAC list_documents count fix not applied: {_state}")
 		except Exception:
 			pass
 	return _state

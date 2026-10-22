@@ -3501,10 +3501,10 @@ assistant_skills = [
 #      Database.execute_query and File.get_content, and keeps drafts out of the
 #      document cache; see knowledge_base/template_guard.py;
 #   4. the AI connector's list_documents counts its results in a form Frappe 16
-#      accepts (v1.728.0). FAC 3.0.0's string `count(name)` logged an Error Log
+#      accepts (v1.727.1). FAC 3.0.0's string `count(name)` logged an Error Log
 #      row on every call. Inert unless FAC's module is byte-for-byte 3.0.0's, so
-#      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0); see
-#      ai_governance/fac_list_documents_count.py.
+#      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
+#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py.
 # Also applied from before_request and before_job (monkeypatches.ensure_applied):
 # hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
