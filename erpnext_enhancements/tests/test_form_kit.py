@@ -2518,7 +2518,8 @@ class TestItemSteps(unittest.TestCase):
                 self.assertEqual(section_of[fieldname], "details")
         self.assertEqual(
             [fieldname for fieldname, key in section_of.items() if key == "custom_maintenance_billing_section"],
-            ["custom_maintenance_billing", "custom_price_per_dose"],
+            # v1.712.0: Size Family and Size, a chemical sold in sizes (sapphire_maintenance/item_sizes.py).
+            ["custom_maintenance_billing", "custom_price_per_dose", "custom_size_family", "custom_size"],
         )
         self.assertIn("stock_uom", _value_names(_step(self.flow, "basics")))
         self.assertEqual(
@@ -2530,6 +2531,8 @@ class TestItemSteps(unittest.TestCase):
                 "custom_sds_reviewed_on",
                 "custom_maintenance_billing",
                 "custom_price_per_dose",
+                "custom_size_family",
+                "custom_size",
             ],
         )
 

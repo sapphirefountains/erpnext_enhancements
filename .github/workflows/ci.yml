@@ -797,6 +797,12 @@ jobs:
       # own frappe stub.
       - name: Chemical billing on approval
         run: python -m unittest erpnext_enhancements.tests.test_chemical_billing -v
+      # A chemical sold in sizes (1" or 3" chlorine tablets, v1.712.0): each size is its own
+      # Item, the wizard's toggle offers them, and every form names the size. Without it a
+      # visit, its report and its invoice say "chlorine tablets" and nobody can tell which
+      # bucket was opened. Own step for its own frappe stub.
+      - name: Chemical sizes on visits
+        run: python -m unittest erpnext_enhancements.tests.test_item_sizes -v
       # The visit roll-forward had no off-season: a drained fountain kept drafting
       # November-March visits, and a weekly site kept drafting one every week. The
       # winter pause defers those to spring. Bench-free, own frappe stub, own step.
