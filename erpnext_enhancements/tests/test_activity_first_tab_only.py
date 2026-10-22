@@ -32,6 +32,34 @@ def script():
     return SCRIPT.read_text(encoding="utf-8")
 
 
+def _code(text):
+    """The script with comments stripped: an assertion must not be satisfied by its own prose."""
+    return re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+
+
+class TestItLooksWhereFrappeV16PutsTheFooter(unittest.TestCase):
+    """The footer is a sibling of `.layout-main-section`, not a child of `.form-page`.
+
+    form.js builds it with `parent: $("<div>").appendTo(this.page.main.parent())` and
+    `page.main` is `.layout-main-section`, so it lives in `.layout-main-section-wrapper`.
+    The feature shipped (v1.259.4) looking inside `.form-page`, which matches nothing, and
+    its tests passed against a fake DOM of the same wrong shape until v1.716.2.
+    """
+
+    ROOT = ".layout-main-section-wrapper"
+
+    def test_the_script_works_on_the_wrapper(self):
+        self.assertIn(f'FORM_ROOT = "{self.ROOT}"', script())
+
+    def test_the_script_never_looks_for_the_footer_under_form_page(self):
+        self.assertNotIn(".form-page", _code(script()))
+
+    def test_the_stylesheet_scopes_the_hide_rule_to_the_wrapper(self):
+        css = re.sub(r"/\*.*?\*/", "", CSS.read_text(encoding="utf-8"), flags=re.S)
+        self.assertIn(f"{self.ROOT}.{CLASS} .form-footer", css)
+        self.assertNotIn(f".form-page.{CLASS}", css)
+
+
 class TestTheTwoHalvesAgree(unittest.TestCase):
     """A class nothing styles, or a rule nothing sets, both fail silently."""
 
@@ -182,8 +210,20 @@ class TestAFooterAlreadyInAPaneIsLeftAlone(unittest.TestCase):
 
 
 class TestItSurvivesFrappeRerendering(unittest.TestCase):
-    def test_it_hooks_the_tab_event(self):
-        self.assertIn("shown.bs.tab", script())
+    def test_it_does_not_wait_for_shown_bs_tab(self):
+        """Frappe's own click handler (tab.js) adds `active` before layout.js calls
+        Bootstrap's `.tab("show")`, which returns early on an already-active link, so
+        `shown.bs.tab` is not fired for a Frappe tab click. Depending on it is a feature
+        that works only on the first paint. Read from the code, not the comments: the
+        header names the event to explain why it is not used."""
+        self.assertNotIn("shown.bs.tab", _code(script()))
+
+    def test_it_watches_the_tab_links_class(self):
+        """What changes on every switch is the link's class (`set_active()` adds and
+        removes `active`), so each `.form-tabs` list is observed for that attribute."""
+        code = _code(script())
+        self.assertIn('attributeFilter: ["class"]', code)
+        self.assertIn("watch_tabs(root)", code)
 
     def test_it_defers_after_form_refresh(self):
         """`form-refresh` fires BEFORE refresh_fields, so the tabs may not exist
