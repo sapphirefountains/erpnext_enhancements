@@ -26,6 +26,10 @@ const APP = path.join(HERE, "..", "erpnext_enhancements");
 const logic = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/logic.js")).href);
 const { Controller } = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/controller.js")).href);
 const PAGE_JS = path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js");
+// The reorder boxes (v1.725.0), the real modules, for the page test that gives the page its bundle.
+const reorder_logic = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/logic.js")).href);
+const { ReorderEditor, cell_html } = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/editor.js")).href);
+const reorder_dom = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/dom.js")).href);
 
 let checks = 0;
 let failures = 0;
@@ -113,6 +117,13 @@ function makeServer(options) {
 				if (fixture.items) loc.items = JSON.parse(JSON.stringify(fixture.items));
 				return loc;
 			}
+			if (name === "get_reorder_levels") {
+				const levels = {};
+				JSON.parse(args.item_codes).forEach((code) => {
+					levels[code] = { item_code: code, has_rule: true, row_warehouse: args.warehouse, warehouse_label: "x", elsewhere: false, level: 2, qty: 5, modified: "m" };
+				});
+				return { levels, can_edit: true };
+			}
 			if (name === "get_recent") return [];
 			if (name === "search_items") return [{ item_code: "PDT-0009", item_name: "VALVE", is_stock_item: 1, on_hand_here: 0 }];
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
@@ -128,7 +139,7 @@ function makeServer(options) {
 			return { log, message: `${name} done`, repeated: false };
 		});
 	};
-	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item/.test(c.method));
+	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels/.test(c.method));
 	return server;
 }
 
@@ -501,6 +512,8 @@ function makeJQuery(registry) {
 			disabled: false,
 			querySelector: () => null,
 			addEventListener: () => {},
+			// `inRoot` marks a stand-in focused element as being inside this node.
+			contains: (x) => !!x && !!x.inRoot,
 		};
 		const state = { html: html || "", text: "", value: "", handlers: [], props: {} };
 		const self = new Proxy(function () {}, {
@@ -596,6 +609,21 @@ function loadPage(options) {
 		get_values() {
 			return Object.assign({}, this.values);
 		}
+		// What Frappe v16 does when the primary button is clicked (ui/dialog.js set_primary_action and
+		// ui/field_group.js get_values): the values are read ONCE and passed to the action as its first
+		// argument; and for a required field whose value is falsy (`!f.value`, which a typed 0 is) the
+		// field is refreshed, which sets the box from `me.value || null`: a 0 is blanked in the box. A
+		// later d.get_values() therefore no longer has it. A page that re-reads the dialog instead of
+		// using the argument loses every 0.
+		click_primary() {
+			const picked = {};
+			for (const f of this.opts.fields || []) {
+				const v = this.values[f.fieldname];
+				if (v !== null && v !== undefined && String(v).trim() !== "") picked[f.fieldname] = v;
+				if (f.reqd && !v) delete this.values[f.fieldname];
+			}
+			return this.opts.primary_action(picked);
+		}
 		get_value(k) {
 			return this.values[k];
 		}
@@ -623,6 +651,8 @@ function loadPage(options) {
 		set_route: (...args) => world.set_route(args.length === 1 ? args[0] : args),
 		require: (assets, cb) => {
 			registry.requires.push(assets);
+			// { hold_reorder: true }: the reorder bundle never arrives (a slow network), and must hold nothing up.
+			if ((options || {}).hold_reorder && assets[0] === "reorder_levels.bundle.js") return;
 			cb();
 		},
 		ui: {
@@ -653,6 +683,19 @@ function loadPage(options) {
 			},
 		},
 		sf_bin_manager: Object.assign({ version: 1, Controller }, logic),
+		// The reorder bundle, when the test asks for it: the real modules over this stand-in's root, which
+		// has no querySelectorAll (nothing is drawn into a real DOM here).
+		sf_reorder: (options || {}).reorder
+			? {
+					version: 1,
+					ReorderEditor,
+					cell_html,
+					bind: reorder_dom.bind,
+					paint: (root, ...rest) => reorder_dom.paint(Object.assign(root, { querySelectorAll: () => [] }), ...rest),
+					read_boxes: reorder_dom.read_boxes,
+					logic: reorder_logic,
+			  }
+			: undefined,
 		history: {
 			get state() {
 				return world.state();
@@ -665,7 +708,8 @@ function loadPage(options) {
 		location: { reload: () => {} },
 	};
 	const __ = (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args && args[i] !== undefined ? args[i] : m));
-	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console });
+	const document = { activeElement: null };
+	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console, document });
 	vm.runInContext(fs.readFileSync(PAGE_JS, "utf-8"), context, { filename: PAGE_JS });
 	const page = pages["bin-manager"];
 	world.page = {
@@ -682,8 +726,144 @@ function loadPage(options) {
 		const handler = root.handlers.find((h) => h.evt === "click" && h.selector === "[data-act]");
 		handler.fn({ preventDefault: () => {}, currentTarget: { getAttribute: (k) => attrs[k] ?? null, disabled: false } });
 	};
-	return { server, world, registry, page, click };
+	return { server, world, registry, page, click, document };
 }
+
+const msgOf = (d) => d.fields_dict.bm_msg.$wrapper.__state.html || "";
+
+// TASK-2026-02912: "Bin Manager rejects 0 as a valid quantity". The cause: Frappe's dialog blanks a typed 0
+// in a required field while it reads the values for the primary action, and the page read them again.
+test("the real page: a count of 0 is sent, because the dialog's own reading of its values is used", async () => {
+	const { server, world, registry, page, click } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	d.values.qty = 0;
+	await d.click_primary();
+	await settle();
+	const write = server.writes().pop();
+	check("set_count was called", !!write && write.method.endsWith("bin_assignments.set_count"), true);
+	check("with a quantity of 0, not a missing one", write && write.args.qty, 0);
+	check("the dialog closed on success", d.shown, false);
+	check("no complaint about the quantity", /Enter the quantity/.test(msgOf(d)), false);
+
+	// blank is still refused (nothing is sent), and so is a negative number
+	for (const typed of ["", null, undefined, -1, "abc"]) {
+		click({ "data-act": "count", "data-item": "PDT-0001" });
+		const e = registry.dialogs.pop();
+		e.values.qty = typed;
+		const before = server.writes().length;
+		await e.click_primary();
+		await settle();
+		check(`${JSON.stringify(typed)} is refused and sends nothing`, server.writes().length, before);
+		check(`${JSON.stringify(typed)}: in the dialog's words`, /Enter the quantity you counted, 0 or more\./.test(msgOf(e)), true);
+	}
+
+	// a refused 0 (the server says no) stays in the box: Frappe blanked it while reading the dialog
+	server.fail.set("set_count", [{ status: 417, message: "Correcting a count needs the Stock Manager role.", exc_type: "PermissionError" }]);
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const r = registry.dialogs.pop();
+	r.values.qty = 0;
+	await r.click_primary();
+	await settle();
+	check("the server's sentence is shown", /Stock Manager role/.test(msgOf(r)), true);
+	check("and the 0 is back in its box", r.values.qty, 0);
+	check("the dialog stays open", r.shown !== false, true);
+
+	// a move of 0 is meaningless and is refused in words, never treated as a missing number
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const m = registry.dialogs.pop();
+	m.values.qty = 0;
+	m.values.to_warehouse = BIN_B;
+	const writes = server.writes().length;
+	await m.click_primary();
+	await settle();
+	check("a move of 0 sends nothing", server.writes().length, writes);
+	check("and says why", /Enter how many to move, more than 0\./.test(msgOf(m)), true);
+});
+
+test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
+	const { server, world, registry, page, click } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	check("asked for the reorder files apart from its own", registry.requires.map((r) => r[0]), ["sf_kit.bundle.js", "reorder_levels.bundle.js"]);
+	check("the editor is made", !!page.bin_manager.reorder, true);
+	const before = world.entries.length;
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("one entry for the bin, none for the reorder read", world.entries.length, before + 1);
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("a Reorder column", /<th scope="col">Reorder<\/th>/.test(html), true);
+	check("a cell for each item", (html.match(/data-ro-item="PDT-000[12]"/g) || []).length, 2);
+	const reads = () => server.calls.filter((c) => c.method.endsWith("get_reorder_levels"));
+	check("one read, for this bin's items", [reads().length, JSON.parse(reads()[0].args.item_codes), reads()[0].args.warehouse], [1, ["PDT-0001", "PDT-0002"], BIN_A]);
+	check("not a write", server.writes().length, 0);
+	page.bin_manager.render();
+	page.bin_manager.render();
+	await settle();
+	check("drawing the same list again does not ask again", reads().length, 1);
+	await page.bin_manager.ctl.load_location();
+	await settle();
+	check("a reloaded list is read once more", reads().length, 2);
+});
+
+test("the real page: a redraw waits for a focused reorder box and runs when it is left", async () => {
+	const { server, world, registry, page, click, document } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	const items = () => registry.found[".bm-items"][0];
+	const before = items().innerHTML;
+	check("drawn", /PUMP, 1 HP/.test(before), true);
+	// the person is in a reorder box; the list changes underneath (a reload lands)
+	document.activeElement = { classList: { contains: (c) => c === "ro-input" }, inRoot: true };
+	page.bin_manager.ctl.state.location = Object.assign({}, page.bin_manager.ctl.state.location, {
+		items: [{ item_code: "PDT-0001", item_name: "PUMP, 2 HP", stock_uom: "Unit", on_hand: 4, on_order: 0, assigned: true, is_default: false, undecided: false }],
+	});
+	page.bin_manager.render();
+	check("the table is left alone while a box has focus", items().innerHTML, before);
+	check("and the redraw is queued", page.bin_manager.redraw_after_blur, true);
+	// focus leaves the box: the queued redraw runs
+	document.activeElement = null;
+	const root = registry.root.__state;
+	const handler = root.handlers.find((h) => h.evt === "focusout" && h.selector === ".ro-input");
+	check("a focusout handler on the boxes", !!handler, true);
+	handler.fn({});
+	await settle();
+	check("the redraw ran", /PUMP, 2 HP/.test(items().innerHTML), true);
+	check("and is no longer queued", page.bin_manager.redraw_after_blur, false);
+	// focus moving from one box to the next (still in a box) does not draw yet
+	page.bin_manager.redraw_after_blur = true;
+	document.activeElement = { classList: { contains: (c) => c === "ro-input" }, inRoot: true };
+	handler.fn({});
+	await settle();
+	check("still queued while another box has focus", page.bin_manager.redraw_after_blur, true);
+	check("no write ever", server.writes().length, 0);
+});
+
+test("the real page: a reorder bundle that never arrives holds the bins up for nothing", async () => {
+	const { world, registry, page, click } = loadPage({ reorder: true, hold_reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("the bin is drawn", /PUMP, 1 HP/.test(registry.found[".bm-items"][0].innerHTML), true);
+	check("with no column", /Reorder/.test(registry.found[".bm-items"][0].innerHTML), false);
+	check("and no editor", page.bin_manager.reorder, null);
+});
+
+test("the real page without the reorder bundle: no column, no read", async () => {
+	const { server, world, registry, page, click } = loadPage();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("no editor", page.bin_manager.reorder, null);
+	check("no column", /Reorder/.test(registry.found[".bm-items"][0].innerHTML), false);
+	check("no read", server.calls.filter((c) => c.method.endsWith("get_reorder_levels")).length, 0);
+});
 
 test("the real page: loads its bundles, a bin click is one entry, a dialog is none", async () => {
 	const { server, world, registry, page, click } = loadPage();
