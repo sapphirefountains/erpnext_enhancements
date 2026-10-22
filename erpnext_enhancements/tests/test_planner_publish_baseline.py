@@ -715,10 +715,12 @@ class TestFixtures(unittest.TestCase):
 			self.assertEqual(self.records[name]["hidden"], 0, name)
 
 	def test_no_form_script_shows_the_planner_schedule_section_again(self):
-		root = FIXTURE.parent.parent / "public" / "js"
-		for path in root.rglob("*.js"):
+		# Every .js in the app, not only public/js: doctype_js and page scripts live in module folders too.
+		for path in APP.rglob("*.js"):
+			if "node_modules" in path.parts:
+				continue
 			text = path.read_text(encoding="utf-8", errors="ignore")
-			self.assertNotIn("custom_schedule_state_section", text, path.name)
+			self.assertNotIn("custom_schedule_state_section", text, str(path))
 
 	def test_the_anchors_exist(self):
 		setters = json.loads(PROPERTY_SETTERS.read_text(encoding="utf-8"))
