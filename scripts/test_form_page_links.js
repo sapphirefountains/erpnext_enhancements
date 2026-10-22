@@ -467,12 +467,14 @@ test("Project: View > Open in Project Planner opens the planner on that project"
 	check("the PM filter is cleared, so it cannot hide the project's cards", pp.pm, "");
 	check("the unscheduled tray is back to its short list", pp.show_all_unscheduled, false);
 	check("route_options is consumed", desk.frappe.route_options, null);
-	// P5: the planner's home tab, the Lookahead, with no last-used view to say otherwise.
-	check("one load, the Lookahead on this week", pp.loads, [{ view: "lookahead", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
-	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there.
+	// P6: the project's Gantt, start to finish, whatever tab this device used last.
+	check("one load, the project's Gantt", pp.loads, [{ view: "gantt", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
+	check("the Gantt is that project's", pp.ppg.project, "PRJ-00001");
+	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there,
+	// which keeps the Lookahead filtered to it one tab away.
 	check("a history entry of its own, its ?project= kept as the filter on screen", desk.entries, [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner/lookahead/2026-10-14?project=PRJ-00001",
+		"/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001",
 	]);
 	desk.back();
 	check("Back returns to the form", desk.route, ["project", "PRJ-00001"]);
@@ -491,7 +493,12 @@ test("Project: the link is a one-off and leaves the person's own filters alone",
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
 	check("the planner shows the form's project", pp.project, "PRJ-00001");
-	check("the remembered filters are untouched", desk.prefs, MINE);
+	// The device remembers the Gantt's project (the tab's own, not a filter); the filters are untouched.
+	check(
+		"the remembered filters are untouched",
+		Object.fromEntries(Object.keys(MINE).map((key) => [key, desk.prefs[key]])),
+		MINE
+	);
 	pp.p6c_save_last();
 	// S5c (v1.676.0): "last used" may still save (colors, view), but keeps the person's own project.
 	check(
@@ -518,38 +525,40 @@ test("Project: Back after switching to All does not snap the filter back", () =>
 	// "All projects" in the select, then a task opened from the calendar. The pick rewrites the
 	// entry's address in place (S5c), so the entry Back lands on says All.
 	pp.pick_filter("project", "");
-	check("the pick took the project out of the address", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
+	// The Gantt's own project is the path's; only the filter leaves the address.
+	check("the pick took the project out of the address", desk.here(), "/desk/project-planner/gantt/PRJ-00001");
 	desk.frappe.set_route("Form", "Task", "TASK-0001");
 	check("on the task", desk.route, ["Form", "Task", "TASK-0001"]);
 	desk.back();
-	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
+	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner/gantt/PRJ-00001");
 	check("the filter stays All", pp.project, "");
 	check("and nothing is left in route_options to apply later", desk.frappe.route_options, null);
 });
 
-test("Project: a project that starts later opens the Lookahead on the week it starts", () => {
+test("Project: every project opens its Gantt, whenever it starts", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk);
+	// P6: the Gantt runs from the project's first task to its last, so a later start needs no week.
 	openForm(desk, "Project", project({ name: "PRJ-00002", expected_start_date: "2026-11-02" })).press(
 		"Open in Project Planner"
 	);
-	check("the Lookahead from its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "lookahead", "2026-11-02"]);
-	check("its address keeps the project", desk.here(), "/desk/project-planner/lookahead/2026-11-02?project=PRJ-00002");
+	check("its Gantt, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "gantt", "PRJ-00002"]);
+	check("its address keeps the project", desk.here(), "/desk/project-planner/gantt/PRJ-00002?project=PRJ-00002");
 	check("loaded there with the filter", pp.loads.slice(-1)[0], {
-		view: "lookahead",
-		anchor: "2026-11-02",
+		view: "gantt",
+		anchor: "2026-10-14",
 		project: "PRJ-00002",
 		pm: "",
 	});
-	// One already under way opens on this week.
 	openForm(desk, "Project", project({ name: "PRJ-00003", expected_start_date: "2026-09-01" })).press(
 		"Open in Project Planner"
 	);
-	check("a started project opens on this week", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00003");
+	check("one under way opens its Gantt too", desk.here(), "/desk/project-planner/gantt/PRJ-00003?project=PRJ-00003");
 	check("filtered to it", pp.project, "PRJ-00003");
+	check("and the Gantt is that one's", pp.ppg.project, "PRJ-00003");
 });
 
-test("Project: this device's last tab still applies, and the project wins over the person's filter", () => {
+test("Project: the link names the Gantt, so this device's last tab does not apply, and the project wins over the person's filter", () => {
 	const desk = projectDesk();
 	// The tab is the device's since P8; the person's saved row holds filters only.
 	desk.tabs["ee_project_planner_tab:"] = "month";
@@ -557,11 +566,11 @@ test("Project: this device's last tab still applies, and the project wins over t
 		p6c: { loaded: true, restored: false, last: { project: "PRJ-OLD", pm: "pm@example.com" } },
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
-	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-00001");
-	check("still one entry past the form", desk.entries.length, 2);
+	check("the Gantt, not the last-used Month view", desk.here(), "/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001");
+	check("one entry past the form", desk.entries.length, 2);
 	check("the form's project, not the remembered one", pp.project, "PRJ-00001");
 	check("and no remembered PM hiding it", pp.pm, "");
-	check("loaded once, on the month", pp.loads, [{ view: "month", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
+	check("loaded once, on the Gantt", pp.loads, [{ view: "gantt", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
 });
 
 test("Project: a name that needs escaping arrives whole, and other options are left alone", () => {

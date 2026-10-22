@@ -922,6 +922,15 @@ jobs:
       # Reuses the Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner Lookahead, server (P5)
         run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead -v
+      # Planner UX redesign P6, the Gantt tab, server side. get_project_gantt must be one project's whole
+      # schedule as planner cards (never get_planner, which is capped at 100 days), with the D6 display
+      # rule, drafts (another scheduler's named, a drafted new task under its group) and finished work
+      # that cannot move; add_dependency / remove_dependency must keep the planner's checks (a reason
+      # when a task would start before the one it waits on ends, on drafted days too; no draft, group,
+      # other project, self or loop) and save with ERPNext's calendar-day push held back, since no date
+      # moved. Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Gantt, server (P6)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_gantt -v
       # Planner UX redesign P8, Today on the phone. get_today is the signed-in person's own day and the
       # next (leave-by, miles, equipment, which day of a task), read-only, with today's route and the
       # Maps key for the inline map; distances are miles on screen. Under node, scripts/test_planner_today.js
@@ -3691,6 +3700,14 @@ jobs:
       # PATH in this job, so the harness cannot skip here.
       - name: Project planner Lookahead tab, page (P5, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead_page -v
+      # Planner UX redesign P6, the Gantt tab, page side, and the widget's embed hooks. Runs
+      # scripts/test_planner_gantt.js: the real gantt_widget.js against a recording DHTMLX stub (fetch,
+      # on_write in place of update_gantt_row, link-by-drag, link double-click, the right-click hook, the
+      # baseline drawn by a type renderer because Standard deletes addTaskLayer) and the real page script
+      # (every drag through commit(), links through send() and Undo, the header's Publish and Reset
+      # baseline handed to P4, the /gantt/<project> address). node is on PATH in this job.
+      - name: Project planner Gantt tab, page and widget hooks (P6, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_gantt_page -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

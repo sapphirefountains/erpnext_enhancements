@@ -845,6 +845,215 @@ test("landing: Back and Forward step through the tabs, each its own entry", asyn
 	check("Forward is the month", desk.urls()[desk.index], "/desk/project-planner/calendar/month/2026-10-21");
 });
 
+// ------------------------------------------------------------------ P6: the Gantt is a remembered tab too
+//
+// Approved by the Sapphire Manager on 2026-10-21 (Nik's "last-used tab per device", no exception): the
+// Gantt is one of the device's tabs, and the device keeps its project beside it.
+
+const GANTT_KEY = "ee_project_planner_gantt:nik@example.com";
+
+// The page's real load for the Gantt, against desk.answers.get_project_gantt (other tabs stay recorded).
+function ganttLoads(pp) {
+	const recorded = pp.load;
+	const real = Object.getPrototypeOf(pp).load;
+	Object.assign(pp, { $title: { text() {} }, take_title_focus() {}, ppl_sync_tabs() {}, fill_filters() {}, render() {} });
+	pp.load = function () {
+		return this.view === "gantt" ? real.call(this) : recorded.call(this);
+	};
+	return pp;
+}
+
+
+test("landing (P6): a device whose tab is the Gantt reopens its project, in place; the other device keeps its own", async () => {
+	const store = { last: null };
+	const desktop = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const phone = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	const drawn = (args) => ({ projects: [], tasks: [], unscheduled: [], gantt: { project: args.project, title: args.project, groups: [] } });
+	for (const desk of [desktop, phone]) {
+		desk.answers.get_today = ME;
+		desk.answers.get_project_gantt = drawn;
+		serverRow(desk, store);
+	}
+	let dt = ganttLoads(openPage(desktop, store));
+	desktop.go("project-planner", "gantt", "PRJ-00754");
+	await settle();
+	check("the desktop remembers the Gantt and its project", [desktop.prefs[TAB_KEY], desktop.prefs[GANTT_KEY]], ["gantt", "PRJ-00754"]);
+	// The phone, for the same person, has its own store: Today the first time, then a Gantt of its own.
+	let ph = ganttLoads(openPage(phone, store));
+	phone.go("project-planner");
+	await settle();
+	check("the phone's first visit is still Today", phone.urls().pop(), "/desk/project-planner/today/2026-10-21");
+	ph.ppg_open("PRJ-00597");
+	await settle();
+	check("the phone's Gantt is its own", [phone.prefs[TAB_KEY], phone.prefs[GANTT_KEY]], ["gantt", "PRJ-00597"]);
+	check("the desktop's did not move", desktop.prefs[GANTT_KEY], "PRJ-00754");
+	// Both come back to a bare address.
+	desktop.go("project", "PRJ-00001");
+	dt = ganttLoads(openPage(desktop, store));
+	desktop.go("project-planner");
+	await settle();
+	check("desktop: its project's Gantt, in place of the bare address", desktop.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/gantt/PRJ-00754"]);
+	check("loaded on the Gantt, that project", [dt.view, dt.ppg.project, desktop.called("get_project_gantt").pop().args.project], ["gantt", "PRJ-00754", "PRJ-00754"]);
+	desktop.back();
+	await settle();
+	check("Back leaves the planner", desktop.urls()[desktop.index], "/desk/project/PRJ-00001");
+	phone.go("project", "PRJ-00001");
+	ph = ganttLoads(openPage(phone, store));
+	phone.go("project-planner");
+	await settle();
+	check("phone: its own project's Gantt", phone.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/gantt/PRJ-00597"]);
+	phone.back();
+	await settle();
+	check("Back leaves the planner on the phone too", phone.urls()[phone.index], "/desk/project/PRJ-00001");
+});
+
+test("landing (P6): a remembered project the server will not open is forgotten, and the Lookahead replaces it once", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "gantt";
+	desk.prefs[GANTT_KEY] = "PRJ-GONE";
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("first the Gantt, in place of the bare address", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/gantt/PRJ-GONE"]);
+	// get_project_gantt refuses (deleted, or not the person's to read).
+	pp.ppg_refused();
+	await settle();
+	check("then the Lookahead, in place again: still one entry past the page", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21"]);
+	check("the project is forgotten on this device", desk.prefs[GANTT_KEY], "");
+	check("and the Lookahead is the tab now", desk.prefs[TAB_KEY], "lookahead");
+	desk.back();
+	await settle();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+	// The next bare address goes straight to the Lookahead.
+	desk.go("project-planner");
+	await settle();
+	check("nothing stored: the Lookahead", desk.urls().pop(), "/desk/project-planner/lookahead/2026-10-21");
+});
+
+test("landing (P6): the Gantt remembered with no project is the Lookahead, in place", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "gantt";
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("the Lookahead, one entry", [desk.urls(), pp.loads.map((l) => l.view)], [["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21"], ["lookahead"]]);
+});
+
+test("landing (P6): a forbidden project (a 403's case) is answered quietly: no dialog, one replace to the Lookahead", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "gantt";
+	desk.prefs[GANTT_KEY] = "PRJ-SECRET";
+	// The server's answer for a project the person may not read (a User Permission): never a 403, whose
+	// msgprint would re_route the address back here and load it a second time.
+	desk.answers.get_project_gantt = (args) => ({ refused: "forbidden", projects: [], tasks: [], unscheduled: [], gantt: null, asked: args.project });
+	const pp = ganttLoads(planner(desk, { p6c: nothingSaved() }));
+	desk.go("project-planner");
+	await settle();
+	check("the Lookahead, in place of the bare address: one entry past the page", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21"]);
+	check("asked once", desk.called("get_project_gantt").map((c) => c.args.project), ["PRJ-SECRET"]);
+	check("no dialog (this harness has no msgprint: one would have thrown)", typeof desk.frappe.msgprint, "undefined");
+	check("forgotten on this device", desk.prefs[GANTT_KEY], "");
+	check("the Lookahead loaded", pp.loads.map((l) => l.view), ["lookahead"]);
+	desk.back();
+	await settle();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+});
+
+test("landing (P6): a request that fails keeps the device's project and stays put with a retry", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "gantt";
+	desk.prefs[GANTT_KEY] = "PRJ-00754";
+	const call = desk.frappe.call;
+	desk.frappe.call = (opts) => (opts.method.endsWith("get_project_gantt") ? Promise.reject({ status: 0 }) : call(opts));
+	const pp = ganttLoads(planner(desk, { p6c: nothingSaved() }));
+	desk.go("project-planner");
+	await settle();
+	check("still the Gantt, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/gantt/PRJ-00754"]);
+	check("the project is kept", desk.prefs[GANTT_KEY], "PRJ-00754");
+	check("marked for a retry", pp.ppg.trouble, "PRJ-00754");
+});
+
+test("landing (P6): a link to a project that will not open never replaces the device's last good one", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "gantt";
+	desk.prefs[GANTT_KEY] = "PRJ-00754";
+	desk.answers.get_project_gantt = (args) =>
+		args.project === "PRJ-GONE" ? { refused: "missing", projects: [], tasks: [], unscheduled: [], gantt: null } : { projects: [], tasks: [], unscheduled: [], gantt: { project: args.project, title: "Riverwalk", groups: [] } };
+	const pp = ganttLoads(planner(desk, { p6c: nothingSaved() }));
+	desk.go("project-planner", "gantt", "PRJ-GONE");
+	await settle();
+	check("the link's address stays, with its sentence", [desk.urls().pop(), pp.ppg.failed, pp.ppg.refused], ["/desk/project-planner/gantt/PRJ-GONE", "PRJ-GONE", "missing"]);
+	check("the device's last good project is untouched", desk.prefs[GANTT_KEY], "PRJ-00754");
+	desk.go("project", "PRJ-00001");
+	ganttLoads(planner(desk, { p6c: nothingSaved() }));
+	desk.go("project-planner");
+	await settle();
+	check("the next bare address reopens it", desk.urls().pop(), "/desk/project-planner/gantt/PRJ-00754");
+});
+
+test("landing (P6): a project opened by link or picker that the server refuses offers the picker; it never redirects", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	pp.render = () => null;
+	desk.go("project-planner", "gantt", "PRJ-GONE");
+	await settle();
+	pp.ppg_refused();
+	await settle();
+	check("stays on its address, marked", [desk.urls().pop(), pp.ppg.failed], ["/desk/project-planner/gantt/PRJ-GONE", "PRJ-GONE"]);
+});
+
+test("landing (P6): a link that names a filter beats a remembered Gantt: the Lookahead with the filter, never Today", async () => {
+	for (const phoneDevice of [false, true]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: phoneDevice });
+		desk.answers.get_today = ME;
+		desk.prefs[TAB_KEY] = "gantt";
+		desk.prefs[GANTT_KEY] = "PRJ-00754";
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner", { pm: "Clegg" });
+		await settle();
+		check(`${phoneDevice ? "phone" : "desktop"}: the Lookahead with the link's filter, in place`, desk.urls(), [
+			"/desk/project/PRJ-00001",
+			"/desk/project-planner/lookahead/2026-10-21?pm=Clegg",
+		]);
+		check(`${phoneDevice ? "phone" : "desktop"}: no Gantt, no Today`, [pp.loads.map((l) => l.view), desk.called("get_today").length], [["lookahead"], 0]);
+		desk.back();
+		await settle();
+		check(`${phoneDevice ? "phone" : "desktop"}: Back leaves the planner`, desk.urls()[desk.index], "/desk/project/PRJ-00001");
+	}
+});
+
+test("landing (P6): Back and Forward step between the Gantt and the other tabs", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	pp.ppg_open("PRJ-00754");
+	await settle();
+	pp.go("crew", "2026-10-21");
+	await settle();
+	pp.go("gantt", "2026-10-21");
+	await settle();
+	check("each its own entry; the Gantt tab reopens the last project", desk.urls().slice(1), [
+		"/desk/project-planner/lookahead/2026-10-21",
+		"/desk/project-planner/gantt/PRJ-00754",
+		"/desk/project-planner/crew/2026-10-21",
+		"/desk/project-planner/gantt/PRJ-00754",
+	]);
+	desk.back();
+	await settle();
+	check("Back: the crew board, and the chart is taken down", [desk.urls()[desk.index], pp.view, pp.ppg.widget], ["/desk/project-planner/crew/2026-10-21", "crew", null]);
+	desk.back();
+	await settle();
+	check("Back: the Gantt of that project", [desk.urls()[desk.index], pp.view, pp.ppg.project], ["/desk/project-planner/gantt/PRJ-00754", "gantt", "PRJ-00754"]);
+	desk.back();
+	await settle();
+	check("Back: the Lookahead", [desk.urls()[desk.index], pp.view], ["/desk/project-planner/lookahead/2026-10-21", "lookahead"]);
+	desk.forward();
+	await settle();
+	check("Forward: the Gantt again", [pp.view, pp.ppg.project], ["gantt", "PRJ-00754"]);
+	check("no entry was added or replaced on the way", desk.urls().length, 5);
+});
+
 test("what is saved for the person has no tab in it", async () => {
 	const store = { last: null };
 	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-21", phone: false });

@@ -252,6 +252,8 @@ class ProjectPlanner {
 			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 			return { view: PP.util_view, anchor: date };
 		}
+		const gantt = this.ppg_route_target(route); // P6: /gantt/<project>
+		if (gantt) return gantt;
 		const lookahead = this.ppl_route_target(route); // P5: lookahead, calendar, the old week/month, bare
 		if (lookahead) return lookahead;
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
@@ -268,6 +270,7 @@ class ProjectPlanner {
 		this.view = target.view;
 		this.anchor = target.anchor;
 		this.ppl_take_target(target);
+		this.ppg_take_target(target); // P6: the Gantt's project; any other screen takes the chart down
 		this.p8_remember_tab(target.view);
 		if (target.view === PP3B.my_week) {
 			this.show_my_week(target.anchor);
@@ -504,6 +507,7 @@ class ProjectPlanner {
 	}
 
 	go(view, anchor) {
+		if (view === PPG.view) return this.ppg_open(); // P6: a project, not a date
 		const route = frappe.get_route() || [];
 		const parts = this.ppl_route_parts(view, anchor); // P5: /lookahead/…, /calendar/week|month/…
 		if (route[0] === PP.route && route.slice(1).join("/") === parts.join("/")) {
@@ -579,6 +583,7 @@ class ProjectPlanner {
 	}
 
 	shift(sign) {
+		if (this.view === PPG.view) return this.ppg_shift(sign); // P6: the chart scrolls
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
 		// The heatmap steps half its span, so each step keeps four weeks in common.
 		const next =
@@ -589,6 +594,7 @@ class ProjectPlanner {
 	}
 
 	title() {
+		if (this.view === PPG.view) return this.ppg_title(); // P6: the project's name
 		const { start, end } = this.range();
 		if (this.view === "month" || this.view === PP.util_view) return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
 		if (start.year() !== end.year()) return `${start.format("MMM D, YYYY")} – ${end.format("MMM D, YYYY")}`;
@@ -624,6 +630,7 @@ class ProjectPlanner {
 		// Utilization stay tabs until the Crew tab takes them in as Capacity.
 		[
 			[PPL.view, __("Lookahead")],
+			[PPG.view, __("Gantt")], // P6
 			["crew", __("Crew")],
 			[PPL.calendar, __("Calendar")],
 			[PP.heatmap_view, __("Heatmap")],
@@ -706,6 +713,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ data
 
 	load() {
+		if (this.view === PPG.view) return this.ppg_load(); // P6: get_project_gantt
 		if (this.view === PP.heatmap_view) return this.load_heatmap();
 		if (this.view === PP.util_view) return this.load_utilization();
 		const { start, end } = this.range();
@@ -843,6 +851,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.view === PPG.view) return this.ppg_render(); // P6: the chart
 		if (this.view === PP.heatmap_view) {
 			this.render_heatmap();
 			return;
@@ -2031,6 +2040,7 @@ class ProjectPlanner {
 		}
 		if (this.t1_undo(snap)) return;
 		if (this.p6b_undo(snap)) return;
+		if (this.ppg_undo(snap)) return; // P6: a link drawn or removed
 		if (this.as4_undo(snap)) return;
 		const card = this.by_task[snap.task];
 		if (card) {
@@ -3841,11 +3851,19 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // server's "last used" row as before; that row no longer carries a view, and the landing never reads
 // one (an older row's is ignored). First visit: a phone opens Today, a desktop the default calendar view
 // (the week). The redirect replaces the bare address (replace_route), so Back leaves the planner as it
-// would have; a link that names a filter (?project=, the Project form's "Open in Project Planner") is
-// the sender's: it opens a calendar view with that filter (this device's tab, never Today, which has no
-// filters to show), so Today is never restored over it; and someone the planner does not list,
+// would have; a link that names a filter (?project=, ?pm=, ?group=) is the sender's: it opens a
+// calendar view with that filter (this device's tab, never Today, which has no filters to show, and
+// never a remembered Gantt: the Lookahead instead), so Today is never restored over it; and someone the planner does not list,
 // sent to Today by the landing, gets the planner instead of its note. Named saved views ("Save view
 // as…") still carry their view.
+//
+// The Gantt (P6; approved by the Sapphire Manager on 2026-10-21 as Nik's rule applied without an
+// exception) is a tab like the others, and this device remembers its project with it
+// (ee_project_planner_gantt:<user>). A bare address with the Gantt remembered is replaced by
+// /gantt/<that project>. With no project stored, or one the server will not open (gone, or not the
+// person's to read), the device forgets it and the address is replaced by the Lookahead: never a dead
+// end, never an extra entry. The Project form's "Open in Project Planner" names /gantt/<project> itself,
+// so none of this applies to it.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
 // (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
@@ -3854,8 +3872,9 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 
 const PP8 = {
 	view: "today",
-	// The screens whose tab a device remembers; the Lookahead (P5) joins them.
-	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],
+	// The screens whose tab a device remembers; the Lookahead (P5) joins them, and the Gantt (P6), whose
+	// project this device remembers beside it (PPG.prefs.project).
+	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead", "gantt"],
 	tab_pref: "ee_project_planner_tab",
 };
 
@@ -3956,6 +3975,7 @@ const PP8_METHODS = {
 		// A link that names a filter is the sender's: it opens a calendar view with that filter, the device's
 		// own when it has one, but never Today, which has no filters to show.
 		if (link && tab === PP8.view) tab = PP6C.default_view;
+		if (tab === PPG.view) return this.ppg_land(link); // P6: its own project, or the default view
 		// The default view is what the bare address already opens.
 		if (tab === PP6C.default_view) return false;
 		// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
@@ -8335,7 +8355,7 @@ const PP6C_METHODS = {
 		if (!this.data) return;
 		// A view that shows another set of tasks asks the server again (a week that is not on screen yet
 		// loads anyway).
-		if (reload && (PP.views.includes(this.view) || this.view === PPL.view)) this.load();
+		if (reload && (PP.views.includes(this.view) || this.view === PPL.view || this.view === PPG.view)) this.load();
 		else this.render();
 	},
 
@@ -8348,7 +8368,7 @@ const PP6C_METHODS = {
 
 	p6c_save_last() {
 		const p6c = this.p6c;
-		if (!PP6C.schema.view[1].includes(this.view)) return;
+		if (!PP6C.schema.view[1].includes(this.view) && this.view !== PPG.view) return; // P6: filters picked there count
 		const state = this.p6c_state(true);
 		// Filters the address gave (S5b's form link, S5c's any link) are that visit's, not "last used":
 		// each keeps the person's own value until they pick it themselves (pick_filter).
@@ -8718,6 +8738,7 @@ const PP6C_METHODS = {
 		if (view === PP.heatmap_view) return Object.assign(model, this.p6c_print_heatmap());
 		if (view === "crew") return Object.assign(model, this.p6c_print_crew());
 		if (view === PPL.view) return Object.assign(model, this.ppl_print()); // P5
+		if (view === PPG.view) return Object.assign(model, this.ppg_print()); // P6
 		return Object.assign(model, this.p6c_print_calendar());
 	},
 
@@ -11265,6 +11286,7 @@ const PPTB_METHODS = {
 	},
 
 	tb_display_items() {
+		if (this.view === PPG.view) return [this.tb_all_tasks_item()]; // P6: the D6 rule applies to the Gantt
 		if (!this.tb_calendar()) return [];
 		return this.p6c_color_items().concat([{ divider: true }], this.tb_highlight_items(), [
 			{
@@ -11950,6 +11972,7 @@ const PPL_METHODS = {
 	},
 
 	ppl_route_parts(view, anchor) {
+		if (view === PPG.view) return this.ppg_route_parts(); // P6: /gantt/<project>, not a date
 		return PPL_PURE.route_parts(view, anchor, this.ppl_state().weeks);
 	},
 
@@ -12592,6 +12615,808 @@ const PPL_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPL_METHODS);
 
+// ====================================================================== P6: Gantt, one project start to finish
+//
+//   /desk/project-planner/gantt/PRJ-00597    that project's schedule, from its first task to its last
+//   /desk/project-planner/gantt              no project named: pick one
+//
+// P6 of the planner UX redesign (docs/planner-ux-redesign.md §4.3; Nik's D1 "Gantt: phases + deps", D5,
+// D8, D10, D14). The chart is the app's DHTMLX widget (erpnext_enhancements.gantt.mount, the one the
+// Project form's Schedule tab and the Projects Dashboard draw with), fed by the planner's own read,
+// api/planner_gantt.get_project_gantt: the project's tasks as planner cards, the D6 rule (phase and crew
+// work, or everything with Show all tasks), drafts included. Groups are the tree (phases first, in
+// phase order) and collapse; the work under them is a bar per task with its days and crew; undated
+// work is under "Not scheduled" at the bottom; the baseline (P3, D5) is a thin grey bar under each bar.
+//
+// Nothing here writes on its own. The widget's write hook (config.on_write) hands every drag to the
+// page's commit(), so a move or a resize is exactly a Calendar or Lookahead one: the reason prompt,
+// Undo, the conflict check, P4's auto-draft, the tasks that follow (by working days, both ways) with
+// Ctrl/⌘ to move just the one, and "Notify crew?". A link drawn from a bar's end dot onto another bar
+// makes that one wait for it (add_dependency, which asks for a reason when it would start before the
+// other ends); double-clicking a link offers to remove it (remove_dependency); both go through send()
+// and Undo. A click opens the task in the side panel, a right-click the 6B menu. The header carries the
+// project's schedule (P3, D8): Draft with Publish… (P4's own confirm), or Published and when; Reset
+// baseline (P4's own confirm, which names how many tasks change); and Build out ▾ (T1's grid, opened on
+// any of its starting points). Zoom is Day, Week or Month, remembered in this browser; the widget's
+// export menu (print, PNG, SVG, CSV, Excel, a date range) stays.
+//
+// A project is a screen: /gantt/<project> is a route, so Back and Forward step through the projects
+// opened, and the Project form's "Open in Project Planner" lands here. Collapsing a phase and the zoom
+// are not screens. The project this device opened last is remembered (per signed-in user), so the Gantt
+// tab reopens it; the toolbar's Project filter, when set, wins. A bare /project-planner on a device whose
+// tab is the Gantt reopens that project (ppg_land; the rule is in the P8 block's comment). Leaving the
+// tab destroys the chart (its listeners included).
+//
+// Hooks into the class above, one line each: ppg_route_target (route_target), ppg_take_target
+// (handle_route), the gantt branch of ppl_route_parts, ppg_open (go), ppg_load (load), ppg_render
+// (render), ppg_title (title), ppg_shift (shift), the Gantt tab (build_shell), ppg_undo (undo), the
+// Display menu's Show all tasks (tb_display_items), Print this view (p6c print model) and the reload of
+// a saved view's Show all tasks (p6c_apply_state).
+
+const PPG = {
+	view: "gantt",
+	method: "erpnext_enhancements.api.planner_gantt.get_project_gantt",
+	actions: "erpnext_enhancements.api.planner_actions",
+	link_methods: ["add_dependency", "remove_dependency"],
+	zooms: ["day", "week", "month"],
+	default_zoom: "week",
+	prefs: {
+		zoom: "ee_project_planner_gantt_zoom",
+		project: "ee_project_planner_gantt",
+	},
+	// The synthetic row the undated work hangs under. Not a Task name: those never contain a colon.
+	not_scheduled: "ppg:not-scheduled",
+	row_height: 34,
+};
+
+// Pure helpers: no frappe, no page. scripts/test_planner_gantt.js runs them under node.
+const PPG_PURE = {
+	// "2026-10-21" -> "2026-10-21 00:00", the widget's wire format.
+	wire(ymd) {
+		return `${ymd} 00:00`;
+	},
+	// A task's last day (inclusive, as ERPNext stores it) as the widget's end, which is exclusive.
+	wire_end(ymd) {
+		return `${PP6B_PURE.ymd_add(ymd, 1)} 00:00`;
+	},
+	// A wire value to the day it falls on, rounded to the nearest midnight: a drag in the Week or Month
+	// zoom can stop part-way through a day.
+	nearest_day(wire) {
+		const m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}):(\d{2}))?/.exec(String(wire || ""));
+		if (!m) return null;
+		const minutes = Number(m[2] || 0) * 60 + Number(m[3] || 0);
+		return minutes >= 12 * 60 ? PP6B_PURE.ymd_add(m[1], 1) : m[1];
+	},
+	// What a drag means as save_task's arguments, {start, end} (end inclusive), or null when the days
+	// did not change. A task is at least one day long.
+	args_from(card, changes) {
+		const start = PPG_PURE.nearest_day(changes && changes.start);
+		const stop = PPG_PURE.nearest_day(changes && changes.end);
+		if (!start || !stop) return null;
+		let end = PP6B_PURE.ymd_add(stop, -1);
+		if (end < start) end = start;
+		const was_end = card && (card.end || card.start);
+		if (card && start === card.start && end === was_end) return null;
+		return { start, end };
+	},
+	// The address after /project-planner.
+	address(project) {
+		return project ? [PPG.view, project] : [PPG.view];
+	},
+	zoom(value) {
+		return PPG.zooms.includes(value) ? value : PPG.default_zoom;
+	},
+	// The classes a bar carries: a draft (dashed), a pencil (hatched), finished work (faded), a drafted
+	// new task, an overdue one.
+	bar_class(card) {
+		const out = ["ppg-bar"];
+		if (card.drafted) out.push("ppg-drafted");
+		if (card.new_task) out.push("ppg-new");
+		if (card.tentative) out.push("ppg-pencil");
+		if (card.finished) out.push("ppg-finished");
+		else if (card.overdue) out.push("ppg-overdue");
+		if (!card.movable) out.push("ppg-locked");
+		return out.join(" ");
+	},
+	// One card as a widget row. `drawn` is the set of groups on the chart; `initials(card)` the crew.
+	task_row(card, drawn, initials) {
+		const base = card.baseline || {};
+		const row = {
+			id: card.name,
+			text: card.subject || card.name,
+			parent: card.gantt_parent && drawn.has(card.gantt_parent) ? card.gantt_parent : 0,
+			ref_doctype: "Task",
+			ref_name: card.name,
+			ee_modified: card.modified,
+			ee_readonly: !card.movable || !!card.finished,
+			ee_days: card.start ? Number(card.span_days) || 1 : "",
+			ee_crew: initials ? initials(card) : "",
+			ee_class: PPG_PURE.bar_class(card),
+		};
+		if (card.start) {
+			row.start_date = PPG_PURE.wire(card.start);
+			row.end_date = PPG_PURE.wire_end(card.end && card.end >= card.start ? card.end : card.start);
+		}
+		if (base.start) {
+			row.ee_baseline_start = base.start;
+			row.ee_baseline_end = base.end || base.start;
+		}
+		return row;
+	},
+	// The rows and links the widget draws, in get_gantt_data's shape: the groups as collapsible
+	// containers (phases first, as the server ordered them), the dated work under them, then "Not
+	// scheduled" with the undated work. A link is finish-to-start, kept only when both ends are drawn.
+	rows(answer, labels, initials) {
+		const gantt = (answer && answer.gantt) || {};
+		const dated = (answer && answer.tasks) || [];
+		const undated = (answer && answer.unscheduled) || [];
+		// A group with no dated work under it would be an empty row whose bar DHTMLX makes up (a day stub on
+		// no day in particular): its undated work is under Not scheduled, so the group is left out.
+		const parent_of = {};
+		(gantt.groups || []).forEach((group) => (parent_of[group.name] = group.parent || null));
+		const holding = new Set();
+		dated.forEach((card) => {
+			let node = card.gantt_parent;
+			for (let hops = 0; node && node in parent_of && !holding.has(node) && hops < 50; hops++) {
+				holding.add(node);
+				node = parent_of[node];
+			}
+		});
+		const groups = (gantt.groups || []).filter((group) => holding.has(group.name));
+		const drawn = new Set(groups.map((group) => group.name));
+		const tasks = groups.map((group) => ({
+			id: group.name,
+			text: group.subject || group.name,
+			type: "project",
+			parent: group.parent && drawn.has(group.parent) ? group.parent : 0,
+			open: true,
+			ref_doctype: "Task",
+			ref_name: group.name,
+			ee_readonly: true,
+			ee_class: "ppg-group",
+		}));
+		dated.forEach((card) => tasks.push(PPG_PURE.task_row(card, drawn, initials)));
+		if (undated.length) {
+			tasks.push({
+				id: PPG.not_scheduled,
+				text: (labels && labels.not_scheduled) || "Not scheduled",
+				type: "project",
+				parent: 0,
+				open: true,
+				unscheduled: true,
+				ee_readonly: true,
+				ee_class: "ppg-group ppg-unscheduled",
+			});
+			undated.forEach((card) =>
+				tasks.push(Object.assign(PPG_PURE.task_row(card, drawn, initials), { parent: PPG.not_scheduled, unscheduled: true }))
+			);
+		}
+		const ids = new Set(tasks.map((task) => task.id));
+		const links = [];
+		dated.concat(undated).forEach((card) =>
+			(card.depends_on || []).forEach((pred) => {
+				if (ids.has(pred) && pred !== card.name && !(pred in parent_of)) {
+					links.push({ id: `${pred}>${card.name}`, source: pred, target: card.name, type: "0" });
+				}
+			})
+		);
+		return { tasks, links, meta: { can_write: { Task: !!(answer && answer.can_edit) } } };
+	},
+	// Which way a link was drawn, as add_dependency takes it: the bar the line starts at is waited on.
+	link_args(source, target) {
+		if (!source || !target) return null;
+		const task = target.ref_name || target.id;
+		const depends_on = source.ref_name || source.id;
+		if (!task || !depends_on || task === depends_on) return null;
+		return { task, depends_on };
+	},
+};
+
+const PPG_METHODS = {
+	ppg_state() {
+		if (!this.ppg) {
+			// The link writes are planner_actions', as 6B's and T1's are.
+			this.p6_send_modules = this.p6_send_modules || {};
+			PPG.link_methods.forEach((method) => (this.p6_send_modules[method] = PPG.actions));
+			this.ppg = {
+				project: "",
+				zoom: PPG_PURE.zoom(this.load_pref(PPG.prefs.zoom, PPG.default_zoom)),
+				widget: null,
+				widget_project: null,
+				drawn_for: null,
+				$root: null,
+			};
+		}
+		return this.ppg;
+	},
+
+	// This device's last Gantt project for the signed-in user (P8's per-device rule), or "".
+	ppg_remembered() {
+		const user = (frappe.session && frappe.session.user) || "";
+		return this.load_pref(`${PPG.prefs.project}:${user}`, "") || "";
+	},
+
+	ppg_remember(project) {
+		const user = (frappe.session && frappe.session.user) || "";
+		this.save_pref(`${PPG.prefs.project}:${user}`, project || "");
+	},
+
+	// ------------------------------------------------------------------ routing
+
+	ppg_route_target(route) {
+		if (route[1] !== PPG.view) return null;
+		return { view: PPG.view, anchor: frappe.datetime.get_today(), project: route[2] || "" };
+	},
+
+	// Every landing: the Gantt's project, or (any other screen) the chart is taken down.
+	ppg_take_target(target) {
+		const state = this.ppg_state();
+		if (target.view === PPG.view) {
+			if (target.project !== state.project) state.drawn_for = null;
+			state.project = target.project || "";
+			// Remembered only once the server has drawn it (ppg_load), so a project that will not open
+			// never replaces this device's last good one.
+			return;
+		}
+		this.ppg_destroy();
+	},
+
+	// The project the Gantt tab opens: the Project filter's, else this device's last one.
+	ppg_default_project() {
+		return this.project || this.ppg_state().project || this.ppg_remembered();
+	},
+
+	ppg_route_parts(project) {
+		return PPG_PURE.address(project === undefined ? this.ppg_default_project() : project);
+	},
+
+	// The Gantt tab, the Today button on the Gantt (scrolls to today) and a project picked on it.
+	ppg_open(project) {
+		const state = this.ppg_state();
+		const route = frappe.get_route() || [];
+		if (!project && route[0] === PP.route && route[1] === PPG.view && state.project) {
+			if (state.widget) state.widget.scroll_to_today();
+			return;
+		}
+		const parts = this.ppg_route_parts(project || undefined);
+		if (route[0] === PP.route && route.slice(1).join("/") === parts.join("/")) {
+			this.load();
+			return;
+		}
+		this.self_route = [PP.route].concat(parts).join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, ...parts, this.filter_options()), true);
+	},
+
+	ppg_title() {
+		const gantt = this.data && this.data.gantt;
+		const state = this.ppg_state();
+		if (!state.project) return __("Gantt: pick a project");
+		const title = gantt && gantt.project === state.project ? gantt.title : "";
+		return title && title !== state.project ? `${title} (${state.project})` : state.project;
+	},
+
+	// ‹ and ›: the chart scrolls a step of its zoom (a week, a month or a quarter) either way.
+	ppg_shift(sign) {
+		const state = this.ppg_state();
+		const g = state.widget && state.widget.gantt;
+		if (!g) return;
+		const days = { day: 7, week: 28, month: 91 }[state.zoom] || 28;
+		const scroll = g.getScrollState();
+		// Measured from the chart's own first day: posFromDate gives 0 for a date off its scale.
+		const first = g.getState().min_date;
+		const step = g.posFromDate(new Date(first.getTime() + days * 86400000)) - g.posFromDate(first);
+		g.scrollTo(Math.max(0, scroll.x + sign * step), null);
+	},
+
+	// ------------------------------------------------------------------ data
+
+	ppg_load() {
+		const state = this.ppg_state();
+		const token = ++this.request;
+		this.$title.text(this.title());
+		this.take_title_focus();
+		this.ppl_sync_tabs();
+		this.$body.addClass("pp-loading");
+		const args = Object.assign({ draft: 1 }, state.project ? { project: state.project } : {}, this.all_tasks ? { all_tasks: 1 } : {});
+		// Two handlers, not then/catch: a slip while drawing is not the server refusing the project.
+		return Promise.resolve(frappe.call({ method: PPG.method, args })).then(
+			(r) => {
+				if (token !== this.request) return;
+				const answer = (r && r.message) || {};
+				this.$body.removeClass("pp-loading");
+				state.trouble = "";
+				// Gone, or not the person's to read: an answer of its own, so Frappe opened no dialog.
+				if (answer.refused && state.project) return this.ppg_refused(answer);
+				this.data = answer;
+				state.failed = "";
+				state.landed = null;
+				if (answer.gantt && answer.gantt.project === state.project) this.ppg_remember(state.project);
+				this.index();
+				this.fill_filters();
+				this.write_filter_url();
+				this.$title.text(this.title());
+				this.render();
+			},
+			() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.ppg_trouble();
+			}
+		);
+	},
+
+	// The request itself failed (the network, a timeout, a server error): nothing is known about the
+	// project, so this device keeps it and the tab offers to try again. The landing stays where it is.
+	ppg_trouble() {
+		const state = this.ppg_state();
+		state.trouble = state.project || "-";
+		this.data = { projects: (this.data && this.data.projects) || [], tasks: [], unscheduled: [], gantt: null };
+		this.index();
+		this.render();
+	},
+
+	// The server will not open the project: get_project_gantt answered `refused` ("missing" or
+	// "forbidden"), never a 404 or 403, so no Frappe dialog opened and no re_route will send the address
+	// back here. This device forgets it. Reached from the landing, the address is replaced by the
+	// Lookahead, once (no dead end, no extra entry); opened by a link or the picker, the tab offers the
+	// picker with a sentence.
+	ppg_refused(answer) {
+		const state = this.ppg_state();
+		if (state.project && this.ppg_remembered() === state.project) this.ppg_remember("");
+		if (state.landed && state.landed === state.project) {
+			state.landed = null;
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			frappe.set_route(PP.route, ...this.ppl_route_parts(PPL.view, frappe.datetime.get_today()));
+			return;
+		}
+		state.failed = state.project;
+		state.refused = (answer && answer.refused) || "";
+		const projects = (answer && answer.projects) || (this.data && this.data.projects) || [];
+		this.data = { projects, tasks: [], unscheduled: [], gantt: null };
+		this.index();
+		this.render();
+	},
+
+	// A bare /project-planner on a device whose tab is the Gantt (p8_landing): its own project, in place.
+	// False (the bare address then opens the default view, the Lookahead, in place) for a link that names
+	// a filter, and when no project is stored.
+	ppg_land(link) {
+		const project = this.ppg_remembered();
+		if (link || !project) return false;
+		this.ppg_state().landed = project;
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		frappe.set_route(PP.route, ...PPG_PURE.address(project));
+		return true;
+	},
+
+	// ------------------------------------------------------------------ render
+
+	ppg_render() {
+		const state = this.ppg_state();
+		this.$panel.hide();
+		this.$trays.empty();
+		// Another tab's answer, still on screen while the Gantt's loads.
+		const stopped = state.failed === state.project || state.trouble === (state.project || "-");
+		if (!this.data || (state.project && !this.data.gantt && !stopped)) return;
+		let root = state.$root && state.$root[0];
+		if (!root || !this.$grid_wrap[0].contains(root)) {
+			this.ppg_destroy();
+			this.$grid_wrap.empty();
+			state.$root = $(
+				'<div class="pp-section ppg-board"><div class="ppg-head"></div><div class="ppg-chart" role="region"></div></div>'
+			).appendTo(this.$grid_wrap);
+			state.$root.find(".ppg-chart").attr("aria-label", __("Gantt chart"));
+			root = state.$root[0];
+		}
+		const gantt = this.data.gantt && this.data.gantt.project === state.project ? this.data.gantt : null;
+		root.querySelector(".ppg-head").innerHTML = this.ppg_head_html(gantt);
+		this.ppg_bind_head(root);
+		const chart = root.querySelector(".ppg-chart");
+		if (!gantt) {
+			this.ppg_destroy();
+			const trouble = !!state.trouble && state.trouble === (state.project || "-");
+			const text = trouble
+				? __("The Gantt could not load. Check the connection, then try again.")
+				: state.failed && state.failed === state.project
+				? state.refused === "forbidden"
+					? __("You cannot open {0}. Pick a project to see its Gantt.", [state.project])
+					: __("{0} was not found. Pick a project to see its Gantt.", [state.project])
+				: __("Pick a project to see its schedule from start to finish.");
+			chart.innerHTML = `<p class="ppg-empty">${pp_esc(text)}${
+				trouble ? ` <button type="button" class="btn btn-default btn-xs" data-ppg-retry>${pp_esc(__("Try again"))}</button>` : ""
+			}</p>`;
+			const retry = chart.querySelector("[data-ppg-retry]");
+			if (retry) retry.addEventListener("click", () => this.load());
+		} else if (!state.widget || state.widget_project !== state.project || state.widget.destroyed) {
+			chart.innerHTML = "";
+			this.ppg_mount(chart, gantt);
+		} else if (state.drawn_for !== this.data) {
+			state.drawn_for = this.data;
+			state.widget.refresh();
+		}
+		this.$hint.text(
+			__(
+				"Drag a bar to move it and the tasks that follow (hold Ctrl or ⌘ to move just that one); drag its end to change its days. Drag from the dot at a bar's end onto another bar to make that task wait for it; double-click a link to remove it. Click a bar to open the task."
+			)
+		);
+		this.render_phase3b();
+		this.render_phase6a();
+		this.tb_render();
+	},
+
+	ppg_head_html(gantt) {
+		const state = this.ppg_state();
+		const projects = (this.data.projects || []).slice().sort((a, b) => String(a.title || a.name).localeCompare(String(b.title || b.name)));
+		const options = [`<option value="">${pp_esc(__("Pick a project…"))}</option>`]
+			.concat(
+				projects.map((project) => {
+					const label = project.title && project.title !== project.name ? `${project.title} (${project.name})` : project.name;
+					const selected = project.name === state.project ? " selected" : "";
+					return `<option value="${pp_esc(project.name)}"${selected}>${pp_esc(label)}</option>`;
+				})
+			)
+			.join("");
+		const picker = `<select class="form-control input-sm ppg-project" aria-label="${pp_esc(__("Project"))}">${options}</select>`;
+		if (!gantt) return picker;
+		const schedule = gantt.schedule || null;
+		const can_edit = !!this.data.can_edit;
+		const bits = [];
+		if (schedule) {
+			if (schedule.status === PPAS.published) {
+				const when = schedule.published_on ? pp_when(String(schedule.published_on).slice(0, 10)) : "";
+				bits.push(`<span class="ppg-state ppg-published">● ${pp_esc(when ? __("Published {0}", [when]) : __("Published"))}</span>`);
+			} else {
+				bits.push(`<span class="ppg-state ppg-draft">◐ ${pp_esc(__("Draft schedule"))}</span>`);
+				if (can_edit) bits.push(`<button type="button" class="btn btn-primary btn-xs" data-ppg-publish>${pp_esc(__("Publish…"))}</button>`);
+			}
+			if (schedule.baseline_set_on) {
+				bits.push(`<span class="ppg-baseline">${pp_esc(__("Baseline {0}", [pp_when(String(schedule.baseline_set_on).slice(0, 10))]))}</span>`);
+			}
+			if (can_edit) {
+				bits.push(
+					`<button type="button" class="btn btn-default btn-xs" data-ppg-baseline>${pp_esc(
+						schedule.baseline_set_on ? __("Reset baseline") : __("Set baseline")
+					)}</button>`
+				);
+			}
+		}
+		if (this.t1_can && this.t1_can()) {
+			bits.push(
+				`<button type="button" class="btn btn-default btn-xs ppg-build" data-ppg-build aria-haspopup="menu">${pp_esc(__("Build out"))} ▾</button>`
+			);
+		}
+		const zooms = PPG.zooms
+			.map((zoom) => {
+				const on = zoom === state.zoom;
+				const label = { day: __("Day"), week: __("Week"), month: __("Month") }[zoom];
+				return `<button type="button" class="${on ? "pp-on" : ""}" data-ppg-zoom="${zoom}" aria-pressed="${on ? "true" : "false"}">${pp_esc(label)}</button>`;
+			})
+			.join("");
+		const hidden = Number(this.data.hidden_tasks) || 0;
+		const note = !this.all_tasks && hidden ? `<span class="ppg-note">${pp_esc(__("{0} task(s) not shown", [hidden]))}</span>` : "";
+		return `${picker}<span class="ppg-bits">${bits.join("")}</span>${note}<span class="pp-spacer"></span><span class="pp-seg ppg-zoom" role="group" aria-label="${pp_esc(
+			__("Zoom")
+		)}">${zooms}</span>`;
+	},
+
+	ppg_bind_head(root) {
+		const head = root.querySelector(".ppg-head");
+		const state = this.ppg_state();
+		const picker = head.querySelector(".ppg-project");
+		if (picker) picker.addEventListener("change", () => picker.value && this.ppg_open(picker.value));
+		const on = (selector, fn) => head.querySelectorAll(selector).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
+		on("[data-ppg-zoom]", (el) => this.ppg_zoom(el.getAttribute("data-ppg-zoom")));
+		on("[data-ppg-publish]", () => {
+			const entry = (((this.data && this.data.drafts) || {}).projects || {})[state.project] || {};
+			this.as4_confirm_publish({
+				project: state.project,
+				title: this.as4_project_title(state.project),
+				count: Number(entry.count) || 0,
+				shared: Number(entry.shared) || 0,
+				draft_schedule: true,
+			});
+		});
+		on("[data-ppg-baseline]", () => this.as4_reset_baseline(state.project));
+		on("[data-ppg-build]", (el, e) => this.ppg_build_menu(el, e));
+	},
+
+	ppg_zoom(zoom) {
+		const state = this.ppg_state();
+		state.zoom = PPG_PURE.zoom(zoom);
+		this.save_pref(PPG.prefs.zoom, state.zoom);
+		if (state.widget) state.widget.set_zoom(state.zoom);
+		const head = state.$root && state.$root[0].querySelector(".ppg-zoom");
+		if (head) {
+			head.querySelectorAll("[data-ppg-zoom]").forEach((el) => {
+				const on = el.getAttribute("data-ppg-zoom") === state.zoom;
+				el.classList.toggle("pp-on", on);
+				el.setAttribute("aria-pressed", on ? "true" : "false");
+			});
+		}
+	},
+
+	// Build out ▾: T1's grid in the side panel, opened on the starting point picked. The starting points
+	// are the grid footer's own (t1_actions: a template, a pasted list, another project, an AI draft), so
+	// the two lists never differ; Add row and Create belong to a grid already open.
+	ppg_build_menu(el, e) {
+		const state = this.ppg_state();
+		const project = state.project;
+		const title = this.as4_project_title(project);
+		const open = (label) => () =>
+			Promise.resolve(this.t1_open_build_out(project, title)).then(() => {
+				const grid = this.t1 && this.t1.grid;
+				if (!label || !grid || grid.project !== project) return;
+				const action = this.t1_actions(grid, 0, 0).find((item) => item.label === label);
+				if (action && action.on_click) action.on_click();
+			});
+		const starts = this.t1_actions({}, 0, 0).filter((item) => !item.primary && item.label !== __("Add row"));
+		const items = [{ label: __("Build out grid…"), on_click: open(null) }].concat(
+			starts.map((item) => ({ label: item.label, title: item.title, on_click: open(item.label) }))
+		);
+		const kit = this.p6b_kit && this.p6b_kit();
+		if (!kit) {
+			items[0].on_click();
+			return;
+		}
+		const rect = el.getBoundingClientRect();
+		kit.menu({ anchor: { x: rect.left, y: rect.bottom }, items, title: __("Build out tasks"), owner: PP6A.owner });
+		if (e) e.preventDefault();
+	},
+
+	ppg_mount(chart, gantt) {
+		const state = this.ppg_state();
+		if (!window.erpnext_enhancements || !erpnext_enhancements.gantt || !erpnext_enhancements.gantt.mount) {
+			chart.innerHTML = `<p class="ppg-empty">${pp_esc(__("The Gantt chart could not load. Refresh the page."))}</p>`;
+			return;
+		}
+		const project = state.project;
+		state.widget_project = project;
+		state.drawn_for = this.data;
+		const labels = { not_scheduled: __("Not scheduled") };
+		const initials = (card) =>
+			(card.crew || []).map((member) => this.p6a_initials(member.resource, member.label)).join(" ");
+		state.widget = erpnext_enhancements.gantt.mount(chart, {
+			// What the CSV and Excel export ask the server for: this project's tasks, permission-checked.
+			doctype: "Task",
+			fields: { text: "subject", start: "exp_start_date", end: "exp_end_date", parent: "parent_task" },
+			filters: { project },
+			dependencies: "depends_on",
+			order_by: "exp_start_date asc",
+			editable: { dates: !!this.data.can_edit, links: !!this.data.can_edit },
+			today: true,
+			tooltip: true,
+			baseline: true,
+			zoom: state.zoom,
+			columns: [
+				{ name: "text", label: __("Task"), tree: true, width: "*", min_width: 160 },
+				{ name: "ee_days", label: __("Days"), width: 48, align: "center", template: (task) => (task.ee_days === "" ? "" : String(task.ee_days || "")) },
+				{ name: "ee_crew", label: __("Crew"), width: 72, template: (task) => pp_esc(task.ee_crew || "") },
+			],
+			gantt: {
+				row_height: PPG.row_height,
+				show_unscheduled: true,
+				// Whole days at every zoom: the Week and Month scales would otherwise snap a drag to a
+				// week or a month. args_from rounds as well.
+				round_dnd_dates: false,
+				time_step: 24 * 60,
+				duration_unit: "day",
+				grid_width: 340,
+			},
+			templates: {
+				task_class: (start, end, task) => task.ee_class || "",
+				grid_row_class: (start, end, task) => (task.type === "project" ? "ppg-group-row" : ""),
+			},
+			toolbar: { export: { title: gantt.title || project, subtitle: project, filename: `${project}-gantt` } },
+			fetch: () => Promise.resolve(PPG_PURE.rows(this.data && this.data.gantt && this.data.gantt.project === project ? this.data : {}, labels, initials)),
+			on_write: (task, changes, info) => this.ppg_write(task, changes, info),
+			on_link: (link) => this.ppg_link(link.source, link.target),
+			on_link_dblclick: (link, source, target) => this.ppg_unlink(source, target),
+			on_task_click: (id, task) => this.ppg_click(task),
+			on_task_context: (id, task, e) => this.ppg_menu(task, e),
+		});
+	},
+
+	ppg_destroy() {
+		const state = this.ppg;
+		if (!state || !state.widget) return;
+		try {
+			state.widget.destroy();
+		} catch (e) {
+			// A chart already taken down with its container.
+		}
+		state.widget = null;
+		state.widget_project = null;
+		state.drawn_for = null;
+	},
+
+	// ------------------------------------------------------------------ the chart's own gestures
+
+	// A bar moved or resized: the page's commit(), as on every tab. The widget keeps the bar where it was
+	// dropped while the planner asks (reason, "Notify crew?"); the reload after the write is the truth.
+	ppg_write(task, changes, info) {
+		const card = task && this.by_task[task.ref_name];
+		if (!card || !card.movable || card.finished) {
+			return Promise.resolve({
+				status: "refused",
+				message: __("{0} cannot be changed from the planner.", [(card && (card.subject || card.name)) || ""]),
+			});
+		}
+		const args = PPG_PURE.args_from(card, changes);
+		if (!args) return Promise.resolve({ status: "success" });
+		const subject = card.subject || card.name;
+		const moved = args.start !== card.start;
+		const message = moved ? __("{0} moved to {1}", [subject, pp_when(args.start)]) : __("{0} now ends {1}", [subject, pp_when(args.end)]);
+		const solo = this.as4_solo(info && info.event);
+		// commit() resolves with send()'s answer, or null when nothing was saved (backed out of a question,
+		// or refused): then the bar goes back at once, before the reload repaints the truth.
+		const run = () =>
+			Promise.resolve(this.commit(card, "save_task", Object.assign({ task: card.name }, args), message, { solo })).then((result) =>
+				result ? { status: "success" } : { status: "cancelled" }
+			);
+		if (!moved || args.start >= this.today()) return run();
+		// Tasks, unlike visits, may be recorded after the fact; a past day only needs a yes (as plan_drop).
+		return new Promise((resolve) => {
+			let settled = false;
+			const settle = (value) => {
+				if (settled) return;
+				settled = true;
+				resolve(value);
+			};
+			frappe.confirm(
+				pp_esc(__("{0} is before today. Schedule the task on a past day?", [pp_when(args.start)])),
+				() => settle(run()),
+				() => settle({ status: "cancelled" })
+			);
+		});
+	},
+
+	// A link is never drafted (it holds no dates and tells nobody), so while "Hold all my changes" is on,
+	// when nothing is meant to reach the tasks, it is refused rather than written live.
+	ppg_held() {
+		if (!this.draft_on) return false;
+		frappe.show_alert(
+			{ message: __("Hold all my changes is on, and a link saves straight to the tasks. Turn it off to change links."), indicator: "orange" },
+			8
+		);
+		return true;
+	},
+
+	// A link drawn from `source`'s end onto `target`: target waits on source.
+	ppg_link(source, target) {
+		const args = PPG_PURE.link_args(source, target);
+		const card = args && this.by_task[args.task];
+		const pred = args && this.by_task[args.depends_on];
+		if (!card || !pred) return Promise.resolve(null);
+		if (card.new_task || pred.new_task) {
+			frappe.show_alert({ message: __("A task that is still a draft cannot be linked yet. Publish the schedule first."), indicator: "orange" }, 7);
+			return Promise.resolve(null);
+		}
+		if ((card.depends_on || []).includes(pred.name)) return Promise.resolve(null);
+		if (this.ppg_held()) return Promise.resolve(null);
+		const subject = card.subject || card.name;
+		const other = pred.subject || pred.name;
+		return this.ppg_link_send(
+			"add_dependency",
+			{ task: card.name, depends_on: pred.name, modified: this.modified[card.name] || card.modified },
+			{ ppg: "link", task: card.name, depends_on: pred.name, subject, added: true },
+			__("{0} now waits for {1}", [subject, other])
+		);
+	},
+
+	// add_dependency or remove_dependency through send(), then the reload. The Undo entry (and its toast)
+	// is pushed here, and only when the server says the link was made or removed (`linked`, `removed`):
+	// a link that was there already, or gone already, is not this gesture's, and an Undo of it would
+	// remove or restore a link somebody else made. send() is given no snapshot for that reason.
+	ppg_link_send(method, args, snapshot, message, extra) {
+		const done = method === "add_dependency" ? "linked" : "removed";
+		return this.send(method, args, extra || {})
+			.then((result) => {
+				if (result && result[done]) {
+					const toasted = snapshot ? this.push_undo(snapshot, message) : false;
+					if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
+				} else if (result) {
+					frappe.show_alert(
+						{
+							message:
+								done === "linked"
+									? __("Nothing changed: {0} already waited for it.", [(snapshot && snapshot.subject) || args.task])
+									: __("Nothing changed: that link was already gone."),
+							indicator: "blue",
+						},
+						5
+					);
+				}
+				return result;
+			})
+			.finally(() => this.load());
+	},
+
+	// A link double-clicked: remove it, once asked.
+	ppg_unlink(source, target) {
+		const args = PPG_PURE.link_args(source, target);
+		const card = args && this.by_task[args.task];
+		if (!card || !this.data || !this.data.can_edit || this.ppg_held()) return;
+		const pred = this.by_task[args.depends_on];
+		const subject = card.subject || card.name;
+		const other = (pred && (pred.subject || pred.name)) || args.depends_on;
+		frappe.confirm(pp_esc(__("Remove the link? {0} will no longer wait for {1}.", [subject, other])), () =>
+			this.ppg_link_send(
+				"remove_dependency",
+				{ task: card.name, depends_on: args.depends_on, modified: this.modified[card.name] || card.modified },
+				{ ppg: "link", task: card.name, depends_on: args.depends_on, subject, added: false },
+				__("{0} no longer waits for {1}", [subject, other])
+			)
+		);
+	},
+
+	// Undo of a link drawn or removed: the opposite call, with the planner's Undo reason.
+	ppg_undo(snap) {
+		if (!snap || snap.ppg !== "link") return false;
+		const card = this.by_task[snap.task];
+		const method = snap.added ? "remove_dependency" : "add_dependency";
+		const args = { task: snap.task, depends_on: snap.depends_on, modified: this.modified[snap.task] || (card && card.modified) || "" };
+		this.ppg_link_send(method, args, null, __("Undone: {0}", [snap.subject]), { auto_reason: __(PP.undo_reason) });
+		return true;
+	},
+
+	ppg_click(task) {
+		const card = task && task.ref_name && this.by_task[task.ref_name];
+		if (card) this.open_card(card);
+	},
+
+	// The 6B right-click menu, for a bar or a row.
+	ppg_menu(task, e) {
+		const card = task && task.ref_name && this.by_task[task.ref_name];
+		if (!card || !this.p6b_kit || !this.p6b_kit()) return;
+		const target = { kind: "card", card, ymd: card.start || null, resource: null, el: e && e.target };
+		const all = PP6B_PURE.with_providers(this.p6b_menu_items(target), this.p6_menu_providers, target);
+		if (!all.length) return;
+		if (e && e.preventDefault) e.preventDefault();
+		this.p6b_open_menu(target, all, { x: (e && e.clientX) || 0, y: (e && e.clientY) || 0 });
+	},
+
+	// More ▸ Print ▸ Print this view: the project's tasks as a list, in the chart's order.
+	ppg_print() {
+		const answer = this.data || {};
+		const gantt = answer.gantt || {};
+		const subjects = {};
+		(gantt.groups || []).forEach((group) => (subjects[group.name] = group.subject));
+		const when = (card) =>
+			card.start
+				? card.end && card.end !== card.start
+					? `${this.p6c_day_label(card.start)} – ${this.p6c_day_label(card.end)}`
+					: this.p6c_day_label(card.start)
+				: __("Not scheduled");
+		const rows = []
+			.concat(answer.tasks || [], answer.unscheduled || [])
+			.map((card) => {
+				const item = this.p6c_print_item(card, null, null);
+				return {
+					color: item.color,
+					cols: [
+						card.gantt_parent ? subjects[card.gantt_parent] || card.gantt_parent : __("Other work"),
+						card.subject || card.name,
+						when(card),
+						card.start ? String(Number(card.span_days) || 1) : "",
+						card.baseline ? `${this.p6c_day_label(card.baseline.start)} – ${this.p6c_day_label(card.baseline.end)}` : "",
+						(card.crew || []).map((member) => this.resource_label(member.resource, member.label)).join(", "),
+						item.marks.map((mark) => (typeof mark === "string" ? mark : mark.text)).join(", "),
+					],
+				};
+			});
+		return {
+			layout: "list",
+			columns: [__("Phase"), __("Task"), __("Dates"), __("Days"), __("Baseline"), __("Crew"), __("Notes")],
+			rows,
+			empty: __("This project has no tasks to show."),
+		};
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPG_METHODS);
+
 // ====================================================================== P4: the tasks that follow, Draft schedules, "Notify crew?"
 //
 // P4 of the planner UX redesign (docs/planner-ux-redesign.md; Nik's D8, D10, D11 and D15, approved
@@ -13115,16 +13940,17 @@ const PPAS_METHODS = {
 				const preview = (r && r.message) || {};
 				const count = Number(preview.changed) || 0;
 				if (!count) {
-					frappe.show_alert({ message: __("{0}: the baseline already matches every task's days.", [title]), indicator: "blue" }, 6);
+					frappe.show_alert({ message: pp_esc(__("{0}: the baseline already matches every task's days.", [title])), indicator: "blue" }, 6);
 					return null;
 				}
+				// The title is a record's text and both messages are HTML (S3: escaped where it meets markup).
 				frappe.confirm(
-					__("Reset the baseline of {0}? {1} task(s) get their days now as their baseline.", [title, count]),
+					pp_esc(__("Reset the baseline of {0}? {1} task(s) get their days now as their baseline.", [title, count])),
 					() =>
 						Promise.resolve(frappe.call({ method: `${PP.api}.reset_baseline`, args: { project } }))
 							.then((done) => {
 								const changed = Number(((done && done.message) || {}).changed) || 0;
-								frappe.show_alert({ message: __("{0}: baseline set for {1} task(s).", [title, changed]), indicator: "green" }, 6);
+								frappe.show_alert({ message: pp_esc(__("{0}: baseline set for {1} task(s).", [title, changed])), indicator: "green" }, 6);
 								return this.load();
 							})
 							.catch(() => null)

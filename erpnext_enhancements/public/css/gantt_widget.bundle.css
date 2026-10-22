@@ -293,3 +293,16 @@
 	font-weight: 600;
 	box-shadow: inset 2px 0 0 #e24c4c;
 }
+
+/* Baseline (config.baseline, P6): a thin bar under the live one, on the days
+   the plan was published with. Appended to the task line by a type renderer;
+   the line does not clip, so it may start before the bar or end after it.
+   LITERAL grey, on the always-light canvas. pointer-events off, so a drag
+   that starts on it starts on the row, never on a stale copy of the task. */
+.ee-gantt-widget .ee-gantt-baseline {
+	position: absolute;
+	height: 5px;
+	border-radius: 2px;
+	background: #a0a8b5;
+	pointer-events: none;
+}
