@@ -218,7 +218,7 @@
   },
   {
    "default": "0",
-   "description": "Every Monday at 6:15 AM, email the weekly schedule summary (the page Overview prints): what is on that week by job and by person, what moved in the last seven days, and what needs a manager. It lists Published schedules only: a Draft schedule is named, never described. Leave this off until the right people are listed on the right: while it is off nothing is sent. Overview > Print weekly summary shows what would go out.",
+   "description": "Every Monday at 6:15 AM, email the weekly schedule summary (the page Overview prints): what is on that week by job and by person, what moved in the last seven days, and what needs a manager. It lists Published schedules only: a Draft schedule is named, never described. Leave this off until the right people are listed on the right: while it is off nothing is sent. The button \"Send me a weekly summary preview\" above emails you the message as it would go, and Overview > Print weekly summary shows the same page.",
    "fieldname": "weekly_summary_email",
    "fieldtype": "Check",
    "label": "Email the weekly summary on Mondays"

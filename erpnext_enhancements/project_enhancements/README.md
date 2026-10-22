@@ -2190,7 +2190,9 @@ on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` bl
   phase is judged task by task); a task **running over** its estimate (Phase 4's rule, for open tasks with
   an estimate); the next two weeks' unresolved **conflicts** (the Conflict center's list, minus those kept
   with a reason); and **overdue** work, one line per job. A line opens its source: the job's Gantt, or the
-  Crew board on the day of the first conflict. When nothing is wrong the box says so in one line.
+  Crew board on the day of the first conflict. When nothing is wrong the box says so in one line. The
+  conflict list is the one costly read and does not depend on the window, so it is kept for two minutes
+  (a conflict kept with a reason stays listed that long); the Monday email always reads fresh.
 - **Overdue is counted by end date, never by the status value.** 1,005 open tasks carry the status
   `Overdue` on production, left by an old import. A task is overdue here when it is open and its last day
   is before today. And only phase and crew work counts (D6), so the ~40 template admin tasks a job gets,
@@ -2208,8 +2210,10 @@ on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` bl
   address refuses the save). `send_weekly_summary` runs Mondays 06:15 and returns before its first query
   unless the box is ticked *and* someone is named. At most once per week, through a `Planner Digest Log`
   row keyed `weekly-summary|<first day>` committed before sending (the deploy `FLUSHDB`s redis, so a cache
-  marker would mail everyone again). It describes **Published** schedules only; a Draft one is named at
-  the foot. *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
+  marker would mail everyone again). The page is built before the week is claimed, so a failed read does
+  not spend the week. It describes **Published** schedules only; a Draft one is named at the foot, and the
+  by-person lines and the conflicts drop a Draft project's bookings by name (the engine books a Draft
+  project's stored tasks like any other). *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
   box unticked, claiming nothing. `patches/backfill_weekly_summary_setting` writes the new Check's
   `tabSingles` row where there is none (a default never reaches a Single's existing row), never over a
   stored value, and cannot raise.

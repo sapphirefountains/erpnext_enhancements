@@ -257,6 +257,8 @@ def found(jobs=None, **kw):
 		"over": {},
 		"conflicts": [],
 		"drafts_named": [],
+		"draft_projects": set(),
+		"truncated": False,
 		"overlay": None,
 	}
 	base.update(kw)
@@ -320,7 +322,7 @@ class TestBuildSummary(unittest.TestCase):
 			mock.patch.object(
 				ws,
 				"_places",
-				lambda first, last: (
+				lambda first, last, skip=(): (
 					[("Austin Healey", [(D(2026, 10, 26), D(2026, 10, 28), ("Riverwalk Plaza",))])],
 					["Lisa Park"],
 				),
@@ -328,16 +330,19 @@ class TestBuildSummary(unittest.TestCase):
 			mock.patch.object(
 				ws,
 				"_moved",
-				lambda found_, since: {
-					"PRJ-1": [
-						{
-							"task": "T1",
-							"subject": "Excavate basin",
-							"from": ["2026-10-20", "2026-10-22"],
-							"to": ["2026-10-26", "2026-10-28"],
-						}
-					]
-				},
+				lambda found_, since: (
+					{
+						"PRJ-1": [
+							{
+								"task": "T1",
+								"subject": "Excavate basin",
+								"from": ["2026-10-20", "2026-10-22"],
+								"to": ["2026-10-26", "2026-10-28"],
+							}
+						]
+					},
+					False,
+				),
 			),
 			mock.patch.object(h.api, "_site_first_weekday", lambda: 6),
 		]
@@ -401,6 +406,171 @@ class TestBuildSummary(unittest.TestCase):
 		self.assertEqual(
 			(len(data["jobs"][0]["lines"]), data["jobs"][0]["more"]), (ws.JOB_LINES, 15 - ws.JOB_LINES)
 		)
+
+
+class TestPlaces(unittest.TestCase):
+	"""By person, from the engine: a Draft schedule's stored tasks are booked by the engine like any other,
+	so the summary drops them by project or it would print a plan the rest of the page keeps private."""
+
+	def setUp(self):
+		h._reset()
+		h.frappe.tables["Project"] = [
+			{"name": "PRJ-1", "project_name": "Riverwalk Plaza"},
+			{"name": "PRJ-9", "project_name": "Tanner Park"},
+		]
+		cells = {
+			"RES-1": {
+				"2026-10-26": {
+					"bookings": [
+						{"kind": "task", "project": "PRJ-1", "label": "Excavate"},
+						{"kind": "task", "project": "PRJ-9", "label": "Secret plan"},
+					]
+				},
+				"2026-10-27": {"bookings": [{"kind": "task", "project": "PRJ-9", "label": "Secret plan"}]},
+			},
+			"RES-2": {
+				"2026-10-26": {
+					"bookings": [
+						{"kind": "visit", "label": "Sanctuary"},
+						{"kind": "drive", "label": "x"},
+						{"kind": "task", "project": "PRJ-1", "label": "Pour", "tentative": 1},
+					]
+				}
+			},
+			"RES-3": {
+				"2026-10-26": {"bookings": [{"kind": "task", "project": "PRJ-9", "label": "Secret plan"}]}
+			},
+		}
+		computed = {
+			"resources": [
+				{"name": "RES-1", "label": "Austin"},
+				{"name": "RES-2", "label": "Lisa"},
+				{"name": "RES-3", "label": "Nik"},
+			],
+			"days": cells,
+		}
+		patch = mock.patch.object(h.engine, "_compute", lambda *a, **k: computed)
+		patch.start()
+		self.addCleanup(patch.stop)
+
+	def test_without_a_skip_every_booking_is_described(self):
+		booked, free = ws._places(D(2026, 10, 25), D(2026, 10, 31))
+		self.assertEqual(free, [])
+		text = {label: [ws.segment_text(s) for s in segments] for label, segments in booked}
+		self.assertEqual(
+			text["Austin"], ["Mon Oct 26: Riverwalk Plaza, Tanner Park", "Tue Oct 27: Tanner Park"]
+		)
+		self.assertEqual(text["Lisa"], ["Mon Oct 26: Visit: Sanctuary, Riverwalk Plaza (pencil)"])
+
+	def test_a_draft_schedules_bookings_are_not_described(self):
+		booked, free = ws._places(D(2026, 10, 25), D(2026, 10, 31), {"PRJ-9"})
+		text = {label: [ws.segment_text(s) for s in segments] for label, segments in booked}
+		self.assertEqual(
+			text,
+			{
+				"Austin": ["Mon Oct 26: Riverwalk Plaza"],
+				"Lisa": ["Mon Oct 26: Visit: Sanctuary, Riverwalk Plaza (pencil)"],
+			},
+		)
+		# Someone whose only booking was the Draft schedule's is free this week, as far as the page says.
+		self.assertEqual(free, ["Nik"])
+		self.assertNotIn("Tanner Park", str(booked))
+
+	def test_build_summary_passes_the_draft_projects_down(self):
+		seen = {}
+
+		def places(first, last, skip=()):
+			seen["skip"] = set(skip)
+			return [], []
+
+		fixture = found([job()], draft_projects={"PRJ-9"})
+		with (
+			mock.patch.object(ov, "collect", lambda **kw: fixture),
+			mock.patch.object(ws, "_places", places),
+			mock.patch.object(ws, "_moved", lambda found_, since: ({}, False)),
+			mock.patch.object(ws, "_crew_labels", lambda names: {}),
+			mock.patch.object(h.api, "_site_first_weekday", lambda: 6),
+		):
+			ws.build_summary("2026-10-26", today="2026-10-26")
+		self.assertEqual(seen["skip"], {"PRJ-9"})
+
+
+class TestMoved(unittest.TestCase):
+	def setUp(self):
+		h._reset()
+		self.fixture = found(
+			[job()],
+			shown={
+				"PRJ-1": [work("T1", "Excavate basin", "2026-10-26", "2026-10-28")],
+				"PRJ-2": [work("T9", "Elsewhere", "2026-10-26", "2026-10-26")],
+			},
+		)
+		self.since = D(2026, 10, 19)
+
+	def log(self, *rows):
+		h.frappe.sql_rows = {
+			"FROM `tabVersion` v": [
+				{"docname": task, "data": json.dumps({"changed": changes})} for task, changes in rows
+			]
+		}
+
+	def test_the_newest_rows_are_read_and_folded_oldest_first(self):
+		# The query answers newest first; the first old value must still be the oldest row's.
+		self.log(
+			("T1", [["exp_start_date", "2026-10-22 00:00:00", "2026-10-26 00:00:00"]]),
+			("T1", [["exp_start_date", "2026-10-20 00:00:00", "2026-10-22 00:00:00"]]),
+		)
+		moved, cut = ws._moved(self.fixture, self.since)
+		self.assertFalse(cut)
+		self.assertEqual(
+			moved["PRJ-1"],
+			[
+				{
+					"task": "T1",
+					"subject": "Excavate basin",
+					"from": ["2026-10-20", "2026-10-28"],
+					"to": ["2026-10-26", "2026-10-28"],
+				}
+			],
+		)
+
+	def test_the_read_is_limited_to_the_summarys_own_projects_in_sql_and_bound(self):
+		self.log()
+		h.frappe.queries.clear()
+		ws._moved(self.fixture, self.since)
+		query = next(q for kind, q in h.frappe.queries if kind == "sql")
+		self.assertIn("INNER JOIN `tabTask` t ON t.name = v.docname", query)
+		self.assertIn("t.project IN %(projects)s", query)
+		self.assertIn("ORDER BY v.creation DESC", query)
+		self.assertIn("LIMIT %(limit)s", query)
+
+	def test_a_log_longer_than_the_rows_read_is_said(self):
+		self.log(
+			("T1", [["exp_start_date", "2026-10-22", "2026-10-26"]]),
+			("T1", [["exp_end_date", "2026-10-27", "2026-10-28"]]),
+		)
+		with mock.patch.object(ws, "MOVED_ROWS", 2):
+			self.assertTrue(ws._moved(self.fixture, self.since)[1])
+		with mock.patch.object(ws, "MOVED_ROWS", 3):
+			self.assertFalse(ws._moved(self.fixture, self.since)[1])
+
+	def test_nothing_shown_asks_nothing(self):
+		h.frappe.queries.clear()
+		self.assertEqual(ws._moved(found([job()], shown={"PRJ-1": []}), self.since), ({}, False))
+		self.assertEqual(h.frappe.queries, [])
+
+	def test_the_caveats_are_worded_for_both_renderings(self):
+		self.assertEqual(ws.data_notes({}), [])
+		notes = ws.data_notes({"moved_cut": True, "truncated": True})
+		self.assertEqual(len(notes), 2)
+		html = ws.summary_document(summary(moved_cut=True, truncated=True), printed_on="x")
+		self.assertIn("The change log was long", html)
+		self.assertIn("Only part of the task list could be read", html)
+		h.email_style.calls.clear()
+		ws.summary_email(summary(moved_cut=True, truncated=True))
+		notes = [str(c[1]) for c in h.email_style.calls if c[0] == "note"]
+		self.assertTrue(any("The change log was long" in n for n in notes))
+		self.assertTrue(any("Only part of the task list" in n for n in notes))
 
 
 # ====================================================================== the printout and the email
@@ -681,15 +851,29 @@ class TestTheMondayJob(unittest.TestCase):
 		h.frappe.fail_insert["Planner Digest Log"] = RuntimeError("duplicate key")
 		ws.send_weekly_summary()
 		self.assertEqual(h.frappe.sent, [])
-		self.assertEqual(self.build.call_count, 0)
+		# It was built (a read) and then refused the claim.
+		self.assertEqual(self.build.call_count, 1)
 
-	def test_a_failure_while_building_is_logged_and_never_raised(self):
+	def test_a_week_already_claimed_is_skipped_before_the_costly_read(self):
+		self.settings(1, "james@x.com")
+		h.frappe.tables["Planner Digest Log"].append(
+			{"name": "weekly-summary|2026-10-25", "log_key": "weekly-summary|2026-10-25"}
+		)
+		ws.send_weekly_summary()
+		self.assertEqual((self.build.call_count, h.frappe.sent), (0, []))
+
+	def test_a_failure_while_building_is_logged_never_raised_and_does_not_spend_the_week(self):
 		self.settings(1, "james@x.com")
 		self.build.side_effect = RuntimeError("engine fell over")
 		ws.send_weekly_summary()
 		self.assertEqual(h.frappe.sent, [])
 		self.assertEqual(len(h.frappe.errors), 1)
 		self.assertIn("Project Planner: weekly summary failed", str(h.frappe.errors[0]))
+		# Nothing was claimed, so a rerun that week (the problem fixed) still sends.
+		self.assertEqual(h.frappe.tables["Planner Digest Log"], [])
+		self.build.side_effect = None
+		ws.send_weekly_summary()
+		self.assertEqual(len(h.frappe.sent), 1)
 
 	def test_a_failed_send_is_not_retried_this_week(self):
 		self.settings(1, "james@x.com")
@@ -863,7 +1047,8 @@ class TestTheScheduler(unittest.TestCase):
 class TestTheModule(unittest.TestCase):
 	def test_it_never_describes_a_draft_and_never_reads_the_drafts(self):
 		source = (APP / "project_enhancements/planner_weekly_summary.py").read_text(encoding="utf-8")
-		self.assertIn("overview.collect(draft=False, published_only=True,", source)
+		self.assertRegex(source, r"overview\.collect\(\s*draft=False, published_only=True,")
+		self.assertIn("cached_conflicts=False", source)
 
 	def test_it_has_no_sql_function_string_in_get_all(self):
 		source = (APP / "project_enhancements/planner_weekly_summary.py").read_text(encoding="utf-8")

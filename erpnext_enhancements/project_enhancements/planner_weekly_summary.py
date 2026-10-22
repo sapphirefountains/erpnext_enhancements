@@ -30,11 +30,12 @@ Things this module is careful about, some of which look like bugs:
 * **Exceptions are now, not that week.** Behind baseline, running over and overdue describe the job as
   it stands; conflicts are the next two weeks from today. The email is sent on the Monday it describes,
   so the two agree; a print for a later week carries today's exceptions and says so.
-* **At most one email per week, through a database row, not redis.** The week is claimed by inserting a
-  ``Planner Digest Log`` row keyed ``weekly-summary|<first day>`` (unique), committed *before* sending.
-  A second run finds it and sends nothing. The production deploy ``FLUSHDB``s redis, so a cache marker
-  would have mailed everyone again after every merge; a send that fails after the claim is not retried,
-  as the 6 AM digest's, because a missed Monday is better than two.
+* **At most one email per week, through a database row, not redis.** The page is built first (it only
+  reads, so a failure there spends nothing), then the week is claimed by inserting a ``Planner Digest
+  Log`` row keyed ``weekly-summary|<first day>`` (unique), committed *before* sending. A second run finds
+  it and sends nothing. The production deploy ``FLUSHDB``s redis, so a cache marker would have mailed
+  everyone again after every merge; a send that fails after the claim is not retried, as the 6 AM
+  digest's, because a missed Monday is better than two.
 * **Nothing is sent, and nothing is read, while the switch is off or nobody is named.** The job returns
   before the first query. It never raises: a scheduler job that raises is only noise at 6 AM.
 * **Every value is escaped**, in the print document (``print_style.escape_html``) and by the email
@@ -192,9 +193,14 @@ def _crew_labels(names):
 		return {}
 
 
-def _places(first, last):
+def _places(first, last, skip=()):
 	"""``([(label, [segment...])], [label...])``: everyone booked in the week, in the engine's order, and
-	the labels of those with nothing booked. One Google-free engine pass."""
+	the labels of those with nothing booked. One Google-free engine pass.
+
+	``skip`` are the projects the summary must not describe (the Draft schedules). The engine books a Draft
+	project's *stored* tasks like any other, so its bookings are dropped here by project, or this section
+	would print a plan the rest of the page promises not to."""
+	skip = set(skip or ())
 	computed = engine._compute(first, last, google=False)
 	people = {r["name"]: r.get("label") or r["name"] for r in computed.get("resources") or []}
 	stops = [
@@ -202,7 +208,7 @@ def _places(first, last):
 		for cells in (computed.get("days") or {}).values()
 		for cell in cells.values()
 		for b in cell.get("bookings") or []
-		if b.get("kind") in ("task", "rental")
+		if b.get("kind") in ("task", "rental") and b.get("project") not in skip
 	]
 	titles = pp._project_titles(b.get("project") for b in stops)
 	booked, free = [], []
@@ -213,6 +219,8 @@ def _places(first, last):
 			for b in cell.get("bookings") or []:
 				kind = b.get("kind")
 				if kind in ("task", "rental"):
+					if b.get("project") in skip:
+						continue
 					place = titles.get(b.get("project")) or b.get("label")
 				elif kind == "visit":
 					place = _("Visit: {0}").format(b.get("label") or "")
@@ -232,22 +240,35 @@ def _places(first, last):
 
 
 def _moved(found, since):
-	"""``{project: [moved_line]}`` for the schedulable work on the summary's jobs, from the Version log."""
+	"""``({project: [moved_line]}, cut)`` for the schedulable work on the summary's jobs, from the Version
+	log. The read is limited to the summary's own projects in SQL (a bulk edit elsewhere cannot crowd it
+	out), takes the **newest** :data:`MOVED_ROWS` rows and folds them oldest first; ``cut`` says the log was
+	longer than that, so an old move may be missing."""
 	index = {t["name"]: (project, t) for project, work in found["shown"].items() for t in work}
 	if not index:
-		return {}
+		return {}, False
 	rows = frappe.db.sql(
 		"""
 		SELECT v.docname, v.data
 		FROM `tabVersion` v
+		INNER JOIN `tabTask` t ON t.name = v.docname
 		WHERE v.ref_doctype = 'Task' AND v.creation >= %(since)s
+			AND t.project IN %(projects)s
 			AND (v.data LIKE %(start)s OR v.data LIKE %(end)s)
-		ORDER BY v.creation ASC
+		ORDER BY v.creation DESC
 		LIMIT %(limit)s
 		""",
-		{"since": since, "start": '%"exp_start_date"%', "end": '%"exp_end_date"%', "limit": MOVED_ROWS},
+		{
+			"since": since,
+			"projects": tuple(sorted({project for project, _t in index.values()})),
+			"start": '%"exp_start_date"%',
+			"end": '%"exp_end_date"%',
+			"limit": MOVED_ROWS,
+		},
 		as_dict=True,
 	)
+	cut = len(rows) >= MOVED_ROWS
+	rows = list(reversed(rows))
 	folded = fold_date_changes([(r.get("docname"), r.get("data")) for r in rows if r.get("docname") in index])
 	out = {}
 	for task, changes in folded.items():
@@ -257,7 +278,7 @@ def _moved(found, since):
 			out.setdefault(project, []).append(line)
 	for lines in out.values():
 		lines.sort(key=lambda l: (l["to"][0], l["subject"].casefold()))
-	return out
+	return out, cut
 
 
 def build_summary(start=None, today=None):
@@ -271,7 +292,9 @@ def build_summary(start=None, today=None):
 		else overview.default_summary_week(today, first_weekday)
 	)
 	last = first + datetime.timedelta(days=6)
-	found = overview.collect(draft=False, published_only=True, with_conflicts=True, today=today)
+	found = overview.collect(
+		draft=False, published_only=True, with_conflicts=True, today=today, cached_conflicts=False
+	)
 	lines, counts, more = overview.exception_lines(found["jobs"], found["over"], found["conflicts"])
 
 	week = {}
@@ -308,9 +331,9 @@ def build_summary(start=None, today=None):
 			}
 		)
 
-	people, free = _places(first, last)
+	people, free = _places(first, last, found["draft_projects"])
 	since = frappe.utils.add_days(frappe.utils.now_datetime(), -MOVED_DAYS)
-	moved_by_job = _moved(found, since)
+	moved_by_job, moved_cut = _moved(found, since)
 	moved = [
 		{
 			"name": job["name"],
@@ -340,7 +363,9 @@ def build_summary(start=None, today=None):
 		"free": free,
 		"moved": moved,
 		"moved_total": sum(m["count"] for m in moved),
+		"moved_cut": moved_cut,
 		"published": published,
+		"truncated": bool(found.get("truncated")),
 		"drafts_named": found["drafts_named"],
 		"job_count": len(found["jobs"]),
 	}
@@ -481,6 +506,7 @@ def summary_document(data, printed_on=None):
 	]
 	if data["drafts_named"]:
 		notes.append(_("Draft schedules, not described here: {0}.").format(", ".join(data["drafts_named"])))
+	notes += data_notes(data)
 	parts.append("".join(f'<div class="ws-foot">{_esc(note)}</div>' for note in notes))
 
 	return (
@@ -492,6 +518,17 @@ def summary_document(data, printed_on=None):
 		+ ps.page_close(None)
 		+ "</body></html>"
 	)
+
+
+def data_notes(data):
+	"""The caveats a reader needs when the read was cut: the change log longer than the rows read, or the
+	task cap reached. Nothing when neither."""
+	notes = []
+	if data.get("moved_cut"):
+		notes.append(_("The change log was long, so an older move may be missing from what moved."))
+	if data.get("truncated"):
+		notes.append(_("Only part of the task list could be read; some jobs may show less than they have."))
+	return notes
 
 
 def _kind_label(kind):
@@ -591,6 +628,8 @@ def summary_email(data, subject_prefix=None, note=None):
 		body += email_style.note(
 			_("Draft schedules, not described here: {0}.").format(", ".join(data["drafts_named"]))
 		)
+	for text in data_notes(data):
+		body += email_style.note(text)
 	body += email_style.button(
 		frappe.utils.get_url(f"{notices.PLANNER_ROUTE}/overview/{data['today']}"), _("Open the Overview")
 	)
@@ -649,7 +688,11 @@ def send_weekly_summary():
 	"""Cron, Monday 06:15 (``hooks.py``): email the week's summary to the managers named in Settings.
 
 	Does nothing, before any query, while ``weekly_summary_email`` is off (the default) or nobody is
-	named. At most once per week (:func:`_claim`). Never raises."""
+	named. At most once per week (:func:`_claim`). Never raises.
+
+	The order matters: the read and the email are built first (they only read, so a failure there spends
+	nothing and the next run that week can still send), then the week is claimed and committed, then the mail
+	goes. A week already claimed is skipped before the costly read."""
 	try:
 		if not notices.setting("weekly_summary_email"):
 			return
@@ -658,10 +701,12 @@ def send_weekly_summary():
 			return
 		today = getdate(nowdate())
 		first = overview.default_summary_week(today, pp._site_first_weekday())
-		if not _claim(first, 0):
+		if frappe.db.exists(LOG_DOCTYPE, f"{CLAIM_PREFIX}|{first}"):
 			return
 		data = build_summary(first, today)
 		subject, html = summary_email(data)
+		if not _claim(first, len(data["jobs"])):
+			return
 		frappe.sendmail(recipients=to, subject=subject, message=html)
 		frappe.db.set_value(
 			LOG_DOCTYPE,

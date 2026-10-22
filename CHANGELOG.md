@@ -28,13 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     **behind its baseline** by more than 2 *working days* (holidays are not working days; work under no
     phase is judged task by task, and nothing is behind without a baseline), a task **running over** its
     estimate (Phase 4's rule), the next two weeks' unresolved **conflicts** (the Conflict center's own list,
-    without those somebody kept with a reason) and **overdue** work (one line per job). Nothing wrong is one
-    line saying so. **Overdue is counted by end date, never by the status value** (spec §8): 1,005 open
+    without those somebody kept with a reason; the costly engine pass behind them does not depend on the
+    window, so the page keeps the list for two minutes and stepping through months does not repeat it) and
+    **overdue** work (one line per job). Nothing wrong is one line saying so. **Overdue is counted by end date, never by the status value** (spec §8): 1,005 open
     tasks on production carry the status `Overdue`, left by an old import, so the status is not evidence of
     anything. A task is overdue when it is open and its last day is before today. Only phase and crew work
     counts (D6), so the ~40 template admin tasks a job gets, all dated its first day, cannot make it look
     late the day it starts. Production's jobs have no baseline until somebody sets one from the Gantt, so
-    "behind" is empty today and the foot says how many jobs have one.
+    "behind" is empty today and the foot says how many jobs have one. A flagged milestone is a manager's
+    own marker (six exist on production), so it is a diamond whether or not the display rule would show it
+    as work; it counts as work only if the rule shows it. One read takes at most 20,000 Task rows
+    (production has about 1,400 on its 53 active customer jobs); past that the answer says so and the page
+    says some jobs may show less than they have, rather than let a job it never read look clean.
   - **The weekly summary** (`planner_weekly_summary.py`): next week by job and by person, what moved in the
     last seven days (read from the Version log: the first old value and the last new value of each start or
     end, so a task moved and moved back is not listed), and the exception list. *Print weekly summary* in
@@ -42,13 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     design system's chrome, every value escaped. "Next week" is the week holding today while it is a day old
     (the Monday email, a Sunday-night print), else the following week. It describes **Published** schedules
     only: a Draft schedule is private until it is published (D8), so the summary names it at the foot and
-    says nothing more.
+    says nothing more. That includes the sections read from the availability engine, which books a Draft
+    project's *stored* tasks like any other: the by-person lines and the conflicts drop every booking and
+    conflict of a Draft project by name. The Version read is limited to the summary's own projects in SQL,
+    takes the newest 2,000 rows and says so when the log was longer.
   - **The Monday email is OFF** (D16). *Project Planner Settings > Telling managers* has **Email the weekly
     summary on Mondays** (a Check, default 0) and **Send it to** (addresses, separated by commas or new
     lines; a line that is not an address refuses the save, by name). `send_weekly_summary` is scheduled
     Mondays 06:15 (`15 6 * * 1`, a key used nowhere else in `scheduler_events`) and **returns before its
-    first query** unless the box is ticked and somebody is named. At most once a week, through a
-    `Planner Digest Log` row keyed `weekly-summary|<first day>` committed before the mail is sent, not
+    first query** unless the box is ticked and somebody is named. The page is built first (a read, so a
+    failure spends nothing and a rerun that week can still send), then the week is claimed: at most once a
+    week, through a `Planner Digest Log` row keyed `weekly-summary|<first day>` committed before the mail is sent, not
     through redis: the production deploy `FLUSHDB`s both redis instances, so a cache marker would have
     mailed everyone again after every merge. A send that fails after the claim is not retried (a missed
     Monday is better than two), and a failure is logged, never raised. *Send me a weekly summary preview* on

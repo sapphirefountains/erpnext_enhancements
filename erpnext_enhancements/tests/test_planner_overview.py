@@ -32,6 +32,7 @@ import datetime
 import importlib
 import re
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -576,14 +577,21 @@ class TestCollect(unittest.TestCase):
 		self.patches = [
 			mock.patch.object(h.api, "_projects", lambda names: self.projects),
 			mock.patch.object(
-				ov, "_read_task_rows", lambda names: [r for r in self.rows if r["project"] in names]
+				ov, "_read_task_rows", lambda names: ([r for r in self.rows if r["project"] in names], False)
 			),
 			mock.patch.object(ov, "_read_expected", lambda names: {}),
 			mock.patch.object(ov, "_read_crewed", lambda names: set()),
 			mock.patch.object(
 				ov,
 				"_conflicts",
-				lambda today: [{"date": "2026-10-09", "label": "Austin", "message": "Austin: double-booked"}],
+				lambda today, exclude=(), cached=True: [
+					{
+						"date": "2026-10-09",
+						"label": "Austin",
+						"message": "Austin: double-booked",
+						"projects": [],
+					}
+				],
 			),
 			mock.patch.object(ov, "_actuals", lambda tasks: {}),
 			mock.patch.object(h.api, "_shift_holidays", lambda: frozenset()),
@@ -649,8 +657,33 @@ class TestCollect(unittest.TestCase):
 		self.assertTrue(answer["conflicts_ok"])
 		self.assertEqual(answer["behind_days"], ov.BEHIND_DAYS)
 
+	def test_a_draft_schedules_conflicts_are_left_out_of_the_summary(self):
+		seen = {}
+
+		def conflicts(today, exclude=(), cached=True):
+			seen.update(exclude=set(exclude), cached=cached)
+			return []
+
+		with mock.patch.object(ov, "_conflicts", conflicts):
+			found = ov.collect(draft=False, published_only=True, cached_conflicts=False)
+		self.assertEqual(seen, {"exclude": {"PRJ-2"}, "cached": False})
+		self.assertEqual(found["draft_projects"], {"PRJ-2"})
+		# The Overview, on screen, draws drafts and so leaves nothing out; it uses the cache.
+		with mock.patch.object(ov, "_conflicts", conflicts):
+			found = ov.collect(draft=False)
+		self.assertEqual(seen, {"exclude": set(), "cached": True})
+		self.assertEqual(found["draft_projects"], set())
+
+	def test_a_cut_task_read_is_said_in_the_answer(self):
+		with mock.patch.object(ov, "_read_task_rows", lambda names: ([], True)):
+			found = ov.collect(draft=False)
+		first, last = ov.month_window("2026-10-21", 6)
+		self.assertTrue(ov.overview_payload(found, first, last, 6)["tasks_truncated"])
+		found = ov.collect(draft=False)
+		self.assertFalse(ov.overview_payload(found, first, last, 6)["tasks_truncated"])
+
 	def test_unreadable_conflicts_leave_the_rest_of_the_answer(self):
-		with mock.patch.object(ov, "_conflicts", lambda today: None):
+		with mock.patch.object(ov, "_conflicts", lambda today, exclude=(), cached=True: None):
 			found = ov.collect(draft=False)
 		first, last = ov.month_window("2026-10-21", 6)
 		answer = ov.overview_payload(found, first, last, 6)
@@ -694,6 +727,92 @@ class TestCollect(unittest.TestCase):
 		self.assertEqual(len(h.frappe.errors), 1)
 
 
+class TestTheConflictsRead(unittest.TestCase):
+	"""The costly part of a read, kept for two minutes, filtered by project, never fatal."""
+
+	def setUp(self):
+		h._reset()
+		self.store = {}
+		self.passes = 0
+		h.frappe.cache = types.SimpleNamespace(
+			get_value=lambda key: self.store.get(key),
+			set_value=lambda key, value, expires_in_sec=None: self.store.update({key: value}),
+		)
+		self.addCleanup(lambda: delattr(h.frappe, "cache"))
+
+		def collect(start, end, planner):
+			self.passes += 1
+			return [
+				{
+					"date": "2026-10-09",
+					"resource_label": "Austin",
+					"message": "Austin: double-booked",
+					"acknowledged": None,
+					"items": [{"project": "PRJ-1"}, {"project": "PRJ-2"}],
+				},
+				{
+					"date": "2026-10-10",
+					"resource_label": "Lisa",
+					"message": "Lisa: over her hours",
+					"acknowledged": None,
+					"items": [{"project": "PRJ-1"}, {"doctype": "Task"}],
+				},
+				{
+					"date": "2026-10-11",
+					"resource_label": "Nik",
+					"message": "Nik: kept",
+					"acknowledged": {"reason": "ok"},
+					"items": [],
+				},
+			]
+
+		from erpnext_enhancements.api import planner_conflicts
+
+		patch = mock.patch.object(planner_conflicts, "_collect", collect)
+		patch.start()
+		self.addCleanup(patch.stop)
+
+	def test_it_is_read_once_for_a_burst_of_clicks(self):
+		first = ov._conflicts(TODAY)
+		second = ov._conflicts(TODAY)
+		self.assertEqual(self.passes, 1)
+		self.assertEqual(first, second)
+		self.assertEqual([c["message"] for c in first], ["Austin: double-booked", "Lisa: over her hours"])
+		self.assertEqual(first[0]["projects"], ["PRJ-1", "PRJ-2"])
+		self.assertEqual(first[1]["projects"], ["PRJ-1"])
+
+	def test_one_kept_with_a_reason_is_not_listed(self):
+		self.assertNotIn("Nik: kept", [c["message"] for c in ov._conflicts(TODAY)])
+
+	def test_a_fresh_read_is_available_and_does_not_fill_the_cache(self):
+		ov._conflicts(TODAY, cached=False)
+		ov._conflicts(TODAY, cached=False)
+		self.assertEqual((self.passes, self.store), (2, {}))
+
+	def test_projects_can_be_left_out_of_the_one_cached_list(self):
+		both = ov._conflicts(TODAY)
+		self.assertEqual(len(both), 2)
+		self.assertEqual([c["message"] for c in ov._conflicts(TODAY, {"PRJ-2"})], ["Lisa: over her hours"])
+		self.assertEqual(ov._conflicts(TODAY, {"PRJ-1"}), [])
+		self.assertEqual(self.passes, 1)
+
+	def test_a_cache_that_is_down_is_no_cache(self):
+		def boom(*a, **k):
+			raise RuntimeError("redis down")
+
+		h.frappe.cache = types.SimpleNamespace(get_value=boom, set_value=boom)
+		self.assertEqual(len(ov._conflicts(TODAY)), 2)
+		self.assertEqual(self.passes, 1)
+
+	def test_a_failed_pass_is_none_logged_and_not_cached(self):
+		from erpnext_enhancements.api import planner_conflicts
+
+		with mock.patch.object(planner_conflicts, "_collect", side_effect=RuntimeError("engine fell over")):
+			self.assertIsNone(ov._conflicts(TODAY))
+		self.assertEqual(len(h.frappe.errors), 1)
+		self.assertEqual(self.store, {})
+
+
 class TestTheQueries(unittest.TestCase):
 	"""The reads are bound SQL: no value of the request reaches the text of a query."""
 
@@ -712,8 +831,26 @@ class TestTheQueries(unittest.TestCase):
 
 	def test_no_projects_asks_nothing(self):
 		h.frappe.queries.clear()
-		self.assertEqual(ov._read_task_rows(set()), [])
+		self.assertEqual(ov._read_task_rows(set()), ([], False))
 		self.assertEqual(h.frappe.queries, [])
+
+	def test_the_task_cap_is_said_not_hidden(self):
+		rows = [{"name": f"T{i}", "project": "PRJ-1"} for i in range(5)]
+		h.frappe.sql_rows = {"FROM `tabTask` t": rows}
+		with mock.patch.object(ov, "MAX_TASKS", 4):
+			got, cut = ov._read_task_rows({"PRJ-1"})
+		self.assertEqual((len(got), cut), (4, True))
+		with mock.patch.object(ov, "MAX_TASKS", 5):
+			got, cut = ov._read_task_rows({"PRJ-1"})
+		self.assertEqual((len(got), cut), (5, False))
+		# It asks for one row more than it keeps, to know.
+		bound = [q for kind, q in h.frappe.queries if kind == "sql"][-1]
+		self.assertIn("LIMIT %(limit)s", bound)
+
+	def test_the_milestone_column_comes_from_the_planners_own_check(self):
+		source = OVERVIEW_PATH.read_text(encoding="utf-8")
+		self.assertIn('pp._task_has_column("is_milestone")', source)
+		self.assertNotIn("def _has_column", source)
 
 	def test_the_source_never_formats_a_value_into_sql(self):
 		source = OVERVIEW_PATH.read_text(encoding="utf-8")
@@ -731,10 +868,10 @@ class TestEndpoints(unittest.TestCase):
 		h._settings()
 		self.patches = [
 			mock.patch.object(h.api, "_projects", lambda names: []),
-			mock.patch.object(ov, "_read_task_rows", lambda names: []),
+			mock.patch.object(ov, "_read_task_rows", lambda names: ([], False)),
 			mock.patch.object(ov, "_read_expected", lambda names: {}),
 			mock.patch.object(ov, "_read_crewed", lambda names: set()),
-			mock.patch.object(ov, "_conflicts", lambda today: []),
+			mock.patch.object(ov, "_conflicts", lambda today, exclude=(), cached=True: []),
 			mock.patch.object(h.api, "_shift_holidays", lambda: frozenset()),
 			mock.patch.object(
 				h.api,

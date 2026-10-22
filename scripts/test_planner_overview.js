@@ -576,6 +576,7 @@ test("The foot: jobs with no dates, jobs outside, how many have a baseline, and 
 	check("the rule for overdue and the display rule", html.includes("Overdue counts a task whose last day has passed; the Overdue status is not used."), true);
 	const quiet = planner({ data: answer({ no_dates: [], outside: 0, counts: { jobs: 3, baselined: 3 } }) }).ppo_foot_html();
 	check("a quiet foot is the rule alone", (quiet.match(/<p class="ppo-note">/g) || []).length, 1);
+	check("a read that hit the task cap says so", [quiet.includes("Only part of the task list"), planner({ data: answer({ tasks_truncated: true }) }).ppo_foot_html().includes("Only part of the task list could be read, so some jobs may show less than they have.")], [false, true]);
 	const names = planner({ data: answer({ no_dates: Array.from({ length: 10 }, (_x, i) => ({ name: `N${i}`, title: i ? `Job ${i}` : "<i>x</i>", pm: "Nik" })) }) }).ppo_foot_html();
 	check("ten with no dates: eight named, escaped, the rest counted", [names.includes("10 jobs have no dates yet:"), names.includes("&lt;i&gt;x&lt;/i&gt;"), names.includes("and 2 more.")], [true, true, true]);
 	const filtered = planner();

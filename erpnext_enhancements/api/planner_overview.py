@@ -30,8 +30,15 @@ is the third and shares this module's read, so the page, the printout and the em
   with no estimate is not judged here: the card judges it against the hours the engine booked, which
   needs the whole availability pass this read does not make.
 * **Conflicts** are the Conflict center's (``planner_conflicts``, one Google-free engine pass over the
-  next :data:`CONFLICT_DAYS` days) that nobody has kept with a reason. The pass is the one costly part;
-  if it fails the rest still answers, with ``conflicts_ok: False``.
+  next :data:`CONFLICT_DAYS` days) that nobody has kept with a reason. The pass is the one costly part
+  and does not depend on the window, so the page's reads keep the list for two minutes (a conflict kept
+  with a reason stays listed that long); the Monday email always reads fresh. If it fails the rest still
+  answers, with ``conflicts_ok: False``.
+* **A flagged milestone always shows.** A dated Task with ``is_milestone`` is a manager's own marker
+  (six exist on production, 2026-10-22), so it is a diamond whether or not the display rule would show it
+  as work. It is not counted as work (phases, overdue, running over) unless the rule shows it.
+* **A cap is said, not hidden.** One read takes at most :data:`MAX_TASKS` Task rows; past that the answer
+  carries ``tasks_truncated`` and the page says some jobs may show less than they have.
 * **Every line opens its source.** A line carries ``project`` (the page opens that job's Gantt),
   and a conflict its ``date`` (the page opens the Crew board on that day).
 
@@ -57,8 +64,9 @@ MONTH_CHOICES = (3, 6, 9, 12)
 DEFAULT_MONTHS = 6
 #: A phase or task is an exception when it is MORE than this many working days behind its baseline.
 BEHIND_DAYS = 2
-#: The most Task rows one read takes: about 56 jobs of a few dozen tasks each, with room.
-MAX_TASKS = 8000
+#: The most Task rows one read takes. Production has about 1,400 across its 53 active customer jobs
+#: (2026-10-22), so this is room, not a limit anyone meets; if one is met, the answer says so.
+MAX_TASKS = 20000
 #: The most exception lines one answer carries; the rest are counted ("and N more").
 EXCEPTION_LIMIT = 60
 #: How many overdue tasks a line names.
@@ -67,6 +75,8 @@ OVERDUE_NAMED = 3
 CONFLICT_DAYS = 14
 #: How many conflicts a line spells out.
 CONFLICT_NAMED = 3
+#: How long the Overview keeps the conflict list (it does not depend on the window).
+CONFLICT_CACHE_SECONDS = 120
 #: Statuses never read: a canceled task is gone from the plan, a template is not work.
 LEFT_OUT = ("Canceled", "Cancelled", "Template")
 #: A conflict-center query chunk: the most names one IN list carries.
@@ -462,24 +472,20 @@ def _read_expected(names):
 	return out
 
 
-def _has_column(doctype, column):
-	try:
-		return bool(frappe.db.has_column(doctype, column))
-	except Exception:
-		return False
-
-
 def _read_task_rows(projects):
-	"""The Task rows of ``projects`` (names), groups included, canceled and template work left out."""
+	"""``(rows, truncated)``: the Task rows of ``projects`` (names), groups included, canceled and template
+	work left out. ``truncated`` is True when there were more than :data:`MAX_TASKS`: the rows past the cap
+	(the last projects, by name) are not read, and the page says so rather than let a job it never read look
+	clean."""
 	if not projects:
-		return []
+		return [], False
 	baseline = (
 		f", t.`{pp.BASELINE_START}` AS `{pp.BASELINE_START}`, t.`{pp.BASELINE_END}` AS `{pp.BASELINE_END}`"
 		if pp._has_schedule_columns()
 		else ""
 	)
-	milestone = ", t.is_milestone AS is_milestone" if _has_column("Task", "is_milestone") else ""
-	return frappe.db.sql(
+	milestone = ", t.is_milestone AS is_milestone" if pp._task_has_column("is_milestone") else ""
+	rows = frappe.db.sql(
 		f"""
 		SELECT
 			t.name, t.subject, t.project, t.status, t.parent_task, IFNULL(t.is_group, 0) AS is_group,
@@ -491,9 +497,10 @@ def _read_task_rows(projects):
 		ORDER BY t.project, t.lft, t.creation
 		LIMIT %(limit)s
 		""",
-		{"projects": tuple(sorted(projects)), "left_out": LEFT_OUT, "limit": MAX_TASKS},
+		{"projects": tuple(sorted(projects)), "left_out": LEFT_OUT, "limit": MAX_TASKS + 1},
 		as_dict=True,
 	)
+	return rows[:MAX_TASKS], len(rows) > MAX_TASKS
 
 
 def apply_drafts(rows, overlay, projects):
@@ -557,22 +564,50 @@ def _read_crewed(names):
 	return crewed
 
 
-def _conflicts(today):
-	"""``[{date, label, message}]``: the Conflict center's list for the next two weeks that nobody has kept
-	with a reason, or None when the pass fails (the rest of the Overview is worth showing without it)."""
-	try:
-		from erpnext_enhancements.api import planner_conflicts
+def _conflicts(today, exclude=(), cached=True):
+	"""``[{date, label, message, projects}]``: the Conflict center's list for the next two weeks that nobody
+	has kept with a reason, or None when the pass fails (the rest of the Overview is worth showing without
+	it). ``exclude`` drops every conflict that involves one of those projects (the weekly summary leaves out
+	a Draft schedule's, whose tasks the engine still books).
 
-		last = today + datetime.timedelta(days=CONFLICT_DAYS - 1)
-		found = planner_conflicts._collect(today, last, "project")
-	except Exception:
-		frappe.log_error(title="Overview: the conflicts could not be read", message=frappe.get_traceback())
-		return None
-	return [
-		{"date": c["date"], "label": c.get("resource_label"), "message": c.get("message") or ""}
-		for c in found
-		if not c.get("acknowledged")
-	]
+	It is the one costly part of a read, and it does not depend on the window, so a manager stepping through
+	months or flipping the picker would otherwise pay for it each click: the unfiltered list is kept for
+	:data:`CONFLICT_CACHE_SECONDS`. A conflict kept with a reason therefore stays listed for up to that long.
+	``cached=False`` (the Monday email) always reads fresh. A cache that is down is no cache."""
+	key = f"ee_planner_overview_conflicts:{today}"
+	found = None
+	if cached:
+		try:
+			found = frappe.cache.get_value(key)
+		except Exception:
+			found = None
+	if found is None:
+		try:
+			from erpnext_enhancements.api import planner_conflicts
+
+			last = today + datetime.timedelta(days=CONFLICT_DAYS - 1)
+			found = [
+				{
+					"date": c["date"],
+					"label": c.get("resource_label"),
+					"message": c.get("message") or "",
+					"projects": sorted({i.get("project") for i in c.get("items") or [] if i.get("project")}),
+				}
+				for c in planner_conflicts._collect(today, last, "project")
+				if not c.get("acknowledged")
+			]
+		except Exception:
+			frappe.log_error(
+				title="Overview: the conflicts could not be read", message=frappe.get_traceback()
+			)
+			return None
+		if cached:
+			try:
+				frappe.cache.set_value(key, found, expires_in_sec=CONFLICT_CACHE_SECONDS)
+			except Exception:
+				pass
+	hidden = set(exclude or ())
+	return [c for c in found if not hidden.intersection(c.get("projects") or ())]
 
 
 def _actuals(hours_tasks):
@@ -587,15 +622,18 @@ def _actuals(hours_tasks):
 		return {}
 
 
-def collect(draft=True, published_only=False, with_conflicts=True, today=None):
+def collect(draft=True, published_only=False, with_conflicts=True, today=None, cached_conflicts=True):
 	"""Everything the Overview and the weekly summary are drawn from.
 
-	``{today, listed, jobs, shown, over, conflicts, drafts_named, overlay}``: ``jobs`` are
-	:func:`build_job` rows in project-name order; ``shown`` maps a job to its schedulable tasks;
-	``listed`` is ``project_planner._projects``' list (for the page's filters); ``overlay`` is the
-	drafts read (None without ``draft``). ``published_only`` (the weekly summary) leaves a Draft
-	schedule out of ``jobs`` and names it in ``drafts_named``: a Draft schedule is private until it is
-	published (D8), so the summary never describes one."""
+	``{today, listed, jobs, shown, over, conflicts, drafts_named, draft_projects, truncated, overlay}``:
+	``jobs`` are :func:`build_job` rows in project-name order; ``shown`` maps a job to its schedulable
+	tasks; ``listed`` is ``project_planner._projects``' list (for the page's filters); ``overlay`` is the
+	drafts read (None without ``draft``); ``truncated`` is True when the task cap cut the read.
+	``published_only`` (the weekly summary) leaves a Draft schedule out of ``jobs``, names it in
+	``drafts_named`` (``draft_projects`` are the same projects' names), and drops the conflicts that
+	involve one: a Draft schedule is private until it is published (D8), so the summary never describes
+	one, and the engine still books a Draft project's stored tasks, so anything read from the engine has to
+	be filtered by those names too."""
 	today = engine._as_date(today) or getdate(nowdate())
 	listed = pp._projects(set())
 	overlay = None
@@ -604,16 +642,16 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None):
 			overlay = pp._draft_overlay()
 		except Exception:
 			frappe.log_error(title="Overview: drafts could not be read", message=frappe.get_traceback())
-	drafts_named = []
+	drafts_named, draft_projects = [], set()
 	if published_only:
-		drafts_named = [
-			p["title"] for p in listed if (p.get("schedule") or {}).get("status") == pp.SCHEDULE_DRAFT
-		]
-		listed_jobs = [p for p in listed if (p.get("schedule") or {}).get("status") != pp.SCHEDULE_DRAFT]
+		drafted = [p for p in listed if (p.get("schedule") or {}).get("status") == pp.SCHEDULE_DRAFT]
+		drafts_named = [p["title"] for p in drafted]
+		draft_projects = {p["name"] for p in drafted}
+		listed_jobs = [p for p in listed if p["name"] not in draft_projects]
 	else:
 		listed_jobs = listed
 	names = {p["name"] for p in listed_jobs}
-	rows = _read_task_rows(names)
+	rows, truncated = _read_task_rows(names)
 	crewed_drafts = set()
 	if overlay:
 		rows, crewed_drafts = apply_drafts(rows, overlay, names)
@@ -641,7 +679,7 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None):
 	hours = [t for job in jobs for t in job["hours_tasks"]]
 	actuals = _actuals(hours) if hours else {}
 	over = {job["name"]: running_over(job["hours_tasks"], actuals) for job in jobs}
-	conflicts = _conflicts(today) if with_conflicts else None
+	conflicts = _conflicts(today, draft_projects, cached_conflicts) if with_conflicts else None
 	return {
 		"today": today,
 		"listed": listed,
@@ -650,6 +688,8 @@ def collect(draft=True, published_only=False, with_conflicts=True, today=None):
 		"over": over,
 		"conflicts": conflicts,
 		"drafts_named": drafts_named,
+		"draft_projects": draft_projects,
+		"truncated": truncated,
 		"overlay": overlay,
 	}
 
@@ -692,6 +732,7 @@ def overview_payload(found, first, last, months):
 		"more_exceptions": more,
 		"counts": counts,
 		"conflicts_ok": found["conflicts"] is not None,
+		"tasks_truncated": bool(found.get("truncated")),
 		"behind_days": BEHIND_DAYS,
 		"projects": found["listed"],
 	}
@@ -700,8 +741,8 @@ def overview_payload(found, first, last, months):
 @frappe.whitelist()
 def get_overview(start=None, months=DEFAULT_MONTHS, draft=1):
 	"""The Overview: ``{today, start, end, months, choices, jobs, no_dates, outside, exceptions,
-	more_exceptions, counts, conflicts_ok, behind_days, projects, can_edit, drafts}``. See the module
-	docstring. ``start`` is any day in the first month (today when not given); the window is ``months``
+	more_exceptions, counts, conflicts_ok, tasks_truncated, behind_days, projects, can_edit, drafts}``. See
+	the module docstring. ``start`` is any day in the first month (today when not given); the window is ``months``
 	(3, 6, 9 or 12; anything else is 6) whole calendar months. ``draft=1`` draws a Draft schedule from its
 	drafts (the caller's own, and everyone's on a Draft schedule), as the page always reads."""
 	pp._require_planner()

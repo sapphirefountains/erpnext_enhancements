@@ -14159,6 +14159,9 @@ const PPO_METHODS = {
 		if (Number(data.outside) > 0) {
 			bits.push(pp_esc(Number(data.outside) === 1 ? __("1 job has nothing in these months.") : __("{0} jobs have nothing in these months.", [data.outside])));
 		}
+		if (data.tasks_truncated) {
+			bits.push(pp_esc(__("Only part of the task list could be read, so some jobs may show less than they have.")));
+		}
 		if (Number(counts.jobs) > 0 && Number(counts.baselined) < Number(counts.jobs)) {
 			bits.push(
 				pp_esc(
