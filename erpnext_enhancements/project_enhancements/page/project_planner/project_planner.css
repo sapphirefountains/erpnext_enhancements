@@ -1978,6 +1978,18 @@ body.pp-drag-active * {
 	padding-bottom: 24px;
 }
 
+/* Simple mode (the PPS block; docs/planner-simple-mode.md). While it shows, the planner's own chrome is
+ * hidden and the kit draws the screen (planner_kit.bundle.css, .pk-simple-*). A class rather than each
+ * element's own hide(), so the next screen's set_mode brings back exactly what it shows. */
+.pp-wrap.pp-simple-on > :not(.pp-simple) {
+	display: none !important;
+}
+
+.pp-simple {
+	max-width: 1100px;
+	padding-bottom: 24px;
+}
+
 .pp-td-day {
 	border: var(--sf-border-hairline) solid var(--sf-rule);
 	border-radius: var(--sf-radius-none);

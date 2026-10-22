@@ -1897,7 +1897,7 @@ jobs:
       # limit. Own frappe stub (and FAC's BaseTool), so its own step; unittest classes.
       - name: Guided Item AI suggest (schema, no PDT/SRV numbers, rules + guard, graceful failure)
         run: python -m unittest erpnext_enhancements.tests.test_item_suggest -v
-      # Supplier Finder (v1.722.0): who sells an item, ranked by purchase evidence. The pure rules
+      # Supplier Finder (v1.724.0): who sells an item, ranked by purchase evidence. The pure rules
       # (inventory_enhancements/supplier_search_rules.py) hold the matching (word starts, model and
       # part numbers squashed, synonyms, strict then partial), the group match, duplicate suppliers
       # folded into one row, and the order: bought, then quoted/listed, then group or name only. Its
@@ -3784,6 +3784,16 @@ jobs:
       # and Back/Forward run in the P8 router harness (test_planner_today). node is on PATH in this job.
       - name: Project planner Overview tab, page (P9, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_overview_page -v
+      # Simple mode for both planners (docs/planner-simple-mode.md; Nik, 2026-10-22). A job's card is the planner's
+      # display rule (D6), and a job from before the phase templates lists its own top-level groups, so the 505 old
+      # jobs are not empty cards; late is by end date, never the Overdue status; a finished job has nothing late; a
+      # site's card has its Maintenance Records, its contract's projected visits and its project's completed tasks;
+      # every read is bound SQL (search text too) behind each planner's own role gate. Runs
+      # scripts/test_planner_simple.js against the real kit module and the real Maintenance Planner script (the
+      # cards, the mounted screen, the device flag); the Project Planner's landing and Back/Forward are in the P8
+      # router harness (test_planner_today). Reuses the Phase 3B harness, so it is unittest; node is on PATH here.
+      - name: Planner Simple mode, server and kit (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_simple -v
       # Planner UX redesign P12, the first-visit tour and "?" for the new tabs (both planners). The flags are
       # the person's own __UserSettings row for that planner, beside the saved views and without touching
       # them (planner_views_prefs.mark_tour_seen, POST, behind the planner's role gate; against a frappe

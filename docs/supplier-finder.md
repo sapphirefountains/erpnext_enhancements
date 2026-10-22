@@ -1,6 +1,6 @@
 # Find a Supplier (Supplier & Item Search)
 
-Shipped in v1.722.0. Tracked as ERPNext TASK-2026-02911 (PRJ-00580, under *Purchase Order Usability*).
+Shipped in v1.724.0. Tracked as ERPNext TASK-2026-02911 (PRJ-00580, under *Purchase Order Usability*).
 
 ## The problem
 

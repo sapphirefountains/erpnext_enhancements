@@ -443,7 +443,7 @@ class TestThePageScript(unittest.TestCase):
 		tabs = re.search(r"tabs: \[(.*?)\]", self.block)
 		self.assertEqual(
 			re.findall(r'"([^"]+)"', tabs.group(1)),
-			["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],
+			["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview", "simple"],
 		)
 
 	def test_every_class_it_uses_is_styled(self):

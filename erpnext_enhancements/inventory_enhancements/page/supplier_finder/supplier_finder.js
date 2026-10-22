@@ -1,4 +1,4 @@
-// Find a Supplier (v1.722.0): who sells this, or has sold it to us. Nik, 2026-10-22: "say I know
+// Find a Supplier (v1.724.0): who sells this, or has sold it to us. Nik, 2026-10-22: "say I know
 // we need a pump, but I don't remember all our pump suppliers." One search box takes a kind of item
 // ("pump"), a phrase ("submersible pump") or a model or part number ("EQKT750"). Suppliers come
 // back ranked by evidence: bought, then quoted/listed/priced, then only a matching Supplier Group or

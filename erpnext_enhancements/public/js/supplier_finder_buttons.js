@@ -1,4 +1,4 @@
-// "Find suppliers" on the Item and Purchase Order forms (v1.722.0): opens the Find a Supplier page
+// "Find suppliers" on the Item and Purchase Order forms (v1.724.0): opens the Find a Supplier page
 // (/desk/supplier-finder) on an Item, so the buyer sees everyone who has sold it to us, ranked by
 // what we bought, and other suppliers in the same line. On a Purchase Order with several items it
 // asks which one first. Shown only to someone who may read Supplier; the page and its endpoint

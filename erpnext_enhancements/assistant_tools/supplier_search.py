@@ -1,6 +1,6 @@
 """supplier_search — who sells this, or has sold it to us (read-only).
 
-The assistant's door to the Supplier Finder (v1.722.0). It runs the same
+The assistant's door to the Supplier Finder (v1.724.0). It runs the same
 ``api.supplier_search.run_search`` that the ``/desk/supplier-finder`` page and the Item and
 Purchase Order buttons call. Nik, 2026-10-22: "I know we need a pump, but I don't remember all our
 pump suppliers." A search can be a kind of item ("pump"), a phrase ("submersible pump") or a model

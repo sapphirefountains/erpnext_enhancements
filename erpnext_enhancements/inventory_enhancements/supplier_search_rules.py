@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""What the Supplier Finder decides (v1.722.0). **No Frappe, no I/O.**
+"""What the Supplier Finder decides (v1.724.0). **No Frappe, no I/O.**
 
 Nik, 2026-10-22: "say I know we need a pump, but I don't remember all our pump suppliers." The
 Supplier Group field cannot answer that. On prod that day there were 174 flat groups, 629 of 1,193

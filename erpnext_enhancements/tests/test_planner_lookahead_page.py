@@ -125,7 +125,7 @@ class TestTheBlock(unittest.TestCase):
 		# landing writes a remembered tab's own address (/calendar/week/…, /lookahead/…).
 		# P9 added the Overview as the last of them.
 		self.assertIn(
-			'tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],', code
+			'tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview", "simple"],', code
 		)
 		self.assertIn("frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));", code)
 		self.assertNotIn("tabbed", code)
