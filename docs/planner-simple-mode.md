@@ -96,7 +96,7 @@ done/late, and no hours or money (S3).
 
 ## Built, and where it differs
 
-Built in v1.718.0 (`api/planner_simple.py`, `public/js/planner_kit/simple.js`, the PPS and MPS blocks of the two page
+Built in v1.720.0 (`api/planner_simple.py`, `public/js/planner_kit/simple.js`, the PPS and MPS blocks of the two page
 scripts). Where it differs from the text above, and why:
 
 - **A site is a project with a contract or a record,** not "a Maintenance Record or of type Service": Service is
