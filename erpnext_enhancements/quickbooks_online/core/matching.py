@@ -711,10 +711,37 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 		TRANSACTION_ENTITIES
 	)
 	start, page_length = _page_args(start, page_length)
-	filters = {"qbo_entity_type": ["in", entity_types], "match_status": "Pending Review", "deleted": 0}
-	rows = frappe.get_all(
+	rows = parked_mapping_rows(entity_types, start=start, page_length=page_length)
+	total = frappe.db.count(MAPPING_DOCTYPE, _parked_filters(entity_types))
+	# Raw SQL for the same reason as _master_where: a string aggregate in get_all's fields
+	# is refused by Frappe 16's query engine.
+	per_type = frappe.db.sql(
+		"select qbo_entity_type, count(*) as n from `tabQuickBooks Sync Mapping`"
+		" where qbo_entity_type in %(types)s and match_status = 'Pending Review'"
+		" and coalesce(deleted, 0) = 0 group by qbo_entity_type",
+		{"types": tuple(TRANSACTION_ENTITIES)},
+		as_dict=True,
+	)
+	return {
+		"rows": build_parked_rows(rows),
+		"total": total,
+		"start": start,
+		"page_length": page_length,
+		"counts": {row.qbo_entity_type: cint(row.n) for row in per_type},
+	}
+
+
+def _parked_filters(entity_types) -> dict:
+	return {"qbo_entity_type": ["in", entity_types], "match_status": "Pending Review", "deleted": 0}
+
+
+def parked_mapping_rows(entity_types, *, start=0, page_length=None) -> list:
+	"""The parked transactions' mapping rows in the tab's order: one page, or -- with no
+	``page_length`` -- all of them, which is how the Excel export reads them (see
+	``master_mapping_rows``)."""
+	return frappe.get_all(
 		MAPPING_DOCTYPE,
-		filters=filters,
+		filters=_parked_filters(entity_types),
 		fields=[
 			"name",
 			"qbo_entity_type",
@@ -727,19 +754,13 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 			"modified",
 		],
 		order_by="qbo_entity_type asc, last_synced_at desc, qbo_id asc",
-		limit_start=start,
-		limit_page_length=page_length,
+		limit_start=start or 0,
+		limit_page_length=page_length or 0,
 	)
-	total = frappe.db.count(MAPPING_DOCTYPE, filters)
-	# Raw SQL for the same reason as _master_where: a string aggregate in get_all's fields
-	# is refused by Frappe 16's query engine.
-	per_type = frappe.db.sql(
-		"select qbo_entity_type, count(*) as n from `tabQuickBooks Sync Mapping`"
-		" where qbo_entity_type in %(types)s and match_status = 'Pending Review'"
-		" and coalesce(deleted, 0) = 0 group by qbo_entity_type",
-		{"types": tuple(TRANSACTION_ENTITIES)},
-		as_dict=True,
-	)
+
+
+def build_parked_rows(rows) -> list:
+	"""Tab rows for parked mapping rows: the newest payloads batched, the draft checked."""
 	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
 	items = []
 	for row in rows:
@@ -763,13 +784,7 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 				"modified": str(row.modified) if getattr(row, "modified", None) else None,
 			}
 		)
-	return {
-		"rows": items,
-		"total": total,
-		"start": start,
-		"page_length": page_length,
-		"counts": {row.qbo_entity_type: cint(row.n) for row in per_type},
-	}
+	return items
 
 
 # ---------------------------------------------------------------------------

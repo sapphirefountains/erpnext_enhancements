@@ -163,6 +163,15 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
   `modified` is a warning only.
 - **Two rows linking one ERPNext record** is a warning on both and both apply (Nik, 2026-10-22);
   notes are saved as a Comment on the Sync Mapping row.
+- **Duplicate Row IDs** (a copied sheet) that disagree are a conflict and neither applies; copies
+  that agree apply once. A note is "already saved" only when the import's own comment carries its
+  `[Excel note <hash>]` marker.
+- **Hardening:** every string cell is written as text (no formulas from QBO data); Link and Keep only
+  on master QBO types, whatever headers a sheet has; key columns locked by sheet protection (no
+  password, filtering and widths allowed); sheet dimensions reset before reading; a 100 MB
+  expanded-size cap. The page settles every request on the `frappe.call` promise.
+- **Files:** exports and uploads live in `Home/QuickBooks Matching Excel`; the daily
+  `matching_excel.delete_old_files` deletes those older than 7 days.
 
 ## Scheduler / webhook entry points
 

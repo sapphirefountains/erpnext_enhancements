@@ -68,6 +68,7 @@ import io
 import re
 import secrets
 import time
+import zipfile
 
 import frappe
 from frappe.utils import cint, now_datetime
@@ -123,6 +124,17 @@ MAX_IMPORT_BYTES = 15 * 1024 * 1024
 JOB_TTL = 6 * 3600
 EXPORT_TIMEOUT = 1500
 PLAN_TTL = 6 * 3600
+#: A cheap zip-bomb guard: the workbook's uncompressed size, checked before openpyxl reads it.
+MAX_EXPANDED_BYTES = 100 * 1024 * 1024
+#: Every export and every uploaded import lives in this folder, and the daily
+#: ``delete_old_files`` job removes what is older than ``FILE_MAX_AGE_DAYS``: the files hold
+#: customer and vendor names, emails and links, and nothing else ever cleans an unattached File.
+FILE_FOLDER_NAME = "QuickBooks Matching Excel"
+FILE_FOLDER = f"Home/{FILE_FOLDER_NAME}"
+FILE_MAX_AGE_DAYS = 7
+#: A string cell starting with one of these is a formula to Excel or to whatever the sheet
+#: is pasted into; see ``_put``.
+FORMULA_LEADS = ("=", "+", "-", "@")
 
 #: (key, header, width, hidden, editable). The import finds columns by header text.
 MASTER_COLUMNS = (
@@ -227,9 +239,23 @@ def plain(content) -> str:
 	return _SPACE.sub(" ", html.unescape(_HTML_TAG.sub(" ", str(content or "")))).strip()
 
 
+def note_key(note) -> str:
+	"""The marker an import's own comment carries for a note: a hash of its exact text."""
+	return hashlib.sha1(str(note or "").strip().encode("utf-8")).hexdigest()[:12]
+
+
+def note_marker(note) -> str:
+	return f"[Excel note {note_key(note)}]"
+
+
 def note_already_saved(note, comments) -> bool:
-	needle = plain(html.escape(note or ""))
-	return bool(needle) and any(needle in plain(comment) for comment in comments or ())
+	"""True only when one of this import's own comments carries this exact note's marker. A
+	substring test was wrong both ways: "ok" was "already saved" inside any comment that said
+	"ok", and a reworded note matched nothing."""
+	if not str(note or "").strip():
+		return False
+	marker = note_marker(note)
+	return any(marker in plain(comment) for comment in comments or ())
 
 
 def suggestion_label(suggestion) -> str:
@@ -359,8 +385,9 @@ def instructions(meta) -> list:
 		"",
 		"Suggestions: the percentage is how closely the names match (100% = the same name).",
 		"",
-		"You can sort, filter, add your own columns and add your own tabs. Please do not change the QBO "
-		"type or QBO ID columns, the column headings, or the hidden columns.",
+		"Each tab is protected so that only the yellow columns can be changed: the grey and hidden "
+		"columns are how ERPNext finds the row again. Filtering and column widths still work; sorting is "
+		"turned off because it would move the protected cells. You can add your own tabs.",
 		"",
 		"When you are done, save the file as an Excel workbook (.xlsx, not .csv) and send it to Nik. "
 		"Nothing changes in ERPNext until Nik imports it, checks the preview, and clicks Apply. If a row "
@@ -374,10 +401,26 @@ def instructions(meta) -> list:
 	return lines
 
 
+def _put(sheet, row, column, value):
+	"""Write one cell. Every string is stored as text: openpyxl writes a string that starts
+	with ``=`` as a FORMULA, so a QuickBooks name like ``=HYPERLINK(...)`` would run in Meg's
+	Excel. A string with a formula lead also gets Excel's quote prefix, so it stays text when
+	the cell is edited or the sheet is pasted elsewhere."""
+	cell = sheet.cell(row=row, column=column)
+	if value is None or value == "":
+		return cell
+	cell.value = value
+	if isinstance(value, str):
+		cell.data_type = "s"
+		if value.startswith(FORMULA_LEADS):
+			cell.quotePrefix = True
+	return cell
+
+
 def build_workbook(sheets, meta) -> bytes:
 	"""``sheets`` is ``[(title, columns, rows, decisions), ...]``; returns the .xlsx bytes."""
 	from openpyxl import Workbook
-	from openpyxl.styles import Alignment, Font, PatternFill
+	from openpyxl.styles import Alignment, Font, PatternFill, Protection
 	from openpyxl.utils import get_column_letter
 	from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -386,7 +429,7 @@ def build_workbook(sheets, meta) -> bytes:
 	guide.title = INSTRUCTIONS_SHEET
 	guide.column_dimensions["A"].width = 120
 	for index, line in enumerate(instructions(meta), start=1):
-		cell = guide.cell(row=index, column=1, value=line)
+		cell = _put(guide, index, 1, line)
 		cell.alignment = Alignment(wrap_text=True, vertical="top")
 	guide["A1"].font = Font(bold=True, size=14)
 
@@ -396,6 +439,7 @@ def build_workbook(sheets, meta) -> bytes:
 	edit_fill = PatternFill("solid", fgColor="FFF2CC")
 	wrap = Alignment(wrap_text=True, vertical="top")
 	top = Alignment(vertical="top")
+	unlocked = Protection(locked=False)
 
 	for title, columns, rows, decisions in sheets:
 		sheet = workbook.create_sheet(title=title[:31])
@@ -403,7 +447,7 @@ def build_workbook(sheets, meta) -> bytes:
 		for position, (key, header, width, hidden, editable) in enumerate(columns, start=1):
 			letter = get_column_letter(position)
 			letters[key] = letter
-			cell = sheet.cell(row=1, column=position, value=header)
+			cell = _put(sheet, 1, position, header)
 			cell.font = bold
 			cell.fill = edit_head_fill if editable else head_fill
 			cell.alignment = wrap
@@ -412,14 +456,21 @@ def build_workbook(sheets, meta) -> bytes:
 			dimension.hidden = hidden
 		for row_index, row in enumerate(rows, start=2):
 			for position, (key, _header, _width, _hidden, editable) in enumerate(columns, start=1):
-				value = row.get(key)
-				cell = sheet.cell(row=row_index, column=position, value=value if value != "" else None)
+				cell = _put(sheet, row_index, position, row.get(key))
 				cell.alignment = wrap if key in ("issues", "qbo_detail", "notes") else top
 				if editable:
 					cell.fill = edit_fill
+					cell.protection = unlocked
 		last = max(len(rows) + 1, 2)
 		sheet.freeze_panes = "D2"
 		sheet.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{last}"
+		# Only the yellow cells can change. No password: this keeps a slip from breaking a
+		# row, it is not a security boundary -- the import's Row ID / QBO type / QBO ID
+		# cross-check is the backstop. Filtering and column widths stay allowed (False =
+		# not protected); sorting stays off, since it would have to move locked cells.
+		sheet.protection.sheet = True
+		sheet.protection.autoFilter = False
+		sheet.protection.formatColumns = False
 
 		pick = DataValidation(
 			type="list",
@@ -461,8 +512,9 @@ def build_workbook(sheets, meta) -> bytes:
 		),
 		start=1,
 	):
-		info.cell(row=index, column=1, value=key)
-		info.cell(row=index, column=2, value=text(value))
+		_put(info, index, 1, key)
+		_put(info, index, 2, text(value))
+	info.protection.sheet = True
 
 	out = io.BytesIO()
 	workbook.save(out)
@@ -475,6 +527,16 @@ def parse_workbook(content) -> dict:
 	or ``txn``) and the cells the import reads."""
 	from openpyxl import load_workbook
 
+	not_workbook = {
+		"rows": [],
+		"errors": ["This is not an Excel workbook (.xlsx). Save it as .xlsx and try again."],
+	}
+	try:
+		expanded = sum(member.file_size for member in zipfile.ZipFile(io.BytesIO(content)).infolist())
+	except (zipfile.BadZipFile, ValueError, TypeError):
+		return not_workbook
+	if expanded > MAX_EXPANDED_BYTES:
+		return {"rows": [], "errors": ["That file is far too large to be a Record Matching export."]}
 	try:
 		workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
 	except Exception:
@@ -490,16 +552,22 @@ def parse_workbook(content) -> dict:
 			],
 		}
 	meta = {}
-	for key, value, *_rest in workbook[META_SHEET].iter_rows(values_only=True):
+	marker = workbook[META_SHEET]
+	marker.reset_dimensions()
+	for key, value, *_rest in marker.iter_rows(values_only=True):
 		if key:
 			meta[text(key)] = text(value)
 	if meta.get("format_version") != FORMAT_VERSION:
 		return {"rows": [], "errors": ["This export is from a different version of the page. Export again."]}
 
 	rows, errors = [], []
+	found = False
 	for sheet in workbook.worksheets:
 		if sheet.title in (META_SHEET, INSTRUCTIONS_SHEET):
 			continue
+		# Read-only mode trusts the sheet's stored <dimension>, and a file that another tool
+		# saved with a wrong one would read as empty -- zero rows and no error.
+		sheet.reset_dimensions()
 		cells = sheet.iter_rows(values_only=True)
 		header = next(cells, None) or ()
 		columns = {}
@@ -509,12 +577,11 @@ def parse_workbook(content) -> dict:
 				columns[key] = position
 		if "row_id" not in columns:
 			continue  # one of Meg's own sheets
-		kind = "master" if "link_to" in columns else "txn"
+		found = True
 		missing = [key for key in ("qbo_type", "qbo_id", "decision", "row_version") if key not in columns]
 		if missing:
 			errors.append(f"Sheet '{sheet.title}' is missing columns it needs; it was skipped.")
 			continue
-		allowed = MASTER_DECISIONS if kind == "master" else TXN_DECISIONS
 		for number, values in enumerate(cells, start=2):
 
 			def cell(key, values=values, columns=columns):
@@ -526,14 +593,20 @@ def parse_workbook(content) -> dict:
 			if len(rows) >= MAX_IMPORT_ROWS:
 				errors.append(f"The file has more than {MAX_IMPORT_ROWS} rows; the rest were not read.")
 				return {"rows": rows, "errors": errors, "meta": meta}
-			decision, recognised = normalise_decision(cell("decision"), allowed)
+			# The row's kind comes from its QBO type, never from which headers the sheet has:
+			# a "Link to" column pasted onto the Parked sheet must not make an Invoice linkable.
+			qbo_type = text(cell("qbo_type"))
+			kind = "master" if qbo_type in MASTER_ENTITIES else "txn"
+			decision, recognised = normalise_decision(
+				cell("decision"), MASTER_DECISIONS if kind == "master" else TXN_DECISIONS
+			)
 			rows.append(
 				{
 					"sheet": sheet.title,
 					"row_number": number,
 					"kind": kind,
 					"row_id": text(cell("row_id")),
-					"qbo_type": text(cell("qbo_type")),
+					"qbo_type": qbo_type,
 					"qbo_id": text(cell("qbo_id")),
 					"qbo_name": text(cell("qbo_name")) or text(cell("doc_number")),
 					"row_version": text(cell("row_version")),
@@ -548,6 +621,10 @@ def parse_workbook(content) -> dict:
 					"notes": text(cell("notes")),
 				}
 			)
+	if not found:
+		errors.append(
+			"No Record Matching sheet was found in this file (no sheet has the export's Row ID column)."
+		)
 	return {"rows": rows, "errors": errors, "meta": meta}
 
 
@@ -604,6 +681,11 @@ def classify_row(row, current, *, target_doctype=None, target_exists=None, note_
 		return result
 	if cint(current.get("deleted")):
 		result["message"] = "This record was deleted in QuickBooks."
+		return result
+	if decision in (LINK, KEEP) and row.get("qbo_type") not in MASTER_ENTITIES:
+		result["message"] = (
+			f"A {row.get('qbo_type')} can only be retried; Link and Keep are for master records."
+		)
 		return result
 	if not row.get("decision_ok", True) or (decision and decision not in allowed):
 		result["message"] = f"'{decision}' is not a decision. Use {', '.join(allowed)}, or leave it blank."
@@ -694,6 +776,52 @@ def classify_row(row, current, *, target_doctype=None, target_exists=None, note_
 	if pending_note:
 		result["message"] += " Saves the note."
 	return result
+
+
+def _signature(row) -> tuple:
+	decision = row.get("decision") or ""
+	return (
+		decision,
+		row.get("link_to") if decision == LINK else "",
+		bool(row.get("fill_blanks")) if decision == LINK else False,
+		(row.get("notes") or "").strip(),
+	)
+
+
+def duplicate_rows(rows, results) -> dict:
+	"""``{index: (category, message)}`` for rows whose Row ID appears more than once with
+	something filled in -- a copied sheet, a pasted row. If every copy says the same, the first
+	stands and the rest are reported as the same row. If they disagree, none is applied: the
+	file says two different things about one record, and only Meg knows which she meant.
+	Mutates ``results`` so the preview shows it; the caller keeps the map so apply honours it."""
+	by_id: dict = {}
+	for index, (row, result) in enumerate(zip(rows, results, strict=True)):
+		if row.get("row_id") and result["category"] != BLANK:
+			by_id.setdefault(row["row_id"], []).append(index)
+	blocked = {}
+	for indexes in by_id.values():
+		if len(indexes) < 2:
+			continue
+		places = {i: f"{rows[i]['sheet']} row {rows[i]['row_number']}" for i in indexes}
+		agree = len({_signature(rows[i]) for i in indexes}) == 1
+		for i in indexes:
+			others = ", ".join(places[j] for j in indexes if j != i)
+			if agree and i == indexes[0]:
+				continue
+			if agree:
+				blocked[i] = (
+					UNCHANGED,
+					f"The same record and decision as {places[indexes[0]]}; applied once, there.",
+				)
+			else:
+				blocked[i] = (
+					INVALID,
+					f"Conflict: the same record is also on {others} with a different decision or note. "
+					"Neither is applied; make them agree, or decide it on the page.",
+				)
+	for i, (category, message) in blocked.items():
+		results[i].update(category=category, action="", save_note=False, message=message, held=True)
+	return blocked
 
 
 def _already(decision, current) -> str:
@@ -798,6 +926,7 @@ def classify(rows) -> list:
 			if title and title != row.get("link_to"):
 				result["target_title"] = title
 		results.append(result)
+	duplicate_rows(rows, results)
 	shared_target_warnings(rows, results)
 	return results
 
@@ -805,6 +934,43 @@ def classify(rows) -> list:
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
+
+
+def ensure_folder() -> str:
+	"""The File folder every export and upload is kept in; created on first use. Two exports
+	starting together may race to create it, and the loser finds it there."""
+	if not frappe.db.exists("File", FILE_FOLDER):
+		try:
+			frappe.get_doc(
+				{"doctype": "File", "file_name": FILE_FOLDER_NAME, "is_folder": 1, "folder": "Home"}
+			).insert(ignore_permissions=True)
+		except Exception:
+			if not frappe.db.exists("File", FILE_FOLDER):
+				raise
+	return FILE_FOLDER
+
+
+def delete_old_files() -> int:
+	"""Daily (hooks.py): delete exports and uploaded imports older than ``FILE_MAX_AGE_DAYS``.
+	They carry customer and vendor names, emails and links, and an unattached private File is
+	otherwise kept forever. One that will not delete is left for tomorrow, never raised."""
+	from frappe.utils import add_days
+
+	cutoff = add_days(now_datetime(), -FILE_MAX_AGE_DAYS)
+	names = frappe.get_all(
+		"File",
+		filters={"folder": FILE_FOLDER, "is_folder": 0, "creation": ["<", cutoff]},
+		pluck="name",
+	)
+	deleted = 0
+	for name in names:
+		try:
+			frappe.delete_doc("File", name, ignore_permissions=True)
+			frappe.db.commit()
+			deleted += 1
+		except Exception:
+			frappe.db.rollback()
+	return deleted
 
 
 def _job_key(user, token) -> str:
@@ -837,16 +1003,14 @@ def collect_export(status=None, entity_types=None, include_parked=True) -> list:
 		if rows
 	]
 	if include_parked:
+		# Read once too: a Retry on the page takes a row out of Pending Review mid-export.
+		parked_rows = matching.parked_mapping_rows(list(TRANSACTION_ENTITIES))
 		parked = []
-		start = 0
-		while True:
-			page = matching.parked_transactions(
-				entity_types=list(TRANSACTION_ENTITIES), start=start, page_length=EXPORT_PAGE
+		for offset in range(0, len(parked_rows), EXPORT_PAGE):
+			parked.extend(
+				txn_sheet_row(row)
+				for row in matching.build_parked_rows(parked_rows[offset : offset + EXPORT_PAGE])
 			)
-			parked.extend(txn_sheet_row(row) for row in page.get("rows") or [])
-			start += cint(page.get("page_length")) or EXPORT_PAGE
-			if not page.get("rows") or start >= cint(page.get("total")):
-				break
 		sheets.append((TXN_SHEET, TXN_COLUMNS, parked, TXN_DECISIONS))
 	return sheets
 
@@ -891,6 +1055,7 @@ def run_export(token, for_user, status=None, entity_types=None, include_parked=T
 				"doctype": "File",
 				"file_name": f"QuickBooks record matching {str(stamp)[:16].replace(':', '')}.xlsx",
 				"is_private": 1,
+				"folder": ensure_folder(),
 				"content": content,
 			}
 		).insert(ignore_permissions=True)
@@ -939,6 +1104,9 @@ def _read_upload(file_name):
 		frappe.throw("Upload the Excel workbook (.xlsx) the export produced.")
 	if cint(file_doc.file_size) > MAX_IMPORT_BYTES:
 		frappe.throw("That file is too large to be a Record Matching export.")
+	if file_doc.folder != FILE_FOLDER:
+		# Into the folder the daily clean-up empties: an upload is the same data as an export.
+		file_doc.db_set("folder", ensure_folder(), update_modified=False)
 	content = file_doc.get_content()
 	return content.encode("utf-8") if isinstance(content, str) else content
 
@@ -971,8 +1139,19 @@ def preview(file_name) -> dict:
 	parsed = parse_workbook(_read_upload(file_name))
 	rows = parsed["rows"]
 	results = classify(rows) if rows else []
+	# classify ran duplicate_rows over the whole file; apply sees one row at a time and
+	# cannot, so the plan keeps those verdicts.
+	blocked = {
+		index: (result["category"], result["message"])
+		for index, result in enumerate(results)
+		if result.get("held")
+	}
 	token = secrets.token_hex(8)
-	_set_state(_plan_key(frappe.session.user, token), {"file": file_name, "rows": rows}, PLAN_TTL)
+	_set_state(
+		_plan_key(frappe.session.user, token),
+		{"file": file_name, "rows": rows, "blocked": {str(i): list(v) for i, v in blocked.items()}},
+		PLAN_TTL,
+	)
 	summary = {category: 0 for category in CATEGORIES}
 	for result in results:
 		summary[result["category"]] += 1
@@ -1000,7 +1179,7 @@ def _save_note(mapping_name, row, user) -> None:
 			"reference_name": mapping_name,
 			"comment_email": user,
 			"content": f"<p><b>Note from the Excel import</b> ({html.escape(row['sheet'])} row "
-			f"{row['row_number']}):</p><p>{html.escape(row['notes'])}</p>",
+			f"{row['row_number']}) {note_marker(row['notes'])}:</p><p>{html.escape(row['notes'])}</p>",
 		}
 	).insert(ignore_permissions=True)
 
@@ -1065,6 +1244,12 @@ def apply(token, indexes) -> list:
 			"qbo_type": row["qbo_type"],
 			"qbo_id": row["qbo_id"],
 		}
+		held = (plan.get("blocked") or {}).get(str(index))
+		if held:
+			# A duplicate Row ID, judged across the whole file at preview -- one row alone
+			# cannot see it, so the preview's verdict stands.
+			out.append(dict(base, ok=False, skipped=True, category=held[0], message=held[1]))
+			continue
 		result = classify([row])[0]
 		if result["category"] != CHANGE:
 			out.append(

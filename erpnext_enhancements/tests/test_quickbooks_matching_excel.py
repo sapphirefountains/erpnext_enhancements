@@ -31,6 +31,7 @@ import ast
 import io
 import re
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -293,17 +294,19 @@ def test_collect_export_reads_the_queue_once_and_builds_it_in_batches(monkeypatc
 		"_master_where",
 		lambda types, status, search: wheres.append(status) or original_where(types, status, search),
 	)
+	parked_reads = []
+
+	def parked_rows(entity_types, *, start=0, page_length=None):
+		parked_reads.append(page_length)
+		return list(range(len(parked)))
+
+	monkeypatch.setattr(matching_excel.matching, "parked_mapping_rows", parked_rows)
 	monkeypatch.setattr(
-		matching_excel.matching,
-		"parked_transactions",
-		lambda entity_types=None, start=0, page_length=50: {
-			"rows": parked[start:],
-			"total": 2,
-			"page_length": 500,
-		},
+		matching_excel.matching, "build_parked_rows", lambda batch: [parked[i] for i in batch]
 	)
 	sheets = matching_excel.collect_export(status="Bogus", entity_types=["Vendor", "Customer", "Nope"])
 	assert reads == [(("Vendor", "Customer"), None, None)], "one unpaged read of the chosen types"
+	assert parked_reads == [None], "the parked rows are read once too, not paged by offset"
 	assert batches == [[0, 1, 2], [3, 4, 5], [6]]
 	assert wheres == ["Needs decision"], "an unknown filter falls back to the default"
 	titles = {title: len(sheet_rows) for title, _c, sheet_rows, _d in sheets}
@@ -563,11 +566,23 @@ def test_notes_are_saved_once_with_or_without_a_decision():
 	assert _classify(matching_excel, _parsed(matching_excel))["category"] == "blank"
 
 
-def test_note_already_saved_reads_through_the_comment_markup():
+def test_note_already_saved_matches_only_the_imports_own_marker_for_that_exact_note():
+	"""A substring test dropped short notes: "ok", "import" or "Note" was always "already
+	saved", inside the comment's own heading. Only this note's own marker counts."""
 	matching_excel, _ = _excel()
-	stored = "<p><b>Note from the Excel import</b> (Vendors row 2):</p><p>Lisa says &amp; Brian agrees</p>"
-	assert matching_excel.note_already_saved("Lisa says & Brian agrees", [stored])
-	assert not matching_excel.note_already_saved("Something else", [stored])
+	note = "Lisa says & Brian agrees"
+	stored = (
+		f"<p><b>Note from the Excel import</b> (Vendors row 2) {matching_excel.note_marker(note)}:</p>"
+		"<p>Lisa says &amp; Brian agrees</p>"
+	)
+	assert matching_excel.note_already_saved(note, [stored])
+	assert matching_excel.note_already_saved("  Lisa says & Brian agrees ", [stored]), "trimmed, as parsed"
+	for short in ("ok", "import", "Note", "Excel", "Lisa"):
+		assert not matching_excel.note_already_saved(short, [stored]), short
+	assert not matching_excel.note_already_saved("Lisa says & Brian agrees!", [stored])
+	assert not matching_excel.note_already_saved(
+		note, ["<p>Lisa says &amp; Brian agrees</p>"]
+	), "a person's own comment with the same words is not the import's"
 	assert not matching_excel.note_already_saved("", [stored])
 
 
@@ -684,7 +699,9 @@ def _wire(monkeypatch, matching_excel, frappe, ledger):
 	monkeypatch.setattr(
 		matching_excel,
 		"_save_note",
-		lambda mapping, row, user: ledger.comments.setdefault(mapping, []).append(f"<p>{row['notes']}</p>"),
+		lambda mapping, row, user: ledger.comments.setdefault(mapping, []).append(
+			f"<p>{matching_excel.note_marker(row['notes'])}</p><p>{row['notes']}</p>"
+		),
 	)
 	return cache
 
@@ -736,7 +753,10 @@ def test_apply_is_idempotent_the_same_file_twice_changes_nothing(monkeypatch):
 	assert [r["ok"] for r in results] == [True, True, True]
 	assert ledger.calls == [("decide", "56", "ABC Supply Co", True, True), ("confirm", "57"), ("sync", "58")]
 	assert "Merged the import's copy" in results[0]["message"] and "Note saved" in results[0]["message"]
-	assert ledger.comments == {"MAP-1": ["<p>Same company</p>"], "MAP-3": ["<p>Fixed the industry</p>"]}
+	assert {name: [matching_excel.plain(c) for c in saved] for name, saved in ledger.comments.items()} == {
+		"MAP-1": [f"{matching_excel.note_marker('Same company')} Same company"],
+		"MAP-3": [f"{matching_excel.note_marker('Fixed the industry')} Fixed the industry"],
+	}
 
 	before = {name: dict(row) for name, row in ledger.mappings.items()}
 	second = matching_excel.preview("FILE-1")
@@ -1010,3 +1030,214 @@ def test_ci_runs_this_suite_with_openpyxl():
 	ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 	assert "python -m pytest erpnext_enhancements/tests/test_quickbooks_matching_excel.py" in ci
 	assert "openpyxl~=3.1.5" in ci
+
+
+# ---------------------------------------------------------------------------
+# Hardening from the review of #1339
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("lead", ["=", "+", "-", "@"])
+def test_a_formula_shaped_name_is_written_as_text_never_a_formula(lead):
+	"""openpyxl stores a string starting with = as a FORMULA. A QuickBooks name is whatever
+	someone typed into QuickBooks, so =HYPERLINK(...) would run in Meg's Excel."""
+	matching_excel, _ = _excel()
+	evil = f'{lead}HYPERLINK("http://example.invalid","click")'
+	row = _master_row(qbo={"name": evil, "detail": [f"{lead}1+1"], "inactive": False, "job": False})
+	content = _workbook(matching_excel, masters=[row])
+	workbook = openpyxl.load_workbook(io.BytesIO(content))
+	sheet = workbook["Vendors"]
+	headers = {cell.value: cell.column for cell in sheet[1]}
+	for header in ("QuickBooks name", "QuickBooks details"):
+		cell = sheet.cell(row=2, column=headers[header])
+		assert cell.data_type == "s", f"{header} must be text, got {cell.data_type}"
+		assert cell.quotePrefix, f"{header} keeps Excel's quote prefix"
+	assert sheet.cell(row=2, column=headers["QuickBooks name"]).value == evil
+	# Nothing in the file is a formula, anywhere -- checked in the XML Excel reads.
+	import zipfile as _zip
+
+	with _zip.ZipFile(io.BytesIO(content)) as archive:
+		for name in archive.namelist():
+			if name.startswith("xl/worksheets/"):
+				assert "<f>" not in archive.read(name).decode("utf-8"), name
+	# And it round-trips as the same text.
+	parsed = matching_excel.parse_workbook(content)
+	assert parsed["rows"][0]["qbo_name"] == evil
+
+
+def test_a_link_column_pasted_onto_the_parked_sheet_cannot_link_an_invoice():
+	"""The kind of a row came from whether its sheet had a "Link to" header, so adding that
+	header to the Parked sheet made Link on an Invoice call decide() against a Sales Invoice.
+	The kind now comes from the QBO type, and Link/Keep need a master type."""
+	matching_excel, _ = _excel()
+	content = _workbook(matching_excel, txns=[_txn_row()])
+	workbook = openpyxl.load_workbook(io.BytesIO(content))
+	sheet = workbook["Parked transactions"]
+	column = sheet.max_column + 1
+	sheet.cell(row=1, column=column, value="Link to (ERPNext ID)")
+	sheet.cell(row=2, column=column, value="ACC-SINV-2026-00001")
+	headers = {cell.value: cell.column for cell in sheet[1]}
+	sheet.cell(row=2, column=headers["Decision"], value="Link")
+	out = io.BytesIO()
+	workbook.save(out)
+	row = matching_excel.parse_workbook(out.getvalue())["rows"][0]
+	assert row["kind"] == "txn" and row["qbo_type"] == "Invoice"
+	current = _current(
+		name="MAP-T1",
+		qbo_entity_type="Invoice",
+		qbo_id="9001",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=None,
+		match_status="Pending Review",
+	)
+	result = matching_excel.classify_row(row, current, target_doctype="Sales Invoice", target_exists=True)
+	assert result["category"] == "invalid" and not result["action"]
+	assert "can only be retried" in result["message"]
+	# Even a row that claims to be master-kind cannot Keep or Link a transaction type.
+	forged = dict(row, kind="master", decision="Keep", decision_ok=True)
+	assert matching_excel.classify_row(forged, current)["category"] == "invalid"
+
+
+def test_duplicate_row_ids_that_disagree_are_a_conflict_and_neither_applies(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+	content = _meg_file(matching_excel)
+	workbook = openpyxl.load_workbook(io.BytesIO(content))
+	copy = workbook.copy_worksheet(workbook["Vendors"])
+	copy.title = "Vendors (2)"
+	headers = {cell.value: cell.column for cell in copy[1]}
+	copy.cell(row=2, column=headers["Decision"], value="Keep")  # disagrees with Vendors row 2 (Link)
+	out = io.BytesIO()
+	workbook.save(out)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: out.getvalue())
+	preview = matching_excel.preview("FILE-1")
+	conflicted = [row for row in preview["rows"] if row["qbo_id"] == "56"]
+	assert [row["category"] for row in conflicted] == ["invalid", "invalid"]
+	assert all("Conflict" in row["message"] for row in conflicted)
+	# The identical copies of rows 3 and 4 apply once, from the first sheet.
+	for qbo_id in ("57", "58"):
+		categories = sorted(row["category"] for row in preview["rows"] if row["qbo_id"] == qbo_id)
+		assert categories == ["change", "unchanged"], qbo_id
+	# Apply honours the preview's verdict even when the page sends every index.
+	results = matching_excel.apply(preview["token"], [row["index"] for row in preview["rows"]])
+	assert not [call for call in ledger.calls if call[1] == "56"], "neither conflicting row ran"
+	assert [call[0] for call in ledger.calls] == ["confirm", "sync"], "each agreeing duplicate ran once"
+	assert sum(1 for r in results if r["ok"]) == 2
+
+
+def test_a_wrong_stored_dimension_still_reads_every_row():
+	"""Read-only openpyxl trusts the sheet's <dimension>; a file another tool saved with a wrong
+	one read as zero rows, with no error."""
+	matching_excel, _ = _excel()
+	content = _fill(_meg_file(matching_excel), {})
+	broken = io.BytesIO()
+	with zipfile.ZipFile(io.BytesIO(content)) as source, zipfile.ZipFile(broken, "w") as target:
+		for item in source.infolist():
+			data = source.read(item.filename)
+			if item.filename.startswith("xl/worksheets/sheet"):
+				data = re.sub(rb'<dimension ref="[^"]*"/>', b'<dimension ref="A1"/>', data)
+			target.writestr(item, data)
+	parsed = matching_excel.parse_workbook(broken.getvalue())
+	assert len(parsed["rows"]) == 3, parsed
+
+
+def test_a_workbook_without_any_matching_sheet_says_so():
+	matching_excel, _ = _excel()
+	workbook = openpyxl.load_workbook(io.BytesIO(_workbook(matching_excel, masters=[_master_row()])))
+	for title in ("Vendors", "Parked transactions"):
+		del workbook[title]
+	out = io.BytesIO()
+	workbook.save(out)
+	parsed = matching_excel.parse_workbook(out.getvalue())
+	assert parsed["rows"] == []
+	assert "No Record Matching sheet was found" in parsed["errors"][-1]
+
+
+def test_a_file_that_expands_past_the_cap_is_refused_before_parsing(monkeypatch):
+	matching_excel, _ = _excel()
+	content = _workbook(matching_excel, masters=[_master_row()])
+	monkeypatch.setattr(matching_excel, "MAX_EXPANDED_BYTES", 1000)
+	parsed = matching_excel.parse_workbook(content)
+	assert parsed["rows"] == [] and "far too large" in parsed["errors"][0]
+
+
+def test_the_key_columns_are_locked_and_only_the_yellow_cells_are_editable():
+	matching_excel, _ = _excel()
+	workbook = openpyxl.load_workbook(
+		io.BytesIO(_workbook(matching_excel, masters=[_master_row()], txns=[_txn_row()]))
+	)
+	for title in ("Vendors", "Parked transactions"):
+		sheet = workbook[title]
+		assert sheet.protection.sheet, f"{title} is protected"
+		assert not sheet.protection.autoFilter, "filtering stays allowed"
+		assert not sheet.protection.formatColumns, "column widths stay allowed"
+		assert sheet.protection.sort, "sorting is off: it would move locked cells"
+		headers = {cell.value: cell.column for cell in sheet[1]}
+		for header in ("Row ID", "Row version", "QBO type", "QBO ID"):
+			assert sheet.cell(row=2, column=headers[header]).protection.locked, header
+		for header in ("Decision", "Notes"):
+			assert not sheet.cell(row=2, column=headers[header]).protection.locked, header
+	assert workbook[matching_excel.META_SHEET].protection.sheet
+
+
+def test_exports_and_uploads_live_in_one_folder_that_a_daily_job_empties(monkeypatch):
+	matching_excel, frappe = _excel()
+	_wire(monkeypatch, matching_excel, frappe, Ledger())
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	moved = {}
+
+	class Upload:
+		folder = "Home"
+		file_name = "Meg's work.xlsx"
+		file_size = 1000
+
+		def db_set(self, field, value, update_modified=True):
+			moved[field] = value
+
+		def get_content(self):
+			return b"bytes"
+
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: Upload(), raising=False)
+	monkeypatch.setattr(frappe, "has_permission", lambda *args, **kwargs: True, raising=False)
+	assert matching_excel._read_upload("FILE-1") == b"bytes"
+	assert moved == {"folder": matching_excel.FILE_FOLDER}, "the upload joins the exports' folder"
+
+	frappe_utils = __import__("sys").modules["frappe.utils"]
+	monkeypatch.setattr(frappe_utils, "add_days", lambda value, days: f"{value}{days:+d}d", raising=False)
+	monkeypatch.setattr(matching_excel, "now_datetime", lambda: "NOW")
+	asked, deleted = {}, []
+
+	def get_all(doctype, filters=None, pluck=None, **kwargs):
+		asked.update(filters)
+		return ["OLD-1", "OLD-2"]
+
+	def delete_doc(doctype, name, ignore_permissions=False):
+		if name == "OLD-2":
+			raise Exception("locked")
+		deleted.append((doctype, name, ignore_permissions))
+
+	monkeypatch.setattr(frappe, "get_all", get_all, raising=False)
+	monkeypatch.setattr(frappe, "delete_doc", delete_doc, raising=False)
+	assert matching_excel.delete_old_files() == 1, "one that will not delete is left for tomorrow"
+	assert asked == {"folder": matching_excel.FILE_FOLDER, "is_folder": 0, "creation": ["<", "NOW-7d"]}
+	assert deleted == [("File", "OLD-1", True)]
+	hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+	assert '"erpnext_enhancements.quickbooks_online.core.matching_excel.delete_old_files"' in hooks
+
+
+def test_the_page_settles_on_the_promise_and_outlasts_the_export_job():
+	"""Frappe v16 never calls frappe.call's `error` on a QueryTimeout or Deadlock, so a chunk
+	loop waiting on it hangs with the screen frozen. And the page must keep polling longer than
+	the job can run, or a slow export is reported as given up while it is still working."""
+	matching_excel, _ = _excel()
+	js = PAGE_JS.read_text(encoding="utf-8")
+	assert "function settle(" in js and ".then(" in js
+	for name in ("runInChunks", "applyImport", "pollExport"):
+		start = js.index(f"function {name}(")
+		body = js[start : js.index("\n\t}\n", start)]
+		assert "settle(" in body, f"{name} settles on the promise"
+		assert "error()" not in body, f"{name} must not rely on the error callback"
+	polls = int(re.search(r"const EXPORT_POLLS = (\d+);", js).group(1))
+	interval = int(re.search(r"const EXPORT_POLL_MS = (\d+);", js).group(1))
+	assert polls * interval / 1000 > matching_excel.EXPORT_TIMEOUT + 60

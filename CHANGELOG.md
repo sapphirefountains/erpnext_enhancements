@@ -41,6 +41,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `build_master_rows`) and builds it 500 rows at a time. Paging by offset would skip rows: the job takes minutes,
     and each row someone decides on the page meanwhile leaves *Needs decision* and pulls the rows behind it past
     an offset already read. A job a deploy kills reads as lost once it outlives its RQ timeout, not as running.
+  - **Hardened after the manager's review of the PR (2026-10-22):**
+    - *No formulas from QuickBooks data.* openpyxl stores any string that starts with `=` as a formula, so a
+      QuickBooks name like `=HYPERLINK(...)` would have run in Meg's Excel. Every string cell is now written as text
+      (`data_type = "s"`), and one starting with `=`, `+`, `-` or `@` also gets Excel's quote prefix.
+    - *Link and Keep only on master records.* A row's kind came from whether its sheet had a "Link to" header, so a
+      header pasted onto the Parked sheet made Link on an Invoice call `decide()` against a Sales Invoice. The kind
+      now comes from the row's QBO type.
+    - *Duplicate Row IDs.* The same record on two rows (a copied sheet, a pasted row) that disagree is a conflict:
+      neither is applied, and the preview says why. Copies that agree are applied once. Apply honours the
+      preview's verdict, because one row on its own cannot see its duplicate.
+    - *Notes match exactly.* "Already saved" was a substring test, so a note of "ok", "import" or "Note" counted as
+      saved inside the comment's own heading and was dropped. The import's comment now carries
+      `[Excel note <hash of the exact text>]`, and only that marker counts.
+    - *No silent empty import.* Read-only openpyxl trusts a sheet's stored `<dimension>`, so a file saved with a
+      wrong one read as zero rows with no error. Each sheet's dimensions are reset before reading, and a file with
+      no Record Matching sheet says so. A file that expands past 100 MB is refused before parsing.
+    - *The page never hangs.* Apply, the Link/Keep bulk loops (`runInChunks`, from v1.518.0) and the export poll
+      now settle on the promise `frappe.call` returns. Frappe v16 never calls its `error` callback on a
+      QueryTimeout or Deadlock, so a chunk loop waiting on it froze the screen. The poll now waits 30 minutes,
+      longer than the job's 25-minute timeout, and offers the export folder if the job still hasn't reported back.
+    - *The parked sheet is read once too* (`matching.parked_mapping_rows` + `build_parked_rows`, split out of
+      `parked_transactions`), so a Retry on the page during the export can't skip rows.
+    - *Files are cleaned up.* Exports and uploaded imports go into one File folder, `Home/QuickBooks Matching
+      Excel`, and a new **daily** scheduler job (`matching_excel.delete_old_files`) deletes those older than
+      **7 days**. They hold customer and vendor names, emails and links, and nothing else ever removes an
+      unattached private File.
+    - *Key columns are locked.* Each data sheet is protected, with no password: only the yellow cells are
+      unlocked. Filtering and column widths still work; sorting is off, since it would move locked cells. The Row
+      ID / QBO type / QBO ID cross-check stays as the backstop.
   - Nik's three calls: the decisions are the page's three, not new ones (Keep on a record the import created
     already means "keep the new record"; blank is "ignore"); a note is saved as a Comment on the row's QuickBooks
     Sync Mapping, with or without a decision; and two QBO records linked to one ERPNext record -- the usual QBO

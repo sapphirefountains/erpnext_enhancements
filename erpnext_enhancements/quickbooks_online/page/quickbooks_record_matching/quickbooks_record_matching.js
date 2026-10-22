@@ -841,15 +841,10 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 			const chunk = items.slice(offset, offset + size);
 			frappe.dom.freeze(progress(offset + 1, offset + chunk.length, items.length));
 			offset += chunk.length;
-			frappe.call({
-				method: API + method,
-				args: Object.assign({ [argName]: chunk }, extra || {}),
-				callback(response) {
-					results.push(...(response.message || []));
-					frappe.dom.unfreeze();
-					next();
-				},
-				error() {
+			settle(method, Object.assign({ [argName]: chunk }, extra || {})).then((reply) => {
+				if (reply.ok) {
+					results.push(...(reply.message || []));
+				} else {
 					chunk.forEach((item) =>
 						results.push({
 							entity_type: item.entity_type,
@@ -858,12 +853,38 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 							error: __("The request failed; Refresh to see whether it landed."),
 						}),
 					);
-					frappe.dom.unfreeze();
-					next();
-				},
+				}
+				frappe.dom.unfreeze();
+				next();
 			});
 		};
 		next();
+	}
+
+	/**
+	 * frappe.call, settled on the promise it returns: resolves {ok: true, message} or
+	 * {ok: false}, and never hangs. Frappe v16's `error` callback is not called on a
+	 * QueryTimeout or a Deadlock (request.js shows its own dialog and stops), so a chunk loop
+	 * that waited on it would sit frozen forever on the first slow request.
+	 */
+	function settle(method, args) {
+		return new Promise((resolve) => {
+			let pending;
+			try {
+				pending = frappe.call({ method: API + method, args });
+			} catch (e) {
+				resolve({ ok: false });
+				return;
+			}
+			if (!pending || typeof pending.then !== "function") {
+				resolve({ ok: false });
+				return;
+			}
+			pending.then(
+				(data) => resolve({ ok: true, message: (data || {}).message }),
+				() => resolve({ ok: false }),
+			);
+		});
 	}
 
 	function runDecisions(decisions, title) {
@@ -1260,8 +1281,13 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	// ------------------------------------------------------------- excel round trip
 	// Keep in sync with matching_excel.EXPORT_STATUSES.
 	const EXPORT_STATUSES = ["Needs decision", "All", "Pending Review", "Conflict", "Auto Matched", "Created", "Manual Matched"];
-	// How long the page waits for the export job before giving up on it (2 s polls).
-	const EXPORT_POLLS = 450;
+	// How long the page waits for the export job: longer than the job may run
+	// (matching_excel.EXPORT_TIMEOUT, 25 min, plus the minute after which the server calls a
+	// still-"running" job lost), so the page never gives up on a job that is still working.
+	const EXPORT_POLL_MS = 2000;
+	const EXPORT_POLLS = 900;
+	// Keep in sync with matching_excel.FILE_FOLDER: every export lands there.
+	const EXPORT_FOLDER = "Home/QuickBooks Matching Excel";
 	let exporting = false;
 
 	function exportExcel() {
@@ -1321,41 +1347,43 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	function pollExport(token, tries) {
 		if (tries >= EXPORT_POLLS) {
 			exporting = false;
-			frappe.msgprint(__("The Excel export is taking too long. Try a smaller filter."));
+			frappe.msgprint({
+				title: __("Still working"),
+				indicator: "orange",
+				message: __("The export has not reported back. If it finishes, the file appears in the {0} folder.", [esc(EXPORT_FOLDER)]),
+				primary_action: {
+					label: __("Open the folder"),
+					action: () => frappe.set_route("List", "File", { folder: EXPORT_FOLDER }),
+				},
+			});
 			return;
 		}
 		setTimeout(() => {
-			frappe.call({
-				method: API + "get_matching_export_status",
-				args: { token },
-				callback(response) {
-					const job = response.message || {};
-					if (job.status === "done") {
-						exporting = false;
-						const counts = Object.entries(job.counts || {})
-							.map(([sheet, n]) => `<li>${esc(sheet)}: ${esc(String(n))}</li>`)
-							.join("");
-						frappe.msgprint({
-							title: __("Excel file ready"),
-							indicator: "green",
-							message: `<p><a href="${esc(job.file_url)}" target="_blank" rel="noopener"><b>${__("Download {0}", [esc(job.file_name)])}</b></a></p><ul>${counts}</ul>`,
-						});
-					} else if (job.status === "failed" || job.status === "unknown") {
-						exporting = false;
-						frappe.msgprint({
-							title: __("Export failed"),
-							indicator: "red",
-							message: esc(job.error || __("The export job was lost (a deploy restarts the workers). Export again.")),
-						});
-					} else {
-						pollExport(token, tries + 1);
-					}
-				},
-				error() {
+			settle("get_matching_export_status", { token }).then((reply) => {
+				const job = reply.ok ? reply.message || {} : {};
+				if (job.status === "done") {
+					exporting = false;
+					const counts = Object.entries(job.counts || {})
+						.map(([sheet, n]) => `<li>${esc(sheet)}: ${esc(String(n))}</li>`)
+						.join("");
+					frappe.msgprint({
+						title: __("Excel file ready"),
+						indicator: "green",
+						message: `<p><a href="${esc(job.file_url)}" target="_blank" rel="noopener"><b>${__("Download {0}", [esc(job.file_name)])}</b></a></p><ul>${counts}</ul>`,
+					});
+				} else if (job.status === "failed" || job.status === "unknown") {
+					exporting = false;
+					frappe.msgprint({
+						title: __("Export failed"),
+						indicator: "red",
+						message: esc(job.error || __("The export job was lost (a deploy restarts the workers). Export again.")),
+					});
+				} else {
+					// Queued, running, or a poll that did not get through: ask again.
 					pollExport(token, tries + 1);
-				},
+				}
 			});
-		}, 2000);
+		}, EXPORT_POLL_MS);
 	}
 
 	function importExcel() {
@@ -1494,15 +1522,12 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 			}
 			frappe.dom.freeze(__("Applying {0}–{1} of {2}…", [done + 1, done + chunk.length, rows.length]));
 			done += chunk.length;
-			frappe.call({
-				method: API + "apply_matching_import",
-				args: { token, indexes: chunk.map((row) => row.index) },
-				callback(response) {
-					results.push(...(response.message || []));
-					frappe.dom.unfreeze();
-					next();
-				},
-				error() {
+			settle("apply_matching_import", { token, indexes: chunk.map((row) => row.index) }).then((reply) => {
+				if (reply.ok) {
+					results.push(...(reply.message || []));
+				} else {
+					// A failed request -- a timeout included -- is reported against these rows and
+					// the rest carry on: each row is its own decision on the server.
 					chunk.forEach((row) =>
 						results.push(
 							Object.assign({}, row, {
@@ -1512,9 +1537,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 							}),
 						),
 					);
-					frappe.dom.unfreeze();
-					next();
-				},
+				}
+				frappe.dom.unfreeze();
+				next();
 			});
 		};
 		next();
