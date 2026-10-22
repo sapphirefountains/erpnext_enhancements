@@ -23,6 +23,12 @@
  *      Capacity header as routes, Capacity's two sections (the heatmap, and the Utilization table behind
  *      the report's own gate), and the saved views and old addresses that say heatmap or utilization.
  *
+ *   4. The Maintenance Planner simplify (P10): project work as one busy strip a technician-day (and as
+ *      cards, or not at all, on request) in the month, the week and the crew view, with its tooltip, its
+ *      click and the print; Resources available as one line until it is opened; the key of the visit
+ *      kinds in the "?" help only, as one provider function that later phases extend; My day to the
+ *      Project Planner's Today; and the two new switches in the saved views.
+ *
  * Run: node scripts/test_planner_toolbar.js
  */
 
@@ -1633,7 +1639,7 @@ const MP_OLD_TOOLBAR = [
 	["Color by", "display", "Color: Technician", "p6c_set_color"],
 	["Projected visits", "display", "Projected visits", "set_show_projected"],
 	["Project work", "display", "Project work", "set_show_project_work"],
-	["The visit-kind legend row", "display", "Pending review", null],
+	["The visit-kind legend row (P10: in \"?\" only)", "help", "Visit cards", null],
 	["Draft mode", "tools", "Draft mode", "set_draft_mode"],
 	["Tap to move", "tools", "Tap to move", "p6c_set_tap"],
 	["Add visit", "add", "Add visit…", "p6e_add_visit"],
@@ -1672,6 +1678,17 @@ test("Maintenance Planner: nothing in the old toolbar is lost, and + Add and Mor
 			check(`${what}: still in the bar`, source.includes(label), true);
 			return;
 		}
+		if (where === "help") {
+			// The "?" help holds it, and More ▸ Display does not (P10, section 4.9).
+			mp.p6c_legend_sections = () => [];
+			mp.p6d_legend_sections = () => [];
+			mp.p6a_tip_section = () => ({ title: "Tips", items: [] });
+			const help = mp.legend_sections().find((entry) => entry.title === label);
+			check(`${what}: a section of the help`, !!help, true);
+			check(`${what}: with every kind of visit`, help ? help.items.length : 0, 8);
+			check(`${what}: and none in Display`, section(mp, "display").some((item) => item.info), false);
+			return;
+		}
 		calls.length = 0;
 		if (where === "chip") {
 			const chip = mp.tb_alerts().find((alert) => alert.key === label);
@@ -1689,7 +1706,7 @@ test("Maintenance Planner: nothing in the old toolbar is lost, and + Add and Mor
 	check("two menus", mp.tb_menu_list().map((m) => m[1]), ["Add", "More"]);
 	check("their buttons read + Add and More", mp.tb_menu_list().map((m) => m[3]), ["+ Add", "More"]);
 	check("More's sections, in order", more.filter((item) => item.section).map((item) => item.heading), ["Display", "Views", "Tools", "Print"]);
-	check("tips are the help's first section", source.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),"), true);
+	check("tips are the help's first section", source.includes("this.p6a_tip_section(),\n\t\t\t...this.p6c_legend_sections(),"), true);
 	check("the legend row is gone from under the toolbar", source.includes('class="mp-legend"'), false);
 });
 
@@ -1697,14 +1714,8 @@ test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 	const { mp } = maintenancePlanner();
 	const display = section(mp, "display");
 	check("Projected visits ticked, Project work not", [find(display, "Projected visits").checked, find(display, "Project work").checked], [true, false]);
-	check(
-		"the visit kinds are Display's key, read-only, each drawn with its card's class",
-		display.filter((i) => i.info).map((i) => [i.label, i.sample_html]).slice(0, 2),
-		[
-			["Scheduled visit", '<i class="mp-swatch"></i>'],
-			["Seasonal", '<i class="mp-swatch mp-seasonal"></i>'],
-		]
-	);
+	check("Project work as cards is a switch of its own, off until ticked", find(display, "Project work as cards").checked, false);
+	check("Display holds no key of the visit kinds any more (they are in the help)", display.filter((i) => i.info).map((i) => i.label), []);
 	const edit = section(mp, "tools");
 	check("Tap to move ticked, Draft mode not", [find(edit, "Tap to move").checked, find(edit, "Draft mode").checked], [true, false]);
 	check("Undo can run", find(edit, "Undo").disabled, false);
@@ -2163,6 +2174,453 @@ test("Project Planner: calendar cards say their length in days and people, with 
 	check("no dates, no label", label({ start: "", end: "", crew: [] }), "");
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("the calendar card and its quick look use the day label", (source.match(/this\.duration_text\(card\)/g) || []).length, 2);
+});
+
+// ------------------------------------------------------------------ Maintenance Planner simplify (P10)
+
+// A moment with what the Maintenance Planner's calendar, crew view and Resources panel ask of it, on UTC
+// dates: parse, clone, add and subtract days, day(), month(), date(), isAfter and format.
+function miniMoment(value) {
+	const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	const longs = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+	const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	const longMonths = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+	const two = (n) => String(n).padStart(2, "0");
+	let date;
+	if (value === undefined) date = new Date(Date.UTC(2026, 9, 21));
+	else if (typeof value === "number") date = new Date(value);
+	else date = new Date(`${value}T00:00:00Z`);
+	const m = {
+		_time: () => date.getTime(),
+		isValid: () => !Number.isNaN(date.getTime()),
+		clone: () => miniMoment(date.getTime()),
+		add: (n) => (date.setUTCDate(date.getUTCDate() + n), m),
+		subtract: (n) => m.add(-n),
+		day: (n) => {
+			if (n === undefined) return date.getUTCDay();
+			date.setUTCDate(date.getUTCDate() + n - date.getUTCDay());
+			return m;
+		},
+		month: () => date.getUTCMonth(),
+		date: () => date.getUTCDate(),
+		year: () => date.getUTCFullYear(),
+		isAfter: (other) => date.getTime() > other._time(),
+		format: (fmt) =>
+			fmt.replace(/YYYY|MMMM|MMM|MM|dddd|ddd|DD|D/g, (token) => {
+				if (token === "YYYY") return date.getUTCFullYear();
+				if (token === "MMMM") return longMonths[date.getUTCMonth()];
+				if (token === "MMM") return months[date.getUTCMonth()];
+				if (token === "MM") return two(date.getUTCMonth() + 1);
+				if (token === "dddd") return longs[date.getUTCDay()];
+				if (token === "ddd") return names[date.getUTCDay()];
+				if (token === "DD") return two(date.getUTCDate());
+				return date.getUTCDate();
+			}),
+	};
+	return m;
+}
+
+// The week of Sun Oct 18 to Sat Oct 24 2026 on a Maintenance Planner with two technicians and their project
+// work: Austin is booked 8h Monday (a task and travel), has 3h free Tuesday and is off Thursday and Friday;
+// Korben has a rental crew task all of Monday.
+function simplifyPage(extra) {
+	const env = maintenancePlanner();
+	const { mp, $ } = env;
+	env.ctx.moment = miniMoment;
+	delete mp.booking_cards;
+	const day = (capacity, booked, items) => ({ capacity, booked, free: Math.max(0, capacity - booked), items: items || [], blocks: [] });
+	const bookings = {
+		"austin@x.com": {
+			"2026-10-18": day(0, 0),
+			"2026-10-19": day(8, 8, [
+				{ kind: "task", ref: "TASK-1", label: "Underground rough-in", project: "Riverwalk Plaza", hours: 6 },
+				{ kind: "travel", ref: "TRIP-1", label: "Travel: Kapture Events", hours: 2 },
+			]),
+			"2026-10-20": day(8, 5, [{ kind: "task", ref: "TASK-2", label: "<img src=x onerror=1> Excavate", project: "Plaza", hours: 5 }]),
+			"2026-10-21": day(8, 8),
+			"2026-10-22": day(0, 0),
+			"2026-10-23": day(0, 0),
+			"2026-10-24": day(0, 0),
+		},
+		"korben@x.com": {
+			"2026-10-19": day(8, 8, [{ kind: "rental", ref: "TASK-3", label: "Rental crew", hours: 8 }]),
+			"2026-10-20": day(8, 0),
+		},
+	};
+	const technicians = [
+		{ user: "austin@x.com", name: "Austin Healey", enabled: true, resource: "R-A", group: "Field" },
+		{ user: "korben@x.com", name: "Korben Dallas", enabled: true, resource: "R-K", group: "Field" },
+	];
+	Object.assign(mp, {
+		view: "week",
+		anchor: "2026-10-20",
+		technician: "",
+		show_project_work: true,
+		show_project_cards: false,
+		panel_open: false,
+		tech_names: { "austin@x.com": "Austin Healey", "korben@x.com": "Korben Dallas" },
+		tech_by_user: { "austin@x.com": technicians[0], "korben@x.com": technicians[1] },
+		by_key: {},
+		day_cards: {},
+		$panel: $("<div></div>").appendTo(env.doc.body),
+		$tray: $("<div></div>"),
+		$grid_wrap: $("<div></div>"),
+	});
+	mp.data = Object.assign(mp.data, { today: "2026-10-19", technicians, bookings, visits: [], unscheduled: [], projected: [], moves: [], unscheduled_moves: [] });
+	delete mp.tech_name;
+	mp.save_pref = (k, v) => ((mp.prefs = mp.prefs || {})[k] = v);
+	mp.render = () => ((mp.renders = (mp.renders || 0) + 1), null);
+	Object.assign(mp, extra || {});
+	return env;
+}
+
+const strips = (html) => (html.match(/class="mp-busy[ "]/g) || []).length;
+
+test("Maintenance Planner: project work is a busy strip by default, cards when asked, and nothing when off", () => {
+	const { mp } = simplifyPage();
+	const booking = { kind: "booking", technician: "austin@x.com" };
+	check("the default is the strip", [mp.project_work_mode(), mp.show_project_cards], ["strip", false]);
+	check("a strip day: no booking is a card", mp.visible(booking), false);
+	mp.show_project_cards = true;
+	check("cards: the booking is a card again", [mp.project_work_mode(), mp.visible(booking)], ["cards", true]);
+	mp.technician = "korben@x.com";
+	check("and a filter on another technician hides it", mp.visible(booking), false);
+	mp.technician = "__none__";
+	check("Unassigned has no project work", mp.visible(booking), false);
+	mp.technician = "";
+	mp.show_project_work = false;
+	check("Project work off: neither", [mp.project_work_mode(), mp.visible(booking), mp.p10_day_strips_html("2026-10-19")], ["off", false, ""]);
+});
+
+test("Maintenance Planner: a day's strips, one a technician, in the technicians' order", () => {
+	const { mp } = simplifyPage();
+	const html = mp.p10_day_strips_html("2026-10-19");
+	check("two strips, Austin's first", [strips(html), html.indexOf("Austin") < html.indexOf("Korben")], [2, true]);
+	check("the words: hours, and the kind when there is only one", [html.includes("Project: 8h"), html.includes("Rental: 8h")], [true, true]);
+	check("with All technicians each strip names the person", [html.includes('class="mp-busy-name">Austin<'), html.includes('class="mp-busy-name">Korben<')], [true, true]);
+	check("a strip is a button to the person's week: role, focus, the person and the day", [html.includes('role="button" tabindex="0"'), html.includes('data-busy-user="austin@x.com"'), html.includes('data-busy-date="2026-10-19"')], [true, true, true]);
+	check("it lights up with the person's name", html.includes('data-pk-persons="austin%40x.com"'), true);
+	check("hover lists the tasks", [html.includes("• Underground rough-in (Project, 6h, Riverwalk Plaza)"), html.includes("• Travel: Kapture Events (Travel, 2h)")], [true, true]);
+	mp.technician = "austin@x.com";
+	const one = mp.p10_day_strips_html("2026-10-19");
+	check("a picked technician: their strip only, and no name (the column says who)", [strips(one), one.includes("mp-busy-name"), one.includes("Korben")], [1, false, false]);
+	check("a day without project work has none", mp.p10_day_strips_html("2026-10-21"), "");
+	mp.technician = "__none__";
+	check("Unassigned has none", mp.p10_day_strips_html("2026-10-19"), "");
+	mp.technician = "";
+	mp.show_project_cards = true;
+	check("in cards mode the day has no strips (the cards are drawn)", mp.p10_day_strips_html("2026-10-19"), "");
+});
+
+test("Maintenance Planner: a strip escapes what people typed, and pencilled hours are said and drawn apart", () => {
+	const { mp, ctx } = simplifyPage();
+	const html = mp.p10_day_strips_html("2026-10-20");
+	check("a task name cannot break out of the tooltip", [html.includes("<img"), html.includes("&lt;img src=x onerror=1&gt; Excavate")], [false, true]);
+	const pure = vm.runInContext("MP10_PURE", ctx);
+	const text = (items) => mp.p10_busy_text(pure.busy(items));
+	check("firm and pencilled hours", text([{ kind: "task", hours: 6 }, { kind: "task", hours: 2, tentative: true }]), "Project: 6h + 2h pencil");
+	check("only pencil", text([{ kind: "task", hours: 2, tentative: true }]), "Project: 2h pencil");
+	check("half hours keep their fraction", text([{ kind: "travel", hours: 2.5 }]), "Travel: 2.5h");
+	check("mixed kinds are Project", text([{ kind: "rental", hours: 4 }, { kind: "travel", hours: 4 }]), "Project: 8h");
+	check("no hours at all counts the items", text([{ kind: "task" }, { kind: "task" }]), "Project: 2 item(s)");
+	const pencil = simplifyPage({ show_project_cards: false });
+	pencil.mp.data.bookings["austin@x.com"]["2026-10-20"].items = [{ kind: "task", ref: "T", label: "Soft", hours: 4, tentative: true }];
+	const soft = pencil.mp.p10_day_strips_html("2026-10-20");
+	check("an all-pencil strip is hatched", soft.includes('class="mp-busy mp-busy-pencil"'), true);
+	check("and the tooltip says pencil", soft.includes("pencil)"), true);
+});
+
+test("Maintenance Planner: a click on a strip opens the person's week, the day selected; keys do too", () => {
+	const { mp, doc } = simplifyPage();
+	const opened = [];
+	mp.p6a = { kit: {} };
+	mp.p6a_open_person = (user, day) => opened.push([user, day]);
+	mp.click_blocked_until = 0;
+	mp.$body = { 0: doc.createElement("div") };
+	mp.init_p10();
+	const strip = doc.createElement("div");
+	strip.className = "mp-busy";
+	strip.setAttribute("data-busy-user", "austin@x.com");
+	strip.setAttribute("data-busy-date", "2026-10-19");
+	mp.$body[0].appendChild(strip);
+	strip.click();
+	check("a click", opened, [["austin@x.com", "2026-10-19"]]);
+	const enter = key(strip, "Enter");
+	check("Enter does the same and is not left to the browser", [opened.length, enter.defaultPrevented], [2, true]);
+	key(strip, "a");
+	check("any other key does nothing", opened.length, 2);
+	mp.click_blocked_until = Date.now() + 1000;
+	strip.click();
+	check("a click that ends a drag is not a click", opened.length, 2);
+	// Before the kit has loaded, a day with one task opens the task; a longer list waits for the kit.
+	mp.click_blocked_until = 0;
+	mp.p6a = { kit: null };
+	const routes = [];
+	mp.open_card = (card) => routes.push([card.kind, card.booking_kind, card.ref]);
+	mp.p10_open_busy(strip);
+	check("two tasks wait for the kit", routes, []);
+	strip.setAttribute("data-busy-date", "2026-10-20");
+	mp.p10_open_busy(strip);
+	check("one task opens itself", routes, [["booking", "task", "TASK-2"]]);
+});
+
+test("Maintenance Planner: the calendar draws strips in the days, cards in cards mode", () => {
+	const env = simplifyPage();
+	const { mp, $ } = env;
+	mp.range = () => ({ start: miniMoment("2026-10-18"), end: miniMoment("2026-10-24") });
+	mp.p6d_day_head = () => null;
+	mp.card_html = (card) => `<card ${card.key}>`;
+	mp.render_tray = () => null;
+	const days = () => mp.$grid_wrap.nodes[0].querySelectorAll(".mp-day").map((node) => [node.getAttribute("data-date"), node.textContent]);
+	const cards = mp.all_cards();
+	check("the week's bookings are cards in the data either way", cards.filter((card) => card.kind === "booking").length, 4);
+	mp.render_calendar(cards);
+	const monday = days().find(([ymd]) => ymd === "2026-10-19")[1];
+	check("strip mode: Monday has Austin's and Korben's strips and no booking cards", [strips(monday), monday.includes("<card bk|")], [2, false]);
+	check("a day without project work has no strip", strips(days().find(([ymd]) => ymd === "2026-10-21")[1]), 0);
+	mp.show_project_cards = true;
+	mp.render_calendar(mp.all_cards());
+	const cardsMonday = days().find(([ymd]) => ymd === "2026-10-19")[1];
+	check("cards mode: the booking cards, no strips", [strips(cardsMonday), (cardsMonday.match(/<card bk\|/g) || []).length], [0, 3]);
+	mp.show_project_work = false;
+	mp.render_calendar(mp.all_cards());
+	check("off: neither", days().map(([, text]) => strips(text) + (text.match(/<card bk\|/g) || []).length).reduce((a, b) => a + b, 0), 0);
+	// Fountain Move cards are not bookings: a strip mode day still draws them.
+	mp.show_project_work = true;
+	mp.show_project_cards = false;
+	mp.data.moves = [{ key: "move|TASK-9", kind: "move", name: "TASK-9", date: "2026-10-19", technician: "austin@x.com", crew: [], site: "Move", movable: true, hours: 8 }];
+	mp.render_calendar(mp.all_cards());
+	const withMove = days().find(([ymd]) => ymd === "2026-10-19")[1];
+	check("a Fountain Move card is still a card beside the strips", [withMove.includes("<card move|TASK-9>"), strips(withMove)], [true, 2]);
+});
+
+test("Maintenance Planner: the crew view puts the strip in the person's cell", () => {
+	const { mp } = simplifyPage();
+	mp.view = "crew";
+	mp.range_days = () => ["2026-10-19", "2026-10-20"];
+	mp.p6d_crew_notes_row = () => "";
+	mp.p6d_cell_blocks = () => "";
+	mp.card_row_html = (card) => `<card ${card.key}>`;
+	mp.render_tray = () => null;
+	const html = () => mp.$grid_wrap.nodes[0].querySelector(".mp-crew").innerHTML;
+	mp.render_crew(mp.all_cards());
+	check("strips in the cells with project work, none in the others", strips(html()), 3);
+	check("none of them names the person (the row does)", html().includes("mp-busy-name"), false);
+	check("and no booking card", html().includes("<card bk|"), false);
+	mp.technician = "korben@x.com";
+	mp.render_crew(mp.all_cards());
+	check("the crew view ignores the technician filter, as it always did", strips(html()), 3);
+	mp.technician = "";
+	mp.show_project_cards = true;
+	mp.render_crew(mp.all_cards());
+	check("cards mode: the cards are in the cells, no strip", [strips(html()), (html().match(/<card bk\|/g) || []).length], [0, 4]);
+	mp.show_project_work = false;
+	mp.render_crew(mp.all_cards());
+	check("off: neither", [strips(html()), html().includes("<card bk|")], [0, false]);
+});
+
+test("Maintenance Planner: More > Display has Project work and Project work as cards; the cards switch asks for the work itself", () => {
+	const { mp, ctx } = simplifyPage();
+	const key = (name) => vm.runInContext(`MP.${name}`, ctx);
+	const display = () => section(mp, "display");
+	check("the two switches, and the strip is what they say first", [find(display(), "Project work").checked, find(display(), "Project work as cards").checked], [true, false]);
+	find(display(), "Project work as cards").on_click();
+	check("ticked: cards, remembered, the page redrawn", [mp.show_project_cards, mp.prefs[key("cards_key")], mp.renders], [true, "1", 1]);
+	check("and it reads as ticked", find(display(), "Project work as cards").checked, true);
+	find(display(), "Project work as cards").on_click();
+	check("unticked: the strip again", [mp.project_work_mode(), mp.show_project_cards], ["strip", false]);
+	mp.show_project_work = false;
+	check("Project work off: the cards switch reads unticked", find(display(), "Project work as cards").checked, false);
+	find(display(), "Project work as cards").on_click();
+	check("asking for cards turns the work on", [mp.show_project_work, mp.project_work_mode()], [true, "cards"]);
+	check("and remembers both", [mp.prefs[key("project_key")], mp.prefs[key("cards_key")]], ["1", "1"]);
+	mp.set_show_project_cards(false);
+	mp.set_show_project_work(false);
+	mp.set_show_project_cards(false);
+	check("the strip's own switch leaves Project work as it is", [mp.show_project_work, mp.project_work_mode()], [false, "off"]);
+	check("Display is Color by, then the three switches; it holds no key", display().filter((item) => item.label).map((item) => item.label).slice(-3), ["Projected visits", "Project work", "Project work as cards"]);
+});
+
+test("Maintenance Planner: Resources available is one line for the week until it is opened", () => {
+	const env = simplifyPage();
+	const { mp } = env;
+	mp.render_panel();
+	const panel = mp.$panel.nodes[0];
+	const line = panel.querySelector(".mp-res-sum");
+	check("closed, the heading holds the summary", !!line, true);
+	check("it says which week, and keeps today's onward", line.innerHTML.includes("This week"), true);
+	check("Austin: 3h free Tuesday, off Thursday and Friday (the weekend is left out)", line.innerHTML.includes("3h free Tue · Off Thu–Fri"), true);
+	check("Korben: free 8h on Tuesday only, Monday fully booked", line.innerHTML.includes("8h free Tue"), true);
+	check("the names are the table's own chips, draggable and clickable", [line.innerHTML.includes('class="mp-person"'), line.innerHTML.includes('data-user="austin@x.com"')], [true, true]);
+	check("the title carries all of it", line.getAttribute("title").includes("Austin Healey: 3h free Tue · Off Thu–Fri"), true);
+	check("closed, no table", panel.querySelector(".mp-res-grid"), null);
+	const toggle = panel.querySelector(".btn");
+	check("Show says it is closed", [toggle.textContent, toggle.getAttribute("aria-expanded")], ["Show", "false"]);
+	let decorated = 0;
+	mp.p6a = {};
+	mp.p6a_decorate = () => (decorated += 1);
+	toggle.click();
+	check("clicking opens it, remembered under the new key", [mp.panel_open, mp.prefs[vm.runInContext("MP.resources_key", env.ctx)]], [true, "1"]);
+	check("the redrawn names get 6A's markup (a click for their week, the hover glow) without a full render", decorated, 1);
+	const open = mp.$panel.nodes[0];
+	check("open: the table, and no summary line", [!!open.querySelector(".mp-res-grid"), open.querySelector(".mp-res-sum")], [true, null]);
+	check("Hide says it is open", [open.querySelector(".btn").textContent, open.querySelector(".btn").getAttribute("aria-expanded")], ["Hide", "true"]);
+	// A picked technician: only theirs.
+	mp.panel_open = false;
+	mp.technician = "korben@x.com";
+	mp.render_panel();
+	const korben = mp.$panel.nodes[0].querySelector(".mp-res-sum").innerHTML;
+	check("a picked technician is the only one in the line", [korben.includes("Korben"), korben.includes("Austin")], [true, false]);
+	// The crew view has no panel.
+	mp.view = "crew";
+	mp.render_panel();
+	check("the crew view has none", mp.$panel.nodes[0].style.display, "none");
+});
+
+test("Maintenance Planner: the summary says free days, a full week, overtime, work on a day off, and keeps to a line", () => {
+	const { ctx } = simplifyPage();
+	const pure = vm.runInContext("MP10_PURE", ctx);
+	const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	const week = (rows) => rows.map((row, i) => (row ? { name: names[i], weekend: i === 0 || i === 6, capacity: row[0], booked: row[1], free: row[2] } : null));
+	const said = (rows) => pure.summary(week(rows)).text;
+	check("the design's own example", said([[0, 0], [8, 8], [8, 5, 3], [8, 8], [0, 0], [0, 0], [0, 0]]), "3h free Tue · Off Thu–Fri");
+	check("days with the same hours free are one stretch", said([[0, 0], [8, 0, 8], [8, 0, 8], [8, 0, 8], [8, 0, 8], [8, 0, 8], [0, 0]]), "8h free Mon–Fri");
+	check("different hours are named apart, in day order", said([[0, 0], [8, 4, 4], [8, 0, 8], [8, 4, 4], [8, 8, 0], [8, 8, 0], [0, 0]]), "4h free Mon, Wed · 8h free Tue");
+	check("a week with nothing free is said so", said([[0, 0], [8, 8, 0], [8, 8, 0], [8, 8, 0], [0, 0], [0, 0], [0, 0]]), "Fully booked · Off Thu–Fri");
+	check("over their hours is said, in words, and is a danger", [said([[0, 0], [8, 10, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]), pure.summary(week([[0, 0], [8, 10, 0], null, null, null, null, null])).danger], ["Over 2h Mon · Off Tue–Fri", true]);
+	check("work on a day off is a danger too, even on a weekend", [said([[0, 3], [8, 0, 8], null, null, null, null, null]), pure.summary(week([[0, 3]])).danger], ["8h free Mon · Booked on a day off Sun", true]);
+	check("more than three stretches are cut to three and a count", said([[0, 0], [8, 1, 7], [8, 2, 6], [8, 3, 5], [8, 4, 4], [8, 5, 3], [0, 0]]), "7h free Mon · 6h free Tue · 5h free Wed · +2 more");
+	check("a day the engine sent nothing for is skipped, and the days stay in place", said([[0, 0], null, [8, 0, 8], null, null, null, [0, 0]]), "8h free Tue");
+	check("nothing to say is nothing", said([null, null, null, null, null, null, null]), "");
+	check("Saturday and Sunday are never 'off'", said([[0, 0], [8, 0, 8], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]), "8h free Mon · Off Tue–Fri");
+	check("a Saturday shift counts as a working day", said([[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [8, 8, 0]]), "Fully booked · Off Mon–Fri");
+	check("runs of consecutive days", [pure.runs([0, 1, 3, 5, 6]), pure.range_text([1, 2, 3], names), pure.range_text([1, 3], names)], [[[0, 1], [3], [5, 6]], "Mon–Wed", "Mon, Wed"]);
+});
+
+test("Maintenance Planner: in the month the summary speaks of the week that holds today; a past week is shown whole", () => {
+	const { mp } = simplifyPage();
+	mp.view = "month";
+	mp.p6a_week_start = () => "2026-10-18";
+	const now = mp.p10_summary_window();
+	check("this week, from today (Monday) on", [now.label, now.days[0], now.days.length], ["This week", "2026-10-19", 6]);
+	mp.p6a_week_start = () => "2026-10-25";
+	const later = mp.p10_summary_window();
+	check("a later week is named by its first day and whole", [later.label, later.days.length], ["Week of Oct 25", 7]);
+	mp.p6a_week_start = () => "2026-10-04";
+	const earlier = mp.p10_summary_window();
+	check("a week that has gone is shown whole", [earlier.label, earlier.days.length], ["Week of Oct 4", 7]);
+});
+
+test("Maintenance Planner: My day is the technician's way to Today on the Project Planner, one history entry", () => {
+	const { mp, route, frappe, ctx } = simplifyPage();
+	const routed = [];
+	mp.p6a_route = (fn) => routed.push(fn) && fn();
+	frappe.session = { user: "austin@x.com" };
+	check("Austin is a technician with a Planner Resource: he has a day", mp.p10_has_day(), true);
+	check("it is in More > Tools", find(section(mp, "tools"), "My day") !== null, true);
+	mp.data.can_schedule = false;
+	find(section(mp, "tools"), "My day").on_click();
+	check("it goes to /project-planner/today/<the planner's today>, by set_route", route.set, [["project-planner", "today", "2026-10-19"]]);
+	check("through the drawer-aware route, leaving the page (not keeping a drawer)", routed.length, 1);
+	// The bar's own link: shown to someone who cannot schedule.
+	mp.$myday = mp.$filters;
+	const bar = mp.$myday.nodes[0];
+	mp.p10_sync_myday();
+	check("a technician sees the link in the bar", bar.style.display, "");
+	mp.data.can_schedule = true;
+	mp.p10_sync_myday();
+	check("a scheduler does not (it is still in Tools)", bar.style.display, "none");
+	check("and still has it in Tools", find(section(mp, "tools"), "My day") !== null, true);
+	// Someone with no day of their own is offered nothing.
+	frappe.session = { user: "lisa@x.com" };
+	check("Lisa is not on the technician list: no day", [mp.p10_has_day(), find(section(mp, "tools"), "My day")], [false, null]);
+	mp.data.can_schedule = false;
+	mp.p10_sync_myday();
+	check("and no bar link either", bar.style.display, "none");
+	route.set.length = 0;
+	mp.p10_open_today();
+	check("and the click does nothing", route.set, []);
+	frappe.session = { user: "austin@x.com" };
+	mp.tech_by_user["austin@x.com"].resource = "";
+	check("a technician with no Planner Resource has no Today either", mp.p10_has_day(), false);
+	check("the link goes only to Today: never the Project Planner's landing", vm.runInContext("MP10.today_view", ctx), "today");
+});
+
+test("Maintenance Planner: the help is one provider function, with the kinds, the strip and Resources, and takes more", () => {
+	const { mp, frappe } = simplifyPage();
+	mp.p6c_legend_sections = () => [];
+	mp.p6d_legend_sections = () => [];
+	mp.p6a_tip_section = () => ({ title: "Tips", items: [] });
+	frappe.session = { user: "lisa@x.com" };
+	const titles = () => mp.legend_sections().map((section) => section.title);
+	check("the sections, kinds before the strip, Resources after it", titles().slice(0, 5), ["Tips", "Quick looks", "Visit cards", "Project work", "Resources available"]);
+	check("no 'Your day' for someone with no day", titles().includes("Your day"), false);
+	frappe.session = { user: "austin@x.com" };
+	check("a technician's help says what My day is", titles().includes("Your day"), true);
+	const strip = mp.legend_sections().find((s) => s.title === "Project work").items[0];
+	check("the strip's sample is the real strip class", strip.sample_html.includes('class="mp-busy mp-p10-sample"'), true);
+	// P12 and later phases register providers; a provider that throws is skipped.
+	mp.p6_legend_providers = [() => [{ title: "A later phase", items: [{ sample_html: "", text: "x" }] }], () => { throw new Error("boom"); }];
+	check("a registered provider's sections come after Keyboard and Faster scheduling", titles().slice(-3), ["Keyboard", "Faster scheduling", "A later phase"]);
+	// "?" opens whatever legend_sections returns.
+	let opened = null;
+	mp.p6a = { kit: { legend: (sections, opts) => (opened = [sections.length, opts.title]) } };
+	mp.p6a_legend();
+	check("the button opens them in the kit's legend", opened, [titles().length, "How to read the Maintenance Planner"]);
+});
+
+test("Maintenance Planner: saved views carry the two new switches, and an old view still matches", () => {
+	const env = simplifyPage();
+	const { mp, ctx } = env;
+	const proto = vm.runInContext("MaintenancePlanner", ctx).prototype;
+	mp.p6c_matching_view = proto.p6c_matching_view;
+	const state = mp.p6c_state();
+	check("the state says whether project work is cards and whether Resources is open", [state.project_cards, state.resources], [false, false]);
+	check("and has no 'panel' (the old default put 'open' in every user's last-used row)", "panel" in state, false);
+	check("the page's schema knows both, and not 'panel'", Object.keys(vm.runInContext("MP6C.schema", ctx)).sort(), ["color_by", "project_cards", "project_work", "projected", "resources", "technician", "view"]);
+	mp.p6c_apply_state({ project_cards: true, resources: true, panel: false }, { render: false });
+	check("applying a view sets them; a stored 'panel' is not read", [mp.show_project_cards, mp.panel_open], [true, true]);
+	mp.p6c_apply_state({ project_cards: false, resources: false }, { render: false });
+	check("and back", [mp.show_project_cards, mp.panel_open], [false, false]);
+	mp.p6c_apply_state({ technician: "austin@x.com" }, { render: false });
+	check("a view that says nothing about them leaves them as they are", [mp.show_project_cards, mp.panel_open], [false, false]);
+	// A view saved before P10 has no say about the two newer switches, so it still matches the screen.
+	mp.technician = "";
+	mp.p6c.views = [
+		{ name: "Old", data: { view: "week", technician: "", projected: true, project_work: true, color_by: "default" } },
+		{ name: "Other", data: { view: "month", technician: "", projected: true, project_work: true, color_by: "default" } },
+	];
+	mp.view = "week";
+	check("the old view that matches the screen is the one on screen", (mp.p6c_matching_view() || {}).name, "Old");
+	mp.show_project_cards = true;
+	check("it says nothing about cards, so it still matches while they are on", (mp.p6c_matching_view() || {}).name, "Old");
+	const now = { view: "week", technician: "", projected: true, project_work: true, project_cards: true, resources: false, color_by: "default" };
+	mp.p6c.views = [{ name: "Strip", data: Object.assign({}, now, { project_cards: false }) }, { name: "Cards", data: now }];
+	check("a view that does say it matches only the screen it describes", (mp.p6c_matching_view() || {}).name, "Cards");
+	mp.show_project_cards = false;
+	check("and the other when the screen is the strip", (mp.p6c_matching_view() || {}).name, "Strip");
+	check("a view's summary says cards", mp.p6c_view_summary({ view: "week", project_work: true, project_cards: true }), "Week · Project work as cards");
+	check("and 'no project work' wins over cards", mp.p6c_view_summary({ view: "week", project_work: false, project_cards: true }), "Week · No project work");
+});
+
+test("Maintenance Planner: the printed page shows the strips beside the visits, and the hint says how project work is drawn", () => {
+	const { mp } = simplifyPage();
+	mp.p6c.highlight = null;
+	const day = mp.p10_print_items("2026-10-19", null);
+	check("a day: a line a technician, with the person in the second line", day.map((item) => [item.title, item.sub]), [["Project: 8h", "Austin Healey"], ["Rental: 8h", "Korben Dallas"]]);
+	check("plain: not dashed, no marks, not faded, not lit", [day[0].dashed, day[0].marks, day[0].faded, day[0].highlight], [false, [], false, false]);
+	mp.technician = "austin@x.com";
+	check("a picked technician: theirs, without the name", mp.p10_print_items("2026-10-19", null).map((item) => [item.title, item.sub]), [["Project: 8h", ""]]);
+	mp.technician = "";
+	check("the crew sheet's cell is that person's", mp.p10_print_items("2026-10-19", "korben@x.com").map((item) => item.title), ["Rental: 8h"]);
+	mp.p6c.highlight = { key: "PRJ-1" };
+	check("with a site highlighted the strip is faded, like the other bookings", mp.p10_print_items("2026-10-19", null)[0].faded, true);
+	check("the hint names the strip", mp.p10_hint_note().includes("thin grey strip"), true);
+	mp.show_project_cards = true;
+	check("cards mode prints cards (p6c_print_item), not strips", mp.p10_print_items("2026-10-19", null), []);
+	check("and the hint names the cards", mp.p10_hint_note().includes("Cards marked Project"), true);
+	mp.show_project_work = false;
+	check("with project work off the hint says nothing of it", mp.p10_hint_note(), "");
 });
 
 // ------------------------------------------------------------------ run
