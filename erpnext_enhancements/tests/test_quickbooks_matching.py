@@ -806,7 +806,10 @@ def test_the_tab_is_a_route_segment_and_a_show_never_refetches():
 	assert 'if (tab === "transactions" && !state.txn.rows.length)' in show
 	assert 'frappe.pages["quickbooks-record-matching"].on_page_show = function (wrapper) {' in js
 	# Filters and pages of rows stay out of history, as in Frappe's own list view.
-	assert js.count("frappe.set_route(") == 3, "the tab, plus the two routes to other pages"
+	# The tab, plus three routes to other pages: the dashboard, the Sync Mapping list, and the
+	# Excel exports' File folder (v1.721.0, offered when an export outlasts the page's wait).
+	assert js.count("frappe.set_route(") == 4, "the tab, plus the three routes to other pages"
+	assert 'frappe.set_route("List", "File", { folder: EXPORT_FOLDER })' in js
 	# Only the newest parked-transactions reply paints.
 	txn = js[js.index("function loadTransactions() {") : js.index("function renderTransactions() {")]
 	assert "const seq = ++txnSeq;" in txn
