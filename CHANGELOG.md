@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     mounting through the shared widget). Both run in CI.
   - **Deploy.** `bench migrate` overwrites the block's `html`, `script` and `style` from these files. No schema,
     fixture or data change.
+
 ## [1.716.2] - 2026-10-22
 
 ### Changed
