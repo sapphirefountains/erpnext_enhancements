@@ -28,6 +28,12 @@ The **Item Naming** section (v1.532.0) holds ``naming_digest_recipients``, who g
 blank means nobody. ``patches/seed_naming_digest_recipient`` writes the Purchasing Agent's
 address once, only where ``tabSingles`` has no row for the field, so a list somebody has
 edited or deliberately emptied is never overwritten.
+
+The **Reorder Board** section (v1.730.0) holds ``reorder_alert_role``, whose enabled users get
+``inventory_enhancements.reorder_board.send_daily_digest`` (Nik, 2026-10-22: Purchase Managers).
+It was added to a Single that already existed, so its ``Purchase Manager`` default reaches the
+stored row only through ``patches/backfill_reorder_alert_role``; ``DEFAULTS`` and
+``reorder_board.alert_role`` fall back to it as well, so blank always means Purchase Manager.
 """
 
 import frappe
@@ -60,6 +66,8 @@ DEFAULTS = {
 	"boneyard_warehouse": None,
 	# Item naming digest. None: no recipients, no email.
 	"naming_digest_recipients": None,
+	# Reorder Board digest recipients (v1.730.0): this role's enabled users. Blank = the default.
+	"reorder_alert_role": "Purchase Manager",
 }
 
 

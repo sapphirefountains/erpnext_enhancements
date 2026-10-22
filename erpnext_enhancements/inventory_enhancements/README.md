@@ -34,6 +34,10 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
+| `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
+| `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
+| `page/reorder_board/` | The Reorder Board (v1.730.0, `/desk/reorder-board`): Needs reorder, On order and Snoozed, each its own history entry |
 | `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
@@ -628,6 +632,59 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
 * **Client.** `public/js/reorder_levels/` as `reorder_levels.bundle.js/.css` (`window.sf_reorder`),
   required by each page apart from its own files and optional. A save is never a history entry. Tests:
   `tests/test_reorder_levels.py`, `scripts/test_reorder_levels.mjs`.
+
+### The Reorder Board (v1.730.0)
+
+ER-2026-1323810, Parker Bailey, approved by Nik 2026-10-22: instead of ERPNext raising a Material
+Request on its own whenever an item reaches its reorder point, tell the buyers, list what is below,
+and let them choose what to request; then follow each request to the receipt. Tasks
+TASK-2026-02922 to -02926.
+
+* **Auto-indent is off.** `patches/disable_auto_material_requests` sets `Stock Settings.auto_indent` to 0,
+  so ERPNext's `reorder_item` job (`daily_long`) returns before it reads a rule and never sends its
+  `reorder_email_notify` email. Switching it back on would make both run; the board says so in a banner.
+* **The page**, `/desk/reorder-board` (`page/reorder_board/`), has three tabs, each its own history entry:
+  **Needs reorder** (`/desk/reorder-board`), **On order** (`/on-order`) and **Snoozed** (`/snoozed`).
+  It admits Purchase Manager, Purchase User, Stock Manager and System Manager (`reorder_board.BOARD_ROLES`):
+  the buyers and the owner of the rules, not Stock User, whose job is taking and counting stock.
+* **Below, and how much:** ERPNext's rule exactly (`reorder_rules.is_below`, `suggested_qty`, copied from
+  `_reorder_item` as production's ERPNext v16.50.0 has it: the larger of the rule's quantity and the
+  deficiency; the `version-16` branch has since changed the quantity, so re-read the tag on an upgrade), on the rules and projected quantities ERPNext's own `get_items_for_reorder` and
+  `get_item_warehouse_projected_qty` return: Item enabled, stock item, not past end of life, the warehouse
+  enabled, variants inheriting their template's rules, projected read at the rule's `warehouse_group` and
+  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for the Inventory Room,
+  `Inventory - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
+  a real rule. Only `Purchase` rules are listed (all of production's are).
+* **Covered** means an open request or order for that item and warehouse: a Material Request line, Draft
+  included (a Draft raises no requested qty, so only this keeps it off Needs reorder), not Stopped,
+  Cancelled or Closed; or a Purchase Order line no request asked for. A covered item is on **On order**, at
+  its stage from the documents' own links (MR Item ← PO Item `material_request_item` ← PR Item
+  `purchase_order_item`): Draft request, Requested, PO in draft, Partially ordered, Ordered, Partially
+  received, Received. The PO's supplier, its expected date (`schedule_date`) and, from
+  `Purchase Order.custom_order_stage` (`po_order_stage.py`), **Pickup** or **Delivery**. A received line stays
+  a week (`RECEIVED_VISIBLE_DAYS`), then drops off.
+* **Create Material Request** (`reorder_board.create_requests`): the selected lines with the quantities on
+  screen, after a confirm dialog that lists them. One **Draft** Material Request (type Purchase) per company,
+  `schedule_date` today plus the item's lead time, the rule's warehouse, the quantity in the purchase UOM as
+  ERPNext converts it; inserted as the person (ERPNext's validation and permissions), never submitted, then
+  opened for review. The server re-checks the role, Material Request create, that each line still has a rule,
+  is still below and is not covered, and the quantity (above 0, at most 100,000, whole for a whole unit); one
+  stale line and nothing is made. A MariaDB named lock serialises it, and `client_ref` (one per dialog) makes
+  a retry return the request it already made.
+* **Snooze** (1 week, 1 month, or until stock drops further: the projected qty is kept and the snooze ends
+  once it is lower). A snoozed line moves to Snoozed, the digest skips it, and Un-snooze brings it back. Who,
+  when and why are kept.
+* **Reorder Watch** (`doctype/reorder_watch/`) is the board's memory, one row per item and warehouse while it
+  is below: `below_since`, `alerted_on`, the snooze, and the last request the board made. Not a tracking table:
+  stages are always read from the documents. Named `<item>::<warehouse>`.
+* **The alert.** `sync_watch` (hourly) inserts a row when a line goes below, deletes it when it recovers and
+  ends a snooze that ran out. `send_daily_digest` (`20 7 * * *`, site time) emails the lines whose row has no
+  `alerted_on` (newly below, or snooze ended) to the enabled System Users holding
+  `Inventory Scanner Settings.reorder_alert_role` (default Purchase Manager; Administrator, Guest and
+  `triton@` excluded), with one bell notification each linking the board, and stamps them in the same
+  transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing.
+* **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
+  `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
 
 ### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
 

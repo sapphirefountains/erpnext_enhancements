@@ -1476,3 +1476,15 @@ erpnext_enhancements.patches.backfill_weekly_summary_setting
 # the live body only when it is exactly a shipped body (v1.611.1 on prod, SHA-256); freezes paper-signed copies first and
 # waits while a signing link is out. Resets no terms. Cannot raise, safe twice.
 erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line
+# Reorder Board (v1.730.0, ER-2026-1323810, Nik 2026-10-22): Stock Settings.auto_indent 1 -> 0, so ERPNext's nightly
+# reorder_item job stops raising Material Requests (and its reorder_email_notify email) on its own; buyers request from
+# /desk/reorder-board instead. One set_single_value, only when it is on, only on a Stock Settings that has rows. Existing
+# auto-made requests untouched. Cannot raise, safe twice.
+erpnext_enhancements.patches.disable_auto_material_requests
+# Reorder Board (v1.730.0): Inventory Scanner Settings.reorder_alert_role = "Purchase Manager" where tabSingles has no row
+# for it (a new Single field's default never reaches the existing row). Never over a stored value; a never-saved Single
+# is left alone. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_reorder_alert_role
+# Reorder Board (v1.730.0): force-import the Inventory Enhancements workspace, whose Purchasing card now links the new
+# Desk page reorder-board. Timestamp-bumped too; this is the belt. Logs failure, never raises, safe twice.
+erpnext_enhancements.patches.reorder_board_workspace_link

@@ -1647,6 +1647,15 @@ scheduler_events = {
 		# Settings.naming_digest_recipients; blank, or a week with nothing failing, sends
 		# nothing. Reads only, so a deploy FLUSHDB costs at most one Monday's email.
 		"0 7 * * 1": ["erpnext_enhancements.inventory_enhancements.item_naming_digest.send_weekly_digest"],
+		# inventory (v1.730.0, ER-2026-1323810): the Reorder Board's morning digest, 07:20 site time, every
+		# day (Nik, 2026-10-22: one daily digest, email + the Desk bell, to Inventory Scanner Settings'
+		# reorder_alert_role, default Purchase Manager). Names only items that newly fell below their
+		# reorder point (or whose snooze ended) since the last digest; nothing new, nothing sent. Its own
+		# key, used nowhere else in this dict ("15 7 * * *" and "0 7 * * *" are different keys). The
+		# memory is Reorder Watch rows, not a queued job, so a deploy FLUSHDB loses nothing: the scheduler
+		# re-enqueues a due job it does not find in the queue, and an un-named line is still un-named.
+		# Replaces ERPNext's auto-indent, which patches/disable_auto_material_requests switches off.
+		"20 7 * * *": ["erpnext_enhancements.inventory_enhancements.reorder_board.send_daily_digest"],
 		# Planner UX redesign P9 (v1.715.0, Nik's D16): Monday 06:15 site time, the weekly schedule
 		# summary (the page Overview prints) to the managers named in Project Planner Settings >
 		# Telling managers. OFF: it does nothing, before any query, unless weekly_summary_email is
@@ -1929,6 +1938,11 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# inventory (v1.730.0): the Reorder Board's Reorder Watch rows -- a row for each item and
+		# warehouse that went at or below its reorder point (below_since, to the hour), snoozes that ran
+		# out cleared for the next digest, rows for what recovered deleted. ~116 rules, reads with
+		# ERPNext's own reorder helpers. Never raises. See inventory_enhancements/reorder_board.py.
+		"erpnext_enhancements.inventory_enhancements.reorder_board.sync_watch",
 		# training: drain Training Attempt progress still sitting in Redis from a
 		# session that ended without a final beacon (closed laptop, dead phone,
 		# killed tab). Bounds progress loss at one flush interval rather than a
