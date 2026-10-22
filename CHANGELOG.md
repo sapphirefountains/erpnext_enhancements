@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.722.0] - 2026-10-22
+
+### Added
+- **Find a Supplier (`/desk/supplier-finder`): who sells this, or has sold it to us.** Nik, 2026-10-22: "say I know
+  we need a pump, but I don't remember all our pump suppliers ... what if we have two pump categories and one pump
+  supplier I'm looking for is in a different supplier group." That cannot be answered with the Supplier Group field.
+  Measured on prod that day:
+  - There are 174 flat groups, and 629 of 1,193 suppliers have none.
+  - Pump suppliers sit in at least five groups.
+  - Of the suppliers we have actually bought pumps from, only one is in a group with "pump" in its name.
+
+  So one search box takes a kind of item ("pump"), a phrase ("submersible pump") or a model or part number
+  ("EQKT750", "Grundfos SQ 3-65"), and ranks suppliers by evidence:
+  - first, suppliers we bought a matching item from (PO and receipt lines, with the date and, for Purchase Order
+    readers, the last nonzero price);
+  - then suppliers that quoted it, list it as an Item Supplier, are its default supplier or have a buying price for
+    it;
+  - last, suppliers whose only link is a matching Supplier Group or name.
+
+  A model search also lists the groups of its category (EQKT750 is a PUMP), which answers "which other pump
+  suppliers might carry this".
+  - **Duplicate supplier records fold into one row**, with the others listed as aliases. Prod had about 50 pairs
+    where the same company was entered twice, with and without "Inc." or ".com". Nothing is merged, because 918 suppliers are mapped to QuickBooks
+    vendors and merging would rewrite records the sync still owns.
+  - **The AI step only expands the query** (Nik's ruling). With "Let AI broaden the search" ticked, Gemini rewrites
+    a fuzzy search into search phrases and Supplier Group names.
+    - It sees only what was typed and the list of group names, never a supplier, an item or a price. The ranking is
+      deterministic.
+    - Not set up, rate-limited (60 per user per hour), timed out, or answering something other than the JSON asked
+      for: the keyword results come back with a one-line note. The Error Log row names the exception's class, never
+      the search.
+    - It is skipped for a model or part number, and cached for a day per search.
+  - **Where it lives** (Nik's choice):
+    - the page, linked from a new *Purchasing* card on the Inventory Enhancements workspace;
+    - a **Find suppliers** button on the Item form, and on the Purchase Order form, which asks which item when the
+      order has several;
+    - the read-only MCP tool **`supplier_search`** for Triton and Claude, with `expand` off by default.
+  - **Writes nothing.** It is gated on Supplier and Item read. The page's roles are the Purchase, Stock and
+    Projects roles, Inventory Clerk and System Manager.
+  - Each screen (`?q=`, `?item=`, `?supplier=`) is its own history entry, so Back and Forward work.
+  - The decisions are pure (`inventory_enhancements/supplier_search_rules.py`). `tests/test_supplier_search_rules.py`
+    covers matching, group matching, folding and ranking. `tests/test_supplier_search_api.py` covers the AI
+    fallback, what the model sees, prices and permissions, and the tool. Both are their own CI steps.
+  - Design and the measured data are in `docs/supplier-finder.md`.
+  - Not in this release, both pending Nik's sign-off:
+    - phase 2, an index of the pre-ERPNext QuickBooks bill line descriptions, which only survive in
+      `QuickBooks Raw Payload`;
+    - the Supplier Group and duplicate-supplier cleanup.
+
 ## [1.716.2] - 2026-10-22
 
 ### Changed

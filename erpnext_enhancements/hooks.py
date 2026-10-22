@@ -287,6 +287,8 @@ doctype_js = {
 		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
 		"public/js/water_engineering/pump_curve_chart.js",
+		# v1.722.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
+		"public/js/supplier_finder_buttons.js",
 	],
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
 	# used by the design form's live dashboard; loaded before the auto-loaded form script.
@@ -344,6 +346,8 @@ doctype_js = {
 		# Purchase Receipt through api/procurement.receive_items, so received_qty, the
 		# status pill and the Order Stage all move on their own.
 		"public/js/po_receive_items.js",
+		# v1.722.0 -- "Find suppliers": who else sells this order's items (Find a Supplier page).
+		"public/js/supplier_finder_buttons.js",
 	],
 	"Material Request": [
 		"public/js/vue.global.js",
@@ -3443,6 +3447,8 @@ assistant_tools = [
 	# invents a vendor part number; api/item_suggest.py and the pure item_suggest_rules hold it
 	# to both. Gated on Item create, as the guided page's Suggest button is.
 	"erpnext_enhancements.assistant_tools.item_naming_suggest.ItemNamingSuggest",
+	# v1.722.0 -- the Supplier Finder's door: who sells this item, ranked by purchase evidence.
+	"erpnext_enhancements.assistant_tools.supplier_search.SupplierSearch",
 	# v1.339.0 CRM -- read-only naming advisor for the three doctypes that name themselves
 	# after a party. Same posture as item_naming_check: advisory, no doc_event, every
 	# judgement in the pure crm_enhancements.party_naming_rules so CI executes it.

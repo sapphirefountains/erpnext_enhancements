@@ -1,0 +1,206 @@
+/* Find a Supplier (v1.722.0). A Desk Page's stylesheet is appended to <head> once and stays for
+   the whole Desk session, so every selector here starts with .sfn-. Colors are the app tokens with
+   the Desk's own as fallback, so the page follows light and dark with the rest of the Desk. */
+
+.sfn-app {
+	padding: var(--sf-space-20, 16px) 0 var(--sf-space-40, 32px);
+	color: var(--sf-text, var(--text-color));
+}
+
+.sfn-search {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	margin-bottom: var(--sf-space-20, 16px);
+}
+
+.sfn-input {
+	flex: 1 1 280px;
+	max-width: 560px;
+	min-height: var(--sf-touch-min, 36px);
+}
+
+.sfn-ai {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	font-weight: normal;
+	color: var(--sf-text-muted, var(--text-muted));
+	cursor: pointer;
+}
+
+.sfn-ai input {
+	margin: 0;
+}
+
+.sfn-loading,
+.sfn-empty {
+	padding: var(--sf-space-20, 16px) 0;
+}
+
+.sfn-note {
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-10, 8px);
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-surface-muted, var(--subtle-fg));
+}
+
+.sfn-note-warn {
+	background: var(--sf-warning-subtle, var(--bg-yellow));
+}
+
+.sfn-note-ai {
+	background: var(--sf-info-subtle, var(--bg-blue));
+}
+
+.sfn-start p {
+	max-width: 720px;
+}
+
+.sfn-chips,
+.sfn-groups {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: var(--sf-space-15, 12px);
+}
+
+.sfn-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 10px;
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: 999px;
+	background: var(--sf-surface, var(--card-bg));
+	color: inherit;
+	text-decoration: none;
+}
+
+.sfn-chip:hover,
+.sfn-chip:focus-visible {
+	border-color: var(--sf-primary, var(--primary));
+	text-decoration: none;
+}
+
+.sfn-count {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-weight: normal;
+	font-size: 0.9em;
+}
+
+.sfn-cols {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	gap: var(--sf-space-20, 16px);
+	align-items: start;
+}
+
+@media (max-width: 860px) {
+	.sfn-cols {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.sfn-heading {
+	margin: 0 0 var(--sf-space-10, 8px);
+	font-weight: var(--sf-weight-bold, 600);
+}
+
+.sfn-card {
+	padding: var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-10, 8px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-left-width: 4px;
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-surface, var(--card-bg));
+}
+
+.sfn-tier-history {
+	border-left-color: var(--sf-success, var(--green-500, #28a745));
+}
+
+.sfn-tier-carries {
+	border-left-color: var(--sf-info, var(--blue-500, #2490ef));
+}
+
+.sfn-tier-group {
+	border-left-color: var(--sf-border-hairline, var(--border-color));
+}
+
+.sfn-disabled {
+	opacity: 0.6;
+}
+
+.sfn-card-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.sfn-sup-name {
+	font-weight: var(--sf-weight-bold, 600);
+	font-size: 1.05em;
+}
+
+.sfn-tier {
+	font-size: 0.85em;
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.sfn-aliases {
+	font-size: 0.85em;
+}
+
+.sfn-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 6px 0;
+}
+
+.sfn-tag {
+	display: inline-block;
+	padding: 0 6px;
+	border-radius: 4px;
+	font-size: 0.8em;
+	background: var(--sf-surface-muted, var(--subtle-fg));
+}
+
+.sfn-tag-none {
+	font-style: italic;
+}
+
+.sfn-tag-model {
+	background: var(--sf-success-subtle, var(--bg-green));
+}
+
+.sfn-tag-ai {
+	background: var(--sf-info-subtle, var(--bg-blue));
+}
+
+.sfn-reason {
+	margin-bottom: 6px;
+}
+
+.sfn-items,
+.sfn-sup-items {
+	list-style: none;
+	margin: 0 0 6px;
+	padding: 0;
+}
+
+.sfn-items > li,
+.sfn-sup-items > li {
+	padding: 6px 0;
+	border-top: 1px solid var(--sf-border-hairline, var(--border-color));
+	overflow-wrap: anywhere;
+}
+
+.sfn-link {
+	font-size: 0.9em;
+}

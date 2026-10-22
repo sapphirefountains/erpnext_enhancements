@@ -1,0 +1,42 @@
+{
+ "content": "",
+ "creation": "2026-10-22 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "search",
+ "modified": "2026-10-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "supplier-finder",
+ "owner": "Administrator",
+ "page_name": "supplier-finder",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Purchase Manager"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
+  },
+  {
+   "role": "Inventory Clerk"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Projects User"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Find a Supplier"
+}

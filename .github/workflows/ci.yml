@@ -1887,6 +1887,18 @@ jobs:
       # limit. Own frappe stub (and FAC's BaseTool), so its own step; unittest classes.
       - name: Guided Item AI suggest (schema, no PDT/SRV numbers, rules + guard, graceful failure)
         run: python -m unittest erpnext_enhancements.tests.test_item_suggest -v
+      # Supplier Finder (v1.722.0): who sells an item, ranked by purchase evidence. The pure rules
+      # (inventory_enhancements/supplier_search_rules.py) hold the matching (word starts, model and
+      # part numbers squashed, synonyms, strict then partial), the group match, duplicate suppliers
+      # folded into one row, and the order: bought, then quoted/listed, then group or name only. Its
+      # own step because the endpoint suite below installs a frappe stub and this one must not see it.
+      - name: Supplier Finder rules (matching, groups, duplicate folding, evidence ranking)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_search_rules -v
+      # The endpoint and the assistant tool against a frappe stub: the AI step falls back to the
+      # keyword results when it is off, busy, failing or answering garbage; the model sees the search
+      # and the Supplier Group names only; prices only for Purchase Order readers; Supplier + Item read.
+      - name: Supplier Finder endpoint (AI fallback, what the model sees, permissions, MCP tool)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_search_api -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
