@@ -146,7 +146,7 @@ class TestTheBlock(unittest.TestCase):
 
 	def test_it_is_a_remembered_device_tab_and_never_the_servers_saved_view(self):
 		self.assertIn(
-			'tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],',
+			'tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview", "simple"],',
 			self.code,
 		)
 		self.assertIn(

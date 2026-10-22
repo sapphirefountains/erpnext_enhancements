@@ -1221,7 +1221,7 @@ test("PP: ? for the new tabs, in the help; Today gets a ? of its own", () => {
 	const sections = env.pp.p12_legend_sections();
 	check("the sections, in order", sections.map((s) => s.title), ["The tabs", "Where the planner opens", "Moving a task", "Draft and Published", "Baseline"]);
 	const tabs = sections[0].items.map((item) => item.chip.text);
-	check("a line for every tab, and Today", tabs, ["Lookahead", "Gantt", "Crew", "Calendar", "Overview", "Today"]);
+	check("a line for every tab, Today, and the Simple switch", tabs, ["Lookahead", "Gantt", "Crew", "Calendar", "Overview", "Today", "Simple"]);
 	sections.forEach((section) =>
 		section.items.forEach((item) => {
 			check(`"${section.title}": an item has words`, !!item.text, true);
@@ -1393,7 +1393,7 @@ test("MP: a failing request tells this browser; the help's sections", async () =
 
 	const sections = again.mp.p12_legend_sections();
 	check("the views, moving a visit, Draft mode and Notify crew?", sections.map((s) => s.title), ["The views", "Moving a visit", "Draft mode and Notify crew?"]);
-	check("a line for each view", sections[0].items.map((item) => item.chip.text), ["Month", "Week", "Crew"]);
+	check("a line for each view, and the Simple switch", sections[0].items.map((item) => item.chip.text), ["Month", "Week", "Crew", "Simple"]);
 	const all = JSON.stringify(sections);
 	["Notify crew?", "Don't notify", "Draft mode", "Publish", "14 days", "Esc puts the change back"].forEach((word) => check(`the help says "${word}"`, all.includes(word), true));
 	check("the kinds the server keeps are the page's", vm.runInContext("MPTOUR.kinds", again.ctx), ["desktop", "phone"]);
