@@ -1006,6 +1006,9 @@ export class FeedbackApp {
 			this.detailDecision(detail)
 		);
 
+		// Set by `proposalPanel` when it draws one: persists the reviewer's unsaved row edits.
+		// Every action that redraws the request calls it first, or the redraw throws them away.
+		this.saveProposalEdits = null;
 		if (this.state.isReviewer) {
 			if (detail.status === "Submitted") append(this.pane, this.triagePanel(detail));
 			if (detail.duplicate_candidates.length) append(this.pane, this.duplicatePanel(detail));
@@ -1209,11 +1212,12 @@ export class FeedbackApp {
 		return panel;
 	}
 
-	/** Call one of the overrule endpoints, then redraw the request. */
+	/** Save any pending proposal edits, call one of the overrule endpoints, redraw the request. */
 	async overrule(control, name, method, args) {
 		const label = control.textContent;
 		this.setBusy(control, true, "Working…");
 		try {
+			await this.savePendingEdits();
 			await call(method, { name, ...args });
 			await this.renderRequest(name);
 		} catch (e) {
@@ -1221,6 +1225,13 @@ export class FeedbackApp {
 		} finally {
 			this.setBusy(control, false, label);
 		}
+	}
+
+	/** Persist the proposal's unsaved row edits, if a proposal is on screen. */
+	async savePendingEdits() {
+		if (!this.saveProposalEdits) return;
+		const result = await this.saveProposalEdits();
+		this.reportRejected(result && result.rejected);
 	}
 
 	/**
@@ -1231,10 +1242,10 @@ export class FeedbackApp {
 	 * server validates it like an edited row and refuses a project outside the two configured
 	 * boards. On a failed breakdown, adding one moves the request to Breakdown Ready.
 	 *
-	 * `saveFirst` persists the edits on the rows above before the add redraws the panel, which
-	 * would otherwise throw them away.
+	 * The edits on the rows above are saved first: the add redraws the panel, which would
+	 * otherwise throw them away.
 	 */
-	addTaskForm(detail, saveFirst) {
+	addTaskForm(detail) {
 		const box = el("details", "ee-fb-add-task");
 		append(box, el("summary", "ee-fb-btn ee-fb-btn-small", "Add a task by hand"));
 
@@ -1263,7 +1274,7 @@ export class FeedbackApp {
 			}
 			this.setBusy(add, true, "Adding…");
 			try {
-				if (saveFirst) this.reportRejected((await saveFirst()).rejected);
+				await this.savePendingEdits();
 				const result = await call(M.ADD_TASK, {
 					name: detail.name,
 					row: {
@@ -1419,16 +1430,17 @@ export class FeedbackApp {
 			}
 		});
 
+		// Saved first even though the re-run replaces the model's rows: the rows it keeps (a hand-
+		// added row, a row that already created its Task) keep the reviewer's edits too.
 		const rerun = button("Ask again", "ee-fb-btn", async () => {
-			await call(M.RERUN, { name: detail.name });
-			await this.renderRequest(detail.name);
+			await this.overrule(rerun, detail.name, M.RERUN, {});
 		});
 
-		const saveFirst = () => call(M.SAVE_PROPOSAL, { name: detail.name, rows: collect() });
+		this.saveProposalEdits = () => call(M.SAVE_PROPOSAL, { name: detail.name, rows: collect() });
 		append(
 			panel,
 			rows,
-			this.addTaskForm(detail, saveFirst),
+			this.addTaskForm(detail),
 			append(el("div", "ee-fb-actions"), create, save, rerun)
 		);
 		return panel;
@@ -1467,6 +1479,14 @@ export class FeedbackApp {
 		if (row.added_by) append(placement, el("span", null, " · added by hand"));
 		if (row.created_task) {
 			append(placement, el("span", null, " · created "), deskLink(row.created_task, `/app/task/${row.created_task}`));
+		}
+		// Only a hand-added row that has not produced a Task can go. A model row is unticked
+		// instead, so the proposal stays a record of what the model suggested.
+		if (row.added_by && !row.created_task) {
+			const remove = button("Remove", "ee-fb-btn ee-fb-btn-small", async () => {
+				await this.overrule(remove, detail.name, M.REMOVE_TASK, { row: row.name });
+			});
+			append(placement, el("span", null, " "), remove);
 		}
 
 		append(node, top, placement, richText(row.description));

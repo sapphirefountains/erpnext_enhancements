@@ -561,15 +561,23 @@ def _apply(request_name: str, breakdown: Breakdown, *, stats: str = "") -> None:
 	proposal rather than two interleaved ones. ``breakdown_stats`` is replaced with them: it
 	describes the call that produced this proposal, not an earlier one.
 
-	**Two kinds of row are a person's, not the model's, and survive.** A proposed task a
-	reviewer typed in (``added_by``) is kept after the new model rows, with its
-	``depends_on_idx`` cleared because the positions it pointed at have just been renumbered. A
-	duplicate candidate a reviewer ruled out (``dismissed``) is kept too: it is the record of
-	who overruled what, and the model may not re-add the same Task beside it.
+	**Three kinds of row are not the model's to replace, and survive**, after the new model rows
+	and with their ``depends_on_idx`` cleared, because the positions it pointed at have just
+	been renumbered:
+
+	* a row that already produced a Task (``created_task``). A re-run after a partial confirm
+	  used to drop it, losing the link to a Task that is on the board, and the next confirm
+	  could then propose and create the same work a second time. The stamp is what makes
+	  ``task_writer`` idempotent, so it must outlive the proposal it came from;
+	* a proposed task a reviewer typed in (``added_by``);
+	* a duplicate candidate a reviewer ruled out (``dismissed``): it is the record of who
+	  overruled what, and the model may not re-add the same Task beside it.
 	"""
 	doc = frappe.get_doc("Enhancement Request", request_name)
-	hand_rows = [
-		row for row in (doc.get("proposed_tasks") or []) if (row.get("added_by") or "").strip()
+	kept_rows = [
+		row
+		for row in (doc.get("proposed_tasks") or [])
+		if (row.get("created_task") or "").strip() or (row.get("added_by") or "").strip()
 	]
 	doc.set("proposed_tasks", [])
 	for task in breakdown.tasks:
@@ -587,9 +595,10 @@ def _apply(request_name: str, breakdown: Breakdown, *, stats: str = "") -> None:
 				"depends_on_idx": task.depends_on_idx,
 			},
 		)
-	for row in hand_rows:
+	for row in kept_rows:
 		row.depends_on_idx = 0
-		# `append` keeps an idx a row already has, which would now collide with a model row's.
+		# v16's `append` keeps an idx a row already has (`if not getattr(d, "idx", False)`),
+		# which would now collide with a model row's.
 		row.idx = None
 		doc.append("proposed_tasks", row)
 

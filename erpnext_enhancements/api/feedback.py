@@ -19,7 +19,8 @@ The lifecycle, and where each part lives:
    ``create_tasks`` is the human review in the sense ``api/training_ai.py`` established: the
    accept call is what stamps a named person against a model's output. The reviewer can also
    overrule the model: ``dismiss_duplicate`` / ``plan_as_new_work`` clear a wrong duplicate
-   flag, and ``add_proposed_task`` writes a row the model never proposed (v1.729.0).
+   flag, and ``add_proposed_task`` / ``remove_proposed_task`` write and withdraw a row the model
+   never proposed (v1.729.0).
 4. ``claude_code_brief`` — once Tasks exist, the reviewer takes the work to a Claude Code
    session as a brief in the work-item shape (WI-079 slice 4). A release whose CHANGELOG
    section carries the brief's ``Refs:`` line moves those Tasks to ``Pending Review``:
@@ -941,7 +942,8 @@ def add_proposed_task(name, row=None):
                 frappe.ValidationError,
             )
     values["parent_task"] = parent
-    values["group_subject"] = (values.get("group_subject") or "").strip()[:200]
+    # A group subject becomes a group Task's subject, the same varchar(140).
+    values["group_subject"] = (values.get("group_subject") or "").strip()[:MAX_TASK_SUBJECT_CHARS]
     values["description"] = (values.get("description") or "").strip()[:MAX_BODY_CHARS]
     values.setdefault("priority", "Medium")
     # A dependency may only point at a row that already exists: the new row is the last one.
@@ -955,6 +957,50 @@ def add_proposed_task(name, row=None):
         doc.status = RequestState.BREAKDOWN_READY.value
     doc.save(ignore_permissions=True)
     return {"request": _serialise(doc, full=True), "rejected": sorted(refused)}
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_proposed_task(name, row):
+    """Remove a row the reviewer added by hand, before it has produced a Task.
+
+    Only a hand-added row (``added_by``): the model's rows are unticked rather than deleted, so
+    the proposal stays a complete record of what the model suggested. Never a row with a
+    ``created_task``, which is the record of a Task on the board.
+
+    The rows after it move up one place, so every ``depends_on_idx`` is remapped: one that
+    pointed past the removed row follows its row, and one that pointed at it is cleared.
+    """
+    _require_reviewer()
+    doc = frappe.get_doc(DOCTYPE, name)
+    _require_editable(doc)
+    rows = list(doc.get("proposed_tasks") or [])
+    row = (row or "").strip()
+    target = next((r for r in rows if (r.name or "") == row), None)
+    if target is None:
+        frappe.throw(_("That row is not on this proposal."), frappe.ValidationError)
+    if (target.get("created_task") or "").strip():
+        frappe.throw(
+            _("That row already created {0}, so it stays.").format(target.created_task),
+            frappe.ValidationError,
+        )
+    if not (target.get("added_by") or "").strip():
+        frappe.throw(
+            _("Only a task added by hand can be removed. Untick a proposed task instead."),
+            frappe.ValidationError,
+        )
+
+    removed = rows.index(target) + 1
+    remaining = [r for r in rows if r is not target]
+    for r in remaining:
+        dep = cint(r.get("depends_on_idx"))
+        if (r.get("created_task") or "").strip() or not dep:
+            continue
+        r.depends_on_idx = 0 if dep == removed else (dep - 1 if dep > removed else dep)
+    for position, r in enumerate(remaining, start=1):
+        r.idx = position
+    doc.set("proposed_tasks", remaining)
+    doc.save(ignore_permissions=True)
+    return _serialise(doc, full=True)
 
 
 def _dismiss(rows):

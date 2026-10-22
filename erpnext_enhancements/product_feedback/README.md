@@ -76,7 +76,14 @@ anything:
   anyway. `_apply` keeps the ruled-out rows through the re-run.
 - **Add a task** (`add_proposed_task`) writes a row the reviewer typed, validated like an edited
   row (`_clean_row`), with `added_by` set. It works from `Breakdown Failed` too — the one
-  transition into `Breakdown Ready` no model wrote — and a hand-added row survives a re-run.
+  transition into `Breakdown Ready` no model wrote. `remove_proposed_task` withdraws one that has
+  not produced a Task yet; a model row is unticked, never removed.
+
+A re-run replaces only the model's rows: a hand-added row and any row that already created its
+Task (`created_task`) are kept after the new ones, so a re-run after a partial confirm cannot
+lose the link and write the same work twice. The reviewer note is a nudge, not a guarantee —
+Triton's prompt treats the description as data, and a requester could type the same words — so
+the hand-added row is the override that holds.
 
 **Which is also why the board shows a "Tasks Completed" pill that is not a status.** A request
 whose tasks are all finished stays on `Tasks Created` forever — correctly; nothing may move it

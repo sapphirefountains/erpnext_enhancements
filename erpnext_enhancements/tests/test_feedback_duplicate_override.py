@@ -143,13 +143,20 @@ class FakeRequest:
 			setattr(self, key, value)
 
 	def append(self, key, value):
+		"""v16's ``Document.append``: an idx is set only when the row has none.
+
+		``frappe/model/document.py`` on ``version-16`` sets ``d.idx = len(table)`` only ``if not
+		getattr(d, "idx", False)``, so a kept row that still carries its old idx keeps it. A stub
+		that always renumbered would hide exactly the collision ``breakdown._apply`` clears.
+		"""
 		row = value if isinstance(value, Row) else Row(**value)
 		if not row.get("name"):
 			self._counter += 1
 			row.name = f"{key}-{self._counter}"
 		table = getattr(self, key)
 		table.append(row)
-		row.idx = len(table)
+		if not row.get("idx"):
+			row.idx = len(table)
 		return row
 
 	def save(self, ignore_permissions=False):
@@ -417,7 +424,9 @@ class Base(unittest.TestCase):
 		global STATE
 		STATE = State()
 
-	def request(self, status="Breakdown Ready", proposed=(), candidates=(flagged(),)):
+	def request(self, status="Breakdown Ready", proposed=(), candidates=None):
+		if candidates is None:
+			candidates = (flagged(),)
 		STATE.doc = FakeRequest(status, proposed=proposed, candidates=candidates)
 		return STATE.doc
 
@@ -485,7 +494,9 @@ class TestPlanAsNewWork(Base):
 
 
 class TestTheRerunLeavesARuledOutTaskOut(Base):
-	def run_it(self, body, candidates=(flagged(dismissed=1, dismissed_by=REVIEWER),), proposed=()):
+	def run_it(self, body, candidates=None, proposed=()):
+		if candidates is None:
+			candidates = (flagged(dismissed=1, dismissed_by=REVIEWER),)
 		doc = self.request(status="Approved", candidates=candidates, proposed=proposed)
 		STATE.triton_body = body
 		breakdown.run_breakdown(REQUEST)
@@ -559,6 +570,49 @@ class TestTheRerunLeavesARuledOutTaskOut(Base):
 		)
 		self.assertEqual(doc.proposed_tasks[1].added_by, REVIEWER)
 		self.assertEqual(doc.proposed_tasks[1].depends_on_idx, 0)
+
+	def test_a_row_that_already_created_its_task_survives(self):
+		"""A re-run after a partial confirm must not drop the link to a Task on the board: the
+		``created_task`` stamp is what stops the next confirm writing the same work again."""
+		doc = self.run_it(
+			{"summary": "", "tasks": [{"subject": "Model row", "target": "erpnext"}]},
+			proposed=(
+				{"include": 1, "subject": "Written already", "project": ERPNEXT, "created_task": "TASK-2026-03000", "depends_on_idx": 2},
+				{"include": 1, "subject": "Old model row", "project": ERPNEXT},
+			),
+		)
+		self.assertEqual([row.subject for row in doc.proposed_tasks], ["Model row", "Written already"])
+		kept = doc.proposed_tasks[1]
+		self.assertEqual(kept.created_task, "TASK-2026-03000")
+		self.assertEqual(kept.depends_on_idx, 0)
+		# Only the new model row is still owed a Task.
+		self.assertEqual(
+			[row.subject for row in task_writer.pending_rows(doc.proposed_tasks)], ["Model row"]
+		)
+
+	def test_kept_rows_get_fresh_positions(self):
+		"""v16's ``append`` keeps a truthy idx, so the kept rows must arrive without one."""
+		doc = self.run_it(
+			{
+				"summary": "",
+				"tasks": [
+					{"subject": "Model one", "target": "erpnext"},
+					{"subject": "Model two", "target": "erpnext"},
+				],
+				"duplicates": [{"task": "TASK-2026-01000", "why": "maybe"}],
+			},
+			proposed=(
+				{"include": 1, "subject": "Written already", "project": ERPNEXT, "created_task": "TASK-2026-03000"},
+				dict(hand_row(), include=1, added_by=REVIEWER),
+			),
+			candidates=(flagged(task="TASK-OLD", task_subject="Old flag"), flagged(dismissed=1)),
+		)
+		self.assertEqual([row.idx for row in doc.proposed_tasks], [1, 2, 3, 4])
+		self.assertEqual(
+			[row.subject for row in doc.proposed_tasks],
+			["Model one", "Model two", "Written already", "Reorder level accepts 0 on the Item form"],
+		)
+		self.assertEqual([(row.task, row.idx) for row in doc.duplicate_candidates], [(WRONG_DUPLICATE, 1), ("TASK-2026-01000", 2)])
 
 	def test_nothing_but_the_ruled_out_duplicate_fails_and_leaves_the_way_open(self):
 		"""The model still says "no work". The request fails legibly, keeps the ruling, and a
@@ -664,6 +718,11 @@ class TestAddProposedTask(Base):
 		feedback.add_proposed_task(REQUEST, hand_row(parent_task="TASK-2026-02200"))
 		self.assertEqual(doc.proposed_tasks[0].parent_task, "TASK-2026-02200")
 
+	def test_a_group_subject_is_cut_to_what_a_task_holds(self):
+		doc = self.request()
+		feedback.add_proposed_task(REQUEST, hand_row(group_subject="g" * 300))
+		self.assertEqual(len(doc.proposed_tasks[0].group_subject), 140)
+
 	def test_a_dependency_must_point_at_an_existing_row(self):
 		doc = self.request(proposed=({"include": 1, "subject": "Model row", "project": ERPNEXT},))
 		feedback.add_proposed_task(REQUEST, hand_row(depends_on_idx=1))
@@ -688,6 +747,69 @@ class TestAddProposedTask(Base):
 		STATE.roles = ["Employee"]
 		with self.assertRaises(PermissionError_):
 			feedback.add_proposed_task(REQUEST, hand_row())
+
+
+class TestRemoveProposedTask(Base):
+	def proposal(self):
+		return self.request(
+			proposed=(
+				{"include": 1, "subject": "Model row", "project": ERPNEXT},
+				dict(hand_row(subject="Hand one"), include=1, added_by=REVIEWER, depends_on_idx=1),
+				dict(hand_row(subject="Hand two"), include=1, added_by=REVIEWER, depends_on_idx=2),
+				dict(hand_row(subject="Hand three"), include=1, added_by=REVIEWER, depends_on_idx=4),
+				{"include": 1, "subject": "Model four", "project": ERPNEXT},
+			)
+		)
+
+	def test_a_hand_row_goes_and_the_rest_are_renumbered(self):
+		doc = self.proposal()
+		feedback.remove_proposed_task(REQUEST, "proposed_tasks-2")
+		self.assertEqual(
+			[(row.subject, row.idx, row.depends_on_idx) for row in doc.proposed_tasks],
+			[
+				("Model row", 1, None),
+				# Pointed at the removed row: cleared.
+				("Hand two", 2, 0),
+				# Pointed past it: follows its row up one place.
+				("Hand three", 3, 3),
+				("Model four", 4, None),
+			],
+		)
+		self.assertEqual(doc.saves, 1)
+
+	def test_a_model_row_cannot_be_removed(self):
+		doc = self.proposal()
+		with self.assertRaises(ValidationError) as caught:
+			feedback.remove_proposed_task(REQUEST, "proposed_tasks-1")
+		self.assertIn("Untick", str(caught.exception))
+		self.assertEqual(len(doc.proposed_tasks), 5)
+		self.assertEqual(doc.saves, 0)
+
+	def test_a_row_that_created_its_task_cannot_be_removed(self):
+		doc = self.request(
+			proposed=(dict(hand_row(), include=1, added_by=REVIEWER, created_task="TASK-2026-03000"),)
+		)
+		with self.assertRaises(ValidationError):
+			feedback.remove_proposed_task(REQUEST, "proposed_tasks-1")
+		self.assertEqual(len(doc.proposed_tasks), 1)
+
+	def test_an_unknown_row_is_refused(self):
+		self.proposal()
+		with self.assertRaises(ValidationError):
+			feedback.remove_proposed_task(REQUEST, "proposed_tasks-99")
+
+	def test_only_while_breakdown_ready(self):
+		doc = self.proposal()
+		doc.status = doc._stored_status = "Breakdown Failed"
+		with self.assertRaises(ValidationError):
+			feedback.remove_proposed_task(REQUEST, "proposed_tasks-2")
+		self.assertEqual(len(doc.proposed_tasks), 5)
+
+	def test_reviewers_only(self):
+		self.proposal()
+		STATE.roles = ["Employee"]
+		with self.assertRaises(PermissionError_):
+			feedback.remove_proposed_task(REQUEST, "proposed_tasks-2")
 
 
 class TestCreateTasksFromAHandAddedRow(Base):

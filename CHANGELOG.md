@@ -40,7 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     paragraph after the description. It is marked "added by ERPNext, not the requester", and it names the ruled-out
     Tasks by subject so the plan can say how this work differs. It goes in the text, not in a new key, because
     Triton ignores keys it does not know. It is appended after the 20,000-character cap, so a long report can't cut
-    it off. A breakdown with nothing ruled out sends the same payload as before.
+    it off. A breakdown with nothing ruled out sends the same payload as before. **Don't rely on it.** Triton's
+    prompt treats the Description section as data, so the model may ignore the note, and a requester could type the
+    same words into their own report. It is a nudge. The fix that holds is the hand-added task below.
   - **Add a task by hand** (`add_proposed_task`). This is the way through that never needs the model. On the
     proposal panel, and on a failed breakdown, the reviewer types a subject, project, priority, hours and an optional
     parent group. The row is validated the way an edited row is: the same `_filter_payload` allowlist
@@ -49,20 +51,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - A missing subject refuses the call, and so does a project outside the two configured boards. Neither is just
       reported.
     - A `parent_task` must be an existing group Task on the same project.
-    - A subject is cut to 140 characters, the length of `Task.subject`.
+    - A subject, and a group subject, are cut to 140 characters, the length of `Task.subject`.
     - `added_by` is the session user. The new field on `Enhancement Request Proposed Task` is server-set and is never
       accepted from the client.
 
     "Create these tasks" then writes the row even when the model proposed nothing.
-  - **A hand-added row survives a re-run.** `_apply` replaces only the model's rows and keeps every row with
-    `added_by`. Its `depends_on_idx` is cleared, because the positions it pointed at have just been renumbered.
-    Without this, "Ask again" after adding a task would silently delete what the reviewer typed.
+  - **Remove a hand-added row** (`remove_proposed_task`). Each hand-added row that hasn't produced a Task gets a
+    Remove button. Model rows are still unticked rather than deleted, so the proposal stays a record of what the model
+    suggested. A row with a `created_task` can never be removed. Rows after the removed one move up a place, so every
+    `depends_on_idx` is remapped: one that pointed past it follows its row, and one that pointed at it is cleared.
+  - **A re-run keeps every row that isn't the model's to replace.** `_apply` replaces only the model's rows. It keeps
+    every row with `added_by`, and every row with a `created_task`, after the new model rows.
+    - **The `created_task` half fixes an older bug** that "Plan it as new work" made easy to hit. A re-run after a
+      partial confirm used to drop the rows that had already written their Task. That lost the link, and the next
+      confirm could propose and create the same work a second time. The stamp is what makes `task_writer`
+      idempotent, so it now outlives the proposal it came from.
+    - A kept row's `depends_on_idx` is cleared, because the positions it pointed at have just been renumbered. Its
+      `idx` is cleared too. Frappe v16's `Document.append` keeps a truthy `idx`, so a kept row would otherwise share
+      a position with a new model row. The same applies to kept duplicate candidates.
+  - **No unsaved edit is thrown away.** "Not a duplicate", "Plan it as new work", "Ask again", Remove and "Add to the
+    proposal" all redraw the request. Each one first saves the pending proposal edits through `save_proposal`.
   - **One new transition: `Breakdown Failed -> Breakdown Ready`**, made only by adding a task by hand
     (`product_feedback/states.py`). No new state. It is needed because the model can still answer "no work" after a
     re-run, and that answer is `Breakdown Failed`, where `create_tasks` refuses. Without it, a wrong duplicate flag
     could still stop a Task being created. The human gate is unchanged: nothing reaches `Breakdown Ready` from
     `Submitted`, and `Breakdown Failed -> Tasks Created` stays illegal.
-  - **Who sees what.** All three overrides are reviewer-only (`_require_reviewer`). They send the requester nothing:
+  - **Who sees what.** All four endpoints are reviewer-only (`_require_reviewer`). They send the requester nothing:
     a ruling inside the review is not a decision about their request. The requester still hears about the outcome
     through the existing `decision_made` and `tasks_created` notifications.
   - **Panel hints reworded** so a reviewer knows the duplicate flag and the proposal are suggestions they can
@@ -77,11 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - `tests/test_feedback_duplicate_override.py` is a new bench-free unittest suite with a frappe stub and its own CI
-  step. It covers the dismissal stamp and its refusals, plan-as-new-work, and the re-run: a ruled-out Task is not in
-  the `open_tasks` sent (with a control showing an un-ruled one is), the reviewer note, a duplicate named anyway is
-  dropped while the ruling row survives, and a hand row survives. It also covers the add-row endpoint, including its
-  project refusal, and `create_tasks` with only a hand-added row, run through the real `task_writer`. 31 of its 32
-  tests fail on v1.727.1; the one that passes is that control.
+  step. It covers:
+  - the dismissal stamp and its refusals, and plan-as-new-work;
+  - the re-run: a ruled-out Task is not in the `open_tasks` sent (with a control showing an un-ruled one is), the
+    reviewer note, and a duplicate named anyway being dropped while the ruling row survives;
+  - hand-added rows and `created_task` rows surviving a re-run, with fresh positions. The stub's `append` keeps a
+    truthy `idx`, as v16's does, and this test fails if the `idx` reset is removed;
+  - the add-row endpoint, including its project refusal and the 140-character caps;
+  - removing a hand-added row, with dependencies remapped;
+  - `create_tasks` with only a hand-added row, run through the real `task_writer`.
+
+  40 of its 41 tests fail on v1.727.1. The one that passes is that control.
 - `test_feedback_breakdown_parse.py` covers a ruled-out duplicate dropped even when it was sent.
   `test_feedback_brief.py` covers a ruled-out candidate left off the brief. `test_feedback_states.py` covers the new
   transition. `test_feedback_code_anchors.py` gets a `has_column` and `get` on its stub, and its outline assertion
