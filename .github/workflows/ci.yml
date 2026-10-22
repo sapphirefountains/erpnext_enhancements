@@ -2247,6 +2247,14 @@ jobs:
         run: node scripts/test_workspace_block_return.mjs
       - name: Workspace block return (registration + lifecycle claims)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_block_return -v
+      # Projects Dashboard tab bar and toolbar (v1.719.0): View More, the "+" menu, the Columns
+      # icon button, Reset widths moved into its menu. The node harness runs the block's real
+      # script and the real ColumnSelector against a recording jQuery stand-in and drives the
+      # buttons; the unittest holds the markup, script and stylesheet in agreement. Files only.
+      - name: Projects Dashboard toolbar (node harness + shell agreement)
+        run: |
+          node scripts/test_projects_dashboard_toolbar.mjs
+          python -m unittest erpnext_enhancements.tests.test_projects_dashboard_toolbar -v
       # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
       # every block's status colours in both themes. Fails on any of the literal status hexes
       # (and their rgba() tints) the blocks used before, comments stripped so a note naming
