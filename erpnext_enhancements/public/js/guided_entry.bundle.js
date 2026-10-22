@@ -38,8 +38,10 @@ import "./guided_item/extension.js";
 // ends_core and opens_by_default. 4 since v1.684.0: the view settings (form_kit/view.js) and the
 // FieldGroups of One page and Tabs, which the page now calls. A tab still holding an older version
 // (loaded before a deploy) takes this one, so a page that needs SidePanel, an extension or the view
-// settings finds it.
-const VERSION = 4;
+// settings finds it. 5 since v1.711.0: header_status, files_chip_label, files_drop and chip_action
+// (form_kit/header.js), which the page's head band calls; a tab that holds 4 would throw out of
+// refresh_chrome.
+const VERSION = 5;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_form_kit && window.sf_form_kit.version >= VERSION)) {

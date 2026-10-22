@@ -384,7 +384,7 @@ class TestTheModules(unittest.TestCase):
 
 	def test_the_pages_bundle_installs_the_kit_with_the_item_extension(self):
 		b = self.out["bundle"]
-		self.assertEqual(b["version"], 4, "3 brought the extensions (P8.1), 4 the view settings (v1.684.0)")
+		self.assertEqual(b["version"], 5, "3 brought the extensions (P8.1), 4 the view settings (v1.684.0), 5 the head band (v1.711.0)")
 		self.assertEqual(b["has"], ["extension_for", "ends_core", "opens_by_default", "parse_route"])
 		self.assertTrue(b["item"])
 
