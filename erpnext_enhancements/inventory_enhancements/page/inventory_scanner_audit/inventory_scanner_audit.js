@@ -186,8 +186,11 @@ class InventoryScanner {
 				paint_all: () => ro.paint(root(), this.reorder, esc, (t) => __(t), null, document.activeElement, false, this.reorderLabels()),
 				later: (fn, ms) => setTimeout(fn, ms),
 				tr: (text) => __(text),
+				confirm: (text, yes, no) => frappe.confirm(text, yes, no),
 			});
-			ro.bind(root(), this.reorder);
+			// Enter in a reorder box leaves it, and the wedge scanner's next read would go nowhere: the focus
+			// goes to the counted-quantity box, where the clerk was before they stopped to look at the rule.
+			ro.bind(root(), this.reorder, { after_enter: () => this.$pending.find('.isa-qty').focus() });
 		} catch (e) {
 			this.reorder = null;
 			return;

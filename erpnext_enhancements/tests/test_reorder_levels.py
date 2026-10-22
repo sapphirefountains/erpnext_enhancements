@@ -34,6 +34,8 @@ import types
 import unittest
 from pathlib import Path
 
+from erpnext_enhancements.inventory_enhancements import stock_scan_rules as rules
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
@@ -94,6 +96,13 @@ class Doc:
 		self._d.setdefault(table, []).append(row)
 		return row
 
+	def remove(self, row):
+		for table, rows in self._d.items():
+			if isinstance(rows, list) and any(r is row for r in rows):
+				self._d[table] = [r for r in rows if r is not row]
+				return
+		raise ValueError("not a child row of this document")
+
 	def check_permission(self, ptype="read"):
 		if not FRAPPE.has_permission(self.doctype, ptype, doc=self):
 			raise FRAPPE.PermissionError(f"No permission to {ptype} {self.doctype}")
@@ -129,9 +138,18 @@ def _matches(record, filters):
 	return True
 
 
-def _item_record(code, rules=None, modified=None):
+SHELF_A = "Shelf A - SF"
+INVENTORY = "Inventory - SF"
+ALL = "All Warehouses - SF"
+# The group each seeded rule checks stock in, as on production: bins under the Rows -> Inventory,
+# the Inventory Room -> All Warehouses.
+GROUP_OF = {BIN: INVENTORY, BIN_B: INVENTORY, ROOM: ALL}
+
+
+def _item_record(code, rules=None, modified=None, uom="Unit"):
 	return {
 		"name": code,
+		"stock_uom": uom,
 		"modified": modified or datetime.datetime(2026, 10, 22, 8, 0, 0, 123456),
 		"reorder_levels": [
 			{
@@ -139,6 +157,7 @@ def _item_record(code, rules=None, modified=None):
 				"parenttype": "Item",
 				"parentfield": "reorder_levels",
 				"warehouse": r[0],
+				"warehouse_group": r[4] if len(r) > 4 else GROUP_OF.get(r[0], r[0]),
 				"warehouse_reorder_level": r[1],
 				"warehouse_reorder_qty": r[2],
 				"material_request_type": r[3] if len(r) > 3 else "Purchase",
@@ -168,6 +187,15 @@ def _reset(perm=None, roles=None):
 				"PDT-LOCALX": _item_record(
 					"PDT-LOCALX", [(ROOM, 6.0, 24.0, "Purchase"), (BIN, 2.0, 5.0, "Material Transfer")]
 				),
+				# one bin rule that checks the bin itself, the shape the default group must not copy
+				"PDT-OWN": _item_record("PDT-OWN", [(BIN_B, 1.0, 1.0, "Purchase", BIN_B)]),
+				"PDT-FEET": _item_record("PDT-FEET", uom="Foot"),
+				"PDT-WHOLE": _item_record("PDT-WHOLE", uom="Each"),
+			},
+			"uoms": {
+				"Unit": {"name": "Unit", "must_be_whole_number": 0},
+				"Foot": {"name": "Foot", "must_be_whole_number": 0},
+				"Each": {"name": "Each", "must_be_whole_number": 1},
 			},
 			"warehouses": {
 				BIN: {
@@ -215,6 +243,40 @@ def _reset(perm=None, roles=None):
 			},
 		}
 	)
+	_tree()
+
+
+def _tree():
+	"""Production's shape: All Warehouses > Inventory > Row > Shelf > Bin, the Inventory Room straight
+	under Inventory, a second Row with no rules yet, and two warehouses outside it."""
+
+	def wh(name, parent=None, group=0, **kw):
+		return {
+			"name": name,
+			"warehouse_name": name.replace(" - SF", ""),
+			"parent_warehouse": parent,
+			"is_group": group,
+			"disabled": 0,
+			"warehouse_type": "",
+			**kw,
+		}
+
+	w = STATE["warehouses"]
+	for name, parent, group in (
+		(ALL, None, 1),
+		(INVENTORY, ALL, 1),
+		("Row 1 - SF", INVENTORY, 1),
+		(SHELF_A, "Row 1 - SF", 1),
+		("Row 2 - SF", INVENTORY, 1),
+		("Shelf C - SF", "Row 2 - SF", 1),
+		("Bin C - SF", "Shelf C - SF", 0),
+		("Annex - SF", ALL, 0),
+		("Loose - SF", None, 0),
+	):
+		w[name] = wh(name, parent, group)
+	w[BIN]["parent_warehouse"] = SHELF_A
+	w[BIN_B]["parent_warehouse"] = SHELF_A
+	w[ROOM]["parent_warehouse"] = INVENTORY
 
 
 def _install_frappe_stub():
@@ -280,6 +342,8 @@ def _install_frappe_stub():
 			rows = [r for r in rows if _matches(r, filters)]
 		elif doctype == "Warehouse":
 			rows = [r for r in STATE["warehouses"].values() if _matches(r, filters)]
+		elif doctype == "UOM":
+			rows = [r for r in STATE["uoms"].values() if _matches(r, filters)]
 		else:
 			raise AssertionError(f"unexpected get_all({doctype})")
 		return [frappe._dict({f: r.get(f) for f in fields}) for r in rows]
@@ -524,15 +588,16 @@ class TestWriting(unittest.TestCase):
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(
 			(rows[0]["warehouse"], rows[0]["warehouse_group"], rows[0]["material_request_type"]),
-			(BIN, BIN, "Purchase"),
+			(BIN, INVENTORY, "Purchase"),
 		)
 		self.assertEqual((rows[0]["warehouse_reorder_level"], rows[0]["warehouse_reorder_qty"]), (3.0, 10.0))
 		self.assertTrue(out["entry"]["has_rule"])
 
-	def test_a_new_rule_with_a_level_but_no_quantity_is_refused_in_words(self):
-		with self.assertRaises(FRAPPE.ValidationError) as caught:
-			self.save("PDT-BARE", BIN, level="3")
-		self.assertIn("how many to buy", str(caught.exception))
+	def test_a_new_rule_needs_both_numbers_neither_ever_zero(self):
+		for kwargs in ({"level": "3"}, {"qty": "10"}):
+			with self.assertRaises(FRAPPE.ValidationError) as caught:
+				self.save("PDT-BARE", BIN, **kwargs)
+			self.assertIn("Enter both Reorder at and Buy", str(caught.exception))
 		self.assertEqual(STATE["items"]["PDT-BARE"]["reorder_levels"], [], "nothing was made")
 		self.assertEqual(STATE["saves"], [])
 
@@ -578,15 +643,24 @@ class TestWriting(unittest.TestCase):
 		with self.assertRaises(FRAPPE.ValidationError) as caught:
 			self.save()
 		self.assertIn("level or a quantity", str(caught.exception))
-		with self.assertRaises(FRAPPE.ValidationError) as caught:
-			self.save(level="5", qty="0")
-		self.assertIn("how many to buy", str(caught.exception))
 		self.assertEqual(STATE["saves"], [])
 
-	def test_a_rule_can_be_turned_off_with_zero(self):
-		self.save(level="0", qty="0")
+	def test_a_level_or_quantity_of_zero_is_never_saved(self):
+		for kwargs, words in (
+			({"level": "5", "qty": "0"}, "Buy must be more than 0"),
+			({"level": "0", "qty": "5"}, "Reorder at must be more than 0"),
+			({"level": "0", "qty": "0"}, "Reorder at must be more than 0"),
+			({"level": "0"}, "Reorder at must be more than 0"),
+		):
+			with self.subTest(kwargs=kwargs):
+				with self.assertRaises(FRAPPE.ValidationError) as caught:
+					self.save(**kwargs)
+				self.assertIn(words, str(caught.exception))
+		with self.assertRaises(FRAPPE.ValidationError):
+			self.save("PDT-BARE", BIN, level="0", qty="5")
+		self.assertEqual(STATE["saves"], [])
 		row = STATE["items"]["PDT-A"]["reorder_levels"][0]
-		self.assertEqual((row["warehouse_reorder_level"], row["warehouse_reorder_qty"]), (0.0, 0.0))
+		self.assertEqual((row["warehouse_reorder_level"], row["warehouse_reorder_qty"]), (4.0, 12.0))
 
 	def test_erpnexts_own_refusal_gets_through(self):
 		STATE["save_error"] = FRAPPE.ValidationError("Item PDT-A is blocked by a validation of its own")
@@ -605,6 +679,166 @@ class TestWriting(unittest.TestCase):
 		self.assertTrue(first["saved"])
 		self.assertFalse(again["saved"])
 		self.assertEqual(len(STATE["saves"]), 1)
+
+
+class TestTheCeilingAndTheUnit(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def save(self, code="PDT-A", **kw):
+		return api.set_reorder_level(code, BIN, stamp(code), **kw)
+
+	def test_the_ceiling_is_the_stock_scan_quantity_ceiling_and_the_clients(self):
+		self.assertEqual(api.MAX_AMOUNT, rules.MAX_QTY)
+		logic = (JS_DIR / "logic.js").read_text(encoding="utf-8")
+		self.assertIn(
+			f"export const MAX_AMOUNT = {api.MAX_AMOUNT};", logic, "the editor and the server must agree"
+		)
+
+	def test_a_number_above_the_ceiling_is_refused_whichever_box_it_was_typed_in(self):
+		for kwargs in (
+			{"level": "12345678905", "qty": "12"},
+			{"level": "4", "qty": "100001"},
+			{"level": "100001"},
+			{"qty": "1e9"},
+		):
+			with self.subTest(kwargs=kwargs):
+				with self.assertRaises(FRAPPE.ValidationError) as caught:
+					self.save(**kwargs)
+				self.assertTrue(
+					"more than" in str(caught.exception) or "number" in str(caught.exception),
+					str(caught.exception),
+				)
+		self.assertEqual(STATE["saves"], [])
+		self.save(level="100000", qty="100000")
+		self.assertEqual(len(STATE["saves"]), 1, "the ceiling itself is allowed")
+
+	def test_a_unit_counted_in_whole_numbers_takes_whole_numbers(self):
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			api.set_reorder_level("PDT-WHOLE", BIN, stamp("PDT-WHOLE"), level="4.5", qty="10")
+		self.assertIn("whole numbers", str(caught.exception))
+		with self.assertRaises(FRAPPE.ValidationError):
+			api.set_reorder_level("PDT-WHOLE", BIN, stamp("PDT-WHOLE"), level="4", qty="2.5")
+		self.assertEqual(STATE["saves"], [])
+		api.set_reorder_level("PDT-WHOLE", BIN, stamp("PDT-WHOLE"), level="4", qty="10")
+		self.assertEqual(STATE["saves"], ["PDT-WHOLE"])
+		# where fractions are fine
+		api.set_reorder_level("PDT-FEET", BIN, stamp("PDT-FEET"), level="4.5", qty="10.25")
+		self.assertEqual(STATE["saves"], ["PDT-WHOLE", "PDT-FEET"])
+
+	def test_the_read_says_which_units_are_whole_numbers(self):
+		out = api.get_reorder_levels(BIN, json.dumps(["PDT-WHOLE", "PDT-FEET"]))["levels"]
+		self.assertEqual((out["PDT-WHOLE"]["stock_uom"], out["PDT-WHOLE"]["whole_number"]), ("Each", True))
+		self.assertEqual((out["PDT-FEET"]["stock_uom"], out["PDT-FEET"]["whole_number"]), ("Foot", False))
+		self.assertTrue(
+			api.set_reorder_level("PDT-WHOLE", BIN, stamp("PDT-WHOLE"), level="4", qty="10")["entry"][
+				"whole_number"
+			]
+		)
+
+
+class TestTheGroupANewRuleChecksStockIn(unittest.TestCase):
+	"""Production: 32 of 33 bin rules check Inventory - SF, all 83 Inventory Room rules check All
+	Warehouses - SF, one bin rule checks itself. A new rule follows its neighbours."""
+
+	def setUp(self):
+		_reset()
+
+	def group(self, warehouse):
+		return api._default_group(warehouse)
+
+	def test_a_bin_under_a_row_checks_inventory(self):
+		self.assertEqual(self.group(BIN), INVENTORY)
+		self.assertEqual(self.group(BIN_B), INVENTORY, "its own neighbour checks itself, and is not copied")
+
+	def test_the_inventory_room_checks_all_warehouses(self):
+		self.assertEqual(self.group(ROOM), ALL)
+
+	def test_a_bin_on_a_shelf_with_no_rules_climbs_to_the_rows_neighbours(self):
+		self.assertEqual(self.group("Bin C - SF"), INVENTORY)
+
+	def _only(self, *rules_):
+		"""Every seeded rule removed, then ``rules_`` (code, warehouse, group) made."""
+		for item in STATE["items"].values():
+			item["reorder_levels"] = []
+		for index, (warehouse, group) in enumerate(rules_):
+			code = f"PDT-X{index}"
+			STATE["items"][code] = _item_record(code, [(warehouse, 1.0, 1.0, "Purchase", group)])
+
+	def test_a_rule_that_checks_its_own_bin_is_never_the_example(self):
+		self._only((BIN_B, BIN_B))
+		self.assertEqual(self.group(BIN), SHELF_A, "no usable neighbour: the parent group")
+		self.assertEqual(self.group(ROOM), INVENTORY)
+
+	def test_with_no_neighbours_the_parent_group_else_itself(self):
+		self.assertEqual(self.group("Annex - SF"), ALL)
+		self.assertEqual(self.group("Loose - SF"), "Loose - SF")
+
+	def test_the_most_common_group_wins_and_a_tie_goes_by_name(self):
+		self._only((BIN, "Row 1 - SF"), (BIN, "Row 1 - SF"), (BIN_B, INVENTORY))
+		self.assertEqual(self.group("Bin C - SF"), "Row 1 - SF", "2 votes beat 1")
+		self._only((BIN, "Row 1 - SF"), (BIN_B, INVENTORY))
+		self.assertEqual(self.group("Bin C - SF"), INVENTORY, "a tie goes by name")
+
+	def test_a_new_rule_made_by_the_endpoint_gets_it_and_existing_rules_are_untouched(self):
+		before = copy.deepcopy(STATE["items"]["PDT-ROOM"]["reorder_levels"])
+		api.set_reorder_level("PDT-BARE", ROOM, stamp("PDT-BARE"), level="2", qty="9")
+		self.assertEqual(STATE["items"]["PDT-BARE"]["reorder_levels"][0]["warehouse_group"], ALL)
+		api.set_reorder_level("PDT-A", BIN, stamp("PDT-A"), level="6", qty="12")
+		self.assertEqual(STATE["items"]["PDT-A"]["reorder_levels"][0]["warehouse_group"], INVENTORY)
+		self.assertEqual(STATE["items"]["PDT-ROOM"]["reorder_levels"], before)
+		# editing the rule that checks its own bin does not quietly change what it checks
+		api.set_reorder_level("PDT-OWN", BIN_B, stamp("PDT-OWN"), level="2", qty="3")
+		self.assertEqual(STATE["items"]["PDT-OWN"]["reorder_levels"][0]["warehouse_group"], BIN_B)
+
+
+class TestRemoving(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def remove(self, code="PDT-A", warehouse=BIN, modified="", view=None):
+		return api.remove_reorder_rule(code, warehouse, stamp(code) if modified == "" else modified, view)
+
+	def test_the_post_only_endpoint_removes_the_row_through_the_item(self):
+		self.assertEqual(api.remove_reorder_rule._whitelist, {"methods": ["POST"]})
+		out = self.remove()
+		self.assertTrue(out["saved"])
+		self.assertEqual(STATE["saves"], ["PDT-A"])
+		self.assertEqual(STATE["items"]["PDT-A"]["reorder_levels"], [])
+		self.assertFalse(out["entry"]["has_rule"])
+		self.assertEqual(out["entry"]["row_warehouse"], BIN, "a new rule can be made again on the bin")
+
+	def test_only_the_named_rule_goes(self):
+		out = self.remove("PDT-MIXED", BIN_B, view=BIN)
+		self.assertEqual([r["warehouse"] for r in STATE["items"]["PDT-MIXED"]["reorder_levels"]], [ROOM])
+		self.assertEqual(out["entry"]["row_warehouse"], ROOM, "the item next rule is what shows")
+		self.assertTrue(out["entry"]["elsewhere"])
+
+	def test_permission_first_then_the_stale_page_then_a_missing_rule(self):
+		_reset(perm={("Item", "write"): False})
+		with self.assertRaises(FRAPPE.PermissionError):
+			self.remove()
+		_reset(roles=["Sales User"])
+		with self.assertRaises(FRAPPE.PermissionError):
+			self.remove()
+		_reset()
+		old = stamp("PDT-A")
+		api.set_reorder_level("PDT-A", BIN, old, level="5", qty="12")
+		with self.assertRaises(FRAPPE.TimestampMismatchError):
+			self.remove(modified=old)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			self.remove("PDT-BARE", BIN)
+		self.assertIn("no reorder rule", str(caught.exception))
+		with self.assertRaises(FRAPPE.ValidationError):
+			self.remove("PDT-ROOM", BIN)
+		self.assertEqual(len(STATE["saves"]), 1)
+		self.assertEqual(len(STATE["items"]["PDT-A"]["reorder_levels"]), 1)
+
+	def test_erpnexts_refusal_gets_through_and_nothing_is_kept(self):
+		STATE["save_error"] = FRAPPE.ValidationError("blocked")
+		with self.assertRaises(FRAPPE.ValidationError):
+			self.remove()
+		self.assertEqual(STATE["saves"], [])
 
 
 class TestTheSource(unittest.TestCase):
@@ -626,7 +860,7 @@ class TestTheSource(unittest.TestCase):
 			self.assertNotIn(banned, code, f"the write must be Item.save() as the user, not {banned}")
 		calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
 		saves = [c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "save"]
-		self.assertEqual(len(saves), 1, "exactly one write, the Item's save")
+		self.assertEqual(len(saves), 2, "set and remove each write once: the Item's save")
 
 	def test_the_item_permission_is_checked_first(self):
 		tree = ast.parse(API_FILE.read_text(encoding="utf-8"))
@@ -690,6 +924,11 @@ class TestTheSource(unittest.TestCase):
 			bins, r"catch \(e\) \{\s+resolve\(\);", "a throwing require must not wedge the ready chain"
 		)
 		self.assertIn("sync_reorder(loc)", bins)
+		self.assertIn(
+			"this.ready.then(() => this.load_reorder_bundle());", bins, "the bins do not wait for the column"
+		)
+		self.assertIn("redraw_after_blur", bins)
+		self.assertIn("confirm: (text, yes, no) => frappe.confirm(text, yes, no)", bins)
 		# the page's own files are still the first require, exactly as test_bin_manager pins
 		self.assertIn(
 			'const BM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "bin_manager.bundle.js"];', bins
@@ -699,6 +938,8 @@ class TestTheSource(unittest.TestCase):
 		self.assertIn("reorderCell(p)", isa)
 		self.assertIn("isa-reorder", isa)
 		self.assertIn("this.reorder.load(", isa)
+		self.assertIn("after_enter", isa, "Enter must return focus to the counted-quantity box")
+		self.assertIn("confirm: (text, yes, no) => frappe.confirm(text, yes, no)", isa)
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not on PATH")

@@ -69,6 +69,7 @@ class BinManagerPage {
 		this._route_timer = null;
 		this.reorder = null; // the reorder editor (public/js/reorder_levels), once its bundle is here
 		this.reorder_for = null; // the location object the editor last read the rules for
+		this.redraw_after_blur = false; // a table redraw is waiting for a reorder box to be left
 		// v16's frappe.require calls back even when a file failed to load (assets.js "resolve even on
 		// error"), so both globals are checked; a page without them says so instead of waiting.
 		this.ready = new Promise((resolve) => frappe.require(BM_ASSETS, resolve)).then(() => {
@@ -76,19 +77,9 @@ class BinManagerPage {
 			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller ? window.sf_bin_manager : null;
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
-		// After the page's own files, never instead of them: a failed reorder bundle must not hold the bins.
-		this.ready = this.ready
-			.then(
-				() =>
-					new Promise((resolve) => {
-						try {
-							frappe.require(BM_REORDER_ASSETS, resolve);
-						} catch (e) {
-							resolve();
-						}
-					})
-			)
-			.then(() => this.start_reorder());
+		// The reorder boxes are not part of `ready`: the bins draw as soon as the page's own files are here, and
+		// the Reorder column joins them when its bundle arrives (a slow or failed bundle holds nothing up).
+		this.ready.then(() => this.load_reorder_bundle());
 		page.set_secondary_action(__("Refresh"), () => this.ctl && this.ctl.refresh(), "refresh");
 		this.bind();
 	}
@@ -124,6 +115,20 @@ class BinManagerPage {
 
 	// The reorder boxes (v1.720.0): the shared editor, once its bundle has arrived, wired to this page's
 	// root. Everything about them is optional: with no bundle there is no Reorder column.
+	load_reorder_bundle() {
+		new Promise((resolve) => {
+			try {
+				frappe.require(BM_REORDER_ASSETS, resolve);
+			} catch (e) {
+				resolve();
+			}
+		}).then(() => {
+			this.start_reorder();
+			// The bin or picker already on screen is drawn again, now with the column.
+			if (this.reorder) this.render();
+		});
+	}
+
 	start_reorder() {
 		const ro = window.sf_reorder && window.sf_reorder.version >= 1 ? window.sf_reorder : null;
 		if (!ro || !this.sf) return;
@@ -135,6 +140,7 @@ class BinManagerPage {
 				paint_all: () => this.paint_reorder(null),
 				later: (fn, ms) => setTimeout(fn, ms),
 				tr: (text) => __(text),
+				confirm: (text, yes, no) => frappe.confirm(text, yes, no),
 			});
 			ro.bind(this.$root[0], this.reorder);
 		} catch (e) {
@@ -226,6 +232,15 @@ class BinManagerPage {
 			else if (row && act === "boneyard") this.boneyard_dialog(row);
 			else if (row && act === "unassign") this.unassign_dialog(row);
 			else if (row && act === "keep") this.keep(row, el);
+		});
+		// A table redraw that waited for a reorder box (draw_items): run it once focus has left the boxes.
+		this.$root.on("focusout", ".ro-input", () => {
+			setTimeout(() => {
+				const active = document.activeElement;
+				if (!this.redraw_after_blur || (active && active.classList && active.classList.contains("ro-input"))) return;
+				this.redraw_after_blur = false;
+				this.render();
+			}, 0);
 		});
 		this.$root.on("input", ".bm-filter", (e) => {
 			if (!this.ctl) return;
@@ -401,9 +416,14 @@ class BinManagerPage {
 
 	draw_items(loc) {
 		const el = this.$root.find(".bm-items")[0];
-		// A redraw replaces the table, and with it a reorder box being typed in: leave it until the box is left.
+		// A redraw replaces the table, and with it a reorder box being typed in: it waits until the box is
+		// left (the focusout handler in bind() draws it then), so nothing on screen goes stale.
 		const active = document.activeElement;
-		if (this.reorder && el && active && active.classList && active.classList.contains("ro-input") && el.contains(active)) return;
+		if (this.reorder && el && active && active.classList && active.classList.contains("ro-input") && el.contains(active)) {
+			this.redraw_after_blur = true;
+			return;
+		}
+		this.redraw_after_blur = false;
 		const st = this.ctl.state;
 		if (!loc) {
 			if (st.location_error) this.failed(el, st.location_error, () => this.ctl.load_location(), __("Could not load this bin."));

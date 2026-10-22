@@ -26,8 +26,10 @@ function field_of(node) {
 
 // `change` fires when a box loses focus having been edited, and on Enter in a text box: either way
 // the two boxes are saved together (the editor drops a save that changes nothing). Enter also leaves
-// the box, so the phone's keyboard closes on the saved value. Escape puts the boxes back.
-export function bind(root, editor) {
+// the box, so the phone's keyboard closes on the saved value, and then runs the page's `after_enter`
+// (if it gave one) to put focus where it wants it. Escape puts the boxes back.
+export function bind(root, editor, opts) {
+	const after_enter = (opts && opts.after_enter) || null;
 	root.addEventListener("change", (event) => {
 		const cell = field_of(event.target) && cell_of(event.target);
 		if (cell) editor.commit(cell.getAttribute("data-ro-item"));
@@ -40,6 +42,9 @@ export function bind(root, editor) {
 			event.preventDefault();
 			// A box not yet "changed" (the person typed and pressed Enter in one go) fires change on blur.
 			if (event.target.blur) event.target.blur();
+			// Where the page wants the person next (the scanner's counted-quantity box): a blur alone drops
+			// focus on the page, and the next wedge scan is typed into nothing.
+			if (after_enter) after_enter(cell.getAttribute("data-ro-item"), event.target);
 		} else if (event.key === "Escape") {
 			editor.revert(cell.getAttribute("data-ro-item"));
 		}

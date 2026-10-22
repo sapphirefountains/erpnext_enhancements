@@ -512,6 +512,8 @@ function makeJQuery(registry) {
 			disabled: false,
 			querySelector: () => null,
 			addEventListener: () => {},
+			// `inRoot` marks a stand-in focused element as being inside this node.
+			contains: (x) => !!x && !!x.inRoot,
 		};
 		const state = { html: html || "", text: "", value: "", handlers: [], props: {} };
 		const self = new Proxy(function () {}, {
@@ -634,6 +636,8 @@ function loadPage(options) {
 		set_route: (...args) => world.set_route(args.length === 1 ? args[0] : args),
 		require: (assets, cb) => {
 			registry.requires.push(assets);
+			// { hold_reorder: true }: the reorder bundle never arrives (a slow network), and must hold nothing up.
+			if ((options || {}).hold_reorder && assets[0] === "reorder_levels.bundle.js") return;
 			cb();
 		},
 		ui: {
@@ -689,7 +693,8 @@ function loadPage(options) {
 		location: { reload: () => {} },
 	};
 	const __ = (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args && args[i] !== undefined ? args[i] : m));
-	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console, document: { activeElement: null } });
+	const document = { activeElement: null };
+	const context = vm.createContext({ frappe, window, $, __, setTimeout, clearTimeout, Promise, console, document });
 	vm.runInContext(fs.readFileSync(PAGE_JS, "utf-8"), context, { filename: PAGE_JS });
 	const page = pages["bin-manager"];
 	world.page = {
@@ -706,7 +711,7 @@ function loadPage(options) {
 		const handler = root.handlers.find((h) => h.evt === "click" && h.selector === "[data-act]");
 		handler.fn({ preventDefault: () => {}, currentTarget: { getAttribute: (k) => attrs[k] ?? null, disabled: false } });
 	};
-	return { server, world, registry, page, click };
+	return { server, world, registry, page, click, document };
 }
 
 test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
@@ -732,6 +737,52 @@ test("the real page with the reorder bundle: a Reorder column, one read per list
 	await page.bin_manager.ctl.load_location();
 	await settle();
 	check("a reloaded list is read once more", reads().length, 2);
+});
+
+test("the real page: a redraw waits for a focused reorder box and runs when it is left", async () => {
+	const { server, world, registry, page, click, document } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	const items = () => registry.found[".bm-items"][0];
+	const before = items().innerHTML;
+	check("drawn", /PUMP, 1 HP/.test(before), true);
+	// the person is in a reorder box; the list changes underneath (a reload lands)
+	document.activeElement = { classList: { contains: (c) => c === "ro-input" }, inRoot: true };
+	page.bin_manager.ctl.state.location = Object.assign({}, page.bin_manager.ctl.state.location, {
+		items: [{ item_code: "PDT-0001", item_name: "PUMP, 2 HP", stock_uom: "Unit", on_hand: 4, on_order: 0, assigned: true, is_default: false, undecided: false }],
+	});
+	page.bin_manager.render();
+	check("the table is left alone while a box has focus", items().innerHTML, before);
+	check("and the redraw is queued", page.bin_manager.redraw_after_blur, true);
+	// focus leaves the box: the queued redraw runs
+	document.activeElement = null;
+	const root = registry.root.__state;
+	const handler = root.handlers.find((h) => h.evt === "focusout" && h.selector === ".ro-input");
+	check("a focusout handler on the boxes", !!handler, true);
+	handler.fn({});
+	await settle();
+	check("the redraw ran", /PUMP, 2 HP/.test(items().innerHTML), true);
+	check("and is no longer queued", page.bin_manager.redraw_after_blur, false);
+	// focus moving from one box to the next (still in a box) does not draw yet
+	page.bin_manager.redraw_after_blur = true;
+	document.activeElement = { classList: { contains: (c) => c === "ro-input" }, inRoot: true };
+	handler.fn({});
+	await settle();
+	check("still queued while another box has focus", page.bin_manager.redraw_after_blur, true);
+	check("no write ever", server.writes().length, 0);
+});
+
+test("the real page: a reorder bundle that never arrives holds the bins up for nothing", async () => {
+	const { world, registry, page, click } = loadPage({ reorder: true, hold_reorder: true });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	click({ "data-act": "bin", "data-bin": BIN_A });
+	await settle();
+	check("the bin is drawn", /PUMP, 1 HP/.test(registry.found[".bm-items"][0].innerHTML), true);
+	check("with no column", /Reorder/.test(registry.found[".bm-items"][0].innerHTML), false);
+	check("and no editor", page.bin_manager.reorder, null);
 });
 
 test("the real page without the reorder bundle: no column, no read", async () => {

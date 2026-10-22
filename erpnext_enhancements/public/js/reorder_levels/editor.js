@@ -9,6 +9,8 @@
  *   env.paint(item_code)           show the item's entry and status in its cell, leaving a box the
  *                                  person is typing in alone
  *   env.paint_all()               the same for every cell on screen (a read has landed)
+ *   env.confirm(text, yes, no)     ask a yes/no question in a dialog (frappe.confirm): `yes` or `no` runs
+ *                                  once. A dialog pushes no history entry.
  *   env.later(fn, ms)              setTimeout
  *   env.tr(text)                   translate
  *
@@ -33,9 +35,10 @@ export class ReorderEditor {
 		this.can_edit = false;
 		this.ready = false; // a read has answered for this warehouse
 		this.error = ""; // the read failed: the sentence, shown in place of the numbers
-		this.status = {}; // item_code -> { state: "saving" | "saved" | "error", message }
+		this.status = {}; // item_code -> { state: "saving" | "saved" | "error" | "note", message }
 		this.busy = {};
 		this.dirty = {};
+		this.asking = {}; // item_code -> a "Remove this reorder rule?" dialog is open
 		this.saves = {}; // item_code -> how many saves have landed: a read that began before one must not undo it
 		this.seq = 0;
 	}
@@ -68,6 +71,7 @@ export class ReorderEditor {
 			this.status = {};
 			this.busy = {};
 			this.dirty = {};
+			this.asking = {};
 			this.saves = {};
 			this.ready = false;
 			this.error = "";
@@ -114,7 +118,8 @@ export class ReorderEditor {
 		this.env.paint(item_code);
 	}
 
-	// A box changed (blur or Enter): save what the two boxes now say, if that is a change.
+	// A box changed (blur or Enter): do what the two boxes now say, if that is a change: save it, say
+	// what is missing, or (a box of an existing rule cleared) ask whether to remove the rule.
 	commit(item_code) {
 		const entry = this.entries[item_code];
 		if (!entry || !this.can_edit || !logic.has_place(entry)) return Promise.resolve();
@@ -122,6 +127,7 @@ export class ReorderEditor {
 			this.dirty[item_code] = true;
 			return Promise.resolve();
 		}
+		if (this.asking[item_code]) return Promise.resolve();
 		const boxes = this.env.read(item_code) || {};
 		const plan = logic.plan_save(entry, boxes.level, boxes.qty, (s) => this.tr(s));
 		if (plan.kind === "none") {
@@ -132,7 +138,34 @@ export class ReorderEditor {
 			this.set_status(item_code, "error", plan.message);
 			return Promise.resolve();
 		}
-		const req = logic.save_request(entry, this.warehouse, plan);
+		if (plan.kind === "incomplete") {
+			this.set_status(item_code, "note", plan.message);
+			return Promise.resolve();
+		}
+		if (plan.kind === "remove") return this.ask_remove(item_code);
+		return this.send(item_code, logic.save_request(entry, this.warehouse, plan), this.tr("Saved."));
+	}
+
+	// "Remove this reorder rule?" Yes removes it; No (or closing the dialog) puts the boxes back.
+	ask_remove(item_code) {
+		this.asking[item_code] = true;
+		return new Promise((resolve) => {
+			const done = (go) => {
+				if (!this.asking[item_code]) return;
+				delete this.asking[item_code];
+				const entry = this.entries[item_code];
+				if (go && entry) resolve(this.send(item_code, logic.remove_request(entry, this.warehouse), this.tr("Removed.")));
+				else {
+					this.revert(item_code);
+					resolve();
+				}
+			};
+			this.env.confirm(this.tr(logic.REMOVE_ASK), () => done(true), () => done(false));
+		});
+	}
+
+	// One write for an item, on its own, with the status line telling how it went.
+	send(item_code, req, saved_text) {
 		this.busy[item_code] = true;
 		this.set_status(item_code, "saving", this.tr("Saving…"));
 		return this.env.call(req.method, req.args, { quiet: true }).then(
@@ -140,7 +173,7 @@ export class ReorderEditor {
 				if (out && out.entry) this.entries[item_code] = out.entry;
 				this.saves[item_code] = (this.saves[item_code] || 0) + 1;
 				this.finish(item_code);
-				this.set_status(item_code, "saved", (out && out.saved) === false ? this.tr("No change.") : this.tr("Saved."));
+				this.set_status(item_code, "saved", (out && out.saved) === false ? this.tr("No change.") : saved_text);
 				this.env.later(() => {
 					const now = this.status[item_code];
 					if (now && now.state === "saved") this.set_status(item_code, null);

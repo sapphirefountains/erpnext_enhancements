@@ -71,6 +71,11 @@ let kitCopies = 0;
 const SCANNER_KIT = path.join(APP, "public", "js", "scanner_kit", "index.js");
 const JSQR_PATH = "/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js";
 let scannerKit = null;
+// The reorder boxes (v1.720.0), the real modules (imported once before the scenarios), installed on a
+// Desk made with { reorder: true } when a page asks for "reorder_levels.bundle.js". The DOM wiring is
+// recorded, not run: this Desk has no real elements (see scripts/test_reorder_levels.mjs for those).
+const REORDER_DIR = path.join(APP, "public", "js", "reorder_levels");
+let reorderMods = null;
 const SCRIPTS = {
 	"device-console": "device_management/page/device_console/device_console.js",
 	"inventory-scanner-audit": "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
@@ -935,6 +940,29 @@ function makeDesk(options) {
 					};
 				} else if (opts.scanner !== false) scannerKit.install(ctx);
 			}
+			if (list.includes("reorder_levels.bundle.js") && opts.reorder) {
+				const install = () => {
+					ctx.sf_reorder = {
+						version: 1,
+						ReorderEditor: reorderMods.editor.ReorderEditor,
+						cell_html: reorderMods.editor.cell_html,
+						bind: (root, editor, bindOpts) => {
+							desk.reorderBind = { root, editor, opts: bindOpts };
+						},
+						paint: () => {},
+						read_boxes: () => ({ level: "", qty: "" }),
+						logic: reorderMods.logic,
+					};
+				};
+				if (opts.reorderLate) {
+					desk.reorderArrives = () => {
+						install();
+						if (typeof cb === "function") cb();
+					};
+					return new Promise(() => {});
+				}
+				install();
+			}
 			if (list.includes(JSQR_PATH)) ctx.jsQR = jsQR;
 			if (typeof cb === "function") cb();
 			return Promise.resolve();
@@ -1697,6 +1725,73 @@ async function inventory(settings, opts) {
 }
 
 const isa = (desk) => desk.wrapper("inventory-scanner-audit").inventory_scanner;
+
+// The reorder boxes on the item card (v1.720.0): the page asks the editor for the scanned item's rule at
+// the active location, draws its cell in the card's own slot, hands focus back to the counted-quantity
+// box after Enter, and never makes a history entry of any of it.
+const reorderAnswer = ({ item_codes, warehouse }) => ({
+	can_edit: true,
+	levels: Object.fromEntries(
+		JSON.parse(item_codes).map((code) => [
+			code,
+			{ item_code: code, has_rule: true, row_warehouse: warehouse, warehouse_label: warehouse, elsewhere: false, level: 3, qty: 10, modified: "m", stock_uom: "Nos", whole_number: true },
+		])
+	),
+});
+const cardHtml = (desk) =>
+	desk.calls.filter((c) => c.label === ".isa-pending" && c.method === "html").map((c) => String(c.args[0] || ""));
+
+test("Scanner Audit, reorder bundle: a scanned item asks for its rule once, at the active location, and draws the cell", async () => {
+	const desk = await inventory(null, { reorder: true });
+	desk.respond.get_reorder_levels = reorderAnswer;
+	const entries = desk.at().length;
+	await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+	await desk.settle();
+	const asks = desk.sent("get_reorder_levels");
+	check("one read, for the item, at the default warehouse", [asks.length, asks[0].args.warehouse, asks[0].args.item_codes], [1, "Stores", JSON.stringify(["ITEM-1"])]);
+	check("the card has its reorder slot and the cell in it", cardHtml(desk).some((h) => h.includes('class="isa-reorder"') && h.includes('data-ro-item="ITEM-1"')), true);
+	check("the pending card is ITEM-1", isa(desk).state.pendingItem.item_code, "ITEM-1");
+	check("no history entry for it", desk.at().length, entries);
+	check("no write", desk.requests.filter((r) => /set_reorder|remove_reorder/.test(r.method)).length, 0);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Scanner Audit, reorder bundle: Enter in a reorder box hands focus to the counted-quantity box", async () => {
+	const desk = await inventory(null, { reorder: true });
+	desk.respond.get_reorder_levels = reorderAnswer;
+	await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+	await desk.settle();
+	check("the wiring was given an after-Enter hook", typeof (desk.reorderBind && desk.reorderBind.opts && desk.reorderBind.opts.after_enter), "function");
+	const before = desk.focused(".isa-qty");
+	desk.reorderBind.opts.after_enter("ITEM-1");
+	check("the counted-quantity box is focused again", desk.focused(".isa-qty"), before + 1);
+	check("the scan box did not take it", desk.focused(".isa-scan") <= before + 1, true);
+	check("a clearing question is a dialog (frappe.confirm), not a route", typeof desk.reorderBind.editor.env.confirm, "function");
+});
+
+test("Scanner Audit, reorder bundle arriving after the card: its slot is filled, the card is not redrawn", async () => {
+	const desk = await inventory(null, { reorder: true, reorderLate: true });
+	desk.respond.get_reorder_levels = reorderAnswer;
+	await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+	await desk.settle();
+	check("no read yet", desk.sent("get_reorder_levels").length, 0);
+	const cards = cardHtml(desk).length;
+	desk.reorderArrives();
+	await desk.settle();
+	check("then the item rule is asked for", desk.sent("get_reorder_levels").length, 1);
+	check("the card itself was not drawn again", cardHtml(desk).filter((h) => h.includes("isa-card")).length, cardHtml(desk).slice(0, cards).filter((h) => h.includes("isa-card")).length);
+	const slot = desk.calls.filter((c) => c.label === ".isa-reorder" && c.method === "html").map((c) => String(c.args[0] || ""));
+	check("the slot got the cell", slot.some((h) => h.includes('data-ro-item="ITEM-1"')), true);
+});
+
+test("Scanner Audit without the reorder bundle: the card is the card it was, and nothing is asked", async () => {
+	const desk = await inventory();
+	await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+	await desk.settle();
+	check("no read", desk.sent("get_reorder_levels").length, 0);
+	check("an empty slot", cardHtml(desk).every((h) => !h.includes("data-ro-item")), true);
+	check("the card is drawn and the counted-quantity box focused", [isa(desk).state.pendingItem.item_code, desk.focused(".isa-qty")], ["ITEM-1", 1]);
+});
 
 test("Scanner Audit: a start-up that failed says so, and Try again boots it in place", async () => {
 	const desk = makeDesk();
@@ -2900,6 +2995,10 @@ test("Day Board: a draft visit links to its record and to the Visit Wizard, both
 
 (async () => {
 	scannerKit = await import(pathToFileURL(SCANNER_KIT).href);
+	reorderMods = {
+		logic: await import(pathToFileURL(path.join(REORDER_DIR, "logic.js")).href),
+		editor: await import(pathToFileURL(path.join(REORDER_DIR, "editor.js")).href),
+	};
 	for (const t of tests) {
 		console.log(t.name);
 		try {

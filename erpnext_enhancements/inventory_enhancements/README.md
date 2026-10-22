@@ -609,9 +609,17 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
 * **Which rule.** The rule on the warehouse on screen; failing that the item's own rule wherever it is,
   labelled with its warehouse and edited there; an item with none gets a Purchase rule on the bin once
   both numbers are given.
+* **What a rule may be.** Automatic re-ordering is on (`Stock Settings`), so a bad rule orders stock:
+  a rule needs **both** numbers and both above 0 (a level of 0 raises a request whenever stock reaches 0);
+  clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
+  that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
+  digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
+  neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
+  ignored): `Inventory - SF` for a bin, `All Warehouses - SF` for the Inventory Room. Existing rules are
+  never changed. (`api.item_flow.save_stock` still writes the bin as its own group: a follow-up.)
 * **Endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` (the Stock
-  Scan roles; `can_edit` is Item write) and `set_reorder_level(item_code, warehouse, modified, level, qty,
-  view_warehouse)`. The write is `Item.save()` as the user, so ERPNext validates (a level needs a
+  Scan roles; `can_edit` is Item write), `set_reorder_level(item_code, warehouse, modified, level, qty,
+  view_warehouse)` and `remove_reorder_rule(item_code, warehouse, modified, view_warehouse)`. The write is `Item.save()` as the user, so ERPNext validates (a level needs a
   quantity; one rule a warehouse) and Item permission is checked first; no SQL, no `ignore_permissions`.
   `modified` is the Item's stamp from the read: a stale page writes nothing and is shown the current
   numbers. The same numbers again save nothing.

@@ -38,6 +38,20 @@ Setting the same numbers again changes nothing and saves nothing (the Item's ``m
 still, so other open copies of it stay current), which also makes a resend after a lost reply
 harmless: these are absolute values, not increments.
 
+**What a rule may be (review of #1338, 2026-10-22).** ``Stock Settings.auto_indent`` is on, so every
+rule this module writes drives the nightly automatic Material Requests (ERPNext submits them):
+
+* **Both numbers, both above 0.** A rule is made only when the level *and* the quantity are given, and
+  neither is ever saved as 0: a level of 0 raises a request whenever stock reaches 0. A rule is
+  switched off by *removing* it (:func:`remove_reorder_rule`), which the screens ask about first.
+* **A sane ceiling** (:data:`MAX_AMOUNT`, ``stock_scan_rules.MAX_QTY``, 100,000): a barcode scanned
+  into a focused box and followed by the scanner's Enter is a number of twelve digits. And a unit
+  that is counted in whole numbers (``UOM.must_be_whole_number``) takes whole numbers.
+* **The group a new rule checks stock in** is the one its neighbours use (:func:`_default_group`),
+  not the bin itself: ERPNext counts the projected stock of ``warehouse_group`` against the level.
+  A rule that checks the bin alone orders an item that has plenty on the shelf next door. Existing
+  rules are never changed.
+
 Tab-indented, like ``item_flow``, whose ``_item`` (the Item after the caller's permission) and
 ``_set`` (set a field, say whether that changed it) it reuses.
 """
@@ -57,6 +71,10 @@ REORDER_TYPE = item_flow.REORDER_TYPE
 
 #: Items one read may ask about: a bin lists at most 150 (``api.stock_scan.LOCATION_ITEM_LIMIT``).
 MAX_ITEMS = 300
+
+#: The most a level or a quantity may be: the Stock Scan page's own ceiling on a quantity. The editor
+#: (``public/js/reorder_levels/logic.js`` ``MAX_AMOUNT``) holds the same number; a test keeps them equal.
+MAX_AMOUNT = rules.MAX_QTY
 
 
 def _check_access():
@@ -120,12 +138,13 @@ def _pick(rows, warehouse):
 	return None
 
 
-def _entry(item_code, rows, modified, warehouse, names):
+def _entry(item_code, rows, modified, warehouse, names, uom=None, whole=False):
 	"""One item's reorder payload for ``warehouse``.
 
 	``has_rule`` false means no row yet (``level``/``qty`` are None and ``row_warehouse`` is where a
 	save would make it: ``warehouse``). ``elsewhere`` says the rule shown is another warehouse's.
-	``modified`` is the Item's stamp, to send back with a save.
+	``modified`` is the Item's stamp, to send back with a save. ``stock_uom`` is the unit the numbers
+	are in, and ``whole_number`` whether that unit is counted in whole numbers.
 	"""
 	row = _pick(rows, warehouse)
 	where = (row.get("warehouse") if row else None) or warehouse or None
@@ -139,7 +158,18 @@ def _entry(item_code, rows, modified, warehouse, names):
 		"qty": flt(row.get("warehouse_reorder_qty")) if row else None,
 		"material_request_type": (row.get("material_request_type") or REORDER_TYPE) if row else None,
 		"modified": cstr(modified),
+		"stock_uom": uom,
+		"whole_number": bool(whole),
 	}
+
+
+def _whole_number_units(units):
+	"""Which of ``units`` are counted in whole numbers (``UOM.must_be_whole_number``)."""
+	units = [unit for unit in set(units) if unit]
+	if not units:
+		return set()
+	rows = frappe.get_all("UOM", filters={"name": ["in", units]}, fields=["name", "must_be_whole_number"])
+	return {row.name for row in rows if flt(row.must_be_whole_number)}
 
 
 def _warehouse_names(names):
@@ -163,7 +193,7 @@ def get_reorder_levels(warehouse=None, item_codes=None):
 	codes = _codes(item_codes)
 	if not codes:
 		return {"levels": {}, "can_edit": can_edit()}
-	items = frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "modified"])
+	items = frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "modified", "stock_uom"])
 	rows = frappe.get_all(
 		"Item Reorder",
 		filters={"parent": ["in", codes], "parenttype": "Item", "parentfield": "reorder_levels"},
@@ -180,17 +210,30 @@ def get_reorder_levels(warehouse=None, item_codes=None):
 	for row in rows:
 		by_item.setdefault(row.parent, []).append(row)
 	names = _warehouse_names([warehouse] + [row.warehouse for row in rows])
+	whole = _whole_number_units([item.stock_uom for item in items])
 	return {
 		"levels": {
-			item.name: _entry(item.name, by_item.get(item.name, []), item.modified, warehouse, names)
+			item.name: _entry(
+				item.name,
+				by_item.get(item.name, []),
+				item.modified,
+				warehouse,
+				names,
+				item.stock_uom,
+				item.stock_uom in whole,
+			)
 			for item in items
 		},
 		"can_edit": can_edit(),
 	}
 
 
-def _amount(value, label):
-	"""``value`` as a quantity, or None when it was not sent. Blank is not sent."""
+def _amount(value, label, whole=False, unit=None):
+	"""``value`` as a quantity, or None when it was not sent. Blank is not sent.
+
+	Refused: not a number (``nan`` and ``inf`` included), negative, above :data:`MAX_AMOUNT`, and
+	with a fraction in a unit that is counted in whole numbers.
+	"""
 	number = flow_rules._number(value)
 	if number is None:
 		return None
@@ -198,7 +241,63 @@ def _amount(value, label):
 		frappe.throw(_("The reorder {0} must be a number.").format(label))
 	if number < 0:
 		frappe.throw(_("The reorder {0} cannot be below 0.").format(label))
+	if number > MAX_AMOUNT:
+		frappe.throw(
+			_("The reorder {0} cannot be more than {1}. Was that a barcode?").format(label, f"{MAX_AMOUNT:,}")
+		)
+	if whole and number != int(number):
+		frappe.throw(
+			_("{0} is counted in whole numbers, so the reorder {1} must be a whole number.").format(
+				frappe.bold(unit or _("The unit")), label
+			)
+		)
 	return float(number)
+
+
+def _ancestors(parents, name):
+	"""``name``'s group parents, nearest first (``parents`` maps a warehouse to its parent)."""
+	out = []
+	while parents.get(name) and parents[name] not in out:
+		out.append(parents[name])
+		name = parents[name]
+	return out
+
+
+def _default_group(warehouse):
+	"""The ``warehouse_group`` a new rule on ``warehouse`` should check stock in.
+
+	The one its neighbours use: among the existing rules on warehouses at the **same depth** in the
+	tree, under the nearest group ancestor that has any, the most common ``warehouse_group`` (ties
+	by name). On this site that is ``Inventory - SF`` for the bins under the Rows and ``All
+	Warehouses - SF`` for ``Inventory Room - SF``. Rules whose group is their own warehouse (one bin
+	has such a rule, the shape this function exists to avoid) are not asked. With no neighbours at
+	all: the warehouse's parent group, else the warehouse itself. Read, never written.
+	"""
+	parents = {
+		row.name: row.parent_warehouse
+		for row in frappe.get_all("Warehouse", fields=["name", "parent_warehouse"])
+	}
+	mine = _ancestors(parents, warehouse)
+	existing = frappe.get_all(
+		"Item Reorder",
+		filters={"parenttype": "Item", "parentfield": "reorder_levels"},
+		fields=["warehouse", "warehouse_group"],
+	)
+	chains = {}
+	for rule in existing:
+		group = cstr(rule.warehouse_group).strip()
+		if group and group != rule.warehouse and rule.warehouse not in chains:
+			chains[rule.warehouse] = _ancestors(parents, rule.warehouse)
+	for ancestor in mine:
+		votes = {}
+		for rule in existing:
+			group = cstr(rule.warehouse_group).strip()
+			chain = chains.get(rule.warehouse)
+			if group and group != rule.warehouse and chain and len(chain) == len(mine) and ancestor in chain:
+				votes[group] = votes.get(group, 0) + 1
+		if votes:
+			return sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+	return mine[0] if mine else warehouse
 
 
 def _make_row_ok(warehouse):
@@ -220,27 +319,8 @@ def _make_row_ok(warehouse):
 		)
 
 
-@frappe.whitelist(methods=["POST"])
-def set_reorder_level(item_code, warehouse, modified, level=None, qty=None, view_warehouse=None):
-	"""Set an item's reorder ``level`` and/or ``qty`` on the rule for ``warehouse``.
-
-	``warehouse`` is the warehouse of the rule the screen showed (its ``row_warehouse``); an item
-	with no rule there gets one, as a Purchase request. ``modified`` is the Item's stamp from the
-	read: a changed Item refuses the save, with the sentence to reload. A value left out (None or
-	blank) is kept; on a new rule a value left out is 0. ``view_warehouse`` is the warehouse the
-	screen is looking at (``warehouse`` when not given): the answer's ``elsewhere`` is read against it.
-	Returns ``{"saved", "message", "entry"}``;
-	``saved`` is False when the numbers were already those.
-
-	Everything that can be refused is, in the caller's terms, before anything is written; the
-	write is one ``Item.save()``, whose own validation is ERPNext's.
-	"""
-	_check_access()
-	item = item_flow._item(item_code, "write")
-	warehouse = cstr(warehouse).strip()
-	level_value, qty_value = _amount(level, _("level")), _amount(qty, _("quantity"))
-	if level_value is None and qty_value is None:
-		frappe.throw(_("Give a reorder level or a quantity."))
+def _stale(item, modified):
+	"""Refuse a page whose copy of the Item is older than the Item."""
 	if not _same_stamp(item.modified, modified):
 		frappe.throw(
 			_(
@@ -250,38 +330,103 @@ def set_reorder_level(item_code, warehouse, modified, level=None, qty=None, view
 			frappe.TimestampMismatchError,
 		)
 
+
+def _answer(item, view, changed, message):
+	saved_rows = [r.as_dict() for r in item.get("reorder_levels") or []]
+	names = _warehouse_names([view] + [r.get("warehouse") for r in saved_rows])
+	whole = item.stock_uom in _whole_number_units([item.stock_uom])
+	return {
+		"saved": bool(changed),
+		"message": message,
+		"entry": _entry(item.name, saved_rows, item.modified, view, names, item.stock_uom, whole),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def set_reorder_level(item_code, warehouse, modified, level=None, qty=None, view_warehouse=None):
+	"""Set an item's reorder ``level`` and/or ``qty`` on the rule for ``warehouse``.
+
+	``warehouse`` is the warehouse of the rule the screen showed (its ``row_warehouse``); an item
+	with no rule there gets one, as a Purchase request, **only when both numbers are given**, in
+	the group :func:`_default_group` finds. ``modified`` is the Item's stamp from the read: a
+	changed Item refuses the save, with the sentence to reload. On an existing rule a value left
+	out (None or blank) is kept. Neither number is ever saved as 0 or less: to stop reordering,
+	:func:`remove_reorder_rule`. ``view_warehouse`` is the warehouse the screen is looking at
+	(``warehouse`` when not given): the answer's ``elsewhere`` is read against it. Returns
+	``{"saved", "message", "entry"}``; ``saved`` is False when the numbers were already those.
+
+	Everything that can be refused is, in the caller's terms, before anything is written; the
+	write is one ``Item.save()``, whose own validation is ERPNext's.
+	"""
+	_check_access()
+	item = item_flow._item(item_code, "write")
+	warehouse = cstr(warehouse).strip()
+	whole = item.stock_uom in _whole_number_units([item.stock_uom])
+	level_value = _amount(level, _("level"), whole, item.stock_uom)
+	qty_value = _amount(qty, _("quantity"), whole, item.stock_uom)
+	if level_value is None and qty_value is None:
+		frappe.throw(_("Give a reorder level or a quantity."))
+	_stale(item, modified)
+
 	rows = item.get("reorder_levels") or []
 	target = _pick([r for r in rows if r.get("warehouse") == warehouse], warehouse)
 	created = target is None
+	if created and (level_value is None or qty_value is None):
+		frappe.throw(_("Enter both Reorder at and Buy to create a reorder rule."))
+	new_level = flt(target.warehouse_reorder_level) if level_value is None else level_value
+	new_qty = flt(target.warehouse_reorder_qty) if qty_value is None else qty_value
+	unchanged = (
+		not created
+		and flt(target.warehouse_reorder_level) == new_level
+		and flt(target.warehouse_reorder_qty) == new_qty
+	)
+	if not unchanged:
+		# A level of 0 raises a request whenever stock reaches 0, and the nightly run submits them.
+		if new_level <= 0:
+			frappe.throw(_("Reorder at must be more than 0. To stop reordering, remove the rule."))
+		if new_qty <= 0:
+			frappe.throw(_("Buy must be more than 0. To stop reordering, remove the rule."))
 	if created:
 		_make_row_ok(warehouse)
 		target = item.append(
 			"reorder_levels",
 			{
 				"warehouse": warehouse,
-				"warehouse_group": warehouse,
+				"warehouse_group": _default_group(warehouse),
 				"material_request_type": REORDER_TYPE,
 				"warehouse_reorder_level": 0.0,
 				"warehouse_reorder_qty": 0.0,
 			},
 		)
 	changed = created
-	new_level = flt(target.warehouse_reorder_level) if level_value is None else level_value
-	new_qty = flt(target.warehouse_reorder_qty) if qty_value is None else qty_value
-	if new_level > 0 and new_qty <= 0:
-		# ERPNext says this too ("Please set reorder quantity"), after the row is built; in words first.
-		frappe.throw(_("Say how many to buy each time the stock falls to the reorder level."))
 	changed = item_flow._set(target, "warehouse_reorder_level", new_level) or changed
 	changed = item_flow._set(target, "warehouse_reorder_qty", new_qty) or changed
 	if changed:
 		item.save()
-
 	view = cstr(view_warehouse).strip() or warehouse
-	saved_rows = [r.as_dict() for r in item.get("reorder_levels") or []]
-	names = _warehouse_names([view] + [r.get("warehouse") for r in saved_rows])
-	entry = _entry(item.name, saved_rows, item.modified, view, names)
-	return {
-		"saved": bool(changed),
-		"message": _("Saved.") if changed else _("Nothing to change."),
-		"entry": entry,
-	}
+	return _answer(item, view, changed, _("Saved.") if changed else _("Nothing to change."))
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_reorder_rule(item_code, warehouse, modified, view_warehouse=None):
+	"""Remove an item's reorder rule on ``warehouse``: the one way to stop it reordering.
+
+	The row comes out through the Item document (``Item.remove`` then ``Item.save()``, as the
+	user), after the same permission and stale-page checks as :func:`set_reorder_level`. The
+	screens ask "Remove this reorder rule?" before calling this. Returns what a save returns;
+	``entry`` is then the item's next rule (if it has another), else none.
+	"""
+	_check_access()
+	item = item_flow._item(item_code, "write")
+	warehouse = cstr(warehouse).strip()
+	_stale(item, modified)
+	target = _pick(
+		[r for r in item.get("reorder_levels") or [] if r.get("warehouse") == warehouse], warehouse
+	)
+	if target is None:
+		frappe.throw(
+			_("{0} has no reorder rule on {1}.").format(frappe.bold(item.name), frappe.bold(warehouse or "?"))
+		)
+	item.remove(target)
+	item.save()
+	return _answer(item, cstr(view_warehouse).strip() or warehouse, True, _("Removed."))

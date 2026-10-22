@@ -5,14 +5,27 @@
  *
  * An entry is api.reorder_levels' payload for one item:
  *   { item_code, has_rule, row_warehouse, warehouse_label, elsewhere, level, qty,
- *     material_request_type, modified }
+ *     material_request_type, modified, stock_uom, whole_number }
  * `level` is the reorder level (buy more when the stock falls to it) and `qty` how many to buy.
+ *
+ * WHAT A RULE MAY BE (review of #1338). Automatic reordering is on, so a rule that is wrong orders
+ * stock nobody wanted: a rule needs BOTH numbers and both above 0 (a level of 0 raises a request
+ * whenever stock reaches 0); a rule is switched off by REMOVING it, which asks first; and neither
+ * number may be above MAX_AMOUNT, because a barcode scanned into a focused box is twelve digits.
  */
 
 export const READ = "erpnext_enhancements.api.reorder_levels.get_reorder_levels";
 export const WRITE = "erpnext_enhancements.api.reorder_levels.set_reorder_level";
+export const REMOVE = "erpnext_enhancements.api.reorder_levels.remove_reorder_rule";
+
+// The most a level or a quantity may be: api.reorder_levels.MAX_AMOUNT, which is
+// stock_scan_rules.MAX_QTY. A test holds the two equal.
+export const MAX_AMOUNT = 100000;
 
 export const QTY_NEEDED = "Say how many to buy each time the stock falls to the reorder level.";
+export const BOTH_NEEDED = "Enter both to create a reorder rule.";
+export const ABOVE_ZERO = "Use a number above 0, or clear a box to remove the rule.";
+export const REMOVE_ASK = "Remove this reorder rule?";
 
 // A number as the box shows it: 3 not 3.000000000, 2.5 as 2.5, nothing for "no rule".
 export function number_text(value) {
@@ -35,25 +48,42 @@ export function parse_amount(text) {
 	return Number.isFinite(value) ? { ok: true, value } : { ok: false };
 }
 
-// What a blur should do with the two boxes' text: nothing, say what is wrong, or save.
-//   { kind: "none" }
-//   { kind: "invalid", field: "level" | "qty", message }
+// What a blur should do with the two boxes' text:
+//   { kind: "none" }                                  nothing changed
+//   { kind: "invalid", field, message }               say what is wrong; nothing is sent
+//   { kind: "incomplete", message }                   a new rule has one box: say so, gently
+//   { kind: "remove" }                                a box of an existing rule was cleared: ask
 //   { kind: "save", level, qty }
-// On an item with a rule a blank box means 0 (the person cleared it); on one with none, a blank
-// box is simply not filled in yet, and nothing is saved until a box has a number.
+// Every number is checked first (a number, 0 or more, at most MAX_AMOUNT, whole where the unit is);
+// then the rules above. A number that is 0 is never saved.
 export function plan_save(entry, level_text, qty_text, tr) {
 	const say = tr || ((s) => s);
-	const level = parse_amount(level_text);
-	const qty = parse_amount(qty_text);
-	if (!level.ok) return { kind: "invalid", field: "level", message: say("The reorder level must be a number, 0 or more.") };
-	if (!qty.ok) return { kind: "invalid", field: "qty", message: say("The order quantity must be a number, 0 or more.") };
+	const fields = [
+		["level", parse_amount(level_text), say("The reorder level")],
+		["qty", parse_amount(qty_text), say("The order quantity")],
+	];
+	for (const [field, parsed, label] of fields) {
+		if (!parsed.ok) return { kind: "invalid", field, message: `${label} ${say("must be a number, 0 or more.")}` };
+		if (parsed.value !== null && parsed.value > MAX_AMOUNT) {
+			return { kind: "invalid", field, message: `${label} ${say("cannot be more than")} ${MAX_AMOUNT.toLocaleString("en-US")}.` };
+		}
+		if (parsed.value !== null && entry && entry.whole_number && !Number.isInteger(parsed.value)) {
+			return { kind: "invalid", field, message: `${label} ${say("must be a whole number for this item.")}` };
+		}
+	}
+	const level = fields[0][1].value;
+	const qty = fields[1][1].value;
 	const ruled = !!(entry && entry.has_rule);
-	if (!ruled && level.value === null && qty.value === null) return { kind: "none" };
-	const new_level = level.value === null ? 0 : level.value;
-	const new_qty = qty.value === null ? 0 : qty.value;
-	if (ruled && new_level === Number(entry.level) && new_qty === Number(entry.qty)) return { kind: "none" };
-	if (new_level > 0 && new_qty <= 0) return { kind: "invalid", field: "qty", message: say(QTY_NEEDED) };
-	return { kind: "save", level: new_level, qty: new_qty };
+	if (!ruled) {
+		if (level === null && qty === null) return { kind: "none" };
+		if (level === null || qty === null) return { kind: "incomplete", message: say(BOTH_NEEDED) };
+	} else {
+		if (level !== null && qty !== null && level === Number(entry.level) && qty === Number(entry.qty)) return { kind: "none" };
+		if (level === null || qty === null) return { kind: "remove" };
+	}
+	if (level <= 0) return { kind: "invalid", field: "level", message: say(ABOVE_ZERO) };
+	if (qty <= 0) return { kind: "invalid", field: "qty", message: say(ABOVE_ZERO) };
+	return { kind: "save", level, qty };
 }
 
 // The server call for a save. A rule is edited where it is (`row_warehouse`); an item with none gets
@@ -68,6 +98,19 @@ export function save_request(entry, view_warehouse, plan) {
 			modified: entry.modified || "",
 			level: plan.level,
 			qty: plan.qty,
+		},
+	};
+}
+
+// The server call that removes the rule an entry shows.
+export function remove_request(entry, view_warehouse) {
+	return {
+		method: REMOVE,
+		args: {
+			item_code: entry.item_code,
+			warehouse: entry.row_warehouse || view_warehouse || "",
+			view_warehouse: view_warehouse || "",
+			modified: entry.modified || "",
 		},
 	};
 }

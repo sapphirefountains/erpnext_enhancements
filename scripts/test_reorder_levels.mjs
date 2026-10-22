@@ -103,17 +103,33 @@ test("plan_save: nothing, invalid, or a save", () => {
 	check("unchanged, written differently", logic.plan_save(ruled, "4.0", "12.00").kind, "none");
 	check("level changed", logic.plan_save(ruled, "6", "12"), { kind: "save", level: 6, qty: 12 });
 	check("qty changed", logic.plan_save(ruled, "4", "20"), { kind: "save", level: 4, qty: 20 });
-	check("cleared box on a rule is 0", logic.plan_save(ruled, "", "12"), { kind: "save", level: 0, qty: 12 });
-	check("level without a quantity", logic.plan_save(ruled, "4", "0").kind, "invalid");
-	check("level without a quantity: the box", logic.plan_save(ruled, "4", "").field, "qty");
-	check("level without a quantity: in words", logic.plan_save(ruled, "4", "0").message, logic.QTY_NEEDED);
-	check("level 0 with no quantity is a rule that is off", logic.plan_save(ruled, "0", "0"), { kind: "save", level: 0, qty: 0 });
+	check("a cleared box on a rule asks to remove it, never saves 0", logic.plan_save(ruled, "", "12"), { kind: "remove" });
+	check("the other box cleared", logic.plan_save(ruled, "4", "").kind, "remove");
+	check("both cleared", logic.plan_save(ruled, "", "").kind, "remove");
+	check("a quantity of 0 is refused", logic.plan_save(ruled, "4", "0"), { kind: "invalid", field: "qty", message: logic.ABOVE_ZERO });
+	check("a level of 0 is refused, not saved", logic.plan_save(ruled, "0", "12"), { kind: "invalid", field: "level", message: logic.ABOVE_ZERO });
+	check("both 0 is refused too", logic.plan_save(ruled, "0", "0").kind, "invalid");
+	check("an old rule left as it is (level 0 on prod) is not touched", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0", "1").kind, "none");
+	check("the same old rule edited is refused until it has a level", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0", "5").kind, "invalid");
 	check("not a number: level", logic.plan_save(ruled, "x", "12").field, "level");
 	check("not a number: qty", logic.plan_save(ruled, "4", "-3").field, "qty");
 	const bare = entry("B", { has_rule: false, level: null, qty: null, modified: "m" });
 	check("no rule, boxes empty", logic.plan_save(bare, "", "").kind, "none");
 	check("no rule, both given", logic.plan_save(bare, "3", "10"), { kind: "save", level: 3, qty: 10 });
-	check("no rule, level only is refused in words", logic.plan_save(bare, "3", "").kind, "invalid");
+	check("no rule, one box: a gentle note, nothing created", logic.plan_save(bare, "3", ""), { kind: "incomplete", message: logic.BOTH_NEEDED });
+	check("no rule, the other box only", logic.plan_save(bare, "", "10").kind, "incomplete");
+	check("no rule, a level of 0 is not a rule", logic.plan_save(bare, "0", "10").kind, "invalid");
+	check("no rule, a quantity of 0 is not a rule", logic.plan_save(bare, "3", "0").kind, "invalid");
+	check("the ceiling is the server ceiling", logic.MAX_AMOUNT, 100000);
+	check("at the ceiling", logic.plan_save(bare, "100000", "100000").kind, "save");
+	for (const big of ["100001", "12345678905", "1,000,000"]) {
+		check(`above the ceiling: ${big}`, [logic.plan_save(ruled, big, "12").kind, logic.plan_save(ruled, "4", big).field], ["invalid", "qty"]);
+	}
+	check("the sentence names the ceiling", /100,000/.test(logic.plan_save(bare, "999999", "1").message), true);
+	const whole = entry("W", { whole_number: true });
+	check("a fraction in a whole-number unit", logic.plan_save(whole, "4.5", "12"), { kind: "invalid", field: "level", message: "The reorder level must be a whole number for this item." });
+	check("a whole number in a whole-number unit", logic.plan_save(whole, "5", "12").kind, "save");
+	check("a fraction where fractions are fine", logic.plan_save(entry("F", { whole_number: false }), "4.5", "12").kind, "save");
 	check("translated", logic.plan_save(ruled, "x", "1", (s) => "T:" + s).message.startsWith("T:"), true);
 });
 
@@ -121,6 +137,10 @@ test("save_request edits the rule where it sits, or on the screen's warehouse", 
 	const there = entry("A", { row_warehouse: ROOM, elsewhere: true });
 	const req = logic.save_request(there, BIN, { kind: "save", level: 5, qty: 9 });
 	check("method", req.method, "erpnext_enhancements.api.reorder_levels.set_reorder_level");
+	check("remove call", logic.remove_request(there, BIN), {
+		method: "erpnext_enhancements.api.reorder_levels.remove_reorder_rule",
+		args: { item_code: "A", warehouse: ROOM, view_warehouse: BIN, modified: "2026-10-22 09:00:00.000001" },
+	});
 	check("args", req.args, {
 		item_code: "A",
 		warehouse: ROOM,
@@ -148,6 +168,8 @@ function makeWorld(options) {
 		boxes: new Map(), // code -> { level, qty }
 		painted: [],
 		timers: [],
+		asked: [],
+		answer: "yes", // what the person says to "Remove this reorder rule?"
 		entries: o.entries || { A: entry("A"), B: entry("B", { has_rule: false, level: null, qty: null, row_warehouse: BIN }) },
 		can_edit: o.can_edit !== false,
 		fail: new Map(),
@@ -173,12 +195,16 @@ function makeWorld(options) {
 				});
 				return { levels, can_edit: world.can_edit };
 			}
-			// set_reorder_level: the server's stamp check, then the write
+			// set_reorder_level / remove_reorder_rule: the server stamp check, then the write
 			const cur = world.entries[args.item_code];
 			if (cur.modified !== args.modified) {
 				return Promise.reject({ status: 409, message: `${args.item_code} was changed by someone else since this page loaded it.` });
 			}
 			world.stamp += 1;
+			if (name === "remove_reorder_rule") {
+				Object.assign(cur, { has_rule: false, level: null, qty: null, modified: `2026-10-22 09:00:0${world.stamp}.000001` });
+				return { saved: true, message: "Removed.", entry: JSON.parse(JSON.stringify(cur)) };
+			}
 			Object.assign(cur, {
 				has_rule: true,
 				level: args.level,
@@ -196,11 +222,15 @@ function makeWorld(options) {
 		paint_all: () => world.painted.push(["*", false]),
 		later: (fn, ms) => world.timers.push({ fn, ms }),
 		tr: (t) => t,
+		confirm: (text, yes, no) => {
+			world.asked.push(text);
+			(world.answer === "yes" ? yes : no)();
+		},
 	};
 	return world;
 }
 
-const writes = (world) => world.calls.filter((c) => /set_reorder_level/.test(c.method));
+const writes = (world) => world.calls.filter((c) => /set_reorder_level|remove_reorder_rule/.test(c.method));
 
 test("load reads once, keeps what is on screen for the same warehouse, and starts over for another", async () => {
 	const world = makeWorld();
@@ -391,11 +421,54 @@ test("a new rule is made on the screen's warehouse once both numbers are given",
 	await ed.load(BIN, ["B"]);
 	world.boxes.set("B", { level: "3", qty: "" });
 	await ed.commit("B");
-	check("level alone: refused in words, no request", [writes(world).length, ed.view("B").status.message], [0, logic.QTY_NEEDED]);
+	check("one box: a gentle note, no request", [writes(world).length, ed.view("B").status.state, ed.view("B").status.message], [0, "note", logic.BOTH_NEEDED]);
 	world.boxes.set("B", { level: "3", qty: "10" });
 	await ed.commit("B");
 	check("both: saved on the bin", [writes(world)[0].args.warehouse, writes(world)[0].args.level, writes(world)[0].args.qty], [BIN, 3, 10]);
 	check("the item now has a rule", ed.view("B").entry.has_rule, true);
+});
+
+test("clearing a box asks first: yes removes the rule through the server, no puts the boxes back", async () => {
+	const world = makeWorld();
+	const ed = new ReorderEditor(world.env);
+	await ed.load(BIN, ["A"]);
+	world.boxes.set("A", { level: "", qty: "12" });
+	world.answer = "no";
+	await ed.commit("A");
+	check("asked in the words", world.asked, ["Remove this reorder rule?"]);
+	check("no: nothing sent", writes(world).length, 0);
+	check("no: the boxes are put back (a forced repaint)", world.painted.at(-1), ["A", true]);
+	check("no: the rule is still there", ed.view("A").entry.has_rule, true);
+	world.answer = "yes";
+	await ed.commit("A");
+	check("yes: one remove call", writes(world).map((c) => c.method.split(".").pop()), ["remove_reorder_rule"]);
+	check("yes: with the stamp, on the rule warehouse", [writes(world)[0].args.warehouse, writes(world)[0].args.modified], [BIN, "2026-10-22 09:00:00.000001"]);
+	check("yes: the item has no rule now", ed.view("A").entry.has_rule, false);
+	check("yes: said removed", ed.view("A").status.message, "Removed.");
+	check("never a save of 0", world.calls.some((c) => /set_reorder_level/.test(c.method)), false);
+});
+
+test("a second blur while the question is up asks nothing more, and a refusal is shown", async () => {
+	const world = makeWorld();
+	const ed = new ReorderEditor(world.env);
+	await ed.load(BIN, ["A"]);
+	let answer;
+	world.env.confirm = (text, yes, no) => {
+		world.asked.push(text);
+		answer = { yes, no };
+	};
+	world.boxes.set("A", { level: "", qty: "" });
+	const first = ed.commit("A");
+	await ed.commit("A");
+	check("one question", world.asked.length, 1);
+	answer.no();
+	await first;
+	check("answered once more is ignored", (answer.yes(), writes(world).length), 0);
+	world.env.confirm = (text, yes) => yes();
+	world.fail.set("remove_reorder_rule", { status: 417, message: "Item PDT-A is blocked." });
+	await ed.commit("A");
+	check("a refused removal is shown", [ed.view("A").status.state, ed.view("A").status.message], ["error", "Item PDT-A is blocked."]);
+	check("and the rule stays", ed.view("A").entry.has_rule, true);
 });
 
 test("cell_html escapes everything the server sends", () => {
@@ -489,7 +562,8 @@ test("dom: change on a box commits that item, Enter leaves the box, Escape rever
 	const world = makeWorld();
 	const ed = new ReorderEditor(Object.assign(world.env, { read: (code) => dom.read_boxes(root, code) }));
 	await ed.load(BIN, ["A"]);
-	dom.bind(root, ed);
+	const entered = [];
+	dom.bind(root, ed, { after_enter: (code, box) => entered.push([code, box === q || box === l]) });
 	l.value = "6";
 	fire(root, "change", l);
 	await settle();
@@ -497,6 +571,7 @@ test("dom: change on a box commits that item, Enter leaves the box, Escape rever
 	const enter = fire(root, "keydown", q, { key: "Enter" });
 	check("Enter is not a form submit", enter.prevented, true);
 	check("Enter leaves the box", q.blurred, 1);
+	check("and hands focus to the page own box", entered, [["A", true]]);
 	const other = new El({}, root);
 	fire(root, "change", other);
 	fire(root, "keydown", other, { key: "Enter" });
