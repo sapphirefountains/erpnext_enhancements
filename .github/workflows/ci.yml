@@ -2201,6 +2201,13 @@ jobs:
       # live-template patch that replaces only the shipped v1.611.0 bodies. Needs jinja2.
       - name: Rental + owner agreement layout and inputs
         run: python -m unittest erpnext_enhancements.tests.test_rental_owner_agreement_layout -v
+      # Own step: it stubs frappe and loads the real billing helper (billed_periods_per_year). The
+      # maintenance agreement's per-period Service Fee (v1.724.0): the linked maintenance contract's
+      # Recurring Amount on the agreement's cadence, else the Annual Fee split over the billed periods,
+      # else no line; the per month/quarter/year and season wording; a no-fee agreement rendering exactly
+      # as v1.611.1 did; the summary row; and the live-template patch. Needs jinja2.
+      - name: Maintenance agreement Service Fee line
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_agreement_fee_line -v
       # Own step, same stub shape as the one above. The NDA, architect and employee-contractor
       # agreements given the same theme: title block, summary, numbered clauses whose cross-references
       # still hold, an input for every doc.<field> they print, initials, the sig() block, and the
