@@ -10,21 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.716.2] - 2026-10-22
 
 ### Changed
-- **The "Planner schedule" section is hidden on the Project form.** Nik, 2026-10-22: "hide the planner schedule
-  from the form view of Projects as well." Asked which block he meant, he answered: just the *Planner schedule*
-  section on the Schedule tab, the one holding *Schedule status* (Draft or Published), *Schedule published on* and
-  *Baseline set on*. It is now `hidden: 1` on the `Project-custom_schedule_state_section` Custom Field, which
-  hides the whole section. The Schedule tab keeps its Gantt chart, dates, rent schedule and notes, and
-  *View > Open in Project Planner* is untouched.
+Three changes to the Project form, all Nik's, 2026-10-22.
+- **The "Planner schedule" section is hidden.** "hide the planner schedule from the form view of Projects as well."
+  Asked which block he meant, he answered: just the *Planner schedule* section on the Schedule tab, the one holding
+  *Schedule status* (Draft or Published), *Schedule published on* and *Baseline set on*. It is now `hidden: 1` on the
+  `Project-custom_schedule_state_section` Custom Field, which hides the whole section. The Schedule tab keeps its
+  Gantt chart, dates, rent schedule and notes, and *View > Open in Project Planner* is untouched.
   - **Hidden, not deleted.** Every field stays in the database and the fixture, so the planner still reads and
     writes `custom_schedule_status`, `custom_schedule_published_on` and `custom_baseline_set_on` exactly as before
     (Publish schedule, Set baseline, the Draft/Published gate on crew views), and a new Project still starts
-    `Draft`. Nothing but the form changed; no patch is needed, because fixture sync updates the existing record in
-    place and the record is a complete one (no key dropped).
-  - **On deploy:** `bench migrate` re-applies `fixtures/custom_field.json`, flipping `hidden` on that one Custom
-    Field. No Property Setter, schema or data change.
+    `Draft`.
   - **Pinned** in `tests/test_planner_publish_baseline.py` (`TestFixtures`): the section is hidden, the Gantt
-    section and its HTML field and the Schedule tab are not, and no form script un-hides it.
+    section and its HTML field and the Schedule tab are not, and no script in the app un-hides it.
+- **The "Production Tracking" section is hidden.** "Production tracking section in the project doctype needs to be
+  hidden as well." `hidden: 1` on the `Project-custom_production_section` Custom Field (Scope tab, between Build
+  Deliverables and Service Scope), which hides Build Status, Bid Cost, Production Started and Completed, and
+  Quality Sign-Off By and Date with it.
+  - **Hidden, not deleted, and checked first for what writes to it.** Nothing on the form does. The Production
+    Builds Kanban board moves `custom_build_status` itself, quality scheduling (`quality/scheduling.py`,
+    `api/quality_due.py`) reads it, and the Project Brief prints all of them; none of that goes through the form,
+    and a hidden field still saves. No field is required, so a hidden one cannot block a save. **One thing to
+    know:** with the section hidden, Build Status can only be moved on the Production Builds board (or by
+    API), not on the Project form.
+- **The activity feed shows on the Project's Comments tab only.** "Can we move the Activity Log to only display
+  under Comments tab of the Project view." The feed is the form timeline (activity entries with their `#N` badges
+  and the comment box) that Frappe draws at the bottom of the form. It used to show on the first tab, Details; it
+  now shows on the Comments tab and on no other tab of a Project. Not a second script: the shared
+  `global_enhancements/activity_first_tab_only.js` gained a `HOME_TABS` map (doctype -> Tab Break fieldname,
+  `Project: custom_comments`), and every other doctype is unchanged (first tab). The tab is found by the id Frappe
+  v16 gives each tab link (`project-custom_comments-tab`, `form/tab.js`), so it needs no knowledge of which form
+  the page belongs to and a renamed label does not break it; a Project with no Comments tab falls back to the first
+  tab. It only toggles the existing `ee-activity-off-tab` class, so the timeline, `@mentions` and the comment box
+  are untouched; they are just visible on that tab.
+  - **Pinned** in `tests/test_project_form_hides.py`, which runs `scripts/test_activity_home_tab.js` (the real
+    script against a fake DOM: shown on Comments, hidden on Details and every other tab, other doctypes
+    unchanged, fallbacks) and checks the Production Tracking record. Own CI step.
+
+### On deploy
+`bench migrate` re-applies `fixtures/custom_field.json` and flips `hidden` on two Custom Fields
+(`Project-custom_schedule_state_section`, `Project-custom_production_section`). No patch, Property Setter, schema or
+data change. The feed change is a JS change in the global bundle.
 
 ## [1.716.0] - 2026-10-22
 

@@ -21,6 +21,14 @@
  * CSS, survives Frappe re-rendering the footer, and can be inspected in devtools
  * without wondering which script set an inline style.
  *
+ * A doctype can name a different home tab (`home_tabs` below): Project's feed
+ * lives on its Comments tab, not on Details (Nik, 2026-10-22, "move the Activity
+ * Log to only display under Comments tab of the Project view"). The tab is found
+ * by its fieldname, through the id Frappe gives every tab link
+ * (`<doctype scrubbed with "-">-<fieldname>-tab`), so it is scoped to that doctype
+ * without knowing which form the wrapper belongs to and survives a rename of the
+ * tab's label. A form whose named tab is missing falls back to the first tab.
+ *
  * Deliberately does nothing to a form with no tabs — the timeline is simply the
  * bottom of that form and there is no "other tab" for it to be wrong on. A form
  * whose first tab is open is left alone for the same reason: the point is to stop
@@ -42,11 +50,27 @@ frappe.provide("erpnext_enhancements.activity_tabs");
 (() => {
 	const HIDDEN_CLASS = "ee-activity-off-tab";
 
+	// Doctypes whose feed lives on a named tab rather than the first one: doctype -> the
+	// Tab Break's fieldname. Project: its Comments tab (`custom_comments`).
+	const HOME_TABS = { Project: "custom_comments" };
+	erpnext_enhancements.activity_tabs.home_tabs = HOME_TABS;
+
+	// The tab link that is this form's home for the feed, or null for "the first tab".
+	function named_home_link(wrapper) {
+		for (const [doctype, fieldname] of Object.entries(HOME_TABS)) {
+			const id = `${frappe.scrub(doctype, "-")}-${fieldname}-tab`;
+			for (const link of wrapper.querySelectorAll(".form-tabs .nav-link")) {
+				if (link.id === id) return link;
+			}
+		}
+		return null;
+	}
+
 	// The active tab is the first one. Frappe builds the tab list in document
 	// order, so "first" is `:first-child` on the list rather than a name — a title
 	// check would break the moment somebody renames Details, and several of our
 	// doctypes have already renamed it (Overview, Summary).
-	function on_first_tab(wrapper) {
+	function on_home_tab(wrapper) {
 		const links = wrapper.querySelectorAll(".form-tabs .nav-link");
 		if (links.length < 2) {
 			// No tabs, or only one. Nothing to be on the wrong side of.
@@ -58,7 +82,7 @@ frappe.provide("erpnext_enhancements.activity_tabs");
 			// and back on every paint.
 			return true;
 		}
-		return active === links[0];
+		return active === (named_home_link(wrapper) || links[0]);
 	}
 
 	function apply() {
@@ -77,7 +101,7 @@ frappe.provide("erpnext_enhancements.activity_tabs");
 				wrapper.classList.remove(HIDDEN_CLASS);
 				return;
 			}
-			wrapper.classList.toggle(HIDDEN_CLASS, !on_first_tab(wrapper));
+			wrapper.classList.toggle(HIDDEN_CLASS, !on_home_tab(wrapper));
 		});
 	}
 
