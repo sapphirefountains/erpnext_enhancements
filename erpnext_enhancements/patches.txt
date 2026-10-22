@@ -1485,6 +1485,3 @@ erpnext_enhancements.patches.disable_auto_material_requests
 # for it (a new Single field's default never reaches the existing row). Never over a stored value; a never-saved Single
 # is left alone. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_reorder_alert_role
-# Reorder Board (v1.730.0): force-import the Inventory Enhancements workspace, whose Purchasing card now links the new
-# Desk page reorder-board. Timestamp-bumped too; this is the belt. Logs failure, never raises, safe twice.
-erpnext_enhancements.patches.reorder_board_workspace_link

@@ -27,6 +27,7 @@ Each part installs its own ``frappe`` stub. Run:
 python -m unittest erpnext_enhancements.tests.test_reorder_board -v
 """
 
+import contextlib
 import datetime as dt
 import importlib
 import json
@@ -114,6 +115,12 @@ class TestErpnextRule(unittest.TestCase):
 		# A shortfall smaller than the rule's quantity buys the rule's quantity.
 		self.assertEqual(rules.suggested_qty(5, 10, 1), 10)
 
+	def test_the_tag_not_the_branch(self):
+		"""Level 10, qty 3, projected 5: v16.50.0 (production) asks for 5, the deficiency; the
+		version-16 branch would ask for 3 + 5 = 8. Fails if the branch's formula comes back."""
+		self.assertEqual(rules.suggested_qty(10, 3, 5), 5)
+		self.assertEqual(erpnext_reference(10, 3, 5), (True, 5))
+
 	def test_projected_at_the_group_and_a_missing_bin(self):
 		projected = {"ITEM-A": {"Room - X": 2.0, "All - X": 9.0}}
 		self.assertEqual(rules.projected_for_rule(projected, "ITEM-A", "Room - X", "All - X"), 9.0)
@@ -145,7 +152,9 @@ class TestErpnextRule(unittest.TestCase):
 		self.assertEqual(rules.schedule_date(TODAY, None), TODAY)
 
 
-def mr_line(name="MRI-1", parent="MR-1", docstatus=1, qty=10, item="ITEM-A", warehouse="Room - X"):
+def mr_line(
+	name="MRI-1", parent="MR-1", docstatus=1, qty=10, item="ITEM-A", warehouse="Room - X", created=None
+):
 	return {
 		"name": name,
 		"parent": parent,
@@ -154,11 +163,21 @@ def mr_line(name="MRI-1", parent="MR-1", docstatus=1, qty=10, item="ITEM-A", war
 		"stock_qty": qty,
 		"schedule_date": TODAY,
 		"docstatus": docstatus,
-		"transaction_date": TODAY,
+		"transaction_date": created or TODAY,
+		"creation": dt.datetime.combine(created or TODAY, dt.time(9, 0)),
 	}
 
 
-def po_line(name="POI-1", parent="PO-1", docstatus=1, qty=10, mri="MRI-1", stage=None, item="ITEM-A"):
+def po_line(
+	name="POI-1",
+	parent="PO-1",
+	docstatus=1,
+	qty=10,
+	mri="MRI-1",
+	stage=None,
+	item="ITEM-A",
+	status="To Receive and Bill",
+):
 	return {
 		"name": name,
 		"parent": parent,
@@ -168,6 +187,7 @@ def po_line(name="POI-1", parent="PO-1", docstatus=1, qty=10, mri="MRI-1", stage
 		"schedule_date": TODAY + dt.timedelta(days=5),
 		"material_request_item": mri,
 		"docstatus": docstatus,
+		"status": status if docstatus == 1 else "Draft",
 		"supplier": "SUP-1",
 		"supplier_name": "Example Supplier",
 		"order_stage": stage,
@@ -263,6 +283,121 @@ class TestCoverage(unittest.TestCase):
 		b = self.board([], {rules.line_key("ITEM-A", "Room - X"): watch})
 		self.assertEqual([l["item_code"] for l in b["needs"]], ["ITEM-B"])
 		self.assertEqual([l["item_code"] for l in b["snoozed"]], ["ITEM-A"])
+
+
+class TestClosedShort(unittest.TestCase):
+	"""Review blocker: a PO closed short must stop covering. ERPNext v16.50.0 closing a PO updates
+	the Bin, never the MR, which stays Ordered / Partially Received; prod had 87 of 104 Closed POs
+	under 100% received, and MAT-MR-2026-00007 (Ordered, its PO Closed) already had this shape."""
+
+	PROJECTED = {"ITEM-A": {"All - X": 1.0}}
+
+	def needs(self, orders, receipts=()):
+		tracked = rules.track_lines([mr_line()], list(orders), list(receipts), TODAY)
+		board = rules.assemble([rule("ITEM-A")], self.PROJECTED, tracked, {}, NOW)
+		return [l["item_code"] for l in board["needs"]], tracked
+
+	def test_closed_after_part_arrived(self):
+		needs, tracked = self.needs([po_line(status="Closed")], [pr_line(qty=4)])
+		self.assertEqual(needs, ["ITEM-A"], "the item is back on Needs reorder")
+		self.assertEqual(tracked, [], "and the closed-short line is off On order")
+
+	def test_closed_with_nothing_received(self):
+		needs, tracked = self.needs([po_line(status="Closed")])
+		self.assertEqual(needs, ["ITEM-A"])
+		self.assertEqual(tracked, [])
+
+	def test_an_open_order_received_short_still_covers(self):
+		needs, tracked = self.needs([po_line()], [pr_line(qty=4)])
+		self.assertEqual(needs, [])
+		self.assertEqual([t["stage"] for t in tracked], [rules.STAGE_PARTIALLY_RECEIVED])
+
+	def test_on_hold_still_covers(self):
+		# ERPNext keeps an On Hold order in the Bin's ordered qty (only Closed and Delivered drop
+		# out), so the projected qty still counts it: the board must agree.
+		needs, tracked = self.needs([po_line(status="On Hold")])
+		self.assertEqual(needs, [])
+		self.assertTrue(tracked[0]["open"])
+
+	def test_part_ordered_on_a_closed_po_leaves_the_rest_to_come(self):
+		# 10 requested, 4 on a Closed PO: the 6 never ordered are still wanted, so it covers.
+		needs, tracked = self.needs([po_line(qty=4, status="Closed")])
+		self.assertEqual(needs, [])
+		self.assertAlmostEqual(rules.still_to_come(mr_line(), [po_line(qty=4, status="Closed")], {}), 6)
+
+	def test_a_closed_order_with_no_request(self):
+		order = po_line(mri=None, status="Closed")
+		self.assertEqual(rules.order_still_to_come(order, {}), 0)
+		self.assertEqual(rules.track_lines([], [order], [], TODAY), [])
+		self.assertEqual(rules.order_still_to_come(po_line(mri=None, status="On Hold"), {}), 10)
+
+
+class TestOldDrafts(unittest.TestCase):
+	PROJECTED = {"ITEM-A": {"All - X": 1.0}}
+
+	def board(self, created):
+		tracked = rules.track_lines([mr_line(docstatus=0, created=created)], [], [], TODAY)
+		return rules.assemble([rule("ITEM-A")], self.PROJECTED, tracked, {}, NOW), tracked
+
+	def test_a_draft_older_than_the_limit_stops_covering(self):
+		created = TODAY - dt.timedelta(days=rules.STALE_DRAFT_DAYS + 1)
+		board, tracked = self.board(created)
+		self.assertEqual([l["item_code"] for l in board["needs"]], ["ITEM-A"])
+		self.assertEqual(board["needs"][0]["old_drafts"], ["MR-1"])
+		self.assertEqual([t["stage"] for t in tracked], [rules.STAGE_OLD_DRAFT])
+		self.assertEqual(tracked[0]["stage_label"], "Old draft request")
+		self.assertFalse(tracked[0]["open"])
+
+	def test_a_draft_within_the_limit_still_covers(self):
+		board, _tracked = self.board(TODAY - dt.timedelta(days=rules.STALE_DRAFT_DAYS))
+		self.assertEqual(board["needs"], [])
+		self.assertEqual(rules.STALE_DRAFT_DAYS, 30)
+
+	def test_a_submitted_request_is_never_stale(self):
+		self.assertFalse(rules.is_stale_draft(mr_line(created=TODAY - dt.timedelta(days=400)), TODAY))
+
+
+class TestCoverageByGroup(unittest.TestCase):
+	"""ERPNext judges a group rule on every warehouse under the group, so a request for any of them
+	is stock the rule is waiting for."""
+
+	PARENTS = {
+		"Room - X": "All - X",
+		"Bin 1 - X": "Inventory - X",
+		"Bin 2 - X": "Inventory - X",
+		"Inventory - X": "All - X",
+	}
+
+	def needs(self, rule_row, warehouse):
+		ancestors = rules.ancestor_map(self.PARENTS)
+		tracked = rules.track_lines([mr_line(docstatus=0, warehouse=warehouse)], [], [], TODAY)
+		projected = {"ITEM-A": {rule_row.get("warehouse_group") or rule_row["warehouse"]: 0.0}}
+		board = rules.assemble([rule_row], projected, tracked, {}, NOW, ancestors)
+		return [l["item_code"] for l in board["needs"]]
+
+	def test_a_draft_for_a_sibling_bin_covers_a_group_rule(self):
+		self.assertEqual(
+			self.needs(rule("ITEM-A", warehouse="Bin 1 - X", group="Inventory - X"), "Bin 2 - X"), []
+		)
+
+	def test_a_draft_outside_the_group_does_not(self):
+		self.assertEqual(
+			self.needs(rule("ITEM-A", warehouse="Bin 1 - X", group="Inventory - X"), "Room - X"), ["ITEM-A"]
+		)
+
+	def test_a_rule_without_a_group_counts_its_own_warehouse_only(self):
+		row = rule("ITEM-A", warehouse="Bin 1 - X", group=None)
+		self.assertEqual(self.needs(row, "Bin 2 - X"), ["ITEM-A"])
+		self.assertEqual(self.needs(row, "Bin 1 - X"), [])
+
+	def test_a_bin_that_is_its_own_group(self):
+		# Production has one rule whose group is its own bin: only that bin counts.
+		row = rule("ITEM-A", warehouse="Bin 1 - X", group="Bin 1 - X")
+		self.assertEqual(self.needs(row, "Bin 2 - X"), ["ITEM-A"])
+		self.assertEqual(self.needs(row, "Bin 1 - X"), [])
+
+	def test_ancestor_map_survives_a_loop(self):
+		self.assertEqual(rules.ancestor_map({"A": "B", "B": "A"})["A"], frozenset({"B", "A"}))
 
 
 class TestSnooze(unittest.TestCase):
@@ -447,9 +582,15 @@ def _install_stubs():
 	class DuplicateEntryError(Exception):
 		pass
 
+	class UniqueValidationError(ValidationError):
+		pass
+
 	frappe.ValidationError = ValidationError
 	frappe.PermissionError = PermissionError
 	frappe.DuplicateEntryError = DuplicateEntryError
+	frappe.UniqueValidationError = UniqueValidationError
+	frappe.flags = types.SimpleNamespace(mute_messages=False)
+	frappe.local = types.SimpleNamespace(site="erp.example.com")
 	frappe._ = lambda s, *a, **k: s
 	frappe.session = types.SimpleNamespace(user="buyer@example.com")
 
@@ -547,6 +688,21 @@ def _install_stubs():
 	utils.format_date = lambda v=None: str(v)
 	frappe.utils = utils
 
+	database = types.ModuleType("frappe.database")
+	database_database = types.ModuleType("frappe.database.database")
+
+	@contextlib.contextmanager
+	def savepoint(catch=Exception):
+		STATE["savepoints"] += 1
+		try:
+			yield
+		except catch:
+			STATE["rolled_back_to_savepoint"] += 1
+
+	database_database.savepoint = savepoint
+	database.database = database_database
+	frappe.database = database
+
 	model = types.ModuleType("frappe.model")
 	document = types.ModuleType("frappe.model.document")
 	document.Document = object
@@ -566,6 +722,8 @@ def _install_stubs():
 		"frappe.utils": utils,
 		"frappe.model": model,
 		"frappe.model.document": document,
+		"frappe.database": database,
+		"frappe.database.database": database_database,
 		"erpnext_enhancements.email_style": email_style,
 	}.items():
 		sys.modules[name] = module
@@ -584,6 +742,8 @@ def setUpModule():
 		"frappe.utils",
 		"frappe.model",
 		"frappe.model.document",
+		"frappe.database",
+		"frappe.database.database",
 		"erpnext_enhancements.email_style",
 	):
 		_SAVED[name] = sys.modules.get(name)
@@ -630,6 +790,8 @@ def _reset(**over):
 			"watch_names": set(),
 			"commits": 0,
 			"meta": None,
+			"savepoints": 0,
+			"rolled_back_to_savepoint": 0,
 		}
 	)
 	STATE.update(over)
@@ -669,7 +831,8 @@ class _BoardCase(unittest.TestCase):
 					)
 				)
 		tracked = rules.track_lines(requests, [], [], TODAY)
-		out = rules.assemble(rows, self.PROJECTED, tracked, self.watches, now or NOW)
+		ancestors = rules.ancestor_map({"Room - X": "All - X"})
+		out = rules.assemble(rows, self.PROJECTED, tracked, self.watches, now or NOW, ancestors)
 		out["on_order"] = tracked
 		out["watches"] = self.watches
 		return out
@@ -777,6 +940,44 @@ class TestCreateRequests(_BoardCase):
 		with self.assertRaises(board.BoardError):
 			board.create_requests([], self.REF)
 
+	def test_the_lock_is_the_sites(self):
+		name = board.lock_name()
+		self.assertTrue(name.startswith(board.LOCK_NAME + ":"))
+		self.assertLessEqual(len(name), 64, "MySQL refuses a named lock over 64 characters")
+		frappe = sys.modules["frappe"]
+		frappe.local.site = "other.example.com"
+		try:
+			self.assertNotEqual(board.lock_name(), name)
+		finally:
+			frappe.local.site = "erp.example.com"
+		board.create_requests(self.LINES, self.REF)
+		locks = [v for q, v in STATE["sql"] if "get_lock" in q]
+		self.assertEqual(locks[0][0], name)
+
+	def test_a_watch_row_made_meanwhile_is_written_quietly(self):
+		# _ensure_watch: the row did not exist when looked for, the insert collides (the hourly sync
+		# won), and the request is still remembered on that row, with no error and no message.
+		frappe = sys.modules["frappe"]
+		original = _Doc.insert
+
+		def collide(doc, ignore_permissions=False):
+			if doc.get("doctype") == "Reorder Watch":
+				raise frappe.UniqueValidationError("duplicate")
+			return original(doc, ignore_permissions)
+
+		_Doc.insert = collide
+		try:
+			out = board.create_requests(self.LINES, self.REF)
+		finally:
+			_Doc.insert = original
+		self.assertTrue(out["ok"])
+		written = {
+			name
+			for doctype, name, fields in STATE["set_values"]
+			if fields.get("last_request_ref") == self.REF
+		}
+		self.assertEqual(written, {"ITEM-A::Room - X", "ITEM-B::Room - X"})
+
 	def test_a_held_lock_refuses(self):
 		STATE["sql_handler"] = lambda q, v: [[0]] if "get_lock" in q else []
 		with self.assertRaises(board.BoardError):
@@ -794,6 +995,45 @@ class TestSnoozeEndpoints(_BoardCase):
 		self.assertEqual(doc["snooze_projected_qty"], 1.0)
 		self.assertEqual(doc["snoozed_by"], "buyer@example.com")
 		self.assertEqual(doc["snooze_reason"], "seasonal")
+
+	def test_only_purchasing_may_snooze(self):
+		# Stock Manager (17 people on prod, technicians among them) may view and ask for a Draft, but a
+		# snooze silences the Purchase Managers' digest, so it is Purchasing's.
+		STATE["roles"] = ["Stock Manager"]
+		with self.assertRaises(sys.modules["frappe"].PermissionError):
+			board.snooze("ITEM-A", "Room - X", rules.SNOOZE_WEEK)
+		with self.assertRaises(sys.modules["frappe"].PermissionError):
+			board.unsnooze("ITEM-A", "Room - X")
+		self.assertFalse(board.permissions()["can_snooze"])
+		self.assertTrue(board.permissions()["can_create"])
+		self.assertEqual([i for i in STATE["inserts"] if i[0] == "Reorder Watch"], [])
+		for role in ("Purchase User", "System Manager"):
+			with self.subTest(role=role):
+				STATE["roles"] = [role]
+				self.assertTrue(board.permissions()["can_snooze"])
+		self.assertEqual(set(board.SNOOZE_ROLES), {"System Manager", "Purchase Manager", "Purchase User"})
+
+	def test_a_racing_insert_lands_on_the_existing_row(self):
+		# The hourly sync made the row a moment earlier: the insert collides, nothing is raised or
+		# left queued for the reply, and the snooze is saved onto that row.
+		frappe = sys.modules["frappe"]
+		key = "ITEM-A::Room - X"
+		STATE["docs"][("Reorder Watch", key)] = {"doctype": "Reorder Watch", "name": key}
+		original = _Doc.insert
+
+		def collide(doc, ignore_permissions=False):
+			assert frappe.flags.mute_messages, "the collision's msgprint must be muted"
+			raise frappe.DuplicateEntryError("Reorder Watch", key)
+
+		_Doc.insert = collide
+		try:
+			out = board.snooze("ITEM-A", "Room - X", rules.SNOOZE_WEEK)
+		finally:
+			_Doc.insert = original
+		self.assertTrue(out["ok"])
+		self.assertEqual(STATE["rolled_back_to_savepoint"], 1)
+		self.assertFalse(frappe.flags.mute_messages, "muting is restored")
+		self.assertEqual(STATE["saves"][-1][1]["snooze_kind"], rules.SNOOZE_WEEK)
 
 	def test_snooze_refuses_a_line_not_below(self):
 		with self.assertRaises(board.BoardError):
@@ -892,9 +1132,31 @@ class TestDigest(_BoardCase):
 		board.send_daily_digest()
 		self.assertEqual(len(STATE["mail"]), 1)
 		message = STATE["mail"][0]["message"]
-		self.assertNotIn('"ITEM-A"', message)
-		self.assertIn('"ITEM-B"', message)
+		self.assertNotIn("ITEM-A name", message)
+		self.assertIn("ITEM-B name", message)
 		self.assertIn("Snooze ended", message)
+
+	def test_the_table_is_four_columns(self):
+		# email_style.table: four columns or fewer fit a phone.
+		self.assertEqual(len(board.DIGEST_HEADERS), 4)
+		rows = board.digest_rows(
+			[
+				{
+					"item_code": "ITEM-A",
+					"item_name": "A pump",
+					"warehouse": "Room - X",
+					"projected_qty": 1,
+					"reorder_level": 5,
+					"suggested_qty": 10,
+					"stock_uom": "Nos",
+				}
+			],
+			lambda code: f"/item/{code}",
+		)
+		self.assertEqual(rows, [[("/item/ITEM-A", "ITEM-A · A pump"), "Room - X", "1 / 5", "10 Nos"]])
+		board.send_daily_digest()
+		table = re.search(r"<table>(.*?)</table>", STATE["mail"][0]["message"]).group(1)
+		self.assertTrue(all(len(r) == 4 for r in json.loads(table)))
 
 	def test_recipients_follow_the_settings_role(self):
 		seen = []
@@ -957,34 +1219,43 @@ class TestPatches(unittest.TestCase):
 		patch_role.execute()
 		self.assertEqual(len(STATE["logged"]), 2)
 
-	def test_backfill_only_where_no_row(self):
+	def role_meta(self):
 		field = types.SimpleNamespace(fieldname="reorder_alert_role", default="Purchase Manager")
 		STATE["meta"] = types.SimpleNamespace(
 			get_field=lambda name: field if name == "reorder_alert_role" else None
 		)
-		self.rows([("default_warehouse",)])
+
+	def test_backfill_writes_only_where_there_is_no_row(self):
+		self.role_meta()
+		self.rows([("default_warehouse",), ("undo_window_minutes",)])
 		patch_role.execute()
 		self.assertEqual(
 			STATE["singles"], [("Inventory Scanner Settings", "reorder_alert_role", "Purchase Manager")]
 		)
-		STATE["singles"].clear()
-		self.rows([("reorder_alert_role",)])
+
+	def test_backfill_never_writes_over_a_stored_value(self):
+		# A row for the field, whatever it holds (a chosen role, or blank on purpose): left alone.
+		self.role_meta()
+		self.rows([("default_warehouse",), ("reorder_alert_role",)])
 		patch_role.execute()
-		self.assertEqual(STATE["singles"], [], "a stored value is never overwritten")
+		self.assertEqual(STATE["singles"], [])
+
+	def test_backfill_leaves_a_never_saved_single_alone(self):
+		# One written row would stop it loading its declared defaults (CLAUDE.md, the Singles notes).
+		self.role_meta()
 		self.rows([])
 		patch_role.execute()
-		self.assertEqual(STATE["singles"], [], "a never-saved Single is left alone")
+		self.assertEqual(STATE["singles"], [])
 
 	def test_the_patches_are_registered_post_model_sync(self):
 		text = (APP / "patches.txt").read_text(encoding="utf-8")
 		post = text.split("[post_model_sync]", 1)[1]
-		for name in (
-			"disable_auto_material_requests",
-			"backfill_reorder_alert_role",
-			"reorder_board_workspace_link",
-		):
+		for name in ("disable_auto_material_requests", "backfill_reorder_alert_role"):
 			with self.subTest(patch=name):
 				self.assertIn(f"erpnext_enhancements.patches.{name}\n", post)
+		# Dropped on review: Frappe 16.50's model sync imports the bumped workspace file by itself.
+		self.assertNotIn("reorder_board_workspace_link", text)
+		self.assertFalse((APP / "patches" / "reorder_board_workspace_link.py").exists())
 
 
 # --- wiring, the page and its logic ----------------------------------------------------

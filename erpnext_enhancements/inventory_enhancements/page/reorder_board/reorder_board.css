@@ -135,3 +135,7 @@
 .rob-selected {
 	color: var(--sf-text-muted, var(--text-muted));
 }
+
+.rob-old-draft {
+	color: var(--sf-warning-text, var(--text-color));
+}

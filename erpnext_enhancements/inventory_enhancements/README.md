@@ -646,43 +646,62 @@ TASK-2026-02922 to -02926.
 * **The page**, `/desk/reorder-board` (`page/reorder_board/`), has three tabs, each its own history entry:
   **Needs reorder** (`/desk/reorder-board`), **On order** (`/on-order`) and **Snoozed** (`/snoozed`).
   It admits Purchase Manager, Purchase User, Stock Manager and System Manager (`reorder_board.BOARD_ROLES`):
-  the buyers and the owner of the rules, not Stock User, whose job is taking and counting stock.
+  the buyers and the owner of the rules, not Stock User, whose job is taking and counting stock. Snooze and
+  un-snooze are narrower (`SNOOZE_ROLES`: Purchase Manager, Purchase User, System Manager), because a snooze
+  silences the Purchase Managers' digest and Stock Manager is held by 17 people, technicians among them.
 * **Below, and how much:** ERPNext's rule exactly (`reorder_rules.is_below`, `suggested_qty`, copied from
   `_reorder_item` as production's ERPNext v16.50.0 has it: the larger of the rule's quantity and the
-  deficiency; the `version-16` branch has since changed the quantity, so re-read the tag on an upgrade), on the rules and projected quantities ERPNext's own `get_items_for_reorder` and
+  deficiency; the `version-16` branch has since changed the quantity, so re-read the tag on an upgrade), on
+  the rules and projected quantities ERPNext's own `get_items_for_reorder` and
   `get_item_warehouse_projected_qty` return: Item enabled, stock item, not past end of life, the warehouse
   enabled, variants inheriting their template's rules, projected read at the rule's `warehouse_group` and
   a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for the Inventory Room,
   `Inventory - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
   a real rule. Only `Purchase` rules are listed (all of production's are).
-* **Covered** means an open request or order for that item and warehouse: a Material Request line, Draft
-  included (a Draft raises no requested qty, so only this keeps it off Needs reorder), not Stopped,
-  Cancelled or Closed; or a Purchase Order line no request asked for. A covered item is on **On order**, at
-  its stage from the documents' own links (MR Item ← PO Item `material_request_item` ← PR Item
-  `purchase_order_item`): Draft request, Requested, PO in draft, Partially ordered, Ordered, Partially
-  received, Received. The PO's supplier, its expected date (`schedule_date`) and, from
-  `Purchase Order.custom_order_stage` (`po_order_stage.py`), **Pickup** or **Delivery**. A received line stays
-  a week (`RECEIVED_VISIBLE_DAYS`), then drops off.
+* **Covered** means a request or order line for that item, in the rule's scope, with **something still to
+  come** (`reorder_rules.still_to_come`): the part of a Material Request line not yet on a submitted Purchase
+  Order, plus what its submitted orders that are not Closed, Completed or Delivered have not delivered. So:
+  * a **PO closed short** covers nothing more (ERPNext closing a PO updates the Bin, never the MR, which stays
+    Ordered for ever; prod had 87 of 104 Closed POs under 100% received), and the line drops off;
+  * an **On Hold** PO still covers, because ERPNext still counts it in the Bin's ordered qty;
+  * a **Draft** request covers (it raises no requested qty, so only this keeps it off Needs reorder), unless it
+    is older than `STALE_DRAFT_DAYS` (30) by its creation: then the item returns to Needs reorder and the Draft
+    is named on its line, "Old draft request", linked, to finish or delete;
+  * Stopped, Cancelled and Closed requests never cover;
+  * the **scope** (`in_scope`) is the rule's warehouse and, for a rule with a `warehouse_group`, every warehouse
+    under that group, which is where ERPNext reads the rule's projected qty. A Draft for a sibling bin covers a
+    bin rule grouped on `Inventory - SF`, as a submitted one would by raising that group's projected qty.
+
+  A covered item is on **On order**, at its stage from the documents' own links (MR Item ← PO Item
+  `material_request_item` ← PR Item `purchase_order_item`): Draft request, Requested, PO in draft, Partially
+  ordered, Ordered, Partially received, Received. The PO's supplier, its expected date (`schedule_date`) and,
+  from `Purchase Order.custom_order_stage` (`po_order_stage.py`), **Pickup** or **Delivery**. A received line
+  stays a week (`RECEIVED_VISIBLE_DAYS`), then drops off.
 * **Create Material Request** (`reorder_board.create_requests`): the selected lines with the quantities on
   screen, after a confirm dialog that lists them. One **Draft** Material Request (type Purchase) per company,
   `schedule_date` today plus the item's lead time, the rule's warehouse, the quantity in the purchase UOM as
   ERPNext converts it; inserted as the person (ERPNext's validation and permissions), never submitted, then
   opened for review. The server re-checks the role, Material Request create, that each line still has a rule,
   is still below and is not covered, and the quantity (above 0, at most 100,000, whole for a whole unit); one
-  stale line and nothing is made. A MariaDB named lock serialises it, and `client_ref` (one per dialog) makes
-  a retry return the request it already made.
+  stale line and nothing is made. A MariaDB named lock serialises it (its name carries a hash of the site:
+  named locks are server-wide), and `client_ref` (one per dialog) makes a retry return the request it already
+  made. A Reorder Watch row the hourly sync inserts at the same moment is caught under a savepoint with
+  messages muted (`DuplicateEntryError` or `UniqueValidationError`) and written onto.
 * **Snooze** (1 week, 1 month, or until stock drops further: the projected qty is kept and the snooze ends
   once it is lower). A snoozed line moves to Snoozed, the digest skips it, and Un-snooze brings it back. Who,
   when and why are kept.
 * **Reorder Watch** (`doctype/reorder_watch/`) is the board's memory, one row per item and warehouse while it
   is below: `below_since`, `alerted_on`, the snooze, and the last request the board made. Not a tracking table:
-  stages are always read from the documents. Named `<item>::<warehouse>`.
+  stages are always read from the documents. Named `<item>::<warehouse>`. DocPerms: System Manager, Purchase
+  Manager and Purchase User write; Stock Manager reads.
 * **The alert.** `sync_watch` (hourly) inserts a row when a line goes below, deletes it when it recovers and
   ends a snooze that ran out. `send_daily_digest` (`20 7 * * *`, site time) emails the lines whose row has no
   `alerted_on` (newly below, or snooze ended) to the enabled System Users holding
   `Inventory Scanner Settings.reorder_alert_role` (default Purchase Manager; Administrator, Guest and
   `triton@` excluded), with one bell notification each linking the board, and stamps them in the same
-  transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing.
+  transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing. The
+  email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
+  on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
 * **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
   `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
 

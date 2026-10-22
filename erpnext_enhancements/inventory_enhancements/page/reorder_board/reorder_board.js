@@ -278,6 +278,16 @@ class ReorderBoardPage {
 		return `<a href="${this.esc(frappe.utils.get_form_link(doctype, name))}">${this.esc(name)}</a>`;
 	}
 
+	// A Draft request older than a month no longer covers its item (reorder_rules.STALE_DRAFT_DAYS): it is
+	// named on the line so the buyer can finish it or delete it, rather than ask twice without knowing.
+	old_drafts(line) {
+		const names = line.old_drafts || [];
+		if (!names.length) return "";
+		return `<div class="rob-sub rob-old-draft">${this.esc(__("Old draft request:"))} ${names
+			.map((n) => this.doc_link("Material Request", n))
+			.join(", ")}</div>`;
+	}
+
 	where(line) {
 		const group = line.warehouse_group && line.warehouse_group !== line.warehouse;
 		return `${this.esc(line.warehouse)}${
@@ -313,7 +323,7 @@ class ReorderBoardPage {
 								}>`
 							: ""
 					}</td>
-					<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div></td>
+					<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div>${this.old_drafts(l)}</td>
 					<td>${this.where(l)}</td>
 					<td class="rob-num">${this.esc(ROB.fmt_qty(l.on_hand))}</td>
 					<td class="rob-num">${this.esc(ROB.fmt_qty(l.projected_qty))}</td>
@@ -451,7 +461,7 @@ class ReorderBoardPage {
 							: "";
 				return `
 				<tr data-key="${this.esc(l.key)}">
-					<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div></td>
+					<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div>${this.old_drafts(l)}</td>
 					<td>${this.where(l)}</td>
 					<td class="rob-num">${this.esc(ROB.fmt_qty(l.projected_qty))}</td>
 					<td class="rob-num">${this.esc(ROB.fmt_qty(l.reorder_level))}</td>

@@ -25,10 +25,13 @@ serves all three and the tests can hold it without a bench:
   and a missing Bin is 0, exactly as ``_reorder_item`` does. On production every rule has a group
   (83 Inventory Room rules on ``All Warehouses - SF``, 32 bin rules on ``Inventory - SF``), so this
   is the common path, not an edge.
-* **Where a request is.** :func:`stage_for_request` and :func:`stage_for_order` derive the stage of
-  one open line from the documents' own links: Material Request Item <- Purchase Order Item
-  (``material_request_item``) <- Purchase Receipt Item (``purchase_order_item``). There is no
-  tracking table of our own to drift from them.
+* **Where a request is, and whether it still covers.** :func:`stage_for_request` and
+  :func:`stage_for_order` derive the stage of one open line from the documents' own links: Material
+  Request Item <- Purchase Order Item (``material_request_item``) <- Purchase Receipt Item
+  (``purchase_order_item``). There is no tracking table of our own to drift from them. Whether the
+  line still keeps its item off Needs reorder is :func:`still_to_come` (a PO closed short brings
+  nothing more; On Hold still does), :func:`is_stale_draft` (a Draft over :data:`STALE_DRAFT_DAYS`
+  stops covering) and :func:`in_scope` (any warehouse under the rule's ``warehouse_group``).
 * **Snoozes** (:func:`snooze_fields`, :func:`snooze_state`) and the **digest's pick**
   (:func:`digest_pick`), and the **recipients** (:func:`filter_recipients`).
 
@@ -50,6 +53,11 @@ MAX_QTY = 100000
 #: list fills with finished work.
 RECEIVED_VISIBLE_DAYS = 7
 
+#: A Draft Material Request older than this (days since it was made) stops covering its item: the
+#: item returns to Needs reorder and the Draft shows on its line as "Old draft request". A buyer
+#: who makes a Draft and submits it within the month never sees the difference.
+STALE_DRAFT_DAYS = 30
+
 #: Most lines one Material Request call takes. The board lists ~116 rules on production.
 MAX_LINES = 200
 
@@ -66,7 +74,10 @@ STAGE_PARTIALLY_ORDERED = "partially_ordered"
 STAGE_ORDERED = "ordered"
 STAGE_PARTIALLY_RECEIVED = "partially_received"
 STAGE_RECEIVED = "received"
+#: Not a stage a purchase moves through: a Draft left longer than STALE_DRAFT_DAYS.
+STAGE_OLD_DRAFT = "old_draft"
 STAGES = (
+	STAGE_OLD_DRAFT,
 	STAGE_DRAFT_REQUEST,
 	STAGE_REQUESTED,
 	STAGE_PO_DRAFT,
@@ -76,6 +87,7 @@ STAGES = (
 	STAGE_RECEIVED,
 )
 STAGE_LABELS = {
+	STAGE_OLD_DRAFT: "Old draft request",
 	STAGE_DRAFT_REQUEST: "Draft request",
 	STAGE_REQUESTED: "Requested",
 	STAGE_PO_DRAFT: "PO in draft",
@@ -90,7 +102,8 @@ STAGE_LABELS = {
 #: submit it (TASK-2026-02925 creates requests as Drafts). It does not raise ERPNext's requested
 #: qty, so the projected qty stays low and only this rule keeps the item off Needs reorder.
 CLOSED_REQUEST_STATUSES = frozenset({"Stopped", "Cancelled", "Closed"})
-#: Purchase Order statuses that are finished or abandoned.
+#: Purchase Order statuses that will bring nothing more (Cancelled is docstatus 2 and never read).
+#: On Hold is deliberately absent: see :func:`order_is_closed`.
 CLOSED_ORDER_STATUSES = frozenset({"Closed", "Cancelled", "Completed", "Delivered"})
 
 #: Purchase Order.custom_order_stage values (``po_order_stage.py``) that say how the goods come.
@@ -221,13 +234,59 @@ def _received_progress(need, received):
 	return None
 
 
+def order_is_closed(order) -> bool:
+	"""A submitted Purchase Order that will bring nothing more: Closed, Completed, Delivered.
+
+	**On Hold is not closed.** ERPNext keeps an On Hold order's quantity in the Bin's ordered qty
+	(``bin.update_ordered_qty`` leaves out only Closed and Delivered orders), so the projected qty
+	the rule reads still counts it as coming; the buyer paused it, they did not give up on it, and
+	"Resume" brings it back. Treating it as covering keeps the board agreeing with the projected qty.
+	"""
+	return (order.get("status") or "") in CLOSED_ORDER_STATUSES
+
+
+def _received_on(order, receipts_by_order):
+	return _sum(receipts_by_order.get(order.get("name"), []), "stock_qty")
+
+
+def still_to_come(request, orders, receipts_by_order) -> float:
+	"""How much of a Material Request line is still on its way, in the stock UOM.
+
+	The part not yet on a submitted order, plus what submitted orders that are not closed have not
+	delivered yet. A Purchase Order closed short (prod, 2026-10-22: 87 of 104 Closed orders under
+	100% received) delivers nothing more, and ERPNext closing it touches the Bin but not the
+	Material Request, which stays Ordered or Partially Received for ever. Its undelivered part is
+	therefore NOT to come: counting it would keep the item covered, off Needs reorder and out of
+	the digest, however low the stock goes. A Draft request is wanted whole.
+	"""
+	need = flt(request.get("stock_qty"))
+	if int(flt(request.get("docstatus"))) == 0:
+		return need
+	submitted = [o for o in orders if int(flt(o.get("docstatus"))) == 1]
+	unordered = max(need - _sum(submitted, "stock_qty"), 0.0)
+	pending = sum(
+		max(flt(o.get("stock_qty")) - _received_on(o, receipts_by_order), 0.0)
+		for o in submitted
+		if not order_is_closed(o)
+	)
+	return unordered + pending
+
+
+def order_still_to_come(order, receipts_by_order) -> float:
+	"""The same for a Purchase Order line no request asked for."""
+	if int(flt(order.get("docstatus"))) == 1 and order_is_closed(order):
+		return 0.0
+	return max(flt(order.get("stock_qty")) - _received_on(order, receipts_by_order), 0.0)
+
+
 def stage_for_request(request, orders, receipts) -> str:
 	"""The stage of one Material Request Item, from the documents linked to it.
 
 	``request``: ``{docstatus, stock_qty}`` of the MR line. ``orders``: the Purchase Order Items
 	whose ``material_request_item`` is that line, ``{docstatus, stock_qty}`` (cancelled ones
 	left out by the caller). ``receipts``: the Purchase Receipt Items whose ``purchase_order_item``
-	is one of those orders, ``{docstatus, stock_qty}``. Quantities are all stock-UOM.
+	is one of those orders, ``{docstatus, stock_qty}``. Quantities are all stock-UOM. Whether the
+	line still covers its item is :func:`still_to_come`, not the stage.
 	"""
 	if int(flt(request.get("docstatus"))) == 0:
 		return STAGE_DRAFT_REQUEST
@@ -253,16 +312,31 @@ def stage_for_order(order, receipts) -> str:
 	return progress or STAGE_ORDERED
 
 
-def is_open_stage(stage) -> bool:
-	"""A line at any stage but Received still covers its item."""
-	return stage in STAGES and stage != STAGE_RECEIVED
+def is_stale_draft(request, today) -> bool:
+	"""A Draft request older than :data:`STALE_DRAFT_DAYS` (by its creation) no longer covers.
+
+	Production held one eleven months old (MAT-MR-2025-00007) that hid its item from the board. A
+	Draft that old was abandoned, not forgotten for a day; the item comes back to Needs reorder and
+	the Draft is shown on its line ("Old draft request") to finish or delete.
+	"""
+	if int(flt(request.get("docstatus"))) != 0:
+		return False
+	made = _date(request.get("creation") or request.get("transaction_date"))
+	if not made:
+		return False
+	return (today - made).days > STALE_DRAFT_DAYS
 
 
-def still_listed(stage, last_receipt_date, today) -> bool:
-	"""Whether an On order line stays on the board. A received one stays a week, then drops off."""
-	if stage != STAGE_RECEIVED:
+def still_listed(stage, is_open, last_receipt_date, today) -> bool:
+	"""Whether a line stays on the On order list.
+
+	An open line stays; a received one stays a week (:data:`RECEIVED_VISIBLE_DAYS`) so the buyer
+	sees it arrive; a line closed short (nothing more to come, not fully received) drops off, and
+	its item is judged on its stock again.
+	"""
+	if is_open:
 		return True
-	if not last_receipt_date:
+	if stage != STAGE_RECEIVED or not last_receipt_date:
 		return False
 	return (today - last_receipt_date).days <= RECEIVED_VISIBLE_DAYS
 
@@ -279,6 +353,11 @@ def arrival(order_stage):
 def _date(value):
 	if isinstance(value, _dt.datetime):
 		return value.date()
+	if isinstance(value, str) and value:
+		try:
+			return _dt.date.fromisoformat(value[:10])
+		except ValueError:
+			return None
 	return value
 
 
@@ -293,6 +372,7 @@ def _order_view(order, receipts):
 	return {
 		"name": order.get("parent"),
 		"docstatus": int(flt(order.get("docstatus"))),
+		"status": order.get("status"),
 		"supplier": order.get("supplier"),
 		"supplier_name": order.get("supplier_name") or order.get("supplier"),
 		"expected": order.get("schedule_date"),
@@ -312,29 +392,33 @@ def _last_receipt(receipts):
 
 
 def track_lines(requests, orders, receipts, today):
-	"""The On order list: one line per open Material Request Item, and one per Purchase Order
-	Item that no request asked for, each with its stage. All derived from the document links.
+	"""The open requests and orders: one line per Material Request Item, and one per Purchase
+	Order Item that no request asked for, each with its stage and whether it still covers
+	(``open``: something is still to come). All derived from the document links.
 
 	``requests``: MR Item rows ``{name, parent, item_code, warehouse, stock_qty, schedule_date,
-	docstatus, transaction_date}``. ``orders``: PO Item rows ``{name, parent, item_code,
-	warehouse, stock_qty, schedule_date, material_request_item, docstatus, supplier,
+	docstatus, transaction_date, creation}``. ``orders``: PO Item rows ``{name, parent, item_code,
+	warehouse, stock_qty, schedule_date, material_request_item, docstatus, status, supplier,
 	supplier_name, order_stage}``. ``receipts``: PR Item rows ``{parent, purchase_order_item,
-	stock_qty, docstatus, posting_date}``. A received line stays for :data:`RECEIVED_VISIBLE_DAYS`.
+	stock_qty, docstatus, posting_date}``. A Draft request older than :data:`STALE_DRAFT_DAYS` comes
+	back as stage ``old_draft``, not open: the board shows it on the item's line, not on On order.
 	"""
 	by_request = _group(orders, "material_request_item")
 	by_order = _group(receipts, "purchase_order_item")
 	out = []
 
-	def finish(line, stage, line_orders, line_receipts, fallback_expected):
+	def finish(line, stage, is_open, line_orders, line_receipts, fallback_expected):
 		last = _last_receipt(line_receipts)
-		if not still_listed(stage, last, today):
+		if stage != STAGE_OLD_DRAFT and not still_listed(stage, is_open, last, today):
 			return
-		open_dates = [o.get("schedule_date") for o in line_orders if o.get("schedule_date")]
+		open_dates = [
+			o.get("schedule_date") for o in line_orders if o.get("schedule_date") and not order_is_closed(o)
+		]
 		line.update(
 			{
 				"stage": stage,
 				"stage_label": STAGE_LABELS[stage],
-				"open": is_open_stage(stage),
+				"open": is_open,
 				"ordered_qty": _sum(line_orders, "stock_qty"),
 				"received_qty": _sum(line_receipts, "stock_qty"),
 				"last_receipt": last,
@@ -347,7 +431,11 @@ def track_lines(requests, orders, receipts, today):
 	for req in requests or ():
 		line_orders = by_request.get(req.get("name"), []) if req.get("name") else []
 		line_receipts = [r for o in line_orders for r in by_order.get(o.get("name"), [])]
-		stage = stage_for_request(req, line_orders, line_receipts)
+		if is_stale_draft(req, today):
+			stage, is_open = STAGE_OLD_DRAFT, False
+		else:
+			stage = stage_for_request(req, line_orders, line_receipts)
+			is_open = still_to_come(req, line_orders, by_order) > _EPS
 		line = {
 			"key": line_key(req.get("item_code"), req.get("warehouse")),
 			"item_code": req.get("item_code"),
@@ -357,7 +445,7 @@ def track_lines(requests, orders, receipts, today):
 			"requested_on": req.get("transaction_date"),
 			"qty": flt(req.get("stock_qty")),
 		}
-		finish(line, stage, line_orders, line_receipts, req.get("schedule_date"))
+		finish(line, stage, is_open, line_orders, line_receipts, req.get("schedule_date"))
 
 	for order in orders or ():
 		if order.get("material_request_item"):
@@ -373,25 +461,66 @@ def track_lines(requests, orders, receipts, today):
 			"requested_on": None,
 			"qty": flt(order.get("stock_qty")),
 		}
-		finish(line, stage, [order], line_receipts, order.get("schedule_date"))
+		finish(
+			line,
+			stage,
+			order_still_to_come(order, by_order) > _EPS,
+			[order],
+			line_receipts,
+			order.get("schedule_date"),
+		)
 
 	out.sort(key=lambda l: (STAGES.index(l["stage"]), l.get("item_code") or "", l.get("warehouse") or ""))
 	return out
 
 
-def assemble(rules, projected_map, tracked, watches, now):
-	"""Every rule as a board line, and the three lists the board shows.
+# --- which warehouses a rule counts -----------------------------------------------------
+
+
+def ancestor_map(parent_map):
+	"""``{warehouse: frozenset(its ancestors)}`` from ``{warehouse: parent_warehouse}``."""
+	out = {}
+	for name in parent_map or {}:
+		seen = []
+		parent = parent_map.get(name)
+		while parent and parent not in seen and len(seen) < 64:
+			seen.append(parent)
+			parent = parent_map.get(parent)
+		out[name] = frozenset(seen)
+	return out
+
+
+def in_scope(warehouse, rule, ancestors) -> bool:
+	"""Whether an open line at ``warehouse`` covers ``rule``.
+
+	ERPNext judges a rule with a ``warehouse_group`` on the projected qty of every warehouse under
+	that group (``get_item_warehouse_projected_qty`` rolls each Bin up its ancestors), so a request
+	for any warehouse in the group is stock that rule is waiting for, once submitted. A Draft for a
+	sibling bin counts the same way. A rule with no group counts its own warehouse only.
+	"""
+	if not warehouse:
+		return False
+	if warehouse == rule.get("warehouse"):
+		return True
+	group = rule.get("warehouse_group")
+	if not group:
+		return False
+	return warehouse == group or group in (ancestors or {}).get(warehouse, ())
+
+
+def assemble(rules, projected_map, tracked, watches, now, ancestors=None):
+	"""Every rule as a board line, and the lists the board shows.
 
 	``rules``: ``{item_code, warehouse, warehouse_group, reorder_level, reorder_qty, ...}`` (the
 	extra keys -- item_name, uom, supplier -- are carried through). ``tracked``: from
-	:func:`track_lines`. ``watches``: ``{key: Reorder Watch row}``. Returns ``{"lines": [...],
-	"needs": [...], "snoozed": [...]}``: a line is *covered* when an open tracked line has its key,
-	and only an uncovered line below its point needs reordering.
+	:func:`track_lines`. ``watches``: ``{key: Reorder Watch row}``. ``ancestors``: from
+	:func:`ancestor_map`. Returns ``{"lines", "needs", "snoozed"}``: a line is *covered* when an
+	open tracked line for its item sits in its scope (:func:`in_scope`), and only an uncovered line
+	below its point needs reordering. ``old_drafts`` names the stale Drafts in its scope.
 	"""
-	covered = {}
+	by_item = {}
 	for t in tracked or ():
-		if t.get("open"):
-			covered.setdefault(t["key"], []).append(t)
+		by_item.setdefault(t.get("item_code"), []).append(t)
 	lines, needs, snoozed = [], [], []
 	for rule in rules or ():
 		key = line_key(rule.get("item_code"), rule.get("warehouse"))
@@ -400,6 +529,9 @@ def assemble(rules, projected_map, tracked, watches, now):
 		)
 		below = is_below(rule.get("reorder_level"), rule.get("reorder_qty"), projected)
 		watch = (watches or {}).get(key) or {}
+		mine = [
+			t for t in by_item.get(rule.get("item_code"), []) if in_scope(t.get("warehouse"), rule, ancestors)
+		]
 		line = dict(rule)
 		line.update(
 			{
@@ -407,10 +539,17 @@ def assemble(rules, projected_map, tracked, watches, now):
 				"projected_qty": projected,
 				"below": below,
 				"suggested_qty": suggested_qty(rule.get("reorder_level"), rule.get("reorder_qty"), projected),
-				"covered_by": [
-					t.get("request") or (t["orders"][0]["name"] if t.get("orders") else None)
-					for t in covered.get(key, [])
-				],
+				"covered_by": sorted(
+					{
+						t.get("request") or (t["orders"][0]["name"] if t.get("orders") else None) or ""
+						for t in mine
+						if t.get("open")
+					}
+					- {""}
+				),
+				"old_drafts": sorted(
+					{t.get("request") for t in mine if t.get("stage") == STAGE_OLD_DRAFT} - {None}
+				),
 				"below_since": watch.get("below_since") if below else None,
 				"snooze": snooze_state(watch, projected, now) if below else None,
 				"snooze_kind": watch.get("snooze_kind"),
@@ -421,7 +560,7 @@ def assemble(rules, projected_map, tracked, watches, now):
 				"snooze_reason": watch.get("snooze_reason"),
 			}
 		)
-		line["covered"] = bool(line["covered_by"])
+		line["covered"] = any(t.get("open") for t in mine)
 		lines.append(line)
 		if not below or line["covered"]:
 			continue

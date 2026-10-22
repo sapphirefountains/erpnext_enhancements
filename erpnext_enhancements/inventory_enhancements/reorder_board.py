@@ -15,7 +15,7 @@ and made instead of just automatically clogging the material request table". So:
   by ERPNext's own rule and how much ERPNext would have asked for, and every open request for a
   rule's item and warehouse, from Material Request through Purchase Order to receipt.
 * :func:`create_requests` makes the Draft Material Requests the buyer picked (one per company).
-* :func:`snooze` / :func:`unsnooze` park a line without forgetting it.
+* :func:`snooze` / :func:`unsnooze` park a line without forgetting it (Purchasing only: ``SNOOZE_ROLES``).
 * :func:`sync_watch` (hourly) and :func:`send_daily_digest` (07:20 site time) tell the buyers
   what newly fell below, by email and by the Desk bell.
 
@@ -37,6 +37,9 @@ not yet named is still un-named tomorrow.
 Tabs, per ``CLAUDE.md`` (new file).
 """
 
+import hashlib
+from contextlib import contextmanager
+
 import frappe
 from frappe import _
 from frappe.utils import add_days, cint, get_url, getdate, now_datetime, nowdate
@@ -44,11 +47,16 @@ from frappe.utils import add_days, cint, get_url, getdate, now_datetime, nowdate
 from erpnext_enhancements.inventory_enhancements import reorder_rules as rules
 from erpnext_enhancements.inventory_enhancements.doctype.reorder_watch.reorder_watch import watch_name
 
-#: Who may open the board, snooze a line and ask for a request. The buyers (Purchase Manager,
-#: Purchase User), the stock manager who owns the reorder rules, and System Manager. Not Stock
-#: User: a technician or clerk takes and counts stock, and choosing what to buy is not theirs.
-#: Parker holds all four of Purchase Manager, Purchase User, Stock Manager and Stock User.
+#: Who may open the board and ask for a Draft request. The buyers (Purchase Manager, Purchase
+#: User), the stock manager who owns the reorder rules, and System Manager. Not Stock User: a
+#: technician or clerk takes and counts stock, and choosing what to buy is not theirs. Parker
+#: holds all four of Purchase Manager, Purchase User, Stock Manager and Stock User.
 BOARD_ROLES = ("Purchase Manager", "Purchase User", "Stock Manager", "System Manager")
+
+#: Who may snooze and un-snooze. Narrower than BOARD_ROLES: a snooze silences the Purchase
+#: Managers' digest for that item, and Stock Manager is held by 17 people on production,
+#: technicians among them (review of v1.730.0). Reorder Watch's own DocPerms say the same.
+SNOOZE_ROLES = ("Purchase Manager", "Purchase User", "System Manager")
 
 WATCH = "Reorder Watch"
 SETTINGS = "Inventory Scanner Settings"
@@ -58,6 +66,7 @@ PAGE = "reorder-board"
 PAGE_PATH = "/desk/reorder-board"
 
 #: A MariaDB named lock around Material Request creation, so a double click cannot make two.
+#: Named locks are server-wide, so the name carries the site (lock_name()).
 LOCK_NAME = "erpnext_enhancements.reorder_board.create_requests"
 LOCK_TIMEOUT_SECONDS = 10
 
@@ -79,16 +88,27 @@ def has_board_role(user=None):
 	return bool(roles.intersection(BOARD_ROLES))
 
 
+def has_snooze_role(user=None):
+	roles = set(frappe.get_roles(user or frappe.session.user))
+	return bool(roles.intersection(SNOOZE_ROLES))
+
+
 def require_board_role():
 	if not has_board_role():
 		frappe.throw(_("The Reorder Board is for Purchasing and Stock Managers."), frappe.PermissionError)
 
 
+def require_snooze_role():
+	require_board_role()
+	if not has_snooze_role():
+		frappe.throw(_("Only Purchasing may snooze a reorder line."), frappe.PermissionError)
+
+
 def permissions():
 	return {
 		"can_create": bool(frappe.has_permission("Material Request", "create")),
-		"can_submit": bool(frappe.has_permission("Material Request", "submit")),
-		"can_snooze": bool(frappe.has_permission(WATCH, "write"))
+		"can_snooze": has_snooze_role()
+		and bool(frappe.has_permission(WATCH, "write"))
 		and bool(frappe.has_permission(WATCH, "create")),
 		"can_see_orders": bool(frappe.has_permission("Purchase Order", "read")),
 	}
@@ -212,13 +232,29 @@ def _on_hand(item_codes):
 	}
 
 
-def read_tracking(item_codes, rule_keys, today):
-	"""The open requests and orders for the rules' items, as :func:`reorder_rules.track_lines`."""
-	codes = _in(item_codes)
+def read_ancestors():
+	"""Every warehouse's ancestors, for :func:`reorder_rules.in_scope`."""
+	return rules.ancestor_map(dict(frappe.db.sql("select name, parent_warehouse from `tabWarehouse`")))
+
+
+def read_tracking(rule_rows, ancestors, today):
+	"""The open requests and orders for the rules' items, as :func:`reorder_rules.track_lines`.
+
+	Only lines some rule counts are kept: the rule's warehouse, or any warehouse under its
+	``warehouse_group`` (:func:`reorder_rules.in_scope`).
+	"""
+	by_item = {}
+	for r in rule_rows:
+		by_item.setdefault(r["item_code"], []).append(r)
+
+	def counted(item_code, warehouse):
+		return any(rules.in_scope(warehouse, r, ancestors) for r in by_item.get(item_code, ()))
+
+	codes = _in(by_item)
 	since = add_days(today, -rules.RECEIVED_VISIBLE_DAYS - 1)
 	requests = frappe.db.sql(
 		"""select mri.name, mri.parent, mri.item_code, mri.warehouse, mri.stock_qty, mri.schedule_date,
-			mr.docstatus, mr.status, mr.transaction_date, mr.company
+			mr.docstatus, mr.status, mr.transaction_date, mr.creation, mr.company
 		from `tabMaterial Request Item` mri
 		inner join `tabMaterial Request` mr on mr.name = mri.parent
 		where mr.docstatus < 2 and mr.material_request_type = 'Purchase'
@@ -228,11 +264,13 @@ def read_tracking(item_codes, rule_keys, today):
 		{"codes": codes, "closed": tuple(rules.CLOSED_REQUEST_STATUSES), "since": since},
 		as_dict=True,
 	)
-	requests = [r for r in requests if rules.line_key(r["item_code"], r["warehouse"]) in rule_keys]
+	requests = [r for r in requests if counted(r["item_code"], r["warehouse"])]
 
 	stage_column = ""
 	if frappe.db.has_column("Purchase Order", "custom_order_stage"):
 		stage_column = ", po.custom_order_stage as order_stage"
+	# A request's orders are read whatever their status: a Closed one still says how much was
+	# ordered and received, and reorder_rules.still_to_come decides that it brings no more.
 	orders = frappe.db.sql(
 		f"""select poi.name, poi.parent, poi.item_code, poi.warehouse, poi.stock_qty, poi.schedule_date,
 			poi.material_request_item, po.docstatus, po.status, po.supplier, po.supplier_name{stage_column}
@@ -257,9 +295,7 @@ def read_tracking(item_codes, rule_keys, today):
 		o
 		for o in orders
 		if (o.get("material_request_item") in request_names)
-		or (
-			not o.get("material_request_item") and rules.line_key(o["item_code"], o["warehouse"]) in rule_keys
-		)
+		or (not o.get("material_request_item") and counted(o["item_code"], o["warehouse"]))
 	]
 	receipts = frappe.db.sql(
 		"""select pri.parent, pri.purchase_order_item, pri.stock_qty, pr.docstatus, pr.posting_date
@@ -309,16 +345,17 @@ def build_board(include_rates=False, now=None):
 		r.update(d)
 		r["on_hand"] = on_hand.get(rules.line_key(r["item_code"], r["warehouse"]), 0.0)
 		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
-	keys = {rules.line_key(r["item_code"], r["warehouse"]) for r in rule_rows}
-	tracked = read_tracking(codes, keys, today)
+	ancestors = read_ancestors()
+	tracked = read_tracking(rule_rows, ancestors, today)
 	watches = read_watches()
-	board = rules.assemble(rule_rows, projected_map, tracked, watches, now)
+	board = rules.assemble(rule_rows, projected_map, tracked, watches, now, ancestors)
 	names = {r["item_code"]: r.get("item_name") for r in rule_rows}
 	uoms = {r["item_code"]: r.get("stock_uom") for r in rule_rows}
 	for t in tracked:
 		t["item_name"] = names.get(t["item_code"])
 		t["stock_uom"] = uoms.get(t["item_code"])
-	board["on_order"] = tracked
+	# An old Draft covers nothing; it is shown on its item's line (old_drafts), not here.
+	board["on_order"] = [t for t in tracked if t["stage"] != rules.STAGE_OLD_DRAFT]
 	board["watches"] = watches
 	return board
 
@@ -352,6 +389,7 @@ _LINE_FIELDS = (
 	"default_supplier",
 	"last_purchase_rate",
 	"lead_time_days",
+	"old_drafts",
 	"below_since",
 	"snooze",
 	"snooze_kind",
@@ -428,14 +466,22 @@ def _parse_lines(lines):
 	return out
 
 
+def lock_name():
+	"""The named lock for this site. MariaDB's named locks are server-wide, and a bench can hold
+	several sites on one server: an unscoped name would make one site's buyers wait on another's.
+	The site is hashed so the name stays short and fixed-length, whatever the site is called."""
+	site = getattr(getattr(frappe, "local", None), "site", None) or ""
+	return f"{LOCK_NAME}:{hashlib.sha1(site.encode('utf-8')).hexdigest()[:12]}"
+
+
 def _lock():
-	got = frappe.db.sql("select get_lock(%s, %s)", (LOCK_NAME, LOCK_TIMEOUT_SECONDS))
+	got = frappe.db.sql("select get_lock(%s, %s)", (lock_name(), LOCK_TIMEOUT_SECONDS))
 	return bool(got and got[0] and cint(got[0][0]) == 1)
 
 
 def _unlock():
 	try:
-		frappe.db.sql("select release_lock(%s)", (LOCK_NAME,))
+		frappe.db.sql("select release_lock(%s)", (lock_name(),))
 	except Exception:
 		# The lock is the connection's: it goes with it at the end of the request anyway.
 		pass
@@ -564,27 +610,65 @@ def create_requests(lines, client_ref):
 		_unlock()
 
 
-def _ensure_watch(item_code, warehouse, fields):
-	"""Write ``fields`` on the line's watch row, making the row if there is none.
+@contextmanager
+def _muted():
+	"""``frappe.flags.mute_messages`` for the block: Frappe's duplicate-name error msgprints
+	("Reorder Watch ... already exists") *before* it raises, and a caught error's message still
+	reaches the browser as a red modal on a successful reply (CLAUDE.md, the caught-throw note)."""
+	flags = getattr(frappe, "flags", None)
+	previous = getattr(flags, "mute_messages", None) if flags is not None else None
+	if flags is not None:
+		flags.mute_messages = True
+	try:
+		yield
+	finally:
+		if flags is not None:
+			flags.mute_messages = previous
 
-	The row's name is the item and warehouse, so the hourly sync inserting the same row a moment
-	earlier is a DuplicateEntryError here, and the write lands on its row instead.
+
+def _insert_quietly(doc, ignore_permissions=True):
+	"""Insert ``doc``; on a name (or unique-index) collision return False, quietly.
+
+	The row's name is its item and warehouse, so the only collision is the hourly sync (or a second
+	request) inserting the same row a moment earlier. A primary-key collision raises
+	``DuplicateEntryError`` and any other unique index ``UniqueValidationError`` (two classes with no
+	common base), so both are caught; the savepoint rolls back only the failed INSERT, and messages
+	are muted so nothing is left queued for the reply.
 	"""
+	from frappe.database.database import savepoint
+
+	errors = tuple(
+		e
+		for e in (
+			getattr(frappe, "DuplicateEntryError", None),
+			getattr(frappe, "UniqueValidationError", None),
+		)
+		if e
+	)
+	inserted = False
+	with _muted():
+		with savepoint(catch=errors):
+			doc.insert(ignore_permissions=ignore_permissions)
+			inserted = True
+	return inserted
+
+
+def _ensure_watch(item_code, warehouse, fields):
+	"""Write ``fields`` on the line's watch row, making the row if there is none."""
 	name = watch_name(item_code, warehouse)
 	if not frappe.db.exists(WATCH, name):
-		try:
-			frappe.get_doc(
-				{
-					"doctype": WATCH,
-					"item_code": item_code,
-					"warehouse": warehouse,
-					"below_since": now_datetime(),
-					**fields,
-				}
-			).insert(ignore_permissions=True)
+		doc = frappe.get_doc(
+			{
+				"doctype": WATCH,
+				"item_code": item_code,
+				"warehouse": warehouse,
+				"below_since": now_datetime(),
+				**fields,
+			}
+		)
+		if _insert_quietly(doc):
 			return
-		except frappe.DuplicateEntryError:
-			pass
+	# The row was there, or arrived while we looked: write onto it.
 	frappe.db.set_value(WATCH, name, fields, update_modified=False)
 
 
@@ -607,7 +691,7 @@ def _line_for(item_code, warehouse):
 
 def snooze(item_code, warehouse, kind, reason=None):
 	"""Park a line that is below its point: it moves to Snoozed and the digest skips it."""
-	require_board_role()
+	require_snooze_role()
 	line, watch = _line_for(item_code, warehouse)
 	if not line or not line.get("below"):
 		raise BoardError(_("This item is not below its reorder point now. Reload the board."))
@@ -616,21 +700,21 @@ def snooze(item_code, warehouse, kind, reason=None):
 	if error:
 		raise BoardError(_(error))
 	# As the person: Reorder Watch write (and create, for a line the hourly sync has not seen yet).
-	if watch and watch.get("name"):
-		doc = frappe.get_doc(WATCH, watch["name"])
-		doc.update(fields)
-		doc.save()
-	else:
+	if not (watch and watch.get("name")):
 		doc = frappe.get_doc(
 			{"doctype": WATCH, "item_code": item_code, "warehouse": warehouse, "below_since": now, **fields}
 		)
-		doc.insert()
+		if _insert_quietly(doc, ignore_permissions=False):
+			return {"ok": True, "key": line["key"], "snooze_kind": kind}
+	doc = frappe.get_doc(WATCH, watch_name(item_code, warehouse))
+	doc.update(fields)
+	doc.save()
 	return {"ok": True, "key": line["key"], "snooze_kind": kind}
 
 
 def unsnooze(item_code, warehouse):
 	"""Bring a snoozed line back to Needs reorder. Not named again by the digest: you just saw it."""
-	require_board_role()
+	require_snooze_role()
 	key = rules.line_key(item_code, warehouse)
 	name = frappe.db.get_value(WATCH, {"item_code": item_code, "warehouse": warehouse}, "name", order_by=None)
 	if not name:
@@ -649,14 +733,16 @@ def _apply_sync(board, now):
 	for row in inserts:
 		if frappe.db.exists(WATCH, watch_name(row["item_code"], row["warehouse"])):
 			continue
-		frappe.get_doc(
-			{
-				"doctype": WATCH,
-				"item_code": row["item_code"],
-				"warehouse": row["warehouse"],
-				"below_since": row["below_since"],
-			}
-		).insert(ignore_permissions=True)
+		_insert_quietly(
+			frappe.get_doc(
+				{
+					"doctype": WATCH,
+					"item_code": row["item_code"],
+					"warehouse": row["warehouse"],
+					"below_since": row["below_since"],
+				}
+			)
+		)
 	for key, fields in updates:
 		frappe.db.set_value(WATCH, board["watches"][key]["name"], fields, update_modified=False)
 	for key in deletes:
@@ -746,14 +832,19 @@ def _qty(value):
 	return f"{number:,.0f}" if abs(number - round(number)) < 1e-9 else f"{number:,.2f}"
 
 
+#: The digest's columns. Four, because ``email_style.table`` fits four on a phone; the rest
+#: (on hand, supplier, rate, how long) is on the board.
+DIGEST_HEADERS = ("Item", "Warehouse", "Projected / reorder at", "Suggested buy")
+
+
 def digest_rows(lines, url_for):
+	"""Four cells a line: the item (code and name, linking the Item), the warehouse, projected
+	against the reorder point, and the suggested buy with its unit."""
 	return [
 		[
-			(url_for(l["item_code"]), l["item_code"]),
-			l.get("item_name") or "",
+			(url_for(l["item_code"]), " · ".join(x for x in (l["item_code"], l.get("item_name")) if x)),
 			l.get("warehouse") or "",
-			_qty(l.get("projected_qty")),
-			_qty(l.get("reorder_level")),
+			f"{_qty(l.get('projected_qty'))} / {_qty(l.get('reorder_level'))}",
 			f"{_qty(l.get('suggested_qty'))} {l.get('stock_uom') or ''}".strip(),
 		]
 		for l in lines
@@ -767,7 +858,7 @@ def _send(newly, ended, total_needing, people):
 
 	board_url = get_url(PAGE_PATH)
 	count = len(newly) + len(ended)
-	headers = [_("Item"), _("Item Name"), _("Warehouse"), _("Projected"), _("Reorder at"), _("Suggested")]
+	headers = [_(h) for h in DIGEST_HEADERS]
 	url_for = lambda code: get_url_to_form("Item", code)  # noqa: E731
 
 	body = email_style.kpis(
