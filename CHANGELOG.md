@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.720.0] - 2026-10-22
+## [1.723.0] - 2026-10-22
 
 ### Added
 - **Simple mode for both planners: every job (or site), what is done and what is coming up, on one quiet page.**

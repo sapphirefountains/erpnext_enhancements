@@ -81,7 +81,7 @@ Related code outside this folder:
 - `api/planner_ai_draft.py` — the Build out grid's **AI draft…** (T4, v1.609.0): one POST endpoint, `draft_task_breakdown`, that asks the app's Gemini client for a task breakdown and returns grid rows. It writes nothing and never picks a person or a day. See [AI draft](#ai-draft-a-task-breakdown-for-the-grid-t4-v1609).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
-- `api/planner_simple.py` and `public/js/planner_kit/simple.js` — **Simple mode** for both planners: a card per job (or site), Done and Coming up, one search box. Reads only. See [Simple mode](#simple-mode-v17200).
+- `api/planner_simple.py` and `public/js/planner_kit/simple.js` — **Simple mode** for both planners: a card per job (or site), Done and Coming up, one search box. Reads only. See [Simple mode](#simple-mode-v17230).
 - `public/js/planner_kit/tour.js` — P12: the first-visit tour, a few short steps in one modal dialog, skippable everywhere and never a history entry. See [The first-visit tour and the help](#the-first-visit-tour-and-the-help-p12-v17160-planner-ux-redesign).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
@@ -2318,7 +2318,7 @@ Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
   and the toolbar exist. It cannot be seen in a browser from a bench-free test, so the first look on a phone at
   375px is a person's.
 
-### Simple mode (v1.720.0)
+### Simple mode (v1.723.0)
 
 Nik, 2026-10-22: "an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and easily
 see all the data in a simple view, both historical data and future data". The design and his decisions S1–S14 are
