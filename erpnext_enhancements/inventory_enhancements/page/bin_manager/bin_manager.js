@@ -73,6 +73,8 @@ class BinManagerPage {
 		this.reorder = null; // the reorder editor (public/js/reorder_levels), once its bundle is here
 		this.reorder_for = null; // the location object the editor last read the rules for
 		this.reorder_pref = null; // the person's switch once they have used it here; until then the boot's
+		this.reorder_saving = false; // a request storing the switch is in flight (remember_reorder sends one at a time)
+		this.reorder_want = null; // the latest choice to store
 		this.redraw_after_blur = false; // a table redraw is waiting for a reorder box to be left
 		// v16's frappe.require calls back even when a file failed to load (assets.js "resolve even on
 		// error"), so both globals are checked; a page without them says so instead of waiting.
@@ -191,12 +193,29 @@ class BinManagerPage {
 		this.remember_reorder(on);
 	}
 
+	// Stores the switch. Quick taps must not leave the store disagreeing with the screen: replies can arrive out of
+	// order, so only one request is in flight, and when it settles the latest choice is sent if it differs from
+	// what was just sent. The last tap wins on screen and in the store.
 	remember_reorder(on) {
 		if (!this.sf) return;
-		this.sf.call(BM_REORDER_PREF, { screen: "bin_manager", value: on ? 1 : 0 }, { quiet: true }).then(
-			() => {},
-			() => frappe.show_alert({ message: __("Could not save that choice for next time."), indicator: "orange" }, 6)
-		);
+		this.reorder_want = on;
+		if (this.reorder_saving) return;
+		this.reorder_saving = true;
+		const send = () => {
+			const sent = this.reorder_want;
+			let failed = false;
+			return this.sf.call(BM_REORDER_PREF, { screen: "bin_manager", value: sent ? 1 : 0 }, { quiet: true }).then(
+				() => {},
+				() => {
+					failed = true;
+				}
+			).then(() => {
+				if (this.reorder_want !== sent) return send();
+				this.reorder_saving = false;
+				if (failed) frappe.show_alert({ message: __("Could not save that choice for next time."), indicator: "orange" }, 6);
+			});
+		};
+		send();
 	}
 
 	sync_reorder(loc) {

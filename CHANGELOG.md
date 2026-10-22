@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Anything wrong is "hidden".** No row, a damaged one, a value that is not a real `true`, a database that
     will not answer: the screen opens clean. A choice that could not be saved still works for the visit and an
     orange note says it will not be remembered.
+  - **Tapping early, or tapping fast, never leaves the store disagreeing with the screen** (independent review
+    of #1345). The Scanner Audit's switch can be there before the start-up reply lands (the reorder bundle
+    may already be cached); the reply used to put the screen back to the older stored value after the tap
+    had saved the new one. A switch the person has used now stays as they left it, the reply no longer
+    overrules it. On both screens only one save is in flight at a time, and when it settles the latest choice
+    is sent if it differs, so replies arriving out of order cannot store an earlier tap: the last tap wins on
+    screen and in the store. A save that fails still says so, once, for the latest choice.
   - **Nothing is read while hidden.** The rules are asked for the first time the boxes are shown, once for a
     list; hidden boxes are not in the page at all, so they are not focusable and not tab stops.
   - **The scanner's focus is untouched.** A tap on the switch cannot take the focus (mousedown is cancelled),

@@ -37,8 +37,16 @@ on**. So a view lives on the server, per user, never in the browser.
   a reload never repeats it. Never frappe's Redis-only user_settings, which a deploy flushes, and never
   the browser alone: a person shown the tour on one machine is not shown it again on the next.
 
-Every endpoint is gated by the calling planner's own roles (``project_planner._require_planner`` or
-``maintenance_planner._require_planner``) and acts only on ``frappe.session.user``'s row.
+Every endpoint acts only on ``frappe.session.user``'s row, and each is gated for the screen it serves:
+
+* the planner endpoints (views, tour) by the calling planner's own roles
+  (``project_planner._require_planner`` or ``maintenance_planner._require_planner``), the Opportunity
+  Board's by read permission on Opportunity;
+* the guided page's settings: the read hands back only the caller's own row, and the writers need read
+  permission on the doctype a setting is about, never a planner role;
+* the inventory screens' reorder switch (:func:`get_inventory_prefs`, :func:`set_show_reorder`, v1.728.0)
+  by ``stock_scan_rules.SCAN_ROLES`` (``_require_inventory``), the roles that may open the Bin Manager and the
+  Inventory Scanner Audit, not by a planner role.
 """
 
 import json

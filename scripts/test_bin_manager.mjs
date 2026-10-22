@@ -1163,6 +1163,32 @@ test("the real page: a choice that could not be saved still works this visit, an
 	check("and an orange note says it will not be remembered", [registry.alerts.length, registry.alerts[0] && registry.alerts[0].indicator, /next time/.test((registry.alerts[0] || {}).message || "")], [1, "orange", true]);
 });
 
+test("the real page: quick taps on the switch send one request at a time, and the last tap is what is stored", async () => {
+	const { server, world, registry, click } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	let release;
+	server.delay.set("set_show_reorder", new Promise((r) => (release = r)));
+	const sent = () => server.calls.filter((c) => c.method === REORDER_PREF).map((c) => c.args.value);
+	for (let i = 0; i < 4; i++) click({ "data-act": "reorder-toggle" }); // on, off, on, off
+	await settle();
+	check("the last tap wins on screen", />Reorder</.test(registry.found[".bm-items"][0].innerHTML), false);
+	check("only the first request is out while it is unanswered", sent(), [1]);
+	server.delay.delete("set_show_reorder");
+	release();
+	await settle();
+	check("then the latest choice follows, in order, and nothing else", sent(), [1, 0]);
+	check("no note about a failed save", registry.alerts.length, 0);
+	// on, off, on while one is out: the in-flight request already says it, so no second one is needed
+	server.delay.set("set_show_reorder", new Promise((r) => (release = r)));
+	for (let i = 0; i < 3; i++) click({ "data-act": "reorder-toggle" });
+	await settle();
+	server.delay.delete("set_show_reorder");
+	release();
+	await settle();
+	check("an end state equal to what was just sent adds no request", sent().slice(2), [1]);
+});
+
 test("the real page: with the boxes on, Move, the item link and a reorder level of 0 all still work", async () => {
 	const { server, world, registry, click } = loadPage({
 		reorder: true,

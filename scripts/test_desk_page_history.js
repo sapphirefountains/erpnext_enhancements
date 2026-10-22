@@ -1721,6 +1721,8 @@ async function inventory(settings, opts) {
 		return { type: "unknown" };
 	};
 	desk.respond.lookup_item = () => [];
+	// { holdBoot: true }: the start-up reply (get_bootstrap) is held until desk.releaseBoot() lets it land.
+	if (opts && opts.holdBoot) desk.releaseBoot = hold(desk, "get_bootstrap");
 	await desk.load("/desk/home");
 	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit"));
 	return desk;
@@ -1854,6 +1856,51 @@ test("Scanner Audit: a choice that could not be saved still works this visit, an
 	await desk.settle();
 	check("the boxes show anyway", slotHtml(desk).some((h) => h.includes("data-ro-item")), true);
 	check("and a note says it will not be remembered", desk.alerts.some((a) => /next time/.test(a)), true);
+});
+
+test("Scanner Audit: a tap on the switch before the start-up reply lands is not put back by that reply", async () => {
+	// The reorder bundle can be cached, so the switch is there before get_bootstrap answers; the stored value
+	// the reply carries is older than the tap.
+	for (const stored of [false, true]) {
+		const desk = await inventory(null, { reorder: true, holdBoot: true, prefs: { show_reorder: stored } });
+		desk.respond.set_show_reorder = ({ screen, value }) => ({ screen, show_reorder: !!value });
+		await desk.settle();
+		check(`stored ${stored}: the switch is up before boot`, isa(desk).booted, false);
+		await desk.tap(() => isa(desk).toggleReorder());
+		await desk.settle();
+		const tapped = true; // before the reply the switch says "Show", whatever was stored: a tap is "show"
+		check("the tap took effect on screen", isa(desk).state.showReorder, tapped);
+		desk.releaseBoot();
+		await desk.settle();
+		check("the reply landed", isa(desk).booted, true);
+		check("and the screen is as the person left it, not as the reply stored it", isa(desk).state.showReorder, tapped);
+		check("the switch says what the screen does", toggleCalls(desk).filter((c) => c.method === "text").slice(-1)[0].args[0], tapped ? "Hide reorder levels" : "Show reorder levels");
+		const saved = desk.sent("set_show_reorder");
+		check("what was stored is what is on screen", [saved.length, saved[0].args.value], [1, tapped ? 1 : 0]);
+	}
+});
+
+test("Scanner Audit: quick taps on the switch send one request at a time, and the last tap is what is stored", async () => {
+	const desk = await inventory(null, { reorder: true });
+	desk.respond.get_reorder_levels = reorderAnswer;
+	desk.respond.set_show_reorder = ({ screen, value }) => ({ screen, show_reorder: !!value });
+	await desk.settle();
+	const release = hold(desk, "set_show_reorder");
+	for (let i = 0; i < 4; i++) await desk.tap(() => isa(desk).toggleReorder()); // on, off, on, off
+	check("the last tap wins on screen", isa(desk).state.showReorder, false);
+	check("only the first request is out while it is unanswered", desk.sent("set_show_reorder").map((r) => r.args.value), [1]);
+	release();
+	await desk.settle();
+	check("then the latest choice follows, in order, and nothing else", desk.sent("set_show_reorder").map((r) => r.args.value), [1, 0]);
+	check("the store ends where the screen is", [desk.sent("set_show_reorder").slice(-1)[0].args.value, isa(desk).state.showReorder], [0, false]);
+	check("no note about a failed save", desk.alerts.length, 0);
+	check("no push without a tap", desk.violations, []);
+	// three taps ending where it began: the in-flight request already says it, so no second one is needed
+	const again = hold(desk, "set_show_reorder");
+	for (let i = 0; i < 3; i++) await desk.tap(() => isa(desk).toggleReorder()); // on, off, on
+	again();
+	await desk.settle();
+	check("an end state equal to what was just sent adds no request", desk.sent("set_show_reorder").map((r) => r.args.value).slice(2), [1]);
 });
 
 test("Scanner Audit without the reorder bundle: the card is the card it was, and nothing is asked", async () => {

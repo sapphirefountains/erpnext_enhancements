@@ -152,6 +152,12 @@ class InventoryScanner {
 		this.page = page;
 		this.wrapper = wrapper;
 		this.state = { settings: {}, session: null, activeLocation: null, pendingItem: null, showReorder: false };
+		// The person's own switch once they have used it this visit: the start-up reply must not put it back to
+		// the stored value (the switch can be tapped before get_bootstrap returns). null = not used yet.
+		this.reorderPref = null;
+		// Saving the switch: one request at a time, and the latest choice is what ends up stored.
+		this.reorderSaving = false;
+		this.reorderWant = null;
 		this.booted = false; // the bootstrap has answered: whether camera scanning is on is known
 		this.kit = null; // the scanner kit, once it has arrived
 		this.nav = isa_bare_sheets(); // the sheets' history handling; the kit's, once it has arrived
@@ -220,19 +226,41 @@ class InventoryScanner {
 	toggleReorder() {
 		if (!this.reorder) return;
 		this.state.showReorder = !this.state.showReorder;
+		this.reorderPref = this.state.showReorder;
 		const p = this.state.pendingItem;
 		this.$pending.find('.isa-reorder').html(p ? this.reorderCell(p) : '');
 		this.renderControls();
 		if (p) this.loadReorder();
 		if (p) this.$pending.find('.isa-qty').focus();
 		else this.focusScan();
-		const on = this.state.showReorder;
-		isa_kit()
-			.then((sf) => sf.call(ISA_REORDER_PREF, { screen: 'scanner_audit', value: on ? 1 : 0 }, { quiet: true }))
-			.then(
-				() => {},
-				() => frappe.show_alert({ message: __('Could not save that choice for next time.'), indicator: 'orange' })
-			);
+		this.saveReorderChoice(this.state.showReorder);
+	}
+
+	// Stores the switch. Quick taps must not leave the store disagreeing with the screen: replies can arrive
+	// out of order, so only one request is in flight, and when it settles the latest choice is sent if it
+	// differs from what was just sent. The last tap wins on screen and in the store.
+	saveReorderChoice(on) {
+		this.reorderWant = on;
+		if (this.reorderSaving) return;
+		this.reorderSaving = true;
+		const send = () => {
+			const sent = this.reorderWant;
+			let failed = false;
+			return isa_kit()
+				.then((sf) => sf.call(ISA_REORDER_PREF, { screen: 'scanner_audit', value: sent ? 1 : 0 }, { quiet: true }))
+				.then(
+					() => {},
+					() => {
+						failed = true;
+					}
+				)
+				.then(() => {
+					if (this.reorderWant !== sent) return send();
+					this.reorderSaving = false;
+					if (failed) frappe.show_alert({ message: __('Could not save that choice for next time.'), indicator: 'orange' });
+				});
+		};
+		send();
 	}
 
 	// The rule of the item on the card, for the warehouse being counted.
@@ -300,7 +328,8 @@ class InventoryScanner {
 					this.booted = true;
 					this.state.settings = (d && d.settings) || {};
 					// Only a real true turns the reorder boxes on; no preference, or one that could not be read, is off.
-					this.state.showReorder = !!(d && d.prefs && d.prefs.show_reorder === true);
+					// A switch already used this visit stays as the person left it.
+					this.state.showReorder = this.reorderPref !== null ? this.reorderPref : !!(d && d.prefs && d.prefs.show_reorder === true);
 					if (this.sessionTouched === touched) this.state.session = (d && d.session) || null;
 					this.renderAll();
 					this.focusScan();
