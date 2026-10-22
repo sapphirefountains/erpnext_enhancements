@@ -135,6 +135,32 @@ class ItemMatchTest(unittest.TestCase):
 		self.assertEqual(_codes(found)[0], "340605")
 		self.assertTrue(_search("45M1", catalog)["items"][0]["model"])
 
+	def test_a_category_and_a_size_is_not_a_model(self):
+		# Review of PR #1341: "pvc 1-1/2" was an exact match for 22 fittings, "sch 40" for 60 of 60.
+		catalog = [
+			*CATALOG,
+			_item("PV-1", 'ELBOW, PVC, SCH 40, 1-1/2"'),
+			_item("PV-2", 'TEE, PVC, SCH 40, 1-1/2"'),
+			_item("HP-2", "PUMP, POOL, 2HP"),
+		]
+		for query in ("pvc 1-1/2", "sch 40", "2 hp pump"):
+			found = rules.match_items(
+				catalog,
+				rules.query_terms(query),
+				rules.whole_query(query),
+				single=rules.is_single_chunk(query),
+			)
+			with self.subTest(query=query):
+				self.assertTrue(found["items"])
+				self.assertFalse(any(r["model"] for r in found["items"]))
+		self.assertEqual(_codes(_search("2 hp pump", catalog))[0], "HP-2")
+
+	def test_one_chunk_is_a_model_search(self):
+		self.assertTrue(rules.is_single_chunk("EQKT-750"))
+		self.assertTrue(rules.is_single_chunk("who sells SQ3-65"))
+		self.assertFalse(rules.is_single_chunk("pvc 1-1/2"))
+		self.assertFalse(rules.is_single_chunk("sch 40"))
+
 	def test_exact_code_outranks_a_code_containing_it(self):
 		catalog = [_item("A1234", "VALVE, BALL"), _item("1234", "VALVE, CHECK")]
 		self.assertEqual(_codes(_search("1234", catalog))[0], "1234")
@@ -317,6 +343,42 @@ class RankTest(unittest.TestCase):
 		self.assertEqual(row["last_date"], "2026-06-01")
 		first = row["items"][0]
 		self.assertEqual((first["item_code"], first["po_lines"], first["last_rate"]), ("340605", 3, 900.0))
+
+	def test_a_direct_purchase_invoice_is_history(self):
+		ranked = self.rank([_ev("Valley Pool Co", "340605", pi_lines=1, last_date="2026-09-01")])
+		self.assertEqual(ranked[0]["tier"], rules.TIER_HISTORY)
+		self.assertEqual(ranked[0]["bought_count"], 1)
+
+	def test_the_price_keeps_its_currency(self):
+		ranked = self.rank(
+			[
+				_ev(
+					"Valley Pool Co",
+					"340605",
+					po_lines=1,
+					last_date="2025-01-01",
+					last_rate=500.0,
+					currency="USD",
+				),
+				_ev(
+					"Valley Pool Co",
+					"340605",
+					pi_lines=1,
+					last_date="2026-03-01",
+					last_rate=700.0,
+					currency="CAD",
+				),
+			]
+		)
+		first = ranked[0]["items"][0]
+		self.assertEqual((first["last_rate"], first["currency"]), (700.0, "CAD"))
+
+	def test_every_pair_has_the_same_keys(self):
+		ranked = self.rank(
+			[_ev("Valley Pool Co", "340605", sq_lines=1), _ev("Valley Pool Co", "342002", po_lines=1)]
+		)
+		keys = {frozenset(i) for i in ranked[0]["items"]}
+		self.assertEqual(len(keys), 1)
 
 	def test_newest_price_wins_within_a_record(self):
 		ranked = self.rank(

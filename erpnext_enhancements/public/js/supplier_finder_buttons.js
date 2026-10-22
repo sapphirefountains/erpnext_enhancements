@@ -5,6 +5,11 @@
 // check again on the server.
 
 (() => {
+	// doctype_js loads this file once for Item and again for Purchase Order. Registered twice, the
+	// handlers would run twice and add the button twice.
+	if (window.__sfn_buttons_registered) return;
+	window.__sfn_buttons_registered = true;
+
 	function open_finder(item_code) {
 		if (item_code) frappe.set_route("supplier-finder", { item: item_code });
 	}

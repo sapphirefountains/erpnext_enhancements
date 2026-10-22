@@ -33,11 +33,13 @@ class SupplierSearch(BaseTool):
 			"specific model. Read-only. Give it a general word ('pump'), a phrase ('submersible "
 			"pump', '2 hp pool pump') or a model or vendor part number ('EQKT750', 'Grundfos SQ "
 			"3-65'). Returns the matching Items and the suppliers ranked by evidence: purchase "
-			"orders and receipts first (tier 'history', with the date and, for buyers, the last "
-			"price), then quotes, Item Supplier listings, default suppliers and buying prices "
+			"orders, invoices and receipts first (tier 'history', with the date and the last price "
+			"paid, in its currency, from documents this user may read), then quotes, Item Supplier listings, default suppliers and buying prices "
 			"(tier 'carries'), and last suppliers that only sit in a matching Supplier Group or "
 			"have a matching name (tier 'group'). Duplicate supplier records are folded into one "
-			"row and listed as 'aliases'. Each supplier has a plain 'reason'. Use this instead of "
+			"row and listed as 'aliases'. Each supplier has a plain 'reason'. 'suppliers_total' and "
+			"'items_total' say how many matched in all, and 'hidden_note' names any purchase "
+			"history this user may not read. Use this instead of "
 			"filtering Supplier by supplier_group: most suppliers are in no group, or in one "
 			"whose name does not say what they sell. Purchase history in ERPNext starts in "
 			"October 2025. Requires read access to Supplier and Item."
@@ -66,7 +68,7 @@ class SupplierSearch(BaseTool):
 				},
 				"limit": {
 					"type": "integer",
-					"description": "Suppliers to return, 1 to 40 (default 40).",
+					"description": "Suppliers to return, 1 to 40 (default 12).",
 				},
 			},
 		}
@@ -88,12 +90,44 @@ class SupplierSearch(BaseTool):
 		from erpnext_enhancements.api.supplier_search import run_search
 
 		limit = args.get("limit")
-		return run_search(
+		answer = run_search(
 			query,
 			item_code=item_code or None,
 			use_ai=bool(args.get("expand") is True),
-			limit=limit if isinstance(limit, int) else None,
+			limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else DEFAULT_LIMIT,
 		)
+		return compact(answer)
+
+
+#: Suppliers returned when the caller names no limit. Every tool result is paid for in the
+#: assistant's context: the page's 40 suppliers and 60 items came to about 89 KB (22k tokens).
+DEFAULT_LIMIT = 12
+#: Items listed per supplier, and matching items listed, in the tool's answer.
+ITEMS_PER_SUPPLIER = 3
+ITEMS_SHOWN = 15
+#: Ranking internals a model does not need to read the answer.
+_INTERNAL = ("score", "hits", "strict", "coverage", "group_match", "name_match", "description")
+
+
+def _strip(row):
+	return {k: v for k, v in row.items() if k not in _INTERNAL}
+
+
+def compact(answer):
+	"""The search's answer cut down for an assistant: suppliers keep their first
+	ITEMS_PER_SUPPLIER items, at most ITEMS_SHOWN matching items are listed, and the ranking
+	internals are dropped. The totals and the hidden-history note stay, so the model can say what it
+	is not showing."""
+	if not answer.get("ok"):
+		return answer
+	out = dict(answer)
+	out["suppliers"] = [
+		dict(_strip(s), items=[_strip(i) for i in s.get("items", [])[:ITEMS_PER_SUPPLIER]])
+		for s in answer.get("suppliers", [])
+	]
+	out["items"] = [_strip(i) for i in answer.get("items", [])[:ITEMS_SHOWN]]
+	out["groups"] = [_strip(g) for g in answer.get("groups", [])]
+	return out
 
 
 __all__ = ["SupplierSearch"]

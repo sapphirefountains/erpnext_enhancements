@@ -234,6 +234,9 @@ class SupplierFinderPage {
 				notes.push(`<div class="sfn-note">${this.esc(r.ai.message)}</div>`);
 			}
 		}
+		if (r.hidden_note) {
+			notes.push(`<div class="sfn-note">${this.esc(r.hidden_note)}</div>`);
+		}
 		if (r.partial) {
 			notes.push(
 				`<div class="sfn-note sfn-note-warn">${this.esc(
@@ -262,15 +265,24 @@ class SupplierFinderPage {
 			${groups}
 			<div class="sfn-cols">
 				<section class="sfn-col-suppliers">
-					<h5 class="sfn-heading">${this.esc(__("Suppliers"))} <span class="sfn-count">${this.esc((r.suppliers || []).length)}</span></h5>
+					<h5 class="sfn-heading">${this.esc(__("Suppliers"))} <span class="sfn-count">${this.esc(
+						this.count_label((r.suppliers || []).length, r.suppliers_total)
+					)}</span></h5>
 					${suppliers}
 				</section>
 				<section class="sfn-col-items">
-					<h5 class="sfn-heading">${this.esc(__("Matching items"))} <span class="sfn-count">${this.esc((r.items || []).length)}</span></h5>
+					<h5 class="sfn-heading">${this.esc(__("Matching items"))} <span class="sfn-count">${this.esc(
+						this.count_label((r.items || []).length, r.items_total)
+					)}</span></h5>
 					${items}
 				</section>
 			</div>
 		`;
+	}
+
+	// "12", or "40 of 73" when the list shown is cut. Every supplier was still ranked on all of it.
+	count_label(shown, total) {
+		return total && total > shown ? __("{0} of {1}", [shown, total]) : String(shown);
 	}
 
 	tier_label(tier) {
@@ -316,6 +328,7 @@ class SupplierFinderPage {
 	render_pair(i, rates) {
 		const bits = [];
 		if (i.po_lines) bits.push(__("{0} PO line(s)", [i.po_lines]));
+		if (i.pi_lines) bits.push(__("{0} invoice line(s)", [i.pi_lines]));
 		if (i.pr_lines) bits.push(__("{0} receipt line(s)", [i.pr_lines]));
 		if (i.sq_lines) bits.push(__("quoted"));
 		if (i.listed) bits.push(i.part_no ? __("their part {0}", [i.part_no]) : __("listed on the Item"));
@@ -324,7 +337,7 @@ class SupplierFinderPage {
 		if (i.last_date) bits.push(__("last {0}", [frappe.datetime.str_to_user(i.last_date)]));
 		if (rates && i.last_rate) {
 			bits.push(
-				__("paid {0}{1}", [format_currency(i.last_rate), i.uom ? ` / ${i.uom}` : ""])
+				__("paid {0}{1}", [format_currency(i.last_rate, i.currency), i.uom ? ` / ${i.uom}` : ""])
 			);
 		}
 		return `
@@ -364,10 +377,12 @@ class SupplierFinderPage {
 				this.$body.html(`<div class="sfn-note">${this.esc(r.message)}</div>`);
 				return;
 			}
+			const hidden = r.hidden_note ? `<div class="sfn-note">${this.esc(r.hidden_note)}</div>` : "";
 			const rows = r.items.length
 				? r.items.map((i) => this.render_pair(i, r.rates)).join("")
 				: `<li class="text-muted">${this.esc(__("Nothing bought, quoted or listed yet."))}</li>`;
 			this.$body.html(`
+				${hidden}
 				<div class="sfn-card">
 					<div class="sfn-card-head">
 						<a href="/desk/supplier/${encodeURIComponent(r.supplier)}" class="sfn-sup-name">${this.esc(r.supplier_name)}</a>

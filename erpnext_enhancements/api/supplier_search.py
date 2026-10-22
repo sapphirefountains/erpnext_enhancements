@@ -22,9 +22,10 @@ supplier group." His rulings that day, which ``docs/supplier-finder.md`` records
 fails, one Error Log row naming the exception's class (never the query). An expansion is cached
 for a day per search, so retyping the same search costs nothing.
 
-Who may use it: anyone who may read both Supplier and Item. Purchase counts and dates are part
-of every answer. The price paid (``last_rate``) is included only for someone who may read
-Purchase Order, and is blank for everyone else.
+Who may use it: anyone who may read both Supplier and Item. Each source of evidence is used only
+when the person may also read it (Purchase Order, Purchase Invoice, Purchase Receipt, Supplier
+Quotation, Item Price). One they may not read is neither ranked on nor shown, and the answer says
+which were hidden. So a price paid, in its own currency, comes only from a purchase they may read.
 
 The decisions are in ``inventory_enhancements/supplier_search_rules.py`` (bench-free tested).
 This file does the reads and the one model call. Indentation is tabs (new file).
@@ -155,17 +156,36 @@ def _group_names():
 	return frappe.get_all("Supplier Group", filters={"is_group": 0}, pluck="name", order_by="name asc")
 
 
-def _can_see_rates():
-	return bool(frappe.has_permission("Purchase Order", "read"))
+#: Where purchase evidence comes from, and the doctype a person must be able to read for it to be
+#: used or shown: (doctype, child table, date field, count key, a purchase with a price?). The
+#: last three are purchases. A Purchase Invoice counts only when it is not a return.
+PURCHASE_SOURCES = (
+	("Purchase Order", "Purchase Order Item", "transaction_date", "po_lines"),
+	("Purchase Invoice", "Purchase Invoice Item", "posting_date", "pi_lines"),
+	("Purchase Receipt", "Purchase Receipt Item", "posting_date", "pr_lines"),
+)
+#: Every doctype the evidence reads, so the caller's read permission on each can be checked.
+EVIDENCE_DOCTYPES = (*(src[0] for src in PURCHASE_SOURCES), "Supplier Quotation", "Item Price")
+
+MSG_HIDDEN = "Some purchase history is hidden because you cannot read: {0}."
 
 
-def _evidence(item_codes=None, suppliers=None, with_rates=False):
+def readable_sources():
+	"""``{doctype: bool}``: may this person read each source of evidence? A source they may not read
+	is neither used to rank nor shown (``hidden`` in the answer says which)."""
+	return {dt: bool(frappe.has_permission(dt, "read")) for dt in EVIDENCE_DOCTYPES}
+
+
+def _evidence(item_codes=None, suppliers=None, allowed=None):
 	"""Supplier–item evidence rows (:func:`rules.rank_suppliers` documents the shape), filtered by
-	``item_codes`` or by ``suppliers``. Submitted purchase orders and receipts count as bought,
-	draft and submitted quotations count as quoted, and Item Supplier rows, default suppliers and
-	buying prices count as carries it."""
+	``item_codes`` or by ``suppliers``, from the sources ``allowed`` (:func:`readable_sources`) says
+	this person may read. Submitted orders, invoices (not returns) and receipts count as bought,
+	draft and submitted quotations as quoted, and Item Supplier rows, default suppliers and buying
+	prices as carries it. ``last_rate`` is the newest nonzero rate from a readable purchase, in that
+	document's own currency."""
 	if not item_codes and not suppliers:
 		return []
+	allowed = allowed or {}
 	values = {"keys": tuple(item_codes or suppliers)}
 
 	def where(item_col, supplier_col):
@@ -174,37 +194,17 @@ def _evidence(item_codes=None, suppliers=None, with_rates=False):
 	pairs = {}
 
 	def _pair(supplier, item_code):
-		return pairs.setdefault(
-			(supplier, item_code),
-			{
-				"supplier": supplier,
-				"item_code": item_code,
-				"po_lines": 0,
-				"pr_lines": 0,
-				"sq_lines": 0,
-				"listed": False,
-				"part_no": "",
-				"default": False,
-				"price": False,
-				"last_date": None,
-				"last_rate": None,
-				"uom": None,
-			},
-		)
+		return pairs.setdefault((supplier, item_code), dict(rules.blank_pair(item_code), supplier=supplier))
 
-	def _later(row, value):
-		if value and (not row["last_date"] or getdate(value) > getdate(row["last_date"])):
-			row["last_date"] = str(getdate(value))
-
-	for doctype, child, date_field, key in (
-		("Purchase Order", "Purchase Order Item", "transaction_date", "po_lines"),
-		("Purchase Receipt", "Purchase Receipt Item", "posting_date", "pr_lines"),
-	):
+	for doctype, child, date_field, key in PURCHASE_SOURCES:
+		if not allowed.get(doctype):
+			continue
+		not_return = " and ifnull(p.is_return, 0) = 0" if doctype != "Purchase Order" else ""
 		for r in frappe.db.sql(
 			f"""
 			select p.supplier, c.item_code, count(*) as n, max(p.{date_field}) as last_date
 			from `tab{child}` c join `tab{doctype}` p on p.name = c.parent
-			where p.docstatus = 1 and {where("c.item_code", "p.supplier")}
+			where p.docstatus = 1{not_return} and {where("c.item_code", "p.supplier")}
 			group by p.supplier, c.item_code
 			""",
 			values,
@@ -212,43 +212,45 @@ def _evidence(item_codes=None, suppliers=None, with_rates=False):
 		):
 			row = _pair(r.supplier, r.item_code)
 			row[key] += cint(r.n)
-			_later(row, r.last_date)
-		if with_rates:
-			# The newest nonzero rate per pair, ranked in the database so no pair is cut off however
-			# long the history. 377 of 592 PO lines on prod were $0 on 2026-10-22, so a zero is no
-			# price at all.
-			for r in frappe.db.sql(
-				f"""
-				select supplier, item_code, rate, uom, dt from (
-					select p.supplier, c.item_code, c.rate, c.uom, p.{date_field} as dt,
-						row_number() over (
-							partition by p.supplier, c.item_code
-							order by p.{date_field} desc, p.modified desc
-						) as rn
-					from `tab{child}` c join `tab{doctype}` p on p.name = c.parent
-					where p.docstatus = 1 and c.rate > 0 and {where("c.item_code", "p.supplier")}
-				) latest
-				where rn = 1
-				""",
-				values,
-				as_dict=True,
-			):
-				row = _pair(r.supplier, r.item_code)
-				if row.get("_rate_date") is None or getdate(r.dt) > getdate(row["_rate_date"]):
-					row["last_rate"], row["uom"], row["_rate_date"] = float(r.rate), r.uom, r.dt
+			if r.last_date and (not row["last_date"] or getdate(r.last_date) > getdate(row["last_date"])):
+				row["last_date"] = str(getdate(r.last_date))
+		# The newest nonzero rate per pair, ranked in the database so no pair is cut off however long
+		# the history. 377 of 592 PO lines on prod were $0 on 2026-10-22, so a zero is no price at all.
+		for r in frappe.db.sql(
+			f"""
+			select supplier, item_code, rate, uom, currency, dt from (
+				select p.supplier, c.item_code, c.rate, c.uom, p.currency, p.{date_field} as dt,
+					row_number() over (
+						partition by p.supplier, c.item_code
+						order by p.{date_field} desc, p.modified desc
+					) as rn
+				from `tab{child}` c join `tab{doctype}` p on p.name = c.parent
+				where p.docstatus = 1{not_return} and c.rate > 0 and {where("c.item_code", "p.supplier")}
+			) latest
+			where rn = 1
+			""",
+			values,
+			as_dict=True,
+		):
+			row = _pair(r.supplier, r.item_code)
+			if row.get("_rate_date") is None or getdate(r.dt) > getdate(row["_rate_date"]):
+				row["last_rate"], row["uom"], row["currency"] = float(r.rate), r.uom, r.currency
+				row["_rate_date"] = r.dt
 
-	for r in frappe.db.sql(
-		f"""
-		select p.supplier, c.item_code, count(*) as n
-		from `tabSupplier Quotation Item` c join `tabSupplier Quotation` p on p.name = c.parent
-		where p.docstatus < 2 and {where("c.item_code", "p.supplier")}
-		group by p.supplier, c.item_code
-		""",
-		values,
-		as_dict=True,
-	):
-		_pair(r.supplier, r.item_code)["sq_lines"] += cint(r.n)
+	if allowed.get("Supplier Quotation"):
+		for r in frappe.db.sql(
+			f"""
+			select p.supplier, c.item_code, count(*) as n
+			from `tabSupplier Quotation Item` c join `tabSupplier Quotation` p on p.name = c.parent
+			where p.docstatus < 2 and {where("c.item_code", "p.supplier")}
+			group by p.supplier, c.item_code
+			""",
+			values,
+			as_dict=True,
+		):
+			_pair(r.supplier, r.item_code)["sq_lines"] += cint(r.n)
 
+	# Item Supplier and Item Default are rows of the Item, which the caller may read.
 	for r in frappe.db.sql(
 		f"""
 		select c.supplier, c.parent as item_code, c.supplier_part_no
@@ -275,25 +277,28 @@ def _evidence(item_codes=None, suppliers=None, with_rates=False):
 	):
 		_pair(r.supplier, r.item_code)["default"] = True
 
-	for r in frappe.db.sql(
-		f"""
-		select c.supplier, c.item_code
-		from `tabItem Price` c
-		where c.buying = 1 and ifnull(c.supplier, '') != ''
-			and {where("c.item_code", "c.supplier")}
-		""",
-		values,
-		as_dict=True,
-	):
-		_pair(r.supplier, r.item_code)["price"] = True
+	if allowed.get("Item Price"):
+		for r in frappe.db.sql(
+			f"""
+			select c.supplier, c.item_code
+			from `tabItem Price` c
+			where c.buying = 1 and ifnull(c.supplier, '') != ''
+				and {where("c.item_code", "c.supplier")}
+			""",
+			values,
+			as_dict=True,
+		):
+			_pair(r.supplier, r.item_code)["price"] = True
 
-	out = []
 	for row in pairs.values():
 		row.pop("_rate_date", None)
-		if not with_rates:
-			row["last_rate"] = row["uom"] = None
-		out.append(row)
-	return out
+	return list(pairs.values())
+
+
+def _hidden(allowed):
+	"""The evidence doctypes this person may not read, and the plain note that says so."""
+	hidden = [dt for dt in EVIDENCE_DOCTYPES if not allowed.get(dt)]
+	return hidden, (_(MSG_HIDDEN).format(", ".join(_(dt) for dt in hidden)) if hidden else "")
 
 
 # --- the AI step -------------------------------------------------------------------
@@ -386,12 +391,18 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 	"""The search. The caller has checked access (:func:`search`, the assistant tool).
 
 	``item_code`` pins the search to that one Item: the Item form's button, and a click on an item
-	in the page. Answers ``{"ok", "message", "query", "terms", "partial", "items", "suppliers",
-	"groups", "ai", "rates"}``:
+	in the page. Answers ``{"ok", "message", "query", "terms", "partial", "items", "items_total",
+	"suppliers", "suppliers_total", "groups", "ai", "rates", "hidden", "hidden_note"}``:
 
 	* ``items`` are :func:`rules.match_items` rows, each with ``suppliers``, the names of suppliers
-	  with evidence for that item.
-	* ``suppliers`` are :func:`rules.rank_suppliers` rows, each with a plain ``reason``.
+	  with evidence for that item. Evidence is read for **every** matching item, and only the list
+	  shown is cut to :data:`rules.ITEMS_MAX`: ``items_total`` says how many matched. Cutting before
+	  the evidence read dropped most real suppliers of a broad search ("pvc" matched 270 items on
+	  prod, 94 of them bought, and only the first 60 were looked up).
+	* ``suppliers`` are :func:`rules.rank_suppliers` rows, each with a plain ``reason``, cut to
+	  ``limit``; ``suppliers_total`` says how many there were.
+	* ``hidden`` names the evidence doctypes this person may not read, which were neither used nor
+	  shown, and ``hidden_note`` says so in words. ``rates`` is whether any price could be shown.
 	* ``groups`` are the Supplier Groups that matched, ``{"name", "hits", "suppliers", "source"}``.
 	  ``source`` is "query", "category" (from the matched items' category word) or "ai".
 	* ``ai`` is ``{"asked", "used", "message", "note", "terms", "groups"}``.
@@ -422,7 +433,9 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 		partial = False
 	else:
 		terms = rules.query_terms(query)
-		found = rules.match_items(catalog, terms, rules.whole_query(query))
+		found = rules.match_items(
+			catalog, terms, rules.whole_query(query), single=rules.is_single_chunk(query)
+		)
 		items, partial = found["items"], found["partial"]
 	whole = rules.whole_query(query)
 
@@ -457,11 +470,11 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 				for g in expansion["groups"]:
 					if g not in group_hits:
 						group_hits[g] = {"name": g, "hits": len(terms) or 1, "source": "ai"}
-				items = items[: rules.ITEMS_MAX]
 
 	supplier_info = _suppliers()
-	with_rates = _can_see_rates()
-	evidence = _evidence(item_codes=[i["item_code"] for i in items], with_rates=with_rates)
+	allowed = readable_sources()
+	hidden, hidden_note = _hidden(allowed)
+	evidence = _evidence(item_codes=[i["item_code"] for i in items], allowed=allowed)
 
 	per_supplier_group = {}
 	for sup, info in supplier_info.items():
@@ -475,7 +488,7 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 			if hit:
 				name_hits[sup] = hit[0]["hits"]
 
-	ranked = rules.rank_suppliers(
+	ranked_all = rules.rank_suppliers(
 		evidence,
 		items,
 		supplier_info,
@@ -483,8 +496,9 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 		name_hits=name_hits,
 		term_count=len(terms),
 		today=getdate(nowdate()),
-		limit=limit,
+		limit=len(supplier_info) or 1,
 	)
+	ranked = ranked_all[:limit]
 	for row in ranked:
 		row["reason"] = rules.reason(row)
 
@@ -492,7 +506,8 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 	for ev in evidence:
 		if ev["supplier"] in supplier_info:
 			by_item.setdefault(ev["item_code"], set()).add(ev["supplier"])
-	for i in items:
+	shown = items[: rules.ITEMS_MAX]
+	for i in shown:
 		i["suppliers"] = sorted(by_item.get(i["item_code"], ()))
 
 	counts = {}
@@ -509,18 +524,22 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 		"item_code": item_code,
 		"terms": terms,
 		"partial": partial,
-		"items": items,
+		"items": shown,
+		"items_total": len(items),
 		"suppliers": ranked,
+		"suppliers_total": len(ranked_all),
 		"groups": groups,
 		"ai": ai,
-		"rates": with_rates,
+		"rates": any(allowed.get(src[0]) for src in PURCHASE_SOURCES),
+		"hidden": hidden,
+		"hidden_note": hidden_note,
 	}
 
 
 def run_supplier_history(supplier):
 	"""What we have bought from ``supplier`` and from every record that is the same company.
-	Answers ``{"ok", "supplier", "supplier_name", "aliases", "groups", "items", "rates"}``. Each
-	``items`` row is an evidence row with ``item_name``, newest first."""
+	Answers ``{"ok", "supplier", "supplier_name", "aliases", "groups", "items", "rates", "hidden",
+	"hidden_note"}``. Each ``items`` row is an evidence row with ``item_name``, newest first."""
 	supplier_info = _suppliers()
 	if supplier not in supplier_info:
 		return {"ok": False, "message": _("No supplier {0}.").format(supplier)}
@@ -528,8 +547,9 @@ def run_supplier_history(supplier):
 	members = sorted(
 		s for s, info in supplier_info.items() if rules.supplier_key(info["supplier_name"]) == key
 	)
-	with_rates = _can_see_rates()
-	rows = _evidence(suppliers=members, with_rates=with_rates)
+	allowed = readable_sources()
+	hidden, hidden_note = _hidden(allowed)
+	rows = _evidence(suppliers=members, allowed=allowed)
 	names = dict(
 		frappe.db.sql(
 			"select name, item_name from `tabItem` where name in %(codes)s",
@@ -547,7 +567,7 @@ def run_supplier_history(supplier):
 		items_per_supplier=None,
 	)
 	items = ranked[0]["items"] if ranked else []
-	items.sort(key=lambda r: (r["last_date"] or "", r["po_lines"] + r["pr_lines"]), reverse=True)
+	items.sort(key=lambda r: (r["last_date"] or "", sum(r[k] for k in rules.BOUGHT_KEYS)), reverse=True)
 	groups = []
 	for s in [supplier] + [m for m in members if m != supplier]:
 		for g in supplier_info[s]["groups"]:
@@ -560,7 +580,9 @@ def run_supplier_history(supplier):
 		"aliases": [m for m in members if m != supplier],
 		"groups": groups,
 		"items": items,
-		"rates": with_rates,
+		"rates": any(allowed.get(src[0]) for src in PURCHASE_SOURCES),
+		"hidden": hidden,
+		"hidden_note": hidden_note,
 	}
 
 

@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   So one search box takes a kind of item ("pump"), a phrase ("submersible pump") or a model or part number
   ("EQKT750", "Grundfos SQ 3-65"), and ranks suppliers by evidence:
-  - first, suppliers we bought a matching item from (PO and receipt lines, with the date and, for Purchase Order
-    readers, the last nonzero price);
+  - first, suppliers we bought a matching item from: submitted Purchase Order, Purchase Invoice (not returns) and
+    Purchase Receipt lines, with the date and the last nonzero price in that document's currency;
   - then suppliers that quoted it, list it as an Item Supplier, are its default supplier or have a buying price for
     it;
   - last, suppliers whose only link is a matching Supplier Group or name.
@@ -44,8 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - a **Find suppliers** button on the Item form, and on the Purchase Order form, which asks which item when the
       order has several;
     - the read-only MCP tool **`supplier_search`** for Triton and Claude, with `expand` off by default.
-  - **Writes nothing.** It is gated on Supplier and Item read. The page's roles are the Purchase, Stock and
-    Projects roles, Inventory Clerk and System Manager.
+  - **Evidence is read for every matching item.** Only the list shown is capped (60 items, 40 suppliers), and
+    the page says "60 of 270". The independent review found that capping before the evidence read made "pvc"
+    (270 matches on prod, 94 of them bought) show 2 of the 6 suppliers we had bought PVC from.
+  - **A model match is one chunk with a digit** ("EQKT-750"). A plain word inside a longer code ("pump" in
+    CHEMPUMP-STENNER-45M1) and a category plus a size ("pvc 1-1/2", "sch 40") are ordinary matches. They no
+    longer get an "exact" badge or switch the AI step off.
+  - **Writes nothing.** It is gated on Supplier and Item read. On top of that, each source of evidence (Purchase
+    Order, Purchase Invoice, Purchase Receipt, Supplier Quotation, Item Price) is used only when the person may
+    read that doctype. A source they may not read is neither ranked on nor shown, and the answer says what was
+    hidden. The page's roles are the Purchase, Stock and Projects roles, Inventory Clerk and System Manager.
+  - The assistant tool answers compactly: 12 suppliers by default, 3 items each and 15 matching items, with the
+    totals and no ranking internals. A worst-case page answer was about 89 KB.
   - Each screen (`?q=`, `?item=`, `?supplier=`) is its own history entry, so Back and Forward work.
   - The decisions are pure (`inventory_enhancements/supplier_search_rules.py`). `tests/test_supplier_search_rules.py`
     covers matching, group matching, folding and ranking. `tests/test_supplier_search_api.py` covers the AI

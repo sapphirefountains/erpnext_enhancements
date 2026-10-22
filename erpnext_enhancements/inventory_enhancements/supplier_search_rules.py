@@ -168,6 +168,14 @@ def whole_query(query) -> str:
 	return "".join(kept)
 
 
+def is_single_chunk(query) -> bool:
+	"""Is the search one unbroken chunk ("EQKT-750", "SQ3-65"), filler words aside? Only then can it
+	be a model number inside a longer code or name. "pvc 1-1/2" and "sch 40" are a category and a
+	size, and as substrings they would mark every 1-1/2" PVC fitting an exact model."""
+	chunks = [c for c in _prepare(query).split() if squash(c) and squash(c) not in STOP_WORDS]
+	return len(chunks) == 1
+
+
 def query_terms(query) -> list[str]:
 	"""The terms of a search, stemmed, without filler words, de-duplicated, at most
 	:data:`TERMS_MAX`. A query of nothing but filler keeps its words rather than becoming empty."""
@@ -214,21 +222,24 @@ def _item_fields(item: dict) -> dict:
 	return {k: (words(v), squash(v)) for k, v in fields.items()}
 
 
-def score_item(item: dict, terms: list[str], whole: str) -> dict | None:
-	"""One Item scored against ``terms``. ``whole`` is the whole query squashed (:func:`squash`).
-	None when nothing matches. Otherwise ``{"score", "hits", "model", "strict"}``. ``hits`` is the
-	number of terms that matched somewhere, ``model`` is true when ``whole`` is the item code or a
-	part number, or is inside one, and ``strict`` is true when every term matched."""
+def score_item(item: dict, terms: list[str], whole: str, single: bool = True) -> dict | None:
+	"""One Item scored against ``terms``. ``whole`` is the whole query squashed (:func:`squash`) and
+	``single`` says whether it was typed as one chunk (:func:`is_single_chunk`). None when nothing
+	matches. Otherwise ``{"score", "hits", "model", "strict"}``. ``hits`` is the number of terms that
+	matched somewhere, ``model`` is true when ``whole`` is the item code or a part number, or (a
+	single chunk with a digit) is inside one or inside the name, and ``strict`` is true when every
+	term matched."""
 	fields = _item_fields(item)
 	model = False
 	score = 0.0
 	if whole and len(whole) >= 3:
 		code_sq = fields["code"][1]
 		part_sqs = [squash(p) for p in item.get("part_nos") or ()]
-		# Inside a longer code or name only when the search has a digit, as a model number does. A
-		# plain word is not a model: PUMP is inside the code CHEMPUMP-STENNER-45M1, and as a "model
-		# match" that chemical feed pump outranked every real pump and switched the AI step off.
-		has_digit = bool(_DIGIT.search(whole))
+		# Inside a longer code or name only for one chunk with a digit, as a model number is. A plain
+		# word is not a model: PUMP is inside the code CHEMPUMP-STENNER-45M1, and as a "model match"
+		# that chemical feed pump outranked every real pump and switched the AI step off. Nor is a
+		# category and a size: "pvc 1-1/2" is inside the name of every 1-1/2" PVC fitting.
+		has_digit = single and bool(_DIGIT.search(whole))
 		if whole == code_sq or whole in part_sqs:
 			model, score = True, 120.0
 		elif has_digit and len(whole) >= 4 and (whole in code_sq or any(whole in p for p in part_sqs if p)):
@@ -256,19 +267,26 @@ def score_item(item: dict, terms: list[str], whole: str) -> dict | None:
 	return {"score": round(score, 3), "hits": hits, "model": model, "strict": strict}
 
 
-def match_items(items: Iterable[dict], terms: list[str], whole: str = "", limit: int = ITEMS_MAX) -> dict:
+def match_items(
+	items: Iterable[dict],
+	terms: list[str],
+	whole: str = "",
+	limit: int | None = None,
+	single: bool | None = None,
+) -> dict:
 	"""Every item in ``items`` scored, the best first. Answers ``{"items", "partial"}``.
 
 	Each item is a dict with ``item_code``, ``item_name``, ``item_group``, ``description`` and
 	``part_nos`` (its Item Supplier part numbers). Each answer row is that dict without
 	``description``, plus ``score``, ``hits``, ``model`` and ``strict``. Strict matches only, unless
 	there are none. Then the items matching the most terms (at least half of them, and at least one)
-	come back, with ``partial`` true."""
+	come back, with ``partial`` true. ``limit`` None returns every match: the caller reads evidence for
+	all of them and caps only what it shows. ``single`` defaults to "one term"."""
 	if not terms and not whole:
 		return {"items": [], "partial": False}
 	scored = []
 	for item in items:
-		s = score_item(item, terms, whole)
+		s = score_item(item, terms, whole, len(terms) <= 1 if single is None else single)
 		if s:
 			row = {k: v for k, v in item.items() if k != "description"}
 			row.update(s)
@@ -282,7 +300,7 @@ def match_items(items: Iterable[dict], terms: list[str], whole: str = "", limit:
 		chosen = [r for r in scored if r["hits"] >= need]
 		partial = bool(chosen)
 	chosen.sort(key=lambda r: (not r["model"], -r["score"], str(r.get("item_code") or "")))
-	return {"items": chosen[:limit], "partial": partial}
+	return {"items": chosen[:limit] if limit else chosen, "partial": partial}
 
 
 def category_terms(items: list[dict], limit: int = 2) -> list[str]:
@@ -372,11 +390,13 @@ def recency_factor(last, today) -> float:
 
 
 #: Points for one supplier–item pair, by kind of evidence. A purchase order is the strongest: we
-#: bought it there. A receipt is nearly as strong. A quote, an Item Supplier row, a default supplier
-#: or a buying price says they carry it, which is weaker.
+#: bought it there. So is a purchase invoice billed with no order. A receipt is nearly as strong. A
+#: quote, an Item Supplier row, a default supplier or a buying price says they carry it, which is weaker.
 EVIDENCE_POINTS = {
 	"po": 3.0,
 	"po_more": 1.0,
+	"pi": 3.0,
+	"pi_more": 1.0,
 	"pr": 2.0,
 	"pr_more": 0.5,
 	"sq": 1.5,
@@ -385,6 +405,12 @@ EVIDENCE_POINTS = {
 	"default": 1.5,
 	"price": 1.0,
 }
+
+#: Line counts on a supplier–item pair. The first three are purchases (the "history" tier).
+BOUGHT_KEYS = ("po_lines", "pi_lines", "pr_lines")
+COUNT_KEYS = (*BOUGHT_KEYS, "sq_lines")
+#: Yes/no evidence that a supplier carries an item.
+FLAG_KEYS = ("listed", "default", "price")
 
 #: Tiers, best first. Every supplier with history ranks above every supplier without it.
 TIER_HISTORY, TIER_CARRIES, TIER_GROUP = "history", "carries", "group"
@@ -396,12 +422,14 @@ def pair_points(ev: dict, today) -> float:
 	received evidence is scaled by :func:`recency_factor`."""
 	p = EVIDENCE_POINTS
 	history = 0.0
-	po = int(ev.get("po_lines") or 0)
-	pr = int(ev.get("pr_lines") or 0)
-	if po:
-		history += p["po"] + p["po_more"] * min(po - 1, 4)
-	if pr:
-		history += p["pr"] + p["pr_more"] * min(pr - 1, 4)
+	for key, base, more in (
+		("po_lines", "po", "po_more"),
+		("pi_lines", "pi", "pi_more"),
+		("pr_lines", "pr", "pr_more"),
+	):
+		n = int(ev.get(key) or 0)
+		if n:
+			history += p[base] + p[more] * min(n - 1, 4)
 	history *= recency_factor(ev.get("last_date"), today)
 	carries = 0.0
 	if ev.get("sq_lines"):
@@ -415,10 +443,44 @@ def pair_points(ev: dict, today) -> float:
 	return history + carries
 
 
-def _blank_pair(code) -> dict:
+def blank_pair(code) -> dict:
 	"""A supplier–item row before any evidence is added: every key present, so each row the
 	search returns has the same shape whether or not a price was ever paid."""
-	return {"item_code": code, "part_no": "", "last_date": None, "last_rate": None, "uom": None}
+	row = {
+		"item_code": code,
+		"part_no": "",
+		"last_date": None,
+		"last_rate": None,
+		"uom": None,
+		"currency": None,
+	}
+	row.update(dict.fromkeys(COUNT_KEYS, 0))
+	row.update(dict.fromkeys(FLAG_KEYS, False))
+	return row
+
+
+def bought(row: dict) -> bool:
+	"""Did we buy this pair's item from this supplier (an order, an invoice or a receipt)?"""
+	return any(row.get(k) for k in BOUGHT_KEYS)
+
+
+def _merge_pair(into: dict, row: dict) -> None:
+	"""Add one evidence row to another for the same item: counts summed, flags OR-ed, the first part
+	number kept, the newer date kept, and the price (with its unit and currency) of the newer
+	purchase, or the only price there is."""
+	for k in COUNT_KEYS:
+		into[k] = int(into.get(k) or 0) + int(row.get(k) or 0)
+	for k in FLAG_KEYS:
+		into[k] = bool(into.get(k)) or bool(row.get(k))
+	into["part_no"] = into.get("part_no") or row.get("part_no") or ""
+	newer = _later(into.get("last_date"), row.get("last_date"))
+	if row.get("last_rate") and (newer == row.get("last_date") or not into.get("last_rate")):
+		into["last_rate"], into["uom"], into["currency"] = (
+			row.get("last_rate"),
+			row.get("uom"),
+			row.get("currency"),
+		)
+	into["last_date"] = newer
 
 
 def _item_weight(item: dict | None) -> float:
@@ -452,8 +514,8 @@ def rank_suppliers(
 	"""Suppliers for a search, best first, duplicates folded.
 
 	* ``evidence`` holds one row per supplier–item pair: ``supplier``, ``item_code``, ``po_lines``,
-	  ``pr_lines``, ``sq_lines``, ``listed``, ``part_no``, ``default``, ``price``, ``last_date``,
-	  ``last_rate``, ``uom``.
+	  ``pi_lines``, ``pr_lines``, ``sq_lines``, ``listed``, ``part_no``, ``default``, ``price``,
+	  ``last_date``, ``last_rate``, ``uom``, ``currency``.
 	* ``items`` are :func:`match_items` rows, used to weight each pair.
 	* ``suppliers`` maps a supplier's docname to ``{"supplier_name", "groups", "disabled"}``, where
 	  ``groups`` is its primary group first and then the others.
@@ -463,8 +525,7 @@ def rank_suppliers(
 
 	Each answer row is ``{"supplier", "supplier_name", "aliases", "groups", "tier", "score",
 	"last_date", "items", "item_count", "bought_count", "group_match", "name_match", "disabled"}``. ``items`` are this supplier's
-	matched items, best first, each ``{"item_code", "item_name", "po_lines", "pr_lines", "sq_lines",
-	"listed", "part_no", "default", "price", "last_date", "last_rate", "uom"}``."""
+	matched items, best first, each the evidence row's keys plus ``item_name``."""
 	group_hits = group_hits or {}
 	name_hits = name_hits or {}
 	item_by_code = {i.get("item_code"): i for i in items}
@@ -477,17 +538,7 @@ def rank_suppliers(
 		code = ev.get("item_code")
 		if not sup or not code or sup not in suppliers:
 			continue
-		row = per_supplier.setdefault(sup, {}).setdefault(code, _blank_pair(code))
-		for k in ("po_lines", "pr_lines", "sq_lines"):
-			row[k] = int(row.get(k) or 0) + int(ev.get(k) or 0)
-		for k in ("listed", "default", "price"):
-			row[k] = bool(row.get(k)) or bool(ev.get(k))
-		if ev.get("part_no") and not row.get("part_no"):
-			row["part_no"] = ev.get("part_no")
-		newer = _later(row.get("last_date"), ev.get("last_date"))
-		if ev.get("last_rate") and (newer == ev.get("last_date") or not row.get("last_rate")):
-			row["last_rate"], row["uom"] = ev.get("last_rate"), ev.get("uom")
-		row["last_date"] = newer
+		_merge_pair(per_supplier.setdefault(sup, {}).setdefault(code, blank_pair(code)), ev)
 
 	candidates = (
 		set(per_supplier) | {s for s, n in group_hits.items() if n} | {s for s, n in name_hits.items() if n}
@@ -504,24 +555,13 @@ def rank_suppliers(
 		pairs: dict[str, dict] = {}
 		for sup in members:
 			for code, row in per_supplier.get(sup, {}).items():
-				merged = pairs.setdefault(code, _blank_pair(code))
-				for k in ("po_lines", "pr_lines", "sq_lines"):
-					merged[k] = int(merged.get(k) or 0) + int(row.get(k) or 0)
-				for k in ("listed", "default", "price"):
-					merged[k] = bool(merged.get(k)) or bool(row.get(k))
-				merged["part_no"] = merged.get("part_no") or row.get("part_no")
-				newer = _later(merged.get("last_date"), row.get("last_date"))
-				if row.get("last_rate") and (newer == row.get("last_date") or not merged.get("last_rate")):
-					merged["last_rate"], merged["uom"] = row.get("last_rate"), row.get("uom")
-				merged["last_date"] = newer
+				_merge_pair(pairs.setdefault(code, blank_pair(code)), row)
 		score = 0.0
 		history = carries = False
 		for code, row in pairs.items():
 			score += pair_points(row, today) * _item_weight(item_by_code.get(code))
-			history = history or bool(row.get("po_lines") or row.get("pr_lines"))
-			carries = carries or bool(
-				row.get("sq_lines") or row.get("listed") or row.get("default") or row.get("price")
-			)
+			history = history or bought(row)
+			carries = carries or bool(row.get("sq_lines") or any(row.get(k) for k in FLAG_KEYS))
 		g_hit = max(int(group_hits.get(s) or 0) for s in members)
 		n_hit = max(int(name_hits.get(s) or 0) for s in members)
 		score += 0.5 * min(g_hit, term_count) / term_count + 0.5 * min(n_hit, term_count) / term_count
@@ -565,7 +605,7 @@ def rank_suppliers(
 				"last_date": str(last) if last else None,
 				"items": item_rows[:items_per_supplier] if items_per_supplier else item_rows,
 				"item_count": len(item_rows),
-				"bought_count": sum(1 for r in item_rows if r.get("po_lines") or r.get("pr_lines")),
+				"bought_count": sum(1 for r in item_rows if bought(r)),
 				"group_match": bool(g_hit),
 				"name_match": bool(n_hit),
 				"disabled": all(suppliers[m].get("disabled") for m in members),

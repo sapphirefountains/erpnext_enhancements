@@ -65,8 +65,9 @@ every push.
      SQ365). Shorter words do not, or LAMP would find CLAMP.
    - A short synonym table covers the old vocabulary, for example LIGHT/LAMP, WIRE/CABLE and NOZZLE/JET.
    - The whole search squashed and equal to an item code or supplier part number is a **model match** and ranks
-     first. Inside a longer code it counts only when the search has a digit, as a model number does. Otherwise
-     "pump" would be a model match for the code CHEMPUMP-STENNER-45M1, which is what the code review caught.
+     first. Inside a longer code or name it counts only when the search is **one chunk with a digit**
+     (`EQKT-750`, `SQ3-65`). Otherwise "pump" was a model match for the code CHEMPUMP-STENNER-45M1, and
+     "pvc 1-1/2" or "sch 40" for every fitting of that size (both caught in review).
    - An item whose name *starts* with the term ("PUMP, …") outranks one that only mentions it ("COVER, PUMP, …").
    - When an item matches every term, only those items are shown. When none does, items matching at least half the
      terms are shown with a "partial" note.
@@ -75,8 +76,9 @@ every push.
    - A model search names no group. It uses the matched items' category word instead: EQKT750 is a PUMP, so the pump
      groups apply.
 4. **Evidence** for the matched items, per supplier–item pair:
-   - submitted PO lines and Purchase Receipt lines (count, last date, and the last nonzero rate per pair, picked
-     with `row_number()` in the database so no pair is cut off);
+   - submitted Purchase Order, Purchase Invoice (not returns) and Purchase Receipt lines: count, last date, and
+     the last nonzero rate per pair in that document's own currency, picked with `row_number()` in the database
+     so no pair is cut off;
    - Supplier Quotation lines;
    - Item Supplier rows (and part numbers);
    - Item Default `default_supplier`;
@@ -94,7 +96,17 @@ every push.
    - A group or name match adds at most 0.5 each.
 6. Each supplier gets a plain **reason**, for example "Bought 4 matching items from them, last on 2026-07-21".
 
-Prices (`last_rate`) are returned only to someone who may read Purchase Order. Everyone else gets counts and dates.
+**Evidence is read for every matching item.** Only the list shown is capped (60 items, 40 suppliers), and the
+page says "60 of 270". The first version capped before the evidence read. The independent review found that
+"pvc" (270 matches on prod, 94 of them bought) then showed only 2 of the 6 suppliers we had bought PVC from.
+
+**Each source of evidence follows the reader's own permissions.** Purchase Order, Purchase Invoice, Purchase
+Receipt, Supplier Quotation and Item Price are used only when the person may read that doctype. A source they
+may not read is neither ranked on nor shown, and the page and the tool say "Some purchase history is hidden
+because you cannot read: …". A price paid comes only from a purchase they may read.
+
+The assistant tool returns 12 suppliers by default, with 3 items each and 15 matching items, and drops the
+ranking internals. It keeps the totals and the hidden-history note.
 
 ## The AI step
 

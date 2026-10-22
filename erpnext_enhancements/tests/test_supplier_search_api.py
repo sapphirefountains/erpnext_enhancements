@@ -253,6 +253,7 @@ class Base(unittest.TestCase):
 			reply=json.dumps({"terms": ["submersible pump"], "groups": ["Pumps"], "note": "A small pump."}),
 			service_account={"client_email": "sa@example.com"},
 			evidence_calls=[],
+			evidence=[dict(e) for e in EVIDENCE],
 		)
 		STATE["counts"].clear()
 		self._saved = {
@@ -263,19 +264,22 @@ class Base(unittest.TestCase):
 		api._suppliers = lambda: {k: dict(v, groups=list(v["groups"])) for k, v in SUPPLIERS.items()}
 		api._group_names = lambda: list(GROUPS)
 
-		def evidence(item_codes=None, suppliers=None, with_rates=False):
+		def evidence(item_codes=None, suppliers=None, allowed=None):
+			# The fake honours ``allowed`` the way the real reads do: a purchase source this person
+			# may not read contributes nothing, not even its count. test_evidence_skips_* checks the
+			# real reads.
 			STATE["evidence_calls"].append(
-				{"item_codes": item_codes, "suppliers": suppliers, "with_rates": with_rates}
+				{"item_codes": item_codes, "suppliers": suppliers, "allowed": allowed}
 			)
-			rows = [dict(e) for e in EVIDENCE]
+			rows = [dict(e) for e in STATE["evidence"]]
 			if item_codes is not None:
 				rows = [e for e in rows if e["item_code"] in item_codes]
 			if suppliers is not None:
 				rows = [e for e in rows if e["supplier"] in suppliers]
-			if not with_rates:
+			if not (allowed or {}).get("Purchase Order"):
 				for e in rows:
-					e["last_rate"] = e["uom"] = None
-			return rows
+					e["po_lines"], e["last_rate"], e["uom"] = 0, None, None
+			return [e for e in rows if e["po_lines"] or e["pr_lines"] or e["sq_lines"] or e["listed"]]
 
 		api._evidence = evidence
 
@@ -303,14 +307,65 @@ class SearchTest(Base):
 		self.assertEqual(by_code["340605"]["suppliers"], ["Valley Pool Co"])
 		self.assertEqual([g["name"] for g in answer["groups"]], ["Pumps"])
 
-	def test_rates_only_for_purchase_order_readers(self):
+	def test_evidence_follows_the_readers_permissions(self):
 		answer = api.run_search("pump")
 		self.assertEqual(answer["suppliers"][0]["items"][0]["last_rate"], 1200.0)
+		self.assertEqual((answer["hidden"], answer["hidden_note"]), ([], ""))
 		STATE["perm"][("Purchase Order", "read")] = False
 		answer = api.run_search("pump")
-		self.assertFalse(answer["rates"])
-		self.assertIsNone(answer["suppliers"][0]["items"][0]["last_rate"])
-		self.assertFalse(STATE["evidence_calls"][-1]["with_rates"])
+		# The PO-only supplier loses its history: not ranked on it, not shown, and the answer says so.
+		history = [s["supplier"] for s in answer["suppliers"] if s["tier"] == "history"]
+		self.assertNotIn("Valley Pool Co", history)
+		self.assertEqual(answer["hidden"], ["Purchase Order"])
+		self.assertIn("Purchase Order", answer["hidden_note"])
+		self.assertFalse(STATE["evidence_calls"][-1]["allowed"]["Purchase Order"])
+		self.assertTrue(answer["rates"])  # receipts and invoices may still carry a price
+
+	def test_evidence_skips_sources_the_reader_cannot_read(self):
+		api._evidence = self._saved["_evidence"]
+		allowed = dict.fromkeys(api.EVIDENCE_DOCTYPES, True)
+		allowed.update({"Purchase Order": False, "Supplier Quotation": False, "Item Price": False})
+		api._evidence(item_codes=["340605"], allowed=allowed)
+		joined = " ".join(STATE["sql"])
+		for table in ("`tabPurchase Order`", "`tabSupplier Quotation`", "`tabItem Price`"):
+			self.assertNotIn(table, joined)
+		for table in ("`tabPurchase Invoice`", "`tabPurchase Receipt`", "`tabItem Supplier`"):
+			self.assertIn(table, joined)
+		self.assertIn("is_return", joined)
+		self.assertIn("p.currency", joined)
+
+	def test_a_broad_search_reads_evidence_for_every_match(self):
+		# Review of PR #1341: "pvc" matched 270 items on prod and only the first 60 were looked up,
+		# so most real suppliers vanished. Evidence is read for every match now; only the list is cut.
+		catalog = [
+			{
+				"item_code": f"PVC-{i:03}",
+				"item_name": f"ELBOW, PVC, {i}",
+				"item_group": "",
+				"description": "",
+				"part_nos": [],
+			}
+			for i in range(150)
+		]
+		api._items = lambda: [dict(i) for i in catalog]
+		STATE["evidence"] = [
+			_ev("Valley Pool Co", "PVC-001", po_lines=1, last_date="2026-10-01"),
+			_ev("Acme Pump Co", "PVC-149", po_lines=1, last_date="2026-10-01"),
+			_ev("Bright Lamp Works", "PVC-120", pr_lines=1, last_date="2026-10-01"),
+		]
+		answer = api.run_search("pvc")
+		self.assertEqual(len(STATE["evidence_calls"][-1]["item_codes"]), 150)
+		self.assertEqual(
+			sorted(s["supplier"] for s in answer["suppliers"] if s["tier"] == "history"),
+			["Acme Pump Co", "Bright Lamp Works", "Valley Pool Co"],
+		)
+		self.assertEqual((len(answer["items"]), answer["items_total"]), (60, 150))
+		self.assertEqual(answer["suppliers_total"], len(answer["suppliers"]))
+
+	def test_suppliers_total_counts_past_the_limit(self):
+		answer = api.run_search("pump", limit=1)
+		self.assertEqual(len(answer["suppliers"]), 1)
+		self.assertEqual(answer["suppliers_total"], 2)
 
 	def test_model_number_finds_its_category_groups(self):
 		answer = api.run_search("EQKT750")
@@ -479,6 +534,34 @@ class ToolTest(Base):
 	def test_limit(self):
 		answer = self.tool().execute({"query": "pump", "limit": 1})
 		self.assertEqual(len(answer["suppliers"]), 1)
+		self.assertEqual(answer["suppliers_total"], 2)
+
+	def test_output_is_compact(self):
+		catalog = [
+			{
+				"item_code": f"P{i}",
+				"item_name": f"PUMP, TYPE {i}",
+				"item_group": "",
+				"description": "",
+				"part_nos": [],
+			}
+			for i in range(40)
+		]
+		api._items = lambda: [dict(i) for i in catalog]
+		STATE["evidence"] = [
+			_ev(sup, f"P{i}", po_lines=1, last_date="2026-10-01")
+			for sup in ("Valley Pool Co", "Acme Pump Co", "Bright Lamp Works")
+			for i in range(10)
+		]
+		answer = self.tool().execute({"query": "pump"})
+		self.assertLessEqual(len(answer["suppliers"]), tool_module.DEFAULT_LIMIT)
+		self.assertLessEqual(len(answer["items"]), tool_module.ITEMS_SHOWN)
+		self.assertEqual(answer["items_total"], 40)
+		for s in answer["suppliers"]:
+			self.assertLessEqual(len(s["items"]), tool_module.ITEMS_PER_SUPPLIER)
+			self.assertNotIn("score", s)
+		self.assertFalse(any("score" in i or "hits" in i for i in answer["items"]))
+		self.assertLess(len(json.dumps(answer)), 20000)
 
 
 if __name__ == "__main__":
