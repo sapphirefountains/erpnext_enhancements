@@ -36,7 +36,9 @@ Indentation is tabs, per ``CLAUDE.md``.
 
 from __future__ import annotations
 
+import html
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import frappe
@@ -89,6 +91,10 @@ CLOSED_TASK_STATUSES = ("Completed", "Canceled", "Invoiced", "Template")
 MAX_METHODOLOGY_CHARS = 4000
 
 MAX_DESCRIPTION_CHARS = 20000
+
+#: How many overruled duplicates the reviewer note names. A request with more than this many
+#: wrong flags has a different problem, and the note must stay a note.
+MAX_NOTE_TASKS = 10
 
 #: The request shape Triton reads. 2 (WI-079 slice 3) adds ``anchors``, sends the context path
 #: without its query string or record, and drops the document name. Today's Triton (v1)
@@ -156,14 +162,23 @@ def run_breakdown(request_name: str) -> None:
 	target_projects = {key: settings[f"{key}_project"] for key in targets}
 
 	try:
-		known_tasks = open_tasks(
-			list(target_projects.values()), limit=cint(settings["duplicate_scan_limit"])
-		)
+		# A Task a reviewer ruled is not a duplicate leaves the scan entirely: sent again, it is
+		# the same evidence the same model reads the same way, and the re-run the reviewer
+		# asked for comes back with the flag they just cleared (ER-2026-1323804).
+		dismissed = dismissed_duplicates(request_name)
+		known_tasks = {
+			name: meta
+			for name, meta in open_tasks(
+				list(target_projects.values()), limit=cint(settings["duplicate_scan_limit"])
+			).items()
+			if name not in dismissed
+		}
 		payload = build_payload(
 			request_name,
 			target_projects=target_projects,
 			known_tasks=known_tasks,
 			max_tasks=cint(settings["max_proposed_tasks"]),
+			dismissed=dismissed,
 		)
 	except Exception:
 		_fail(request_name, "Could not assemble the request payload; see the Error Log.")
@@ -195,6 +210,7 @@ def run_breakdown(request_name: str) -> None:
 		target_projects=target_projects,
 		known_tasks=known_tasks,
 		max_tasks=cint(settings["max_proposed_tasks"]),
+		dismissed_tasks=dismissed,
 	)
 	_record_usage(body, breakdown.model, request_name)
 	stats = breakdown_stats(sizes, body)
@@ -303,12 +319,70 @@ def open_tasks(projects: list[str], *, limit: int) -> dict[str, dict[str, Any]]:
 	}
 
 
+def dismissed_duplicates(request_name: str) -> dict[str, str]:
+	"""``{task: subject}`` for every duplicate candidate a reviewer ruled out on this request.
+
+	Guarded on the column: the sweeper can run on a site whose migrate has not yet added it,
+	and a filter on an unknown column raises.
+	"""
+	doctype = "Enhancement Request Duplicate Candidate"
+	if not frappe.db.has_column(doctype, "dismissed"):
+		return {}
+	rows = frappe.get_all(
+		doctype,
+		filters={
+			"parent": request_name,
+			"parenttype": "Enhancement Request",
+			"parentfield": "duplicate_candidates",
+			"dismissed": 1,
+		},
+		fields=["task", "task_subject"],
+		order_by="idx asc",
+	)
+	return {
+		row["task"]: row.get("task_subject") or ""
+		for row in rows
+		if (row.get("task") or "").strip()
+	}
+
+
+def reviewer_note(dismissed: Mapping[str, str]) -> str:
+	"""The paragraph appended to the request's description when a reviewer overruled a duplicate.
+
+	Why a note at all, when the overruled Tasks are already out of ``open_tasks``: the model is
+	told that a request covered by open work comes back with few or no tasks, and it can reach
+	that conclusion from the code map, the anchors or the CHANGELOG lines without the Task in
+	front of it. The note is the one fact the payload otherwise lacks — that a person has
+	already checked and wants new work planned. It goes in ``description`` rather than in a new
+	key because Triton ignores keys it does not know (and this fix must not need a Triton
+	change), and it is marked as ERPNext's, so neither the model nor a reader takes it for the
+	requester's words. The Tasks are named, by subject, so the plan can say how this work
+	differs from them.
+
+	``""`` when nothing was ruled out, so an ordinary breakdown's payload is unchanged.
+	"""
+	names = [name for name in (dismissed or {}) if name][:MAX_NOTE_TASKS]
+	if not names:
+		return ""
+	items = "".join(
+		f"<li>{html.escape(name)} — {html.escape(((dismissed or {}).get(name) or '')[:200])}</li>"
+		for name in names
+	)
+	return (
+		"<p><b>Reviewer note (added by ERPNext, not the requester):</b> a reviewer compared this "
+		"request with the existing Tasks below and ruled that it is <b>not</b> a duplicate of any "
+		"of them. Plan it as new work and propose the tasks it needs.</p>"
+		f"<ul>{items}</ul>"
+	)
+
+
 def build_payload(
 	request_name: str,
 	*,
 	target_projects: dict[str, str],
 	known_tasks: dict[str, dict[str, Any]],
 	max_tasks: int,
+	dismissed: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
 	"""The body Triton's ``/api/v1/planning/work-breakdown`` receives.
 
@@ -322,6 +396,9 @@ def build_payload(
 	data), and no record segment (``/desk/item/PUMP-001`` carries the name the field used to).
 	The stored ``context_url`` is read whole only by ``build_anchors``, which turns it into
 	schema and code facts and never sends it.
+
+	``dismissed`` is the duplicates a reviewer overruled; :func:`reviewer_note` says so at the
+	end of the description, after the cap, so a long report cannot truncate it away.
 	"""
 	doc = frappe.db.get_value(
 		"Enhancement Request",
@@ -351,7 +428,8 @@ def build_payload(
 			"title": doc.get("title") or "",
 			"type": doc.get("request_type") or "",
 			"impact": doc.get("impact") or "",
-			"description": (doc.get("description") or "")[:MAX_DESCRIPTION_CHARS],
+			"description": (doc.get("description") or "")[:MAX_DESCRIPTION_CHARS]
+			+ reviewer_note(dismissed or {}),
 			"steps_to_reproduce": (doc.get("steps_to_reproduce") or "")[:MAX_DESCRIPTION_CHARS],
 			"context": {
 				"url": path,
@@ -479,11 +557,20 @@ def _json_chars(value: Any) -> int:
 def _apply(request_name: str, breakdown: Breakdown, *, stats: str = "") -> None:
 	"""Replace the proposal on the request and move it to ``Breakdown Ready``.
 
-	The child tables are replaced wholesale rather than appended to, so a re-run leaves one
+	The model's rows are replaced wholesale rather than appended to, so a re-run leaves one
 	proposal rather than two interleaved ones. ``breakdown_stats`` is replaced with them: it
 	describes the call that produced this proposal, not an earlier one.
+
+	**Two kinds of row are a person's, not the model's, and survive.** A proposed task a
+	reviewer typed in (``added_by``) is kept after the new model rows, with its
+	``depends_on_idx`` cleared because the positions it pointed at have just been renumbered. A
+	duplicate candidate a reviewer ruled out (``dismissed``) is kept too: it is the record of
+	who overruled what, and the model may not re-add the same Task beside it.
 	"""
 	doc = frappe.get_doc("Enhancement Request", request_name)
+	hand_rows = [
+		row for row in (doc.get("proposed_tasks") or []) if (row.get("added_by") or "").strip()
+	]
 	doc.set("proposed_tasks", [])
 	for task in breakdown.tasks:
 		doc.append(
@@ -500,9 +587,22 @@ def _apply(request_name: str, breakdown: Breakdown, *, stats: str = "") -> None:
 				"depends_on_idx": task.depends_on_idx,
 			},
 		)
+	for row in hand_rows:
+		row.depends_on_idx = 0
+		# `append` keeps an idx a row already has, which would now collide with a model row's.
+		row.idx = None
+		doc.append("proposed_tasks", row)
 
-	doc.set("duplicate_candidates", [])
+	overruled = [
+		row for row in (doc.get("duplicate_candidates") or []) if cint(row.get("dismissed"))
+	]
+	overruled_tasks = {row.get("task") for row in overruled}
+	for row in overruled:
+		row.idx = None
+	doc.set("duplicate_candidates", overruled)
 	for candidate in breakdown.duplicates:
+		if candidate.task in overruled_tasks:
+			continue
 		doc.append(
 			"duplicate_candidates",
 			{

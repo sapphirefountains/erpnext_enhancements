@@ -155,6 +155,9 @@ class _FakeDoc:
 		self.name = name
 		self.tables = {}
 
+	def get(self, key, default=None):
+		return self.tables.get(key, default)
+
 	def set(self, key, value):
 		self.tables[key] = list(value)
 
@@ -209,6 +212,8 @@ def _install():
 		commit=commit,
 		get_single_value=lambda doctype, field: 1,
 		sql=lambda *a, **k: [[SECRET_VALUE]],
+		# A site with no "Not a duplicate" column: `breakdown.dismissed_duplicates` reads nothing.
+		has_column=lambda doctype, column: False,
 	)
 
 	def get_meta(name):
@@ -406,7 +411,9 @@ class TestOutline(Base):
 		source = (APP_DIR / "product_feedback/breakdown.py").read_text(encoding="utf-8")
 		out = ca.outline_python(source, ca.MAX_OUTLINE_CHARS)
 		self.assertTrue(out.startswith("The background worker that asks Triton for a work breakdown"))
-		self.assertIn("build_payload(request_name, *, target_projects, known_tasks, max_tasks)", out)
+		self.assertIn(
+			"build_payload(request_name, *, target_projects, known_tasks, max_tasks, dismissed=None)", out
+		)
 		self.assertIn("run_breakdown(request_name)  # Ask Triton to break one request down", out)
 		self.assertLessEqual(len(out), ca.MAX_OUTLINE_CHARS)
 		# A table of contents, not the file: no body line survives.

@@ -31,6 +31,11 @@ export const M = {
 	RERUN: "erpnext_enhancements.api.feedback.rerun_breakdown",
 	SAVE_PROPOSAL: "erpnext_enhancements.api.feedback.save_proposal",
 	CREATE_TASKS: "erpnext_enhancements.api.feedback.create_tasks",
+	// The reviewer overruling the model (v1.729.0): a wrong duplicate flag, or a proposal
+	// with nothing in it, never stands between a request and a Task.
+	DISMISS_DUPLICATE: "erpnext_enhancements.api.feedback.dismiss_duplicate",
+	PLAN_AS_NEW: "erpnext_enhancements.api.feedback.plan_as_new_work",
+	ADD_TASK: "erpnext_enhancements.api.feedback.add_proposed_task",
 	// Dialled by the capture panel (public/js/capture/panel.js), which reuses this transport
 	// on the Desk, the kiosk and the allowlisted web pages rather than growing a second one.
 	CAPTURE: "erpnext_enhancements.api.feedback.submit_capture",

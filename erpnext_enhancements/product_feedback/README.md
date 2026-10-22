@@ -38,10 +38,12 @@ two boards this company plans all of its engineering on. Do not add that path.
 
 ```
 Submitted ──approve──► Approved ──worker──► Breakdown Ready ──confirm──► Tasks Created
-    │                     │  ▲                    │   │
-    │                     ▼  └──── re-run ────────┘   │
-    │              Breakdown Failed ─────────────────┘
-    └──────────────► Rejected / Duplicate ◄────────────
+    │                     │  ▲                 ▲    │
+    │                     │  └──── re-run ─────┼────┤
+    │                     ▼                    │    │
+    │              Breakdown Failed ─add a task┘    │
+    │                 (re-run too)                  │
+    └──────────────► Rejected / Duplicate ◄─────────┘   (from any open state)
 ```
 
 `status` is the machine; the table is in [`states.py`](states.py), which is **stdlib-only** so
@@ -57,6 +59,24 @@ writer runs, and the writer's own empty return carries the full result shape;
 `tests/test_feedback_endpoint_surface.py` pins both with AST. The first zero-task breakdown,
 ER-2026-458194, found the gap as a 500 on the button (v1.474.2). A request that needs no work
 is closed with Reject or Duplicate — `Tasks Created` means there is work on a board.
+
+**The model never has the last word on whether work is needed (v1.729.0).** ER-2026-1323804
+came back with no tasks and one wrong High-confidence duplicate, and the reviewer's only
+buttons were "Close as duplicate of this" and Reject; "Ask again" sent the same Task to the same
+model. Three overrides now exist, all reviewer-only and none of them telling the requester
+anything:
+
+- **Not a duplicate** (`api.feedback.dismiss_duplicate`) stamps the candidate row `dismissed`,
+  `dismissed_by`, `dismissed_on`. The row is kept as the record; it leaves the review panel, the
+  brief's not-in-scope list, and the duplicate scan of every later breakdown.
+- **Plan it as new work** (`plan_as_new_work`) rules out every remaining flag and re-runs.
+  `breakdown.run_breakdown` leaves the ruled-out Tasks out of `open_tasks`, appends a
+  `reviewer_note` to the description it sends (a note in the text, because Triton ignores keys
+  it does not know), and `proposal.parse_breakdown(dismissed_tasks=…)` drops any the model names
+  anyway. `_apply` keeps the ruled-out rows through the re-run.
+- **Add a task** (`add_proposed_task`) writes a row the reviewer typed, validated like an edited
+  row (`_clean_row`), with `added_by` set. It works from `Breakdown Failed` too — the one
+  transition into `Breakdown Ready` no model wrote — and a hand-added row survives a re-run.
 
 **Which is also why the board shows a "Tasks Completed" pill that is not a status.** A request
 whose tasks are all finished stays on `Tasks Created` forever — correctly; nothing may move it
@@ -203,8 +223,8 @@ and a release that ships them reports back on the board.
 | DocType | Role |
 |---|---|
 | `Enhancement Request` | `ER-{YYYY}-{#####}`. What was filed, what was decided, and the proposal. Not submittable |
-| `Enhancement Request Proposed Task` | One proposed task. Nothing here has been written anywhere until `created_task` is stamped |
-| `Enhancement Request Duplicate Candidate` | An existing `Task` the model thinks already covers this. Advisory |
+| `Enhancement Request Proposed Task` | One proposed task. Nothing here has been written anywhere until `created_task` is stamped. `added_by` marks a row a reviewer typed, which a re-run keeps |
+| `Enhancement Request Duplicate Candidate` | An existing `Task` the model thinks already covers this. Advisory. `dismissed` (with `dismissed_by`/`dismissed_on`) is a reviewer ruling it out, which every later breakdown respects |
 | `Product Feedback Reviewer` | Who is *told* a request arrived. Grants nothing |
 | `Product Feedback Settings` | Single: `paused`, the two board ids, the caps, the notify list, and `release_sync_last_version` (the release sync's marker, no default) |
 

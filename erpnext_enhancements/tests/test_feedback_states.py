@@ -113,6 +113,17 @@ class TestTransitions(unittest.TestCase):
 		self.assertTrue(is_legal(RequestState.BREAKDOWN_READY.value, RequestState.APPROVED.value))
 		self.assertTrue(is_legal(RequestState.BREAKDOWN_FAILED.value, RequestState.APPROVED.value))
 
+	def test_a_failed_breakdown_can_be_planned_by_hand(self):
+		"""v1.729.0: a reviewer adding a task moves ``Breakdown Failed`` to ``Breakdown Ready``.
+
+		The model saying "no work is needed" must not be the last word. The gate before the
+		model is unchanged: nothing reaches ``Breakdown Ready`` from ``Submitted``, and a failed
+		breakdown still cannot jump to ``Tasks Created`` without a confirmed proposal.
+		"""
+		self.assertTrue(is_legal(RequestState.BREAKDOWN_FAILED.value, RequestState.BREAKDOWN_READY.value))
+		self.assertFalse(is_legal(RequestState.BREAKDOWN_FAILED.value, RequestState.TASKS_CREATED.value))
+		self.assertFalse(is_legal(RequestState.SUBMITTED.value, RequestState.BREAKDOWN_READY.value))
+
 	def test_a_reviewer_can_close_from_any_open_state(self):
 		"""Rejecting must not require spending a model call first."""
 		for state in (

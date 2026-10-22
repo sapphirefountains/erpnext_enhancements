@@ -17,7 +17,9 @@ The lifecycle, and where each part lives:
    and writes it to a child table. **No ``Task`` exists at this point.**
 3. ``save_proposal`` / ``create_tasks`` — the reviewer edits the proposal and confirms it.
    ``create_tasks`` is the human review in the sense ``api/training_ai.py`` established: the
-   accept call is what stamps a named person against a model's output.
+   accept call is what stamps a named person against a model's output. The reviewer can also
+   overrule the model: ``dismiss_duplicate`` / ``plan_as_new_work`` clear a wrong duplicate
+   flag, and ``add_proposed_task`` writes a row the model never proposed (v1.729.0).
 4. ``claude_code_brief`` — once Tasks exist, the reviewer takes the work to a Claude Code
    session as a brief in the work-item shape (WI-079 slice 4). A release whose CHANGELOG
    section carries the brief's ``Refs:`` line moves those Tasks to ``Pending Review``:
@@ -59,6 +61,7 @@ from frappe import _
 from frappe.utils import cint, flt, now_datetime
 
 from erpnext_enhancements.product_feedback.doctype.product_feedback_settings.product_feedback_settings import (
+    MAX_PROPOSED_TASKS_CEILING,
     allowed_projects,
     get_settings,
 )
@@ -104,8 +107,24 @@ PROPOSED_TASK_ALLOWED_FIELDS = frozenset(
 #: Server-owned mirrors the client echoes back. Skipped in silence rather than reported,
 #: because echoing them is not lost work. Same idea as `training_author`'s `*_ECHOED_KEYS`.
 _ECHOED_KEYS = frozenset(
-    {"name", "idx", "doctype", "parent", "parenttype", "parentfield", "created_task", "owner"}
+    {
+        "name",
+        "idx",
+        "doctype",
+        "parent",
+        "parenttype",
+        "parentfield",
+        "created_task",
+        "owner",
+        "added_by",
+    }
 )
+
+#: `Task.subject` is a Data field, varchar(140). A longer hand-typed subject would be accepted
+#: here and refused by the database at confirm time, after the reviewer has moved on.
+MAX_TASK_SUBJECT_CHARS = 140
+
+VALID_PRIORITIES = ("Low", "Medium", "High", "Urgent")
 
 VALID_REQUEST_TYPES = ("Feature", "Bug")
 VALID_IMPACTS = (
@@ -790,6 +809,12 @@ def rerun_breakdown(name):
     """
     _require_reviewer()
     doc = frappe.get_doc(DOCTYPE, name)
+    _requeue(doc)
+    return _serialise(doc, full=True)
+
+
+def _requeue(doc):
+    """``Breakdown Ready``/``Failed`` -> ``Approved``, saved, and the job queued."""
     if doc.status not in (RequestState.BREAKDOWN_READY.value, RequestState.BREAKDOWN_FAILED.value):
         frappe.throw(
             _("A breakdown can only be re-run once one has been attempted."), frappe.ValidationError
@@ -798,7 +823,150 @@ def rerun_breakdown(name):
     doc.status = RequestState.APPROVED.value
     doc.save(ignore_permissions=True)
     _enqueue_breakdown(doc.name)
+
+
+# ------------------------------------------------------------------ overruling the model
+
+
+@frappe.whitelist(methods=["POST"])
+def dismiss_duplicate(name, task):
+    """A reviewer rules that ``task`` is **not** a duplicate of this request.
+
+    The row is kept, stamped with who and when, rather than deleted: the request has to go on
+    showing what the model claimed and who overruled it (and ``Enhancement Request`` tracks
+    changes, so the Version history carries the edit too). A dismissed row leaves the review
+    panel, the brief's "not in this work item" list and the duplicate scan of every later
+    breakdown — ``product_feedback/breakdown.py`` reads the stamp. Nothing is sent to the
+    requester: this is a step inside the review, not a decision about their request.
+
+    Any open request, not only ``Breakdown Ready``: a reviewer may well rule on a candidate
+    while a re-run is in flight, and ``breakdown._apply`` keeps the stamp when it lands.
+    """
+    _require_reviewer()
+    doc = frappe.get_doc(DOCTYPE, name)
+    _require_open(doc)
+    task = (task or "").strip()
+    rows = [row for row in (doc.get("duplicate_candidates") or []) if (row.task or "") == task]
+    if not task or not rows:
+        frappe.throw(
+            _("{0} is not one of this request's duplicate candidates.").format(task or _("That")),
+            frappe.ValidationError,
+        )
+    _dismiss(rows)
+    doc.save(ignore_permissions=True)
     return _serialise(doc, full=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def plan_as_new_work(name):
+    """Rule out every remaining duplicate flag, then ask for the breakdown again.
+
+    The re-run is not the same call as "Ask again": the ruled-out Tasks are left out of the
+    tasks the model is shown, any it names anyway is dropped, and the request it reads ends
+    with a note that a reviewer has checked and wants new work planned — see
+    ``breakdown.reviewer_note`` for why the note exists. If the model still proposes nothing,
+    ``add_proposed_task`` is the way through, and it never needs the model.
+    """
+    _require_reviewer()
+    doc = frappe.get_doc(DOCTYPE, name)
+    _dismiss(doc.get("duplicate_candidates") or [])
+    _requeue(doc)
+    return _serialise(doc, full=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def add_proposed_task(name, row=None):
+    """Add a proposed task the reviewer typed, as a new row on the proposal.
+
+    **The deterministic escape hatch.** Whatever the model concluded — a wrong duplicate, "no
+    new work is needed", an empty generation — a reviewer can write the row themselves and
+    confirm it with ``create_tasks``. Validated exactly as an edited row is (``_clean_row``:
+    the same allowlist, the same project allowlist, the same coercions), with two differences
+    that follow from the row being new: a subject and a permitted project are required, so
+    either one missing refuses the whole call rather than being reported in ``rejected``; and
+    a ``parent_task`` must be an existing group Task on the same project, because no model
+    vetted it against the tasks ERPNext sent.
+
+    Allowed from ``Breakdown Failed`` too, which then becomes ``Breakdown Ready`` (the one
+    transition into it that no model wrote; ``product_feedback/states.py``). The row carries
+    ``added_by``, which is what keeps it through a later re-run of the breakdown.
+    """
+    _require_reviewer()
+    doc = frappe.get_doc(DOCTYPE, name)
+    if doc.status not in (RequestState.BREAKDOWN_READY.value, RequestState.BREAKDOWN_FAILED.value):
+        frappe.throw(
+            _(
+                "A task can be added once the request has been broken down "
+                "(Breakdown Ready or Breakdown Failed)."
+            ),
+            frappe.ValidationError,
+        )
+
+    existing = list(doc.get("proposed_tasks") or [])
+    if len(existing) >= MAX_PROPOSED_TASKS_CEILING:
+        frappe.throw(
+            _("This proposal already has {0} rows, the most one request may carry.").format(
+                MAX_PROPOSED_TASKS_CEILING
+            ),
+            frappe.ValidationError,
+        )
+
+    values, rejected = _filter_payload(_as_dict(row), PROPOSED_TASK_ALLOWED_FIELDS)
+    refused = set(rejected)
+    submitted_project = (values.get("project") or "").strip()
+    _clean_row(values, set(allowed_projects()), refused)
+
+    subject = (values.get("subject") or "").strip()
+    if not subject:
+        frappe.throw(_("Give the task a subject."), frappe.ValidationError)
+    values["subject"] = subject[:MAX_TASK_SUBJECT_CHARS]
+
+    project = (values.get("project") or "").strip()
+    if not project:
+        frappe.throw(
+            _("{0} is not a project this feature writes to. Pick ERPNext or Triton.").format(
+                submitted_project or _("No project")
+            ),
+            frappe.ValidationError,
+        )
+
+    parent = (values.get("parent_task") or "").strip()
+    if parent:
+        meta = frappe.db.get_value("Task", parent, ["project", "is_group"], as_dict=True)
+        if not meta or not cint(meta.get("is_group")) or (meta.get("project") or "") != project:
+            frappe.throw(
+                _("{0} is not a group task on {1}, so the new task cannot sit under it.").format(
+                    parent, project
+                ),
+                frappe.ValidationError,
+            )
+    values["parent_task"] = parent
+    values["group_subject"] = (values.get("group_subject") or "").strip()[:200]
+    values["description"] = (values.get("description") or "").strip()[:MAX_BODY_CHARS]
+    values.setdefault("priority", "Medium")
+    # A dependency may only point at a row that already exists: the new row is the last one.
+    if cint(values.get("depends_on_idx")) > len(existing):
+        values["depends_on_idx"] = 0
+    values["include"] = cint(values["include"]) if "include" in values else 1
+    values["added_by"] = frappe.session.user
+
+    doc.append("proposed_tasks", values)
+    if doc.status == RequestState.BREAKDOWN_FAILED.value:
+        doc.status = RequestState.BREAKDOWN_READY.value
+    doc.save(ignore_permissions=True)
+    return {"request": _serialise(doc, full=True), "rejected": sorted(refused)}
+
+
+def _dismiss(rows):
+    """Stamp the not-yet-dismissed ``rows`` as ruled out by the session user, now."""
+    user = frappe.session.user
+    when = now_datetime()
+    for row in rows:
+        if cint(row.get("dismissed")):
+            continue
+        row.dismissed = 1
+        row.dismissed_by = user
+        row.dismissed_on = when
 
 
 @frappe.whitelist(methods=["POST"])
@@ -841,8 +1009,8 @@ def create_tasks(name, rows=None):
         # board. The two ways to close a request that needs none are Reject and Duplicate.
         frappe.throw(
             _(
-                "Nothing here is ticked to be created. Tick at least one proposed task, or "
-                "reject the request or mark it a duplicate if no work is needed."
+                "Nothing here is ticked to be created. Tick at least one proposed task or add "
+                "one by hand, or reject the request or mark it a duplicate if no work is needed."
             ),
             frappe.ValidationError,
         )
@@ -929,6 +1097,8 @@ def claude_code_brief(name):
             "task_subject": row.task_subject,
             "confidence": row.confidence,
             "why": row.why,
+            # `brief._not_in_scope` leaves a ruled-out candidate off the brief.
+            "dismissed": cint(row.get("dismissed")),
         }
         for row in (doc.get("duplicate_candidates") or [])
     ]
@@ -1036,6 +1206,13 @@ def _readable(name):
     if _is_reviewer() or (doc.requested_by or "") == frappe.session.user:
         return doc
     frappe.throw(_("Not permitted."), frappe.PermissionError)
+
+
+def _require_open(doc):
+    from erpnext_enhancements.product_feedback.states import is_open
+
+    if not is_open(doc.status):
+        frappe.throw(_("This request is closed ({0}).").format(doc.status), frappe.ValidationError)
 
 
 def _require_editable(doc):
@@ -1153,27 +1330,39 @@ def _apply_row_edits(doc, rows):
 
         values, refused = _filter_payload(raw, PROPOSED_TASK_ALLOWED_FIELDS)
         rejected.update(refused)
-
-        if "project" in values:
-            project = (values.get("project") or "").strip()
-            if project not in permitted:
-                rejected.add("project")
-                values.pop("project")
-
-        if "include" in values:
-            values["include"] = cint(values["include"])
-        if "expected_hours" in values:
-            values["expected_hours"] = max(0.0, flt(values["expected_hours"]))
-        if "depends_on_idx" in values:
-            values["depends_on_idx"] = max(0, cint(values["depends_on_idx"]))
-        if "priority" in values and values["priority"] not in ("Low", "Medium", "High", "Urgent"):
-            rejected.add("priority")
-            values.pop("priority")
+        _clean_row(values, permitted, rejected)
 
         for key, value in values.items():
             target.set(key, value)
 
     return sorted(rejected)
+
+
+def _clean_row(values, permitted, rejected):
+    """Coerce one row's allowlisted ``values`` in place; add refused field names to ``rejected``.
+
+    Shared by an edited row (``_apply_row_edits``) and a hand-added one (``add_proposed_task``),
+    so the two cannot disagree about what a valid row is. A project outside ``permitted`` (the
+    two Projects in Product Feedback Settings) and a priority outside ERPNext's four are
+    dropped and reported.
+    """
+    if "project" in values:
+        project = (values.get("project") or "").strip()
+        if project not in permitted:
+            rejected.add("project")
+            values.pop("project")
+        else:
+            values["project"] = project
+
+    if "include" in values:
+        values["include"] = cint(values["include"])
+    if "expected_hours" in values:
+        values["expected_hours"] = max(0.0, flt(values["expected_hours"]))
+    if "depends_on_idx" in values:
+        values["depends_on_idx"] = max(0, cint(values["depends_on_idx"]))
+    if "priority" in values and values["priority"] not in VALID_PRIORITIES:
+        rejected.add("priority")
+        values.pop("priority")
 
 
 # -------------------------------------------------------------------------- attachments
@@ -1424,6 +1613,7 @@ def _serialise(doc, full=False):
     if not full:
         return out
 
+    ruled_by = _full_names([row.get("dismissed_by") for row in (doc.get("duplicate_candidates") or [])])
     out.update(
         {
             "description": doc.description,
@@ -1459,6 +1649,7 @@ def _serialise(doc, full=False):
                     "depends_on_idx": cint(row.depends_on_idx),
                     "description": row.description,
                     "created_task": row.created_task,
+                    "added_by": row.get("added_by") or "",
                 }
                 for row in (doc.get("proposed_tasks") or [])
             ],
@@ -1478,6 +1669,10 @@ def _serialise(doc, full=False):
                     "task_subject": row.task_subject,
                     "confidence": row.confidence,
                     "why": row.why,
+                    "dismissed": cint(row.get("dismissed")),
+                    "dismissed_by": row.get("dismissed_by") or "",
+                    "dismissed_by_name": ruled_by.get(row.get("dismissed_by") or "", ""),
+                    "dismissed_on": str(row.get("dismissed_on") or ""),
                 }
                 for row in (doc.get("duplicate_candidates") or [])
             ],

@@ -39,6 +39,11 @@ Two things the table encodes that are easy to miss
 ``Approved``, which is the state the sweeper already looks for — so a re-run and a
 deploy-lost job are recovered by exactly one query rather than two.
 
+**A failed breakdown can still be planned by hand.** ``Breakdown Failed -> Breakdown Ready``
+is the reviewer adding a proposed task themselves. It is the one way into ``Breakdown Ready``
+that no model wrote, and it exists so that "the model said no work is needed" is never the
+last word on a request a person knows needs some.
+
 **The three terminal states are terminal.** A rejected request is not reopened; a new
 request is the answer. This costs a reviewer a re-file when they misclick and buys the
 property that ``Tasks Created`` cannot be walked back to a state where the same proposal
@@ -87,7 +92,12 @@ LEGAL_TRANSITIONS: Final[Mapping[str, frozenset[str]]] = {
 	# `-> APPROVED` is "regenerate the proposal".
 	RequestState.BREAKDOWN_READY: frozenset({RequestState.TASKS_CREATED, RequestState.APPROVED})
 	| _CLOSEABLE,
-	RequestState.BREAKDOWN_FAILED: frozenset({RequestState.APPROVED}) | _CLOSEABLE,
+	# `-> BREAKDOWN_READY` is a reviewer writing the proposal by hand (`api.feedback.
+	# add_proposed_task`). A failed or empty breakdown must not be the end of a request that
+	# needs work: the model is not the only way to a Task, and a re-run that asks the same
+	# model the same question is not an escape (ER-2026-1323804, v1.729.0).
+	RequestState.BREAKDOWN_FAILED: frozenset({RequestState.APPROVED, RequestState.BREAKDOWN_READY})
+	| _CLOSEABLE,
 	RequestState.TASKS_CREATED: frozenset(),
 	RequestState.REJECTED: frozenset(),
 	RequestState.DUPLICATE: frozenset(),
