@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `desk_enhancements.bundle.css`.
   - **The record sidebar and the Training rail.** frappe v16.50.0 has no in-page toggle for the right-hand
     sidebar of a form at all, only the Desk Settings checkbox, which is server-side and all-or-nothing. Every
-    form, and every Training page, now has a small panel icon in the page head (*Hide sidebar* / *Show sidebar*).
+    form, and every Training page, now has a small panel icon in the page head (*Hide sidebar* / *Show sidebar*; its accessible name stays "Sidebar" and `aria-expanded` carries the state).
     One click saves the choice and sets `ee-page-sidebar-hidden` on `<html>`; the stylesheet hides
     `.layout-side-section.right` (the form's) and `.tn-host .layout-side-section` (the Training rail) under it. The
     class is set when the bundle evaluates, before the desk draws a page, so a sidebar you hid is never painted and
@@ -28,9 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Only from 992px up.** Below that the form's sidebar is frappe's responsive layout and the Training rail is a
     stacked "Training menu" disclosure; hiding either would leave a phone with no way back, so the stylesheet
     applies nothing there and the button is out of sight.
+  - **A route with an empty sidebar no longer reopens a collapsed one.** frappe's
+    `Sidebar.restore_expanded_state()` sets the panel expanded, without saving, whenever the sidebar it just drew has
+    no items (a route whose module has no Workspace Sidebar). So the panel popped open over a saved collapse on
+    such a route and folded again on the next: "it resets when I navigate". The module wraps that one method (the
+    original still runs first) so a saved collapse wins on a desktop. **Not verified on production data**: I could
+    not tell which of our routes resolve to an empty sidebar, so check that a collapsed sidebar now stays collapsed
+    on the Training pages and the planners. A phone drawer is left as frappe has it.
   - **The left Desk sidebar, across tabs.** frappe already saves this one (`desk-sidebar-collapsed`, written by
-    `Sidebar.close()`/`open()`) and re-reads it on every redraw of the sidebar, so a route change needs nothing and
-    this file deliberately does not re-apply it: a second writer would fight frappe, which forces an empty
+    `Sidebar.close()`/`open()`) and re-reads it on every redraw of the sidebar, so a route change needs nothing more
+    and this file deliberately does not re-apply it: a second writer would fight frappe, which forces an empty
     workspace's sidebar open on purpose. What frappe does not do is notice another tab changing the key; the module
     listens for the `storage` event and folds or opens the live sidebar to match, on a desktop only (below 768px
     the sidebar is a drawer that neither reads nor writes the key).
@@ -46,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above. `tests/test_sidebar_memory.py` fails the build if it returns.
 
 ### Tests
-- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (39 checks:
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (50 checks:
   the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
   get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
   that throws; a route change never touches the left sidebar). `tests/test_sidebar_memory.py` holds the seams it

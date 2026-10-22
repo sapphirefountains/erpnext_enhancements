@@ -112,8 +112,23 @@ class TestNotDrivenOnRoute(unittest.TestCase):
         code = strip_js_comments(read(MODULE))
         self.assertEqual(len(re.findall(r"sync_nav\(", code)), 2)  # the definition and one call
         self.assertIn("function on_storage", code)
-        for token in ("app_ready", "frappe.router", "set_route"):
+        # The one call is inside on_storage, not on any route or boot event.
+        handler = re.search(r"function on_storage\(event\) \{.*?\n\t\}\n", code, flags=re.S)
+        self.assertIsNotNone(handler)
+        self.assertIn("sync_nav()", handler.group(0))
+        for token in ("frappe.router", "set_route"):
             self.assertNotIn(token, code)
+        # app_ready is only the retry for installing the restore wrapper.
+        self.assertEqual(re.findall(r'on\("app_ready", (\w+)\)', code), ["patch_restore"])
+
+    def test_an_empty_sidebar_cannot_override_a_saved_collapse(self):
+        """frappe v16.50.0 Sidebar.restore_expanded_state() sets sidebar_expanded = true whenever
+        sidebar_items is empty, without saving: the panel pops open on a route whose module has no
+        Workspace Sidebar and folds again on the next. The wrapper must keep calling the original."""
+        code = strip_js_comments(read(MODULE))
+        self.assertIn("proto.restore_expanded_state", code)
+        self.assertIn("original.apply(this, arguments)", code)
+        self.assertIn("_ee_restore_patched", code)
 
     def test_it_never_clicks_the_page_head_toggle(self):
         code = strip_js_comments(read(MODULE))

@@ -19,6 +19,9 @@
  *   6. Storage that throws (private window) never escapes, and the toggle still works in memory.
  *   7. The left sidebar is NOT driven on a route change: frappe restores it from its own key on
  *      every redraw, and a second writer would fight it.
+ *   8. ...except in the one case frappe gets wrong: restore_expanded_state() forces the panel open
+ *      when the sidebar it drew has no items, over a saved collapse. The wrapper lets the collapse win
+ *      on a desktop, never on a phone drawer, and never twice.
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
  */
@@ -141,7 +144,7 @@ function makePage({ governed = true, hideSidebar = false } = {}) {
 }
 
 // Evaluates the module once, as one page load would.
-function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvents = false } = {}) {
+function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvents = false, SidebarClass } = {}) {
 	const world = { buttons: [] };
 	const events = {};
 	const winHandlers = {};
@@ -151,6 +154,7 @@ function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvent
 		app: sidebar ? { sidebar } : undefined,
 		container: { page: { page: null } },
 		is_mobile: () => mobile,
+		ui: SidebarClass ? { Sidebar: SidebarClass } : undefined,
 	};
 	function $(arg) {
 		if (typeof arg === 'string') {
@@ -257,13 +261,15 @@ console.log('sidebar memory — a hidden sidebar stays hidden everywhere until s
 	page.fire('form-refresh', { page: a });
 	page.fire('form-refresh', { page: b });
 	check(page.world.buttons.length === 2, 'a form page gets a button');
-	check(page.world.buttons[0].attrs['aria-pressed'] === 'false', 'it starts un-pressed when the sidebar is shown');
+	check(page.world.buttons[0].attrs['aria-expanded'] === 'true', 'it starts expanded when the sidebar is shown');
 	page.world.buttons[0].click();
 	check(page.storage.getItem(PAGE) === '1', 'one click saves "hidden"');
 	check(page.html(), 'and puts the class on <html> at once');
 	check(
-		page.world.buttons.every((x) => x.attrs['aria-pressed'] === 'true' && x.attrs.title === 'Show sidebar'),
-		'every button on screen is re-labelled, not just the one clicked'
+		page.world.buttons.every(
+			(x) => x.attrs['aria-expanded'] === 'false' && x.attrs.title === 'Show sidebar' && x.attrs['aria-label'] === 'Sidebar'
+		),
+		'every button on screen is re-labelled, not just the one clicked, with a constant accessible name'
 	);
 	page.world.buttons[1].click();
 	check(page.storage.getItem(PAGE) === '0' && !page.html(), 'a second click, from another page, shows it again and saves that');
@@ -284,7 +290,8 @@ console.log('sidebar memory — a hidden sidebar stays hidden everywhere until s
 	page.fire('form-refresh', { page: fresh });
 	check(!page.world.buttons[0].classes.has('hide'), 'and shown once the record is saved');
 
-	check(page.fire('form-refresh', {}) === undefined && page.warnings.length === 0, 'a form event with no page is ignored');
+	page.fire('form-refresh', {});
+	check(page.warnings.length === 0 && page.world.buttons.length === 1, 'a form event with no page is ignored');
 }
 
 // --- 4. All three events add it, and never twice -------------------------------------------
@@ -313,7 +320,7 @@ console.log('sidebar memory — a hidden sidebar stays hidden everywhere until s
 	page.storageEvent(PAGE);
 	check(page.html(), 'the other tab hid the record sidebar: this tab hides it');
 	check(page.api().is_hidden(), 'and its in-memory state follows');
-	check(page.world.buttons[0].attrs['aria-pressed'] === 'true', 'and the button here is re-labelled');
+	check(page.world.buttons[0].attrs['aria-expanded'] === 'false', 'and the button here is re-labelled');
 
 	storage.setItem(NAV, '1');
 	page.storageEvent(NAV);
@@ -395,10 +402,96 @@ console.log('sidebar memory — a hidden sidebar stays hidden everywhere until s
 	page.fire('page-change');
 	page.fire('form-refresh', { page: makePage() });
 	check(sidebar.closed === 0 && sidebar.opened === 0, 'page-change and form-refresh never fold or open the left sidebar');
-	check(
-		!/app_ready|page-change[\s\S]{0,80}sync_nav|route/.test(SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')),
-		'the code has no app_ready, route or page-change path into sync_nav'
-	);
+}
+
+// --- 11. An empty sidebar must not override a saved collapse -------------------------------------
+// frappe's restore_expanded_state() forces the panel open when the sidebar it drew has no items,
+// without saving. Rebuilt here the way sidebar.js v16.50.0 has it.
+function makeSidebarClass(storage, { drawer = false } = {}) {
+	class Sidebar {
+		constructor(items) {
+			this.sidebar_items = items;
+			this.sidebar_expanded = true;
+			this.applied = 0;
+		}
+		panel_can_close() {
+			return drawer;
+		}
+		load_expanded_state() {
+			this.sidebar_expanded = !drawer && storage.getItem(NAV) !== '1';
+		}
+		apply_expanded_state() {
+			this.applied += 1;
+		}
+		restore_expanded_state() {
+			this.load_expanded_state();
+			if (this.sidebar_items.length === 0) this.sidebar_expanded = true;
+			this.apply_expanded_state();
+		}
+	}
+	return Sidebar;
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeSidebarClass(storage);
+	const page = load({ storage, SidebarClass: Sidebar });
+	check(Sidebar.prototype._ee_restore_patched === true, 'the restore wrapper is installed at evaluation when the desk class exists');
+	const empty = new Sidebar([]);
+	empty.restore_expanded_state();
+	check(!empty.sidebar_expanded, 'an empty sidebar no longer pops open over a saved collapse');
+	check(empty.applied === 2, 'and the collapse is drawn (frappe drew once, we draw the fold)');
+	const full = new Sidebar([{}]);
+	full.restore_expanded_state();
+	check(!full.sidebar_expanded && full.applied === 1, 'a sidebar with items is left exactly as frappe restored it, not drawn twice');
+	storage.setItem(NAV, '0');
+	const open = new Sidebar([]);
+	open.restore_expanded_state();
+	check(open.sidebar_expanded, 'with no collapse saved an empty sidebar is still forced open, as before');
+	check(storage.getItem(NAV) === '0', 'and nothing is written to the key by the wrapper');
+	load({ storage, SidebarClass: Sidebar });
+	const again = new Sidebar([{}]);
+	again.restore_expanded_state();
+	check(again.applied === 1, 'evaluating the module twice does not wrap the method twice');
+	void page;
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeSidebarClass(storage, { drawer: true });
+	load({ storage, SidebarClass: Sidebar });
+	const s = new Sidebar([]);
+	s.restore_expanded_state();
+	check(s.sidebar_expanded && s.applied === 1, 'a phone drawer is left as frappe has it');
+}
+{
+	// The class is not defined when the bundle evaluates: patched on app_ready instead.
+	const storage = makeStorage({ [NAV]: '1' });
+	const page = load({ storage });
+	check(!page.threw && (page.handlers.app_ready || []).length === 1, 'no desk class yet: one app_ready retry is registered');
+	const Sidebar = makeSidebarClass(storage);
+	page.frappe.ui = { Sidebar };
+	page.fire('app_ready');
+	const s = new Sidebar([]);
+	s.restore_expanded_state();
+	check(!s.sidebar_expanded, 'and the retry installs the wrapper');
+	page.fire('app_ready');
+	check(Sidebar.prototype._ee_restore_patched === true, 'a second app_ready is harmless');
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeSidebarClass(storage);
+	Sidebar.prototype.apply_expanded_state = function () {
+		this.applied += 1;
+		if (this.applied > 1) throw new Error('detached');
+	};
+	const page = load({ storage, SidebarClass: Sidebar });
+	const s = new Sidebar([]);
+	let threw = null;
+	try {
+		s.restore_expanded_state();
+	} catch (e) {
+		threw = e;
+	}
+	check(!threw && page.warnings.length === 1, 'a failure while folding is a warning, never a broken route');
 }
 
 console.log('');

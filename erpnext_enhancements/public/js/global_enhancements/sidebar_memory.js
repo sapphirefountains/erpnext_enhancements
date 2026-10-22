@@ -12,10 +12,15 @@
  * 1. LEFT DESK SIDEBAR. frappe v16.50.0 already remembers it: Sidebar.close()/open() write
  *    localStorage "desk-sidebar-collapsed", and every redraw of the sidebar (a new workspace, a new
  *    route) reads it back through restore_expanded_state() -- so there is nothing to re-apply on a
- *    route change, and this file deliberately does not fight the desk by doing so. What the desk
- *    does NOT do is notice that ANOTHER TAB changed the key. This file listens for that and folds or
- *    opens the live sidebar to match. (Until v1.717.0 an "enforce_sidebar_expanded" in
- *    erpnext_enhancements.js also stripped body.sidebar-collapsed on every class change; it is gone.)
+ *    route change. Two gaps, both closed here:
+ *      a. restore_expanded_state() FORCES the panel open whenever the sidebar it just drew has no
+ *         items (a route whose module has no Workspace Sidebar), without saving. So on such a route
+ *         the panel pops open over a saved collapse and folds again on the next route with items:
+ *         "it resets when I navigate". The wrapper below lets a saved collapse win on a desktop.
+ *      b. The desk does not notice that ANOTHER TAB changed the key. This file listens for the
+ *         storage event and folds or opens the live sidebar to match.
+ *    (Until v1.717.0 an "enforce_sidebar_expanded" in erpnext_enhancements.js also stripped
+ *    body.sidebar-collapsed on every class change; it is gone.)
  *
  * 2. RECORD SIDEBAR + TRAINING RAIL. frappe v16.50.0 has no in-page toggle for the form's right-hand
  *    sidebar at all -- only the Desk Settings checkbox, which is server-side and all-or-nothing. This
@@ -30,6 +35,7 @@
  * a drawer below 768px (Sidebar.panel_can_close()), which starts shut and neither reads nor writes
  * the key, so cross-tab sync never touches it.
  *
+ * The restore wrapper is installed at evaluation (or on app_ready if the desk class is not defined yet).
  * The button is added on `form-refresh` (the form toolbar clears the page's icon group on refresh, so
  * it is re-added every time, idempotently), on `page-change` (any page that already has a sidebar),
  * and on `ee-page-sidebar-ready`, which the Training rail triggers when it mounts.
@@ -79,8 +85,15 @@
 		return state.hidden ? text("Show sidebar") : text("Hide sidebar");
 	}
 
+	// One name, one state: a constant accessible name with aria-expanded says "Sidebar, expanded" or
+	// "collapsed". A changing label AND aria-pressed would be read twice ("Show sidebar, pressed").
 	function paint(button) {
-		button.attr({ "aria-pressed": state.hidden ? "true" : "false", title: label(), "aria-label": label() });
+		const text = window.__ ? window.__ : (s) => s;
+		button.attr({
+			"aria-expanded": state.hidden ? "false" : "true",
+			"aria-label": text("Sidebar"),
+			title: label(),
+		});
 		button.toggleClass("active", state.hidden);
 	}
 
@@ -149,6 +162,42 @@
 		}
 	}
 
+	// Wraps Sidebar.restore_expanded_state so an empty sidebar no longer overrides a saved collapse.
+	// The original runs first and does everything it did before; only when it ended expanded, on a
+	// desktop, with a collapse saved, do we fold it again (drawn, not saved: the key already says so).
+	function patch_restore() {
+		try {
+			const proto = window.frappe && frappe.ui && frappe.ui.Sidebar && frappe.ui.Sidebar.prototype;
+			if (!proto || proto._ee_restore_patched || typeof proto.restore_expanded_state !== "function") {
+				return !!(proto && proto._ee_restore_patched);
+			}
+			const original = proto.restore_expanded_state;
+			proto.restore_expanded_state = function () {
+				const result = original.apply(this, arguments);
+				try {
+					const drawer = typeof this.panel_can_close === "function" && this.panel_can_close();
+					if (
+						this.sidebar_expanded &&
+						!drawer &&
+						read(NAV_KEY) === "1" &&
+						typeof this.apply_expanded_state === "function"
+					) {
+						this.sidebar_expanded = false;
+						this.apply_expanded_state();
+					}
+				} catch (e) {
+					console.warn("sidebar_memory:", e);
+				}
+				return result;
+			};
+			proto._ee_restore_patched = true;
+			return true;
+		} catch (e) {
+			console.warn("sidebar_memory:", e);
+			return false;
+		}
+	}
+
 	function on_storage(event) {
 		// key === null means the whole store was cleared.
 		if (event.key === null || event.key === PAGE_KEY) {
@@ -161,6 +210,10 @@
 
 	state.hidden = read(PAGE_KEY) === "1";
 	apply_class();
+
+	// The desk bundle defines frappe.ui.Sidebar before app bundles run; app_ready is the net for an
+	// order where it does not. Either way it is patched before any route's sidebar is drawn.
+	if (!patch_restore()) $(document).on("app_ready", patch_restore);
 
 	if (typeof window.addEventListener === "function") window.addEventListener("storage", on_storage);
 	$(document).on("form-refresh", function (event, frm) {
