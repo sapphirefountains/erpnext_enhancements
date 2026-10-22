@@ -24,6 +24,9 @@
  *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
  *   toolbar.menu(button, opts) / sheet(opts)  the toolbar's menu buttons (no history entry) and the
  *                                       phone's "Filters and tools" sheet (one, like a drawer)
+ *   tour.open({title, steps, owner, on_close})  the first-visit tour (P12): a few short steps in one
+ *                                       modal dialog, skippable everywhere, keyboard-complete, and
+ *                                       never a history entry (planner_kit/tour.js)
  *   toolbar.tabs(container, opts)       the view buttons as a WAI-ARIA tablist (toolbar v2)
  *   toolbar.sections_to_items(sections) named sections as one menu list (More's Display/Views/Tools/Print)
  *   quiet_call(method, args, opts)      sf_kit's call on its quiet path: a fetch, so frappe shows no
@@ -50,6 +53,7 @@ import * as blocks from "./planner_kit/blocks.js";
 import { CSS, STYLE_ID } from "./planner_kit/styles.js";
 import * as big_picture from "./planner_kit/big_picture.js";
 import { create_toolbar } from "./planner_kit/toolbar.js";
+import { create_tour } from "./planner_kit/tour.js";
 import { call as sf_call } from "./sf_kit/call.js";
 import { state_html } from "./sf_kit/state.js";
 
@@ -178,6 +182,8 @@ function install() {
 		big_picture,
 		// The planner toolbar redesign (v1.687.0): menu buttons and the phone's sheet.
 		toolbar: create_toolbar(env),
+		// The first-visit tour (P12). Not part of the history guard: it takes no entry of its own.
+		tour: create_tour(env),
 		// A request whose refusal the page reports in its own panel (the Utilization view).
 		quiet_call: (method, args, opts) => sf_call(call_env, method, args, Object.assign({}, opts, { quiet: true })),
 		state_html,

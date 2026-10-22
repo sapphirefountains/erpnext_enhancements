@@ -340,6 +340,38 @@ Drafts with no date at all wait in the **Unscheduled** tray above the calendar u
 - **Refused in Draft mode**: *Add visit here* (a visit that does not exist cannot be a draft) and moving a **projected** visit (it rewrites the contract's next visit date and may draft a record at once). Both are refused on the page and by the server.
 - **Pencil** (`Sapphire Maintenance Record.tentative`, *Tentative (pencil)*): *Pencil* / *Firm up* in a visit's right-click menu and a checkbox in its dialog, a normal `move_visit(tentative=)` write (drafted like any other in Draft mode). A pencilled visit is booked softly for everyone on it, exactly like a pencil task: `soft_booked`, never a conflict or a reason, not routed or drive-padded, hatched on both planners. It assigns nobody (`visit_crew.on_record_update`; firming it up assigns the technician and the whole crew at once, and pencilling a firm visit removes nothing), sends the customer no date confirmation until it is firmed up (`customer_confirmations.visit_customer_date`), and is left out of the technician's 6 AM text (`maintenance_dispatch.send_morning_digests`).
 
+### The first-visit tour and the help (P12, v1.716.0, Planner UX redesign)
+
+The last PR of the redesign (`docs/planner-ux-redesign.md` §7); the Project Planner's README has the whole story
+(its `PPTOUR` block and the kit's `planner_kit.tour`). Nik, 2026-10-21: "a brief and simple tutorial on the
+planner for every first time visitor." This planner's half is the page's `MPTOUR` block (the last in
+`maintenance_planner.js`) and three sections of "?".
+
+- **The desktop tour** is four to six steps: *Month, Week and Crew* (everyone); *Drag to reschedule* (only for a
+  scheduler, `data.can_schedule`); *Project work is a thin strip* and *Resources available* (everyone; the drag
+  onto a visit is mentioned for schedulers only); *Who hears about a change* (schedulers: Notify crew?, which
+  starts on Notify for the next two weeks, and Draft mode in More ▸ Tools); *My day* (a technician who cannot
+  schedule and has a day of their own, `p10_has_day`); and *Help is one click away*.
+- **The phone tour** is four or five: *Your visits*, *Project work is a strip*, *My day* (only for someone with a
+  day), *Filters and tools* (the sheet from the bottom) and *Help is one tap away*. It opens on whichever of the
+  three views the phone is on, since this planner has no screen of its own for a phone.
+- **When, once, and where it is kept** as on the Project Planner: after the data is drawn, the kit and the toolbar
+  are built and the saved views have answered; waits while a drawer, menu, sheet, dialog or drag is on screen;
+  marked on the server the moment it shows (`planner_views_prefs.mark_tour_seen`, `planner="maintenance"`, the
+  flag in the person's `Maintenance Planner` `__UserSettings` row under `planner_tour`, a desktop's and a phone's
+  separate), this browser told only if that fails (`ee_maintenance_planner_tour:<user>:<kind>`). Skippable by
+  Esc, *Skip tour* or a press outside; **"?" ▸ Take the tour** shows it again and marks nothing. It takes no
+  history entry, a route of the planner's own or the page hiding closes it, and `p6b_key` treats it as a dialog
+  so the planner's shortcuts do nothing behind it. A person who has used the planner before sees it once on their
+  next visit.
+- **"?"** (`legend_sections()`, P10's one provider function) gets three sections right after the tips
+  (`p12_legend_sections`): *The views* (Month, Week and Crew; the planner opens on the view used last, on any
+  device), *Moving a visit* (drag, add one, Undo) and *Draft mode and Notify crew?* (what Draft mode holds back;
+  how Notify, Don't notify and the 14-day default work; a draft asks nothing). The sections P10 wrote (Visit cards,
+  Project work, Resources available, Your day) and the earlier phases' follow them.
+- **Tests:** `tests/test_planner_tour.py` and `scripts/test_planner_tour.js`; the toolbar harness
+  (`scripts/test_planner_toolbar.js`) pins that P12's sections come right after the tips.
+
 ## Visit Review
 
 Phase A of the 2026-10-12 Maintenance tools plan (TASK-2026-02473, v1.595.0) is for the four

@@ -81,6 +81,7 @@ Related code outside this folder:
 - `api/planner_ai_draft.py` — the Build out grid's **AI draft…** (T4, v1.609.0): one POST endpoint, `draft_task_breakdown`, that asks the app's Gemini client for a task breakdown and returns grid rows. It writes nothing and never picks a person or a day. See [AI draft](#ai-draft-a-task-breakdown-for-the-grid-t4-v1609).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
+- `public/js/planner_kit/tour.js` — P12: the first-visit tour, a few short steps in one modal dialog, skippable everywhere and never a history entry. See [The first-visit tour and the help](#the-first-visit-tour-and-the-help-p12-v17160-planner-ux-redesign).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
@@ -1252,7 +1253,8 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide` | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
-| `legend(sections, {title, owner})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}` | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
+| `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
+| `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, labelled by the step's heading and described by its sentence, the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside. Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
@@ -2224,6 +2226,73 @@ on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` bl
   page: the rows, the three parts, the mounted widget, every control, the printout), run by
   `tests/test_planner_overview_page.py`, and the landing and Back/Forward scenarios in
   `scripts/test_planner_today.js`.
+
+### The first-visit tour and the help (P12, v1.716.0, Planner UX redesign)
+
+The last PR of the redesign (`docs/planner-ux-redesign.md` §7). Nik, 2026-10-21: "When we are close to
+finishing, I'd like a brief and simple tutorial on the planner for every first time visitor." Two things: a
+**tour** that shows once, and **"?"** rewritten for the new tabs. It is the page's `PPTOUR` block (the last in
+`project_planner.js`), the kit's `planner_kit.tour` (`planner_kit/tour.js`), and
+`planner_views_prefs.mark_tour_seen`. The Maintenance
+Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
+
+- **The desktop tour** is five steps, six for the Executive Team: *Tabs along the top* (Lookahead, Gantt, Crew,
+  Calendar), *Overview is for managers* (**Executive Team only**, the role the landing already tests), *Drag to
+  move* (the tasks that follow move too; hold Ctrl or ⌘ to move just that one), *Draft until you publish*
+  (Publish… and the baseline), *Notify crew?* (Notify, Don't notify, the next two weeks) and *Help is one click
+  away*. Someone who may look but not change tasks (`data.can_edit` false) gets *Click for the details* in place
+  of the three editing steps, so theirs is three or four.
+- **The phone tour** is Today's, five steps: *This is your day*, *Open the route*, *Block my time*, *The rest of
+  the planner* (Planner, then Filters and tools, the sheet from the bottom) and *Help is one tap away*.
+  It opens **on Today** for a person who has a day (`get_today` answered with a `resource`), never on the
+  Lookahead's phone list and never for someone the planner does not list. A desktop that opens Today is not
+  shown it there either. The kind is `p8_is_phone()`, the toolbar's own 767px.
+- **Once per person, per kind of device, on the server.** Whether a person has been shown each tour is
+  `planner_tour.seen.{desktop, phone}` in their own `__UserSettings` row for the planner (`Project Planner`),
+  beside `planner_views` and touching nothing in it. `get_views` carries it (`tour`), so the page needs no request
+  of its own; `mark_tour_seen(planner, kind)` (POST, behind the planner's role gate, the Opportunity Board
+  refused) sets one flag, straight to the table. Never frappe's Redis-only user_settings, which a deploy flushes,
+  and never the browser alone: a person shown it at their desk is not shown it on the next machine. The two
+  kinds are separate on purpose (a desktop and a phone land on different screens), so a person who has seen the
+  desktop tour is shown the phone one once. **It is marked the moment it shows** (the guided page's first-time
+  pop-up does the same), so a reload mid-tour does not repeat it; only if that request fails is this browser told
+  (`save_pref`, `ee_project_planner_tour:<user>:<kind>`), so a server that is down cannot bring it back at every
+  visit. A saved row from before P12 has no flag, so **everyone sees it once on their next visit**, the people who
+  have used the planner for weeks included: the planner they open has changed, and Skip is one press.
+- **When it opens.** Never before the page can show it: `tour_verdict` answers *wait* until the saved views have
+  answered (they carry the flags), the kit and the toolbar are built (`tb.kit`), and the screen's data is here and
+  not loading; it answers *no* on another page, on a screen with no toolbar (the route view, My week) and when the
+  kit on the Desk is older than P12 and has no `tour`. It waits, and asks again each second for a minute, while a
+  drawer, a menu, the phone's sheet (the kit's guard knows each), a Frappe dialog or a drag is on screen. A landing
+  (`handle_route` → `tour_route`) starts a 0.7 s settle, so a redirect lands first. All of it is in try/catch: a
+  tour that cannot show is no reason for the planner not to.
+- **Skippable everywhere, re-openable.** Esc, the *Skip tour* button or a press outside the card each close it as
+  skipped (it is already marked). **"?" ▸ Take the tour** is a footer button of the help drawer (`legend`'s
+  `actions`); it closes the drawer and shows the tour for this device again, marking nothing. Today has no
+  toolbar, so it gets a **?** button beside *Planner* (`tour_today_help`).
+- **No history, no Back trouble.** The tour joins none of the kit's history guard: opening, stepping, replaying
+  and closing it push, replace and step off nothing, so Back and Forward mean what they did. A route of the
+  planner's own (`handle_route`) or the page hiding closes it (`tour_close("route")`). Its keys are its own: it
+  listens on the document in the capture phase for Esc and Tab, and `p6b_key` treats it as a dialog, so the
+  planner's `T`, `/`, `?`, `1 2 3` and the arrows do nothing to the page behind it.
+- **Accessible, and fine at 375px.** A modal dialog labelled by the step's heading and described by its sentence,
+  the count ("Step 2 of 5") in a polite live region, focus on Next and trapped, back on the control that started
+  it; 44px buttons on a touch screen; on a phone the card sits along the bottom, and long words wrap, so there is
+  no sideways scroll. The rules are `.pk-tour-*` in `planner_kit.bundle.css` (tokens only, no shadow, no
+  animation); the script is in `planner_kit.bundle.js`. No raw `/assets` path.
+- **"?" for the new tabs** (`p12_legend_sections`, right after the tips): *The tabs* (a line for Lookahead, Gantt,
+  Crew with Capacity, Calendar, Overview and Today), *Where the planner opens* (the last tab per device; a phone's
+  first visit is Today; a desktop's the Lookahead, and the Executive Team's the Overview), *Moving a task*,
+  *Draft and Published* (Draft schedule, Publish…, Published, Notify crew?, Hold all my changes) and *Baseline*
+  (the grey bar, the red tail, Reset baseline). The sections after them are the ones the earlier phases wrote.
+  The tips (the first section) stay as they were: they teach the quick looks, and the tour does not.
+- **Tests.** `tests/test_planner_tour.py` (the flags against a frappe stub, the wiring, the docs) runs
+  `scripts/test_planner_tour.js`: the real `tour.js` on a fake DOM and the real page scripts with a fake kit and a
+  fake server. First visit shows it and marks it; the second does not; Skip, Esc and a press outside leave it seen;
+  Take the tour shows it again and marks nothing; a phone and a desktop each get their own; the Overview step is for
+  the Executive Team only; no history entry, no route and no guard overlay; nothing opens or throws before the data
+  and the toolbar exist. It cannot be seen in a browser from a bench-free test, so the first look on a phone at
+  375px is a person's.
 
 ## Calendar sync (C2, v1.604.0)
 

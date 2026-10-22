@@ -242,6 +242,7 @@ class ProjectPlanner {
 		this.init_phase6d();
 		this.init_t1();
 		this.init_toolbar();
+		this.init_tour();
 		this.bind_drag();
 	}
 
@@ -302,6 +303,7 @@ class ProjectPlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		this.tour_route(); // P12: a tour from the last screen closes, and the first-visit check is made again
 		if (target.capacity_redirect) {
 			// Replace, never push: Back from here leaves the planner, as it would have from the old address.
 			// The old address's filters travel with it (take_route_filters has not read them yet).
@@ -4315,6 +4317,7 @@ const PP8_METHODS = {
 			.text(__("Planner"))
 			.on("click", () => this.go(PPL.view, date))
 			.appendTo($head);
+		this.tour_today_help($head); // P12: Today has no toolbar, so no "?" without this
 
 		if (!data) {
 			$('<div class="pp-route-note"></div>').text(__("Your day could not be loaded. Refresh to try again.")).appendTo($root);
@@ -5766,6 +5769,7 @@ const PP6A_METHODS = {
 		kit.legend(
 			[
 				this.p6a_tip_section(),
+				...this.p12_legend_sections(), // P12: the tabs, where it opens, moving, Draft and Published, the baseline
 				...this.p6c_legend_sections(),
 				{
 					title: __("Quick looks"),
@@ -5848,7 +5852,7 @@ const PP6A_METHODS = {
 				},
 				...this.p6d_legend_sections(),
 			].concat(this.p6b_legend_sections()),
-			{ title: __("How to read the Project Planner"), owner: PP6A.owner }
+			{ title: __("How to read the Project Planner"), owner: PP6A.owner, actions: this.tour_legend_actions() }
 		);
 	},
 };
@@ -7619,7 +7623,8 @@ const PP6B_METHODS = {
 			shift: e.shiftKey,
 			alt: e.altKey,
 			editable,
-			dialog: !!(window.cur_dialog && window.cur_dialog.display),
+			// P12: the first-visit tour is a dialog, and its keys are its own.
+			dialog: !!(window.cur_dialog && window.cur_dialog.display) || this.tour_open(),
 		});
 		if (!action) return;
 		// A menu's own keys (arrows, Enter, Esc) are the menu's.
@@ -8493,6 +8498,7 @@ const PP6C_METHODS = {
 				const answer = (r && r.message) || {};
 				p6c.views = Array.isArray(answer.views) ? answer.views : [];
 				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : null;
+				this.tour_take(answer.tour); // P12: whether this person has been shown each tour
 			})
 			.catch(() => null);
 		// A slow answer must not keep the planner blank: after a few seconds it opens without it.
@@ -14909,3 +14915,434 @@ const PPAS_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPAS_METHODS);
+
+// ====================================================================== P12: the first-visit tour, and "?" for the new tabs
+//
+// P12 of the planner UX redesign (docs/planner-ux-redesign.md section 7; Nik, 2026-10-21: "When we are
+// close to finishing, I'd like a brief and simple tutorial on the planner for every first time visitor").
+// Two things, both about helping a person who has never seen this planner:
+//
+//   - **The tour.** A handful of short steps in one small dialog (planner_kit.tour), shown once to each
+//     person on each kind of device. A desktop's tour is the tabs, dragging (the tasks that follow move
+//     too), Draft and Publish…, Notify crew? and "?"; the Overview step is for the Executive Team only
+//     (the people it is built for), and the editing steps are for people who can edit tasks. A phone's
+//     tour is Today: your day, the route, Block my time, the way to the rest of the planner, and help.
+//     It is skippable at every step (Esc, Skip, a press outside), and "?" has Take the tour.
+//   - **"?"** gets sections for the new model: the tabs, where the planner opens, moving a task, Draft
+//     and Published (Publish…, Notify crew?), the baseline (p12_legend_sections). Today, which has no
+//     toolbar, gets a "?" button of its own, so the phone's help and tour are not two screens away.
+//
+// When it opens. Never before the page can show it: the saved views have answered (they carry the
+// flags: planner_views_prefs.get_views), the kit and the toolbar are built, and the screen's data is
+// here. A desktop's tour opens on the planner's own screens (not the route view or My week, which have no
+// toolbar); a phone's opens on Today, for someone who has a day. It waits, and asks again each second
+// for a minute, while anything else is on screen that needs a decision: a drawer, a menu, the phone's
+// sheet, a Frappe dialog, a drag. It checks again 0.7 s after each landing, so a redirect settles first.
+// All of it is in try/catch: a tour that cannot show is no reason for the planner not to.
+//
+// Seen. Marked on the server the moment the tour shows (planner_views_prefs.mark_tour_seen, in the
+// person's own __UserSettings row; never frappe's Redis-only user_settings, and never only this browser:
+// a person shown it on one machine is not shown it on the next), so a reload never repeats it. Only
+// if that request fails is this browser told (the page's save_pref), so a failing server cannot make it
+// come back on every visit. A replay from "?" marks nothing.
+//
+// History. The tour joins no history guard and pushes, replaces and steps off nothing, so Back and
+// Forward are what they were. A route of the planner's own (handle_route) or the page hiding closes it.
+//
+// Hooks into the class above, one line each: init_tour (constructor), tour_route (handle_route),
+// tour_take (p6c_fetch_views), tour_open (p6b_key's dialog test), p12_legend_sections and
+// tour_legend_actions (p6a_legend), tour_today_help (render_today).
+
+const PPTOUR = {
+	prefs: "erpnext_enhancements.api.planner_views_prefs",
+	planner: "project",
+	kinds: ["desktop", "phone"],
+	// The browser's note that the server could not be told (the page's own storage helper writes it).
+	local_pref: "ee_project_planner_tour",
+	// The screens a desktop's tour opens on by itself: the tabs. The route view and My week have no toolbar.
+	desktop_screens: ["lookahead", "week", "month", "crew", "capacity", "gantt", "overview"],
+	settle_ms: 700,
+	retry_ms: 1000,
+	retries: 60,
+};
+
+// Pure: no frappe, no page. scripts/test_planner_tour.js runs it under node.
+const PPTOUR_PURE = {
+	// Which tour a device gets.
+	kind(is_phone) {
+		return is_phone ? "phone" : "desktop";
+	},
+	// Whether the tour opens by itself on this screen. A phone's is Today's (a Planner Resource's own day);
+	// a desktop's is a tab's. `has_day` is Today's answer carrying a resource.
+	auto_screen(kind, view, has_day) {
+		if (kind === "phone") return view === PP8.view && !!has_day;
+		return PPTOUR.desktop_screens.includes(view);
+	},
+	// The steps for `kind`, in words from `say` (the page's __). `who`: {executive, can_edit}.
+	steps(kind, who, say) {
+		const w = who || {};
+		if (kind === "phone") {
+			return [
+				{
+					title: say("This is your day"),
+					text: say("Today lists your stops for today and tomorrow, in driving order, with when to leave and who is with you."),
+				},
+				{
+					title: say("Open the route"),
+					text: say("The map shows the drive. Tap an address to open it in Google Maps, or Full route for the stops and drive times."),
+				},
+				{
+					title: say("Block my time"),
+					text: say("Need time away? Block my time marks you unavailable for part of a day or all of it. This week shows your whole week."),
+				},
+				{
+					title: say("The rest of the planner"),
+					text: say("Planner opens the full schedule. There, Filters and tools opens a sheet from the bottom with the filters, alerts, + Add and More."),
+				},
+				{
+					title: say("Help is one tap away"),
+					text: say("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again. On Today, the ? button opens it too."),
+				},
+			];
+		}
+		const steps = [
+			{
+				title: say("Tabs along the top"),
+				text: say(
+					"Lookahead shows every job for the next three weeks. Gantt shows one job from start to finish. Crew shows who is where. Calendar is the week and month you know."
+				),
+				keys: say("All four show the same tasks."),
+			},
+		];
+		if (w.executive) {
+			steps.push({
+				title: say("Overview is for managers"),
+				text: say("Overview puts every active job on one timeline, lists what needs attention, and prints the weekly summary."),
+			});
+		}
+		if (w.can_edit !== false) {
+			steps.push(
+				{
+					title: say("Drag to move"),
+					text: say("Drag a bar or card to a new day. The tasks that wait on it move with it, by the same number of working days."),
+					keys: say("Hold Ctrl (⌘ on a Mac) while dropping to move just that task."),
+				},
+				{
+					title: say("Draft until you publish"),
+					text: say(
+						"A new job's schedule starts as a Draft: changes stay private and nobody is told. When it is ready, press Publish… on the job. That tells the crew and sets the baseline, the grey bar you compare against later."
+					),
+				},
+				{
+					title: say("Notify crew?"),
+					text: say(
+						"After a job is published, a change to someone's days asks Notify crew? Notify tells the people affected. Don't notify keeps it quiet. It starts on Notify for changes in the next two weeks."
+					),
+					keys: say("Esc puts the change back."),
+				}
+			);
+		} else {
+			// Someone who may look but not change: what a click shows them, in place of the editing steps.
+			steps.push({
+				title: say("Click for the details"),
+				text: say("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
+			});
+		}
+		steps.push({
+			title: say("Help is one click away"),
+			text: say("? explains every tab, chip and color, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+		});
+		return steps;
+	},
+};
+
+const PPTOUR_METHODS = {
+	init_tour() {
+		this.tour = { seen: null, timer: null, handle: null };
+		// Leaving the page closes it (another page, or Back out of the planner).
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			wrapper.on("hide", (e) => {
+				if (e.target === wrapper[0]) this.tour_close("route");
+			});
+		}
+	},
+
+	tour_state() {
+		if (!this.tour) this.tour = { seen: null, timer: null, handle: null };
+		return this.tour;
+	},
+
+	// True while the tour is on screen: the page's shortcut handlers (p6b_key) treat it as a dialog.
+	tour_open() {
+		const kit = this.p6a && this.p6a.kit;
+		return !!(kit && kit.tour && typeof kit.tour.is_open === "function" && kit.tour.is_open());
+	},
+
+	tour_kind() {
+		return PPTOUR_PURE.kind(this.p8_is_phone());
+	},
+
+	tour_close(how) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const state = this.tour_state();
+		if (state.handle) {
+			try {
+				state.handle.close(how || "api");
+			} catch (e) {
+				state.handle = null;
+			}
+		}
+	},
+
+	// The flags get_views answered (p6c_fetch_views): {desktop, phone}. Anything else leaves them unknown, and
+	// the tour waits (and in the end does not show) rather than guess.
+	tour_take(answer) {
+		try {
+			if (answer && typeof answer === "object") {
+				this.tour_state().seen = { desktop: answer.desktop === true, phone: answer.phone === true };
+			}
+			this.tour_nudge();
+		} catch (e) {
+			// A tour is never a reason for the planner to fail.
+		}
+	},
+
+	// A landing: a tour still open from the last screen closes, and the check is made again in a moment.
+	tour_route() {
+		try {
+			this.tour_close("route");
+			this.tour_nudge();
+		} catch (e) {
+			// As above.
+		}
+	},
+
+	tour_nudge(wait, tries) {
+		try {
+			const state = this.tour_state();
+			if (state.timer) clearTimeout(state.timer);
+			state.timer = setTimeout(() => this.tour_check(tries || 0), wait == null ? PPTOUR.settle_ms : wait);
+		} catch (e) {
+			// No timer, no tour.
+		}
+	},
+
+	tour_check(tries) {
+		const state = this.tour_state();
+		state.timer = null;
+		let verdict = "";
+		try {
+			verdict = this.tour_verdict();
+		} catch (e) {
+			return;
+		}
+		if (verdict === "ok") {
+			try {
+				this.tour_start(false);
+			} catch (e) {
+				// Not shown, not marked: the next visit tries again.
+			}
+		} else if (verdict === "wait" && (tries || 0) < PPTOUR.retries) this.tour_nudge(PPTOUR.retry_ms, (tries || 0) + 1);
+	},
+
+	// "ok": open it now. "wait": not yet, ask again shortly. "": not on this screen, already seen, or no
+	// way to show it; leave it until the next landing.
+	tour_verdict() {
+		if (!this.p6b_page_live()) return "";
+		const state = this.tour_state();
+		if (state.handle || this.tour_open()) return "";
+		const kit = this.p6a && this.p6a.kit;
+		if (!state.seen || !kit) return "wait";
+		// An older kit already on the Desk has no tour: there is nothing to wait for.
+		if (!kit.tour) return "";
+		const kind = this.tour_kind();
+		if (state.seen[kind] || this.tour_local_seen(kind)) return "";
+		if (!PPTOUR_PURE.auto_screen(kind, this.view, this.today_data && this.today_data.resource)) {
+			// Today's answer may not be in yet.
+			return kind === "phone" && this.view === PP8.view && !this.today_data ? "wait" : "";
+		}
+		if (!this.tb || !this.tb.kit) return "wait";
+		if (kind === "desktop" && (!this.data || this.tour_loading())) return "wait";
+		if (this.tour_busy(kit)) return "wait";
+		return "ok";
+	},
+
+	tour_loading() {
+		const $body = this.$body;
+		return !!($body && typeof $body.hasClass === "function" && $body.hasClass("pp-loading"));
+	},
+
+	// Anything on screen that is waiting for a decision, or in the way: a drawer, a menu, the phone's sheet
+	// (the kit's guard knows each), a Frappe dialog, a drag.
+	tour_busy(kit) {
+		if (this.drag) return true;
+		if (kit.drawer && typeof kit.drawer.current === "function" && kit.drawer.current()) return true;
+		if (kit.guard && typeof kit.guard.top === "function" && kit.guard.top()) return true;
+		if (window.cur_dialog && window.cur_dialog.display) return true;
+		try {
+			if (document.querySelector && document.querySelector(".modal.show")) return true;
+		} catch (e) {
+			return false;
+		}
+		return false;
+	},
+
+	tour_local_key(kind) {
+		const user = (frappe.session && frappe.session.user) || "";
+		return `${PPTOUR.local_pref}:${user}:${kind}`;
+	},
+
+	tour_local_seen(kind) {
+		return this.load_pref(this.tour_local_key(kind), "") === "1";
+	},
+
+	tour_who() {
+		let executive = false;
+		try {
+			executive = !!(frappe.user && typeof frappe.user.has_role === "function" && frappe.user.has_role(PPO.role));
+		} catch (e) {
+			executive = false;
+		}
+		return { executive, can_edit: this.data ? !!this.data.can_edit : true };
+	},
+
+	// Open the tour for this device. `replay`: from "?", which marks nothing (it was marked when first shown).
+	tour_start(replay) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return false;
+		const kind = this.tour_kind();
+		const state = this.tour_state();
+		const steps = PPTOUR_PURE.steps(kind, this.tour_who(), __);
+		if (!steps.length) return false;
+		const handle = kit.tour.open({
+			title: __("Project Planner tour"),
+			steps,
+			owner: PP6A.owner,
+			return_focus: replay && this.$p6a_help ? this.$p6a_help[0] : null,
+			on_close: () => {
+				if (state.handle === handle) state.handle = null;
+			},
+		});
+		state.handle = handle || null;
+		if (handle && !replay) this.tour_mark(kind);
+		return !!handle;
+	},
+
+	tour_mark(kind) {
+		const state = this.tour_state();
+		state.seen = Object.assign({ desktop: false, phone: false }, state.seen, { [kind]: true });
+		const args = { planner: PPTOUR.planner, kind };
+		const method = `${PPTOUR.prefs}.mark_tour_seen`;
+		const kit = this.p6a && this.p6a.kit;
+		// A request the kit makes quietly: frappe shows nothing if it fails. Only a failure is told to this
+		// browser, so a server that is down cannot bring the tour back at every visit.
+		const failed = () => this.save_pref(this.tour_local_key(kind), "1");
+		try {
+			const call =
+				kit && typeof kit.quiet_call === "function"
+					? kit.quiet_call(method, args)
+					: frappe.call({ method, args, silent: true });
+			Promise.resolve(call).then(null, failed);
+		} catch (e) {
+			failed();
+		}
+	},
+
+	// "?" ▸ Take the tour: close the help (its drawer), then the same tour this device gets.
+	tour_replay() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const open = () => {
+			try {
+				this.tour_start(true);
+			} catch (e) {
+				// Nothing to show.
+			}
+		};
+		if (kit.drawer && typeof kit.drawer.navigate === "function") kit.drawer.navigate(open);
+		else open();
+	},
+
+	// The help drawer's footer button; none when this kit has no tour (an older one, still on the Desk).
+	tour_legend_actions() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return [];
+		return [
+			{
+				label: __("Take the tour"),
+				title: __("A few short steps through the planner"),
+				on_click: () => this.tour_replay(),
+			},
+		];
+	},
+
+	// Today has no toolbar, so no "?": its own, beside Planner.
+	tour_today_help($head) {
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text("?")
+			.attr("title", __("How to read the planner"))
+			.attr("aria-label", __("How to read the planner"))
+			.on("click", () => this.p6a_legend())
+			.appendTo($head);
+	},
+
+	// ------------------------------------------------------------------ "?" for the new tabs
+
+	// The help's sections for the planner as it is now, after the tips and before the cards, chips and keys the
+	// phases before it wrote. Samples are the kit's own chips (planner_kit.legend), no markup of the page's.
+	p12_legend_sections() {
+		const item = (text) => ({ sample_html: "", text: __(text) });
+		const chip = (label, text, tone) => ({ chip: { text: __(label), tone: tone || "plain" }, text: __(text) });
+		return [
+			{
+				title: __("The tabs"),
+				note: __("Four views of one schedule, and a fifth for managers. Today is the phone's."),
+				items: [
+					chip("Lookahead", "Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published."),
+					chip("Gantt", "One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Open it from a job's name, or from the Project form's Open in Project Planner."),
+					chip("Crew", "Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it."),
+					chip("Calendar", "The week and month grids you know: cards, double-click to add, drag to move."),
+					chip("Overview", "Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print."),
+					chip("Today", "A phone's home: your stops for today and tomorrow, the route map and Block my time. This week opens your whole week. From the planner on a phone, it is in More ▸ Views."),
+				],
+			},
+			{
+				title: __("Where the planner opens"),
+				items: [
+					item("It opens on the tab you used last on this device. A phone and a desktop each remember their own."),
+					item("The first time, a phone opens Today. A desktop opens the Lookahead, and the Executive Team's opens the Overview."),
+					item("Your filters are yours and follow you to any device. A link that carries a filter shows what its sender saw."),
+				],
+			},
+			{
+				title: __("Moving a task"),
+				items: [
+					item("Drag a bar or card to another day. The tasks that wait on it move with it, by the same number of working days, later or earlier, as one change with one Undo."),
+					item("Hold Ctrl (⌘ on a Mac) while you drop to move just that task."),
+					item("Drag a bar's edge to change its first or last day."),
+				],
+			},
+			{
+				title: __("Draft and Published"),
+				items: [
+					chip("◐ Draft schedule", "A new job's schedule is a Draft. Every change to its tasks, on any tab, is kept as a draft: nobody is told, nobody is assigned and nothing reaches Google Calendar. Every scheduler sees its drafts.", "amber"),
+					chip("Publish…", "On the job's row (Lookahead, Gantt, Overview) or in its peek. It checks conflicts once, asks for one reason, sets the baseline, tells each person affected once and lets Google Calendar pick the tasks up.", "blue"),
+					chip("● Published", "From then on, edits are live.", "green"),
+					chip("Notify crew?", "A live change that moves someone's days or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back."),
+					item("More ▸ Tools ▸ Hold all my changes is the older board-wide Draft mode: keep every change to yourself, on any job, until you publish or discard."),
+				],
+			},
+			{
+				title: __("Baseline"),
+				items: [
+					item("The grey bar behind a task is the baseline: the dates it had when the schedule was published. A thin red tail shows how far it has slipped."),
+					item("Reset baseline (the Gantt's header, or the job's peek) copies today's dates for a re-plan, after asking how many tasks move. A job published without a baseline offers Set baseline."),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPTOUR_METHODS);

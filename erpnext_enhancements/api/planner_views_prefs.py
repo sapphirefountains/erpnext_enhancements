@@ -28,6 +28,14 @@ on**. So a view lives on the server, per user, never in the browser.
   stripes and ruled-table cell styles (``print_style``, the same chrome as the weekly crew sheet).
   The page builds the body from the data it already has on screen, with its filters, and prints it
   from a browser window: the server PDF is broken on production (``docs/pdf-generation.md``).
+* **The first-visit tour** (P12 of the planner UX redesign, ``docs/planner-ux-redesign.md``). Whether a
+  person has been shown each planner's tour is kept in the same row, under a key of its own
+  (``planner_tour``), as ``{"version": 1, "seen": {"desktop": bool, "phone": bool}}``: a desktop and a
+  phone land on different screens, so each has its own tour, shown once. :func:`get_views` carries the
+  flags (``tour``), so the page needs no request of its own to know; :func:`mark_tour_seen` sets one. The
+  page marks a tour the moment it shows it (the guided page's first-time pop-up works the same way), so
+  a reload never repeats it. Never frappe's Redis-only user_settings, which a deploy flushes, and never
+  the browser alone: a person shown the tour on one machine is not shown it again on the next.
 
 Every endpoint is gated by the calling planner's own roles (``project_planner._require_planner`` or
 ``maintenance_planner._require_planner``) and acts only on ``frappe.session.user``'s row.
@@ -45,6 +53,12 @@ PLANNERS = {"project": "Project Planner", "maintenance": "Maintenance Planner", 
 #: The one top-level key of the row these endpoints own; anything else in the row is kept.
 ROW_KEY = "planner_views"
 STORE_VERSION = 1
+#: The first-visit tour's flags (P12), beside ``planner_views`` in the same row (see the module docstring).
+TOUR_ROW_KEY = "planner_tour"
+#: The planners that have a tour, and the two tours each has: a phone and a desktop land on different
+#: screens. The pages' PPTOUR.kinds and MPTOUR.kinds say the same (tests/test_planner_tour.py).
+TOUR_PLANNERS = ("project", "maintenance")
+TOUR_KINDS = ("desktop", "phone")
 
 MAX_VIEWS = 20
 MAX_NAME = 60
@@ -344,6 +358,24 @@ def _store_into(row, store):
 	return row
 
 
+def read_tour(row):
+	"""Which tours the row says were shown: ``{"desktop": bool, "phone": bool}``.
+
+	Only a real ``true`` counts, so a hand-edited row (``"yes"``, ``1``) or a damaged one reads as not
+	seen, which shows the tour once more rather than never.
+	"""
+	raw = row.get(TOUR_ROW_KEY) if isinstance(row, dict) else None
+	seen = raw.get("seen") if isinstance(raw, dict) else None
+	seen = seen if isinstance(seen, dict) else {}
+	return {kind: seen.get(kind) is True for kind in TOUR_KINDS}
+
+
+def _tour_into(row, seen):
+	row = dict(row or {})
+	row[TOUR_ROW_KEY] = {"version": STORE_VERSION, "seen": {kind: bool(seen.get(kind)) for kind in TOUR_KINDS}}
+	return row
+
+
 def _now_text():
 	return str(frappe.utils.now_datetime())[:19]
 
@@ -355,11 +387,20 @@ def _now_text():
 def get_views(planner):
 	"""The caller's views for ``planner`` (``project`` | ``maintenance``).
 
-	``{"planner", "last": {view} | None, "views": [{"name", "data": {view}, "saved_on"}], "max_views"}``
+	``{"planner", "last": {view} | None, "views": [{"name", "data": {view}, "saved_on"}], "max_views",
+	"tour": {"desktop": bool, "phone": bool}}``. ``tour`` says which of the planner's first-visit tours
+	the caller has been shown (P12); the Opportunity Board has none, so it reads ``{}`` there.
 	"""
 	planner, doctype = _require(planner)
-	store = read_store(planner, _read_row(doctype))
-	return {"planner": planner, "last": store["last"], "views": store["views"], "max_views": MAX_VIEWS}
+	row = _read_row(doctype)
+	store = read_store(planner, row)
+	return {
+		"planner": planner,
+		"last": store["last"],
+		"views": store["views"],
+		"max_views": MAX_VIEWS,
+		"tour": read_tour(row) if planner in TOUR_PLANNERS else {},
+	}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -404,6 +445,28 @@ def save_last_view(planner, data):
 		store["last"] = view
 		_write_row(doctype, _store_into(row, store))
 	return {"last": view}
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_tour_seen(planner, kind):
+	"""The caller has been shown ``planner``'s ``kind`` tour (``desktop`` | ``phone``); never show it again.
+
+	Only the caller's own row, and only the flag asked for: the other tour and the saved views are kept.
+	Setting it twice writes nothing the second time. ``{"planner", "tour": {"desktop": bool, "phone": bool}}``
+	"""
+	# Before the role gate: the board's gate is a read on Opportunity, which says nothing about a tour.
+	if clean_text(planner, 20) not in TOUR_PLANNERS:
+		frappe.throw(_("That planner has no tour."))
+	planner, doctype = _require(planner)
+	kind = clean_text(kind, 20)
+	if kind not in TOUR_KINDS:
+		frappe.throw(_("Unknown tour."))
+	row = _read_row(doctype, for_update=True)
+	seen = read_tour(row)
+	if not seen[kind]:
+		seen[kind] = True
+		_write_row(doctype, _tour_into(row, seen))
+	return {"planner": planner, "tour": seen}
 
 
 @frappe.whitelist()

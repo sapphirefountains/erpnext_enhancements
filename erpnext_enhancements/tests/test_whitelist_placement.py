@@ -243,6 +243,9 @@ EXACT_SURFACE = {
         "save_view",
         "delete_view",
         "save_last_view",
+        # P12: whether the caller has been shown a planner's first-visit tour (POST; the caller's own
+        # row, tested in test_planner_tour).
+        "mark_tour_seen",
         "get_print_chrome",
         "get_guided_view",
         "save_guided_view",
