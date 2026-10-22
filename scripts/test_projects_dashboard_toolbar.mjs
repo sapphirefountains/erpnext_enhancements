@@ -378,6 +378,19 @@ await test("Escape closes an open + menu; the toggle opens it again", async () =
 	assert.equal(run.dom.node("#pg-new-list").prop("hidden"), false);
 });
 
+await test("a click outside closes the + menu; a click inside its own wrapper leaves it open", async () => {
+	const run = await runBlock();
+	const wrap = run.dom.node("#pg-new-menu")[0];
+	const clickDocument = (path) =>
+		run.dom.fire(run.dom.documentNode, "click", { originalEvent: { composedPath: () => path } });
+	run.dom.fire(run.dom.node("#btn-new"), "click");
+	clickDocument([wrap, {}]);
+	assert.equal(run.dom.node("#pg-new-list").prop("hidden"), false, "a click inside the menu's own wrapper");
+	clickDocument([{}, {}]);
+	assert.equal(run.dom.node("#pg-new-list").prop("hidden"), true, "a click elsewhere closes it");
+	assert.equal(run.dom.node("#btn-new").attr("aria-expanded"), "false");
+});
+
 console.log("\nprojects_dashboard.js: the Columns button");
 
 await test("each list tab hands its ColumnSelector the icon option and a Reset column widths action", async () => {
@@ -471,6 +484,22 @@ await test("a menu action runs its callback and closes the menu; toggling flips 
 	dom.fire(action, "click");
 	assert.equal(ran, 1);
 	assert.equal(menu[NODE].display, "none");
+	assert.equal(toggle.attr("aria-expanded"), "false");
+});
+
+await test("a click outside closes the Columns menu; a click on its button or checkboxes does not", () => {
+	const { dom, selector } = loadSelector();
+	const wrapper = selector.render_button(dom.node("toolbar"), () => {}, { icon: true });
+	const toggle = dom.node(".column-selector-toggle");
+	const menu = dom.node(".column-selector-menu");
+	const clickDocument = (path) =>
+		dom.fire(dom.documentNode, "click.columnSelector", { originalEvent: { composedPath: () => path } });
+	dom.fire(toggle, "click");
+	assert.equal(menu[NODE].display, "shown");
+	clickDocument([wrapper[0], {}]);
+	assert.equal(menu[NODE].display, "shown", "ticking a checkbox must not close the menu");
+	clickDocument([{}, {}]);
+	assert.equal(menu[NODE].display, "none", "a click elsewhere closes it");
 	assert.equal(toggle.attr("aria-expanded"), "false");
 });
 

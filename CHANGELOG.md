@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     **View Less** while they show). The choice is kept per browser in `localStorage`
     (`chb_projects_dashboard_more_v1`, with the dashboard's other saved view), never in frappe `user_settings`
     (Redis only, flushed on every deploy). Collapsing while one of the three is open lands on Priority Overview
-    instead of leaving a tab on screen with no tab in the bar. Each extra tab keeps its own search, sort and
-    column menu. The two list tabs keep their old definitions: Active Internal is an active project of an internal
+    instead of leaving a tab on screen with no tab in the bar. Each extra tab keeps its own sort and column
+    menu; the search box above them is shared by all the list tabs, as it always was. The two list tabs keep their old definitions: Active Internal is an active project of an internal
     type, Completed is every inactive project (its status column says Completed, Paid, Canceled ...).
   - **The Dashboard tab is gone, and nothing it showed was lost.** Its six number cards and three breakdowns (by
     status, type and completion) were on no other page, and Nik's rule is "we shouldn't have lost any
