@@ -51,6 +51,9 @@ frappe.pages["bin-manager"].on_page_show = function (wrapper) {
 };
 
 const BM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "bin_manager.bundle.js"];
+// The reorder boxes (v1.720.0): asked for apart from the page's own files, and optional. A page whose
+// copy of them did not load shows no Reorder column and works as before.
+const BM_REORDER_ASSETS = ["reorder_levels.bundle.js", "reorder_levels.bundle.css"];
 const BM_PAGE = "bin-manager";
 const BM_SEARCH_DELAY_MS = 250;
 
@@ -64,6 +67,8 @@ class BinManagerPage {
 		this.ctl = null;
 		this.drawn = "";
 		this._route_timer = null;
+		this.reorder = null; // the reorder editor (public/js/reorder_levels), once its bundle is here
+		this.reorder_for = null; // the location object the editor last read the rules for
 		// v16's frappe.require calls back even when a file failed to load (assets.js "resolve even on
 		// error"), so both globals are checked; a page without them says so instead of waiting.
 		this.ready = new Promise((resolve) => frappe.require(BM_ASSETS, resolve)).then(() => {
@@ -71,6 +76,8 @@ class BinManagerPage {
 			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller ? window.sf_bin_manager : null;
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
+		// After the page's own files, never instead of them: a failed reorder bundle must not hold the bins.
+		this.ready = this.ready.then(() => new Promise((resolve) => frappe.require(BM_REORDER_ASSETS, resolve))).then(() => this.start_reorder());
 		page.set_secondary_action(__("Refresh"), () => this.ctl && this.ctl.refresh(), "refresh");
 		this.bind();
 	}
@@ -102,6 +109,50 @@ class BinManagerPage {
 			now: () => Date.now(),
 			random: () => Math.random(),
 		};
+	}
+
+	// The reorder boxes (v1.720.0): the shared editor, once its bundle has arrived, wired to this page's
+	// root. Everything about them is optional: with no bundle there is no Reorder column.
+	start_reorder() {
+		const ro = window.sf_reorder && window.sf_reorder.version >= 1 ? window.sf_reorder : null;
+		if (!ro || !this.sf) return;
+		try {
+			this.reorder = new ro.ReorderEditor({
+				call: (method, args, opts) => this.sf.call(method, args, opts),
+				read: (code) => ro.read_boxes(this.$root[0], code),
+				paint: (code, force) => this.paint_reorder(code, force),
+				paint_all: () => this.paint_reorder(null),
+				later: (fn, ms) => setTimeout(fn, ms),
+				tr: (text) => __(text),
+			});
+			ro.bind(this.$root[0], this.reorder);
+		} catch (e) {
+			this.reorder = null;
+		}
+	}
+
+	paint_reorder(code, force) {
+		const ro = window.sf_reorder;
+		if (!ro || !this.reorder) return;
+		ro.paint(this.$root[0], this.reorder, (v) => this.esc(v), (t) => __(t), code, document.activeElement, !!force, this.reorder_labels());
+	}
+
+	// The items on screen, by code, for the boxes' accessible names.
+	reorder_labels() {
+		const loc = this.ctl && this.ctl.state.location;
+		const out = {};
+		((loc && loc.items) || []).forEach((r) => {
+			out[r.item_code] = r.item_name;
+		});
+		return out;
+	}
+
+	// The rules are read once per list of items on screen: a new location object (a bin opened, a save
+	// that reloaded it) is a new list, and the same one drawn again is not asked about twice.
+	sync_reorder(loc) {
+		if (!this.reorder || !loc || this.reorder_for === loc) return;
+		this.reorder_for = loc;
+		this.reorder.load(loc.warehouse, (loc.items || []).map((r) => r.item_code));
 	}
 
 	showing() {
@@ -317,6 +368,7 @@ class BinManagerPage {
 		);
 		this.draw_notice();
 		this.draw_items(loc);
+		this.sync_reorder(loc);
 		this.draw_recent();
 	}
 
@@ -376,6 +428,7 @@ class BinManagerPage {
 				return `<tr>
 					<td class="bm-item"><div class="bm-item-name">${this.esc(r.item_name)}</div><div class="bm-item-code">${this.esc(r.item_code)}</div></td>
 					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
+					${this.reorder ? `<td class="bm-reorder">${window.sf_reorder.cell_html((v) => this.esc(v), (t) => __(t), this.reorder.view(r.item_code), r.item_code, r.item_name)}</td>` : ""}
 					<td class="bm-why">${chips}</td>
 					<td class="bm-row-actions">${buttons}</td>
 				</tr>`;
@@ -385,6 +438,7 @@ class BinManagerPage {
 			<thead><tr>
 				<th scope="col">${this.esc(__("Item"))}</th>
 				<th scope="col" class="bm-qty">${this.esc(__("On hand"))}</th>
+				${this.reorder ? `<th scope="col">${this.esc(__("Reorder"))}</th>` : ""}
 				<th scope="col">${this.esc(__("Listed because"))}</th>
 				<th scope="col"><span class="bm-sr">${this.esc(__("Actions"))}</span></th>
 			</tr></thead>

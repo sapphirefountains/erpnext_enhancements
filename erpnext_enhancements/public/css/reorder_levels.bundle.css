@@ -1,0 +1,94 @@
+/*
+ * The reorder boxes on the audit screens (v1.720.0): "Reorder at" and "Buy" under an item, edited in
+ * place. Loaded with reorder_levels.bundle.js by the Bin Manager and the Inventory Scanner Audit.
+ * Every selector is under .ro (a Desk Page's stylesheet is global once loaded); colours come from the
+ * app tokens (--sf-*) with Frappe's own variables behind them, so dark mode follows.
+ *
+ * Phones: the boxes sit side by side and are 16px type (iOS zooms the page into a smaller box),
+ * 44px tall, so a thumb hits them; they wrap to two lines before they would overflow a 375px screen.
+ */
+
+.ro {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5, 4px) var(--sf-space-10, 8px);
+	min-width: 0;
+}
+
+.ro-boxes {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10, 8px);
+	min-width: 0;
+}
+
+.ro-field {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5, 4px);
+	margin: 0;
+	font-weight: normal;
+}
+
+.ro-label {
+	font-size: var(--sf-text-sm, 13px);
+	color: var(--sf-text-muted, var(--text-muted));
+	white-space: nowrap;
+}
+
+.ro-input {
+	box-sizing: border-box;
+	width: 5.5em;
+	min-height: 44px;
+	padding: 0 var(--sf-space-10, 8px);
+	font-size: 16px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	color: var(--sf-text-strong, var(--text-color));
+	background: var(--sf-surface, var(--control-bg, var(--bg-color)));
+	border: 1px solid var(--sf-border-control, var(--border-color));
+	border-radius: var(--sf-radius-control, 8px);
+}
+
+.ro-input:focus {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 1px;
+}
+
+.ro-input::placeholder {
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.ro-text,
+.ro-muted,
+.ro-where {
+	font-size: var(--sf-text-sm, 13px);
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.ro-status {
+	flex: 1 1 100%;
+	min-height: 1.2em;
+	font-size: var(--sf-text-sm, 13px);
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.ro-status:empty {
+	display: none;
+}
+
+.ro-saved {
+	color: var(--sf-success, #15803d);
+}
+
+.ro-error {
+	color: var(--sf-danger, #b91c1c);
+}
+
+@media (min-width: 768px) {
+	.ro-input {
+		min-height: 32px;
+		font-size: var(--sf-text-md, 14px);
+	}
+}

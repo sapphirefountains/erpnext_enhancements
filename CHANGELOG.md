@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.720.0] - 2026-10-22
+
+### Added
+- **Reorder level and quantity, editable in place on both inventory audit screens.** Nik, 2026-10-22: "From the
+  Inventory audit screen include the reorder threshold amount so each items reorder amount can be adjusted
+  easily without leaving the screen." He chose *both* screens that answer to that name. The **Bin Manager** has
+  a new **Reorder** column on each item of a bin, and the **Inventory Scanner Audit** shows the same two boxes
+  on the card of the item just scanned. "Threshold" could mean the trigger or the amount to buy, so there are
+  two boxes, **Reorder at** (ERPNext's `warehouse_reorder_level`: buy more when the stock falls to it) and
+  **Buy** (`warehouse_reorder_qty`: how many).
+  - **Saving.** A box saves when you leave it or press Enter, with a line under it that says *Saving…*, then
+    *Saved.*, or why not (in the words of ERPNext's refusal, or of this page's, such as "Say how many to buy each
+    time the stock falls to the reorder level."). Text that is not a number, or is negative, is refused before
+    any request and stays in the box to be corrected. A box left at the number it already had saves nothing.
+    Escape puts the boxes back. Two quick edits of one item go out one after the other. Nothing is a history
+    entry, so Back and Forward are the pages' own.
+  - **Which rule.** Prod today (2026-10-22): 116 items have a reorder rule, one each, 83 of them on `Inventory
+    Room - SF` and 33 on a bin; no custom field stands in for it. An item shows the rule on the bin being
+    looked at; otherwise its own rule wherever it sits, labelled ("Rule is on Inventory Room") and edited
+    there; an item with none gets a Purchase rule made on the bin, the first time both numbers are given.
+  - **Who.** Anyone who can use the screen sees the rule. The boxes are inputs only for a person who may
+    write an Item (`Item` write); everyone else sees the numbers as text.
+  - **The endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` and
+    `set_reorder_level(item_code, warehouse, modified, level, qty, view_warehouse)`. The write is one
+    `Item.save()` as the user, so ERPNext's own validation runs (a level with no quantity, a second rule for
+    one warehouse) and Item permission is the framework's, checked before anything else; never SQL on the child
+    table, never `ignore_permissions`. It carries the Item's `modified`: a page that is out of date writes
+    nothing, says so, and shows the current numbers. A resend, or numbers that are already those, saves nothing
+    and leaves the Item's `modified` alone.
+  - **Phones.** The boxes are 16px type (iOS zooms the page into anything smaller), 44px tall, and wrap to two
+    lines before a 375px screen would overflow; the Bin Manager's table already stacks its cells there.
+  - **Where it lives.** `public/js/reorder_levels/` (`logic.js` the decisions, `editor.js` the state and the
+    saves, `dom.js` the wiring), shipped as `reorder_levels.bundle.js` and `.css`, which each page asks for
+    apart from its own files and does without if they do not arrive: a page whose copy did not load is the page
+    it was.
+  - **Production.** Nothing is written by the deploy: no patch, no fixture, no migration step. Changes to rules
+    happen only when a person edits a box.
+  - Tests: `tests/test_reorder_levels.py` (the endpoints on a stub of Frappe, the source, and the editor under
+    node) and `scripts/test_reorder_levels.mjs`; one CI step.
+
 ## [1.716.2] - 2026-10-22
 
 ### Changed
