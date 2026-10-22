@@ -202,13 +202,6 @@ $(document).on("app_ready", function () {
         console.error("Error initializing auto-save:", e);
     }
 
-    // Sidebar Enforcement
-    try {
-        enforce_sidebar_expanded();
-    } catch (e) {
-        console.error("Error enforcing sidebar:", e);
-    }
-
     // Remove "Go to Home" button
     try {
         remove_go_to_home_button();
@@ -508,46 +501,12 @@ function remove_go_to_home_button() {
 }
 
 // ==========================================
-// Sidebar Enforcement
+// Sidebar state
 // ==========================================
-
-function enforce_sidebar_expanded() {
-    // 1. Initial Cleanup (Immediate)
-    check_and_expand_sidebar();
-
-    // 2. Setup Observer (Once)
-    if (window._sidebar_observer_installed) return;
-    window._sidebar_observer_installed = true;
-
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (mutation.attributeName === "class") {
-                check_and_expand_sidebar();
-            }
-        });
-    });
-
-    observer.observe(document.body, { attributes: true });
-}
-
-function check_and_expand_sidebar() {
-    // Only target desktop
-    if (window.innerWidth >= 992) {
-        if ($('body').hasClass('sidebar-collapsed')) {
-             $('body').removeClass('sidebar-collapsed');
-        }
-
-        // Update runtime preference if available
-        if(frappe && frappe.boot && frappe.boot.user && frappe.boot.user.sidebar_collapsed !== 0) {
-            frappe.boot.user.sidebar_collapsed = 0;
-        }
-    }
-}
-
-// Handle resize events
-$(window).on('resize', function() {
-    check_and_expand_sidebar();
-});
+// There used to be an "enforce_sidebar_expanded" here that stripped body.sidebar-collapsed on
+// every desktop class change and resize. It fought the desk's own collapse, so a person's choice
+// never held. Removed in v1.717.0: global_enhancements/sidebar_memory.js now keeps the left menu
+// and the record sidebar where the person left them, on every page.
 
 function save_draft_handler(frm) {
     // Basic validations
