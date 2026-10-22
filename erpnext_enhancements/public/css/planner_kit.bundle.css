@@ -1932,6 +1932,15 @@ a.pk-stop-addr {
 	color: var(--sf-text-muted);
 }
 
+/* A Draft schedule (P3): the warn tint, with the warn mix as text, never plain yellow (unreadable on white). */
+.pk-simple-draft {
+	padding: 0 var(--sf-space-5);
+	border-radius: var(--sf-radius-pill);
+	background: color-mix(in srgb, var(--sf-warn) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	font-size: var(--sf-text-xs);
+}
+
 .pk-simple-facts {
 	flex: 1 1 100%;
 	color: var(--sf-text-muted);
@@ -2101,13 +2110,21 @@ a.pk-stop-addr {
 		border-top: var(--sf-border-hairline) solid var(--sf-rule);
 	}
 
+	/* The date sits above the name, and may wrap: a range across a year ("Dec 28 – Jan 4, 2027") is wider than
+	 * any fixed column a 375px card can spare, and ran into the name in one. The mark stays in its own column. */
 	.pk-simple-row {
-		grid-template-columns: 1.2em 6em minmax(0, 1fr);
+		grid-template-columns: 1.2em minmax(0, 1fr);
+		row-gap: 0;
 		min-height: var(--sf-touch-min);
 	}
 
+	.pk-simple-when {
+		white-space: normal;
+	}
+
+	.pk-simple-what,
 	.pk-simple-who {
-		grid-column: 3;
+		grid-column: 2;
 	}
 
 	.pk-simple-name,

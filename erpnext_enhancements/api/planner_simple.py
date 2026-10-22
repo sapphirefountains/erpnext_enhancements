@@ -19,7 +19,7 @@ Maintenance Planner), split into **Done** and **Coming up**, from the job's firs
 * **What a job's card lists** (S11, S13). The planner's display rule (D6): a task under a Phase 100–700
   group or with someone on it (a crew row, or an open assignee who is a Planner Resource,
   ``crew_availability.resolve_crew``). A job with none of that (every job from before the phase
-  templates: 565 finished jobs, one assigned task among them) lists its own **top-level groups** instead,
+  templates: 505 finished jobs on production, 2026-10-22, almost none assigned) lists its own **top-level groups** instead,
   each "N of M done", and any top-level task outside a group.
 * **What a site's card lists** (S12, S14). Its Maintenance Records (dated as the Maintenance Planner dates
   them; done once submitted or in review), its contract's projected visits for the next
@@ -38,6 +38,7 @@ The card builders (:func:`build_job_card`, :func:`build_site_card`) take plain v
 """
 
 import frappe
+from frappe import _
 from frappe.utils import add_days, cint, getdate, nowdate
 
 from erpnext_enhancements.api import maintenance_planner as mp
@@ -47,7 +48,7 @@ from erpnext_enhancements.api.planner_overview import _chunks
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 
 #: Cards one answer carries, unless the page asks for more (a refresh of every card it shows), up to
-#: :data:`MAX_PAGE_LENGTH`: more than every customer job on production (640, 2026-10-22), so a refresh after
+#: :data:`MAX_PAGE_LENGTH`: more than every customer job on production (561, 2026-10-22), so a refresh after
 #: many *Show more* presses never drops cards the person has scrolled to.
 PAGE_LENGTH = 20
 MAX_PAGE_LENGTH = 1000
@@ -279,6 +280,13 @@ def build_job_card(project, rows, today, who=None, crewed=frozenset()):
 		"pm": project.get("pm") or "",
 		"status": project.get("status") or "",
 		"finished": finished,
+		# P3's schedule state, read only once its column exists (``schedule_status`` is then in the row): a
+		# blank reads Draft, as project_planner.schedule_status says. A finished job's draft is not news.
+		"draft": bool(
+			not finished
+			and "schedule_status" in project
+			and pp.schedule_status(project.get("schedule_status")) == pp.SCHEDULE_DRAFT
+		),
 		"mode": mode,
 		"first": first,
 		"last": last,
@@ -396,8 +404,32 @@ def _search_sql(columns, text):
 	}
 
 
-def _page_of_jobs(text, start, today, limit=PAGE_LENGTH):
-	"""``(projects, total)``: one page of customer jobs in Simple mode's order, and how many match."""
+def _require_read(doctypes):
+	"""The caller may read every one of ``doctypes``. The planner's role gate says who plans; this says whose
+	records they are allowed to see, as the Gantt's ``has_permission("Project", "read", ...)`` does."""
+	for doctype in doctypes:
+		if not frappe.has_permission(doctype, "read"):
+			frappe.throw(
+				_("You do not have permission to read {0}.").format(_(doctype)), frappe.PermissionError
+			)
+
+
+def _readable_projects():
+	"""The Projects the caller may read: ``frappe.get_list`` applies their User Permissions and any permission
+	query conditions, so a person restricted to some projects sees only those cards. Every project on
+	production is a few hundred names, so the list goes into the page's query as one bound ``IN``."""
+	return frappe.get_list("Project", pluck="name", limit_page_length=0)
+
+
+#: The condition every page query carries: the caller's readable projects (:func:`_readable_projects`).
+READABLE = " AND p.name IN %(readable)s"
+
+
+def _page_of_jobs(text, start, today, limit=PAGE_LENGTH, readable=None):
+	"""``(projects, total)``: one page of customer jobs in Simple mode's order, and how many match.
+	``readable`` is the projects the caller may read (none: no cards, no query)."""
+	if not readable:
+		return [], 0
 	owner, join = _owner_sql()
 	search, values = _search_sql(("p.name", "p.project_name", "p.customer", owner), text)
 	values.update(
@@ -408,17 +440,20 @@ def _page_of_jobs(text, start, today, limit=PAGE_LENGTH):
 			"done": DONE_STATUSES,
 			"limit": limit,
 			"start": start,
+			"readable": tuple(sorted(readable)),
 			**engine.PLANNER_SQL_VALUES,
 		}
 	)
-	where = f"WHERE {engine.planner_job_condition('p')}{search}"
+	# P3's schedule state, once its column exists: a Draft job's card says so.
+	schedule = ", p.custom_schedule_status AS schedule_status" if pp._has_schedule_columns() else ""
+	where = f"WHERE {engine.planner_job_condition('p')}{search}{READABLE}"
 	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabProject` p {join} {where}", values)[0][0]
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			p.name, p.project_name AS title, p.status, p.customer, {owner} AS pm,
 			p.expected_start_date AS expected_start, p.expected_end_date AS expected_end,
-			agg.next_day, agg.last_day
+			agg.next_day, agg.last_day{schedule}
 		FROM `tabProject` p
 		{join}
 		LEFT JOIN (
@@ -523,8 +558,11 @@ def _read_who(task_names):
 	return who, crewed
 
 
-def _page_of_sites(text, start, today, limit=PAGE_LENGTH):
-	"""``(projects, total)``: one page of maintenance sites in Simple mode's order, and how many match."""
+def _page_of_sites(text, start, today, limit=PAGE_LENGTH, readable=None):
+	"""``(projects, total)``: one page of maintenance sites in Simple mode's order, and how many match.
+	``readable`` is the projects the caller may read (none: no cards, no query)."""
+	if not readable:
+		return [], 0
 	search, values = _search_sql(("p.name", "p.project_name", "p.customer"), text)
 	values.update(
 		{
@@ -534,6 +572,7 @@ def _page_of_sites(text, start, today, limit=PAGE_LENGTH):
 			"pending": mp.PENDING_STATE,
 			"limit": limit,
 			"start": start,
+			"readable": tuple(sorted(readable)),
 		}
 	)
 	sites = """
@@ -544,7 +583,7 @@ def _page_of_sites(text, start, today, limit=PAGE_LENGTH):
 			WHERE IFNULL(r.project, '') <> '' AND r.docstatus < 2
 		)
 	"""
-	where = f"WHERE {sites}{search}"
+	where = f"WHERE {sites}{search}{READABLE}"
 	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabProject` p {where}", values)[0][0]
 	rows = frappe.db.sql(
 		f"""
@@ -688,9 +727,10 @@ def get_simple_jobs(search=None, start=0, limit=None):
 	card per customer job (:func:`build_job_card`). ``start`` is the offset of the first card, ``limit`` how
 	many (:data:`PAGE_LENGTH` unless 1 to :data:`MAX_PAGE_LENGTH`)."""
 	pp._require_planner()
+	_require_read(("Project", "Task"))
 	today = getdate(nowdate())
 	text, start, limit = search_text(search), page_start(start), page_length(limit)
-	projects, total = _page_of_jobs(text, start, today, limit)
+	projects, total = _page_of_jobs(text, start, today, limit, _readable_projects())
 	names = [p.get("name") for p in projects]
 	rows = _read_tasks(names)
 	who, crewed = _read_who([r.get("name") for r in rows if not cint(r.get("is_group"))])
@@ -705,9 +745,10 @@ def get_simple_jobs(search=None, start=0, limit=None):
 def get_simple_sites(search=None, start=0, limit=None):
 	"""The Maintenance Planner's Simple mode: the same answer, one card per site (:func:`build_site_card`)."""
 	mp._require_planner()
+	_require_read(("Project", "Sapphire Maintenance Record"))
 	today = getdate(nowdate())
 	text, start, limit = search_text(search), page_start(start), page_length(limit)
-	projects, total = _page_of_sites(text, start, today, limit)
+	projects, total = _page_of_sites(text, start, today, limit, _readable_projects())
 	names = [p.get("name") for p in projects]
 	visits = _read_visits(names)
 	history = _read_history(names)

@@ -30,7 +30,7 @@ alert chips, + Add and More. Simple mode is the opposite: one switch, one search
 
 | Measure | Number | Consequence |
 |---|---|---|
-| Customer jobs (Internal, Overhead and Group Projects left out) | 640: Active 58, Completed 565, Canceled 15, Paid 2 | "All jobs ever" needs search and paging, not one long page |
+| Customer jobs, by the planner's own rule (type Design, Build, Service, Events, Rent or Delivery, or such a value stream) | 561: Active 56, Completed 492, Canceled 11, Paid 2 (505 finished) | "All jobs ever" needs search and paging, not one long page |
 | Tasks on finished jobs | 5,497, **1** with an assignee, none under a Phase 100–700 group | The D6 rule alone would leave every old card empty, hence S13 |
 | Top-level groups on finished jobs | 771: Project Launch 93, Billing 89, Service Visit(s) 31, Construction Plan 30, Electrical 29, Mechanical 29… | What an old card lists |
 | Completed tasks | 6,370, dated by `completed_on` from 2009 to yesterday | History is there, by completion date |

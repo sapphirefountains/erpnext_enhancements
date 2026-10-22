@@ -3763,7 +3763,7 @@ jobs:
       - name: Project planner Overview tab, page (P9, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_overview_page -v
       # Simple mode for both planners (docs/planner-simple-mode.md; Nik, 2026-10-22). A job's card is the planner's
-      # display rule (D6), and a job from before the phase templates lists its own top-level groups, so the 565 old
+      # display rule (D6), and a job from before the phase templates lists its own top-level groups, so the 505 old
       # jobs are not empty cards; late is by end date, never the Overdue status; a finished job has nothing late; a
       # site's card has its Maintenance Records, its contract's projected visits and its project's completed tasks;
       # every read is bound SQL (search text too) behind each planner's own role gate. Runs

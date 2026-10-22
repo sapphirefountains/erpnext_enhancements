@@ -131,13 +131,15 @@ export function card_html(card, today, open, phone) {
 	const span = span_text(card.first, card.last);
 	if (span) facts.push(span);
 	const status = card.status ? `<span class="pk-simple-status${card.finished ? " pk-simple-finished" : ""}">${escape(t(card.status))}</span>` : "";
+	// A job whose schedule is still a Draft (P3, D8): its dates are private planning, as the Overview hatches them.
+	const draft = card.draft ? `<span class="pk-simple-draft" title="${escape(t("This job's schedule is a draft: its crew has not been told yet."))}">◐ ${escape(t("Draft schedule"))}</span>` : "";
 	const done = half_html(card, "done", card.done || [], [], is_open("done"), today);
 	const coming = half_html(card, "coming", card.coming || [], card.unscheduled || [], is_open("coming"), today);
 	return `
 		<article class="pk-simple-card${card.finished ? " pk-simple-finished" : ""}" data-pk-simple-card="${escape(card.name)}">
 			<header class="pk-simple-title">
 				<button type="button" class="pk-simple-name" data-pk-simple-open="Project" data-pk-simple-name="${escape(card.name)}">${escape(card.title || card.name)}</button>
-				${status}
+				${status}${draft}
 				<div class="pk-simple-facts">${escape(facts.join(" · "))}</div>
 			</header>
 			<div class="pk-simple-halves">${phone ? coming + done : done + coming}</div>
@@ -215,7 +217,8 @@ export function create_simple(env) {
 			const tail = $q(".pk-simple-tail");
 			if (s.error && !s.cards.length) {
 				line.textContent = "";
-				cards.innerHTML = `<div class="pk-simple-empty">${escape(t("Simple mode could not be loaded."))} <button type="button" class="btn btn-default btn-xs pk-simple-retry">${escape(
+				const failed = s.search ? t("The search for “{0}” could not be loaded.", [s.search]) : t("Simple mode could not be loaded.");
+				cards.innerHTML = `<div class="pk-simple-empty">${escape(failed)} <button type="button" class="btn btn-default btn-xs pk-simple-retry">${escape(
 					t("Try again")
 				)}</button></div>`;
 				tail.innerHTML = "";
@@ -229,10 +232,11 @@ export function create_simple(env) {
 			}
 			line.textContent = s.loading ? t("Loading…") : t("{0} of {1} {2}", [s.cards.length, s.total, s.total === 1 ? noun[0] : noun[1]]);
 			cards.innerHTML = s.cards.map((card) => card_html(card, s.today, s.open, phone())).join("");
-			tail.innerHTML = s.more
-				? `<button type="button" class="btn btn-default btn-sm pk-simple-more"${s.loading ? " disabled" : ""}>${escape(t("Show more {0}", [noun[1]]))}</button>`
-				: s.error
+			// A failed Show more keeps the cards it added to (they are the same search) and says so with Try again.
+			tail.innerHTML = s.error
 				? `<div class="pk-simple-empty">${escape(t("More could not be loaded."))} <button type="button" class="btn btn-default btn-xs pk-simple-retry">${escape(t("Try again"))}</button></div>`
+				: s.more
+				? `<button type="button" class="btn btn-default btn-sm pk-simple-more"${s.loading ? " disabled" : ""}>${escape(t("Show more {0}", [noun[1]]))}</button>`
 				: "";
 		}
 
@@ -260,6 +264,15 @@ export function create_simple(env) {
 					if (token !== s.token) return;
 					s.loading = false;
 					s.error = true;
+					// A read that was to replace the cards (a new search, a refresh) failed: the cards on screen belong
+					// to what was asked before, so they go, with their count and paging. Try again then reads page one
+					// of the search in the box, and Show more can never add one search's page to another's cards.
+					if (!append) {
+						s.cards = [];
+						s.total = 0;
+						s.more = false;
+						s.open.clear();
+					}
 					if (env && env.warn) env.warn(e);
 					render();
 				});

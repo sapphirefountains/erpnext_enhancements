@@ -2339,14 +2339,16 @@ see all the data in a simple view, both historical data and future data". The de
   ones with work coming up first and soonest, then the rest by last activity, 20 at a time with *Show more jobs*;
   search across all of them (number, name, customer, PM). **Done** (grey, newest first) and **Coming up** (bold,
   late first), three of each and *Show all N*; *N not scheduled* counts undated open work. A job's items are the
-  planner's display rule (D6); a job with no phase or crew work (all 565 finished jobs from before the phase
+  planner's display rule (D6); a job with no phase or crew work (all 505 finished jobs on production, 2026-10-22, are from before the phase
   templates) lists its own top-level groups, each "N of M done". Late is by end date, never by the Overdue status;
   on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the assignees,
   open or closed, drawn as initials with the names on hover.
 - **A card per site** (`get_simple_sites`, S12, S14). Every project with a maintenance contract or a Maintenance
   Record: its records (done once submitted or in review), its contract's projected visits for the next 120 days,
   marked *planned*, and its project's completed tasks, its history from before the records.
-- **Reads only.** Both endpoints are GETs behind each planner's own role gate, raw SQL with bound parameters
+- **Reads only.** Both endpoints are GETs behind each planner's own role gate and read permission on their
+  records (Project and Task; Project and Sapphire Maintenance Record), listing only the projects the caller may
+  read (`frappe.get_list("Project")`, so User Permissions apply), raw SQL with bound parameters
   (search text included, `%` and `_` literal). A click opens the record (a Task, a Maintenance Record, a contract or
   the Project) as a normal Desk route.
 - **The tour and "?"**. The tour's last step mentions the switch (the tours are capped at six steps); "?" lists

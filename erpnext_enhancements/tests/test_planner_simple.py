@@ -8,7 +8,7 @@ What this pins, and what would fail quietly otherwise:
 
 * **A job's card is the planner's display rule (D6), and an old job still has one (S13).** A task under a
   Phase 100–700 group or with someone on it is listed; the template admin tasks are not. A job with none of
-  that (every job from before the phase templates) lists its own top-level groups, "N of M done", so the 565
+  that (every job from before the phase templates) lists its own top-level groups, "N of M done", so the 505
   finished jobs do not all show empty cards.
 * **Done, late and not scheduled are worked out from dates and status, never from the status value
   "Overdue"** (1,005 open tasks carry it). A finished job has nothing late: what was never done says so.
@@ -253,6 +253,17 @@ class TestAJobCard(unittest.TestCase):
 		self.assertEqual((card["first"], card["last"]), ("2026-11-01", "2026-12-01"))
 		self.assertEqual((card["done"], card["coming"], card["unscheduled"]), ([], [], []))
 
+	def test_a_draft_schedule_is_marked_on_an_open_job_only(self):
+		cases = (
+			({"schedule_status": "Draft"}, True),
+			({"schedule_status": ""}, True),  # blank reads Draft (project_planner.schedule_status)
+			({"schedule_status": "Published"}, False),
+			({}, False),  # before P3's column exists: nothing is said
+			({"schedule_status": "Draft", "status": "Completed"}, False),
+		)
+		for extra, want in cases:
+			self.assertEqual(ps.build_job_card(project(**extra), [], TODAY)["draft"], want, extra)
+
 
 # ---------------------------------------------------------------------- a site's card
 
@@ -335,13 +346,31 @@ class TestTheReads(unittest.TestCase):
 			mock.patch.object(h.frappe.db, "sql", fake, create=True),
 			mock.patch.object(h.frappe.db, "has_column", lambda *a: True, create=True),
 		):
-			got = fn(text, start, TODAY, limit)
+			got = fn(text, start, TODAY, limit, ("PRJ-2", "PRJ-1"))
 		return got, fake.calls
+
+	def test_only_the_projects_the_caller_may_read(self):
+		fake = _FakeSql()
+		with mock.patch.object(h.frappe.db, "sql", fake, create=True):
+			self.assertEqual(ps._page_of_jobs("", 0, TODAY, 20, []), ([], 0))
+			self.assertEqual(ps._page_of_sites("", 0, TODAY, 20, None), ([], 0))
+		self.assertEqual(fake.calls, [], "nothing readable reads nothing")
+		for fn in (ps._page_of_jobs, ps._page_of_sites):
+			_got, calls = self.run_page(fn, "x")
+			for query, values in calls:
+				self.assertIn("AND p.name IN %(readable)s", query)
+				self.assertEqual(values["readable"], ("PRJ-1", "PRJ-2"))
+
+	def test_readable_projects_are_frappes_permission_aware_list(self):
+		with mock.patch.object(h.frappe, "get_list", create=True) as get_list:
+			get_list.return_value = ["PRJ-1"]
+			self.assertEqual(ps._readable_projects(), ["PRJ-1"])
+		get_list.assert_called_once_with("Project", pluck="name", limit_page_length=0)
 
 	def test_jobs_one_page_in_order_every_value_bound(self):
 		search = "50%' OR 1=1 --"
-		(rows, total), calls = self.run_page(ps._page_of_jobs, search, start=40, limit=20, count=640)
-		self.assertEqual(total, 640)
+		(rows, total), calls = self.run_page(ps._page_of_jobs, search, start=40, limit=20, count=561)
+		self.assertEqual(total, 561)
 		self.assertEqual(len(calls), 2)
 		for query, values in calls:
 			self.assertNotIn("1=1", query)
@@ -354,6 +383,7 @@ class TestTheReads(unittest.TestCase):
 		self.assertIn("ORDER BY", page)
 		self.assertLess(page.index("agg.next_day IS NOT NULL THEN 0 ELSE 1"), page.index("DESC"))
 		self.assertIn("e.employee_name", page)
+		self.assertIn("p.custom_schedule_status AS schedule_status", page)
 
 	def test_no_search_no_like(self):
 		_got, calls = self.run_page(ps._page_of_jobs, "")
@@ -394,7 +424,15 @@ class TestTheReads(unittest.TestCase):
 
 	def test_the_source_never_formats_a_value_into_sql(self):
 		source = SIMPLE_PATH.read_text(encoding="utf-8")
-		allowed = {"owner", "join", "where", "search", "slot", "engine.planner_job_condition('p')"}
+		allowed = {
+			"owner",
+			"join",
+			"where",
+			"search",
+			"slot",
+			"schedule",
+			"engine.planner_job_condition('p')",
+		}
 		for sql in re.findall(r'f"""(.*?)"""', source, flags=re.S):
 			for name in re.findall(r"\{([^}]*)\}", sql):
 				self.assertIn(name, allowed, sql)
@@ -458,6 +496,35 @@ class TestTheReads(unittest.TestCase):
 class TestTheEndpoints(unittest.TestCase):
 	def setUp(self):
 		h._reset()
+		readable = mock.patch.object(ps, "_readable_projects", lambda: ["PRJ-1", "PRJ-9"])
+		readable.start()
+		self.addCleanup(readable.stop)
+
+	def test_each_endpoint_needs_read_on_its_records(self):
+		denied = set()
+		h.frappe.has_permission = lambda doctype, ptype="read", *a, **k: doctype not in denied
+		h.frappe.roles = ["Projects User", "Maintenance User"]
+		for doctype, endpoints in (
+			("Project", (ps.get_simple_jobs, ps.get_simple_sites)),
+			("Task", (ps.get_simple_jobs,)),
+			("Sapphire Maintenance Record", (ps.get_simple_sites,)),
+		):
+			denied.clear()
+			denied.add(doctype)
+			for endpoint in endpoints:
+				with self.assertRaises(h._PermissionError, msg=f"{endpoint.__name__} without {doctype}"):
+					endpoint()
+
+	def test_the_readable_projects_reach_the_page_query(self):
+		seen = {}
+
+		def page(text, start, today, limit, readable):
+			seen["readable"] = readable
+			return [], 0
+
+		with mock.patch.object(ps, "_page_of_jobs", page):
+			ps.get_simple_jobs()
+		self.assertEqual(seen["readable"], ["PRJ-1", "PRJ-9"])
 
 	def test_each_endpoint_holds_its_planners_role_gate(self):
 		h.frappe.roles = ["Customer"]
@@ -478,7 +545,9 @@ class TestTheEndpoints(unittest.TestCase):
 		for r in rows:
 			r["project"] = "PRJ-1"
 		with (
-			mock.patch.object(ps, "_page_of_jobs", lambda text, start, today, limit: ([project()], 25)) as _p,
+			mock.patch.object(
+				ps, "_page_of_jobs", lambda text, start, today, limit, readable: ([project()], 25)
+			),
 			mock.patch.object(ps, "_read_tasks", lambda names: rows),
 			mock.patch.object(ps, "_read_who", lambda names: ({}, set())),
 		):
@@ -493,7 +562,7 @@ class TestTheEndpoints(unittest.TestCase):
 	def test_more_is_false_on_the_last_page_and_a_limit_passes_through(self):
 		seen = {}
 
-		def page(text, start, today, limit):
+		def page(text, start, today, limit, readable):
 			seen["limit"] = limit
 			return [project()], 21
 
@@ -529,7 +598,7 @@ class TestTheEndpoints(unittest.TestCase):
 		}
 		with (
 			mock.patch.object(
-				ps, "_page_of_sites", lambda text, start, today, limit: ([project("PRJ-9")], 1)
+				ps, "_page_of_sites", lambda text, start, today, limit, readable: ([project("PRJ-9")], 1)
 			),
 			mock.patch.object(ps, "_read_visits", lambda names: visits),
 			mock.patch.object(ps, "_read_history", lambda names: []),

@@ -236,6 +236,9 @@ test("a card: Done and Coming up, three of each, Show all and Show fewer, Coming
 	check("a small half: Show all 2", mod.card_html(small, "2026-10-22", new Set(), false).includes("Show all 2"), true);
 	const opened = mod.card_html(small, "2026-10-22", new Set(["PRJ-1|coming"]), false);
 	check("opened, it lists the waiting one and offers Show fewer", [opened.includes("Pull wire"), opened.includes("Show fewer")], [true, true]);
+	const draft = mod.card_html(card({ draft: true }), "2026-10-22", new Set(), false);
+	check("a Draft schedule is marked, with why on hover", [draft.includes('class="pk-simple-draft"'), draft.includes("◐ Draft schedule"), draft.includes("crew has not been told")], [true, true, true]);
+	check("and nothing is said when it is published", mod.card_html(card(), "2026-10-22", new Set(), false).includes("pk-simple-draft"), false);
 	check("a half with nothing hidden offers neither", [/Show (all|fewer)/.test(mod.card_html(card({ coming: [item()] }), "2026-10-22", new Set(["PRJ-1|coming"]), false))], [false]);
 });
 
@@ -332,6 +335,45 @@ test("mounted: a failed read says so with Try again, and Try again reads", async
 	s.root.fire("click", { target: target({ ".pk-simple-retry": {} }) });
 	await settle();
 	check("read again, and drawn", [reads, s.view.state().cards.length, s.view.state().error], [[0, 0], 1, false]);
+});
+
+test("mounted: a failed search never leaves the old search's cards, so Show more cannot mix two searches", async () => {
+	const timers = [];
+	const mod = loadSimple(timers);
+	const reads = [];
+	let fail = false;
+	const s = mounted(mod, (search, start) => {
+		reads.push([search, start]);
+		if (fail) return Promise.reject(new Error("timeout"));
+		return Promise.resolve(answer([card({ name: `${search || "all"}-${start}` })], { total: 40, more: true }));
+	});
+	s.view.refresh();
+	await settle();
+	check("the first page of everything, with Show more", [s.view.state().cards.map((c) => c.name), s.tail().innerHTML.includes("pk-simple-more")], [["all-0"], true]);
+	s.root.fire("click", { target: target({ "[data-pk-simple-all]": { "data-pk-simple-all": "all-0", "data-pk-simple-half": "done" } }) });
+	fail = true;
+	const box = s.root.querySelector(".pk-simple-search");
+	box.value = "sonnen";
+	box.fire("input");
+	flush(timers);
+	await settle();
+	const st = s.view.state();
+	check("the old search's cards, count, paging and Show all are gone", [st.cards, st.total, st.more, [...st.open]], [[], 0, false, []]);
+	check("the failure names the search, with Try again and no Show more", [s.cards().innerHTML.includes("The search for “sonnen” could not be loaded."), s.cards().innerHTML.includes("pk-simple-retry"), s.tail().innerHTML], [true, true, ""]);
+	check("no count left on the status line", s.line().textContent, "");
+	fail = false;
+	s.root.fire("click", { target: target({ ".pk-simple-retry": {} }) });
+	await settle();
+	check("Try again reads page one of the search in the box", [reads.pop(), s.view.state().cards.map((c) => c.name)], [["sonnen", 0], ["sonnen-0"]]);
+	// A Show more that fails keeps the cards it would have added to (the same search) and says so instead.
+	fail = true;
+	s.root.fire("click", { target: target({ ".pk-simple-more": {} }) });
+	await settle();
+	check("a failed Show more keeps that search's cards, with Try again in place of Show more", [s.view.state().cards.map((c) => c.name), s.tail().innerHTML.includes("More could not be loaded."), s.tail().innerHTML.includes("pk-simple-more")], [["sonnen-0"], true, false]);
+	fail = false;
+	s.root.fire("click", { target: target({ ".pk-simple-retry": {} }) });
+	await settle();
+	check("Try again there reads the next page of the same search", [reads.pop(), s.view.state().cards.map((c) => c.name)], [["sonnen", 1], ["sonnen-0", "sonnen-1"]]);
 });
 
 test("mounted: the switch, ?, an item and a card's name are the page's", async () => {
