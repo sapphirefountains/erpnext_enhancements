@@ -90,6 +90,9 @@ def permitted_count(real_frappe, doctype, kwargs):
 	permission-checked query selecting only ``name``, then count its rows. Only ``fields``,
 	``limit`` and ``order_by`` are set here; ``filters``, ``ignore_permissions`` and anything else
 	the caller passed go through unchanged, so the count obeys the same rules as the listing.
+
+	Returns ``None`` when ``get_list`` hands back rows instead of a query: a virtual DocType's
+	controller ignores ``run=0``, and there is no SQL to count.
 	"""
 	from frappe.query_builder.functions import Count
 
@@ -101,6 +104,8 @@ def permitted_count(real_frappe, doctype, kwargs):
 		run=0,
 		**query_kwargs,
 	)
+	if isinstance(rows, list):
+		return None
 	return real_frappe.qb.from_(rows).select(Count("*")).run()[0][0]
 
 
@@ -125,7 +130,10 @@ class _CountSafeFrappe:
 
 	def get_list(self, *args, **kwargs):
 		if args and kwargs.get("fields") == LEGACY_COUNT_FIELDS:
-			return [{"count": permitted_count(self._ee_frappe, args[0], kwargs)}]
+			count = permitted_count(self._ee_frappe, args[0], kwargs)
+			if count is not None:
+				return [{"count": count}]
+		# Everything else, and a count we cannot answer, goes to frappe exactly as FAC wrote it.
 		return self._ee_frappe.get_list(*args, **kwargs)
 
 
@@ -165,7 +173,10 @@ def apply():
 		_state = FAILED
 	if _state not in (APPLIED, NO_FAC):
 		try:
-			frappe.logger("erpnext_enhancements").info(f"FAC list_documents count fix not applied: {_state}")
+			# ERROR, not INFO: frappe's file logger drops anything below ERROR on a production site
+			# (frappe/utils/logger.py default_log_level), and an inert fix nobody can see is the failure
+			# this line exists to expose. File log only, never the Error Log doctype.
+			frappe.logger("erpnext_enhancements").error(f"FAC list_documents count fix not applied: {_state}")
 		except Exception:
 			pass
 	return _state

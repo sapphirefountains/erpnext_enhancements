@@ -121,7 +121,8 @@ def _build_frappe_stub():
 		frappe_stub.error_logs.append(title)
 
 	class _Logger:
-		def info(self, message):
+		# ERROR is the lowest level frappe's file logger writes on a production site.
+		def error(self, message):
 			frappe_stub.log_lines.append(message)
 
 	frappe_stub.get_list = get_list
@@ -270,6 +271,24 @@ class TestAppliedCount(_Base):
 			)
 			self.assertIs(self.frappe.calls[0][3]["ignore_permissions"], value)
 
+	def test_virtual_doctype_count_goes_through_as_written(self):
+		# A virtual DocType's controller ignores run=0 and returns rows, so there is no query to count:
+		# the stand-in hands FAC's own call to frappe unchanged rather than failing on it.
+		real_get_list = self.frappe.get_list
+
+		def virtual_get_list(doctype, *args, **kwargs):
+			if kwargs.get("run", 1) in (0, False):
+				self.frappe.calls.append(("get_list", doctype, args, kwargs))
+				return [{"name": "row"}]
+			return real_get_list(doctype, *args, **kwargs)
+
+		self.frappe.get_list = virtual_get_list
+		stand_in = self.patch._CountSafeFrappe(self.frappe)
+		with self.assertRaises(Exception) as raised:
+			stand_in.get_list("Virtual Thing", filters={}, fields=["count(name) as count"], limit=1)
+		self.assertIn("SQL functions are not allowed as strings", str(raised.exception))
+		self.assertEqual([call for call in self.frappe.calls if call[0] == "count"], [])
+
 	def test_other_fields_are_not_rewritten(self):
 		stand_in = self.patch._CountSafeFrappe(self.frappe)
 		with self.assertRaises(Exception):
@@ -310,10 +329,8 @@ class TestGuardIsInert(_Base):
 		self.assertIs(self.target().frappe, self.frappe)
 
 	def test_source_mismatch(self):
-		self.known.stop()
 		with mock.patch.dict(self.patch.KNOWN_SOURCES, {"0" * 64: "3.0.0"}, clear=True):
 			self.assertEqual(self.patch.apply(), self.patch.SOURCE_MISMATCH)
-		self.known.start()
 		self.assert_untouched()
 		result = self.target().run("Task", {"status": "Open"})
 		self.assertIsNone(result["total_count"])
@@ -339,10 +356,8 @@ class TestGuardIsInert(_Base):
 
 	def test_logger_failure_never_raises(self):
 		self.frappe.logger = mock.Mock(side_effect=RuntimeError("no logger"))
-		self.known.stop()
 		with mock.patch.dict(self.patch.KNOWN_SOURCES, {}, clear=True):
 			self.assertEqual(self.patch.apply(), self.patch.SOURCE_MISMATCH)
-		self.known.start()
 
 
 class TestPinnedSource(unittest.TestCase):

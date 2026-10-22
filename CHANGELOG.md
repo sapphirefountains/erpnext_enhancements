@@ -48,8 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       switch it off;
     - the module's `frappe` must still be the real module.
 
-    The first time it stands down in a process, it writes the reason, and only the reason, to the app log.
-    Nothing here logs arguments, filters or results. It imports FAC by dotted path only after `find_spec` finds
+    The first time it stands down in a process, it writes the reason, and only the reason, to the app's file
+    log. It logs at ERROR, because frappe's file logger drops anything lower on a production site, and an
+    inert fix that nobody can see is exactly what this line is for. Nothing here logs arguments, filters or
+    results. A count it cannot answer, such as a virtual DocType whose controller ignores `run=0`, goes to
+    frappe exactly as FAC wrote it, so it behaves as it did before. It imports FAC by dotted path only after `find_spec` finds
     it, so sites without FAC never touch it, and the FAC-optional invariant test still holds.
   - **Applied in every web request and background job.** `monkeypatches.ensure_applied` already runs from
     `before_request` and `before_job`, because v16 serves hooks from the redis cache, so the bottom of `hooks.py`
