@@ -635,7 +635,8 @@ class TestTheDocs(unittest.TestCase):
 		version = re.search(r'__version__ = "([\d.]+)"', init).group(1)
 		package = json.loads(_text(REPO_ROOT / "package.json"))["version"]
 		self.assertEqual(version, package)
-		self.assertEqual(version, "1.716.0")
+		# P12 shipped as 1.716.0; later releases move past it, so this checks the floor.
+		self.assertGreaterEqual(tuple(int(n) for n in version.split(".")), (1, 716, 0))
 		changelog = _text(REPO_ROOT / "CHANGELOG.md")
 		self.assertIn("## [1.716.0] - 2026-10-22", changelog)
 		self.assertLess(changelog.index("## [1.716.0]"), changelog.index("## [1.715.0]"))
