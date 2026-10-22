@@ -990,7 +990,7 @@ class TestTheSource(unittest.TestCase):
 	def test_both_pages_ask_for_the_bundle_and_work_without_it(self):
 		bins = BIN_PAGE.read_text(encoding="utf-8")
 		self.assertIn('"reorder_levels.bundle.js", "reorder_levels.bundle.css"', bins)
-		self.assertIn("this.reorder ?", bins, "the column exists only with the editor")
+		self.assertIn("this.reorder_shown() ?", bins, "the column exists only with the editor, switched on")
 		self.assertRegex(
 			bins, r"catch \(e\) \{\s+resolve\(\);", "a throwing require must not wedge the ready chain"
 		)

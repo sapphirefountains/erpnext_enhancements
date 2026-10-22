@@ -953,6 +953,12 @@ def _trails(rows):
 	return out
 
 
+def _show_reorder(screen):
+	from erpnext_enhancements.api.planner_views_prefs import show_reorder
+
+	return show_reorder(screen)
+
+
 @frappe.whitelist(methods=["GET"])
 def manager_boot():
 	"""What the Bin Manager Desk page (``inventory_enhancements/page/bin_manager``) needs before
@@ -966,6 +972,8 @@ def manager_boot():
 	* ``can_create_items`` -- Item create, which the quick Item is inserted with.
 	* ``can_open_items`` -- Item read: the page links an item's name to its Item record only for those who
 	  can open it.
+	* ``show_reorder`` -- the caller's own switch for the Reorder column (``planner_views_prefs``), off by
+	  default; ``False`` too when it cannot be read.
 	* ``boneyard_warehouse`` / ``boneyard_name`` -- from Inventory Scanner Settings, read here so
 	  the page never reads a Settings Single from the browser (a non-System-Manager would be
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
@@ -1008,6 +1016,9 @@ def manager_boot():
 		"can_create_items": bool(frappe.has_permission("Item", "create")),
 		# Whether an item's name links to its Item record (TASK-2026-02918).
 		"can_open_items": bool(frappe.has_permission("Item", "read")),
+		# Whether the caller has turned the reorder boxes on here (TASK-2026-02920): hidden unless they have,
+		# and hidden when the preference cannot be read.
+		"show_reorder": _show_reorder("bin_manager"),
 		"boneyard_warehouse": boneyard,
 		"boneyard_name": (boneyard_row.warehouse_name or boneyard_row.name) if boneyard_row else None,
 		"undo_window_minutes": cint(settings.get("undo_window_minutes")),

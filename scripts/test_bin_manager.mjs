@@ -111,7 +111,11 @@ function makeServer(options) {
 				if (Array.isArray(failure) && !failure.length) server.fail.delete(name);
 				if (err) return Promise.reject(err);
 			}
-			if (name === "manager_boot") return JSON.parse(JSON.stringify(fixture.boot || BOOT));
+			if (name === "manager_boot") {
+				// `show_reorder` is the person's saved switch for the Reorder column (TASK-2026-02920): absent = off.
+				const boot = Object.assign({}, fixture.boot || BOOT, fixture.show_reorder === undefined ? {} : { show_reorder: fixture.show_reorder });
+				return JSON.parse(JSON.stringify(boot));
+			}
 			if (name === "get_location") {
 				const loc = location_of(args.warehouse);
 				if (fixture.items) loc.items = JSON.parse(JSON.stringify(fixture.items));
@@ -144,7 +148,7 @@ function makeServer(options) {
 			return { log, message: `${name} done`, repeated: !!server.repeat };
 		});
 	};
-	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels/.test(c.method));
+	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder/.test(c.method));
 	return server;
 }
 
@@ -1030,7 +1034,7 @@ test("the real page: without Item read there is no link, only the text", async (
 });
 
 test("the real page with the reorder bundle: a Reorder column, one read per list, no history", async () => {
-	const { server, world, registry, page, click } = loadPage({ reorder: true });
+	const { server, world, registry, page, click } = loadPage({ reorder: true, show_reorder: true });
 	world.go_to("/desk/bin-manager");
 	await settle();
 	check("asked for the reorder files apart from its own", registry.requires.map((r) => r[0]), ["sf_kit.bundle.js", "reorder_levels.bundle.js"]);
@@ -1055,7 +1059,7 @@ test("the real page with the reorder bundle: a Reorder column, one read per list
 });
 
 test("the real page: a redraw waits for a focused reorder box and runs when it is left", async () => {
-	const { server, world, registry, page, click, document } = loadPage({ reorder: true });
+	const { server, world, registry, page, click, document } = loadPage({ reorder: true, show_reorder: true });
 	world.go_to("/desk/bin-manager");
 	await settle();
 	click({ "data-act": "bin", "data-bin": BIN_A });
@@ -1087,6 +1091,92 @@ test("the real page: a redraw waits for a focused reorder box and runs when it i
 	await settle();
 	check("still queued while another box has focus", page.bin_manager.redraw_after_blur, true);
 	check("no write ever", server.writes().length, 0);
+});
+
+// TASK-2026-02920: the reorder boxes are off until a person turns them on, and the choice is theirs for good.
+const REORDER_PREF = "erpnext_enhancements.api.planner_views_prefs.set_show_reorder";
+const reads = (server) => server.calls.filter((c) => c.method.endsWith("get_reorder_levels"));
+const toggleButton = (registry) => (registry.found[".bm-bin-actions"] || [{}])[0].innerHTML || "";
+
+test("the real page: the Reorder column is hidden by default, with a switch, and nothing is read for it", async () => {
+	const { server, world, registry } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("a clean list: no Reorder column, no reorder boxes, nothing to tab to", [/>Reorder</.test(html), /data-ro-item|ro-input/.test(html)], [false, false]);
+	check("the items are all there", /PUMP, 1 HP/.test(html), true);
+	check("the rules are not even read while they are hidden", reads(server).length, 0);
+	const toolbar = toggleButton(registry);
+	check("one switch in the bin's toolbar, off", [/data-act="reorder-toggle"/.test(toolbar), /aria-pressed="false"/.test(toolbar), /Show reorder levels/.test(toolbar)], [true, true, true]);
+});
+
+test("the real page: the switch shows the column, reads the rules once, and is remembered", async () => {
+	const { server, world, registry, click, page } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const entries = world.entries.length;
+	click({ "data-act": "reorder-toggle" });
+	await settle();
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("the column and a cell for each item appear", [/<th scope="col">Reorder<\/th>/.test(html), (html.match(/data-ro-item="PDT-000[12]"/g) || []).length], [true, 2]);
+	check("the rules are read now, once, for this bin's items", [reads(server).length, JSON.parse(reads(server)[0].args.item_codes)], [1, ["PDT-0001", "PDT-0002"]]);
+	const saved = server.calls.filter((c) => c.method === REORDER_PREF);
+	check("the choice is saved to the person's own store: this screen, on", [saved.length, saved[0].args], [1, { screen: "bin_manager", value: 1 }]);
+	check("the switch now says hide, and is pressed", [/Hide reorder levels/.test(toggleButton(registry)), /aria-pressed="true"/.test(toggleButton(registry))], [true, true]);
+	check("a switch is not a history entry", world.entries.length, entries);
+	click({ "data-act": "reorder-toggle" });
+	await settle();
+	check("off again: the column is gone and the choice saved off", [/>Reorder</.test(registry.found[".bm-items"][0].innerHTML), server.calls.filter((c) => c.method === REORDER_PREF).slice(-1)[0].args.value], [false, 0]);
+	click({ "data-act": "reorder-toggle" });
+	await settle();
+	check("on again: the rules are not read a second time for the same list", reads(server).length, 1);
+	check("no page error", page.bin_manager.ctl !== null, true);
+});
+
+test("the real page: a saved choice opens the screen as the person left it, and anything unreadable is hidden", async () => {
+	let t = loadPage({ reorder: true, show_reorder: true });
+	t.world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	check("saved on: the column is there on arrival, read once", [/>Reorder</.test(t.registry.found[".bm-items"][0].innerHTML), reads(t.server).length], [true, 1]);
+	check("and the switch says hide", /Hide reorder levels/.test(toggleButton(t.registry)), true);
+	for (const [label, value] of [["off", false], ["a damaged value", "yes"], ["a number", 1], ["null", null]]) {
+		t = loadPage({ reorder: true, show_reorder: value });
+		t.world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+		await settle();
+		check(`${label}: hidden, nothing read`, [/>Reorder</.test(t.registry.found[".bm-items"][0].innerHTML), reads(t.server).length], [false, 0]);
+	}
+	// no preference in the boot at all (the read failed on the server and it said nothing): hidden
+	t = loadPage({ reorder: true });
+	t.world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	check("no preference at all: hidden", />Reorder</.test(t.registry.found[".bm-items"][0].innerHTML), false);
+});
+
+test("the real page: a choice that could not be saved still works this visit, and says so", async () => {
+	const { server, world, registry, click } = loadPage({ reorder: true });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	server.fail.set("set_show_reorder", { status: 500, message: "boom" });
+	click({ "data-act": "reorder-toggle" });
+	await settle();
+	check("the column shows anyway", />Reorder</.test(registry.found[".bm-items"][0].innerHTML), true);
+	check("and an orange note says it will not be remembered", [registry.alerts.length, registry.alerts[0] && registry.alerts[0].indicator, /next time/.test((registry.alerts[0] || {}).message || "")], [1, "orange", true]);
+});
+
+test("the real page: with the boxes on, Move, the item link and a reorder level of 0 all still work", async () => {
+	const { server, world, registry, click } = loadPage({
+		reorder: true,
+		show_reorder: true,
+		items: [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", on_hand: 4, on_order: 0, assigned: true, is_default: false, undecided: false }],
+	});
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const html = registry.found[".bm-items"][0].innerHTML;
+	check("the link and the column are both there", [html.includes('<a class="bm-item-link" href="/desk/item/PDT-0001"'), /data-ro-item="PDT-0001"/.test(html)], [true, true]);
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	check("Move still opens", d && d.shown, true);
+	void server;
 });
 
 test("the real page: a reorder bundle that never arrives holds the bins up for nothing", async () => {

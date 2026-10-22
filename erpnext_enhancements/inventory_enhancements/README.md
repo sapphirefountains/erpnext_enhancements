@@ -603,9 +603,9 @@ A bin's items: each item's name is a link to its Item record where the person ma
 (`can_open_items`), and **Move** is `bin_assignments.move_to` through a dialog (pick a bin that is not this
 one, a quantity of at most what is here). Frappe builds no input for a hidden field, so a listener on the
 hidden "Make <bin> this item's bin" box is attached when the box is first shown, never at build time (that threw
-and made the Move button look dead until v1.727.2).
+and made the Move button look dead until v1.728.0).
 
-### Reorder levels on both audit screens (v1.725.0)
+### Reorder levels on both audit screens (v1.725.0; hidden until switched on, v1.728.0)
 
 Nik, 2026-10-22: the reorder amount "adjusted easily without leaving the screen". The Bin Manager's
 **Reorder** column and the Inventory Scanner Audit's item card show an item's reorder rule and edit it

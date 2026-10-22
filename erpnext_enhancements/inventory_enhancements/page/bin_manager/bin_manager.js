@@ -54,6 +54,9 @@ const BM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "bin_manager.bundle.
 // The reorder boxes (v1.725.0): asked for apart from the page's own files, and optional. A page whose
 // copy of them did not load shows no Reorder column and works as before.
 const BM_REORDER_ASSETS = ["reorder_levels.bundle.js", "reorder_levels.bundle.css"];
+// The person's own switch for the Reorder column (TASK-2026-02920): off until they turn it on, and kept for
+// good in the same per-user store as the planners' saved views (api/planner_views_prefs.py).
+const BM_REORDER_PREF = "erpnext_enhancements.api.planner_views_prefs.set_show_reorder";
 const BM_PAGE = "bin-manager";
 const BM_SEARCH_DELAY_MS = 250;
 
@@ -69,6 +72,7 @@ class BinManagerPage {
 		this._route_timer = null;
 		this.reorder = null; // the reorder editor (public/js/reorder_levels), once its bundle is here
 		this.reorder_for = null; // the location object the editor last read the rules for
+		this.reorder_pref = null; // the person's switch once they have used it here; until then the boot's
 		this.redraw_after_blur = false; // a table redraw is waiting for a reorder box to be left
 		// v16's frappe.require calls back even when a file failed to load (assets.js "resolve even on
 		// error"), so both globals are checked; a page without them says so instead of waiting.
@@ -166,8 +170,37 @@ class BinManagerPage {
 
 	// The rules are read once per list of items on screen: a new location object (a bin opened, a save
 	// that reloaded it) is a new list, and the same one drawn again is not asked about twice.
+	// Whether the Reorder column is on: the editor is here, and the person turned it on (this visit, or at
+	// some earlier one: manager_boot says). Off by default, and off whenever the preference could not be read.
+	reorder_shown() {
+		if (!this.reorder) return false;
+		if (this.reorder_pref !== null) return this.reorder_pref;
+		const boot = this.ctl && this.ctl.state.boot;
+		return !!(boot && boot.show_reorder === true);
+	}
+
+	// The switch in the bin's toolbar. The rules are read the first time they are shown, never before.
+	toggle_reorder() {
+		if (!this.reorder) return;
+		const on = !this.reorder_shown();
+		this.reorder_pref = on;
+		// Nothing is reset: the rules are read when the boxes are first shown for this list (sync_reorder), and
+		// showing them again for the same list needs no second read; a save reloads the list, which reads again.
+		this.render();
+		this.$root.find(".bm-reorder-toggle").trigger("focus");
+		this.remember_reorder(on);
+	}
+
+	remember_reorder(on) {
+		if (!this.sf) return;
+		this.sf.call(BM_REORDER_PREF, { screen: "bin_manager", value: on ? 1 : 0 }, { quiet: true }).then(
+			() => {},
+			() => frappe.show_alert({ message: __("Could not save that choice for next time."), indicator: "orange" }, 6)
+		);
+	}
+
 	sync_reorder(loc) {
-		if (!this.reorder || !loc || this.reorder_for === loc) return;
+		if (!this.reorder_shown() || !loc || this.reorder_for === loc) return;
 		this.reorder_for = loc;
 		this.reorder.load(loc.warehouse, (loc.items || []).map((r) => r.item_code));
 	}
@@ -225,6 +258,7 @@ class BinManagerPage {
 			else if (act === "leave") this.ctl.leave_bin();
 			else if (act === "undo") this.undo(el.getAttribute("data-log"), el);
 			else if (act === "retry") this.ctl.refresh();
+			else if (act === "reorder-toggle") this.toggle_reorder();
 			else if (act === "add") this.add_dialog();
 			else if (act === "create") this.create_dialog();
 			else if (row && act === "count") this.count_dialog(row);
@@ -382,6 +416,12 @@ class BinManagerPage {
 		this.$root.find(".bm-name").text(loc ? loc.warehouse_name : warehouse);
 		this.$root.find(".bm-trail").text(loc ? loc.trail || "" : "");
 		const actions = st.boot ? this.bm.bin_actions(perms, warehouse) : [];
+		const shown = this.reorder_shown();
+		const toggle = this.reorder
+			? ` <button type="button" class="btn btn-sm btn-default bm-reorder-toggle" data-act="reorder-toggle" aria-pressed="${shown}">${this.esc(
+					shown ? __("Hide reorder levels") : __("Show reorder levels")
+			  )}</button>`
+			: "";
 		this.$root.find(".bm-bin-actions").html(
 			actions
 				.map(
@@ -390,7 +430,7 @@ class BinManagerPage {
 							__(this.bm.ACTION_LABELS[a])
 						)}</button>`
 				)
-				.join(" ")
+				.join(" ") + toggle
 		);
 		this.draw_notice();
 		this.draw_items(loc);
@@ -462,7 +502,7 @@ class BinManagerPage {
 				return `<tr>
 					<td class="bm-item">${this.item_cell(r, perms)}</td>
 					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
-					${this.reorder ? `<td class="bm-reorder">${window.sf_reorder.cell_html((v) => this.esc(v), (t) => __(t), this.reorder.view(r.item_code), r.item_code, r.item_name)}</td>` : ""}
+					${this.reorder_shown() ? `<td class="bm-reorder">${window.sf_reorder.cell_html((v) => this.esc(v), (t) => __(t), this.reorder.view(r.item_code), r.item_code, r.item_name)}</td>` : ""}
 					<td class="bm-why">${chips}</td>
 					<td class="bm-row-actions">${buttons}</td>
 				</tr>`;
@@ -472,7 +512,7 @@ class BinManagerPage {
 			<thead><tr>
 				<th scope="col">${this.esc(__("Item"))}</th>
 				<th scope="col" class="bm-qty">${this.esc(__("On hand"))}</th>
-				${this.reorder ? `<th scope="col">${this.esc(__("Reorder"))}</th>` : ""}
+				${this.reorder_shown() ? `<th scope="col">${this.esc(__("Reorder"))}</th>` : ""}
 				<th scope="col">${this.esc(__("Listed because"))}</th>
 				<th scope="col"><span class="bm-sr">${this.esc(__("Actions"))}</span></th>
 			</tr></thead>

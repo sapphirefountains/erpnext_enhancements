@@ -37,6 +37,9 @@ frappe.pages['inventory-scanner-audit'].on_page_show = function (wrapper) {
 };
 
 const ISA_METHOD = 'erpnext_enhancements.api.inventory_scanner.';
+// The person's own switch for the card's reorder boxes (TASK-2026-02920): off until they turn it on, and
+// kept for good in the same per-user store as the planners' saved views (api/planner_views_prefs.py).
+const ISA_REORDER_PREF = 'erpnext_enhancements.api.planner_views_prefs.set_show_reorder';
 const ISA_ROUTE = 'inventory-scanner-audit';
 const ISA_SHEETS = ['camera', 'find'];
 // How long to wait for the router to land our own history.back() before going on without it.
@@ -148,7 +151,7 @@ class InventoryScanner {
 	constructor(page, wrapper) {
 		this.page = page;
 		this.wrapper = wrapper;
-		this.state = { settings: {}, session: null, activeLocation: null, pendingItem: null };
+		this.state = { settings: {}, session: null, activeLocation: null, pendingItem: null, showReorder: false };
 		this.booted = false; // the bootstrap has answered: whether camera scanning is on is known
 		this.kit = null; // the scanner kit, once it has arrived
 		this.nav = isa_bare_sheets(); // the sheets' history handling; the kit's, once it has arrived
@@ -195,19 +198,47 @@ class InventoryScanner {
 			this.reorder = null;
 			return;
 		}
-		// A card already drawn before the bundle arrived gets its boxes now, in its own slot: the
-		// card is not redrawn, so a count already typed into it stays.
+		this.renderControls(); // the switch is only there with the editor
+		// A card already drawn before the bundle arrived gets its boxes now (when they are switched on), in
+		// its own slot: the card is not redrawn, so a count already typed into it stays.
 		const p = this.state.pendingItem;
-		if (p) {
+		if (p && this.reorderShown()) {
 			this.$pending.find('.isa-reorder').html(this.reorderCell(p));
 			this.loadReorder();
 		}
 	}
 
+	// Whether the card shows its reorder boxes: the editor is here and the person turned them on.
+	reorderShown() {
+		return !!(this.reorder && this.state.showReorder);
+	}
+
+	// The switch in the toolbar. Showing or hiding the boxes never takes the focus off the count: the tap is
+	// not allowed to keep it (mousedown is cancelled on the button), and it is put back on the counted-quantity
+	// box (or the scan box) afterwards, so the wedge scanner's next read and Enter go where they did. The rules
+	// are read the first time the boxes are shown, never before.
+	toggleReorder() {
+		if (!this.reorder) return;
+		this.state.showReorder = !this.state.showReorder;
+		const p = this.state.pendingItem;
+		this.$pending.find('.isa-reorder').html(p ? this.reorderCell(p) : '');
+		this.renderControls();
+		if (p) this.loadReorder();
+		if (p) this.$pending.find('.isa-qty').focus();
+		else this.focusScan();
+		const on = this.state.showReorder;
+		isa_kit()
+			.then((sf) => sf.call(ISA_REORDER_PREF, { screen: 'scanner_audit', value: on ? 1 : 0 }, { quiet: true }))
+			.then(
+				() => {},
+				() => frappe.show_alert({ message: __('Could not save that choice for next time.'), indicator: 'orange' })
+			);
+	}
+
 	// The rule of the item on the card, for the warehouse being counted.
 	loadReorder() {
 		const p = this.state.pendingItem;
-		if (this.reorder && p) this.reorder.load(this.activeWarehouse() || '', [p.item_code]);
+		if (this.reorderShown() && p) this.reorder.load(this.activeWarehouse() || '', [p.item_code]);
 	}
 
 	reorderLabels() {
@@ -217,7 +248,7 @@ class InventoryScanner {
 
 	// The reorder cell of the item on the card, as markup ('' with no editor).
 	reorderCell(p) {
-		if (!this.reorder) return '';
+		if (!this.reorderShown()) return '';
 		const esc = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
 		return window.sf_reorder.cell_html(esc, (t) => __(t), this.reorder.view(p.item_code), p.item_code, p.item_name || p.item_code);
 	}
@@ -268,6 +299,8 @@ class InventoryScanner {
 					this.$boot.empty();
 					this.booted = true;
 					this.state.settings = (d && d.settings) || {};
+					// Only a real true turns the reorder boxes on; no preference, or one that could not be read, is off.
+					this.state.showReorder = !!(d && d.prefs && d.prefs.show_reorder === true);
 					if (this.sessionTouched === touched) this.state.session = (d && d.session) || null;
 					this.renderAll();
 					this.focusScan();
@@ -359,6 +392,7 @@ class InventoryScanner {
 				<div class="isa-bar">
 					<div class="isa-status"></div>
 					<div class="isa-actions">
+						<button type="button" class="btn btn-sm btn-default isa-toggle" aria-pressed="false">${__('Show reorder levels')}</button>
 						<button class="btn btn-sm btn-primary isa-start">${__('Start Session')}</button>
 						<button class="btn btn-sm btn-default isa-cancel">${__('Cancel')}</button>
 					</div>
@@ -389,6 +423,10 @@ class InventoryScanner {
 		this.$boot = $b.find('.isa-boot');
 		this.$list = $b.find('.isa-list');
 		this.$start = $b.find('.isa-start');
+		this.$toggle = $b.find('.isa-toggle');
+		this.$toggle.hide(); // only once the reorder editor is here (renderControls)
+		this.$toggle.on('mousedown', (e) => e.preventDefault()); // a tap must not take the focus off the count
+		this.$toggle.on('click', () => this.toggleReorder());
 		this.$cancel = $b.find('.isa-cancel');
 		this.$finbar = $b.find('.isa-finbar');
 		this.$finsum = $b.find('.isa-finsum');
@@ -420,6 +458,11 @@ class InventoryScanner {
 		const s = this.state.session;
 		const camOn = this.state.settings.enable_camera_scan && this.cameraAvailable();
 		this.$cam.toggle(!!camOn);
+		const shown = this.reorderShown();
+		this.$toggle
+			.toggle(!!this.reorder)
+			.attr('aria-pressed', shown ? 'true' : 'false')
+			.text(shown ? __('Hide reorder levels') : __('Show reorder levels'));
 		if (s) {
 			this.$status.html(
 				`${__('Counting')} · <b>${frappe.utils.escape_html(s.name)}</b> · ${s.summary.lines} ${__('lines')}`

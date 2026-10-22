@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.727.2] - 2026-10-22
+## [1.728.0] - 2026-10-22
 
 ### Fixed
 - **The Bin Manager's Move button opens its dialog again** (TASK-2026-02919, Parker's report ER-2026-1323788:
@@ -45,6 +45,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counted as stocked there; whether they should say "has a rule" instead is a separate decision.
 
 ### Added
+- **The reorder boxes are hidden until you turn them on** (TASK-2026-02920, Parker's ER-2026-1323805). Nik,
+  2026-10-22: "I would like the reorder values to be hidden or toggleable, it's not information I need to see
+  constantly. Ideally I would only need to change and alter once." Both screens now open with a clean list: the
+  Bin Manager without its Reorder column, the Inventory Scanner Audit's item card without the Reorder at / Buy
+  boxes. One switch in each toolbar, **Show reorder levels** / **Hide reorder levels**, brings them in.
+  - **Remembered, for good, on any device.** The choice is stored per person and per screen in the same
+    place as the planners' saved views and the guided page's settings (`api/planner_views_prefs.py`: a
+    `__UserSettings` row, `Inventory Screens`, written straight to the table). Frappe's own `user_settings`
+    were not used: they are Redis-only, and a deploy flushes Redis, which would forget the choice. The
+    browser's storage is not used either. Each screen's boot already carries it (`manager_boot.show_reorder`,
+    `get_bootstrap.prefs`), so a screen opens in the right state with no request of its own and no flash.
+  - **Anything wrong is "hidden".** No row, a damaged one, a value that is not a real `true`, a database that
+    will not answer: the screen opens clean. A choice that could not be saved still works for the visit and an
+    orange note says it will not be remembered.
+  - **Nothing is read while hidden.** The rules are asked for the first time the boxes are shown, once for a
+    list; hidden boxes are not in the page at all, so they are not focusable and not tab stops.
+  - **The scanner's focus is untouched.** A tap on the switch cannot take the focus (mousedown is cancelled),
+    and after it the focus goes to the counted-quantity box (or the scan box), so the next wedge scan and its
+    Enter land where they did. Enter in a reorder box still returns to the quantity box.
+  - Tests: `tests/test_inventory_screen_prefs.py` (the store: default off, per screen, straight to the table,
+    only the caller's row, damaged and unreadable rows read as off, the role gate, an unknown screen refused;
+    the wiring), and the real pages in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js`
+    (hidden by default and nothing read; the switch shows them, reads once and saves; a saved choice opens as
+    left; an unreadable or unsaved one falls back). The reorder-at-0, Move and item-link work is exercised with
+    the boxes on. One CI step.
 - **An item's name in the Bin Manager links to its Item record** (TASK-2026-02918). A real anchor to the Desk
   form (`/desk/item/<code>`, from `frappe.utils.get_form_link`, never `/app`, which is a full page load on
   v16): a click goes in place with a history entry so Back returns to the bin, Ctrl/Cmd or middle click opens
