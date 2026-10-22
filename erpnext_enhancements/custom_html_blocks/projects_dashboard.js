@@ -1710,8 +1710,9 @@
             $list.find('.pg-new-item').first().trigger('focus');
         };
 
-        $toggle.on('click', function(e) {
-            e.stopPropagation();
+        // No stopPropagation: the click must reach the document so another open menu (Columns,
+        // a Gantt filter) closes; the outside() check below knows this button is inside.
+        $toggle.on('click', function() {
             if ($list.prop('hidden')) open(); else close();
         });
         $wrap.on('keydown', function(e) {

@@ -203,8 +203,9 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 			}
 		};
 
-		toggle.on("click", (e) => {
-			e.stopPropagation();
+		// No stopPropagation: the click has to reach the document so any other open menu closes;
+		// the close handler below treats a click on this button as inside.
+		toggle.on("click", () => {
 			const isOpen = menu.is(":visible");
 			// Close any other open column menus first. The dashboard draws inside a shadow
 			// root, so look in the root this button is in, not only the page's document.

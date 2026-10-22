@@ -222,6 +222,8 @@
     .pg-toolbar .view-mode-group { width: 100%; display: flex; }
     .pg-toolbar .view-mode-group .btn { flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
     .pg-legend { margin-left: 0; width: 100%; gap: 10px; }
+    /* the + sits at the left edge here (the actions cell is only right-aligned from md up) */
+    .pg-new-list { left: 0; right: auto; }
     .pg-widget-host { height: 60vh; min-height: 320px; }
     /* touch targets */
     .pg-check { padding: 4px 0; }

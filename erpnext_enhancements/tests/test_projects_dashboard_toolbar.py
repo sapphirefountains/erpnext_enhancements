@@ -141,6 +141,11 @@ class TestNewMenu(unittest.TestCase):
 			self.assertIn(f'id="{item}"', menu, item + " must sit inside the menu")
 		self.assertNotRegex(actions, r'class="btn[^"]*"[^>]*id="btn-new-(master-)?project"')
 
+	def test_the_menu_opens_inward_on_a_phone(self):
+		# At 375px the + sits at the left edge; a right:0 menu would open off-screen to its left.
+		phone = CSS_CODE[CSS_CODE.index("@media (max-width: 767px)") :]
+		self.assertRegex(phone, r"\.pg-new-list\s*\{\s*left:\s*0;\s*right:\s*auto")
+
 	def test_the_plus_is_labelled_and_announces_a_menu(self):
 		self.assertRegex(HTML_CODE, r'id="btn-new"[^>]*aria-label="New"')
 		self.assertRegex(HTML_CODE, r'id="btn-new"[^>]*aria-haspopup="menu"')
