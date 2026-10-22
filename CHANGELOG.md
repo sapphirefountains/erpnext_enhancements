@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`docs/planner-ux-redesign.md` is marked as built.** Its status line says so, the §7 table gains a *Built*
   column naming the PR of each row (P1 #1319, P2 #1322, P3 #1320, P4 #1323, P5 #1327, P6 #1330, P7 #1325, P8 #1326,
-  P9 #1332, P10 #1331, P11 #1324, P12 this one), and a new section, *Built, and where it differs*, lists what the
+  P9 #1332, P10 #1331, P11 #1324, P12 #1333), and a new section, *Built, and where it differs*, lists what the
   build does differently from the approved text: the new endpoints are in their own modules, the `1` to `5` tab keys
   still pick Week, Month and Crew, the Crew board is a chip per day joined rather than one bar, the Overdue tray and
   the print sheet are not yet day-based or D6-filtered, and Today's new "?".
