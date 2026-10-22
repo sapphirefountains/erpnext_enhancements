@@ -350,6 +350,11 @@ class TestBuildSummary(unittest.TestCase):
 			p.start()
 		self.addCleanup(lambda: [p.stop() for p in self.patches])
 
+	def test_a_start_that_is_not_a_day_is_a_clear_error(self):
+		with self.assertRaises(h._Throw) as caught:
+			ws.build_summary("garbage", today="2026-10-26")
+		self.assertNotIn("garbage", str(caught.exception))
+
 	def test_the_default_week_is_the_week_ahead(self):
 		# Today in the stub is Thursday Oct 8; Sunday-first, so the week ahead starts Sunday Oct 11.
 		self.assertEqual(ws.build_summary()["first"], D(2026, 10, 11))
@@ -409,16 +414,32 @@ class TestBuildSummary(unittest.TestCase):
 
 
 class TestPlaces(unittest.TestCase):
-	"""By person, from the engine: a Draft schedule's stored tasks are booked by the engine like any other,
-	so the summary drops them by project or it would print a plan the rest of the page keeps private."""
+	"""By person, from the engine. The engine books a Draft project's stored tasks like any other, and a
+	project that is not an Active customer job is booked too, so a booking is described only if its OWN
+	project's schedule is Published (blank reads Draft), whatever list the project is on."""
 
 	def setUp(self):
 		h._reset()
 		h.frappe.tables["Project"] = [
 			{"name": "PRJ-1", "project_name": "Riverwalk Plaza"},
 			{"name": "PRJ-9", "project_name": "Tanner Park"},
+			{"name": "PRJ-HOLD", "project_name": "Hold Job"},
+			{"name": "PRJ-NEW", "project_name": "Brand New"},
 		]
-		cells = {
+		# PRJ-9 is a listed Draft job; PRJ-HOLD is a Draft schedule on a project the page never lists (On Hold);
+		# PRJ-NEW has no schedule state at all, which reads Draft.
+		h.frappe.sql_rows = {
+			"FROM `tabProject` WHERE name IN": [
+				{"name": "PRJ-1", "custom_schedule_status": "Published"},
+				{"name": "PRJ-9", "custom_schedule_status": "Draft"},
+				{"name": "PRJ-HOLD", "custom_schedule_status": "Draft"},
+				{"name": "PRJ-NEW", "custom_schedule_status": None},
+			]
+		}
+		patch = mock.patch.object(h.api, "_has_schedule_columns", lambda: True)
+		patch.start()
+		self.addCleanup(patch.stop)
+		self.cells = {
 			"RES-1": {
 				"2026-10-26": {
 					"bookings": [
@@ -438,7 +459,13 @@ class TestPlaces(unittest.TestCase):
 				}
 			},
 			"RES-3": {
-				"2026-10-26": {"bookings": [{"kind": "task", "project": "PRJ-9", "label": "Secret plan"}]}
+				"2026-10-26": {
+					"bookings": [
+						{"kind": "task", "project": "PRJ-9", "label": "Secret plan"},
+						{"kind": "task", "project": "PRJ-HOLD", "label": "Hold plan"},
+					]
+				},
+				"2026-10-27": {"bookings": [{"kind": "rental", "project": "PRJ-NEW", "label": "New plan"}]},
 			},
 		}
 		computed = {
@@ -447,24 +474,18 @@ class TestPlaces(unittest.TestCase):
 				{"name": "RES-2", "label": "Lisa"},
 				{"name": "RES-3", "label": "Nik"},
 			],
-			"days": cells,
+			"days": self.cells,
 		}
 		patch = mock.patch.object(h.engine, "_compute", lambda *a, **k: computed)
 		patch.start()
 		self.addCleanup(patch.stop)
 
-	def test_without_a_skip_every_booking_is_described(self):
+	def text(self):
 		booked, free = ws._places(D(2026, 10, 25), D(2026, 10, 31))
-		self.assertEqual(free, [])
-		text = {label: [ws.segment_text(s) for s in segments] for label, segments in booked}
-		self.assertEqual(
-			text["Austin"], ["Mon Oct 26: Riverwalk Plaza, Tanner Park", "Tue Oct 27: Tanner Park"]
-		)
-		self.assertEqual(text["Lisa"], ["Mon Oct 26: Visit: Sanctuary, Riverwalk Plaza (pencil)"])
+		return {label: [ws.segment_text(s) for s in segments] for label, segments in booked}, free
 
-	def test_a_draft_schedules_bookings_are_not_described(self):
-		booked, free = ws._places(D(2026, 10, 25), D(2026, 10, 31), {"PRJ-9"})
-		text = {label: [ws.segment_text(s) for s in segments] for label, segments in booked}
+	def test_only_published_schedules_are_described_whatever_list_the_project_is_on(self):
+		text, free = self.text()
 		self.assertEqual(
 			text,
 			{
@@ -472,30 +493,45 @@ class TestPlaces(unittest.TestCase):
 				"Lisa": ["Mon Oct 26: Visit: Sanctuary, Riverwalk Plaza (pencil)"],
 			},
 		)
-		# Someone whose only booking was the Draft schedule's is free this week, as far as the page says.
+		# Someone whose only bookings were Draft schedules' (listed, unlisted, or with no state) is free
+		# this week, as far as the page says.
 		self.assertEqual(free, ["Nik"])
-		self.assertNotIn("Tanner Park", str(booked))
 
-	def test_build_summary_passes_the_draft_projects_down(self):
-		seen = {}
+	def test_no_draft_projects_name_or_task_label_reaches_the_page(self):
+		booked, _free = ws._places(D(2026, 10, 25), D(2026, 10, 31))
+		for secret in ("Tanner Park", "Secret plan", "Hold Job", "Hold plan", "Brand New", "New plan"):
+			self.assertNotIn(secret, str(booked), secret)
 
-		def places(first, last, skip=()):
-			seen["skip"] = set(skip)
-			return [], []
+	def test_a_project_whose_schedule_cannot_be_read_yet_is_described_as_before(self):
+		# Before P3's columns exist every schedule reads as published, as the Lookahead's does.
+		with mock.patch.object(h.api, "_has_schedule_columns", lambda: False):
+			text, free = self.text()
+		self.assertEqual(free, [])
+		self.assertIn("Tanner Park", str(text))
 
-		fixture = found([job()], draft_projects={"PRJ-9"})
-		with (
-			mock.patch.object(ov, "collect", lambda **kw: fixture),
-			mock.patch.object(ws, "_places", places),
-			mock.patch.object(ws, "_moved", lambda found_, since: ({}, False)),
-			mock.patch.object(ws, "_crew_labels", lambda names: {}),
-			mock.patch.object(h.api, "_site_first_weekday", lambda: 6),
-		):
-			ws.build_summary("2026-10-26", today="2026-10-26")
-		self.assertEqual(seen["skip"], {"PRJ-9"})
+	def test_the_schedule_states_are_read_in_one_bound_query(self):
+		h.frappe.queries.clear()
+		ws._places(D(2026, 10, 25), D(2026, 10, 31))
+		queries = [q for kind, q in h.frappe.queries if kind == "sql" and "`tabProject`" in q]
+		self.assertEqual(len(queries), 1)
+		self.assertIn("WHERE name IN %(names)s", queries[0])
+
+	def test_build_summary_does_not_depend_on_the_list_of_jobs_for_this(self):
+		source = (APP / "project_enhancements/planner_weekly_summary.py").read_text(encoding="utf-8")
+		self.assertIn("overview.draft_projects(", source)
+		self.assertNotIn('found["draft_projects"]', source)
+		self.assertNotIn(
+			'found["drafts_listed"]', source[source.index("def _places") : source.index("def _moved")]
+		)
 
 
 class TestMoved(unittest.TestCase):
+	"""'What moved', from the Version log, in two steps: the names first (indexes, no blobs), then the data of
+	the few that are the summary's own tasks, by primary key."""
+
+	STEP_ONE = "v.creation >= %(since)s"
+	STEP_TWO = "v.name IN %(versions)s"
+
 	def setUp(self):
 		h._reset()
 		self.fixture = found(
@@ -507,15 +543,21 @@ class TestMoved(unittest.TestCase):
 		)
 		self.since = D(2026, 10, 19)
 
-	def log(self, *rows):
+	def log(self, *rows, others=()):
+		"""``rows`` are ``(task, changes)`` newest first, as the first query answers them."""
+		everything = [
+			(f"V{index}", task, changes) for index, (task, changes) in enumerate(list(rows) + list(others))
+		]
 		h.frappe.sql_rows = {
-			"FROM `tabVersion` v": [
-				{"docname": task, "data": json.dumps({"changed": changes})} for task, changes in rows
-			]
+			self.STEP_ONE: [{"name": name, "docname": task} for name, task, _c in everything],
+			self.STEP_TWO: [
+				{"name": name, "docname": task, "data": json.dumps({"changed": changes})}
+				for name, task, changes in reversed(everything)  # the database owes the second query no order
+			],
 		}
 
 	def test_the_newest_rows_are_read_and_folded_oldest_first(self):
-		# The query answers newest first; the first old value must still be the oldest row's.
+		# The first query answers newest first; the first old value must still be the oldest row's.
 		self.log(
 			("T1", [["exp_start_date", "2026-10-22 00:00:00", "2026-10-26 00:00:00"]]),
 			("T1", [["exp_start_date", "2026-10-20 00:00:00", "2026-10-22 00:00:00"]]),
@@ -534,30 +576,77 @@ class TestMoved(unittest.TestCase):
 			],
 		)
 
-	def test_the_read_is_limited_to_the_summarys_own_projects_in_sql_and_bound(self):
-		self.log()
+	def test_step_one_reads_names_only_and_step_two_reads_by_primary_key_and_both_are_bound(self):
+		self.log(("T1", [["exp_start_date", "2026-10-22", "2026-10-26"]]))
 		h.frappe.queries.clear()
 		ws._moved(self.fixture, self.since)
-		query = next(q for kind, q in h.frappe.queries if kind == "sql")
-		self.assertIn("INNER JOIN `tabTask` t ON t.name = v.docname", query)
-		self.assertIn("t.project IN %(projects)s", query)
-		self.assertIn("ORDER BY v.creation DESC", query)
-		self.assertIn("LIMIT %(limit)s", query)
+		queries = [q for kind, q in h.frappe.queries if kind == "sql"]
+		self.assertEqual(len(queries), 2)
+		one, two = queries
+		# Step one: the indexed columns only. No blob, no LIKE, no join.
+		self.assertIn("SELECT v.name, v.docname", one)
+		self.assertIn("v.ref_doctype = 'Task' AND v.creation >= %(since)s", one)
+		self.assertIn("ORDER BY v.creation DESC", one)
+		self.assertIn("LIMIT %(limit)s", one)
+		self.assertNotIn("data", one)
+		self.assertNotIn("LIKE", one)
+		self.assertNotIn("JOIN", one)
+		# Step two: the few versions that matter, by primary key; the LIKE runs over those alone.
+		self.assertIn("v.name IN %(versions)s", two)
+		self.assertIn("v.data LIKE %(start)s", two)
+		self.assertNotIn("{", one + two)
+
+	def test_versions_of_other_projects_tasks_never_reach_step_two(self):
+		self.log(
+			("T1", [["exp_start_date", "2026-10-22", "2026-10-26"]]),
+			others=[("T-OTHER", [["exp_end_date", "2026-10-01", "2026-10-09"]])] * 50,
+		)
+		seen = {}
+		original = frappe_sql = h.frappe.db.sql
+
+		def sql(query, values=None, as_dict=False, **kw):
+			if self.STEP_TWO in query:
+				seen["versions"] = list(values["versions"])
+			return original(query, values, as_dict, **kw)
+
+		h.frappe.db.sql = sql
+		try:
+			moved, _cut = ws._moved(self.fixture, self.since)
+		finally:
+			h.frappe.db.sql = frappe_sql
+		self.assertEqual(seen["versions"], ["V0"])
+		self.assertEqual(list(moved), ["PRJ-1"])
 
 	def test_a_log_longer_than_the_rows_read_is_said(self):
 		self.log(
 			("T1", [["exp_start_date", "2026-10-22", "2026-10-26"]]),
 			("T1", [["exp_end_date", "2026-10-27", "2026-10-28"]]),
 		)
-		with mock.patch.object(ws, "MOVED_ROWS", 2):
+		with mock.patch.object(ws, "MOVED_ROWS", 1):
 			self.assertTrue(ws._moved(self.fixture, self.since)[1])
-		with mock.patch.object(ws, "MOVED_ROWS", 3):
+		with mock.patch.object(ws, "MOVED_ROWS", 2):
+			self.assertFalse(ws._moved(self.fixture, self.since)[1])
+
+	def test_a_window_with_more_versions_than_the_scan_cap_is_said(self):
+		self.log(
+			("T1", [["exp_start_date", "2026-10-22", "2026-10-26"]]),
+			("T-OTHER", [["exp_start_date", "2026-10-01", "2026-10-02"]]),
+		)
+		with mock.patch.object(ws, "MOVED_SCAN", 2):
+			self.assertTrue(ws._moved(self.fixture, self.since)[1])
+		with mock.patch.object(ws, "MOVED_SCAN", 3):
 			self.assertFalse(ws._moved(self.fixture, self.since)[1])
 
 	def test_nothing_shown_asks_nothing(self):
 		h.frappe.queries.clear()
 		self.assertEqual(ws._moved(found([job()], shown={"PRJ-1": []}), self.since), ({}, False))
 		self.assertEqual(h.frappe.queries, [])
+
+	def test_a_window_with_no_versions_of_its_tasks_asks_for_no_data(self):
+		self.log(others=[("T-OTHER", [["exp_start_date", "2026-10-01", "2026-10-02"]])])
+		h.frappe.queries.clear()
+		self.assertEqual(ws._moved(self.fixture, self.since), ({}, False))
+		self.assertEqual(len([q for kind, q in h.frappe.queries if kind == "sql"]), 1)
 
 	def test_the_caveats_are_worded_for_both_renderings(self):
 		self.assertEqual(ws.data_notes({}), [])
@@ -786,6 +875,7 @@ class TestTheEmail(unittest.TestCase):
 class TestTheMondayJob(unittest.TestCase):
 	def setUp(self):
 		h._reset()
+		self.today = D(2026, 10, 26)  # a Monday; Sunday-first, so its week starts Sunday Oct 25
 		self.build = mock.MagicMock(
 			return_value=summary(
 				jobs=[{"name": "P", "title": "Riverwalk Plaza", "pm": None, "lines": [], "more": 0}]
@@ -794,7 +884,7 @@ class TestTheMondayJob(unittest.TestCase):
 		self.patches = [
 			mock.patch.object(ws, "build_summary", self.build),
 			mock.patch.object(h.api, "_site_first_weekday", lambda: 6),
-			mock.patch.object(ws, "getdate", lambda value=None: D(2026, 10, 26)),
+			mock.patch.object(ws, "getdate", lambda value=None: self.today),
 		]
 		for p in self.patches:
 			p.start()
@@ -887,14 +977,113 @@ class TestTheMondayJob(unittest.TestCase):
 		self.assertEqual(h.frappe.sendmail if False else len(h.frappe.sent), 0)
 		self.assertEqual(len(h.frappe.tables["Planner Digest Log"]), 1)
 
+	def test_a_catch_up_run_describes_and_claims_the_week_that_holds_today_not_the_next(self):
+		"""The scheduler was down Monday and the job runs Tuesday. The week-ahead rule would have sent a
+		summary of NEXT week, claimed next week's key and silenced the following Monday."""
+		self.settings(1, "james@x.com")
+		self.today = D(2026, 10, 27)  # Tuesday of the week that began Sunday Oct 25
+		ws.send_weekly_summary()
+		self.assertEqual(
+			[r["log_key"] for r in h.frappe.tables["Planner Digest Log"]], ["weekly-summary|2026-10-25"]
+		)
+		self.assertEqual(self.build.call_args[0], (D(2026, 10, 25), D(2026, 10, 27)))
+		self.assertEqual(len(h.frappe.sent), 1)
+
+	def test_the_next_monday_after_a_tuesday_catch_up_still_sends(self):
+		self.settings(1, "james@x.com")
+		self.today = D(2026, 10, 27)
+		ws.send_weekly_summary()
+		self.today = D(2026, 11, 2)  # the Monday of the next week, which began Sunday Nov 1
+		ws.send_weekly_summary()
+		self.assertEqual(
+			[r["log_key"] for r in h.frappe.tables["Planner Digest Log"]],
+			["weekly-summary|2026-10-25", "weekly-summary|2026-11-01"],
+		)
+		self.assertEqual(self.build.call_args[0], (D(2026, 11, 1), D(2026, 11, 2)))
+		self.assertEqual(len(h.frappe.sent), 2)
+		# And a second run in the same week, whichever day, still sends nothing.
+		self.today = D(2026, 11, 4)
+		ws.send_weekly_summary()
+		self.assertEqual(len(h.frappe.sent), 2)
+
+	def test_every_day_of_a_week_claims_that_weeks_key(self):
+		for offset in range(7):
+			h._reset()
+			h._settings(weekly_summary_email=1, weekly_summary_recipients="james@x.com")
+			self.today = D(2026, 10, 25) + datetime.timedelta(days=offset)
+			ws.send_weekly_summary()
+			self.assertEqual(
+				[r["log_key"] for r in h.frappe.tables["Planner Digest Log"]],
+				["weekly-summary|2026-10-25"],
+				offset,
+			)
+
+	def test_a_monday_first_site_claims_the_week_that_began_that_monday(self):
+		self.settings(1, "james@x.com")
+		self.today = D(2026, 10, 28)  # a Wednesday
+		with mock.patch.object(h.api, "_site_first_weekday", lambda: 0):
+			ws.send_weekly_summary()
+		self.assertEqual(
+			[r["log_key"] for r in h.frappe.tables["Planner Digest Log"]], ["weekly-summary|2026-10-26"]
+		)
+
 	def test_a_preview_goes_to_the_caller_alone_and_claims_nothing(self):
 		self.settings(0, "james@x.com")
 		answer = ws.send_preview("nik@example.com")
 		self.assertTrue(answer["sent"])
+		self.assertEqual(answer["reason"], "")
 		self.assertEqual(len(h.frappe.sent), 1)
 		self.assertEqual(h.frappe.sent[0]["recipients"], ["nik@example.com"])
 		self.assertTrue(h.frappe.sent[0]["subject"].startswith("Preview: "))
 		self.assertEqual(h.frappe.tables["Planner Digest Log"], [])
+
+	def test_a_caller_with_no_usable_email_is_answered_not_raised_at(self):
+		"""Administrator's User.email is not an address; the Settings button needs a branch to show."""
+		self.settings(0, "james@x.com")
+		for person in ("Administrator", ""):
+			self.build.reset_mock()
+			answer = ws.send_preview(person)
+			self.assertFalse(answer["sent"], person)
+			self.assertEqual(answer["reason"], "no_email")
+			self.assertIn("no email address", answer["message"])
+		# Nothing was built or sent, and the answer has the keys the Settings form reads.
+		self.assertEqual((self.build.call_count, h.frappe.sent), (0, []))
+		self.assertTrue({"sent", "message", "reason"} <= set(answer))
+
+	def test_a_user_record_with_an_address_is_used_even_when_the_login_is_not_one(self):
+		h.frappe.values[("User", "Administrator", "email")] = "admin@sapphire.example"
+		answer = ws.send_preview("Administrator")
+		self.assertTrue(answer["sent"])
+		self.assertEqual(h.frappe.sent[0]["recipients"], ["admin@sapphire.example"])
+
+	def test_a_send_or_a_build_that_fails_is_answered_and_logged(self):
+		original = h.frappe.sendmail
+		h.frappe.sendmail = mock.MagicMock(side_effect=RuntimeError("smtp down"))
+		try:
+			answer = ws.send_preview("nik@example.com")
+		finally:
+			h.frappe.sendmail = original
+		self.assertEqual((answer["sent"], answer["reason"]), (False, "failed"))
+		self.assertIn("Error Log", answer["message"])
+		self.assertNotIn("smtp", answer["message"])
+		self.assertEqual(len(h.frappe.errors), 1)
+		self.build.side_effect = RuntimeError("engine fell over")
+		answer = ws.send_preview("nik@example.com")
+		self.assertEqual((answer["sent"], answer["reason"]), (False, "failed"))
+		self.assertEqual(len(h.frappe.errors), 2)
+
+	def test_a_start_that_is_not_a_day_is_a_clear_error_before_anything_else(self):
+		with self.assertRaises(h._Throw) as caught:
+			ws.send_preview("nik@example.com", "garbage")
+		self.assertNotIn("garbage", str(caught.exception))
+		self.assertEqual((self.build.call_count, h.frappe.sent), (0, []))
+
+	def test_the_settings_form_reads_the_branch_the_preview_answers_with(self):
+		js = (
+			APP / "project_enhancements/doctype/project_planner_settings/project_planner_settings.js"
+		).read_text(encoding="utf-8")
+		self.assertIn('result.sent ? __("Preview sent") : __("No preview sent")', js)
+		self.assertIn("result.message", js)
 
 
 # ====================================================================== the setting and its patch

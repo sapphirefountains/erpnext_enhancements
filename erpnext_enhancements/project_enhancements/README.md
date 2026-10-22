@@ -2213,10 +2213,19 @@ on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` bl
   unless the box is ticked *and* someone is named. At most once per week, through a `Planner Digest Log`
   row keyed `weekly-summary|<first day>` committed before sending (the deploy `FLUSHDB`s redis, so a cache
   marker would mail everyone again). The page is built before the week is claimed, so a failed read does
-  not spend the week. It describes **Published** schedules only; a Draft one is named at the foot, and the
-  by-person lines and the conflicts drop a Draft project's bookings by name (the engine books a Draft
-  project's stored tasks like any other). *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
-  box unticked, claiming nothing. `patches/backfill_weekly_summary_setting` writes the new Check's
+  not spend the week. **The scheduled run always describes and claims the week that holds today**, not the
+  week ahead (`week_holding`, unlike a print's `default_summary_week`), so a Tuesday catch-up after a
+  Monday the scheduler missed is this week's summary under this week's key, and the next Monday still
+  sends. It describes **Published** schedules only; a Draft one is named at the foot, and each booking
+  and each conflict is judged by **its own project's** schedule state (Draft or blank reads Draft,
+  `planner_overview.draft_projects`), whatever list the project is on: the engine books a Draft project's
+  stored tasks like any other, and a project on hold too. "What moved" reads the Version log in two steps
+  (the names first, through the indexes; then the data of the few that are the summary's, by primary
+  key). *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
+  box unticked, claiming nothing; it always answers (`reason`: `no_email` for a User record with no usable
+  address such as Administrator's, `failed` when building or sending raised and was logged), so the form's
+  "No preview sent" branch always has something to say. A `start` that is not a date is a clear error,
+  never a 500. `patches/backfill_weekly_summary_setting` writes the new Check's
   `tabSingles` row where there is none (a default never reaches a Single's existing row), never over a
   stored value, and cannot raise.
 - **The page reads no Settings.** A desk script that read a Settings Single would show "No permission for
