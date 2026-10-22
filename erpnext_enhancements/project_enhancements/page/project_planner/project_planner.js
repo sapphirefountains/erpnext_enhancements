@@ -5328,11 +5328,11 @@ const PP6A_METHODS = {
 		};
 	},
 
-	// The crew view, the week grid and the people panel scroll inside themselves on a wide screen
-	// (so their headers can stay put): near their top or bottom edge, a drag scrolls them too.
+	// The crew view, the week grid, the people panel and the Crew tray scroll inside themselves on a wide
+	// screen (so their headers can stay put): near their top or bottom edge, a drag scrolls them too.
 	p6a_edge_scroll(x, y) {
 		const el = document.elementFromPoint(x, y);
-		const box = el && el.closest ? el.closest(".pp-crew-view .pp-scroll, .pp-week .pp-grid, .pp-res .pp-scroll") : null;
+		const box = el && el.closest ? el.closest(".pp-crew-view .pp-scroll, .pp-week .pp-grid, .pp-res .pp-scroll, .pp-main-crew > .pp-trays") : null;
 		if (!box || box.scrollHeight <= box.clientHeight) return;
 		const rect = box.getBoundingClientRect();
 		if (y < rect.top + 40) box.scrollTop -= 14;

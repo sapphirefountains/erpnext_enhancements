@@ -832,6 +832,41 @@ class TestProjectPlanner(unittest.TestCase):
 		self.assertIn("position: static", reset[0])
 		self.assertIn("max-height: none", reset[0])
 
+	def test_the_crew_tray_scrolls_by_itself(self):
+		"""v1.716.1: the Not scheduled / Needs crew tray beside the Crew board scrolled with the
+		whole page, so reaching a task near the bottom meant scrolling the board away with it. It
+		is sticky below Frappe's navbar and page head, capped to what is left of the viewport,
+		and scrolls on its own without chaining to the page."""
+		body = self._rule(".pp-main-crew > .pp-trays")
+		self.assertIn("position: sticky", body)
+		self.assertIn("overflow-y: auto", body)
+		self.assertIn("overscroll-behavior: contain", body)
+		top = int(re.search(r"top: (\d+)px", body).group(1))
+		# The 48px navbar and the 60px page head (Frappe v16) sit above it.
+		self.assertGreaterEqual(top, 48 + 60)
+		cap = int(re.search(r"max-height: calc\(100vh - (\d+)px\)", body).group(1))
+		self.assertGreaterEqual(cap, top)
+		# The row must not stretch the tray to the board's height, or sticky has nothing to do.
+		self.assertIn("align-items: flex-start", self._rule(".pp-main-crew"))
+
+	def test_the_crew_tray_is_plain_flow_on_a_phone_and_in_print(self):
+		"""On a phone the tray goes back above the board; a printout carries all of it."""
+		phones = re.findall(r"@media \(max-width: 767px\) \{(.*?)\n\}", self.css, flags=re.S)
+		blocks = [b for b in phones if ".pp-main-crew > .pp-trays" in b]
+		self.assertEqual(len(blocks), 1)
+		prints = re.findall(r"@media print \{(.*?)\n\}", self.css, flags=re.S)
+		blocks.append(next((b for b in prints if ".pp-main-crew > .pp-trays" in b), ""))
+		for block in blocks:
+			self.assertIn("position: static", block)
+			self.assertIn("max-height: none", block)
+			self.assertRegex(block, r"overflow(-y)?: visible")
+
+	def test_a_drag_near_the_crew_trays_edge_scrolls_it(self):
+		"""The tray is a scroll box now, so edge-scroll treats it as the board and the grids."""
+		m = re.search(r"p6a_edge_scroll\(x, y\) \{(.*?)\n\t\},", self.js, flags=re.S)
+		self.assertIsNotNone(m)
+		self.assertIn(".pp-main-crew > .pp-trays", m.group(1))
+
 	def test_the_s3_6_focus_ring_moved_with_the_css(self):
 		self.assertRegex(
 			self.css,
