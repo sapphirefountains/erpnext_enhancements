@@ -453,7 +453,7 @@ def _created(doc, warnings, conflicts, **extra):
 
 
 @frappe.whitelist(methods=["POST"])
-def duplicate_task(task, date=None, reason=None, draft=0):
+def duplicate_task(task, date=None, reason=None, draft=None):
 	"""Copy ``task`` as a new Task: on the same days, or starting on ``date`` (keeping its length).
 
 	The copy is Copy week's (``project_planner._copy_values``): subject, project, parent task, crew
@@ -473,10 +473,11 @@ def duplicate_task(task, date=None, reason=None, draft=0):
 	only information, since drafting never asks for a reason.
 	"""
 	pp._require_planner()
-	drafting = bool(cint(pp.given(draft)))
 	_require_create()
 	doc = frappe.get_doc("Task", task)
 	doc.check_permission("read")
+	# v1.741.0: unset or "auto" drafts the copy when the project's schedule is Draft.
+	drafting = pp.drafts_new_task(draft, doc.get("project"))
 	_refuse_rental(doc, _("duplicated"))
 	if cint(doc.get("is_group")) or cint(doc.get("is_template")):
 		frappe.throw(_("{0} is a group or template task, so it is not duplicated here.").format(doc.name))
@@ -966,7 +967,7 @@ def quick_add_task(
 	resource=None,
 	tentative=0,
 	reason=None,
-	draft=0,
+	draft=None,
 	parent_task=None,
 	depends_on=None,
 	start_time=None,
@@ -1011,7 +1012,7 @@ def quick_add_task(
 	Returns ``{"name", "modified", "created": True, "card", "warnings", "conflicts"}``.
 	"""
 	pp._require_planner()
-	drafting = bool(cint(pp.given(draft)))
+	drafting = pp.drafts_new_task(draft, pp.given(project))  # v1.741.0: unset or "auto" on a Draft schedule
 	_require_create()
 	subject = clean_text(pp.given(subject))
 	if not subject:
@@ -1329,7 +1330,7 @@ def _insert_row(doc, label):
 
 
 @frappe.whitelist(methods=["POST"])
-def build_out_tasks(project, rows, draft=0, phase_checklists=None):
+def build_out_tasks(project, rows, draft=None, phase_checklists=None):
 	"""Create many undated Tasks on one customer job, in ONE request: the Build out grid.
 
 	``rows`` is a JSON list (at most 100) of ``{"subject", "hours", "parent_task", "phase",
@@ -1370,9 +1371,9 @@ def build_out_tasks(project, rows, draft=0, phase_checklists=None):
 	phase is never written to, and a name no row uses is ignored.
 	"""
 	pp._require_planner()
-	drafting = bool(cint(pp.given(draft)))
 	_require_create()
 	project = pp.given(project)
+	drafting = pp.drafts_new_task(draft, project)  # v1.741.0: unset or "auto" on a Draft schedule
 	if not project or not frappe.db.exists("Project", project):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
@@ -1822,7 +1823,7 @@ def _draft_many(entries, follow=False, auto=False, exclude=(), clear=False):
 
 
 @frappe.whitelist(methods=["POST"])
-def move_many(moves, reason=None, dependents=None, notify=None, draft=0):
+def move_many(moves, reason=None, dependents=None, notify=None, draft=None):
 	"""Move several tasks in one go: the multi-select drag, and the selection bar's Move and Pencil.
 
 	``moves`` is a JSON list of ``{"task", "modified", "start", "end", "tentative"}``: ``start`` and
@@ -1854,6 +1855,7 @@ def move_many(moves, reason=None, dependents=None, notify=None, draft=0):
 	pp._require_planner()
 	entries = _parse_moves(moves)
 	follow = pp.as_bool(dependents) if pp.given(dependents) is not None else False
+	draft = pp.unset_auto(draft)  # v1.741.0: no flag drafts on a Draft schedule
 	choice = pp.draft_choice(draft)
 	if choice is True:
 		return _draft_many(entries, follow=follow)

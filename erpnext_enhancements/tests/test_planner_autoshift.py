@@ -1246,35 +1246,6 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		self.assertEqual(self._drafted()["TASK-AF"], ("2026-10-30", "2026-10-30"))
 		self.assertEqual(result["shift_skipped"], [])
 
-	def test_a_dependency_cycle_ends(self):
-		self._follower("TASK-B", "2026-10-27", "2026-10-27")
-		self._follower("TASK-C", "2026-10-28", "2026-10-28", on="TASK-B")
-		self._depends("TASK-B", "TASK-C")  # a cycle ERPNext would refuse, as an import might leave it
-		with mock.patch.object(self.api, "SUCCESSOR_DEPTH", 3):
-			result = self._reschedule()  # returns: each task is offered at most SUCCESSOR_DEPTH times
-		reasons = {skip["task"]: skip["reason"] for skip in result["shift_skipped"]}
-		self.assertTrue(set(reasons) & {"TASK-B", "TASK-C"})
-		self.assertTrue(all("Too many tasks follow it" in reason for reason in reasons.values()))
-
-	def test_a_follower_of_two_selected_tasks_clears_both_in_either_order(self):
-		# R1 (TASK-A) ends Tue 27 once rescheduled, R2 (TASK-R) Wed 28; F waits on both.
-		for order in (["TASK-A", "TASK-R"], ["TASK-R", "TASK-A"]):
-			with self.subTest(order=order):
-				self.frappe.tables["Planner Draft Change"] = []
-				self.frappe.tables["Task Depends On"] = []
-				h._task("TASK-R", start="2026-09-28", end="2026-09-30", crew=("RES-1",), project="PRJ-2")
-				self._follower("TASK-F", "2026-10-27", "2026-10-27")
-				self._depends("TASK-F", "TASK-R")
-				result = self.api.bulk_update(json.dumps(order), "reschedule", "2026-10-26")
-				self.assertEqual(self._drafted()["TASK-R"], ("2026-10-26", "2026-10-28"))
-				self.assertEqual(self._drafted()["TASK-F"], ("2026-10-29", "2026-10-29"))
-				# Once in the answer, from where it was to where it ends up.
-				self.assertEqual(
-					[(m["task"], m["from"], m["to"]) for m in result["shifted"]],
-					[("TASK-F", "2026-10-27", "2026-10-29")],
-				)
-				self.frappe.docs[("Task", "TASK-F")]["depends_on"] = []
-
 	def test_a_published_follower_in_the_way_is_named_and_left(self):
 		h._task("TASK-B", start="2026-10-27", end="2026-10-27", crew=("RES-2",))  # PRJ-1, published
 		self._depends("TASK-B", "TASK-A")
@@ -1316,6 +1287,171 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		result = self.api.bulk_update(json.dumps(["TASK-P"]), "reschedule", "2026-10-26", draft=1)
 		self.assertEqual(self.frappe.saved, [])
 		self.assertEqual((result["shifted"], set(self._drafted())), ([], {"TASK-P"}))
+
+
+class TestALoopOfFollowers(_OverdueFollowers):
+	"""v1.741.0: ERPNext refuses a dependency loop on save, but imported data can carry one. The clear
+	walk used to push its tasks past each other until its limits stopped it (B to January, C the day
+	after); now the loop's tasks stay where they are, are named, and the rest of the walk carries on."""
+
+	def test_the_loop_stays_put_and_the_rest_carries_on(self):
+		# B waits on A and on C, C waits on B; D waits on A only. All three are in A's way (Tue 27).
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		self._follower("TASK-D", "2026-10-27", "2026-10-27")
+		result = self._reschedule()
+		# Every task where it lands: A rescheduled, D cleared to Wed 28, B and C not drafted at all.
+		self.assertEqual(
+			self._drafted(), {"TASK-A": ("2026-10-26", "2026-10-27"), "TASK-D": ("2026-10-28", "2026-10-28")}
+		)
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-D"])
+		reasons = {skip["task"]: skip["reason"] for skip in result["shift_skipped"]}
+		# C is reached only through B, which stays: B's line names the whole loop.
+		self.assertEqual(set(reasons), {"TASK-B"})
+		self.assertEqual(
+			reasons["TASK-B"], "TASK-B and TASK-C wait on each other, so their dates were left as they are."
+		)
+
+	def test_what_follows_only_through_the_loop_stays_too(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		self._follower("TASK-E", "2026-10-27", "2026-10-27", on="TASK-C")
+		result = self._reschedule()
+		self.assertEqual(set(self._drafted()), {"TASK-A"})
+		self.assertNotIn("TASK-E", {m["task"] for m in result["shifted"]})
+
+	def test_a_task_that_waits_on_itself(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._depends("TASK-B", "TASK-B")
+		result = self._reschedule()
+		self.assertEqual(set(self._drafted()), {"TASK-A"})
+		self.assertEqual(
+			result["shift_skipped"][0]["reason"],
+			"TASK-B waits on itself, so its dates were left as they are.",
+		)
+
+	def test_finding_the_loops(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._follower("TASK-G", "2026-10-27", "2026-10-27", on="TASK-C")
+		self._depends("TASK-B", "TASK-G")  # B -> C -> G -> B
+		self._follower("TASK-D", "2026-10-27", "2026-10-27")
+		loops = self.api._follower_loops("TASK-A")
+		self.assertEqual(
+			loops, {name: ["TASK-B", "TASK-C", "TASK-G"] for name in ("TASK-B", "TASK-C", "TASK-G")}
+		)
+		self.assertEqual(self.api._follower_loops("TASK-A", exclude={"TASK-C"}), {})  # moved by the request
+
+
+class TestFollowersNamedOnlyWhenInTheWay(_OverdueFollowers):
+	"""v1.741.0: a Fountain Move or read-only follower that was already clear is not reported."""
+
+	def _fountain_move(self):
+		self.patches.append(
+			mock.patch.object(
+				h.api.fountain_move_jobs, "move_projects", lambda names: {"PRJ-3"} & set(names or ())
+			)
+		)
+		self.patches[-1].start()
+		self.projects["PRJ-3"] = {"custom_schedule_status": "Draft"}
+
+	def test_a_clear_fountain_move_is_not_named(self):
+		self._fountain_move()
+		h._task("TASK-M", start="2026-11-02", end="2026-11-02", crew=("RES-2",), project="PRJ-3")
+		self._depends("TASK-M", "TASK-A")
+		self.assertEqual(self._reschedule()["shift_skipped"], [])
+
+	def test_a_fountain_move_in_the_way_is_named(self):
+		self._fountain_move()
+		h._task("TASK-M", start="2026-10-27", end="2026-10-27", crew=("RES-2",), project="PRJ-3")
+		self._depends("TASK-M", "TASK-A")
+		self.assertEqual([skip["task"] for skip in self._reschedule()["shift_skipped"]], ["TASK-M"])
+
+	def test_a_clear_read_only_follower_is_not_named(self):
+		self._follower("TASK-R", "2026-11-02", "2026-11-02")
+		real = self.frappe.has_permission
+		self.frappe.has_permission = lambda doctype=None, ptype=None, doc=None, **k: doc != "TASK-R" and real(
+			doctype, ptype, doc=doc, **k
+		)
+		self.assertEqual(self._reschedule()["shift_skipped"], [])
+
+
+class TestOneLinePerWarning(_OverdueFollowers):
+	def test_a_follower_two_selected_tasks_move_says_each_line_once(self):
+		h._task("TASK-R", start="2026-09-28", end="2026-09-30", crew=("RES-1",), project="PRJ-2")
+		self._follower("TASK-F", "2026-10-27", "2026-10-27")
+		self._depends("TASK-F", "TASK-R")
+		# Lisa is overbooked wherever F is drafted away from its stored day: both passes say so.
+		self.batch_hook = lambda changes: (
+			{"Lisa Park": ["Over on Thu"]}
+			if any(
+				state.get("name") == "TASK-F"
+				and not str(state.get("exp_start_date")).startswith("2026-10-27")
+				for state, _crew in changes
+			)
+			else {}
+		)
+		result = self.api.bulk_update(json.dumps(["TASK-A", "TASK-R"]), "reschedule", "2026-10-26")
+		lines = [line for line in result["warnings"] if "Over on Thu" in line]
+		self.assertEqual(len(lines), 1, result["warnings"])
+
+
+class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
+	"""v1.741.0: what ERPNext v16's Task.validate_dates will refuse at Publish is said on the draft,
+	as a warning, rather than only when Publish fails and leaves the schedule Draft."""
+
+	def _refused(self, result):
+		return [line for line in result["warnings"] if "Publish will be refused" in line]
+
+	def test_a_drafted_reschedule_past_the_projects_end(self):
+		self.projects["PRJ-2"]["expected_end_date"] = "2026-10-26"
+		result = self._reschedule()
+		self.assertTrue(result["updated"][0]["drafted"])  # warned, never refused
+		self.assertEqual(
+			self._refused(result),
+			[
+				"Not published yet. ERPNext: Publish will be refused for Subject TASK-A: its end (2026-10-27) is"
+				" after project PRJ-2's expected end (2026-10-26)."
+			],
+		)
+
+	def test_a_drafted_move_before_the_projects_start(self):
+		self.projects["PRJ-2"]["expected_start_date"] = "2026-10-27"
+		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-26", "end": "2026-10-27"}]
+		result = _actions().move_many(json.dumps(moves), draft="auto")
+		self.assertTrue(result["drafted"])
+		self.assertIn(
+			"its start (2026-10-26) is before project PRJ-2's expected start", " ".join(result["warnings"])
+		)
+
+	def test_a_drafted_follower_past_its_parent_tasks_end(self):
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		result = self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+		self.assertIn(
+			"Publish will be refused for Subject TASK-B: its end (2026-10-29) is after its parent task TASK-P's"
+			" end (2026-10-28).",
+			" ".join(result["warnings"]),
+		)
+
+	def test_a_draft_that_breaks_nothing_says_nothing(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-01", expected_end_date="2026-12-31")
+		self.assertEqual(self._refused(self._reschedule()), [])
+
+	def test_only_a_date_that_moved_is_judged_but_end_before_start_always_is(self):
+		self.projects["PRJ-2"]["expected_end_date"] = "2026-10-01"
+		doc = h._Doc(name="T", project="PRJ-2", exp_start_date="2026-10-05", exp_end_date="2026-10-02")
+		stored = {"exp_start_date": "2026-10-05", "exp_end_date": "2026-10-02"}
+		self.assertEqual(
+			self.api.erpnext_date_problems(doc, stored),
+			["its end (2026-10-02) is before its start (2026-10-05)"],
+		)
+		# A new task (no stored row) is judged on every date.
+		self.assertEqual(len(self.api.erpnext_date_problems(doc)), 3)
 
 
 class TestADraftedRescheduleThenPublish(_OverdueFollowers):
@@ -1507,6 +1643,14 @@ class TestCopyWeekOnADraftSchedule(_P4):
 				self.assertTrue(result["created"][0]["drafted"])
 		self.assertEqual(self._inserted(), [])
 
+	def test_duplicate_with_no_flag_drafts_on_a_draft_schedule(self):
+		drafted = _actions().duplicate_task("TASK-8")
+		self.assertTrue(drafted["drafted"] and drafted["name"].startswith("draft-new:"))
+		live = _actions().duplicate_task("TASK-1")
+		self.assertNotIn("drafted", live)
+		self.assertEqual(len(self._inserted()), 1)
+		self.assertNotIn("drafted", _actions().duplicate_task("TASK-8", draft=0))  # explicit 0: live
+
 	def test_a_published_projects_copy_is_inserted_as_before(self):
 		result = self._copy(["TASK-1"], dry_run=0, draft="auto")
 		((created,),) = [result["created"]]
@@ -1578,6 +1722,49 @@ class TestSplitOnADraftSchedule(_P4):
 			_actions().split_task("TASK-8", "2026-10-13", BASE)
 
 
+class TestNoFlagMeansAuto(_P4):
+	"""v1.741.0: an unset draft flag drafts on a Draft schedule on every planner write, as it already did
+	for Split, Copy week and the Overdue tray. The audit found no caller relying on unset meaning live:
+	the two planner pages are the only callers. An explicit 0 still saves."""
+
+	def test_save_task_add_crew_swap_crew_and_move_many(self):
+		h._task("TASK-8", crew=("RES-1",), project="PRJ-2")
+		self.assertTrue(self.api.save_task("TASK-8", BASE, start="2026-10-19")["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		self.assertTrue(self.api.add_crew("TASK-8", "RES-2", BASE)["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		self.assertTrue(self.api.swap_crew("TASK-8", "RES-1", "RES-2", BASE)["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		moves = [{"task": "TASK-8", "modified": BASE, "start": "2026-10-19", "end": "2026-10-21"}]
+		self.assertTrue(_actions().move_many(json.dumps(moves))["drafted"])
+		self.assertEqual(self.frappe.saved, [])
+
+	def test_an_explicit_0_still_saves(self):
+		h._task("TASK-8", crew=("RES-1",), project="PRJ-2")
+		self.assertNotIn("drafted", self.api.save_task("TASK-8", BASE, start="2026-10-19", draft=0))
+		self.assertEqual(self._saves(), ["TASK-8"])
+
+	def test_a_published_schedule_saves_with_no_flag(self):
+		h._task("TASK-1", crew=("RES-1",))
+		self.assertNotIn("drafted", self.api.save_task("TASK-1", BASE, start="2026-10-19"))
+		self.assertEqual(self._saves(), ["TASK-1"])
+
+	def test_a_new_tasks_rule(self):
+		rule = self.api.drafts_new_task
+		self.assertEqual(
+			[rule(None, "PRJ-2"), rule("auto", "PRJ-2"), rule("", "PRJ-2"), rule(0, "PRJ-2")],
+			[True, True, True, False],
+		)
+		self.assertEqual([rule(None, "PRJ-1"), rule(1, "PRJ-1"), rule("0", "PRJ-1")], [False, True, False])
+		self.frappe.db.has_column = lambda doctype, column: column not in h.P3_COLUMNS
+		self.assertIs(rule(None, "PRJ-2"), False)  # before the P3 columns: live, as before
+
+	def test_the_three_creating_writes_use_it(self):
+		source = ACTIONS_PATH.read_text(encoding="utf-8")
+		self.assertNotIn("drafting = bool(cint(pp.given(draft)))", source)
+		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 3)
+
+
 class TestWiring(unittest.TestCase):
 	def _args(self, path, name):
 		fn = next(
@@ -1600,6 +1787,20 @@ class TestWiring(unittest.TestCase):
 		for name in ("bulk_update", "copy_week"):
 			names, defaults = self._args(API_PATH, name)
 			self.assertEqual(names[-1], "draft", name)
+			self.assertIsNone(defaults["draft"], name)
+
+	def test_every_planner_write_takes_draft_unset(self):
+		# v1.741.0: unset reads as "auto" (project_planner.unset_auto / drafts_new_task).
+		for path, name in (
+			(API_PATH, "save_task"),
+			(API_PATH, "add_crew"),
+			(API_PATH, "swap_crew"),
+			(ACTIONS_PATH, "move_many"),
+			(ACTIONS_PATH, "duplicate_task"),
+			(ACTIONS_PATH, "quick_add_task"),
+			(ACTIONS_PATH, "build_out_tasks"),
+		):
+			_names, defaults = self._args(path, name)
 			self.assertIsNone(defaults["draft"], name)
 
 	def test_the_maintenance_add_crew_takes_the_answer_too(self):

@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.741.0] - 2026-10-23
+
+Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
+
+### Changed
+- **No draft flag now means "auto" on every planner write.** This covers `save_task`, `add_crew`,
+  `swap_crew`, `move_many`, `duplicate_task`, `quick_add_task` and `build_out_tasks`.
+  - **What changed:** a write with no draft flag is drafted when the task's project schedule is
+    Draft, and saved otherwise (`project_planner.unset_auto`). For the three writes that create a
+    task, unset or `"auto"` drafts the new task on a Draft schedule (`drafts_new_task`). Before, they
+    took `draft=1` only. An explicit `draft=0` still saves, as before.
+  - **Why:** an unset flag used to mean "save it". So a client that sent none wrote live into a
+    schedule nobody had published, as Split, Copy week and the Overdue tray did before v1.740.0.
+  - **The page had the same gap.** The creating writes decide on the page (`draft_args`), from the
+    projects on the board. A quick add or a build out for a Draft-schedule job with no tasks on the
+    board yet sent no flag, and created live Tasks. The server now drafts those.
+  - **The caller audit** found no caller that relies on unset meaning live. It covered every page
+    (Lookahead, Gantt, Crew, Calendar, Today and the Maintenance Planner), every Python module, the
+    assistant and MCP tools, and the triton repo.
+    - Only the Project Planner page calls these writes.
+    - Every write except the creating ones already sends `draft="auto"`, or `1` under the hold,
+      through `with_draft`.
+    - The creating writes send `{draft: 1}` or nothing.
+    - Nothing sends an explicit 0.
+    - The assistant tools only read (`get_route`, `suggest_dates`, `who_is_free`), and triton calls
+      only `get_my_week`.
+    - The Maintenance Planner's own `add_crew` is a different endpoint, for visits, and is unchanged.
+- **ERPNext's own date checks now run on a draft, as warnings** (`erpnext_date_problems`).
+  - **Why:** a draft is never saved, so ERPNext's `Task.validate` doesn't see it until Publish.
+    Publish then refuses the task and leaves the project's schedule Draft, long after the scheduler
+    made the change.
+  - **What runs:** the three checks ERPNext v16 makes in `Task.validate_dates`, read from
+    `erpnext/projects/doctype/task/task.py` on `version-16`:
+    - the expected end is not before the start;
+    - the end is not after the parent task's end;
+    - neither date is outside the project's expected start and end.
+  - **When a date counts:** ERPNext refuses the last two only when that date changed
+    (`report_date_conflict`), so a date the draft did not move is not judged. A new task is judged
+    on every date.
+  - **What the scheduler sees:** a line under **ERPNext**, such as "Publish will be refused for
+    Pump set: its end (2026-10-27) is after project PRJ-00756's expected end (2026-10-26)". The
+    draft is never refused.
+  - **Where it runs:**
+    - every drafted edit of a task (`_store_draft`);
+    - its drafted followers (`_draft_checks`);
+    - drafted new tasks from quick add, duplicate and Copy week (`store_new_draft`), and a later
+      edit of one.
+
+    A build-out row carries no dates, so there is nothing to check there.
+  - Copy week now also passes on what each drafted copy's own draft says.
+- **A dependency loop among the followers of an overdue Reschedule now stays where it is**
+  (`_follower_loops`).
+  - **The problem:** ERPNext refuses a loop on save (`check_recursion`), but imported data can
+    carry one. The clear walk (v1.740.0) then pushed the loop's tasks past each other until its
+    limits stopped it. In the reviewer's example, B waits on A and C, and C waits on B: B was
+    drafted to 4 January 2027 and C to the day after, and the only note was "Too many tasks follow
+    it".
+  - **Now:** the loops are found first, from the same `Task Depends On` rows. Their tasks are left
+    as they are, with no drafts, and named: "TASK-B and TASK-C wait on each other, so their dates
+    were left as they are". A task that waits on itself says so too. The rest of the walk carries
+    on.
+  - Prod has no one-, two- or three-task loop today (the manager's check, 2026-10-23), so this only
+    guards imported data.
+- **A Fountain Move or read-only follower that was already clear** is no longer reported in
+  `shift_skipped`. It would not have moved, so there was nothing to say.
+- **A follower two selected overdue tasks both move** now gives each warning line once.
+
+### Notes
+- **Behavior change on prod after the deploy:**
+  - On a Draft-schedule project, a quick add or a build out for a project with no tasks on the
+    board now makes drafts where it made live Tasks. Publish creates them.
+  - Drafts whose dates ERPNext will refuse now say so when they are made.
+  - Published projects behave as before.
+- **Tests** in `tests/test_planner_autoshift.py`:
+  - a loop of two left put while another follower moves (every task's landing day asserted);
+  - what follows only through a loop stays;
+  - a task that waits on itself;
+  - finding a three-task loop, and an excluded task breaking it;
+  - a clear Fountain Move or read-only follower not named, and one in the way named;
+  - one warning line for a follower of two selected tasks;
+  - ERPNext's checks on a drafted Reschedule past the project's end, a drafted move before its
+    start, and a drafted follower past its parent's end; a draft that breaks nothing says nothing;
+    only a moved date is judged, but end-before-start always is;
+  - the no-flag rule on all seven writes; an explicit 0 saving; the new-task rule before the P3
+    columns exist.
+- Each new test fails with its fix disabled.
+- **Stub changes:**
+  - `test_planner_phase6b`'s stub, which `test_planner_build_out` and `test_planner_draft_new_tasks`
+    reuse, now reads a project's schedule as Published unless a test sets it. Those suites test the
+    live writes, and a blank status reads Draft.
+  - `test_planner_phase3b` and `test_planner_publish_baseline` now pin the writes' `draft` default as
+    unset. The read and the Maintenance Planner's `move_visit` keep 0.
+
 ## [1.740.0] - 2026-10-23
 
 Split, Copy week and the Overdue tray now respect a project's Draft schedule (D8) on the Project
