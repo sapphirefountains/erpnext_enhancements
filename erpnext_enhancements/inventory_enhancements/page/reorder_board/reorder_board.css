@@ -1,0 +1,141 @@
+/* Reorder Board (v1.730.0). A Desk Page's stylesheet is appended to <head> once and stays for the
+   whole Desk session, so every selector here starts with .rob-. Colors are the app tokens with the
+   Desk's own as fallback, so the page follows light and dark with the rest of the Desk. */
+
+.rob-app {
+	padding: var(--sf-space-20, 16px) 0 var(--sf-space-40, 32px);
+	color: var(--sf-text, var(--text-color));
+}
+
+.rob-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5, 4px);
+	margin-bottom: var(--sf-space-15, 12px);
+	border-bottom: 1px solid var(--sf-border, var(--border-color));
+}
+
+.rob-tab {
+	min-height: var(--sf-touch-min, 36px);
+	padding: 0 var(--sf-space-15, 12px);
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.rob-tab:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+}
+
+.rob-tab-active {
+	border-bottom-color: var(--sf-primary, var(--primary));
+	color: var(--sf-text, var(--text-color));
+}
+
+.rob-count {
+	display: inline-block;
+	min-width: 1.6em;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--sf-surface-muted, var(--subtle-fg));
+	font-size: 0.85em;
+	text-align: center;
+}
+
+.rob-intro {
+	max-width: 760px;
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.rob-note {
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-10, 8px);
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-surface-muted, var(--subtle-fg));
+}
+
+.rob-note-warn {
+	background: var(--sf-warning-subtle, var(--bg-yellow));
+}
+
+.rob-note ul {
+	margin: 6px 0 0;
+	padding-left: 20px;
+}
+
+/* The tables scroll inside their own box on a phone; the page itself never scrolls sideways. */
+.rob-scroll {
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.rob-table {
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.rob-table th {
+	white-space: nowrap;
+	font-weight: 600;
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.rob-table td {
+	vertical-align: top;
+}
+
+.rob-num {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.rob-check {
+	width: 28px;
+}
+
+.rob-check input {
+	width: 16px;
+	height: 16px;
+	margin: 2px 0 0;
+	cursor: pointer;
+}
+
+.rob-qty {
+	width: 88px;
+	margin-left: auto;
+	text-align: right;
+}
+
+.rob-sub {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: 0.85em;
+}
+
+.rob-actions {
+	white-space: nowrap;
+	text-align: right;
+}
+
+.rob-footer {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--sf-space-10, 8px);
+	padding: var(--sf-space-10, 8px) 0;
+	background: var(--sf-surface, var(--bg-color));
+	border-top: 1px solid var(--sf-border, var(--border-color));
+}
+
+.rob-selected {
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.rob-old-draft {
+	color: var(--sf-warning-text, var(--text-color));
+}

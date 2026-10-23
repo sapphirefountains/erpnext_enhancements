@@ -1,0 +1,196 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-22 18:00:00.000000",
+ "description": "The Reorder Board's memory of one item and warehouse while it is at or below its reorder point: since when, whether the daily digest has named it, and its snooze. Written by the board and its hourly job, never by hand.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "warehouse",
+  "column_break_main",
+  "below_since",
+  "alerted_on",
+  "snooze_section",
+  "snooze_kind",
+  "snoozed_until",
+  "snooze_projected_qty",
+  "column_break_snooze",
+  "snoozed_by",
+  "snoozed_on",
+  "snooze_ended_on",
+  "snooze_reason",
+  "request_section",
+  "last_request",
+  "last_request_ref"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Item",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Warehouse",
+   "options": "Warehouse",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "below_since",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Below Since",
+   "read_only": 1
+  },
+  {
+   "description": "When the daily digest named it. Blank: the next digest will.",
+   "fieldname": "alerted_on",
+   "fieldtype": "Datetime",
+   "label": "Alerted On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snooze_section",
+   "fieldtype": "Section Break",
+   "label": "Snooze"
+  },
+  {
+   "fieldname": "snooze_kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Snoozed",
+   "options": "\n1 week\n1 month\nUntil stock drops further",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snoozed_until",
+   "fieldtype": "Datetime",
+   "label": "Snoozed Until",
+   "read_only": 1
+  },
+  {
+   "description": "For \"Until stock drops further\": the snooze ends once the projected qty is below this.",
+   "fieldname": "snooze_projected_qty",
+   "fieldtype": "Float",
+   "label": "Projected Qty When Snoozed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_snooze",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "snoozed_by",
+   "fieldtype": "Link",
+   "label": "Snoozed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snoozed_on",
+   "fieldtype": "Datetime",
+   "label": "Snoozed On",
+   "read_only": 1
+  },
+  {
+   "description": "Set when a snooze ran out; the next digest names it under \"Snooze ended\".",
+   "fieldname": "snooze_ended_on",
+   "fieldtype": "Datetime",
+   "label": "Snooze Ended On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snooze_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": "Last Request"
+  },
+  {
+   "description": "The Draft Material Request the board made for it (Data, not a Link, so the request can still be deleted).",
+   "fieldname": "last_request",
+   "fieldtype": "Data",
+   "label": "Last Material Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_request_ref",
+   "fieldtype": "Data",
+   "label": "Board Request Id",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-22 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Reorder Watch",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase User",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_code",
+ "track_changes": 1
+}

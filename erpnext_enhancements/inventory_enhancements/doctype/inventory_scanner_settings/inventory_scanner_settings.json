@@ -22,7 +22,9 @@
   "stock_scan_disable_browser_back",
   "boneyard_warehouse",
   "item_naming_section",
-  "naming_digest_recipients"
+  "naming_digest_recipients",
+  "reorder_board_section",
+  "reorder_alert_role"
  ],
  "fields": [
   {
@@ -138,12 +140,25 @@
    "fieldname": "naming_digest_recipients",
    "fieldtype": "Small Text",
    "label": "Weekly Naming Digest Recipients"
+  },
+  {
+   "fieldname": "reorder_board_section",
+   "fieldtype": "Section Break",
+   "label": "Reorder Board"
+  },
+  {
+   "default": "Purchase Manager",
+   "description": "Who gets the Reorder Board's morning digest (email and the Desk bell) of items that newly fell below their reorder point: every enabled user with this role, except Administrator, Guest and the Triton service account. Blank means Purchase Manager.",
+   "fieldname": "reorder_alert_role",
+   "fieldtype": "Link",
+   "label": "Reorder Alert Role",
+   "options": "Role"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-22 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",
