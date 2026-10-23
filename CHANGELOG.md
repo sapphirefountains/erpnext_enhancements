@@ -65,8 +65,18 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - **What it widens to:** from the earliest to the latest of the task's set dates among the four,
     in the same transaction. It only ever widens. The sync hook then sets the authoritative value
     straight after the save.
-  - **Defensive, as doc_events here must be:** it reads with `getattr` and never raises. A widening
-    that fails is logged, and ERPNext then judges the save as it always did.
+  - **Defensive, as doc_events here must be:** it reads with `getattr`. A widening that fails for
+    an ordinary reason, such as a missing column during ERPNext's own test bootstrap or a bad
+    value, is logged, and ERPNext then judges the save as it always did.
+  - **Except when the database itself fails, which is raised:**
+    - a deadlock or a lock-wait timeout (`frappe.db.is_deadlocked` / `is_timedout`);
+    - any other `OperationalError` or `InternalError`, except a missing table or column.
+
+    After a deadlock, InnoDB has already rolled the whole transaction back. Swallowing the error
+    would let the request carry on in a fresh transaction and commit only what it wrote
+    afterwards, so a planner Publish would silently lose part of its batch. The Gantt's old code
+    never caught at all.
+  - It reads both of the project's dates in one `get_value`.
   - **The explicit calls stay:** the planner's `_save`/`_insert_doc` (and `bulk_update`'s and Copy
     week's own saves) and the Gantt still call it first. Widening twice is harmless, and their
     bench-free tests exercise it there.
@@ -134,9 +144,13 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     has an end.
   - The dedupe of warning lines merges identical lines from different tasks.
 - **Known limits of the widening:**
-  - It costs two small reads of the project's dates per Task save, four on a planner or Gantt
+  - It costs one small read of the project's dates per Task save, two on a planner or Gantt
     save, which calls it itself first. Caching them for the request would be unsafe: the sync hook
     narrows the window between saves in the same request.
+  - **Nothing widens a parent task.** ERPNext 16.50.0's `validate_parent_expected_end_date`
+    refuses any save of a task that ends after its parent task, changed or not. So a dependent that
+    ERPNext pushes past its parent's end, or a live save of legacy data already in that state, still
+    fails. For drafts the warning above says so beforehand.
   - `sync_project_dates_from_tasks` derives the window from the expected dates only. A widening
     for an *actual* date past them is undone by the sync after the save and made again on the next
     save of that task. That is two writes, and no failed save.
@@ -164,7 +178,9 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     too;
   - the Task `before_validate` hook: a Desk-style save past the end; an actual end past the end; a
     dependent ERPNext's reschedule pushes past the end; the start side; never inward; not a task or
-    no project; never raises (logged); registered in hooks.py;
+    no project; an ordinary failure is logged and swallowed, a missing column included; a deadlock,
+    a lock-wait timeout or an InternalError from the database is raised; both dates read at once;
+    registered in hooks.py;
   - widening, with ERPNext 16.50.0's refusal simulated on save (all four dates, every save):
     - live: the last task a day later, and the first a day earlier;
     - a crew-only edit of a task whose timesheets ran past the end;

@@ -142,6 +142,10 @@ class _P4(h._Base):
 		def get_value(doctype, name, field=None, *args, as_dict=False, **kwargs):
 			if doctype == "Project" and isinstance(field, str):
 				return (self.projects.get(name) or {}).get(field)
+			if doctype == "Project" and isinstance(field, list | tuple):
+				# As frappe answers several fields: a tuple, or None for a project that is not there.
+				project = self.projects.get(name)
+				return tuple(project.get(key) for key in field) if project is not None else None
 			if doctype == "Task" and isinstance(field, str):
 				row = self._stored(name)
 				return row.get(field) if row else None
@@ -2013,7 +2017,7 @@ class TestTheTaskHookWidensEverySave(_P4):
 		self.hook(types.SimpleNamespace(doctype="Task"))  # a doc without the fields at all
 		self.assertEqual(self.widened, [])
 
-	def test_it_never_raises(self):
+	def test_it_never_raises_on_anything_but_the_database_failing(self):
 		def boom(*args, **kwargs):
 			raise RuntimeError("no Project table yet (ERPNext's own test bootstrap)")
 
@@ -2021,6 +2025,58 @@ class TestTheTaskHookWidensEverySave(_P4):
 		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
 		self.assertEqual(self.widened, [])
 		self.assertTrue(self.frappe.errors)
+
+	def _mariadb(self):
+		"""``frappe.db``'s error kinds and checks, as frappe 16.50.0's MariaDBExceptionUtil has them."""
+
+		class OperationalError(Exception):
+			pass
+
+		class InternalError(Exception):
+			pass
+
+		db = self.frappe.db
+		db.OperationalError, db.InternalError = OperationalError, InternalError
+		db.is_deadlocked = lambda e: bool(e.args) and e.args[0] in (1213, 1020)
+		db.is_timedout = lambda e: bool(e.args) and e.args[0] == 1205
+		db.is_missing_table_or_column = lambda e: bool(e.args) and e.args[0] in (1054, 1146)
+		return OperationalError, InternalError
+
+	def test_a_deadlock_while_widening_is_raised(self):
+		# InnoDB has rolled the whole transaction back: carrying on would commit half a Publish.
+		operational, internal = self._mariadb()
+		for error in (
+			operational(1213, "Deadlock found when trying to get lock"),
+			operational(1205, "Lock wait timeout exceeded"),
+			internal(1927, "Connection was killed"),
+		):
+
+			def write(*args, error=error, **kwargs):
+				raise error
+
+			self.frappe.db.set_value = write
+			with self.subTest(error=error.args[0]), self.assertRaises(type(error)):
+				self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertEqual(self.frappe.errors, [])
+
+	def test_a_missing_column_is_still_swallowed(self):
+		operational, _internal = self._mariadb()
+
+		def read(*args, **kwargs):
+			raise operational(1054, "Unknown column 'expected_start_date' in 'field list'")
+
+		self.frappe.db.get_value = read
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertTrue(self.frappe.errors)
+
+	def test_both_dates_are_read_at_once(self):
+		reads = []
+		real = self.frappe.db.get_value
+		self.frappe.db.get_value = lambda doctype, name, field=None, *a, **k: reads.append(
+			(doctype, field)
+		) or real(doctype, name, field, *a, **k)
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-20"))
+		self.assertEqual(reads, [("Project", ("expected_start_date", "expected_end_date"))])
 
 	def test_it_is_the_tasks_before_validate_hook(self):
 		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))

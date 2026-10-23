@@ -46,8 +46,12 @@ def widen(project, start=None, end=None):
 	if not project:
 		return {}
 	start, end = _day(start), _day(end)
-	first = _day(frappe.db.get_value("Project", project, "expected_start_date"))
-	last = _day(frappe.db.get_value("Project", project, "expected_end_date"))
+	# One read of both. A tuple of fields: frappe 16.50.0's get_value turns a list into one anyway,
+	# and answers a tuple of values, or None for a project that is not there.
+	row = frappe.db.get_value("Project", project, ("expected_start_date", "expected_end_date"))
+	first, last = (
+		_day(value) for value in (row if isinstance(row, list | tuple) and len(row) == 2 else (None, None))
+	)
 	changed = {}
 	if start and first and start < first:
 		changed["expected_start_date"] = (first, start)
@@ -74,17 +78,54 @@ def widen_for_task(doc):
 	return widen(doc.get("project"), min(days), max(days))
 
 
+def _database_failed(exc):
+	"""Whether ``exc`` means the database itself failed, so the transaction cannot carry on: a deadlock
+	or a lock-wait timeout (InnoDB has already rolled the whole transaction back by then), or any
+	other ``OperationalError`` / ``InternalError`` of the connection. Read off ``frappe.db`` as frappe
+	16.50.0 exposes them (``frappe/database/mariadb/database.py``: ``MariaDBExceptionUtil``). A missing
+	table or column is not that: it is what ERPNext's own test bootstrap meets before this app's fields
+	exist, and the statement failing does not end the transaction."""
+	db = getattr(frappe, "db", None)
+	for name in ("is_deadlocked", "is_timedout"):
+		check = getattr(db, name, None)
+		try:
+			if callable(check) and check(exc):
+				return True
+		except Exception:
+			pass
+	kinds = tuple(
+		kind
+		for kind in (getattr(db, "OperationalError", None), getattr(db, "InternalError", None))
+		if isinstance(kind, type) and issubclass(kind, BaseException)
+	)
+	if not kinds or not isinstance(exc, kinds):
+		return False
+	missing = getattr(db, "is_missing_table_or_column", None)
+	try:
+		return not (callable(missing) and missing(exc))
+	except Exception:
+		return True
+
+
 def before_task_validate(doc, method=None):
 	"""Task ``before_validate`` doc_event (hooks.py, v1.742.0): :func:`widen_for_task` before ERPNext's
 	own ``validate`` judges the task against its project's window. Defensive, as doc_events here must
 	be (they fire during ERPNext's own test bootstrap, before this app's fields exist): attributes are
-	read with ``getattr``, and nothing raises. A widening that fails is logged and the save goes on, to
-	be judged by ERPNext as it always was."""
+	read with ``getattr``, and a widening that fails for any other reason (a missing column, a bad
+	value) is logged and the save goes on, to be judged by ERPNext as it always was.
+
+	**Except a failure of the database itself** (:func:`_database_failed`), which is raised: after a
+	deadlock or a lock-wait timeout InnoDB has rolled the whole transaction back, and carrying on would
+	commit only what the request writes afterwards, so a planner Publish would silently lose part of
+	its batch. Raised, the request fails whole and Frappe's own retry or the person's next try starts
+	clean, as the Gantt's call (which never caught anything) always did."""
 	try:
 		if getattr(doc, "doctype", None) != "Task" or not getattr(doc, "project", None):
 			return
 		widen_for_task(doc)
-	except Exception:
+	except Exception as exc:
+		if _database_failed(exc):
+			raise
 		try:
 			frappe.log_error(
 				title="Task: the project's window could not be widened", message=frappe.get_traceback()
