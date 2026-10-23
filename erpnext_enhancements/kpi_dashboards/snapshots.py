@@ -490,6 +490,20 @@ def _store_run_rows(suppliers, since):
 	return charges, receipts
 
 
+#: Which ``Item Reorder`` rows are a rule (alias ``r``): ERPNext's own trigger test,
+#: ``reorder_level or reorder_qty`` (``erpnext/stock/reorder_item.py``; the Reorder Board's
+#: ``reorder_rules.is_below`` has the same). Before v1.732.0 the stock KPIs asked for a level above 0,
+#: so an item reordered "when it runs out" (level 0 with a Buy above 0, allowed since v1.728.0) was
+#: not a stocked item and dropped out of every count. The quantity is an alternative to the level and
+#: not a replacement for it, so a rule that only ever had a level still counts, as before.
+STOCKED_RULE_SQL = "(coalesce(r.warehouse_reorder_level,0) > 0 or coalesce(r.warehouse_reorder_qty,0) > 0)"
+
+#: What the item has on hand: actual qty summed over every bin. Not the Reorder Board's projected qty
+#: per warehouse or group (which counts open orders), so the KPI and the board differ by design: with
+#: ``<=`` against this figure 30 more prod items counted as below, nearly all with orders already open.
+ON_HAND_SQL = "coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0)"
+
+
 def _operations_metrics():
 	"""Operations — inventory and purchasing, since v1.530.0.
 
@@ -502,9 +516,9 @@ def _operations_metrics():
 	The inventory set answers the plan's three questions. *Are we making store runs?* (store
 	runs and their spend.) *Is the shelf stocked?* (stocked items below reorder or out.) *Is
 	the record true?* (stock at a placeholder cost, unpriced PO lines, count coverage, and the
-	queue of adds nobody has reviewed.) "Stocked item" means an Item with a positive reorder
-	level: that is ERPNext's own marker for "we keep this on the shelf", so no second list
-	exists to drift from it.
+	queue of adds nobody has reviewed.) "Stocked item" means an Item with a reorder rule
+	(:data:`STOCKED_RULE_SQL`, a rule at level 0 included since v1.732.0): that is ERPNext's own
+	marker for "we keep this on the shelf", so no second list exists to drift from it.
 	"""
 	today = getdate(nowdate())
 	d30 = add_days(today, -30)
@@ -524,15 +538,18 @@ def _operations_metrics():
 		add("store_runs_30", "Store Runs (30d)", runs, "count", STORE_RUN_SOURCE, metrics.LOWER)
 		add("store_run_spend_30", "Store-Run Spend (30d)", spend, "USD", STORE_RUN_SOURCE, metrics.LOWER)
 
-	# --- stock levels (moved from Product, definitions unchanged) ---
+	# --- stock levels (moved from Product; "stocked" is any reorder rule since v1.732.0, and a rule
+	#     at level 0 counts as below when the item is out). Quantities are actual qty summed over
+	#     every bin, not the Reorder Board's projected qty per warehouse or group. ---
 	if _exists("Item Reorder") and _exists("Bin") and frappe.db.has_column("Item Reorder", "warehouse_reorder_level"):
 		add(
 			"items_below_reorder",
 			"Stocked Items Below Reorder",
 			_scalar(
 				"select count(distinct r.parent) from `tabItem Reorder` r "
-				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
-				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) < r.warehouse_reorder_level"
+				"where " + STOCKED_RULE_SQL + " and ("
+				+ ON_HAND_SQL + " < coalesce(r.warehouse_reorder_level,0) or "
+				"(coalesce(r.warehouse_reorder_level,0) = 0 and " + ON_HAND_SQL + " <= 0))"
 			),
 			"count",
 			"Item Reorder",
@@ -543,7 +560,7 @@ def _operations_metrics():
 			"Stocked Items Out of Stock",
 			_scalar(
 				"select count(distinct r.parent) from `tabItem Reorder` r "
-				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
+				"where " + STOCKED_RULE_SQL + " and "
 				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) <= 0"
 			),
 			"count",
@@ -554,15 +571,13 @@ def _operations_metrics():
 		# Stock Reconciliation (the count page finalizes into one, and the opening stock went in
 		# as four), so the stock ledger is the one place every count shows up.
 		stocked = flt(
-			_scalar(
-				"select count(distinct parent) from `tabItem Reorder` where coalesce(warehouse_reorder_level,0) > 0"
-			)
+			_scalar("select count(distinct r.parent) from `tabItem Reorder` r where " + STOCKED_RULE_SQL)
 		)
 		if stocked:
 			counted = flt(
 				_scalar(
 					"select count(distinct r.parent) from `tabItem Reorder` r "
-					"where coalesce(r.warehouse_reorder_level,0) > 0 and exists ("
+					"where " + STOCKED_RULE_SQL + " and exists ("
 					"select 1 from `tabStock Ledger Entry` sle where sle.item_code = r.parent "
 					"and sle.voucher_type = 'Stock Reconciliation' and sle.is_cancelled = 0 "
 					"and sle.posting_date >= %(d)s)",

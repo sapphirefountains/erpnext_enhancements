@@ -29,7 +29,7 @@
   },
   "is_stock_item": {
    "hint": "Tick for parts we keep on a shelf and count; not for services or assets",
-   "help": "A stock item has quantities in bins, shows in Stock Scan and can be reordered automatically. Services and fixed assets are not stock. It cannot be changed once stock has moved, so decide before the first receipt."
+   "help": "A stock item has quantities in bins, shows in Stock Scan and can be put on the Reorder Board. Services and fixed assets are not stock. It cannot be changed once stock has moved, so decide before the first receipt."
   },
   "is_fixed_asset": {
    "hint": "Tick for equipment we own and track as an Asset, such as a rental fountain",
@@ -57,7 +57,7 @@
   },
   "lead_time_days": {
    "hint": "How many days the supplier usually takes to deliver",
-   "help": "Automatic reorders set their Required By date this many days ahead, so a rough figure is better than none."
+   "help": "A reorder created from the Reorder Board sets its Required By date this many days ahead, so a rough figure is better than none."
   },
   "last_purchase_rate": {
    "hint": "Set by ERPNext from the last purchase; nothing to enter",
@@ -73,7 +73,7 @@
   },
   "reorder_levels": {
    "hint": "Per bin: when stock falls to the level, request the quantity",
-   "help": "Each row is one bin, with its reorder level, the quantity to request and the kind of request. The block above writes the row for the default bin; add rows here for other bins. Requests are raised only while automatic reordering is on in Stock Settings."
+   "help": "Each row is one bin, with its reorder level, the quantity to request and the kind of request. The block above writes the row for the default bin; add rows here for other bins. ERPNext raises no request from a row on its own: an item at or below its level appears on the Reorder Board, and a buyer creates the request there."
   },
   "auto_create_assets": {
    "hint": "Tick to have a purchase receipt create an Asset for each one received",

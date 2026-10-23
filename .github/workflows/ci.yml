@@ -3587,6 +3587,14 @@ jobs:
       # its tabs as history entries. Own frappe stub, so its own step; unittest classes.
       - name: Reorder Board (ERPNext's reorder rule, Draft requests, snoozes, digest, patches)
         run: python -m unittest erpnext_enhancements.tests.test_reorder_board -v
+      # A reorder rule counts by existing (v1.732.0). "Reorder at" may be 0 since v1.728.0, but the Operations KPIs
+      # (Stocked Items Out of Stock / Below Reorder / Counted 90d) still asked for a level above 0, so an item reordered
+      # "when it runs out" was not a stocked item. Runs the real _operations_metrics on SQLite tables
+      # (tests/sqlite_sql_helper.py): a level-0 rule with a quantity joins every count, a level-only rule stays in, a
+      # row with neither is not a rule, and the four queries share one definition. The Stock Scan half is in
+      # test_bin_manager. Own frappe stub, so its own step.
+      - name: Reorder rule counts (KPI stocked items, bench-free, SQLite)
+        run: python -m unittest erpnext_enhancements.tests.test_reorder_rule_counts -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

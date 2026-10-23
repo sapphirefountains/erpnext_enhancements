@@ -41,6 +41,19 @@ const ISA_METHOD = 'erpnext_enhancements.api.inventory_scanner.';
 // kept for good in the same per-user store as the planners' saved views (api/planner_views_prefs.py).
 const ISA_REORDER_PREF = 'erpnext_enhancements.api.planner_views_prefs.set_show_reorder';
 const ISA_ROUTE = 'inventory-scanner-audit';
+// The Reorder Board (v1.730.0): where buyers pick reorders now that ERPNext no longer raises them on its own. The
+// button shows only to the roles that may open that page (BOARD_ROLES in inventory_enhancements/reorder_board.py,
+// which tests/test_bin_manager.py pins this list to); the page is gated on the server too. The check is the Desk's
+// own (frappe.user), never a read of a Settings Single.
+const ISA_BOARD_ROUTE = 'reorder-board';
+const ISA_BOARD_ROLES = ['Purchase Manager', 'Purchase User', 'Stock Manager', 'System Manager'];
+function isa_can_open_board() {
+	try {
+		return ISA_BOARD_ROLES.some((role) => !!(frappe.user && frappe.user.has_role(role)));
+	} catch (e) {
+		return false;
+	}
+}
 const ISA_SHEETS = ['camera', 'find'];
 // How long to wait for the router to land our own history.back() before going on without it.
 const ISA_BACK_TIMEOUT_MS = 1500;
@@ -397,7 +410,16 @@ class InventoryScanner {
 		// A sheet has just closed: focus stays where closing it left it (the counted-qty box,
 		// after a read of an item). The wedge scanner's focus comes back with the next scan.
 		if (sheet || came) return;
-		this.focusScan();
+		// Coming back from another page (the Reorder Board, say) with an item card waiting for its count: the
+		// counted-qty box, so the number is typed where it was left. The scan box takes it only when no card waits.
+		this.focusCount();
+	}
+
+	focusCount() {
+		setTimeout(() => {
+			if (this.state.pendingItem) this.$pending.find('.isa-qty').focus();
+			else if (this.$scan) this.$scan.focus();
+		}, 50);
 	}
 
 	// Forward onto a sheet Back closed: open it again on its entry. False when it cannot be.
@@ -422,6 +444,7 @@ class InventoryScanner {
 					<div class="isa-status"></div>
 					<div class="isa-actions">
 						<button type="button" class="btn btn-sm btn-default isa-toggle" aria-pressed="false">${__('Show reorder levels')}</button>
+						<button type="button" class="btn btn-sm btn-default isa-board">${__('Reorder Board')}</button>
 						<button class="btn btn-sm btn-primary isa-start">${__('Start Session')}</button>
 						<button class="btn btn-sm btn-default isa-cancel">${__('Cancel')}</button>
 					</div>
@@ -456,6 +479,12 @@ class InventoryScanner {
 		this.$toggle.hide(); // only once the reorder editor is here (renderControls)
 		this.$toggle.on('mousedown', (e) => e.preventDefault()); // a tap must not take the focus off the count
 		this.$toggle.on('click', () => this.toggleReorder());
+		// The Reorder Board: its own history entry (Back returns to the count, which is kept on the server). A tap
+		// must not take the focus off the scan box or the counted-qty box, as the switch above.
+		this.$board = $b.find('.isa-board');
+		this.$board.toggle(isa_can_open_board());
+		this.$board.on('mousedown', (e) => e.preventDefault());
+		this.$board.on('click', () => frappe.set_route(ISA_BOARD_ROUTE));
 		this.$cancel = $b.find('.isa-cancel');
 		this.$finbar = $b.find('.isa-finbar');
 		this.$finsum = $b.find('.isa-finsum');
@@ -969,7 +998,7 @@ class InventoryScanner {
 .isa{max-width:680px;margin:0 auto;padding:6px 2px 90px;}
 .isa-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
 .isa-status{font-size:13px;color:var(--text-muted);}
-.isa-actions{display:flex;gap:6px;}
+.isa-actions{display:flex;flex-wrap:wrap;gap:6px;}
 .isa-scanrow{display:flex;gap:8px;margin-bottom:10px;}
 .isa-scan{flex:1 1 auto;min-width:0;font-size:18px;padding:12px 14px;border:2px solid var(--border-color);border-radius:10px;background:var(--control-bg,var(--bg-color));color:var(--text-color);}
 .isa-scan:focus{border-color:var(--primary);outline:none;}

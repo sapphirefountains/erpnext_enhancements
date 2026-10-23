@@ -189,6 +189,8 @@ ITEM_KEYS = {
 	"is_stock_item",
 	"store_run_ok",
 	"reorder_level",
+	# whether it has a reorder rule, level 0 included: what makes it a stocked item (v1.732.0)
+	"has_reorder_rule",
 	# bin assignments: "Remove from this bin" shows by any of the three (v1.692.0), also on an
 	# item reached from Recent or "Where is it?", where no bin list is underneath
 	"assigned",

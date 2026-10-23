@@ -534,9 +534,28 @@ def _plain_description(item):
 	return text[:280] + ("…" if len(text) > 280 else "")
 
 
+def _has_reorder_rule(item_code):
+	"""Whether the item has a reorder rule in ERPNext, which makes it a *stocked item*: the KPI
+	dashboard's own definition (``snapshots.STOCKED_RULE_SQL``), and the store-run reason is read
+	against it. A rule exists when it has a level above 0 or a quantity to buy, ERPNext's own
+	trigger test (``reorder_level or reorder_qty``): a rule that reorders at 0, allowed since
+	v1.728.0, is a rule. Reading the level alone (:func:`_reorder_level`) called that item unstocked
+	until v1.732.0."""
+	row = frappe.db.sql(
+		"""
+		select 1 from `tabItem Reorder`
+		where parent = %(item)s and parenttype = 'Item'
+		and (coalesce(warehouse_reorder_level, 0) > 0 or coalesce(warehouse_reorder_qty, 0) > 0)
+		limit 1
+		""",
+		{"item": item_code},
+	)
+	return bool(row)
+
+
 def _reorder_level(item_code):
-	"""The item's highest reorder level in ERPNext: above 0 makes it a *stocked item*, the KPI
-	dashboard's own definition, and the store-run reason is read against it."""
+	"""The item's highest reorder level in ERPNext, for the card and the log line to show. It is
+	not the test for a stocked item (a rule at 0 has level 0): that is :func:`_has_reorder_rule`."""
 	row = frappe.db.sql(
 		"""
 		select max(coalesce(warehouse_reorder_level, 0)) from `tabItem Reorder`
@@ -568,6 +587,8 @@ def _item_payload(item_code, location=None):
 		"is_stock_item": cint(item.is_stock_item),
 		"store_run_ok": store_run_refusal is None,
 		"reorder_level": _reorder_level(item.name),
+		# Whether it is a stocked item (v1.732.0): a rule at level 0 has "reorder_level" 0 and is one.
+		"has_reorder_rule": cint(_has_reorder_rule(item.name)),
 		"warehouse": None,
 		"warehouse_name": None,
 		"on_hand": None,

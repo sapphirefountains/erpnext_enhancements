@@ -38,8 +38,12 @@ Setting the same numbers again changes nothing and saves nothing (the Item's ``m
 still, so other open copies of it stay current), which also makes a resend after a lost reply
 harmless: these are absolute values, not increments.
 
-**What a rule may be (review of #1338, 2026-10-22).** ``Stock Settings.auto_indent`` is on, so every
-rule this module writes drives the nightly automatic Material Requests (ERPNext submits them):
+**What a rule may be (review of #1338, 2026-10-22).** Since v1.730.0
+``Stock Settings.auto_indent`` is off (``patches/disable_auto_material_requests``), so ERPNext raises no Material
+Request from a rule on its own. Every rule this module writes drives the **Reorder Board** and its daily digest
+to Purchase Managers (``inventory_enhancements/reorder_board.py``): a buyer picks from the board and creates
+the Draft request. (This module was written while auto-indent was on and the same limits were reviewed for
+that; they stand, because a wrong rule still puts the wrong lines in front of a buyer.)
 
 * **Both numbers given; Buy above 0; Reorder at may be 0.** A rule is made only when the level *and*
   the quantity are given. ``warehouse_reorder_qty`` is never saved as 0 or less: a rule that buys
@@ -49,11 +53,12 @@ rule this module writes drives the nightly automatic Material Requests (ERPNext 
   reorder items." The review of #1338 had refused a level of 0 as a request raised "whenever stock
   reaches 0"; that is exactly what he wants. ERPNext's trigger (``erpnext/stock/reorder_item.py``,
   version-16) is ``if (reorder_level or reorder_qty) and projected_qty <= reorder_level``, and
-  ``get_items_for_reorder`` does not filter on level > 0: a rule at 0 with a quantity raises a Material
-  Request once projected stock reaches 0 or below, and because projected stock counts open Material
-  Requests and Purchase Orders it does not raise a second one. A level below 0 is still refused.
-  (Known: the KPI dashboards and ``stock_scan._reorder_level`` call an item *stocked* when its level
-  is above 0, so an item reordered at 0 is not counted as stocked there.)
+  ``get_items_for_reorder`` does not filter on level > 0: a rule at 0 with a quantity is below its
+  reorder point once projected stock reaches 0 or below (the Reorder Board lists it by the same rule),
+  and because projected stock counts open Material Requests and Purchase Orders it is not offered a
+  second time. A level below 0 is still refused. (A rule counts as a rule when it exists, level 0
+  included: the KPI dashboards' "stocked items" and the Stock Scan reason read it that way since
+  v1.732.0.)
 * **A sane ceiling** (:data:`MAX_AMOUNT`, ``stock_scan_rules.MAX_QTY``, 100,000): a barcode scanned
   into a focused box and followed by the scanner's Enter is a number of twelve digits. And a unit
   that is counted in whole numbers (``UOM.must_be_whole_number``) takes whole numbers.

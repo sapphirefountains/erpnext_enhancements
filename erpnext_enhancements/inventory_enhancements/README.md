@@ -384,8 +384,8 @@ out: undo the run's lines. Undone lines do not count toward the header, so a run
 reopens as a new run's header **prefilled with the old values** (`logic.reopenedDraft`), under the
 same run id, to correct and record again. Past the undo window, Purchasing.
 
-**The reason** starts from the item: a reorder level above 0 is a *stocked item* (the KPI's own
-definition), so buying it means *A stocked item was out* (Purchasing raises the minimum); anything
+**The reason** starts from the item: an item with a reorder rule (a level above 0, or a quantity to buy
+with the level at 0: `stock_scan._has_reorder_rule`) is a *stocked item* (the KPI's own definition), so buying it means *A stocked item was out* (Purchasing raises the minimum); anything
 else, and every new item, is *Not something we stock* (twice in 60 days means add it to the kit);
 *Only for this job* is fine. A choice that contradicts the item is pointed out, not refused, and the
 reorder level seen is stored on the line (`reorder_level_seen`). `repeat_unstocked` flags the
@@ -621,11 +621,17 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
 * **Which rule.** The rule on the warehouse on screen; failing that the item's own rule wherever it is,
   labelled with its warehouse and edited there; an item with none gets a Purchase rule on the bin once
   both numbers are given.
-* **What a rule may be.** Automatic re-ordering is on (`Stock Settings`), so a bad rule orders stock:
-  a rule needs **both** numbers; **Buy must be above 0, Reorder at may be 0** (Nik, 2026-10-22: running out
-  of all stock is a normal place to reorder; ERPNext reorders when projected stock is at or below the level, so
-  0 raises one request when it runs out, and open requests and orders count, so not two). A blank box is not a
-  0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. Clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
+* **What a rule drives.** Since v1.730.0 ERPNext raises no Material Request from a rule on its own
+  (`Stock Settings.auto_indent` is off): a rule puts the item on the **Reorder Board** and in its daily
+  digest to Purchase Managers (see *The Reorder Board* below), and a buyer creates the request. Both
+  audit screens link to the board for the roles that may open it. A bad rule still sends a buyer after
+  stock nobody wanted.
+* **What a rule may be.** A rule needs **both** numbers; **Buy must be above 0, Reorder at may be 0**
+  (Nik, 2026-10-22: running out of all stock is a normal place to reorder; a rule is below its point when
+  projected stock is at or below the level, so 0 lists the item when it runs out, and open requests and
+  orders count, so it is not offered twice). A rule counts as a rule by existing, level 0 included: the
+  KPI "stocked items" and the Stock Scan reason read it that way (v1.732.0). A blank box is not a
+  0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. `remove_reorder_rule` takes
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
   neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules

@@ -8,11 +8,12 @@
  *     material_request_type, modified, stock_uom, whole_number }
  * `level` is the reorder level (buy more when the stock falls to it) and `qty` how many to buy.
  *
- * WHAT A RULE MAY BE. Automatic reordering is on, so a rule that is wrong orders stock nobody wanted: a
- * rule needs BOTH numbers; "Buy" must be above 0; "Reorder at" may be 0 (Nik, 2026-10-22: "The reorder at
+ * WHAT A RULE MAY BE. Since v1.730.0 a rule no longer orders anything by itself (ERPNext's automatic
+ * reordering is off): it puts the item on the Reorder Board and in the daily digest to Purchase Managers, where
+ * a buyer decides. A wrong rule still sends a buyer after stock nobody wanted, so: a rule needs BOTH numbers; "Buy" must be above 0; "Reorder at" may be 0 (Nik, 2026-10-22: "The reorder at
  * line is refusing to be assigned a 0 even though running out of all stock is a very normal spot to
- * reorder items." ERPNext reorders when projected stock <= the level, so 0 means "when it runs out", and
- * projected stock counts open requests and orders, so it does not ask twice). A blank box is NOT a 0: a
+ * reorder items." The rule is below its point when projected stock <= the level, so 0 means "when it runs out",
+ * and projected stock counts open requests and orders, so the board does not offer it twice). A blank box is NOT a 0: a
  * blank box of an existing rule asks to REMOVE it, a "0" is a level. Neither number may be above
  * MAX_AMOUNT, because a barcode scanned into a focused box is twelve digits.
  */

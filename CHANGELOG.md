@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.732.0] - 2026-10-23
+
+Follow-ups to the Reorder Board (v1.730.0) that it and the reorder switch (v1.728.0) left open. No new
+endpoint, no patch, no data change.
+
+### Added
+- **A "Reorder Board" button on the Bin Manager and the Inventory Scanner Audit** (TASK-2026-02924,
+  TASK-2026-02920). #1347 left both pages alone because #1345 was editing them. On the Bin Manager it sits in the
+  picker's toolbar beside the filter box and in a bin's action row; on the Scanner Audit it is in the bar beside the
+  reorder switch. It is one `frappe.set_route("reorder-board")`, so the board is its own history entry and Back lands
+  on the same bin or count (a count is kept on the server, so leaving it loses nothing). It shows only to the roles
+  the board admits (`reorder_board.BOARD_ROLES`: Purchase Manager, Purchase User, Stock Manager, System Manager),
+  checked with the Desk's own `frappe.user.has_role`, never a Settings read; a role check that throws hides the
+  button and breaks nothing. On the Scanner Audit a tap does not take the focus off the scan box or the quantity
+  box (`mousedown` is cancelled, as on the reorder switch). The board is gated on the server too: this only keeps a
+  link that would end in "no permission" off the screen. `tests/test_bin_manager.py` pins both role lists to
+  `BOARD_ROLES` and to the board page's own roles. Coming back to the Scanner Audit from another page (the board
+  included) with an item card waiting for its count now focuses that card's counted-qty box, so the number is
+  typed where it was left; the scan box takes the focus only when no card waits (it used to take it always).
+
+### Fixed
+- **A reorder rule counts as a rule by existing, level 0 included** (the known gap #1345 named in 1.728.0).
+  "Reorder at" may be 0 since v1.728.0, but two counts still asked for a level *above* 0, so an item reordered
+  "when it runs out" was not a stocked item:
+  - the Operations KPIs `Stocked Items Out of Stock`, `Stocked Items Below Reorder` and `Stocked Items Counted
+    (90d)` (`kpi_dashboards/snapshots.py`, now one definition, `STOCKED_RULE_SQL`, shared by all four queries);
+  - the Stock Scan store run's suggested reason ("A stocked item was out" against "Not something we stock") and its
+    contradiction warning (`stock_scan._has_reorder_rule`, `has_reorder_rule` on the item card, `stockedItem` in
+    `public/js/stock_scan/logic.js`). A card from before this release has no flag, and falls back to the level.
+
+  **What counts as a rule** is ERPNext's own trigger test, `reorder_level or reorder_qty`
+  (`erpnext/stock/reorder_item.py`; `reorder_rules.is_below` has the same): a level above 0, or a quantity to
+  buy. It is "or" and not "Buy above 0" alone so that nothing leaves a count: a rule that only ever had a level
+  (older rows, written before a rule needed both numbers) stays in, a level-0 rule with a quantity joins, and a
+  row with neither is still not a rule. *Out* is still `on hand <= 0` and *counted* is
+  still a Stock Reconciliation in the last 90 days. The tests run the real queries on SQLite
+  (`tests/sqlite_sql_helper.py`): they fail on 1.730.0 (the level-0 item was absent from the out count, and the
+  coverage share was 33.3% for 40.0%).
+- **`Stocked Items Below Reorder` counts a rule at level 0 as below when the item is out.** The test is `on hand <
+  level`, as before, or `level = 0 and on hand <= 0`: a rule at 0 means "reorder when out", and with `<` alone it
+  could never count (prod allows no negative stock). It is deliberately not `<=` for every rule. The KPI tests
+  actual qty summed over every bin, while the Reorder Board tests *projected* qty (open orders counted) per
+  warehouse or group, so the two differ by design and are not the same list: measured on prod in that review, `<=` took the
+  count from 31 to 61, +30 items whose summed on hand equals their level (mostly level 1 with 1 on hand), nearly
+  all with orders already open. Pinned: level 0 with 0 on hand is below, level 0 with 1 is not, level 5 with 5 is
+  not, level 5 with 4 is.
+- **Prod effect on the next nightly snapshot (measured in the independent review of #1349).** One rule at level 0 exists
+  (3ED71A on Bin A1-3-3, 1 on hand). Stocked Items Below Reorder 31 → 31; Out of Stock 19 → 19; the stocked
+  denominator 115 → 116, because 3ED71A now counts as stocked; Counted (90d) 37.39% → 37.07%. A rule saved at 0
+  later moves the counts by one item each.
+
+### Changed
+- **Text that said automatic reordering is on.** Since v1.730.0 `Stock Settings.auto_indent` is off and a rule puts
+  the item on the Reorder Board, where a buyer decides. Corrected: the reorder-levels section of
+  `inventory_enhancements/README.md`, the `api/reorder_levels.py` module docstring, the
+  `reorder_levels/logic.js` header, `kpi_dashboards/README.md` and the Operations docstring, and the Item form's help text
+  (`form_kit/help_text/item.json`: the Stock-item, Lead-time and Reorder-levels rows).
+- **The guided Item page's note under "Where it is kept"** (`guided_item/extension.js`, from `api/item_flow.py`'s
+  `auto_reorder` flag) said, with auto-indent off, "a reorder level is recorded, but nothing is requested until it
+  is turned on", which sent people to switch it back on. It now says a level puts the item on the Reorder Board and
+  a buyer creates the request, and, if auto-indent is ever on again, that ERPNext also raises requests itself.
+  `auto_reorder` still reports the setting; only what it is used to say changed.
+- The `Stock Scan Log.reorder_level_seen` field description says a stocked item is one with a rule (a text change;
+  the field still stores the level).
+
 ## [1.731.0] - 2026-10-23
 
 ### Added

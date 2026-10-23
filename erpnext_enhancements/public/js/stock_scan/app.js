@@ -2482,7 +2482,7 @@ export class StockScanApp {
 	 * as it is taken), its total with tax (required) and its number (optional). The line is the
 	 * item, how many, the price each before tax, why, and the job — or an explicit "No job: safety
 	 * or shop", so a blank is a decision (POL-0602 §4.7 asks for the job). The reason starts from
-	 * the item: a stocked item (a reorder level above 0) "was out", anything else is "not
+	 * the item: a stocked item (one with a reorder rule) "was out", anything else is "not
 	 * something we stock", and a contradiction is pointed out, not refused.
 	 *
 	 * A run's header is its first Posted line's (`api.stock_scan._run_head`). A run whose every
@@ -2535,7 +2535,7 @@ export class StockScanApp {
 			checking: false,
 			checkAgain: false,
 			checkTimer: null,
-			reason: last && last.reason === REASON_ONLY_THIS_JOB ? last.reason : suggestedReason(c.item ? c.item.reorder_level : 0, !c.item),
+			reason: last && last.reason === REASON_ONLY_THIS_JOB ? last.reason : suggestedReason(c.item ? c.item.reorder_level : 0, !c.item, c.item ? c.item.has_reorder_rule : undefined),
 			reasonTouched: false,
 			job: last ? last.job : this.job ? { project: this.job.project, project_name: this.job.project_name } : null,
 			noJob: last ? !!last.noJob : false,
@@ -2863,7 +2863,7 @@ export class StockScanApp {
 				s.newItem = null;
 				s.check = null;
 				quick = null;
-				if (!s.reasonTouched) s.reason = suggestedReason(found.reorder_level, false);
+				if (!s.reasonTouched) s.reason = suggestedReason(found.reorder_level, false, found.has_reorder_rule);
 				drawItem();
 				drawHints();
 				drawQty();
@@ -3007,7 +3007,7 @@ export class StockScanApp {
 				group.appendChild(row);
 			}
 			reasonBox.appendChild(group);
-			const warning = reasonWarning(s.reason, s.item ? s.item.reorder_level : 0, !s.item);
+			const warning = reasonWarning(s.reason, s.item ? s.item.reorder_level : 0, !s.item, s.item ? s.item.has_reorder_rule : undefined);
 			if (warning) reasonBox.appendChild(el("p", "ee-ss-notice", warning));
 		};
 
