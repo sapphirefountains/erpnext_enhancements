@@ -39,12 +39,20 @@ task id will invent a plausible one (``TASK-2026-99999``) rather than admit it h
 an invented parent silently reparents nothing while an invented duplicate sends a reviewer
 looking for a task that does not exist.
 
+**And a duplicate a reviewer has already overruled stays overruled.** ``dismissed_tasks`` names
+the Tasks a human ruled are *not* duplicates of this request. ``breakdown.run_breakdown`` keeps
+them out of what it sends, so the model should never see them; this is the backstop for one it
+names anyway (from memory of a previous run, or because the reviewer note names it). A model
+cannot reinstate a flag a person cleared, which is the bug that made this rule: ER-2026-1323804
+came back with no tasks and one wrong duplicate, and nothing the reviewer could do would make
+the next run disagree.
+
 Indentation is tabs, per ``CLAUDE.md``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -124,6 +132,7 @@ def parse_breakdown(
 	target_projects: Mapping[str, str],
 	known_tasks: Mapping[str, Mapping[str, Any]],
 	max_tasks: int,
+	dismissed_tasks: Collection[str] = (),
 ) -> Breakdown:
 	"""Turn Triton's response into a validated :class:`Breakdown`.
 
@@ -136,6 +145,8 @@ def parse_breakdown(
 		known_tasks: ``{task_name: {"subject", "project", "is_group"}}`` — exactly the rows
 			ERPNext sent. Nothing outside this map may be referenced.
 		max_tasks: hard clamp, applied after validation.
+		dismissed_tasks: Task names a reviewer ruled are not duplicates of this request. A
+			duplicate naming one is dropped and reported, whatever ``known_tasks`` says.
 
 	Never raises. A caller in a background job would only turn the exception back into the
 	same empty result, and an exception here would lose the ``dropped`` reasons with it.
@@ -169,7 +180,12 @@ def parse_breakdown(
 		kept = kept[:max_tasks]
 
 	tasks = _resolve_dependencies(kept, dropped)
-	duplicates = _parse_duplicates(body.get("duplicates"), known_tasks=known_tasks, dropped=dropped)
+	duplicates = _parse_duplicates(
+		body.get("duplicates"),
+		known_tasks=known_tasks,
+		dropped=dropped,
+		dismissed_tasks=dismissed_tasks,
+	)
 
 	return Breakdown(
 		summary=_text(body.get("summary"), MAX_SUMMARY_CHARS),
@@ -307,10 +323,17 @@ def _parse_duplicates(
 	*,
 	known_tasks: Mapping[str, Mapping[str, Any]],
 	dropped: list[str],
+	dismissed_tasks: Collection[str] = (),
 ) -> tuple[DuplicateCandidate, ...]:
-	"""Duplicate rows, restricted to tasks we actually sent and de-duplicated themselves."""
+	"""Duplicate rows, restricted to tasks we actually sent and de-duplicated themselves.
+
+	A Task in ``dismissed_tasks`` is refused before the ``known_tasks`` check, so the reason
+	recorded is the true one ("a reviewer ruled it out") rather than "not in the tasks we sent".
+	"""
 	if not isinstance(raw_duplicates, Sequence) or isinstance(raw_duplicates, (str, bytes)):
 		return ()
+
+	overruled = {name for name in (dismissed_tasks or ()) if isinstance(name, str) and name}
 
 	out: list[DuplicateCandidate] = []
 	seen: set[str] = set()
@@ -319,6 +342,9 @@ def _parse_duplicates(
 			dropped.append(f"Duplicate {position}: not an object.")
 			continue
 		name = _text(raw.get("task"), 140)
+		if name in overruled:
+			dropped.append(f"Duplicate {position}: {name} was ruled not a duplicate by a reviewer.")
+			continue
 		known = known_tasks.get(name)
 		if known is None:
 			# The invented-task-id case. Worth reporting: it is the signal that the model is

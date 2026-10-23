@@ -57,6 +57,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reports as left out, the default window, a start after the end, a visit with no chemicals, bound
     parameters, and the report's roles, DocPerm, columns and workspace link.
 
+## [1.729.0] - 2026-10-22
+
+### Added
+- **Feedback: a reviewer can overrule the AI's duplicate flag, and add a task by hand.** Nik, 2026-10-22: "when it
+  thinks there is a duplicate task, it won't create a new task that is a duplicate of an existing task even if I know
+  it's not a duplicate". The case was ER-2026-1323804, Parker's report that the reorder level refuses 0. The
+  breakdown came back in `Breakdown Ready` with no proposed tasks, one High-confidence duplicate (TASK-2026-02912,
+  "Bin Manager rejects 0 as a valid quantity", a different bug) and the summary "no new development tasks are
+  needed". The reviewer had two buttons, "Close as duplicate of this" and Reject.
+  - **Why it happened.** Triton's breakdown prompt tells the model that a request already covered by open work should
+    come back as duplicates with few or no tasks, and `breakdown.py` treats that as a valid result. Nothing let a
+    person disagree. The duplicate panel offered only the close button. The proposal panel could edit only the rows
+    the model wrote, because `_apply_row_edits` matches rows by child-row `name` and skips any it doesn't carry.
+    `create_tasks` refuses when nothing is ticked. "Ask again" sent the same Task to the same model with the same
+    inputs, and got the same answer.
+  - **Not a duplicate** (`api.feedback.dismiss_duplicate`). Each candidate in the duplicate panel gets the button.
+    It stamps the row with three new fields on `Enhancement Request Duplicate Candidate`: `dismissed`,
+    `dismissed_by` and `dismissed_on`. The row is kept, so the request still shows what the model claimed and who
+    overruled it. The request tracks changes, so its Version history has the edit too, and the panel lists ruled-out
+    Tasks on a quiet line. A ruled-out row leaves the panel and the Claude Code brief's "not in this work item" list
+    (`brief._not_in_scope`). Every later breakdown ignores it as a duplicate.
+  - **Plan it as new work** (`plan_as_new_work`). It rules out every remaining flag, then re-runs the breakdown.
+    The re-run differs from "Ask again" in three ways. `breakdown.run_breakdown` leaves the ruled-out Tasks out of
+    `open_tasks`. `proposal.parse_breakdown(dismissed_tasks=...)` drops any the model names anyway, with the reason
+    "ruled not a duplicate by a reviewer". And `breakdown._apply` keeps the ruled-out rows when it replaces the
+    proposal. No Triton change: the payload keeps its shape and `schema_version` 2.
+  - **Why the re-run also adds a reviewer note to the description.** Removing the Task from the scan removes the
+    evidence. It does not remove the instruction. The model can still decide "already covered" from the code map,
+    the anchors or the CHANGELOG lines it is sent, and the prompt tells it to answer that with no tasks. The one fact
+    the payload otherwise lacks is that a person has already checked. `breakdown.reviewer_note` says so in a short
+    paragraph after the description. It is marked "added by ERPNext, not the requester", and it names the ruled-out
+    Tasks by subject so the plan can say how this work differs. It goes in the text, not in a new key, because
+    Triton ignores keys it does not know. It is appended after the 20,000-character cap, so a long report can't cut
+    it off. A breakdown with nothing ruled out sends the same payload as before. **Don't rely on it.** Triton's
+    prompt treats the Description section as data, so the model may ignore the note, and a requester could type the
+    same words into their own report. It is a nudge. The fix that holds is the hand-added task below.
+  - **Add a task by hand** (`add_proposed_task`). This is the way through that never needs the model. On the
+    proposal panel, and on a failed breakdown, the reviewer types a subject, project, priority, hours and an optional
+    parent group. The row is validated the way an edited row is: the same `_filter_payload` allowlist
+    (`PROPOSED_TASK_ALLOWED_FIELDS`), the same `allowed_projects()` gate and the same coercions. Those checks are now
+    one function, `_clean_row`, shared with `_apply_row_edits`. There are differences, because the row is new:
+    - A missing subject refuses the call, and so does a project outside the two configured boards. Neither is just
+      reported.
+    - A `parent_task` must be an existing group Task on the same project.
+    - A subject, and a group subject, are cut to 140 characters, the length of `Task.subject`.
+    - `added_by` is the session user. The new field on `Enhancement Request Proposed Task` is server-set and is never
+      accepted from the client.
+
+    "Create these tasks" then writes the row even when the model proposed nothing.
+  - **Remove a hand-added row** (`remove_proposed_task`). Each hand-added row that hasn't produced a Task gets a
+    Remove button. Model rows are still unticked rather than deleted, so the proposal stays a record of what the model
+    suggested. A row with a `created_task` can never be removed. Rows after the removed one move up a place, so every
+    `depends_on_idx` is remapped: one that pointed past it follows its row, and one that pointed at it is cleared.
+  - **A re-run keeps every row that isn't the model's to replace.** `_apply` replaces only the model's rows. It keeps
+    every row with `added_by`, and every row with a `created_task`, after the new model rows.
+    - **The `created_task` half fixes an older bug** that "Plan it as new work" made easy to hit. A re-run after a
+      partial confirm used to drop the rows that had already written their Task. That lost the link, and the next
+      confirm could propose and create the same work a second time. The stamp is what makes `task_writer`
+      idempotent, so it now outlives the proposal it came from.
+    - A kept row's `depends_on_idx` is cleared, because the positions it pointed at have just been renumbered. Its
+      `idx` is cleared too. Frappe v16's `Document.append` keeps a truthy `idx`, so a kept row would otherwise share
+      a position with a new model row. The same applies to kept duplicate candidates.
+  - **No unsaved edit is thrown away.** "Not a duplicate", "Plan it as new work", "Ask again", Remove and "Add to the
+    proposal" all redraw the request. Each one first saves the pending proposal edits through `save_proposal`.
+  - **One new transition: `Breakdown Failed -> Breakdown Ready`**, made only by adding a task by hand
+    (`product_feedback/states.py`). No new state. It is needed because the model can still answer "no work" after a
+    re-run, and that answer is `Breakdown Failed`, where `create_tasks` refuses. Without it, a wrong duplicate flag
+    could still stop a Task being created. The human gate is unchanged: nothing reaches `Breakdown Ready` from
+    `Submitted`, and `Breakdown Failed -> Tasks Created` stays illegal.
+  - **Who sees what.** All four endpoints are reviewer-only (`_require_reviewer`). They send the requester nothing:
+    a ruling inside the review is not a decision about their request. The requester still hears about the outcome
+    through the existing `decision_made` and `tasks_created` notifications.
+  - **Panel hints reworded** so a reviewer knows the duplicate flag and the proposal are suggestions they can
+    overrule. The "nothing ticked" refusal now names "add one by hand".
+
+### Deploy
+- Schema only: four new columns from model sync. `Enhancement Request Duplicate Candidate` gets `dismissed`
+  (Check, default 0), `dismissed_by` and `dismissed_on`. `Enhancement Request Proposed Task` gets `added_by`. These are
+  child doctypes, not Singles, so the `ALTER` writes `dismissed = 0` into every existing row. That is the right
+  value: nothing has been ruled out yet. No patch. `breakdown.dismissed_duplicates` checks `has_column` first, so a
+  sweeper run before the migrate finishes reads no rulings and does not fail.
+
+### Tests
+- `tests/test_feedback_duplicate_override.py` is a new bench-free unittest suite with a frappe stub and its own CI
+  step. It covers:
+  - the dismissal stamp and its refusals, and plan-as-new-work;
+  - the re-run: a ruled-out Task is not in the `open_tasks` sent (with a control showing an un-ruled one is), the
+    reviewer note, and a duplicate named anyway being dropped while the ruling row survives;
+  - hand-added rows and `created_task` rows surviving a re-run, with fresh positions. The stub's `append` keeps a
+    truthy `idx`, as v16's does, and this test fails if the `idx` reset is removed;
+  - the add-row endpoint, including its project refusal and the 140-character caps;
+  - removing a hand-added row, with dependencies remapped;
+  - `create_tasks` with only a hand-added row, run through the real `task_writer`.
+
+  40 of its 41 tests fail on v1.727.1. The one that passes is that control.
+- `test_feedback_breakdown_parse.py` covers a ruled-out duplicate dropped even when it was sent.
+  `test_feedback_brief.py` covers a ruled-out candidate left off the brief. `test_feedback_states.py` covers the new
+  transition. `test_feedback_code_anchors.py` gets a `has_column` and `get` on its stub, and its outline assertion
+  now includes the new `build_payload` signature.
+
 ## [1.728.0] - 2026-10-22
 
 ### Fixed
