@@ -93,6 +93,12 @@ DRAFT_REFUSAL = (
 	"Draft mode holds back changes to tasks that already exist, and a new task can be drafted; but a split "
 	"changes a task and creates another at once, which cannot be a draft. Turn Draft mode off to split it."
 )
+#: v1.740.0: the same limit on a project whose schedule is still Draft, where every write is a draft.
+SCHEDULE_SPLIT_REFUSAL = (
+	"This project's schedule is still a Draft, so changes to its tasks are held until it is published, "
+	"and a split changes a task and creates another at once, which cannot be held. Publish the "
+	"project's schedule first, then split the task."
+)
 INTERVAL_DOCTYPE = planner_tracking.INTERVAL_DOCTYPE
 DRAFT_DOCTYPE = "Planner Draft Change"
 #: Build-out (v1.602.0): most rows one grid may create, most new phases among them, and the cap on
@@ -360,7 +366,8 @@ def needs_tasks_query(has_owner, limit=NEEDS_TASKS_LIMIT):
 
 
 def _refuse_draft(draft, message=DRAFT_REFUSAL):
-	if cint(pp.given(draft)):
+	# draft_choice, not cint: "auto" (P4) is not the hold.
+	if pp.draft_choice(draft) is True:
 		frappe.throw(_(message), title=_("Not in Draft mode"))
 
 
@@ -499,22 +506,7 @@ def duplicate_task(task, date=None, reason=None, draft=0):
 		return {"needs_reason": True, "conflicts": conflicts}
 
 	# The same spec builds the live copy and the drafted one (project_planner.task_from_spec).
-	spec = {
-		"op": "duplicate",
-		"source": doc.name,
-		"values": {key: value for key, value in values.items() if key != "doctype"},
-		"crew": pp.crew_payload(crew),
-		"keep_crew": [member.get("resource") for member in crew if member.get("resource")],
-		"credentials": [
-			row.get("credential_type")
-			for row in (doc.get("custom_required_credentials") or [])
-			if row.get("credential_type")
-		],
-		"equipment": pp.equipment_payload(doc.get("custom_equipment"))
-		if doc.get("custom_equipment")
-		else None,
-		"depends_on": [],
-	}
+	spec = pp.copy_spec("duplicate", doc, values, crew)
 	new = pp.task_from_spec(spec)
 	new.check_permission("create")
 	if drafting:
@@ -716,9 +708,15 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 	lists the original is pointed at the second part instead (:func:`_repoint_dependents`), inside
 	the same savepoint, so a failure there rolls the whole split back. ``repointed`` names them; the
 	page hands the list back to :func:`remove_created_task` so the Undo can put them back.
+
+	**A Draft schedule (v1.740.0)** refuses it too, for the same reason: a task of a project whose
+	schedule is Draft cannot be split until the schedule is published, whatever ``draft`` says
+	(``auto``, ``0`` or none), so no client splits live into a schedule nobody has published.
 	"""
 	pp._require_planner()
 	_refuse_draft(draft)
+	if pp._drafting(pp.DRAFT_AUTO, task):
+		frappe.throw(_(SCHEDULE_SPLIT_REFUSAL), title=_("Publish the schedule first"))
 	_require_create()
 	doc = pp._load(task, modified)
 	_refuse_split(doc)

@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.740.0] - 2026-10-23
+
+Split, Copy week and the Overdue tray now respect a project's Draft schedule (D8) on the Project
+Planner. P4 (v1.705.0) made every other planner write a draft on a Draft schedule, but these three
+still wrote live Tasks there: a schedule that was meant to stay private until *Publish schedule*
+could gain new Tasks, moved Tasks and split Tasks that assigned, notified and reached Google. The
+Overdue tray's Reschedule also left the tasks that follow where they were.
+
+### Changed
+- **Overdue tray: Reschedule drafts on a Draft schedule, with its followers.** This covers the bulk
+  *Reschedule to…* and a drop of an overdue task on a day.
+  - `bulk_update(..., draft=None)` drafts each task whose project schedule is Draft, or every task
+    while *Hold all my changes* is on (`draft=1`). The draft goes through
+    `planner_actions._draft_many`, the path `move_many` drafts by. Nothing is copied.
+  - The tasks that follow move with it by the working days its end moved, both ways (D10, D15).
+    They come back in `shifted`, and the ones left where they were in `shift_skipped`. A follower on
+    a published schedule is left alone, as in `move_many`; under the hold every follower is drafted.
+  - A drafted task's conflicts are warnings. Only the saved tasks can ask for a reason. A live
+    conflict without a reason still saves nothing and drafts nothing.
+  - Each drafted task has its own savepoint. A refused one (a rental crew task, a Fountain Move) is
+    reported in `failed`, and the rest carry on, as the saved ones always did.
+  - **A task on a published schedule saves exactly as before, and its followers still do not move.**
+    The brief asked for that. Whether a live Reschedule should carry followers too is a separate
+    question.
+  - A drafted Task stays overdue until Publish. So `get_overdue` now gives each row with a visible
+    draft a `drafted_start`, and the tray shows **Draft: <day>** on it. The toast after the
+    action says how many tasks are drafts and how many followers moved with them.
+- **Copy week: a copy into a Draft schedule is a drafted new task.** It becomes a `New task` Draft
+  row, not a Task, so it gets no assignment, no notice and no calendar sync until Publish creates it.
+  - It is built from the same spec as a drafted duplicate (v1.603.0). The spec builder moved out of
+    `duplicate_task` into `project_planner.copy_spec`, which both now call.
+  - The hold drafts every copy.
+  - The dry run marks such a copy `"drafted": True`. The preview labels it **Draft** and says why.
+  - Only the live copies are checked for a reason (`conflicts`). What the drafted copies would
+    overbook is `drafted_conflicts`, shown as information and returned as `warnings` after the run.
+  - Room for all the drafted copies is checked before anything is written.
+  - The done message counts the drafts.
+  - With no drafted copy, every answer is what it was.
+- **Split is refused on a Draft schedule.** No draft row can hold a split, which changes one task
+  and creates another at once. That is why the hold already refused it.
+  - `split_task` now refuses a Draft schedule's task whatever `draft` says. The message says to
+    publish the project's schedule first.
+  - The right-click *Split…* item is greyed on such a card with the hint "Draft schedule: publish it
+    first".
+- **The server decides, not the page.** `bulk_update` and `copy_week` took no draft flag before.
+  An unset flag, `"auto"` or `0` all draft on a Draft schedule (`project_planner._held`), and
+  `split_task` refuses on one. So the AI connector or another client that sends no flag cannot
+  write live into a schedule nobody has published.
+  - This is deliberately stricter than `save_task` and `move_many`, where an explicit `draft=0`
+    still saves.
+  - The page adds both methods to `PP3B.draft_methods`, so it sends `draft="auto"`, or `1` under
+    the hold.
+- `planner_actions._refuse_draft` reads the flag through `draft_choice` instead of `cint`. Under
+  `cint`, `"auto"` happened to count as off, which was right by accident.
+
+### Notes
+- **Mark done and Cancel stay live on a Draft schedule, and under the hold.** Nik's decisions do
+  not settle this, so it needs Nik's call.
+  - §4.8 of `docs/planner-ux-redesign.md` says every write to a Draft project's tasks is drafted.
+  - But D8 is about the *schedule*. A status change records what happened rather than when work is
+    planned, and a Draft row holds no status (`DRAFT_KEYS`).
+  - Drafting Complete and Cancel would need a new draft kind and a publish step for it. If Nik
+    wants that, it is a follow-up.
+- **Behavior change on prod after the deploy.** Prod has 21 Active projects on a Draft schedule and
+  56 Published (the manager's count on 2026-10-23; a blank status reads Draft too). On a
+  Draft-schedule project:
+  - an Overdue tray Reschedule or drop becomes a draft, with its followers;
+  - Copy week into it makes drafts;
+  - Split is greyed and refused.
+  Published projects behave as before.
+- Tests:
+  - `tests/test_planner_autoshift.py` covers a Draft and a Published project for each of the three
+    actions, plus the hold. It also covers no flag and `draft=0` on a Draft schedule, a mixed batch,
+    a live conflict that drafts nothing, a refused drafted task, Complete staying live, the tray's
+    `drafted_start`, draft room for copies, and the Split refusal before the P3 columns exist.
+  - `scripts/test_planner_autoshift.js` drives the real page under node. It checks the flags sent,
+    the drop's and the bulk action's messages, the greyed Split item and its hint, and Copy week's
+    preview labels and done message.
+  - Disabling the Draft-schedule rule fails 17 of the new Python checks.
+  - `tests/test_project_planner.py`'s Overdue and Copy week tests are about the live path, so their
+    projects are now marked Published. Before this, the stub's blank status read Draft.
+
 ## [1.739.2] - 2026-10-23
 
 ### Fixed
@@ -2684,6 +2766,9 @@ or items used or added". TASK-2026-02901.
 ### Notes
 - **Still live on a Draft schedule:** Split, Copy week and the Overdue tray's actions, including
   dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
+  *Closed in v1.740.0:* a Reschedule there is now drafted with its followers, a copy is a drafted
+  new task, and a split is refused until the schedule is published. Mark done and Cancel stay live,
+  pending Nik's call.
 - **Behavior change:** `move_many` now checks every task it moves against the tasks it waits on,
   as `save_task` always has. A multi-select move earlier past a predecessor asks for a reason, even
   with Ctrl/⌘ held.

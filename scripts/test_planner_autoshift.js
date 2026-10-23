@@ -15,6 +15,9 @@
  *      publish_project_schedule (and asking for a reason when it must), Set/Reset baseline.
  *   4. The Maintenance Planner: move_visit asks once per gesture, a multi-select move once for all,
  *      never in Draft mode, for a visit nobody is on, or for an Undo.
+ *   5. v1.740.0: the Overdue tray's Reschedule (a drop and the bulk actions) and Copy week send
+ *      draft="auto" (or the hold's 1) and say which reschedules and copies are drafts; Split is greyed
+ *      on a Draft schedule with "publish it first".
  *
  * Run: node scripts/test_planner_autoshift.js
  */
@@ -449,7 +452,7 @@ test("Creating writes draft on a Draft schedule; the read always asks for drafts
 	pp.draft_on = true;
 	check("the hold", pp.draft_args("PRJ-P"), { draft: 1 });
 	check("an explicit draft is left alone", pp.with_draft("save_task", { draft: 0 }), { draft: 0 });
-	check("other writes are not touched", pp.with_draft("bulk_update", { tasks: "[]" }), { tasks: "[]" });
+	check("other writes are not touched", pp.with_draft("publish_drafts", { project: "PRJ-D" }), { project: "PRJ-D" });
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("load reads with draft=1", source.includes("args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks"), true);
 });
@@ -603,6 +606,117 @@ test("Maintenance: a multi-select move asks once for every visit", async () => {
 	check("Draft mode: straight on, nothing asked", [asked.length, went], [1, ["1", undefined]]);
 	const source = fs.readFileSync(MP_JS, "utf8");
 	check("the moves carry it", source.includes("if (notify !== undefined) args.notify = notify;"), true);
+});
+
+// ------------------------------------------------------------------ 5. Split, Copy week and the Overdue tray (v1.740.0)
+//
+// The server decides (bulk_update, copy_week and split_task draft or refuse on a Draft schedule whatever
+// the page sends); the page sends draft="auto" or the hold's 1, greys Split with what to do, and says
+// which copies and reschedules are drafts.
+
+test("The Overdue tray's Reschedule and Copy week say draft=\"auto\", or the hold's 1", () => {
+	const { pp } = projectPlanner();
+	check("bulk_update", pp.with_draft("bulk_update", { tasks: "[]" }), { tasks: "[]", draft: "auto" });
+	check("copy_week", pp.with_draft("copy_week", { dry_run: 1 }), { dry_run: 1, draft: "auto" });
+	pp.draft_on = true;
+	check("the hold", [pp.with_draft("bulk_update", {}).draft, pp.with_draft("copy_week", {}).draft], [1, 1]);
+	check("split_task still sends none: the server refuses it", pp.with_draft("split_task", { task: "T1" }), { task: "T1" });
+});
+
+test("A drop from the Overdue tray: a drafted reschedule says so, with the tasks that follow", async () => {
+	const { pp, frappe, calls, alerts } = projectPlanner();
+	pp.overdue_selected = new Set(["T1"]);
+	frappe.answers.push({ action: "reschedule", updated: [{ task: "T1", drafted: true }], failed: [], shifted: [{ task: "T2" }, { task: "T3" }], shift_skipped: [{ task: "T4" }] });
+	pp.drop_overdue({ name: "T1" }, { date: "2026-10-20" });
+	await flush();
+	check("bulk_update, auto", [calls[0].method.endsWith(".bulk_update"), calls[0].args.action, calls[0].args.draft], [true, "reschedule", "auto"]);
+	check(
+		"the note",
+		alerts.includes("1 of them are drafts until their project's schedule is published. 2 task(s) that follow them moved too, as drafts. 1 task(s) that follow them stayed where they were."),
+		true
+	);
+	check("ticked off", pp.overdue_selected.has("T1"), false);
+
+	const live = projectPlanner();
+	live.pp.overdue_selected = new Set();
+	live.frappe.answers.push({ action: "reschedule", updated: [{ task: "T1" }], failed: [] });
+	live.pp.drop_overdue({ name: "T1" }, { date: "2026-10-20" });
+	await flush();
+	check("a published one: no draft note", live.alerts.filter((text) => /draft/i.test(text)), []);
+
+	const held = projectPlanner();
+	held.pp.draft_on = true;
+	held.pp.overdue_selected = new Set();
+	held.frappe.answers.push({ action: "reschedule", updated: [{ task: "T1", drafted: true }], failed: [] });
+	held.pp.drop_overdue({ name: "T1" }, { date: "2026-10-20" });
+	await flush();
+	check("the hold sends 1", held.calls[0].args.draft, 1);
+	check("and says whose publish", held.alerts.includes("1 of them are held as drafts until you publish them."), true);
+});
+
+test("The Overdue tray's bulk actions go through the same send", async () => {
+	const { pp, frappe, calls } = projectPlanner();
+	pp.overdue = { groups: [{ project: "PRJ-D", rows: [{ name: "T1", subject: "S" }] }] };
+	pp.overdue_selected = new Set(["T1"]);
+	frappe.answers.push({ action: "complete", updated: [{ task: "T1" }], failed: [] });
+	pp.overdue_act("complete");
+	await flush();
+	check("complete, auto (the server keeps it live)", [calls[0].args.action, calls[0].args.draft], ["complete", "auto"]);
+	const read = pp.normalize_overdue({ projects: [{ project: "PRJ-D", tasks: [{ name: "T1", end: "2026-10-01", drafted_start: "2026-10-20" }] }] });
+	check("a drafted row keeps its day", read.groups[0].rows[0].drafted_start, "2026-10-20");
+	check("and the tray shows it", fs.readFileSync(PP_JS, "utf8").includes('__("Draft: {0}", [pp_when(row.drafted_start)])'), true);
+});
+
+test("Split is greyed on a Draft schedule, with what to do; a published one splits; the hold says so", () => {
+	const { pp } = projectPlanner();
+	pp.p6b_next_free_item = () => ({ label: "Next free day" });
+	const split = (values) =>
+		pp.p6b_card_items({ card: card("T1", Object.assign({ movable: true }, values)) }).find((item) => /^Split/.test(item.label || ""));
+	const draft = split({ project: "PRJ-D" });
+	check("Draft schedule", [draft.disabled, draft.hint], [true, "Draft schedule: publish it first"]);
+	const live = split({ project: "PRJ-P" });
+	check("published", [live.disabled, live.hint], [false, ""]);
+	const old = split({ project: "PRJ-OLD" });
+	check("before the P3 columns (no schedule)", old.disabled, false);
+	pp.draft_on = true;
+	check("the hold", split({ project: "PRJ-P" }).hint, "Not in Draft mode");
+});
+
+test("Copy week's preview marks the drafted copies and says why; the done message counts them", async () => {
+	const { pp, frappe, calls, alerts, dialogs } = projectPlanner();
+	pp.go = () => null;
+	frappe.answers.push({
+		copies: [
+			{ task: "T1", subject: "Pump", to_start: "2026-10-20", drafted: true },
+			{ task: "T2", subject: "Wall", to_start: "2026-10-21" },
+		],
+		conflicts: {},
+		drafted_conflicts: { "RES-1": ["Over on Tue"] },
+		skipped: [],
+	});
+	await pp.preview_copy("2026-10-11", "2026-10-18", ["T1", "T2"]);
+	check("dry run, auto", [calls[0].args.dry_run, calls[0].args.draft], [1, "auto"]);
+	const dialog = dialogs[dialogs.length - 1];
+	const html = dialog.opts.fields[0].options;
+	check("one Draft chip", (html.match(/pp-draft-chip/g) || []).length, 1);
+	check("why", html.includes("1 of these copies go to a project whose schedule is still Draft"), true);
+	check("their overbooking is information", html.includes("nobody is asked for a reason until they are published"), true);
+	check("no live clash: a plain Copy", dialog.opts.primary_action_label, "Copy");
+	frappe.answers.push({ created: [{ task: "draft-new:PDC-1", drafted: true }, { task: "TASK-9" }], conflicts: {}, skipped: [] });
+	dialog.opts.primary_action();
+	await flush();
+	await flush();
+	check("the run, auto", [calls[1].args.dry_run, calls[1].args.draft], [0, "auto"]);
+	check("the message counts the drafts", alerts.some((text) => text.endsWith(", 1 of them as drafts")), true);
+});
+
+test("The note helpers", () => {
+	const { ctx } = projectPlanner();
+	const PURE = vm.runInContext("PPAS_PURE", ctx);
+	check("nothing drafted", PURE.overdue_draft_note({ updated: [{ task: "T1" }] }, false), "");
+	check("no answer", PURE.overdue_draft_note(null, false), "");
+	check("drafted, no followers", PURE.overdue_draft_note({ updated: [{ task: "T1", drafted: true }] }, false), "1 of them are drafts until their project's schedule is published.");
+	check("drafted copies", [PURE.drafted_count([{ drafted: true }, {}, { drafted: true }]), PURE.drafted_count(undefined)], [2, 0]);
 });
 
 // ------------------------------------------------------------------ run

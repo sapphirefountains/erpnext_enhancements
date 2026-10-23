@@ -1691,7 +1691,11 @@ class TestPage(unittest.TestCase):
 			self.assertIn(line, self.code, line)
 
 	def test_draft_mode_sends_draft_on_every_write_and_the_read(self):
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', self.block)
+		# v1.740.0: the Overdue tray's Reschedule and Copy week follow the same rule.
+		self.assertIn(
+			'draft_methods: ["save_task", "add_crew", "swap_crew", "move_many", "bulk_update", "copy_week"]',
+			self.block,
+		)
 		# P4: off, the writes say draft="auto" and the server drafts a Draft schedule's tasks.
 		self.assertIn("PPAS_PURE.draft_value(this.draft_on)", self.block)
 		self.assertIn("{ draft: 1 }", self.block)

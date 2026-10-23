@@ -2055,8 +2055,25 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   each from its own drafted days). A follower in a project whose schedule says otherwise is left alone
   and named, so a draft never moves a published schedule and a live save never reaches into a draft one.
   The creating writes (quick add, duplicate, build out, AI draft) send `draft=1` for a Draft schedule's
-  project; the page decides there, because those endpoints take only `draft=1`. **Still live on a Draft
-  schedule:** a split, Copy week and the Overdue tray's bulk actions, which have no draft form.
+  project; the page decides there, because those endpoints take only `draft=1`.
+- **Split, Copy week and the Overdue tray on a Draft schedule** (v1.740.0). These three decide on the
+  server (`_held`), and `draft=0` or no flag does not write live into a Draft schedule, so the AI
+  connector or an old page cannot reach one either. `draft=1` (the hold) drafts every one of them.
+  - **Overdue Reschedule** (the bulk action and a drop on a day): `bulk_update` drafts a Draft
+    schedule's task through `planner_actions._draft_many`, the path `move_many` drafts by, so its
+    followers are drafted along by working days (`shifted`, `shift_skipped`) and conflicts are
+    warnings. Its `updated` entry says `drafted`. The saved ones work as before, with no followers.
+    The Task stays overdue until Publish, so `get_overdue` marks the row with `drafted_start` and the
+    tray shows "Draft: <day>".
+  - **Copy week**: a copy into a Draft schedule is a `New task` Draft row, built from the same spec as
+    a drafted duplicate (`copy_spec`, `store_new_draft`). The dry run marks it `drafted` and the preview
+    labels it **Draft**. Only the live copies can ask for a reason; the drafted ones' overbooking is
+    `drafted_conflicts`, shown as information.
+  - **Split** is refused on a Draft schedule (`SCHEDULE_SPLIT_REFUSAL`): a split changes a task and
+    creates another at once, which no draft row can hold. The right-click item is greyed with "Draft
+    schedule: publish it first".
+  - **Mark done and Cancel stay live**, on a Draft schedule and under the hold alike: they record what
+    happened, not the plan, and a draft row holds no status. That is waiting on Nik's call.
 - **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
   everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
   rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line

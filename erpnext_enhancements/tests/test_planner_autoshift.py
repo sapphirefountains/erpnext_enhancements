@@ -982,6 +982,271 @@ class TestPublishActiveJobSchedules(unittest.TestCase):
 # ====================================================================== wiring
 
 
+# ====================================================================== v1.740.0: Split, Copy week, Overdue tray
+
+
+class TestTheOverdueTrayReschedule(_P4):
+	"""bulk_update's ``reschedule`` drafts a Draft schedule's task (or any, under the hold) through
+	move_many's draft path, with its followers; a published one saves exactly as before."""
+
+	def _on(self, project, *names):
+		for name in names:
+			self.frappe.docs[("Task", name)]["project"] = project
+
+	def test_a_draft_projects_task_is_drafted_with_its_followers(self):
+		self._chain()
+		self._on("PRJ-2", "TASK-1", "TASK-2", "TASK-3")
+		result = self.api.bulk_update(json.dumps(["TASK-1"]), "reschedule", "2026-10-14", draft="auto")
+
+		self.assertEqual(self.frappe.saved, [])  # nothing reaches a Task
+		((updated,),) = [result["updated"]]
+		self.assertEqual(
+			(updated["task"], updated["drafted"], updated["start"]), ("TASK-1", True, "2026-10-14")
+		)
+		drafts = {row["task"]: json.loads(row["payload"]) for row in self._drafts()}
+		self.assertEqual(set(drafts), {"TASK-1", "TASK-2", "TASK-3"})
+		# The followers move by the working days TASK-1's end moved (Wed to Fri: two), as move_many does.
+		self.assertEqual((drafts["TASK-2"]["start"], drafts["TASK-2"]["end"]), ("2026-10-19", "2026-10-20"))
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2", "TASK-3"])
+		self.assertTrue(all(m["dependent"] and m["drafted"] for m in result["shifted"]))
+		self.assertEqual(result["failed"], [])
+
+	def test_no_flag_or_draft_0_cannot_write_live_into_a_draft_schedule(self):
+		# The AI connector and an old page send no flag; draft=0 is no way round it either.
+		for draft in (None, 0, "0"):
+			with self.subTest(draft=draft):
+				self.frappe.tables["Planner Draft Change"] = []
+				h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+				kwargs = {} if draft is None else {"draft": draft}
+				result = self.api.bulk_update(json.dumps(["TASK-8"]), "reschedule", "2026-10-19", **kwargs)
+				self.assertTrue(result["updated"][0]["drafted"])
+				self.assertEqual(self.frappe.saved, [])
+				self.assertEqual([row["task"] for row in self._drafts()], ["TASK-8"])
+
+	def test_a_published_projects_task_is_saved_as_before_without_its_followers(self):
+		self._chain()
+		result = self.api.bulk_update(json.dumps(["TASK-1"]), "reschedule", "2026-10-14", draft="auto")
+		self.assertEqual(self._saves(), ["TASK-1"])
+		self.assertEqual(self._drafts(), [])
+		self.assertNotIn("drafted", result["updated"][0])
+		self.assertNotIn("shifted", result)
+		self.assertEqual(self._saved("TASK-1")["exp_end_date"], "2026-10-16 17:00:00")
+
+	def test_the_hold_drafts_a_published_task_and_every_follower(self):
+		self._chain()
+		self._on("PRJ-2", "TASK-3")  # a follower on a Draft schedule is drafted too under the hold
+		result = self.api.bulk_update(json.dumps(["TASK-1"]), "reschedule", "2026-10-14", draft=1)
+		self.assertEqual(self.frappe.saved, [])
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2", "TASK-3"])
+		self.assertEqual({row["task"] for row in self._drafts()}, {"TASK-1", "TASK-2", "TASK-3"})
+
+	def test_a_draft_never_reaches_a_follower_on_a_published_schedule(self):
+		self._chain()
+		self._on("PRJ-2", "TASK-1", "TASK-2")
+		result = self.api.bulk_update(json.dumps(["TASK-1"]), "reschedule", "2026-10-14", draft="auto")
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2"])
+		self.assertEqual([skip["task"] for skip in result["shift_skipped"]], ["TASK-3"])
+		self.assertEqual(self.frappe.saved, [])
+
+	def test_one_batch_saves_the_published_and_drafts_the_draft(self):
+		h._task("TASK-1", crew=("RES-1",))
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+		result = self.api.bulk_update(
+			json.dumps(["TASK-1", "TASK-8"]), "reschedule", "2026-10-19", draft="auto"
+		)
+		updated = {u["task"]: u for u in result["updated"]}
+		self.assertNotIn("drafted", updated["TASK-1"])
+		self.assertTrue(updated["TASK-8"]["drafted"])
+		self.assertEqual(self._saves(), ["TASK-1"])
+		self.assertEqual([row["task"] for row in self._drafts()], ["TASK-8"])
+		# Only the saved one is checked for a reason: the drafted one is not in the batch check.
+		self.assertEqual([name for name, _span in self.batches[0]], ["TASK-1"])
+
+	def test_a_live_conflict_without_a_reason_drafts_nothing_either(self):
+		h._task("TASK-1", crew=("RES-1",))
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+		self.batch_hook = lambda changes: {"Austin Healey": ["Over on Mon"]}
+		result = self.api.bulk_update(
+			json.dumps(["TASK-1", "TASK-8"]), "reschedule", "2026-10-19", draft="auto"
+		)
+		self.assertTrue(result["needs_reason"])
+		self.assertEqual((self.frappe.saved, self._drafts()), ([], []))
+
+	def test_a_drafted_task_that_is_refused_is_reported_and_the_rest_carry_on(self):
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2", custom_rental_booking="RB-1")
+		h._task("TASK-9", crew=("RES-1",), project="PRJ-2")
+		result = self.api.bulk_update(json.dumps(["TASK-8", "TASK-9"]), "reschedule", "2026-10-19")
+		self.assertEqual([u["task"] for u in result["updated"]], ["TASK-9"])
+		((failed,),) = [result["failed"]]
+		self.assertEqual(failed["task"], "TASK-8")
+		self.assertIn("rental crew task", failed["error"])
+		self.assertIn(("rollback", "planner_bulk_draft_0"), self.frappe.db_calls)
+
+	def test_complete_and_cancel_stay_live_on_a_draft_schedule_and_under_the_hold(self):
+		# A status change is not a schedule edit (no draft row holds a status): waiting on Nik's call.
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+		for draft in ("auto", 1):
+			result = self.api.bulk_update(json.dumps(["TASK-8"]), "complete", draft=draft)
+			self.assertEqual(result["updated"][0]["status"], "Completed")
+			self.assertNotIn("drafted", result["updated"][0])
+		self.assertEqual(self._saved("TASK-8")["status"], "Completed")
+		self.assertEqual(self._drafts(), [])
+
+	def test_the_tray_shows_where_a_drafted_task_goes(self):
+		h._draft_row("TASK-1", {"start": "2026-10-20", "end": "2026-10-21"})
+		h._draft_row("TASK-2", {"crew_size": 2})  # a draft that does not move it
+		self.assertEqual(self.api._overdue_drafts(), {"TASK-1": "2026-10-20"})
+
+		def broken(*args, **kwargs):
+			raise RuntimeError("no table yet")
+
+		with mock.patch.object(self.frappe, "get_all", broken):
+			self.assertEqual(self.api._overdue_drafts(), {})  # never fails the tray
+
+
+class _NewTask(h._TaskDoc):
+	"""A new Task (Copy week's live copy or a spec's): insert() records it, as the framework would."""
+
+	def insert(self):
+		self.frappe.counter += 1
+		self["name"] = self.get("name") or f"TASK-NEW-{self.frappe.counter}"
+		self["modified"] = BASE
+		self.frappe.sequence.append(f"insert:Task:{self['name']}")
+		return self
+
+
+class TestCopyWeekOnADraftSchedule(_P4):
+	"""copy_week keeps a copy into a Draft schedule (or any, under the hold) as a New task draft, the
+	way a drafted duplicate is kept; a copy into a published one is inserted exactly as before."""
+
+	def setUp(self):
+		super().setUp()
+		_NewTask.frappe = self.frappe
+		real_get_doc = self.frappe.get_doc
+
+		def get_doc(doctype, name=None):
+			if isinstance(doctype, dict) and doctype.get("doctype") == "Task":
+				return _NewTask(doctype)
+			return real_get_doc(doctype, name)
+
+		self.patches += [
+			mock.patch.object(self.frappe, "get_doc", get_doc),
+			# Both test projects are customer jobs.
+			mock.patch.object(h.engine, "planner_projects", lambda names: set(names)),
+		]
+		for patch in self.patches[-2:]:
+			patch.start()
+		h._task("TASK-1", crew=("RES-1",))  # Published, Mon-Wed 12-14 October
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")  # Draft
+
+	def _copy(self, names, **kwargs):
+		return self.api.copy_week("2026-10-12", "2026-10-19", json.dumps(names), **kwargs)
+
+	def _inserted(self):
+		return [step.split(":", 2)[2] for step in self.frappe.sequence if step.startswith("insert:Task:")]
+
+	def test_the_dry_run_says_which_copies_will_be_drafts(self):
+		self.batch_hook = lambda changes: (
+			{"Lisa Park": ["Over on Mon"]}
+			if any(state.get("name") == "TASK-8 (copy)" for state, _c in changes)
+			else {}
+		)
+		result = self._copy(["TASK-1", "TASK-8"], draft="auto")
+		copies = {c["task"]: c for c in result["copies"]}
+		self.assertNotIn("drafted", copies["TASK-1"])
+		self.assertTrue(copies["TASK-8"]["drafted"])
+		# The drafted copy's overbooking is information, never a reason the live copy must give.
+		self.assertEqual(result["conflicts"], {})
+		self.assertEqual(result["drafted_conflicts"], {"Lisa Park": ["Over on Mon"]})
+		self.assertEqual((self._inserted(), self._drafts()), ([], []))
+
+	def test_a_draft_schedules_copy_is_a_new_task_draft_and_no_task(self):
+		result = self._copy(["TASK-8"], dry_run=0, draft="auto")
+		((created,),) = [result["created"]]
+		self.assertTrue(created["task"].startswith("draft-new:"))
+		self.assertEqual((created["source"], created["drafted"]), ("TASK-8", True))
+		self.assertEqual((created["start"], created["end"]), ("2026-10-19", "2026-10-21"))
+		self.assertEqual(self._inserted(), [])  # the calendar sync reads Tasks only
+		rows = [r for r in self.frappe.tables["Planner Draft Change"] if r.get("kind") == "New task"]
+		self.assertEqual([(r["project"], r["subject"]) for r in rows], [("PRJ-2", "Subject TASK-8")])
+		spec = json.loads(rows[0]["payload"])
+		self.assertEqual((spec["op"], spec["source"]), ("copy_week", "TASK-8"))
+		self.assertEqual([member["resource"] for member in spec["crew"]], ["RES-2"])
+
+	def test_no_flag_or_draft_0_cannot_insert_into_a_draft_schedule(self):
+		for draft in (None, 0):
+			with self.subTest(draft=draft):
+				kwargs = {} if draft is None else {"draft": draft}
+				result = self._copy(["TASK-8"], dry_run=0, **kwargs)
+				self.assertTrue(result["created"][0]["drafted"])
+		self.assertEqual(self._inserted(), [])
+
+	def test_a_published_projects_copy_is_inserted_as_before(self):
+		result = self._copy(["TASK-1"], dry_run=0, draft="auto")
+		((created,),) = [result["created"]]
+		self.assertNotIn("drafted", created)
+		self.assertEqual(self._inserted(), [created["task"]])
+		self.assertEqual(self._drafts(), [])
+		self.assertNotIn("drafted_conflicts", result)
+
+	def test_the_hold_drafts_every_copy(self):
+		result = self._copy(["TASK-1", "TASK-8"], dry_run=0, draft=1)
+		self.assertEqual([c["drafted"] for c in result["created"]], [True, True])
+		self.assertEqual(self._inserted(), [])
+
+	def test_one_run_inserts_the_published_copy_and_drafts_the_other(self):
+		result = self._copy(["TASK-1", "TASK-8"], dry_run=0, draft="auto")
+		created = {c["source"]: c for c in result["created"]}
+		self.assertEqual(self._inserted(), [created["TASK-1"]["task"]])
+		self.assertTrue(created["TASK-8"]["drafted"])
+
+	def test_drafting_copies_needs_room_for_all_of_them_first(self):
+		with mock.patch.object(self.api, "DRAFT_LIMIT", 0):
+			with self.assertRaises(h._Throw):
+				self._copy(["TASK-1", "TASK-8"], dry_run=0, draft="auto")
+		self.assertEqual(self._inserted(), [])  # refused before the live copy too
+
+
+class TestSplitOnADraftSchedule(_P4):
+	"""No draft row can hold a split, so a Draft schedule refuses it on the server, whatever the flag."""
+
+	class _PastTheGate(Exception):
+		pass
+
+	def setUp(self):
+		super().setUp()
+		h._task("TASK-1", crew=("RES-1",))
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+		self.patches.append(mock.patch.object(_actions(), "_require_create", self._past))
+		self.patches[-1].start()
+
+	def _past(self):
+		raise self._PastTheGate()
+
+	def test_a_draft_schedule_refuses_it_with_what_to_do(self):
+		for draft in (None, 0, "auto"):
+			with self.subTest(draft=draft):
+				kwargs = {} if draft is None else {"draft": draft}
+				with self.assertRaises(h._Throw) as caught:
+					_actions().split_task("TASK-8", "2026-10-13", BASE, **kwargs)
+				self.assertIn("Publish the project's schedule first", str(caught.exception))
+		self.assertEqual((self.frappe.saved, self._drafts()), ([], []))
+
+	def test_a_published_one_goes_on_to_split(self):
+		with self.assertRaises(self._PastTheGate):
+			_actions().split_task("TASK-1", "2026-10-13", BASE, draft="auto")
+
+	def test_the_hold_still_refuses_with_its_own_reason(self):
+		with self.assertRaises(h._Throw) as caught:
+			_actions().split_task("TASK-1", "2026-10-13", BASE, draft=1)
+		self.assertIn("Turn Draft mode off", str(caught.exception))
+
+	def test_before_the_columns_exist_nothing_changes(self):
+		self.frappe.db.has_column = lambda doctype, column: column not in h.P3_COLUMNS
+		with self.assertRaises(self._PastTheGate):
+			_actions().split_task("TASK-8", "2026-10-13", BASE)
+
+
 class TestWiring(unittest.TestCase):
 	def _args(self, path, name):
 		fn = next(
@@ -998,6 +1263,13 @@ class TestWiring(unittest.TestCase):
 			names, defaults = self._args(path, name)
 			self.assertEqual(names[-3:], ["dependents", "notify", "draft"], name)
 			self.assertIsNone(defaults["dependents"], name)
+
+	def test_the_overdue_tray_and_copy_week_take_draft_last_and_unset(self):
+		# v1.740.0: unset reads as "auto" for these two (_held), so an old caller keeps working.
+		for name in ("bulk_update", "copy_week"):
+			names, defaults = self._args(API_PATH, name)
+			self.assertEqual(names[-1], "draft", name)
+			self.assertIsNone(defaults["draft"], name)
 
 	def test_the_maintenance_add_crew_takes_the_answer_too(self):
 		path = APP / "api/maintenance_planner.py"
