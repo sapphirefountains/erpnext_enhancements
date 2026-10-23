@@ -81,30 +81,50 @@ def widen_for_task(doc):
 def _database_failed(exc):
 	"""Whether ``exc`` means the database itself failed, so the transaction cannot carry on: a deadlock
 	or a lock-wait timeout (InnoDB has already rolled the whole transaction back by then), or any
-	other ``OperationalError`` / ``InternalError`` of the connection. Read off ``frappe.db`` as frappe
-	16.50.0 exposes them (``frappe/database/mariadb/database.py``: ``MariaDBExceptionUtil``). A missing
-	table or column is not that: it is what ERPNext's own test bootstrap meets before this app's fields
-	exist, and the statement failing does not end the transaction."""
+	other ``OperationalError``, ``InternalError`` or ``InterfaceError`` of the connection.
+
+	As frappe 16.50.0 raises them (``frappe/database/database.py`` ``Database.sql``): a deadlock comes
+	back as ``frappe.QueryDeadlockError(e)`` and a timeout as ``frappe.QueryTimeoutError(e)``, plain
+	``Exception`` subclasses raised ``from`` the pymysql error, so those two are matched by kind and the
+	chain of causes is followed; the pymysql kinds and checks are read off ``frappe.db``
+	(``frappe/database/mariadb/database.py`` ``MariaDBExceptionUtil``). A missing table or column is
+	not a failure: it is what ERPNext's own test bootstrap meets before this app's fields exist, and
+	the statement failing does not end the transaction."""
 	db = getattr(frappe, "db", None)
-	for name in ("is_deadlocked", "is_timedout"):
-		check = getattr(db, name, None)
-		try:
-			if callable(check) and check(exc):
-				return True
-		except Exception:
-			pass
-	kinds = tuple(
+	wrapped = tuple(
 		kind
-		for kind in (getattr(db, "OperationalError", None), getattr(db, "InternalError", None))
+		for kind in (getattr(frappe, "QueryDeadlockError", None), getattr(frappe, "QueryTimeoutError", None))
 		if isinstance(kind, type) and issubclass(kind, BaseException)
 	)
-	if not kinds or not isinstance(exc, kinds):
-		return False
+	kinds = tuple(
+		kind
+		for kind in (
+			getattr(db, "OperationalError", None),
+			getattr(db, "InternalError", None),
+			getattr(db, "InterfaceError", None),
+		)
+		if isinstance(kind, type) and issubclass(kind, BaseException)
+	)
 	missing = getattr(db, "is_missing_table_or_column", None)
-	try:
-		return not (callable(missing) and missing(exc))
-	except Exception:
-		return True
+	seen = set()
+	while exc is not None and id(exc) not in seen:
+		seen.add(id(exc))
+		if wrapped and isinstance(exc, wrapped):
+			return True
+		for name in ("is_deadlocked", "is_timedout"):
+			check = getattr(db, name, None)
+			try:
+				if callable(check) and check(exc):
+					return True
+			except Exception:
+				pass
+		if kinds and isinstance(exc, kinds):
+			try:
+				return not (callable(missing) and missing(exc))
+			except Exception:
+				return True
+		exc = exc.__cause__ or exc.__context__
+	return False
 
 
 def before_task_validate(doc, method=None):

@@ -69,8 +69,11 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     an ordinary reason, such as a missing column during ERPNext's own test bootstrap or a bad
     value, is logged, and ERPNext then judges the save as it always did.
   - **Except when the database itself fails, which is raised:**
-    - a deadlock or a lock-wait timeout (`frappe.db.is_deadlocked` / `is_timedout`);
-    - any other `OperationalError` or `InternalError`, except a missing table or column.
+    - a deadlock or a lock-wait timeout. frappe 16.50.0's `db.sql` raises these as
+      `frappe.QueryDeadlockError` / `QueryTimeoutError` from the pymysql error, so they are matched
+      by kind, and the cause chain is followed for `frappe.db.is_deadlocked` / `is_timedout`;
+    - any other `OperationalError`, `InternalError` or `InterfaceError` (a lost connection), except
+      a missing table or column.
 
     After a deadlock, InnoDB has already rolled the whole transaction back. Swallowing the error
     would let the request carry on in a fresh transaction and commit only what it wrote
@@ -178,8 +181,9 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     too;
   - the Task `before_validate` hook: a Desk-style save past the end; an actual end past the end; a
     dependent ERPNext's reschedule pushes past the end; the start side; never inward; not a task or
-    no project; an ordinary failure is logged and swallowed, a missing column included; a deadlock,
-    a lock-wait timeout or an InternalError from the database is raised; both dates read at once;
+    no project; an ordinary failure is logged and swallowed, a missing column included; frappe's
+    `QueryDeadlockError` and `QueryTimeoutError` (raised from the pymysql error, as `db.sql` does), a
+    raw deadlock, an `InternalError` and an `InterfaceError` are raised; both dates read at once;
     registered in hooks.py;
   - widening, with ERPNext 16.50.0's refusal simulated on save (all four dates, every save):
     - live: the last task a day later, and the first a day earlier;

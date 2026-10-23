@@ -2035,20 +2035,55 @@ class TestTheTaskHookWidensEverySave(_P4):
 		class InternalError(Exception):
 			pass
 
+		class InterfaceError(Exception):
+			pass
+
+		class QueryDeadlockError(Exception):  # frappe.exceptions: plain Exception subclasses
+			pass
+
+		class QueryTimeoutError(Exception):
+			pass
+
 		db = self.frappe.db
-		db.OperationalError, db.InternalError = OperationalError, InternalError
+		db.OperationalError, db.InternalError, db.InterfaceError = (
+			OperationalError,
+			InternalError,
+			InterfaceError,
+		)
+		self.patches.append(
+			mock.patch.object(self.frappe, "QueryDeadlockError", QueryDeadlockError, create=True)
+		)
+		self.patches.append(
+			mock.patch.object(self.frappe, "QueryTimeoutError", QueryTimeoutError, create=True)
+		)
+		for patch in self.patches[-2:]:
+			patch.start()
+		self.interface_error = InterfaceError
 		db.is_deadlocked = lambda e: bool(e.args) and e.args[0] in (1213, 1020)
 		db.is_timedout = lambda e: bool(e.args) and e.args[0] == 1205
 		db.is_missing_table_or_column = lambda e: bool(e.args) and e.args[0] in (1054, 1146)
 		return OperationalError, InternalError
 
+	def _wrapped(self, kind, cause):
+		"""As frappe 16.50.0's Database.sql raises it: ``raise frappe.QueryDeadlockError(e) from e``."""
+		try:
+			raise kind(cause) from cause
+		except kind as error:
+			return error
+
 	def test_a_deadlock_while_widening_is_raised(self):
 		# InnoDB has rolled the whole transaction back: carrying on would commit half a Publish.
 		operational, internal = self._mariadb()
 		for error in (
+			# What frappe's db.sql actually raises: its own kinds, from the pymysql error.
+			self._wrapped(
+				self.frappe.QueryDeadlockError, operational(1213, "Deadlock found when trying to get lock")
+			),
+			self._wrapped(self.frappe.QueryTimeoutError, operational(1205, "Lock wait timeout exceeded")),
+			# And the raw kinds, as any other path may raise them.
 			operational(1213, "Deadlock found when trying to get lock"),
-			operational(1205, "Lock wait timeout exceeded"),
 			internal(1927, "Connection was killed"),
+			self.interface_error(0, ""),
 		):
 
 			def write(*args, error=error, **kwargs):
