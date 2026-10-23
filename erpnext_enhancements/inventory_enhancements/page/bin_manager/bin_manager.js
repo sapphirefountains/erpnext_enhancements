@@ -58,6 +58,13 @@ const BM_REORDER_ASSETS = ["reorder_levels.bundle.js", "reorder_levels.bundle.cs
 // good in the same per-user store as the planners' saved views (api/planner_views_prefs.py).
 const BM_REORDER_PREF = "erpnext_enhancements.api.planner_views_prefs.set_show_reorder";
 const BM_PAGE = "bin-manager";
+// The Reorder Board (v1.730.0): buyers pick reorders from it now that ERPNext no longer raises them on its own, and
+// a bin or a count is where a shortage is seen. The link shows only to the roles that may open that page
+// (BOARD_ROLES in inventory_enhancements/reorder_board.py, which tests/test_bin_manager.py pins this list to). The
+// page is gated on the server too: this only keeps a link that ends in "no permission" off the screen. The check is
+// the Desk's own (frappe.user), never a read of a Settings Single.
+const BM_BOARD_ROUTE = "reorder-board";
+const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
 const BM_SEARCH_DELAY_MS = 250;
 
 class BinManagerPage {
@@ -228,6 +235,25 @@ class BinManagerPage {
 		return (frappe.get_route() || [])[0] === BM_PAGE;
 	}
 
+	// Whether this person may open the Reorder Board. Anything unreadable is "no": a missing link is a lesser
+	// fault than one that leads to a refusal.
+	can_open_board() {
+		try {
+			return BM_BOARD_ROLES.some((role) => !!(frappe.user && frappe.user.has_role(role)));
+		} catch (e) {
+			return false;
+		}
+	}
+
+	// The link to the Reorder Board, or nothing. One frappe.set_route: the board is its own history entry, so
+	// Back lands here again (on this bin, when it was one).
+	board_link() {
+		if (!this.can_open_board()) return "";
+		return `<button type="button" class="btn btn-sm btn-default bm-board-link" data-act="reorder-board">${this.esc(
+			__("Reorder Board")
+		)}</button>`;
+	}
+
 	// One show per task: a replace followed by a push fires on_page_show twice.
 	route_changed() {
 		if (this._route_timer) return;
@@ -278,6 +304,7 @@ class BinManagerPage {
 			else if (act === "undo") this.undo(el.getAttribute("data-log"), el);
 			else if (act === "retry") this.ctl.refresh();
 			else if (act === "reorder-toggle") this.toggle_reorder();
+			else if (act === "reorder-board") frappe.set_route(BM_BOARD_ROUTE);
 			else if (act === "add") this.add_dialog();
 			else if (act === "create") this.create_dialog();
 			else if (row && act === "count") this.count_dialog(row);
@@ -362,6 +389,7 @@ class BinManagerPage {
 						<input type="search" class="form-control bm-filter" autocomplete="off"
 							placeholder="${this.esc(__("Find a bin: type part of its name"))}"
 							aria-label="${this.esc(__("Find a bin"))}">
+						${this.board_link()}
 					</div>
 					<div class="bm-list"></div>
 				</div>`);
@@ -449,7 +477,7 @@ class BinManagerPage {
 							__(this.bm.ACTION_LABELS[a])
 						)}</button>`
 				)
-				.join(" ") + toggle
+				.join(" ") + toggle + (this.board_link() ? ` ${this.board_link()}` : "")
 		);
 		this.draw_notice();
 		this.draw_items(loc);

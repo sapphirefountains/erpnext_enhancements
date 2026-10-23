@@ -972,7 +972,8 @@ function makeDesk(options) {
 			desk.newDoc = [doctype, values];
 			return frappe.set_route(slug(doctype), "new");
 		},
-		user: { has_role: () => true, full_name: (u) => u },
+		// { roles: [...] } is who the person is (the Desk's own boot roles); without it every role is held.
+		user: { has_role: (role) => (opts.roles ? opts.roles.includes(role) : true), full_name: (u) => u },
 		dom: { freeze() {}, unfreeze() {} },
 		request: { cleanup() {} },
 		model: {},
@@ -1829,6 +1830,60 @@ test("Scanner Audit: the switch shows the boxes, reads the rule once, keeps the 
 	await desk.settle();
 	check("on again for the same card: its rule is asked for again only because the card is the one on screen", desk.sent("get_reorder_levels").length >= 1, true);
 	check("no push without a tap", desk.violations, []);
+});
+
+// v1.731.1: a button to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), for the
+// roles the board admits (reorder_board.BOARD_ROLES). It is one history entry, and a tap on it takes no focus.
+const boardCalls = (desk) => desk.calls.filter((c) => c.label === ".isa-board");
+const boardShown = (desk) => {
+	const t = boardCalls(desk).filter((c) => c.method === "toggle");
+	return t.length ? t[t.length - 1].args[0] : null;
+};
+
+test("Scanner Audit: the Reorder Board button is shown to each board role, is one history entry, and Back returns to the count", async () => {
+	for (const role of ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"]) {
+		const desk = await inventory(null, { roles: [role] });
+		check(`${role}: the button is shown`, boardShown(desk), true);
+		check(`${role}: and says Reorder Board`, desk.calls.length > 0 && desk.calls.some((c) => typeof c.args[0] === "string" && c.args[0].includes('class="btn btn-sm btn-default isa-board">Reorder Board</button>')), true);
+		await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+		await desk.settle();
+		const click = desk.handlers.find((h) => h.el.__label === ".isa-board" && h.type === "click");
+		const mousedown = desk.handlers.find((h) => h.el.__label === ".isa-board" && h.type === "mousedown");
+		let prevented = false;
+		mousedown.fn({ preventDefault() { prevented = true; } });
+		check(`${role}: a tap cannot take the focus off the scan box or the quantity box`, prevented, true);
+		const before = [desk.at().length, desk.focused(".isa-scan"), desk.focused(".isa-qty")];
+		await desk.tap(() => click.fn({}));
+		check(`${role}: it routes to the board`, [desk.route(), desk.current()], ["reorder-board", "reorder-board"]);
+		check(`${role}: as a new entry`, desk.at().length, before[0] + 1);
+		check(`${role}: and took no focus`, [desk.focused(".isa-scan"), desk.focused(".isa-qty")], [before[1], before[2]]);
+		await desk.back();
+		check(`${role}: Back returns to the count`, [desk.route(), desk.current(), desk.at().length], ["inventory-scanner-audit", "inventory-scanner-audit", before[0] + 1]);
+		await desk.forward();
+		check(`${role}: Forward returns to the board`, desk.route(), "reorder-board");
+		check(`${role}: no push without a tap`, desk.violations, []);
+	}
+});
+
+test("Scanner Audit: no Reorder Board button for a person without a board role", async () => {
+	for (const roles of [[], ["Stock User"], ["Sales User", "Accounts User"]]) {
+		const desk = await inventory(null, { roles });
+		check(`${JSON.stringify(roles)}: hidden`, boardShown(desk), false);
+		check("the rest of the bar is still there", desk.handlers.some((h) => h.el.__label === ".isa-start" && h.type === "click"), true);
+	}
+});
+
+test("Scanner Audit: a role check that throws hides the Reorder Board button and breaks nothing", async () => {
+	const desk = await inventory(null, { roles: ["Stock Manager"] });
+	check("sanity: shown with a working role check", boardShown(desk), true);
+	const broken = makeDesk({ roles: ["Stock Manager"] });
+	broken.frappe.user.has_role = () => {
+		throw new Error("boot has no roles");
+	};
+	broken.respond.get_bootstrap = () => ({ settings: { enable_camera_scan: 0, default_warehouse: "Stores" }, session: null });
+	await broken.load("/desk/home");
+	await broken.tap(() => broken.frappe.set_route("inventory-scanner-audit"));
+	check("hidden, and the page loaded", [boardShown(broken), !!isa(broken)], [false, true]);
 });
 
 test("Scanner Audit: a saved choice opens the card with the boxes, and anything unreadable is hidden", async () => {

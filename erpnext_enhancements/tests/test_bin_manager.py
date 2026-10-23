@@ -427,6 +427,123 @@ class TestThePageUnderNode(unittest.TestCase):
 		self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class TestAStockedItemIsOneWithARule(unittest.TestCase):
+	"""v1.731.1: the Stock Scan store run reads an item as *stocked* when it has a reorder rule, level 0
+	included (a rule that reorders when the item runs out, allowed since v1.728.0). It asked for a level
+	above 0, so that item was offered "Not something we stock". Run for real on SQLite
+	(tests/sqlite_sql_helper.py); the KPI half of the same fix is tests/test_reorder_rule_counts.py."""
+
+	def setUp(self):
+		from erpnext_enhancements.tests import sqlite_sql_helper as sqlite_sql
+
+		conn = sqlite_sql.connect(
+			"create table `tabItem Reorder` (parent text, parenttype text, warehouse text, "
+			"warehouse_reorder_level real, warehouse_reorder_qty real)"
+		)
+		conn.executemany(
+			"insert into `tabItem Reorder` values (?, ?, 'Bin A', ?, ?)",
+			[
+				("AT-ZERO", "Item", 0, 12),
+				("LEVEL-ONLY", "Item", 4, 0),
+				("BOTH", "Item", 4, 10),
+				("NEITHER", "Item", 0, 0),
+				("NULLS", "Item", None, None),
+				("OTHER-PARENT", "Warehouse", 5, 5),
+			],
+		)
+		self._sql = base.FRAPPE.db.sql
+		self._conn = conn
+		base.FRAPPE.db.sql = sqlite_sql.sql_for(conn, strict=True)
+
+	def tearDown(self):
+		base.FRAPPE.db.sql = self._sql
+		self._conn.close()
+
+	def test_a_rule_at_level_zero_with_a_quantity_is_a_rule(self):
+		self.assertTrue(base.scan._has_reorder_rule("AT-ZERO"))
+
+	def test_a_level_alone_still_is(self):
+		self.assertTrue(base.scan._has_reorder_rule("LEVEL-ONLY"))
+		self.assertTrue(base.scan._has_reorder_rule("BOTH"))
+
+	def test_no_rule_no_numbers_or_someone_elses_table_is_not(self):
+		for item in ("NEITHER", "NULLS", "OTHER-PARENT", "NO-SUCH-ITEM"):
+			with self.subTest(item=item):
+				self.assertFalse(base.scan._has_reorder_rule(item))
+
+	def test_the_level_shown_on_the_card_is_unchanged(self):
+		# the card and the log line still show the level; the rule at 0 shows 0 and has_reorder_rule 1
+		self.assertEqual(base.scan._reorder_level("AT-ZERO"), 0)
+		self.assertEqual(base.scan._reorder_level("BOTH"), 4)
+
+	def test_the_item_card_carries_the_flag(self):
+		src = (APP / "api" / "stock_scan.py").read_text(encoding="utf-8")
+		self.assertIn('"has_reorder_rule": cint(_has_reorder_rule(item.name)),', src)
+
+
+BOARD = APP / "inventory_enhancements" / "reorder_board.py"
+BOARD_PAGE_JSON = APP / "inventory_enhancements" / "page" / "reorder_board" / "reorder_board.json"
+SCANNER_AUDIT_JS = APP / "inventory_enhancements" / "page" / "inventory_scanner_audit" / "inventory_scanner_audit.js"
+
+
+def _board_roles():
+	"""``reorder_board.BOARD_ROLES``, read with ast (the module imports frappe)."""
+	for node in ast.parse(BOARD.read_text(encoding="utf-8")).body:
+		if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "BOARD_ROLES" for t in node.targets):
+			return tuple(ast.literal_eval(node.value))
+	raise AssertionError("BOARD_ROLES not found")
+
+
+class TestTheReorderBoardLink(unittest.TestCase):
+	"""v1.731.1: the Bin Manager and the Inventory Scanner Audit link to the Reorder Board, for the roles
+	that may open it. The behaviour (role-gated, one history entry, Back returns, no focus taken) runs
+	under node in scripts/test_bin_manager.mjs and scripts/test_desk_page_history.js; these pin what a
+	node stand-in cannot: that the role lists in the two pages are the board's own."""
+
+	PAGES = {
+		"bin_manager.js": (PAGE_JS, r"const BM_BOARD_ROLES = (\[[^\]]*\]);", "BM_BOARD_ROUTE"),
+		"inventory_scanner_audit.js": (SCANNER_AUDIT_JS, r"const ISA_BOARD_ROLES = (\[[^\]]*\]);", "ISA_BOARD_ROUTE"),
+	}
+
+	def test_each_page_names_the_boards_roles_and_no_others(self):
+		wanted = set(_board_roles())
+		self.assertGreaterEqual(len(wanted), 4)
+		for name, (path, pattern, _route) in self.PAGES.items():
+			with self.subTest(page=name):
+				match = re.search(pattern, path.read_text(encoding="utf-8"))
+				self.assertIsNotNone(match, f"{name} has no board role list")
+				listed = set(json.loads(match.group(1).replace("'", '"')))
+				self.assertEqual(listed, wanted)
+
+	def test_the_boards_own_page_admits_the_same_roles(self):
+		page = json.loads(BOARD_PAGE_JSON.read_text(encoding="utf-8"))
+		self.assertEqual({r["role"] for r in page["roles"]}, set(_board_roles()))
+
+	def test_the_link_routes_to_the_board_and_reads_no_settings(self):
+		for name, (path, _pattern, route) in self.PAGES.items():
+			with self.subTest(page=name):
+				code = _code(path)
+				self.assertRegex(code, rf"{route} = ['\"]reorder-board['\"];")
+				self.assertIn(f"frappe.set_route({route})", code)
+				self.assertIn("frappe.user.has_role(role)", code)
+				# a Settings Single read from desk JS is "No permission" for anyone but a System Manager
+				self.assertNotIn("get_single_value", code)
+				self.assertNotRegex(code, r"frappe\.db\.get_value\(\s*['\"][A-Za-z ]*Settings")
+
+	def test_the_scanner_audit_button_takes_no_focus(self):
+		code = _code(SCANNER_AUDIT_JS)
+		self.assertIn("this.$board.on('mousedown', (e) => e.preventDefault());", code)
+		# the button is only ever shown after the role check, never unconditionally
+		self.assertIn("this.$board.toggle(isa_can_open_board());", code)
+
+	def test_the_page_script_parses(self):
+		if not shutil.which("node"):
+			self.skipTest("node is not on PATH")
+		for path in (PAGE_JS, SCANNER_AUDIT_JS):
+			result = subprocess.run([shutil.which("node"), "--check", str(path)], capture_output=True, text=True, timeout=60)
+			self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class TestThePageFiles(unittest.TestCase):
 	def test_the_page_is_for_the_people_who_use_stock_scan(self):
 		page = json.loads(PAGE_JSON.read_text(encoding="utf-8"))

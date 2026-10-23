@@ -91,9 +91,12 @@ belongs on Operations. So:
   items counted in 90 days, and the Stock Scan review queue. The three stock-level KPIs moved
   here from Product unchanged. Device compliance, unsynced time logs and project naming stayed.
 
-**A "stocked item" is an Item with a positive reorder level.** That is ERPNext's own marker for
-"we keep this on the shelf", and it is what drives the automatic Material Requests, so there is
-no second list to drift from it.
+**A "stocked item" is an Item with a reorder rule.** That is ERPNext's own marker for "we keep
+this on the shelf", and it is what the Reorder Board lists from, so there is no second list to
+drift from it. "Has a rule" is ERPNext's own trigger test, `reorder_level or reorder_qty`: a rule
+reordering at 0 counts (v1.731.1); before that only a level above 0 did, which dropped every item
+reordered "when it runs out". `snapshots.STOCKED_RULE_SQL` is the one definition the four Operations
+KPIs share.
 
 **A "store run" is a purchase from a Supplier ticked *Store-Run Vendor*** (a Check created by
 the patch; Home Depot and Lowes are ticked to start). Today the only record of a run is a

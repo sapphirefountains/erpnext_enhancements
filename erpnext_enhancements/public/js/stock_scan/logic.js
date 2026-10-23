@@ -560,12 +560,21 @@ export function boughtLabel(bought, today) {
 }
 
 /**
- * The reason to start on. An item with a reorder level above 0 is a stocked item (the KPI's own
- * definition), so buying it at a counter means "A stocked item was out"; anything else, a new
- * item included, is "Not something we stock".
+ * Whether an item is a stocked item: it has a reorder rule (the KPI's own definition). The server
+ * says so in `has_reorder_rule` (v1.731.1: a rule that reorders at 0 is a rule, though its level is
+ * 0). A payload without it, an older one, falls back to the level being above 0.
  */
-export function suggestedReason(reorderLevel, isNewItem) {
-	return !isNewItem && Number(reorderLevel) > 0 ? REASON_OUT_OF_STOCK : REASON_NOT_STOCKED;
+export function stockedItem(reorderLevel, hasRule) {
+	if (hasRule !== undefined && hasRule !== null) return !!Number(hasRule);
+	return Number(reorderLevel) > 0;
+}
+
+/**
+ * The reason to start on. A stocked item (`stockedItem`) bought at a counter means "A stocked item
+ * was out"; anything else, a new item included, is "Not something we stock".
+ */
+export function suggestedReason(reorderLevel, isNewItem, hasRule) {
+	return !isNewItem && stockedItem(reorderLevel, hasRule) ? REASON_OUT_OF_STOCK : REASON_NOT_STOCKED;
 }
 
 /**
@@ -573,12 +582,15 @@ export function suggestedReason(reorderLevel, isNewItem) {
  * was out" and considers the kit on "Not something we stock", so a wrong one sends them the
  * wrong way. A warning, never a refusal: the technician may know better.
  */
-export function reasonWarning(reason, reorderLevel, isNewItem) {
+export function reasonWarning(reason, reorderLevel, isNewItem, hasRule) {
 	const level = Number(reorderLevel) || 0;
-	if (reason === REASON_NOT_STOCKED && !isNewItem && level > 0) {
-		return `ERPNext keeps a minimum of ${plain(level)} of this item, so it is a stocked item. "${REASON_OUT_OF_STOCK}" is probably the reason.`;
+	const stocked = stockedItem(reorderLevel, hasRule);
+	if (reason === REASON_NOT_STOCKED && !isNewItem && stocked) {
+		return level > 0
+			? `ERPNext keeps a minimum of ${plain(level)} of this item, so it is a stocked item. "${REASON_OUT_OF_STOCK}" is probably the reason.`
+			: `ERPNext reorders this item when it runs out, so it is a stocked item. "${REASON_OUT_OF_STOCK}" is probably the reason.`;
 	}
-	if (reason === REASON_OUT_OF_STOCK && (isNewItem || level <= 0)) {
+	if (reason === REASON_OUT_OF_STOCK && (isNewItem || !stocked)) {
 		return isNewItem
 			? `A new item is not stocked yet. "${REASON_NOT_STOCKED}" is probably the reason.`
 			: `This item has no minimum in ERPNext, so it is not a stocked item yet. "${REASON_NOT_STOCKED}" is probably the reason.`;

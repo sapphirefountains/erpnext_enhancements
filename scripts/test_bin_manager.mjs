@@ -665,6 +665,13 @@ function loadPage(options) {
 		},
 		get_route: () => world.route(),
 		set_route: (...args) => world.set_route(args.length === 1 ? args[0] : args),
+		// The Desk's own role check (boot's roles). { roles: [...] } is who the person is; none = no board link.
+		user: {
+			has_role: (role) => {
+				if ((options || {}).user_throws) throw new Error("boot has no roles");
+				return ((options || {}).roles || []).includes(role);
+			},
+		},
 		require: (assets, cb) => {
 			registry.requires.push(assets);
 			// { hold_reorder: true }: the reorder bundle never arrives (a slow network), and must hold nothing up.
@@ -1406,6 +1413,60 @@ test("names are data: titles, labels and descriptions escape them", async () => 
 	}
 	check("row name escaped in the table", registry.found[".bm-items"][0].innerHTML.includes(ESCAPED), true);
 	check("no raw tag in the table", /<b>Bold/.test(registry.found[".bm-items"][0].innerHTML), false);
+});
+
+// v1.731.1: a link to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), on the
+// picker and on a bin, for the roles the board admits (reorder_board.BOARD_ROLES) and nobody else.
+const BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
+const boardLinkIn = (html) => (String(html).match(/data-act="reorder-board"/g) || []).length;
+
+test("the real page: the Reorder Board link is on the picker and on a bin for each board role, and Back returns", async () => {
+	for (const role of BOARD_ROLES) {
+		const { world, registry, click } = loadPage({ roles: [role] });
+		world.go_to("/desk/bin-manager");
+		await settle();
+		check(`${role}: one link on the picker`, boardLinkIn(registry.root.__state.html), 1);
+		check(`${role}: its words`, />Reorder Board<\/button>/.test(registry.root.__state.html), true);
+		world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+		await settle();
+		check(`${role}: one link on a bin`, boardLinkIn(registry.found[".bm-bin-actions"][0].innerHTML), 1);
+		const entries = world.entries.length;
+		click({ "data-act": "reorder-board" });
+		await settle();
+		check(`${role}: it routes to the board`, world.route(), ["reorder-board"]);
+		check(`${role}: as a new history entry`, [world.entries.length, world.index], [entries + 1, entries]);
+		world.back();
+		await settle();
+		check(`${role}: Back lands on the bin again`, world.route(), ["bin-manager", BIN_A]);
+		world.forward();
+		await settle();
+		check(`${role}: Forward returns to the board`, world.route(), ["reorder-board"]);
+	}
+});
+
+test("the real page: no Reorder Board link for a person without a board role, and the page is as it was", async () => {
+	for (const roles of [[], ["Stock User"], ["Sales User", "Accounts User"]]) {
+		const { world, registry } = loadPage({ roles });
+		world.go_to("/desk/bin-manager");
+		await settle();
+		check(`${JSON.stringify(roles)}: none on the picker`, [boardLinkIn(registry.root.__state.html), /Reorder Board/.test(registry.root.__state.html)], [0, false]);
+		check("the filter box is still there", /bm-filter/.test(registry.root.__state.html), true);
+		world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+		await settle();
+		check(`${JSON.stringify(roles)}: none on a bin`, boardLinkIn(registry.found[".bm-bin-actions"][0].innerHTML), 0);
+	}
+});
+
+test("the real page: a role check that throws shows no Reorder Board link and breaks nothing", async () => {
+	const { world, registry } = loadPage({ roles: BOARD_ROLES });
+	// Another page load whose frappe.user throws: the link is hidden, not a broken page.
+	const broken = loadPage({ roles: BOARD_ROLES, user_throws: true });
+	for (const [name, w, r] of [["a role check that works", world, registry], ["a role check that throws", broken.world, broken.registry]]) {
+		w.go_to("/desk/bin-manager");
+		await settle();
+		check(`${name}: the picker still draws`, /bm-filter/.test(r.root.__state.html), true);
+		check(`${name}: the link is ${name.endsWith("works") ? "there" : "not there"}`, boardLinkIn(r.root.__state.html), name.endsWith("works") ? 1 : 0);
+	}
 });
 
 // ------------------------------------------------------------------ run

@@ -2225,6 +2225,12 @@ async function appBinActions() {
 	check("validTotal", [L.validTotal("23.41").total, L.validTotal("").total, L.validTotal("0").total], [23.41, null, null]);
 	check("money (stock_scan_rules.money)", [L.money(4.97), L.money(1234.5), L.money(0.497), L.money(null)], ["$4.97", "$1,234.50", "$0.4970", ""]);
 	check("suggestedReason: a stocked item was out; anything else is not stocked", [L.suggestedReason(5, false), L.suggestedReason(0, false), L.suggestedReason(5, true)], [L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED]);
+	// v1.731.1: a rule that reorders at 0 has level 0 and is still a stocked item. The server says so in has_reorder_rule;
+	// a payload without it (an older one) falls back to the level.
+	check("suggestedReason: a rule at level 0 is a stocked item (has_reorder_rule), a payload without the flag falls back to the level", [L.suggestedReason(0, false, 1), L.suggestedReason(0, false, true), L.suggestedReason(0, false, 0), L.suggestedReason(5, false, 0), L.suggestedReason(0, true, 1), L.suggestedReason(5, false, undefined), L.suggestedReason(0, false, null)], [L.REASON_OUT_OF_STOCK, L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED, L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED]);
+	check("stockedItem", [L.stockedItem(0, 1), L.stockedItem(0, 0), L.stockedItem(3, undefined), L.stockedItem(0, undefined), L.stockedItem(3, 0)], [true, false, true, false, false]);
+	truthy("reasonWarning: 'not something we stock' on a rule at 0 says it reorders when it runs out", /reorders this item when it runs out/.test(L.reasonWarning(L.REASON_NOT_STOCKED, 0, false, 1) || ""));
+	check("reasonWarning: 'a stocked item was out' on a rule at 0 is quiet; on an item with no rule it is not", [L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, false, 1), /no minimum/.test(L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, false, 0) || "")], [null, true]);
 	truthy("reasonWarning: 'not something we stock' for an item with a minimum", /minimum of 4/.test(L.reasonWarning(L.REASON_NOT_STOCKED, 4, false) || ""));
 	truthy("reasonWarning: 'a stocked item was out' for a new item", /new item/i.test(L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, true) || ""));
 	truthy("reasonWarning: 'a stocked item was out' for an item with no minimum", /no minimum/.test(L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, false) || ""));
