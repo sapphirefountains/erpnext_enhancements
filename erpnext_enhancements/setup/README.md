@@ -198,9 +198,13 @@ is dropped, not appended (`frappe/desk/layers.py`, `keep_unnamed=False`). frappe
 layer, so a dock that differs by job is written one person at a time.
 
 - **One rail.** `dock/erpnext_enhancements/erpnext_enhancements.json` is this app's own dock,
-  `mount_on: erpnext`. Its rows are appended to ERPNext's: the Opportunities Kanban (a URL row),
+  `mount_on: erpnext`. Its rows are appended to ERPNext's: three URL rows, the Opportunities
+  Kanban, Suppliers (`/desk/supplier`) and Accounts (Customers) (`/desk/customer`; Customer is
+  relabelled Accounts on prod, and the row's title keeps it apart from ERPNext's Accounts module),
   then Workspace pins for Maintenance, Travel, Training, KPI Dashboards, Water Engineering,
-  QuickBooks, HR, Knowledge Base, Fleet and AI Governance. The desk then shows ERPNext's rail in
+  QuickBooks, HR, Knowledge Base, Fleet and AI Governance. **Change a row, move the file's
+  `modified` forward**: frappe re-imports it only when that is later than the database row, and
+  `test_dock_profiles.SHIPPED_DOCKS` fails the build until you do. The desk then shows ERPNext's rail in
   our modules too (`frappe.boot.app_rail_host`), where before our sidebars drew a second rail:
   22 "(Custom)" entries from the 16.50 conversion. That old site layer (`app =
   erpnext_enhancements`) is left in place and no longer read. Our areas are **Workspace** pins
@@ -220,7 +224,9 @@ layer, so a dock that differs by job is written one person at a time.
   Blank means the first `BY_ROLE_PROFILE` rule the person's Role Profiles match, and the order is
   the precedence: Design before Field Tech for someone holding both Design Team and Production
   Team. Site Default, or no match, means no layer of their own. Nik, James and Parker hold no
-  Role Profile and are set by hand.
+  Role Profile and are set by hand. **CEO** (Projects, Opportunities, CRM, Suppliers, Accounts
+  (Customers); James, v1.736.0) is only ever chosen on the User form: no Role Profile maps to it,
+  and Executive stays with Management.
 - **Nothing is blocked.** The rail only stops *offering* an entry. Search, links and Manage Dock
   still reach every module, and frappe's own reach gate (module visibility, workspace roles)
   still runs on every boot. Blocking a module outright is what Module Profiles are for, and Nik
