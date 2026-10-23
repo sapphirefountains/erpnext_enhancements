@@ -2348,7 +2348,7 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 	]
 	labels = _crew_labels([row.get("name") for row in rows]) if rows else {}
 	groups = group_overdue(rows, labels)
-	drafted = _overdue_drafts() if rows else {}
+	drafted = _overdue_drafts({row.get("name"): row.get("modified") for row in rows}) if rows else {}
 	for group in groups:
 		for task in group["tasks"]:
 			if drafted.get(task["name"]):
@@ -2356,8 +2356,10 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 	return {"today": str(today), "total": len(rows), "projects": groups}
 
 
-def _overdue_drafts():
-	"""``{task: start}`` for the drafts the caller can see that move a task (:func:`_draft_rows`).
+def _overdue_drafts(modified):
+	"""``{task: start}`` for the drafts the caller can see that move one of the tasks in ``modified``
+	(``{task: its modified}``, :func:`_draft_rows`). A draft of a task changed since it was drafted is
+	left out: Publish skips it as out of date, so the tray must not say the task is taken care of.
 	Never fails the tray: a draft that cannot be read is simply not shown on it."""
 	try:
 		rows, _duplicates = _draft_rows()
@@ -2365,9 +2367,12 @@ def _overdue_drafts():
 		return {}
 	out = {}
 	for row in rows:
-		start = load_payload(row.get("payload")).get("start") if row.get("task") else None
+		task = row.get("task")
+		if task not in modified or not same_moment(row.get("base_modified"), modified[task]):
+			continue
+		start = load_payload(row.get("payload")).get("start")
 		if start:
-			out[row["task"]] = str(start)[:10]
+			out[task] = str(start)[:10]
 	return out
 
 
@@ -2536,7 +2541,8 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 		doc = by_name[name]
 		entry = {
 			"task": name,
-			"modified": doc.get("modified"),
+			# As stored now: a live save earlier in this request may have had ERPNext push it.
+			"modified": frappe.db.get_value("Task", name, "modified") or doc.get("modified"),
 			"start": str(day),
 			"end": None,
 			"tentative": None,

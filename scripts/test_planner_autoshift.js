@@ -710,6 +710,26 @@ test("Copy week's preview marks the drafted copies and says why; the done messag
 	check("the message counts the drafts", alerts.some((text) => text.endsWith(", 1 of them as drafts")), true);
 });
 
+test("Copy week under the hold: every copy a draft, its own wording, and no reason asked", async () => {
+	const { pp, frappe, calls, dialogs } = projectPlanner();
+	pp.draft_on = true;
+	frappe.answers.push({
+		copies: [{ task: "T1", subject: "Pump", to_start: "2026-10-20", drafted: true }],
+		conflicts: {},
+		drafted_conflicts: { "RES-1": ["Over on Tue"] },
+		skipped: [],
+	});
+	await pp.preview_copy("2026-10-11", "2026-10-18", ["T1"]);
+	check("the hold's 1", calls[0].args.draft, 1);
+	const dialog = dialogs[dialogs.length - 1];
+	const html = dialog.opts.fields[0].options;
+	check("the hold's wording", html.includes("1 of these copies will be held as drafts until you publish them"), true);
+	check("not the Draft schedule's", html.includes("whose schedule is still Draft"), false);
+	check("the drafts' overbooking, as information", html.includes("nobody is asked for a reason"), true);
+	check("no live-conflict warning", html.includes("These copies would cause conflicts"), false);
+	check("a plain Copy", dialog.opts.primary_action_label, "Copy");
+});
+
 test("The note helpers", () => {
 	const { ctx } = projectPlanner();
 	const PURE = vm.runInContext("PPAS_PURE", ctx);

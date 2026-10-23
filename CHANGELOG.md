@@ -27,13 +27,16 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
   - A drafted task's conflicts are warnings. Only the saved tasks can ask for a reason. A live
     conflict without a reason still saves nothing and drafts nothing.
   - Each drafted task has its own savepoint. A refused one (a rental crew task, a Fountain Move) is
-    reported in `failed`, and the rest carry on, as the saved ones always did.
+    reported in `failed`, and the rest carry on, as the saved ones always did. Each is drafted from
+    the Task as stored after the live saves, so one that ERPNext pushed while saving a task it waits
+    on, in the same batch, is not refused as changed since.
   - **A task on a published schedule saves exactly as before, and its followers still do not move.**
     The brief asked for that. Whether a live Reschedule should carry followers too is a separate
     question.
   - A drafted Task stays overdue until Publish. So `get_overdue` now gives each row with a visible
-    draft a `drafted_start`, and the tray shows **Draft: <day>** on it. The toast after the
-    action says how many tasks are drafts and how many followers moved with them.
+    draft a `drafted_start`, and the tray shows **Draft: <day>** on it. A draft whose task changed
+    since it was drafted is left off, because Publish would skip it. The toast after the action
+    says how many tasks are drafts and how many followers moved with them.
 - **Copy week: a copy into a Draft schedule is a drafted new task.** It becomes a `New task` Draft
   row, not a Task, so it gets no assignment, no notice and no calendar sync until Publish creates it.
   - It is built from the same spec as a drafted duplicate (v1.603.0). The spec builder moved out of

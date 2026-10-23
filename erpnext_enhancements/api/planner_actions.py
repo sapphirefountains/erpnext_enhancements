@@ -715,7 +715,8 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 	"""
 	pp._require_planner()
 	_refuse_draft(draft)
-	if pp._drafting(pp.DRAFT_AUTO, task):
+	# A drafted new task (draft-new:) is not a Task yet: _load below refuses it, as it always has.
+	if not pp.is_draft_ref(task) and pp._drafting(pp.DRAFT_AUTO, task):
 		frappe.throw(_(SCHEDULE_SPLIT_REFUSAL), title=_("Publish the schedule first"))
 	_require_create()
 	doc = pp._load(task, modified)

@@ -1095,13 +1095,35 @@ class TestTheOverdueTrayReschedule(_P4):
 	def test_the_tray_shows_where_a_drafted_task_goes(self):
 		h._draft_row("TASK-1", {"start": "2026-10-20", "end": "2026-10-21"})
 		h._draft_row("TASK-2", {"crew_size": 2})  # a draft that does not move it
-		self.assertEqual(self.api._overdue_drafts(), {"TASK-1": "2026-10-20"})
+		h._draft_row("TASK-3", {"start": "2026-10-22", "end": "2026-10-22"})  # changed since: stale
+		h._draft_row("TASK-4", {"start": "2026-10-23", "end": "2026-10-23"})  # not on the tray
+		modified = {"TASK-1": BASE, "TASK-2": BASE, "TASK-3": "2026-10-08 12:00:00"}
+		self.assertEqual(self.api._overdue_drafts(modified), {"TASK-1": "2026-10-20"})
 
 		def broken(*args, **kwargs):
 			raise RuntimeError("no table yet")
 
 		with mock.patch.object(self.frappe, "get_all", broken):
-			self.assertEqual(self.api._overdue_drafts(), {})  # never fails the tray
+			self.assertEqual(self.api._overdue_drafts(modified), {})  # never fails the tray
+
+	def test_a_task_pushed_by_a_live_save_in_the_same_batch_is_still_drafted(self):
+		# TASK-8 (Draft schedule) waits on TASK-1 (published): saving TASK-1 has ERPNext push TASK-8,
+		# which bumps its modified after bulk_update loaded it.
+		h._task("TASK-1", crew=("RES-1",))
+		h._task("TASK-8", start="2026-10-15", end="2026-10-15", crew=("RES-2",), project="PRJ-2")
+		real_save = h._TaskDoc.save
+
+		def save(doc):
+			real_save(doc)
+			if doc.get("name") == "TASK-1":
+				self.frappe.docs[("Task", "TASK-8")]["modified"] = PUSHED_AT
+
+		with mock.patch.object(h._TaskDoc, "save", save):
+			result = self.api.bulk_update(json.dumps(["TASK-1", "TASK-8"]), "reschedule", "2026-10-26")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(
+			{u["task"]: bool(u.get("drafted")) for u in result["updated"]}, {"TASK-1": False, "TASK-8": True}
+		)
 
 
 class _NewTask(h._TaskDoc):
@@ -1240,6 +1262,11 @@ class TestSplitOnADraftSchedule(_P4):
 		with self.assertRaises(h._Throw) as caught:
 			_actions().split_task("TASK-1", "2026-10-13", BASE, draft=1)
 		self.assertIn("Turn Draft mode off", str(caught.exception))
+
+	def test_a_drafted_new_task_is_refused_as_before_not_as_a_draft_schedule(self):
+		with self.assertRaises(Exception) as caught:
+			_actions().split_task("draft-new:PDC-1", "2026-10-13", BASE)
+		self.assertNotIn("Publish the project's schedule first", str(caught.exception))
 
 	def test_before_the_columns_exist_nothing_changes(self):
 		self.frappe.db.has_column = lambda doctype, column: column not in h.P3_COLUMNS
