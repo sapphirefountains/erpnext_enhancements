@@ -1549,6 +1549,34 @@ class TestTodoView(unittest.TestCase):
 		self.row["date"] = "2026-10-23"
 		self.assertFalse(api.get_todo_view("T1")["due_is_stamp"])
 
+	def test_it_names_the_assignee_and_the_assigner(self):
+		"""v1.739.2: v16 boots user_info for the session user alone, so the form cannot name anyone
+		else; the server does, for the two people fields only."""
+		names = {"crew@x": "Brian Morisseau", "boss@x": "Lisa Symanski"}
+		saved = api.get_fullname
+		api.get_fullname = lambda user: names.get(user, user)
+		try:
+			people = api.get_todo_view("T1")["people"]
+			self.assertEqual(people, {"crew@x": "Brian Morisseau", "boss@x": "Lisa Symanski"})
+			# blanks are left out, never sent as None
+			self.row["assigned_by"] = None
+			self.assertEqual(api.get_todo_view("T1")["people"], {"crew@x": "Brian Morisseau"})
+			self.row["allocated_to"] = ""
+			self.assertEqual(api.get_todo_view("T1")["people"], {})
+		finally:
+			api.get_fullname = saved
+
+	def test_it_names_people_on_a_todo_that_is_not_yours(self):
+		fake.session.user = "boss@x"
+		api_names = api.get_fullname
+		api.get_fullname = lambda user: {"crew@x": "Brian Morisseau"}.get(user, user)
+		try:
+			view = api.get_todo_view("T1")
+		finally:
+			api.get_fullname = api_names
+		self.assertIsNone(view["item"])
+		self.assertEqual(view["people"]["crew@x"], "Brian Morisseau")
+
 
 class TestRecordFactsAndNames(unittest.TestCase):
 	"""v1.739.1, found on prod in ToDo khoaj9qnhe: the record card read "Expected End Date:
@@ -1592,10 +1620,25 @@ class TestRecordFactsAndNames(unittest.TestCase):
 	def test_names_not_addresses_on_the_two_people_fields(self):
 		desk = (APP / "public" / "js" / "global_enhancements" / "my_work.js").read_text(encoding="utf-8")
 		body = desk.split("function show_people_by_name", 1)[1].split("\n\t}\n", 1)[0]
-		self.assertIn('["allocated_to", "assigned_by"]', body)
+		self.assertIn('const PEOPLE_FIELDS = ["allocated_to", "assigned_by"];', desk)
+		self.assertIn("PEOPLE_FIELDS.forEach(", body)
 		# through Link's own machinery, so title_value_map hands the email back when the form saves
 		self.assertIn("translate_and_set_input_value(", body)
 		self.assertIn("show_people_by_name(frm);", desk.split("function draw_todo_view", 1)[1][:200])
+
+	def test_the_form_takes_the_names_from_the_server_first(self):
+		"""v1.739.2: frappe.user.full_name knows only the session user on v16 ("You")."""
+		desk = (APP / "public" / "js" / "global_enhancements" / "my_work.js").read_text(encoding="utf-8")
+		view = desk.split("function draw_todo_view", 1)[1].split("\n\t}\n", 1)[0]
+		self.assertIn("apply_people_names(frm, view.people);", view)
+		lookup = desk.split("function person_name", 1)[1].split("\n\t}\n", 1)[0]
+		self.assertLess(lookup.index("__ee_mw_people"), lookup.index("frappe.user.full_name"))
+		# a person picked in the field is named from the dropdown item, without a request
+		body = desk.split("function show_people_by_name", 1)[1].split("\n\t}\n", 1)[0]
+		self.assertIn('"awesomplete-select"', body)
+		self.assertIn("item.description", body)
+		# boot's user_info is left whole: its readers expect image, colour and initials too
+		self.assertNotRegex(desk, r"frappe\.boot\.user_info\s*\[[^\]]*\]\s*=")
 
 	def test_user_links_stay_addresses_everywhere_else(self):
 		"""show_title_field_in_link on User would turn every User link on the site into a name."""

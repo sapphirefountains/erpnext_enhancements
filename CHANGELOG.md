@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.739.2] - 2026-10-23
+
+### Fixed
+- **The ToDo form named only you.** v1.739.1 showed names in Assigned To and Assigned By through
+  `frappe.user.full_name`, which reads boot's `user_info`, and Frappe v16 boots that for the session
+  user alone (on prod `Object.keys(frappe.boot.user_info).length` is 1). Your own to-dos read "You",
+  but one assigned to Brian, or assigned by Lisa, still showed the address. Nik approved fetching the
+  names from the server.
+  - `api/my_work.get_todo_view` now returns `people`, `{user: full name}` for the two fields,
+    with blanks left out.
+  - The form applies those names when the view arrives and redraws a field already drawn. Only the
+    input's text changes: the stored value is still the email, and the form is not dirtied.
+  - A person picked in either field keeps their name too. The dropdown item's description is the
+    full name (User's search field), and it is recorded before Frappe redraws the field.
+  - The order is: the server's name, then a picked one, then `frappe.user.full_name` ("You"), then
+    the address.
+  - `frappe.boot.user_info` is deliberately not seeded. Its readers expect a whole entry (image,
+    colour, initials), and a name-only one would put them at risk elsewhere in the Desk.
+
+### Notes
+- Tests: `tests/test_my_work.py` checks that `get_todo_view` names the assignee and the assigner, on
+  your to-do and on someone else's, with blanks left out. It also checks that the form prefers the
+  server's names and leaves `frappe.boot.user_info` alone. There is no JS harness for
+  `global_enhancements/my_work.js`, so the form's side is checked at source level.
+
 ## [1.739.1] - 2026-10-23
 
 Two display faults on the new ToDo form (v1.739.0), found on prod in ToDo khoaj9qnhe the day it

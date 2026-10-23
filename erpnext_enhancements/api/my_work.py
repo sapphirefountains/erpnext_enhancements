@@ -197,7 +197,7 @@ def get_todo_view(todo: str):
 	"""The top of a ToDo's own form (v1.739.0), now that every link about an assignment that is not
 	on a Task or a visit opens its ToDo rather than My Work.
 
-	``{"heading", "status", "record", "item", "due_is_stamp"}``:
+	``{"heading", "status", "record", "item", "due_is_stamp", "people"}``:
 
 	* ``heading`` -- the ask's first line, else the record's title (``assignments.heading``), in
 	  place of Frappe's whole description.
@@ -208,6 +208,10 @@ def get_todo_view(todo: str):
 	  Reassign, Reply), when it is open and yours; else ``None``.
 	* ``due_is_stamp`` -- its date is only the day it was made, which My Work reads as no due date,
 	  so the form can say so under the Due Date it shows again.
+	* ``people`` -- ``{user: full name}`` for its Assigned To and Assigned By, blanks left out
+	  (v1.739.2). The form shows these names in place of the addresses. It cannot look them up
+	  itself: v16 boots ``user_info`` for the session user alone, so ``frappe.user.full_name`` knew
+	  only "You" and every other person stayed an email.
 
 	``None`` when the ToDo does not exist or the session user may not read it.
 	"""
@@ -246,6 +250,7 @@ def get_todo_view(todo: str):
 		"record": record,
 		"item": item,
 		"due_is_stamp": bool(row.date) and assignments.due_date(row.date, row.creation) is None,
+		"people": {person: get_fullname(person) for person in (row.allocated_to, row.assigned_by) if person},
 	}
 
 
