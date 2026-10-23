@@ -1474,7 +1474,7 @@ def build_out_tasks(project, rows, draft=None, phase_checklists=None):
 
 
 @frappe.whitelist()
-def get_build_out_context(project, draft=0):
+def get_build_out_context(project, draft=None):
 	"""What the Build out grid offers for ``project``: ``{"project", "title", "phases": [{name,
 	subject}], "tasks": [{name, subject, status}], "truncated", "can_create"}``.
 
@@ -1491,7 +1491,8 @@ def get_build_out_context(project, draft=0):
 	_require_customer_job(project)
 	rows = [
 		row
-		for row in _project_task_rows(project, draft=bool(cint(pp.given(draft)))).values()
+		# v1.741.0: the same rule as build_out_tasks, so the grid shows what its create would build on.
+		for row in _project_task_rows(project, draft=pp.drafts_new_task(draft, project)).values()
 		if not _is_finished(row)
 	]
 	phases = sorted(

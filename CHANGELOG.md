@@ -17,7 +17,9 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - **What changed:** a write with no draft flag is drafted when the task's project schedule is
     Draft, and saved otherwise (`project_planner.unset_auto`). For the three writes that create a
     task, unset or `"auto"` drafts the new task on a Draft schedule (`drafts_new_task`). Before, they
-    took `draft=1` only. An explicit `draft=0` still saves, as before.
+    took `draft=1` only. An explicit `draft=0` still saves, as before. The build-out grid's read
+    (`get_build_out_context`) follows the same rule, so the grid lists the drafted phases its create
+    will build on.
   - **Why:** an unset flag used to mean "save it". So a client that sent none wrote live into a
     schedule nobody had published, as Split, Copy week and the Overdue tray did before v1.740.0.
   - **The page had the same gap.** The creating writes decide on the page (`draft_args`), from the
@@ -45,7 +47,8 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     - neither date is outside the project's expected start and end.
   - **When a date counts:** ERPNext refuses the last two only when that date changed
     (`report_date_conflict`), so a date the draft did not move is not judged. A new task is judged
-    on every date.
+    on every date. A parent task that is drafted too is judged where it is drafted to, since the two
+    publish together.
   - **What the scheduler sees:** a line under **ERPNext**, such as "Publish will be refused for
     Pump set: its end (2026-10-27) is after project PRJ-00756's expected end (2026-10-26)". The
     draft is never refused.
@@ -66,8 +69,8 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     it".
   - **Now:** the loops are found first, from the same `Task Depends On` rows. Their tasks are left
     as they are, with no drafts, and named: "TASK-B and TASK-C wait on each other, so their dates
-    were left as they are". A task that waits on itself says so too. The rest of the walk carries
-    on.
+    were left as they are". A task that waits on itself says so too. A loop that is already clear
+    of the moved task is not named. The rest of the walk carries on.
   - Prod has no one-, two- or three-task loop today (the manager's check, 2026-10-23), so this only
     guards imported data.
 - **A Fountain Move or read-only follower that was already clear** is no longer reported in
@@ -84,11 +87,13 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - a loop of two left put while another follower moves (every task's landing day asserted);
   - what follows only through a loop stays;
   - a task that waits on itself;
+  - a loop already clear not named;
   - finding a three-task loop, and an excluded task breaking it;
   - a clear Fountain Move or read-only follower not named, and one in the way named;
   - one warning line for a follower of two selected tasks;
   - ERPNext's checks on a drafted Reschedule past the project's end, a drafted move before its
-    start, and a drafted follower past its parent's end; a draft that breaks nothing says nothing;
+    start, and a drafted follower past its parent's end; a parent drafted later too, which says
+    nothing; a draft that breaks nothing says nothing;
     only a moved date is judged, but end-before-start always is;
   - the no-flag rule on all seven writes; an explicit 0 saving; the new-task rule before the P3
     columns exist.

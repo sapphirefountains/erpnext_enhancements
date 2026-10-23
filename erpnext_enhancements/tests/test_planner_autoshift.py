@@ -1332,6 +1332,13 @@ class TestALoopOfFollowers(_OverdueFollowers):
 			"TASK-B waits on itself, so its dates were left as they are.",
 		)
 
+	def test_a_loop_already_clear_is_not_named(self):
+		self._follower("TASK-B", "2026-11-02", "2026-11-02")
+		self._follower("TASK-C", "2026-11-03", "2026-11-03", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		result = self._reschedule()
+		self.assertEqual((result["shift_skipped"], set(self._drafted())), ([], {"TASK-A"}))
+
 	def test_finding_the_loops(self):
 		self._follower("TASK-B", "2026-10-27", "2026-10-27")
 		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
@@ -1437,6 +1444,15 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 			" end (2026-10-28).",
 			" ".join(result["warnings"]),
 		)
+
+	def test_a_parent_drafted_later_too_is_judged_where_it_is_drafted(self):
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"})  # the phase, drafted later
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		result = self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+		self.assertNotIn("parent task", " ".join(result["warnings"]))
 
 	def test_a_draft_that_breaks_nothing_says_nothing(self):
 		self.projects["PRJ-2"].update(expected_start_date="2026-09-01", expected_end_date="2026-12-31")
@@ -1759,10 +1775,15 @@ class TestNoFlagMeansAuto(_P4):
 		self.frappe.db.has_column = lambda doctype, column: column not in h.P3_COLUMNS
 		self.assertIs(rule(None, "PRJ-2"), False)  # before the P3 columns: live, as before
 
+	def test_the_build_out_grid_reads_by_the_same_rule(self):
+		source = ACTIONS_PATH.read_text(encoding="utf-8")
+		self.assertIn("_project_task_rows(project, draft=pp.drafts_new_task(draft, project))", source)
+
 	def test_the_three_creating_writes_use_it(self):
 		source = ACTIONS_PATH.read_text(encoding="utf-8")
 		self.assertNotIn("drafting = bool(cint(pp.given(draft)))", source)
-		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 3)
+		# duplicate, quick add and build out, and the build-out grid's read.
+		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 4)
 
 
 class TestWiring(unittest.TestCase):
@@ -1799,6 +1820,7 @@ class TestWiring(unittest.TestCase):
 			(ACTIONS_PATH, "duplicate_task"),
 			(ACTIONS_PATH, "quick_add_task"),
 			(ACTIONS_PATH, "build_out_tasks"),
+			(ACTIONS_PATH, "get_build_out_context"),
 		):
 			_names, defaults = self._args(path, name)
 			self.assertIsNone(defaults["draft"], name)

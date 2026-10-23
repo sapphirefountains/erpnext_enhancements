@@ -2049,7 +2049,10 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		if not row:
 			return False
 		if name in loops:
-			skip(row, _loop_text(loops[name]))
+			# Named only when it is in the way: one already clear would not have moved anyway.
+			stored = frappe.get_doc("Task", name)
+			if _clearing_step(stored, _span_text(_state(stored)), ends, _shift_holidays()):
+				skip(row, _loop_text(loops[name]))
 			return False
 		# _load refuses a Fountain Move task and a task the caller cannot change, so both are named
 		# here, before a draft context is built for them.
@@ -2241,6 +2244,9 @@ def erpnext_date_problems(doc, stored=None):
 	if parent and end and changed("exp_end_date") and not is_draft_ref(parent):
 		parent_end = engine._as_date(frappe.db.get_value("Task", parent, "exp_end_date"))
 		if parent_end and end > parent_end:
+			# The parent's own draft publishes with this one: judge against where it is drafted to.
+			parent_end = _drafted_end(parent) or parent_end
+		if parent_end and end > parent_end:
 			problems.append(
 				_("its end ({0}) is after its parent task {1}'s end ({2})").format(end, parent, parent_end)
 			)
@@ -2264,6 +2270,17 @@ def erpnext_date_problems(doc, stored=None):
 					)
 				)
 	return problems
+
+
+def _drafted_end(task):
+	"""The last day ``task`` is drafted to by a draft the caller can see (:func:`_draft_rows`), or
+	None. Read only when a check would otherwise warn, so a clean draft costs nothing."""
+	try:
+		rows, _duplicates = _draft_rows()
+	except Exception:
+		return None
+	row = next((r for r in rows if r.get("task") == task), None)
+	return engine._as_date(load_payload(row.get("payload")).get("end")) if row else None
 
 
 def erpnext_date_lines(doc, stored=None):
