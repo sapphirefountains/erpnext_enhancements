@@ -1525,6 +1525,14 @@ class TestALiveSaveWidensTheProject(_ERPNextsProjectWindow, _P4):
 		self.api.save_task("TASK-1", BASE, start="2026-10-09")  # keeps its length: Fri 9 - Tue 13
 		self.assertEqual(self.widened, [("PRJ-1", {"expected_start_date": "2026-10-09"})])
 
+	def test_a_multi_select_move_and_a_fountain_move(self):
+		# move_many and the Maintenance Planner's Fountain Move both save through _save / _apply.
+		moves = [{"task": "TASK-1", "modified": BASE, "start": "2026-10-19", "end": "2026-10-21"}]
+		self.assertEqual(_actions().move_many(json.dumps(moves))["moved"][0]["to"], "2026-10-19")
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-21"})])
+		source = (APP / "project_enhancements/fountain_move_jobs.py").read_text(encoding="utf-8")
+		self.assertIn("return project_planner._apply(", source)
+
 	def test_a_save_inside_the_window_never_moves_it(self):
 		self.api.save_task("TASK-1", BASE, end="2026-10-13")  # shorter
 		self.assertEqual(self.widened, [])
