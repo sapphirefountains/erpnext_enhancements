@@ -3617,7 +3617,7 @@ jobs:
       # test_bin_manager. Own frappe stub, so its own step.
       - name: Reorder rule counts (KPI stocked items, bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_reorder_rule_counts -v
-      # The Count Desk (v1.736.0): laptop counts and audits. count_desk_rules (no frappe) decides which
+      # The Count Desk (v1.737.0): laptop counts and audits. count_desk_rules (no frappe) decides which
       # bins a choice covers, the sheet and its summary, and what a post does: the variance applied to
       # what is on hand NOW, so a take after the shelf was counted survives the count; nothing posted
       # for a match (ERPNext refuses an all-unchanged reconciliation), a count somebody posted since,

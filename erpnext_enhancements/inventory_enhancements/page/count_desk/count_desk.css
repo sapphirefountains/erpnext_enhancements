@@ -1,4 +1,4 @@
-/* Count Desk (v1.736.0). A Desk Page's stylesheet is appended to <head> once and stays for the whole
+/* Count Desk (v1.737.0). A Desk Page's stylesheet is appended to <head> once and stays for the whole
    Desk session, so every selector here starts with .cd- (tests/test_count_desk.py holds it). Colors
    are the app tokens (sf_tokens.bundle.css, global) with the Desk's own as fallback, so the page
    follows light and dark with the rest of the Desk. Dialog pieces are .cd- too: frappe.ui.Dialog

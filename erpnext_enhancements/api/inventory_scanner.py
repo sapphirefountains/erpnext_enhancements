@@ -501,7 +501,7 @@ def _build_reconciliation(company, aggregated):
 
 
 def _active_session_name(user=None):
-	"""The caller's open phone count. A Count Desk count (v1.736.0) carries a ``scope`` and is
+	"""The caller's open phone count. A Count Desk count (v1.737.0) carries a ``scope`` and is
 	left out: someone may have several of those open, and a scan on the phone must not land in
 	whichever of them the database happens to return first."""
 	user = user or frappe.session.user

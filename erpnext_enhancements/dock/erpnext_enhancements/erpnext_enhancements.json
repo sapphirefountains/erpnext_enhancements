@@ -16,6 +16,22 @@
   {
    "added": 0,
    "hidden": 0,
+   "icon": "building-2",
+   "link_type": "URL",
+   "title": "Suppliers",
+   "url": "/desk/supplier"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "customer",
+   "link_type": "URL",
+   "title": "Accounts (Customers)",
+   "url": "/desk/customer"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
    "icon": "wrench",
    "link_to": "Sapphire Maintenance",
    "link_type": "Workspace",
@@ -94,7 +110,7 @@
    "title": "AI Governance"
   }
  ],
- "modified": "2026-10-23 12:00:00.000000",
+ "modified": "2026-10-23 16:00:00.000000",
  "modified_by": "Administrator",
  "mount_on": "erpnext",
  "name": "erpnext_enhancements",

@@ -1,5 +1,5 @@
 /*
- * Count Desk (v1.736.0): the page's pure decisions, no DOM and no frappe, so scripts/test_count_desk.mjs
+ * Count Desk (v1.737.0): the page's pure decisions, no DOM and no frappe, so scripts/test_count_desk.mjs
  * runs them under node. The page script draws and wires (inventory_enhancements/page/count_desk), the
  * controller holds the screen state and the server calls (controller.js), and this file decides.
  *

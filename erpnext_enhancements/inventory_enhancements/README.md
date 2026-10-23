@@ -3,7 +3,7 @@
 A resumable physical-count workflow driven by a barcode scanner, a storage-location model
 finer-grained than ERPNext's Warehouse, and — since v1.521.0 — the **Stock Scan** page: a QR
 label on every stock-holding warehouse that opens a phone page to take parts, receive stock
-and put it away. Since v1.736.0 counts also have a laptop page, the **Count Desk**: pick bins
+and put it away. Since v1.737.0 counts also have a laptop page, the **Count Desk**: pick bins
 from the warehouse tree, type a sheet of every item they hold, review the variances, post.
 
 Backend endpoints are in `api/inventory_scanner.py` (counting on the phone), `api/count_desk.py`
@@ -22,7 +22,7 @@ model, the pure rules and the label reads.
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | The phone count page: scan a location, scan items, type what is there |
-| `page/count_desk/` | The **Count Desk** (v1.736.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
+| `page/count_desk/` | The **Count Desk** (v1.737.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
 | `count_desk_rules.py` | Every judgement the Count Desk makes: which bins a choice covers, the sheet's rows and summary, a row's save, and what posting does (each item's variance applied to what is on hand now). No Frappe, no I/O; the endpoints are `api/count_desk.py` |
 | `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
@@ -60,7 +60,7 @@ Finalizing (`api.inventory_scanner.finalize_session`) aggregates the lines per
 submit; `stock_reconciliation` on the session links back to it. The Count Desk (below) posts
 a count its own way, and can open and post a count taken on the phone.
 
-**A variance is the item's, at the warehouse** (fixed in v1.736.0). Each line's `system_qty` is
+**A variance is the item's, at the warehouse** (fixed in v1.737.0). Each line's `system_qty` is
 the warehouse's on-hand, so an item spread over two Storage Locations is only short once both
 are counted. `add_count` always stamped the per-item variance on every line of the item, and
 then the session controller's `validate` overwrote it with each line's own
@@ -70,7 +70,7 @@ item's counts against the on-hand the latest of them saw.
 **The phone keeps to its own count.** A Count Desk count carries a `scope` (the bins it covers)
 and someone may have several open, so the phone page's "your open count"
 (`_active_session_name`) leaves those out and picks the most recently changed one without a
-scope. Each line records who counted it (`counted_by`, v1.736.0).
+scope. Each line records who counted it (`counted_by`, v1.737.0).
 
 Nothing in the count flow submits stock movements. The clerk counts, the Stock Manager
 decides. (The Stock Scan page, below, is the opposite by design.)
@@ -765,7 +765,7 @@ page asks, and sends the same save with `rate` (`stock_scan._receipt_cost`).
   Bin Manager (`public/js/bin_manager/logic.js` re-exports them), `app.js` `askUnitCost`, and the Bin Manager's
   `cost_dialog`.
 
-## The Count Desk (v1.736.0)
+## The Count Desk (v1.737.0)
 
 The phone page above is a 680 px column that shows one scanned item at a time, and nothing on
 screen until something is scanned. On a laptop that is the wrong tool for the person who runs

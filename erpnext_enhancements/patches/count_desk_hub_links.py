@@ -1,4 +1,4 @@
-"""Count Desk (v1.736.0): link the new Desk page from the Operations Hub (a shortcut beside the Bin
+"""Count Desk (v1.737.0): link the new Desk page from the Operations Hub (a shortcut beside the Bin
 Manager, and a link in its Inventory card) and from the Inventory Enhancements workspace (a shortcut
 beside Stock Scan, and the first link of its Counts card).
 

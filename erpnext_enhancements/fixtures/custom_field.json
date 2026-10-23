@@ -39144,7 +39144,7 @@
   "name": "User-custom_dock_profile",
   "no_copy": 1,
   "non_negative": 0,
-  "options": "\nManagement\nSales\nFinance\nPurchasing\nProduction Lead\nDesign\nField Tech\nSite Default",
+  "options": "\nManagement\nCEO\nSales\nFinance\nPurchasing\nProduction Lead\nDesign\nField Tech\nSite Default",
   "permlevel": 0,
   "placeholder": null,
   "precision": "",

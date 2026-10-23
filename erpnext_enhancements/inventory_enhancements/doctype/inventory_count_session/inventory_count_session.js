@@ -1,4 +1,4 @@
-// Inventory Count Session form (v1.736.0): a door to the Count Desk, where a count is typed,
+// Inventory Count Session form (v1.737.0): a door to the Count Desk, where a count is typed,
 // reviewed and posted. The form shows the raw lines; the Count Desk shows the sheet.
 
 frappe.ui.form.on("Inventory Count Session", {

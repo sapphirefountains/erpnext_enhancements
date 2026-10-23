@@ -1,4 +1,4 @@
-// Count Desk (v1.736.0): physical counts and audits on a laptop, built for typing, not tapping.
+// Count Desk (v1.737.0): physical counts and audits on a laptop, built for typing, not tapping.
 //
 // The Inventory Scanner Audit page is a phone screen: a 680px column, one scanned item at a time,
 // nothing on screen until something is scanned. This is the laptop's: pick bins from the warehouse

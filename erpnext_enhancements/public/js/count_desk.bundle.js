@@ -1,5 +1,5 @@
 /*
- * Count Desk entry point (v1.736.0): the page's pure decisions (public/js/count_desk/logic.js) and
+ * Count Desk entry point (v1.737.0): the page's pure decisions (public/js/count_desk/logic.js) and
  * its controller (count_desk/controller.js), as one esbuild bundle with a content-hashed name.
  *
  * Loaded only by the Count Desk Desk page (inventory_enhancements/page/count_desk), never

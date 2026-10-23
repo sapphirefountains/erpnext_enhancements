@@ -299,7 +299,7 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	(ERPNext refuses one in ``validate``, but there is no unique index behind it).
 
 	Capped at ``limit`` for a phone (``truncated`` says so). The Count Desk passes ``limit=None``
-	(v1.736.0): a count sheet that silently stopped at 150 items would leave the rest of
+	(v1.737.0): a count sheet that silently stopped at 150 items would leave the rest of
 	``Stores - SF`` uncounted with nothing on screen to say so.
 	"""
 	items = frappe.db.sql(
