@@ -1999,9 +1999,9 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	that stays is checked again when another task it waits on moves, and one that moved is pushed on
 	when a later one requires it, so the answer does not depend on the order the walk meets them in.
 	Each follower comes back once, from where it was to where it ends up."""
-	shifted, skipped, entries, jobs = [], [], [], {}
+	skipped, jobs = [], {}
 	if not days and clear_of is None:
-		return shifted, skipped, entries
+		return [], skipped, []
 	ends = {root: engine._as_date(clear_of)} if clear_of is not None else {}
 	# Read once: each follower's own row is all its context looks at, and no other follower's draft
 	# touches it. A follower the clear walk moves twice is read again the second time (moved).
@@ -2051,33 +2051,31 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		new = _span_text(after[0])
 		if clear_of is not None:
 			ends[doc.name] = engine._as_date(new[1])
+		# Moved again (the clear walk): it keeps where it was first, and its place in the answer.
 		first = moved.get(doc.name)
-		entry = {
-			"doc": doc,
-			"stored": context["stored"],
-			"before": first["entry"]["before"] if first else before_state,
-			"after": after,
+		moved[doc.name] = {
+			"entry": {
+				"doc": doc,
+				"stored": context["stored"],
+				"before": first["entry"]["before"] if first else before_state,
+				"after": after,
+			},
+			"move": {
+				"task": doc.name,
+				"subject": doc.get("subject") or doc.name,
+				"from": first["move"]["from"] if first else old[0],
+				"to": new[0],
+				"from_end": first["move"]["from_end"] if first else old[1],
+				"to_end": new[1],
+				"modified": result.get("modified"),
+			},
 		}
-		move = {
-			"task": doc.name,
-			"subject": doc.get("subject") or doc.name,
-			"from": first["move"]["from"] if first else old[0],
-			"to": new[0],
-			"from_end": first["move"]["from_end"] if first else old[1],
-			"to_end": new[1],
-			"modified": result.get("modified"),
-		}
-		if first:
-			entries[entries.index(first["entry"])] = entry
-			shifted[shifted.index(first["move"])] = move
-		else:
-			entries.append(entry)
-			shifted.append(move)
-		moved[doc.name] = {"entry": entry, "move": move}
 		return True
 
 	walk = _walk_followers if clear_of is None else _walk_clearing
 	cut = walk(root, accept, exclude)
+	shifted = [item["move"] for item in moved.values()]
+	entries = [item["entry"] for item in moved.values()]
 	return shifted, skipped + _cut_skips(cut), entries
 
 
@@ -2086,21 +2084,25 @@ def _walk_clearing(root, accept, exclude=()):
 	each task ``accept`` moves, is offered to ``accept``, and offered again whenever another task it
 	waits on moves. So a follower that waits on two moved tasks ends up clear of both, whichever the
 	walk reaches first, and one that stayed is still checked against a task that moves after it.
-	It ends: a task is offered again only when something it waits on moved, every move is later, and
-	at most :data:`SUCCESSOR_LIMIT` offers are made in all (the rest are returned, to be named).
+	It ends: a task is offered again only when something it waits on moved, and every move is later.
+	At most :data:`SUCCESSOR_LIMIT` tasks are offered, as the other walk reaches at most that many,
+	and a dependency cycle (which ERPNext refuses on save, but an import need not) stops at
+	:data:`SUCCESSOR_DEPTH` offers per task; the rest are returned, to be named. Tasks are queued by
+	name, so the order of the answer does not follow the database's row order either.
 	``exclude``: tasks the request moves itself, never offered."""
 	out = {root, *(exclude or ())}
-	queue = [name for name in _waiting_on([root]) if name not in out]
-	waiting, offers, cut = set(queue), 0, []
+	queue = [name for name in sorted(_waiting_on([root])) if name not in out]
+	waiting, offered, cut = set(queue), {}, []
 	while queue:
 		name = queue.pop(0)
 		waiting.discard(name)
-		if offers >= SUCCESSOR_LIMIT:
+		new = name not in offered
+		if (new and len(offered) >= SUCCESSOR_LIMIT) or offered.get(name, 0) >= SUCCESSOR_DEPTH:
 			cut.append(name)
 			continue
-		offers += 1
+		offered[name] = offered.get(name, 0) + 1
 		if accept(name):
-			for later in _waiting_on([name]):
+			for later in sorted(_waiting_on([name])):
 				if later not in out and later not in waiting:
 					waiting.add(later)
 					queue.append(later)

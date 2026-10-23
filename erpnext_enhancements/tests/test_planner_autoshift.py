@@ -1203,35 +1203,58 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
 		self.assertEqual(self._drafted()["TASK-C"], ("2026-10-30", "2026-10-30"))
 
-	def _diamond(self, f_row_first):
-		"""B waits on A; F waits on A and on B. A's new end is Tue 27: B (Tue-Wed) is in its way and
-		goes Wed-Thu, which puts F (Thu 29) in B's way. ``f_row_first``: F's row on A is the first
-		one the database returns, so the walk meets F before B has moved."""
+	def _diamond(self, f_row_first, f="TASK-F"):
+		"""B waits on A; ``f`` waits on A and on B. A's new end is Tue 27: B (Tue-Wed) is in its way and
+		goes Wed-Thu, which puts ``f`` (Thu 29) in B's way. ``f_row_first``: f's row on A is the first one
+		the database returns. The walk queues by name, so ``TASK-AF`` is met before B has moved (and is
+		offered again once B moves) and ``TASK-F`` after."""
 		h._task("TASK-B", start="2026-10-27", end="2026-10-28", crew=("RES-2",), project="PRJ-2")
-		h._task("TASK-F", start="2026-10-29", end="2026-10-29", crew=("RES-2",), project="PRJ-2")
+		h._task(f, start="2026-10-29", end="2026-10-29", crew=("RES-2",), project="PRJ-2")
 		if f_row_first:
-			self._depends("TASK-F", "TASK-A")
+			self._depends(f, "TASK-A")
 			self._depends("TASK-B", "TASK-A")
 		else:
 			self._depends("TASK-B", "TASK-A")
-			self._depends("TASK-F", "TASK-A")
-		self._depends("TASK-F", "TASK-B")
+			self._depends(f, "TASK-A")
+		self._depends(f, "TASK-B")
 		return self._reschedule()
 
-	def test_a_follower_of_two_moved_tasks_clears_both_whatever_the_row_order(self):
-		for f_row_first in (True, False):
-			with self.subTest(f_row_first=f_row_first):
-				self.frappe.tables["Planner Draft Change"] = []
-				self.frappe.tables["Task Depends On"] = []
-				self.frappe.docs[("Task", "TASK-A")]["depends_on"] = []
-				result = self._diamond(f_row_first)
-				self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
-				# Clear of B's new end (Thu 29), not only of A's (Tue 27).
-				self.assertEqual(self._drafted()["TASK-F"], ("2026-10-30", "2026-10-30"))
-				moves = {m["task"]: (m["from"], m["to"]) for m in result["shifted"]}
-				self.assertEqual(
-					moves, {"TASK-B": ("2026-10-27", "2026-10-28"), "TASK-F": ("2026-10-29", "2026-10-30")}
-				)
+	def _fresh(self):
+		self.frappe.tables["Planner Draft Change"] = []
+		self.frappe.tables["Task Depends On"] = []
+		for key in [key for key in self.frappe.docs if key[1] != "TASK-A"]:
+			del self.frappe.docs[key]
+
+	def test_a_follower_of_two_moved_tasks_clears_both_whatever_the_order(self):
+		for f in ("TASK-AF", "TASK-F"):
+			for f_row_first in (True, False):
+				with self.subTest(f=f, f_row_first=f_row_first):
+					self._fresh()
+					result = self._diamond(f_row_first, f)
+					self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+					# Clear of B's new end (Thu 29), not only of A's (Tue 27).
+					self.assertEqual(self._drafted()[f], ("2026-10-30", "2026-10-30"))
+					moves = {m["task"]: (m["from"], m["to"]) for m in result["shifted"]}
+					self.assertEqual(
+						moves, {"TASK-B": ("2026-10-27", "2026-10-28"), f: ("2026-10-29", "2026-10-30")}
+					)
+
+	def test_offering_a_follower_again_does_not_spend_the_cap(self):
+		# Two tasks follow, and TASK-AF is offered twice: the cap counts tasks, not offers.
+		with mock.patch.object(self.api, "SUCCESSOR_LIMIT", 2):
+			result = self._diamond(True, "TASK-AF")
+		self.assertEqual(self._drafted()["TASK-AF"], ("2026-10-30", "2026-10-30"))
+		self.assertEqual(result["shift_skipped"], [])
+
+	def test_a_dependency_cycle_ends(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-28", "2026-10-28", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")  # a cycle ERPNext would refuse, as an import might leave it
+		with mock.patch.object(self.api, "SUCCESSOR_DEPTH", 3):
+			result = self._reschedule()  # returns: each task is offered at most SUCCESSOR_DEPTH times
+		reasons = {skip["task"]: skip["reason"] for skip in result["shift_skipped"]}
+		self.assertTrue(set(reasons) & {"TASK-B", "TASK-C"})
+		self.assertTrue(all("Too many tasks follow it" in reason for reason in reasons.values()))
 
 	def test_a_follower_of_two_selected_tasks_clears_both_in_either_order(self):
 		# R1 (TASK-A) ends Tue 27 once rescheduled, R2 (TASK-R) Wed 28; F waits on both.

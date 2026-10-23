@@ -36,7 +36,11 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
       - So a follower of two moved tasks ends up clear of both, whichever dependency row the
         database returns first. This includes a follower of two *selected* tasks: only the
         selected tasks are kept out of each other's walks.
-      - Each follower comes back once in `shifted`, from where it was to where it ends up.
+      - Each follower comes back once in `shifted`, from where it was to where it ends up. The walk
+        queues tasks by name, so the order of the answer does not follow the row order either.
+      - Its limits: at most 200 tasks (`SUCCESSOR_LIMIT`), counting tasks, not offers. A dependency
+        cycle, which ERPNext refuses on save but an import can leave behind, stops after 25 offers
+        per task (`SUCCESSOR_DEPTH`). Tasks past either limit are named as before.
     - Why not carry followers by how far the task moved, as a drag does (D10)? An overdue task is
       weeks late. A follower planned for next week, already clear of it, would have been pushed by
       the same weeks. This is `_draft_many(clear=True)` → `_draft_followers(clear_of=…)`, the same
@@ -118,6 +122,9 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
     time slot after the task's own, still moves to the next working day.
   - A Fountain Move follower, or one the caller cannot change, is named in `shift_skipped` even
     when it was already clear and would not have moved.
+  - The room count treats a task as a new row unless the caller has a row for it, even when its
+    draft lands in another scheduler's shared row on a Draft schedule. Near the cap that refuses a
+    little early.
 - **Follow-ups, not in this release:**
   - ERPNext's own validation (a date outside the project, a dependency still open) runs only at
     Publish for these drafts, as for every planner draft.
@@ -134,6 +141,7 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
     - a chain stops at a clear follower;
     - a follower of two moved tasks clears both, whichever of its dependency rows comes first;
     - a follower of two selected tasks clears both, in either order;
+    - offering a follower again does not spend the cap, and a dependency cycle ends;
     - a pushed follower pushes its own;
     - a follower's draft is what is compared;
     - a published follower is named only when in the way;
