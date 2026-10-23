@@ -449,6 +449,12 @@ jobs:
       # the copies the 16.50 conversion made, against a stub. Own step: own frappe stub.
       - name: Every shipped desk icon name draws on frappe v16.50 (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_icon_names -v
+      # The Dock per job (v1.734.0): the dock file this app ships mounted on ERPNext's, every
+      # profile naming only entries that rail holds, who gets which profile from their Role
+      # Profiles, and the layers it writes, never over one a person arranged. Against a stub.
+      # Own step: own frappe stub.
+      - name: Dock profiles and the shipped dock (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_dock_profiles -v
       # The payment step's follow-up button and its two whitelisted endpoints.
       # The suites that exercise the real behaviour need a bench and so never
       # run here -- which is why the seam is pinned statically: a renamed

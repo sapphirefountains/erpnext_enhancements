@@ -1356,6 +1356,12 @@ doc_events = {
 		# than converting a string back into a list and getting the conversion wrong.
 		"on_update": [
 			"erpnext_enhancements.training.assignment.on_user_roles_changed",
+			# Dock (v1.734.0): rewrite this person's Dock layer when their Dock Profile, Role
+			# Profiles or enabled flag change, so choosing Parker's profile shows on his next
+			# page load rather than the next deploy. Returns at once when none of the three
+			# moved; a chosen profile is applied even over a layer the person arranged, a Role
+			# Profile change is not. Never raises (setup/dock_profiles.py).
+			"erpnext_enhancements.setup.dock_profiles.on_user_update",
 		],
 	},
 	"Supplier": {
@@ -2364,6 +2370,14 @@ after_migrate = [
 	# a Custom Sidebar layer would append at the very end or reorder the module. Skips a link
 	# already there (hidden or not), re-adds after an ERPNext re-import, logs instead of raising.
 	"erpnext_enhancements.setup.workspace_tweaks.add_core_sidebar_items",
+	# The Dock rail per job (v1.734.0, Nik 2026-10-23). Keeps the site's layer of ERPNext's dock
+	# (Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer on
+	# their dock profile: the User's Dock Profile, else the first profile their Role Profiles
+	# match. Every migrate, so an entry an app adds later reaches those layers as a hidden row.
+	# Writes only a layer that is missing or still the app's: once someone arranges theirs in
+	# Manage Dock it is theirs. After fixture sync, which adds User.custom_dock_profile; logs
+	# instead of raising (setup/dock_profiles.py).
+	"erpnext_enhancements.setup.dock_profiles.apply_dock_profiles",
 	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
 	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,
 	# a field Desktop Icon does not have (the real one is `app`) -- so `app` stays NULL,

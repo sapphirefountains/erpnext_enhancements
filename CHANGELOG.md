@@ -7,6 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.734.0] - 2026-10-23
+
+The Dock, the icon rail on the left, now shows one rail across ERPNext and our own modules, starts with
+Buying, Stock, Projects and the Opportunities Kanban, and is arranged for each person's job. Nik,
+2026-10-23: "The ERPNext dock should have the following entries: Buying, Stock, Projects, Opportunities
+Kanban (CRM), and do an audit to make sure we are surfacing the most used modules and doctypes", then
+"customizing it so everyone has their relevant modules ... Brian the Account Executive has CRM and maybe
+Selling and Projects, but he wouldn't need Buying". He chose the four options below the same morning:
+dock profiles rather than Module Profiles, keep a layout someone arranged themselves, the stock Kanban
+rather than the new board, and one rail.
+
+### Added
+- **This app ships its own dock, mounted on ERPNext's** (`dock/erpnext_enhancements/erpnext_enhancements.json`,
+  `mount_on: erpnext`). Its rows are appended to ERPNext's rail. The first is **Opportunities**, a URL row
+  to the stock Kanban `/desk/opportunity/view/kanban/Opportunity`. After it come Workspace pins for
+  Maintenance, Travel, Training, KPI Dashboards, Water Engineering, QuickBooks, HR, Knowledge Base, Fleet
+  and AI Governance. frappe 16.50 then shows ERPNext's rail in our modules too. Before, our sidebars drew a
+  second rail: the 22 "(Custom)" entries the 16.50 conversion wrote, which left out Travel, HR, KPI
+  Dashboards and Knowledge Base, and the rail changed under you as you crossed from Projects into
+  Maintenance. Our areas are Workspace pins rather than Sidebar rows because the workspaces ship from this
+  repo, while the "(Custom)" sidebars exist only on prod. The old 22-entry site layer is left in place,
+  unread; deleting it is a follow-up once the one rail is confirmed live.
+- **Dock profiles** (`setup/dock_profiles.py`). frappe has no per-role dock layer, only the app's file, the
+  site's arrangement and each person's own. So the app writes each enabled System User's own layer of
+  ERPNext's dock from a profile:
+
+  | Profile | Rail | Who, by Role Profile |
+  |---|---|---|
+  | Sales | Opportunities, CRM, Selling, Projects | Sales, Sales Team, Sales & Marketing (Brian, Rich) |
+  | Finance | Accounts, QuickBooks, Selling, Projects, Maintenance | Finance, Finance Team, Accounting (Lisa, Marlene) |
+  | Purchasing | Buying, Stock, Projects | Purchase, Inventory; Parker by his User form |
+  | Production Lead | Projects, Opportunities, Buying, Stock, Maintenance | Projects & Operations (Clegg) |
+  | Design | Projects, Opportunities, Buying, Water Engineering | Design Team (Logan, Nathan) |
+  | Field Tech | Maintenance, Projects, Travel, Training | Production Team, Technician (Austin, Korben, Jesse, Daniel R., Jim) |
+  | Management | Buying, Stock, Projects, Opportunities, CRM, Selling, Accounts, Maintenance, Travel, Training, KPI Dashboards, QuickBooks, AI Governance | Executive; Nik and James by their User forms |
+
+  The first matching row wins, so someone holding Design Team and Production Team is a designer. A new
+  **Dock Profile** field on the User form (Roles & Permissions, beside Role Profiles) overrides the match.
+  **Site Default**, or no match, gives the shared dock. Every layer names the whole rail, the other entries
+  as hidden, so Manage Dock offers them back in one click. Nothing is blocked: the rail only stops offering
+  an entry, and search, links and frappe's own module and workspace gates are untouched.
+  `apply_dock_profiles` runs on every migrate. A User `on_update` hook redoes one person's layer when their
+  Dock Profile, Role Profiles or enabled flag change.
+- **A layout someone arranged is theirs.** A layer last written by Administrator is the app's. Manage
+  Dock saves as the person, so once someone arranges their own layer no migrate touches it. The one
+  override is choosing a Dock Profile on their User form, which applies at once. A write made inside a User
+  save runs as whoever saved the User, so the app puts the Administrator stamp back. Administrator's own
+  layer is never managed.
+
+### Changed
+- **The shared dock is Buying, Stock, Projects, Opportunities, CRM** (patch `set_dock_site_layer`). Nik had
+  set the site's layer by hand that morning to Buying, Stock, Projects and CRM. The patch writes the same
+  layer with the Opportunities Kanban after Projects, plus every other entry named as hidden, and
+  overwrites his hand-made layer once on purpose. Without that, the "keep their own" rule would keep it
+  and this change would never land. CRM stays because its dashboard is the module's landing page (189
+  visits from six people).
+
+### Usage audit (read-only, prod, the 90 days to 2026-10-23)
+Sources: `tabRoute History` (list views, workspaces, reports and pages; v16 records no form opens there),
+`tabVersion` edits by doctype, and new documents per doctype by `creation`. Staff accounts only, Triton
+excluded.
+
+| Most visited | Visits | People |
+|---|---:|---:|
+| Purchase Order list | 916 | 3 (Parker 878) |
+| Opportunity Kanban (`/desk/opportunity/view/kanban/Opportunity`) | 836 | 6 (Brian 343, James 259) |
+| Projects workspace | 755 | 13, the widest reach of any page |
+| Customer list | 280 | 4 (Brian 206) |
+| AI Pending Action list | 269 | 1 (Nik) |
+| Guided entry: Opportunity | 264 | 5 |
+| Buying workspace | 203 | 6 |
+| CRM dashboard (the CRM sidebar's landing page) | 189 | 6 |
+| Training workspace | 176 | 3 |
+| Project list | 174 | 4 |
+| Item list / Material Request list | 146 / 133 | 5 / 4 |
+| Sapphire Maintenance workspace | 124 | 7 |
+| Home / Travel / KPI Dashboards workspaces | 93 / 89 / 66 | 8 / 6 / 9 |
+| Stock / Selling / Accounting workspaces | 34 / 34 / 29 | 5 / 7 / 5 |
+| Opportunity Board page (`/desk/opportunity-board`) | 25 | 2, nearly all Nik |
+
+Most edited: Task 4,073, Journal Entry 3,197 (Nik's QBO work), AI Pending Action 3,035, Supplier 1,837,
+Sales Invoice 1,149, Project 1,049, Opportunity 607, ToDo 387, Purchase Order 361, Customer 313,
+Item 242. Most created: Task 1,200, Item 513, ToDo 385, Purchase Receipt 152, Purchase Order 150,
+Stock Entry 102, Contact 78, Opportunity 50, Customer 30.
+
+**By job.**
+- Brian lives in the Kanban, Customers, guided Opportunity entry, the CRM dashboard and ToDo, with zero
+  Buying visits.
+- Parker lives in Purchase Orders, the Buying workspace, Material Requests, Items and Projects.
+- Clegg is in the Projects workspace (331 visits), then Opportunities, the CRM dashboard and the crew
+  planner.
+- The field techs touch Maintenance, Travel, Training and Projects at low volume.
+- Finance works QuickBooks Online, the General Ledger, Bank Reconciliation and the Chart of Accounts.
+- Design is almost only the Projects workspace.
+
+**Gaps the change closes.**
+- Heavily used but buried: the Opportunity Kanban, which ranks second overall and was reachable only through
+  the Opportunity list's redirect. Travel and KPI Dashboards, used by six and nine people, were on neither
+  rail. Maintenance was only on the second rail.
+- Surfaced but unused, now off the default rails and still one click away in Manage Dock: Manufacturing,
+  Portal and Support (fewer than 8 visits each), Assets (10) and Quality (9). On the old second rail:
+  Google Drive, Integration Hub, Devices, Product Configurator, Morning Briefing, Process Documentation,
+  Shipping and Task Enhancements, mostly Nik's own admin visits.
+
+**Workspace shortcuts recommended, not changed here.**
+- Put Purchase Order and Material Request first on Buying.
+- Open the CRM module on the Opportunity Kanban rather than the CRM dashboard, or put the Kanban first in
+  its sidebar.
+- Repoint the Opportunities entry at `/desk/opportunity-board` when P6.10 retires the stock Kanban.
+
+### On deploy
+- Model sync imports this app's dock and mounts it on ERPNext's.
+- The patch rewrites the shared layer.
+- Fixture sync adds `User.custom_dock_profile`.
+- `apply_dock_profiles` writes layers for 12 people from their Role Profiles. Nik, James and Parker hold
+  none and stay on the shared dock until their Dock Profile is set on the User form: Management, Management
+  and Purchasing.
+- No one held a layer of their own on 2026-10-23, so no personal arrangement is overwritten.
+
 ## [1.733.0] - 2026-10-23
 
 The Closed-Won hand-off meeting and the project launch meeting are now real Google Calendar events. Each is one
