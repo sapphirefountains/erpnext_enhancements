@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.741.0] - 2026-10-23
+
+The Maintenance Planner's search box now finds Fountain Move tasks. Typing a move's project name or
+number, subject, customer or city listed nothing: the search was written before move cards existed
+(v1.703.0, PR #1321), so it indexed only visits, their sites and the technicians, and
+`search_planner` read only Maintenance Records. A move's card could be scheduled on the planner but
+not looked for on it.
+
+### Added
+- **Move results in the Maintenance Planner's search.** A move task is listed with a *Move* label
+  (the card's chip), then its day, or *Not scheduled* when it waits in the Unscheduled tray, and
+  its subject.
+  - **On screen first**, like visits: `p6b_local_entries` now indexes the page's own move cards
+    (`fm_cards()`, dated and tray), by project number, project name, subject, task number, customer
+    and the people on it. A move ranks with the visits (`MP6B_PURE.search_local`'s `move: 2`); the
+    Project Planner's copy of that table is untouched and so is every Project Planner search.
+  - **Then the server**, for what the weeks on screen do not hold:
+    `planner_actions.search_planner(planner="maintenance")` now also returns `{"kind": "move", name,
+    label, subject, project, customer, city, date, status}`. It matches the task's number and
+    subject, the project's number and name, the customer (its number and its name), and the city of
+    the project's address (`Project.primary_address`, else the older `custom_customer__lead_address`,
+    each joined to `tabAddress`; the free-text `custom_project_address` is matched as well).
+    The city is a server-side match only, because a move card carries no address.
+  - **The same rule as the calendar.** Which tasks are listed is `fountain_move_jobs.
+    OPEN_MOVE_TASKS_SQL`, now the one condition `planner_cards` and the new `search_cards` both
+    use (open leaf tasks with hours on a move project that is not closed), so the box cannot list
+    a move the calendar would not draw. Unlike the calendar it has no date range: a move months
+    away, or one nobody has dated, is what someone searches for. `planner_cards` itself returns
+    exactly what it did.
+  - **Room for moves.** Visits outnumber open moves by hundreds to one (every submitted visit of a
+    contract matches its customer's name), and the box shows 20 results, so a customer with a long
+    history would have cut its own move. `blend_moves` keeps up to five (`SEARCH_MOVES`) among the
+    records whatever the visits are, gives the visits the rest, and gives a slot the visits leave
+    empty to further moves. With no moves the answer is what it was.
+  - **A failure here costs only the moves.** The move query runs inside a `try`: a failure is logged
+    (`Maintenance Planner: Fountain Move search failed`) and the box answers with visits, sites
+    and people, as `get_planner` answers without move cards. A site part-way through a migrate
+    (no Fountain Move flag, no address columns) still answers.
+- **Picking a move does what picking a visit does.** The calendar goes to its day (a real route, so
+  Back works) and the card flashes; a tray card is scrolled to and flashed; with no card on the
+  page (stale data) the task opens, as a click on its card does. The visit jump was lifted into
+  one helper, `p6b_jump_to_card`, which both use, so visits behave exactly as before.
+  - A dated move is flashed **where the page draws it**: a task that began before the weeks on
+    screen sits on the first day shown, so the page stays instead of leaving for its real first
+    day.
+  - **A move the technician filter hides says so**, in the tray as well as on a day: *That move
+    is hidden by the filters on screen.* (An unscheduled *visit* hidden by a filter still says
+    nothing, as before.)
+- **No duplicates.** A move from the server carries the card's own key (`move|TASK-...`), so one the
+  page already listed is dropped from the remote half (`p6b_result_key`).
+
+### Tests
+- `tests/test_planner_phase6b.py` (CI's existing step, `python -m unittest`, unchanged):
+  - **Server**: dated and tray moves in nearest-first order; the five things a person types are
+    each matched by a bound `LIKE` (the text is never in the SQL); the box and the calendar share
+    `OPEN_MOVE_TASKS_SQL`; a customer with 40 visits still lists its move and the box says it was
+    truncated; `blend_moves` on its own; a failing move query leaves the visits and is logged; a
+    site part-way through a migrate answers; the Project Planner's search issues no move query.
+  - **Under node**: the real `p6b_local_entries`, `p6b_from_server`, `p6b_remote_search` (including
+    the de-duplication), `p6b_render_results` and `p6b_pick` against a stubbed page, for a dated
+    move, a tray move, one hidden by a filter, one that began before the weeks on screen, one far
+    away, a stale one, and visits as they were. The ranking of the pure helper is run too.
+
 ## [1.740.0] - 2026-10-23
 
 Split, Copy week and the Overdue tray now respect a project's Draft schedule (D8) on the Project

@@ -2937,8 +2937,8 @@ Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
 //                                            they all move by the same number of calendar days, one
 //                                            move_visit each after a single confirmation, one reason
 //                                            for the lot and one Undo
-//   - the search box (or /)                  visits, sites and technicians on screen first, then the
-//                                            server (search_planner, planner="maintenance")
+//   - the search box (or /)                  visits, Fountain Move tasks, sites and technicians on screen
+//                                            first, then the server (search_planner, planner="maintenance")
 //   - T, the arrows, 1 2 3, Ctrl/Cmd+Z, ?, Esc keyboard shortcuts, listed in the legend
 //
 // Left out on purpose: Duplicate and Split (a visit has neither) and resizing (no visit spans several
@@ -3022,7 +3022,7 @@ const MP6B_PURE = {
 			.split(/\s+/)
 			.filter(Boolean);
 		if (!words.length) return [];
-		const order = { person: 0, project: 1, site: 1, task: 2, visit: 2 };
+		const order = { person: 0, project: 1, site: 1, task: 2, visit: 2, move: 2 };
 		const rank = (kind) => (kind in order ? order[kind] : 3);
 		const found = [];
 		(entries || []).forEach((entry) => {
@@ -3760,8 +3760,8 @@ const MP6B_METHODS = {
 		this.$p6b_search = $('<input type="search" class="form-control input-sm mp-p6b-search" autocomplete="off" spellcheck="false">')
 			.attr({
 				placeholder: __("Search  ( / )"),
-				title: __("Find a visit, site or technician. Press / to come here."),
-				"aria-label": __("Search visits, sites and technicians"),
+				title: __("Find a visit, move, site or technician. Press / to come here."),
+				"aria-label": __("Search visits, moves, sites and technicians"),
 				role: "combobox",
 				"aria-autocomplete": "list",
 				"aria-expanded": "false",
@@ -3802,7 +3802,8 @@ const MP6B_METHODS = {
 		search.timer = setTimeout(() => this.p6b_remote_search(q, token), MP6B.search_wait_ms);
 	},
 
-	// What is on screen: every visit (drafted, unscheduled, projected), their sites and the technicians.
+	// What is on screen: every visit (drafted, unscheduled, projected), their sites, the Fountain Move
+	// tasks (the cards of MPFM, dated or in the tray) and the technicians.
 	p6b_local_entries() {
 		const data = this.data || {};
 		const out = [];
@@ -3822,6 +3823,26 @@ const MP6B_METHODS = {
 				sites[card.project] = true;
 				out.push({ kind: "site", project: card.project, label: site, keys: [card.project, card.site_full || ""], sub: card.project });
 			}
+		});
+		// A move job's task: found by its project (number or name), subject, customer or crew. Its city is
+		// only known to the server (the project's address), so that one comes from the remote search.
+		this.fm_cards().forEach((card) => {
+			out.push({
+				kind: "move",
+				key: card.key,
+				name: card.name,
+				label: this.site_of(card),
+				keys: [
+					card.name,
+					card.project || "",
+					card.subject || "",
+					card.customer || "",
+					card.site_full || "",
+					...this.visit_people(card).map((user) => this.tech_name(user)),
+				],
+				sub: [card.date ? mp_when(card.date) : __("Not scheduled"), card.subject || ""].filter(Boolean).join(" · "),
+				date: card.date || null,
+			});
 		});
 		(data.technicians || [])
 			.filter((person) => person.enabled)
@@ -3846,6 +3867,17 @@ const MP6B_METHODS = {
 				sub: [item.date ? mp_when(item.date) : __("Not scheduled"), item.visit_label ? __(item.visit_label) : "", item.name]
 					.filter(Boolean)
 					.join(" · "),
+				date: item.date || null,
+			};
+		}
+		if (item.kind === "move" && item.name) {
+			// The key is the card's (MPFM), so a move the page already lists is not listed twice.
+			return {
+				kind: "move",
+				key: `move|${item.name}`,
+				name: item.name,
+				label: item.label || item.name,
+				sub: [item.date ? mp_when(item.date) : __("Not scheduled"), item.subject || "", item.city || ""].filter(Boolean).join(" · "),
 				date: item.date || null,
 			};
 		}
@@ -3886,7 +3918,7 @@ const MP6B_METHODS = {
 		const shown = search.local.concat(search.remote).slice(0, MP6B.search_limit);
 		search.shown = shown;
 		if (search.active >= shown.length) search.active = 0;
-		const kinds = { visit: __("Visit"), site: __("Site"), person: __("Technician") };
+		const kinds = { visit: __("Visit"), move: __("Move"), site: __("Site"), person: __("Technician") };
 		const rows = shown.map(
 			(item, index) =>
 				`<div class="mp-p6b-result${index === search.active ? " mp-p6b-active" : ""}" role="option" id="${mp_esc(
@@ -3936,22 +3968,42 @@ const MP6B_METHODS = {
 		if (item.kind === "person") this.p6a_open_person(item.user);
 		else if (item.kind === "site") this.p6a_open_site({ project: item.project, site: item.label, site_full: item.label });
 		else if (item.kind === "visit") this.p6b_jump_to_visit(item);
+		else if (item.kind === "move") this.p6b_jump_to_move(item);
 	},
 
 	// A visit: the calendar goes to its week (a real route) and the card flashes.
 	p6b_jump_to_visit(item) {
 		const card = this.by_key[item.key];
-		const date = item.date || (card && card.date) || null;
+		this.p6b_jump_to_card(item, item.date || (card && card.date) || null, () =>
+			frappe.set_route("Form", "Sapphire Maintenance Record", item.name)
+		);
+	},
+
+	// A Fountain Move task (MPFM): the same jump. A dated one goes to the day its card is drawn on (a task
+	// that began before these weeks sits on the first day shown, so it is not left for its real first day);
+	// one in the Unscheduled tray is scrolled to and flashed there. With no card to find, the task opens.
+	p6b_jump_to_move(item) {
+		const card = this.by_key[item.key];
+		this.p6b_jump_to_card(item, (card && card.date) || item.date || null, () =>
+			this.open_card({ kind: "move", name: item.name })
+		);
+	},
+
+	// `date` is the day to go to (null: it is in the tray); `open_record` opens it when the page has no card.
+	p6b_jump_to_card(item, date, open_record) {
+		const card = this.by_key[item.key];
+		const move = item.kind === "move";
 		if (!date) {
 			if (card) {
-				this.p6b.flash = { key: card.key, date: null, wait: false };
+				// The tray is always on screen when it has cards. A move says so when the filters hide it.
+				this.p6b.flash = { key: card.key, date: null, wait: move, move };
 				this.p6b_flash_pending();
 				return;
 			}
-			this.p6b_navigate(() => frappe.set_route("Form", "Sapphire Maintenance Record", item.name));
+			this.p6b_navigate(open_record);
 			return;
 		}
-		this.p6b.flash = { key: item.key, date, wait: true };
+		this.p6b.flash = { key: item.key, date, wait: true, move };
 		if (this.range_days().includes(date)) {
 			this.p6b_flash_pending();
 			return;
@@ -3972,7 +4024,8 @@ const MP6B_METHODS = {
 		);
 		if (!el) {
 			if (flash.wait) {
-				frappe.show_alert({ message: __("That visit is hidden by the filters on screen."), indicator: "orange" }, 6);
+				const message = flash.move ? __("That move is hidden by the filters on screen.") : __("That visit is hidden by the filters on screen.");
+				frappe.show_alert({ message, indicator: "orange" }, 6);
 			}
 			return;
 		}
@@ -4100,7 +4153,7 @@ const MP6B_METHODS = {
 					item(key("←") + key("→"), "The previous or next month or week."),
 					item(key("1") + key("2") + key("3"), "Month, week or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
-					item(key("/"), "Search visits, sites and technicians."),
+					item(key("/"), "Search visits, moves, sites and technicians."),
 					item(key("?"), "This help."),
 					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
 				],

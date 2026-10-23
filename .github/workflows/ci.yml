@@ -1043,7 +1043,12 @@ jobs:
       # by working days and makes the second half depend on the first, all or nothing; that a
       # multi-task move is one conflict check and one reason; that Undo of a new task deletes it
       # only when nothing was attached, never with force; and that search is customer jobs only.
-      # Under node it runs the pages' pure helpers (offset math, shortcuts, the selection set).
+      # Since v1.741.0 it also pins that the Maintenance Planner's search lists Fountain Move tasks by
+      # the calendar's own rule (one shared SQL condition), keeps room for them among the 20 results
+      # (a customer's visit history must not cut its move), and that picking one jumps to its day or
+      # its tray and flashes it, or says the filters hide it.
+      # Under node it runs the pages' pure helpers (offset math, shortcuts, the selection set) and the
+      # Maintenance Planner's search methods against a stubbed page.
       # Own frappe stub, own step.
       - name: Planner faster scheduling (menu, resize, quick add, multi-select, search; Phase 6B)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6b -v
