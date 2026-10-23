@@ -36,44 +36,58 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     - The assistant tools only read (`get_route`, `suggest_dates`, `who_is_free`), and triton calls
       only `get_my_week`.
     - The Maintenance Planner's own `add_crew` is a different endpoint, for visits, and is unchanged.
-- **Every planner save now widens the project's expected window when it needs to**, as the Gantt's
-  drags always have (`project_enhancements/project_window.py`).
+- **Every Task save now widens its project's expected window first, so a save is no longer refused
+  for falling outside it.** This includes saves from the Desk form. The widening is a Task
+  `before_validate` doc_event (`project_window.before_task_validate`, in hooks.py).
   - **Why:** on this site a Project's expected start and end are *derived*. They are the earliest
-    task start and the latest task end, recomputed on every Task save
-    (`script_migrations.task.sync_project_dates_from_tasks`), and read-only on the form. ERPNext
-    v16's `Task.validate_parent_project_dates` meanwhile refuses a task outside them. So the
-    commonest edits were refused against a value the same save was about to recompute:
+    task start and the latest task end, recomputed after every Task save
+    (`script_migrations.task.sync_project_dates_from_tasks`), and read-only on the form. Refusing a
+    Task save against a value that the same save is about to recompute is a contradiction.
+  - **What prod's ERPNext actually checks:** prod runs **ERPNext 16.50.0**. Its
+    `Task.validate_parent_project_dates` refuses any of `exp_start_date`, `exp_end_date`,
+    `act_start_date` and `act_end_date` outside that window, on **every** save, changed or not.
+    The version-16 branch head narrowed this on 2026-10-13, after the tag. This PR was first
+    written against the head, and this round models the tag.
+  - **What it blocked:**
     - moving the last task a day later, or the first a day earlier;
     - an overdue Reschedule on a job whose tasks are all past (v1.740.0's drafted path), which the
       live tray reported as "a date outside the project";
-    - a Copy week copy into next week.
+    - a Copy week copy into next week;
+    - a crew-only edit of a task whose timesheets ran past the derived end;
+    - the save of an Open dependent that `Task.reschedule_dependent_tasks` pushes past the
+      project's end, which also failed the save that pushed it.
 
     On the drafted paths, Publish refused them and left the project Draft.
-  - **Where:** `_save` and `_insert_doc` widen first, in the same transaction. Every live planner
-    save, quick add, duplicate, split, build out and Publish goes through them. `bulk_update`'s and
-    Copy week's own saves do the same.
-  - It widens only, never inward, and only a date that is set. The sync hook then sets the
-    authoritative value straight after the save.
-  - Like the Gantt, it leaves no comment on the Project: the window is derived, so the next save
-    says the same anyway.
-  - The Gantt's `_widen_parent_project_window` now calls the shared helper, and so it widens the
-    start too, since the start is derived the same way. `rental_logistics._widen_project` keeps
-    its own code, which its tests pin.
+  - **Why a doc_event:** frappe 16.50.0's `Document.run_before_save_methods` runs `before_validate`
+    before the controller's `validate`, on insert and save alike. So every save is covered: the
+    Desk form, ERPNext's dependent push, the Project Planner and its Publish, the Gantt, and the
+    rental code.
+  - **What it widens to:** from the earliest to the latest of the task's set dates among the four,
+    in the same transaction. It only ever widens. The sync hook then sets the authoritative value
+    straight after the save.
+  - **Defensive, as doc_events here must be:** it reads with `getattr` and never raises. A widening
+    that fails is logged, and ERPNext then judges the save as it always did.
+  - **The explicit calls stay:** the planner's `_save`/`_insert_doc` (and `bulk_update`'s and Copy
+    week's own saves) and the Gantt still call it first. Widening twice is harmless, and their
+    bench-free tests exercise it there.
+  - The Gantt's `_widen_parent_project_window` uses the shared helper, so it widens the start too.
+    `rental_logistics._widen_project` keeps its own code, which its tests pin; the hook covers it.
+  - Like the Gantt always has, it leaves no comment on the Project: the window is derived, so the
+    next save says the same anyway.
 - **ERPNext's own date checks now run on a draft, as warnings** (`erpnext_date_problems`).
   - **Why:** a draft is never saved, so ERPNext's `Task.validate` doesn't see it until Publish.
     Publish then refuses the task and leaves the project's schedule Draft, long after the scheduler
     made the change.
-  - **What runs:** of the checks ERPNext v16 makes in `Task.validate_dates` (read from
-    `erpnext/projects/doctype/task/task.py` on `version-16`), the two that Publish can't clear
-    itself:
-    - the expected end is not before the start;
-    - the end is not after the parent task's end.
-  - **Not warned about:** the third check, the project's expected start and end. Publish now
-    widens that window itself (above), so a warning would name something nobody needs to fix.
-  - **When a date counts:** ERPNext refuses a parent conflict only when the end changed
-    (`report_date_conflict`), so an end the draft did not move is not judged. A new task is judged.
-    A parent task that is drafted too is judged where it is drafted to, since the two publish
-    together.
+  - **What runs:** the checks that Publish can't clear itself, modelled on ERPNext **16.50.0**
+    (`erpnext/projects/doctype/task/task.py` at tag `v16.50.0`):
+    - the expected end is not before the expected start, nor the actual end before the actual
+      start;
+    - the expected end is not after the parent task's.
+
+    16.50.0 makes these on every save, so a draft is judged on every set date, whether it changed or
+    not. A crew-only draft of a task that already ends after its parent says so too. A parent task
+    that is drafted as well is judged where it is drafted to, since Publish saves it first.
+  - **Not warned about:** the project's expected window. The hook above widens it on every save.
   - **What the scheduler sees:** a line under **ERPNext**, such as "Publish will be refused for
     Pump set: its end (2026-10-30) is after its parent task TASK-2026-01234's end (2026-10-27)". The
     draft is never refused.
@@ -85,6 +99,9 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
 
     A build-out row carries no dates, so there is nothing to check there.
   - Copy week now also passes on what each drafted copy's own draft says.
+- **CLAUDE.md's "sibling checkouts" gotcha is corrected:** prod is pinned to a release tag, not
+  the version-16 branch. Read the tag that matches `tabInstalled Application.app_version`
+  (`v16.50.0` today). The Task project-date check is the evidence.
 - **A dependency loop among the followers of an overdue Reschedule now stays where it is**
   (`_follower_loops`).
   - **The problem:** ERPNext refuses a loop on save (`check_recursion`), but imported data can
@@ -116,17 +133,14 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - An end that ERPNext fills in from `expected_time` at save is not judged. A planner task always
     has an end.
   - The dedupe of warning lines merges identical lines from different tasks.
-- **Known limit of the widening:** it runs on the planner's and the Gantt's saves only. A Task
-  saved from the Desk form past its project's derived end is still refused by ERPNext. Widening in
-  the app's Task override (`task_enhancements/doctype/task/task.py`) would cover every save, but it
-  changes the Desk form's behaviour, so it is a separate decision.
 - **Behavior change on prod after the deploy:**
   - On a Draft-schedule project, a quick add or a build out for a project with no tasks on the
     board now makes drafts where it made live Tasks. Publish creates them.
   - Drafts whose dates ERPNext will refuse now say so when they are made.
-  - A planner or Gantt save that moves a task past its project's expected end (or before its
-    start) now widens the project's window instead of being refused. That covers moving the last
-    task later, an overdue reschedule, and a Copy week copy into next week, and their Publish.
+  - **Any Task save past its project's derived dates now succeeds and widens them, the Desk form
+    included.** That covers moving the last task later or the first earlier, an overdue reschedule,
+    a Copy week copy into next week, a crew-only edit of a task whose timesheets ran on, ERPNext's
+    own push of a dependent, and every Publish of those.
   - Otherwise, Published projects behave as before.
 - **Tests** in `tests/test_planner_autoshift.py`:
   - a loop of two left put while another follower moves (every task's landing day asserted);
@@ -136,11 +150,17 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - finding a three-task loop, and an excluded task breaking it;
   - a clear Fountain Move or read-only follower not named, and one in the way named;
   - one warning line for a follower of two selected tasks;
-  - ERPNext's checks: no warning for the project's window, which Publish widens; a drafted
+  - ERPNext's checks, as 16.50.0 makes them: no warning for the project's window; a drafted
     follower past its parent's end; a parent drafted later too, which says nothing; a draft that
-    breaks nothing says nothing;
-  - widening, with ERPNext's refusal simulated on save:
+    breaks nothing says nothing; every set date judged (expected and actual end before start, the
+    parent's end); a crew-only and a crew-size-only draft of a task already past its parent judged
+    too;
+  - the Task `before_validate` hook: a Desk-style save past the end; an actual end past the end; a
+    dependent ERPNext's reschedule pushes past the end; the start side; never inward; not a task or
+    no project; never raises (logged); registered in hooks.py;
+  - widening, with ERPNext 16.50.0's refusal simulated on save (all four dates, every save):
     - live: the last task a day later, and the first a day earlier;
+    - a crew-only edit of a task whose timesheets ran past the end;
     - a save inside the window never moves it;
     - the live overdue tray;
     - the simulation refuses without widening;
@@ -149,9 +169,10 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
     task drafted a day later publishes; a drafted Copy week copy into next week publishes;
   - Publish order: a parent before its children on the same day, and furthest first still;
   - the AI draft reads drafts on a Draft schedule with no flag, and not with an explicit 0;
-    only a moved date is judged, but end-before-start always is;
   - the no-flag rule on all seven writes; an explicit 0 saving; the new-task rule before the P3
     columns exist.
+- `tests/test_gantt_api.py` (its pytest CI step): a drag of the first task earlier widens the
+  project's start, and the never-shrinks test now gives the project a real start.
 - Each new test fails with its fix disabled.
 - **Stub changes:**
   - `test_planner_phase6b`'s stub, which `test_planner_build_out` and `test_planner_draft_new_tasks`

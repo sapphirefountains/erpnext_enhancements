@@ -2227,38 +2227,39 @@ def _clearing_step(doc, old, ends, holidays):
 	return working_days_between(start, add_working_days(bound, 1, holidays), holidays)
 
 
-def erpnext_date_problems(doc, stored=None):
-	"""What ERPNext v16's ``Task.validate_dates`` will refuse about ``doc``'s planned dates when the
-	draft is published, as sentences (v1.742.0). A draft is never saved, so without this a drafted
-	move, a drafted copy or a drafted follower that breaks one of them only fails at Publish, which
-	then leaves the project's schedule Draft. Of the checks ``erpnext/projects/doctype/task/task.py``
-	on version-16 makes, the two that Publish cannot clear itself:
+def erpnext_date_problems(doc):
+	"""What ERPNext's ``Task.validate`` will refuse about ``doc``'s dates when the draft is published,
+	as sentences (v1.742.0). A draft is never saved, so without this a drafted move, a drafted copy or
+	a drafted follower that breaks one of these only fails at Publish, which then leaves the project's
+	schedule Draft. Modelled on **ERPNext 16.50.0, the version prod runs**
+	(``erpnext/projects/doctype/task/task.py`` at tag ``v16.50.0``), not on the version-16 branch head,
+	which narrowed these checks on 2026-10-13. 16.50.0 makes them on **every** save, whether the date
+	changed or not, so a draft is judged on every set date:
 
-	* ``validate_from_to_dates``: the expected end is not before the expected start (always).
-	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's. ERPNext
-	  refuses it only when the end changed (``report_date_conflict``), so with ``stored`` (the task as
-	  stored, a dict) an end that did not move is not judged; a new task (``stored`` None) is. A
-	  parent that is drafted too is judged where it is drafted to, since the two publish together, and
-	  one that is itself a drafted new task is skipped (it has no row to read yet).
+	* ``validate_from_to_dates``: the expected end is not before the expected start, and the actual
+	  end not before the actual start.
+	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's. A parent
+	  that is drafted too is judged where it is drafted to (Publish saves it first,
+	  :func:`_publish_order`); one that is itself a drafted new task is skipped (no row to read yet).
 
-	The third, ``validate_parent_project_dates`` (neither date outside the project's expected start
-	and end), is not warned about: every planner save widens that window first
-	(``project_window.widen_for_task`` in :func:`_save` and :func:`_insert_doc`), Publish included.
-	The comparison is by date, as ERPNext's own, and an end ERPNext would fill in from
-	``expected_time`` is not judged (a planner task always has one)."""
+	``validate_parent_project_dates`` (any of the four dates outside the project's expected start and
+	end) is not warned about: the Task ``before_validate`` hook widens that window first, on every
+	save (``project_window.before_task_validate``). The comparison is by date, as ERPNext's own, and
+	an end ERPNext would fill in from ``expected_time`` is not judged (a planner task always has one)."""
 	problems = []
-	start, end = engine._as_date(doc.get("exp_start_date")), engine._as_date(doc.get("exp_end_date"))
-
-	def changed(field):
-		return stored is None or engine._as_date(stored.get(field)) != engine._as_date(doc.get(field))
-
-	if start and end and end < start:
-		problems.append(_("its end ({0}) is before its start ({1})").format(end, start))
+	for first, last, label in (
+		("exp_start_date", "exp_end_date", _("its end")),
+		("act_start_date", "act_end_date", _("its actual end")),
+	):
+		start, end = engine._as_date(doc.get(first)), engine._as_date(doc.get(last))
+		if start and end and end < start:
+			problems.append(_("{0} ({1}) is before its start ({2})").format(label, end, start))
+	end = engine._as_date(doc.get("exp_end_date"))
 	parent = doc.get("parent_task")
-	if parent and end and changed("exp_end_date") and not is_draft_ref(parent):
+	if parent and end and not is_draft_ref(parent):
 		parent_end = engine._as_date(frappe.db.get_value("Task", parent, "exp_end_date"))
 		if parent_end and end > parent_end:
-			# The parent's own draft publishes with this one: judge against where it is drafted to.
+			# The parent's own draft publishes with this one, first: judge against where it is drafted to.
 			parent_end = _drafted_end(parent) or parent_end
 		if parent_end and end > parent_end:
 			problems.append(
@@ -2278,12 +2279,12 @@ def _drafted_end(task):
 	return engine._as_date(load_payload(row.get("payload")).get("end")) if row else None
 
 
-def erpnext_date_lines(doc, stored=None):
+def erpnext_date_lines(doc):
 	""":func:`erpnext_date_problems` as the lines a draft's conflicts carry under :data:`ERPNEXT_KEY`."""
 	label = doc.get("subject") or doc.get("name")
 	return [
 		_("Publish will be refused for {0}: {1}.").format(label, problem)
-		for problem in erpnext_date_problems(doc, stored)
+		for problem in erpnext_date_problems(doc)
 	]
 
 
@@ -2309,7 +2310,7 @@ def _draft_checks(roots, followers):
 		conflicts[DEPENDENCY_KEY] = lines
 	# v1.742.0: what ERPNext will refuse at Publish about a drafted follower's dates (the task each
 	# follows says so through its own _store_draft).
-	refused = [line for entry in followers for line in erpnext_date_lines(entry["doc"], entry["stored"][0])]
+	refused = [line for entry in followers for line in erpnext_date_lines(entry["doc"])]
 	if refused:
 		conflicts[ERPNEXT_KEY] = refused
 	return conflicts
@@ -4050,7 +4051,8 @@ def _store_draft(
 			)
 		)
 	# v1.742.0: what ERPNext's own validation will refuse at Publish, said now (a draft is not saved).
-	refused = erpnext_date_lines(doc, stored_state) if moved and check and not unchanged else []
+	# ERPNext 16.50.0 judges every date on every save, so a crew-only draft is judged too.
+	refused = erpnext_date_lines(doc) if check and not unchanged else []
 	if refused:
 		conflicts = dict(conflicts, **{ERPNEXT_KEY: refused})
 	for label, messages in conflicts.items():

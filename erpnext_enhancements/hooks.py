@@ -661,6 +661,14 @@ doc_events = {
 		# overwrites, never copies the crew, never raises. before_insert so the values are saved in
 		# the one insert and pass the Task's validate. See project_enhancements/task_templates.py.
 		"before_insert": "erpnext_enhancements.project_enhancements.task_templates.copy_template_planning",
+		# v1.742.0: widen the Project's expected start/end to take in this Task's four dates before
+		# ERPNext's validate refuses it for falling outside them. On this site that window is DERIVED
+		# from the tasks (sync_project_dates_from_tasks, on_update above, recomputes MIN/MAX after
+		# every save), so the refusal contradicted itself; prod's ERPNext 16.50.0 checks exp_* and
+		# act_* on every save, a dependent its reschedule pushes included. before_validate, not
+		# validate: frappe runs it before the controller's validate, on insert and save. Widens only,
+		# never raises. See project_enhancements/project_window.py.
+		"before_validate": "erpnext_enhancements.project_enhancements.project_window.before_task_validate",
 		"on_trash": [
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).

@@ -6,17 +6,26 @@
 On this site ``Project.expected_start_date`` and ``expected_end_date`` are DERIVED: they are the
 earliest task start and the latest task end, recomputed on every Task save and delete
 (``script_migrations.task.sync_project_dates_from_tasks``), and the Project form shows them
-read-only. ERPNext v16's ``Task.validate_parent_project_dates`` meanwhile refuses a task whose
-dates fall outside them (``InvalidDates``). So the commonest edits there are, moving the last task
-one day later or the first one day earlier, and every task of a job whose tasks are all in the
-past, are refused against a value that the same save is about to recompute.
+read-only. ERPNext's ``Task.validate_parent_project_dates`` meanwhile refuses a task whose dates
+fall outside them (``InvalidDates``). Refusing a save against a value that the same save is about to
+recompute is a contradiction, and it blocked the commonest edits there are: the last task one day
+later, the first one day earlier, any save of a task on a job whose tasks are all in the past.
 
-:func:`widen_for_task` widens the window first, in the same transaction as the save, and never
-shrinks it: the sync hook then sets the authoritative value straight after. The Gantt has done this
-for its drags since it was written (``api/gantt.py``, which now calls this); the Project Planner
-does it for every save and insert it makes, its Publish included (v1.742.0,
-``api/project_planner._save`` / ``_insert_doc``). Like the Gantt, it leaves no comment: the window
-is derived, so the next save says the same thing anyway.
+**Prod runs ERPNext 16.50.0**, and there the check is broader than on the version-16 branch head
+(which changed it on 2026-10-13, after that tag): it judges ``exp_start_date``, ``exp_end_date``,
+``act_start_date`` and ``act_end_date``, on every save, changed or not. So a crew-only edit of a task
+whose timesheets ran past the derived end is refused too, and so is the save of an Open dependent
+that ``Task.reschedule_dependent_tasks`` pushes past the project's end (and the save that pushed it).
+
+So the widening is a Task ``before_validate`` doc_event (:func:`before_task_validate`, v1.742.0),
+which frappe 16.50.0's ``Document.run_before_save_methods`` runs before the controller's
+``validate``, on insert and save alike: the Desk form, ERPNext's dependent push, the Project Planner,
+the Gantt, the rental code and anything else. It widens the window to take in every set date of the
+four, in the same transaction, and never shrinks it: the sync hook then sets the authoritative
+value straight after. The planner (``api/project_planner._save`` / ``_insert_doc``) and the Gantt
+still call :func:`widen_for_task` themselves first; widening twice is harmless, and their bench-free
+tests exercise it there. Like the Gantt always has, it leaves no comment: the window is derived, so
+the next save says the same thing anyway.
 """
 
 import frappe
@@ -50,8 +59,35 @@ def widen(project, start=None, end=None):
 	return changed
 
 
+#: The Task dates ERPNext 16.50.0's ``validate_parent_project_dates`` judges against the project.
+TASK_DATE_FIELDS = ("exp_start_date", "exp_end_date", "act_start_date", "act_end_date")
+
+
 def widen_for_task(doc):
-	""":func:`widen` for a Task about to be saved or inserted, from its expected start and end."""
+	""":func:`widen` for a Task about to be saved or inserted: from the earliest to the latest of its
+	set dates among :data:`TASK_DATE_FIELDS`, so every one of them is inside the window."""
 	if (doc.get("doctype") or "Task") != "Task":
 		return {}
-	return widen(doc.get("project"), doc.get("exp_start_date"), doc.get("exp_end_date"))
+	days = [day for day in (_day(doc.get(field)) for field in TASK_DATE_FIELDS) if day]
+	if not days:
+		return {}
+	return widen(doc.get("project"), min(days), max(days))
+
+
+def before_task_validate(doc, method=None):
+	"""Task ``before_validate`` doc_event (hooks.py, v1.742.0): :func:`widen_for_task` before ERPNext's
+	own ``validate`` judges the task against its project's window. Defensive, as doc_events here must
+	be (they fire during ERPNext's own test bootstrap, before this app's fields exist): attributes are
+	read with ``getattr``, and nothing raises. A widening that fails is logged and the save goes on, to
+	be judged by ERPNext as it always was."""
+	try:
+		if getattr(doc, "doctype", None) != "Task" or not getattr(doc, "project", None):
+			return
+		widen_for_task(doc)
+	except Exception:
+		try:
+			frappe.log_error(
+				title="Task: the project's window could not be widened", message=frappe.get_traceback()
+			)
+		except Exception:
+			pass

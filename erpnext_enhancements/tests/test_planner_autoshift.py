@@ -1445,7 +1445,8 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 		self.projects["PRJ-2"].update(expected_start_date="2026-09-01", expected_end_date="2026-12-31")
 		self.assertEqual(self._refused(self._reschedule()), [])
 
-	def test_only_a_date_that_moved_is_judged_but_end_before_start_always_is(self):
+	def test_every_set_date_is_judged_as_erpnext_16_50_does(self):
+		# ERPNext 16.50.0 (prod) makes these checks on every save, changed or not.
 		h._task("TASK-P", start="2026-09-01", end="2026-09-30", crew=(), project="PRJ-2")
 		doc = h._Doc(
 			name="T",
@@ -1453,19 +1454,37 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 			parent_task="TASK-P",
 			exp_start_date="2026-10-05",
 			exp_end_date="2026-10-02",
+			act_start_date="2026-10-03",
+			act_end_date="2026-10-01",
 		)
-		stored = {"exp_start_date": "2026-10-05", "exp_end_date": "2026-10-02"}
 		self.assertEqual(
-			self.api.erpnext_date_problems(doc, stored),
-			["its end (2026-10-02) is before its start (2026-10-05)"],
+			self.api.erpnext_date_problems(doc),
+			[
+				"its end (2026-10-02) is before its start (2026-10-05)",
+				"its actual end (2026-10-01) is before its start (2026-10-03)",
+				"its end (2026-10-02) is after its parent task TASK-P's end (2026-09-30)",
+			],
 		)
-		# A new task (no stored row) is judged on its end against the parent's too.
-		self.assertEqual(len(self.api.erpnext_date_problems(doc)), 2)
+
+	def test_a_crew_only_draft_is_judged_too(self):
+		# The task already ends after its parent: Publish of any draft of it will be refused.
+		h._task("TASK-P", start="2026-09-01", end="2026-10-01", crew=(), project="PRJ-2")
+		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
+		self.frappe.docs[("Task", "TASK-A")]["exp_end_date"] = "2026-10-02"
+		result = self.api.add_crew("TASK-A", "RES-2", BASE)
+		self.assertTrue(result["drafted"])
+		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(result)))
+		# Even a draft that moves nobody's hours (crew size only) is saved, and so judged, at Publish.
+		self.frappe.tables["Planner Draft Change"] = []
+		sized = self.api.save_task("TASK-A", BASE, crew_size=3)
+		self.assertTrue(sized["drafted"])
+		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(sized)))
 
 
 class _ERPNextsProjectWindow:
-	"""ERPNext's ``validate_parent_project_dates`` simulated on save: a task outside its project's
-	expected start and end is refused, and ``frappe.db.set_value`` on a Project really moves them."""
+	"""ERPNext 16.50.0's ``validate_parent_project_dates`` simulated on save: a task any of whose four
+	dates (expected and actual, start and end) falls outside its project's expected start and end is
+	refused, on every save, and ``frappe.db.set_value`` on a Project really moves them."""
 
 	def _simulate_erpnext(self):
 		self.widened = []
@@ -1485,7 +1504,7 @@ class _ERPNextsProjectWindow:
 
 		def save(doc):
 			window = projects.get(doc.get("project")) or {}
-			for field in ("exp_start_date", "exp_end_date"):
+			for field in ("exp_start_date", "exp_end_date", "act_start_date", "act_end_date"):
 				day = str(doc.get(field) or "")[:10]
 				if day and window.get("expected_end_date") and day > str(window["expected_end_date"])[:10]:
 					raise h._Throw(
@@ -1532,6 +1551,13 @@ class TestALiveSaveWidensTheProject(_ERPNextsProjectWindow, _P4):
 		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-21"})])
 		source = (APP / "project_enhancements/fountain_move_jobs.py").read_text(encoding="utf-8")
 		self.assertIn("return project_planner._apply(", source)
+
+	def test_a_crew_only_edit_of_a_task_whose_timesheets_ran_past_the_end(self):
+		# 16.50.0 judges act_end_date too, on every save: a crew change alone was refused.
+		self.frappe.docs[("Task", "TASK-1")]["act_end_date"] = "2026-10-16"
+		result = self.api.add_crew("TASK-1", "RES-2", BASE)
+		self.assertNotIn("drafted", result)
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-16"})])
 
 	def test_a_save_inside_the_window_never_moves_it(self):
 		self.api.save_task("TASK-1", BASE, end="2026-10-13")  # shorter
@@ -1935,6 +1961,79 @@ class TestNoFlagMeansAuto(_P4):
 		self.assertNotIn("drafting = bool(cint(pp.given(draft)))", source)
 		# duplicate, quick add and build out, and the build-out grid's read.
 		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 4)
+
+
+class TestTheTaskHookWidensEverySave(_P4):
+	"""v1.742.0 round 3: the widening is a Task ``before_validate`` doc_event, so every save gets it:
+	the Desk form, ERPNext's own dependent push, the planner, the Gantt and the rental code."""
+
+	def setUp(self):
+		super().setUp()
+		self.widened = []
+		self.frappe.db.set_value = lambda doctype, name, field, value=None, **k: self.widened.append(
+			(doctype, name, field, str(value))
+		)
+		self.projects["PRJ-1"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		self.hook = self.api.project_window.before_task_validate
+
+	def _task(self, **dates):
+		return h._Doc(doctype="Task", name="TASK-9", project="PRJ-1", **dates)
+
+	def test_a_desk_save_past_the_end(self):
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-20"))
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-20")])
+
+	def test_an_actual_end_past_the_end(self):
+		# A crew-only edit of a task whose timesheets ran on: its actual end is what is outside.
+		self.hook(
+			self._task(exp_start_date="2026-10-12", exp_end_date="2026-10-13", act_end_date="2026-10-17")
+		)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-17")])
+
+	def test_a_dependent_erpnexts_reschedule_pushes_past_the_end(self):
+		# Task.reschedule_dependent_tasks saves the pushed dependent through the same validate.
+		pushed = self._task(exp_start_date="2026-10-15", exp_end_date="2026-10-16")
+		pushed.flags = types.SimpleNamespace(ignore_recursion_check=True)
+		self.hook(pushed)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-16")])
+
+	def test_the_start_side(self):
+		self.hook(
+			self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-13", act_start_date="2026-10-08")
+		)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_start_date", "2026-10-08")])
+
+	def test_never_inward(self):
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-13"))
+		self.assertEqual(self.widened, [])
+
+	def test_not_a_task_or_no_project(self):
+		self.hook(h._Doc(doctype="Project", name="PRJ-1", exp_end_date="2026-12-01"))
+		self.hook(h._Doc(doctype="Task", name="T", project=None, exp_end_date="2026-12-01"))
+		self.hook(types.SimpleNamespace(doctype="Task"))  # a doc without the fields at all
+		self.assertEqual(self.widened, [])
+
+	def test_it_never_raises(self):
+		def boom(*args, **kwargs):
+			raise RuntimeError("no Project table yet (ERPNext's own test bootstrap)")
+
+		self.frappe.db.get_value = boom
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertEqual(self.widened, [])
+		self.assertTrue(self.frappe.errors)
+
+	def test_it_is_the_tasks_before_validate_hook(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		events = next(
+			node.value
+			for node in tree.body
+			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
+		)
+		task = ast.literal_eval(events)["Task"]
+		self.assertEqual(
+			task["before_validate"],
+			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		)
 
 
 class TestPublishOrder(unittest.TestCase):

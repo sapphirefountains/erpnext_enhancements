@@ -2099,22 +2099,25 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
     confirmation first names each selected task with a drafted reschedule that is not published
     (`drafted_start`). It says that the tasks drafted along with it will still publish where they
     were drafted unless someone moves them. It warns and discards nothing.
-- **The project's window is widened by every planner save** (v1.742.0,
-  `project_enhancements/project_window.py`, called from `_save` and `_insert_doc`). A Project's
-  expected start and end are derived on this site: the earliest task start and the latest task end,
-  recomputed on every Task save. ERPNext refuses a task outside them, so moving the last task later,
-  rescheduling an overdue task, or copying a week ahead was refused against a value about to be
-  recomputed, and Publish then left the project Draft. The window now widens first, in the same
-  transaction, and never inward, as the Gantt's drags always have. The Gantt now calls the same
-  helper.
+- **Every Task save widens its project's window first** (v1.742.0,
+  `project_enhancements/project_window.py`, a Task `before_validate` doc_event).
+  - **The problem:** a Project's expected start and end are derived on this site, the earliest task
+    start and the latest task end, recomputed after every Task save. Prod's ERPNext 16.50.0 refuses
+    a task any of whose four dates (expected and actual) falls outside them, on every save. So these
+    were all refused against a value about to be recomputed: moving the last task later,
+    rescheduling an overdue task, copying a week ahead, a crew-only edit of a task whose timesheets
+    ran on, and ERPNext's own push of a dependent. Publish then left the project Draft.
+  - **The fix:** the window now widens first, in the same transaction and never inward, for every
+    save: the Desk form, ERPNext's push, the planner, the Gantt and the rental code. The planner's
+    `_save`/`_insert_doc` and the Gantt also call it first themselves.
 - **ERPNext's own date checks run on the draft** (v1.742.0, `erpnext_date_problems`). A draft is
   never saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the
-  project's schedule Draft. The two date checks Publish cannot clear itself are run on the drafted
-  state, and come back as warnings under **ERPNext** ("Publish will be refused for …"). They never
-  refuse the draft.
-  - The end is not before the start.
-  - The end is not after the parent task's end: judged only when the end moved, and against the
-    parent's drafted end when it is drafted too.
+  project's schedule Draft. The date checks Publish cannot clear itself are run on the drafted
+  state, as ERPNext 16.50.0 (prod) makes them, on every set date of every save. They come back as
+  warnings under **ERPNext** ("Publish will be refused for …") and never refuse the draft.
+  - The expected end is not before the expected start, nor the actual end before the actual start.
+  - The end is not after the parent task's end. When the parent is drafted too, its drafted end is
+    used.
 
   The project-window check is left out because Publish widens the window. Publish saves a parent
   before its children when they end on the same day (`_publish_order`), so a child is never checked
