@@ -2314,7 +2314,10 @@ jobs:
       # Replays production's Projects sidebar rows: only ERPNext's own row is flagged hidden,
       # once, and again after an ERPNext re-import; the pre-16.50 path still drops the row;
       # a failure is logged, never raised. Execs the module against a fake database passed in
-      # as `frappe`, so nothing goes in sys.modules.
+      # as `frappe`, so nothing goes in sys.modules. Since v1.735.0 also production's Buying and
+      # CRM sidebars: CRM opens on the Opportunity Kanban, Buying lists Purchase Order and
+      # Material Request under Home, a second migrate writes nothing, and the boot filter takes
+      # the Kanban row from anyone who cannot read Opportunity.
       - name: Core sidebar tweaks (16.50 Sidebar + pre-16.50 Workspace Sidebar)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_tweaks -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
