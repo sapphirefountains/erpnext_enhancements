@@ -1,12 +1,14 @@
-# `inventory_enhancements/` — barcode counting, storage locations and Stock Scan
+# `inventory_enhancements/` — counting, storage locations and Stock Scan
 
 A resumable physical-count workflow driven by a barcode scanner, a storage-location model
 finer-grained than ERPNext's Warehouse, and — since v1.521.0 — the **Stock Scan** page: a QR
 label on every stock-holding warehouse that opens a phone page to take parts, receive stock
-and put it away.
+and put it away. Since v1.737.0 counts also have a laptop page, the **Count Desk**: pick bins
+from the warehouse tree, type a sheet of every item they hold, review the variances, post.
 
-Backend endpoints are in `api/inventory_scanner.py` (counting) and `api/stock_scan.py`
-(Stock Scan); the count page is a Desk page here, and the Stock Scan page is a website route
+Backend endpoints are in `api/inventory_scanner.py` (counting on the phone), `api/count_desk.py`
+(the Count Desk) and `api/stock_scan.py` (Stock Scan); the count pages are Desk pages here, and
+the Stock Scan page is a website route
 (`www/stock-scan.html`, front end in `public/js/stock_scan/`). This module holds the data
 model, the pure rules and the label reads.
 
@@ -19,7 +21,9 @@ model, the pure rules and the label reads.
 | `doctype/storage_location/` | Sub-warehouse storage locations |
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
-| `page/inventory_scanner_audit/` | Desk audit view over count sessions |
+| `page/inventory_scanner_audit/` | The phone count page: scan a location, scan items, type what is there |
+| `page/count_desk/` | The **Count Desk** (v1.737.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
+| `count_desk_rules.py` | Every judgement the Count Desk makes: which bins a choice covers, the sheet's rows and summary, a row's save, and what posting does (each item's variance applied to what is on hand now). No Frappe, no I/O; the endpoints are `api/count_desk.py` |
 | `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
@@ -53,7 +57,20 @@ clerk was standing in.
 
 Finalizing (`api.inventory_scanner.finalize_session`) aggregates the lines per
 (item, warehouse) into a **draft** Stock Reconciliation for a Stock Manager to review and
-submit; `stock_reconciliation` on the session links back to it.
+submit; `stock_reconciliation` on the session links back to it. The Count Desk (below) posts
+a count its own way, and can open and post a count taken on the phone.
+
+**A variance is the item's, at the warehouse** (fixed in v1.737.0). Each line's `system_qty` is
+the warehouse's on-hand, so an item spread over two Storage Locations is only short once both
+are counted. `add_count` always stamped the per-item variance on every line of the item, and
+then the session controller's `validate` overwrote it with each line's own
+`counted - system_qty` on the same save. It now takes `count_desk_rules.groups`: the sum of the
+item's counts against the on-hand the latest of them saw.
+
+**The phone keeps to its own count.** A Count Desk count carries a `scope` (the bins it covers)
+and someone may have several open, so the phone page's "your open count"
+(`_active_session_name`) leaves those out and picks the most recently changed one without a
+scope. Each line records who counted it (`counted_by`, v1.737.0).
 
 Nothing in the count flow submits stock movements. The clerk counts, the Stock Manager
 decides. (The Stock Scan page, below, is the opposite by design.)
@@ -748,6 +765,118 @@ page asks, and sends the same save with `rate` (`stock_scan._receipt_cost`).
   Bin Manager (`public/js/bin_manager/logic.js` re-exports them), `app.js` `askUnitCost`, and the Bin Manager's
   `cost_dialog`.
 
+## The Count Desk (v1.737.0)
+
+The phone page above is a 680 px column that shows one scanned item at a time, and nothing on
+screen until something is scanned. On a laptop that is the wrong tool for the person who runs
+the counts. `/desk/count-desk` is the laptop's: a keyboard sheet of everything the bins hold.
+
+**Three screens, each its own history entry**: the plan (`/desk/count-desk`), a count's sheet
+(`/desk/count-desk/<count>`) and its review (`/desk/count-desk/<count>/review`). Dialogs push
+nothing. The state and the server calls are `public/js/count_desk/controller.js`, every
+decision is `public/js/count_desk/logic.js` (both in `count_desk.bundle.js`, `window.sf_count_desk`),
+and the page script draws and wires. Every request is the quiet `sf_kit.call`.
+
+**The plan** answers *what should be counted next*. Four numbers over the last 90 days (the
+Operations KPI's window): coverage (of the bins holding stock, how many had a count recorded),
+accuracy (of the items counted, how many matched), the value adjusted, and the open counts. Then
+the warehouse tree, opened down to the shelves, with each node's bins, items on hand, stock value
+and how many of its bins are due. "Last counted" is the later of a submitted Stock Reconciliation
+in the ledger at the bin (the KPI's definition, so the two agree) and a finalized count's line
+there: a count where everything matched posts nothing to the ledger and was still a count. Tick a
+row, bay, shelf or bin, or a preset (*Never counted*, *Not counted in 90 days*, *10 most valuable
+of those*), title it, tick *Blind count* if wanted, and *Start count*. A whole group is sent as the
+group, so the count is titled after it. Open counts that already cover a ticked bin are named
+before the start and again after it; two people may split a big shelf, so it is said, not refused.
+
+**The sheet** lists every item each bin holds, by the phone page's own listing
+(`api.stock_scan._items_at`: on hand, assigned, its default, on order, not yet decided), called with
+`limit=None`. The phone caps a location at 150 items, and a sheet that stopped at 150 would leave
+the rest of `Stores - SF` uncounted with nothing to say so. Rows are grouped under each bin with how
+far it has got. The grid is built for the keyboard:
+
+| Key | Does |
+|---|---|
+| a number, or `3*24+5`, `3x24` | the count; a sum is worked out (never `eval`), so cases of 24 need no calculator |
+| Enter / Shift+Enter, ↑ ↓ | save and move; under *To count*, Enter goes to the next uncounted row |
+| `=` in an empty cell | the system quantity (not on a blind count) |
+| Esc | the cell as it was |
+| a pasted column | fills down from the cell, skipping rows that cannot be counted |
+| Alt+R | flag the row for a recount |
+| Ctrl+Z | undo the last change (a paste or a *Zero the rest* is one step) |
+| `/`, Ctrl+K | the search box; Alt+1…6 the filters (All, To count, Variances, Recount, Moved since counted, Not expected) |
+| Ctrl+Enter | the review |
+| `?` | all of them |
+
+**A scan is never a quantity.** A wedge scanner types into whatever has focus and presses Enter, so
+a scanned label or part number lands in a count cell. Anything with a letter (other than the x of
+`3x24`), a URL, or eight or more digits (a UPC) is taken as a scan (`logic.looks_like_scan`): an item
+on the sheet jumps to its row, a location label filters to that bin, and an item not on the sheet
+offers *Add an item*, which counts it at a bin of the count as *Not expected here*. The search box
+does the same with typed text, and filters the grid as it is typed.
+
+*Zero the rest* (for a bin, or the whole sheet) counts every row not yet counted as 0: for after
+the shelf has been searched, when an item not found is not there. *Print* gives a sheet grouped by
+bin with a box per item, blank for a clipboard walk or with the counts so far, with or without the
+system quantity; *CSV* exports the sheet with formula-looking text escaped. *+ Locations* adds bins
+to an open count.
+
+**A blind count** hides the system quantity, the variance, its value and the row's colour while
+counting, so nothing steers the count; the review shows them. It is a discipline aid for the
+counter, not a security control: the server still sends the numbers.
+
+**Saving.** Each count is saved as it is entered (`save_counts`), through one queue in the
+controller: one request in flight, edits made meanwhile merged per row (the last value wins). A save
+is an absolute value, so resending one is always safe: a dropped connection or a 5xx retries with
+backoff (2 s up to 30 s) without losing a newer edit; a refusal (417, 403) marks its rows with the
+server's sentence and is not retried. The server judges each row on its own, so one typo in a pasted
+column does not stop the others, and locks the session row before it loads it, so two saves of one
+count cannot collide on `modified`. A changed count takes a fresh snapshot of the system and the
+time, as a scan does on the phone; a reason or a flag alone changes neither. Rows are patched in
+place, so the cell being typed in keeps its text. Leaving the page with anything unsaved asks first.
+
+**The review** lists the variances by value, with each one's on-hand now and what will post, a
+reason (the line's `reason_code`, one of `count_desk_rules.REASON_CODES`) and a note. Inventory
+Scanner Settings' *Require Variance Reason* is on by default, so Post waits for every variance to
+have one (the server refuses the post otherwise). It also says how many items were not counted
+(posting leaves them as they are), flagged for a recount, or reserved.
+
+**Posting** (`post_count`, `count_desk_rules.post_plan`):
+
+* **What posts is the variance applied to what is on hand now**, never the counted number: stock
+  keeps moving while a count is open, and posting the count would undo a take made after the shelf
+  was counted. Below zero posts zero.
+* **A match posts nothing.** ERPNext drops unchanged rows from a Stock Reconciliation and refuses one
+  with none left ("None of the items have any change in quantity or value"), so a count where
+  everything matched used to fail to finalize. It is now finalized with no reconciliation; the
+  session is the record that it was counted.
+* **Left out, and listed** on the result and in the count's notes: an item somebody posted a count
+  of after this one was counted (two open counts of a bin would otherwise each add their variance),
+  stock reserved for orders (v16 refuses a reconciliation of the pair and its cancel), an item at
+  zero with no cost on record (`api.stock_scan._receipt_rate`), and serial, batch, template,
+  disabled and non-stock items.
+* **One reconciliation per company and difference account**, `expense_account` from
+  `stock_accounts.difference_account` as every stock voucher here, the scan cost center, remarks
+  naming the count, who counted it and each adjusted item's reason. A recount leaves
+  `valuation_rate` blank, so the quantity changes and the unit cost does not.
+* **Submitted as the user** with Stock Reconciliation create and submit (no `ignore_permissions`).
+  Without them the page offers *Send for review*: a **draft** inserted past permissions after the
+  role gate, the phone page's rule since v1.29.0 (the clerk counts, the Stock Manager decides), with
+  `set_posting_time` and the posting time fixed at the moment it was drafted. A Stock Manager who
+  submits it next week does not wipe out what moved in between; ERPNext reposts it on top.
+* **Idempotent**: a retry after a dropped reply finds the count Finalized and gets the first post
+  back (`repeated`).
+
+**Who.** The page and its endpoints admit `count_desk_rules.COUNT_ROLES`: System Manager, Stock
+Manager and Inventory Clerk, the phone page's counting roles. A count belongs to whoever started it;
+a Stock Manager or System Manager may open and act on anyone's, and sees everyone's open counts on
+the plan. Phone counts (no `scope`) open on the Count Desk too, and can be posted from it.
+
+**Where.** The Operations Hub (a shortcut beside the Bin Manager, and its Inventory card), the
+Inventory Enhancements workspace (a shortcut beside Stock Scan, and first in its Counts card), both
+linked by `patches/count_desk_hub_links`, and an *Open in the Count Desk* button on the Inventory
+Count Session form.
+
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -920,6 +1049,7 @@ python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
+python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
 

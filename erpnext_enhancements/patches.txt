@@ -1490,3 +1490,7 @@ erpnext_enhancements.patches.backfill_reorder_alert_role
 # Overwrites Nik's hand-made layer of that morning once, on purpose (setup/dock_profiles.py keeps a layer a person saved
 # last). After model sync, which imports dock/erpnext_enhancements. Cannot raise, safe twice.
 erpnext_enhancements.patches.set_dock_site_layer
+# Count Desk (v1.737.0): force-import the Operations Hub and the Inventory Enhancements workspace, which now link
+# the new Desk page count-desk (a shortcut beside the Bin Manager and beside Stock Scan; the Inventory and Counts
+# cards). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
+erpnext_enhancements.patches.count_desk_hub_links
