@@ -832,7 +832,7 @@ def _widen_parent_project_window(doc):
 
 	Widening the window first clears that hurdle; the sync hook then sets the
 	authoritative value straight after the save. No-op for any other doctype,
-	and never shrinks the window. Since v1.741.0 the widening is shared with the
+	and never shrinks the window. Since v1.742.0 the widening is shared with the
 	Project Planner (``project_enhancements.project_window``), and it widens the
 	start too: the expected start is derived the same way, as MIN(task start).
 	"""

@@ -585,7 +585,7 @@ text above:
     the task's new end, to the working day after (Nik, 2026-10-23). This is unlike a drag (D10),
     because an overdue task is weeks late.
   - *Mark done* and *Cancel* stay live (Nik, 2026-10-23), and warn first about a drafted reschedule.
-- **Draft hardening** (v1.741.0).
+- **Draft hardening** (v1.742.0).
   - Every planner write treats a missing draft flag as "auto", so §4.8's "every write to its tasks is
     drafted" holds for any client, not only the page.
   - Every planner save widens the project's derived expected window first, as the Gantt does. So

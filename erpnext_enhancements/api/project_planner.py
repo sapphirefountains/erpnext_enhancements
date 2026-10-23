@@ -134,7 +134,7 @@ SUCCESSOR_LIMIT = 200
 SUCCESSOR_DEPTH = 25
 #: The needs_reason key that dependency lines are filed under (the others are people).
 DEPENDENCY_KEY = "Dependencies"
-#: The conflict heading for what ERPNext's own Task.validate will refuse at Publish (v1.741.0).
+#: The conflict heading for what ERPNext's own Task.validate will refuse at Publish (v1.742.0).
 ERPNEXT_KEY = "ERPNext"
 #: An Employee Credential in one of these counts as held (Expired and Revoked do not).
 CURRENT_CREDENTIAL_STATUSES = ("Valid", "Expiring")
@@ -306,9 +306,9 @@ def draft_choice(draft):
 
 
 def unset_auto(draft):
-	"""A planner write's ``draft`` with an unset one read as :data:`DRAFT_AUTO` (v1.741.0).
+	"""A planner write's ``draft`` with an unset one read as :data:`DRAFT_AUTO` (v1.742.0).
 
-	Until v1.741.0 an unset flag meant "save it" on ``save_task``, ``add_crew``, ``swap_crew`` and
+	Until v1.742.0 an unset flag meant "save it" on ``save_task``, ``add_crew``, ``swap_crew`` and
 	``move_many``, and on the three writes that create a task, so a client that sent none (the AI
 	connector, a script, a page that did not know the project) wrote live into a schedule nobody had
 	published. The audit for this release found no caller that relies on that: the planner pages are
@@ -320,7 +320,7 @@ def unset_auto(draft):
 def drafts_new_task(draft, project):
 	"""Whether a write that creates a task of ``project`` (quick add, duplicate, build out) keeps it
 	as a drafted new task: ``draft=1`` always, ``0`` never, and unset or ``auto`` when the project's
-	schedule is Draft (v1.741.0; :func:`unset_auto`). Before, those took ``draft=1`` only, and the
+	schedule is Draft (v1.742.0; :func:`unset_auto`). Before, those took ``draft=1`` only, and the
 	page could not send it for a project not on the board yet, the usual case for a quick add or a
 	build out on a new job."""
 	choice = draft_choice(unset_auto(draft))
@@ -1220,7 +1220,7 @@ def _message_log():
 def _save(doc):
 	"""``doc.save()`` as the caller; what it said through msgprint comes back as warnings.
 
-	v1.741.0: the project's expected window is widened first where the task now needs it
+	v1.742.0: the project's expected window is widened first where the task now needs it
 	(``project_window.widen_for_task``): on this site it is derived from the tasks, and ERPNext would
 	otherwise refuse moving the last task later or the first one earlier. Every live planner save and
 	Publish come through here or :func:`_insert_doc`."""
@@ -1495,7 +1495,7 @@ def save_task(
 	"""
 	tentative = given(tentative)
 	follow = as_bool(dependents) if given(dependents) is not None else False
-	draft = unset_auto(draft)  # v1.741.0: no flag drafts on a Draft schedule
+	draft = unset_auto(draft)  # v1.742.0: no flag drafts on a Draft schedule
 	if _drafting(draft, task):
 		return _store_draft_followed(
 			_draft_context(task, modified),
@@ -1536,7 +1536,7 @@ def add_crew(task, resource, modified, reason=None, notify=None, draft=None):
 	does not silently drop the others from the planner. ``draft=1``: into the caller's draft.
 	``notify`` and ``draft`` (``auto`` included): as :func:`save_task` takes them.
 	"""
-	draft = unset_auto(draft)  # v1.741.0
+	draft = unset_auto(draft)  # v1.742.0
 	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
@@ -1572,7 +1572,7 @@ def swap_crew(
 	:func:`save_task` takes them.
 	"""
 	follow = as_bool(dependents) if given(dependents) is not None else False
-	draft = unset_auto(draft)  # v1.741.0
+	draft = unset_auto(draft)  # v1.742.0
 	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
@@ -2045,7 +2045,7 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	# touches it. A follower the clear walk moves twice is read again the second time (moved).
 	drafts = _draft_rows()
 	moved, named = {}, set()
-	# v1.741.0: tasks in a dependency loop are left where they are (named), before anything moves.
+	# v1.742.0: tasks in a dependency loop are left where they are (named), before anything moves.
 	loops = _follower_loops(root, exclude) if clear_of is not None else {}
 
 	def skip(doc, problem):
@@ -2070,7 +2070,7 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		move_job = _is_move_job(row.get("project"), jobs)
 		writable = frappe.has_permission("Task", "write", doc=name)
 		if move_job or not writable:
-			# v1.741.0: one already clear of what it waits on would not have moved: nothing to name.
+			# v1.742.0: one already clear of what it waits on would not have moved: nothing to name.
 			if clear_of is not None:
 				stored = frappe.get_doc("Task", name)
 				if not _clearing_step(stored, _span_text(_state(stored)), ends, _shift_holidays()):
@@ -2132,7 +2132,7 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 
 def _follower_loops(root, exclude=()):
 	"""``{task: [the tasks of its loop]}`` for the tasks following ``root`` that wait on each other in
-	a loop (v1.741.0, the clear walk). ERPNext refuses a dependency loop on save
+	a loop (v1.742.0, the clear walk). ERPNext refuses a dependency loop on save
 	(``Task.check_recursion``), but imported data can carry one, and the clear walk would push its
 	tasks past each other until its limits stopped it: B to January, C the day after, and so on. So
 	the loops are found first, from the same ``Task Depends On`` rows, and their tasks are left where
@@ -2229,7 +2229,7 @@ def _clearing_step(doc, old, ends, holidays):
 
 def erpnext_date_problems(doc, stored=None):
 	"""What ERPNext v16's ``Task.validate_dates`` will refuse about ``doc``'s planned dates when the
-	draft is published, as sentences (v1.741.0). A draft is never saved, so without this a drafted
+	draft is published, as sentences (v1.742.0). A draft is never saved, so without this a drafted
 	move, a drafted copy or a drafted follower that breaks one of them only fails at Publish, which
 	then leaves the project's schedule Draft. Of the checks ``erpnext/projects/doctype/task/task.py``
 	on version-16 makes, the two that Publish cannot clear itself:
@@ -2307,7 +2307,7 @@ def _draft_checks(roots, followers):
 	)
 	if lines:
 		conflicts[DEPENDENCY_KEY] = lines
-	# v1.741.0: what ERPNext will refuse at Publish about a drafted follower's dates (the task each
+	# v1.742.0: what ERPNext will refuse at Publish about a drafted follower's dates (the task each
 	# follows says so through its own _store_draft).
 	refused = [line for entry in followers for line in erpnext_date_lines(entry["doc"], entry["stored"][0])]
 	if refused:
@@ -2742,7 +2742,7 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 		saved_point = _savepoint(point)
 		mark = len(log) if log is not None else 0
 		try:
-			project_window.widen_for_task(doc)  # v1.741.0, as _save does
+			project_window.widen_for_task(doc)  # v1.742.0, as _save does
 			doc.save()
 		except Exception as exc:
 			if saved_point:
@@ -2840,7 +2840,7 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 		result["shift_skipped"].extend(
 			item for item in drafted.get("shift_skipped") or [] if item["task"] not in known
 		)
-		# v1.741.0: a follower two selected tasks both move says each of its lines once.
+		# v1.742.0: a follower two selected tasks both move says each of its lines once.
 		for line in [*(drafted.get("warnings") or []), *_take_messages(log, mark)]:
 			if line not in result["warnings"]:
 				result["warnings"].append(line)
@@ -3051,7 +3051,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 		)
 		if doc.get("custom_equipment"):
 			_set_equipment(new, equipment_payload(doc.get("custom_equipment")))
-		project_window.widen_for_task(new)  # v1.741.0, as _insert_doc does
+		project_window.widen_for_task(new)  # v1.742.0, as _insert_doc does
 		new.insert()
 		if conflicts:
 			new.add_comment(
@@ -3073,7 +3073,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 		new = task_from_spec(spec)
 		new.check_permission("create")
 		stored = store_new_draft(spec, new)
-		warnings.extend(stored.get("warnings") or [])  # v1.741.0: what Publish will refuse
+		warnings.extend(stored.get("warnings") or [])  # v1.742.0: what Publish will refuse
 		start, end = _span_text(_state(new))
 		created.append(
 			{
@@ -4049,7 +4049,7 @@ def _store_draft(
 				"Your earlier draft of this task was replaced: someone else changed the task since you drafted it."
 			)
 		)
-	# v1.741.0: what ERPNext's own validation will refuse at Publish, said now (a draft is not saved).
+	# v1.742.0: what ERPNext's own validation will refuse at Publish, said now (a draft is not saved).
 	refused = erpnext_date_lines(doc, stored_state) if moved and check and not unchanged else []
 	if refused:
 		conflicts = dict(conflicts, **{ERPNEXT_KEY: refused})
@@ -4238,7 +4238,7 @@ def _publish_plan(row):
 		"kwargs": payload_kwargs(load_payload(row.get("payload"))),
 		"before": (_state(stored), _current_crew(stored)),
 		"after": (_state(doc), _current_crew(doc)),
-		"parent": stored.get("parent_task") or None,  # v1.741.0, for _publish_order
+		"parent": stored.get("parent_task") or None,  # v1.742.0, for _publish_order
 	}, None
 
 
@@ -4320,7 +4320,7 @@ def _publish_order(plans):
 	before the task it follows, so ERPNext's own push finds it already out of the way (P4), for later
 	moves and earlier ones alike. A task that waits on one not saved yet retries (``_apply_plans``).
 
-	v1.741.0: on the same last day a parent task goes before the tasks filed under it. ERPNext checks
+	v1.742.0: on the same last day a parent task goes before the tasks filed under it. ERPNext checks
 	a child's end against its parent's end as stored, so a child drafted to end with its parent, both
 	later than the parent ends now, was saved first and refused."""
 	parents = {plan["name"]: plan.get("parent") for plan in plans}
@@ -4744,7 +4744,7 @@ def spec_from_doc(doc, spec):
 def _insert_doc(doc):
 	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings. The one
 	insert behind every new Task the planners make, drafted or live. The project's window is widened
-	first, as for :func:`_save` (v1.741.0)."""
+	first, as for :func:`_save` (v1.742.0)."""
 	log = _message_log()
 	mark = len(log) if log is not None else 0
 	project_window.widen_for_task(doc)
@@ -4838,7 +4838,7 @@ def store_new_draft(spec, doc, conflicts=None):
 	"card", "warnings", "conflicts"}``: no Task, no assignment, nothing anyone else can see.
 	"""
 	require_draft_room(1)
-	# v1.741.0: what ERPNext will refuse when Publish creates it, said now.
+	# v1.742.0: what ERPNext will refuse when Publish creates it, said now.
 	refused = erpnext_date_lines(doc)
 	conflicts = dict(conflicts or {}, **({ERPNEXT_KEY: refused} if refused else {}))
 	row = insert_new_draft(spec)

@@ -45,7 +45,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
 | `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
-| `fountain_move_jobs.py` | Fountain Move jobs (Nik, 2026-10-21): a **Service** project with `custom_is_fountain_move` ticked. A new ticked project gets the **Fountain Move** template when none was chosen (and that template ticks the box; an Opportunity from the /fountain-move intake ticks it and preselects the template in Create Project); its task cards are moved on the **Maintenance Planner** and are read-only on the Project Planner (`mark_read_only`, and `_load` refuses a single-task edit there). Seeds the template (Confirm move date 0 h; Move day 4 h, crew 2, Outdoor; Invoice 0 h) and converts PRJ-00775 | `apply_on_insert`, `insert_defaults`, `opportunity_defaults`, `planner_cards`, `move_task`, `mark_read_only`, `refuse_on_project_planner`, `seed_template`, `make_move_job` | `doc_events["Project"]["before_insert"]`; `api/project_planner` (`get_planner`, `_load`); `api/maintenance_planner` (`get_planner`, `move_fountain_move`); `patches/seed_fountain_move_template.py`, `patches/make_prj_00775_a_move_job.py` |
+| `fountain_move_jobs.py` | Fountain Move jobs (Nik, 2026-10-21): a **Service** project with `custom_is_fountain_move` ticked. A new ticked project gets the **Fountain Move** template when none was chosen (and that template ticks the box; an Opportunity from the /fountain-move intake ticks it and preselects the template in Create Project); its task cards are moved on the **Maintenance Planner** and are read-only on the Project Planner (`mark_read_only`, and `_load` refuses a single-task edit there). Which tasks get a card is one SQL condition, `OPEN_MOVE_TASKS_SQL`, shared by the calendar (`planner_cards`) and that planner's search box (`search_cards`, v1.741.0: also matches the project's number, name, customer and address city, and has no date range). Seeds the template (Confirm move date 0 h; Move day 4 h, crew 2, Outdoor; Invoice 0 h) and converts PRJ-00775 | `apply_on_insert`, `insert_defaults`, `opportunity_defaults`, `planner_cards`, `search_cards`, `move_task`, `mark_read_only`, `refuse_on_project_planner`, `seed_template`, `make_move_job` | `doc_events["Project"]["before_insert"]`; `api/project_planner` (`get_planner`, `_load`); `api/maintenance_planner` (`get_planner`, `move_fountain_move`); `patches/seed_fountain_move_template.py`, `patches/make_prj_00775_a_move_job.py` |
 | `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own, except on a project whose schedule is still Draft, where they are the project's and every scheduler shares them (P3) | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
 | `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
@@ -2055,10 +2055,10 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   each from its own drafted days). A follower in a project whose schedule says otherwise is left alone
   and named, so a draft never moves a published schedule and a live save never reaches into a draft one.
   The creating writes (quick add, duplicate, build out, AI draft) send `draft=1` for a Draft schedule's
-  project they know of. **Since v1.741.0 no flag means "auto" on every one of these writes**
+  project they know of. **Since v1.742.0 no flag means "auto" on every one of these writes**
   (`unset_auto`; `drafts_new_task` for the creating ones), so the server drafts on a Draft schedule
   whatever a client sends, including a quick add for a job not on the board yet. An explicit `0`
-  still saves. The caller audit for v1.741.0 found the planner pages to be the only callers.
+  still saves. The caller audit for v1.742.0 found the planner pages to be the only callers.
 - **Split, Copy week and the Overdue tray on a Draft schedule** (v1.740.0). These three decide on the
   server (`_held`), and `draft=0` or no flag does not write live into a Draft schedule, so the AI
   connector or an old page cannot reach one either. `draft=1` (the hold) drafts every one of them.
@@ -2074,12 +2074,12 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
     - The walk is `_walk_clearing`. A follower is offered again whenever another task it waits on
       moves, so the result does not depend on the order the walk meets tasks in. A follower of two
       selected tasks clears both, and says each warning line once.
-    - **A dependency loop stays put** (v1.741.0, `_follower_loops`). ERPNext refuses a loop on save,
+    - **A dependency loop stays put** (v1.742.0, `_follower_loops`). ERPNext refuses a loop on save,
       but imported data can carry one, and the walk would push its tasks past each other until its
       limits stopped it. So the loops among the followers are found first, from the same `Task
       Depends On` rows. Their tasks are left where they are and named ("B and C wait on each other,
       so their dates were left as they are"), and the rest of the walk carries on.
-    - A Fountain Move or read-only follower is named only when it is in the way (v1.741.0).
+    - A Fountain Move or read-only follower is named only when it is in the way (v1.742.0).
     - A drag and `move_many` still carry followers by the working days the end moved (D10). An
       overdue task is weeks late, so that rule would push work that was never in its way.
     - The room for the drafts is checked before anything is saved (`require_change_room`). The
@@ -2099,7 +2099,7 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
     confirmation first names each selected task with a drafted reschedule that is not published
     (`drafted_start`). It says that the tasks drafted along with it will still publish where they
     were drafted unless someone moves them. It warns and discards nothing.
-- **The project's window is widened by every planner save** (v1.741.0,
+- **The project's window is widened by every planner save** (v1.742.0,
   `project_enhancements/project_window.py`, called from `_save` and `_insert_doc`). A Project's
   expected start and end are derived on this site: the earliest task start and the latest task end,
   recomputed on every Task save. ERPNext refuses a task outside them, so moving the last task later,
@@ -2107,7 +2107,7 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   recomputed, and Publish then left the project Draft. The window now widens first, in the same
   transaction, and never inward, as the Gantt's drags always have. The Gantt now calls the same
   helper.
-- **ERPNext's own date checks run on the draft** (v1.741.0, `erpnext_date_problems`). A draft is
+- **ERPNext's own date checks run on the draft** (v1.742.0, `erpnext_date_problems`). A draft is
   never saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the
   project's schedule Draft. The two date checks Publish cannot clear itself are run on the drafted
   state, and come back as warnings under **ERPNext** ("Publish will be refused for …"). They never

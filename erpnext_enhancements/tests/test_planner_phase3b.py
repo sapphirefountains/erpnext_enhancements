@@ -1553,7 +1553,7 @@ class TestWiring(unittest.TestCase):
 			# get_planner's all_tasks (P2) and google (P5) come after draft, so a positional draft still works.
 			last = -3 if name == "get_planner" else -1
 			self.assertEqual(args.args[last].arg, "draft", name)
-			# v1.741.0: the writes take draft unset, which reads as "auto" (project_planner.unset_auto);
+			# v1.742.0: the writes take draft unset, which reads as "auto" (project_planner.unset_auto);
 			# the read still defaults to 0.
 			want = 0 if name == "get_planner" else None
 			self.assertEqual(ast.literal_eval(args.defaults[last]), want, name)

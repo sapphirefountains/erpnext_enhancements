@@ -36,7 +36,8 @@ needs the server is here:
   wait on another, or stop: through ``_load``'s checks, with the "starts before" line asking for a
   reason as a save does, and with ERPNext's calendar-day push held back, because no date changed.
 * :func:`search_planner` finds tasks, projects and people for the search box, customer jobs only;
-  ``planner="maintenance"`` finds visits, sites and technicians for the Maintenance Planner.
+  ``planner="maintenance"`` finds visits, Fountain Move tasks, sites and technicians for the
+  Maintenance Planner.
 
 The rules every write here keeps, because the page relies on them:
 
@@ -476,7 +477,7 @@ def duplicate_task(task, date=None, reason=None, draft=None):
 	_require_create()
 	doc = frappe.get_doc("Task", task)
 	doc.check_permission("read")
-	# v1.741.0: unset or "auto" drafts the copy when the project's schedule is Draft.
+	# v1.742.0: unset or "auto" drafts the copy when the project's schedule is Draft.
 	drafting = pp.drafts_new_task(draft, doc.get("project"))
 	_refuse_rental(doc, _("duplicated"))
 	if cint(doc.get("is_group")) or cint(doc.get("is_template")):
@@ -1012,7 +1013,7 @@ def quick_add_task(
 	Returns ``{"name", "modified", "created": True, "card", "warnings", "conflicts"}``.
 	"""
 	pp._require_planner()
-	drafting = pp.drafts_new_task(draft, pp.given(project))  # v1.741.0: unset or "auto" on a Draft schedule
+	drafting = pp.drafts_new_task(draft, pp.given(project))  # v1.742.0: unset or "auto" on a Draft schedule
 	_require_create()
 	subject = clean_text(pp.given(subject))
 	if not subject:
@@ -1373,7 +1374,7 @@ def build_out_tasks(project, rows, draft=None, phase_checklists=None):
 	pp._require_planner()
 	_require_create()
 	project = pp.given(project)
-	drafting = pp.drafts_new_task(draft, project)  # v1.741.0: unset or "auto" on a Draft schedule
+	drafting = pp.drafts_new_task(draft, project)  # v1.742.0: unset or "auto" on a Draft schedule
 	if not project or not frappe.db.exists("Project", project):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
@@ -1491,7 +1492,7 @@ def get_build_out_context(project, draft=None):
 	_require_customer_job(project)
 	rows = [
 		row
-		# v1.741.0: the same rule as build_out_tasks, so the grid shows what its create would build on.
+		# v1.742.0: the same rule as build_out_tasks, so the grid shows what its create would build on.
 		for row in _project_task_rows(project, draft=pp.drafts_new_task(draft, project)).values()
 		if not _is_finished(row)
 	]
@@ -1856,7 +1857,7 @@ def move_many(moves, reason=None, dependents=None, notify=None, draft=None):
 	pp._require_planner()
 	entries = _parse_moves(moves)
 	follow = pp.as_bool(dependents) if pp.given(dependents) is not None else False
-	draft = pp.unset_auto(draft)  # v1.741.0: no flag drafts on a Draft schedule
+	draft = pp.unset_auto(draft)  # v1.742.0: no flag drafts on a Draft schedule
 	choice = pp.draft_choice(draft)
 	if choice is True:
 		return _draft_many(entries, follow=follow)
@@ -2634,19 +2635,64 @@ def _search_sites(like):
 	]
 
 
+#: How many Fountain Move tasks the Maintenance Planner's search keeps room for among its records. Visits
+#: outnumber open moves by hundreds to one (every submitted visit of a contract matches its customer), so
+#: without a reserve a customer's one move would be cut by its own visit history.
+SEARCH_MOVES = 5
+
+
+def _search_moves(like, anchor):
+	"""The Fountain Move tasks the Maintenance Planner draws as cards, matching ``like``.
+
+	The rule is the calendar's (``fountain_move_jobs.OPEN_MOVE_TASKS_SQL``) with no date range. Never
+	raises: the visits come first here, so a failure is logged and the box answers without moves, as
+	``get_planner`` answers without their cards.
+	"""
+	try:
+		from erpnext_enhancements.project_enhancements import fountain_move_jobs
+
+		return fountain_move_jobs.search_cards(like, anchor, SEARCH_SCAN)
+	except Exception:
+		_mp()._log_failure("Maintenance Planner: Fountain Move search failed")
+		return []
+
+
+def blend_moves(visits, moves, anchor, room):
+	"""``(records, truncated)``: the visits and move tasks that fit in ``room`` slots, nearest ``anchor`` first.
+
+	Up to :data:`SEARCH_MOVES` moves are kept whatever the visits (when that many matched), the visits
+	take the rest, and a slot the visits leave empty goes to further moves. ``visits`` arrive nearest
+	first (:func:`_search_visits`); ``moves`` are put in that order here.
+	"""
+	room = max(int(room), 0)
+	visits = list(visits or [])
+	moves = nearest_first(moves, anchor, lambda row: row.get("date"))
+	reserved = min(len(moves), SEARCH_MOVES, room)
+	shown_visits = visits[: room - reserved]
+	spare = room - reserved - len(shown_visits)
+	shown_moves = moves[: reserved + min(spare, len(moves) - reserved)]
+	records = nearest_first(shown_visits + shown_moves, anchor, lambda row: row.get("date"))
+	return records, len(shown_visits) < len(visits) or len(shown_moves) < len(moves)
+
+
 @frappe.whitelist()
 def search_planner(q, start=None, planner="project"):
 	"""The search box. ``q`` (2 to 80 characters) against the Project Planner's tasks (subject,
 	name), projects (name, title) and people (name), customer jobs only and open work only, the tasks
 	nearest ``start`` (default today) first. ``planner="maintenance"`` (the Maintenance Planner's
-	roles) searches visits (record, site, customer), sites with a maintenance contract, and the people
-	who have a user. At most 20 results: up to 5 people, up to 5 projects or sites, then the records.
+	roles) searches visits (record, site, customer), Fountain Move tasks (task, subject, project
+	number and name, customer, city: the cards that planner draws, found whatever their day), sites
+	with a maintenance contract, and the people who have a user. At most 20 results: up to 5 people,
+	up to 5 projects or sites, then the records (visits and moves, up to 5 of them moves kept even
+	when visits fill the rest).
 
 	Returns ``{"q", "planner", "results": [...], "truncated"}``, each result ``{"kind": "person",
 	resource, user, label, group}``, ``{"kind": "project", name, label, status}``, ``{"kind": "task",
 	name, label, project, project_title, status, start, end, rental}``, ``{"kind": "site", project,
-	label}`` or ``{"kind": "visit", name, label, project, visit_label, date, status}``. Read-only and
-	Google-free; the page searches what it has loaded first and asks this only for the rest.
+	label}``, ``{"kind": "visit", name, label, project, visit_label, date, status}`` or ``{"kind":
+	"move", name, label, subject, project, customer, city, date, status}`` (``date`` None for the
+	Unscheduled tray). Read-only and Google-free; the page searches what it has loaded first and asks
+	this only for the rest.
 	"""
 	planner = str(pp.given(planner) or "project").strip().lower()
 	if planner not in PLANNERS:
@@ -2661,11 +2707,17 @@ def search_planner(q, start=None, planner="project"):
 	if len(text) < SEARCH_MIN_CHARS:
 		return answer
 	like = like_pattern(text)
+	cut = False
 	if planner == "maintenance":
 		people = _search_people(like, need_user=True)
-		places, records = _search_sites(like), _search_visits(like, anchor)
+		places = _search_sites(like)
+		head = min(len(people), SEARCH_PEOPLE) + min(len(places), SEARCH_PROJECTS)
+		records, cut = blend_moves(
+			_search_visits(like, anchor), _search_moves(like, anchor), anchor, SEARCH_LIMIT - head
+		)
 	else:
 		people = _search_people(like, need_user=False)
 		places, records = _search_projects(like), _search_tasks(like, anchor)
 	answer["results"], answer["truncated"] = merge_results(people, places, records)
+	answer["truncated"] = answer["truncated"] or cut
 	return answer

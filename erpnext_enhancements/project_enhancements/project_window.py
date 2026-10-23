@@ -14,7 +14,7 @@ past, are refused against a value that the same save is about to recompute.
 :func:`widen_for_task` widens the window first, in the same transaction as the save, and never
 shrinks it: the sync hook then sets the authoritative value straight after. The Gantt has done this
 for its drags since it was written (``api/gantt.py``, which now calls this); the Project Planner
-does it for every save and insert it makes, its Publish included (v1.741.0,
+does it for every save and insert it makes, its Publish included (v1.742.0,
 ``api/project_planner._save`` / ``_insert_doc``). Like the Gantt, it leaves no comment: the window
 is derived, so the next save says the same thing anyway.
 """

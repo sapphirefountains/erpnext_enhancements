@@ -1290,7 +1290,7 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 
 
 class TestALoopOfFollowers(_OverdueFollowers):
-	"""v1.741.0: ERPNext refuses a dependency loop on save, but imported data can carry one. The clear
+	"""v1.742.0: ERPNext refuses a dependency loop on save, but imported data can carry one. The clear
 	walk used to push its tasks past each other until its limits stopped it (B to January, C the day
 	after); now the loop's tasks stay where they are, are named, and the rest of the walk carries on."""
 
@@ -1353,7 +1353,7 @@ class TestALoopOfFollowers(_OverdueFollowers):
 
 
 class TestFollowersNamedOnlyWhenInTheWay(_OverdueFollowers):
-	"""v1.741.0: a Fountain Move or read-only follower that was already clear is not reported."""
+	"""v1.742.0: a Fountain Move or read-only follower that was already clear is not reported."""
 
 	def _fountain_move(self):
 		self.patches.append(
@@ -1406,14 +1406,14 @@ class TestOneLinePerWarning(_OverdueFollowers):
 
 
 class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
-	"""v1.741.0: what ERPNext v16's Task.validate_dates will refuse at Publish is said on the draft,
+	"""v1.742.0: what ERPNext v16's Task.validate_dates will refuse at Publish is said on the draft,
 	as a warning, rather than only when Publish fails and leaves the schedule Draft."""
 
 	def _refused(self, result):
 		return [line for line in result["warnings"] if "Publish will be refused" in line]
 
 	def test_the_projects_window_is_not_warned_about_publish_widens_it(self):
-		# v1.741.0 round 2: every planner save widens the project's derived window first, so a draft
+		# v1.742.0 round 2: every planner save widens the project's derived window first, so a draft
 		# past the project's end (or before its start) is not something Publish will refuse.
 		self.projects["PRJ-2"].update(expected_start_date="2026-10-27", expected_end_date="2026-10-26")
 		self.assertEqual(self._refused(self._reschedule()), [])
@@ -1506,7 +1506,7 @@ class _ERPNextsProjectWindow:
 
 
 class TestALiveSaveWidensTheProject(_ERPNextsProjectWindow, _P4):
-	"""v1.741.0 round 2: on this site a Project's expected dates are derived from its tasks, so the
+	"""v1.742.0 round 2: on this site a Project's expected dates are derived from its tasks, so the
 	planner widens them before a save that needs it, as the Gantt does; never inward."""
 
 	def setUp(self):
@@ -1890,7 +1890,7 @@ class TestSplitOnADraftSchedule(_P4):
 
 
 class TestNoFlagMeansAuto(_P4):
-	"""v1.741.0: an unset draft flag drafts on a Draft schedule on every planner write, as it already did
+	"""v1.742.0: an unset draft flag drafts on a Draft schedule on every planner write, as it already did
 	for Split, Copy week and the Overdue tray. The audit found no caller relying on unset meaning live:
 	the two planner pages are the only callers. An explicit 0 still saves."""
 
@@ -1987,7 +1987,7 @@ class TestWiring(unittest.TestCase):
 			self.assertIsNone(defaults["draft"], name)
 
 	def test_every_planner_write_takes_draft_unset(self):
-		# v1.741.0: unset reads as "auto" (project_planner.unset_auto / drafts_new_task).
+		# v1.742.0: unset reads as "auto" (project_planner.unset_auto / drafts_new_task).
 		for path, name in (
 			(API_PATH, "save_task"),
 			(API_PATH, "add_crew"),

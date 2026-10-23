@@ -719,7 +719,7 @@ def draft_task_breakdown(project, brief=None, grid_subjects=None, draft=None):
 	text = scrub(pp.given(brief), BRIEF_MAX)
 	typed = _grid_subjects(grid_subjects)
 	try:
-		# v1.741.0: no flag reads drafts on a Draft schedule, as build_out_tasks and its grid do, so the
+		# v1.742.0: no flag reads drafts on a Draft schedule, as build_out_tasks and its grid do, so the
 		# model sees the drafted phases and tasks rather than proposing them again.
 		context = read_context(project, draft=pp.drafts_new_task(draft, project))
 		prompt = build_prompt(context, text, typed)

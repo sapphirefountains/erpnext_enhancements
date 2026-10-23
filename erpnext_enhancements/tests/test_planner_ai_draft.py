@@ -382,7 +382,7 @@ class _AiSite(build._Site):
 		}
 		self.customer_values = {"customer_type": "Company", "customer_name": "Smith Family Trust LLC"}
 		self.frappe.installed |= {"Project Scope of Work", "Scope Acceptance Criterion"}
-		# v1.741.0: with no draft flag the drafts are read on a Draft schedule (a blank status reads
+		# v1.742.0: with no draft flag the drafts are read on a Draft schedule (a blank status reads
 		# Draft), so the project is Published here unless a test says otherwise.
 		self.frappe.values[("Project", "PRJ-1", "custom_schedule_status")] = "Published"
 		self.frappe.tables["Project Scope of Work"] = [
@@ -674,7 +674,7 @@ class TestDraftTaskBreakdown(_AiSite):
 			self.ask()
 			self.model_calls.clear()
 			self.ask(draft=1)
-			# v1.741.0: with no flag, a Draft schedule's drafts are read too, as the Build out grid does.
+			# v1.742.0: with no flag, a Draft schedule's drafts are read too, as the Build out grid does.
 			self.frappe.values[("Project", "PRJ-1", "custom_schedule_status")] = "Draft"
 			self.model_calls.clear()
 			self.ask()

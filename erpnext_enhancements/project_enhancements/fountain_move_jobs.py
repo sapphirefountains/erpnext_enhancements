@@ -15,9 +15,10 @@ its own, so Service reports keep counting moves). What the tick does:
 * **An Opportunity from the /fountain-move intake** (a Fountain Move Request whose
   ``created_opportunity`` is it) makes a ticked project, and the Create Project dialog preselects the
   template (:func:`opportunity_defaults`).
-* **Its tasks are moved on the Maintenance Planner** (:func:`planner_cards`, :func:`move_task`): a
-  deliberate exception to "each planner moves only its own work". Only tasks with hours get a card
-  (the Move day; the office tasks have 0 h and stay on the project). The Project Planner still shows
+* **Its tasks are moved on the Maintenance Planner** (:func:`planner_cards`, :func:`move_task`, and
+  found by its search box through :func:`search_cards`): a deliberate exception to "each planner moves
+  only its own work". Only tasks with hours get a card (the Move day; the office tasks have 0 h and
+  stay on the project). The Project Planner still shows
   them and the engine still counts their hours, but read-only: :func:`mark_read_only` clears
   ``movable`` on its cards and :func:`refuse_on_project_planner` refuses a single-task edit there.
   The Project Planner's Overdue tray (bulk complete / cancel / reschedule) and its successor shift
@@ -47,6 +48,16 @@ CANCELED = "Canceled"
 LOG_TITLE = "Fountain Move jobs"
 #: How many move tasks the Maintenance Planner reads at most (a range is weeks, not years).
 CARD_LIMIT = 500
+#: Which tasks the Maintenance Planner draws as cards, as a SQL condition on ``tabTask t`` joined to
+#: ``tabProject p``: an open leaf task with hours on a move project that is not closed. One definition,
+#: used by :func:`planner_cards` (the calendar) and :func:`search_cards` (the search box), so the box
+#: can never list a move the calendar would not draw. Binds ``finished`` and ``closed``.
+OPEN_MOVE_TASKS_SQL = f"""p.`{FLAG}` = 1
+		AND IFNULL(t.is_group, 0) = 0
+		AND IFNULL(t.is_template, 0) = 0
+		AND IFNULL(t.expected_time, 0) > 0
+		AND IFNULL(t.status, '') NOT IN %(finished)s
+		AND IFNULL(p.status, '') NOT IN %(closed)s"""
 
 #: Nik's compact list, 2026-10-21. ``hours`` is the task's whole estimate, which the planner splits
 #: over its crew: the Move day is 4 h with two people, so each is booked 2 h. The office tasks have
@@ -359,12 +370,7 @@ def planner_cards(start, end, today, can_move):
 			p.project_name AS project_title, p.customer
 		FROM `tabTask` t
 		INNER JOIN `tabProject` p ON p.name = t.project
-		WHERE p.`{FLAG}` = 1
-			AND IFNULL(t.is_group, 0) = 0
-			AND IFNULL(t.is_template, 0) = 0
-			AND IFNULL(t.expected_time, 0) > 0
-			AND IFNULL(t.status, '') NOT IN %(finished)s
-			AND IFNULL(p.status, '') NOT IN %(closed)s
+		WHERE {OPEN_MOVE_TASKS_SQL}
 			AND (t.exp_start_date IS NULL OR DATE(t.exp_start_date) <= %(end)s)
 			AND (t.exp_end_date IS NULL OR DATE(t.exp_end_date) >= %(start)s)
 		ORDER BY t.exp_start_date, p.project_name, t.name
@@ -394,6 +400,93 @@ def planner_cards(start, end, today, can_move):
 			shown = span[0] if span[0] >= start else start
 			dated.append(move_card(row, crew, today, can_move, span[0], span[1], shown))
 	return dated, undated
+
+
+def _project_column(column):
+	"""SQL for one of Project's columns (alias ``p``), or ``NULL`` when it is not there: a site
+	part-way through a migrate still answers."""
+	try:
+		return f"p.`{column}`" if frappe.db.has_column("Project", column) else "NULL"
+	except Exception:
+		return "NULL"
+
+
+def search_cards(like, anchor, limit=60):
+	"""The move tasks the Maintenance Planner's search box lists for ``like``, as dicts for the page.
+
+	``like`` is a SQL LIKE pattern with its wildcards already escaped (``planner_actions.like_pattern``).
+	It is matched against what a person types to find a move: the task's number and subject, the
+	project's number, name and free-text address, its customer (number and name) and the city of
+	either Address the project links to (``primary_address``, or the older
+	``custom_customer__lead_address``). A column a site has not migrated yet reads as NULL.
+
+	Which tasks are listed is :data:`OPEN_MOVE_TASKS_SQL`, the calendar's own rule, but with no date
+	range: a move months away, or one nobody has dated yet, is exactly what someone searches for. Each
+	result is ``{"kind": "move", name, label (the project's title, as the card's), subject, project,
+	customer, city, date, status}``, ``date`` being the task's first day (the day its card sits on) or
+	None for the Unscheduled tray. Read-only; the caller has passed the planner's role gate, as
+	``get_planner`` has when it draws these cards. Rows nearest ``anchor`` first, undated ones last.
+	"""
+	from erpnext_enhancements.project_enhancements import crew_availability as engine
+
+	if not _has_flag_column():
+		return []
+	cols = engine._task_columns()
+	selected = ", ".join(f"{expr} AS `{column}`" for column, expr in cols.items())
+	primary, lead, typed = (
+		_project_column(column)
+		for column in ("primary_address", "custom_customer__lead_address", "custom_project_address")
+	)
+	rows = frappe.db.sql(
+		f"""
+		SELECT
+			t.name, t.subject, t.project, t.status, t.is_group, t.exp_start_date, t.exp_end_date,
+			t.expected_time, {selected},
+			p.project_name AS project_title, p.customer,
+			COALESCE(a.city, la.city) AS city
+		FROM `tabTask` t
+		INNER JOIN `tabProject` p ON p.name = t.project
+		LEFT JOIN `tabCustomer` c ON c.name = p.customer
+		LEFT JOIN `tabAddress` a ON a.name = {primary}
+		LEFT JOIN `tabAddress` la ON la.name = {lead}
+		WHERE {OPEN_MOVE_TASKS_SQL}
+			AND (
+				t.name LIKE %(like)s OR t.subject LIKE %(like)s
+				OR p.name LIKE %(like)s OR p.project_name LIKE %(like)s
+				OR p.customer LIKE %(like)s OR c.customer_name LIKE %(like)s
+				OR a.city LIKE %(like)s OR la.city LIKE %(like)s OR {typed} LIKE %(like)s
+			)
+		ORDER BY (t.exp_start_date IS NULL), ABS(DATEDIFF(t.exp_start_date, %(anchor)s)), t.name
+		LIMIT %(scan)s
+		""",
+		{
+			"like": like,
+			"anchor": str(anchor),
+			"finished": engine.FINISHED_STATUSES,
+			"closed": engine.CLOSED_PROJECT_STATUSES,
+			"scan": cint(limit) or 60,
+		},
+		as_dict=True,
+	)
+	out = []
+	for row in rows or []:
+		if not cardable(row):
+			continue
+		span = engine.task_span(row)
+		out.append(
+			{
+				"kind": "move",
+				"name": row.get("name"),
+				"label": row.get("project_title") or row.get("project") or row.get("name"),
+				"subject": row.get("subject") or row.get("name"),
+				"project": row.get("project"),
+				"customer": row.get("customer"),
+				"city": row.get("city"),
+				"date": str(span[0]) if span else None,
+				"status": row.get("status"),
+			}
+		)
+	return out
 
 
 def _crews(task_names):
