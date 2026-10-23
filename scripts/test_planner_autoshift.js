@@ -667,6 +667,45 @@ test("The Overdue tray's bulk actions go through the same send", async () => {
 	check("and the tray shows it", fs.readFileSync(PP_JS, "utf8").includes('__("Draft: {0}", [pp_when(row.drafted_start)])'), true);
 });
 
+test("Mark done and Cancel stay live, but name a task with a drafted reschedule first", async () => {
+	const { pp, frappe, calls, confirms } = projectPlanner();
+	pp.overdue = {
+		groups: [
+			{
+				project: "PRJ-D",
+				rows: [
+					{ name: "T1", subject: "Set pump", drafted_start: "2026-10-26" },
+					{ name: "T2", subject: "Wire panel", drafted_start: "" },
+				],
+			},
+		],
+	};
+	pp.overdue_selected = new Set(["T1", "T2"]);
+	frappe.answers.push({ action: "complete", updated: [{ task: "T1" }, { task: "T2" }], failed: [] });
+	pp.overdue_act("complete");
+	await flush();
+	const message = confirms[0];
+	check("names the drafted one", message.includes("Set pump (drafted to 2026-10-26)"), true);
+	check("not the other", message.includes("Wire panel (drafted"), false);
+	check("says the followers still publish", message.includes("will still publish where they were drafted unless someone moves them"), true);
+	check("and that nothing is discarded", message.includes("Marking them done does not discard those drafts"), true);
+	check("still sent, live", [calls[0].args.action, calls[0].args.draft], ["complete", "auto"]);
+
+	const cancel = projectPlanner();
+	cancel.pp.overdue = pp.overdue;
+	cancel.pp.overdue_selected = new Set(["T1"]);
+	cancel.frappe.answers.push({ action: "cancel", updated: [{ task: "T1" }], failed: [] });
+	cancel.pp.overdue_act("cancel");
+	check("Cancel says so too", cancel.confirms[0].includes("Canceling them does not discard those drafts"), true);
+
+	const plain = projectPlanner();
+	plain.pp.overdue = { groups: [{ project: "PRJ-P", rows: [{ name: "T2", subject: "Wire panel", drafted_start: "" }] }] };
+	plain.pp.overdue_selected = new Set(["T2"]);
+	plain.frappe.answers.push({ action: "complete", updated: [{ task: "T2" }], failed: [] });
+	plain.pp.overdue_act("complete");
+	check("no drafted one: no warning", plain.confirms[0].includes("drafted reschedule"), false);
+});
+
 test("Split is greyed on a Draft schedule, with what to do; a published one splits; the hold says so", () => {
 	const { pp } = projectPlanner();
 	pp.p6b_next_free_item = () => ({ label: "Next free day" });

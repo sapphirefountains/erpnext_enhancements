@@ -987,7 +987,12 @@ class TestPublishActiveJobSchedules(unittest.TestCase):
 
 class TestTheOverdueTrayReschedule(_P4):
 	"""bulk_update's ``reschedule`` drafts a Draft schedule's task (or any, under the hold) through
-	move_many's draft path, with its followers; a published one saves exactly as before."""
+	move_many's draft path, with the followers that would otherwise start by its new end; a published
+	one saves exactly as before."""
+
+	def setUp(self):
+		super().setUp()
+		_count_drafts(self.frappe)
 
 	def _on(self, project, *names):
 		for name in names:
@@ -1126,6 +1131,179 @@ class TestTheOverdueTrayReschedule(_P4):
 		)
 
 
+def _count_drafts(frappe):
+	"""``frappe.db.count`` over the stub's Planner Draft Change rows (require_change_room)."""
+	frappe.db.count = lambda doctype, filters=None: sum(
+		1 for row in frappe.tables.get(doctype, []) if h._matches(row, filters)
+	)
+
+
+class _OverdueFollowers(_P4):
+	"""An overdue TASK-A on a Draft schedule, and helpers to give it followers and reschedule it."""
+
+	def setUp(self):
+		super().setUp()
+		_count_drafts(self.frappe)
+		# A ran Wed 30 Sep - Thu 1 Oct and is overdue; rescheduled to Mon 26 Oct it runs Mon-Tue.
+		h._task("TASK-A", start="2026-09-30", end="2026-10-01", crew=("RES-1",), project="PRJ-2")
+
+	def _follower(self, name, start, end, on="TASK-A"):
+		h._task(name, start=start, end=end, crew=("RES-2",), project="PRJ-2")
+		self._depends(name, on)
+
+	def _reschedule(self, **kwargs):
+		return self.api.bulk_update(json.dumps(["TASK-A"]), "reschedule", "2026-10-26", **kwargs)
+
+	def _drafted(self):
+		out = {}
+		for row in self._drafts():
+			payload = json.loads(row["payload"])
+			out[row["task"]] = (payload.get("start"), payload.get("end"))
+		return out
+
+
+class TestTheOverdueFollowerRule(_OverdueFollowers):
+	"""Nik, 2026-10-23: a drafted overdue Reschedule moves a follower only when it would otherwise
+	start on or before the task's new end, to the next working day after it, keeping its length in
+	working days; the rest stay where they are. (A drag keeps the gap instead, D10.)"""
+
+	def test_a_follower_already_clear_stays_where_it_is(self):
+		self._follower("TASK-B", "2026-10-29", "2026-10-30")  # after A's new end (Tue 27)
+		result = self._reschedule()
+		self.assertEqual(self._drafted(), {"TASK-A": ("2026-10-26", "2026-10-27")})
+		# Not moved, and not "skipped" either: nothing was wrong with it. (By how late A was, as a drag
+		# moves followers, B would have gone to late November.)
+		self.assertEqual((result["shifted"], result["shift_skipped"]), ([], []))
+
+	def test_an_overlapping_follower_moves_to_the_working_day_after_across_a_holiday(self):
+		self.frappe.local.planner_shift_holidays = frozenset({D(2026, 10, 28)})  # Wednesday
+		# Tue-Thu with the Wednesday off: two working days, starting on A's new end, so in its way.
+		self._follower("TASK-B", "2026-10-27", "2026-10-29")
+		result = self._reschedule()
+		# The next working day after Tue 27 is Thu 29 (Wed 28 is a holiday); two working days: Thu-Fri.
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-29", "2026-10-30"))
+		self.assertEqual(
+			[(m["task"], m["to"], m["to_end"]) for m in result["shifted"]],
+			[("TASK-B", "2026-10-29", "2026-10-30")],
+		)
+
+	def test_the_rule_cascades_and_stops_at_a_follower_that_is_clear(self):
+		self._follower("TASK-B", "2026-10-26", "2026-10-26")  # in A's way: to Wed 28
+		self._follower("TASK-C", "2026-10-30", "2026-10-30", on="TASK-B")  # clear of B's new end
+		self._follower("TASK-D", "2026-10-30", "2026-10-30", on="TASK-C")  # follows only through C
+		result = self._reschedule()
+		self.assertEqual(set(self._drafted()), {"TASK-A", "TASK-B"})
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-28"))
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-B"])
+
+	def test_a_follower_pushed_in_turn_moves_after_its_own_predecessor(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")  # to Wed 28 - Thu 29
+		self._follower("TASK-C", "2026-10-29", "2026-10-29", on="TASK-B")  # now in B's way: to Fri 30
+		self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+		self.assertEqual(self._drafted()["TASK-C"], ("2026-10-30", "2026-10-30"))
+
+	def test_a_published_follower_in_the_way_is_named_and_left(self):
+		h._task("TASK-B", start="2026-10-27", end="2026-10-27", crew=("RES-2",))  # PRJ-1, published
+		self._depends("TASK-B", "TASK-A")
+		result = self._reschedule()
+		self.assertEqual([skip["task"] for skip in result["shift_skipped"]], ["TASK-B"])
+		self.assertEqual(set(self._drafted()), {"TASK-A"})
+
+	def test_a_published_follower_already_clear_is_not_named(self):
+		h._task("TASK-B", start="2026-11-02", end="2026-11-02", crew=("RES-2",))  # PRJ-1, clear
+		self._depends("TASK-B", "TASK-A")
+		self.assertEqual(self._reschedule()["shift_skipped"], [])
+
+	def test_the_followers_own_draft_is_what_is_compared(self):
+		# B is stored clear (Nov 2) but drafted into A's way (Tue 27): the draft is what moves.
+		self._follower("TASK-B", "2026-11-02", "2026-11-02")
+		h._draft_row("TASK-B", {"start": "2026-10-27", "end": "2026-10-27"})
+		self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-28"))
+
+	def test_move_many_still_keeps_the_gap(self):
+		self._follower("TASK-B", "2026-10-29", "2026-10-30")
+		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-26", "end": "2026-10-27"}]
+		result = _actions().move_many(json.dumps(moves), draft="auto", dependents=1)
+		# D10: B moves by the working days A's end moved, clear or not.
+		self.assertEqual([m["task"] for m in result["moved"] if m.get("dependent")], ["TASK-B"])
+
+	def test_the_hold_on_a_published_task_uses_the_same_rule(self):
+		h._task("TASK-P", start="2026-09-30", end="2026-10-01", crew=("RES-1",))  # PRJ-1, published
+		h._task("TASK-Q", start="2026-10-29", end="2026-10-29", crew=("RES-2",))  # clear
+		self._depends("TASK-Q", "TASK-P")
+		result = self.api.bulk_update(json.dumps(["TASK-P"]), "reschedule", "2026-10-26", draft=1)
+		self.assertEqual(self.frappe.saved, [])
+		self.assertEqual((result["shifted"], set(self._drafted())), ([], {"TASK-P"}))
+
+
+class TestADraftedRescheduleThenPublish(_OverdueFollowers):
+	"""Publish applies a drafted Reschedule and the follower drafted with it on their drafted days."""
+
+	def setUp(self):
+		super().setUp()
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+
+	def test_publish_saves_both_on_their_drafted_days(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self._reschedule()
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(sorted(p["task"] for p in result["published"]), ["TASK-A", "TASK-B"])
+		a, b = self._stored("TASK-A"), self._stored("TASK-B")
+		self.assertEqual((a["exp_start_date"][:10], a["exp_end_date"][:10]), ("2026-10-26", "2026-10-27"))
+		self.assertEqual((b["exp_start_date"][:10], b["exp_end_date"][:10]), ("2026-10-28", "2026-10-29"))
+
+
+class TestTheDraftRoom(_P4):
+	"""One tray action can draft 100 tasks and their followers, and the planner reads only the oldest
+	DRAFT_LIMIT rows: past it a draft would drop out of the overlay and of Publish without a word."""
+
+	def setUp(self):
+		super().setUp()
+		_count_drafts(self.frappe)
+		h._task("TASK-1", crew=("RES-1",))  # published
+		h._task("TASK-8", crew=("RES-2",), project="PRJ-2")
+		h._task("TASK-9", crew=("RES-2",), project="PRJ-2")
+
+	def test_no_room_for_the_drafted_ones_refuses_before_anything_is_saved(self):
+		h._draft_row("TASK-X", {"start": "2026-10-20", "end": "2026-10-20"})
+		with mock.patch.object(self.api, "DRAFT_LIMIT", 2):
+			with self.assertRaises(h._Throw) as caught:
+				self.api.bulk_update(json.dumps(["TASK-1", "TASK-8", "TASK-9"]), "reschedule", "2026-10-19")
+		self.assertIn("too many unpublished changes", str(caught.exception))
+		self.assertEqual(self.frappe.saved, [])  # the published one was not saved either
+
+	def test_followers_past_the_limit_undo_that_task_and_the_rest_carry_on(self):
+		# TASK-9 starts inside TASK-8's new days, so it would be drafted along: two rows, room for one.
+		self.frappe.docs[("Task", "TASK-9")].update(exp_start_date="2026-10-20", exp_end_date="2026-10-20")
+		self._depends("TASK-9", "TASK-8")
+		with mock.patch.object(self.api, "DRAFT_LIMIT", 1):
+			result = self.api.bulk_update(json.dumps(["TASK-8"]), "reschedule", "2026-10-19")
+		((failed,),) = [result["failed"]]
+		self.assertEqual(failed["task"], "TASK-8")
+		self.assertIn("too many unpublished changes", failed["error"])
+		self.assertIn(("rollback", "planner_bulk_draft_0"), self.frappe.db_calls)
+
+	def test_room_is_counted_on_the_callers_task_rows_only(self):
+		h._draft_row("TASK-X", {"start": "2026-10-20"}, owner="clegg@example.com")
+		h._draft_row("TASK-Y", {"start": "2026-10-20"}, status="Published")
+		with mock.patch.object(self.api, "DRAFT_LIMIT", 1):
+			result = self.api.bulk_update(json.dumps(["TASK-8"]), "reschedule", "2026-10-26")
+		self.assertTrue(result["updated"][0]["drafted"])
+
+
 class _NewTask(h._TaskDoc):
 	"""A new Task (Copy week's live copy or a spec's): insert() records it, as the framework would."""
 
@@ -1181,6 +1359,41 @@ class TestCopyWeekOnADraftSchedule(_P4):
 		self.assertEqual(result["conflicts"], {})
 		self.assertEqual(result["drafted_conflicts"], {"Lisa Park": ["Over on Mon"]})
 		self.assertEqual((self._inserted(), self._drafts()), ([], []))
+
+	def test_a_live_copy_and_a_drafted_one_that_double_book_someone_warn(self):
+		both = {"TASK-1 (copy)", "TASK-8 (copy)"}
+
+		def hook(changes):
+			names = {state.get("name") for state, _crew in changes}
+			out = {"Austin Healey": ["Over on Tue"]} if "TASK-1 (copy)" in names else {}
+			if both <= names:
+				out["Lisa Park"] = ["In two places on Mon"]
+			return out
+
+		self.batch_hook = hook
+		result = self._copy(["TASK-1", "TASK-8"], draft="auto")
+		# The live copy's own conflict asks for a reason, as before; what the two make together is the
+		# drafted copy's information, and the live line is not said twice.
+		self.assertEqual(result["conflicts"], {"Austin Healey": ["Over on Tue"]})
+		self.assertEqual(result["drafted_conflicts"], {"Lisa Park": ["In two places on Mon"]})
+
+	def test_a_drafted_copy_keeps_what_a_copy_keeps(self):
+		self.frappe.docs[("Task", "TASK-8")].update(
+			expected_time=9,
+			custom_crew_size=3,
+			custom_locationaddress_of_task="ADDR-7",
+			custom_required_credentials=[h._Doc(credential_type="Forklift")],
+		)
+		self._copy(["TASK-8"], dry_run=0, draft="auto")
+		((row,),) = [[r for r in self.frappe.tables["Planner Draft Change"] if r.get("kind") == "New task"]]
+		spec = json.loads(row["payload"])
+		values = spec["values"]
+		self.assertEqual(
+			(values["expected_time"], values["custom_crew_size"], values["custom_locationaddress_of_task"]),
+			(9.0, 3, "ADDR-7"),
+		)
+		self.assertEqual(spec["credentials"], ["Forklift"])
+		self.assertIn("Copied from TASK-8 on the Project Planner", values["description"])
 
 	def test_a_draft_schedules_copy_is_a_new_task_draft_and_no_task(self):
 		result = self._copy(["TASK-8"], dry_run=0, draft="auto")

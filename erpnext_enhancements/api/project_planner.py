@@ -1982,15 +1982,24 @@ def _save_with_followers(doc, followers, moves, days, conflicts, reason):
 	return warnings + _settle(followers, planned, shifted), shifted
 
 
-def _draft_followers(root, days, auto=False, exclude=()):
+def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	"""Draft the tasks that follow ``root`` ``days`` working days on, each from its own drafted days
 	(:func:`_draft_context`), as a draft of ``root`` moves them, through :func:`_walk_followers`.
 	``(shifted, skipped, entries)``: ``shifted`` and ``skipped`` as :func:`_follower_docs` and
 	:func:`shift_successors` report them, ``entries`` for :func:`_draft_checks`. ``auto``: a follower
-	whose project is published is left alone (a draft never moves a published schedule)."""
+	whose project is published is left alone (a draft never moves a published schedule).
+
+	``clear_of`` (v1.740.0, the Overdue tray's drafted Reschedule; Nik, 2026-10-23): ``root``'s new
+	last day, and ``days`` is ignored. A follower moves only when it starts (as drafted, else as
+	stored) on or before the new last day of a task it waits on that this walk moved, and then to the
+	next working day after the latest of them, keeping its length in working days. One already clear
+	stays, unreported, and so does everything that follows only through it. An overdue task is weeks
+	late, so carrying its followers by how far it moved, as a drag does (D10), would push work that
+	was never in its way."""
 	shifted, skipped, entries, jobs = [], [], [], {}
-	if not days:
+	if not days and clear_of is None:
 		return shifted, skipped, entries
+	ends = {root: engine._as_date(clear_of)} if clear_of is not None else {}
 	# Read once: each follower's own row is all its context looks at, and no other follower's draft
 	# touches it.
 	drafts = _draft_rows()
@@ -2010,21 +2019,28 @@ def _draft_followers(root, days, auto=False, exclude=()):
 			return False
 		context = _draft_context(name, row.get("modified"), drafts)
 		doc = context["doc"]
+		before_state = _state(doc)
+		old = _span_text(before_state)
+		holidays = _shift_holidays()
+		step = days
+		if clear_of is not None:
+			step = _clearing_step(doc, old, ends, holidays)
+			if not step:
+				return False  # already clear of what it waits on: it stays, and so does what follows it
 		problem = _follower_problem(doc, auto=auto, drafting=True)
 		if problem:
 			skipped.append(_skip(doc, problem))
 			return False
-		before_state = _state(doc)
-		old = _span_text(before_state)
-		holidays = _shift_holidays()
 		result = _store_draft(
 			context,
-			start=str(shift_working(old[0], days, holidays)),
-			end=str(shift_working(old[1], days, holidays)),
+			start=str(shift_working(old[0], step, holidays)),
+			end=str(shift_working(old[1], step, holidays)),
 			check=False,
 		)
 		after = (_state(doc), _current_crew(doc))
 		new = _span_text(after[0])
+		if clear_of is not None:
+			ends[doc.name] = engine._as_date(new[1])
 		entries.append({"doc": doc, "stored": context["stored"], "before": before_state, "after": after})
 		shifted.append(
 			{
@@ -2041,6 +2057,18 @@ def _draft_followers(root, days, auto=False, exclude=()):
 
 	cut = _walk_followers(root, accept, exclude)
 	return shifted, skipped + _cut_skips(cut), entries
+
+
+def _clearing_step(doc, old, ends, holidays):
+	""":func:`_draft_followers`' ``clear_of`` rule for one follower: the working days it moves so it
+	starts the working day after the latest new end of the tasks it waits on that the walk moved
+	(``ends``), or 0 when it already starts after them (or has no dates, which the caller reports)."""
+	start = engine._as_date(old[0])
+	waits = [ends[row.get("task")] for row in (doc.get("depends_on") or []) if row.get("task") in ends]
+	bound = max((day for day in waits if day), default=None)
+	if not start or not bound or start > bound:
+		return 0
+	return working_days_between(start, add_working_days(bound, 1, holidays), holidays)
 
 
 def _draft_checks(roots, followers):
@@ -2416,16 +2444,19 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 	**A Draft schedule (v1.740.0).** A ``reschedule`` of a task whose project schedule is Draft, or of
 	any task with ``draft=1`` (Hold all my changes), is drafted rather than saved (:func:`_held`:
 	``draft=0`` or no flag does not write live into a Draft schedule). It goes through
-	``planner_actions._draft_many``, the path ``move_many`` drafts by, so the tasks that follow it are
-	drafted along by the working days its end moved (D10, D15), a follower in a published project is
-	left alone under the per-project rule, and the conflicts are warnings, never a reason. Its
-	``updated`` entry says ``"drafted": True``; the followers come back in ``shifted`` and the ones
-	left in ``shift_skipped``. The saved moves go first, all as before (no followers move with them,
-	as before); a drafted task that fails is reported in ``failed`` and the rest carry on.
+	``planner_actions._draft_many(clear=True)``, the path ``move_many`` drafts by, and its conflicts
+	are warnings, never a reason. A task that follows it is drafted along only when it would otherwise
+	start on or before its new last day, to the working day after (Nik, 2026-10-23; see
+	:func:`_draft_followers`' ``clear_of``), and a follower in a published project is left alone under
+	the per-project rule. Its ``updated`` entry says ``"drafted": True``; the followers come back in
+	``shifted`` and the ones in the way that could not move in ``shift_skipped``. The saved moves go
+	first, all as before (no followers move with them, as before); a drafted task that fails is
+	reported in ``failed`` and the rest carry on. Room for the drafts is checked before anything is
+	saved (:func:`require_change_room`).
 
-	``complete`` and ``cancel`` stay live on a Draft schedule and under the hold: they record what
-	happened to a task, not when it is planned, and a draft row holds no status. Nik has not ruled on
-	it yet (v1.740.0's CHANGELOG entry).
+	``complete`` and ``cancel`` stay live on a Draft schedule and under the hold (Nik, 2026-10-23):
+	they record what happened to a task, not when it is planned, and a draft row holds no status. The
+	tray warns first about a selected task with a drafted reschedule.
 	"""
 	_require_planner()
 	action = (given(action) or "").strip().lower()
@@ -2470,6 +2501,9 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 			continue
 		docs.append(doc)
 
+	if held:
+		# Before anything is saved: past DRAFT_LIMIT rows a draft drops out of the planner and Publish.
+		require_change_room(len(held))
 	conflicts = {}
 	reason = (reason or "").strip()
 	if action == "reschedule" and docs:
@@ -2526,7 +2560,9 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 def _draft_reschedules(docs, day, auto, taken, result, log):
 	""":func:`bulk_update`'s drafted half: each task in ``docs`` drafted to start on ``day`` with the
 	tasks that follow it, through ``planner_actions._draft_many`` (``move_many``'s draft path), one
-	task per savepoint so a refused one is reported in ``failed`` and the rest carry on. ``auto``: a
+	task per savepoint so a refused one is reported in ``failed`` and the rest carry on. Its
+	followers move only where they would otherwise start by its new last day (``clear=True``; Nik,
+	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone. ``auto``: a
 	Draft schedule's task, so a follower in a published project stays (the per-project rule); under
 	the hold every follower is drafted. ``taken``: the tasks the request moves itself, never moved
 	again as a follower. Downstream first, as ``move_many`` orders them, so when two of them reach the
@@ -2551,7 +2587,9 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 		saved_point = _savepoint(point)
 		mark = len(log) if log is not None else 0
 		try:
-			drafted = planner_actions._draft_many([entry], follow=True, auto=auto, exclude=taken)
+			drafted = planner_actions._draft_many([entry], follow=True, auto=auto, exclude=taken, clear=True)
+			# Its followers can take the caller past what the planner reads: then this one is undone.
+			require_change_room(0)
 		except Exception as exc:
 			if saved_point:
 				_rollback_to(point)
@@ -2727,14 +2765,20 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 
 	held = [plan for plan in plans if plan[4]]
 	plans = [plan for plan in plans if not plan[4]]
-	# The live copies are checked together as before; drafted ones apart, as information only.
+	# The live copies are checked together as before. The drafted ones are checked with the live ones
+	# (a live copy and a drafted one can double-book someone), and what that adds is information only.
 	conflicts = (
 		engine.preview_batch([(preview_state, crew) for _d, _v, crew, preview_state, _h in plans])
 		if plans or not held
 		else {}
 	)
 	drafted_conflicts = (
-		engine.preview_batch([(preview_state, crew) for _d, _v, crew, preview_state, _h in held])
+		conflict_delta(
+			conflicts,
+			engine.preview_batch(
+				[(preview_state, crew) for _d, _v, crew, preview_state, _h in [*plans, *held]]
+			),
+		)
 		if held
 		else {}
 	)
@@ -4463,6 +4507,23 @@ def require_draft_room(count):
 		frappe.throw(
 			_(
 				"You already have too many unpublished new tasks ({0} at most). Publish or discard some first."
+			).format(DRAFT_LIMIT),
+			title=_("Too many drafts"),
+		)
+
+
+def require_change_room(count):
+	"""Refuse drafting changes to ``count`` more tasks when the caller would hold more Draft rows of
+	tasks than :func:`_draft_rows` reads (:data:`DRAFT_LIMIT`, oldest first): past it a row drops out of
+	the overlay and of Publish without a word (v1.740.0, the Overdue tray's drafted Reschedule, which
+	can draft 100 tasks and their followers at once). ``0``: whether the caller is past it already."""
+	held = frappe.db.count(
+		DRAFT_DOCTYPE, {"owner": frappe.session.user, "status": DRAFT, "task": ["is", "set"]}
+	)
+	if held + count > DRAFT_LIMIT:
+		frappe.throw(
+			_(
+				"You already have too many unpublished changes ({0} at most). Publish or discard some first."
 			).format(DRAFT_LIMIT),
 			title=_("Too many drafts"),
 		)

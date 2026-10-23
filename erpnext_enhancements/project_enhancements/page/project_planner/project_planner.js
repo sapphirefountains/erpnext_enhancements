@@ -2817,13 +2817,31 @@ class ProjectPlanner {
 		const head = done
 			? __("Mark these {0} task(s) as Completed?", [rows.length])
 			: __("Cancel these {0} task(s)? They are set to Canceled and leave the planner.", [rows.length]);
-		frappe.confirm(`<p>${pp_esc(head)}</p>${this.overdue_list_html(rows)}`, () =>
+		frappe.confirm(`<p>${pp_esc(head)}</p>${this.overdue_list_html(rows)}${this.overdue_draft_warning(rows, done)}`, () =>
 			this.run_bulk(
 				rows.map((row) => row.name),
 				action,
 				null
 			)
 		);
+	}
+
+	// v1.740.0 (Nik, 2026-10-23): Mark done and Cancel stay live, but a task with a drafted reschedule
+	// not yet published (get_overdue's drafted_start: the caller's draft, or anyone's on a Draft
+	// schedule) is named first. Nothing is discarded: the tasks drafted along with it still publish
+	// where they were drafted.
+	overdue_draft_warning(rows, done) {
+		const pending = (rows || []).filter((row) => row.drafted_start);
+		if (!pending.length) return "";
+		const items = pending
+			.slice(0, 30)
+			.map((row) => `<li>${pp_esc(__("{0} (drafted to {1})", [row.subject || row.name, pp_when(row.drafted_start)]))}</li>`)
+			.join("");
+		const more = pending.length > 30 ? `<li>${pp_esc(__("and {0} more", [pending.length - 30]))}</li>` : "";
+		const what = done ? __("Marking them done") : __("Canceling them");
+		return `<div class="pp-route-note"><b>${pp_esc(__("These have a drafted reschedule that is not published yet:"))}</b><ul>${items}${more}</ul><div>${pp_esc(
+			__("{0} does not discard those drafts. Any tasks that follow them that were drafted with them will still publish where they were drafted unless someone moves them.", [what])
+		)}</div></div>`;
 	}
 
 	ask_reschedule(rows) {

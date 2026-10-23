@@ -1752,7 +1752,7 @@ def _move_report(doc, old, new):
 	}
 
 
-def _draft_many(entries, follow=False, auto=False, exclude=()):
+def _draft_many(entries, follow=False, auto=False, exclude=(), clear=False):
 	"""``move_many`` in draft mode: each move into the caller's Draft row of that task (Phase 3B),
 	never the Task. A stale task or a rental one fails the whole request, which rolls back.
 
@@ -1761,7 +1761,11 @@ def _draft_many(entries, follow=False, auto=False, exclude=()):
 	follower in a published project is left alone (``shift_skipped``). ``exclude``: tasks the same
 	request moves another way. What the lot creates together comes back as warnings
 	(``pp._draft_checks``), and when two moved tasks reach the same follower, the one nearer it, the
-	downstream one, carries it (``pp._downstream_first``)."""
+	downstream one, carries it (``pp._downstream_first``).
+
+	``clear`` (v1.740.0, only the Overdue tray's drafted Reschedule): a follower moves only when it
+	would otherwise start on or before the moved task's new last day, to the working day after it
+	(``pp._draft_followers(clear_of=…)``). A drag keeps the gap instead (D10)."""
 	moved, warnings, conflicts, skipped = [], [], {}, []
 	taken = {entry["task"] for entry in entries} | set(exclude or ())
 	roots, holidays = {}, pp._shift_holidays()
@@ -1791,15 +1795,23 @@ def _draft_many(entries, follow=False, auto=False, exclude=()):
 			"before": before_state,
 			"after": (pp._state(doc), pp._current_crew(doc)),
 			"days": pp.dependent_days(old, new, holidays) if follow and old[0] and new[0] else 0,
+			"end": new[1],
 		}
 	answer = {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
 	if not follow:
 		return answer
 	followers = []
 	for name in pp._downstream_first(list(roots)):
-		if not roots[name]["days"]:
+		if clear:
+			if not roots[name]["end"]:
+				continue
+			shifted, left, found = pp._draft_followers(
+				name, 0, auto=auto, exclude=taken, clear_of=roots[name]["end"]
+			)
+		elif not roots[name]["days"]:
 			continue
-		shifted, left, found = pp._draft_followers(name, roots[name]["days"], auto=auto, exclude=taken)
+		else:
+			shifted, left, found = pp._draft_followers(name, roots[name]["days"], auto=auto, exclude=taken)
 		taken.update(move["task"] for move in shifted)
 		moved.extend(dict(move, dependent=True, drafted=True) for move in shifted)
 		skipped.extend(left)

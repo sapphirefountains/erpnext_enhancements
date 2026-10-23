@@ -578,10 +578,13 @@ text above:
   End work on them.
 - **The Crew board is not yet one true bar.** A multi-day task is a chip per day, drawn joined and labeled
   *Day 2 of 5* (P7). The chip is what is dragged, resized and tapped; a single spanning bar is a possible follow-up.
-- **Split, Copy week and the Overdue tray on a Draft schedule** (v1.740.0, after P4). A Reschedule is
-  drafted with its followers, a copy is a drafted new task, and a split is refused until the schedule
-  is published, since no draft can hold one. *Mark done* and *Cancel* stay live: §4.8's "every write"
-  could cover them, but D8 is about the schedule and a draft holds no status, so that waits on Nik.
+- **Split, Copy week and the Overdue tray on a Draft schedule** (v1.740.0, after P4).
+  - A copy is a drafted new task.
+  - A split is refused until the schedule is published, since no draft can hold one.
+  - A Reschedule is drafted. It moves a follower only when the follower would otherwise start by
+    the task's new end, to the working day after (Nik, 2026-10-23). This is unlike a drag (D10),
+    because an overdue task is weeks late.
+  - *Mark done* and *Cancel* stay live (Nik, 2026-10-23), and warn first about a drafted reschedule.
 - **The Overdue tray is not filtered by D6** (§6 names the schedule and the Unscheduled tray), and the **print
   sheet** still labels cards with hours (P2, P11).
 - **The Overview** draws a job's milestones as diamonds when the job is expanded, not on its collapsed bar (P9).

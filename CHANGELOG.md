@@ -21,11 +21,28 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
   - `bulk_update(..., draft=None)` drafts each task whose project schedule is Draft, or every task
     while *Hold all my changes* is on (`draft=1`). The draft goes through
     `planner_actions._draft_many`, the path `move_many` drafts by. Nothing is copied.
-  - The tasks that follow move with it by the working days its end moved, both ways (D10, D15).
-    They come back in `shifted`, and the ones left where they were in `shift_skipped`. A follower on
-    a published schedule is left alone, as in `move_many`; under the hold every follower is drafted.
+  - **A follower moves only when it is in the way** (Nik, 2026-10-23: "A drafted overdue
+    Reschedule moves a follower only when it would otherwise start before the task's new end (to
+    the next working day), leaving the rest where they are").
+    - A follower moves when it starts, as drafted or else as stored, on or before the new last day
+      of a task it waits on that this action moved. It goes to the working day after the latest
+      such day, skipping weekends and the company's holidays, and keeps its length in working days.
+    - The rule cascades: a moved follower's own followers are checked against its new end. A
+      follower already clear stays put, unreported, and nothing past it moves.
+    - Why not carry followers by how far the task moved, as a drag does (D10)? An overdue task is
+      weeks late. A follower planned for next week, already clear of it, would have been pushed by
+      the same weeks. This is `_draft_many(clear=True)` → `_draft_followers(clear_of=…)`, the same
+      walk with a different step. `move_many`, the drag and a live Reschedule are unchanged.
+    - Moved followers come back in `shifted`. Followers in the way that could not move go to
+      `shift_skipped`, for example one on a published schedule. Under the hold, a follower on any
+      schedule moves.
   - A drafted task's conflicts are warnings. Only the saved tasks can ask for a reason. A live
     conflict without a reason still saves nothing and drafts nothing.
+  - **Room for the drafts is checked** (`require_change_room`). The planner reads only the caller's
+    oldest `DRAFT_LIMIT` (300) Draft rows of tasks, so a row past that would drop out of the
+    overlay and of Publish without a word, and one tray action can draft 100 tasks plus their
+    followers. The tasks to draft are counted before anything is saved. A task whose followers then
+    take the caller past the limit is undone and reported in `failed`.
   - Each drafted task has its own savepoint. A refused one (a rental crew task, a Fountain Move) is
     reported in `failed`, and the rest carry on, as the saved ones always did. Each is drafted from
     the Task as stored after the live saves, so one that ERPNext pushed while saving a task it waits
@@ -43,8 +60,10 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
     `duplicate_task` into `project_planner.copy_spec`, which both now call.
   - The hold drafts every copy.
   - The dry run marks such a copy `"drafted": True`. The preview labels it **Draft** and says why.
-  - Only the live copies are checked for a reason (`conflicts`). What the drafted copies would
-    overbook is `drafted_conflicts`, shown as information and returned as `warnings` after the run.
+  - Only the live copies are checked for a reason (`conflicts`). The drafted copies are checked
+    together with the live ones of the same run, so a live copy and a drafted copy that double-book
+    someone are caught. What that adds beyond `conflicts` is `drafted_conflicts`, shown as
+    information and returned as `warnings` after the run.
   - Room for all the drafted copies is checked before anything is written.
   - The done message counts the drafts.
   - With no drafted copy, every answer is what it was.
@@ -62,33 +81,59 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
     still saves.
   - The page adds both methods to `PP3B.draft_methods`, so it sends `draft="auto"`, or `1` under
     the hold.
+- **Mark done and Cancel stay live, and the tray warns first** (Nik, 2026-10-23: "Keep Mark done and
+  Cancel live, but warn on the tray when the task has a pending drafted reschedule").
+  - They record what happened to a task, not when it is planned, and a Draft row holds no status.
+  - The confirmation names each selected task that has a drafted reschedule not yet published. It
+    uses the tray's `drafted_start`, so the visibility rule is the same: the caller's draft, or
+    anyone's on a Draft schedule.
+  - It says that nothing is discarded, and that the tasks drafted along with it will still publish
+    where they were drafted unless someone moves them. It only warns.
 - `planner_actions._refuse_draft` reads the flag through `draft_choice` instead of `cint`. Under
   `cint`, `"auto"` happened to count as off, which was right by accident.
 
 ### Notes
-- **Mark done and Cancel stay live on a Draft schedule, and under the hold.** Nik's decisions do
-  not settle this, so it needs Nik's call.
-  - §4.8 of `docs/planner-ux-redesign.md` says every write to a Draft project's tasks is drafted.
-  - But D8 is about the *schedule*. A status change records what happened rather than when work is
-    planned, and a Draft row holds no status (`DRAFT_KEYS`).
-  - Drafting Complete and Cancel would need a new draft kind and a publish step for it. If Nik
-    wants that, it is a follow-up.
 - **Behavior change on prod after the deploy.** Prod has 21 Active projects on a Draft schedule and
   56 Published (the manager's count on 2026-10-23; a blank status reads Draft too). On a
   Draft-schedule project:
   - an Overdue tray Reschedule or drop becomes a draft, with its followers;
   - Copy week into it makes drafts;
   - Split is greyed and refused.
-  Published projects behave as before.
+
+  Published projects behave as before, except under *Hold all my changes*. With the hold on, a
+  Reschedule or a Copy week on a Published project is now drafted too. Before, both wrote live
+  despite the hold, because neither took a draft flag. Mark done and Cancel stay live under the
+  hold.
+- **Follow-ups, not in this release:**
+  - ERPNext's own validation (a date outside the project, a dependency still open) runs only at
+    Publish for these drafts, as for every planner draft.
+  - `save_task`, `move_many`, quick add, duplicate and build out still write live when a client
+    sends no draft flag. Making an unset flag mean `auto` on every planner write is the general fix.
 - Tests:
   - `tests/test_planner_autoshift.py` covers a Draft and a Published project for each of the three
     actions, plus the hold. It also covers no flag and `draft=0` on a Draft schedule, a mixed batch,
     a live conflict that drafts nothing, a refused drafted task, Complete staying live, the tray's
     `drafted_start`, draft room for copies, and the Split refusal before the P3 columns exist.
+  - The follower rule:
+    - a follower already clear stays;
+    - one in the way moves to the working day after, across a holiday;
+    - a chain stops at a clear follower;
+    - a pushed follower pushes its own;
+    - a follower's draft is what is compared;
+    - a published follower is named only when in the way;
+    - `move_many` still keeps the gap;
+    - Publish saves the task and its follower on their drafted days.
+  - The draft room: the count is checked before anything is saved; followers past it undo their
+    task; only the caller's task rows count.
+  - Copy week: a live and a drafted copy that double-book someone; a drafted copy keeps the hours,
+    crew size, location and qualifications.
   - `scripts/test_planner_autoshift.js` drives the real page under node. It checks the flags sent,
     the drop's and the bulk action's messages, the greyed Split item and its hint, and Copy week's
-    preview labels and done message.
-  - Disabling the Draft-schedule rule fails 17 of the new Python checks.
+    preview labels and done message, and the Mark done and Cancel warning.
+  - Mutation checks:
+    - disabling the Draft-schedule rule fails 17 of the new Python tests;
+    - drafting followers by the old rule fails 8 of the follower-rule tests;
+    - removing the up-front room check fails its test.
   - `tests/test_project_planner.py`'s Overdue and Copy week tests are about the live path, so their
     projects are now marked Published. Before this, the stub's blank status read Draft.
 
@@ -2771,7 +2816,7 @@ or items used or added". TASK-2026-02901.
   dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
   *Closed in v1.740.0:* a Reschedule there is now drafted with its followers, a copy is a drafted
   new task, and a split is refused until the schedule is published. Mark done and Cancel stay live,
-  pending Nik's call.
+  and warn about a drafted reschedule first.
 - **Behavior change:** `move_many` now checks every task it moves against the tasks it waits on,
   as `save_task` always has. A multi-select move earlier past a predecessor asks for a reason, even
   with Ctrl/⌘ held.
