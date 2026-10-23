@@ -1649,6 +1649,22 @@ def _drafting(draft, task):
 	return _project_drafts(frappe.db.get_value("Task", task, "project"))
 
 
+def _held(draft, project, cache=None):
+	"""Whether Split, Copy week or the Overdue tray's Reschedule drafts a write to ``project``'s task
+	(v1.740.0): ``draft=1`` (Hold all my changes) always, and otherwise when the project's schedule is
+	Draft, whatever ``draft`` says. Unlike :func:`_drafting`, ``draft=0`` does not write live into a
+	Draft schedule: those endpoints took no draft flag before, so a client that sends none (the AI
+	connector, an old page) must not reach a schedule nobody has published. ``cache`` holds the answer
+	per project for a request that asks about many tasks."""
+	if draft_choice(draft) is True:
+		return True
+	if cache is None:
+		return _project_drafts(project)
+	if project not in cache:
+		cache[project] = _project_drafts(project)
+	return cache[project]
+
+
 def _shift_holidays():
 	"""The company's holidays, as dates, that a shift by working days steps over: its default Holiday
 	List (``crew_availability._default_holiday_list``), weekly-off rows left out as the engine leaves
@@ -1966,18 +1982,36 @@ def _save_with_followers(doc, followers, moves, days, conflicts, reason):
 	return warnings + _settle(followers, planned, shifted), shifted
 
 
-def _draft_followers(root, days, auto=False, exclude=()):
+def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	"""Draft the tasks that follow ``root`` ``days`` working days on, each from its own drafted days
 	(:func:`_draft_context`), as a draft of ``root`` moves them, through :func:`_walk_followers`.
 	``(shifted, skipped, entries)``: ``shifted`` and ``skipped`` as :func:`_follower_docs` and
 	:func:`shift_successors` report them, ``entries`` for :func:`_draft_checks`. ``auto``: a follower
-	whose project is published is left alone (a draft never moves a published schedule)."""
-	shifted, skipped, entries, jobs = [], [], [], {}
-	if not days:
-		return shifted, skipped, entries
+	whose project is published is left alone (a draft never moves a published schedule).
+
+	``clear_of`` (v1.740.0, the Overdue tray's drafted Reschedule; Nik, 2026-10-23): ``root``'s new
+	last day, and ``days`` is ignored. A follower moves only when it starts (as drafted, else as
+	stored) on or before the new last day of a task it waits on that this walk moved, and then to the
+	next working day after the latest of them, keeping its length in working days. One already clear
+	stays, unreported, and so does everything that follows only through it. An overdue task is weeks
+	late, so carrying its followers by how far it moved, as a drag does (D10), would push work that
+	was never in its way. The walk is :func:`_walk_clearing`, not :func:`_walk_followers`: a follower
+	that stays is checked again when another task it waits on moves, and one that moved is pushed on
+	when a later one requires it, so the answer does not depend on the order the walk meets them in.
+	Each follower comes back once, from where it was to where it ends up."""
+	skipped, jobs = [], {}
+	if not days and clear_of is None:
+		return [], skipped, []
+	ends = {root: engine._as_date(clear_of)} if clear_of is not None else {}
 	# Read once: each follower's own row is all its context looks at, and no other follower's draft
-	# touches it.
+	# touches it. A follower the clear walk moves twice is read again the second time (moved).
 	drafts = _draft_rows()
+	moved, named = {}, set()
+
+	def skip(doc, problem):
+		if doc.get("name") not in named:
+			named.add(doc.get("name"))
+			skipped.append(_skip(doc, problem))
 
 	def accept(name):
 		row = frappe.db.get_value(
@@ -1990,41 +2024,103 @@ def _draft_followers(root, days, auto=False, exclude=()):
 		move_job = _is_move_job(row.get("project"), jobs)
 		writable = frappe.has_permission("Task", "write", doc=name)
 		if move_job or not writable:
-			skipped.append(_skip(row, _follower_problem(row, move_job=move_job, writable=writable)))
+			skip(row, _follower_problem(row, move_job=move_job, writable=writable))
 			return False
-		context = _draft_context(name, row.get("modified"), drafts)
+		context = _draft_context(name, row.get("modified"), _draft_rows() if name in moved else drafts)
 		doc = context["doc"]
-		problem = _follower_problem(doc, auto=auto, drafting=True)
-		if problem:
-			skipped.append(_skip(doc, problem))
-			return False
 		before_state = _state(doc)
 		old = _span_text(before_state)
 		holidays = _shift_holidays()
+		step = days
+		# An undated follower goes on to _follower_problem, which names it ("It has no dates").
+		if clear_of is not None and engine.task_span(before_state):
+			step = _clearing_step(doc, old, ends, holidays)
+			if not step:
+				return False  # already clear of what it waits on: it stays, and so does what follows it
+		problem = _follower_problem(doc, auto=auto, drafting=True)
+		if problem:
+			skip(doc, problem)
+			return False
 		result = _store_draft(
 			context,
-			start=str(shift_working(old[0], days, holidays)),
-			end=str(shift_working(old[1], days, holidays)),
+			start=str(shift_working(old[0], step, holidays)),
+			end=str(shift_working(old[1], step, holidays)),
 			check=False,
 		)
 		after = (_state(doc), _current_crew(doc))
 		new = _span_text(after[0])
-		entries.append({"doc": doc, "stored": context["stored"], "before": before_state, "after": after})
-		shifted.append(
-			{
+		if clear_of is not None:
+			ends[doc.name] = engine._as_date(new[1])
+		# Moved again (the clear walk): it keeps where it was first, and its place in the answer.
+		first = moved.get(doc.name)
+		moved[doc.name] = {
+			"entry": {
+				"doc": doc,
+				"stored": context["stored"],
+				"before": first["entry"]["before"] if first else before_state,
+				"after": after,
+			},
+			"move": {
 				"task": doc.name,
 				"subject": doc.get("subject") or doc.name,
-				"from": old[0],
+				"from": first["move"]["from"] if first else old[0],
 				"to": new[0],
-				"from_end": old[1],
+				"from_end": first["move"]["from_end"] if first else old[1],
 				"to_end": new[1],
 				"modified": result.get("modified"),
-			}
-		)
+			},
+		}
 		return True
 
-	cut = _walk_followers(root, accept, exclude)
+	walk = _walk_followers if clear_of is None else _walk_clearing
+	cut = walk(root, accept, exclude)
+	shifted = [item["move"] for item in moved.values()]
+	entries = [item["entry"] for item in moved.values()]
 	return shifted, skipped + _cut_skips(cut), entries
+
+
+def _walk_clearing(root, accept, exclude=()):
+	""":func:`_draft_followers`' walk for ``clear_of`` (v1.740.0): every task waiting on ``root``, and on
+	each task ``accept`` moves, is offered to ``accept``, and offered again whenever another task it
+	waits on moves. So a follower that waits on two moved tasks ends up clear of both, whichever the
+	walk reaches first, and one that stayed is still checked against a task that moves after it.
+	It ends: a task is offered again only when something it waits on moved, and every move is later.
+	At most :data:`SUCCESSOR_LIMIT` tasks are offered, as the other walk reaches at most that many,
+	and a dependency cycle (which ERPNext refuses on save, but an import need not) stops at
+	:data:`SUCCESSOR_DEPTH` offers per task; the rest are returned, to be named. Tasks are queued by
+	name, so the order of the answer does not follow the database's row order either.
+	``exclude``: tasks the request moves itself, never offered."""
+	out = {root, *(exclude or ())}
+	queue = [name for name in sorted(_waiting_on([root])) if name not in out]
+	waiting, offered, cut = set(queue), {}, []
+	while queue:
+		name = queue.pop(0)
+		waiting.discard(name)
+		new = name not in offered
+		if (new and len(offered) >= SUCCESSOR_LIMIT) or offered.get(name, 0) >= SUCCESSOR_DEPTH:
+			cut.append(name)
+			continue
+		offered[name] = offered.get(name, 0) + 1
+		if accept(name):
+			for later in sorted(_waiting_on([name])):
+				if later not in out and later not in waiting:
+					waiting.add(later)
+					queue.append(later)
+	return list(dict.fromkeys(cut))
+
+
+def _clearing_step(doc, old, ends, holidays):
+	""":func:`_draft_followers`' ``clear_of`` rule for one follower: the working days it moves so it
+	starts the working day after the latest new end of the tasks it waits on that the walk moved
+	(``ends``, their latest new ends), or 0 when it already starts after them. A task it waits on that
+	moves later in the walk offers it again (:func:`_walk_clearing`), so it ends up clear of all of
+	them."""
+	start = engine._as_date(old[0])
+	waits = [ends[row.get("task")] for row in (doc.get("depends_on") or []) if row.get("task") in ends]
+	bound = max((day for day in waits if day), default=None)
+	if not start or not bound or start > bound:
+		return 0
+	return working_days_between(start, add_working_days(bound, 1, holidays), holidays)
 
 
 def _draft_checks(roots, followers):
@@ -2277,6 +2373,10 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 	"status", "start", "end", "crew": [labels], "tentative", "modified"}]}]}``, oldest end first
 	within each project. Rental crew tasks are left out: their dates belong to the booking.
 	``project`` narrows to one project; ``limit`` (default 200, at most 500) caps the rows.
+
+	v1.740.0: a task with a draft the caller can see (theirs, or anyone's on a Draft schedule) says
+	where it is drafted to, ``"drafted_start"``: a drafted reschedule leaves the Task overdue until its
+	schedule is published, so the tray shows the row with the day it moves to rather than as untouched.
 	"""
 	_require_planner()
 	today = getdate(nowdate())
@@ -2327,7 +2427,33 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 		and engine.task_span(row)[1] < today
 	]
 	labels = _crew_labels([row.get("name") for row in rows]) if rows else {}
-	return {"today": str(today), "total": len(rows), "projects": group_overdue(rows, labels)}
+	groups = group_overdue(rows, labels)
+	drafted = _overdue_drafts({row.get("name"): row.get("modified") for row in rows}) if rows else {}
+	for group in groups:
+		for task in group["tasks"]:
+			if drafted.get(task["name"]):
+				task["drafted_start"] = drafted[task["name"]]
+	return {"today": str(today), "total": len(rows), "projects": groups}
+
+
+def _overdue_drafts(modified):
+	"""``{task: start}`` for the drafts the caller can see that move one of the tasks in ``modified``
+	(``{task: its modified}``, :func:`_draft_rows`). A draft of a task changed since it was drafted is
+	left out: Publish skips it as out of date, so the tray must not say the task is taken care of.
+	Never fails the tray: a draft that cannot be read is simply not shown on it."""
+	try:
+		rows, _duplicates = _draft_rows()
+	except Exception:
+		return {}
+	out = {}
+	for row in rows:
+		task = row.get("task")
+		if task not in modified or not same_moment(row.get("base_modified"), modified[task]):
+			continue
+		start = load_payload(row.get("payload")).get("start")
+		if start:
+			out[task] = str(start)[:10]
+	return out
 
 
 def _savepoint(name):
@@ -2353,7 +2479,7 @@ def _failure_text(exc, messages):
 
 
 @frappe.whitelist(methods=["POST"])
-def bulk_update(tasks, action, date=None, reason=None):
+def bulk_update(tasks, action, date=None, reason=None, draft=None):
 	"""One action on up to 100 tasks (the Overdue tray): ``reschedule``, ``complete`` or ``cancel``.
 
 	* ``reschedule`` needs ``date``: every task starts that day and keeps its length (a slot keeps
@@ -2366,6 +2492,23 @@ def bulk_update(tasks, action, date=None, reason=None):
 	dependencies are open, a date outside the project) is reported in ``failed`` with the reason
 	and the rest carry on. Returns ``{"action", "updated": [{task, status, start, end,
 	modified}], "failed": [{task, error}], "warnings", "conflicts"}``.
+
+	**A Draft schedule (v1.740.0).** A ``reschedule`` of a task whose project schedule is Draft, or of
+	any task with ``draft=1`` (Hold all my changes), is drafted rather than saved (:func:`_held`:
+	``draft=0`` or no flag does not write live into a Draft schedule). It goes through
+	``planner_actions._draft_many(clear=True)``, the path ``move_many`` drafts by, and its conflicts
+	are warnings, never a reason. A task that follows it is drafted along only when it would otherwise
+	start on or before its new last day, to the working day after (Nik, 2026-10-23; see
+	:func:`_draft_followers`' ``clear_of``), and a follower in a published project is left alone under
+	the per-project rule. Its ``updated`` entry says ``"drafted": True``; the followers come back in
+	``shifted`` and the ones in the way that could not move in ``shift_skipped``. The saved moves go
+	first, all as before (no followers move with them, as before); a drafted task that fails is
+	reported in ``failed`` and the rest carry on. Room for the drafts is checked before anything is
+	saved (:func:`require_change_room`).
+
+	``complete`` and ``cancel`` stay live on a Draft schedule and under the hold (Nik, 2026-10-23):
+	they record what happened to a task, not when it is planned, and a draft row holds no status. The
+	tray warns first about a selected task with a drafted reschedule.
 	"""
 	_require_planner()
 	action = (given(action) or "").strip().lower()
@@ -2381,7 +2524,7 @@ def bulk_update(tasks, action, date=None, reason=None):
 		frappe.throw(_("Pick the day to reschedule to."))
 
 	log = _message_log()
-	docs, failed, moves = [], [], []
+	docs, failed, moves, held, schedules = [], [], [], [], {}
 	for name in names:
 		mark = len(log) if log is not None else 0
 		try:
@@ -2389,6 +2532,9 @@ def bulk_update(tasks, action, date=None, reason=None):
 			doc.check_permission("write")
 			if action == "reschedule":
 				fountain_move_jobs.refuse_on_project_planner(doc)
+				if _held(draft, doc.get("project"), schedules):
+					held.append(doc)
+					continue
 				old = _span_text(_state(doc))
 				_move(doc, str(day), None)
 				new = _span_text(_state(doc))
@@ -2407,6 +2553,9 @@ def bulk_update(tasks, action, date=None, reason=None):
 			continue
 		docs.append(doc)
 
+	if held:
+		# Before anything is saved: past DRAFT_LIMIT rows a draft drops out of the planner and Publish.
+		require_change_room([doc.name for doc in held])
 	conflicts = {}
 	reason = (reason or "").strip()
 	if action == "reschedule" and docs:
@@ -2448,13 +2597,81 @@ def bulk_update(tasks, action, date=None, reason=None):
 				"modified": str(doc.modified),
 			}
 		)
-	return {
+	result = {
 		"action": action,
 		"updated": updated,
 		"failed": failed,
 		"warnings": warnings,
 		"conflicts": conflicts,
 	}
+	if held:
+		_draft_reschedules(held, day, draft_choice(draft) is not True, set(names), result, log)
+	return result
+
+
+def _draft_reschedules(docs, day, auto, taken, result, log):
+	""":func:`bulk_update`'s drafted half: each task in ``docs`` drafted to start on ``day`` with the
+	tasks that follow it, through ``planner_actions._draft_many`` (``move_many``'s draft path), one
+	task per savepoint so a refused one is reported in ``failed`` and the rest carry on. Its
+	followers move only where they would otherwise start by its new last day (``clear=True``; Nik,
+	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone. A
+	follower one task moved is still offered to the next (only the selected tasks are kept out), so
+	one that follows two of them ends up clear of both; it comes back once in ``shifted``.
+	``auto``: a Draft schedule's task, so a follower in a published project stays (the per-project rule); under
+	the hold every follower is drafted. ``taken``: the tasks the request moves itself, never moved
+	again as a follower. Downstream first, as ``move_many`` orders them, so when two of them reach the
+	same follower the nearer one carries it."""
+	# planner_actions imports this module, so it is imported here, when it is first needed.
+	from erpnext_enhancements.api import planner_actions
+
+	by_name = {doc.name: doc for doc in docs}
+	result.setdefault("shifted", [])
+	result.setdefault("shift_skipped", [])
+	for index, name in enumerate(_downstream_first(list(by_name))):
+		doc = by_name[name]
+		entry = {
+			"task": name,
+			# As stored now: a live save earlier in this request may have had ERPNext push it.
+			"modified": frappe.db.get_value("Task", name, "modified") or doc.get("modified"),
+			"start": str(day),
+			"end": None,
+			"tentative": None,
+		}
+		point = f"planner_bulk_draft_{index}"
+		saved_point = _savepoint(point)
+		mark = len(log) if log is not None else 0
+		try:
+			drafted = planner_actions._draft_many([entry], follow=True, auto=auto, exclude=taken, clear=True)
+			# Its followers can take the caller past what the planner reads: then this one is undone.
+			require_change_room()
+		except Exception as exc:
+			if saved_point:
+				_rollback_to(point)
+			result["failed"].append({"task": name, "error": _failure_text(exc, _take_messages(log, mark))})
+			continue
+		own = next((move for move in drafted["moved"] if move["task"] == name), {})
+		for move in (move for move in drafted["moved"] if move.get("dependent")):
+			known = next((item for item in result["shifted"] if item["task"] == move["task"]), None)
+			if known:
+				known.update(to=move["to"], to_end=move["to_end"], modified=move.get("modified"))
+			else:
+				result["shifted"].append(move)
+		result["updated"].append(
+			{
+				"task": name,
+				"status": doc.get("status"),
+				"start": own.get("to"),
+				"end": own.get("to_end"),
+				"modified": own.get("modified"),
+				"drafted": True,
+			}
+		)
+		known = {item["task"] for item in result["shift_skipped"]}
+		result["shift_skipped"].extend(
+			item for item in drafted.get("shift_skipped") or [] if item["task"] not in known
+		)
+		result["warnings"].extend(drafted.get("warnings") or [])
+		result["warnings"].extend(_take_messages(log, mark))
 
 
 # ---------------------------------------------------------------------- Phase 3A: copy week
@@ -2487,8 +2704,31 @@ def _copy_values(source, state, days):
 	return values
 
 
+def copy_spec(op, source, values, crew):
+	"""The spec of a copy of ``source`` (``op``: ``duplicate``, ``copy_week``), for
+	:func:`task_from_spec`: ``values`` from :func:`_copy_values`, its crew (kept even where someone is
+	inactive now), qualifications and equipment. Duplicate builds its live copy and its drafted one
+	from it; Copy week its drafted ones (v1.740.0)."""
+	return {
+		"op": op,
+		"source": source.name,
+		"values": {key: value for key, value in values.items() if key != "doctype"},
+		"crew": crew_payload(crew),
+		"keep_crew": [member.get("resource") for member in crew if member.get("resource")],
+		"credentials": [
+			row.get("credential_type")
+			for row in (source.get("custom_required_credentials") or [])
+			if row.get("credential_type")
+		],
+		"equipment": equipment_payload(source.get("custom_equipment"))
+		if source.get("custom_equipment")
+		else None,
+		"depends_on": [],
+	}
+
+
 @frappe.whitelist(methods=["POST"])
-def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
+def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=None):
 	"""Copy tasks from one week into another as **new** Tasks.
 
 	``tasks`` (JSON list, up to 100) are tasks in the week holding ``source_start``; each copy
@@ -2507,6 +2747,16 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 	True, "conflicts", "copies", "skipped"}``; otherwise every copy is inserted as the caller
 	(create permission) and the answer is ``{"created": [{task, source, subject, start, end}],
 	"conflicts", "skipped"}``. A copy that fails to insert fails the whole request.
+
+	**A Draft schedule (v1.740.0).** A copy into a project whose schedule is Draft, or any copy with
+	``draft=1`` (Hold all my changes), is not inserted: it is kept as a ``New task`` Draft row, as a
+	drafted duplicate is (:func:`copy_spec`, :func:`store_new_draft`), and Publish creates the Task.
+	``draft=0`` or no flag does not write live into a Draft schedule (:func:`_held`). Such a copy is
+	``"drafted": True`` in ``copies`` (the dry run says so before anything is written) and in
+	``created``, where its ``task`` is its ``draft-new:`` name. Only the live copies are checked for a
+	reason; what the drafted ones would overbook is ``drafted_conflicts`` in the dry run and
+	``warnings`` once they are drafted, since drafting never asks for a reason. With no drafted copy
+	every answer is what it was.
 	"""
 	_require_planner()
 	first_day = _site_first_weekday()
@@ -2526,7 +2776,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 		frappe.throw(_("You cannot create Tasks."), frappe.PermissionError)
 
 	source_end = source + datetime.timedelta(days=6)
-	plans, copies, skipped, docs = [], [], [], []
+	plans, copies, skipped, docs, schedules = [], [], [], [], {}
 	for name in names:
 		doc = frappe.get_doc("Task", name)
 		doc.check_permission("read")
@@ -2560,26 +2810,63 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 			state, name=f"{name} (copy)", status="Open", **{f: values[f] for f in DATE_FIELDS}
 		)
 		to_start, to_end = _span_text(preview_state)
-		plans.append((doc, values, crew, preview_state))
-		copies.append(
-			{
-				"task": name,
-				"subject": doc.get("subject") or name,
-				"to_start": to_start,
-				"to_end": to_end,
-				"tentative": engine.is_tentative(state),
-			}
-		)
+		drafted = _held(draft, doc.get("project"), schedules)
+		plans.append((doc, values, crew, preview_state, drafted))
+		item = {
+			"task": name,
+			"subject": doc.get("subject") or name,
+			"to_start": to_start,
+			"to_end": to_end,
+			"tentative": engine.is_tentative(state),
+		}
+		if drafted:
+			item["drafted"] = True
+		copies.append(item)
 
-	conflicts = engine.preview_batch([(preview_state, crew) for _d, _v, crew, preview_state in plans])
+	held = [plan for plan in plans if plan[4]]
+	plans = [plan for plan in plans if not plan[4]]
+	# The live copies are checked together as before. The drafted ones are checked with the live ones
+	# (a live copy and a drafted one can double-book someone), and what that adds is information only.
+	conflicts = (
+		engine.preview_batch([(preview_state, crew) for _d, _v, crew, preview_state, _h in plans])
+		if plans or not held
+		else {}
+	)
+	drafted_conflicts = (
+		conflict_delta(
+			conflicts,
+			engine.preview_batch(
+				[(preview_state, crew) for _d, _v, crew, preview_state, _h in [*plans, *held]]
+			),
+		)
+		if held
+		else {}
+	)
+	extra = {"drafted_conflicts": drafted_conflicts} if held else {}
 	if dry:
-		return {"copies": copies, "conflicts": conflicts, "skipped": skipped, "dry_run": True, **weeks}
+		return {
+			"copies": copies,
+			"conflicts": conflicts,
+			"skipped": skipped,
+			"dry_run": True,
+			**extra,
+			**weeks,
+		}
 	reason = (reason or "").strip()
 	if conflicts and not reason:
-		return {"needs_reason": True, "conflicts": conflicts, "copies": copies, "skipped": skipped, **weeks}
+		return {
+			"needs_reason": True,
+			"conflicts": conflicts,
+			"copies": copies,
+			"skipped": skipped,
+			**extra,
+			**weeks,
+		}
+	if held:
+		require_draft_room(len(held))
 
 	created = []
-	for doc, values, crew, _preview_state in plans:
+	for doc, values, crew, _preview_state, _held_copy in plans:
 		new = frappe.get_doc(values)
 		_set_crew(new, crew, crew)
 		new.set(
@@ -2604,7 +2891,33 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 		created.append(
 			{"task": new.name, "source": doc.name, "subject": new.get("subject"), "start": start, "end": end}
 		)
-	return {"created": created, "conflicts": conflicts, "skipped": skipped, **weeks}
+	if not held:
+		return {"created": created, "conflicts": conflicts, "skipped": skipped, **weeks}
+	# The drafted copies: duplicate's draft path, one New task row each and no Task.
+	for doc, values, crew, _preview_state, _held_copy in held:
+		spec = copy_spec("copy_week", doc, values, crew)
+		new = task_from_spec(spec)
+		new.check_permission("create")
+		stored = store_new_draft(spec, new)
+		start, end = _span_text(_state(new))
+		created.append(
+			{
+				"task": stored["name"],
+				"source": doc.name,
+				"subject": new.get("subject"),
+				"start": start,
+				"end": end,
+				"drafted": True,
+			}
+		)
+	return {
+		"created": created,
+		"conflicts": conflicts,
+		"skipped": skipped,
+		"warnings": conflict_warnings(drafted_conflicts),
+		"drafted_conflicts": drafted_conflicts,
+		**weeks,
+	}
 
 
 # ---------------------------------------------------------------------- routes: pure helpers
@@ -4254,6 +4567,31 @@ def require_draft_room(count):
 		frappe.throw(
 			_(
 				"You already have too many unpublished new tasks ({0} at most). Publish or discard some first."
+			).format(DRAFT_LIMIT),
+			title=_("Too many drafts"),
+		)
+
+
+def require_change_room(tasks=()):
+	"""Refuse drafting changes to ``tasks`` when the caller would hold more Draft rows of tasks than
+	:func:`_draft_rows` reads (:data:`DRAFT_LIMIT`, oldest first): past it a row drops out of the
+	overlay and of Publish without a word (v1.740.0, the Overdue tray's drafted Reschedule, which can
+	draft 100 tasks and their followers at once). A task that already has one of the caller's rows
+	adds none (a new draft merges into it). No ``tasks``: whether the caller is past it already."""
+	mine = {"owner": frappe.session.user, "status": DRAFT}
+	held = frappe.db.count(DRAFT_DOCTYPE, {**mine, "task": ["is", "set"]})
+	tasks = list(dict.fromkeys(tasks or ()))
+	if tasks:
+		drafted = set(
+			frappe.get_all(
+				DRAFT_DOCTYPE, filters={**mine, "task": ["in", tasks]}, pluck="task", limit_page_length=0
+			)
+		)
+		tasks = [name for name in tasks if name not in drafted]
+	if held + len(tasks) > DRAFT_LIMIT:
+		frappe.throw(
+			_(
+				"You already have too many unpublished changes ({0} at most). Publish or discard some first."
 			).format(DRAFT_LIMIT),
 			title=_("Too many drafts"),
 		)

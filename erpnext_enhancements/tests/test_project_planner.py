@@ -2654,7 +2654,18 @@ class TestDependencyWrites(_Phase3AWrites):
 		self.assertEqual(frappe.saved, [])
 
 
-class TestBulkUpdate(_Phase3AWrites):
+class _LiveSchedules(_Phase3AWrites):
+	"""v1.740.0: bulk_update and copy_week draft a write to a project whose schedule is Draft (blank
+	reads Draft). These tests are about the live path, so both projects are Published here;
+	tests/test_planner_autoshift.py covers the drafted one."""
+
+	def setUp(self):
+		super().setUp()
+		for project in ("PRJ-1", "PRJ-2"):
+			frappe.values[("Project", project, "custom_schedule_status")] = "Published"
+
+
+class TestBulkUpdate(_LiveSchedules):
 	def _three(self):
 		for name in ("TASK-A", "TASK-B", "TASK-C"):
 			_tdoc(name, "2026-10-01 08:00:00", "2026-10-02 17:00:00")
@@ -2721,7 +2732,7 @@ class TestBulkUpdate(_Phase3AWrites):
 			api.bulk_update('["TASK-A"]', "complete")
 
 
-class TestCopyWeek(_Phase3AWrites):
+class TestCopyWeek(_LiveSchedules):
 	def _source(self):
 		frappe.tables["Planner Resource"].append(
 			{"name": "RES-9", "resource_name": "Retired", "user": None, "is_active": 0}

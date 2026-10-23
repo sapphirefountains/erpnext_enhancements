@@ -2639,6 +2639,7 @@ class ProjectPlanner {
 				subject: row.subject || row.name || row.task,
 				end: row.end || row.exp_end_date || "",
 				modified: row.modified || "",
+				drafted_start: row.drafted_start || "",
 				crew: (row.crew_labels || row.crew || []).map((member) =>
 					typeof member === "string" ? member : member.label || member.resource || ""
 				),
@@ -2750,7 +2751,11 @@ class ProjectPlanner {
 							<div class="pp-od-subject">${pp_esc(row.subject)}</div>
 							<div class="pp-od-sub">${pp_esc(crew || __("No crew"))}</div>
 						</div>
-						<span class="pp-od-end">${pp_esc(row.end ? __("Ended {0}", [pp_when(row.end)]) : "")}</span>
+						<span class="pp-od-end">${pp_esc(row.end ? __("Ended {0}", [pp_when(row.end)]) : "")}${
+							row.drafted_start
+								? `<br><span class="pp-chip pp-draft-chip">${pp_esc(__("Draft: {0}", [pp_when(row.drafted_start)]))}</span>`
+								: ""
+						}</span>
 					</div>`);
 			});
 		});
@@ -2812,13 +2817,31 @@ class ProjectPlanner {
 		const head = done
 			? __("Mark these {0} task(s) as Completed?", [rows.length])
 			: __("Cancel these {0} task(s)? They are set to Canceled and leave the planner.", [rows.length]);
-		frappe.confirm(`<p>${pp_esc(head)}</p>${this.overdue_list_html(rows)}`, () =>
+		frappe.confirm(`<p>${pp_esc(head)}</p>${this.overdue_list_html(rows)}${this.overdue_draft_warning(rows, done)}`, () =>
 			this.run_bulk(
 				rows.map((row) => row.name),
 				action,
 				null
 			)
 		);
+	}
+
+	// v1.740.0 (Nik, 2026-10-23): Mark done and Cancel stay live, but a task with a drafted reschedule
+	// not yet published (get_overdue's drafted_start: the caller's draft, or anyone's on a Draft
+	// schedule) is named first. Nothing is discarded: the tasks drafted along with it still publish
+	// where they were drafted.
+	overdue_draft_warning(rows, done) {
+		const pending = (rows || []).filter((row) => row.drafted_start);
+		if (!pending.length) return "";
+		const items = pending
+			.slice(0, 30)
+			.map((row) => `<li>${pp_esc(__("{0} (drafted to {1})", [row.subject || row.name, pp_when(row.drafted_start)]))}</li>`)
+			.join("");
+		const more = pending.length > 30 ? `<li>${pp_esc(__("and {0} more", [pending.length - 30]))}</li>` : "";
+		const what = done ? __("Marking them done") : __("Canceling them");
+		return `<div class="pp-route-note"><b>${pp_esc(__("These have a drafted reschedule that is not published yet:"))}</b><ul>${items}${more}</ul><div>${pp_esc(
+			__("{0} does not discard those drafts. Any tasks that follow them that were drafted with them will still publish where they were drafted unless someone moves them.", [what])
+		)}</div></div>`;
 	}
 
 	ask_reschedule(rows) {
@@ -2875,6 +2898,9 @@ class ProjectPlanner {
 					cancel: __("{0} task(s) set to Canceled", [ok]),
 				}[action];
 				if (ok) frappe.show_alert({ message: label, indicator: "green" }, 6);
+				// v1.740.0: a Draft schedule's (or, under the hold, any) reschedule is a draft, with its followers.
+				const note = PPAS_PURE.overdue_draft_note(result, this.draft_on);
+				if (note) frappe.show_alert({ message: note, indicator: "blue" }, 8);
 				if (failed.length) {
 					const lines = failed.map((item) => {
 						if (typeof item === "string") return `<li>${pp_esc(item)}</li>`;
@@ -3214,7 +3240,9 @@ class ProjectPlanner {
 						item.to_end && item.to_end !== item.to_start
 							? `${pp_when(item.to_start)} – ${pp_when(item.to_end)}`
 							: pp_when(item.to_start);
-					return `<tr><td><b>${pp_esc(item.subject || item.task)}</b></td><td>${pp_esc(was)}${pp_esc(to)}</td></tr>`;
+					// v1.740.0: a copy into a Draft schedule (or any, under the hold) is kept as a draft.
+					const chip = item.drafted ? ` <span class="pp-chip pp-draft-chip">${pp_esc(__("Draft"))}</span>` : "";
+					return `<tr><td><b>${pp_esc(item.subject || item.task)}</b>${chip}</td><td>${pp_esc(was)}${pp_esc(to)}</td></tr>`;
 				})
 				.join("");
 			const skipped = (result.skipped || []).map(
@@ -3231,6 +3259,19 @@ class ProjectPlanner {
 						)
 						.join("")}<div>${pp_esc(__("You can copy anyway; you will be asked for a reason."))}</div></div>`
 				: "";
+			const drafts = PPAS_PURE.drafted_count(copies);
+			const held = Object.entries(result.drafted_conflicts || {}).filter(([who, list]) => (list || []).length);
+			const draft_note = drafts
+				? `<div class="pp-route-note">${pp_esc(
+						this.draft_on
+							? __("{0} of these copies will be held as drafts until you publish them (Hold all my changes is on).", [drafts])
+							: __("{0} of these copies go to a project whose schedule is still Draft: they are kept as drafts (marked Draft) until it is published.", [drafts])
+				  )}${
+						held.length
+							? `<div>${pp_esc(__("As drafts they would overbook {0}; nobody is asked for a reason until they are published.", [held.map(([who]) => this.p4_conflict_heading(who)).join(", ")]))}</div>`
+							: ""
+				  }</div>`
+				: "";
 			const dialog = new frappe.ui.Dialog({
 				title: __("Copy {0} task(s) into the week of {1}?", [copies.length, pp_when(target_start)]),
 				size: "large",
@@ -3238,7 +3279,7 @@ class ProjectPlanner {
 					{
 						fieldtype: "HTML",
 						fieldname: "preview",
-						options: `${warn}<table class="pp-copy-table">${table}</table>${skip_note}`,
+						options: `${warn}${draft_note}<table class="pp-copy-table">${table}</table>${skip_note}`,
 					},
 				],
 				primary_action_label: clashes.length ? __("Copy anyway") : __("Copy"),
@@ -3247,8 +3288,14 @@ class ProjectPlanner {
 					this.send("copy_week", Object.assign({ dry_run: 0 }, base)).then((done) => {
 						if (!done) return;
 						const made = (done.copies || done.created || []).length || copies.length;
+						const kept = PPAS_PURE.drafted_count(done.created);
 						frappe.show_alert(
-							{ message: __("{0} task(s) copied into the week of {1}", [made, pp_when(target_start)]), indicator: "green" },
+							{
+								message: kept
+									? __("{0} task(s) copied into the week of {1}, {2} of them as drafts", [made, pp_when(target_start), kept])
+									: __("{0} task(s) copied into the week of {1}", [made, pp_when(target_start)]),
+								indicator: "green",
+							},
 							6
 						);
 						this.go(this.view, target_start);
@@ -3688,7 +3735,9 @@ const PP3B = {
 	my_week: "my-week",
 	pref: "ee_project_planner_draft",
 	// The writes that go to the drafts while "Hold all my changes" is on, and (P4) on a Draft schedule.
-	draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"],
+	// v1.740.0: the Overdue tray's Reschedule (bulk_update) and Copy week too; the server drafts them on
+	// a Draft schedule whatever the page sends.
+	draft_methods: ["save_task", "add_crew", "swap_crew", "move_many", "bulk_update", "copy_week"],
 };
 
 const PP3B_METHODS = {
@@ -6325,8 +6374,18 @@ const PP6B_METHODS = {
 		const fresh_why = __("Not published yet");
 		const copying = editable && !fresh;
 		const copy_why = !editable ? why : fresh ? fresh_why : "";
-		const creating = editable && !this.draft_on && !fresh;
-		const create_why = !editable ? why : fresh ? fresh_why : this.draft_on ? __("Not in Draft mode") : "";
+		// v1.740.0: a split cannot be held as a draft, so a Draft schedule refuses it as the hold does.
+		const draft_schedule = editable && !fresh && this.as4_draft_project(card.project);
+		const creating = editable && !this.draft_on && !fresh && !draft_schedule;
+		const create_why = !editable
+			? why
+			: fresh
+			? fresh_why
+			: this.draft_on
+			? __("Not in Draft mode")
+			: draft_schedule
+			? __("Draft schedule: publish it first")
+			: "";
 		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
 		const multi = !!(card.start && end > card.start);
 		const items = [
@@ -14422,6 +14481,26 @@ const PPAS_PURE = {
 	// The board-wide hold drafts everything; otherwise the server drafts per project (auto).
 	draft_value(hold) {
 		return hold ? 1 : "auto";
+	},
+	// v1.740.0: what the Overdue tray adds after a reschedule drafted some of its tasks (bulk_update marks
+	// them "drafted") and the tasks that follow them; nothing when every task was saved.
+	overdue_draft_note(result, hold) {
+		const drafted = ((result && result.updated) || []).filter((item) => item && item.drafted).length;
+		if (!drafted) return "";
+		const parts = [
+			hold
+				? __("{0} of them are held as drafts until you publish them.", [drafted])
+				: __("{0} of them are drafts until their project's schedule is published.", [drafted]),
+		];
+		const followers = ((result && result.shifted) || []).length;
+		if (followers) parts.push(__("{0} task(s) that follow them moved too, as drafts.", [followers]));
+		const left = ((result && result.shift_skipped) || []).length;
+		if (left) parts.push(__("{0} task(s) that follow them stayed where they were.", [left]));
+		return parts.join(" ");
+	},
+	// v1.740.0: how many of Copy week's copies (the dry run's `copies`, the run's `created`) are drafts.
+	drafted_count(items) {
+		return (items || []).filter((item) => item && item.drafted).length;
 	},
 	// The Undo entries for the tasks that moved along: each back to the days it had.
 	undo_items(moves) {
