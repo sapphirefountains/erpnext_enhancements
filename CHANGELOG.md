@@ -37,6 +37,70 @@ James modules be Projects, Opportunities, CRM, Supplier, Accounts (Customer) ins
 - James keeps Management until his User's Dock Profile is switched to CEO. The manager files that User
   change after deploy. The User `on_update` hook then rewrites his layer at once.
 
+## [1.735.0] - 2026-10-23
+
+CRM now opens on the Opportunity Kanban, and the Buying sidebar lists Purchase Order and Material
+Request first. These are the two sidebar changes the dock usage audit in [1.734.0] recommended and left
+out of that release. The audit covered 90 days of Route History:
+- The Opportunity Kanban had 836 visits from six people. The CRM dashboard that CRM opened on had 189.
+- The Purchase Order list had 916 visits, 878 of them Parker's. The Material Request list had 133
+  from four people.
+
+### Changed
+- **CRM opens on the Opportunity Kanban.** frappe 16.50 opens a module on the first sidebar row that
+  leads anywhere (`sidebar.module_landing_route`). There is no separate landing setting. So the
+  Kanban becomes the CRM sidebar's first row.
+  - It is a URL row to `/desk/opportunity/view/kanban/Opportunity`, the same address as the dock's
+    Opportunities entry. A Sidebar Item can't name a list view, so a URL row is the only way to
+    reach the Kanban.
+  - The desk adds the CRM shell to the address, so the row is highlighted while the board is open.
+  - The dock's CRM entry opens the module's landing page, so it opens the Kanban too.
+  - The CRM dashboard is still one click away, as the second row.
+- **CRM's "Home" row is now "Dashboard".** It links the CRM dashboard, and CRM no longer opens on it.
+  Buying already labels its own dashboard row "Dashboard".
+- **Buying lists Purchase Order and Material Request first**, right under Home. Everything else keeps
+  its order.
+  - Before, ERPNext put Dashboard and Supplier above both. Purchase Order also sat below Request for
+    Quotation and Supplier Quotation.
+  - Home stays first, so Buying still opens on its workspace (203 visits from six people). Only CRM
+    was asked to open somewhere new.
+  - The Buying workspace page has no shortcuts on prod, so the sidebar is where these links live.
+
+### Added
+- **`arrange_core_sidebar_items`** (`setup/workspace_tweaks.py`), a new `after_migrate` hook that
+  runs after `add_core_sidebar_items`. It does the Buying reorder and the CRM relabel.
+  - It writes ERPNext's own rows with `db.set_value`, for the reasons the existing hooks give. A
+    `Custom Sidebar` layer that names no base row is appended at the very end. One that names a base
+    row is read as an arrangement and reorders the module. `Sidebar.validate_app_content` refuses a
+    save outside a migrate.
+  - It renumbers `idx` 1..n, and writes only where a value differs. So a second migrate writes
+    nothing.
+  - After an ERPNext re-import brings back ERPNext's order and labels, it runs in the same migrate
+    and puts ours back.
+  - A label someone else set is left alone. A site's own arrangement still wins, as before.
+- **`add_core_sidebar_items` can place a row at the top** (`after: None`) and can add URL rows.
+  - A row's identity is now what it opens: `link_to`, or `url` for a URL row. This matches frappe's
+    `sidebar.item_key`. Keyed on `link_to` alone, every URL row in a sidebar would count as the same
+    row.
+- **The Kanban row is taken away from anyone who can't read Opportunity.** frappe permission-checks
+  every sidebar row except a URL row: `desk.utils.is_item_allowed` returns True for `url`.
+  - Without this, three enabled System Users would have CRM open on a page that refuses them. They are
+    two External Contractor accounts and one HR account. They can see CRM at all only because everyone
+    can read Contact and Communication.
+  - `boot.boot_session` now calls `workspace_tweaks.drop_unreadable_sidebar_links`. It runs on every
+    boot, cached or not. For these users CRM opens on its dashboard, as it did before this release.
+  - If removing the row leaves a sidebar with nothing to open, the sidebar is removed too. That
+    matches what frappe does itself (`sidebar.resolve_sidebar`).
+
+### On deploy
+- `add_core_sidebar_items` inserts one row: the Kanban, at the top of CRM. The other 41 CRM rows
+  move down one.
+- `arrange_core_sidebar_items` renames CRM's "Home" row and renumbers six Buying rows: Purchase Order,
+  Material Request, Dashboard, Supplier, Request for Quotation and Supplier Quotation.
+- Neither hook bumps the sidebar's `modified`, and both clear the `bootinfo` cache.
+- Nothing is deleted. No patch is involved, and a failure in either hook logs an Error Log instead of
+  stopping the migrate.
+
 ## [1.734.0] - 2026-10-23
 
 The Dock, the icon rail on the left, now shows one rail across ERPNext and our own modules, starts with

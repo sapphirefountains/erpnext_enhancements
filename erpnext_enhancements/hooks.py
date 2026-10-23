@@ -2058,6 +2058,9 @@ scheduler_events = {
 # read from ERPNext Enhancements Settings — see boot.py and api/collab.py.
 # Also frappe.boot.sf_normalize (form kit P2-B): the phone fields the Desk shows as
 # (801) 555-0100, absent when site_config sets disable_value_normalization.
+# And it takes the Opportunity Kanban row out of frappe.boot.module_sidebars["CRM"] for anyone
+# who cannot read Opportunity: frappe never permission-checks a sidebar URL row (v1.735.0,
+# setup/workspace_tweaks.drop_unreadable_sidebar_links).
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------
@@ -2369,7 +2372,14 @@ after_migrate = [
 	# base sidebar from ERPNext's own rows in idx order, so the rows go in at the right idx;
 	# a Custom Sidebar layer would append at the very end or reorder the module. Skips a link
 	# already there (hidden or not), re-adds after an ERPNext re-import, logs instead of raising.
+	# Since v1.735.0 also the Opportunity Kanban as the CRM sidebar's first row, so CRM opens on
+	# it (the dock usage audit of v1.734.0).
 	"erpnext_enhancements.setup.workspace_tweaks.add_core_sidebar_items",
+	# Same audit: Purchase Order and Material Request moved up under Home in the Buying sidebar,
+	# and CRM's dashboard row renamed from "Home" to "Dashboard" now that CRM opens on the Kanban.
+	# Renumbers ERPNext's own rows' idx with db.set_value, only where it differs, so a second
+	# migrate writes nothing; re-applied after an ERPNext re-import; logs instead of raising.
+	"erpnext_enhancements.setup.workspace_tweaks.arrange_core_sidebar_items",
 	# The Dock rail per job (v1.734.0, Nik 2026-10-23). Keeps the site's layer of ERPNext's dock
 	# (Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer on
 	# their dock profile: the User's Dock Profile, else the first profile their Role Profiles

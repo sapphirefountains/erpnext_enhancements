@@ -44,6 +44,16 @@ Adding a link to a core sidebar works the same way, by writing ERPNext's own row
 and one that names any base row reorders the module. `add_core_sidebar_items` inserts the Project
 Planner and Crew Utilization into the Projects sidebar at the right `idx` (v1.583.1).
 
+A module opens on the first row of its sidebar that leads anywhere (`sidebar.module_landing_route`
+in frappe's desk), so choosing a module's landing page means choosing its first row. That is how
+CRM opens on the Opportunity Kanban (v1.735.0): `add_core_sidebar_items` puts a URL row to
+`/desk/opportunity/view/kanban/Opportunity` above the CRM dashboard, and `arrange_core_sidebar_items`
+renames the dashboard row from "Home" to "Dashboard". The same function renumbers Buying so Purchase
+Order and Material Request sit right under Home. A URL row is the one row frappe never
+permission-checks (`desk.utils.is_item_allowed` answers True for it), so `boot.py` takes the Kanban
+row out of the boot payload of anyone who cannot read Opportunity
+(`workspace_tweaks.drop_unreadable_sidebar_links`).
+
 ## Sidebars are also what make a desk tile visible
 
 The tiles on the Desk home grid are `Desktop Icon` records, not workspaces — but a tile of
