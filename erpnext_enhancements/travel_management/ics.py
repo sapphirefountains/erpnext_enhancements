@@ -25,6 +25,15 @@ invite relies on. Every travel calendar a trip email attaches carries
 already has, and a later itinerary email must not then look *older* than the
 alert's, which a calendar that honors SEQUENCE would ignore. A booking taken
 off someone's trip is sent under its old UID with ``STATUS:CANCELLED``.
+
+**ORGANIZER and ATTENDEE** (v1.733.0). An event may also carry ``organizer`` (an
+address) and ``attendees`` (a list of addresses). With ``method="REQUEST"`` that is
+an RFC 5546 invite — one shared meeting the recipient can accept or decline —
+rather than a copy to file away; the CRM hand-off's email fallback sends it when no
+Google Calendar could organize the meeting, and ``METHOD:CANCEL`` under the same
+UID withdraws it. The RSVP goes back to the organizer by email: nothing here
+collects it, which is why the Google path is the preferred one. An event without
+the two keys is written exactly as before.
 """
 
 from datetime import timedelta
@@ -94,8 +103,10 @@ def build_ics(events, method="PUBLISH"):
 	all-day DTEND is made exclusive by adding a day), optional
 	``description``, ``location``, ``url``, ``sequence`` (int: which version of
 	the event this is, so a calendar replaces an older copy of the same UID) and
-	``status`` (``"CANCELLED"`` takes the event off the calendar). An event
-	without the last two is written exactly as before they existed.
+	``status`` (``"CANCELLED"`` takes the event off the calendar), ``organizer``
+	(an address) and ``attendees`` (addresses), which with ``method="REQUEST"``
+	make it an invite. An event without the optional keys is written exactly as
+	before they existed.
 	"""
 	lines = [
 		"BEGIN:VCALENDAR",
@@ -129,6 +140,12 @@ def build_ics(events, method="PUBLISH"):
 			lines.append(f"URL:{_escape(event['url'])}")
 		if event.get("status"):
 			lines.append(f"STATUS:{_escape(event['status'])}")
+		# Addresses are written raw: a mailto: URI is not TEXT, so TEXT escaping would
+		# corrupt it, and an address with a comma or semicolon in it is not one we send to.
+		if event.get("organizer"):
+			lines.append(f"ORGANIZER:mailto:{event['organizer']}")
+		for address in event.get("attendees") or []:
+			lines.append(f"ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:{address}")
 		lines.append("END:VEVENT")
 
 	lines.append("END:VCALENDAR")

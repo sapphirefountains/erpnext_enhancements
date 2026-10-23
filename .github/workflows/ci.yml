@@ -3136,6 +3136,19 @@ jobs:
       # weekend, and that step 5 never escalates while step 4 does.
       - name: Closed-Won hand-off gate (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_handoff_gate -v
+      # The hand-off and launch meetings as Google Calendar events (v1.733.0). Its
+      # own step: it installs a frappe stub AND a fake of frappe's Google Calendar
+      # module in setUpModule, so it must not share a process with the gate suite
+      # above. unittest classes, so `python -m unittest` collects them.
+      #
+      # Pins who organizes (own calendar, then the fallback, then email), that
+      # group addresses are guests, that Google sends the invite with a Meet
+      # request and ERPNext then sends no email, that re-schedule moves the same
+      # Event and Google event instead of adding a second (EV00454/EV00455), that
+      # Skip cancels it, that a revoked token falls back and logs no secret, and
+      # that a time already past is refused (EV00456, booked at 09:21 for 01:30).
+      - name: Hand-off meetings on Google Calendar (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_handoff_calendar -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       # QBO attachment mirroring (v1.359.0). Its own pytest step (plain functions +

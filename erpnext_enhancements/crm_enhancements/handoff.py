@@ -54,6 +54,16 @@ and the money it works out to. A blank Billing Email means the configured Billin
 route, which is still ``billing@sapphirefountains.com`` — the field is an
 override, not a redirect that had to be filled in for the old behaviour to keep
 working.
+
+**The meetings are Google Calendar events (v1.733.0).** Both meetings are now
+created by Google on an organizer's calendar, with every attendee as a guest, a
+Meet link and Google's own invites; :mod:`.handoff_calendar` holds that half and
+says why it bypasses Frappe's Event sync. What stays here is the ERPNext side:
+**one Event per meeting**, moved rather than duplicated on re-schedule (Summit
+Vista had two, EV00454 and EV00455), cancelled with its invite on Skip, and the
+email invite as the last resort when no Google Calendar can organize it. The email
+is never sent as well as Google's: two invites for one meeting is the bug this
+replaced.
 """
 
 import re
@@ -72,6 +82,7 @@ from frappe.utils import (
 )
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements.crm_enhancements import handoff_calendar
 from erpnext_enhancements.crm_enhancements.historical import is_historical
 from erpnext_enhancements.feature_flags import handoff_gate_enabled, process_automation_enabled
 from erpnext_enhancements.utils.working_days import add_working_days
@@ -95,6 +106,12 @@ LAUNCH_GOAL_BUSINESS_DAYS = 7
 #: Default meeting length. Short on purpose: the meeting is a handover, and a
 #: 15-minute default is far likelier to actually get booked than an hour.
 DEFAULT_DURATION_MINUTES = 15
+
+#: How far in the past a meeting may start and still be booked. A little slack, so
+#: a meeting booked as it begins still goes through; anything older is a typo.
+#: EV00456 was booked at 09:21 for 01:30 the same morning, because the picker is a
+#: 24-hour clock and "1:30" meant 1:30 PM.
+PAST_GRACE_MINUTES = 30
 
 #: First and last hour (site time) a default slot may be proposed in.
 WORKDAY_START_HOUR = 9
@@ -352,13 +369,16 @@ def project_meeting_attendees(project):
 
 @frappe.whitelist()
 def schedule_project_meeting(project, starts_on=None, attendees=None, duration_minutes=None):
-	"""Create the project launch meeting Event and send the invite.
+	"""Book (or move) the project launch meeting and invite the team.
 
 	The same act as :func:`schedule_handoff_meeting`, one step later and hung off
 	a Project instead of an Opportunity — so it shares the dialog, the Event
 	shape and the invite. Kept as its own endpoint rather than overloading the
 	first with a doctype argument: the permission check differs (Project write,
 	not Opportunity write), and collapsing them would make that easy to get wrong.
+
+	A Project has no field pointing at its launch Event, so the open one is found
+	by reference and subject (:func:`_launch_event`). Booking again moves it.
 	"""
 	doc = frappe.get_doc("Project", project)
 	if not doc.has_permission("write"):
@@ -370,7 +390,7 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 	if not addresses:
 		frappe.throw(_("No attendees could be resolved for this project."))
 
-	start = get_datetime(starts_on) if starts_on else next_business_slot()
+	start = _meeting_start(starts_on)
 	minutes = cint(duration_minutes) or DEFAULT_DURATION_MINUTES
 	end = add_to_date(start, minutes=minutes)
 
@@ -378,29 +398,27 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 	link = get_url_to_form("Project", doc.name)
 	subject = _("Project Launch Meeting — {0}").format(label)
 
-	event = _create_event(
+	booked = _book_meeting(
+		existing=_launch_event(doc.name),
 		subject=subject,
 		starts_on=start,
 		ends_on=end,
-		description=_meeting_description(label, link, addresses),
 		attendees=addresses,
+		label=label,
+		link=link,
+		purpose=_("Project launch for {0}.").format(label),
 		reference_doctype="Project",
 		reference_docname=doc.name,
 	)
-	sent = _send_invite(event, addresses, subject, label, link)
 	doc.add_comment(
 		"Comment",
-		_("Project launch meeting scheduled for {0} with {1}.").format(
-			frappe.utils.format_datetime(start), ", ".join(addresses)
-		),
+		(
+			_("Project launch meeting moved to {0} with {1}.")
+			if booked["rescheduled"]
+			else _("Project launch meeting scheduled for {0} with {1}.")
+		).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
 	)
-	return {
-		"event": event.name,
-		"starts_on": str(start),
-		"attendees": addresses,
-		"invited": sent,
-		"not_invited": _not_invited(attendees),
-	}
+	return _booking_response(booked, start, addresses, attendees)
 
 
 @frappe.whitelist()
@@ -424,6 +442,9 @@ def project_handoff_context(project):
 	return {
 		"launch_deadline": str(deadline) if deadline else None,
 		"invoice_flow": flow or "Manual Billing Email",
+		# The booked launch meeting, for step 7's card: when, and its Meet link.
+		# No Google call; the guest list is fetched when someone asks for it.
+		"launch_meeting": handoff_calendar.meeting_summary(_launch_event(project)),
 	}
 
 
@@ -646,6 +667,31 @@ def _handoff_holiday_list():
 	return frappe.db.get_single_value("ERPNext Enhancements Settings", "handoff_holiday_list")
 
 
+def _meeting_start(starts_on):
+	"""The meeting's start, or the default slot. Refuses a time that has already passed.
+
+	Both are site-local wall-clock times (America/Denver on prod), and so is what
+	the dialog sends: every user on the site has the site's time zone, so v16's
+	Datetime control converts nothing. EV00456's 01:30 was therefore not a time-zone
+	shift. It was booked at 09:21 for 01:30 that same morning, and the dialog's own
+	default would have been 09:30, so the time was typed or picked on the 24-hour
+	clock as "1:30" for 1:30 PM. Nothing stopped a meeting from being booked in the
+	past, and an invite for a meeting that is already over still went out, so
+	that is what is refused now.
+	"""
+	if not starts_on:
+		return next_business_slot()
+	start = get_datetime(starts_on)
+	if start < add_to_date(now_datetime(), minutes=-PAST_GRACE_MINUTES):
+		frappe.throw(
+			_(
+				"{0} has already passed. Times use the 24-hour clock, so 1:30 PM is 13:30. Pick a time from now on."
+			).format(frappe.utils.format_datetime(start)),
+			title=_("That time has passed"),
+		)
+	return start
+
+
 # ---------------------------------------------------------------------------
 # The meeting
 # ---------------------------------------------------------------------------
@@ -669,9 +715,13 @@ def _participant_reference(address):
 	return None
 
 
-def _meeting_description(label, link, attendees):
+def _meeting_description(label, link, attendees, purpose=None):
+	"""The Event's description. The attendee line is also how a later re-schedule
+	or Skip finds who the *email* invite went to (:func:`_description_addresses`):
+	Event Participants cannot hold a group address, so it is the only record."""
+	purpose = purpose or _("Closed-Won hand-off for {0}.").format(label)
 	lines = [
-		f"<p>{frappe.utils.escape_html(_('Closed-Won hand-off for {0}.').format(label))}</p>",
+		f"<p>{frappe.utils.escape_html(purpose)}</p>",
 		f"<p><a href='{link}'>{frappe.utils.escape_html(link)}</a></p>",
 		f"<p><b>{frappe.utils.escape_html(_('Attendees'))}:</b> "
 		f"{frappe.utils.escape_html(', '.join(attendees))}</p>",
@@ -699,6 +749,18 @@ def _create_event(subject, starts_on, ends_on, description, attendees, reference
 	event.reference_doctype = reference_doctype
 	event.reference_docname = reference_docname
 
+	_add_participants(event, attendees)
+	event.flags.ee_handoff_calendar = True
+	event.insert(ignore_permissions=True)
+	return event
+
+
+def _add_participants(event, attendees):
+	"""The participants grid: every attendee an Employee or Contact stands behind.
+
+	A grid row, not the guest list. Google's guest list holds every address,
+	group addresses included; this grid is only what ERPNext can link.
+	"""
 	for address in attendees:
 		reference = _participant_reference(address)
 		if not reference:
@@ -708,17 +770,47 @@ def _create_event(subject, starts_on, ends_on, description, attendees, reference
 			{"reference_doctype": reference[0], "reference_docname": reference[1], "email": address},
 		)
 
-	event.insert(ignore_permissions=True)
-	return event
+
+def _description_addresses(event):
+	"""The addresses in the Event's description: who an email invite went to.
+
+	:func:`_meeting_description` writes them; the link line beside them has no
+	``@`` in it. Read rather than stored because nothing else can hold them.
+	"""
+	text = str(getattr(event, "description", None) or "")
+	return _dedupe(re.findall(r"[^\s,;<>\"']+@[^\s,;<>\"']+", text))
 
 
-def _send_invite(event, attendees, subject, label, link):
-	"""Email the invite, with a calendar attachment.
+def _invite_uid(event):
+	"""The ``.ics`` UID, the same one every invite for this Event has used."""
+	return f"{frappe.scrub(event.name)}@{frappe.local.site}"
 
-	Note the attachment is ``METHOD:PUBLISH`` — an "add to calendar" file, not a
-	``METHOD:REQUEST`` invite with RSVP tracking. ``travel_management.ics``
-	deliberately stops short of REQUEST semantics; extending it is a separate
-	piece of work. The email is the invite; the attachment is the convenience.
+
+def _organizer_address():
+	"""Who an email invite says it is from: the person who clicked."""
+	user = frappe.session.user
+	try:
+		return frappe.db.get_value("User", user, "email") or user
+	except Exception:
+		return user
+
+
+def _send_invite(event, attendees, subject, label, link, purpose=None, method="REQUEST"):
+	"""Email the invite, as a ``METHOD:REQUEST`` calendar invite (v1.733.0).
+
+	The **last resort**: sent only when no Google Calendar could organize the
+	meeting (:func:`handoff_calendar.deliver`). Until v1.733.0 this was the only
+	invite and it was ``METHOD:PUBLISH``, a file to add to your own calendar, so
+	everyone got a private copy with no guests and no RSVP. A REQUEST names the
+	clicker as ORGANIZER and every address as an ATTENDEE, so a mail client shows
+	one shared meeting to accept or decline. The UID is stable and SEQUENCE grows,
+	so a re-scheduled invite replaces the earlier one. Answers go back to the
+	organizer by email; nothing here records them, which is the Google path's job.
+
+	``method="CANCEL"`` withdraws it (Skip, or moving to Google).
+
+	The calendar part is sent as ``text/calendar; method=...``: Outlook decides
+	whether an attachment is an invite from that header, not from the file.
 
 	Failures are logged and swallowed: the Event exists and the step is recorded,
 	and losing the email must not roll that back.
@@ -727,52 +819,240 @@ def _send_invite(event, attendees, subject, label, link):
 		return False
 	from erpnext_enhancements.travel_management.ics import build_ics
 
+	purpose = purpose or _("Closed-Won hand-off for {0}.").format(label)
+	cancelling = method == "CANCEL"
 	try:
 		ics = build_ics(
 			[
 				{
-					"uid": f"{frappe.scrub(event.name)}@{frappe.local.site}",
+					"uid": _invite_uid(event),
 					"summary": event.subject,
 					"start": event.starts_on,
 					"end": event.ends_on,
-					"description": _("Closed-Won hand-off for {0}.").format(label),
+					"description": purpose,
 					"url": link,
+					# Seconds since the epoch: only ever grows, and needs nothing stored.
+					"sequence": int(get_datetime(now_datetime()).timestamp()),
+					"organizer": _organizer_address(),
+					"attendees": list(attendees),
+					"status": "CANCELLED" if cancelling else None,
 				}
-			]
+			],
+			method=method,
+		)
+		intro = (
+			_("This meeting has been cancelled: {0}").format(purpose)
+			if cancelling
+			else _("You are invited: {0}").format(purpose)
 		)
 		frappe.sendmail(
-			recipients=attendees,
-			subject=subject,
+			recipients=list(attendees),
+			subject=_("Cancelled: {0}").format(subject) if cancelling else subject,
 			message=email_style.wrap(
-				email_style.p(
-					_("You are invited to the Closed-Won hand-off meeting for {0}.").format(label)
-				)
-				+ email_style.kv(
-					[(_("When"), frappe.utils.format_datetime(event.starts_on))]
-				)
-				+ email_style.button(link, _("Open the hand-off")),
+				email_style.p(intro)
+				+ email_style.kv([(_("When"), frappe.utils.format_datetime(event.starts_on))])
+				+ email_style.button(link, _("Open in ERPNext")),
 				title=subject,
-				eyebrow=_("Hand-off"),
+				eyebrow=_("Meeting"),
 			),
-			attachments=[{"fname": f"{frappe.scrub(event.name)}.ics", "fcontent": ics}],
+			attachments=[
+				{
+					"fname": f"{frappe.scrub(event.name)}.ics",
+					"fcontent": ics,
+					"content_type": f"text/calendar; method={method}",
+				}
+			],
 			reference_doctype=event.reference_doctype,
 			reference_name=event.reference_docname,
 		)
 		return True
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Hand-off meeting invite failed")
+		frappe.log_error(title="Hand-off meeting invite failed", message=frappe.get_traceback())
 		return False
+
+
+def _open_event(name):
+	"""``name`` if it is an Event a re-schedule should move, else ``None``.
+
+	A Cancelled, Closed or Completed Event, or one somebody deleted, gets a fresh
+	booking instead: bringing a cancelled meeting back to life is not what
+	"schedule" means.
+	"""
+	if not name:
+		return None
+	status = frappe.db.get_value("Event", name, "status")
+	if not status or status in ("Cancelled", "Closed", "Completed"):
+		return None
+	return name
+
+
+def _launch_event(project):
+	"""The Project's open launch-meeting Event, or ``None``.
+
+	There is no field on Project for it, and adding one would mean a schema change
+	for a lookup this narrow: the launch Event is the newest open Event referencing
+	the Project whose subject is the launch meeting's own.
+	"""
+	if not project:
+		return None
+	prefix = _("Project Launch Meeting — {0}").format("")
+	names = frappe.get_all(
+		"Event",
+		filters={
+			"reference_doctype": "Project",
+			"reference_docname": project,
+			"status": ("not in", ("Cancelled", "Closed", "Completed")),
+			"subject": ("like", f"{prefix}%"),
+		},
+		pluck="name",
+		order_by="creation desc",
+		limit=1,
+	)
+	return names[0] if names else None
+
+
+def _move_event(name, subject, starts_on, ends_on, description, attendees):
+	"""Re-schedule: the same Event gets the new time, subject and participants."""
+	event = frappe.get_doc("Event", name)
+	event.subject = subject
+	event.starts_on = starts_on
+	event.ends_on = ends_on
+	event.description = description
+	event.set("event_participants", [])
+	_add_participants(event, attendees)
+	event.flags.ee_handoff_calendar = True
+	event.save(ignore_permissions=True)
+	return event
+
+
+def _calendar_text(purpose, link):
+	"""The Google event's description: what it is, and where in ERPNext."""
+	return f"{purpose}\n\n{_('Open in ERPNext')}: {link}"
+
+
+def _book_meeting(
+	*,
+	existing,
+	subject,
+	starts_on,
+	ends_on,
+	attendees,
+	label,
+	link,
+	purpose,
+	reference_doctype,
+	reference_docname,
+):
+	"""Create or move the meeting's Event, then invite: Google first, email only if not.
+
+	Returns ``{"event", "rescheduled", "delivery", "invited"}``. Exactly one invite
+	goes out per booking. When Google sends it, no email does. When an Event whose
+	earlier invite went by email moves onto Google, that email invite is withdrawn
+	with a CANCEL, so nobody keeps both copies.
+	"""
+	description = _meeting_description(label, link, attendees, purpose=purpose)
+	emailed_before = []
+	if existing:
+		previous = frappe.get_doc("Event", existing)
+		if not previous.get("google_calendar_event_id"):
+			emailed_before = _description_addresses(previous)
+		event = _move_event(existing, subject, starts_on, ends_on, description, attendees)
+	else:
+		event = _create_event(
+			subject=subject,
+			starts_on=starts_on,
+			ends_on=ends_on,
+			description=description,
+			attendees=attendees,
+			reference_doctype=reference_doctype,
+			reference_docname=reference_docname,
+		)
+
+	delivery = handoff_calendar.deliver(event, attendees, _calendar_text(purpose, link))
+	if delivery["calendar_path"] == handoff_calendar.PATH_EMAIL:
+		invited = _send_invite(event, attendees, subject, label, link, purpose=purpose)
+	else:
+		invited = True
+		if emailed_before:
+			_send_invite(event, emailed_before, subject, label, link, purpose=purpose, method="CANCEL")
+	return {"event": event, "rescheduled": bool(existing), "delivery": delivery, "invited": invited}
+
+
+def _booking_response(booked, start, addresses, requested):
+	"""What both schedule endpoints return. ``calendar_path`` says which way it went."""
+	delivery = booked["delivery"]
+	return {
+		"event": booked["event"].name,
+		"starts_on": str(start),
+		"attendees": addresses,
+		"invited": booked["invited"],
+		"not_invited": _not_invited(requested),
+		"rescheduled": booked["rescheduled"],
+		"calendar_path": delivery["calendar_path"],
+		"meet_link": delivery.get("meet_link"),
+		"html_link": delivery.get("html_link"),
+		"organizer": delivery.get("organizer"),
+		"warnings": delivery.get("warnings") or [],
+	}
+
+
+def _cancel_meeting(event_name):
+	"""Cancel a booked meeting: its invite (Google or email) and the Event itself.
+
+	Never raises — it runs after the step it belongs to has been recorded, and a
+	Google outage must not turn a recorded Skip into an error. Returns what
+	happened, for the response, or ``None`` when there was nothing to cancel.
+	"""
+	if not event_name:
+		return None
+	try:
+		event = frappe.get_doc("Event", event_name)
+	except Exception:
+		return None
+	if event.get("status") == "Cancelled":
+		return {"event": event_name, "already": True}
+	try:
+		outcome = handoff_calendar.cancel(event)
+		if not outcome.get("google"):
+			emailed = _description_addresses(event)
+			if emailed:
+				reference_doctype = event.get("reference_doctype")
+				reference = event.get("reference_docname") or ""
+				link = get_url_to_form(reference_doctype, reference) if reference_doctype else ""
+				_send_invite(
+					event, emailed, event.subject, reference, link, purpose=event.subject, method="CANCEL"
+				)
+		event.status = "Cancelled"
+		event.flags.ee_handoff_calendar = True
+		event.save(ignore_permissions=True)
+		return {
+			"event": event_name,
+			"calendar_path": "google" if outcome.get("google") else handoff_calendar.PATH_EMAIL,
+			"cancelled": bool(outcome.get("cancelled") or not outcome.get("google")),
+			"warning": outcome.get("warning"),
+		}
+	except Exception:
+		frappe.log_error(title="Hand-off meeting: cancel failed", message=frappe.get_traceback())
+		return {
+			"event": event_name,
+			"cancelled": False,
+			"warning": _("The meeting could not be cancelled; see the Error Log."),
+		}
 
 
 @frappe.whitelist()
 def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, duration_minutes=None):
-	"""Create the hand-off meeting Event and send the invite.
+	"""Book (or move) the hand-off meeting and invite Sales, Production and Billing.
 
 	``attendees`` is whatever the dialog ended up with (a list, or a
 	comma/newline-separated string over HTTP); when omitted the configured
 	defaults are resolved server-side, so the endpoint is usable without the
 	dialog. Does **not** mark the step complete — holding the meeting and having
 	held it are different facts, and the audit was about the difference.
+
+	Booking again while a meeting is open **moves** it (v1.733.0): the same Event
+	and the same Google invite change time and guests. Until then each re-schedule
+	made a second Event and left the first invite on everyone's calendar.
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity)
 	if not doc.has_permission("write"):
@@ -787,7 +1067,7 @@ def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, durati
 			_("No hand-off attendees could be resolved. Set them in ERPNext Enhancements Settings.")
 		)
 
-	start = get_datetime(starts_on) if starts_on else next_business_slot()
+	start = _meeting_start(starts_on)
 	minutes = cint(duration_minutes) or DEFAULT_DURATION_MINUTES
 	end = add_to_date(start, minutes=minutes)
 
@@ -795,32 +1075,29 @@ def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, durati
 	link = get_url_to_form("Opportunity", doc.name)
 	subject = _("Hand-Off Meeting — {0}").format(label)
 
-	event = _create_event(
+	booked = _book_meeting(
+		existing=_open_event(doc.get("custom_handoff_event")),
 		subject=subject,
 		starts_on=start,
 		ends_on=end,
-		description=_meeting_description(label, link, addresses),
 		attendees=addresses,
+		label=label,
+		link=link,
+		purpose=_("Closed-Won hand-off for {0}.").format(label),
 		reference_doctype="Opportunity",
 		reference_docname=doc.name,
 	)
 
-	sent = _send_invite(event, addresses, subject, label, link)
-
-	doc.db_set("custom_handoff_event", event.name, update_modified=False)
+	doc.db_set("custom_handoff_event", booked["event"].name, update_modified=False)
 	doc.add_comment(
 		"Comment",
-		_("Hand-off meeting scheduled for {0} with {1}.").format(
-			frappe.utils.format_datetime(start), ", ".join(addresses)
-		),
+		(
+			_("Hand-off meeting moved to {0} with {1}.")
+			if booked["rescheduled"]
+			else _("Hand-off meeting scheduled for {0} with {1}.")
+		).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
 	)
-	return {
-		"event": event.name,
-		"starts_on": str(start),
-		"attendees": addresses,
-		"invited": sent,
-		"not_invited": _not_invited(attendees),
-	}
+	return _booking_response(booked, start, addresses, attendees)
 
 
 def _attendee_entries(attendees):
@@ -953,7 +1230,10 @@ def skip_handoff(opportunity, reason):
 
 	_stamp_handoff(doc, skip_reason=reason)
 	doc.add_comment("Comment", _("Hand-off meeting SKIPPED by {0}: {1}").format(frappe.session.user, reason))
-	return {"already": False, "reason": reason}
+	# A skipped meeting is not going to happen, so its invite comes off everyone's
+	# calendar. After the stamp, and unable to raise: the skip is the record.
+	cancelled = _cancel_meeting(doc.get("custom_handoff_event"))
+	return {"already": False, "reason": reason, "meeting": cancelled}
 
 
 # ---------------------------------------------------------------------------
@@ -1004,7 +1284,8 @@ def handoff_state(opportunity):
 	# stored on the Opportunity so a re-scheduled meeting reads correctly without
 	# a second field to keep in sync; ``None`` if somebody deleted the Event.
 	event = row.get("custom_handoff_event")
-	event_on = frappe.db.get_value("Event", event, "starts_on") if event else None
+	meeting = handoff_calendar.meeting_summary(event)
+	event_on = meeting["starts_on"] if meeting else None
 	return {
 		"available": True,
 		"enabled": process_automation_enabled() and handoff_gate_enabled(),
@@ -1016,6 +1297,8 @@ def handoff_state(opportunity):
 		"skip_reason": row.get("custom_handoff_skip_reason"),
 		"event": event,
 		"event_on": str(event_on or ""),
+		# The Meet link and whether Google holds the invite, for step 2's card.
+		"meeting": meeting,
 		"due_by": str(row.get("custom_handoff_due_by") or ""),
 		"launch_deadline": str(row.get("custom_launch_deadline") or ""),
 		"project": row.get("custom_created_project"),

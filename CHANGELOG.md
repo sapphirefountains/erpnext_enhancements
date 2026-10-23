@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.733.0] - 2026-10-23
+
+The Closed-Won hand-off meeting and the project launch meeting are now real Google Calendar events. Each is one
+shared event: every guest can see the others and RSVP, it has a Google Meet link, and Google sends the invites. Nik,
+2026-10-23: the old invite "doesn't show up as a typical event. It is individually on our calendars and you can't see
+who the other guests are". It was an ERPNext Event plus an email with a `METHOD:PUBLISH` `.ics` attached, which is a
+file to add to your own calendar, so each person got a private copy. One new Settings field, one Event hook, no patch,
+and existing Events are untouched.
+
+### Added
+- **Who organizes the meeting, in order** (`crm_enhancements/handoff_calendar.py`, Nik's choice): first the person
+  who clicks Schedule, once they have connected their Google Calendar. Then the shared calendar in the new setting
+  **ERPNext Enhancements Settings → Hand-Off Fallback Google Calendar** (`handoff_fallback_google_calendar`, a Link to
+  Google Calendar). Then email. A calendar is used only when it is enabled, set to push, and authorized (it has a
+  refresh token). Every organizer that fails is logged and reported, and the next one is tried. A Google failure never
+  rolls the step back. The response says which way the invite went (`calendar_path`: `own_calendar`,
+  `fallback_calendar`, `original_organizer` or `email`) and lists each failure in `warnings`, which the dialog shows.
+  The dialog also says, before you book, which way the invite will go.
+- **"Connect my Google Calendar"**, in the schedule dialog whenever the invite would not come from your own calendar
+  (`connect_google_calendar`). It creates your Google Calendar record and starts Frappe's own authorize flow. The
+  record is always for the session user. It has `pull_from_google_calendar` = 0, so nobody's personal events are
+  imported into ERPNext, `push_to_google_calendar` = 1, and the Calendar ID `primary`, so invites come from your own
+  calendar. If you already have a record, it is reused. No permission change was needed: v16 gives the automatic
+  `Desk User` role (every System User has it) `if_owner` create and write on Google Calendar. Checked on prod: there
+  is no Custom DocPerm on it.
+- **The step card shows the meeting**: the Meet link, and a "Guests & RSVPs" toggle that lists each guest's answer
+  and links to the event in Google Calendar. This is on the Opportunity's step 2 and the Project's step 7. The
+  answers are read from Google only when someone clicks, and then kept for 2 minutes (`meeting_guests`). A form load
+  reads only the Event row, so it costs no API call. The Project's step-7 button reads "Re-schedule Launch Meeting"
+  once a launch meeting is booked.
+
+### Changed
+- **Google creates the event, and ERPNext calls the API itself instead of using Frappe's Event sync.** Frappe v16's
+  `Google Calendar` doctype still handles OAuth and tokens (`authorize_access`, `get_google_calendar_object`). The
+  event is not pushed through Frappe's `Event` hooks, for two reasons. Their `get_attendees` reads only Event
+  Participants rows, which need an Employee or Contact behind every address, so `production@` could never be a
+  guest. And they `msgprint` "Event Synced with Google Calendar." on every save. So `sync_with_google_calendar` stays
+  0, and `events().insert/patch/delete` are called with the full deduplicated guest list, `conferenceData.createRequest`
+  (`hangoutsMeet`, `conferenceDataVersion=1`) and `sendUpdates="all"`. The Event stores `google_calendar`,
+  `google_calendar_id`, `google_calendar_event_id` and `google_meet_link`, always all four together. Frappe's own
+  `on_trash` hook reads them, so deleting the Event cancels the Google event, and a blank `calendar_id` would make
+  that hook fail and block the delete. **Do not tick Sync with Google Calendar on these Events.** Frappe's
+  `on_update` would then push a second copy built from the participants grid.
+- **No double invite.** When Google sent the invite, ERPNext sends no email and no `.ics`.
+- **Re-schedule moves the same Event and the same Google event.** It used to insert a second Event and overwrite
+  `custom_handoff_event`, which left the first invite on everyone's calendar. Summit Vista has two, EV00454 and
+  EV00455, both for 2026-09-11 08:45; they are left as they are. Now the open Event is updated and its Google event
+  is patched with `sendUpdates="all"`. The guest list is merged, so guests who are still invited keep their RSVP,
+  new guests are added, and removed guests are told by Google. A Project has no field pointing at its launch Event,
+  so `_launch_event` finds the newest open Event that references the Project and has the launch meeting's subject.
+  If the original organizer's calendar can no longer be reached, a new invite goes out from the next organizer, and
+  the response says the old one may still be on guests' calendars. An Event whose earlier invite went by email, and
+  that now moves onto Google, gets that email invite withdrawn with a `METHOD:CANCEL`.
+- **The email fallback is a `METHOD:REQUEST` invite.** `travel_management/ics.py` can now write `ORGANIZER` (the
+  person who clicked) and `ATTENDEE` lines. An event without them is written exactly as before, so the travel
+  calendars are unchanged. The UID is stable and `SEQUENCE` increases, so a re-scheduled invite replaces the old one.
+  The `.ics` part is sent as `text/calendar; method=REQUEST`, because Outlook uses that header to decide whether an
+  attachment is an invite. Replies go to the organizer by email; nothing records them, which is why Google is
+  preferred.
+
+### Fixed
+- **Skip cancels the meeting.** Skip now deletes the Google event with `sendUpdates="all"` (or emails a
+  `METHOD:CANCEL`) and sets the Event to Cancelled. The skip is recorded first, and the cancel cannot raise. Setting
+  one of these Events to Cancelled in the Desk also cancels its Google invite (new `Event` `on_update` hook,
+  `cancel_on_status_change`). The app's own saves set `flags.ee_handoff_calendar`, so the hook does not cancel twice.
+- **A meeting can no longer be booked for a time that has already passed.** EV00456 (Stephen Swenson) was booked at
+  09:21 on 2026-09-25 for 01:30 that morning. This was not a time zone bug. The site and all 20 users are on
+  America/Denver, so v16's Datetime control converts nothing, and the dialog's default would have been 09:30. The
+  picker uses a 24-hour clock (`HH:mm`), and "1:30" meant 1:30 PM. Both the server (`_meeting_start`) and the dialog
+  now refuse a start more than 30 minutes in the past, with a message that 1:30 PM is 13:30. The field's help says
+  the same.
+- **Google failures are logged without secrets and do not pop a modal.** Each Google step runs through one helper
+  that keeps only Google's HTTP status or the exception's class name. A network error's own text can contain the
+  request URL. The helper re-raises `from None`, so the original frames go no further, and it logs with
+  `title=`/`message=` keywords. It also runs with `frappe.flags.mute_messages`, because Frappe's helpers
+  `frappe.throw` on a bad calendar, and a throw queues its message before raising, so a caught failure would still
+  show the user a red modal.
+
+### Manual steps (Nik)
+- On the Google Cloud OAuth client used by **Google Settings**, add this **Authorized redirect URI** exactly:
+  `https://erp.sapphirefountains.com?cmd=frappe.integrations.doctype.google_calendar.google_calendar.google_callback`.
+  v16's `authorize_access` builds the redirect as the site root plus `?cmd=`, not `/api/method/`. Until it is added,
+  Google answers "redirect_uri_mismatch", and the dialog's Connect prompt tells the user to send this URI to a System
+  Manager. Also enable the **Google Calendar API** on that project. The flow requests the
+  `https://www.googleapis.com/auth/calendar` scope; add it to the consent screen if the app is not Internal.
+- For the fallback, create a Google Calendar record for the shared organizer account (Calendar ID `primary`, Push to
+  Google Calendar on, Pull off), click Authorize while signed in to Google as that account, and pick the record in
+  **ERPNext Enhancements Settings → Hand-Off Fallback Google Calendar**. Until then, anyone who has not connected
+  their own calendar sends the email invite.
+
+### Tests
+- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 38 tests, with a fake Google service.
+  It covers organizer order and skipping unusable calendars; group addresses as guests; the Meet request and
+  `sendUpdates`; no email when Google sent the invite; re-schedule patching the same event and adding no second
+  Event, keeping guests' RSVPs; the launch meeting moving the same way; Skip and a Desk cancel deleting the Google
+  event; a revoked token falling back, logged with keywords and no secret, and leaving no queued modal; the
+  `METHOD:REQUEST` email; the past-time refusal; the cached guest list; and the connect endpoint.
+
 ## [1.732.0] - 2026-10-23
 
 Follow-ups to the Reorder Board (v1.730.0) that it and the reorder switch (v1.728.0) left open. No new
