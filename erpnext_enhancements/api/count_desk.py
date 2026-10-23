@@ -1071,6 +1071,13 @@ def post_count(session, mode="post"):
 			),
 			frappe.PermissionError,
 		)
+	counted_at = _counted_at(doc)
+	if counted_at:
+		# What the ledger says about Counted At can change after a line was typed: an entry recorded
+		# late and backdated before it is in the on-hand now, so a snapshot taken without it would
+		# apply it twice. Read every line's baseline again, and keep it on the lines.
+		_resnapshot(doc)
+		doc.save(ignore_permissions=True)
 	group_map = rules.groups(_line_dicts(doc))
 	items = _items({key[0] for key in group_map})
 	refusals = {code: rules.item_refusal(items.get(code)) for code in {key[0] for key in group_map}}
@@ -1089,6 +1096,7 @@ def post_count(session, mode="post"):
 		_superseded(group_map),
 		rate_for,
 		require_reason=bool(cint(get_settings().get("require_variance_reason"))),
+		paper=bool(counted_at),
 	)
 	if plan["needs_reason"]:
 		names = sorted({row["item_code"] for row in plan["needs_reason"]})

@@ -141,6 +141,12 @@ class CountDeskPage {
 		if (this.sf && this.sf.toast) this.sf.toast(message, { tone: tone || "info" });
 	}
 
+	// A stored Datetime (system time zone, as the server keeps it) as the user reads it: the Datetime
+	// control converts to the user's zone, so a label written beside it must too.
+	when(value) {
+		return value ? frappe.datetime.str_to_user(frappe.datetime.convert_to_user_tz(value)) : "";
+	}
+
 	form_link(doctype, name) {
 		return frappe.utils.get_form_link(doctype, name);
 	}
@@ -740,7 +746,7 @@ class CountDeskPage {
 		const scope = s.scoped ? __("{0} locations", [s.scope.length]) : __("counted on the phone");
 		// A paper count says when it was counted; an open Count Desk count offers to say so (a phone
 		// count is snapshotted as each item is scanned, and the server refuses it one).
-		const when = s.counted_at ? __("counted at {0}", [frappe.datetime.str_to_user(s.counted_at)]) : __("live count");
+		const when = s.counted_at ? __("counted at {0}", [this.when(s.counted_at)]) : __("live count");
 		const counted_at = this.ctl.editable() && (s.scoped || s.counted_at)
 			? ` · <button type="button" class="btn btn-xs btn-link cd-counted-at" data-act="counted-at" title="${this.esc(
 					__("When the shelf was counted, for a count taken on paper and typed in later")
@@ -787,6 +793,8 @@ class CountDeskPage {
 			)}</button></span>`;
 		} else if (st.save_error) {
 			save = `<span class="cd-save cd-save--danger">${this.esc(st.save_error.message)}</span>`;
+		} else if (st.save_stuck) {
+			save = `<span class="cd-save cd-save--danger">${this.esc(st.save_stuck)}</span>`;
 		} else if (st.saving || st.pending.size) {
 			save = `<span class="cd-save">${this.esc(__("Saving…"))}</span>`;
 		} else if (errors) {
@@ -1308,7 +1316,7 @@ class CountDeskPage {
 			<button type="button" class="btn btn-sm btn-default" data-act="sheet">← ${this.esc(__("Back to the sheet"))}</button>
 			<div class="cd-title"><h2 class="cd-name">${this.esc(__("Review"))}: ${this.esc(s.title || s.name)}</h2>
 				<div class="cd-sub">${this.esc(s.name)} · ${this.esc(s.mine ? __("you") : s.counted_by_name)}${
-			s.counted_at ? ` · ${this.esc(__("counted at {0}", [frappe.datetime.str_to_user(s.counted_at)]))}` : ""
+			s.counted_at ? ` · ${this.esc(__("counted at {0}", [this.when(s.counted_at)]))}` : ""
 		}</div></div>
 			<div class="cd-head-actions">${actions.join("")}</div></div>`;
 		const notice = st.notice && st.notice.message ? this.notice_html(st.notice) : "";
@@ -1338,7 +1346,7 @@ class CountDeskPage {
 			if (check.reserved.length) checks.push(["warn", __("{0} items have stock reserved for orders. ERPNext will not count those; they are left out.", [check.reserved.length])]);
 			if (!s.can_post) checks.push(["neutral", __("Posting needs a Stock Manager. Send for review makes a draft reconciliation, dated now, for one to submit.")]);
 			if (s.counted_at) {
-				checks.push(["neutral", __("Counted at {0}: each variance is against what the stock ledger showed then.", [frappe.datetime.str_to_user(s.counted_at)])]);
+				checks.push(["neutral", __("Counted at {0}: each variance is against what the stock ledger showed then.", [this.when(s.counted_at)])]);
 			}
 			checks.push(["neutral", __("What posts is each variance applied to what is on hand now, so anything taken or received since it was counted is kept.")]);
 		}
@@ -1473,7 +1481,7 @@ class CountDeskPage {
 		if (!s) return;
 		if (!this.ctl.editable() || !(s.scoped || s.counted_at)) {
 			const when = s.counted_at
-				? __("Counted at {0}.", [frappe.datetime.str_to_user(s.counted_at)])
+				? __("Counted at {0}.", [this.when(s.counted_at)])
 				: s.scoped
 				? __("Counted live: each row against the system as it was typed.")
 				: __("A count taken on the phone is counted as each item is scanned, so it has no Counted At.");
@@ -1494,7 +1502,7 @@ class CountDeskPage {
 			],
 			(values) =>
 				this.ctl.update({ counted_at: values.counted_at || "" }).then(
-					() => this.toast(values.counted_at ? __("Counted at {0}.", [frappe.datetime.str_to_user(values.counted_at)]) : __("This is a live count again."), "success"),
+					() => this.toast(values.counted_at ? __("Counted at {0}.", [this.when(values.counted_at)]) : __("This is a live count again."), "success"),
 					(err) => this.toast((err && err.message) || __("Could not change when it was counted."), "warning")
 				),
 			__("When was this counted?"),

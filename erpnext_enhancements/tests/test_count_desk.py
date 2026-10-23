@@ -292,6 +292,8 @@ class TestThePostPlan(unittest.TestCase):
 		self.assertIn("posted after yours", reasons["A"])
 		self.assertIn("reserved", reasons["B"])
 		self.assertEqual(reasons["C"], "Nope.")
+		paper = rules.post_plan(rules.groups(lines[:1]), {}, {}, {("A", W1)}, lambda i, w: 0, paper=True)
+		self.assertIn("set a Counted At after that count", paper["skipped"][0]["reason"])
 		self.assertEqual([r["item_code"] for r in plan["adjust"]], ["D"])
 		plan = self._plan([_line("E", W1, 1, 2)], {("E", W1): dict(actual_qty=2)}, require_reason=True)
 		self.assertEqual([r["item_code"] for r in plan["needs_reason"]], ["E"])
@@ -1304,7 +1306,23 @@ class TestCountedAt(unittest.TestCase):
 		STATE["ledger_pairs"] = [dict(item_code="A", warehouse=W1, last=datetime.datetime(2026, 10, 20, 9, 30))]
 		out = CD.post_count(name)
 		self.assertEqual(out["posted"], [])
-		self.assertIn("posted after yours", out["skipped"][0]["reason"])
+		self.assertIn("posted after this count's Counted At", out["skipped"][0]["reason"], "recounting would not help")
+
+	def test_an_entry_backdated_after_typing_is_not_applied_twice(self):
+		"""The shelf held 10 at 9:00, but a take of 3 at 8:30 was not yet recorded, so at typing the
+		ledger said 13 and the variance was -3. The take is then recorded, dated 8:30: on hand is 10.
+		The post reads the baseline again (10), finds nothing to adjust, and does not post 7."""
+		STATE["tables"]["Bin"][0]["actual_qty"] = 13
+		STATE["sle"] = [dict(item_code="A", warehouse=W1, at=datetime.datetime(2026, 10, 20, 8, 0), qty_after_transaction=13)]
+		CD.update_count(self.name, counted_at=self.NINE)
+		_save(self.name, {"key": _key("A"), "counted_qty": 10})
+		line = STATE["sessions"][self.name].lines[0]
+		self.assertEqual(line.system_qty, 13)
+		STATE["sle"].append(dict(item_code="A", warehouse=W1, at=datetime.datetime(2026, 10, 20, 8, 30), qty_after_transaction=10))
+		STATE["tables"]["Bin"][0]["actual_qty"] = 10
+		out = CD.post_count(self.name)
+		self.assertEqual((out["posted"], out["matched"], STATE["srs"]), ([], 1, {}))
+		self.assertEqual(line.system_qty, 10, "the line keeps the baseline it was posted against")
 
 
 class TestTheSessionController(unittest.TestCase):
@@ -1420,6 +1438,7 @@ class TestTheDoctypes(unittest.TestCase):
 		# which is a live count and an empty list, the right answers for both.
 		self.assertNotIn("default", fields["counted_at"])
 		self.assertNotIn("reqd", fields["counted_at"])
+		self.assertEqual(fields["counted_at"].get("read_only"), 1, "set on the Count Desk, which checks it and re-reads the lines")
 		self.assertEqual(fields["stock_reconciliations"].get("read_only"), 1)
 		self.assertEqual(doc["title_field"], "count_title")
 		self.assertGreaterEqual(doc["modified"], "2026-10-23")

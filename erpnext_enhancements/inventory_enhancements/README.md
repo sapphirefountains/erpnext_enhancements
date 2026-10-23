@@ -849,7 +849,14 @@ as of then (ERPNext's `get_previous_sle`; the whitelisted `get_stock_balance` ar
 read, which Inventory Clerk does not have), and its `scan_time` is then, so a reconciliation posted
 after it supersedes the count. Setting, changing or clearing it re-reads every line already counted.
 It cannot be in the future (5 minutes allowed for a fast laptop clock) or more than 7 days before
-the count was started. The post still applies each variance to what is on hand now.
+the count was started, and a phone count has none. The post reads each line's baseline again (an
+entry recorded late and backdated before the Counted At would otherwise count twice) and still
+applies each variance to what is on hand now. It is read only on the form: only the Count Desk
+checks it and re-reads the lines.
+
+A save's answer carries the lines, not the bin's listing, so the page keeps each row's listing
+flags (`expected`, `assigned`, ...) from the sheet (`logic.merge_groups`): a saved row stays
+expected, and one cleared or undone comes back uncounted instead of leaving the sheet.
 
 **The review** lists the variances by value, with each one's on-hand now and what will post, a
 reason (the line's `reason_code`, one of `count_desk_rules.REASON_CODES`) and a note. Inventory

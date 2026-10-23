@@ -38,6 +38,14 @@ Manager, so his posts take the submit path, the one finding 1 is about.
   value and keeps nothing; when that value was not blank, the toast says so. The cases are in
   `tests/data/count_desk_vectors.json`: the node harness runs them through the page's code, and the Python
   suite holds them to the rule that value n lands on the nth row.
+- **A saved row lost its place on the sheet.** A save's answer (`_group_rows`) carries the lines, not the
+  bin's listing, so every row in it said `expected: false`. On v1.737.0 each saved row read *Not expected
+  here*, and a row cleared or undone was dropped from the sheet until a reload, which also lowered the
+  review's "not counted". The dropped row's key stayed in the grid's keys, so the next paste spent a value
+  on a row nobody could see. `merge_groups` now keeps the sheet's listing flags (`expected`, `assigned`,
+  `on_order`, `is_default`, `undecided`). The controller drops keys whose row is gone, and a paste lays
+  values only over rows that exist. The node harness's fake server now answers as `_group_rows` does; with
+  that, the old code failed the existing Undo tests as well. Found by the second review of this change.
 - **Post went ahead while saves had failed.** A row the server refused kept its typed value on screen.
   A batch refused as a whole (the count finalized elsewhere, access gone) was dropped from the queue, so
   `unsaved()` read 0. Either way the review and Post went ahead without those values.
@@ -48,7 +56,10 @@ Manager, so his posts take the submit path, the one finding 1 is about.
   - `logic.post_check` takes the save queue's state (`Controller.save_state`). A mark or a whole refusal
     disables Post and says why in the review. `Controller.post` refuses too.
   - *Clear the marks* clears per-row marks: those rows already show what is saved. It does nothing for a
-    whole refusal, which only a reload resolves.
+    whole refusal, which only loading the sheet again resolves. A whole refusal is kept in `save_stuck`,
+    which a later save that lands does not clear (it clears `save_error`), because those rows still are
+    not on the server.
+  - A 429 (rate limited) is retried with backoff like a dropped connection, not taken as a refusal.
 - **The reconciliation's remarks were silently dropped.** Stock Reconciliation has no `remarks` field on
   v16 (checked on production: only `purpose`, and no Custom Field adds one), so `sr.remarks` was discarded
   on save. The test passed only because the stub took any attribute. Each reconciliation now gets a
@@ -68,8 +79,14 @@ Manager, so his posts take the submit path, the one finding 1 is about.
     used directly because the wrapper is whitelisted and demands Item read, which Inventory Clerk does not
     hold on production.
   - Each line's `scan_time` is the Counted At, so a reconciliation posted after it still supersedes the
-    count.
+    count. Such an item's advice is to clear Counted At or set a later one, since a recount is stamped
+    with the same time.
   - The post still applies each variance to what is on hand now, with the zero floor.
+  - The post reads every line's baseline again first. Suppose an entry is recorded late, backdated
+    before the Counted At, after the line was typed. It is in the on-hand now, so the old snapshot would
+    have applied it twice.
+  - The field is read only on the form: the Count Desk checks it and re-reads the lines when it changes,
+    and the form could do neither. The page shows it in the user's time zone, as the Datetime control does.
   - Setting, changing or clearing it re-reads every line already counted. Clearing makes it a live count,
     counted as of now.
   - It is refused in the future (5 minutes are allowed for a laptop clock running fast), more than 7 days

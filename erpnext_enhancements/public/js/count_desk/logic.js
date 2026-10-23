@@ -603,10 +603,16 @@ export function uncounted(row) {
 	});
 }
 
+// What the bin's listing says about an item (count_desk_rules._listing_flags): the sheet's to keep.
+const LISTING = ["expected", "assigned", "on_order", "is_default", "undecided"];
+
 // A save's answer (api.count_desk.save_counts `groups`) merged into the rows: each group's rows
 // replaced where its first row stood. A group that came back empty was cleared: an expected item
 // gets its uncounted row back, one that was not expected goes. Returns { rows, renamed } where
 // `renamed` maps a key that left to the key that took its place (so the grid can keep its row).
+// The answer is about the lines, not the bin's listing, so every row in it says expected: false
+// (_group_rows lists nothing); the listing flags are taken from the rows on screen, or a saved row
+// would read "Not expected here" and, cleared, vanish from the sheet.
 export function merge_groups(rows, groups) {
 	let out = (rows || []).slice();
 	const renamed = new Map();
@@ -615,6 +621,8 @@ export function merge_groups(rows, groups) {
 		const at = out.findIndex((r) => group_of(r) === group);
 		const old = out.filter((r) => group_of(r) === group);
 		let fresh = (g.rows || []).slice();
+		const listing = old.find((r) => r.expected);
+		if (listing) fresh = fresh.map((r) => Object.assign({}, r, Object.fromEntries(LISTING.map((f) => [f, listing[f]]))));
 		if (!fresh.length) {
 			const expected = old.find((r) => r.expected);
 			fresh = expected ? [uncounted(expected)] : [];

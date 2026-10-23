@@ -598,9 +598,11 @@ def check_entry(entry, scope, refusal, whole_number=False, uom=""):
 # ---------------------------------------------------------------------------
 
 
-def post_plan(group_map, balances, refusals, superseded, rate_for, require_reason=False):
+def post_plan(group_map, balances, refusals, superseded, rate_for, require_reason=False, paper=False):
 	"""What posting a count does, per (item, warehouse). Pure: ``rate_for(item, warehouse)`` is the
-	caller's, asked only for a row that adds stock to an empty bin.
+	caller's, asked only for a row that adds stock to an empty bin. ``paper`` is a count with a
+	Counted At, whose lines are stamped with it: counting a superseded item again does not move it
+	past the later count, so the advice is to change Counted At instead.
 
 	Returns ``{"adjust": [...], "matched": [...], "skipped": [...], "needs_reason": [...]}``:
 
@@ -633,7 +635,12 @@ def post_plan(group_map, balances, refusals, superseded, rate_for, require_reaso
 			plan["skipped"].append(
 				dict(
 					base,
-					reason="A count of this item here was posted after yours. Count it again to post it.",
+					reason=(
+						"A count of this item here was posted after this count's Counted At. Clear Counted At "
+						"and count it again, or set a Counted At after that count, to post it."
+						if paper
+						else "A count of this item here was posted after yours. Count it again to post it."
+					),
 				)
 			)
 			continue

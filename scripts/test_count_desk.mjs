@@ -200,7 +200,10 @@ function makeWorld(options) {
 					}
 					for (const f of ["reason_code", "reason", "recount"]) if (f in e) r[f] = e[f];
 					results.push({ key: e.key, ok: true });
-					groups.push({ item_code: r.item_code, warehouse: r.warehouse, rows: r.counted ? [Object.assign({}, r)] : [] });
+					// As api.count_desk._group_rows answers: the lines, with no word on the bin's listing,
+					// so every row says expected: false (merge_groups keeps the sheet's flags).
+					const answer = Object.assign({}, r, { expected: false, assigned: false, on_order: 0, is_default: false, undecided: false });
+					groups.push({ item_code: r.item_code, warehouse: r.warehouse, rows: r.counted ? [answer] : [] });
 				}
 				return Promise.resolve({ results, groups });
 			}
@@ -784,6 +787,59 @@ test("a pasted column with a refused row lands every value on its own row", asyn
 	check("said", [res.done, res.problems.length, res.refused.length], [3, 0, 0]);
 	const r2 = world.ctl.fill(K("A"), ["1", "2"]);
 	check("a value on the refused row is said, not saved", [r2.refused.map((p) => p.key), world.ctl.state.status.has(K("R"))], [[K("R")], false]);
+});
+
+test("a saved row keeps its bin's listing; undone, it is back, and a paste lands on every row", async () => {
+	const world = await open_sheet({ rows: [row("A"), row("B", W1, { assigned: true, on_order: 2 }), row("C"), row("D")] });
+	world.ctl.set_count(K("B"), 3);
+	await settle();
+	const b = world.ctl.row(K("B"));
+	check("still expected, flags kept", [b.expected, b.assigned, b.on_order], [true, true, 2]);
+	world.ctl.undo();
+	await settle();
+	check("undone: back on the sheet, uncounted", [world.ctl.row(K("B")) && world.ctl.row(K("B")).counted, world.ctl.state.rows.length], [false, 4]);
+	world.ctl.fill(K("A"), ["1", "2", "3"]);
+	await settle();
+	check("one value per row", world.saves().pop(), [
+		{ key: K("A"), counted_qty: 1 },
+		{ key: K("B"), counted_qty: 2 },
+		{ key: K("C"), counted_qty: 3 },
+	]);
+	// A row that was not expected does go when cleared, and leaves no key behind for a paste.
+	const key = world.ctl.add_row({ item_code: "N", item_name: "NEW", stock_uom: "Unit" }, W1);
+	world.rows.splice(4, 0, L.added_row([], { item_code: "N", item_name: "NEW", stock_uom: "Unit" }, W1));
+	world.ctl.set_count(key, 5);
+	await settle();
+	world.ctl.set_count(key, null);
+	await settle();
+	check("gone from the rows and the grid's keys", [world.ctl.row(key), world.ctl.state.visible.includes(key)], [null, false]);
+});
+
+test("a save refused whole stays refused after a later save lands", async () => {
+	const world = await open_sheet();
+	world.fail.set("save_counts", [{ status: 403, message: "No access." }]);
+	world.ctl.set_count(K("A"), 8);
+	await settle();
+	world.ctl.set_count(K("B"), 3);
+	await settle();
+	check("the later save landed", [world.ctl.state.save_error, world.ctl.row(K("B")).counted_qty], [null, 3]);
+	check("A still is not on the server", world.rows.find((r) => r.key === K("A")).counted, false);
+	check("still stuck, marks stay", [world.ctl.save_state().fatal, world.ctl.clear_errors(), world.ctl.errors()], ["Not saved: No access. Reload the page to see the count as it is saved.", 0, 1]);
+	let message = "";
+	await world.ctl.post("post").catch((e) => (message = e.message));
+	check("Post refused", [message.startsWith("Some counts are not saved yet."), world.calls.some((c) => c.method.endsWith("post_count"))], [true, false]);
+	await world.ctl.load_sheet();
+	check("the sheet loaded again: the server's rows, unstuck", [world.ctl.save_state().fatal, world.ctl.row(K("A")).counted], [null, false]);
+});
+
+test("a 429 is retried, not refused", async () => {
+	const world = await open_sheet();
+	world.fail.set("save_counts", [{ status: 429, message: "Too many requests." }]);
+	world.ctl.set_count(K("A"), 8);
+	await settle();
+	check("retrying", [!!(world.ctl.state.save_error && world.ctl.state.save_error.retrying), world.ctl.unsaved()], [true, 1]);
+	await world.fire_timers();
+	check("landed", [world.ctl.unsaved(), world.ctl.errors()], [0, 0]);
 });
 
 test("changing Counted At waits for the queue, then takes the server's sheet", async () => {

@@ -58,6 +58,7 @@ export class Controller {
 			pending: new Map(),
 			saving: false,
 			save_error: null,
+			save_stuck: null,
 			status: new Map(),
 			undo: [],
 			notice: null,
@@ -274,6 +275,8 @@ export class Controller {
 			reasons: p.reasons || [],
 		});
 		this.state.sheet_error = null;
+		// The rows are the server's again, so nothing typed and refused is on screen any more.
+		this.state.save_stuck = null;
 		this.set_rows(p.rows || []);
 		this.server = new Map();
 		for (const r of this.state.rows) {
@@ -378,7 +381,9 @@ export class Controller {
 	}
 
 	fill(key, values) {
-		const plan = logic.fill_plan(this.state.visible, this.by_key, key, values);
+		// The rows the grid draws: a key whose row has gone (cleared, not expected) takes no value.
+		const keys = this.state.visible.filter((k) => this.by_key.has(k));
+		const plan = logic.fill_plan(keys, this.by_key, key, values);
 		const done = this.change_many(plan.entries);
 		for (const p of plan.problems) this.state.status.set(p.key, { state: "error", message: `Not saved: ${p.message}` });
 		if (plan.problems.length) this.env.render({ rows: plan.problems.map((p) => p.key) });
@@ -469,7 +474,9 @@ export class Controller {
 			for (const r of rows) if (logic.group_of(r) === group) changed.add(r.key);
 		}
 		this.set_rows(rows);
-		if (renamed.size) this.state.visible = this.state.visible.map((k) => renamed.get(k) || k);
+		const visible = this.state.visible.map((k) => renamed.get(k) || k).filter((k) => this.by_key.has(k));
+		const shrunk = visible.length !== this.state.visible.length;
+		this.state.visible = visible;
 		for (const g of groups) for (const r of g.rows || []) changed.add(r.key);
 		for (const [from, to] of renamed) {
 			changed.add(from);
@@ -480,13 +487,14 @@ export class Controller {
 				this.state.status.delete(from);
 			}
 		}
-		this.env.render({ rows: Array.from(changed), structure: renamed.size > 0 });
+		this.env.render({ rows: Array.from(changed), structure: renamed.size > 0 || shrunk });
 		this.flush();
 	}
 
 	save_failed(session, batch, err) {
 		this.state.saving = false;
-		const transient = !err.status || err.status >= 500 || err.status === 409 || err.exc_type === "DuplicateEntryError";
+		const transient =
+			!err.status || err.status >= 500 || err.status === 409 || err.status === 429 || err.exc_type === "DuplicateEntryError";
 		if (err.session_expired || err.status === 401) {
 			this.requeue(batch);
 			this.state.save_error = { message: "You have been signed out. Reload the page to sign in; nothing typed is lost until you do.", fatal: true };
@@ -508,10 +516,13 @@ export class Controller {
 		}
 		// Refused as a whole (the count was finalized elsewhere, or access changed): say why on
 		// every row it carried, and stop. What was typed stays on screen, marked, so it can be
-		// written down; Post waits (save_state) until the page is reloaded.
+		// written down; Post waits (save_state) until the sheet is loaded again. `save_stuck` outlives
+		// a later save that lands (which clears save_error): those rows still are not on the server.
 		const message = err.message || "The server refused this save.";
 		for (const entry of batch) this.state.status.set(entry.key, { state: "error", message: `Not saved: ${message}` });
-		this.state.save_error = { message: `Not saved: ${message} Reload the page to see the count as it is saved.`, fatal: true };
+		const said = `Not saved: ${message} Reload the page to see the count as it is saved.`;
+		this.state.save_error = { message: said, fatal: true };
+		this.state.save_stuck = said;
 		this.env.render({ rows: batch.map((e) => e.key) });
 		this.settle();
 	}
@@ -526,13 +537,14 @@ export class Controller {
 	// What holds a post back on the saving side (logic.post_check's `save`).
 	save_state() {
 		const e = this.state.save_error;
-		return { errors: this.errors(), fatal: e && e.fatal ? e.message : null, unsaved: this.unsaved() };
+		return { errors: this.errors(), fatal: this.state.save_stuck || (e && e.fatal ? e.message : null), unsaved: this.unsaved() };
 	}
 
-	// "I have seen them": a refused row is already back to what the server has, so clearing its
-	// mark changes nothing saved. A save refused as a whole is not cleared this way.
+	// "I have seen them": a row refused on its own is already back to what the server has, so
+	// clearing its mark changes nothing saved. A save refused as a whole is not cleared this way: its
+	// rows still show what was typed.
 	clear_errors() {
-		if (this.state.save_error && this.state.save_error.fatal) return 0;
+		if (this.state.save_stuck || (this.state.save_error && this.state.save_error.fatal)) return 0;
 		const keys = [];
 		for (const [key, s] of this.state.status) if (s.state === "error") keys.push(key);
 		for (const key of keys) this.state.status.delete(key);

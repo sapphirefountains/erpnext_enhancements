@@ -103,10 +103,11 @@
    "label": "Blind Count"
   },
   {
-   "description": "When the shelf was counted, for a count taken on paper and typed in later. Each line is then counted against the stock ledger as of this time, and what moved since is kept. Blank for a live count, where each line is counted against the system as it is typed.",
+   "description": "When the shelf was counted, for a count taken on paper and typed in later. Each line is then counted against the stock ledger as of this time, and what moved since is kept. Blank for a live count, where each line is counted against the system as it is typed. Set it on the Count Desk, which checks it and re-reads every counted line when it changes.",
    "fieldname": "counted_at",
    "fieldtype": "Datetime",
-   "label": "Counted At"
+   "label": "Counted At",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_desk",
