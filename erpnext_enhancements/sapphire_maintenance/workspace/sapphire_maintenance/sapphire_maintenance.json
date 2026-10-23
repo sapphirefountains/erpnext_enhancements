@@ -100,7 +100,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Tools",
-   "link_count": 5,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -125,6 +125,17 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Missed Maintenance Visits"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Maintenance Chemicals Used",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Maintenance Chemicals Used"
   },
   {
    "dependencies": "",
@@ -160,7 +171,7 @@
    "link_to": "maintenance-day-board"
   }
  ],
- "modified": "2026-10-12 18:00:00.000000",
+ "modified": "2026-10-23 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance",
