@@ -39,12 +39,17 @@ endpoint, no patch, no data change.
   (`erpnext/stock/reorder_item.py`; `reorder_rules.is_below` has the same): a level above 0, or a quantity to
   buy. It is "or" and not "Buy above 0" alone so that nothing leaves a count: a rule that only ever had a level
   (older rows, written before a rule needed both numbers) stays in, a level-0 rule with a quantity joins, and a
-  row with neither is still not a rule. Everything else about each count is as it was: *below* is still
-  `on hand < level` (so a rule at 0 is never "below" 0 on hand, and is "out" at 0), *out* is `on hand <= 0`,
-  *counted* is a Stock Reconciliation in the last 90 days. The tests run the real queries on SQLite
+  row with neither is still not a rule. *Out* is still `on hand <= 0` and *counted* is
+  still a Stock Reconciliation in the last 90 days. The tests run the real queries on SQLite
   (`tests/sqlite_sql_helper.py`): they fail on 1.730.0 (the level-0 item was absent from the out count, and the
-  coverage share was 33.3% for 40.0%). Prod effect on the next nightly snapshot: the three counts can rise by the
+  coverage share was 33.3% for 40.0%). Prod effect on the next nightly snapshot: the counts can rise by the
   number of level-0 rules (none exist until someone saves one).
+- **`Stocked Items Below Reorder` is now `on hand <= level`, not `<`** (ERPNext's own trigger, and what the Reorder
+  Board lists). With `<` a rule at 0 could never count as below, because prod allows no negative stock: the same
+  level-0 blindness as above. An item sitting exactly at its level was also missed. The `items_below_reorder` series
+  may step up on the first snapshot after the deploy by the items sitting exactly at their level; that step is the
+  definition changing, not stock falling. Pinned: level 0 with 0 on hand and level 5 with 5 on hand are below;
+  level 5 with 6 and level 0 with 1 are not.
 
 ### Changed
 - **Text that said automatic reordering is on.** Since v1.730.0 `Stock Settings.auto_indent` is off and a rule puts

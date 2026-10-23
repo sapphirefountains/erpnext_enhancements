@@ -127,9 +127,23 @@ class TestARuleCountsByExisting(unittest.TestCase):
 		# AT-ZERO-OUT only; NO-RULE has no stock either and is not a stocked item.
 		self.assertEqual(self.m["stocked_items_out"], 1)
 
-	def test_below_reorder_keeps_its_meaning(self):
-		# stock under the level: BELOW (2 < 4). A rule at 0 is never "below" 0 on hand, as before.
-		self.assertEqual(self.m["items_below_reorder"], 1)
+	def test_below_reorder_is_at_or_under_the_level(self):
+		# on hand <= level, ERPNext's own trigger: BELOW (2 <= 4), AT-ZERO-OUT (0 <= 0) and TWO-ROWS (3 <= 3, once
+		# although it has two rows). LEVEL-ONLY (10 > 4) and AT-ZERO-STOCKED (7 > 0) are not; NO-RULE has no rule.
+		self.assertEqual(self.m["items_below_reorder"], 3)
+
+	def test_an_item_exactly_at_its_level_is_below(self):
+		"""Before v1.731.1 the count asked for ``on hand < level``. With no negative stock on prod a rule at 0
+		could never be below, and an item sitting exactly at its level (the board lists it) was missed."""
+		for name, level, on_hand, expected in (
+			("level 0, on hand 0", 0, 0, 1),
+			("level 5, on hand 5", 5, 5, 1),
+			("level 5, on hand 6", 5, 6, 0),
+			("level 0, on hand 1", 0, 1, 0),
+		):
+			with self.subTest(case=name):
+				m = _metrics([("X", level, 12)], [("X", on_hand)], [])
+				self.assertEqual(m["items_below_reorder"], expected)
 
 	def test_the_count_coverage_share_includes_the_level_zero_rules(self):
 		# stocked: AT-ZERO-OUT, BELOW, LEVEL-ONLY, TWO-ROWS, AT-ZERO-STOCKED = 5; counted since

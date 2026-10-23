@@ -541,7 +541,7 @@ def _operations_metrics():
 			_scalar(
 				"select count(distinct r.parent) from `tabItem Reorder` r "
 				"where " + STOCKED_RULE_SQL + " and "
-				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) < r.warehouse_reorder_level"
+				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) <= r.warehouse_reorder_level"
 			),
 			"count",
 			"Item Reorder",
