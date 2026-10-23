@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.739.0] - 2026-10-23
+
+Assignment links now open the assignment, and the ToDo form leads with it. On 2026-10-23 Nik asked for the
+assignment email to open "the ToDo and or Task that is specifically that ToDo or Task, and not the My Work
+homepage by default", and for some love on the ToDo form. He picked the link rule and the form changes from
+a list drawn from production.
+
+### Changed
+- **Every link about an assignment opens that assignment.** A Task or a maintenance visit (Sapphire
+  Maintenance Record) opens the record. Anything else, or nothing, opens the ToDo (`assignments.link_kind`,
+  `assignment_alerts.link`). That covers the High-priority email, the morning My Work summary, the Morning
+  Briefing's list, My Work's bells and the High-priority text. The link is checked against what the reader
+  may open: a Task they cannot read opens their ToDo, and a team member told about a queue item they cannot
+  open gets the record, else My Work's Unclaimed tab. Before, a ToDo with no record linked to
+  `/desk/my-work?todo=…`, which marked the row only when the ToDo was open, yours and among the first 40 of
+  its section, and otherwise showed the homepage.
+- **The morning My Work summary gives each assignment its own button** ("OPEN TASK", "OPEN TO-DO"). Its
+  only button was "Open My Work", which opened My Work's homepage, and each title was a small text link. My
+  Work is now a small link at the foot. The rows are a new email component, `item()`
+  (`templates/emails/_components.html`).
+- **The Morning Briefing's My Work list links each item.** Neither the Gemini briefing nor the fallback
+  linked one, and the Gemini briefing had no My Work section at all (2026-10-23's folded the assignments
+  into "Overdue"). Both now end with the same linked list (`briefing.my_work_section`), and Gemini is told
+  not to write its own.
+- **The ToDo form leads with the assignment** (`api/my_work.get_todo_view`). The heading is the ask's first
+  line, else the record's title. Frappe headed it with the whole description, which reads "Assignment for
+  Task TASK-…" on 74 of 372 Task assignments in the last 90 days. A card shows the record the to-do is for,
+  with its title, a few facts and an Open button. When the to-do is yours and open, the record banner's
+  strip follows, with Done, Snooze, Reassign and Reply. Until now the form had one line, "This to-do is for
+  Task TASK-…", and nothing at all on a ToDo with no record.
+- **The ToDo form's first section holds Status, Priority, Due Date, Assigned To and Assigned By.** Allocated
+  To is labeled Assigned To. Color and Assigned By Full Name are hidden (no ToDo in the last 90 days had a
+  color), and Role and Assignment Rule show only when set. The field order drops the three calendar fields
+  deleted with Google Calendar.
+
+### Fixed
+- **The ToDo's Due Date had been hidden on the form and in the list for ten months.** `migrate_todo_dates`
+  (commit 4ecc1432, 2025-12-10) wrote three system-generated Property Setters hiding it when ToDo moved to
+  custom calendar fields. Removing Google Calendar deleted that patch and those fields but not the hiding,
+  so My Work bucketed every assignment by a date nobody could see or set on the form.
+  `patches/show_todo_due_date.py` deletes the three. The fixture filter skips system-generated setters, so
+  this takes a patch rather than a fixture. Under the field, the form now says when the date is only the
+  day the ToDo was assigned, which My Work counts as no due date.
+
+### Notes
+- Frappe's own "X assigned … to you" bell still points at the record; this app does not override Frappe
+  there. Frappe's email for it has been off since v1.697.0.
+- Bench-free tests: `tests/test_my_work.py` (the link rule, the reader checks, the summary's rows, the
+  bells, the briefing's lines, the ToDo view, the patch and the fixtures) and `tests/test_email_design.py`
+  (`item()`).
+
 ## [1.738.0] - 2026-10-23
 
 Fixes from the independent review of the Count Desk (#1316, v1.737.0), which merged before they were

@@ -484,3 +484,62 @@ def blocking_dependency(depends_on):
 		if task and status not in TASK_DEPENDENCY_DONE:
 			return task, status
 	return None
+
+
+# ---------------------------------------------------------------------------
+# Where a link to an assignment goes (Nik, 2026-10-23: "the email for when a document is assigned to
+# someone needs to link to the ToDo and or Task that is specifically that ToDo or Task, and not the
+# My Work homepage by default").
+
+#: An assignment on one of these opens the record itself; an assignment on anything else, or on
+#: nothing, opens its ToDo. Nik's choice: a Task is the to-do in everyone's head and its form has the
+#: "Assigned to you" banner, and a maintenance visit is where the work is done. On an Opportunity or
+#: a Customer the ask is easy to lose on a long form, so the ToDo -- what was asked, by whom, by
+#: when, with Done and Snooze, and the record one tap away -- is the page to land on. Until v1.739.0
+#: every record opened itself and a ToDo with no record opened My Work, which marked the row only
+#: when it was open, yours and in the first 40 of its section, and otherwise showed the homepage.
+RECORD_LINK_DOCTYPES = ("Task", "Sapphire Maintenance Record")
+
+#: The words on a link's button, by where it goes. Anything else says "Open <doctype>".
+LINK_LABELS = {
+	"Task": "Open task",
+	"Sapphire Maintenance Record": "Open visit",
+	"ToDo": "Open to-do",
+}
+
+
+def link_kind(reference_type, reference_name, can_read_record=True, can_read_todo=True):
+	"""Where a link to one assignment goes, for one reader: ``"record"``, ``"todo"`` or ``"my_work"``.
+
+	A Task or a visit opens the record, unless the reader may not read it. Everything else opens the
+	ToDo, which its assignee, whoever assigned it and whoever made it can always read (v16
+	``todo.has_permission``). The one reader who cannot is a team member told about a queue item,
+	which nobody owns yet: they get the record when they may read it, and otherwise My Work, where
+	the Unclaimed tab lets them take it.
+	"""
+	has_record = bool(reference_type and reference_name)
+	if has_record and reference_type in RECORD_LINK_DOCTYPES and can_read_record:
+		return "record"
+	if can_read_todo:
+		return "todo"
+	if has_record and can_read_record:
+		return "record"
+	return "my_work"
+
+
+def link_label(doctype):
+	"""The button's words for a link that opens ``doctype``: "Open task", "Open to-do"."""
+	return LINK_LABELS.get(doctype) or (f"Open {doctype}" if doctype else "Open My Work")
+
+
+def heading(description, reference_type=None, reference_name=None, title=None, limit=100):
+	"""What an assignment's ToDo form is headed with: the ask's first line, else its record's title.
+
+	Frappe heads a ToDo with its whole description, which is "Assignment for Task TASK-2026-02302"
+	on a fifth of production's Task assignments (74 of 372 in the 90 days to 2026-10-23) and a
+	paragraph on Triton's call follow-ups.
+	"""
+	first = ""
+	if the_ask(description, reference_type, reference_name):
+		first = paragraphs(description).split("\n", 1)[0].strip()
+	return truncate(first, limit) or (title or "").strip() or (reference_name or "") or "To-do"

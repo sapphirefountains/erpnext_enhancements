@@ -143,6 +143,12 @@ class FakeFrappe(types.ModuleType):
 		self.bells = []
 		self.texts = []
 		self.cells = {}
+		# (doctype, name, user) a permission check refuses; everything else may be read.
+		self.denied = set()
+		self.session = types.SimpleNamespace(user="me@x")
+
+	def has_permission(self, doctype=None, ptype="read", doc=None, user=None, **kwargs):
+		return (doctype, str(doc), user or self.session.user) not in self.denied
 
 	def parse_json(self, value):
 		return json.loads(value) if isinstance(value, str) else value
@@ -800,12 +806,55 @@ class TestDigest(unittest.TestCase):
 		self.assertEqual(since, DT(2026, 10, 17, 9, 0))
 
 	def test_record_titles_cannot_inject_markdown(self):
-		row = todo("X", reference_name="](javascript:alert(1))", date="2026-10-15", allocated_to="me")
-		md = alerts.digest_markdown(
-			{"overdue": [row]}, {("Task", row.reference_name): "Evil](javascript:x)"}, TODAY
+		"""The briefing's lines are Markdown: a title cannot close the link and open its own."""
+		lines = alerts.briefing_lines(
+			[{"description": "Evil](javascript:x)", "bucket": "overdue", "url": "https://erp.test/desk/todo/X"}]
 		)
-		self.assertIn("Evil\\]\\(javascript:x\\)", md)
-		self.assertIn("5 days late", md)
+		self.assertEqual(lines, ["- [Evil\\]\\(javascript:x\\)](https://erp.test/desk/todo/X) (overdue)"])
+
+	def test_each_assignment_has_its_own_button(self):
+		"""The summary's one big button opened My Work's homepage; each row now opens its own."""
+		rows = [
+			todo("TASK-1", allocated_to="me", date="2026-10-15"),
+			todo("T2", allocated_to="me", date="2026-10-15", reference_type="Opportunity", reference_name="OPP-1"),
+			todo("T3", allocated_to="me", date="2026-10-15", reference_type=None, reference_name=None),
+		]
+		blocks = alerts.digest_blocks({"overdue": rows}, {("Task", "TASK-1"): "Install tiles"}, TODAY, "me")
+		self.assertEqual(len(blocks), 1)
+		self.assertEqual(blocks[0]["heading"], "Overdue (3)")
+		self.assertEqual(blocks[0]["more"], 0)
+		first, second, third = blocks[0]["items"]
+		self.assertEqual(first["title"], "Install tiles")
+		self.assertEqual(first["url"], "https://erp.test/desk/task/TASK-1")
+		self.assertEqual(first["label"], "OPEN TASK")
+		self.assertEqual(first["detail"], "Do it · 5 days late")
+		# not on a Task or a visit: its ToDo, never My Work
+		self.assertEqual(second["url"], "https://erp.test/desk/todo/T2")
+		self.assertEqual(second["label"], "OPEN TO-DO")
+		self.assertEqual(third["url"], "https://erp.test/desk/todo/T3")
+		for item in blocks[0]["items"]:
+			self.assertNotIn("my-work", item["url"])
+
+	def test_a_long_section_says_how_many_more(self):
+		rows = [todo(f"T{i}", allocated_to="me", date="2026-10-15") for i in range(alerts.DIGEST_ROWS + 3)]
+		block = alerts.digest_blocks({"overdue": rows, "today": []}, {}, TODAY, "me")[0]
+		self.assertEqual(len(block["items"]), alerts.DIGEST_ROWS)
+		self.assertEqual(block["more"], 3)
+
+	def test_waiting_names_who_has_it(self):
+		people = {"crew@x": Row(full_name="Crew Person")}
+		row = todo("TASK-2", allocated_to="crew@x", assigned_by="me", date="2026-10-10")
+		item = alerts.digest_blocks({"waiting": [row]}, {}, TODAY, "me", people)[0]["items"][0]
+		self.assertTrue(item["detail"].endswith("Crew Person"))
+		self.assertEqual(item["url"], "https://erp.test/desk/task/TASK-2")
+
+	def test_the_email_builds_from_the_blocks_and_ends_with_a_small_my_work_link(self):
+		source = (APP / "task_enhancements" / "assignment_alerts.py").read_text(encoding="utf-8")
+		body = source.split("def _send_digest", 1)[1].split("\ndef ", 1)[0]
+		self.assertIn("email_style.item(", body)
+		self.assertIn("email_style.links(", body)
+		self.assertNotIn("email_style.button(", body)
+		self.assertNotIn("email_style.markdown(", body)
 
 	def test_briefing_readers_do_not_get_it_twice(self):
 		fake.db.values[("ERPNext Enhancements Settings", None, "briefing_enabled")] = 1
@@ -895,6 +944,14 @@ class TestHighPriorityText(unittest.TestCase):
 		self.assertEqual(number, "+18015550100")
 		self.assertIn("High priority from Boss Person: Title of TASK-9 - Do it", message)
 		self.assertTrue(message.endswith("https://erp.test/desk/task/TASK-9"))
+
+	def test_the_text_on_an_opportunity_opens_the_todo(self):
+		fake.db.exists = lambda *a, **k: True
+		row = Row(todo("T1", status="Open", reference_type="Opportunity", reference_name="OPP-9"))
+		fake.db.get_value = lambda dt, name, field=None, **k: row if dt == "ToDo" else "Boss Person"
+		fake.cells["crew@x"] = "+18015550100"
+		self.assertTrue(alerts.send_high_priority_text("T1"))
+		self.assertTrue(fake.texts[0][1].endswith("https://erp.test/desk/todo/T1"))
 
 	def test_no_cell_number_no_text(self):
 		fake.db.exists = lambda *a, **k: True
@@ -1304,6 +1361,247 @@ class TestPhaseThreeWiring(unittest.TestCase):
 			self.assertEqual(decorated.get(name), "GET", name)
 		for name in ("assign", "set_repeat", "checklist_toggle", "checklist_add", "checklist_remove"):
 			self.assertEqual(decorated.get(name), "POST", name)
+
+
+# ---------------------------------------------------------------------------
+# v1.739.0: every link about an assignment opens that assignment, and the ToDo form leads with it
+# (Nik, 2026-10-23: "link to the ToDo and or Task that is specifically that ToDo or Task, and not
+# the My Work homepage by default"; a Task or a visit opens the record, anything else its ToDo).
+
+
+class TestLinkRule(unittest.TestCase):
+	def test_a_task_or_a_visit_opens_the_record(self):
+		self.assertEqual(rules.link_kind("Task", "TASK-1"), "record")
+		self.assertEqual(rules.link_kind("Sapphire Maintenance Record", "PRJ-00744-2026-V002"), "record")
+
+	def test_anything_else_opens_the_todo(self):
+		for ref_type, ref_name in (("Opportunity", "OPP-1"), ("Customer", "Acme"), (None, None), ("Task", None)):
+			with self.subTest(ref_type=ref_type):
+				self.assertEqual(rules.link_kind(ref_type, ref_name), "todo")
+
+	def test_a_task_the_reader_cannot_open_falls_back_to_the_todo(self):
+		self.assertEqual(rules.link_kind("Task", "TASK-1", can_read_record=False), "todo")
+
+	def test_a_queue_item_the_reader_cannot_open(self):
+		"""A team member told about a queue item may not read its ToDo (v16 todo.has_permission)."""
+		self.assertEqual(rules.link_kind("Opportunity", "OPP-1", True, False), "record")
+		self.assertEqual(rules.link_kind("Opportunity", "OPP-1", False, False), "my_work")
+		self.assertEqual(rules.link_kind(None, None, False, False), "my_work")
+
+	def test_labels(self):
+		self.assertEqual(rules.link_label("Task"), "Open task")
+		self.assertEqual(rules.link_label("Sapphire Maintenance Record"), "Open visit")
+		self.assertEqual(rules.link_label("ToDo"), "Open to-do")
+		self.assertEqual(rules.link_label("Opportunity"), "Open Opportunity")
+		self.assertEqual(rules.link_label(None), "Open My Work")
+
+
+class TestHeading(unittest.TestCase):
+	def test_the_ask_first_line_heads_the_form(self):
+		value = "Call Rebecca Landau back at 801-558-2599.\n\n(Follow-up from call with Rebecca Landau)"
+		self.assertEqual(rules.heading(value), "Call Rebecca Landau back at 801-558-2599.")
+		html_value = '<div class="ql-editor read-mode"><p>Send revised quote</p><p>with the LED</p></div>'
+		self.assertEqual(rules.heading(html_value, "Opportunity", "OPP-1", "Smith"), "Send revised quote")
+
+	def test_no_ask_is_the_record_title_then_its_name(self):
+		auto = "Assignment for Task TASK-2026-02302"
+		self.assertEqual(rules.heading(auto, "Task", "TASK-2026-02302", "Install Tiles (8)"), "Install Tiles (8)")
+		self.assertEqual(rules.heading(auto, "Task", "TASK-2026-02302"), "TASK-2026-02302")
+		self.assertEqual(rules.heading(""), "To-do")
+
+	def test_a_long_ask_is_cut(self):
+		self.assertLessEqual(len(rules.heading("word " * 80)), 100)
+
+
+class TestAssignmentLinks(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def test_the_assignee_gets_the_task(self):
+		got = alerts.link(todo("TASK-1"))
+		self.assertEqual(
+			(got["kind"], got["doctype"], got["name"], got["url"]),
+			("record", "Task", "TASK-1", "https://erp.test/desk/task/TASK-1"),
+		)
+		self.assertEqual(got["label"], "Open task")
+
+	def test_a_task_the_assignee_cannot_read_opens_their_todo(self):
+		fake.denied.add(("Task", "TASK-1", "crew@x"))
+		got = alerts.link(todo("T1", reference_name="TASK-1"))
+		self.assertEqual((got["kind"], got["url"]), ("todo", "https://erp.test/desk/todo/T1"))
+
+	def test_an_opportunity_opens_the_todo_without_reading_the_record(self):
+		fake.denied.add(("Opportunity", "OPP-1", "crew@x"))
+		got = alerts.link(todo("T1", reference_type="Opportunity", reference_name="OPP-1"))
+		self.assertEqual((got["kind"], got["doctype"], got["name"]), ("todo", "ToDo", "T1"))
+
+	def test_the_reader_is_the_assignee_unless_named(self):
+		fake.denied.add(("Task", "TASK-1", "boss@x"))
+		self.assertEqual(alerts.link(todo("TASK-1"))["kind"], "record")
+		# whoever assigned it may always open the ToDo
+		self.assertEqual(alerts.link(todo("T1", reference_name="TASK-1"), "boss@x")["url"], "https://erp.test/desk/todo/T1")
+
+	def test_a_team_member_told_about_a_queue_item(self):
+		row = todo("Q1", allocated_to=None, assigned_by="boss@x", owner="boss@x", reference_type=None, reference_name=None)
+		fake.denied.add(("ToDo", "Q1", "member@x"))
+		got = alerts.link(row, "member@x")
+		self.assertEqual(got["kind"], "my_work")
+		self.assertEqual(got["path"], "/desk/my-work/unclaimed?todo=Q1")
+		self.assertEqual(alerts.bell_fields(row, "member@x")["link"], "/desk/my-work/unclaimed?todo=Q1")
+
+	def test_bells_point_at_the_record_or_the_todo(self):
+		self.assertEqual(
+			alerts.bell_fields(todo("TASK-1"), "crew@x"), {"document_type": "Task", "document_name": "TASK-1"}
+		)
+		row = todo("T1", reference_type="Customer", reference_name="Acme")
+		self.assertEqual(alerts.bell_fields(row, "crew@x"), {"document_type": "ToDo", "document_name": "T1"})
+
+	def test_the_morning_bells_follow_the_rule(self):
+		fake.all_rows["User"] = [Row(name="crew@x", email="crew@x", full_name="Crew Person")]
+		alerts.nudge_due_today(
+			[todo("T1", date="2026-10-20", reference_type="Opportunity", reference_name="OPP-1")], TODAY
+		)
+		self.assertEqual(fake.bells[0][1]["document_type"], "ToDo")
+		self.assertEqual(fake.bells[0][1]["document_name"], "T1")
+		self.assertNotIn("link", fake.bells[0][1])
+
+	def test_my_works_own_bells_follow_the_rule(self):
+		fake.session.user = "boss@x"
+		doc = FakeDoc(
+			name="T1",
+			allocated_to="crew@x",
+			assigned_by="boss@x",
+			owner="boss@x",
+			reference_type="Opportunity",
+			reference_name="OPP-1",
+		)
+		api._notify("crew@x", doc, "Nudge")
+		self.assertEqual(fake.bells[0][0], "crew@x")
+		self.assertEqual(
+			(fake.bells[0][1]["document_type"], fake.bells[0][1]["document_name"]), ("ToDo", "T1")
+		)
+		self.assertNotIn("link", fake.bells[0][1])
+
+	def test_briefing_lines_link_and_say_which_list(self):
+		lines = alerts.briefing_lines(
+			[
+				{"description": "Call Mike", "bucket": "today", "url": "https://erp.test/desk/todo/T1"},
+				{"description": "No link", "bucket": "new", "url": ""},
+			]
+		)
+		self.assertEqual(
+			lines, ["- [Call Mike](https://erp.test/desk/todo/T1) (due today)", "- No link (new)"]
+		)
+
+
+class TestTodoView(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		fake.session.user = "crew@x"
+		fake.db.exists = lambda *a, **k: True
+		self.row = Row(
+			todo("T1", status="Open", description="Assignment for Task TASK-1", reference_name="TASK-1")
+		)
+		self.row["role"] = None
+		fake.db.get_value = lambda dt, name, field=None, **k: self.row if dt == "ToDo" else None
+		self._record_info = api._record_info
+		self._present = api._present
+		api._record_info = lambda rows, with_facts=True: {
+			("Task", "TASK-1"): {"title": "Install Tiles (8)", "facts": [["Status", "Open"]]}
+		}
+		api._present = lambda rows, user, today, with_facts=True: [{"name": rows[0].name, "can": {"complete": True}}]
+		fake.get_roles = lambda user=None: []
+
+	def tearDown(self):
+		api._record_info = self._record_info
+		api._present = self._present
+
+	def test_yours_and_open(self):
+		view = api.get_todo_view("T1")
+		self.assertEqual(view["heading"], "Install Tiles (8)")
+		self.assertEqual(view["record"]["title"], "Install Tiles (8)")
+		self.assertEqual(view["record"]["button"], "Open task")
+		self.assertTrue(view["record"]["can_read"])
+		self.assertEqual(view["item"]["name"], "T1")
+		# dated 2026-10-01 and made that day: My Work reads it as no due date
+		self.assertTrue(view["due_is_stamp"])
+
+	def test_someone_elses_or_closed_has_no_actions(self):
+		fake.session.user = "boss@x"
+		self.assertIsNone(api.get_todo_view("T1")["item"])
+		fake.session.user = "crew@x"
+		self.row["status"] = "Closed"
+		self.assertIsNone(api.get_todo_view("T1")["item"])
+
+	def test_a_record_you_cannot_read_shows_no_title(self):
+		fake.denied.add(("Task", "TASK-1", "crew@x"))
+		view = api.get_todo_view("T1")
+		self.assertFalse(view["record"]["can_read"])
+		self.assertEqual(view["record"]["title"], "TASK-1")
+		self.assertEqual(view["record"]["facts"], [])
+		self.assertEqual(view["heading"], "TASK-1")
+
+	def test_a_todo_you_cannot_read_is_nothing(self):
+		fake.denied.add(("ToDo", "T1", "crew@x"))
+		self.assertIsNone(api.get_todo_view("T1"))
+
+	def test_a_real_due_date_is_not_a_stamp(self):
+		self.row["date"] = "2026-10-23"
+		self.assertFalse(api.get_todo_view("T1")["due_is_stamp"])
+
+
+class TestLinkWiring(unittest.TestCase):
+	def test_no_assignment_message_defaults_to_my_work(self):
+		"""The homepage link was the complaint; My Work stays only as the unreadable-queue fallback."""
+		for rel in ("email_style.py", "api/my_work.py", "api/briefing.py"):
+			with self.subTest(rel=rel):
+				self.assertNotIn("my-work?todo", (APP / rel).read_text(encoding="utf-8"))
+		records = json.loads((APP / "fixtures" / "notification.json").read_text(encoding="utf-8"))
+		message = next(r for r in records if r.get("document_type") == "ToDo")["message"]
+		self.assertIn("ee_button(a.url, a.button)", message)
+		self.assertNotIn("Open My Work", message)
+
+	def test_the_todo_view_is_a_get_and_the_form_asks_for_it(self):
+		source = (APP / "api" / "my_work.py").read_text()
+		self.assertRegex(source, r'@frappe\.whitelist\(methods=\["GET"\]\)\ndef get_todo_view\(')
+		desk = (APP / "public" / "js" / "global_enhancements" / "my_work.js").read_text()
+		self.assertIn('API + "get_todo_view"', desk)
+		self.assertNotIn("draw_todo_pointer", desk)
+
+	def test_the_due_date_patch_is_registered_and_deletes_the_three_setters(self):
+		patches = (APP / "patches.txt").read_text(encoding="utf-8").splitlines()
+		self.assertIn("erpnext_enhancements.patches.show_todo_due_date", patches)
+		self.assertGreater(
+			patches.index("erpnext_enhancements.patches.show_todo_due_date"), patches.index("[post_model_sync]")
+		)
+		tree = ast.parse((APP / "patches" / "show_todo_due_date.py").read_text(encoding="utf-8"))
+		hiding = next(
+			ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "HIDING"
+		)
+		self.assertEqual(set(hiding), {"ToDo-date-hidden", "ToDo-date-reqd", "ToDo-date-in_list_view"})
+		setters = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+		# a fixture must not bring any of them back
+		self.assertFalse({s["name"] for s in setters} & set(hiding))
+
+	def test_the_form_leads_with_due_priority_and_people(self):
+		setters = {
+			s["name"]: s
+			for s in json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+		}
+		order = json.loads(setters["ToDo-main-field_order"]["value"])
+		first = order[: order.index("description_section")]
+		for field in ("status", "priority", "date", "allocated_to", "assigned_by"):
+			self.assertIn(field, first)
+		# the calendar fields were deleted with Google Calendar; the order no longer names them
+		for gone in ("custom_calendar_datetime_start", "custom_calendar_datetime_end", "custom_google_event_id"):
+			self.assertNotIn(gone, order)
+		self.assertEqual(setters["ToDo-color-hidden"]["value"], "1")
+		self.assertEqual(setters["ToDo-assigned_by_full_name-hidden"]["value"], "1")
+		self.assertEqual(setters["ToDo-role-depends_on"]["value"], "eval:doc.role")
+		self.assertEqual(setters["ToDo-assignment_rule-depends_on"]["value"], "eval:doc.assignment_rule")
+		self.assertEqual(setters["ToDo-allocated_to-label"]["value"], "Assigned To")
+		for name in ("ToDo-color-hidden", "ToDo-role-depends_on", "ToDo-allocated_to-label"):
+			self.assertEqual(setters[name]["is_system_generated"], 0, name)
 
 
 if __name__ == "__main__":

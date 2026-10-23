@@ -281,6 +281,34 @@ def test_button_label_is_still_escaped(macros):
 	assert "&lt;i&gt;" in str(macros.button("https://x.test", "<i>Go</i>"))
 
 
+def test_item_escapes_its_words_and_not_its_url(macros):
+	"""item() is the My Work summary's row (v1.739.0): a record title someone typed, the ask,
+	and a button to that assignment's own Task or to-do."""
+	url = "https://erp.example.com/desk/todo/abc?x=1&y=2"
+	out = str(macros.item("Smith & <b>Sons</b>", "<i>late</i>", url, "OPEN <TO-DO>"))
+	assert "Smith &amp; &lt;b&gt;Sons&lt;/b&gt;" in out
+	assert "&lt;i&gt;late&lt;/i&gt;" in out
+	assert "OPEN &lt;TO-DO&gt;" in out
+	assert f'href="{url}"' in out, "the URL was escaped or altered"
+	assert "&amp;amp;" not in out
+
+
+def test_item_without_a_safe_url_keeps_its_words_and_drops_the_button(macros):
+	out = str(macros.item("Install tiles", "", "", "OPEN TASK"))
+	assert "Install tiles" in out
+	assert "<a " not in out and "OPEN TASK" not in out
+
+
+def test_item_button_is_the_design_systems_control_and_fills_for_outlook(macros):
+	out = str(macros.item("T", "D", "https://x.test", "OPEN TASK"))
+	inner = [s for _, s in _tags(out, "td")][-1]
+	a = next(s for _, s in _tags(out, "a"))
+	assert "#00a0df" in inner and "border-radius:10px" in inner and "mso-padding-alt" in inner
+	assert "padding:0" in inner and "border:0" in inner, "padded cell = coloured space outside the anchor"
+	assert "display:inline-block" in a and "color:#00111c" in a
+	assert 'class="ee-btn"' not in out, "the phone rule would stretch the row's button across the row"
+
+
 # ---------------------------------------------------------------------------
 # The body cell is `class="ee-pad ee-md"`, and the shell styles the markdown body
 # through DESCENDANT selectors — `.ee-md table{width:100%}` and
@@ -396,6 +424,7 @@ def test_every_macro_link_opts_out_of_frappes_link_rule(macros):
 		("button", str(macros.button("https://x.test", "OPEN"))),
 		("links", str(macros.links([("https://x.test", "A link")]))),
 		("table", str(macros.table(["H"], [[("https://x.test", "A link")]]))),
+		("item", str(macros.item("Install tiles", "5 days late", "https://x.test", "OPEN TASK"))),
 		("shell footer", shell),
 	]
 	seen = 0
@@ -405,7 +434,7 @@ def test_every_macro_link_opts_out_of_frappes_link_rule(macros):
 			assert re.search(r'class="[^"]*\bbtn\b', tag), f"{where}: anchor without class=btn: {tag}"
 			missing = [p for p in FRAPPE_BTN_PROPERTIES if not _declares(style, p)]
 			assert not missing, f"{where}: frappe's .btn would supply {missing} to {tag}"
-	assert seen == 4, f"expected one anchor per source, found {seen} — has the scan broken?"
+	assert seen == 5, f"expected one anchor per source, found {seen} — has the scan broken?"
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +557,7 @@ def test_rendered_type_is_only_the_declared_stacks(macros):
 			macros.button("https://x.test", "GO"),
 			macros.button_fallback("https://x.test"),
 			macros.pill("OK", "success"),
+			macros.item("Title", "Detail", "https://x.test", "OPEN"),
 		)
 	)
 	html = _render_shell(body=body, logo_url="https://x.test/logo.png", tagline=True)
@@ -549,6 +579,7 @@ def test_text_cells_name_their_face(macros):
 		*_tags(str(macros.kv([("L", "V")])), "td"),
 		*_tags(str(macros.table(["H"], [["C", ("https://x.test", "L")]])), "td"),
 		*_tags(str(macros.table(["H"], [["C"]])), "th"),
+		*list(_tags(str(macros.item("T", "D", "https://x.test", "OPEN")), "td"))[:1],
 	]:
 		assert f"font-family:{SANS}" in style, f"cell leaves its face to frappe: {tag}"
 

@@ -16,6 +16,8 @@ Endpoints:
   date / This week / Later, with what the viewer may do to each.
 * :func:`get_count` -- the sidebar number: your open assignments not put off to a later day.
 * :func:`get_record_assignments` -- the banner on a record: your open assignments on it.
+* :func:`get_todo_view` -- the top of a ToDo's own form: its heading, a card for its record and,
+  when it is yours, the same banner (v1.739.0).
 * Actions: :func:`complete`, :func:`reschedule`, :func:`reassign`, :func:`reply`, :func:`claim`,
   :func:`nudge`, :func:`withdraw`.
 * Backlog triage (System Manager): :func:`triage_preview`, :func:`triage_apply`,
@@ -188,6 +190,78 @@ def get_record_assignments(doctype: str, name: str):
 		order_by="creation desc",
 	)
 	return _present(rows, user, getdate(nowdate()), with_facts=False)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_todo_view(todo: str):
+	"""The top of a ToDo's own form (v1.739.0), now that every link about an assignment that is not
+	on a Task or a visit opens its ToDo rather than My Work.
+
+	``{"heading", "status", "record", "item", "due_is_stamp"}``:
+
+	* ``heading`` -- the ask's first line, else the record's title (``assignments.heading``), in
+	  place of Frappe's whole description.
+	* ``record`` -- the record it is for: ``doctype``, ``label``, ``name``, ``title``, ``facts``
+	  (:data:`FACTS`), ``can_read`` and ``missing``; ``None`` when it names none. Its title and facts
+	  are read only when the session user may read the record.
+	* ``item`` -- the assignment as the banner draws it, with what you may do (Done, Snooze,
+	  Reassign, Reply), when it is open and yours; else ``None``.
+	* ``due_is_stamp`` -- its date is only the day it was made, which My Work reads as no due date,
+	  so the form can say so under the Due Date it shows again.
+
+	``None`` when the ToDo does not exist or the session user may not read it.
+	"""
+	if not todo or not frappe.db.exists("ToDo", todo):
+		return None
+	if not frappe.has_permission("ToDo", "read", doc=todo):
+		return None
+	user = frappe.session.user
+	row = frappe.db.get_value("ToDo", todo, _todo_fields(), as_dict=True)
+	if not row:
+		return None
+	record = None
+	if row.reference_type and row.reference_name:
+		key = (row.reference_type, str(row.reference_name))
+		missing = not _exists(*key)
+		readable = not missing and _may_read(*key)
+		info = _record_info([row], True).get(key) if readable else None
+		record = {
+			"doctype": row.reference_type,
+			"label": _(row.reference_type),
+			"name": row.reference_name,
+			"title": (info or {}).get("title") or row.reference_name,
+			"facts": (info or {}).get("facts") or [],
+			"can_read": readable,
+			"missing": missing,
+			"button": _(assignments.link_label(row.reference_type)),
+		}
+	item = None
+	if row.status == "Open" and row.allocated_to == user:
+		items = _present([row], user, getdate(nowdate()))
+		item = items[0] if items else None
+	title = record["title"] if record and record["can_read"] else None
+	return {
+		"heading": assignments.heading(row.description, row.reference_type, row.reference_name, title),
+		"status": row.status,
+		"record": record,
+		"item": item,
+		"due_is_stamp": bool(row.date) and assignments.due_date(row.date, row.creation) is None,
+	}
+
+
+def _exists(doctype, name):
+	"""Whether the record exists; a ToDo can outlive both its record and its record's DocType."""
+	try:
+		return bool(frappe.db.exists("DocType", doctype) and frappe.db.exists(doctype, name))
+	except Exception:
+		return False
+
+
+def _may_read(doctype, name):
+	try:
+		return bool(frappe.has_permission(doctype, "read", doc=name))
+	except Exception:
+		return False
 
 
 def _rows(view, user):
@@ -514,11 +588,15 @@ def _record_title(doc):
 def _notify(user, doc, subject, body=None):
 	"""A bell entry (and, per the person's Notification Settings, an email) about ``doc``.
 
-	It points at the record when there is one, else at My Work opened on this assignment.
+	It points where every assignment link points (``assignment_alerts.link``, v1.739.0): the Task
+	or visit, else the ToDo, else -- for a team member told about a queue item they cannot open --
+	My Work's Unclaimed tab on it.
 	"""
 	if not user or user == frappe.session.user:
 		return
 	from frappe.desk.doctype.notification_log.notification_log import enqueue_create_notification
+
+	from erpnext_enhancements.task_enhancements.assignment_alerts import bell_fields
 
 	notification = {
 		"type": "Assignment",
@@ -526,13 +604,7 @@ def _notify(user, doc, subject, body=None):
 		"from_user": frappe.session.user,
 		"email_content": body,
 	}
-	if doc.reference_type and doc.reference_name:
-		notification["document_type"] = doc.reference_type
-		notification["document_name"] = doc.reference_name
-	else:
-		notification["document_type"] = "ToDo"
-		notification["document_name"] = doc.name
-		notification["link"] = f"/desk/my-work?todo={doc.name}"
+	notification.update(bell_fields(doc, user))
 	enqueue_create_notification(user, notification)
 
 

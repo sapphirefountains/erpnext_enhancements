@@ -105,7 +105,65 @@
 	font-size: var(--sf-text-sm);
 }
 
+/* v1.739.0: on a ToDo's own form, the card for the record it is for, above the banner. The
+   banner's frame, with a plain rule where the banner has its accent: it is a fact, not an ask. */
+
+.ee-mw-record {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: var(--sf-space-10) var(--sf-space-20);
+	align-items: center;
+	padding: var(--sf-space-10) var(--sf-space-15);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	font-family: var(--sf-font-sans);
+}
+
+.ee-mw-record-kind {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.ee-mw-record-title {
+	margin-top: var(--sf-space-5);
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+
+.ee-mw-record-name {
+	margin-left: var(--sf-space-10);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-regular);
+}
+
+.ee-mw-record-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5) var(--sf-space-15);
+	margin-top: var(--sf-space-5);
+	color: var(--sf-text);
+	font-size: var(--sf-text-sm);
+	overflow-wrap: anywhere;
+}
+
 @media (max-width: 767px) {
+	.ee-mw-record {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.ee-mw-record-actions .btn {
+		width: 100%;
+		min-height: var(--sf-touch-min);
+	}
+
 	.ee-mw-banner {
 		grid-template-columns: minmax(0, 1fr);
 	}

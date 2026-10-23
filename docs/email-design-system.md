@@ -256,6 +256,7 @@ All in `_components.html`, all available as `email_style.<name>()` in Python and
 | `callout(text, tone)` | A boxed aside |
 | `bullets(items)` / `links(items)` | Lists |
 | `button(url, label, tone)` | The CTA |
+| `item(title, detail, url, label)` | A list row with its own compact button: a bold title, a line under it, the button at the right. For a list where each entry is its own destination (the My Work summary's assignments), not for one CTA. An empty `url` drops the button |
 | `button_fallback(url)` | "If the button does not work…" — use it on anything a customer must reach |
 | `pill(label, tone)` | A short status word |
 
@@ -434,6 +435,7 @@ alert also needs **Send Change Alerts**, which is off until someone ticks it.
 | Email | Source | Trigger | Audience |
 |---|---|---|---|
 | Morning briefing | `api/briefing.py` | cron `30 6 * * 1-5` | staff |
+| My Work summary (each assignment an `item()` with its own button) | `task_enhancements/assignment_alerts.py` | cron `40 6 * * 1-5` | staff |
 | Maintenance route digest | `api/maintenance_dispatch.py` | cron `0 6 * * *` | staff |
 | Customer service report | `api/maintenance_workflow.py` | Record finalized (settings-gated) | **customer** |
 | Call transcript / voicemail | `api/telephony.py` | Call analysed; voicemail left | staff |

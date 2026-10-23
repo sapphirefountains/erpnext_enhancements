@@ -237,6 +237,45 @@
 {%- endmacro %}
 
 
+{# One thing in a list that has its own button (v1.739.0): a bold title, a line
+   under it, and a compact primary button at the right — the My Work summary's
+   assignments, each opening its own Task or to-do. Until then that list was
+   markdown with each title a small text link, under one big button that opened
+   My Work's homepage, and the big button is the one people pressed.
+
+   Two cells, not a stack, because the button is short ("OPEN TASK") and the
+   title wraps: at 320px the title cell keeps about two thirds of the row. The
+   button is button()'s, smaller — its own table so Outlook fills it, every td
+   declaring padding AND border and every table its width (the .ee-md rules
+   say why), the anchor declaring every property frappe's .btn sets. No
+   ee-btn class, so the phone block does not stretch it across the row.
+
+   An empty `url` leaves the words and drops the button: email_style.item()
+   passes one when utils.url_safety refuses the link. #}
+{% macro item(title, detail, url, label) -%}
+{%- set t = TONES["primary"] %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:0">
+	<tr>
+		<td valign="middle" style="padding:12px 12px 12px 0;border:0;border-bottom:1px solid {{ RULE }};font-family:{{ SANS }};font-size:15px;line-height:1.45;color:{{ BODY_INK }};{{ WRAP }}">
+			<div style="font-weight:700;color:{{ INK }};{{ WRAP }}">{{ title|e }}</div>
+{%- if detail %}
+			<div style="margin-top:2px;font-size:14px;color:{{ BODY_INK }};{{ WRAP }}">{{ detail|e }}</div>
+{%- endif %}
+		</td>
+		<td align="right" valign="middle" width="1%" style="width:1%;padding:12px 0;border:0;border-bottom:1px solid {{ RULE }};white-space:nowrap">
+{%- if url %}
+			<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:auto;margin:0;border-collapse:separate">
+				<tr><td align="center" bgcolor="{{ t.fill }}" style="padding:0;border:0;border-radius:10px;background:{{ t.fill }};white-space:nowrap;mso-padding-alt:8px 14px">
+					<a class="btn" href="{{ url }}" style="display:inline-block;margin:0;padding:8px 14px;border:0;border-radius:10px;background-color:transparent;font-family:{{ SANS }};font-size:13px;font-weight:700;line-height:1;letter-spacing:0.5px;white-space:nowrap;color:{{ t.label }};text-decoration:none">{{ label|e }}</a>
+				</td></tr>
+			</table>
+{%- endif %}
+		</td>
+	</tr>
+</table>
+{%- endmacro %}
+
+
 {# The call to action. Table-wrapped rather than a bare padded <a> so Outlook
    renders the fill; bgcolor AND background so Outlook and the rest agree.
 

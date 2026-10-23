@@ -38,8 +38,12 @@ Things it is careful about:
 * **The text goes after the commit** (``enqueue_after_commit``), so a slow gateway never holds up
   whoever is assigning, and a rolled-back assignment texts nobody. It goes to the Employee's
   ``cell_number``, the rule every other text in this app uses (``planner_notices.cell_number``).
-* Record titles are user-typed, so they are escaped before they become Markdown links; the
-  rendered email is sanitized again by ``email_style.markdown``.
+* Record titles are user-typed. The summary hands them to ``email_style.item``, whose macro
+  escapes them; the briefing's Markdown lines escape them before they become link labels, and
+  ``email_style.markdown`` sanitizes that email again.
+* **Every link opens the assignment** (v1.739.0, :func:`link`): a Task or a maintenance visit opens
+  the record, anything else its ToDo, checked against what the reader may open. None opens My
+  Work's homepage any more.
 """
 
 import frappe
@@ -115,23 +119,86 @@ def _what(row, titles):
 	return (title or assignments.truncate(ask, 80) or row.name), ask
 
 
-def _url(row):
-	"""The absolute link an email or a text carries: the record, else My Work on the assignment."""
-	if row.reference_type and row.reference_name:
-		return get_url_to_form(row.reference_type, row.reference_name)
-	return get_url(f"/desk/my-work?todo={row.name}")
+# ---------------------------------------------------------------------------
+# Links (v1.739.0): every email, bell and text about an assignment opens that assignment -- its Task
+# or visit, else its ToDo -- never My Work's homepage. The rule is assignments.link_kind.
+
+
+def _may_read(doctype, name, user):
+	try:
+		return bool(frappe.has_permission(doctype, "read", doc=name, user=user))
+	except Exception:
+		return False
+
+
+def _may_read_todo(row, user):
+	"""v16 ``todo.has_permission``, its cheap half first: the assignee, whoever assigned it and
+	whoever made it always may; anyone else (a System Manager) only through the check itself."""
+	if user and user in (row.get("allocated_to"), row.get("assigned_by"), row.get("owner")):
+		return True
+	return bool(row.get("name")) and _may_read("ToDo", row.get("name"), user)
+
+
+def link(row, user=None):
+	"""Where a link to the assignment ``row`` goes for ``user``, who defaults to its assignee.
+
+	``{"kind", "doctype", "name", "url", "path", "label"}``: ``doctype``/``name`` are what a bell
+	entry points at, ``url`` is absolute (an email, a text), ``path`` is the site-relative link a
+	bell carries when it opens My Work, ``label`` the button's words. The record is read-checked
+	only when the answer depends on it, because the morning job asks once per row.
+	"""
+	user = user or row.get("allocated_to") or row.get("assigned_by") or row.get("owner")
+	ref_type, ref_name, name = row.get("reference_type"), row.get("reference_name"), row.get("name")
+	todo_ok = _may_read_todo(row, user)
+	record_ok = bool(
+		ref_type
+		and ref_name
+		and (ref_type in assignments.RECORD_LINK_DOCTYPES or not todo_ok)
+		and _may_read(ref_type, ref_name, user)
+	)
+	kind = assignments.link_kind(ref_type, ref_name, record_ok, todo_ok)
+	if kind == "record":
+		doctype, docname, path = ref_type, ref_name, None
+		url = get_url_to_form(ref_type, ref_name)
+	elif kind == "todo":
+		doctype, docname, path = "ToDo", name, None
+		url = get_url_to_form("ToDo", name)
+	else:
+		from urllib.parse import quote
+
+		tab = "/unclaimed" if not row.get("allocated_to") else ""
+		doctype, docname = "ToDo", name
+		path = f"/desk/my-work{tab}?todo={quote(str(name or ''))}"
+		url = get_url(path)
+	return {
+		"kind": kind,
+		"doctype": doctype,
+		"name": docname,
+		"url": url,
+		"path": path,
+		"label": _(assignments.link_label(doctype if kind != "my_work" else None)),
+	}
+
+
+def bell_fields(row, user):
+	"""What a bell entry (Notification Log) about ``row`` points at, for ``user``."""
+	target = link(row, user)
+	fields = {"document_type": target["doctype"], "document_name": target["name"]}
+	if target["path"]:
+		fields["link"] = target["path"]
+	return fields
+
+
+def _url(row, user=None):
+	"""The absolute link an email or a text about ``row`` carries (:func:`link`)."""
+	return link(row, user)["url"]
 
 
 def _bell(user, row, subject):
 	from frappe.desk.doctype.notification_log.notification_log import enqueue_create_notification
 
 	notification = {"type": "Assignment", "subject": subject, "from_user": "Administrator"}
-	if row.reference_type and row.reference_name:
-		notification.update(document_type=row.reference_type, document_name=row.reference_name)
-	else:
-		notification.update(
-			document_type="ToDo", document_name=row.name, link=f"/desk/my-work?todo={row.name}"
-		)
+	notification.update(bell_fields(row, user))
 	enqueue_create_notification(user, notification)
 
 
@@ -276,23 +343,36 @@ def _md(text):
 	return "".join("\\" + ch if ch in "\\`*_[]()#<>|!" else ch for ch in str(text or ""))
 
 
-def _line(row, titles, today, people=None, waiting=False):
+def _item(row, titles, today, user, people=None, waiting=False):
+	"""One assignment as the summary lists it: ``{"title", "detail", "url", "label"}``."""
 	title, ask = _what(row, titles)
-	text = f"[{_md(title)}]({_url(row)})"
+	detail = []
 	if ask and ask != title:
-		text += f" — {_md(assignments.truncate(ask, 120))}"
+		detail.append(assignments.truncate(ask, 120))
 	due = assignments.due_date(row.date, row.creation)
 	if due and due < today:
-		text += f" ({_md(_('{0} days late').format((today - due).days))})"
+		detail.append(_("{0} days late").format((today - due).days))
 	if waiting:
 		who = (people or {}).get(row.allocated_to)
-		text += f" · {_md((who.full_name if who else None) or row.allocated_to)}"
-	return f"- {text}"
+		detail.append((who.full_name if who else None) or row.allocated_to)
+	target = link(row, user)
+	return {
+		"title": title,
+		"detail": " · ".join(str(d) for d in detail),
+		"url": target["url"],
+		# The design system's buttons carry their capitals in the words (docs/email-design-system.md).
+		"label": target["label"].upper(),
+	}
 
 
-def digest_markdown(sections, titles, today, people=None):
-	"""The summary as Markdown. Separate from sending, so the morning briefing can reuse it."""
-	parts = []
+def digest_blocks(sections, titles, today, user, people=None):
+	"""The summary's sections for ``user``: ``[{"heading", "items", "more"}]``, empty ones left out.
+
+	Until v1.739.0 this was Markdown with each title a small text link, under one big "Open My
+	Work" button that opened My Work's homepage -- the button people pressed. Each assignment now
+	carries its own button to its Task, visit or ToDo, and My Work is a small link at the foot.
+	"""
+	blocks = []
 	for key, heading in (
 		("overdue", _("Overdue")),
 		("today", _("Due today")),
@@ -302,13 +382,36 @@ def digest_markdown(sections, titles, today, people=None):
 		rows = sections.get(key) or []
 		if not rows:
 			continue
-		parts.append(f"\n## {heading} ({len(rows)})\n")
-		parts.extend(_line(r, titles, today, people, waiting=key == "waiting") for r in rows[:DIGEST_ROWS])
-		if len(rows) > DIGEST_ROWS:
-			parts.append(f"- {_('and {0} more').format(len(rows) - DIGEST_ROWS)}")
-	if sections.get("undated"):
-		parts.append("\n" + _("{0} more with no due date.").format(sections["undated"]))
-	return "\n".join(parts).strip()
+		blocks.append(
+			{
+				"heading": f"{heading} ({len(rows)})",
+				"items": [
+					_item(r, titles, today, user, people, waiting=key == "waiting") for r in rows[:DIGEST_ROWS]
+				],
+				"more": max(len(rows) - DIGEST_ROWS, 0),
+			}
+		)
+	return blocks
+
+
+#: The Morning Briefing's word for each section a My Work line came from.
+BRIEFING_TAGS = {"overdue": "overdue", "today": "due today", "new": "new", "waiting": "waiting"}
+
+
+def briefing_lines(items):
+	"""The Morning Briefing's My Work list as Markdown lines, each a link to its assignment.
+
+	``items`` are ``api/briefing._user_todos``'s (``description``, ``bucket``, ``url``). The text
+	is user-typed, so it is escaped before it becomes a link label; the email sanitizes again.
+	"""
+	lines = []
+	for item in items or []:
+		text = _md(item.get("description"))
+		url = item.get("url")
+		line = f"[{text}]({url})" if url else text
+		tag = BRIEFING_TAGS.get(item.get("bucket"))
+		lines.append(f"- {line}" + (f" ({_(tag)})" if tag else ""))
+	return lines
 
 
 def _send_digest(person, sections, titles, today, people):
@@ -316,9 +419,16 @@ def _send_digest(person, sections, titles, today, people):
 
 	count = len(sections["overdue"]) + len(sections["today"])
 	subject = _("My Work: {0} due or overdue today").format(count) if count else _("My Work: new assignments")
-	body = email_style.markdown(digest_markdown(sections, titles, today, people)) + email_style.button(
-		get_url("/desk/my-work"), _("Open My Work")
-	)
+	parts = []
+	for block in digest_blocks(sections, titles, today, person.name, people):
+		parts.append(email_style.h(block["heading"]))
+		parts.extend(email_style.item(i["title"], i["detail"], i["url"], i["label"]) for i in block["items"])
+		if block["more"]:
+			parts.append(email_style.note(_("And {0} more in My Work.").format(block["more"])))
+	if sections.get("undated"):
+		parts.append(email_style.note(_("{0} more with no due date.").format(sections["undated"])))
+	parts.append(email_style.links([(get_url("/desk/my-work"), _("See all your work in My Work"))]))
+	body = "".join(parts)
 	frappe.sendmail(
 		recipients=[person.email or person.name],
 		subject=subject,

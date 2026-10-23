@@ -203,7 +203,8 @@ def _user_todos(user, today):
 	(``assign_to.add`` stamps ``nowdate()``), so it listed the five oldest assignments rather than
 	anything due. ``task_enhancements/assignments.due_date`` reads that stamp as no due date.
 	``description`` and ``date`` keep their meaning for the prompt and the fallback; ``bucket`` says
-	which list a row came from.
+	which list a row came from; ``url`` (v1.739.0) is where the line links, by the rule every
+	assignment link shares (``assignment_alerts.link``): the Task or visit, else the ToDo.
 	"""
 	from erpnext_enhancements.task_enhancements import assignment_alerts, assignments
 
@@ -216,6 +217,7 @@ def _user_todos(user, today):
 			"name",
 			"allocated_to",
 			"assigned_by",
+			"owner",
 			"date",
 			"creation",
 			"description",
@@ -234,8 +236,26 @@ def _user_todos(user, today):
 		if key == "waiting":
 			text = _("{0} (waiting on {1})").format(text, frappe.utils.get_fullname(row.allocated_to))
 		due = assignments.due_date(row.date, row.creation)
-		out.append({"description": text[:140], "date": str(due) if due else "", "bucket": key})
+		try:
+			url = assignment_alerts.link(row, user)["url"]
+		except Exception:
+			url = ""
+		out.append({"description": text[:140], "date": str(due) if due else "", "bucket": key, "url": url})
 	return out
+
+
+def my_work_section(todos):
+	"""The briefing's "My Work" section as Markdown, each line a link to its assignment, or ``""``.
+
+	Written here rather than by Gemini, which is handed the list for its Top 3 but would drop or
+	invent links; until v1.739.0 neither the Gemini briefing nor the fallback linked a single one,
+	and Gemini's wrote no My Work section at all (2026-10-23's folded the assignments into
+	"Overdue"). Both now end with this one.
+	"""
+	from erpnext_enhancements.task_enhancements import assignment_alerts
+
+	lines = assignment_alerts.briefing_lines(todos)
+	return ("\n\n## ✅ My Work\n\n" + "\n".join(lines)) if lines else ""
 
 
 def gather_briefing_data(user):
@@ -316,6 +336,7 @@ def compose_prompt(data, user):
 		"## ⚠️ Overdue\n"
 		"## 💼 Pipeline Pulse\n"
 		"## 🎯 Top 3 Priorities (your judgement, drawn strictly from the data)\n"
+		"Do not write a My Work section: the MY WORK list is added below your text, with links.\n"
 		"Keep it under 350 words. Plain, direct, no fluff."
 	)
 
@@ -352,12 +373,9 @@ def compose_fallback(data, user):
 		data["pipeline"],
 		lambda o: f"- {o['title']} — {o['party']} [{o['status']}]",
 	)
-	labels = {"overdue": "overdue", "today": "due today", "new": "new", "waiting": "waiting"}
-	section(
-		"✅ My Work",
-		data["todos"],
-		lambda t: f"- {t['description']}" + (f" ({labels[t['bucket']]})" if t.get("bucket") in labels else ""),
-	)
+	my_work = my_work_section(data["todos"])
+	if my_work:
+		parts.append("\n" + my_work.strip())
 
 	if len(parts) == 1:
 		parts.append("\nNothing scheduled, due, or overdue on your plate. Enjoy the clear runway!")
@@ -377,7 +395,7 @@ def _generate_narrative(data, user, settings):
 			compose_prompt(data, user), SYSTEM_INSTRUCTION, triton_settings, feature="morning_briefing"
 		)
 		if text and text.strip():
-			return text.strip(), "Gemini", None
+			return text.strip() + my_work_section(data["todos"]), "Gemini", None
 		return compose_fallback(data, user), "Fallback", "Gemini returned empty text"
 	except Exception as e:
 		frappe.log_error(title="Morning Briefing", message=f"Briefing narrative failed for {user}: {e}")

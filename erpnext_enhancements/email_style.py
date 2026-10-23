@@ -335,6 +335,13 @@ def button(url, label, tone="primary"):
 	return _macro("button", url, label, tone)
 
 
+def item(title, detail, url, label):
+	"""One thing in a list that has its own button: a bold title, a line under it, and a compact
+	button at the right — the My Work summary's assignments. An unsafe URL drops the button and
+	keeps the words."""
+	return _macro("item", title, detail, url if is_safe_url(url) else "", label)
+
+
 def button_fallback(url):
 	"""The copy-this-link escape hatch, for mail clients that strip buttons."""
 	return _macro("button_fallback", url) if is_safe_url(url) else ""
@@ -457,19 +464,20 @@ def ee_email_logo_url():
 def ee_assignment(doc):
 	"""What an assignment email says, for the ToDo Notification (WI-081): a dict of ``subject``,
 	``title``, ``record`` ("Opportunity CRM-OPP-2026-00187"), ``ask`` (one line), ``body`` (the ask
-	with its paragraph breaks), ``due`` and ``url``.
+	with its paragraph breaks), ``due``, ``url`` and ``button``.
 
 	The old email was titled "ToDo: CRM-OPP-2026-00187 [For Opportunity CRM-OPP-2026-00187]" and its
 	button opened the ToDo form, where the record you were actually assigned to is a link at the
-	bottom. ``url`` is the record itself, where the "Assigned to you" banner waits with Done, Snooze,
-	Reassign and Reply; a ToDo that names no record opens My Work on that assignment instead.
-	``due`` is ``None`` when the ToDo's date is only the day it was made
-	(``task_enhancements/assignments.due_date``). Degrades to the bare names rather than raising,
-	because Notification.send() turns a raise into a dropped email.
+	bottom. Since v1.739.0 ``url`` follows the rule every assignment link shares
+	(``assignment_alerts.link``): a Task or a maintenance visit opens the record, where the
+	"Assigned to you" banner waits with Done, Snooze, Reassign and Reply; anything else opens the
+	ToDo, which now leads with the same strip and a card for its record. ``button`` is the button's
+	words ("OPEN TASK", "OPEN TO-DO"). The message is rendered once for every recipient, so the
+	link is chosen for the assignee. ``due`` is ``None`` when the ToDo's date is only the day it was
+	made (``task_enhancements/assignments.due_date``). Degrades to the bare names rather than
+	raising, because Notification.send() turns a raise into a dropped email.
 	"""
-	from urllib.parse import quote
-
-	from erpnext_enhancements.task_enhancements import assignments
+	from erpnext_enhancements.task_enhancements import assignment_alerts, assignments
 
 	ref_type, ref_name = doc.get("reference_type"), doc.get("reference_name")
 	title = None
@@ -480,9 +488,12 @@ def ee_assignment(doc):
 			title = get_title(ref_type, ref_name)
 		except Exception:
 			title = ref_name
-		url = frappe.utils.get_url_to_form(ref_type, ref_name)
-	else:
-		url = frappe.utils.get_url(f"/desk/my-work?todo={quote(str(doc.get('name') or ''))}")
+	try:
+		target = assignment_alerts.link(doc)
+		url, button_label = target["url"], target["label"].upper()
+	except Exception:
+		url = frappe.utils.get_url_to_form("ToDo", doc.get("name"))
+		button_label = frappe._("Open to-do").upper()
 	ask = assignments.the_ask(doc.get("description"), ref_type, ref_name)
 	body = assignments.paragraphs(doc.get("description")) if ask else ""
 	label = frappe._(ref_type) if ref_type else None
@@ -495,4 +506,5 @@ def ee_assignment(doc):
 		"body": body,
 		"due": frappe.utils.formatdate(due) if due else None,
 		"url": url,
+		"button": button_label,
 	}
