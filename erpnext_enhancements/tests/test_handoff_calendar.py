@@ -658,6 +658,18 @@ class TestReschedule(unittest.TestCase):
 		self.assertNotEqual(second["event"], first["event"])
 		self.assertFalse(second["rescheduled"])
 
+	def test_an_emailed_reschedule_cancels_for_whoever_was_dropped(self):
+		STATE["gcals"].clear()
+		name = _opportunity()
+		_book(name)
+		STATE["sent"].clear()
+		_book(name, starts_on="2026-09-26 10:00:00", attendees=["ae@example.com", "production@example.com"])
+		request, cancel = STATE["sent"]
+		self.assertEqual(request["recipients"], ["ae@example.com", "production@example.com"])
+		self.assertIn("METHOD:REQUEST", request["attachments"][0]["fcontent"])
+		self.assertEqual(cancel["recipients"], ["billing@example.com"])
+		self.assertIn("METHOD:CANCEL", cancel["attachments"][0]["fcontent"])
+
 	def test_moving_an_emailed_invite_onto_google_withdraws_the_email(self):
 		name = _opportunity()
 		STATE["gcals"].clear()
@@ -794,6 +806,16 @@ class TestFailuresFallBack(unittest.TestCase):
 		self.assertEqual([c[0] for c in _calls("insert")], ["ae@example.com", "Hand-offs"])
 		self.assertTrue(any("earlier Google invite" in line for line in result["warnings"]))
 
+	def test_a_stranded_google_invite_is_named_when_only_email_is_left(self):
+		name = _opportunity()
+		_book(name)
+		STATE["fail_connect"]["ae@example.com"] = RefreshError(SECRET)
+		STATE["fail_connect"]["Hand-offs"] = RefreshError(SECRET)
+		result = _book(name, starts_on="2026-09-26 10:00:00")
+		self.assertEqual(result["calendar_path"], "email")
+		self.assertEqual(len(STATE["sent"]), 1)
+		self.assertTrue(any("still have it at the old time" in line for line in result["warnings"]))
+
 
 class TestPastTimes(unittest.TestCase):
 	"""EV00456: booked at 09:21 for 01:30 the same morning."""
@@ -903,6 +925,13 @@ class TestGuestsAndConnect(unittest.TestCase):
 		handoff_calendar.connect_google_calendar()
 		self.assertEqual(STATE["gcal_inserted"], [])
 		self.assertEqual(STATE["authorized"], [("ae@example.com", True)])
+
+	def test_connect_gives_a_reused_record_the_primary_calendar(self):
+		# Blank, Frappe would create a secondary calendar to organize from.
+		_calendar("ae@example.com", "ae@example.com", authorized=False)
+		STATE["gcals"]["ae@example.com"]["google_calendar_id"] = None
+		handoff_calendar.connect_google_calendar()
+		self.assertEqual(STATE["gcals"]["ae@example.com"]["google_calendar_id"], "primary")
 
 	def test_connect_says_what_to_do_when_google_is_not_set_up(self):
 		STATE["google_settings"]["enable"] = 0

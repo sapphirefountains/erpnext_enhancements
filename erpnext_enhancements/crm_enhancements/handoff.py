@@ -971,6 +971,12 @@ def _book_meeting(
 	delivery = handoff_calendar.deliver(event, attendees, _calendar_text(purpose, link))
 	if delivery["calendar_path"] == handoff_calendar.PATH_EMAIL:
 		invited = _send_invite(event, attendees, subject, label, link, purpose=purpose)
+		# Still by email: whoever was dropped from the list gets the cancellation,
+		# or their calendar keeps a meeting they are no longer in.
+		kept = {address.lower() for address in attendees}
+		dropped = [address for address in emailed_before if address.lower() not in kept]
+		if dropped:
+			_send_invite(event, dropped, subject, label, link, purpose=purpose, method="CANCEL")
 	else:
 		invited = True
 		if emailed_before:

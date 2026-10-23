@@ -59,7 +59,11 @@ and existing Events are untouched.
   so `_launch_event` finds the newest open Event that references the Project and has the launch meeting's subject.
   If the original organizer's calendar can no longer be reached, a new invite goes out from the next organizer, and
   the response says the old one may still be on guests' calendars. An Event whose earlier invite went by email, and
-  that now moves onto Google, gets that email invite withdrawn with a `METHOD:CANCEL`.
+  that now moves onto Google, gets that email invite withdrawn with a `METHOD:CANCEL`. An Event that stays on email
+  sends the `METHOD:CANCEL` to anyone dropped from the list. A Google event that nothing could move or replace (every
+  organizer failing) is named in the warning, because guests then have it at the old time and the email at the new.
+  `connect_google_calendar` gives a reused record the Calendar ID `primary` when it is blank; Frappe would otherwise
+  create a secondary calendar, and that calendar would organize the meetings.
 - **The email fallback is a `METHOD:REQUEST` invite.** `travel_management/ics.py` can now write `ORGANIZER` (the
   person who clicked) and `ATTENDEE` lines. An event without them is written exactly as before, so the travel
   calendars are unchanged. The UID is stable and `SEQUENCE` increases, so a re-scheduled invite replaces the old one.
@@ -98,7 +102,7 @@ and existing Events are untouched.
   their own calendar sends the email invite.
 
 ### Tests
-- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 38 tests, with a fake Google service.
+- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 41 tests, with a fake Google service.
   It covers organizer order and skipping unusable calendars; group addresses as guests; the Meet request and
   `sendUpdates`; no email when Google sent the invite; re-schedule patching the same event and adding no second
   Event, keeping guests' RSVPs; the launch meeting moving the same way; Skip and a Desk cancel deleting the Google

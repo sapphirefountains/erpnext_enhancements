@@ -412,6 +412,14 @@ def deliver(event, attendees, description, user=None):
 			)
 		return outcome
 
+	if had_google:
+		# Nothing could move or replace it, and the email that follows is a second
+		# invite for the same meeting. Say so plainly rather than leave it to guess.
+		warnings.append(
+			_(
+				"The Google invite could not be moved, so guests still have it at the old time. The new time went by email; delete the old Google event or reconnect the calendar and re-schedule."
+			)
+		)
 	return {
 		"calendar_path": PATH_EMAIL,
 		"google_calendar": None,
@@ -652,7 +660,8 @@ def connect_google_calendar():
 	A record this creates is push-only. ``pull_from_google_calendar`` is **0**, so
 	nobody's personal calendar is imported into ERPNext, and ``google_calendar_id``
 	is ``primary``, so invites come from the person's own calendar. An existing
-	record of theirs is reused as it is, apart from being switched on.
+	record of theirs is reused as it is, apart from being switched on and given
+	``primary`` when its Calendar ID is blank.
 
 	Permission: v16 gives ``Desk User``, which every System User holds, ``if_owner``
 	create and write on Google Calendar, which is exactly "your own". Frappe's
@@ -671,9 +680,16 @@ def connect_google_calendar():
 	name = frappe.db.get_value("Google Calendar", {"user": user}, "name")
 	if name:
 		doc = frappe.get_doc("Google Calendar", name)
-		if not doc.get("enable") or not doc.get("push_to_google_calendar"):
+		# A blank Calendar ID would make Frappe create a secondary calendar on the
+		# first call, and that calendar, not the person, would organize the meeting.
+		if (
+			not doc.get("enable")
+			or not doc.get("push_to_google_calendar")
+			or not doc.get("google_calendar_id")
+		):
 			doc.enable = 1
 			doc.push_to_google_calendar = 1
+			doc.google_calendar_id = doc.get("google_calendar_id") or "primary"
 			doc.save()
 	else:
 		doc = frappe.get_doc(
