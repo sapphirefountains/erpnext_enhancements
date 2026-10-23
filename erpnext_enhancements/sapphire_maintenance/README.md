@@ -116,6 +116,8 @@ Configuration lives in **ERPNext Enhancements Settings → Maintenance**: fee it
 | `../www/visit-sign-off.html` + `../www/visit_sign_off.py` | The public page the link opens: the service report, a typed name, a signature pad and "I confirm the service described above was performed" (`public/js/visit_sign_off/`, `public/css/visit_sign_off/`) | `get_context` |
 | `missed_visits.py` | Missed and stale visits (v1.595.0): Not drafted, Not started, Started not sent, for the report and the Visit Review page | `missed_visits`, `late_drafts`, `undrafted_visits` |
 | `report/missed_maintenance_visits/` | **Missed Maintenance Visits** Script Report over `missed_visits` | `execute` |
+| `chemical_usage.py` | What was used, by site and month (v1.731.0, TASK-2026-02480): the Consumables lines of counted visits grouped site x month x item x **dose unit** (units compared without case/spacing, never added or converted; a blank unit is the item's stock unit), the *Visit state* filter (Approved by default), the default window. Groups in Python from one bound query | `get_usage`, `build_rows`, `resolve_months`, `default_months`, `state_counts`, `fetch_lines` |
+| `report/maintenance_chemicals_used/` | **Maintenance Chemicals Used** Script Report over `get_usage` | `execute` |
 | `doctype/sapphire_visit_crew_member/…` | Child table on the visit (`crew`) and the profile (`default_crew`): user, own hours, and the helper's per-day digest stamp | (no custom logic) |
 | `doctype/sapphire_maintenance_section/…py` / `.js` | Section controller / type-driven grid columns | `validate` (dosing rows need an Item; min ≤ max) |
 | `doctype/sapphire_maintenance_template/…py` | Template controller | (no custom logic) |
@@ -227,6 +229,7 @@ The reusable sections made for the two sites follow the agreement's numbering: *
 - *Maintenance Planner* (`/app/maintenance-planner`, roles: System Manager / Maintenance Supervisor / Projects Manager / Maintenance User). See the next section.
 - *Visit Review* (`/desk/visit-review`, roles: Maintenance Reviewer / Maintenance Supervisor / System Manager; v1.595.0, Phase A of the 2026-10-12 Maintenance tools plan). See [Visit Review](#visit-review) below.
 - *Missed Maintenance Visits* report (same roles): visits that should have happened and have not. Its rows are also the Visit Review page's "Missed and not sent" section.
+- *Maintenance Chemicals Used* report (roles: Maintenance Reviewer / Maintenance Supervisor / **Finance Team** / System Manager; v1.731.0): the quantity of each chemical or part recorded on visits, per site and month, in the unit it was recorded in (a cap full is never added to a tablespoon; 1" and 3" tablets are separate Items). Only approved visits count unless the *Visit state* filter widens it. No price column: billing is undecided. Finance Team holds a read + report DocPerm on the record only so Frappe lets the report run; its permission query condition shows such a user no visits.
 - *Chemistry trend sparklines* on the record dashboard — last 5 visits per reading, red dots out-of-range (`_chemistry_trends`).
 - *Out-of-range follow-up* — Settings days > 0 drafts a "Chemistry Follow-Up" visit + technician ToDo on submit of a flagged record (deduped; labelled visits don't advance the regular cadence).
 

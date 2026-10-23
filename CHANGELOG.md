@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.731.0] - 2026-10-23
+
+### Added
+- **Maintenance Chemicals Used: a report of what was put into each site's fountains, by month**
+  (TASK-2026-02480, B3 of the 2026-10-12 Maintenance tools plan). A Script Report in Sapphire Maintenance,
+  linked under Tools on the workspace beside Missed Maintenance Visits. One row per **site x month x item x
+  unit**, with the total quantity, the number of visits it was used on and the last visit date. The site and
+  item are links; a Size column shows a chlorine tablet's 1" or 3". It reads the visits' Consumables lines,
+  because since v1.594.0 chemicals are recorded on a visit and never issued from stock, so Stock Entries
+  cannot say what was used.
+  - **Units are never added together or converted.** A dose unit is free text per template line (a tablet, a
+    cap full, a tablespoon), doses are fractional, and tablets per bucket vary by brand, so there is no honest
+    factor to the stock unit. "3 cap full" and "2 tablespoon" of one product are two rows. Units match with
+    case and spacing ignored ("Cap Full" = "cap  full"), shown in the spelling used most. A line with no unit
+    (older rows, or a part) is counted in the item's own stock unit. Parts and items used are lines in the
+    same table, so they appear in their own unit the same way.
+  - **Tablet sizes need no special case:** the two sizes are two Items (v1.712.0), so grouping by item keeps
+    them apart.
+  - **Which visits count is a filter, "Visit state", defaulting to Approved.** Choices: *Approved*
+    (`docstatus` 1, the workflow's Final/Submitted), *Approved or waiting for review* (adds Pending Review)
+    and *Including drafts*; canceled visits never count. Approved is the default because a reviewer's approval
+    is what makes a visit final: it is the state the customer's report, the invoice and the schedule
+    roll-forward act on, whereas a draft can be a half-answer still on a phone and a visit in review can be
+    sent back and changed. The cost is lag: a visit shows up only once a reviewer approves it, so the open
+    month reads low until they catch up. When the filter hides visits in the period, the report's message says
+    how many were waiting for review and how many were unsent drafts, so a low number is never a silent one.
+    Lines with a quantity of 0 never count ("none used").
+  - A visit sits in the month of its Visit Date (the day the work was done), else its Scheduled Visit Date,
+    else the day it was created. The month filters take any day and snap to whole months; the default is the
+    last three full months plus the current one (on 2026-10-23, July 1 to October 31).
+  - **No price, cost or revenue column.** Billing is undecided (chemical billing is situational, v1.628.0), so
+    nothing here could be mistaken for an invoice. Eight narrow columns (810px of width) and no money column.
+  - **Roles:** Maintenance Reviewer, Maintenance Supervisor and System Manager, which are the Missed
+    Maintenance Visits report's, plus **Finance Team**, which the plan named for the finance phase. Frappe
+    also requires the *report* permission on a report's reference DocType (`get_report_doc` in
+    `desk/query_report.py`, checked with `has_permission(ref_doctype, "report")`), and Finance Team had none on
+    Sapphire Maintenance Record, so a role on the report alone would have shown the link and then refused the
+    run. Sapphire Maintenance Record now gives Finance Team **read + report** only. They still see no visits
+    in lists or forms: the record's permission query condition returns `1=0` for any user who is neither staff
+    nor a portal customer. (If a Custom DocPerm is ever added for Sapphire Maintenance Record on the site it
+    replaces these rows wholesale, and Finance Team would need re-adding there.)
+  - Aggregation is done in Python from one bound-parameter `frappe.db.sql` query (no `"sum(x) as y"` field
+    string, which Frappe 16 refuses); every filter value is a bound parameter.
+  - The workspace JSON's `modified` is bumped so the new link syncs; no force-import patch. The new report and
+    the added DocPerm sync from their JSON on `bench migrate`. No schema change, no patch.
+  - `tests/test_maintenance_chemicals_used.py` (bench-free, its own CI step): units never summed, case and
+    spacing, tablet sizes apart, no-unit lines, month edges and year wrap, the state filter and what it
+    reports as left out, the default window, a start after the end, a visit with no chemicals, bound
+    parameters, and the report's roles, DocPerm, columns and workspace link.
+
 ## [1.728.0] - 2026-10-22
 
 ### Fixed

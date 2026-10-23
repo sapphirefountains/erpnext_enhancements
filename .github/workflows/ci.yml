@@ -2768,6 +2768,12 @@ jobs:
       # own rule, minus a paused contract's winter window, with seasonal visits.
       - name: Missed maintenance visits (not drafted, not started, not sent)
         run: python -m unittest erpnext_enhancements.tests.test_missed_visits -v
+      # Maintenance Chemicals Used (v1.731.0): doses are in the template line's own unit (a tablet,
+      # a cap full, a tablespoon) with no conversion, so one site's month must stay a row per item
+      # AND unit, chlorine tablet sizes (two Items) apart, and only approved visits counted by
+      # default. A cap full added to a tablespoon is a finance number that looks right and is not.
+      - name: Maintenance Chemicals Used (units never added, visit state, months)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_chemicals_used -v
       # A visit is dated and clocked out when the technician sends it for review (v1.595.1),
       # not at approval days later: the schedule rolls from the day the work was done, and a
       # later kiosk interval never becomes this visit's clock-out. Plus the patch that dates
