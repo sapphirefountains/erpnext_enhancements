@@ -133,6 +133,13 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - An end that ERPNext fills in from `expected_time` at save is not judged. A planner task always
     has an end.
   - The dedupe of warning lines merges identical lines from different tasks.
+- **Known limits of the widening:**
+  - It costs two small reads of the project's dates per Task save, four on a planner or Gantt
+    save, which calls it itself first. Caching them for the request would be unsafe: the sync hook
+    narrows the window between saves in the same request.
+  - `sync_project_dates_from_tasks` derives the window from the expected dates only. A widening
+    for an *actual* date past them is undone by the sync after the save and made again on the next
+    save of that task. That is two writes, and no failed save.
 - **Behavior change on prod after the deploy:**
   - On a Draft-schedule project, a quick add or a build out for a project with no tasks on the
     board now makes drafts where it made live Tasks. Publish creates them.
