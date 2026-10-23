@@ -149,7 +149,28 @@
 }
 
 .bm-item-name {
+	display: block;
 	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-item-code {
+	display: block;
+}
+
+.bm-item-link {
+	display: block;
+	color: var(--sf-link, var(--primary));
+	text-decoration: none;
+}
+
+.bm-item-link:hover .bm-item-name {
+	text-decoration: underline;
+}
+
+.bm-item-link:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+	border-radius: var(--sf-radius-control, 4px);
 }
 
 .bm-table .bm-reorder {

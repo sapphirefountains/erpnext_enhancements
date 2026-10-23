@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.728.0] - 2026-10-22
+
+### Fixed
+- **The Bin Manager's Move button opens its dialog again** (TASK-2026-02919, Parker's report ER-2026-1323788:
+  "in the bin manager clicking the move button on an item doesn't have any function", release 1.727.1). The
+  task text guessed a missing click handler; the handler was there. `move_dialog` listened for changes on the
+  "Make <bin> this item's bin" box's `$input` while building the dialog, but that box starts hidden and Frappe
+  builds a control's input only while the control is shown (`ControlBaseInput.refresh_input` calls
+  `make_input()` inside `if (disp_status != "None")`, and a hidden field's status is "None"). So `$input` was
+  `undefined`, the page threw a `TypeError` before `d.show()`, and the click looked dead. It has been so since
+  the Bin Manager was built (v1.693.0, `9275f8b2`); no recent change caused it. It never showed in the tests
+  because the dialog stand-in gave every field an input. The listener is now attached the first time the box
+  is shown. Move was already the existing `bin_assignments.move_to` (the one Stock Scan uses) with its
+  checks: a move of 0 or more than is here is refused in words, the picker never lists the bin being managed,
+  the quantity starts at everything here, the button is off while the save is out, and a tap after a lost reply
+  is the same save.
+  - A move, a send to the boneyard and a count now **change the row on screen at once** (before the list is
+    read again, which settles it) and show a **green toast** as well as the notice above the list.
+  - `scripts/test_bin_manager.mjs`: the dialog stand-in builds no input for a hidden field, as Frappe does, so
+    the Move tests throw on the old code; new tests walk the whole move.
+
+### Changed
+- **"Reorder at" can be 0** (reverses part of the #1338 review). Nik, 2026-10-22: "The reorder at line is
+  refusing to be assigned a 0 even though running out of all stock is a very normal spot to reorder items."
+  The review had refused a level of 0 because it raises a request "whenever stock reaches 0"; that is the point.
+  ERPNext's trigger (`erpnext/stock/reorder_item.py`, version-16) is `if (reorder_level or reorder_qty) and
+  projected_qty <= reorder_level`, and `get_items_for_reorder` does not filter on level > 0: a rule at 0 with a
+  quantity raises a Material Request once projected stock reaches 0 or below, and projected stock counts open
+  Material Requests and Purchase Orders, so it does not raise a second one. **Buy still has to be above 0** (a
+  rule that buys nothing is removed), a level below 0 is still refused, and a blank "Reorder at" box on an
+  existing rule still asks to remove it: a typed 0 is a level, a blank is not. A level of 0 shows as "0", is a
+  rule when read back, and survives a reload and a resend. In `api/reorder_levels.py` `set_reorder_level` and
+  `public/js/reorder_levels/logic.js` `plan_save`; the "Buy" refusal now has a sentence about Buy only.
+  Known and left alone: the KPI dashboards (`Stocked Items Out of Stock` and friends) and
+  `stock_scan._reorder_level` call an item *stocked* when its level is above 0, so an item reordered at 0 is not
+  counted as stocked there; whether they should say "has a rule" instead is a separate decision.
+
+### Added
+- **The reorder boxes are hidden until you turn them on** (TASK-2026-02920, Parker's ER-2026-1323805). Nik,
+  2026-10-22: "I would like the reorder values to be hidden or toggleable, it's not information I need to see
+  constantly. Ideally I would only need to change and alter once." Both screens now open with a clean list: the
+  Bin Manager without its Reorder column, the Inventory Scanner Audit's item card without the Reorder at / Buy
+  boxes. One switch in each toolbar, **Show reorder levels** / **Hide reorder levels**, brings them in.
+  - **Remembered, for good, on any device.** The choice is stored per person and per screen in the same
+    place as the planners' saved views and the guided page's settings (`api/planner_views_prefs.py`: a
+    `__UserSettings` row, `Inventory Screens`, written straight to the table). Frappe's own `user_settings`
+    were not used: they are Redis-only, and a deploy flushes Redis, which would forget the choice. The
+    browser's storage is not used either. Each screen's boot already carries it (`manager_boot.show_reorder`,
+    `get_bootstrap.prefs`), so a screen opens in the right state with no request of its own and no flash.
+  - **Anything wrong is "hidden".** No row, a damaged one, a value that is not a real `true`, a database that
+    will not answer: the screen opens clean. A choice that could not be saved still works for the visit and an
+    orange note says it will not be remembered.
+  - **Tapping early, or tapping fast, never leaves the store disagreeing with the screen** (independent review
+    of #1345). The Scanner Audit's switch can be there before the start-up reply lands (the reorder bundle
+    may already be cached); the reply used to put the screen back to the older stored value after the tap
+    had saved the new one. A switch the person has used now stays as they left it, the reply no longer
+    overrules it. On both screens only one save is in flight at a time, and when it settles the latest choice
+    is sent if it differs, so replies arriving out of order cannot store an earlier tap: the last tap wins on
+    screen and in the store. A save that fails still says so, once, for the latest choice.
+  - **Nothing is read while hidden.** The rules are asked for the first time the boxes are shown, once for a
+    list; hidden boxes are not in the page at all, so they are not focusable and not tab stops.
+  - **The scanner's focus is untouched.** A tap on the switch cannot take the focus (mousedown is cancelled),
+    and after it the focus goes to the counted-quantity box (or the scan box), so the next wedge scan and its
+    Enter land where they did. Enter in a reorder box still returns to the quantity box.
+  - Tests: `tests/test_inventory_screen_prefs.py` (the store: default off, per screen, straight to the table,
+    only the caller's row, damaged and unreadable rows read as off, the role gate, an unknown screen refused;
+    the wiring), and the real pages in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js`
+    (hidden by default and nothing read; the switch shows them, reads once and saves; a saved choice opens as
+    left; an unreadable or unsaved one falls back). The reorder-at-0, Move and item-link work is exercised with
+    the boxes on. One CI step.
+- **An item's name in the Bin Manager links to its Item record** (TASK-2026-02918). A real anchor to the Desk
+  form (`/desk/item/<code>`, from `frappe.utils.get_form_link`, never `/app`, which is a full page load on
+  v16): a click goes in place with a history entry so Back returns to the bin, Ctrl/Cmd or middle click opens
+  a tab, and the keyboard reaches it. The code is URL-encoded and the text escaped. It sits outside every row
+  action. Shown only to people who may read Items (`manager_boot.can_open_items`).
+
 ## [1.727.1] - 2026-10-22
 
 ### Fixed

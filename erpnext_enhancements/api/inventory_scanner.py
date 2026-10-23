@@ -69,7 +69,16 @@ def get_bootstrap():
 			"enable_camera_scan": cint(settings.get("enable_camera_scan")),
 		},
 		"session": _session_payload(_active_session_name()),
+		# The caller's own switches (TASK-2026-02920): the reorder boxes on the item card are hidden unless
+		# they turned them on, and hidden when the preference cannot be read.
+		"prefs": {"show_reorder": _show_reorder()},
 	}
+
+
+def _show_reorder():
+	from erpnext_enhancements.api.planner_views_prefs import show_reorder
+
+	return show_reorder("scanner_audit")
 
 
 @frappe.whitelist()

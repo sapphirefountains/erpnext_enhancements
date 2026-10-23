@@ -3558,6 +3558,13 @@ jobs:
       # the real app.js in test_stock_scan_client.mjs and on the real Bin Manager page in test_bin_manager.
       - name: Unit-cost prompt for stock added with no cost (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_unit_cost_prompt -v
+      # The inventory screens' reorder switch (v1.728.0, TASK-2026-02920): the Bin Manager and the Inventory
+      # Scanner Audit open with the reorder boxes hidden, and a person's choice is kept per screen in their own
+      # __UserSettings row, written straight to the table (frappe's user_settings are Redis-only and a deploy
+      # flushes Redis, which would forget it). Only a real true is on; a damaged row, a database that will not
+      # answer, an unknown screen or a missing role never leave a screen worse than hidden. Own frappe stub.
+      - name: Inventory screens' reorder switch (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_screen_prefs -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

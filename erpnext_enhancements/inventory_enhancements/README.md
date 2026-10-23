@@ -599,7 +599,13 @@ The page's decisions are `public/js/bin_manager/logic.js` and its state and call
 `public/js/bin_manager/controller.js` (`bin_manager.bundle.js`, `window.sf_bin_manager`); the page
 script draws and wires, and its CSS is `bin_manager.css`, every selector under `.bm-`.
 
-### Reorder levels on both audit screens (v1.725.0)
+A bin's items: each item's name is a link to its Item record where the person may read Items
+(`can_open_items`), and **Move** is `bin_assignments.move_to` through a dialog (pick a bin that is not this
+one, a quantity of at most what is here). Frappe builds no input for a hidden field, so a listener on the
+hidden "Make <bin> this item's bin" box is attached when the box is first shown, never at build time (that threw
+and made the Move button look dead until v1.728.0).
+
+### Reorder levels on both audit screens (v1.725.0; hidden until switched on, v1.728.0)
 
 Nik, 2026-10-22: the reorder amount "adjusted easily without leaving the screen". The Bin Manager's
 **Reorder** column and the Inventory Scanner Audit's item card show an item's reorder rule and edit it
@@ -612,8 +618,10 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   labelled with its warehouse and edited there; an item with none gets a Purchase rule on the bin once
   both numbers are given.
 * **What a rule may be.** Automatic re-ordering is on (`Stock Settings`), so a bad rule orders stock:
-  a rule needs **both** numbers and both above 0 (a level of 0 raises a request whenever stock reaches 0);
-  clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
+  a rule needs **both** numbers; **Buy must be above 0, Reorder at may be 0** (Nik, 2026-10-22: running out
+  of all stock is a normal place to reorder; ERPNext reorders when projected stock is at or below the level, so
+  0 raises one request when it runs out, and open requests and orders count, so not two). A blank box is not a
+  0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. Clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
   neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
