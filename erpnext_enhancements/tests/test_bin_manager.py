@@ -373,6 +373,12 @@ class TestManagerBoot(_Base):
 		base._without_item_read()
 		self.assertFalse(base.bins.manager_boot()["can_manage"])
 
+	def test_an_items_name_links_to_its_record_only_for_those_who_can_open_it(self):
+		"""TASK-2026-02918: the page links an item's name to /desk/item/<code> when ``can_open_items``."""
+		self.assertTrue(base.bins.manager_boot()["can_open_items"])
+		STATE["perm"][("Item", "read")] = False
+		self.assertFalse(base.bins.manager_boot()["can_open_items"])
+
 	def test_the_quick_item_lists_are_the_store_runs(self):
 		out = base.bins.manager_boot()
 		self.assertEqual(out["uoms"], list(rules.QUICK_ITEM_UOMS))

@@ -8,10 +8,13 @@
  *     material_request_type, modified, stock_uom, whole_number }
  * `level` is the reorder level (buy more when the stock falls to it) and `qty` how many to buy.
  *
- * WHAT A RULE MAY BE (review of #1338). Automatic reordering is on, so a rule that is wrong orders
- * stock nobody wanted: a rule needs BOTH numbers and both above 0 (a level of 0 raises a request
- * whenever stock reaches 0); a rule is switched off by REMOVING it, which asks first; and neither
- * number may be above MAX_AMOUNT, because a barcode scanned into a focused box is twelve digits.
+ * WHAT A RULE MAY BE. Automatic reordering is on, so a rule that is wrong orders stock nobody wanted: a
+ * rule needs BOTH numbers; "Buy" must be above 0; "Reorder at" may be 0 (Nik, 2026-10-22: "The reorder at
+ * line is refusing to be assigned a 0 even though running out of all stock is a very normal spot to
+ * reorder items." ERPNext reorders when projected stock <= the level, so 0 means "when it runs out", and
+ * projected stock counts open requests and orders, so it does not ask twice). A blank box is NOT a 0: a
+ * blank box of an existing rule asks to REMOVE it, a "0" is a level. Neither number may be above
+ * MAX_AMOUNT, because a barcode scanned into a focused box is twelve digits.
  */
 
 export const READ = "erpnext_enhancements.api.reorder_levels.get_reorder_levels";
@@ -24,7 +27,7 @@ export const MAX_AMOUNT = 100000;
 
 export const QTY_NEEDED = "Say how many to buy each time the stock falls to the reorder level.";
 export const BOTH_NEEDED = "Enter both to create a reorder rule.";
-export const ABOVE_ZERO = "Use a number above 0, or clear a box to remove the rule.";
+export const QTY_ABOVE_ZERO = "Buy must be more than 0. Clear a box to remove the rule.";
 export const REMOVE_ASK = "Remove this reorder rule?";
 
 // A number as the box shows it: 3 not 3.000000000, 2.5 as 2.5, nothing for "no rule".
@@ -55,7 +58,7 @@ export function parse_amount(text) {
 //   { kind: "remove" }                                a box of an existing rule was cleared: ask
 //   { kind: "save", level, qty }
 // Every number is checked first (a number, 0 or more, at most MAX_AMOUNT, whole where the unit is);
-// then the rules above. A number that is 0 is never saved.
+// then the rules above. "Reorder at" may be 0; "Buy" may not.
 export function plan_save(entry, level_text, qty_text, tr) {
 	const say = tr || ((s) => s);
 	const fields = [
@@ -81,8 +84,7 @@ export function plan_save(entry, level_text, qty_text, tr) {
 		if (level !== null && qty !== null && level === Number(entry.level) && qty === Number(entry.qty)) return { kind: "none" };
 		if (level === null || qty === null) return { kind: "remove" };
 	}
-	if (level <= 0) return { kind: "invalid", field: "level", message: say(ABOVE_ZERO) };
-	if (qty <= 0) return { kind: "invalid", field: "qty", message: say(ABOVE_ZERO) };
+	if (qty <= 0) return { kind: "invalid", field: "qty", message: say(QTY_ABOVE_ZERO) };
 	return { kind: "save", level, qty };
 }
 
