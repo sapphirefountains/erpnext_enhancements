@@ -72,6 +72,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reports as left out, the default window, a start after the end, a visit with no chemicals, bound
     parameters, and the report's roles, DocPerm, columns and workspace link.
 
+## [1.730.0] - 2026-10-22
+
+### Added
+- **The Reorder Board, and ERPNext no longer raises Material Requests on its own** (ER-2026-1323810, Parker
+  Bailey, approved by Nik 2026-10-22; TASK-2026-02922 to -02926). Parker: "Instead I would like it to send me an
+  alert letting me know an item has fallen below the reorder point ... I think having more control over requests
+  being sent and made instead of just automatically clogging the material request table would be a lot more
+  helpful, and would allow greater control to potentially ignore items that are not pressing but still remember
+  they are below stock levels."
+  - **Why auto-indent goes off.** With `Stock Settings.auto_indent` on, ERPNext's nightly `reorder_item` job made
+    and *submitted* a Material Request for every item at or below its reorder point, whether or not anyone wanted
+    it (six on production, Oct 17-22, owner Administrator). The board replaces it, and running both would make
+    every short item twice. `patches/disable_auto_material_requests` sets `auto_indent` to 0, which Nik signs off
+    at merge. ERPNext's job begins `if cint(get_single_value("Stock Settings", "auto_indent")): return
+    _reorder_item()` (checked on the v16.50.0 tag production runs, and on the `version-16` branch), so with 0 it
+    reads no rule, makes no request and never reaches its `reorder_email_notify` email. The requests auto-indent already made are untouched; the three
+    Pending ones show on the board's On order tab. If someone switches auto-indent back on, the board says so.
+  - **The page**, `/desk/reorder-board`, has three tabs, each its own history entry (Back and Forward walk them):
+    - **Needs reorder**: at or below the reorder point, with nothing open covering it. Item, name, warehouse,
+      on hand, projected, reorder at, the suggested buy (editable; above 0, at most 100,000, whole for a whole
+      unit), UOM, default supplier, last purchase rate (Purchase Order readers only) and how long it has been
+      below. Select all or some, then **Create Material Request**.
+    - **On order**: every open request for a reorder item, staged from the documents' own links (Material
+      Request Item ← Purchase Order Item `material_request_item` ← Purchase Receipt Item `purchase_order_item`),
+      with no tracking table of our own: Draft request → Requested → PO in draft → Partially ordered / Ordered
+      (the PO, its supplier, the expected date) → Partially received → Received. **Pickup or Delivery** comes
+      from the PO's existing `custom_order_stage` (Waiting for Pickup / Waiting for Delivery). A received line
+      stays a week so the buyer sees it arrive, then drops off; a line closed short drops off at once.
+    - **Snoozed**: still below, parked, never forgotten. Un-snooze brings it back.
+  - **"Below" is ERPNext's own rule, not a second one.** `reorder_rules.is_below` and `suggested_qty` are the
+    closure inside ERPNext's `_reorder_item`, line for line, **as production runs it (ERPNext v16.50.0)**: fire
+    when `(level or qty) and projected <= level`, and buy the larger of `reorder_qty` and the deficiency
+    `level - projected`. Level 0 with a quantity is a real rule ("reorder when out of stock"). The `version-16`
+    branch has since changed the quantity to `reorder_qty + (level - projected)` when `projected + reorder_qty`
+    would not clear the level; this follows the installed tag, and the test transcribes v16.50.0. Re-read it
+    when ERPNext is upgraded. The rules and projected quantities come from ERPNext's
+    `get_items_for_reorder` and `get_item_warehouse_projected_qty`, so its filters apply (Item enabled, a stock
+    item, not past end of life, the warehouse enabled, variants inheriting the template's rules) and the projected
+    qty is read at the rule's `warehouse_group`, a missing Bin counting 0. Every rule on production has a group
+    (the 83 Inventory Room rules `All Warehouses - SF`, the bin rules `Inventory - SF`), so "below" is across
+    the group, exactly what auto-indent compared. Only Purchase rules are listed; all of production's are.
+  - **Create Material Request** shows a dialog listing the lines, then makes one **Draft** Material Request (type
+    Purchase) per company: the quantities on screen (converted to the purchase UOM as ERPNext converts them),
+    `schedule_date` today plus each item's lead time, the rule's warehouse. It is inserted as the person, so
+    ERPNext's validation and permissions apply, and opened so they review and submit it there. The server checks
+    everything again: the role, Material Request create, that each line still has a rule, is still at or below
+    its point, and is not already on an open request or order; one stale line and nothing is made, and the dialog
+    says which. **It cannot make two:** a MariaDB named lock serialises the call, the transaction is refreshed
+    under it, and the dialog's one `client_ref` makes a double click or a retry after a lost reply return the
+    request already made. The lock's name carries a hash of the site, because MariaDB named locks are
+    server-wide. A Reorder Watch row the hourly sync inserts at the same moment is caught (`DuplicateEntryError`
+    or `UniqueValidationError`, under a savepoint, messages muted) and written onto, so no modal follows a
+    successful request.
+  - **What "covered" means** (and so what keeps an item off Needs reorder and out of the digest). A request line
+    covers while something on it is **still to come**: the part not yet on a submitted Purchase Order, plus what
+    submitted orders that are not Closed, Completed or Delivered have not delivered yet.
+    - **A Purchase Order closed short covers nothing more.** Closing a PO in ERPNext v16.50.0 updates the Bin but
+      never the Material Request, which stays Ordered or Partially Received for ever. Counting it as open would pin
+      the item as covered however low it went (prod, 2026-10-22: 87 of 104 Closed POs under 100% received;
+      MAT-MR-2026-00007, Ordered, its PO-2026-00255 Closed, already had this shape). Its line drops off On order and
+      the item is judged on its stock again.
+    - **On Hold still covers**: ERPNext keeps an On Hold order in the Bin's ordered qty (only Closed and Delivered
+      drop out), so the projected qty still counts it, and the buyer can resume it.
+    - **A Draft request covers**, because ERPNext raises no requested qty for one and only this keeps the item off
+      Needs reorder; it shows on On order as "Draft request". **But a Draft older than 30 days does not**
+      (`reorder_rules.STALE_DRAFT_DAYS`): prod had MAT-MR-2025-00007, eleven months old, hiding its item. Such an
+      item comes back to Needs reorder with the Draft named on its line, "Old draft request", linked, to finish or
+      delete.
+    - **Across the rule's group.** ERPNext judges a rule on the projected qty of every warehouse under its
+      `warehouse_group`, so a request for any warehouse in the group covers it (a Draft for a sibling bin
+      included). A rule with no group counts its own warehouse; production's one rule whose group is its own bin
+      counts that bin.
+    - Material Requests that are Stopped, Cancelled or Closed never cover.
+  - **Snooze**: 1 week, 1 month (the day clamped, 31 Jan → 28 Feb), or until stock drops further (the projected
+    qty is kept and the snooze ends once it is lower; equal is not further). Who, when and an optional reason
+    are kept. The digest never names a snoozed line, and names it again once its snooze ends.
+  - **The alert: one morning digest, email plus the Desk bell.** `reorder_board.send_daily_digest` runs at
+    07:20 site time every day and names the lines that newly fell below since the last digest, or whose snooze
+    ended, with a link to the board; nothing new, nothing sent. It goes to the enabled System Users holding
+    **Inventory Scanner Settings → Reorder Alert Role** (new; default Purchase Manager), except Administrator,
+    Guest and the Triton service account: seven people on production today. One email in the app's design
+    system, its table four columns so it reads on a phone (item and name, warehouse, projected / reorder at,
+    suggested buy; the rest is on the board), and one bell notification (type Alert, linking
+    `/desk/reorder-board`) each. An hourly `sync_watch` records when each line went below, ends snoozes that ran
+    out, and forgets lines that recovered.
+  - **The first digest will be long.** Every item already below its point on the morning after the deploy has no
+    Reorder Watch row yet, so it counts as newly below: day one names everything that is short and uncovered.
+    From then on it names only what changed.
+  - **State is in the database, so a deploy's FLUSHDB costs nothing.** New DocType **Reorder Watch**, one row
+    per item and warehouse while it is below (`below_since`, `alerted_on`, the snooze, the last request the board
+    made). A line is stamped `alerted_on` in the same transaction that queues the email. Frappe re-enqueues a
+    due cron job that is no longer in the queue (`last_execution` is written when a job starts, not when it is
+    queued), and a line not yet named is still un-named the next morning.
+  - **Who may:** Purchase Manager, Purchase User, Stock Manager and System Manager open the board and ask for
+    Draft requests: the buyers and the owner of the reorder rules; not Stock User, whose job is taking and counting
+    stock. **Snooze and un-snooze are Purchasing's only** (Purchase Manager, Purchase User, System Manager: the
+    endpoints, the page and Reorder Watch's DocPerms, where Stock Manager reads only), because a snooze silences
+    the Purchase Managers' digest and Stock Manager is held by 17 people, technicians among them. Item and
+    Material Request permissions stay the framework's.
+  - **Where it is:** the digest's link and the bell, and a *Reorder Board* link in the Inventory Enhancements
+    workspace's Purchasing card, beside Find a Supplier. The workspace file's `modified` is bumped past v1.726.0's,
+    so model sync imports it; no patch is needed.
+  - **Where the brief and the Tasks differ, the brief wins** (the Task texts were AI-written): the alert is a
+    **daily** digest, not the hourly check TASK-2026-02926 suggests (Nik's decision); the endpoints live in a new
+    `api/reorder_board.py`, not `api/item_flow.py` as TASK-2026-02923 and -02925 say, because another change in
+    flight edits that file; the page is built on `sf_kit` (state panels, chips, toasts, the quiet call) as
+    TASK-2026-02924 asks.
+  - Endpoints: `api/reorder_board.py` (`get_board`, `create_material_requests`, `snooze_line`, `unsnooze_line`).
+    Rules: `inventory_enhancements/reorder_rules.py` (no Frappe). Reads and writes:
+    `inventory_enhancements/reorder_board.py`.
+  - **Patches**, both `post_model_sync`, neither can raise, both safe twice:
+    - `disable_auto_material_requests`: `Stock Settings.auto_indent` 1 → 0, one `set_single_value`, only when
+      it is on and only on a Stock Settings that has rows.
+    - `backfill_reorder_alert_role`: `Inventory Scanner Settings.reorder_alert_role` = `Purchase Manager`, only
+      where `tabSingles` has no row for it (a new Single field's default never reaches the existing row); never
+      over a stored value; a never-saved Single left alone. The digest also falls back to Purchase Manager.
+  - Tests: `tests/test_reorder_board.py`, its own CI step: the rule against a transcription of v16.50.0's over a
+    grid (level 0, the group, a missing Bin) and a case where the tag and the branch differ (level 10, qty 3,
+    projected 5: 5, not 8); coverage and every stage; a PO closed short, closed with nothing received, and On Hold;
+    old Drafts; coverage across a group; Draft-only and idempotent requests and stale refusals; the site-scoped lock
+    and the insert race; who may snooze; each snooze kind; the digest's pick, its silence and its four columns;
+    recipients; both patches (the backfill writes only where there is no row, never over a stored value, never on
+    a never-saved Single); and the page's logic under node. `test_stock_scan_surface` now counts the new backfill
+    for the new field.
+  - Not done here: a link to the board from the Bin Manager and the Inventory Scanner Audit (another change is
+    editing both). Lines from Transfer or Manufacture reorder rules are not listed (there are none on production).
+
 ## [1.729.0] - 2026-10-22
 
 ### Added

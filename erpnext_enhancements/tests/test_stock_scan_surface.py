@@ -2276,6 +2276,9 @@ class TestTheSettings(unittest.TestCase):
 		value = _module_constant(BACKFILL, "FIELDS")
 		self.assertIsNotNone(value, "the backfill patch has no FIELDS")
 		fields = set(ast.literal_eval(value))
+		# v1.730.0: the Reorder Board's reorder_alert_role came later, so it has its own backfill
+		# (the v1.521.0 patch has already run on every site and would never see a new field).
+		fields |= set(ast.literal_eval(_module_constant(APP / "patches" / "backfill_reorder_alert_role.py", "FIELDS")))
 		with_default = {f["fieldname"] for f in self.new_fields() if self.expected(f) is not None}
 		self.assertEqual(fields, with_default)
 		self.assertEqual(
