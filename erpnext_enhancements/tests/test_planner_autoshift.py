@@ -1203,6 +1203,55 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
 		self.assertEqual(self._drafted()["TASK-C"], ("2026-10-30", "2026-10-30"))
 
+	def _diamond(self, f_row_first):
+		"""B waits on A; F waits on A and on B. A's new end is Tue 27: B (Tue-Wed) is in its way and
+		goes Wed-Thu, which puts F (Thu 29) in B's way. ``f_row_first``: F's row on A is the first
+		one the database returns, so the walk meets F before B has moved."""
+		h._task("TASK-B", start="2026-10-27", end="2026-10-28", crew=("RES-2",), project="PRJ-2")
+		h._task("TASK-F", start="2026-10-29", end="2026-10-29", crew=("RES-2",), project="PRJ-2")
+		if f_row_first:
+			self._depends("TASK-F", "TASK-A")
+			self._depends("TASK-B", "TASK-A")
+		else:
+			self._depends("TASK-B", "TASK-A")
+			self._depends("TASK-F", "TASK-A")
+		self._depends("TASK-F", "TASK-B")
+		return self._reschedule()
+
+	def test_a_follower_of_two_moved_tasks_clears_both_whatever_the_row_order(self):
+		for f_row_first in (True, False):
+			with self.subTest(f_row_first=f_row_first):
+				self.frappe.tables["Planner Draft Change"] = []
+				self.frappe.tables["Task Depends On"] = []
+				self.frappe.docs[("Task", "TASK-A")]["depends_on"] = []
+				result = self._diamond(f_row_first)
+				self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+				# Clear of B's new end (Thu 29), not only of A's (Tue 27).
+				self.assertEqual(self._drafted()["TASK-F"], ("2026-10-30", "2026-10-30"))
+				moves = {m["task"]: (m["from"], m["to"]) for m in result["shifted"]}
+				self.assertEqual(
+					moves, {"TASK-B": ("2026-10-27", "2026-10-28"), "TASK-F": ("2026-10-29", "2026-10-30")}
+				)
+
+	def test_a_follower_of_two_selected_tasks_clears_both_in_either_order(self):
+		# R1 (TASK-A) ends Tue 27 once rescheduled, R2 (TASK-R) Wed 28; F waits on both.
+		for order in (["TASK-A", "TASK-R"], ["TASK-R", "TASK-A"]):
+			with self.subTest(order=order):
+				self.frappe.tables["Planner Draft Change"] = []
+				self.frappe.tables["Task Depends On"] = []
+				h._task("TASK-R", start="2026-09-28", end="2026-09-30", crew=("RES-1",), project="PRJ-2")
+				self._follower("TASK-F", "2026-10-27", "2026-10-27")
+				self._depends("TASK-F", "TASK-R")
+				result = self.api.bulk_update(json.dumps(order), "reschedule", "2026-10-26")
+				self.assertEqual(self._drafted()["TASK-R"], ("2026-10-26", "2026-10-28"))
+				self.assertEqual(self._drafted()["TASK-F"], ("2026-10-29", "2026-10-29"))
+				# Once in the answer, from where it was to where it ends up.
+				self.assertEqual(
+					[(m["task"], m["from"], m["to"]) for m in result["shifted"]],
+					[("TASK-F", "2026-10-27", "2026-10-29")],
+				)
+				self.frappe.docs[("Task", "TASK-F")]["depends_on"] = []
+
 	def test_a_published_follower_in_the_way_is_named_and_left(self):
 		h._task("TASK-B", start="2026-10-27", end="2026-10-27", crew=("RES-2",))  # PRJ-1, published
 		self._depends("TASK-B", "TASK-A")
@@ -1303,6 +1352,17 @@ class TestTheDraftRoom(_P4):
 		self.assertEqual(failed["task"], "TASK-8")
 		self.assertIn("too many unpublished changes", failed["error"])
 		self.assertIn(("rollback", "planner_bulk_draft_0"), self.frappe.db_calls)
+
+	def test_re_drafting_an_already_drafted_task_adds_no_row_and_is_not_refused(self):
+		# At the cap, with that cap's one row being TASK-8's own: rescheduling it again merges into it.
+		h._draft_row("TASK-8", {"start": "2026-10-20", "end": "2026-10-22"})
+		with mock.patch.object(self.api, "DRAFT_LIMIT", 1):
+			result = self.api.bulk_update(json.dumps(["TASK-8"]), "reschedule", "2026-10-26")
+			self.assertEqual(result["failed"], [])
+			self.assertTrue(result["updated"][0]["drafted"])
+			# A task with no row of the caller's would add one: refused at the cap.
+			with self.assertRaises(h._Throw):
+				self.api.bulk_update(json.dumps(["TASK-9"]), "reschedule", "2026-10-26")
 
 	def test_room_is_counted_on_the_callers_task_rows_only(self):
 		h._draft_row("TASK-X", {"start": "2026-10-20"}, owner="clegg@example.com")

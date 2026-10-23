@@ -2068,10 +2068,14 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
       moved. It moves to the working day after, keeping its length in working days
       (`_draft_followers(clear_of=…)`, `_clearing_step`). This cascades, and a follower already clear
       stops it.
+    - The walk is `_walk_clearing`. A follower is offered again whenever another task it waits on
+      moves, so the result does not depend on the order the walk meets tasks in. A follower of two
+      selected tasks clears both.
     - A drag and `move_many` still carry followers by the working days the end moved (D10). An
       overdue task is weeks late, so that rule would push work that was never in its way.
     - The room for the drafts is checked before anything is saved (`require_change_room`). The
-      planner reads only `DRAFT_LIMIT` task rows per person, oldest first.
+      planner reads only `DRAFT_LIMIT` task rows per person, oldest first. A task that already has
+      one of the caller's rows is not counted.
     - The Task stays overdue until Publish, so `get_overdue` marks the row with `drafted_start`,
       unless the task changed since it was drafted, and the tray shows "Draft: <day>".
   - **Copy week**: a copy into a Draft schedule is a `New task` Draft row, built from the same spec as

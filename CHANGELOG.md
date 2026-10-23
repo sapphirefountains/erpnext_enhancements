@@ -29,6 +29,14 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
       such day, skipping weekends and the company's holidays, and keeps its length in working days.
     - The rule cascades: a moved follower's own followers are checked against its new end. A
       follower already clear stays put, unreported, and nothing past it moves.
+    - **The result does not depend on the order the walk meets tasks in** (`_walk_clearing`).
+      - A follower that stayed is checked again when another task it waits on moves later in the
+        walk.
+      - A follower that already moved is pushed on if a later move needs it.
+      - So a follower of two moved tasks ends up clear of both, whichever dependency row the
+        database returns first. This includes a follower of two *selected* tasks: only the
+        selected tasks are kept out of each other's walks.
+      - Each follower comes back once in `shifted`, from where it was to where it ends up.
     - Why not carry followers by how far the task moved, as a drag does (D10)? An overdue task is
       weeks late. A follower planned for next week, already clear of it, would have been pushed by
       the same weeks. This is `_draft_many(clear=True)` → `_draft_followers(clear_of=…)`, the same
@@ -41,8 +49,9 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
   - **Room for the drafts is checked** (`require_change_room`). The planner reads only the caller's
     oldest `DRAFT_LIMIT` (300) Draft rows of tasks, so a row past that would drop out of the
     overlay and of Publish without a word, and one tray action can draft 100 tasks plus their
-    followers. The tasks to draft are counted before anything is saved. A task whose followers then
-    take the caller past the limit is undone and reported in `failed`.
+    followers. The tasks to draft are counted before anything is saved. A task that already has one
+    of the caller's rows adds none (the new draft merges into it), so it is not refused at the cap.
+    A task whose followers then take the caller past the limit is undone and reported in `failed`.
   - Each drafted task has its own savepoint. A refused one (a rental crew task, a Fountain Move) is
     reported in `failed`, and the rest carry on, as the saved ones always did. Each is drafted from
     the Task as stored after the live saves, so one that ERPNext pushed while saving a task it waits
@@ -104,6 +113,11 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
   Reschedule or a Copy week on a Published project is now drafted too. Before, both wrote live
   despite the hold, because neither took a draft flag. Mark done and Cancel stay live under the
   hold.
+- **Known limits of the follower rule:**
+  - "On or before the new last day" is by date. A follower that starts later on that same day, in a
+    time slot after the task's own, still moves to the next working day.
+  - A Fountain Move follower, or one the caller cannot change, is named in `shift_skipped` even
+    when it was already clear and would not have moved.
 - **Follow-ups, not in this release:**
   - ERPNext's own validation (a date outside the project, a dependency still open) runs only at
     Publish for these drafts, as for every planner draft.
@@ -118,13 +132,15 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
     - a follower already clear stays;
     - one in the way moves to the working day after, across a holiday;
     - a chain stops at a clear follower;
+    - a follower of two moved tasks clears both, whichever of its dependency rows comes first;
+    - a follower of two selected tasks clears both, in either order;
     - a pushed follower pushes its own;
     - a follower's draft is what is compared;
     - a published follower is named only when in the way;
     - `move_many` still keeps the gap;
     - Publish saves the task and its follower on their drafted days.
   - The draft room: the count is checked before anything is saved; followers past it undo their
-    task; only the caller's task rows count.
+    task; only the caller's task rows count; a task already drafted is not refused at the cap.
   - Copy week: a live and a drafted copy that double-book someone; a drafted copy keeps the hours,
     crew size, location and qualifications.
   - `scripts/test_planner_autoshift.js` drives the real page under node. It checks the flags sent,
@@ -133,7 +149,9 @@ Overdue tray's Reschedule also left the tasks that follow where they were.
   - Mutation checks:
     - disabling the Draft-schedule rule fails 17 of the new Python tests;
     - drafting followers by the old rule fails 8 of the follower-rule tests;
-    - removing the up-front room check fails its test.
+    - removing the up-front room check fails its test;
+    - the first walk of the follower rule, which marked every task seen, fails the two
+      order-independence tests, and its room count fails the re-draft test.
   - `tests/test_project_planner.py`'s Overdue and Copy week tests are about the live path, so their
     projects are now marked Published. Before this, the stub's blank status read Draft.
 

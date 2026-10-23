@@ -1995,14 +1995,23 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	next working day after the latest of them, keeping its length in working days. One already clear
 	stays, unreported, and so does everything that follows only through it. An overdue task is weeks
 	late, so carrying its followers by how far it moved, as a drag does (D10), would push work that
-	was never in its way."""
+	was never in its way. The walk is :func:`_walk_clearing`, not :func:`_walk_followers`: a follower
+	that stays is checked again when another task it waits on moves, and one that moved is pushed on
+	when a later one requires it, so the answer does not depend on the order the walk meets them in.
+	Each follower comes back once, from where it was to where it ends up."""
 	shifted, skipped, entries, jobs = [], [], [], {}
 	if not days and clear_of is None:
 		return shifted, skipped, entries
 	ends = {root: engine._as_date(clear_of)} if clear_of is not None else {}
 	# Read once: each follower's own row is all its context looks at, and no other follower's draft
-	# touches it.
+	# touches it. A follower the clear walk moves twice is read again the second time (moved).
 	drafts = _draft_rows()
+	moved, named = {}, set()
+
+	def skip(doc, problem):
+		if doc.get("name") not in named:
+			named.add(doc.get("name"))
+			skipped.append(_skip(doc, problem))
 
 	def accept(name):
 		row = frappe.db.get_value(
@@ -2015,9 +2024,9 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		move_job = _is_move_job(row.get("project"), jobs)
 		writable = frappe.has_permission("Task", "write", doc=name)
 		if move_job or not writable:
-			skipped.append(_skip(row, _follower_problem(row, move_job=move_job, writable=writable)))
+			skip(row, _follower_problem(row, move_job=move_job, writable=writable))
 			return False
-		context = _draft_context(name, row.get("modified"), drafts)
+		context = _draft_context(name, row.get("modified"), _draft_rows() if name in moved else drafts)
 		doc = context["doc"]
 		before_state = _state(doc)
 		old = _span_text(before_state)
@@ -2030,7 +2039,7 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 				return False  # already clear of what it waits on: it stays, and so does what follows it
 		problem = _follower_problem(doc, auto=auto, drafting=True)
 		if problem:
-			skipped.append(_skip(doc, problem))
+			skip(doc, problem)
 			return False
 		result = _store_draft(
 			context,
@@ -2042,30 +2051,68 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		new = _span_text(after[0])
 		if clear_of is not None:
 			ends[doc.name] = engine._as_date(new[1])
-		entries.append({"doc": doc, "stored": context["stored"], "before": before_state, "after": after})
-		shifted.append(
-			{
-				"task": doc.name,
-				"subject": doc.get("subject") or doc.name,
-				"from": old[0],
-				"to": new[0],
-				"from_end": old[1],
-				"to_end": new[1],
-				"modified": result.get("modified"),
-			}
-		)
+		first = moved.get(doc.name)
+		entry = {
+			"doc": doc,
+			"stored": context["stored"],
+			"before": first["entry"]["before"] if first else before_state,
+			"after": after,
+		}
+		move = {
+			"task": doc.name,
+			"subject": doc.get("subject") or doc.name,
+			"from": first["move"]["from"] if first else old[0],
+			"to": new[0],
+			"from_end": first["move"]["from_end"] if first else old[1],
+			"to_end": new[1],
+			"modified": result.get("modified"),
+		}
+		if first:
+			entries[entries.index(first["entry"])] = entry
+			shifted[shifted.index(first["move"])] = move
+		else:
+			entries.append(entry)
+			shifted.append(move)
+		moved[doc.name] = {"entry": entry, "move": move}
 		return True
 
-	cut = _walk_followers(root, accept, exclude)
+	walk = _walk_followers if clear_of is None else _walk_clearing
+	cut = walk(root, accept, exclude)
 	return shifted, skipped + _cut_skips(cut), entries
+
+
+def _walk_clearing(root, accept, exclude=()):
+	""":func:`_draft_followers`' walk for ``clear_of`` (v1.740.0): every task waiting on ``root``, and on
+	each task ``accept`` moves, is offered to ``accept``, and offered again whenever another task it
+	waits on moves. So a follower that waits on two moved tasks ends up clear of both, whichever the
+	walk reaches first, and one that stayed is still checked against a task that moves after it.
+	It ends: a task is offered again only when something it waits on moved, every move is later, and
+	at most :data:`SUCCESSOR_LIMIT` offers are made in all (the rest are returned, to be named).
+	``exclude``: tasks the request moves itself, never offered."""
+	out = {root, *(exclude or ())}
+	queue = [name for name in _waiting_on([root]) if name not in out]
+	waiting, offers, cut = set(queue), 0, []
+	while queue:
+		name = queue.pop(0)
+		waiting.discard(name)
+		if offers >= SUCCESSOR_LIMIT:
+			cut.append(name)
+			continue
+		offers += 1
+		if accept(name):
+			for later in _waiting_on([name]):
+				if later not in out and later not in waiting:
+					waiting.add(later)
+					queue.append(later)
+	return list(dict.fromkeys(cut))
 
 
 def _clearing_step(doc, old, ends, holidays):
 	""":func:`_draft_followers`' ``clear_of`` rule for one follower: the working days it moves so it
 	starts the working day after the latest new end of the tasks it waits on that the walk moved
-	(``ends``), or 0 when it already starts after them. Only the tasks moved so far count: a follower
-	that also waits on another follower at its own depth of the walk is checked before that one
-	moves, and if that leaves it starting too early, ``_draft_checks`` says so ("Starts before")."""
+	(``ends``, their latest new ends), or 0 when it already starts after them. A task it waits on that
+	moves later in the walk offers it again (:func:`_walk_clearing`), so it ends up clear of all of
+	them."""
 	start = engine._as_date(old[0])
 	waits = [ends[row.get("task")] for row in (doc.get("depends_on") or []) if row.get("task") in ends]
 	bound = max((day for day in waits if day), default=None)
@@ -2506,7 +2553,7 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 
 	if held:
 		# Before anything is saved: past DRAFT_LIMIT rows a draft drops out of the planner and Publish.
-		require_change_room(len(held))
+		require_change_room([doc.name for doc in held])
 	conflicts = {}
 	reason = (reason or "").strip()
 	if action == "reschedule" and docs:
@@ -2565,7 +2612,9 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 	tasks that follow it, through ``planner_actions._draft_many`` (``move_many``'s draft path), one
 	task per savepoint so a refused one is reported in ``failed`` and the rest carry on. Its
 	followers move only where they would otherwise start by its new last day (``clear=True``; Nik,
-	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone.
+	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone. A
+	follower one task moved is still offered to the next (only the selected tasks are kept out), so
+	one that follows two of them ends up clear of both; it comes back once in ``shifted``.
 	``auto``: a Draft schedule's task, so a follower in a published project stays (the per-project rule); under
 	the hold every follower is drafted. ``taken``: the tasks the request moves itself, never moved
 	again as a follower. Downstream first, as ``move_many`` orders them, so when two of them reach the
@@ -2592,15 +2641,19 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 		try:
 			drafted = planner_actions._draft_many([entry], follow=True, auto=auto, exclude=taken, clear=True)
 			# Its followers can take the caller past what the planner reads: then this one is undone.
-			require_change_room(0)
+			require_change_room()
 		except Exception as exc:
 			if saved_point:
 				_rollback_to(point)
 			result["failed"].append({"task": name, "error": _failure_text(exc, _take_messages(log, mark))})
 			continue
 		own = next((move for move in drafted["moved"] if move["task"] == name), {})
-		followers = [move for move in drafted["moved"] if move.get("dependent")]
-		taken.update(move["task"] for move in followers)
+		for move in (move for move in drafted["moved"] if move.get("dependent")):
+			known = next((item for item in result["shifted"] if item["task"] == move["task"]), None)
+			if known:
+				known.update(to=move["to"], to_end=move["to_end"], modified=move.get("modified"))
+			else:
+				result["shifted"].append(move)
 		result["updated"].append(
 			{
 				"task": name,
@@ -2611,8 +2664,10 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 				"drafted": True,
 			}
 		)
-		result["shifted"].extend(followers)
-		result["shift_skipped"].extend(drafted.get("shift_skipped") or [])
+		known = {item["task"] for item in result["shift_skipped"]}
+		result["shift_skipped"].extend(
+			item for item in drafted.get("shift_skipped") or [] if item["task"] not in known
+		)
 		result["warnings"].extend(drafted.get("warnings") or [])
 		result["warnings"].extend(_take_messages(log, mark))
 
@@ -4515,15 +4570,23 @@ def require_draft_room(count):
 		)
 
 
-def require_change_room(count):
-	"""Refuse drafting changes to ``count`` more tasks when the caller would hold more Draft rows of
-	tasks than :func:`_draft_rows` reads (:data:`DRAFT_LIMIT`, oldest first): past it a row drops out of
-	the overlay and of Publish without a word (v1.740.0, the Overdue tray's drafted Reschedule, which
-	can draft 100 tasks and their followers at once). ``0``: whether the caller is past it already."""
-	held = frappe.db.count(
-		DRAFT_DOCTYPE, {"owner": frappe.session.user, "status": DRAFT, "task": ["is", "set"]}
-	)
-	if held + count > DRAFT_LIMIT:
+def require_change_room(tasks=()):
+	"""Refuse drafting changes to ``tasks`` when the caller would hold more Draft rows of tasks than
+	:func:`_draft_rows` reads (:data:`DRAFT_LIMIT`, oldest first): past it a row drops out of the
+	overlay and of Publish without a word (v1.740.0, the Overdue tray's drafted Reschedule, which can
+	draft 100 tasks and their followers at once). A task that already has one of the caller's rows
+	adds none (a new draft merges into it). No ``tasks``: whether the caller is past it already."""
+	mine = {"owner": frappe.session.user, "status": DRAFT}
+	held = frappe.db.count(DRAFT_DOCTYPE, {**mine, "task": ["is", "set"]})
+	tasks = list(dict.fromkeys(tasks or ()))
+	if tasks:
+		drafted = set(
+			frappe.get_all(
+				DRAFT_DOCTYPE, filters={**mine, "task": ["in", tasks]}, pluck="task", limit_page_length=0
+			)
+		)
+		tasks = [name for name in tasks if name not in drafted]
+	if held + len(tasks) > DRAFT_LIMIT:
 		frappe.throw(
 			_(
 				"You already have too many unpublished changes ({0} at most). Publish or discard some first."
