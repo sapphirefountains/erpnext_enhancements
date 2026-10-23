@@ -21,8 +21,9 @@
  * `assignments: [{owner, name}]`), so only a form that lists YOU asks the server anything. The
  * banner says who assigned it, when it is due and what they asked, with Done (and an optional
  * note for the timeline), Snooze, Reassign and Reply, in a strip at the top of the form layout.
- * On a ToDo's own form it says which record the to-do is for, with a button to open it: the link
- * that the ToDo form otherwise keeps at the bottom.
+ * On a ToDo's own form (v1.739.0, where every assignment link not on a Task or a visit now lands)
+ * the heading becomes the ask, a card shows the record the to-do is for with an Open button, and
+ * the same strip follows when the to-do is yours. See "a ToDo's own form" below.
  *
  * After an action the form reloads, so its Assign To avatars match, unless it has unsaved
  * changes, in which case only the assignments in its docinfo are updated.
@@ -152,7 +153,7 @@
 			return;
 		}
 		if (frm.doctype === "ToDo") {
-			draw_todo_pointer(frm, $slot);
+			draw_todo_view(frm, $slot);
 			return;
 		}
 		const info = frm.get_docinfo ? frm.get_docinfo() : null;
@@ -171,7 +172,8 @@
 			.catch(() => $slot.empty());
 	}
 
-	function banner_html(item) {
+	// opts.no_ask: on a ToDo's own form the ask is already its heading and its Description.
+	function banner_html(item, opts) {
 		const parts = [];
 		if (item.assigned_by && item.assigned_by !== frappe.session.user) {
 			parts.push(__("Assigned to you by {0}", [esc(item.assigned_by_name)]));
@@ -182,7 +184,7 @@
 		else if (item.due) parts.push(esc(__("due {0}", [frappe.datetime.str_to_user(item.due)])));
 		if (item.priority === "High") parts.push(`<b>${esc(__("High priority"))}</b>`);
 		if (item.repeat) parts.push(esc(__("repeats: {0}", [__(item.repeat)])));
-		const ask = item.ask ? `<div class="ee-mw-banner-ask">${esc(item.ask)}</div>` : "";
+		const ask = item.ask && !(opts && opts.no_ask) ? `<div class="ee-mw-banner-ask">${esc(item.ask)}</div>` : "";
 		// Phase 3: the checklist, ticked in place (api.my_work.checklist_toggle).
 		const steps = item.checklist || [];
 		const checklist = steps.length
@@ -228,22 +230,86 @@
 		);
 	}
 
-	function draw_todo_pointer(frm, $slot) {
+	// ------------------------------------------------------------------ a ToDo's own form (v1.739.0)
+	//
+	// Every email, bell and text about an assignment that is not on a Task or a maintenance visit now
+	// opens its ToDo (assignment_alerts.link), so the ToDo form leads with what the record banner
+	// gives: a heading that is the ask (Frappe heads it with the whole description, "Assignment for
+	// Task TASK-..." on a fifth of production's), a card for the record it is for with its title,
+	// facts and an Open button, and -- when it is yours and open -- the same strip, with Done,
+	// Snooze, Reassign and Reply. One read, api.my_work.get_todo_view. Until v1.739.0 this was one
+	// line, "This to-do is for Task TASK-2026-02302", and nothing at all on a ToDo with no record.
+
+	function draw_todo_view(frm, $slot) {
 		const doc = frm.doc;
-		if (!doc.reference_type || !doc.reference_name) {
-			$slot.empty();
-			return;
+		keep_todo_heading(frm);
+		frm.__ee_mw_heading = null;
+		const ticket = (frm.__ee_mw_ticket = (frm.__ee_mw_ticket || 0) + 1);
+		quiet_get(API + "get_todo_view", { todo: doc.name })
+			.then((view) => {
+				if (ticket !== frm.__ee_mw_ticket || frm.docname !== doc.name) return;
+				if (!view) {
+					$slot.empty();
+					return;
+				}
+				frm.__ee_mw_heading = view.heading || null;
+				if (frm.__ee_mw_heading) set_todo_heading(frm);
+				note_stamped_date(frm, view.due_is_stamp);
+				$slot.html(record_card_html(view.record) + (view.item ? banner_html(view.item, { no_ask: true }) : ""));
+				$slot.data("items", view.item ? [view.item] : []);
+			})
+			.catch(() => $slot.empty());
+	}
+
+	// Frappe re-heads the form from the title field (description) on every toolbar refresh, a save
+	// included; this puts the ask back after it, on this form only.
+	function keep_todo_heading(frm) {
+		const toolbar = frm.toolbar;
+		if (!toolbar || toolbar.__ee_mw_heading || typeof toolbar.set_title !== "function") return;
+		const set_title = toolbar.set_title.bind(toolbar);
+		toolbar.set_title = function () {
+			set_title();
+			if (frm.doctype === "ToDo" && frm.__ee_mw_heading && !frm.is_new()) set_todo_heading(frm);
+		};
+		toolbar.__ee_mw_heading = true;
+	}
+
+	function set_todo_heading(frm) {
+		frm.page.set_title(frm.__ee_mw_heading);
+		frappe.utils.set_title(frm.__ee_mw_heading);
+	}
+
+	// My Work reads a date that is only the day the ToDo was made as no due date
+	// (task_enhancements/assignments.due_date); the Due Date field, shown again since v1.739.0, says so.
+	function note_stamped_date(frm, stamped) {
+		if (!frm.fields_dict.date) return;
+		frm.set_df_property(
+			"date",
+			"description",
+			stamped ? __("The day it was assigned, which My Work counts as no due date. Pick a day to give it one.") : ""
+		);
+	}
+
+	function record_card_html(record) {
+		if (!record) return "";
+		const kind = `<div class="ee-mw-record-kind">${esc(record.label)}</div>`;
+		if (!record.can_read) {
+			const why = record.missing
+				? __("{0} {1} no longer exists.", [record.label, record.name])
+				: __("You cannot open {0} {1}.", [record.label, record.name]);
+			return `<div class="ee-mw-record ee-mw-record--closed"><div class="ee-mw-record-text">${kind}<div class="ee-mw-record-facts">${esc(why)}</div></div></div>`;
 		}
-		const link = frappe.utils.get_form_link(doc.reference_type, doc.reference_name);
-		$slot.html(
-			`<div class="ee-mw-banner ee-mw-banner--pointer">` +
-				`<div class="ee-mw-banner-text"><div class="ee-mw-banner-who">${esc(
-					__("This to-do is for {0} {1}", [__(doc.reference_type), doc.reference_name])
-				)}</div></div>` +
-				`<div class="ee-mw-banner-actions">` +
-				`<a class="btn btn-sm btn-primary" href="${esc(link)}">${esc(__("Open {0}", [__(doc.reference_type)]))}</a>` +
-				`<a class="btn btn-sm btn-link" href="/desk/my-work?todo=${encodeURIComponent(doc.name)}">${esc(__("My Work"))}</a>` +
-				`</div></div>`
+		const facts = (record.facts || []).map((f) => `<span>${esc(f[0])}: ${esc(f[1])}</span>`).join("");
+		const link = frappe.utils.get_form_link(record.doctype, record.name);
+		const sub = record.title !== record.name ? `<span class="ee-mw-record-name">${esc(record.name)}</span>` : "";
+		return (
+			`<div class="ee-mw-record" role="region" aria-label="${esc(__("What this to-do is for"))}">` +
+			`<div class="ee-mw-record-text">${kind}` +
+			`<div class="ee-mw-record-title">${esc(record.title)}${sub}</div>` +
+			(facts ? `<div class="ee-mw-record-facts">${facts}</div>` : "") +
+			`</div>` +
+			`<div class="ee-mw-record-actions"><a class="btn btn-sm btn-primary" href="${esc(link)}">${esc(record.button)}</a></div>` +
+			`</div>`
 		);
 	}
 
