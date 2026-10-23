@@ -59,6 +59,11 @@ ACCOUNTS = ("Sidebar", "Accounts")
 # The stock Kanban everyone works their deals on (836 visits from six people in the 90 days to
 # 2026-10-23). The form kit's /desk/opportunity-board replaces it at P6.10; repoint this then.
 OPPORTUNITIES = ("URL", "/desk/opportunity/view/kanban/Opportunity")
+# Two lists rather than modules, as URL rows: a dock row opens a Sidebar, a Workspace or a URL,
+# never a DocType. Customer is relabelled "Accounts" on prod, so the row reads "Accounts
+# (Customers)", which keeps it apart from ERPNext's Accounts module in Manage Dock (v1.736.0).
+SUPPLIERS = ("URL", "/desk/supplier")
+CUSTOMERS = ("URL", "/desk/customer")
 MAINTENANCE = ("Workspace", "Sapphire Maintenance")
 TRAVEL = ("Workspace", "Travel")
 TRAINING = ("Workspace", "Training")
@@ -90,6 +95,10 @@ PROFILES = {
 		QUICKBOOKS,
 		AI_GOVERNANCE,
 	),
+	# James, the CEO. Nik, 2026-10-23: "make James modules be Projects, Opportunities, CRM,
+	# Supplier, Accounts (Customer) instead of all those ones." Set on his User form only: no Role
+	# Profile maps here, and Executive stays with Management.
+	"CEO": (PROJECTS, OPPORTUNITIES, CRM, SUPPLIERS, CUSTOMERS),
 	"Sales": (OPPORTUNITIES, CRM, SELLING, PROJECTS),
 	"Finance": (ACCOUNTS, QUICKBOOKS, SELLING, PROJECTS, MAINTENANCE),
 	"Purchasing": (BUYING, STOCK, PROJECTS),
