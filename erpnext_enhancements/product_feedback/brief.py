@@ -190,7 +190,9 @@ def render_brief(
 	created, each with ``name``, ``subject``, ``description``, ``parent_task``, ``project``,
 	``is_group`` and ``status``, plus ``parent_subject`` when the parent is not one of them.
 	``duplicates`` are the breakdown's candidates (``task``, ``task_subject``, ``confidence``,
-	``why``). ``anchors`` is ``code_anchors.build_anchors`` output or ``{}``; it is copied,
+	``why``, and ``dismissed`` when a reviewer ruled it out — such a row is left off the brief:
+	a Task a person has said this work is *not* would only steer the session away from the job).
+	``anchors`` is ``code_anchors.build_anchors`` output or ``{}``; it is copied,
 	never changed. ``data`` is the object the ``## Data`` block holds.
 	"""
 	anchors = copy.deepcopy(anchors) if isinstance(anchors, dict) else {}
@@ -489,7 +491,7 @@ def _acceptance(request: dict[str, Any], open_leaves: list[dict[str, Any]], refs
 def _not_in_scope(duplicates: list[dict[str, Any]], fit: _Fit) -> list[str]:
 	lines = [HEADINGS[3], ""]
 	for row in duplicates:
-		if not isinstance(row, dict):
+		if not isinstance(row, dict) or _truthy(row.get("dismissed")):
 			continue
 		task = _one_line(row.get("task"))
 		if not task:
@@ -504,6 +506,13 @@ def _not_in_scope(duplicates: list[dict[str, Any]], fit: _Fit) -> list[str]:
 		lines.append(text)
 	lines.append("- Anything not listed under Scope.")
 	return [*lines, ""]
+
+
+def _truthy(value: Any) -> bool:
+	"""A Check value as Frappe hands it over: ``1``, ``"1"``, ``True``; anything else is false."""
+	if isinstance(value, str):
+		return value.strip() not in ("", "0")
+	return bool(value)
 
 
 def _data(data: dict[str, Any], cuts: list[str]) -> list[str]:

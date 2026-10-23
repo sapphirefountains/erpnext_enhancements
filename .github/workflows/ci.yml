@@ -538,6 +538,12 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_intake -v
       - name: Feedback capture retention + Error Log matching (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_jobs -v
+      # A reviewer overrules the model (v1.729.0, ER-2026-1323804): "Not a duplicate" is stamped
+      # and kept, a ruled-out Task is left out of the re-run's scan and dropped if named anyway,
+      # and a task added by hand reaches the board through the real task_writer even when the
+      # model proposed nothing. Its own step: it installs a frappe stub.
+      - name: Feedback duplicate override + add-a-task (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_duplicate_override -v
       # WI-079 slice 5, Design Review (ADR 0016 §2). Sanitize: concept HTML loses every script,
       # handler, external URL and fetching style before it is stored. Codes: a revision that
       # renumbers or renames an existing part is refused whole; the Borda tally matches the
