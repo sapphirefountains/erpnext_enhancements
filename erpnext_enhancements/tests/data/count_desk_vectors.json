@@ -31,5 +31,35 @@
    ],
    "summary": {"expected": 1, "counted": 0, "uncounted": 1, "matched": 0, "variances": 0, "accuracy": null, "net_value": 0.0, "gross_value": 0.0, "recount": 0, "moved": 0}
   }
+ ],
+ "_pastes": "A column pasted from a cell (logic.fill_plan): value n goes to the nth row on screen from that cell, a refused row included, because the grid and the CSV both list it. Every row is in W1 and counts whole units. entries are [item, qty]; problems and refused are items.",
+ "pastes": [
+  {
+   "name": "the review's repro: a refused row in the column takes its blank, and nothing lands a row high",
+   "rows": [{"item_code": "A"}, {"item_code": "R", "refusal": "Serialized items are counted by serial number on the Stock Reconciliation form."}, {"item_code": "B"}, {"item_code": "C"}],
+   "start": "A",
+   "values": ["5", "", "7", "9"],
+   "entries": [["A", 5], ["B", 7], ["C", 9]],
+   "problems": [],
+   "refused": []
+  },
+  {
+   "name": "a value on a refused row is left out and said, and the next value is the next row's",
+   "rows": [{"item_code": "A"}, {"item_code": "R", "refusal": "This is a template; count its variants instead."}, {"item_code": "B"}],
+   "start": "A",
+   "values": ["1", "2", "3"],
+   "entries": [["A", 1], ["B", 3]],
+   "problems": [],
+   "refused": ["R"]
+  },
+  {
+   "name": "from the middle: a sum, a blank keeps its row, a bad value is named, values past the end are dropped",
+   "rows": [{"item_code": "A"}, {"item_code": "B"}, {"item_code": "R", "refusal": "Batch items are counted by batch on the Stock Reconciliation form."}, {"item_code": "C"}, {"item_code": "D"}],
+   "start": "B",
+   "values": ["2x3", "4", "", "oops", "10", "11"],
+   "entries": [["B", 6]],
+   "problems": ["D"],
+   "refused": ["R"]
+  }
  ]
 }

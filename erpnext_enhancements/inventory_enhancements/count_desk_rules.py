@@ -10,11 +10,15 @@ its counts in the same ``Inventory Count Session`` the phone page (Inventory Sca
 Every judgement it makes is here, so it runs bench-free in CI; ``api/count_desk.py`` only reads and
 writes.
 
-Four of those judgements are not the obvious ones:
+Six of those judgements are not the obvious ones:
 
 * **A variance is a fact about (item, warehouse), not about one line.** A line's ``system_qty`` is
   the warehouse's on-hand when it was counted, so an item spread over two Storage Locations of one
   warehouse is only short once *every* location is counted. :func:`groups` sums the lines first.
+* **"When it was counted" is not always "when it was typed"** (v1.738.0). A paper count walked at 9:00 and
+  typed in at 11:00 is a count of the shelf at 9:00. A session's optional ``counted_at``
+  (:func:`check_counted_at`) makes every line's snapshot the stock ledger as of then, so a take at
+  10:00 is not counted twice; blank is a live count, snapshotted as each row is typed.
 * **What posts is the variance, not the count.** Stock keeps moving while a count is open: a
   technician takes three after the shelf was counted. Posting the counted number would undo that
   take. :func:`post_plan` posts *what is on hand now* plus the variance, so a movement after the
@@ -26,11 +30,16 @@ Four of those judgements are not the obvious ones:
   and refuses one with none left ("None of the items have any change in quantity or value"), so a
   count where everything matched used to fail to finalize. Matches stay on the session, which is
   the record that they were counted.
+* **A post is reconciliations of at most** ``RECONCILIATION_ROWS`` **rows** (v1.738.0). ERPNext v16's
+  ``StockReconciliation.submit`` sends one of more than 100 rows to a background job and returns
+  with it still a draft; a failed job puts it back to Draft, and a deploy's redis flush drops the
+  job. :func:`batches` splits the post so each submits there and then.
 
 Nothing here raises. Functions return a value or a sentence in the user's terms.
 """
 
 import datetime
+import html
 import json
 
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as scan_rules
@@ -50,8 +59,8 @@ SUPERVISOR_ROLES = frozenset({"System Manager", "Stock Manager"})
 COVERAGE_DAYS = 90
 
 #: Why a count differs from the system. Stored on ``Inventory Count Line.reason_code`` (a Select
-#: whose options ``tests/test_count_desk.py`` holds equal to this) and listed in the
-#: reconciliation's remarks, so a shrinkage report can group by cause later.
+#: whose options ``tests/test_count_desk.py`` holds equal to this) and summed in the comment on each
+#: reconciliation, so a shrinkage report can group by cause later.
 REASON_CODES = (
 	"Earlier count was wrong",
 	"Used and not recorded",
@@ -67,9 +76,21 @@ REASON_CODES = (
 #: The longest count title. It is a list-view column, not a document.
 TITLE_MAX = 140
 
-#: The longest reconciliation remark this writes. ``remarks`` is a Text field, but the reasons
-#: of a 400-line count are a report, not a remark: past this the remark says how many it left out.
-REMARKS_MAX = 2000
+#: Items one reconciliation comment lists by name. The reasons of a 400-line count are a report, not
+#: a comment: past this it says how many more the count has (the per-reason totals count them all).
+COMMENT_ITEMS = 50
+
+#: Rows one Stock Reconciliation may carry and still submit in the request that posts it. ERPNext
+#: v16 ``StockReconciliation.submit`` queues one of more than 100 (``queue_action``) and returns it
+#: a draft; prod has had reconciliations of 365 rows. A post is split into reconciliations this size.
+RECONCILIATION_ROWS = 100
+
+#: How long before a count was opened its Counted At may be: a paper count walked on Friday and typed
+#: in on Monday. Older than this, the count is history, not a count to post now.
+COUNTED_AT_DAYS = 7
+
+#: A Counted At this far past the server's clock is a laptop clock running fast, not the future.
+COUNTED_AT_SKEW = datetime.timedelta(minutes=5)
 
 #: Bins one count may cover. A count is a walk someone finishes; the whole site (221 leaf
 #: warehouses on 2026-10-14) is a stocktake, and a sheet that long is not one anyone types into.
@@ -206,6 +227,51 @@ def default_title(labels):
 
 
 # ---------------------------------------------------------------------------
+# When it was counted
+# ---------------------------------------------------------------------------
+
+
+def to_datetime(value):
+	"""A ``datetime`` (seconds, no microseconds) from a datetime or ``YYYY-MM-DD HH:MM[:SS]`` text, or
+	``None`` for blank and anything unreadable."""
+	if value in (None, ""):
+		return None
+	if isinstance(value, datetime.datetime):
+		return value.replace(microsecond=0, tzinfo=None)
+	if isinstance(value, datetime.date):
+		return datetime.datetime(value.year, value.month, value.day)
+	try:
+		parsed = datetime.datetime.fromisoformat(str(value).strip())
+	except ValueError:
+		return None
+	return parsed.replace(microsecond=0, tzinfo=None)
+
+
+def check_counted_at(value, created, now):
+	"""``(when, problem)`` for a session's Counted At: when the shelf was counted, for a count taken
+	on paper and typed in later. Blank is ``(None, None)``, a live count.
+
+	``created`` is when the count was opened and ``now`` the server's time. A Counted At may be up to
+	``COUNTED_AT_DAYS`` before the count was opened (the walk came first, the typing after), and not
+	after now (``COUNTED_AT_SKEW`` allows for a laptop clock running fast)."""
+	if value in (None, "") or (isinstance(value, str) and not value.strip()):
+		return None, None
+	when = to_datetime(value)
+	if not when:
+		return None, f"{value} is not a date and time."
+	now = to_datetime(now)
+	if now and when > now + COUNTED_AT_SKEW:
+		return None, "Counted At is in the future. It is when the shelf was counted, so it has passed."
+	created = to_datetime(created) or now
+	if created and when < created - datetime.timedelta(days=COUNTED_AT_DAYS):
+		return None, (
+			f"Counted At can be at most {COUNTED_AT_DAYS} days before the count was started "
+			f"({created:%Y-%m-%d %H:%M}). A count older than that is out of date: count the shelf again."
+		)
+	return min(when, now) if now else when, None
+
+
+# ---------------------------------------------------------------------------
 # The sheet
 # ---------------------------------------------------------------------------
 
@@ -295,7 +361,7 @@ def groups(lines):
 	return out
 
 
-def sheet_rows(expected, lines, balances, items, names):
+def sheet_rows(expected, lines, balances, items, names, as_of=None):
 	"""The count sheet: every line counted, and every item expected in scope that has none.
 
 	* ``expected`` -- ``{warehouse: [listing row, ...]}``, what each bin lists on the phone page
@@ -305,11 +371,15 @@ def sheet_rows(expected, lines, balances, items, names):
 	* ``items`` -- ``{item_code: {item_name, stock_uom, whole_number, disabled, is_stock_item,
 	  has_serial_no, has_batch_no, has_variants, valuation_rate}}``.
 	* ``names`` -- ``{warehouse: warehouse_name}``.
+	* ``as_of`` -- for a count with a Counted At, ``{(item_code, warehouse): qty}`` the stock ledger
+	  showed then, for the rows not yet counted; ``None`` for a live count.
 
 	An expected (item, warehouse) is covered by **any** line for it, whatever its storage location.
 	Each row carries the live on-hand (``system_qty``), and once counted the on-hand it was counted
 	against (``snapshot_qty``), what has moved since (``moved``) and the item's variance (the
-	group's: every line of one item at one warehouse shows the same). In shelf order, then by name.
+	group's: every line of one item at one warehouse shows the same). ``as_of_qty`` is what a count
+	of the row is counted against, under a Counted At (``None`` without one): the page shows it as
+	the system quantity. In shelf order, then by name.
 	"""
 	balances = balances or {}
 	items = items or {}
@@ -373,6 +443,7 @@ def sheet_rows(expected, lines, balances, items, names):
 		if abs(row["moved"]) <= TOLERANCE:
 			row["moved"] = 0.0
 		row["value_variance"] = row["variance"] * row["rate"]
+		row["as_of_qty"] = row["snapshot_qty"] if as_of is not None else None
 		_listing_flags(row, listed.get((item_code, warehouse)))
 		rows.append(row)
 
@@ -402,6 +473,9 @@ def sheet_rows(expected, lines, balances, items, names):
 				"scan_time": None,
 				"counted_by": None,
 				"expected": True,
+				"as_of_qty": (number(as_of.get((item_code, warehouse))) or 0.0)
+				if as_of is not None
+				else None,
 			}
 		)
 		_listing_flags(row, listing)
@@ -617,30 +691,77 @@ def post_plan(group_map, balances, refusals, superseded, rate_for, require_reaso
 	return plan
 
 
-def remarks(session, title, who, adjust):
-	"""The reconciliation's remarks: which count, who counted it, and each adjusted item's reason."""
-	head = f"Count {session}"
+def batches(rows, size=RECONCILIATION_ROWS):
+	"""``rows`` in runs of at most ``size``, in order: one Stock Reconciliation each."""
+	rows = list(rows or [])
+	size = max(int(size or RECONCILIATION_ROWS), 1)
+	return [rows[i : i + size] for i in range(0, len(rows), size)]
+
+
+def reconciliation_comment(session, title, who, adjust, link=None, part=1, parts=1):
+	"""The comment on a reconciliation a count made: which count, who counted it, how many of its
+	items each reason covers, and each item's reason. HTML, everything typed escaped.
+
+	A comment, not ``remarks``: Stock Reconciliation has no remarks field on v16 (checked on prod
+	2026-10-23), so a remark set on it was dropped on save. ``link`` is the session's form URL;
+	``part`` of ``parts`` when the count posted several reconciliations (:func:`batches`)."""
+	esc = html.escape
+	name = f'<a href="{esc(link)}">{esc(session)}</a>' if link else esc(session)
+	head = f"From count {name}"
 	if title:
-		head += f" ({title})"
+		head += f" ({esc(title)})"
 	if who:
-		head += f", counted by {who}"
-	head += f". {len(adjust)} item(s) adjusted on the Count Desk."
-	parts = [head]
-	length = len(head)
-	left = 0
+		head += f", counted by {esc(who)}"
+	head += f" on the Count Desk. {len(adjust)} item(s) adjusted here"
+	if parts > 1:
+		head += f", part {part} of {parts}"
+	out = [f"<p>{head}.</p>"]
+	totals = {}
+	for row in adjust:
+		code = row.get("reason_code") or ("Note only" if row.get("reason") else "No reason given")
+		totals[code] = totals.get(code, 0) + 1
+	if totals:
+		order = sorted(totals, key=lambda code: (-totals[code], code))
+		out.append("<p>Reasons: " + " · ".join(f"{esc(code)}: {totals[code]}" for code in order) + "</p>")
+	items = []
 	for row in adjust:
 		why = " - ".join(x for x in (row.get("reason_code"), row.get("reason")) if x)
-		if not why:
-			continue
-		text = f"{row['item_code']} at {row['warehouse']}: {why}"
-		if length + len(text) + 1 > REMARKS_MAX - 40:
-			left += 1
-			continue
-		parts.append(text)
-		length += len(text) + 1
-	if left:
-		parts.append(f"(+{left} more reasons on {session})")
-	return "\n".join(parts)
+		if why:
+			items.append(f"<li>{esc(row['item_code'])} at {esc(row['warehouse'])}: {esc(why)}</li>")
+	if items:
+		more = len(items) - COMMENT_ITEMS
+		listed = "".join(items[:COMMENT_ITEMS])
+		if more > 0:
+			listed += f"<li>and {more} more on {esc(session)}</li>"
+		out.append(f"<ul>{listed}</ul>")
+	return "".join(out)
+
+
+def reconciliation_names(value, first=None):
+	"""Every reconciliation a count made, in order. ``value`` is the session's
+	``stock_reconciliations`` (one name a line, as :func:`dump_names` writes it); ``first`` its
+	``stock_reconciliation``, the only one a phone count, or a count posted before the field
+	existed, has. It leads when the list lacks it."""
+	text = value if isinstance(value, str) else "\n".join(str(v) for v in value or [])
+	names = []
+	for name in [first or "", *text.replace(",", "\n").split("\n")]:
+		name = name.strip()
+		if name and name not in names:
+			names.append(name)
+	return names
+
+
+def dump_names(names):
+	return "\n".join(reconciliation_names(names))
+
+
+def combined_status(statuses):
+	"""One word for several reconciliations' states (``Draft``, ``Submitted``, ``Cancelled``):
+	theirs when they agree, ``Mixed`` when they do not, ``None`` for none."""
+	found = {s for s in statuses or [] if s}
+	if not found:
+		return None
+	return found.pop() if len(found) == 1 else "Mixed"
 
 
 def result_message(plan, posted, drafts):

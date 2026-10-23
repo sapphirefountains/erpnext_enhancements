@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.738.0] - 2026-10-23
+
+Fixes from the independent review of the Count Desk (#1316, v1.737.0), which merged before they were
+made. Four would lose or misplace counts without anything saying so. The fifth, a paper count posting
+against the wrong baseline, needed a new field, *Counted At*. Parker runs counts from a laptop as a Stock
+Manager, so his posts take the submit path, the one finding 1 is about.
+
+### Fixed
+- **A post of more than 100 items could say "Posted" and never post.** ERPNext v16's
+  `StockReconciliation.submit` sends a reconciliation of more than 100 rows to a background job
+  (`queue_action("submit")`, erpnext `version-16` `stock_reconciliation.py`) and returns with it still a
+  draft. A failed job puts it back to Draft, and a deploy's redis `FLUSHDB` drops the queued job outright.
+  `post_count` reported "Posted" and finalized the count regardless, so a retry answered `repeated` and the
+  count was never posted. Production has had reconciliations of up to 365 rows in the last 90 days.
+  - A post is now split into reconciliations of at most `count_desk_rules.RECONCILIATION_ROWS` (100) rows,
+    per company and difference account (`count_desk_rules.batches`). Each submits in the request.
+  - Each is checked `docstatus == 1` before anything is said. One that is not refuses the whole post, and
+    the request's single transaction rolls every part back, so nothing is half posted and a retry posts
+    afresh.
+  - The draft path, for users without create and submit, splits the same way, so a Stock Manager's later
+    submit of a draft is not queued either.
+  - Every part is kept on the session in the new read-only `stock_reconciliations` (one name a line);
+    `stock_reconciliation` keeps the first. The sheet's header, the result, the plan's recent counts
+    (*+2 more*) and its 90-day *value adjusted* read every part, where they read only the one link before.
+- **A pasted column put counts on the wrong items.** `logic.fill_plan` skipped a serial, batch or template
+  row before taking a value, but the grid and the CSV both list those rows. So a column copied from either
+  had a cell for them: rows A, R (refused), B, C and the column `5,,7,9` left B blank, put 7 on C and
+  dropped the 9. Each value now goes to the next row on screen, whatever it is. A refused row takes its
+  value and keeps nothing; when that value was not blank, the toast says so. The cases are in
+  `tests/data/count_desk_vectors.json`: the node harness runs them through the page's code, and the Python
+  suite holds them to the rule that value n lands on the nth row.
+- **Post went ahead while saves had failed.** A row the server refused kept its typed value on screen.
+  A batch refused as a whole (the count finalized elsewhere, access gone) was dropped from the queue, so
+  `unsaved()` read 0. Either way the review and Post went ahead without those values.
+  - A row refused on its own now goes back to what the server has (`logic.revert`, from the controller's
+    record of each item's saved rows) and keeps a red mark saying why.
+  - A batch refused as a whole leaves what was typed on screen, marked, so it can be written down, with the
+    reason and "reload the page" above the grid.
+  - `logic.post_check` takes the save queue's state (`Controller.save_state`). A mark or a whole refusal
+    disables Post and says why in the review. `Controller.post` refuses too.
+  - *Clear the marks* clears per-row marks: those rows already show what is saved. It does nothing for a
+    whole refusal, which only a reload resolves.
+- **The reconciliation's remarks were silently dropped.** Stock Reconciliation has no `remarks` field on
+  v16 (checked on production: only `purpose`, and no Custom Field adds one), so `sr.remarks` was discarded
+  on save. The test passed only because the stub took any attribute. Each reconciliation now gets a
+  Comment (`count_desk_rules.reconciliation_comment`, HTML with everything typed escaped). It links the
+  count, names the counter, says which part it is of how many, totals the items per reason code, and lists
+  each item's reason, the first 50 by name. The test asserts the comment and the attribute's absence.
+
+### Added
+- **Counted At, for a paper count typed in later.** A live count snapshots each row's system quantity
+  when the row is typed. Counted 10 at 9:00, 3 taken at 10:00, typed at 11:00: the count posted 10 against
+  the 7 on hand at 11:00, undoing the take.
+  - The new optional `Inventory Count Session.counted_at` can be set from the sheet's header ("live
+    count" / "counted at …") or the menu (*When it was counted…*). `start_count` and `update_count` take
+    it too.
+  - With it set, every line is counted against the stock ledger as of then, through ERPNext's own
+    `erpnext.stock.stock_ledger.get_previous_sle`. That is the call inside `erpnext.stock.utils.get_stock_balance`,
+    used directly because the wrapper is whitelisted and demands Item read, which Inventory Clerk does not
+    hold on production.
+  - Each line's `scan_time` is the Counted At, so a reconciliation posted after it still supersedes the
+    count.
+  - The post still applies each variance to what is on hand now, with the zero floor.
+  - Setting, changing or clearing it re-reads every line already counted. Clearing makes it a live count,
+    counted as of now.
+  - It is refused in the future (5 minutes are allowed for a laptop clock running fast), more than 7 days
+    before the count was started (`COUNTED_AT_DAYS`), and on a phone count, which the phone keeps scanning
+    into live.
+  - Uncounted rows carry `as_of_qty`, so the System column, `=`, the CSV and the page's own variance
+    before the server answers all use the 9:00 figure. The review says the count was taken at that time.
+  - Blank is a live count, exactly as before.
+- **Inventory Count Session** gains `counted_at` (Datetime) and `stock_reconciliations` (Small Text, read
+  only). It is a normal doctype and neither field has a default or `reqd`: `bench migrate` adds two
+  nullable columns, and every existing count reads blank, which is right for both (a live count, and
+  nothing posted from here in parts). No patch, no backfill.
+
+### Changed
+- American English in the Count Desk's own sentences: "canceled". The `Cancelled` status values are
+  ERPNext's and stay as they are.
+- `controller.update` waits for the save queue before a change that answers with the whole sheet (adding
+  locations, Counted At), so no edit in flight is drawn over.
+
 ## [1.737.1] - 2026-10-23
 
 The naming banner on Opportunity now checks the Opportunity Name, the name the form shows. Nik reported

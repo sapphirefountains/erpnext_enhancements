@@ -4,8 +4,8 @@ The Desk page ``inventory_enhancements/page/count_desk`` calls these. It answers
 phone page (Inventory Scanner Audit, ``api.inventory_scanner``) was never built to answer from a
 keyboard: *what should be counted next* (the warehouse tree with each bin's stock, value and last
 count), *what is on this shelf* (a sheet of every item the bins in a count hold, so nothing has to be
-scanned to appear), *what is wrong* (the variances, by value) and *post it* (one Stock
-Reconciliation). Counts live in the same ``Inventory Count Session`` the phone writes, so a count
+scanned to appear), *what is wrong* (the variances, by value) and *post it* (Stock Reconciliations
+of at most 100 rows). Counts live in the same ``Inventory Count Session`` the phone writes, so a count
 taken on the phone opens here too; a Count Desk count carries a ``scope``, the bins it covers.
 
 Every judgement is in ``inventory_enhancements/count_desk_rules.py`` (no Frappe, tested bench-free);
@@ -18,6 +18,15 @@ this module reads and writes. The things it is careful about:
 * **What posts is the variance, applied to what is on hand now** (``count_desk_rules.post_plan``),
   so a take or a receipt after the shelf was counted survives the count. A count posted since by
   somebody else supersedes this one for that item and bin.
+* **A paper count is counted against the shelf as it was** (v1.738.0). With the session's Counted At set, a
+  line's snapshot is the stock ledger as of then (:func:`_system_at`, ERPNext's ``get_previous_sle``)
+  and its ``scan_time`` is then, not the moment it was typed in. Blank is a live count.
+* **Every reconciliation submits in the request that posts it** (v1.738.0). ERPNext v16 queues the submit of
+  one with more than 100 rows and returns it a draft; a failed job reverts it and a deploy's redis
+  flush drops it. v1.737.0 said "Posted" and finalized the count anyway, so a retry answered
+  ``repeated`` and the count never posted. A post is split
+  (``count_desk_rules.batches``), each one is checked submitted before anything is said, and every
+  name is kept on the session (``stock_reconciliations``).
 * **Two saves of one count never race.** ``save_counts`` and ``post_count`` lock the session row
   (``select ... for update``) before they load it: the page saves as people type, and a second save
   loading the same ``modified`` would fail ``check_if_latest`` after the first committed.
@@ -40,7 +49,17 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, cstr, flt, get_datetime, now_datetime, nowdate, nowtime
+from frappe.utils import (
+	add_days,
+	cint,
+	cstr,
+	flt,
+	get_datetime,
+	get_url_to_form,
+	now_datetime,
+	nowdate,
+	nowtime,
+)
 
 from erpnext_enhancements.api import stock_scan as scan
 from erpnext_enhancements.inventory_enhancements import count_desk_rules as rules
@@ -278,6 +297,7 @@ def _recent_counts(supervisor):
 			"start_time",
 			"end_time",
 			"stock_reconciliation",
+			"stock_reconciliations",
 			"scope",
 		],
 		order_by="end_time desc",
@@ -285,21 +305,12 @@ def _recent_counts(supervisor):
 	)
 	lines = _lines_of([row.name for row in rows])
 	who = _full_names([row.counted_by for row in rows])
-	recs = [row.stock_reconciliation for row in rows if row.stock_reconciliation]
-	sr = {}
-	if recs:
-		sr = {
-			r.name: r
-			for r in frappe.get_all(
-				"Stock Reconciliation",
-				filters={"name": ["in", recs]},
-				fields=["name", "docstatus", "difference_amount"],
-			)
-		}
+	made = {row.name: _made(row) for row in rows}
+	sr = _reconciliation_rows([name for names in made.values() for name in names])
 	out = []
 	for row in rows:
 		matched, counted = rules.accuracy(lines.get(row.name, []))
-		rec = sr.get(row.stock_reconciliation) if row.stock_reconciliation else None
+		recs = [sr[name] for name in made[row.name] if name in sr]
 		out.append(
 			{
 				"name": row.name,
@@ -309,13 +320,34 @@ def _recent_counts(supervisor):
 				"items": counted,
 				"matched": matched,
 				"accuracy": round(matched * 100.0 / counted, 1) if counted else None,
-				"stock_reconciliation": row.stock_reconciliation or None,
-				"sr_status": _sr_status(rec),
-				"difference": flt(rec.difference_amount) if rec else 0.0,
+				"stock_reconciliation": made[row.name][0] if made[row.name] else None,
+				"stock_reconciliations": made[row.name],
+				"sr_status": rules.combined_status(_sr_status(rec) for rec in recs),
+				"difference": sum(flt(rec.difference_amount) for rec in recs),
 				"bins": len(rules.parse_scope(row.scope)),
 			}
 		)
 	return out
+
+
+def _made(doc):
+	"""Every reconciliation a session made: ``stock_reconciliations``, with the older single link."""
+	return rules.reconciliation_names(doc.get("stock_reconciliations"), doc.get("stock_reconciliation"))
+
+
+def _reconciliation_rows(names):
+	"""``{name: {name, docstatus, difference_amount}}`` for these Stock Reconciliations."""
+	names = sorted({name for name in names or [] if name})
+	if not names:
+		return {}
+	return {
+		r.name: r
+		for r in frappe.get_all(
+			"Stock Reconciliation",
+			filters={"name": ["in", names]},
+			fields=["name", "docstatus", "difference_amount"],
+		)
+	}
 
 
 def _sr_status(rec):
@@ -329,20 +361,27 @@ def _stats(bins):
 	today = nowdate()
 	since = add_days(today, -rules.COVERAGE_DAYS)
 	cover = rules.coverage(bins, today)
-	names = frappe.get_all(SESSION, filters={"status": "Finalized", "end_time": [">=", since]}, pluck="name")
+	sessions = frappe.get_all(
+		SESSION,
+		filters={"status": "Finalized", "end_time": [">=", since]},
+		fields=["name", "stock_reconciliation", "stock_reconciliations"],
+	)
+	names = [row.name for row in sessions]
 	all_lines = []
 	for lines in _lines_of(names).values():
 		all_lines.extend(lines)
 	matched, counted = rules.accuracy(all_lines)
-	value = frappe.db.sql(
-		f"""
-		select coalesce(sum(sr.difference_amount), 0)
-		from `tabStock Reconciliation` sr
-		inner join `tab{SESSION}` s on s.stock_reconciliation = sr.name
-		where sr.docstatus = 1 and s.status = 'Finalized' and s.end_time >= %(since)s
-		""",
-		{"since": since},
-	)
+	recs = sorted({name for row in sessions for name in _made(row)})
+	value = None
+	if recs:
+		value = frappe.db.sql(
+			"""
+			select coalesce(sum(difference_amount), 0)
+			from `tabStock Reconciliation`
+			where docstatus = 1 and name in %(names)s
+			""",
+			{"names": tuple(recs)},
+		)
 	return {
 		"coverage": cover,
 		"accuracy": round(matched * 100.0 / counted, 1) if counted else None,
@@ -469,6 +508,41 @@ def _balances(pairs):
 	}
 
 
+def _system_at(pairs, when):
+	"""``{(item_code, warehouse): qty}``: what the system showed at each pair at ``when``.
+
+	``when`` is a session's Counted At: the stock ledger as of then, through ERPNext's own
+	``get_previous_sle`` (the last entry at or before it; nothing yet is 0). Not
+	``erpnext.stock.utils.get_stock_balance``, whose body is this same call: it is whitelisted and
+	asks for Item read, which Inventory Clerk does not hold on production (checked 2026-10-23), and
+	this page's role gate has already run. ``None`` is a live count: ``tabBin`` now."""
+	pairs = {p for p in pairs or [] if p[0] and p[1]}
+	if not pairs:
+		return {}
+	if not when:
+		return {pair: balance["actual_qty"] for pair, balance in _balances(pairs).items()}
+	from erpnext.stock.stock_ledger import get_previous_sle
+
+	when = get_datetime(when)
+	out = {}
+	for item_code, warehouse in sorted(pairs):
+		sle = get_previous_sle(
+			{
+				"item_code": item_code,
+				"warehouse": warehouse,
+				"posting_date": when.strftime("%Y-%m-%d"),
+				"posting_time": when.strftime("%H:%M:%S"),
+			}
+		)
+		out[(item_code, warehouse)] = flt((sle or {}).get("qty_after_transaction"))
+	return out
+
+
+def _counted_at(doc):
+	"""The session's Counted At as a datetime, or ``None`` for a live count."""
+	return rules.to_datetime(doc.get("counted_at"))
+
+
 def _line_dicts(doc):
 	return [
 		{
@@ -506,14 +580,10 @@ def _header(doc, warehouses=None):
 	by_name = {w.name: w for w in warehouses}
 	group_rows = [w for w in warehouses if cint(w.is_group)]
 	scope = rules.parse_scope(doc.get("scope"))
-	sr = None
-	if doc.stock_reconciliation:
-		sr = frappe.db.get_value(
-			"Stock Reconciliation",
-			doc.stock_reconciliation,
-			["name", "docstatus", "difference_amount"],
-			as_dict=True,
-		)
+	made = _made(doc)
+	sr = _reconciliation_rows(made)
+	recs = [sr[name] for name in made if name in sr]
+	counted_at = _counted_at(doc)
 	mine = doc.counted_by == frappe.session.user
 	return {
 		"name": doc.name,
@@ -524,6 +594,7 @@ def _header(doc, warehouses=None):
 		"mine": mine,
 		"start_time": cstr(doc.start_time) or None,
 		"end_time": cstr(doc.end_time) or None,
+		"counted_at": counted_at.strftime("%Y-%m-%d %H:%M:%S") if counted_at else None,
 		"blind": bool(cint(doc.get("blind_count"))),
 		"notes": doc.notes or "",
 		"scoped": bool(scope),
@@ -535,9 +606,10 @@ def _header(doc, warehouses=None):
 			}
 			for name in scope
 		],
-		"stock_reconciliation": doc.stock_reconciliation or None,
-		"sr_status": _sr_status(sr),
-		"difference": flt(sr.difference_amount) if sr else 0.0,
+		"stock_reconciliation": made[0] if made else None,
+		"stock_reconciliations": made,
+		"sr_status": rules.combined_status(_sr_status(rec) for rec in recs),
+		"difference": sum(flt(rec.difference_amount) for rec in recs),
 		"editable": doc.status == "Open" and (mine or _is_supervisor()),
 	}
 
@@ -550,12 +622,17 @@ def _sheet_payload(doc):
 	expected = _expected(scope, by_name) if doc.status == "Open" else {}
 	codes = {line["item_code"] for line in lines}
 	pairs = {(line["item_code"], line["warehouse"]) for line in lines}
+	counted_pairs = set(pairs)
 	for warehouse, listing in expected.items():
 		for row in listing:
 			codes.add(row["item_code"])
 			pairs.add((row["item_code"], warehouse))
 	names = {w.name: w.warehouse_name or w.name for w in warehouses}
-	rows = rules.sheet_rows(expected, lines, _balances(pairs), _items(codes), names)
+	# Under a Counted At an uncounted row shows, and is counted against, the ledger as of then; a
+	# counted row's snapshot already is that.
+	counted_at = _counted_at(doc) if doc.status == "Open" else None
+	as_of = _system_at(pairs - counted_pairs, counted_at) if counted_at else None
+	rows = rules.sheet_rows(expected, lines, _balances(pairs), _items(codes), names, as_of=as_of)
 	settings = get_settings()
 	return {
 		"count": _header(doc, warehouses),
@@ -606,15 +683,21 @@ def _open_overlaps(bins, exclude=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def start_count(warehouses, title=None, blind=0):
+def start_count(warehouses, title=None, blind=0, counted_at=None):
 	"""Start a count of ``warehouses`` (a JSON list of bins and groups; a group counts every bin
-	under it). Returns the new count's name, any other open count that covers the same bins (said,
-	not refused: two people may split a big shelf), and any part of the choice that was left out."""
+	under it). ``counted_at`` is when a paper count was walked (blank for a live count;
+	:func:`count_desk_rules.check_counted_at`). Returns the new count's name, any other open count
+	that covers the same bins (said, not refused: two people may split a big shelf), and any part of
+	the choice that was left out."""
 	_check_access()
 	selected = _json_list(warehouses, limit=rules.MAX_SCOPE * 2)
 	warehouse_rows = _warehouses()
 	bins, problems = rules.expand_scope(selected, warehouse_rows)
 	problem = rules.check_scope(bins, problems)
+	if problem:
+		frappe.throw(problem)
+	now = now_datetime()
+	when, problem = rules.check_counted_at(counted_at, now, now)
 	if problem:
 		frappe.throw(problem)
 	by_name = {w.name: w for w in warehouse_rows}
@@ -629,10 +712,11 @@ def start_count(warehouses, title=None, blind=0):
 			"counted_by": frappe.session.user,
 			"company": by_name[bins[0]].company,
 			"status": "Open",
-			"start_time": now_datetime(),
+			"start_time": now,
 			"count_title": rules.check_title(title) or rules.default_title(labels),
 			"blind_count": 1 if cint(blind) else 0,
 			"scope": rules.dump_scope(bins),
+			"counted_at": when,
 		}
 	)
 	doc.insert(ignore_permissions=True)
@@ -645,12 +729,32 @@ def start_count(warehouses, title=None, blind=0):
 
 
 @frappe.whitelist(methods=["POST"])
-def update_count(session, title=None, blind=None, notes=None, add_warehouses=None):
-	"""Rename a count, switch blind counting, keep notes, or add bins to it. Only the arguments sent
-	change. A phone count has no bins to add to: it covers whatever is scanned."""
+def update_count(session, title=None, blind=None, notes=None, add_warehouses=None, counted_at=None):
+	"""Rename a count, switch blind counting, keep notes, set when it was counted, or add bins to
+	it. Only the arguments sent change. A phone count has no bins to add to: it covers whatever is
+	scanned.
+
+	``counted_at`` sets the count's Counted At (``""`` clears it, back to a live count). A change
+	re-reads the snapshot of every line already counted (:func:`_resnapshot`): the lines are a count
+	of the shelf at that moment, so each is counted against what the system showed then. A phone
+	count takes none: the phone keeps scanning into it, each scan snapshotted as it is made."""
 	_check_access()
 	_lock(session)
 	doc = _session(session, editable=True)
+	resnapshot = False
+	if counted_at is not None:
+		when, problem = rules.check_counted_at(
+			counted_at, doc.get("creation") or doc.start_time, now_datetime()
+		)
+		if problem:
+			frappe.throw(problem)
+		if when and not rules.parse_scope(doc.get("scope")):
+			frappe.throw(
+				_("A count taken on the phone is counted as each item is scanned, so it has no Counted At.")
+			)
+		if when != _counted_at(doc):
+			doc.counted_at = when
+			resnapshot = True
 	if title is not None:
 		doc.count_title = rules.check_title(title) or doc.count_title
 	if blind is not None:
@@ -675,8 +779,22 @@ def update_count(session, title=None, blind=None, notes=None, add_warehouses=Non
 		if problem:
 			frappe.throw(problem)
 		doc.scope = rules.dump_scope(merged)
+	if resnapshot:
+		_resnapshot(doc)
 	doc.save(ignore_permissions=True)
-	return _sheet_payload(doc) if add_warehouses else {"count": _header(doc)}
+	return _sheet_payload(doc) if add_warehouses or resnapshot else {"count": _header(doc)}
+
+
+def _resnapshot(doc):
+	"""Every counted line against the count's baseline: the ledger at its Counted At, or, cleared
+	back to a live count, what the system shows now. ``scan_time`` follows, because a later
+	reconciliation of the item supersedes a count by that time (:func:`_superseded`)."""
+	when = _counted_at(doc)
+	stamp = when or now_datetime()
+	system = _system_at({(line.item_code, line.warehouse) for line in doc.lines}, when)
+	for line in doc.lines:
+		line.system_qty = flt(system.get((line.item_code, line.warehouse)))
+		line.scan_time = stamp
 
 
 def _find_line(doc, item_code, warehouse, storage_location):
@@ -713,8 +831,10 @@ def save_counts(session, rows):
 	``counted_qty`` of ``null`` clears that count.
 
 	A row whose count changes takes a fresh snapshot of what the system shows there and the time,
-	as a scan does on the phone; a reason or a flag alone changes neither. Each row is judged on its
-	own and a refused one does not stop the rest (a pasted column with one typo saves the others).
+	as a scan does on the phone; a reason or a flag alone changes neither. Under a Counted At the
+	snapshot is the ledger as of then and the time is then (a paper count typed in later). Each row
+	is judged on its own and a refused one does not stop the rest (a pasted column with one typo
+	saves the others).
 	Returns each row's ``ok`` / ``message`` and, per (item, warehouse) touched, its rows as they now
 	stand: a variance belongs to the item at the warehouse, so every line of it can change."""
 	_check_access()
@@ -724,13 +844,21 @@ def save_counts(session, rows):
 	scope = rules.parse_scope(doc.get("scope"))
 	keys = [rules.split_key(entry.get("key")) if isinstance(entry, dict) else None for entry in entries]
 	items = _items({k["item_code"] for k in keys if k})
-	# One read of what the system shows, for every row this save carries: the snapshot a changed
-	# count takes is "now", and now is the same moment for each of them.
-	balances = _balances({(k["item_code"], k["warehouse"]) for k in keys if k})
+	# One read of what the system shows, for every row this save carries a count for: the snapshot a
+	# changed count takes is "now" (or the count's Counted At), the same moment for each of them.
+	counted_at = _counted_at(doc)
+	system = _system_at(
+		{
+			(k["item_code"], k["warehouse"])
+			for entry, k in zip(entries, keys, strict=True)
+			if k and isinstance(entry, dict) and entry.get("counted_qty") not in (None, "")
+		},
+		counted_at,
+	)
 	locations = {}
 	results = []
 	touched = set()
-	now = now_datetime()
+	now = counted_at or now_datetime()
 	for entry, where in zip(entries, keys, strict=True):
 		key = entry.get("key") if isinstance(entry, dict) else None
 		item = items.get(where["item_code"]) if where else None
@@ -770,8 +898,7 @@ def save_counts(session, rows):
 				line.counted_qty is None
 				or abs(flt(line.counted_qty) - values["counted_qty"]) > rules.TOLERANCE
 			):
-				balance = balances.get((values["item_code"], values["warehouse"])) or {}
-				line.system_qty = flt(balance.get("actual_qty"))
+				line.system_qty = flt(system.get((values["item_code"], values["warehouse"])))
 				line.scan_time = now
 				line.counted_by = frappe.session.user
 			line.counted_qty = values["counted_qty"]
@@ -801,7 +928,8 @@ def _group_rows(doc, touched):
 	names = {}
 	for pair in touched:
 		names[pair[1]] = frappe.db.get_value("Warehouse", pair[1], "warehouse_name") or pair[1]
-	rows = rules.sheet_rows({}, lines, _balances(touched), _items(codes), names)
+	as_of = {} if _counted_at(doc) else None
+	rows = rules.sheet_rows({}, lines, _balances(touched), _items(codes), names, as_of=as_of)
 	out = []
 	for item_code, warehouse in sorted(touched):
 		out.append(
@@ -848,39 +976,40 @@ def _superseded(group_map):
 
 
 def _reconciliations(doc, plan, draft):
-	"""The unsaved Stock Reconciliations for ``plan["adjust"]``: one per (company, difference
-	account), because a reconciliation has one of each. ``expense_account`` from the resolver every
-	stock voucher here uses (``stock_accounts.difference_account``: production's Company has no
-	Stock Adjustment Account, and ERPNext refuses a reconciliation without one)."""
+	"""The unsaved Stock Reconciliations for ``plan["adjust"]``, as ``[(sr, rows)]``: one per
+	(company, difference account), because a reconciliation has one of each, and each of those in
+	runs of ``count_desk_rules.RECONCILIATION_ROWS`` so it submits in this request
+	(:func:`post_count`). ``expense_account`` from the resolver every stock voucher here uses
+	(``stock_accounts.difference_account``: production's Company has no Stock Adjustment Account,
+	and ERPNext refuses a reconciliation without one)."""
 	settings = get_settings()
 	companies = {}
 	for row in plan["adjust"]:
 		company = frappe.get_cached_value("Warehouse", row["warehouse"], "company") or doc.company
 		account = scan._difference_account(company, row["item_code"])
 		companies.setdefault((company, account), []).append(row)
-	who = scan._full_name(doc.counted_by)
 	out = []
-	for (company, account), rows in companies.items():
-		sr = frappe.new_doc("Stock Reconciliation")
-		sr.purpose = "Stock Reconciliation"
-		sr.company = company
-		sr.expense_account = account
-		cost_center = scan._cost_center(settings.get("scan_cost_center"), company)
-		if cost_center:
-			sr.cost_center = cost_center
-		if draft:
-			# Posted as of now even if a Stock Manager submits it next week: ERPNext then reposts
-			# whatever moved in between on top of it, instead of the draft overwriting it.
-			sr.set_posting_time = 1
-			sr.posting_date = nowdate()
-			sr.posting_time = nowtime()
-		sr.remarks = rules.remarks(doc.name, doc.get("count_title"), who, rows)
-		for row in rows:
-			item = {"item_code": row["item_code"], "warehouse": row["warehouse"], "qty": row["qty"]}
-			if row.get("valuation_rate"):
-				item["valuation_rate"] = row["valuation_rate"]
-			sr.append("items", item)
-		out.append(sr)
+	for (company, account), all_rows in companies.items():
+		for rows in rules.batches(all_rows):
+			sr = frappe.new_doc("Stock Reconciliation")
+			sr.purpose = "Stock Reconciliation"
+			sr.company = company
+			sr.expense_account = account
+			cost_center = scan._cost_center(settings.get("scan_cost_center"), company)
+			if cost_center:
+				sr.cost_center = cost_center
+			if draft:
+				# Posted as of now even if a Stock Manager submits it next week: ERPNext then reposts
+				# whatever moved in between on top of it, instead of the draft overwriting it.
+				sr.set_posting_time = 1
+				sr.posting_date = nowdate()
+				sr.posting_time = nowtime()
+			for row in rows:
+				item = {"item_code": row["item_code"], "warehouse": row["warehouse"], "qty": row["qty"]}
+				if row.get("valuation_rate"):
+					item["valuation_rate"] = row["valuation_rate"]
+				sr.append("items", item)
+			out.append((sr, rows))
 	return out
 
 
@@ -889,8 +1018,11 @@ def _post_result(doc, plan=None, posted=None, drafts=None, repeated=False):
 	drafts = drafts or []
 	if repeated:
 		message = _("This count was already posted.")
-		if doc.stock_reconciliation:
-			message += " " + _("Its reconciliation is {0}.").format(doc.stock_reconciliation)
+		made = _made(doc)
+		if len(made) == 1:
+			message += " " + _("Its reconciliation is {0}.").format(made[0])
+		elif made:
+			message += " " + _("Its reconciliations are {0}.").format(", ".join(made))
 	else:
 		message = rules.result_message(plan, posted, drafts)
 	return {
@@ -909,12 +1041,18 @@ def _post_result(doc, plan=None, posted=None, drafts=None, repeated=False):
 def post_count(session, mode="post"):
 	"""Finish a count and post its variances (:func:`count_desk_rules.post_plan`).
 
-	``mode="post"`` submits the reconciliation as the user (Stock Reconciliation create and submit);
-	``mode="draft"`` inserts it as a draft for a Stock Manager. Items that matched post nothing;
-	items that cannot be posted are listed with the reason and kept in the count's notes. A count
-	where nothing needed adjusting is finalized with no reconciliation at all, which ERPNext would
-	otherwise refuse. Refused, posting nothing, while any variance lacks a reason the settings
-	require."""
+	``mode="post"`` submits the reconciliations as the user (Stock Reconciliation create and submit);
+	``mode="draft"`` inserts them as drafts for a Stock Manager. There is one per company and
+	difference account and per ``RECONCILIATION_ROWS`` rows, so a Stock Manager's submit of a draft
+	is not sent to a background job either. Each gets a comment saying which count it came from, who
+	counted it and why. Items that matched post nothing; items that cannot be posted are listed with
+	the reason and kept in the count's notes. A count where nothing needed adjusting is finalized
+	with no reconciliation at all, which ERPNext would otherwise refuse. Refused, posting nothing,
+	while any variance lacks a reason the settings require.
+
+	All of it is one request and one transaction: the count is finalized only once every
+	reconciliation is submitted (or drafted), and a reconciliation that is not submitted when
+	``submit`` returns refuses the whole post, so nothing is half posted and a retry posts afresh."""
 	_check_access()
 	mode = cstr(mode).strip() or "post"
 	if mode not in ("post", "draft"):
@@ -957,19 +1095,37 @@ def post_count(session, mode="post"):
 		frappe.throw(_("A variance reason is required before posting: {0}.").format(", ".join(names)))
 
 	posted, drafts = [], []
-	for sr in _reconciliations(doc, plan, draft=mode == "draft"):
+	batches = _reconciliations(doc, plan, draft=mode == "draft")
+	who = scan._full_name(doc.counted_by)
+	link = get_url_to_form(SESSION, doc.name)
+	for part, (sr, rows) in enumerate(batches, 1):
 		if mode == "post":
 			sr.insert()
-			sr.submit()
-			posted.append(sr.name)
 		else:
 			sr.insert(ignore_permissions=True)
+		sr.add_comment(
+			"Comment",
+			rules.reconciliation_comment(
+				doc.name, doc.get("count_title"), who, rows, link=link, part=part, parts=len(batches)
+			),
+		)
+		if mode == "post":
+			sr.submit()
+			# A reconciliation of more than 100 rows is submitted by a background job, still a draft
+			# here; none is that long (batches), and this refuses the post, rolling back every one,
+			# rather than say "Posted" over a draft.
+			if cint(sr.docstatus) != 1:
+				frappe.throw(
+					_(
+						"{0} was not submitted when it was posted, so nothing was posted. Post the count again, or send it for review."
+					).format(sr.name)
+				)
+			posted.append(sr.name)
+		else:
 			drafts.append(sr.name)
 
 	made = posted or drafts
 	notes = [doc.notes] if doc.notes else []
-	if len(made) > 1:
-		notes.append(_("Reconciliations: {0}").format(", ".join(made)))
 	if plan["skipped"]:
 		notes.append(
 			_("Not posted:")
@@ -983,6 +1139,7 @@ def post_count(session, mode="post"):
 			"status": "Finalized",
 			"end_time": now_datetime(),
 			"stock_reconciliation": made[0] if made else None,
+			"stock_reconciliations": rules.dump_names(made) or None,
 			"notes": "\n\n".join(notes)[:10000] if notes else doc.notes,
 		}
 	)

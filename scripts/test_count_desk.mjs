@@ -8,11 +8,15 @@
  *   - the tree's roll-ups, the presets and "a whole group is sent as the group";
  *   - Enter goes to the next row (the next uncounted under "To count"), and rows counted under a
  *     filter do not vanish under the cursor;
- *   - a pasted column fills down, skipping refused rows; Zero the rest only touches uncounted rows;
+ *   - a pasted column fills down one value per row on screen, a refused row taking its value and
+ *     keeping nothing; Zero the rest only touches uncounted rows;
  *   - one save in flight at a time, edits made meanwhile merged into the next batch (last value
  *     wins), a dropped connection retried with backoff and never losing a newer edit, a refusal not
  *     retried; Undo puts the previous value back;
- *   - the summary and the row key agree with count_desk_rules.py (tests/data/count_desk_vectors.json);
+ *   - a refused row goes back to what the server has, marked, and a refused save holds Post back;
+ *   - under a Counted At an uncounted row is counted against the ledger then (as_of_qty);
+ *   - the summary, the row key and the paste agree with count_desk_rules.py and its vectors
+ *     (tests/data/count_desk_vectors.json);
  *   - CSV is formula-safe and leaves the system out of a blind count; the print sheet escapes.
  *
  * Run: node scripts/test_count_desk.mjs   (from tests/test_count_desk.py)
@@ -209,7 +213,13 @@ function makeWorld(options) {
 				if (args.code === "0999999999999") return Promise.resolve({ type: "item", item_code: "NEW", item_name: "NEW ITEM", uom: "Unit" });
 				return Promise.resolve({ type: "unknown", code: args.code });
 			}
-			if (name === "update_count") return Promise.resolve({ count: { title: args.title } });
+			if (name === "update_count") {
+				if ("counted_at" in args) {
+					const rows = JSON.parse(JSON.stringify(world.rows)).map((r) => Object.assign(r, { as_of_qty: r.counted ? r.snapshot_qty : 6 }));
+					return Promise.resolve(sheet_payload(rows, Object.assign({}, o.sheet, { counted_at: args.counted_at || null })));
+				}
+				return Promise.resolve({ count: { title: args.title } });
+			}
 			return Promise.resolve({});
 		};
 		const held = world.hold.get(name);
@@ -483,18 +493,61 @@ test("an added row lands after its bin", () => {
 	check("a new bin in shelf order", L.insert_row(rows, other).map((r) => r.item_code), ["A", "C", "Q"]);
 });
 
-test("a pasted column fills down", () => {
+test("a pasted column fills down, one value per row on screen", () => {
 	check("one value is a normal paste", L.parse_paste("12"), []);
 	check("lines, tabs, CRLF, trailing blank", L.parse_paste("1\t a\r\n2\n\n3\n\n"), ["1", "2", "", "3"]);
 	const rows = [row("A"), row("B", W1, { refusal: "No." }), row("C"), row("D"), row("E")];
 	const by = new Map(rows.map((r) => [r.key, r]));
 	const plan = L.fill_plan(rows.map((r) => r.key), by, K("A"), ["5", "2x3", "", "oops", "9", "10"]);
-	check("refused skipped, blank kept its row, extras dropped", plan.entries, [
+	check("the refused row took 2x3 and kept nothing, C's blank kept its row, extras dropped", plan.entries, [
 		{ key: K("A"), counted_qty: 5 },
-		{ key: K("C"), counted_qty: 6 },
+		{ key: K("E"), counted_qty: 9 },
 	]);
-	check("problems named", plan.problems.map((p) => L.split_key(p.key).item_code), ["E"]);
+	check("problems named", plan.problems.map((p) => L.split_key(p.key).item_code), ["D"]);
+	check("refused said", plan.refused, [{ key: K("B"), message: "No." }]);
 	check("zero the rest", L.zero_plan([counted("A", W1, 1, 1), row("B"), row("C", W2), row("D", W1, { refusal: "No." })], W1), [{ key: K("B"), counted_qty: 0 }]);
+});
+
+test("the paste agrees with count_desk_vectors.json (held to the rule by count_desk_rules' side too)", () => {
+	for (const v of VECTORS.pastes) {
+		const rows = v.rows.map((r) => row(r.item_code, W1, { refusal: r.refusal || null }));
+		const by = new Map(rows.map((r) => [r.key, r]));
+		const plan = L.fill_plan(rows.map((r) => r.key), by, K(v.start), v.values);
+		const item = (k) => L.split_key(k).item_code;
+		check(`${v.name}: entries`, plan.entries.map((e) => [item(e.key), e.counted_qty]), v.entries);
+		check(`${v.name}: problems`, plan.problems.map((p) => item(p.key)), v.problems);
+		check(`${v.name}: refused`, plan.refused.map((p) => item(p.key)), v.refused);
+	}
+});
+
+test("Counted At: an uncounted row is counted against the ledger then", () => {
+	check("system_of", [L.system_of(row("A")), L.system_of(row("A", W1, { as_of_qty: 7 })), L.system_of(counted("A", W1, 3, 5, { as_of_qty: 7 }))], [10, 7, 5]);
+	const rows = L.optimistic([row("A", W1, { as_of_qty: 7 })], K("A"), { counted_qty: 7 });
+	check("a match against 9:00, not against now", [rows[0].snapshot_qty, rows[0].variance], [7, 0]);
+	const back = L.uncounted(rows[0]);
+	check("cleared, it keeps its baseline", back.as_of_qty, 7);
+	check("CSV shows the baseline", L.to_csv([row("A", W1, { as_of_qty: 7 })]).split("\r\n")[1], "Bin A1-1-1,,A,ITEM A,Unit,7,,,,,,,");
+});
+
+test("a refused row goes back to what the server has", () => {
+	const typed = counted("A", W1, 3, 10);
+	let out = L.revert([typed, row("B")], K("A"), []);
+	check("never saved: uncounted again", out.rows.map((r) => [r.item_code, r.counted]), [["A", false], ["B", false]]);
+	const added = Object.assign(counted("N", W1, 2, 0), { expected: false });
+	out = L.revert([added], K("N"), []);
+	check("an added row stays, uncounted", out.rows.map((r) => [r.item_code, r.counted, r.expected]), [["N", false, false]]);
+	out = L.revert([counted("A", W1, 9, 10)], K("A"), [counted("A", W1, 5, 10)]);
+	check("saved before: the saved count", out.rows.map((r) => r.counted_qty), [5]);
+});
+
+test("a save that did not land holds the post back", () => {
+	const rows = [counted("A", W1, 9, 10)];
+	check("clean", L.post_check(rows, false, { errors: 0, fatal: null }).blocked, false);
+	check("a refused row", L.post_check(rows, false, { errors: 1 }).blocked, true);
+	const stuck = L.post_check(rows, false, { fatal: "Not saved: gone." });
+	check("a save refused whole", [stuck.blocked, stuck.stuck], [true, "Not saved: gone."]);
+	check("nothing counted", L.post_check([row("A")], false).blocked, true);
+	check("a reason missing", L.post_check(rows, true).blocked, true);
 });
 
 test("the queue merges per row", () => {
@@ -660,13 +713,94 @@ test("a refusal is said on the row and not retried", async () => {
 	world.ctl.set_count(K("B"), 3);
 	await settle();
 	await settle();
-	check("A saved, B refused", [world.ctl.state.status.has(K("A")), (world.ctl.state.status.get(K("B")) || {}).message], [false, "No."]);
+	check("A saved, B refused", [world.ctl.state.status.has(K("A")), (world.ctl.state.status.get(K("B")) || {}).message], [false, "Not saved: No."]);
+	check("B sent once, no retry", [world.saves().flat().filter((e) => e.key === K("B")).length, world.timers.filter((t) => t.fn).length], [1, 0]);
 	const w2 = await open_sheet();
 	w2.fail.set("save_counts", [{ status: 417, message: "Count INV is Finalized; it can no longer be changed." }]);
 	w2.ctl.set_count(K("A"), 8);
 	await settle();
 	check("whole save refused: fatal, no timer", [!!w2.ctl.state.save_error.fatal, w2.timers.filter((t) => t.fn).length], [true, 0]);
-	check("row says why", w2.ctl.state.status.get(K("A")).message, "Count INV is Finalized; it can no longer be changed.");
+	check("row says why", w2.ctl.state.status.get(K("A")).message, "Not saved: Count INV is Finalized; it can no longer be changed.");
+});
+
+test("a refused row is put back and holds Post until it is dealt with", async () => {
+	// The review's repro: B refused on its own, the queue empty, unsaved() 0; B's 3 must not post.
+	const world = await open_sheet({ refuse: (e) => e.key === K("B"), rows: [row("A"), counted("B", W1, 5, 10), row("C", W2)] });
+	world.ctl.set_count(K("A"), 8);
+	world.ctl.set_count(K("B"), 3);
+	await settle();
+	await settle();
+	check("queue empty", world.ctl.unsaved(), 0);
+	check("B shows what is saved, marked", [world.ctl.row(K("B")).counted_qty, world.ctl.errors()], [5, 1]);
+	check("the review leaves the typed 3 out", L.review_rows(world.ctl.state.rows).find((g) => g.item_code === "B").counted_total, 5);
+	check("held back", L.post_check(world.ctl.state.rows, false, world.ctl.save_state()).blocked, true);
+	let message = "";
+	await world.ctl.post("post").catch((e) => (message = e.message));
+	check("refused in words", message, "1 row(s) were not saved and show what the server has. Count them again, or clear the red marks, then post.");
+	check("no post", world.calls.some((c) => c.method.endsWith("post_count")), false);
+	check("clearing the marks", world.ctl.clear_errors(), 1);
+	await world.ctl.post("post");
+	check("then it posts", world.calls.some((c) => c.method.endsWith("post_count")), true);
+	// A row never saved goes back to uncounted; another row saving leaves its mark; counting it again
+	// (accepted this time) clears it.
+	let refusing = true;
+	const w2 = await open_sheet({ refuse: (e) => refusing && e.key === K("A") });
+	w2.ctl.set_count(K("A"), 4);
+	await settle();
+	check("never saved: uncounted, marked", [w2.ctl.row(K("A")).counted, w2.ctl.errors()], [false, 1]);
+	w2.ctl.set_count(K("C", W2), 2);
+	await settle();
+	check("another row saves meanwhile, the mark stays", w2.ctl.errors(), 1);
+	refusing = false;
+	w2.ctl.set_count(K("A"), 4);
+	await settle();
+	check("counted again: saved, unmarked", [w2.ctl.row(K("A")).counted_qty, w2.ctl.errors()], [4, 0]);
+});
+
+test("a save refused whole holds Post until the page is reloaded", async () => {
+	const world = await open_sheet();
+	world.fail.set("save_counts", [{ status: 403, message: "No access." }]);
+	world.ctl.set_count(K("A"), 8);
+	await settle();
+	check("dropped from the queue", world.ctl.unsaved(), 0);
+	check("what was typed stays, marked", [world.ctl.row(K("A")).counted_qty, world.ctl.errors()], [8, 1]);
+	check("the marks do not clear", world.ctl.clear_errors(), 0);
+	let message = "";
+	await world.ctl.post("post").catch((e) => (message = e.message));
+	check("refused", message, "Some counts are not saved yet. Fix the rows marked in red, or retry, then post.");
+	check("the review says why", L.post_check(world.ctl.state.rows, false, world.ctl.save_state()).stuck, "Not saved: No access. Reload the page to see the count as it is saved.");
+	check("no post", world.calls.some((c) => c.method.endsWith("post_count")), false);
+});
+
+test("a pasted column with a refused row lands every value on its own row", async () => {
+	const world = await open_sheet({ rows: [row("A"), row("R", W1, { refusal: "Serialized." }), row("B"), row("C")] });
+	const res = world.ctl.fill(K("A"), ["5", "", "7", "9"]);
+	await settle();
+	check("one save, each on its row", world.saves()[0], [
+		{ key: K("A"), counted_qty: 5 },
+		{ key: K("B"), counted_qty: 7 },
+		{ key: K("C"), counted_qty: 9 },
+	]);
+	check("said", [res.done, res.problems.length, res.refused.length], [3, 0, 0]);
+	const r2 = world.ctl.fill(K("A"), ["1", "2"]);
+	check("a value on the refused row is said, not saved", [r2.refused.map((p) => p.key), world.ctl.state.status.has(K("R"))], [[K("R")], false]);
+});
+
+test("changing Counted At waits for the queue, then takes the server's sheet", async () => {
+	const world = await open_sheet();
+	let release;
+	world.hold.set("save_counts", new Promise((r) => (release = r)));
+	world.ctl.set_count(K("A"), 8);
+	const changed = world.ctl.update({ counted_at: "2026-10-20 09:00:00" });
+	await settle();
+	check("not sent while a save is in flight", world.calls.some((c) => c.method.endsWith("update_count")), false);
+	world.hold.delete("save_counts");
+	release();
+	await changed;
+	const call = world.calls.find((c) => c.method.endsWith("update_count"));
+	check("sent", call.args.counted_at, "2026-10-20 09:00:00");
+	check("the header says it", world.ctl.state.sheet.counted_at, "2026-10-20 09:00:00");
+	check("the rows are the server's", world.ctl.row(K("B")).as_of_qty, 6);
 });
 
 test("Undo puts the previous value back", async () => {
@@ -779,7 +913,7 @@ test("cancel goes back to the plan in place of the sheet", async () => {
 	await world.ctl.cancel();
 	await world.route();
 	check("plan, replacing the sheet entry", [world.ctl.state.target.screen, world.entries.length, world.index], ["plan", 2, 1]);
-	check("said", (world.ctl.state.notice || {}).message, "Count INV-CNT-2026-00007 was cancelled. Nothing was posted.");
+	check("said", (world.ctl.state.notice || {}).message, "Count INV-CNT-2026-00007 was canceled. Nothing was posted.");
 });
 
 test("opening another count starts clean", async () => {
