@@ -28,7 +28,7 @@ is ``custom_opportunity_name`` (a Property Setter since June), and that is the f
 type. ``title`` is ERPNext's own, filled from ``customer_name`` in ``Opportunity.validate`` when
 blank (``erpnext/crm/doctype/opportunity/opportunity.py``, version-16) — so it is the bare
 party on almost every record, and nothing on the form shows it. This check read ``title`` from
-v1.339.0 until v1.736.1, and the banner told 346 Opportunities that "Summit Vista - Circulation
+v1.339.0 until v1.737.1, and the banner told 346 Opportunities that "Summit Vista - Circulation
 Pump" had no separator because it was looking at "Summit Vista".
 
 **Address does not, and appending the type by hand is a defect rather than the rule.**

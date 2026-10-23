@@ -1,0 +1,27 @@
+{
+ "content": "",
+ "creation": "2026-10-20 15:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "clipboard-check",
+ "modified": "2026-10-20 15:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "count-desk",
+ "owner": "Administrator",
+ "page_name": "count-desk",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Inventory Clerk"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Count Desk"
+}

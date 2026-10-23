@@ -24,7 +24,7 @@ repo, so bench-free code is the only code that runs on every push.
    ``test_a_stale_customer_docname_is_not_a_naming_defect``.
 4. *Check the field the form shows.* Opportunity's form title is the Opportunity Name
    (``custom_opportunity_name``); ``title`` is ERPNext's auto-filled copy of the party. The
-   check read ``title`` until v1.736.1 and told 346 Opportunities that a name reading
+   check read ``title`` until v1.737.1 and told 346 Opportunities that a name reading
    ``Summit Vista - Circulation Pump`` had no separator. See ``OpportunityNameFieldTest``.
 
 Every fixture is a verbatim record read from ERPNext Production on 19 August 2026, except
