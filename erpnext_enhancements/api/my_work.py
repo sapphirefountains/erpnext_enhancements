@@ -46,7 +46,7 @@ Things this module is careful about:
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, escape_html, get_fullname, getdate, now_datetime, nowdate
+from frappe.utils import add_to_date, escape_html, formatdate, get_fullname, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.task_enhancements import assignments
 from erpnext_enhancements.task_enhancements.auto_close import close_todo
@@ -451,8 +451,14 @@ def _record_info(rows, with_facts):
 
 
 def _format(value, df):
+	"""A record fact as text. A day -- a Date, or a Datetime at midnight like Task's Expected End
+	Date -- is the date alone in the person's format (``assignments.shows_as_day``); everything else
+	is ``frappe.format_value``'s."""
 	try:
-		text = frappe.format_value(value, df)
+		if assignments.shows_as_day(value, getattr(df, "fieldtype", None)):
+			text = formatdate(assignments.as_date(value))
+		else:
+			text = frappe.format_value(value, df)
 	except Exception:
 		text = value
 	return assignments.plain_text(text)

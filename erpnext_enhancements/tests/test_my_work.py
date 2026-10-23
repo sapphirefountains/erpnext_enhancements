@@ -1550,6 +1550,61 @@ class TestTodoView(unittest.TestCase):
 		self.assertFalse(api.get_todo_view("T1")["due_is_stamp"])
 
 
+class TestRecordFactsAndNames(unittest.TestCase):
+	"""v1.739.1, found on prod in ToDo khoaj9qnhe: the record card read "Expected End Date:
+	10/30/2026 00:00", and Assigned To showed nikolas.bradshaw@sapphirefountains.com."""
+
+	def setUp(self):
+		_reset()
+
+	def tearDown(self):
+		fake.__dict__.pop("format_value", None)
+
+	def test_a_day_is_a_date_or_a_datetime_at_midnight(self):
+		self.assertTrue(rules.shows_as_day(DT(2026, 10, 30, 0, 0), "Datetime"))
+		self.assertTrue(rules.shows_as_day("2026-10-30 00:00:00", "Datetime"))
+		self.assertTrue(rules.shows_as_day("2026-10-30", "Datetime"))
+		self.assertTrue(rules.shows_as_day(D(2026, 10, 30), "Date"))
+		self.assertTrue(rules.shows_as_day("2026-10-30", "Date"))
+
+	def test_a_real_time_or_anything_else_is_not(self):
+		self.assertFalse(rules.shows_as_day(DT(2026, 10, 30, 14, 30), "Datetime"))
+		self.assertFalse(rules.shows_as_day("2026-10-30 09:15:00", "Datetime"))
+		self.assertFalse(rules.shows_as_day("2026-10-30", "Data"))
+		self.assertFalse(rules.shows_as_day(None, "Datetime"))
+		self.assertFalse(rules.shows_as_day("not a date", "Date"))
+
+	def test_the_card_prints_a_midnight_end_date_as_the_day(self):
+		fake.format_value = lambda value, df=None: f"formatted {value}"
+		datetime_df = types.SimpleNamespace(fieldtype="Datetime")
+		# the stub's formatdate is str(date); on a site it is the person's date format
+		self.assertEqual(api._format(DT(2026, 10, 30, 0, 0), datetime_df), "2026-10-30")
+		self.assertEqual(api._format(D(2026, 10, 30), types.SimpleNamespace(fieldtype="Date")), "2026-10-30")
+		# a real time, and every other kind of fact, are format_value's
+		self.assertEqual(api._format(DT(2026, 10, 30, 14, 30), datetime_df), "formatted 2026-10-30 14:30:00")
+		self.assertEqual(api._format("Open", types.SimpleNamespace(fieldtype="Select")), "formatted Open")
+		self.assertEqual(api._format("Open", None), "formatted Open")
+
+	def test_task_dates_are_among_the_facts(self):
+		"""The rule is worth having only because a Task's dates are on the card."""
+		self.assertIn("exp_end_date", api.FACTS["Task"])
+
+	def test_names_not_addresses_on_the_two_people_fields(self):
+		desk = (APP / "public" / "js" / "global_enhancements" / "my_work.js").read_text(encoding="utf-8")
+		body = desk.split("function show_people_by_name", 1)[1].split("\n\t}\n", 1)[0]
+		self.assertIn('["allocated_to", "assigned_by"]', body)
+		# through Link's own machinery, so title_value_map hands the email back when the form saves
+		self.assertIn("translate_and_set_input_value(", body)
+		self.assertIn("show_people_by_name(frm);", desk.split("function draw_todo_view", 1)[1][:200])
+
+	def test_user_links_stay_addresses_everywhere_else(self):
+		"""show_title_field_in_link on User would turn every User link on the site into a name."""
+		setters = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+		self.assertFalse(
+			[s["name"] for s in setters if s.get("doc_type") == "User" and s["property"] == "show_title_field_in_link"]
+		)
+
+
 class TestLinkWiring(unittest.TestCase):
 	def test_no_assignment_message_defaults_to_my_work(self):
 		"""The homepage link was the complaint; My Work stays only as the unreadable-queue fallback."""
