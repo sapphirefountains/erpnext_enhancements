@@ -43,6 +43,10 @@ import {
 
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 
+// `TERMINAL_STATES` in product_feedback/states.py. Nothing leaves these, so no review action
+// is offered on a request in one.
+const CLOSED_STATUSES = ["Tasks Created", "Rejected", "Duplicate"];
+
 /** Mirrors `api.feedback.draft_description`'s own guard. The server stays the authority. */
 const MIN_TITLE_FOR_DRAFT = 8;
 
@@ -1002,6 +1006,9 @@ export class FeedbackApp {
 			this.detailDecision(detail)
 		);
 
+		// Set by `proposalPanel` when it draws one: persists the reviewer's unsaved row edits.
+		// Every action that redraws the request calls it first, or the redraw throws them away.
+		this.saveProposalEdits = null;
 		if (this.state.isReviewer) {
 			if (detail.status === "Submitted") append(this.pane, this.triagePanel(detail));
 			if (detail.duplicate_candidates.length) append(this.pane, this.duplicatePanel(detail));
@@ -1118,14 +1125,36 @@ export class FeedbackApp {
 		return row;
 	}
 
+	/**
+	 * The model's duplicate flags, and the reviewer's answer to each.
+	 *
+	 * A flag is a suggestion, not a verdict: the reviewer can close against it, or rule it out
+	 * ("Not a duplicate"). A ruled-out flag leaves this list for the quiet line underneath, which
+	 * keeps who overruled what on the request, and it never comes back on a re-run. "Plan it as
+	 * new work" rules out every remaining flag and asks again, which is the button for the
+	 * request that came back with no tasks because of a wrong flag (ER-2026-1323804).
+	 */
 	duplicatePanel(detail) {
-		const panel = el("section", "ee-fb-section ee-fb-panel ee-fb-panel-warn");
-		append(
-			panel,
-			el("h3", "ee-fb-section-title", "Possibly already covered"),
-			el("p", "ee-fb-hint", "Closing against one of these creates nothing and tells the requester where the work already is.")
-		);
-		for (const candidate of detail.duplicate_candidates) {
+		const candidates = detail.duplicate_candidates || [];
+		const active = candidates.filter((candidate) => !candidate.dismissed);
+		const ruledOut = candidates.filter((candidate) => candidate.dismissed);
+		const open = !CLOSED_STATUSES.includes(detail.status);
+		const canReplan = detail.status === "Breakdown Ready" || detail.status === "Breakdown Failed";
+
+		const panel = el("section", `ee-fb-section ee-fb-panel${active.length ? " ee-fb-panel-warn" : ""}`);
+		append(panel, el("h3", "ee-fb-section-title", active.length ? "Possibly already covered" : "Duplicate flags"));
+		if (active.length && open) {
+			append(
+				panel,
+				el(
+					"p",
+					"ee-fb-hint",
+					"The model thinks this is already covered. It can be wrong: if a task here is different work, mark it Not a duplicate. Closing against one creates nothing and tells the requester where the work already is."
+				)
+			);
+		}
+
+		for (const candidate of active) {
 			const row = el("div", "ee-fb-duplicate");
 			append(
 				row,
@@ -1133,17 +1162,150 @@ export class FeedbackApp {
 				deskLink(`${candidate.task} — ${candidate.task_subject}`, `/app/task/${candidate.task}`),
 				el("span", "ee-fb-why", candidate.why)
 			);
-			const close = button("Close as duplicate of this", "ee-fb-btn ee-fb-btn-small", async () => {
-				await this.decide(close, detail.name, {
-					decision: "duplicate",
-					duplicate_of_task: candidate.task,
-					reason: candidate.why,
+			if (open) {
+				const close = button("Close as duplicate of this", "ee-fb-btn ee-fb-btn-small", async () => {
+					await this.decide(close, detail.name, {
+						decision: "duplicate",
+						duplicate_of_task: candidate.task,
+						reason: candidate.why,
+					});
 				});
-			});
-			append(row, close);
+				const dismiss = button("Not a duplicate", "ee-fb-btn ee-fb-btn-small", async () => {
+					await this.overrule(dismiss, detail.name, M.DISMISS_DUPLICATE, { task: candidate.task });
+				});
+				append(row, close, dismiss);
+			}
 			panel.appendChild(row);
 		}
+
+		if (active.length && canReplan) {
+			const replan = button("Plan it as new work", "ee-fb-btn ee-fb-btn-primary", async () => {
+				await this.overrule(replan, detail.name, M.PLAN_AS_NEW, {});
+			});
+			append(
+				panel,
+				el(
+					"p",
+					"ee-fb-hint",
+					"Plan it as new work marks every flag above Not a duplicate and asks Triton again, without showing it those tasks. You can also add a task by hand in the proposal below."
+				),
+				append(el("div", "ee-fb-actions"), replan)
+			);
+		}
+
+		if (ruledOut.length) {
+			const list = el("ul", "ee-fb-ruled-out");
+			for (const candidate of ruledOut) {
+				const item = el("li");
+				const who = [candidate.dismissed_by_name || candidate.dismissed_by, relativeTime(candidate.dismissed_on)]
+					.filter(Boolean)
+					.join(", ");
+				append(
+					item,
+					deskLink(`${candidate.task} — ${candidate.task_subject}`, `/app/task/${candidate.task}`),
+					el("span", "ee-fb-cell-quiet", ` — ruled not a duplicate${who ? ` (${who})` : ""}`)
+				);
+				list.appendChild(item);
+			}
+			append(panel, el("p", "ee-fb-hint", "Ruled out by a reviewer. These stay off every later breakdown."), list);
+		}
 		return panel;
+	}
+
+	/** Save any pending proposal edits, call one of the overrule endpoints, redraw the request. */
+	async overrule(control, name, method, args) {
+		const label = control.textContent;
+		this.setBusy(control, true, "Working…");
+		try {
+			await this.savePendingEdits();
+			await call(method, { name, ...args });
+			await this.renderRequest(name);
+		} catch (e) {
+			this.showBanner(e.message, "bad");
+		} finally {
+			this.setBusy(control, false, label);
+		}
+	}
+
+	/** Persist the proposal's unsaved row edits, if a proposal is on screen. */
+	async savePendingEdits() {
+		if (!this.saveProposalEdits) return;
+		const result = await this.saveProposalEdits();
+		this.reportRejected(result && result.rejected);
+	}
+
+	/**
+	 * "Add a task": a proposed row the reviewer types, saved through `add_proposed_task`.
+	 *
+	 * The way to a Task that never needs the model — whatever the breakdown concluded, a wrong
+	 * duplicate or "no new work is needed", the reviewer writes the row and confirms it. The
+	 * server validates it like an edited row and refuses a project outside the two configured
+	 * boards. On a failed breakdown, adding one moves the request to Breakdown Ready.
+	 *
+	 * The edits on the rows above are saved first: the add redraws the panel, which would
+	 * otherwise throw them away.
+	 */
+	addTaskForm(detail) {
+		const box = el("details", "ee-fb-add-task");
+		append(box, el("summary", "ee-fb-btn ee-fb-btn-small", "Add a task by hand"));
+
+		const subject = input("text", "What needs doing (the task subject)", "");
+		subject.maxLength = 140;
+		const project = select(
+			[
+				{ value: detail.projects.erpnext, label: `ERPNext (${detail.projects.erpnext})` },
+				{ value: detail.projects.triton, label: `Triton (${detail.projects.triton})` },
+			],
+			detail.target_triton && !detail.target_erpnext ? detail.projects.triton : detail.projects.erpnext
+		);
+		const priority = select(PRIORITIES, "Medium");
+		const hours = input("number", "0", 0);
+		hours.min = "0";
+		hours.step = "0.5";
+		const parent = input("text", "e.g. TASK-2026-02200 (optional)", "");
+
+		const top = el("div", "ee-fb-add-top");
+		append(top, subject, project, priority, hours);
+
+		const add = button("Add to the proposal", "ee-fb-btn ee-fb-btn-primary", async () => {
+			if (!subject.value.trim()) {
+				this.showBanner("Give the task a subject.", "warn");
+				return;
+			}
+			this.setBusy(add, true, "Adding…");
+			try {
+				await this.savePendingEdits();
+				const result = await call(M.ADD_TASK, {
+					name: detail.name,
+					row: {
+						subject: subject.value,
+						project: project.value,
+						priority: priority.value,
+						expected_hours: hours.value,
+						parent_task: parent.value.trim(),
+					},
+				});
+				this.reportRejected(result.rejected);
+				await this.renderRequest(detail.name);
+			} catch (e) {
+				this.showBanner(e.message, "bad");
+			} finally {
+				this.setBusy(add, false, "Add to the proposal");
+			}
+		});
+
+		append(
+			box,
+			el(
+				"p",
+				"ee-fb-hint",
+				"For work the model missed or wrongly ruled a duplicate. It joins the proposal ticked, and Create these tasks writes it like any other row."
+			),
+			top,
+			field("Parent group task", parent, "Optional. An existing group task on the same project.").row,
+			append(el("div", "ee-fb-actions"), add)
+		);
+		return box;
 	}
 
 	waitingPanel(detail) {
@@ -1181,7 +1343,13 @@ export class FeedbackApp {
 			panel,
 			el("h3", "ee-fb-section-title", "The breakdown failed"),
 			el("p", "ee-fb-reason", detail.breakdown_error || "No reason was recorded."),
-			append(el("div", "ee-fb-actions"), rerun)
+			el(
+				"p",
+				"ee-fb-hint",
+				"If you know what work is needed, you do not have to wait for the model: add the task by hand and create it."
+			),
+			append(el("div", "ee-fb-actions"), rerun),
+			this.addTaskForm(detail)
 		);
 		return panel;
 	}
@@ -1195,6 +1363,16 @@ export class FeedbackApp {
 		if (detail.breakdown_error) {
 			append(panel, el("p", "ee-fb-hint", `Dropped on the way: ${detail.breakdown_error}`));
 		}
+		append(
+			panel,
+			el(
+				"p",
+				"ee-fb-hint",
+				detail.proposed_tasks.length
+					? "Edit, untick or add rows. The model's plan is a suggestion: if it missed work, or wrongly called this a duplicate, add the task by hand."
+					: "The model proposed no tasks. If work is needed, add the task by hand; it does not need the model."
+			)
+		);
 
 		const editors = [];
 		const rows = el("div", "ee-fb-rows");
@@ -1225,7 +1403,7 @@ export class FeedbackApp {
 				// The server refuses this too; saying it here saves the round trip and
 				// names the two ways to close a request that needs no work.
 				this.showBanner(
-					"Nothing is ticked. Tick at least one task, or reject the request or mark it a duplicate if no work is needed.",
+					"Nothing is ticked. Tick at least one task or add one by hand, or reject the request or mark it a duplicate if no work is needed.",
 					"warn"
 				);
 				return;
@@ -1252,12 +1430,19 @@ export class FeedbackApp {
 			}
 		});
 
+		// Saved first even though the re-run replaces the model's rows: the rows it keeps (a hand-
+		// added row, a row that already created its Task) keep the reviewer's edits too.
 		const rerun = button("Ask again", "ee-fb-btn", async () => {
-			await call(M.RERUN, { name: detail.name });
-			await this.renderRequest(detail.name);
+			await this.overrule(rerun, detail.name, M.RERUN, {});
 		});
 
-		append(panel, rows, append(el("div", "ee-fb-actions"), create, save, rerun));
+		this.saveProposalEdits = () => call(M.SAVE_PROPOSAL, { name: detail.name, rows: collect() });
+		append(
+			panel,
+			rows,
+			this.addTaskForm(detail),
+			append(el("div", "ee-fb-actions"), create, save, rerun)
+		);
 		return panel;
 	}
 
@@ -1291,8 +1476,17 @@ export class FeedbackApp {
 			append(placement, el("span", null, "top level"));
 		}
 		if (row.depends_on_idx) append(placement, el("span", null, ` · after row ${row.depends_on_idx}`));
+		if (row.added_by) append(placement, el("span", null, " · added by hand"));
 		if (row.created_task) {
 			append(placement, el("span", null, " · created "), deskLink(row.created_task, `/app/task/${row.created_task}`));
+		}
+		// Only a hand-added row that has not produced a Task can go. A model row is unticked
+		// instead, so the proposal stays a record of what the model suggested.
+		if (row.added_by && !row.created_task) {
+			const remove = button("Remove", "ee-fb-btn ee-fb-btn-small", async () => {
+				await this.overrule(remove, detail.name, M.REMOVE_TASK, { row: row.name });
+			});
+			append(placement, el("span", null, " "), remove);
 		}
 
 		append(node, top, placement, richText(row.description));

@@ -523,6 +523,42 @@ body .container {
 	flex: 1 1 240px;
 }
 
+/* A ruled-out duplicate: kept on the request as a record, out of the way. */
+.ee-fb-ruled-out {
+	margin: 4px 0 0;
+	padding-left: 18px;
+	font-size: 13px;
+}
+
+/* "Add a task by hand": the reviewer's own row, for work the model did not propose. */
+.ee-fb-add-task {
+	margin-top: 12px;
+}
+
+.ee-fb-add-task > summary {
+	display: inline-block;
+	cursor: pointer;
+	list-style: none;
+}
+
+.ee-fb-add-task[open] > summary {
+	margin-bottom: 8px;
+}
+
+.ee-fb-add-top {
+	display: grid;
+	grid-template-columns: 1fr 170px 110px 80px;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+	.ee-fb-add-top {
+		grid-template-columns: 1fr;
+	}
+}
+
 /* ------------------------------------------------------------------ proposal rows */
 
 .ee-fb-rows {

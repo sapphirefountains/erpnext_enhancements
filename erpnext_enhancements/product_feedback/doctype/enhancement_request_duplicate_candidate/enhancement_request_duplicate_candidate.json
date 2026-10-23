@@ -9,7 +9,10 @@
   "task",
   "task_subject",
   "confidence",
-  "why"
+  "why",
+  "dismissed",
+  "dismissed_by",
+  "dismissed_on"
  ],
  "fields": [
   {
@@ -44,14 +47,37 @@
    "fieldtype": "Small Text",
    "label": "Why",
    "in_list_view": 1,
-   "columns": 4,
+   "columns": 3,
    "description": "The model's one-line justification. A duplicate flag with no reason is one the reviewer has to re-derive, which costs more than not flagging it."
+  },
+  {
+   "fieldname": "dismissed",
+   "fieldtype": "Check",
+   "label": "Not a Duplicate",
+   "default": "0",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "A reviewer ruled this Task is not a duplicate of the request. The row is kept, so the request still shows what the model claimed and who overruled it, but it leaves the review panel, the brief's not-in-scope list, and the duplicate scan of every later breakdown."
+  },
+  {
+   "fieldname": "dismissed_by",
+   "fieldtype": "Link",
+   "label": "Ruled By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dismissed_on",
+   "fieldtype": "Datetime",
+   "label": "Ruled On",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-08-17 12:00:00.000000",
+ "modified": "2026-10-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Feedback",
  "name": "Enhancement Request Duplicate Candidate",

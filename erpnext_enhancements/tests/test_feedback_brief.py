@@ -615,6 +615,35 @@ class TestNotInScope(unittest.TestCase):
 		)
 		self.assertEqual(lines[-1], "- Anything not listed under Scope.")
 
+	def test_a_duplicate_a_reviewer_ruled_out_is_left_off(self):
+		"""v1.729.0: a Task a person said this work is *not* would only steer the session away.
+
+		``dismissed`` arrives as Frappe hands a Check over: 1, "1" or True. 0 and "0" are not
+		a ruling, and the row stays.
+		"""
+		for value in (1, "1", True):
+			with self.subTest(dismissed=value):
+				rows = [dict(duplicates()[0], dismissed=value)]
+				markdown, data = render(duplicates=rows)
+				nis = section(markdown, "## Explicitly NOT in this work item")
+				self.assertEqual(
+					[line for line in nis.split("\n") if line.startswith("- ")],
+					["- Anything not listed under Scope."],
+				)
+				self.assertNotIn("TASK-2026-00777", markdown)
+		for value in (0, "0", None, ""):
+			with self.subTest(dismissed=value):
+				rows = [dict(duplicates()[0], dismissed=value)]
+				nis = section(render(duplicates=rows)[0], "## Explicitly NOT in this work item")
+				self.assertIn("- TASK-2026-00777 — Speed up Item save.", nis)
+
+	def test_the_endpoint_hands_the_brief_the_ruling(self):
+		"""``claude_code_brief`` builds the duplicate dicts; without the key the filter is inert."""
+		source = (APP_DIR / "api" / "feedback.py").read_text(encoding="utf-8")
+		start = source.index("def claude_code_brief(")
+		body = source[start : source.index("\ndef ", start + 1)]
+		self.assertIn('"dismissed": cint(row.get("dismissed"))', body)
+
 	def test_without_duplicates_only_the_catch_all(self):
 		nis = section(render(duplicates=[])[0], "## Explicitly NOT in this work item")
 		self.assertEqual(
