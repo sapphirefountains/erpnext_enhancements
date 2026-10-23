@@ -18,12 +18,14 @@
   "naming_series",
   "count_desk_section",
   "blind_count",
+  "counted_at",
   "column_break_desk",
   "scope",
   "lines_section",
   "lines",
   "result_section",
   "stock_reconciliation",
+  "stock_reconciliations",
   "notes"
  ],
  "fields": [
@@ -101,6 +103,13 @@
    "label": "Blind Count"
   },
   {
+   "description": "When the shelf was counted, for a count taken on paper and typed in later. Each line is then counted against the stock ledger as of this time, and what moved since is kept. Blank for a live count, where each line is counted against the system as it is typed. Set it on the Count Desk, which checks it and re-reads every counted line when it changes.",
+   "fieldname": "counted_at",
+   "fieldtype": "Datetime",
+   "label": "Counted At",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_desk",
    "fieldtype": "Column Break"
   },
@@ -128,11 +137,18 @@
    "label": "Result"
   },
   {
-   "description": "The draft Stock Reconciliation produced when this session was finalized.",
+   "description": "The Stock Reconciliation produced when this session was finalized: the first, when a Count Desk post made several.",
    "fieldname": "stock_reconciliation",
    "fieldtype": "Link",
    "label": "Stock Reconciliation",
    "options": "Stock Reconciliation",
+   "read_only": 1
+  },
+  {
+   "description": "Every Stock Reconciliation the Count Desk posted or drafted for this count, one a line. A post is split into reconciliations of at most 100 items, because ERPNext submits a longer one in the background.",
+   "fieldname": "stock_reconciliations",
+   "fieldtype": "Small Text",
+   "label": "Stock Reconciliations",
    "read_only": 1
   },
   {
@@ -143,7 +159,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-20 15:00:00.000000",
+ "modified": "2026-10-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Count Session",

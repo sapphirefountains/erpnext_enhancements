@@ -352,6 +352,13 @@
 	font-size: var(--sf-text-sm, 13px);
 }
 
+/* "live count" / "counted at …" in the sheet's header: a link, sized as the line it sits in. */
+.cd-counted-at {
+	padding: 0;
+	font-size: inherit;
+	vertical-align: baseline;
+}
+
 .cd-head-actions,
 .cd-tools {
 	display: flex;

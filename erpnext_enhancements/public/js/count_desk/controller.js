@@ -20,6 +20,14 @@
  * each touched item's rows, unless the row has been edited again since (then the next answer
  * will). Leaving the page with anything unsaved asks first (the page's beforeunload).
  *
+ * A REFUSED SAVE IS NEVER POSTED AROUND (v1.738.0). The review is worked out from the rows on screen, so a
+ * value the server refused must not stay on screen looking counted. A row refused on its own is put
+ * back as the server has it (`this.server`: each item's counted rows as the sheet or the last answer
+ * gave them) and keeps its red mark; a save refused as a whole (the count finalized elsewhere,
+ * access gone) leaves what was typed on screen, marked, with the reason above the grid. Either
+ * holds Post back (save_state, logic.post_check) until the marks are dealt with or cleared, or the
+ * page is reloaded.
+ *
  * HISTORY. The plan, a sheet and its review are routes, so frappe owns history: opening a count is
  * one set_route, Back is the browser's. Entries this page pushed are tagged (history.state cd_from),
  * so "Counts" and "Back to the sheet" step back through them instead of stacking duplicates.
@@ -50,6 +58,7 @@ export class Controller {
 			pending: new Map(),
 			saving: false,
 			save_error: null,
+			save_stuck: null,
 			status: new Map(),
 			undo: [],
 			notice: null,
@@ -57,6 +66,8 @@ export class Controller {
 			posting: false,
 		};
 		this.by_key = new Map();
+		// "item\x1fwarehouse" -> that item's counted rows as the server last gave them.
+		this.server = new Map();
 		this.boot_loading = null;
 		this.sheet_seq = 0;
 		this.retry_timer = null;
@@ -227,6 +238,7 @@ export class Controller {
 		this.state.sheet_error = null;
 		this.state.rows = [];
 		this.by_key = new Map();
+		this.server = new Map();
 		this.state.visible = [];
 		this.state.view = { filter: "all", query: "", bin: "" };
 		this.state.revealed = false;
@@ -263,7 +275,16 @@ export class Controller {
 			reasons: p.reasons || [],
 		});
 		this.state.sheet_error = null;
+		// The rows are the server's again, so nothing typed and refused is on screen any more.
+		this.state.save_stuck = null;
 		this.set_rows(p.rows || []);
+		this.server = new Map();
+		for (const r of this.state.rows) {
+			if (!r.counted) continue;
+			const group = logic.group_of(r);
+			if (!this.server.has(group)) this.server.set(group, []);
+			this.server.get(group).push(Object.assign({}, r));
+		}
 		this.refilter();
 	}
 
@@ -360,11 +381,13 @@ export class Controller {
 	}
 
 	fill(key, values) {
-		const plan = logic.fill_plan(this.state.visible, this.by_key, key, values);
+		// The rows the grid draws: a key whose row has gone (cleared, not expected) takes no value.
+		const keys = this.state.visible.filter((k) => this.by_key.has(k));
+		const plan = logic.fill_plan(keys, this.by_key, key, values);
 		const done = this.change_many(plan.entries);
-		for (const p of plan.problems) this.state.status.set(p.key, { state: "error", message: p.message });
+		for (const p of plan.problems) this.state.status.set(p.key, { state: "error", message: `Not saved: ${p.message}` });
 		if (plan.problems.length) this.env.render({ rows: plan.problems.map((p) => p.key) });
-		return { done, problems: plan.problems };
+		return { done, problems: plan.problems, refused: plan.refused };
 	}
 
 	zero_rest(warehouse) {
@@ -417,34 +440,61 @@ export class Controller {
 			return;
 		}
 		const changed = new Set();
+		const refused = [];
 		for (const r of res.results || []) {
 			if (!r || !r.key) continue;
 			changed.add(r.key);
 			if (this.state.pending.has(r.key)) continue;
 			if (r.ok) this.state.status.delete(r.key);
-			else this.state.status.set(r.key, { state: "error", message: r.message || "Not saved." });
+			else {
+				this.state.status.set(r.key, { state: "error", message: `Not saved: ${r.message || "the server refused it."}` });
+				refused.push(r.key);
+			}
 		}
+		// What the server now holds for each item it answered for, edited again since or not.
+		for (const g of res.groups || []) this.server.set(`${g.item_code}${logic.KEY_SEP}${g.warehouse}`, (g.rows || []).map((r) => Object.assign({}, r)));
 		// An item edited again since this batch left keeps what is on screen; the next answer has it.
 		const busy = new Set(Array.from(this.state.pending.keys()).map((k) => {
 			const parts = logic.split_key(k);
 			return parts ? `${parts.item_code}${logic.KEY_SEP}${parts.warehouse}` : k;
 		}));
 		const groups = (res.groups || []).filter((g) => !busy.has(`${g.item_code}${logic.KEY_SEP}${g.warehouse}`));
-		const { rows, renamed } = logic.merge_groups(this.state.rows, groups);
+		let { rows, renamed } = logic.merge_groups(this.state.rows, groups);
+		// A refused row whose item the answer did not redraw goes back to what the server has, so
+		// the review never counts a value that is not saved.
+		const merged = new Set(groups.map((g) => `${g.item_code}${logic.KEY_SEP}${g.warehouse}`));
+		for (const key of refused) {
+			const row = rows.find((r) => r.key === key);
+			if (!row) continue;
+			const group = logic.group_of(row);
+			if (merged.has(group) || busy.has(group)) continue;
+			const back = logic.revert(rows, key, this.server.get(group));
+			rows = back.rows;
+			for (const [from, to] of back.renamed) renamed.set(from, to);
+			for (const r of rows) if (logic.group_of(r) === group) changed.add(r.key);
+		}
 		this.set_rows(rows);
-		if (renamed.size) this.state.visible = this.state.visible.map((k) => renamed.get(k) || k);
+		const visible = this.state.visible.map((k) => renamed.get(k) || k).filter((k) => this.by_key.has(k));
+		const shrunk = visible.length !== this.state.visible.length;
+		this.state.visible = visible;
 		for (const g of groups) for (const r of g.rows || []) changed.add(r.key);
 		for (const [from, to] of renamed) {
 			changed.add(from);
 			changed.add(to);
+			// The mark goes with the row it was on.
+			if (this.state.status.has(from) && !this.state.status.has(to)) {
+				this.state.status.set(to, this.state.status.get(from));
+				this.state.status.delete(from);
+			}
 		}
-		this.env.render({ rows: Array.from(changed), structure: renamed.size > 0 });
+		this.env.render({ rows: Array.from(changed), structure: renamed.size > 0 || shrunk });
 		this.flush();
 	}
 
 	save_failed(session, batch, err) {
 		this.state.saving = false;
-		const transient = !err.status || err.status >= 500 || err.status === 409 || err.exc_type === "DuplicateEntryError";
+		const transient =
+			!err.status || err.status >= 500 || err.status === 409 || err.status === 429 || err.exc_type === "DuplicateEntryError";
 		if (err.session_expired || err.status === 401) {
 			this.requeue(batch);
 			this.state.save_error = { message: "You have been signed out. Reload the page to sign in; nothing typed is lost until you do.", fatal: true };
@@ -465,12 +515,41 @@ export class Controller {
 			return;
 		}
 		// Refused as a whole (the count was finalized elsewhere, or access changed): say why on
-		// every row it carried, and stop.
+		// every row it carried, and stop. What was typed stays on screen, marked, so it can be
+		// written down; Post waits (save_state) until the sheet is loaded again. `save_stuck` outlives
+		// a later save that lands (which clears save_error): those rows still are not on the server.
 		const message = err.message || "The server refused this save.";
-		for (const entry of batch) this.state.status.set(entry.key, { state: "error", message });
-		this.state.save_error = { message, fatal: true };
+		for (const entry of batch) this.state.status.set(entry.key, { state: "error", message: `Not saved: ${message}` });
+		const said = `Not saved: ${message} Reload the page to see the count as it is saved.`;
+		this.state.save_error = { message: said, fatal: true };
+		this.state.save_stuck = said;
 		this.env.render({ rows: batch.map((e) => e.key) });
 		this.settle();
+	}
+
+	// Rows on screen whose save was refused (a red mark).
+	errors() {
+		let n = 0;
+		for (const [key, s] of this.state.status) if (s.state === "error" && this.by_key.has(key)) n += 1;
+		return n;
+	}
+
+	// What holds a post back on the saving side (logic.post_check's `save`).
+	save_state() {
+		const e = this.state.save_error;
+		return { errors: this.errors(), fatal: this.state.save_stuck || (e && e.fatal ? e.message : null), unsaved: this.unsaved() };
+	}
+
+	// "I have seen them": a row refused on its own is already back to what the server has, so
+	// clearing its mark changes nothing saved. A save refused as a whole is not cleared this way: its
+	// rows still show what was typed.
+	clear_errors() {
+		if (this.state.save_stuck || (this.state.save_error && this.state.save_error.fatal)) return 0;
+		const keys = [];
+		for (const [key, s] of this.state.status) if (s.state === "error") keys.push(key);
+		for (const key of keys) this.state.status.delete(key);
+		this.env.render({ rows: keys });
+		return keys.length;
 	}
 
 	// A batch put back in front of anything typed since: the newer value of a field wins.
@@ -572,7 +651,10 @@ export class Controller {
 		if (!sheet) return Promise.reject({ message: "" });
 		const args = Object.assign({ session: sheet.name }, fields || {});
 		if (args.add_warehouses) args.add_warehouses = JSON.stringify(args.add_warehouses);
-		return this.env.call(logic.WRITES.update, args, { quiet: true }).then((res) => {
+		// Adding locations or changing Counted At answers with the whole sheet, which replaces the
+		// rows on screen: let what is being saved land first, so no edit is drawn over.
+		const whole = !!args.add_warehouses || "counted_at" in args;
+		return (whole ? this.idle() : Promise.resolve()).then(() => this.env.call(logic.WRITES.update, args, { quiet: true })).then((res) => {
 			if (res && res.rows) {
 				const view = this.state.view;
 				this.set_sheet(res);
@@ -599,8 +681,14 @@ export class Controller {
 		this.env.render();
 		return this.idle()
 			.then(() => {
-				if (this.unsaved()) {
+				const save = this.save_state();
+				if (save.unsaved || save.fatal) {
 					return Promise.reject({ message: "Some counts are not saved yet. Fix the rows marked in red, or retry, then post." });
+				}
+				if (save.errors) {
+					return Promise.reject({
+						message: `${save.errors} row(s) were not saved and show what the server has. Count them again, or clear the red marks, then post.`,
+					});
 				}
 				return this.env.call(logic.WRITES.post, { session: sheet.name, mode: mode || "post" }, { quiet: true });
 			})
@@ -633,7 +721,7 @@ export class Controller {
 			this.state.boot_stale = true;
 			this.state.pending = new Map();
 			this.reset_sheet();
-			this.state.carry_notice = { message: `Count ${sheet.name} was cancelled. Nothing was posted.`, tone: "neutral" };
+			this.state.carry_notice = { message: `Count ${sheet.name} was canceled. Nothing was posted.`, tone: "neutral" };
 			this.go({ screen: "plan" }, true);
 		});
 	}

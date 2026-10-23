@@ -141,6 +141,12 @@ class CountDeskPage {
 		if (this.sf && this.sf.toast) this.sf.toast(message, { tone: tone || "info" });
 	}
 
+	// A stored Datetime (system time zone, as the server keeps it) as the user reads it: the Datetime
+	// control converts to the user's zone, so a label written beside it must too.
+	when(value) {
+		return value ? frappe.datetime.str_to_user(frappe.datetime.convert_to_user_tz(value)) : "";
+	}
+
 	form_link(doctype, name) {
 		return frappe.utils.get_form_link(doctype, name);
 	}
@@ -273,6 +279,12 @@ class CountDeskPage {
 			case "retry":
 				ctl.retry_now();
 				break;
+			case "clear-errors":
+				ctl.clear_errors();
+				break;
+			case "counted-at":
+				this.counted_at_dialog();
+				break;
 			case "reload-sheet":
 				ctl.refresh();
 				break;
@@ -324,6 +336,7 @@ class CountDeskPage {
 		}
 		this.page.add_menu_item(__("Open the count's form"), () => frappe.set_route("Form", "Inventory Count Session", t.count));
 		this.page.add_menu_item(__("Rename this count…"), () => this.rename_dialog());
+		this.page.add_menu_item(__("When it was counted…"), () => this.counted_at_dialog());
 		this.page.add_menu_item(__("Notes…"), () => this.notes_dialog());
 		this.page.add_menu_item(__("Keyboard shortcuts"), () => this.keys_dialog());
 		this.page.add_menu_item(__("Cancel this count…"), () => this.cancel_confirm());
@@ -635,9 +648,10 @@ class CountDeskPage {
 			`<ul class="cd-list">${list
 				.map((c, i) => {
 					const acc = c.accuracy === null || c.accuracy === undefined ? "" : this.sf.chip(this.cd.percent(c.accuracy), c.accuracy >= 95 ? "good" : c.accuracy >= 85 ? "warn" : "danger");
+					const more = (c.stock_reconciliations || []).length - 1;
 					const sr = c.stock_reconciliation
 						? `<a href="${this.esc(this.form_link("Stock Reconciliation", c.stock_reconciliation))}">${this.esc(c.stock_reconciliation)}</a> ${this.esc(
-								c.sr_status ? `(${__(c.sr_status)})` : ""
+								`${more > 0 ? __("+{0} more", [more]) + " " : ""}${c.sr_status ? `(${__(c.sr_status)})` : ""}`
 						  )}`
 						: this.esc(__("nothing to post"));
 					return `<li class="cd-recent-row"><button type="button" class="cd-list-row" data-act="open-recent" data-i="${i}">
@@ -722,14 +736,24 @@ class CountDeskPage {
 	draw_head() {
 		const st = this.ctl.state;
 		const s = st.sheet;
-		const finished = { Draft: __("Drafted"), Submitted: __("Posted"), Cancelled: __("Reconciliation cancelled") };
+		const finished = { Draft: __("Drafted"), Submitted: __("Posted"), Cancelled: __("Reconciliation canceled"), Mixed: __("Partly posted") };
 		const status =
 			s.status === "Open"
 				? ""
 				: s.status === "Finalized"
-				? this.sf.chip(finished[s.sr_status] || __("Finished"), s.sr_status === "Cancelled" ? "warn" : "good")
+				? this.sf.chip(finished[s.sr_status] || __("Finished"), s.sr_status === "Cancelled" || s.sr_status === "Mixed" ? "warn" : "good")
 				: this.sf.chip(__(s.status), "neutral");
 		const scope = s.scoped ? __("{0} locations", [s.scope.length]) : __("counted on the phone");
+		// A paper count says when it was counted; an open Count Desk count offers to say so (a phone
+		// count is snapshotted as each item is scanned, and the server refuses it one).
+		const when = s.counted_at ? __("counted at {0}", [this.when(s.counted_at)]) : __("live count");
+		const counted_at = this.ctl.editable() && (s.scoped || s.counted_at)
+			? ` · <button type="button" class="btn btn-xs btn-link cd-counted-at" data-act="counted-at" title="${this.esc(
+					__("When the shelf was counted, for a count taken on paper and typed in later")
+			  )}">${this.esc(when)}</button>`
+			: s.counted_at
+			? ` · ${this.esc(when)}`
+			: "";
 		const blind = s.blind
 			? `<button type="button" class="btn btn-sm btn-default" data-act="reveal">${this.esc(
 					st.revealed ? __("Hide the system quantity") : __("Show the system quantity")
@@ -745,7 +769,7 @@ class CountDeskPage {
 				<h2 class="cd-name">${this.esc(s.title || s.name)} ${status}</h2>
 				<div class="cd-sub">${this.esc(s.name)} · ${this.esc(scope)} · ${this.esc(
 			__("started {0} by {1}", [s.start_time ? frappe.datetime.comment_when(s.start_time) : "", s.mine ? __("you") : s.counted_by_name])
-		)}${s.blind ? ` · ${this.sf.chip(__("Blind"), "neutral")}` : ""}</div>
+		)}${counted_at}${s.blind ? ` · ${this.sf.chip(__("Blind"), "neutral")}` : ""}</div>
 			</div>
 			<div class="cd-head-actions">${blind}${review}</div>`);
 	}
@@ -762,17 +786,21 @@ class CountDeskPage {
 		}
 		if (sum.recount) parts.push(__("{0} to recount", [sum.recount]));
 		let save;
-		const errors = Array.from(st.status.values()).filter((s) => s.state === "error").length;
+		const errors = this.ctl.errors();
 		if (st.save_error && st.save_error.retrying) {
 			save = `<span class="cd-save cd-save--warn">${this.esc(st.save_error.message)} <button type="button" class="btn btn-xs btn-default" data-act="retry">${this.esc(
 				__("Retry now")
 			)}</button></span>`;
 		} else if (st.save_error) {
 			save = `<span class="cd-save cd-save--danger">${this.esc(st.save_error.message)}</span>`;
+		} else if (st.save_stuck) {
+			save = `<span class="cd-save cd-save--danger">${this.esc(st.save_stuck)}</span>`;
 		} else if (st.saving || st.pending.size) {
 			save = `<span class="cd-save">${this.esc(__("Saving…"))}</span>`;
 		} else if (errors) {
-			save = `<span class="cd-save cd-save--danger">${this.esc(__("{0} rows not saved: see the red marks.", [errors]))}</span>`;
+			save = `<span class="cd-save cd-save--danger">${this.esc(
+				__("{0} rows not saved: they show what is saved, and the red marks say why. Post waits for them.", [errors])
+			)} <button type="button" class="btn btn-xs btn-default" data-act="clear-errors">${this.esc(__("Clear the marks"))}</button></span>`;
 		} else {
 			save = `<span class="cd-save cd-save--ok">${this.esc(st.sheet.status === "Open" ? __("All changes saved") : __("Read only"))}</span>`;
 		}
@@ -906,8 +934,7 @@ class CountDeskPage {
 		const item = `<div class="cd-item-name">${this.esc(row.item_name)}</div><div class="cd-item-code">${this.esc(row.item_code)}${
 			chips.length ? ` · ${chips.join(" ")}` : ""
 		}</div>${refusal}`;
-		const sys_value = row.counted ? row.snapshot_qty : row.system_qty;
-		const system = hidden ? "•••" : cd.plain(sys_value);
+		const system = hidden ? "•••" : cd.plain(cd.system_of(row));
 		const variance = !row.counted || hidden ? "" : cd.signed(row.variance);
 		const value = !row.counted || hidden || Math.abs(Number(row.value_variance) || 0) < 0.005 ? "" : cd.money(row.value_variance, { signed: true });
 		const st_class = status ? `cd-st--${status.state}` : "";
@@ -1100,7 +1127,7 @@ class CountDeskPage {
 			const row = this.ctl.row(key);
 			if (!row || row.refusal) return;
 			e.preventDefault();
-			input.value = this.cd.plain(row.counted ? row.snapshot_qty : row.system_qty);
+			input.value = this.cd.plain(this.cd.system_of(row));
 			if (this.commit(input)) this.move(key, 1);
 			return;
 		}
@@ -1124,12 +1151,10 @@ class CountDeskPage {
 		if (!values.length) return;
 		e.preventDefault();
 		const res = this.ctl.fill(key, values);
-		this.toast(
-			res.problems.length
-				? __("Filled {0} rows. {1} values could not be used: see the red marks.", [res.done, res.problems.length])
-				: __("Filled {0} rows from the pasted column.", [res.done]),
-			res.problems.length ? "warning" : "success"
-		);
+		const said = [__("Filled {0} rows from the pasted column.", [res.done])];
+		if (res.problems.length) said.push(__("{0} values could not be used: see the red marks.", [res.problems.length]));
+		if (res.refused.length) said.push(__("{0} values were on rows that cannot be counted here, and were left out.", [res.refused.length]));
+		this.toast(said.join(" "), res.problems.length || res.refused.length ? "warning" : "success");
 	}
 
 	on_jump_key(e) {
@@ -1267,12 +1292,13 @@ class CountDeskPage {
 		const st = this.ctl.state;
 		const cd = this.cd;
 		const sum = this.ctl.summary();
-		const check = cd.post_check(st.rows, s.require_reason);
+		const check = cd.post_check(st.rows, s.require_reason, this.ctl.save_state());
 		const variances = cd.review_rows(st.rows);
 		const editable = this.ctl.editable();
 		this.review_keys = variances.map((g) => g.keys[0]);
-		// The server refuses a post with a required reason missing; the buttons wait for it instead.
-		const blocked = check.nothing || check.needs_reason.length > 0;
+		// The server refuses a post with a required reason missing; the buttons wait for it instead,
+		// and for every count on screen to be saved (a refused save is not on the server).
+		const blocked = check.blocked;
 		const actions = [];
 		if (editable) {
 			if (s.can_post) {
@@ -1289,7 +1315,9 @@ class CountDeskPage {
 		const head = `<div class="cd-head">
 			<button type="button" class="btn btn-sm btn-default" data-act="sheet">← ${this.esc(__("Back to the sheet"))}</button>
 			<div class="cd-title"><h2 class="cd-name">${this.esc(__("Review"))}: ${this.esc(s.title || s.name)}</h2>
-				<div class="cd-sub">${this.esc(s.name)} · ${this.esc(s.mine ? __("you") : s.counted_by_name)}</div></div>
+				<div class="cd-sub">${this.esc(s.name)} · ${this.esc(s.mine ? __("you") : s.counted_by_name)}${
+			s.counted_at ? ` · ${this.esc(__("counted at {0}", [this.when(s.counted_at)]))}` : ""
+		}</div></div>
 			<div class="cd-head-actions">${actions.join("")}</div></div>`;
 		const notice = st.notice && st.notice.message ? this.notice_html(st.notice) : "";
 		const tiles = [
@@ -1304,6 +1332,10 @@ class CountDeskPage {
 			.join("");
 		const checks = [];
 		if (s.status === "Open") {
+			if (check.stuck) checks.push(["danger", check.stuck]);
+			else if (check.not_saved) {
+				checks.push(["danger", __("{0} rows on the sheet were not saved: they show what is saved, with a red mark saying why. Count them again, or clear the marks, before posting.", [check.not_saved])]);
+			}
 			if (check.needs_reason.length) {
 				checks.push(["danger", __("{0} variances need a reason before this can post (the settings require one).", [check.needs_reason.length])]);
 			}
@@ -1313,6 +1345,9 @@ class CountDeskPage {
 			}
 			if (check.reserved.length) checks.push(["warn", __("{0} items have stock reserved for orders. ERPNext will not count those; they are left out.", [check.reserved.length])]);
 			if (!s.can_post) checks.push(["neutral", __("Posting needs a Stock Manager. Send for review makes a draft reconciliation, dated now, for one to submit.")]);
+			if (s.counted_at) {
+				checks.push(["neutral", __("Counted at {0}: each variance is against what the stock ledger showed then.", [this.when(s.counted_at)])]);
+			}
 			checks.push(["neutral", __("What posts is each variance applied to what is on hand now, so anything taken or received since it was counted is kept.")]);
 		}
 		const checks_html = checks.length ? `<ul class="cd-checks">${checks.map(([tone, text]) => `<li class="cd-check-${tone}">${this.esc(text)}</li>`).join("")}</ul>` : "";
@@ -1366,9 +1401,11 @@ class CountDeskPage {
 		const link = (name) => `<a href="${this.esc(this.form_link("Stock Reconciliation", name))}">${this.esc(name)}</a>`;
 		const parts = [];
 		if (res && res.message) parts.push(`<p>${this.esc(res.message)}</p>`);
-		const made = res ? (res.posted || []).concat(res.drafts || []) : s.stock_reconciliation ? [s.stock_reconciliation] : [];
+		const made = res ? (res.posted || []).concat(res.drafts || []) : s.stock_reconciliations || (s.stock_reconciliation ? [s.stock_reconciliation] : []);
 		if (made.length) {
-			parts.push(`<p>${this.esc(__("Reconciliation"))}: ${made.map(link).join(", ")}${s.sr_status ? ` (${this.esc(__(s.sr_status))})` : ""}</p>`);
+			parts.push(
+				`<p>${this.esc(made.length > 1 ? __("Reconciliations") : __("Reconciliation"))}: ${made.map(link).join(", ")}${s.sr_status ? ` (${this.esc(__(s.sr_status))})` : ""}</p>`
+			);
 		} else if (s.status === "Finalized") {
 			parts.push(`<p>${this.esc(__("Nothing needed adjusting, so no reconciliation was made. The count stays on record."))}</p>`);
 		}
@@ -1388,9 +1425,16 @@ class CountDeskPage {
 		const st = this.ctl.state;
 		const s = st.sheet;
 		if (!s || !this.ctl.editable()) return;
-		const check = this.cd.post_check(st.rows, s.require_reason);
-		if (check.nothing || check.needs_reason.length) {
-			this.toast(check.nothing ? __("Nothing has been counted yet.") : __("Give every variance a reason first: {0} still need one.", [check.needs_reason.length]), "warning");
+		const check = this.cd.post_check(st.rows, s.require_reason, this.ctl.save_state());
+		if (check.blocked) {
+			const why = check.stuck
+				? check.stuck
+				: check.not_saved
+				? __("{0} rows were not saved: count them again, or clear the red marks, first.", [check.not_saved])
+				: check.nothing
+				? __("Nothing has been counted yet.")
+				: __("Give every variance a reason first: {0} still need one.", [check.needs_reason.length]);
+			this.toast(why, "warning");
 			return;
 		}
 		const review = this.cd.review_rows(st.rows);
@@ -1398,8 +1442,8 @@ class CountDeskPage {
 		const net = this.cd.money(sum.net_value, { signed: true });
 		const message =
 			mode === "post"
-				? __("Post {0} adjustments ({1} net) as a submitted Stock Reconciliation? Stock changes now. It can be cancelled from the reconciliation.", [review.length, net])
-				: __("Make a draft Stock Reconciliation with {0} adjustments ({1} net) for a Stock Manager to submit? It is dated now, so anything that moves before they submit it is kept.", [review.length, net]);
+				? __("Post {0} adjustments ({1} net) as submitted Stock Reconciliations? Stock changes now. A post of more than 100 items is split into reconciliations of 100. Each can be canceled from its form.", [review.length, net])
+				: __("Make draft Stock Reconciliations with {0} adjustments ({1} net) for a Stock Manager to submit? They are dated now, so anything that moves before they are submitted is kept.", [review.length, net]);
 		frappe.confirm(this.safe(message), () => {
 			this.ctl.state.notice = null;
 			this.ctl.post(mode).then(
@@ -1411,10 +1455,10 @@ class CountDeskPage {
 
 	cancel_confirm() {
 		if (!this.ctl.editable()) {
-			this.toast(__("Only an open count can be cancelled."), "warning");
+			this.toast(__("Only an open count can be canceled."), "warning");
 			return;
 		}
-		frappe.confirm(this.safe(__("Cancel this count? Nothing is posted, and its counts stay on the record as cancelled.")), () =>
+		frappe.confirm(this.safe(__("Cancel this count? Nothing is posted, and its counts stay on the record as canceled.")), () =>
 			this.ctl.cancel().catch((err) => this.toast((err && err.message) || __("Could not cancel."), "warning"))
 		);
 	}
@@ -1426,6 +1470,42 @@ class CountDeskPage {
 			[{ fieldtype: "Data", fieldname: "title", label: __("Title"), default: s.title || "", reqd: 1 }],
 			(values) => this.ctl.update({ title: values.title }).catch((err) => this.toast(err.message, "warning")),
 			__("Rename the count"),
+			__("Save")
+		);
+	}
+
+	// Counted At: when the shelf was counted, for a paper count typed in later. The server re-reads
+	// every counted row's system quantity as of then, so the sheet comes back whole.
+	counted_at_dialog() {
+		const s = this.ctl.state.sheet;
+		if (!s) return;
+		if (!this.ctl.editable() || !(s.scoped || s.counted_at)) {
+			const when = s.counted_at
+				? __("Counted at {0}.", [this.when(s.counted_at)])
+				: s.scoped
+				? __("Counted live: each row against the system as it was typed.")
+				: __("A count taken on the phone is counted as each item is scanned, so it has no Counted At.");
+			frappe.msgprint({ title: __("When it was counted"), message: this.safe(when) });
+			return;
+		}
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Datetime",
+					fieldname: "counted_at",
+					label: __("Counted At"),
+					default: s.counted_at || "",
+					description: __(
+						"For a count taken on paper and typed in later: when the shelf was counted. Each row is then counted against what the stock ledger showed at that time, and anything taken or received since is kept. Leave it blank for a live count. Changing it re-reads the system quantity of every row already counted."
+					),
+				},
+			],
+			(values) =>
+				this.ctl.update({ counted_at: values.counted_at || "" }).then(
+					() => this.toast(values.counted_at ? __("Counted at {0}.", [this.when(values.counted_at)]) : __("This is a live count again."), "success"),
+					(err) => this.toast((err && err.message) || __("Could not change when it was counted."), "warning")
+				),
+			__("When was this counted?"),
 			__("Save")
 		);
 	}

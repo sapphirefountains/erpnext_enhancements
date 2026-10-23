@@ -11,12 +11,15 @@
  *   the tree      groups and bins into a tree with each node's bins, items, value and the bins
  *                 that have not been counted lately; the selection, its presets and overlaps.
  *   the sheet     its rows (the server's, count_desk_rules.sheet_rows), filters, the next row,
- *                 a save's answer merged in, a pasted column, "zero the rest", the summary.
- *   the review    the variances by value, and what stops a post.
+ *                 a save's answer merged in, a refused save put back, a pasted column (one value
+ *                 per row on screen), "zero the rest", the summary.
+ *   the review    the variances by value, and what stops a post: a reason the settings require,
+ *                 or a save that did not land.
  *   export        CSV (formula-safe) and the printable count sheet.
  *
  * The server judges everything again. Where a rule exists in count_desk_rules.py too (the summary,
- * the row key), test_count_desk.py holds the two equal.
+ * the row key), test_count_desk.py holds the two equal; tests/data/count_desk_vectors.json also
+ * pins the paste, which only the page does, from both sides.
  */
 
 export const PAGE = "count-desk";
@@ -538,9 +541,19 @@ export function next_key(keys, by_key, key, step, todo) {
 	return null;
 }
 
+// The system quantity a row is counted against, as the System column shows it: a counted row's
+// snapshot; an uncounted one's ledger quantity at the count's Counted At (`as_of_qty`, a paper
+// count typed in later), else what the system shows now.
+export function system_of(row) {
+	const r = row || {};
+	if (r.counted) return Number(r.snapshot_qty) || 0;
+	if (r.as_of_qty !== null && r.as_of_qty !== undefined) return Number(r.as_of_qty) || 0;
+	return Number(r.system_qty) || 0;
+}
+
 // A row as the page shows it before the server answers: counted at `qty` against the on-hand it
-// will be counted against (its snapshot when it already has one, else what the system shows now),
-// with its item's variance worked out over the group's rows.
+// will be counted against (its snapshot when it already has one, else system_of), with its item's
+// variance worked out over the group's rows.
 export function optimistic(rows, key, patch) {
 	const out = rows.map((r) => (r.key === key ? Object.assign({}, r) : r));
 	const row = out.find((r) => r.key === key);
@@ -550,7 +563,7 @@ export function optimistic(rows, key, patch) {
 		if (p.counted_qty === null) {
 			Object.assign(row, uncounted(row));
 		} else {
-			if (!row.counted) row.snapshot_qty = Number(row.system_qty) || 0;
+			if (!row.counted) row.snapshot_qty = system_of(row);
 			row.counted = true;
 			row.counted_qty = p.counted_qty;
 		}
@@ -590,10 +603,16 @@ export function uncounted(row) {
 	});
 }
 
+// What the bin's listing says about an item (count_desk_rules._listing_flags): the sheet's to keep.
+const LISTING = ["expected", "assigned", "on_order", "is_default", "undecided"];
+
 // A save's answer (api.count_desk.save_counts `groups`) merged into the rows: each group's rows
 // replaced where its first row stood. A group that came back empty was cleared: an expected item
 // gets its uncounted row back, one that was not expected goes. Returns { rows, renamed } where
 // `renamed` maps a key that left to the key that took its place (so the grid can keep its row).
+// The answer is about the lines, not the bin's listing, so every row in it says expected: false
+// (_group_rows lists nothing); the listing flags are taken from the rows on screen, or a saved row
+// would read "Not expected here" and, cleared, vanish from the sheet.
 export function merge_groups(rows, groups) {
 	let out = (rows || []).slice();
 	const renamed = new Map();
@@ -602,6 +621,8 @@ export function merge_groups(rows, groups) {
 		const at = out.findIndex((r) => group_of(r) === group);
 		const old = out.filter((r) => group_of(r) === group);
 		let fresh = (g.rows || []).slice();
+		const listing = old.find((r) => r.expected);
+		if (listing) fresh = fresh.map((r) => Object.assign({}, r, Object.fromEntries(LISTING.map((f) => [f, listing[f]]))));
 		if (!fresh.length) {
 			const expected = old.find((r) => r.expected);
 			fresh = expected ? [uncounted(expected)] : [];
@@ -613,6 +634,17 @@ export function merge_groups(rows, groups) {
 		for (const r of old) if (!keys.has(r.key) && fresh.length) renamed.set(r.key, fresh[0].key);
 	}
 	return { rows: out, renamed };
+}
+
+// A row the server refused, put back as the server has it: its item's counted rows as the sheet or
+// the last answer gave them (`server_rows`), or the row uncounted when the server has none. What is
+// on screen is then what is saved; the refusal stays on the row as its status. Returns merge_groups'
+// { rows, renamed }.
+export function revert(rows, key, server_rows) {
+	const row = (rows || []).find((r) => r.key === key);
+	if (!row) return { rows: (rows || []).slice(), renamed: new Map() };
+	const back = (server_rows || []).length ? server_rows.map((r) => Object.assign({}, r)) : [uncounted(row)];
+	return merge_groups(rows, [{ item_code: row.item_code, warehouse: row.warehouse, rows: back }]);
 }
 
 // A row added from Find item: not expected here, not counted yet. Null when the sheet has it.
@@ -662,25 +694,35 @@ export function parse_paste(text) {
 	return lines.map((line) => line.split("\t")[0].trim());
 }
 
-// A pasted column laid down the grid from `key`: one value per visible row, refused rows skipped.
-// Returns { entries: [{key, counted_qty}], problems: [{key, message}] }; a blank cell is skipped.
+// A pasted column laid down the grid from `key`: value n goes to the nth visible row from there,
+// every row the grid shows counting, refused rows (serial, batch, template) included. The grid and
+// the CSV both list a refused row, so a column copied from either has a cell for it; skipping the
+// row before taking its value would put every count below it on the row above. A refused row takes
+// its value and keeps nothing (`refused` says so when the cell was not blank); a blank cell is
+// skipped; values past the last row are dropped.
+// Returns { entries: [{key, counted_qty}], problems: [{key, message}], refused: [{key, message}] }.
 export function fill_plan(keys, by_key, key, values) {
 	const entries = [];
 	const problems = [];
-	let i = Math.max((keys || []).indexOf(key), 0);
+	const refused = [];
+	const list = keys || [];
+	let i = Math.max(list.indexOf(key), 0);
 	for (const text of values || []) {
-		while (i < keys.length && by_key.get(keys[i]) && by_key.get(keys[i]).refusal) i += 1;
-		if (i >= keys.length) break;
-		const row = by_key.get(keys[i]);
-		const k = keys[i];
+		if (i >= list.length) break;
+		const k = list[i];
+		const row = by_key.get(k);
 		i += 1;
-		if (!String(text).trim()) continue;
+		if (!row || !String(text).trim()) continue;
+		if (row.refusal) {
+			refused.push({ key: k, message: row.refusal });
+			continue;
+		}
 		const got = evaluate(text);
 		const problem = got.error || check_count(got.value, row);
 		if (problem) problems.push({ key: k, message: problem });
 		else entries.push({ key: k, counted_qty: got.value });
 	}
-	return { entries, problems };
+	return { entries, problems, refused };
 }
 
 // "Zero the rest": every row not yet counted (and not refused), in one bin or the whole sheet.
@@ -818,16 +860,24 @@ export function review_rows(rows) {
 
 // What to say before posting: reasons the settings require and are missing (which the server
 // refuses), recount flags still up, items not counted (left unchanged) and reserved stock.
-export function post_check(rows, require_reason) {
+// `save` is the save queue's state (Controller.save_state): rows whose save was refused (`errors`)
+// and a save refused as a whole (`fatal`, its sentence). Either holds the post back (`blocked`):
+// the review is worked out from the screen, and a count that did not save is not one the server has.
+export function post_check(rows, require_reason, save) {
 	const review = review_rows(rows);
 	const sum = summary(rows);
-	return {
+	const s = save || {};
+	const out = {
 		needs_reason: require_reason ? review.filter((g) => !g.reason_code && !g.reason) : [],
 		recount: sum.recount,
 		uncounted: sum.uncounted,
 		reserved: review.filter((g) => Number(g.reserved) > TOLERANCE),
 		nothing: sum.counted === 0,
+		not_saved: Number(s.errors) || 0,
+		stuck: s.fatal || null,
 	};
+	out.blocked = out.nothing || out.needs_reason.length > 0 || out.not_saved > 0 || !!out.stuck;
+	return out;
 }
 
 // ------------------------------------------------------------------ export
@@ -859,7 +909,7 @@ export function to_csv(rows, opts) {
 			csv_cell(r.item_name, true),
 			csv_cell(r.uom, true),
 		];
-		if (!blind) cells.push(csv_cell(r.counted ? r.snapshot_qty : r.system_qty, false));
+		if (!blind) cells.push(csv_cell(system_of(r), false));
 		cells.push(csv_cell(r.counted ? r.counted_qty : "", false));
 		if (!blind) {
 			cells.push(csv_cell(r.counted ? r.variance : "", false));
@@ -905,7 +955,7 @@ export function print_html(count, rows, opts) {
 			const lines = g.rows
 				.map((r) => {
 					const counted = !o.blank && r.counted ? esc(plain(r.counted_qty)) : "";
-					const system = show_system ? `<td class="n">${esc(plain(r.counted ? r.snapshot_qty : r.system_qty))}</td>` : "";
+					const system = show_system ? `<td class="n">${esc(plain(system_of(r)))}</td>` : "";
 					return `<tr><td>${esc(r.item_name)}<div class="code">${esc(r.item_code)}${
 						r.storage_location ? ` · ${esc(r.storage_location)}` : ""
 					}</div></td><td>${esc(r.uom)}</td>${system}<td class="box">${counted}</td><td class="note"></td></tr>`;

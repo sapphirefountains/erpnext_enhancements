@@ -801,7 +801,7 @@ far it has got. The grid is built for the keyboard:
 | Enter / Shift+Enter, ↑ ↓ | save and move; under *To count*, Enter goes to the next uncounted row |
 | `=` in an empty cell | the system quantity (not on a blind count) |
 | Esc | the cell as it was |
-| a pasted column | fills down from the cell, skipping rows that cannot be counted |
+| a pasted column | fills down from the cell, one value per row on screen; a row that cannot be counted takes its value and keeps nothing, so the column stays lined up |
 | Alt+R | flag the row for a recount |
 | Ctrl+Z | undo the last change (a paste or a *Zero the rest* is one step) |
 | `/`, Ctrl+K | the search box; Alt+1…6 the filters (All, To count, Variances, Recount, Moved since counted, Not expected) |
@@ -835,6 +835,29 @@ count cannot collide on `modified`. A changed count takes a fresh snapshot of th
 time, as a scan does on the phone; a reason or a flag alone changes neither. Rows are patched in
 place, so the cell being typed in keeps its text. Leaving the page with anything unsaved asks first.
 
+**A save that did not land is never posted around** (v1.738.0). The review is worked out from the rows on
+screen, so a row the server refused goes back to what the server has and keeps a red mark saying
+why; a save refused as a whole (the count finalized elsewhere, access gone) leaves what was typed,
+marked, with the reason above the grid. Either holds Post back until the rows are counted again or
+the marks are cleared (*Clear the marks*), or, for a whole refusal, the page is reloaded.
+
+**Counted At, for a paper count** (v1.738.0). A live count snapshots each row as it is typed. A count walked
+with a clipboard at 9:00 and typed in at 11:00 is a count of the shelf at 9:00, and against the
+system at 11:00 it would undo whatever was taken in between. The sheet's header (or the menu, *When
+it was counted…*) sets the count's `counted_at`: every line is then counted against the stock ledger
+as of then (ERPNext's `get_previous_sle`; the whitelisted `get_stock_balance` around it demands Item
+read, which Inventory Clerk does not have), and its `scan_time` is then, so a reconciliation posted
+after it supersedes the count. Setting, changing or clearing it re-reads every line already counted.
+It cannot be in the future (5 minutes allowed for a fast laptop clock) or more than 7 days before
+the count was started, and a phone count has none. The post reads each line's baseline again (an
+entry recorded late and backdated before the Counted At would otherwise count twice) and still
+applies each variance to what is on hand now. It is read only on the form: only the Count Desk
+checks it and re-reads the lines.
+
+A save's answer carries the lines, not the bin's listing, so the page keeps each row's listing
+flags (`expected`, `assigned`, ...) from the sheet (`logic.merge_groups`): a saved row stays
+expected, and one cleared or undone comes back uncounted instead of leaving the sheet.
+
 **The review** lists the variances by value, with each one's on-hand now and what will post, a
 reason (the line's `reason_code`, one of `count_desk_rules.REASON_CODES`) and a note. Inventory
 Scanner Settings' *Require Variance Reason* is on by default, so Post waits for every variance to
@@ -855,15 +878,24 @@ have one (the server refuses the post otherwise). It also says how many items we
   stock reserved for orders (v16 refuses a reconciliation of the pair and its cancel), an item at
   zero with no cost on record (`api.stock_scan._receipt_rate`), and serial, batch, template,
   disabled and non-stock items.
-* **One reconciliation per company and difference account**, `expense_account` from
-  `stock_accounts.difference_account` as every stock voucher here, the scan cost center, remarks
-  naming the count, who counted it and each adjusted item's reason. A recount leaves
-  `valuation_rate` blank, so the quantity changes and the unit cost does not.
+* **One reconciliation per company and difference account, in parts of at most 100 rows** (v1.738.0)
+  (`count_desk_rules.batches`), `expense_account` from `stock_accounts.difference_account` as every
+  stock voucher here, and the scan cost center. ERPNext v16 submits a reconciliation of more than
+  100 rows in a background job and returns it a draft; a failed job puts it back to Draft and a
+  deploy's redis flush drops the job, so a count that had said "Posted" would never post. Each part
+  is checked submitted before the count is finalized, and one that is not refuses the whole post,
+  rolling back every part. Every part is listed in the session's `stock_reconciliations`
+  (`stock_reconciliation` is the first). A recount leaves `valuation_rate` blank, so the quantity
+  changes and the unit cost does not.
+* **A Comment on each reconciliation** (v1.738.0) names the count (linked), who counted it, how many items
+  each reason code covers and each item's reason. Not `remarks`: Stock Reconciliation has none on
+  v16, so a remark set on it is dropped.
 * **Submitted as the user** with Stock Reconciliation create and submit (no `ignore_permissions`).
   Without them the page offers *Send for review*: a **draft** inserted past permissions after the
   role gate, the phone page's rule since v1.29.0 (the clerk counts, the Stock Manager decides), with
   `set_posting_time` and the posting time fixed at the moment it was drafted. A Stock Manager who
-  submits it next week does not wipe out what moved in between; ERPNext reposts it on top.
+  submits it next week does not wipe out what moved in between; ERPNext reposts it on top. Drafts
+  are split in the same parts, so that submit is not sent to a background job either.
 * **Idempotent**: a retry after a dropped reply finds the count Finalized and gets the first post
   back (`repeated`).
 

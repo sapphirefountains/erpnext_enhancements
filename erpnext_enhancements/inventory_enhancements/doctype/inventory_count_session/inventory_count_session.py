@@ -5,7 +5,9 @@ A persistent, resumable physical-count audit. Each counted row lives in the ``li
 (``api.inventory_scanner``) and the Count Desk (``api.count_desk``, v1.737.0) both write here;
 a Count Desk count carries a ``scope`` (the bins it covers), a phone count does not.
 Finalizing turns the variances into a Stock Reconciliation; ``stock_reconciliation`` links
-back to it.
+back to it. A Count Desk post can make several (at most 100 rows each), all listed in
+``stock_reconciliations``; a paper count's ``counted_at`` is the time its lines were counted
+against.
 """
 
 from frappe.model.document import Document

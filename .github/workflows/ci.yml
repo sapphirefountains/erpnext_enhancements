@@ -3623,9 +3623,11 @@ jobs:
       # for a match (ERPNext refuses an all-unchanged reconciliation), a count somebody posted since,
       # reserved stock or an item with no cost. api/count_desk.py on its own frappe stub (own step):
       # the session row locked before it is loaded, a post submitted AS THE USER and a draft dated now,
-      # a retried post posting nothing twice. Then scripts/test_count_desk.mjs under node: a scan into a
-      # count cell is never a quantity, the save queue merges and retries without losing a newer edit,
-      # and the summary and row key equal the Python's (tests/data/count_desk_vectors.json).
+      # in reconciliations of at most 100 rows (v1.738.0: v16 queues a longer submit), a retried post posting
+      # nothing twice, a paper count's Counted At read from a stand-in stock ledger. Then
+      # scripts/test_count_desk.mjs under node: a scan into a count cell is never a quantity, the save
+      # queue merges and retries without losing a newer edit, a refused save holds Post back, and the
+      # summary, row key and paste equal the Python's (tests/data/count_desk_vectors.json).
       - name: Count Desk rules, endpoints and page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_count_desk -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
