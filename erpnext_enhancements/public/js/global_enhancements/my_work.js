@@ -253,6 +253,7 @@
 					$slot.empty();
 					return;
 				}
+				apply_people_names(frm, view.people);
 				frm.__ee_mw_heading = view.heading || null;
 				if (frm.__ee_mw_heading) set_todo_heading(frm);
 				note_stamped_date(frm, view.due_is_stamp);
@@ -265,24 +266,55 @@
 	// "Assigned To" and "Assigned By" are Links to User, and a Link shows its record's title only
 	// when the target DocType has show_title_field_in_link (link.js is_title_link) -- for User that
 	// would turn every User link on the site into a name at once, and the server's get_link_title
-	// answers with the name for nobody else. So these two controls alone draw the person's name
-	// from boot's user_info, through Link's own title machinery: title_value_map hands the email
-	// back to get_input_value, so the value saved is still the email (v1.739.1; it showed the raw
-	// address). Patched once per control; the form reuses its controls for every ToDo it opens.
+	// answers with the name for nobody else. So these two controls alone draw the person's name,
+	// through Link's own title machinery: title_value_map hands the email back to get_input_value,
+	// so the value saved is still the email, and only the input's text changes, so the form is not
+	// dirtied (v1.739.1). Patched once per control; the form reuses its controls for every ToDo.
+	//
+	// Where the names come from (v1.739.2): get_todo_view's `people`, because v16 boots user_info
+	// for the session user alone -- frappe.user.full_name knew "You" and nobody else, so Brian's
+	// and Lisa's to-dos still read as addresses. Then a person picked in the field: the dropdown
+	// item's description is their full name (User's search field), and Frappe's own select handler
+	// validates before it redraws the field, so the name is recorded in time. Then
+	// frappe.user.full_name ("You"), then the address. frappe.boot.user_info is left alone: its
+	// readers expect a whole entry (image, colour, initials), not just a name.
+	const PEOPLE_FIELDS = ["allocated_to", "assigned_by"];
+
 	function show_people_by_name(frm) {
-		["allocated_to", "assigned_by"].forEach((fieldname) => {
+		frm.__ee_mw_people = frm.__ee_mw_people || {};
+		PEOPLE_FIELDS.forEach((fieldname) => {
 			const control = frm.fields_dict[fieldname];
 			if (!control || control.__ee_mw_names || typeof control.translate_and_set_input_value !== "function") return;
 			control.set_link_title = function (value) {
-				this.translate_and_set_input_value(person_name(value), value);
+				this.translate_and_set_input_value(person_name(frm, value), value);
 			};
+			if (control.$input) {
+				control.$input.on("awesomplete-select", (e) => {
+					const o = e.originalEvent;
+					const item = o && o.text && control.awesomplete ? control.awesomplete.get_item(o.text.value) : null;
+					if (item && item.value && item.description) {
+						frm.__ee_mw_people[item.value] = strip_html(String(item.description)).trim();
+					}
+				});
+			}
 			control.__ee_mw_names = true;
 			if (control.value) control.refresh();
 		});
 	}
 
-	function person_name(user) {
+	// The server's names arrived: redraw the two fields that already show an address.
+	function apply_people_names(frm, people) {
+		frm.__ee_mw_people = Object.assign(frm.__ee_mw_people || {}, people || {});
+		PEOPLE_FIELDS.forEach((fieldname) => {
+			const control = frm.fields_dict[fieldname];
+			if (control && control.__ee_mw_names && control.value) control.refresh();
+		});
+	}
+
+	function person_name(frm, user) {
 		if (!user) return user;
+		const known = frm.__ee_mw_people && frm.__ee_mw_people[user];
+		if (known) return known;
 		const name = frappe.user && typeof frappe.user.full_name === "function" ? frappe.user.full_name(user) : null;
 		return name || user;
 	}
