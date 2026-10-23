@@ -428,7 +428,7 @@ class TestThePageUnderNode(unittest.TestCase):
 
 
 class TestAStockedItemIsOneWithARule(unittest.TestCase):
-	"""v1.731.1: the Stock Scan store run reads an item as *stocked* when it has a reorder rule, level 0
+	"""v1.732.0: the Stock Scan store run reads an item as *stocked* when it has a reorder rule, level 0
 	included (a rule that reorders when the item runs out, allowed since v1.728.0). It asked for a level
 	above 0, so that item was offered "Not something we stock". Run for real on SQLite
 	(tests/sqlite_sql_helper.py); the KPI half of the same fix is tests/test_reorder_rule_counts.py."""
@@ -495,7 +495,7 @@ def _board_roles():
 
 
 class TestTheReorderBoardLink(unittest.TestCase):
-	"""v1.731.1: the Bin Manager and the Inventory Scanner Audit link to the Reorder Board, for the roles
+	"""v1.732.0: the Bin Manager and the Inventory Scanner Audit link to the Reorder Board, for the roles
 	that may open it. The behaviour (role-gated, one history entry, Back returns, no focus taken) runs
 	under node in scripts/test_bin_manager.mjs and scripts/test_desk_page_history.js; these pin what a
 	node stand-in cannot: that the role lists in the two pages are the board's own."""

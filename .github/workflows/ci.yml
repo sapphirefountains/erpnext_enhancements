@@ -3581,7 +3581,7 @@ jobs:
       # its tabs as history entries. Own frappe stub, so its own step; unittest classes.
       - name: Reorder Board (ERPNext's reorder rule, Draft requests, snoozes, digest, patches)
         run: python -m unittest erpnext_enhancements.tests.test_reorder_board -v
-      # A reorder rule counts by existing (v1.731.1). "Reorder at" may be 0 since v1.728.0, but the Operations KPIs
+      # A reorder rule counts by existing (v1.732.0). "Reorder at" may be 0 since v1.728.0, but the Operations KPIs
       # (Stocked Items Out of Stock / Below Reorder / Counted 90d) still asked for a level above 0, so an item reordered
       # "when it runs out" was not a stocked item. Runs the real _operations_metrics on SQLite tables
       # (tests/sqlite_sql_helper.py): a level-0 rule with a quantity joins every count, a level-only rule stays in, a

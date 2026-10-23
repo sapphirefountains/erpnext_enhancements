@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.731.1] - 2026-10-23
+## [1.732.0] - 2026-10-23
 
 Follow-ups to the Reorder Board (v1.730.0) that it and the reorder switch (v1.728.0) left open. No new
 endpoint, no patch, no data change.
@@ -23,7 +23,9 @@ endpoint, no patch, no data change.
   button and breaks nothing. On the Scanner Audit a tap does not take the focus off the scan box or the quantity
   box (`mousedown` is cancelled, as on the reorder switch). The board is gated on the server too: this only keeps a
   link that would end in "no permission" off the screen. `tests/test_bin_manager.py` pins both role lists to
-  `BOARD_ROLES` and to the board page's own roles.
+  `BOARD_ROLES` and to the board page's own roles. Coming back to the Scanner Audit from another page (the board
+  included) with an item card waiting for its count now focuses that card's counted-qty box, so the number is
+  typed where it was left; the scan box takes the focus only when no card waits (it used to take it always).
 
 ### Fixed
 - **A reorder rule counts as a rule by existing, level 0 included** (the known gap #1345 named in 1.728.0).
@@ -42,14 +44,19 @@ endpoint, no patch, no data change.
   row with neither is still not a rule. *Out* is still `on hand <= 0` and *counted* is
   still a Stock Reconciliation in the last 90 days. The tests run the real queries on SQLite
   (`tests/sqlite_sql_helper.py`): they fail on 1.730.0 (the level-0 item was absent from the out count, and the
-  coverage share was 33.3% for 40.0%). Prod effect on the next nightly snapshot: the counts can rise by the
-  number of level-0 rules (none exist until someone saves one).
-- **`Stocked Items Below Reorder` is now `on hand <= level`, not `<`** (ERPNext's own trigger, and what the Reorder
-  Board lists). With `<` a rule at 0 could never count as below, because prod allows no negative stock: the same
-  level-0 blindness as above. An item sitting exactly at its level was also missed. The `items_below_reorder` series
-  may step up on the first snapshot after the deploy by the items sitting exactly at their level; that step is the
-  definition changing, not stock falling. Pinned: level 0 with 0 on hand and level 5 with 5 on hand are below;
-  level 5 with 6 and level 0 with 1 are not.
+  coverage share was 33.3% for 40.0%).
+- **`Stocked Items Below Reorder` counts a rule at level 0 as below when the item is out.** The test is `on hand <
+  level`, as before, or `level = 0 and on hand <= 0`: a rule at 0 means "reorder when out", and with `<` alone it
+  could never count (prod allows no negative stock). It is deliberately not `<=` for every rule. The KPI tests
+  actual qty summed over every bin, while the Reorder Board tests *projected* qty (open orders counted) per
+  warehouse or group, so the two differ by design and are not the same list: measured on prod in that review, `<=` took the
+  count from 31 to 61, +30 items whose summed on hand equals their level (mostly level 1 with 1 on hand), nearly
+  all with orders already open. Pinned: level 0 with 0 on hand is below, level 0 with 1 is not, level 5 with 5 is
+  not, level 5 with 4 is.
+- **Prod effect on the next nightly snapshot (measured in the independent review of #1349).** One rule at level 0 exists
+  (3ED71A on Bin A1-3-3, 1 on hand). Stocked Items Below Reorder 31 → 31; Out of Stock 19 → 19; the stocked
+  denominator 115 → 116, because 3ED71A now counts as stocked; Counted (90d) 37.39% → 37.07%. A rule saved at 0
+  later moves the counts by one item each.
 
 ### Changed
 - **Text that said automatic reordering is on.** Since v1.730.0 `Stock Settings.auto_indent` is off and a rule puts

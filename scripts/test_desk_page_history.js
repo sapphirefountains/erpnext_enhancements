@@ -1832,7 +1832,7 @@ test("Scanner Audit: the switch shows the boxes, reads the rule once, keeps the 
 	check("no push without a tap", desk.violations, []);
 });
 
-// v1.731.1: a button to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), for the
+// v1.732.0: a button to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), for the
 // roles the board admits (reorder_board.BOARD_ROLES). It is one history entry, and a tap on it takes no focus.
 const boardCalls = (desk) => desk.calls.filter((c) => c.label === ".isa-board");
 const boardShown = (desk) => {
@@ -1863,6 +1863,31 @@ test("Scanner Audit: the Reorder Board button is shown to each board role, is on
 		check(`${role}: Forward returns to the board`, desk.route(), "reorder-board");
 		check(`${role}: no push without a tap`, desk.violations, []);
 	}
+});
+
+test("Scanner Audit: back from the board with a card waiting focuses its counted-qty box, else the scan box", async () => {
+	// A card waiting for its count
+	let desk = await inventory(null, { roles: ["Stock Manager"] });
+	await desk.tap(() => isa(desk).handleScan("ITEM-1"));
+	await desk.settle();
+	const click = () => desk.handlers.find((h) => h.el.__label === ".isa-board" && h.type === "click");
+	await desk.tap(() => click().fn({}));
+	check("on the board", desk.route(), "reorder-board");
+	let qty = desk.focused(".isa-qty");
+	let scan = desk.focused(".isa-scan");
+	await desk.back();
+	check("back on the count", desk.route(), "inventory-scanner-audit");
+	check("the counted-qty box took the focus", desk.focused(".isa-qty"), qty + 1);
+	check("the scan box did not", desk.focused(".isa-scan"), scan);
+
+	// No card: the scan box, as before
+	desk = await inventory(null, { roles: ["Stock Manager"] });
+	await desk.tap(() => desk.handlers.find((h) => h.el.__label === ".isa-board" && h.type === "click").fn({}));
+	qty = desk.focused(".isa-qty");
+	scan = desk.focused(".isa-scan");
+	await desk.back();
+	check("no card: the scan box took the focus", [desk.focused(".isa-scan"), desk.focused(".isa-qty")], [scan + 1, qty]);
+	check("no push without a tap", desk.violations, []);
 });
 
 test("Scanner Audit: no Reorder Board button for a person without a board role", async () => {

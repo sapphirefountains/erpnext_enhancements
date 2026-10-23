@@ -410,7 +410,16 @@ class InventoryScanner {
 		// A sheet has just closed: focus stays where closing it left it (the counted-qty box,
 		// after a read of an item). The wedge scanner's focus comes back with the next scan.
 		if (sheet || came) return;
-		this.focusScan();
+		// Coming back from another page (the Reorder Board, say) with an item card waiting for its count: the
+		// counted-qty box, so the number is typed where it was left. The scan box takes it only when no card waits.
+		this.focusCount();
+	}
+
+	focusCount() {
+		setTimeout(() => {
+			if (this.state.pendingItem) this.$pending.find('.isa-qty').focus();
+			else if (this.$scan) this.$scan.focus();
+		}, 50);
 	}
 
 	// Forward onto a sheet Back closed: open it again on its entry. False when it cannot be.

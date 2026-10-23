@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests that a reorder rule counts as a rule by existing (v1.731.1).
+"""Bench-free tests that a reorder rule counts as a rule by existing (v1.732.0).
 
 v1.728.0 let "Reorder at" be 0 (running out of all stock is a normal place to reorder). The KPI
 dashboards' stock counts still asked for a level *above* 0, so an item whose rule is "reorder at 0,
@@ -127,19 +127,21 @@ class TestARuleCountsByExisting(unittest.TestCase):
 		# AT-ZERO-OUT only; NO-RULE has no stock either and is not a stocked item.
 		self.assertEqual(self.m["stocked_items_out"], 1)
 
-	def test_below_reorder_is_at_or_under_the_level(self):
-		# on hand <= level, ERPNext's own trigger: BELOW (2 <= 4), AT-ZERO-OUT (0 <= 0) and TWO-ROWS (3 <= 3, once
-		# although it has two rows). LEVEL-ONLY (10 > 4) and AT-ZERO-STOCKED (7 > 0) are not; NO-RULE has no rule.
-		self.assertEqual(self.m["items_below_reorder"], 3)
+	def test_below_reorder_is_under_the_level_or_out_at_level_zero(self):
+		# on hand < level: BELOW (2 < 4). A rule at 0 is below when the item is out: AT-ZERO-OUT (0 <= 0).
+		# TWO-ROWS sits exactly at its level (3, 3) and is not; LEVEL-ONLY (10 > 4) and AT-ZERO-STOCKED (7 > 0)
+		# are not; NO-RULE has no rule.
+		self.assertEqual(self.m["items_below_reorder"], 2)
 
-	def test_an_item_exactly_at_its_level_is_below(self):
-		"""Before v1.731.1 the count asked for ``on hand < level``. With no negative stock on prod a rule at 0
-		could never be below, and an item sitting exactly at its level (the board lists it) was missed."""
+	def test_a_rule_at_level_zero_is_below_only_when_out(self):
+		"""The count is actual qty summed over every bin, not the board's projected qty, so ``<=`` against the
+		level would add every item sitting exactly at it (on prod, 30, nearly all with orders already open).
+		It stays ``<``, plus one clause: a rule at 0 means "reorder when out", so out is below."""
 		for name, level, on_hand, expected in (
 			("level 0, on hand 0", 0, 0, 1),
-			("level 5, on hand 5", 5, 5, 1),
-			("level 5, on hand 6", 5, 6, 0),
 			("level 0, on hand 1", 0, 1, 0),
+			("level 5, on hand 5", 5, 5, 0),
+			("level 5, on hand 4", 5, 4, 1),
 		):
 			with self.subTest(case=name):
 				m = _metrics([("X", level, 12)], [("X", on_hand)], [])

@@ -561,7 +561,7 @@ export function boughtLabel(bought, today) {
 
 /**
  * Whether an item is a stocked item: it has a reorder rule (the KPI's own definition). The server
- * says so in `has_reorder_rule` (v1.731.1: a rule that reorders at 0 is a rule, though its level is
+ * says so in `has_reorder_rule` (v1.732.0: a rule that reorders at 0 is a rule, though its level is
  * 0). A payload without it, an older one, falls back to the level being above 0.
  */
 export function stockedItem(reorderLevel, hasRule) {

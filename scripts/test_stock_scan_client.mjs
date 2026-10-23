@@ -2225,7 +2225,7 @@ async function appBinActions() {
 	check("validTotal", [L.validTotal("23.41").total, L.validTotal("").total, L.validTotal("0").total], [23.41, null, null]);
 	check("money (stock_scan_rules.money)", [L.money(4.97), L.money(1234.5), L.money(0.497), L.money(null)], ["$4.97", "$1,234.50", "$0.4970", ""]);
 	check("suggestedReason: a stocked item was out; anything else is not stocked", [L.suggestedReason(5, false), L.suggestedReason(0, false), L.suggestedReason(5, true)], [L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED]);
-	// v1.731.1: a rule that reorders at 0 has level 0 and is still a stocked item. The server says so in has_reorder_rule;
+	// v1.732.0: a rule that reorders at 0 has level 0 and is still a stocked item. The server says so in has_reorder_rule;
 	// a payload without it (an older one) falls back to the level.
 	check("suggestedReason: a rule at level 0 is a stocked item (has_reorder_rule), a payload without the flag falls back to the level", [L.suggestedReason(0, false, 1), L.suggestedReason(0, false, true), L.suggestedReason(0, false, 0), L.suggestedReason(5, false, 0), L.suggestedReason(0, true, 1), L.suggestedReason(5, false, undefined), L.suggestedReason(0, false, null)], [L.REASON_OUT_OF_STOCK, L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED, L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED]);
 	check("stockedItem", [L.stockedItem(0, 1), L.stockedItem(0, 0), L.stockedItem(3, undefined), L.stockedItem(0, undefined), L.stockedItem(3, 0)], [true, false, true, false, false]);

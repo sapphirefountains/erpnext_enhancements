@@ -630,7 +630,7 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   (Nik, 2026-10-22: running out of all stock is a normal place to reorder; a rule is below its point when
   projected stock is at or below the level, so 0 lists the item when it runs out, and open requests and
   orders count, so it is not offered twice). A rule counts as a rule by existing, level 0 included: the
-  KPI "stocked items" and the Stock Scan reason read it that way (v1.731.1). A blank box is not a
+  KPI "stocked items" and the Stock Scan reason read it that way (v1.732.0). A blank box is not a
   0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. `remove_reorder_rule` takes
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its

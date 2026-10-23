@@ -1415,7 +1415,7 @@ test("names are data: titles, labels and descriptions escape them", async () => 
 	check("no raw tag in the table", /<b>Bold/.test(registry.found[".bm-items"][0].innerHTML), false);
 });
 
-// v1.731.1: a link to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), on the
+// v1.732.0: a link to the Reorder Board (buyers pick reorders there now that ERPNext raises none on its own), on the
 // picker and on a bin, for the roles the board admits (reorder_board.BOARD_ROLES) and nobody else.
 const BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
 const boardLinkIn = (html) => (String(html).match(/data-act="reorder-board"/g) || []).length;

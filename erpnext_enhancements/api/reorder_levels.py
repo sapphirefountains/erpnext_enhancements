@@ -58,7 +58,7 @@ that; they stand, because a wrong rule still puts the wrong lines in front of a 
   and because projected stock counts open Material Requests and Purchase Orders it is not offered a
   second time. A level below 0 is still refused. (A rule counts as a rule when it exists, level 0
   included: the KPI dashboards' "stocked items" and the Stock Scan reason read it that way since
-  v1.731.1.)
+  v1.732.0.)
 * **A sane ceiling** (:data:`MAX_AMOUNT`, ``stock_scan_rules.MAX_QTY``, 100,000): a barcode scanned
   into a focused box and followed by the scanner's Enter is a number of twelve digits. And a unit
   that is counted in whole numbers (``UOM.must_be_whole_number``) takes whole numbers.
