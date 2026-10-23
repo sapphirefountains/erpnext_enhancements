@@ -23,6 +23,10 @@
  *    an Opportunity) get a "Start Hand-Off Process" button — explicit opt-in,
  *    per the meeting decision not to back-fill active projects.
  *
+ * Step 7's box shows the booked launch meeting (1.733.0): its Meet link and a
+ *    "Guests & RSVPs" toggle, and its button reads "Re-schedule" once a meeting
+ *    exists, because booking again moves that meeting rather than adding one.
+ *
  * All writes are click-driven (collab-safe: nothing here reacts to field
  * changes, so remote live-sync values can't re-fire side effects). Styling
  * is inline in the rendered HTML using Frappe CSS variables, so both Frappe
@@ -184,11 +188,12 @@
 				project: frm.doc.name,
 			})
 			.then((attendees) => {
+				const booked = !!(frm.__handoff_ctx || {}).launch_meeting;
 				erpnext_enhancements.handoff_meeting_dialog.open({
-					title: __("Hold Project Launch Meeting"),
-					description: __(
-						"The project team is invited by email and the meeting is added to the calendar."
-					),
+					title: booked ? __("Re-schedule Project Launch Meeting") : __("Hold Project Launch Meeting"),
+					description: booked
+						? __("Moves the booked launch meeting. Everyone invited gets the change.")
+						: __("The project team is invited and the meeting is added to the calendar."),
 					attendees: attendees,
 					on_submit(values) {
 						return frappe
@@ -202,12 +207,10 @@
 								}
 							)
 							.then((result) => {
-								frappe.show_alert({
-									message: result.invited
-										? __("Launch meeting created and invites sent.")
-										: __("Meeting created, but the invite email failed — check the Error Log."),
-									indicator: result.invited ? "green" : "orange",
-								});
+								erpnext_enhancements.handoff_meeting_dialog.report_booking(
+									result,
+									__("Launch meeting")
+								);
 								frm.reload_doc();
 								// The dialog reads `not_invited` off this.
 								return result;
@@ -230,7 +233,12 @@
 			},
 		},
 		[STEP_TASKS]: { label: "Open Tasks", run: open_tasks },
-		[STEP_LAUNCH]: { label: "Schedule Launch Meeting", run: open_launch_meeting },
+		[STEP_LAUNCH]: {
+			label: "Schedule Launch Meeting",
+			// Once a launch meeting is booked the same button moves it.
+			booked_label: "Re-schedule Launch Meeting",
+			run: open_launch_meeting,
+		},
 		[STEP_PAYMENT]: { label: "Set Follow-Up Reminder", run: open_payment_followup },
 	};
 
@@ -314,14 +322,19 @@
 	 * records it. "Mark Complete" rather than "Mark Step N Complete" — the
 	 * number is in the same box, an arm's length above the button.
 	 */
-	function step_actions_html(step) {
+	function step_actions_html(frm, step) {
 		const esc = frappe.utils.escape_html;
 		const action = STEP_ACTIONS[step.step_number];
+		const booked =
+			action && action.booked_label && Number(step.step_number) === STEP_LAUNCH
+				? !!(frm.__handoff_ctx || {}).launch_meeting
+				: false;
+		const label = action ? (booked ? action.booked_label : action.label) : "";
 		return `
 			<div class="ee-step-actions">
 				${
 					action
-						? `<button class="btn btn-xs btn-default ee-step-action" data-step="${esc(step.name)}">${__(action.label)}</button>`
+						? `<button class="btn btn-xs btn-default ee-step-action" data-step="${esc(step.name)}">${__(label)}</button>`
 						: ""
 				}
 				<button class="btn btn-xs btn-primary ee-complete-step" data-step="${esc(step.name)}">
@@ -424,7 +437,7 @@
 			// be actionable at once (5 and 6, then 7), and a shared row underneath
 			// had to re-print the step title on every button just to say which box
 			// it belonged to. In the box, the box says it.
-			const actions = is_actionable ? step_actions_html(step) : "";
+			const actions = is_actionable ? step_actions_html(frm, step) : "";
 			html += `
 				<div class="ee-process-step ${cls}${actions ? " has-actions" : ""}" data-step="${esc(step.name)}">
 					<span class="ee-step-no">${step.status === "Completed" ? "✓" : esc(String(step.step_number || ""))}</span>
@@ -472,6 +485,17 @@
 			const action = step && STEP_ACTIONS[step.step_number];
 			if (action) action.run(frm, step);
 		});
+
+		// The booked launch meeting on step 7: Meet link and the RSVP toggle. From
+		// the context call, which reads only the Event row; Google is asked only
+		// when someone opens the guest list.
+		const launch_step = steps.find((s) => Number(s.step_number) === STEP_LAUNCH);
+		const launch_meeting = (frm.__handoff_ctx || {}).launch_meeting;
+		if (launch_step && launch_step.status === "Pending" && launch_meeting) {
+			const $slot = field.$wrapper.find(`[data-extra="${CSS.escape(launch_step.name)}"]`);
+			$slot.html(erpnext_enhancements.handoff_meeting_dialog.meeting_html(launch_meeting));
+			erpnext_enhancements.handoff_meeting_dialog.bind_meeting($slot);
+		}
 
 		// Soft signal on the payment step: when the next chase is set. Display
 		// only, and best-effort — the step has no due date of its own, so this

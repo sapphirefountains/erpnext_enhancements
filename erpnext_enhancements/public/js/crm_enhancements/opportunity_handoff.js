@@ -49,6 +49,10 @@
  *    deal behind a closed gate can still book or skip the meeting and then
  *    create its project.
  *
+ * Step 2's box also carries the booked meeting (1.733.0): its Google Meet link and
+ * a "Guests & RSVPs" toggle that reads each guest's answer from Google on a click
+ * (`handoff_meeting_dialog.meeting_html`). A form load reads only the Event row.
+ *
  * Styling matches the Project's hand-off bar (Frappe CSS vars; Light + Night).
  */
 (function () {
@@ -156,6 +160,8 @@
 			held_by: s.held_by || "",
 			scheduled: !!(known ? s.event : frm.doc.custom_handoff_event),
 			event_on: s.event_on || "",
+			// `{event, google, meet_link, status}` for the booked meeting, or null.
+			meeting: s.meeting || null,
 			due_by: due_by,
 			overdue: known
 				? !!s.overdue
@@ -325,6 +331,11 @@
 		// can be offered together, and then this one still leads — one primary
 		// button, pointing at the step the process actually wants next.
 		const booking_first = !f.held && !f.scheduled;
+		// The booked meeting itself, above its buttons: Meet link and RSVPs.
+		if (!f.held && f.scheduled && f.meeting) {
+			const meeting = erpnext_enhancements.handoff_meeting_dialog.meeting_html(f.meeting);
+			if (meeting) at(STEP_MEETING, meeting);
+		}
 		if (booking_first) {
 			at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), lead));
 		}
@@ -402,9 +413,18 @@
 						opportunity: frm.doc.name,
 						reason: values.reason,
 					})
-					.then(() => {
+					.then((result) => {
 						dialog.hide();
 						frappe.show_alert({ message: __("Hand-off skipped and logged."), indicator: "orange" });
+						// Skipping cancels the booked meeting's invite; say so if Google refused.
+						const warning = result && result.meeting && result.meeting.warning;
+						if (warning) {
+							frappe.msgprint({
+								title: __("Invite not cancelled"),
+								message: frappe.utils.escape_html(warning),
+								indicator: "orange",
+							});
+						}
 						frm.reload_doc();
 					});
 			},
@@ -425,6 +445,7 @@
 			const run = ACTIONS[$(this).attr("data-ee-handoff")];
 			if (run) run(frm);
 		});
+		erpnext_enhancements.handoff_meeting_dialog.bind_meeting(field.$wrapper);
 	}
 
 	// -----------------------------------------------------------------------

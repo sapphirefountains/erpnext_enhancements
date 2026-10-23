@@ -1090,6 +1090,13 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
+	# Hand-off and launch meetings are Google Calendar events created by this app,
+	# not by Frappe's Event sync (crm_enhancements/handoff_calendar.py). Setting one
+	# to Cancelled in the Desk withdraws its Google invite; the app's own Skip and
+	# re-schedule paths flag the Event so this does not run twice.
+	"Event": {
+		"on_update": "erpnext_enhancements.crm_enhancements.handoff_calendar.cancel_on_status_change",
+	},
 	"Opportunity": {
 		"before_validate": [
 			"erpnext_enhancements.sync_contact.sanitize_primary_address_link",
