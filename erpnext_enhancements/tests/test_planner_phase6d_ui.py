@@ -328,8 +328,11 @@ class TestFixesGoThroughTheWritePath(unittest.TestCase):
 		self.assertEqual(set(methods.values()), {"save_task", "swap_crew", "add_crew"})
 		self.assertTrue(all(key == value for key, value in methods.items()))
 		# The hold drafts every one of them: send() adds draft=1 (P4: or "auto", so a Draft schedule
-		# drafts them too) to exactly these methods, and to move_many.
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', PP)
+		# drafts them too) to exactly these methods, and to move_many (v1.740.0: and to the Overdue tray's
+		# bulk_update and Copy week).
+		self.assertIn(
+			'draft_methods: ["save_task", "add_crew", "swap_crew", "move_many", "bulk_update", "copy_week"]', PP
+		)
 		send = _class_method(PP, "send")
 		self.assertIn("args = this.with_draft(method, args);", send)
 		self.assertIn("this.ask_reason(result.conflicts || {})", send)
