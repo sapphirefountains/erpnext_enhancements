@@ -59,7 +59,7 @@ MAINTENANCE_CONTRACT_JSON = (
 )
 
 #: Rows the stub serves, keyed by doctype. Reset per test.
-STATE = {"rows": {}, "docs": {}, "permissions": True, "reads": []}
+STATE = {"rows": {}, "docs": {}, "permissions": True, "reads": [], "list_reads": []}
 
 project_brief = None
 
@@ -115,12 +115,17 @@ def _install_stub():
 			return [{f: r.get(f) for f in fields} for r in rows]
 		return [dict(r) for r in rows]
 
+	def get_list(doctype, filters=None, fields=None, **kwargs):
+		STATE["list_reads"].append(doctype)
+		return get_all(doctype, filters=filters, fields=fields)
+
 	def get_doc(doctype, name):
 		STATE["reads"].append(doctype)
 		return FakeDoc(STATE["docs"][(doctype, name)])
 
 	fake.has_permission = has_permission
 	fake.get_all = get_all
+	fake.get_list = get_list
 	fake.get_doc = get_doc
 	fake.db = types.SimpleNamespace(
 		get_value=lambda doctype, name, field: STATE["docs"].get((doctype, name), {}).get(field)
@@ -176,6 +181,7 @@ class ProjectBriefTestCase(unittest.TestCase):
 		STATE["docs"] = {}
 		STATE["permissions"] = True
 		STATE["reads"] = []
+		STATE["list_reads"] = []
 
 
 # ------------------------------------------------------------------- which sections
@@ -468,6 +474,30 @@ class ProjectBriefPermissions(ProjectBriefTestCase):
 
 		self.assertEqual(STATE["reads"], [])
 		self.assertTrue(sections, "the Project's own fields still render")
+
+	def test_recent_visits_go_through_get_list_so_the_doctypes_query_conditions_apply(self):
+		"""A doctype-level ``read`` says nothing about which visits: ``get_all`` would hand a
+		Finance-only user (read + report on Sapphire Maintenance Record, and nothing that lets
+		them see a visit) every visit on the job. ``get_list`` applies the record's permission
+		query condition."""
+		STATE["rows"] = {
+			"Sapphire Maintenance Record": [
+				{
+					"project": "PRJ-00001",
+					"docstatus": 1,
+					"visit_date": "2026-10-01",
+					"visit_label": "Regular",
+					"technician": "tech@example.com",
+					"completion_percent": 100,
+				}
+			]
+		}
+
+		sections = project_brief.brief_sections(_project(project_type="Service"))
+
+		visits = _blocks(sections, "Service")["Recent Visits"]
+		self.assertEqual(len(visits["rows"]), 1)
+		self.assertIn("Sapphire Maintenance Record", STATE["list_reads"])
 
 	def test_a_doctype_this_site_has_not_got_costs_a_section_not_a_traceback(self):
 		"""``has_permission`` raises for an unknown doctype, it does not say False.

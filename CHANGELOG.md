@@ -38,16 +38,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     else the day it was created. The month filters take any day and snap to whole months; the default is the
     last three full months plus the current one (on 2026-10-23, July 1 to October 31).
   - **No price, cost or revenue column.** Billing is undecided (chemical billing is situational, v1.628.0), so
-    nothing here could be mistaken for an invoice. Eight narrow columns (810px of width) and no money column.
+    nothing here could be mistaken for an invoice. Nine narrow columns (890px of width) and no money column.
   - **Roles:** Maintenance Reviewer, Maintenance Supervisor and System Manager, which are the Missed
     Maintenance Visits report's, plus **Finance Team**, which the plan named for the finance phase. Frappe
     also requires the *report* permission on a report's reference DocType (`get_report_doc` in
     `desk/query_report.py`, checked with `has_permission(ref_doctype, "report")`), and Finance Team had none on
     Sapphire Maintenance Record, so a role on the report alone would have shown the link and then refused the
-    run. Sapphire Maintenance Record now gives Finance Team **read + report** only. They still see no visits
-    in lists or forms: the record's permission query condition returns `1=0` for any user who is neither staff
-    nor a portal customer. (If a Custom DocPerm is ever added for Sapphire Maintenance Record on the site it
-    replaces these rows wholesale, and Finance Team would need re-adding there.)
+    run. Sapphire Maintenance Record now gives Finance Team **read + report** only, and that DocPerm exists
+    so the report can run, not as a privacy measure. The record's `has_permission` hook and its `1=0` permission
+    query condition (`sapphire_maintenance/permissions.py`) keep visits hidden only from a **Finance-only**
+    user, and none exists today: all six Finance Team holders (Administrator, james.harris, lisa.symanski,
+    marlene.legaspi, nikolas.bradshaw, triton) also hold Maintenance User, so they already see every visit.
+    (If a Custom DocPerm is ever added for Sapphire Maintenance Record on the site it replaces these rows
+    wholesale, and Finance Team would need re-adding there.)
+  - **Containers column.** Beside Quantity, the sum of each line's *Containers* field ("how many containers
+    this visit opened", 1 on almost every line), for the truck-restock question. It is its own unit, counted
+    in whole containers, and is never mixed into the dose Quantity; it groups exactly as Quantity does.
+  - **Prod data note:** on prod today every consumable line's unit is "Unit". Until technicians pick real dose
+    units, rows read "3 Unit" for tablets, so the unit normalisation is correct but not yet exercised by real
+    data.
+  - **Project Brief: Recent Visits now reads with `get_list`** (`project_enhancements/project_brief.py`,
+    `_maintenance_visits`). It checked `has_permission("Sapphire Maintenance Record", "read")` at doctype level
+    and then used `frappe.get_all`, which ignores permissions, so a Finance-only user (read on the doctype
+    since this release, nothing that lets them see a visit) printing a Service brief would have been shown the
+    job's recent visits. `get_list` applies the record's permission query condition. Same fields and filters.
+    `tests/test_project_brief_sections.py` pins it (its stub gains `get_list`).
   - Aggregation is done in Python from one bound-parameter `frappe.db.sql` query (no `"sum(x) as y"` field
     string, which Frappe 16 refuses); every filter value is a bound parameter.
   - The workspace JSON's `modified` is bumped so the new link syncs; no force-import patch. The new report and

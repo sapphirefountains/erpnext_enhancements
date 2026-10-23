@@ -125,8 +125,9 @@ def tearDownModule():
 	_forget_package_attributes()
 
 
-def line(visit, item, qty, uom, day, docstatus=1, state="Final/Submitted", project="PRJ-1"):
+def line(visit, item, qty, uom, day, docstatus=1, state="Final/Submitted", project="PRJ-1", containers=1):
 	return {
+		"containers": containers,
 		"visit": visit,
 		"project": project,
 		"item": item,
@@ -249,6 +250,39 @@ class GroupingTests(_Base):
 		self.assertEqual(
 			self.rows([line("V1", "ALGAECIDE", 0.25, "cap full", D(2026, 9, 3))])[0]["qty"], 0.25
 		)
+
+
+class ContainerTests(_Base):
+	def test_containers_are_summed_beside_quantity_never_mixed_into_it(self):
+		rows = self.rows(
+			[
+				line("V1", "ALGAECIDE", 3, "cap full", D(2026, 9, 3), containers=1),
+				line("V2", "ALGAECIDE", 2, "cap full", D(2026, 9, 10), containers=2),
+				line("V3", "ALGAECIDE", 0.5, "cap full", D(2026, 9, 17), containers=None),
+			]
+		)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual((rows[0]["qty"], rows[0]["containers"]), (5.5, 3.0))
+
+	def test_containers_follow_the_same_grouping_as_quantity(self):
+		rows = self.rows(
+			[
+				line("V1", "ALGAECIDE", 3, "cap full", D(2026, 9, 3), containers=1),
+				line("V2", "ALGAECIDE", 2, "tablespoon", D(2026, 9, 4), containers=1),
+				line("V3", "ALGAECIDE", 1, "cap full", D(2026, 10, 4), containers=1),
+			]
+		)
+		self.assertEqual(
+			sorted((r["month"], r["uom"], r["containers"]) for r in rows),
+			[("2026-09", "cap full", 1.0), ("2026-09", "tablespoon", 1.0), ("2026-10", "cap full", 1.0)],
+		)
+
+	def test_the_query_reads_the_containers_field_and_the_report_shows_it(self):
+		usage.get_usage({})
+		self.assertIn("c.containers", SQL_CALLS[-1][0])
+		source = (REPORT_DIR / "maintenance_chemicals_used.py").read_text(encoding="utf-8")
+		self.assertLess(source.index('"fieldname": "qty"'), source.index('"fieldname": "containers"'))
+		self.assertLess(source.index('"fieldname": "containers"'), source.index('"fieldname": "visits"'))
 
 
 class MonthTests(_Base):
@@ -406,7 +440,7 @@ class DeclarationTests(unittest.TestCase):
 		import re
 
 		widths = [int(w) for w in re.findall(r'"width": (\d+)', source)]
-		self.assertEqual(len(widths), 8)
+		self.assertEqual(len(widths), 9)
 		self.assertLessEqual(sum(widths), 900)
 
 	def test_the_workspace_lists_the_report(self):

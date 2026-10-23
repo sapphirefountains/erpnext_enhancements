@@ -39,6 +39,11 @@ wizard prefills nothing, but a 0 line means "none used" and is not a use.
 A visit is placed in a month by ``visit_date`` (the day the work was done, stamped when the visit
 goes for review), else its Scheduled Visit Date, else the day it was created.
 
+**Containers** is a second quantity, summed beside the dose: the line's own *Containers* field,
+"how many containers this visit opened" (1 on almost every line). It is its own unit, counted in
+whole containers, so it is never mixed into Quantity; the truck-restock question ("how many
+buckets did this site open this month") reads it, the pricing question reads Quantity.
+
 Nothing here prices anything: billing is undecided (see ``chemical_billing.py``), so no money
 column exists to be mistaken for an invoice.
 
@@ -143,7 +148,7 @@ def unit_key(unit):
 def fetch_lines(start, end, project=None, item=None):
 	"""Every consumable line with a quantity on a non-canceled visit dated inside the window.
 
-	Bound parameters only. Returns dicts with ``visit, project, item, uom, qty, docstatus,
+	Bound parameters only. Returns dicts with ``visit, project, item, uom, qty, containers, docstatus,
 	workflow_state, day``; the state filter and the grouping are applied by :func:`build_rows`.
 	"""
 	conditions = [
@@ -161,7 +166,7 @@ def fetch_lines(start, end, project=None, item=None):
 	return frappe.db.sql(
 		"""
 		SELECT c.parent AS visit, r.project AS project, c.item AS item, c.uom AS uom,
-			c.qty AS qty, r.docstatus AS docstatus, r.workflow_state AS workflow_state,
+			c.qty AS qty, c.containers AS containers, r.docstatus AS docstatus, r.workflow_state AS workflow_state,
 			COALESCE(r.visit_date, r.scheduled_visit_date, DATE(r.creation)) AS day
 		FROM `tabSapphire Maintenance Consumable` c
 		INNER JOIN `tabSapphire Maintenance Record` r
@@ -203,8 +208,8 @@ def build_rows(lines, state=DEFAULT_STATE, info=None, site_names=None):
 	"""Group lines into report rows and say how many visits the state filter left out.
 
 	Returns ``(rows, left_out)``: ``rows`` are one per site x month x item x unit, with ``qty``
-	(rounded to 4 places, which removes 0.1 + 0.2 noise and keeps a 0.25 dose), ``visits``
-	(distinct visits) and ``last_visit`` (the latest day); ``left_out`` is
+	(rounded to 4 places, which removes 0.1 + 0.2 noise and keeps a 0.25 dose), ``containers`` (summed
+	separately from ``qty``), ``visits`` (distinct visits) and ``last_visit`` (the latest day); ``left_out`` is
 	``{"waiting": n, "drafts": n}``, distinct visits inside the window that the state filter did
 	not count, so the report can say what it is not showing.
 	"""
@@ -227,8 +232,9 @@ def build_rows(lines, state=DEFAULT_STATE, info=None, site_names=None):
 		if not unit:
 			unit = (info.get(item) or {}).get("stock_uom") or NO_UNIT
 		key = (line.get("project") or "", month_key(day), item, unit_key(unit))
-		group = groups.setdefault(key, {"qty": 0.0, "visits": set(), "last": day})
+		group = groups.setdefault(key, {"qty": 0.0, "containers": 0.0, "visits": set(), "last": day})
 		group["qty"] += float(line.get("qty") or 0)
+		group["containers"] += float(line.get("containers") or 0)
 		group["visits"].add(line["visit"])
 		if day > group["last"]:
 			group["last"] = day
@@ -248,6 +254,7 @@ def build_rows(lines, state=DEFAULT_STATE, info=None, site_names=None):
 				"size": (info.get(item) or {}).get("size", ""),
 				"uom": unit,
 				"qty": round(group["qty"], 4),
+				"containers": round(group["containers"], 4),
 				"visits": len(group["visits"]),
 				"last_visit": group["last"],
 			}

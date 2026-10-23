@@ -14,7 +14,9 @@ Roles: Maintenance Reviewer, Maintenance Supervisor, System Manager (as the Miss
 Visits report) plus Finance Team, which the 2026-10-12 plan named for the finance phase. Frappe
 also demands the *report* permission on the report's ``ref_doctype`` (``desk/query_report.py``,
 ``get_report_doc``), so Finance Team holds a read + report DocPerm on Sapphire Maintenance Record;
-the record's permission query condition still shows such a user no visits.
+that DocPerm exists so the report can run, not as a privacy guarantee: the record's
+``has_permission`` hook and ``1=0`` query condition hide visits only from a Finance-only user,
+and every current Finance Team holder also holds Maintenance User.
 """
 
 from frappe import _
@@ -49,6 +51,7 @@ def get_columns():
 		{"fieldname": "size", "label": _("Size"), "fieldtype": "Data", "width": 60},
 		{"fieldname": "uom", "label": _("Unit"), "fieldtype": "Data", "width": 90},
 		{"fieldname": "qty", "label": _("Quantity"), "fieldtype": "Float", "width": 90},
+		{"fieldname": "containers", "label": _("Containers"), "fieldtype": "Float", "width": 80},
 		{"fieldname": "visits", "label": _("Visits"), "fieldtype": "Int", "width": 70},
 		{"fieldname": "last_visit", "label": _("Last Visit"), "fieldtype": "Date", "width": 100},
 	]

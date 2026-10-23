@@ -793,11 +793,16 @@ def _maintenance_agreement(project_name):
 
 
 def _maintenance_visits(project_name, limit=5):
-	"""The most recent visits logged on this job, newest first."""
+	"""The most recent visits logged on this job, newest first.
+
+	``get_list``, not ``get_all``: the doctype-level gate above says the role may read the
+	doctype, but only the doctype's own query conditions (``permissions.py``: staff see every
+	visit, a portal customer only their own submitted ones, anyone else none) say which visits.
+	"""
 	if not _may_read("Sapphire Maintenance Record"):
 		return []
 	try:
-		return frappe.get_all(
+		return frappe.get_list(
 			"Sapphire Maintenance Record",
 			filters={"project": project_name, "docstatus": ["<", 2]},
 			fields=["visit_date", "visit_label", "technician", "completion_percent"],
