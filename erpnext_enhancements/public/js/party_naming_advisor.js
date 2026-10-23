@@ -10,8 +10,8 @@
 //
 // Advisory only. There is no validate hook on any of these doctypes, nothing here calls
 // `frappe.validated = false`, and no save is interrupted. Most of these records predate the
-// rule — 769 of 823 Opportunity titles are a bare party name — so anything that blocked would
-// fire constantly on legitimate edits.
+// rule — 487 of 858 Opportunity Names carry no separator (2026-10-23) — so anything that
+// blocked would fire constantly on legitimate edits.
 //
 // The check reads ONLY the record in hand (plus an Address's links). No corpus read, so it is
 // cheap enough to run on every refresh. Duplicate detection needs the whole set and lives in

@@ -22,13 +22,23 @@ repo, so bench-free code is the only code that runs on every push.
    Customers have drifted apart, which flagged 14 records — 5 Projects, 3 Opportunities and
    6 Addresses — for a difference nothing on their form could explain. See
    ``test_a_stale_customer_docname_is_not_a_naming_defect``.
+4. *Check the field the form shows.* Opportunity's form title is the Opportunity Name
+   (``custom_opportunity_name``); ``title`` is ERPNext's auto-filled copy of the party. The
+   check read ``title`` until v1.736.1 and told 346 Opportunities that a name reading
+   ``Summit Vista - Circulation Pump`` had no separator. See ``OpportunityNameFieldTest``.
 
-Every fixture is a verbatim record read from ERPNext Production on 19 August 2026.
+Every fixture is a verbatim record read from ERPNext Production on 19 August 2026, except
+the Opportunities, which were re-read on 23 October 2026 with both name fields.
 """
 
+import ast
+import json
+import pathlib
 import unittest
 
 from erpnext_enhancements.crm_enhancements import party_naming_rules as rules
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def codes_of(findings):
@@ -94,11 +104,54 @@ ADDRESSES = [
 	{"name": "Orphan-Billing", "address_title": "Orphan", "address_type": "Billing", "party": ""},
 ]
 
+#: Both name fields on every row, because the bug these guard was reading the wrong one.
+#: ``title`` is what ERPNext writes (the party, from customer_name); ``custom_opportunity_name``
+#: is the Opportunity Name the form shows and the check judges.
 OPPORTUNITIES = [
-	{"name": "CRM-OPP-2026-00153", "title": "Hess Construction LLC", "party_name": "Hess Construction LLC"},
+	# The record the bug was reported on: the form reads "Summit Vista - Circulation Pump" and
+	# the banner said separator_missing, because it was looking at "Summit Vista".
+	{"name": "CRM-OPP-2026-00173", "title": "Summit Vista",
+	 "custom_opportunity_name": "Summit Vista - Circulation Pump",
+	 "party_name": "Summit Vista", "customer_name": "Summit Vista", "opportunity_from": "Customer"},
+	# Compliant, and flagged separator_missing by the old read like 344 others.
+	{"name": "CRM-OPP-2026-00153", "title": "Hess Construction LLC",
+	 "custom_opportunity_name": "Hess Construction - Stenmark Residence",
+	 "party_name": "Hess Construction LLC", "customer_name": "Hess Construction LLC",
+	 "opportunity_from": "Customer"},
+	# The trailing space is in title and customer_name, neither of which is the name.
 	{"name": "CRM-OPP-2026-00156", "title": "West Jordan Parks and Recreation ",
-	 "party_name": "West Jordan Parks and Recreation"},
-	{"name": "CRM-OPP-2026-00155", "title": "Ore", "party_name": "Ore Designs, Inc."},
+	 "custom_opportunity_name": "West Jordan - Splash Pad Controller Servive 8/17/26",
+	 "party_name": "West Jordan Parks and Recreation", "customer_name": "West Jordan Parks and Recreation ",
+	 "opportunity_from": "Customer"},
+	{"name": "CRM-OPP-2026-00155", "title": "Ore",
+	 "custom_opportunity_name": "Ore Designs - DC Bronze Fountain on Belmont St.",
+	 "party_name": "Ore Designs, Inc.", "customer_name": "Ore Designs, Inc.", "opportunity_from": "Customer"},
+	# Real defects, which must still be flagged.
+	# Named for the site rather than for who pays.
+	{"name": "CRM-OPP-2025-00127", "title": "Anderson Wahlen & Associates",
+	 "custom_opportunity_name": "Myers Mortuary - Fountain",
+	 "party_name": "Anderson Wahlen & Associates", "customer_name": "Anderson Wahlen & Associates",
+	 "opportunity_from": "Customer"},
+	# The inverse of the bug: title has a separator (the customer's own name carries one) and
+	# the Opportunity Name has none. The old read passed it.
+	{"name": "CRM-OPP-2025-00076", "title": "Skyline Exhibits Utah - Salt Lake City",
+	 "custom_opportunity_name": "Skyline Water TV",
+	 "party_name": "Skyline Exhibits Utah - Salt Lake City",
+	 "customer_name": "Skyline Exhibits Utah - Salt Lake City", "opportunity_from": "Customer"},
+	# A separator with its leading space dropped. Five live names look like this.
+	{"name": "CRM-OPP-2025-00620", "title": "AJC Architects",
+	 "custom_opportunity_name": "Wadman Corporation- Saltair Affordable Housing Water Wall",
+	 "party_name": "Wadman Corporation", "customer_name": "Wadman Corporation", "opportunity_from": "Customer"},
+	# An em dash, and no party first. Written by fountain_move.conversion._opportunity_title,
+	# not typed; all three live em-dash names came from there.
+	{"name": "CRM-OPP-2026-00139", "title": "Sapphire Fountains",
+	 "custom_opportunity_name": "Fountain Move — Bountiful (C&T Draper)",
+	 "party_name": "Sapphire Fountains", "customer_name": "Sapphire Fountains", "opportunity_from": "Customer"},
+	# A trailing space in the Opportunity Name itself. 55 live names have one.
+	{"name": "CRM-OPP-2026-00045", "title": "C&C - Creativity & Community Architecture",
+	 "custom_opportunity_name": "C&C - Indoor Bubbler ",
+	 "party_name": "C&C - Creativity & Community Architecture",
+	 "customer_name": "C&C - Creativity & Community Architecture", "opportunity_from": "Customer"},
 ]
 
 
@@ -252,15 +305,16 @@ class SeparatorTest(unittest.TestCase):
 		)
 
 	def test_an_en_or_em_dash_is_a_separator_written_wrongly(self):
-		"""No live record uses one. Word and Google Docs autocorrect a spaced hyphen into an
-		en dash as you type, so the way in is a paste and it looks right at a glance."""
+		"""No typed record uses one; three Opportunity Names written by the Fountain Move
+		importer do. Word and Google Docs autocorrect a spaced hyphen into an en dash as you
+		type, so the way in is a paste and it looks right at a glance."""
 		for value in ("Hess Construction – Colony 256", "Hess Construction — Colony 256"):
 			self.assertEqual(rules.separator_form(value), rules.SEP_MALFORMED, value)
 
 	def test_a_bare_hyphen_inside_a_name_is_not_a_separator(self):
 		"""The one failure this module cannot afford. Splitting these would invent a party
 		called `Ana Mendez` and a qualifier called `Law`: a false finding on a correct name.
-		18 Projects, 4 Opportunities and 16 Addresses contain a hyphen like this."""
+		18 Projects, 39 Opportunity Names and 16 Addresses contain a hyphen like this."""
 		for value in (
 			"Ana Mendez-Law Event",
 			"Mayflower-Deer Valley Pool Controller",
@@ -274,8 +328,8 @@ class SeparatorTest(unittest.TestCase):
 			self.assertEqual(rules.split(value), (value, ""), value)
 
 	def test_no_dash_at_all(self):
-		"""345 of 552 customer-facing Projects and 785 of 839 Opportunities. This is the bulk
-		of what the guard reports, and for these separator_missing is simply correct."""
+		"""345 of 552 customer-facing Projects and 487 of 858 Opportunity Names. This is the
+		bulk of what the guard reports, and for these separator_missing is simply correct."""
 		self.assertEqual(rules.separator_form("CEM Daybreak Splash Pad"), rules.SEP_NONE)
 
 	def test_extra_spaces_are_not_the_separators_problem(self):
@@ -475,56 +529,170 @@ class OpportunityCheckTest(unittest.TestCase):
 		row = next(r for r in OPPORTUNITIES if r["name"] == name)
 		return codes_of(rules.check("Opportunity", row))
 
+	def test_the_reported_record_passes(self):
+		"""CRM-OPP-2026-00173. Its banner read `Naming: FIX — separator_missing` under a title
+		of `Summit Vista - Circulation Pump`."""
+		self.assertEqual(self._check("CRM-OPP-2026-00173"), set())
+
+	def test_compliant_names_the_old_read_flagged_now_pass(self):
+		"""346 Opportunities were told separator_missing about a name that has one; on 208 of
+		them nothing else is wrong and the banner goes away."""
+		for name in ("CRM-OPP-2026-00153", "CRM-OPP-2026-00156", "CRM-OPP-2026-00155"):
+			self.assertEqual(self._check(name), set(), name)
+
 	def test_a_bare_party_name_needs_a_qualifier(self):
-		"""769 of 823 live titles are exactly the party name, because ERPNext fills a blank
-		title with customer_name and nobody types one."""
-		self.assertIn(rules.SEPARATOR_MISSING, self._check("CRM-OPP-2026-00153"))
+		"""487 of 858 live Opportunity Names carry no separator at all. For them the finding is
+		simply correct."""
+		self.assertIn(rules.SEPARATOR_MISSING, codes_of(rules.check("Opportunity", {
+			"custom_opportunity_name": "Hess Construction LLC", "party_name": "Hess Construction LLC",
+		})))
+
+	def test_a_site_named_opportunity_is_still_flagged(self):
+		self.assertIn(rules.PARTY_PREFIX_MISMATCH, self._check("CRM-OPP-2025-00127"))
+
+	def test_a_dropped_space_is_malformed_not_missing(self):
+		found = self._check("CRM-OPP-2025-00620")
+		self.assertIn(rules.SEPARATOR_MALFORMED, found)
+		self.assertNotIn(rules.SEPARATOR_MISSING, found)
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, found)
+
+	def test_the_generated_fountain_move_name_is_flagged_for_what_it_is(self):
+		"""An em dash and no party first: two real findings, and neither is "no separator"."""
+		found = self._check("CRM-OPP-2026-00139")
+		self.assertIn(rules.SEPARATOR_MALFORMED, found)
+		self.assertIn(rules.PARTY_PREFIX_MISMATCH, found)
+		self.assertNotIn(rules.SEPARATOR_MISSING, found)
 
 	def test_a_trailing_space(self):
-		"""25 live titles have one. MariaDB's PAD SPACE collation makes the SQL form of this
-		test always false, so it is done here where a trailing space is still a character."""
-		self.assertIn(rules.EDGE_WHITESPACE, self._check("CRM-OPP-2026-00156"))
+		"""55 live Opportunity Names have one. MariaDB's PAD SPACE collation makes the SQL form
+		of this test always false, so it is done here where a trailing space is still a
+		character."""
+		self.assertEqual(self._check("CRM-OPP-2026-00045"), {rules.EDGE_WHITESPACE})
 
 	def test_every_opportunity_is_in_scope(self):
-		"""All 823 carry a party; there is no internal-opportunity class to exclude."""
+		"""All 858 carry a party; there is no internal-opportunity class to exclude."""
 		for row in OPPORTUNITIES:
 			self.assertTrue(rules.in_scope("Opportunity", row), row["name"])
 
-	def test_a_compliant_title_passes(self):
+	def test_a_compliant_name_passes(self):
 		self.assertEqual(codes_of(rules.check("Opportunity", {
-			"title": "Ore - Courtyard Fountain Refit", "party_name": "Ore Designs, Inc.",
+			"custom_opportunity_name": "Ore - Courtyard Fountain Refit", "party_name": "Ore Designs, Inc.",
 		})), set())
 
 	def test_both_names_are_accepted_when_the_link_and_the_label_disagree(self):
 		"""They disagree on every record whose party was renamed after it was created, and a
-		title built from either is correct. 24 live Opportunities were flagged for this."""
-		row = {"title": "Acme - Thing", "party_name": "Acme Holdings", "customer_name": "Something Else"}
+		name built from either is correct. 24 live Opportunities were flagged for this."""
+		row = {"custom_opportunity_name": "Acme - Thing", "party_name": "Acme Holdings",
+		       "customer_name": "Something Else"}
 		self.assertEqual(rules.party_names("Opportunity", row), ("Something Else", "Acme Holdings"))
 		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", row)))
-		other = dict(row, title="Something - Thing")
+		other = dict(row, custom_opportunity_name="Something - Thing")
 		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", other)))
 
 	def test_the_label_is_what_gets_displayed(self):
 		"""party_of feeds the form banner and the report's Party column. A row reading
 		`CRM-LEAD-2025-00184` for a party the Desk calls `Cactus & Tropicals` describes a
 		record nobody can find."""
-		row = {"title": "Cactus & Tropicals", "party_name": "CRM-LEAD-2025-00184",
+		row = {"custom_opportunity_name": "Cactus & Tropicals", "party_name": "CRM-LEAD-2025-00184",
 		       "customer_name": "Cactus & Tropicals"}
 		self.assertEqual(rules.party_of("Opportunity", row), "Cactus & Tropicals")
 
 	def test_an_opportunity_against_a_lead_is_not_compared_to_a_document_id(self):
-		"""party_name can be a Lead docname. Comparing a title against `CRM-LEAD-2025-00184`
+		"""party_name can be a Lead docname. Comparing a name against `CRM-LEAD-2025-00184`
 		is a mismatch by construction — it can never pass, however the record is named."""
 		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", {
-			"title": "Cactus & Tropicals", "party_name": "CRM-LEAD-2025-00184",
-			"customer_name": "Cactus & Tropicals",
+			"custom_opportunity_name": "Cactus & Tropicals - Grand Opening",
+			"party_name": "CRM-LEAD-2025-00184", "customer_name": "Cactus & Tropicals",
 		})))
 
 	def test_a_party_with_one_name_is_named_once(self):
 		"""The usual case. Deduplicated, so no message ever reads "X, also recorded as X"."""
-		row = {"title": "Ore - Refit", "party_name": "Ore Designs, Inc.",
+		row = {"custom_opportunity_name": "Ore - Refit", "party_name": "Ore Designs, Inc.",
 		       "customer_name": "Ore Designs, Inc."}
 		self.assertEqual(rules.party_names("Opportunity", row), ("Ore Designs, Inc.",))
+
+
+class OpportunityNameFieldTest(unittest.TestCase):
+	"""The check judges the field the form shows, and only that one.
+
+	The reported bug. Opportunity's form title is the Opportunity Name, set by a Property
+	Setter in June; ``title`` is ERPNext's own field, filled from customer_name in
+	``Opportunity.validate`` and shown nowhere. Reading ``title`` made the banner disagree with
+	the name directly above it on 346 records, which is the one thing an advisory cannot do
+	and keep being read.
+	"""
+
+	def test_it_reads_the_opportunity_name(self):
+		self.assertEqual(rules.DOCTYPES["Opportunity"]["field"], "custom_opportunity_name")
+		self.assertEqual(rules.DOCTYPES["Opportunity"]["label"], "Opportunity Name")
+
+	def test_erpnexts_title_is_never_read(self):
+		"""Whatever title holds, the verdict is the Opportunity Name's."""
+		row = next(r for r in OPPORTUNITIES if r["name"] == "CRM-OPP-2026-00173")
+		for title in ("Summit Vista", "", "Something Else Entirely", "A - B"):
+			self.assertEqual(codes_of(rules.check("Opportunity", dict(row, title=title))), set(), title)
+
+	def test_a_separator_in_title_does_not_excuse_the_name(self):
+		"""The inverse of the bug: the old read passed this record because the customer's own
+		name carries a separator."""
+		found = codes_of(rules.check("Opportunity", next(
+			r for r in OPPORTUNITIES if r["name"] == "CRM-OPP-2025-00076"
+		)))
+		self.assertIn(rules.SEPARATOR_MISSING, found)
+
+	def test_an_empty_opportunity_name_is_reported_even_when_title_is_set(self):
+		"""The field is mandatory, so this should not occur; if it does, the form title falls
+		back to the record ID and "Opportunity Name is empty" is the true finding."""
+		findings = rules.check("Opportunity", {
+			"title": "Summit Vista - Circulation Pump", "custom_opportunity_name": "",
+			"party_name": "Summit Vista",
+		})
+		self.assertEqual(codes_of(findings), {rules.VALUE_MISSING})
+		self.assertIn("Opportunity Name", findings[0]["message"])
+
+	def test_messages_name_the_field_people_see(self):
+		findings = rules.check("Opportunity", {
+			"custom_opportunity_name": "Summit Vista Circulation Pump", "party_name": "Summit Vista",
+		})
+		self.assertTrue(findings[0]["message"].startswith("Opportunity Name"), findings[0]["message"])
+
+	def test_the_checked_field_is_the_forms_title_field(self):
+		"""Pins the rule to the title_field Property Setter in the fixtures, so moving the form
+		title again fails here instead of on the form. Party-qualifier shapes only: an
+		Address's title field is its full address, and the check deliberately reads
+		address_title, which is what frappe builds the record name from."""
+		with open(ROOT / "fixtures" / "property_setter.json", encoding="utf-8") as fh:
+			title_fields = {
+				row["doc_type"]: row["value"]
+				for row in json.load(fh)
+				if row.get("property") == "title_field" and row.get("doctype_or_field") == "DocType"
+			}
+		self.assertIn("Opportunity", title_fields, "Opportunity's title_field Property Setter is gone")
+		for doctype, config in rules.DOCTYPES.items():
+			if config["shape"] != rules.SHAPE_PARTY_QUALIFIER or doctype not in title_fields:
+				continue
+			self.assertEqual(config["field"], title_fields[doctype], doctype)
+
+	def test_the_opportunity_name_is_a_shipped_custom_field(self):
+		"""The reader selects the column by name; it must exist wherever this app is installed."""
+		with open(ROOT / "fixtures" / "custom_field.json", encoding="utf-8") as fh:
+			shipped = {(row["dt"], row["fieldname"]) for row in json.load(fh)}
+		self.assertIn(("Opportunity", "custom_opportunity_name"), shipped)
+
+	def test_the_reader_selects_the_field_the_rules_check(self):
+		"""party_naming.FIELDS is the column list the form endpoint, the report and the KPI read.
+		It imports frappe, so it is read here as source rather than imported. A rule pointed at
+		a column the reader never selects sees None on every record and reports value_missing
+		on all of them."""
+		tree = ast.parse((ROOT / "crm_enhancements" / "party_naming.py").read_text(encoding="utf-8"))
+		fields = next(
+			ast.literal_eval(node.value)
+			for node in tree.body
+			if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "FIELDS" for t in node.targets)
+		)
+		for doctype, config in rules.DOCTYPES.items():
+			self.assertIn(config["field"], fields[doctype], doctype)
+		self.assertNotIn("title", fields["Opportunity"])
 
 
 class AuditTest(unittest.TestCase):

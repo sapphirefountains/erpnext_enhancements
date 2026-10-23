@@ -395,9 +395,10 @@ doctype_js = {
 		"project_enhancements/doctype/address/address.js",
 		# v1.339.0 -- the party-naming advisor, bound to Project, Opportunity and Address.
 		# Advisory only: a headline on refresh from a record-only check (no corpus read) and
-		# a 'Why?' button. There is deliberately no validate hook on any of the three -- 769
-		# of 823 Opportunity titles are a bare party name, so anything that blocked a save
-		# would fire constantly on records that predate the rule.
+		# a 'Why?' button. There is deliberately no validate hook on any of the three -- 487
+		# of 858 Opportunity Names carry no separator, so anything that blocked a save
+		# would fire constantly on records that predate the rule. (v1.736.1: the Opportunity
+		# check reads the Opportunity Name, custom_opportunity_name, not ERPNext's `title`.)
 		"public/js/party_naming_advisor.js",
 	],
 	# NOT listed here, on purpose: this app's OWN DocTypes' form scripts. Frappe loads
