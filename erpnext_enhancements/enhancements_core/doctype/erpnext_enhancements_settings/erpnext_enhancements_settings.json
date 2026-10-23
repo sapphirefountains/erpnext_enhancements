@@ -44,6 +44,7 @@
   "handoff_gate_enabled",
   "handoff_invoice_flow",
   "handoff_escalation_fallback",
+  "handoff_fallback_google_calendar",
   "handoff_attendees_section",
   "handoff_attendees",
   "handoff_report_recipients",
@@ -461,6 +462,13 @@
    "fieldtype": "Data",
    "label": "Escalation Fallback Recipient",
    "options": "Email"
+  },
+  {
+   "description": "Organizes the hand-off and launch meetings when the person who clicks Schedule has not connected their own Google Calendar. Pick a Google Calendar that is enabled, set to push, and authorized, and give it the Calendar ID \"primary\" (or the shared calendar's ID). Leave blank and those people's invites go by email instead.",
+   "fieldname": "handoff_fallback_google_calendar",
+   "fieldtype": "Link",
+   "label": "Hand-Off Fallback Google Calendar",
+   "options": "Google Calendar"
   },
   {
    "fieldname": "handoff_attendees_section",
@@ -1476,7 +1484,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 18:00:00.000000",
+ "modified": "2026-10-23 08:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",
