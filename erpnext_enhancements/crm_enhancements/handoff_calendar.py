@@ -32,10 +32,26 @@ Do not set ``sync_with_google_calendar`` on these Events: Frappe's ``on_update``
 hook would then push a second copy built from the participants grid.
 
 The Event does carry ``google_calendar``, ``google_calendar_id`` and
-``google_calendar_event_id``. Frappe's ``on_trash`` hook reads them, so deleting
-the Event in ERPNext also takes the Google event off the calendar. All three are
-always written together: that hook calls Google with ``calendarId`` straight off
-the row, and a blank one would stop the Event being deleted at all.
+``google_calendar_event_id``, always written together. Note what that hands to
+Frappe's ``on_trash`` hook, which (unlike its other two) ignores
+``sync_with_google_calendar``: **deleting** such an Event in the Desk marks the
+Google event cancelled *without* ``sendUpdates``, so guests get no notice, and
+if the organizer's token is revoked or Google Settings is off, the hook raises
+and the Event cannot be deleted. Use Skip, or set the Event to Cancelled, which
+withdraws the invite properly. Once an invite is cancelled, :func:`cancel` blanks
+those fields, so a later delete never calls Google at all.
+
+**Who may organize as "you".** ``Desk User`` holds ``if_owner`` write on Google
+Calendar, and ``if_owner`` checks the record's ``owner``, not its free ``user``
+field. So someone could make a record with ``user`` set to a colleague and
+authorize it with their own Google account. A record counts as a person's own
+calendar only when they both own it and are its ``user`` (:func:`own_calendar`).
+
+**A Google event is never left behind by a rollback.** It is created mid-request,
+and its invites go out at once. If anything after that rolls the request back,
+the ERPNext Event goes but the guests' invites would not, so each successful
+insert registers ``frappe.db.after_rollback`` to delete it again. A commit drops
+that callback.
 """
 
 import frappe
@@ -116,27 +132,43 @@ def _authorized(name):
 
 
 def own_calendar(user=None):
-	"""The user's own enabled, authorized Google Calendar, or ``None``."""
+	"""The user's own enabled, authorized Google Calendar, or ``None``.
+
+	Own means **owned by** the user as well as naming them in ``user``: the field
+	is free text to whoever owns the record (see the module docstring).
+
+	The shared fallback calendar is **never** anyone's own, whoever it names.
+	Frappe's form requires a User, and whoever sets the fallback up will likely
+	leave it as themselves. Counted as theirs, their invites would claim to come
+	from their calendar, and their Connect would re-authorize the shared record
+	with their personal Google sign-in.
+	"""
 	user = user or frappe.session.user
+	fallback = _fallback_name()
 	names = frappe.get_all(
 		"Google Calendar",
-		filters={"user": user, "enable": 1, "push_to_google_calendar": 1},
+		filters={"user": user, "owner": user, "enable": 1, "push_to_google_calendar": 1},
 		pluck="name",
 		order_by="modified desc",
 	)
 	for name in names:
-		if _authorized(name):
+		if name != fallback and _authorized(name):
 			return name
 	return None
 
 
-def fallback_calendar():
-	"""The shared organizer calendar from Settings, when it is usable."""
+def _fallback_name():
+	"""The Google Calendar named in Settings as the fallback, usable or not."""
 	try:
-		name = frappe.db.get_single_value("ERPNext Enhancements Settings", FALLBACK_SETTING)
+		return frappe.db.get_single_value("ERPNext Enhancements Settings", FALLBACK_SETTING) or None
 	except Exception:
 		# Before migrate adds the field, v16 raises for a field the meta lacks.
 		return None
+
+
+def fallback_calendar():
+	"""The shared organizer calendar from Settings, when it is usable."""
+	name = _fallback_name()
 	return name if _authorized(name) else None
 
 
@@ -333,6 +365,39 @@ def _insert(calendar, event, attendees, description):
 	return calendar_id, created
 
 
+def _undo_on_rollback(calendar, calendar_id, event_id):
+	"""Delete the Google event just created if this request's transaction rolls back.
+
+	The invite went out when Google created the event; the Event row recording it
+	is only committed when the request ends. A lock wait or deadlock after this
+	point would roll the row back and leave guests holding an invite nothing in
+	ERPNext knows about, and a retry would send a second one. ``after_rollback``
+	runs only on a full rollback (not a savepoint's) and is dropped on commit.
+
+	The callback calls Google only: the database has just been rolled back, so it
+	writes nothing, and it swallows every failure, because it runs inside
+	Frappe's own error handling.
+	"""
+	db = getattr(frappe, "db", None)
+	callbacks = getattr(db, "after_rollback", None)
+	if not event_id or callbacks is None:
+		return
+
+	def undo():
+		try:
+			service, account_calendar_id = _google_service(calendar)
+			_call(
+				_("Withdrawing the Google event after a rollback"),
+				lambda: service.events()
+				.delete(calendarId=calendar_id or account_calendar_id, eventId=event_id, sendUpdates="all")
+				.execute(),
+			)
+		except Exception:
+			pass
+
+	callbacks.add(undo)
+
+
 def _patch(event, attendees, description):
 	"""Move the existing Google event and update its guests, on its own organizer's calendar."""
 	service, account_calendar_id = _google_service(_field(event, "google_calendar"))
@@ -401,6 +466,7 @@ def deliver(event, attendees, description, user=None):
 		except GoogleCalendarError as failure:
 			warnings.append(_report(_("Could not create the Google invite"), event.name, calendar, failure))
 			continue
+		_undo_on_rollback(calendar, calendar_id, google_event.get("id"))
 		_store(event.name, calendar, calendar_id, google_event)
 		outcome = _outcome(path, calendar, google_event, warnings)
 		outcome["replaced"] = had_google
@@ -478,6 +544,14 @@ def cancel(event):
 					failure,
 				),
 			}
+	# Off Google now, so nothing about this Event should call Google again: not a
+	# re-schedule, and not Frappe's on_trash hook, which would fail on a revoked
+	# token and make the Event impossible to delete.
+	cleared = {"google_calendar": "", "google_calendar_id": "", "google_calendar_event_id": ""}
+	frappe.db.set_value("Event", event.name, cleared, update_modified=False)
+	# And on the document in hand, so a save that follows does not write them back.
+	for fieldname, value in cleared.items():
+		setattr(event, fieldname, value)
 	_forget_guests(event.name)
 	return {"google": True, "cancelled": True, "warning": None}
 
@@ -660,8 +734,8 @@ def connect_google_calendar():
 	A record this creates is push-only. ``pull_from_google_calendar`` is **0**, so
 	nobody's personal calendar is imported into ERPNext, and ``google_calendar_id``
 	is ``primary``, so invites come from the person's own calendar. An existing
-	record of theirs is reused as it is, apart from being switched on and given
-	``primary`` when its Calendar ID is blank.
+	record they own is reused, switched on, with pull turned off and ``primary``
+	when its Calendar ID is blank.
 
 	Permission: v16 gives ``Desk User``, which every System User holds, ``if_owner``
 	create and write on Google Calendar, which is exactly "your own". Frappe's
@@ -677,28 +751,45 @@ def connect_google_calendar():
 			)
 		)
 
-	name = frappe.db.get_value("Google Calendar", {"user": user}, "name")
+	# Only a record the user owns: one somebody else made naming them is not theirs.
+	# And never the shared fallback: re-authorizing it here would put this person's
+	# Google sign-in on it, and the fallback would quietly organize as them.
+	fallback = _fallback_name()
+	candidates = frappe.get_all(
+		"Google Calendar",
+		filters={"user": user, "owner": user},
+		pluck="name",
+		order_by="modified desc",
+	)
+	name = next((candidate for candidate in candidates if candidate != fallback), None)
 	if name:
 		doc = frappe.get_doc("Google Calendar", name)
-		# A blank Calendar ID would make Frappe create a secondary calendar on the
-		# first call, and that calendar, not the person, would organize the meeting.
+		# Pull stays off: a re-enabled old record with pull on would import the
+		# person's whole calendar every hour. A blank Calendar ID would make Frappe
+		# create a secondary calendar on the first call, and that calendar, not the
+		# person, would organize the meeting.
 		if (
 			not doc.get("enable")
 			or not doc.get("push_to_google_calendar")
+			or doc.get("pull_from_google_calendar")
 			or not doc.get("google_calendar_id")
 		):
 			doc.enable = 1
 			doc.push_to_google_calendar = 1
+			doc.pull_from_google_calendar = 0
 			doc.google_calendar_id = doc.get("google_calendar_id") or "primary"
 			doc.save()
 	else:
+		# calendar_name is the record's (unique) name. Frappe only uses it to title
+		# a calendar it creates, and with google_calendar_id set it creates none. The
+		# address is the natural choice; a suffix when a record already has it.
+		calendar_name = user
+		if frappe.db.exists("Google Calendar", calendar_name):
+			calendar_name = f"{user} ({frappe.generate_hash(length=6)})"
 		doc = frappe.get_doc(
 			{
 				"doctype": "Google Calendar",
-				# calendar_name is the record's (unique) name. The address is unique
-				# per user; Frappe only uses the name to title a calendar it creates,
-				# and with google_calendar_id set it creates none.
-				"calendar_name": user,
+				"calendar_name": calendar_name,
 				"user": user,
 				"enable": 1,
 				"pull_from_google_calendar": 0,

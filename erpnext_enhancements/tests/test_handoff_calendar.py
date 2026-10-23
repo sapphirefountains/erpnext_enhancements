@@ -119,6 +119,7 @@ class StubEvent:
 	def insert(self, ignore_permissions=False):
 		STATE["event_seq"] += 1
 		self.name = f"EV-{STATE['event_seq']}"
+		self.__dict__["_f"].setdefault("owner", sys.modules["frappe"].session.user)
 		STATE["events"][self.name] = copy.deepcopy(self.__dict__["_f"])
 		STATE["inserted"].append(self.name)
 		return self
@@ -284,7 +285,7 @@ def _install_stubs():
 
 			def insert(ignore_permissions=False):
 				doc.name = record["calendar_name"]
-				STATE["gcals"][doc.name] = dict(record)
+				STATE["gcals"][doc.name] = dict(record, owner=frappe.session.user)
 				STATE["gcal_inserted"].append(doc.name)
 				return doc
 
@@ -365,7 +366,8 @@ def _install_stubs():
 	db.set_value = set_value
 	db.get_single_value = lambda doctype, field: STATE["singles"].get(field)
 	db.has_column = lambda doctype, column: True
-	db.exists = lambda *a, **k: False
+	db.exists = lambda doctype, name=None, *a, **k: doctype == "Google Calendar" and name in STATE["gcals"]
+	db.after_rollback = types.SimpleNamespace(add=lambda fn: STATE["after_rollback"].append(fn))
 	frappe.db = db
 
 	cache = types.SimpleNamespace()
@@ -477,6 +479,7 @@ def _reset():
 		saved=[],
 		gcal_inserted=[],
 		authorized=[],
+		after_rollback=[],
 		event_seq=0,
 		google_seq=0,
 	)
@@ -484,9 +487,13 @@ def _reset():
 	sys.modules["frappe"].flags.mute_messages = False
 
 
-def _calendar(name, user, owner_email=None, authorized=True, enable=1, push=1):
+def _calendar(name, user, owner_email=None, authorized=True, enable=1, push=1, record_owner=None):
+	"""A Google Calendar record. ``owner_email`` is the Google account behind it;
+	``record_owner`` is who owns the ERPNext record (by default its ``user``)."""
 	STATE["gcals"][name] = {
 		"user": user,
+		"owner": record_owner or user,
+		"pull_from_google_calendar": 0,
 		"enable": enable,
 		"push_to_google_calendar": push,
 		"refresh_token": "*****" if authorized else None,
@@ -946,6 +953,155 @@ class TestGuestsAndConnect(unittest.TestCase):
 		self.assertEqual(handoff_calendar.calendar_status()["calendar_path"], "fallback_calendar")
 		_calendar("ae@example.com", "ae@example.com")
 		self.assertEqual(handoff_calendar.calendar_status()["calendar_path"], "own_calendar")
+
+
+class TestReviewFixes(unittest.TestCase):
+	"""The 2026-10-23 review of #1350."""
+
+	def setUp(self):
+		_reset()
+
+	def test_a_record_naming_you_but_owned_by_someone_else_is_not_your_calendar(self):
+		# Desk User's if_owner write lets anyone set `user` to a colleague and
+		# authorize the record with their own Google account.
+		_calendar(
+			"hijack", "ae@example.com", owner_email="mallory@gmail.com", record_owner="mallory@example.com"
+		)
+		self.assertIsNone(handoff_calendar.own_calendar("ae@example.com"))
+		result = _book(_opportunity())
+		self.assertEqual(result["calendar_path"], "email")
+		self.assertEqual(_calls("insert"), [])
+
+	def test_connect_ignores_a_record_someone_else_owns(self):
+		_calendar("ae@example.com", "ae@example.com", record_owner="mallory@example.com")
+		handoff_calendar.connect_google_calendar()
+		(created,) = STATE["gcal_inserted"]
+		self.assertNotEqual(created, "ae@example.com")
+		self.assertEqual(STATE["gcals"][created]["owner"], "ae@example.com")
+		self.assertEqual(STATE["gcals"][created]["user"], "ae@example.com")
+		self.assertEqual(STATE["gcals"]["ae@example.com"]["owner"], "mallory@example.com")
+
+	def test_a_rollback_withdraws_the_google_event_just_created(self):
+		_calendar("ae@example.com", "ae@example.com")
+		_book(_opportunity())
+		self.assertEqual(len(STATE["after_rollback"]), 1)
+		self.assertEqual(_calls("delete"), [])
+		STATE["after_rollback"][0]()
+		delete = _calls("delete")[0][2]
+		self.assertEqual((delete["eventId"], delete["sendUpdates"]), ("g-1", "all"))
+
+	def test_the_rollback_undo_never_raises(self):
+		_calendar("ae@example.com", "ae@example.com")
+		_book(_opportunity())
+		STATE["fail_connect"]["ae@example.com"] = RefreshError(SECRET)
+		STATE["after_rollback"][0]()
+
+	def test_a_moved_event_registers_no_undo(self):
+		_calendar("ae@example.com", "ae@example.com")
+		name = _opportunity()
+		_book(name)
+		_book(name, starts_on="2026-09-26 10:00:00")
+		self.assertEqual(len(STATE["after_rollback"]), 1)
+
+	def test_the_opportunity_is_recorded_before_google_is_called(self):
+		_calendar("ae@example.com", "ae@example.com")
+		name = _opportunity()
+		seen = {}
+		real = handoff_calendar.deliver
+
+		def deliver(event, *args, **kwargs):
+			doc = STATE["docs"][name]
+			seen["link"] = doc.fields.get("custom_handoff_event")
+			seen["comments"] = list(doc.comments)
+			return real(event, *args, **kwargs)
+
+		with mock.patch.object(handoff_calendar, "deliver", side_effect=deliver):
+			result = _book(name)
+		self.assertEqual(seen["link"], result["event"])
+		self.assertEqual(len(seen["comments"]), 1)
+
+	def test_a_cancelled_invite_leaves_no_google_ids_for_on_trash(self):
+		_calendar("ae@example.com", "ae@example.com")
+		name = _opportunity()
+		booked = _book(name)
+		handoff.skip_handoff(name, "No meeting needed")
+		row = STATE["events"][booked["event"]]
+		self.assertEqual(row["status"], "Cancelled")
+		self.assertEqual(
+			(row["google_calendar"], row["google_calendar_id"], row["google_calendar_event_id"]), ("", "", "")
+		)
+
+	def test_connect_turns_pull_off_on_a_reused_record(self):
+		_calendar("ae@example.com", "ae@example.com", enable=0)
+		STATE["gcals"]["ae@example.com"]["pull_from_google_calendar"] = 1
+		handoff_calendar.connect_google_calendar()
+		record = STATE["gcals"]["ae@example.com"]
+		self.assertEqual((record["enable"], record["pull_from_google_calendar"]), (1, 0))
+
+	def test_connect_turns_pull_off_even_on_an_enabled_record(self):
+		_calendar("ae@example.com", "ae@example.com")
+		STATE["gcals"]["ae@example.com"]["pull_from_google_calendar"] = 1
+		handoff_calendar.connect_google_calendar()
+		self.assertEqual(STATE["gcals"]["ae@example.com"]["pull_from_google_calendar"], 0)
+
+	def test_the_launch_meeting_is_linked_and_found_after_a_rename(self):
+		_calendar("ae@example.com", "ae@example.com")
+		project = _project()
+		with mock.patch.object(handoff, "email_style", FakeStyle):
+			first = handoff.schedule_project_meeting(
+				project, starts_on="2026-09-25 13:30:00", attendees=GUESTS
+			)
+			self.assertEqual(STATE["docs"][project].fields["custom_launch_event"], first["event"])
+			STATE["events"][first["event"]]["subject"] = "Kickoff"
+			second = handoff.schedule_project_meeting(
+				project, starts_on="2026-09-28 09:00:00", attendees=GUESTS
+			)
+		self.assertEqual(second["event"], first["event"])
+		self.assertEqual(STATE["inserted"], [first["event"]])
+		self.assertEqual(len(_calls("insert")), 1)
+
+	def test_the_email_organizer_stays_whoever_first_booked(self):
+		name = _opportunity()
+		_book(name)
+		sys.modules["frappe"].session.user = "nik@example.com"
+		STATE["sent"].clear()
+		_book(name, starts_on="2026-09-26 10:00:00")
+		ics = STATE["sent"][0]["attachments"][0]["fcontent"].replace("\r\n ", "")
+		self.assertIn("ORGANIZER:mailto:ae@example.com", ics)
+		self.assertNotIn("nik@example.com", ics.split("ORGANIZER")[1].split("\r\n")[0])
+
+
+class TestFallbackIsNobodysOwn(unittest.TestCase):
+	"""Whoever set up the shared fallback record is very likely its User."""
+
+	def setUp(self):
+		_reset()
+		_calendar("Hand-offs", "ae@example.com", owner_email="handoffs@example.com")
+		STATE["singles"]["handoff_fallback_google_calendar"] = "Hand-offs"
+
+	def test_the_fallback_is_not_its_users_own_calendar(self):
+		self.assertIsNone(handoff_calendar.own_calendar("ae@example.com"))
+		self.assertEqual(handoff_calendar.calendar_status()["calendar_path"], "fallback_calendar")
+		self.assertEqual(_book(_opportunity())["calendar_path"], "fallback_calendar")
+
+	def test_connect_makes_a_new_record_and_leaves_the_fallback_alone(self):
+		before = dict(STATE["gcals"]["Hand-offs"])
+		result = handoff_calendar.connect_google_calendar()
+		self.assertEqual(STATE["gcal_inserted"], ["ae@example.com"])
+		self.assertEqual(result["calendar"], "ae@example.com")
+		self.assertEqual(STATE["authorized"], [("ae@example.com", True)])
+		self.assertEqual(STATE["gcals"]["Hand-offs"], before)
+
+	def test_connect_suffixes_the_name_when_the_address_is_taken(self):
+		# The fallback record itself named after the address.
+		STATE["gcals"]["ae@example.com"] = STATE["gcals"].pop("Hand-offs")
+		STATE["owners"]["ae@example.com"] = "handoffs@example.com"
+		STATE["singles"]["handoff_fallback_google_calendar"] = "ae@example.com"
+		before = dict(STATE["gcals"]["ae@example.com"])
+		result = handoff_calendar.connect_google_calendar()
+		self.assertNotEqual(result["calendar"], "ae@example.com")
+		self.assertEqual(STATE["authorized"], [(result["calendar"], True)])
+		self.assertEqual(STATE["gcals"]["ae@example.com"], before)
 
 
 if __name__ == "__main__":

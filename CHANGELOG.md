@@ -13,8 +13,8 @@ The Closed-Won hand-off meeting and the project launch meeting are now real Goog
 shared event: every guest can see the others and RSVP, it has a Google Meet link, and Google sends the invites. Nik,
 2026-10-23: the old invite "doesn't show up as a typical event. It is individually on our calendars and you can't see
 who the other guests are". It was an ERPNext Event plus an email with a `METHOD:PUBLISH` `.ics` attached, which is a
-file to add to your own calendar, so each person got a private copy. One new Settings field, one Event hook, no patch,
-and existing Events are untouched.
+file to add to your own calendar, so each person got a private copy. One new Settings field, one new Custom Field
+(`Project.custom_launch_event`), one Event hook, no patch, and existing Events are untouched.
 
 ### Added
 - **Who organizes the meeting, in order** (`crm_enhancements/handoff_calendar.py`, Nik's choice): first the person
@@ -29,9 +29,28 @@ and existing Events are untouched.
   (`connect_google_calendar`). It creates your Google Calendar record and starts Frappe's own authorize flow. The
   record is always for the session user. It has `pull_from_google_calendar` = 0, so nobody's personal events are
   imported into ERPNext, `push_to_google_calendar` = 1, and the Calendar ID `primary`, so invites come from your own
-  calendar. If you already have a record, it is reused. No permission change was needed: v16 gives the automatic
+  calendar. A record you already own is reused, switched on, with pull turned **off** (an old record with pull on
+  would import your whole calendar every hour) and `primary` filled in when its Calendar ID is blank (or Frappe
+  would create a secondary calendar to organize from). No permission change was needed: v16 gives the automatic
   `Desk User` role (every System User has it) `if_owner` create and write on Google Calendar. Checked on prod: there
   is no Custom DocPerm on it.
+- **A calendar counts as yours only if you own it.** `if_owner` checks the record's `owner`, but the record's `user`
+  field is free text to whoever owns it. So anyone could create a record with `user` set to a colleague, authorize
+  it with their own Google account, and organize every meeting that colleague schedules, seeing every guest and
+  RSVP. `own_calendar` and `connect_google_calendar` now require `owner` = `user` = the session user. Connect makes a
+  fresh record (with a suffixed name, if the address is taken) rather than reuse one somebody else owns.
+- **The shared fallback calendar is never anyone's own.** Frappe's Google Calendar form requires a User, and whoever
+  sets the fallback up will likely leave it as themselves. Counted as theirs, their invites would say "from your
+  calendar" while coming from the shared account, and their Connect would re-authorize the fallback record with
+  their personal Google sign-in, so the fallback would quietly start organizing as them. `own_calendar` and
+  `connect_google_calendar` skip the record named in `handoff_fallback_google_calendar`; that person's Connect makes
+  a record of their own instead.
+- **`Project.custom_launch_event`** (Link → Event, read-only, no copy; a new Custom Field in
+  `fixtures/custom_field.json`), the twin of `Opportunity.custom_handoff_event`. Booking the launch meeting sets it,
+  and re-scheduling and the step card follow it, so renaming the Event no longer makes the next re-schedule create a
+  second one. A Project booked before the field existed has no link; for those the old lookup (the newest open Event
+  referencing the Project with the launch meeting's subject) is the fallback. No backfill. Writes are guarded with
+  `has_column`, so a site before migrate does not raise.
 - **The step card shows the meeting**: the Meet link, and a "Guests & RSVPs" toggle that lists each guest's answer
   and links to the event in Google Calendar. This is on the Opportunity's step 2 and the Project's step 7. The
   answers are read from Google only when someone clicks, and then kept for 2 minutes (`meeting_guests`). A form load
@@ -55,17 +74,29 @@ and existing Events are untouched.
   `custom_handoff_event`, which left the first invite on everyone's calendar. Summit Vista has two, EV00454 and
   EV00455, both for 2026-09-11 08:45; they are left as they are. Now the open Event is updated and its Google event
   is patched with `sendUpdates="all"`. The guest list is merged, so guests who are still invited keep their RSVP,
-  new guests are added, and removed guests are told by Google. A Project has no field pointing at its launch Event,
-  so `_launch_event` finds the newest open Event that references the Project and has the launch meeting's subject.
-  If the original organizer's calendar can no longer be reached, a new invite goes out from the next organizer, and
+  new guests are added, and removed guests are told by Google. The launch meeting is found through
+  `Project.custom_launch_event` (above). If the original organizer's calendar can no longer be reached, a new invite goes out from the next organizer, and
   the response says the old one may still be on guests' calendars. An Event whose earlier invite went by email, and
   that now moves onto Google, gets that email invite withdrawn with a `METHOD:CANCEL`. An Event that stays on email
   sends the `METHOD:CANCEL` to anyone dropped from the list. A Google event that nothing could move or replace (every
   organizer failing) is named in the warning, because guests then have it at the old time and the email at the new.
-  `connect_google_calendar` gives a reused record the Calendar ID `primary` when it is blank; Frappe would otherwise
-  create a secondary calendar, and that calendar would organize the meetings.
-- **The email fallback is a `METHOD:REQUEST` invite.** `travel_management/ics.py` can now write `ORGANIZER` (the
-  person who clicked) and `ATTENDEE` lines. An event without them is written exactly as before, so the travel
+- **Google is the last write, and a rollback takes its invite back.** The source document's link and comment are
+  now written before Google is called (`_book_meeting(record=...)`), so as little as possible can fail after the
+  invites go out. Each successful insert also registers `frappe.db.after_rollback` to delete that Google event with
+  `sendUpdates="all"`. Until then, a lock wait or deadlock after the insert rolled the Event back while guests kept
+  the invite, and a retry sent a second one. v16 runs `after_rollback` only on a full rollback, not a savepoint's,
+  and drops it on commit. The callback only calls Google and swallows every failure, because it runs inside Frappe's
+  error handling after the database has been rolled back.
+- **A cancelled invite leaves the Event with no Google ids.** After Skip, or a Desk cancel, deletes the Google event,
+  the Event's `google_calendar`, `google_calendar_id` and `google_calendar_event_id` are blanked. Frappe's own
+  `on_trash` hook ignores `sync_with_google_calendar` and calls Google for any Event with those fields set: it marks
+  the event cancelled *without* `sendUpdates`, so guests get no notice, and it raises if the organizer's token is
+  revoked or Google Settings is off, so the Event could not be deleted. **To call off a meeting, use Skip or set the
+  Event to Cancelled; deleting a still-booked Event withdraws it without telling anyone.**
+- **The email fallback is a `METHOD:REQUEST` invite.** `travel_management/ics.py` can now write `ORGANIZER` and
+  `ATTENDEE` lines. ORGANIZER is whoever first booked the meeting (the Event's owner), not whoever clicks: every
+  invite for one meeting shares a UID, and a re-schedule or Skip that named a different organizer under it is an
+  update from a stranger, which Outlook may ignore. An event without them is written exactly as before, so the travel
   calendars are unchanged. The UID is stable and `SEQUENCE` increases, so a re-scheduled invite replaces the old one.
   The `.ics` part is sent as `text/calendar; method=REQUEST`, because Outlook uses that header to decide whether an
   attachment is an invite. Replies go to the organizer by email; nothing records them, which is why Google is
@@ -94,20 +125,39 @@ and existing Events are untouched.
   `https://erp.sapphirefountains.com?cmd=frappe.integrations.doctype.google_calendar.google_calendar.google_callback`.
   v16's `authorize_access` builds the redirect as the site root plus `?cmd=`, not `/api/method/`. Until it is added,
   Google answers "redirect_uri_mismatch", and the dialog's Connect prompt tells the user to send this URI to a System
-  Manager. Also enable the **Google Calendar API** on that project. The flow requests the
-  `https://www.googleapis.com/auth/calendar` scope; add it to the consent screen if the app is not Internal.
+  Manager. Copy the exact string the Connect prompt shows: v16's `get_url` appends `:port` when the supervisor
+  restart flags are unset. Also enable the **Google Calendar API** on that project. The flow requests the
+  `https://www.googleapis.com/auth/calendar` scope; add it to the consent screen if the app is not Internal. If the
+  consent screen is **External and in "Testing"**, Google expires refresh tokens after 7 days: publish it, or make it
+  Internal, or everyone will have to reconnect every week.
 - For the fallback, create a Google Calendar record for the shared organizer account (Calendar ID `primary`, Push to
   Google Calendar on, Pull off), click Authorize while signed in to Google as that account, and pick the record in
   **ERPNext Enhancements Settings → Hand-Off Fallback Google Calendar**. Until then, anyone who has not connected
   their own calendar sends the email invite.
+- Set the fallback record's **User** to someone who will never click Connect: ideally Administrator, or the shared
+  account's own ERPNext user. The code no longer treats the fallback as anyone's own, but the record's User is still
+  what Frappe shows.
+
+### Known limits
+- **Editing an Event's time in the Desk does not move the Google event.** Only Re-schedule does. The Desk edit
+  changes ERPNext's copy alone.
+- **Ticking "Sync with Google Calendar" on one of these Events hands it to Frappe's own sync**, which builds the
+  guest list from the participants grid and so drops group addresses such as `production@`.
+- **Frappe's `google_callback` keeps the calendar being connected in one shared cache key**
+  (`frappe.cache.hset("google_calendar", ...)`, upstream), so two people connecting at the same moment can cross
+  over. Connect one person at a time.
 
 ### Tests
-- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 41 tests, with a fake Google service.
+- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 55 tests, with a fake Google service.
   It covers organizer order and skipping unusable calendars; group addresses as guests; the Meet request and
   `sendUpdates`; no email when Google sent the invite; re-schedule patching the same event and adding no second
   Event, keeping guests' RSVPs; the launch meeting moving the same way; Skip and a Desk cancel deleting the Google
   event; a revoked token falling back, logged with keywords and no secret, and leaving no queued modal; the
-  `METHOD:REQUEST` email; the past-time refusal; the cached guest list; and the connect endpoint.
+  `METHOD:REQUEST` email; the past-time refusal; the cached guest list; and the connect endpoint. Since the review:
+  a record naming you but owned by someone else is not your calendar; a rollback withdraws the Google event; the
+  source document is written before Google; a cancel blanks the Google ids; pull is turned off on reuse; the launch
+  Event is found by its link after a rename; the email ORGANIZER stays whoever first booked; and the fallback record
+  is never its User's own calendar, nor re-authorized by that person's Connect.
 
 ## [1.732.0] - 2026-10-23
 

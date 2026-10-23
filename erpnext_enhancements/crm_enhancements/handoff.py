@@ -377,8 +377,8 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 	first with a doctype argument: the permission check differs (Project write,
 	not Opportunity write), and collapsing them would make that easy to get wrong.
 
-	A Project has no field pointing at its launch Event, so the open one is found
-	by reference and subject (:func:`_launch_event`). Booking again moves it.
+	The booked Event is linked from ``Project.custom_launch_event`` (v1.733.0),
+	and booking again moves it (:func:`_launch_event`).
 	"""
 	doc = frappe.get_doc("Project", project)
 	if not doc.has_permission("write"):
@@ -398,8 +398,20 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 	link = get_url_to_form("Project", doc.name)
 	subject = _("Project Launch Meeting — {0}").format(label)
 
+	def record(event, rescheduled):
+		if _has_launch_event_field():
+			doc.db_set(LAUNCH_EVENT_FIELD, event.name, update_modified=False)
+		doc.add_comment(
+			"Comment",
+			(
+				_("Project launch meeting moved to {0} with {1}.")
+				if rescheduled
+				else _("Project launch meeting scheduled for {0} with {1}.")
+			).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
+		)
+
 	booked = _book_meeting(
-		existing=_launch_event(doc.name),
+		existing=_launch_event(doc.name, doc.get(LAUNCH_EVENT_FIELD)),
 		subject=subject,
 		starts_on=start,
 		ends_on=end,
@@ -409,14 +421,7 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 		purpose=_("Project launch for {0}.").format(label),
 		reference_doctype="Project",
 		reference_docname=doc.name,
-	)
-	doc.add_comment(
-		"Comment",
-		(
-			_("Project launch meeting moved to {0} with {1}.")
-			if booked["rescheduled"]
-			else _("Project launch meeting scheduled for {0} with {1}.")
-		).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
+		record=record,
 	)
 	return _booking_response(booked, start, addresses, attendees)
 
@@ -444,7 +449,12 @@ def project_handoff_context(project):
 		"invoice_flow": flow or "Manual Billing Email",
 		# The booked launch meeting, for step 7's card: when, and its Meet link.
 		# No Google call; the guest list is fetched when someone asks for it.
-		"launch_meeting": handoff_calendar.meeting_summary(_launch_event(project)),
+		"launch_meeting": handoff_calendar.meeting_summary(
+			_launch_event(
+				project,
+				frappe.db.get_value("Project", project, LAUNCH_EVENT_FIELD) if _has_launch_event_field() else None,
+			)
+		),
 	}
 
 
@@ -786,9 +796,14 @@ def _invite_uid(event):
 	return f"{frappe.scrub(event.name)}@{frappe.local.site}"
 
 
-def _organizer_address():
-	"""Who an email invite says it is from: the person who clicked."""
-	user = frappe.session.user
+def _organizer_address(event):
+	"""Who an email invite says it is from: whoever first booked the meeting.
+
+	The Event's owner, not whoever clicks now. Every invite for one meeting shares
+	a UID, and a re-schedule or Skip that named a different ORGANIZER under it is
+	an update from a stranger, which Outlook may ignore.
+	"""
+	user = getattr(event, "owner", None) or frappe.session.user
 	try:
 		return frappe.db.get_value("User", user, "email") or user
 	except Exception:
@@ -833,7 +848,7 @@ def _send_invite(event, attendees, subject, label, link, purpose=None, method="R
 					"url": link,
 					# Seconds since the epoch: only ever grows, and needs nothing stored.
 					"sequence": int(get_datetime(now_datetime()).timestamp()),
-					"organizer": _organizer_address(),
+					"organizer": _organizer_address(event),
 					"attendees": list(attendees),
 					"status": "CANCELLED" if cancelling else None,
 				}
@@ -886,15 +901,33 @@ def _open_event(name):
 	return name
 
 
-def _launch_event(project):
+#: Project's link to its launch-meeting Event (v1.733.0), the twin of
+#: ``Opportunity.custom_handoff_event``. A Custom Field in fixtures/custom_field.json.
+LAUNCH_EVENT_FIELD = "custom_launch_event"
+
+
+def _has_launch_event_field():
+	"""Whether the Custom Field has landed. ``doc_events`` and the bench-free stubs
+	run before migrate adds it, and a ``db_set`` on a missing column raises."""
+	try:
+		return bool(frappe.db.has_column("Project", LAUNCH_EVENT_FIELD))
+	except Exception:
+		return False
+
+
+def _launch_event(project, linked=None):
 	"""The Project's open launch-meeting Event, or ``None``.
 
-	There is no field on Project for it, and adding one would mean a schema change
-	for a lookup this narrow: the launch Event is the newest open Event referencing
-	the Project whose subject is the launch meeting's own.
+	``linked`` is ``Project.custom_launch_event``, which every booking since
+	v1.733.0 sets, and wins while it is open. A Project booked before the field
+	existed has no link, so the fallback is the newest open Event referencing the
+	Project whose subject is the launch meeting's own. That fallback is fragile (a
+	renamed Event is missed), which is why the link exists.
 	"""
 	if not project:
 		return None
+	if linked:
+		return _open_event(linked)
 	prefix = _("Project Launch Meeting — {0}").format("")
 	names = frappe.get_all(
 		"Event",
@@ -942,6 +975,7 @@ def _book_meeting(
 	purpose,
 	reference_doctype,
 	reference_docname,
+	record=None,
 ):
 	"""Create or move the meeting's Event, then invite: Google first, email only if not.
 
@@ -949,6 +983,11 @@ def _book_meeting(
 	goes out per booking. When Google sends it, no email does. When an Event whose
 	earlier invite went by email moves onto Google, that email invite is withdrawn
 	with a CANCEL, so nobody keeps both copies.
+
+	``record(event, rescheduled)`` writes the source document's side (its link to
+	the Event, its comment). It runs **before** Google is called, so the invite is
+	the last thing to happen and the fewest writes can fail after it; a rollback
+	after it is covered by ``handoff_calendar._undo_on_rollback``.
 	"""
 	description = _meeting_description(label, link, attendees, purpose=purpose)
 	emailed_before = []
@@ -968,6 +1007,8 @@ def _book_meeting(
 			reference_docname=reference_docname,
 		)
 
+	if record is not None:
+		record(event, bool(existing))
 	delivery = handoff_calendar.deliver(event, attendees, _calendar_text(purpose, link))
 	if delivery["calendar_path"] == handoff_calendar.PATH_EMAIL:
 		invited = _send_invite(event, attendees, subject, label, link, purpose=purpose)
@@ -1081,6 +1122,17 @@ def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, durati
 	link = get_url_to_form("Opportunity", doc.name)
 	subject = _("Hand-Off Meeting — {0}").format(label)
 
+	def record(event, rescheduled):
+		doc.db_set("custom_handoff_event", event.name, update_modified=False)
+		doc.add_comment(
+			"Comment",
+			(
+				_("Hand-off meeting moved to {0} with {1}.")
+				if rescheduled
+				else _("Hand-off meeting scheduled for {0} with {1}.")
+			).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
+		)
+
 	booked = _book_meeting(
 		existing=_open_event(doc.get("custom_handoff_event")),
 		subject=subject,
@@ -1092,16 +1144,7 @@ def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, durati
 		purpose=_("Closed-Won hand-off for {0}.").format(label),
 		reference_doctype="Opportunity",
 		reference_docname=doc.name,
-	)
-
-	doc.db_set("custom_handoff_event", booked["event"].name, update_modified=False)
-	doc.add_comment(
-		"Comment",
-		(
-			_("Hand-off meeting moved to {0} with {1}.")
-			if booked["rescheduled"]
-			else _("Hand-off meeting scheduled for {0} with {1}.")
-		).format(frappe.utils.format_datetime(start), ", ".join(addresses)),
+		record=record,
 	)
 	return _booking_response(booked, start, addresses, attendees)
 
