@@ -1485,3 +1485,8 @@ erpnext_enhancements.patches.disable_auto_material_requests
 # for it (a new Single field's default never reaches the existing row). Never over a stored value; a never-saved Single
 # is left alone. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_reorder_alert_role
+# Dock (v1.734.0, Nik 2026-10-23): the site's layer of ERPNext's dock becomes Buying, Stock, Projects, Opportunities
+# (the stock Kanban) and CRM, every other entry, the rows this app now mounts on ERPNext's rail included, named hidden.
+# Overwrites Nik's hand-made layer of that morning once, on purpose (setup/dock_profiles.py keeps a layer a person saved
+# last). After model sync, which imports dock/erpnext_enhancements. Cannot raise, safe twice.
+erpnext_enhancements.patches.set_dock_site_layer

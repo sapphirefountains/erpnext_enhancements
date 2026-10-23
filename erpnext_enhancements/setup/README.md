@@ -27,6 +27,7 @@ every time, so they both *create* what's missing and *correct* drift.
 | `custom_fields.py` | `after_migrate` | Provisions the "Contacts & Addresses" tab — Primary Contact link, directory widgets, primary address + location map — on the party doctypes, plus a Comments tab for Master Project (every other doctype's is fixture-owned) |
 | `supplier_groups.py` | `after_migrate` | Relabels `supplier_group` to "Primary Supplier Group" and adds the additional-groups Table MultiSelect plus the denormalized text fields `supplier_query.sync_supplier_groups` populates |
 | `workspace_tweaks.py` | `after_migrate` | Re-asserts overrides on core (erpnext-owned) workspaces and sidebars. Hides the "Project" link in the Projects sidebar: drops the row from the `Workspace Sidebar` before frappe 16.50, and from 16.50 sets `hidden` on ERPNext's own `Sidebar Item` row (a `Custom Sidebar` layer would reorder the sidebar; see the function's docstring). Since v1.583.1 it also **adds** the Project Planner (after Task) and the Crew Utilization report (after the module's other reports) to the Projects sidebar (`add_core_sidebar_items`): ERPNext's own rows are inserted at the right `idx` with `db_insert`, a link already there is left alone even if hidden, and the rows come back after an ERPNext re-import |
+| `dock_profiles.py` | `after_migrate`, User `on_update` | The Dock rail per job (v1.734.0). Writes the site's layer of ERPNext's dock (`SITE_DEFAULT`: Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer from their dock profile: `User.custom_dock_profile` when set, else the first `BY_ROLE_PROFILE` match. Only a layer that is missing or still the app's (last written by Administrator) is written, so one a person arranged in Manage Dock is kept; choosing a Dock Profile on the User form is the one override. See "The Dock per job" below |
 | `desktop_icon_map.py` | — | Data only: the Desk home-grid tile for each module (slug, glyph, colour). Importless on purpose — the generator and the bench-free test read it without a frappe stub |
 | `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, creates the tile for a workspace core never gave one, appends the `ADD_TO_SAVED_LAYOUTS` tiles to every saved home-screen layout that lacks them, and shows each `DISPLAY_LABELS` tile under its display name (Sapphire Maintenance as **Maintenance**, v1.592.0: label, legacy Workspace Sidebar title and saved layouts, never a docname or URL) |
 
@@ -187,6 +188,46 @@ make that safe, and one makes it necessary:
 - **A saved layout is a frozen copy with no `module`**, and ERPNext ships a module called
   Maintenance. Relabelled without its module, a saved tile would route to ERPNext's own
   maintenance pages. So every relabelled layout entry also gets `module`.
+
+## The Dock per job (`dock_profiles.py`)
+
+frappe 16.50 draws the Dock, the icon rail on the left, from three layers of one app's `Dock`:
+the app's own file, the site's arrangement (`user = ""`) and each person's own
+(`user = <email>`). Later layers win, and a saved layer *is* the rail: an entry it does not name
+is dropped, not appended (`frappe/desk/layers.py`, `keep_unnamed=False`). frappe has no per-role
+layer, so a dock that differs by job is written one person at a time.
+
+- **One rail.** `dock/erpnext_enhancements/erpnext_enhancements.json` is this app's own dock,
+  `mount_on: erpnext`. Its rows are appended to ERPNext's: the Opportunities Kanban (a URL row),
+  then Workspace pins for Maintenance, Travel, Training, KPI Dashboards, Water Engineering,
+  QuickBooks, HR, Knowledge Base, Fleet and AI Governance. The desk then shows ERPNext's rail in
+  our modules too (`frappe.boot.app_rail_host`), where before our sidebars drew a second rail:
+  22 "(Custom)" entries from the 16.50 conversion. That old site layer (`app =
+  erpnext_enhancements`) is left in place and no longer read. Our areas are **Workspace** pins
+  rather than Sidebar rows because the workspaces ship from this repo, while the "<area>
+  (Custom)" sidebars are rows the conversion wrote on prod.
+- **Layers are written whole.** Each names every entry the rail holds, the ones a person should
+  not see as `hidden: 1`, which is what frappe's own Manage Dock saves and what puts them on its
+  Hidden pane. The site's layer has to name everything for a second reason: a person's layer is
+  laid over the site's, and a row naming an entry the site's layer dropped is skipped.
+- **Whose layer it is.** A layer last written by Administrator is the app's. Manage Dock saves
+  as the person, so once someone arranges their own it reads as theirs and no migrate touches it
+  (Nik, 2026-10-23: "Keep their own"). Choosing a Dock Profile on the User form is the one
+  override, because it is a deliberate act. A write made inside a User save runs as whoever
+  saved it, so `write_layer` puts the stamp back to Administrator. Administrator's own layer is
+  never managed, since it could not be told apart from the app's.
+- **Who gets which.** `custom_dock_profile` (Select, on the User form beside Role Profiles) wins.
+  Blank means the first `BY_ROLE_PROFILE` rule the person's Role Profiles match, and the order is
+  the precedence: Design before Field Tech for someone holding both Design Team and Production
+  Team. Site Default, or no match, means no layer of their own. Nik, James and Parker hold no
+  Role Profile and are set by hand.
+- **Nothing is blocked.** The rail only stops *offering* an entry. Search, links and Manage Dock
+  still reach every module, and frappe's own reach gate (module visibility, workspace roles)
+  still runs on every boot. Blocking a module outright is what Module Profiles are for, and Nik
+  chose not to use them.
+- **The site's layer** is written once by the patch `set_dock_site_layer`, which overwrote Nik's
+  hand-made layer of 2026-10-23 on purpose. After that it is the app's, and `apply_dock_profiles`
+  keeps it current until someone arranges it again.
 
 ## Writing a new one
 
