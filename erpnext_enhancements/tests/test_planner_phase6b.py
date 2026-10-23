@@ -84,6 +84,7 @@ engine = None
 api = None
 mp = None
 actions = None
+fm = None
 
 
 class _Throw(Exception):
@@ -158,7 +159,7 @@ def _throw(message, exc=None, title=None):
 
 
 def setUpModule():
-	global frappe, engine, api, mp, actions
+	global frappe, engine, api, mp, actions, fm
 	_modules_before.update(sys.modules)
 	for name in list(sys.modules):
 		if name == "frappe" or name.startswith(("frappe.", "erpnext_enhancements")):
@@ -193,6 +194,7 @@ def setUpModule():
 	mp = importlib.import_module("erpnext_enhancements.api.maintenance_planner")
 	api = importlib.import_module("erpnext_enhancements.api.project_planner")
 	actions = importlib.import_module("erpnext_enhancements.api.planner_actions")
+	fm = importlib.import_module("erpnext_enhancements.project_enhancements.fountain_move_jobs")
 
 
 def tearDownModule():
@@ -1392,6 +1394,213 @@ class TestSearch(unittest.TestCase):
 		self.assertEqual((visits["SMR-2"]["status"], visits["SMR-2"]["date"]), ("done", "2026-09-03"))
 		self.assertEqual((visits["SMR-3"]["status"], visits["SMR-3"]["date"]), ("pending", "2026-10-02"))
 
+	# ------------------------------------------------------------ v1.741.0: Fountain Move tasks
+
+	def _move_row(self, name, start=None, **values):
+		row = {
+			"name": name,
+			"subject": "Move day",
+			"project": "PRJ-MOVE-1",
+			"status": "Open",
+			"is_group": 0,
+			"exp_start_date": start,
+			"exp_end_date": start,
+			"expected_time": 4,
+			"custom_start_datetime": None,
+			"custom_end_datetime": None,
+			"custom_rental_booking": None,
+			"custom_rental_task_kind": None,
+			"custom_crew_size": 2,
+			"custom_tentative": 0,
+			"modified": MODIFIED,
+			"project_title": "Michelle Ainge - 4 Pots Moved",
+			"customer": "Michelle Ainge",
+			"city": "Provo",
+		}
+		row.update(values)
+		return row
+
+	def _visit_rows(self, count):
+		return [
+			{
+				"name": f"SMR-{i}",
+				"project": "PRJ-2",
+				"customer": "Hotel",
+				"visit_label": None,
+				"technician": None,
+				"docstatus": 0,
+				"workflow_state": "Draft",
+				"scheduled_visit_date": str(TODAY + datetime.timedelta(days=i)),
+				"visit_date": None,
+				"project_title": "Hotel Fountain",
+			}
+			for i in range(count)
+		]
+
+	def _move_sql(self):
+		return next(q for q in frappe.queries if q[0] == "sql" and "FROM `tabTask` t" in q[1])
+
+	def test_the_maintenance_planner_lists_move_tasks_dated_or_in_the_tray(self):
+		frappe.roles = ["Maintenance User"]
+		frappe.sql_rows["FROM `tabTask` t"] = [
+			self._move_row("TASK-FAR", "2026-12-01"),
+			self._move_row(
+				"TASK-NEAR", "2026-10-12", project="PRJ-MOVE-2", project_title="Acme Lobby", customer="Acme", city=None
+			),
+			self._move_row("TASK-TRAY", None, project="PRJ-MOVE-3", project_title="Beta Atrium"),
+			# The query already leaves these out; the re-check is the definition (fountain_move_jobs.cardable).
+			self._move_row("TASK-NOHOURS", "2026-10-13", expected_time=0),
+			self._move_row("TASK-GROUP", "2026-10-13", is_group=1),
+		]
+		answer = actions.search_planner("move", start=str(TODAY), planner="maintenance")
+		moves = [r for r in answer["results"] if r["kind"] == "move"]
+		# Nearest the day on screen first, the one nobody has dated last.
+		self.assertEqual([m["name"] for m in moves], ["TASK-NEAR", "TASK-FAR", "TASK-TRAY"])
+		self.assertEqual(
+			moves[0],
+			{
+				"kind": "move",
+				"name": "TASK-NEAR",
+				"label": "Acme Lobby",
+				"subject": "Move day",
+				"project": "PRJ-MOVE-2",
+				"customer": "Acme",
+				"city": None,
+				"date": "2026-10-12",
+				"status": "Open",
+			},
+		)
+		self.assertEqual((moves[1]["date"], moves[1]["city"], moves[1]["label"]), ("2026-12-01", "Provo", "Michelle Ainge - 4 Pots Moved"))
+		self.assertIsNone(moves[2]["date"])
+
+	def test_a_move_is_found_by_its_project_subject_customer_or_city(self):
+		frappe.roles = ["Maintenance User"]
+		actions.search_planner("provo", planner="maintenance")
+		kind, query, values = self._move_sql()
+		# The text is bound (escaped), never written into the SQL.
+		self.assertEqual(values["like"], "%provo%")
+		self.assertNotIn("provo", query)
+		for matched in (
+			"t.name LIKE %(like)s",  # the task's number
+			"t.subject LIKE %(like)s",
+			"p.name LIKE %(like)s",  # the project's number
+			"p.project_name LIKE %(like)s",
+			"p.customer LIKE %(like)s",
+			"c.customer_name LIKE %(like)s",
+			"a.city LIKE %(like)s",  # the city of the address the job site links to
+			"la.city LIKE %(like)s",  # ... or of the older link
+			"p.`custom_project_address` LIKE %(like)s",  # ... or of the typed address
+		):
+			self.assertIn(matched, query)
+		self.assertIn("LEFT JOIN `tabAddress` a ON a.name = p.`primary_address`", query)
+		self.assertIn("LEFT JOIN `tabAddress` la ON la.name = p.`custom_customer__lead_address`", query)
+		# Wildcards the person typed stay literal.
+		actions.search_planner("50%_off", planner="maintenance")
+		self.assertEqual([q for q in frappe.queries if q[0] == "sql" and "FROM `tabTask` t" in q[1]][-1][2]["like"], "%50\\%\\_off%")
+
+	def test_a_site_part_way_through_a_migrate_still_answers(self):
+		frappe.roles = ["Maintenance User"]
+		# No address columns yet: they read as NULL instead of failing the box.
+		frappe.db.has_column = lambda doctype, column: column == fm.FLAG
+		try:
+			actions.search_planner("provo", planner="maintenance")
+		finally:
+			frappe.db.has_column = lambda doctype, column: True
+		query = self._move_sql()[1]
+		self.assertIn("LEFT JOIN `tabAddress` a ON a.name = NULL", query)
+		self.assertIn("NULL LIKE %(like)s", query)
+		# Without the Fountain Move flag nothing is queried at all.
+		frappe.queries.clear()
+		frappe.db.has_column = lambda doctype, column: False
+		try:
+			answer = actions.search_planner("provo", planner="maintenance")
+		finally:
+			frappe.db.has_column = lambda doctype, column: True
+		self.assertFalse([q for q in frappe.queries if q[0] == "sql" and "FROM `tabTask` t" in q[1]])
+		self.assertEqual([r for r in answer["results"] if r["kind"] == "move"], [])
+
+	def test_the_box_and_the_calendar_apply_one_rule(self):
+		frappe.roles = ["Maintenance User"]
+		frappe.sql_rows["FROM `tabTask` t"] = [
+			self._move_row("TASK-A", "2026-10-14"),
+			self._move_row("TASK-B", None),
+		]
+		dated, undated = fm.planner_cards(MON, SUN, TODAY, True)
+		self.assertEqual(([c["name"] for c in dated], [c["name"] for c in undated]), (["TASK-A"], ["TASK-B"]))
+		calendar_query = self._move_sql()[1]
+		frappe.queries.clear()
+		actions.search_planner("move", planner="maintenance")
+		box_query = self._move_sql()[1]
+		self.assertIn(fm.OPEN_MOVE_TASKS_SQL, calendar_query)
+		self.assertIn(fm.OPEN_MOVE_TASKS_SQL, box_query)
+		# The rule itself: an open leaf task with hours, on a move job that is not closed.
+		for part in (
+			"p.`custom_is_fountain_move` = 1",
+			"IFNULL(t.is_group, 0) = 0",
+			"IFNULL(t.is_template, 0) = 0",
+			"IFNULL(t.expected_time, 0) > 0",
+			"IFNULL(t.status, '') NOT IN %(finished)s",
+			"IFNULL(p.status, '') NOT IN %(closed)s",
+		):
+			self.assertIn(part, fm.OPEN_MOVE_TASKS_SQL)
+		values = self._move_sql()[2]
+		self.assertEqual(values["finished"], engine.FINISHED_STATUSES)
+		self.assertEqual(values["closed"], engine.CLOSED_PROJECT_STATUSES)
+
+	def test_a_customer_with_a_long_visit_history_still_lists_its_move(self):
+		frappe.roles = ["Maintenance User"]
+		frappe.sql_rows["tabSapphire Maintenance Record"] = self._visit_rows(40)
+		frappe.sql_rows["tabSapphire Maintenance Contract"] = [{"name": "PRJ-2", "title": "Hotel Fountain"}]
+		frappe.sql_rows["FROM `tabTask` t"] = [
+			self._move_row("TASK-HOTEL", None, project="PRJ-MOVE-9", project_title="Hotel Lobby Move", customer="Hotel")
+		]
+		answer = actions.search_planner("hotel", start=str(TODAY), planner="maintenance")
+		results = answer["results"]
+		self.assertEqual(len(results), 20)
+		self.assertEqual(sum(r["kind"] == "move" for r in results), 1)
+		self.assertEqual(sum(r["kind"] == "visit" for r in results), 18)
+		self.assertTrue(answer["truncated"])
+		# The visits nearest the day on screen stay, in order; the undated move comes after them.
+		self.assertEqual(results[-1]["name"], "TASK-HOTEL")
+
+	def test_blend_moves_keeps_room_for_moves_and_gives_the_visits_the_rest(self):
+		visits = [{"name": f"V{i}", "date": str(TODAY + datetime.timedelta(days=i))} for i in range(30)]
+		moves = [{"name": f"M{i}", "date": None} for i in range(8)]
+		records, cut = actions.blend_moves(visits, moves, TODAY, 14)
+		self.assertEqual([r["name"][0] for r in records].count("M"), actions.SEARCH_MOVES)
+		self.assertEqual(len(records), 14)
+		self.assertTrue(cut)
+		# Few visits: the slots they leave go to the moves, and nothing is cut.
+		records, cut = actions.blend_moves(visits[:3], moves, TODAY, 14)
+		self.assertEqual(([r["name"][0] for r in records].count("M"), len(records), cut), (8, 11, False))
+		# Fewer slots than the reserve: moves first, the visits wait.
+		records, cut = actions.blend_moves(visits, moves, TODAY, 3)
+		self.assertEqual({r["name"][0] for r in records}, {"M"})
+		# No moves: exactly what the visits were (this search is the old one).
+		records, cut = actions.blend_moves(visits, [], TODAY, 14)
+		self.assertEqual(([r["name"] for r in records], cut), ([v["name"] for v in visits[:14]], True))
+		self.assertEqual(actions.blend_moves([], [], TODAY, 14), ([], False))
+		self.assertEqual(actions.blend_moves(visits, moves, TODAY, 0), ([], True))
+
+	def test_a_failing_move_query_leaves_the_visits_and_is_logged(self):
+		frappe.roles = ["Maintenance User"]
+		frappe.sql_rows["tabSapphire Maintenance Record"] = self._visit_rows(3)
+		with mock.patch.object(fm, "search_cards", side_effect=_Throw("boom")):
+			answer = actions.search_planner("hotel", start=str(TODAY), planner="maintenance")
+		self.assertEqual([r["kind"] for r in answer["results"]], ["visit"] * 3)
+		self.assertEqual(len(frappe.errors), 1)
+		self.assertEqual(frappe.errors[0][1]["title"], "Maintenance Planner: Fountain Move search failed")
+
+	def test_the_project_planners_search_knows_nothing_of_moves(self):
+		frappe.sql_rows["FROM `tabTask` t"] = [self._task_row("TASK-1", "2026-10-12", subject="Move the pump")]
+		answer = actions.search_planner("move", start=str(TODAY))
+		self.assertEqual({r["kind"] for r in answer["results"]} - {"person", "project", "task"}, set())
+		self.assertFalse([q for q in frappe.queries if q[0] == "sql" and fm.FLAG in q[1]])
+		# ... and the Project Planner's roles cannot reach the Maintenance Planner's version of it.
+		frappe.roles = ["Projects User"]
+		with self.assertRaises(_PermissionError):
+			actions.search_planner("move", planner="maintenance")
+
 
 # ---------------------------------------------------------------------- the pages
 
@@ -1671,7 +1880,21 @@ class TestPages(unittest.TestCase):
 		jump = _method(self.pp_block, "p6b_jump_to_task")
 		self.assertIn("this.go(", jump)
 		self.assertNotIn("set_route(PP.route", jump)
-		self.assertIn("this.go(", _method(self.mp_block, "p6b_jump_to_visit"))
+		# A visit and a Fountain Move task (v1.741.0) both jump through one helper, which goes to a real route.
+		self.assertIn("this.go(", _method(self.mp_block, "p6b_jump_to_card"))
+		self.assertNotIn("set_route(MP.route", _method(self.mp_block, "p6b_jump_to_card"))
+		self.assertIn("this.p6b_jump_to_card(item,", _method(self.mp_block, "p6b_jump_to_visit"))
+		move_jump = _method(self.mp_block, "p6b_jump_to_move")
+		self.assertIn("this.p6b_jump_to_card(item,", move_jump)
+		# With no card to find, the task opens the way a click on its card opens it (MPFM's open_card).
+		self.assertIn('this.open_card({ kind: "move", name: item.name })', move_jump)
+		self.assertIn('else if (item.kind === "move") this.p6b_jump_to_move(item);', _method(self.mp_block, "p6b_pick"))
+		# The page's own cards of move tasks are in the local index, from the one place that lists them.
+		self.assertIn("this.fm_cards().forEach((card) => {", _method(self.mp_block, "p6b_local_entries"))
+		self.assertIn('{ visit: __("Visit"), move: __("Move"), site: __("Site"), person: __("Technician") }', self.mp_block)
+		# The Project Planner's search knows nothing of moves.
+		self.assertNotIn("fm_cards", self.pp)
+		self.assertNotIn('"move"', _method(self.pp_block, "p6b_from_server"))
 		for block in (self.pp_block, self.mp_block):
 			self.assertIn('"aria-autocomplete": "list"', block)
 			self.assertIn('role="option"', block)
@@ -1845,6 +2068,17 @@ out.need = [
 	P.need_hours({ expected_time: 1, crew: [{}, {}, {}], start: "2026-10-12", end: "2026-10-16" }, "add", 8),
 	P.need_hours({ expected_time: 200, crew: [], start: "2026-10-12", end: "2026-10-12" }, "add", 8),
 ];
+out.mp_ranks = ctx.MP.search_local("hotel", [
+	{ kind: "move", label: "Hotel Atrium Move", keys: [] },
+	{ kind: "visit", label: "Hotel Fountain", keys: [] },
+	{ kind: "site", label: "Hotel Pool", keys: [] },
+	{ kind: "person", label: "Hotelier", keys: [] },
+	{ kind: "other", label: "Hotel Other", keys: [] },
+]).map((e) => e.label);
+out.pp_ranks = ctx.PP.search_local("hotel", [
+	{ kind: "move", label: "Hotel Atrium Move", keys: [] },
+	{ kind: "visit", label: "Hotel Fountain", keys: [] },
+]).map((e) => e.label);
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -1934,6 +2168,14 @@ class TestPureUnderNode(unittest.TestCase):
 		self.assertEqual(out["search_empty"], [])
 		self.assertEqual(out["search_limit"], 7)
 
+	def test_a_move_ranks_with_the_visits_on_the_maintenance_planner_only(self):
+		# Equal label starts: people, then sites, then visits and moves together (by name), then the rest.
+		self.assertEqual(
+			self.out["mp_ranks"], ["Hotelier", "Hotel Pool", "Hotel Atrium Move", "Hotel Fountain", "Hotel Other"]
+		)
+		# The Project Planner has no such kind: its table is as it was, so a stray one ranks last.
+		self.assertEqual(self.out["pp_ranks"], ["Hotel Fountain", "Hotel Atrium Move"])
+
 	def test_offset_moves_keep_lengths(self):
 		self.assertEqual(
 			self.out["moves"],
@@ -2016,7 +2258,7 @@ const ctx = {
 ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
 // Phase 6E's methods are mixed in too: 6B's drop, panel and bar call p6e_* for the calendar/working switch.
-vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS, PPAS_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS, MPAS_METHODS);", ctx);
+vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS, PPAS_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS, MPAS_METHODS); this.MPP = MP6B_PURE;", ctx);
 const out = {};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -2199,6 +2441,101 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 	out.mp_undo_other = mp.p6b_undo({ kind: "visit", record: "SMR-1" });
 	out.mp_legend = mp.p6b_legend_sections().map((s) => s.title);
 	out.mp_pushed = pushed.filter(([snap]) => snap.site).map(([snap, message]) => [snap, message]);
+
+	// ------------------------------------------------------------ v1.741.0: the search finds Fountain Move cards
+	const flashed = [];
+	const take = () => flashed.splice(0);
+	const element = (key) => ({
+		getAttribute: (name) => (name === "data-key" ? key : null),
+		classList: { add: (c) => flashed.push(["add", key, c]), remove: (c) => flashed.push(["remove", key, c]) },
+		scrollIntoView: () => flashed.push(["scroll", key]),
+	});
+	const move_dated = { kind: "move", key: "move|TASK-M1", name: "TASK-M1", subject: "Move day", project: "PRJ-0042", customer: "Acme Corp", site: "Acme Lobby - 4 Pots Moved", site_full: "Acme Lobby - 4 Pots Moved", date: "2026-10-14", start: "2026-10-14", technician: "austin@x.com", crew: [], hours: 4, movable: true };
+	const move_tray = { kind: "move", key: "move|TASK-M2", name: "TASK-M2", subject: "Move day", project: "PRJ-0043", customer: "Beta LLC", site: "Beta Atrium", site_full: "Beta Atrium", date: null, start: null, technician: null, crew: [], hours: 4, movable: true };
+	mp.fm_cards = function () { return (this.data.moves || []).concat(this.data.unscheduled_moves || []); };
+	mp.data = Object.assign({}, mp.data, { visits: [visit], unscheduled: [], projected: [], moves: [move_dated], unscheduled_moves: [move_tray], start: "2026-10-12", end: "2026-10-18" });
+	const entries = mp.p6b_local_entries();
+	const move_entries = entries.filter((e) => e.kind === "move");
+	out.mp_move_entries = move_entries.map((e) => [e.key, e.name, e.label, e.sub, e.date]);
+	out.mp_move_only_moves_in_the_index = entries.filter((e) => e.kind === "site").map((e) => e.project);
+	out.mp_move_search = ["acme", "PRJ-0042", "move day", "beta llc", "austin", "task-m2", "acme beta", "zzz"].map((q) => [
+		q,
+		ctx.MPP.search_local(q, entries, 20).filter((e) => e.kind === "move").map((e) => e.key),
+	]);
+	const from_server = mp.p6b_from_server({ kind: "move", name: "TASK-M1", label: "Acme Lobby - 4 Pots Moved", subject: "Move day", project: "PRJ-0042", customer: "Acme Corp", city: "Denver", date: "2026-10-14", status: "Open" });
+	out.mp_move_from_server = [from_server, mp.p6b_from_server({ kind: "move", name: "TASK-M3", label: "Gamma", subject: "Move day", city: null, date: null }), mp.p6b_from_server({ kind: "move" })];
+	out.mp_move_keys = [mp.p6b_result_key(move_entries[0]), mp.p6b_result_key(from_server)];
+
+	// The remote half: what the page already lists is not listed twice.
+	ctx.frappe.call = (opts) => {
+		calls.push(opts);
+		return Promise.resolve({ message: { results: [
+			{ kind: "move", name: "TASK-M1", label: "Acme Lobby - 4 Pots Moved", subject: "Move day", city: "Denver", date: "2026-10-14" },
+			{ kind: "move", name: "TASK-M3", label: "Gamma", subject: "Move day", city: null, date: null },
+			{ kind: "visit", name: "SMR-1", label: "Hotel", date: "2026-10-14" },
+			{ kind: "site", project: "PRJ-2", label: "Hotel Fountain" },
+		] } });
+	};
+	mp.$p6b_search = { is: () => false, trigger: () => null, attr: () => null, removeAttr: () => null };
+	mp.p6b.search = { q: "acme", token: 3, local: move_entries.slice(0, 1), remote: [], loading: true, active: 0, shown: [], list_id: "mp-results" };
+	await mp.p6b_remote_search("acme", 3);
+	out.mp_remote = mp.p6b.search.remote.map((e) => [e.kind, e.key || e.project]);
+	out.mp_remote_call = calls.filter((c) => /search_planner/.test(c.method)).map((c) => [c.method, c.args]);
+	let rendered = "";
+	mp.$p6b_results = { html: (h) => { rendered = h; return { show: () => null }; } };
+	mp.p6b.search.loading = false;
+	mp.p6b_render_results();
+	out.mp_rendered = {
+		move_labels: (rendered.match(/mp-p6b-result-kind">Move</g) || []).length,
+		dated: rendered.includes("when(2026-10-14) · Move day"),
+		tray: rendered.includes("Not scheduled · Move day"),
+	};
+
+	// Picking one: the same jump as a visit (a real route, a flash), or the tray.
+	mp.tb_close_sheet = () => null;
+	mp.p6b_close_results = () => null;
+	const went = [];
+	const opened = [];
+	mp.go = (view, date) => went.push([view, date]);
+	mp.open_card = (card) => opened.push(card);
+	mp.range_days = () => ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"];
+	let nodes = [element("move|TASK-M1"), element("move|TASK-M2")];
+	mp.$body = [{ querySelectorAll: () => nodes }];
+	mp.by_key = { [move_dated.key]: move_dated, [move_tray.key]: move_tray, "SMR-7": { kind: "visit", key: "SMR-7", name: "SMR-7", date: null } };
+	const pick = {};
+	const alerts_from = alerts.length;
+	mp.p6b_pick(move_entries[0]);
+	pick.dated = { flashed: take(), went: went.splice(0), alerts: alerts.slice(alerts_from), flash: mp.p6b.flash };
+	mp.p6b_pick(move_entries[1]);
+	pick.tray = { flashed: take(), went: went.splice(0), alerts: alerts.slice(alerts_from), flash: mp.p6b.flash };
+	// The filters on screen hide the tray card: it says so, as it does for a dated one.
+	nodes = [];
+	mp.p6b_pick(move_entries[1]);
+	pick.tray_hidden = { flashed: take(), went: went.splice(0), alerts: alerts.slice(alerts_from) };
+	nodes = [element("move|TASK-M1"), element("move|TASK-M2")];
+	// A task that began before these weeks is drawn on the first day shown: the page does not leave for its real first day.
+	alerts.length = alerts_from;
+	mp.p6b_pick({ kind: "move", key: "move|TASK-M1", name: "TASK-M1", label: "Acme", date: "2026-10-05" });
+	pick.began_earlier = { flashed: take(), went: went.splice(0), alerts: alerts.slice(alerts_from) };
+	// A day outside the weeks on screen: the calendar goes to its week; the flash waits for the load.
+	mp.p6b_pick({ kind: "move", key: "move|TASK-M9", name: "TASK-M9", label: "Gamma", date: "2026-12-01" });
+	pick.far = { flashed: take(), went: went.splice(0), flash: mp.p6b.flash };
+	mp.data = Object.assign({}, mp.data, { start: "2026-11-29", end: "2026-12-05" });
+	nodes = [element("move|TASK-M9")];
+	mp.p6b_flash_pending();
+	pick.far_loaded = { flashed: take(), flash: mp.p6b.flash };
+	// A tray task the page has no card for (stale data): the task opens, as a click on its card opens it.
+	mp.p6b_pick({ kind: "move", key: "move|TASK-M8", name: "TASK-M8", label: "Delta", date: null });
+	pick.stale = { opened: opened.splice(0), went: went.splice(0), flashed: take() };
+	// Visits are unchanged: a far one goes to its week, an unscheduled one hidden by the filters says nothing.
+	alerts.length = alerts_from;
+	mp.p6b_pick({ kind: "visit", key: "SMR-1", name: "SMR-1", label: "Hotel", date: "2026-12-20" });
+	pick.visit_far = { went: went.splice(0), flash: mp.p6b.flash };
+	mp.p6b.flash = null;
+	nodes = [];
+	mp.p6b_pick({ kind: "visit", key: "SMR-7", name: "SMR-7", label: "Hotel", date: null });
+	pick.visit_tray_hidden = { alerts: alerts.slice(alerts_from), flash: mp.p6b.flash };
+	out.mp_pick = pick;
 	process.stdout.write(JSON.stringify(out));
 })().catch((e) => {
 	process.stderr.write(String(e && e.stack ? e.stack : e));
@@ -2474,6 +2811,96 @@ class TestMethodsUnderNode(unittest.TestCase):
 			[("move_visit", "SMR-1", "2026-10-14", ["auto_reason", "noun"])],
 		)
 		self.assertFalse(out["mp_undo_other"])
+
+	# ------------------------------------------------------------ v1.741.0: Fountain Move cards in the search
+
+	def test_the_local_index_lists_move_cards_dated_or_in_the_tray(self):
+		out = self.out
+		self.assertEqual(
+			out["mp_move_entries"],
+			[
+				["move|TASK-M1", "TASK-M1", "Acme Lobby - 4 Pots Moved", "when(2026-10-14) \u00b7 Move day", "2026-10-14"],
+				["move|TASK-M2", "TASK-M2", "Beta Atrium", "Not scheduled \u00b7 Move day", None],
+			],
+		)
+		# A move job has no maintenance site to open: only the visit adds a site entry.
+		self.assertEqual(out["mp_move_only_moves_in_the_index"], ["PRJ-2"])
+
+	def test_a_move_is_found_by_project_subject_customer_or_crew(self):
+		found = {q: keys for q, keys in self.out["mp_move_search"]}
+		self.assertEqual(found["acme"], ["move|TASK-M1"])  # its project's name, and its customer
+		self.assertEqual(found["PRJ-0042"], ["move|TASK-M1"])  # the project's number
+		self.assertEqual(found["move day"], ["move|TASK-M1", "move|TASK-M2"])  # the subject
+		self.assertEqual(found["beta llc"], ["move|TASK-M2"])  # the customer
+		self.assertEqual(found["austin"], ["move|TASK-M1"])  # the lead
+		self.assertEqual(found["task-m2"], ["move|TASK-M2"])  # the task's number
+		self.assertEqual(found["acme beta"], [])  # every word must match one card
+		self.assertEqual(found["zzz"], [])
+
+	def test_a_move_the_server_sends_has_the_cards_key_so_it_is_not_listed_twice(self):
+		out = self.out
+		dated, tray, nameless = out["mp_move_from_server"]
+		self.assertEqual(
+			dated,
+			{
+				"kind": "move",
+				"key": "move|TASK-M1",
+				"name": "TASK-M1",
+				"label": "Acme Lobby - 4 Pots Moved",
+				"sub": "when(2026-10-14) \u00b7 Move day \u00b7 Denver",
+				"date": "2026-10-14",
+			},
+		)
+		self.assertEqual((tray["key"], tray["sub"], tray["date"]), ("move|TASK-M3", "Not scheduled \u00b7 Move day", None))
+		self.assertIsNone(nameless)
+		self.assertEqual(out["mp_move_keys"][0], out["mp_move_keys"][1])
+		# The remote half drops the move the page already lists (TASK-M1) and keeps the rest, in order.
+		self.assertEqual(out["mp_remote"], [["move", "move|TASK-M3"], ["visit", "SMR-1"], ["site", "PRJ-2"]])
+		((method, args),) = out["mp_remote_call"]
+		self.assertEqual(method, "erpnext_enhancements.api.planner_actions.search_planner")
+		self.assertEqual((args["q"], args["planner"]), ("acme", "maintenance"))
+
+	def test_a_move_result_says_move_and_its_day_or_that_it_is_not_scheduled(self):
+		self.assertEqual(self.out["mp_rendered"], {"move_labels": 2, "dated": True, "tray": True})
+
+	def test_picking_a_move_jumps_to_its_day_or_its_tray_and_flashes_it(self):
+		pick = self.out["mp_pick"]
+
+		def flashes(key):
+			return [["add", key, "mp-p6b-flash"], ["scroll", key], ["remove", key, "mp-p6b-flash"]]
+
+		# On screen: no navigation, the card flashes.
+		self.assertEqual(pick["dated"], {"flashed": flashes("move|TASK-M1"), "went": [], "alerts": [], "flash": None})
+		# In the tray: scrolled to and flashed there, nothing else.
+		self.assertEqual(pick["tray"], {"flashed": flashes("move|TASK-M2"), "went": [], "alerts": [], "flash": None})
+		# Hidden by the technician filter: it says so, with the word move.
+		self.assertEqual(
+			pick["tray_hidden"],
+			{"flashed": [], "went": [], "alerts": ["That move is hidden by the filters on screen."]},
+		)
+		# A task that began before these weeks is drawn on the first day shown: the page stays.
+		self.assertEqual(pick["began_earlier"], {"flashed": flashes("move|TASK-M1"), "went": [], "alerts": []})
+		# A day outside the weeks on screen: a real route to its week, the flash waits for the load.
+		self.assertEqual(
+			pick["far"],
+			{
+				"flashed": [],
+				"went": [["week", "2026-12-01"]],
+				"flash": {"key": "move|TASK-M9", "date": "2026-12-01", "wait": True, "move": True},
+			},
+		)
+		self.assertEqual(pick["far_loaded"], {"flashed": flashes("move|TASK-M9"), "flash": None})
+		# No card for it on the page (stale): the task itself opens, as a click on its card does.
+		self.assertEqual(pick["stale"], {"opened": [{"kind": "move", "name": "TASK-M8"}], "went": [], "flashed": []})
+
+	def test_picking_a_visit_is_as_it_was(self):
+		pick = self.out["mp_pick"]
+		self.assertEqual(pick["visit_far"]["went"], [["week", "2026-12-20"]])
+		self.assertEqual(
+			pick["visit_far"]["flash"], {"key": "SMR-1", "date": "2026-12-20", "wait": True, "move": False}
+		)
+		# An unscheduled visit the filters hide still says nothing (only a move says so).
+		self.assertEqual(pick["visit_tray_hidden"], {"alerts": [], "flash": None})
 
 
 # ====================================================================== docs and wiring
