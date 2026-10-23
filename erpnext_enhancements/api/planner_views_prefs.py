@@ -37,8 +37,16 @@ on**. So a view lives on the server, per user, never in the browser.
   a reload never repeats it. Never frappe's Redis-only user_settings, which a deploy flushes, and never
   the browser alone: a person shown the tour on one machine is not shown it again on the next.
 
-Every endpoint is gated by the calling planner's own roles (``project_planner._require_planner`` or
-``maintenance_planner._require_planner``) and acts only on ``frappe.session.user``'s row.
+Every endpoint acts only on ``frappe.session.user``'s row, and each is gated for the screen it serves:
+
+* the planner endpoints (views, tour) by the calling planner's own roles
+  (``project_planner._require_planner`` or ``maintenance_planner._require_planner``), the Opportunity
+  Board's by read permission on Opportunity;
+* the guided page's settings: the read hands back only the caller's own row, and the writers need read
+  permission on the doctype a setting is about, never a planner role;
+* the inventory screens' reorder switch (:func:`get_inventory_prefs`, :func:`set_show_reorder`, v1.728.0)
+  by ``stock_scan_rules.SCAN_ROLES`` (``_require_inventory``), the roles that may open the Bin Manager and the
+  Inventory Scanner Audit, not by a planner role.
 """
 
 import json
@@ -372,7 +380,10 @@ def read_tour(row):
 
 def _tour_into(row, seen):
 	row = dict(row or {})
-	row[TOUR_ROW_KEY] = {"version": STORE_VERSION, "seen": {kind: bool(seen.get(kind)) for kind in TOUR_KINDS}}
+	row[TOUR_ROW_KEY] = {
+		"version": STORE_VERSION,
+		"seen": {kind: bool(seen.get(kind)) for kind in TOUR_KINDS},
+	}
 	return row
 
 
@@ -749,3 +760,81 @@ def mark_guided_intro_seen():
 		store["intro_seen"] = True
 		_write_row(GUIDED_SETTINGS, _guided_into(row, store))
 	return {"intro_seen": True}
+
+
+# ---------------------------------------------------------------------- the inventory screens' switches
+#
+# TASK-2026-02920 (Parker's ER-2026-1323805; Nik, 2026-10-22: "I would like the reorder values to be hidden or
+# toggleable, it's not information I need to see constantly. Ideally I would only need to change and alter
+# once."). The Bin Manager and the Inventory Scanner Audit open with a clean list and show the reorder boxes
+# only once a person turns them on, on each screen, and the choice is theirs from then on, on any device.
+# It lives where every other per-person choice in this app does (see the module docstring): a row of its
+# own in ``__UserSettings`` (``Inventory Screens``), written straight to the table, never frappe's Redis-only
+# user_settings and never the browser alone, so a deploy cannot lose it. Reading it can never break a
+# screen: anything wrong with it (no row, a damaged one, a database that will not answer) is "hidden".
+
+INVENTORY_SETTINGS = "Inventory Screens"
+INVENTORY_ROW_KEY = "inventory_screens"
+#: The screens that have the switch, keyed as the pages say (bin_manager.js, inventory_scanner_audit.js).
+INVENTORY_SCREENS = ("bin_manager", "scanner_audit")
+
+
+def read_inventory_prefs(row):
+	"""The ``inventory_screens`` part of a ``__UserSettings`` row: ``{"show_reorder": {screen: bool}}``.
+
+	Only a real ``true`` counts, so a hand-edited row (``"yes"``, ``1``) or a damaged one reads as hidden.
+	"""
+	raw = row.get(INVENTORY_ROW_KEY) if isinstance(row, dict) else None
+	shown = raw.get("show_reorder") if isinstance(raw, dict) else None
+	shown = shown if isinstance(shown, dict) else {}
+	return {"show_reorder": {screen: shown.get(screen) is True for screen in INVENTORY_SCREENS}}
+
+
+def _inventory_into(row, prefs):
+	row = dict(row or {})
+	row[INVENTORY_ROW_KEY] = {
+		"version": STORE_VERSION,
+		"show_reorder": {screen: bool(prefs["show_reorder"].get(screen)) for screen in INVENTORY_SCREENS},
+	}
+	return row
+
+
+def show_reorder(screen):
+	"""Whether the caller has turned the reorder boxes on for ``screen``; ``False`` if anything is wrong.
+
+	Called by the screens' own boot payloads (``bin_assignments.manager_boot``,
+	``inventory_scanner.get_bootstrap``), so the screen opens in the right state with no request of its
+	own, and a preference that cannot be read must never be why a screen does not open.
+	"""
+	try:
+		return read_inventory_prefs(_read_row(INVENTORY_SETTINGS))["show_reorder"].get(screen) is True
+	except Exception:
+		return False
+
+
+def _require_inventory():
+	from erpnext_enhancements.inventory_enhancements import stock_scan_rules
+
+	if not stock_scan_rules.SCAN_ROLES.intersection(frappe.get_roles()):
+		frappe.throw(_("You are not permitted to use Stock Scan."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_inventory_prefs():
+	"""The caller's switches for the inventory screens: ``{"show_reorder": {screen: bool}}``."""
+	_require_inventory()
+	return read_inventory_prefs(_read_row(INVENTORY_SETTINGS))
+
+
+@frappe.whitelist(methods=["POST"])
+def set_show_reorder(screen, value):
+	"""Turn the reorder boxes on or off on ``screen`` for the caller, for good. Returns the screen's switch."""
+	_require_inventory()
+	screen = clean_text(screen, 20)
+	if screen not in INVENTORY_SCREENS:
+		frappe.throw(_("Unknown screen."))
+	row = _read_row(INVENTORY_SETTINGS, for_update=True)
+	prefs = read_inventory_prefs(row)
+	prefs["show_reorder"][screen] = as_flag(value)
+	_write_row(INVENTORY_SETTINGS, _inventory_into(row, prefs))
+	return {"screen": screen, "show_reorder": prefs["show_reorder"][screen]}

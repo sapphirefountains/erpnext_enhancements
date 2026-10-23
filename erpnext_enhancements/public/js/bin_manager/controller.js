@@ -222,7 +222,13 @@ export class Controller {
 			return Promise.reject({ message: String(e && e.message), keep_ref: false });
 		}
 		return this.env.call(req.method, req.args, { quiet: true }).then(
-			(result) => (logic.isCostPrompt(result) ? { prompt: result, message: "" } : this.saved(result)),
+			(result) => {
+				if (logic.isCostPrompt(result)) return { prompt: result, message: "" };
+				// The row changes now; saved() reads the list again and that is the truth. Not for a repeated save
+				// (the server returned a save it had already made): the list may have been read since.
+				if (!(result && result.repeated)) logic.apply_local(kind, row, values);
+				return this.saved(result);
+			},
 			(err) => Promise.reject({ message: (err && err.message) || "", keep_ref: logic.keep_ref(err), error: err })
 		);
 	}

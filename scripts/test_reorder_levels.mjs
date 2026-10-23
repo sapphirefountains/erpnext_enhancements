@@ -106,11 +106,17 @@ test("plan_save: nothing, invalid, or a save", () => {
 	check("a cleared box on a rule asks to remove it, never saves 0", logic.plan_save(ruled, "", "12"), { kind: "remove" });
 	check("the other box cleared", logic.plan_save(ruled, "4", "").kind, "remove");
 	check("both cleared", logic.plan_save(ruled, "", "").kind, "remove");
-	check("a quantity of 0 is refused", logic.plan_save(ruled, "4", "0"), { kind: "invalid", field: "qty", message: logic.ABOVE_ZERO });
-	check("a level of 0 is refused, not saved", logic.plan_save(ruled, "0", "12"), { kind: "invalid", field: "level", message: logic.ABOVE_ZERO });
-	check("both 0 is refused too", logic.plan_save(ruled, "0", "0").kind, "invalid");
+	check("a quantity of 0 is refused, in words about Buy only", logic.plan_save(ruled, "4", "0"), { kind: "invalid", field: "qty", message: logic.QTY_ABOVE_ZERO });
+	check("that sentence is about Buy and does not talk about both boxes", [/^Buy must be more than 0/.test(logic.QTY_ABOVE_ZERO), /Reorder at/.test(logic.QTY_ABOVE_ZERO)], [true, false]);
+	// Nik, 2026-10-22: "The reorder at line is refusing to be assigned a 0 even though running out of all
+	// stock is a very normal spot to reorder items." ERPNext reorders when projected stock <= the level.
+	check("a level of 0 is a rule: it saves", logic.plan_save(ruled, "0", "12"), { kind: "save", level: 0, qty: 12 });
+	check("a blank level is not a 0: it asks to remove the rule", logic.plan_save(ruled, "", "12"), { kind: "remove" });
+	check("0 and 0: the quantity is what is refused", logic.plan_save(ruled, "0", "0"), { kind: "invalid", field: "qty", message: logic.QTY_ABOVE_ZERO });
+	check("a negative level is still not a number", logic.plan_save(ruled, "-1", "12"), { kind: "invalid", field: "level", message: "The reorder level must be a number, 0 or more." });
 	check("an old rule left as it is (level 0 on prod) is not touched", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0", "1").kind, "none");
-	check("the same old rule edited is refused until it has a level", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0", "5").kind, "invalid");
+	check("the same level-0 rule edited keeps its 0", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0", "5"), { kind: "save", level: 0, qty: 5 });
+	check("a level-0 rule left alone is unchanged, written any way", logic.plan_save(entry("Z", { level: 0, qty: 1 }), "0.0", "1.00").kind, "none");
 	check("not a number: level", logic.plan_save(ruled, "x", "12").field, "level");
 	check("not a number: qty", logic.plan_save(ruled, "4", "-3").field, "qty");
 	const bare = entry("B", { has_rule: false, level: null, qty: null, modified: "m" });
@@ -118,8 +124,9 @@ test("plan_save: nothing, invalid, or a save", () => {
 	check("no rule, both given", logic.plan_save(bare, "3", "10"), { kind: "save", level: 3, qty: 10 });
 	check("no rule, one box: a gentle note, nothing created", logic.plan_save(bare, "3", ""), { kind: "incomplete", message: logic.BOTH_NEEDED });
 	check("no rule, the other box only", logic.plan_save(bare, "", "10").kind, "incomplete");
-	check("no rule, a level of 0 is not a rule", logic.plan_save(bare, "0", "10").kind, "invalid");
-	check("no rule, a quantity of 0 is not a rule", logic.plan_save(bare, "3", "0").kind, "invalid");
+	check("no rule, a level of 0 with a quantity is a rule", logic.plan_save(bare, "0", "10"), { kind: "save", level: 0, qty: 10 });
+	check("no rule, a level of 0 alone is still one box", logic.plan_save(bare, "0", "").kind, "incomplete");
+	check("no rule, a quantity of 0 is not a rule", logic.plan_save(bare, "3", "0"), { kind: "invalid", field: "qty", message: logic.QTY_ABOVE_ZERO });
 	check("the ceiling is the server ceiling", logic.MAX_AMOUNT, 100000);
 	check("at the ceiling", logic.plan_save(bare, "100000", "100000").kind, "save");
 	for (const big of ["100001", "12345678905", "1,000,000"]) {
@@ -469,6 +476,53 @@ test("a second blur while the question is up asks nothing more, and a refusal is
 	await ed.commit("A");
 	check("a refused removal is shown", [ed.view("A").status.state, ed.view("A").status.message], ["error", "Item PDT-A is blocked."]);
 	check("and the rule stays", ed.view("A").entry.has_rule, true);
+});
+
+test("a level of 0 shows as 0, reads as a rule, and is never a blank box or 'no rule'", async () => {
+	check("number_text keeps a 0", [logic.number_text(0), logic.number_text("0"), logic.number_text(null), logic.number_text("")], ["0", "0", "", ""]);
+	const zero = entry("Z", { level: 0, qty: 12 });
+	const view = { ready: true, error: "", entry: zero, editable: true, can_edit: true, status: null };
+	const html = cell_html(esc, null, view, "Z", "Pump");
+	check("the Reorder at box holds 0 and remembers it as shown", [html.includes('data-ro-field="level" value="0" data-ro-shown="0"'), html.includes('data-ro-field="qty" value="12"')], [true, true]);
+	const text = cell_html(esc, null, { ...view, editable: false }, "Z", "Pump");
+	check("read-only: 'Reorder at 0, buy 12', not 'No reorder rule'", [text.includes("Reorder at 0, buy 12"), text.includes("No reorder rule")], [true, false]);
+	const none = cell_html(esc, null, { ...view, editable: false, entry: entry("N", { has_rule: false, level: null, qty: null }) }, "N", "Pump");
+	check("a real 'no rule' is still said", none.includes("No reorder rule"), true);
+
+	// load and reload keep the 0
+	const world = makeWorld({ entries: { Z: zero } });
+	const ed = new ReorderEditor(world.env);
+	await ed.load(BIN, ["Z"]);
+	check("loaded: level 0, a rule", [ed.view("Z").entry.level, ed.view("Z").entry.has_rule, ed.view("Z").editable], [0, true, true]);
+	await ed.load(BIN, ["Z"]);
+	check("reloaded: still 0", ed.view("Z").entry.level, 0);
+
+	// saving a 0: the request carries 0, not 'nothing'
+	world.boxes.set("Z", { level: "0", qty: "20" });
+	await ed.commit("Z");
+	check("a level of 0 is sent as 0 with the quantity", [writes(world).length, writes(world)[0].args.level, writes(world)[0].args.qty], [1, 0, 20]);
+	check("the answer keeps it, and the box would show 0", [ed.view("Z").entry.level, logic.number_text(ed.view("Z").entry.level)], [0, "0"]);
+
+	// a new rule at 0, and the quantity-only refusal says Buy
+	const world2 = makeWorld();
+	const ed2 = new ReorderEditor(world2.env);
+	await ed2.load(BIN, ["B"]);
+	world2.boxes.set("B", { level: "0", qty: "5" });
+	await ed2.commit("B");
+	check("a new rule at 0 is created", [writes(world2)[0].args.level, writes(world2)[0].args.qty, ed2.view("B").entry.has_rule, ed2.view("B").entry.level], [0, 5, true, 0]);
+	world2.boxes.set("B", { level: "0", qty: "0" });
+	await ed2.commit("B");
+	check("then 0 and 0 says Buy, and sends nothing more", [ed2.view("B").status.message, writes(world2).length], [logic.QTY_ABOVE_ZERO, 1]);
+});
+
+test("dom: a level of 0 is painted into its box as 0, never blanked", async () => {
+	const root = new El();
+	const { l, q } = makeCell(root, "Z", "", "");
+	const world = makeWorld({ entries: { Z: entry("Z", { level: 0, qty: 12 }) } });
+	const ed = new ReorderEditor(world.env);
+	await ed.load(BIN, ["Z"]);
+	dom.paint(root, ed, esc, null, "Z", null, false, { Z: "Pump" });
+	check("the boxes show 0 and 12", [l.value, q.value, l.getAttribute("data-ro-shown")], ["0", "12", "0"]);
 });
 
 test("cell_html escapes everything the server sends", () => {

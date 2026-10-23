@@ -121,6 +121,11 @@ class Doc:
 			seen.add(row.get("warehouse"))
 			if row.get("warehouse_reorder_level") and not row.get("warehouse_reorder_qty"):
 				raise FRAPPE.ValidationError(f"Row #{index}: Please set reorder quantity")
+		# Frappe stamps every child row with its parent on save; the stub's reads filter on it.
+		for row in self._d["reorder_levels"]:
+			row.setdefault("parent", self._d["name"])
+			row.setdefault("parenttype", "Item")
+			row.setdefault("parentfield", "reorder_levels")
 		STATE["clock"] += 1
 		self._d["modified"] = datetime.datetime(2026, 10, 22, 9, 0, STATE["clock"], 123456)
 		STATE["saves"].append(self._d["name"])
@@ -190,6 +195,8 @@ def _reset(perm=None, roles=None):
 				# one bin rule that checks the bin itself, the shape the default group must not copy
 				"PDT-OWN": _item_record("PDT-OWN", [(BIN_B, 1.0, 1.0, "Purchase", BIN_B)]),
 				"PDT-FEET": _item_record("PDT-FEET", uom="Foot"),
+				# a rule that reorders when stock runs out (Reorder at 0): a rule, never "no rule"
+				"PDT-ZERO": _item_record("PDT-ZERO", [(BIN, 0.0, 6.0)]),
 				"PDT-WHOLE": _item_record("PDT-WHOLE", uom="Each"),
 			},
 			"uoms": {
@@ -645,22 +652,86 @@ class TestWriting(unittest.TestCase):
 		self.assertIn("level or a quantity", str(caught.exception))
 		self.assertEqual(STATE["saves"], [])
 
-	def test_a_level_or_quantity_of_zero_is_never_saved(self):
-		for kwargs, words in (
-			({"level": "5", "qty": "0"}, "Buy must be more than 0"),
-			({"level": "0", "qty": "5"}, "Reorder at must be more than 0"),
-			({"level": "0", "qty": "0"}, "Reorder at must be more than 0"),
-			({"level": "0"}, "Reorder at must be more than 0"),
-		):
+	def test_a_quantity_of_zero_is_never_saved(self):
+		"""Buy stays above 0: a rule that buys nothing is no rule (remove it instead)."""
+		for kwargs in ({"level": "5", "qty": "0"}, {"level": "0", "qty": "0"}, {"qty": "0"}):
 			with self.subTest(kwargs=kwargs):
 				with self.assertRaises(FRAPPE.ValidationError) as caught:
 					self.save(**kwargs)
-				self.assertIn(words, str(caught.exception))
-		with self.assertRaises(FRAPPE.ValidationError):
-			self.save("PDT-BARE", BIN, level="0", qty="5")
+				self.assertIn("Buy must be more than 0", str(caught.exception))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			self.save("PDT-BARE", BIN, level="2", qty="0")
+		self.assertIn("Buy must be more than 0", str(caught.exception))
 		self.assertEqual(STATE["saves"], [])
+		self.assertEqual(STATE["items"]["PDT-BARE"]["reorder_levels"], [], "no rule was made")
 		row = STATE["items"]["PDT-A"]["reorder_levels"][0]
 		self.assertEqual((row["warehouse_reorder_level"], row["warehouse_reorder_qty"]), (4.0, 12.0))
+
+	def test_a_negative_level_is_still_refused(self):
+		for level in ("-1", -0.5):
+			with self.subTest(level=level):
+				with self.assertRaises(FRAPPE.ValidationError) as caught:
+					self.save(level=level, qty="5")
+				self.assertIn("below 0", str(caught.exception))
+		self.assertEqual(STATE["saves"], [])
+
+	def test_a_reorder_level_of_zero_is_a_rule_on_an_existing_rule(self):
+		"""Nik, 2026-10-22: 'The reorder at line is refusing to be assigned a 0 even though running out of
+		all stock is a very normal spot to reorder items.' ERPNext reorders when projected stock <= the level."""
+		out = self.save(level="0", qty="12")
+		self.assertTrue(out["saved"])
+		row = STATE["items"]["PDT-A"]["reorder_levels"][0]
+		self.assertEqual((row["warehouse_reorder_level"], row["warehouse_reorder_qty"]), (0.0, 12.0))
+		self.assertEqual(
+			(out["entry"]["has_rule"], out["entry"]["level"], out["entry"]["qty"]), (True, 0.0, 12.0)
+		)
+		# the level alone, with 0 as the one value sent: the quantity is kept, the 0 is not 'not sent'
+		self.save("PDT-ROOM", ROOM, level="0")
+		room = STATE["items"]["PDT-ROOM"]["reorder_levels"][0]
+		self.assertEqual((room["warehouse_reorder_level"], room["warehouse_reorder_qty"]), (0.0, 24.0))
+		self.assertEqual(STATE["saves"], ["PDT-A", "PDT-ROOM"])
+
+	def test_a_reorder_level_of_zero_makes_a_new_rule(self):
+		out = self.save("PDT-BARE", BIN, level="0", qty="5")
+		(row,) = STATE["items"]["PDT-BARE"]["reorder_levels"]
+		self.assertEqual(
+			(
+				row["warehouse"],
+				row["warehouse_reorder_level"],
+				row["warehouse_reorder_qty"],
+				row["material_request_type"],
+			),
+			(BIN, 0.0, 5.0, "Purchase"),
+		)
+		self.assertEqual(row["warehouse_group"], INVENTORY)
+		self.assertEqual((out["entry"]["has_rule"], out["entry"]["level"]), (True, 0.0))
+		# a level of 0 alone still makes no rule: both numbers are needed
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			self.save("PDT-FEET", BIN, level="0")
+		self.assertIn("Enter both Reorder at and Buy", str(caught.exception))
+		self.assertEqual(STATE["items"]["PDT-FEET"]["reorder_levels"], [])
+
+	def test_a_reorder_level_of_zero_survives_a_reload_and_a_resend(self):
+		self.save("PDT-BARE", BIN, level="0", qty="5")
+		read = api.get_reorder_levels(BIN, json.dumps(["PDT-BARE", "PDT-ZERO"]))["levels"]
+		for code, qty in (("PDT-BARE", 5.0), ("PDT-ZERO", 6.0)):
+			with self.subTest(code=code):
+				entry = read[code]
+				self.assertTrue(entry["has_rule"], "a level of 0 is a rule, never 'no rule'")
+				self.assertEqual((entry["level"], entry["qty"], entry["row_warehouse"]), (0.0, qty, BIN))
+				self.assertIsNotNone(entry["level"], "0.0 is not None: it must not read as a blank box")
+		# the same numbers again save nothing, whatever the level is
+		again = self.save("PDT-BARE", BIN, level="0", qty="5", modified=read["PDT-BARE"]["modified"])
+		self.assertFalse(again["saved"])
+		# editing the quantity of a level-0 rule keeps the 0
+		self.save("PDT-ZERO", BIN, qty="9")
+		row = STATE["items"]["PDT-ZERO"]["reorder_levels"][0]
+		self.assertEqual((row["warehouse_reorder_level"], row["warehouse_reorder_qty"]), (0.0, 9.0))
+
+	def test_removing_a_level_zero_rule_works(self):
+		out = api.remove_reorder_rule("PDT-ZERO", BIN, stamp("PDT-ZERO"))
+		self.assertTrue(out["saved"])
+		self.assertEqual(STATE["items"]["PDT-ZERO"]["reorder_levels"], [])
 
 	def test_erpnexts_own_refusal_gets_through(self):
 		STATE["save_error"] = FRAPPE.ValidationError("Item PDT-A is blocked by a validation of its own")
@@ -919,7 +990,7 @@ class TestTheSource(unittest.TestCase):
 	def test_both_pages_ask_for_the_bundle_and_work_without_it(self):
 		bins = BIN_PAGE.read_text(encoding="utf-8")
 		self.assertIn('"reorder_levels.bundle.js", "reorder_levels.bundle.css"', bins)
-		self.assertIn("this.reorder ?", bins, "the column exists only with the editor")
+		self.assertIn("this.reorder_shown() ?", bins, "the column exists only with the editor, switched on")
 		self.assertRegex(
 			bins, r"catch \(e\) \{\s+resolve\(\);", "a throwing require must not wedge the ready chain"
 		)
