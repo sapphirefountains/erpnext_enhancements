@@ -79,6 +79,11 @@ MUST_STAY_WHITELISTED = {
         "confirm_matches",
         "link_existing_record",
         "sync_entity",
+        # The Excel round trip (v1.721.0): the page's Export / Import buttons and nothing else.
+        "start_matching_export",
+        "get_matching_export_status",
+        "preview_matching_import",
+        "apply_matching_import",
     ),
     # The AI write gate's only door (v1.528.0 added the batch half). `_confirm_one` and
     # `_cancel_one` now sit directly above the endpoints that wrap them, and losing a decorator
@@ -243,11 +248,18 @@ EXACT_SURFACE = {
         "save_view",
         "delete_view",
         "save_last_view",
+        # P12: whether the caller has been shown a planner's first-visit tour (POST; the caller's own
+        # row, tested in test_planner_tour).
+        "mark_tour_seen",
         "get_print_chrome",
         "get_guided_view",
         "save_guided_view",
         "remember_guided_section",
         "mark_guided_intro_seen",
+        # v1.728.0: the Bin Manager's and the Scanner Audit's reorder switch (the caller's own row; GET and
+        # POST; tested in test_inventory_screen_prefs).
+        "get_inventory_prefs",
+        "set_show_reorder",
     },
     # The Opportunity board (form kit P6). Part C (v1.675.0) added bulk_update, which changes many
     # deals at once and so must check write permission and the `modified` lock deal by deal, through

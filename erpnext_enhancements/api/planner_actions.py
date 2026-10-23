@@ -32,6 +32,9 @@ needs the server is here:
   add, the second half of a split): it deletes it only when nothing has been attached since, and
   never with ``force``. For a split it also puts the first half back, and the tasks the split had
   moved onto the second half go back onto the first (Phase 6E).
+* :func:`add_dependency` / :func:`remove_dependency` (P6, the Gantt tab's link-by-drag) make one task
+  wait on another, or stop: through ``_load``'s checks, with the "starts before" line asking for a
+  reason as a save does, and with ERPNext's calendar-day push held back, because no date changed.
 * :func:`search_planner` finds tasks, projects and people for the search box, customer jobs only;
   ``planner="maintenance"`` finds visits, sites and technicians for the Maintenance Planner.
 
@@ -1750,20 +1753,31 @@ def _move_report(doc, old, new):
 	}
 
 
-def _draft_many(entries):
+def _draft_many(entries, follow=False, auto=False, exclude=()):
 	"""``move_many`` in draft mode: each move into the caller's Draft row of that task (Phase 3B),
-	never the Task. A stale task or a rental one fails the whole request, which rolls back."""
-	moved, warnings, conflicts = [], [], {}
+	never the Task. A stale task or a rental one fails the whole request, which rolls back.
+
+	``follow`` (P4): the tasks that follow each moved one are drafted along by the working days its
+	end moved (``pp._draft_followers``), each once, marked ``"dependent": True``. ``auto``: a
+	follower in a published project is left alone (``shift_skipped``). ``exclude``: tasks the same
+	request moves another way. What the lot creates together comes back as warnings
+	(``pp._draft_checks``), and when two moved tasks reach the same follower, the one nearer it, the
+	downstream one, carries it (``pp._downstream_first``)."""
+	moved, warnings, conflicts, skipped = [], [], {}, []
+	taken = {entry["task"] for entry in entries} | set(exclude or ())
+	roots, holidays = {}, pp._shift_holidays()
 	for entry in entries:
 		context = pp._draft_context(entry["task"], entry["modified"])
 		doc = context["doc"]
 		if entry["start"] or entry["end"]:
 			_refuse_rental(doc, _("moved"))
-		old = pp._span_text(pp._state(doc))
+		before_state = pp._state(doc)
+		old = pp._span_text(before_state)
 		result = pp._store_draft(
 			context, start=entry["start"], end=entry["end"], tentative=entry["tentative"]
 		)
-		report = _move_report(doc, old, pp._span_text(pp._state(doc)))
+		new = pp._span_text(pp._state(doc))
+		report = _move_report(doc, old, new)
 		report["modified"] = result.get("modified")
 		moved.append(report)
 		warnings.extend(result.get("warnings") or [])
@@ -1772,11 +1786,32 @@ def _draft_many(entries):
 			for line in lines:
 				if line not in known:
 					known.append(line)
-	return {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
+		roots[doc.name] = {
+			"doc": doc,
+			"stored": context["stored"],
+			"before": before_state,
+			"after": (pp._state(doc), pp._current_crew(doc)),
+			"days": pp.dependent_days(old, new, holidays) if follow and old[0] and new[0] else 0,
+		}
+	answer = {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
+	if not follow:
+		return answer
+	followers = []
+	for name in pp._downstream_first(list(roots)):
+		if not roots[name]["days"]:
+			continue
+		shifted, left, found = pp._draft_followers(name, roots[name]["days"], auto=auto, exclude=taken)
+		taken.update(move["task"] for move in shifted)
+		moved.extend(dict(move, dependent=True, drafted=True) for move in shifted)
+		skipped.extend(left)
+		followers.extend(found)
+	pp._merge_info(answer, pp._draft_checks(list(roots.values()), followers))
+	answer["shift_skipped"] = skipped
+	return answer
 
 
 @frappe.whitelist(methods=["POST"])
-def move_many(moves, reason=None, draft=0):
+def move_many(moves, reason=None, dependents=None, notify=None, draft=0):
 	"""Move several tasks in one go: the multi-select drag, and the selection bar's Move and Pencil.
 
 	``moves`` is a JSON list of ``{"task", "modified", "start", "end", "tentative"}``: ``start`` and
@@ -1793,12 +1828,44 @@ def move_many(moves, reason=None, draft=0):
 	crew task's dates are refused. ``draft=1``: each move goes into the caller's drafts instead.
 	Returns ``{"moved": [{task, subject, from, to, from_end, to_end, tentative, modified}],
 	"warnings", "conflicts"}``.
+
+	``notify`` (P3, the "Notify crew?" answer, as ``project_planner.save_task`` takes it): one notice
+	per person whose bookings the moves changed (``"notified"``); ``auto`` notifies when any move
+	touches the next 14 days. Ignored with ``draft=1``.
+
+	``draft="auto"`` (P4): each move is drafted when its task's project schedule is Draft and saved
+	otherwise, in one request (the saves first, all or nothing; a drafted move is marked
+	``"drafted": True``). ``dependents=1`` (P4, D10 and D15): the tasks that follow each moved task
+	move with it by the working days its end moved, later or earlier, checked with the batch and
+	marked ``"dependent": True`` in ``moved``; ``shift_skipped`` lists the ones left where they were.
+	A task the request moves itself is never moved again as a follower.
 	"""
 	pp._require_planner()
 	entries = _parse_moves(moves)
-	if cint(pp.given(draft)):
-		return _draft_many(entries)
+	follow = pp.as_bool(dependents) if pp.given(dependents) is not None else False
+	choice = pp.draft_choice(draft)
+	if choice is True:
+		return _draft_many(entries, follow=follow)
+	auto = choice == pp.DRAFT_AUTO
+	held = [entry for entry in entries if auto and pp._drafting(draft, entry["task"])]
+	live = [entry for entry in entries if entry not in held]
+	if not live:
+		return _draft_many(held, follow=follow, auto=True)
+	result = _move_live(live, reason, notify, follow, auto, exclude={entry["task"] for entry in held})
+	if result.get("needs_reason") or not held:
+		return result
+	taken = {move["task"] for move in result["moved"]}
+	drafts = _draft_many(held, follow=follow, auto=True, exclude=taken)
+	result["moved"].extend(dict(move, drafted=True) for move in drafts["moved"])
+	result["warnings"].extend(drafts["warnings"])
+	if follow:
+		result["shift_skipped"] = result.get("shift_skipped", []) + drafts.get("shift_skipped", [])
+	return result
 
+
+def _move_live(entries, reason, notify, follow, auto, exclude=()):
+	""":func:`move_many`'s saving half: the moves (and with ``follow`` the tasks that follow them)
+	checked together and saved, or ``needs_reason``."""
 	docs = []
 	for entry in entries:
 		doc = pp._load(entry["task"], entry["modified"])
@@ -1819,7 +1886,43 @@ def move_many(moves, reason=None, draft=0):
 		after.append((new_state, crew))
 		reports.append(_move_report(doc, old, pp._span_text(new_state)))
 
+	skipped = []
+	if follow:
+		taken = {doc.name for doc in docs} | set(exclude or ())
+		holidays = pp._shift_holidays()
+		by_task = {report["task"]: report for report in reports}
+		# Downstream first: a follower two moved tasks reach takes the nearer one's shift.
+		for name in pp._downstream_first([report["task"] for report in reports]):
+			report = by_task[name]
+			days = (
+				pp.dependent_days(
+					(report["from"], report["from_end"]), (report["to"], report["to_end"]), holidays
+				)
+				if report["from"] and report["to"]
+				else 0
+			)
+			followers, left = pp._follower_docs(report["task"], days, exclude=taken, auto=auto)
+			skipped.extend(left)
+			if not followers:
+				continue
+			was, now, moves = pp._shift_docs(followers, days)
+			taken.update(doc.name for doc in followers)
+			docs.extend(followers)
+			before.extend(was)
+			after.extend(now)
+			reports.extend(
+				dict(move, tentative=engine.is_tentative(doc), dependent=True)
+				for doc, move in zip(followers, moves, strict=True)
+			)
+
 	conflicts = pp.conflict_delta(engine.preview_batch(before), engine.preview_batch(after))
+	# P4: each task the batch moves against every task it waits on, where those go ("Starts before").
+	lines = pp._follower_dependency_lines(
+		[(doc, was[0], now[0]) for doc, was, now in zip(docs, before, after, strict=True)],
+		{doc.name: now[0] for doc, now in zip(docs, after, strict=True)},
+	)
+	if lines:
+		conflicts[pp.DEPENDENCY_KEY] = lines
 	reason = (pp.given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts, "moves": reports}
@@ -1832,18 +1935,30 @@ def move_many(moves, reason=None, draft=0):
 
 	later = sum(shift(report) for report in reports) > 0
 	order = sorted(docs, key=lambda d: by_name[d.name]["from"] or "", reverse=later)
+	pairs = [
+		{"name": doc.name, "before": was, "after": now}
+		for doc, was, now in zip(docs, before, after, strict=True)
+	]
 	warnings, moved = [], []
-	for doc in order:
-		warnings.extend(pp._save(doc))
-		if conflicts:
-			_comment_reason(
-				doc,
-				_("Moved with other tasks on the Project Planner over a conflict: {0}. Reason: {1}"),
-				conflicts,
-				reason,
-			)
-		moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
-	return {"moved": moved, "warnings": warnings, "conflicts": conflicts}
+	# P4: a task ERPNext's own reschedule pushed during the batch is reloaded and put back on its
+	# planned dates (pp._save_planned / pp._settle), rather than failing as "changed since".
+	planned = {doc.name: pp._planned(doc) for doc in docs}
+	with pp._quiet_alerts(notify):
+		for doc in order:
+			warnings.extend(pp._save_planned(doc, planned[doc.name]))
+			if conflicts:
+				_comment_reason(
+					doc,
+					_("Moved with other tasks on the Project Planner over a conflict: {0}. Reason: {1}"),
+					conflicts,
+					reason,
+				)
+			moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
+		warnings.extend(pp._settle(docs, planned, moved))
+	result = {"moved": moved, "warnings": warnings, "conflicts": conflicts}
+	if follow:
+		result["shift_skipped"] = skipped
+	return pp._with_notice(result, notify, pairs)
 
 
 # ---------------------------------------------------------------------- undo of a created task
@@ -1939,7 +2054,7 @@ def _discard_new(refs):
 	for ref in live:
 		draft = frappe.get_doc(DRAFT_DOCTYPE, mine[ref].get("name"))
 		draft.status = pp.DISCARDED
-		draft.save()
+		pp._save_draft_row(draft)
 	return live, gone
 
 
@@ -2144,6 +2259,175 @@ def remove_built_out_tasks(tasks, phases=None):
 	for name in phases_removed:
 		frappe.delete_doc("Task", name)
 	return {"removed": removed, "phases": phases_removed, "gone": gone}
+
+
+# ---------------------------------------------------------------------- dependencies (P6)
+
+
+def link_problem(task, depends_on, rows, waiting):
+	"""Why ``task`` cannot wait on ``depends_on``, as a sentence, or None when it can.
+
+	``rows`` maps a Task name to its row (``project``, ``is_group``, ``subject``); ``waiting`` holds the
+	tasks that already wait on ``task``, at any depth (:func:`project_planner.successors`). Pure, so the
+	rules are tested without a bench:
+
+	* both ends are stored tasks: a drafted new task (``draft-new:…``) has no row to link yet;
+	* not the same task, and both of the same project (ERPNext moves dependents only within one);
+	* neither is a group: ERPNext lists a group's children in the group's own ``depends_on``
+	  (``Task.populate_depends_on``), so a phase "waits on" its tasks already and a link to or from one
+	  would be rewritten or refused on the next save;
+	* no loop: the task it would wait on must not already wait on it.
+	"""
+	for name in (task, depends_on):
+		if pp.is_draft_ref(name):
+			return _("A task that is still a draft cannot be linked yet. Publish the schedule first.")
+	if task == depends_on:
+		return _("A task cannot wait on itself.")
+	row, pred = rows.get(task), rows.get(depends_on)
+	if not row or not pred:
+		return _("Task {0} was not found.").format(depends_on if row else task)
+	if (row.get("project") or "") != (pred.get("project") or "") or not row.get("project"):
+		return _("Only tasks of the same project can be linked.")
+	for name, entry in ((task, row), (depends_on, pred)):
+		if cint(entry.get("is_group")):
+			subject = entry.get("subject") or name
+			return _("{0} is a phase or group. Link the tasks in it instead.").format(subject)
+	if depends_on in set(waiting or ()):
+		return _("{0} already waits on {1}, so this link would make a loop.").format(
+			pred.get("subject") or depends_on, row.get("subject") or task
+		)
+	return None
+
+
+def _link_rows(names):
+	"""``{name: row}`` for :func:`link_problem` and the "starts before" check, as ``pp._task_rows`` reads
+	a task plus ``is_group``."""
+	rows = pp._task_rows(names)
+	for row in frappe.get_all(
+		"Task", filters={"name": ["in", sorted(rows)]}, fields=["name", "is_group"], limit_page_length=0
+	):
+		rows[row.get("name")]["is_group"] = row.get("is_group")
+	return rows
+
+
+def _drafted_states(names):
+	"""``{name: state}`` for the tasks in ``names`` that a Draft row has moved (the caller's, or anyone's
+	on a Draft schedule): a link on a draft schedule is judged against the drafted days."""
+	out = {}
+	rows, _duplicates = pp._draft_rows()
+	for row in rows:
+		if row.get("task") in names and not pp.is_new_row(row):
+			doc, problem = pp._drafted_doc(row)
+			if not problem:
+				out[row.get("task")] = pp._state(doc)
+	return out
+
+
+def _rebase_drafts(task, before, after):
+	"""A link changes no date, crew or anything else a draft holds, so the task's Draft rows drafted
+	against the task as it was are moved on to the save, not left looking out of date."""
+	for row in frappe.get_all(
+		pp.DRAFT_DOCTYPE,
+		filters={"task": task, "status": pp.DRAFT},
+		fields=["name", "base_modified"],
+		limit_page_length=0,
+	):
+		if pp.same_moment(row.get("base_modified"), before):
+			frappe.db.set_value(
+				pp.DRAFT_DOCTYPE, row.get("name"), "base_modified", after, update_modified=False
+			)
+
+
+def _save_links(doc):
+	"""Save a change to ``doc.depends_on`` only. Its days did not change, so ERPNext's own
+	``reschedule_dependent_tasks`` (calendar days, P4's merge blocker) is told not to run."""
+	before = doc.modified
+	doc.flags.ignore_reschedule = True
+	try:
+		from erpnext.projects.doctype.task.task import CircularReferenceError
+	except ImportError:  # pragma: no cover - ERPNext is always installed beside this app
+		CircularReferenceError = frappe.ValidationError
+	try:
+		warnings = pp._save(doc)
+	except CircularReferenceError:
+		frappe.throw(_("This link would make a loop of tasks waiting on each other."))
+	_rebase_drafts(doc.name, before, doc.modified)
+	return warnings
+
+
+@frappe.whitelist(methods=["POST"])
+def add_dependency(task, depends_on, modified, reason=None):
+	"""``task`` waits on ``depends_on`` (finish to start): the Gantt tab's link drawn from one bar's
+	end dot onto another (P6, §4.3).
+
+	Through the planner's rules, as ``save_task``: the planner role and write permission on ``task``,
+	the "changed since the planner loaded" check on ``modified``, no Fountain Move task (its schedule is
+	the Maintenance Planner's) and no rental crew task. When ``task`` would start before ``depends_on``
+	ends (on their drafted days, where a Draft row moves either), the answer is
+	``{"needs_reason": True, "conflicts": {"Dependencies": [line]}}`` and nothing is saved; with a
+	``reason`` it is saved and the reason goes on the task's timeline. Nothing moves: no date changes,
+	so nobody is notified, and ERPNext's own calendar-day push is held back (:func:`_save_links`).
+
+	A link is not drafted on a Draft schedule. It holds no dates and tells nobody, which is all a draft
+	holds back; the task's Draft rows stay current (:func:`_rebase_drafts`).
+
+	Returns ``{"name", "modified", "warnings", "conflicts", "linked", "task", "depends_on"}``;
+	``linked`` is False when the link was already there.
+	"""
+	task, depends_on = pp.given(task), pp.given(depends_on)
+	if pp.is_draft_ref(task) or pp.is_draft_ref(depends_on):
+		frappe.throw(link_problem(task, depends_on, {}, ()))
+	doc = pp._load(task, modified)
+	_refuse_rental(doc, _("linked"))
+	if not frappe.db.exists("Task", depends_on):
+		frappe.throw(_("Task {0} was not found.").format(depends_on))
+	frappe.has_permission("Task", "read", doc=depends_on, throw=True)
+	rows = _link_rows([task, depends_on])
+	problem = link_problem(task, depends_on, rows, pp.successors(task))
+	if problem:
+		frappe.throw(problem)
+	answer = {"name": doc.name, "task": doc.name, "depends_on": depends_on, "warnings": [], "conflicts": {}}
+	if any(row.get("task") == depends_on for row in doc.get("depends_on") or []):
+		return dict(answer, modified=str(doc.modified), linked=False)
+	drafted = _drafted_states({task, depends_on})
+	state = drafted.get(task) or pp._state(doc)
+	pred = drafted.get(depends_on) or rows[depends_on]
+	lines = [] if engine.is_tentative(state) else pp.dependency_conflicts(state, [pred])
+	conflicts = {pp.DEPENDENCY_KEY: lines} if lines else {}
+	reason = (reason or "").strip()
+	if conflicts and not reason:
+		return {"needs_reason": True, "conflicts": conflicts}
+	doc.append("depends_on", {"task": depends_on})
+	warnings = _save_links(doc)
+	if conflicts:
+		text = _("Linked on the Project Planner over a conflict: {0}. Reason: {1}")
+		_comment_reason(doc, text, conflicts, reason)
+	return dict(answer, modified=str(doc.modified), warnings=warnings, conflicts=conflicts, linked=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_dependency(task, depends_on, modified):
+	"""``task`` no longer waits on ``depends_on``: a link removed on the Gantt tab, or the Undo of
+	:func:`add_dependency`. The same checks on ``task``; a group's own rows are ERPNext's (each child in
+	its group's ``depends_on``) and are refused. Removing a wait never creates a conflict, so there is no
+	reason to ask for. Returns ``{"name", "modified", "warnings", "removed", "task", "depends_on"}``;
+	``removed`` is False when there was no such link."""
+	task, depends_on = pp.given(task), pp.given(depends_on)
+	if pp.is_draft_ref(task):
+		frappe.throw(link_problem(task, depends_on, {}, ()))
+	doc = pp._load(task, modified)
+	_refuse_rental(doc, _("changed"))
+	if cint(doc.get("is_group")):
+		frappe.throw(
+			_("{0} is a phase or group. Its tasks are ERPNext's to list.").format(doc.subject or doc.name)
+		)
+	answer = {"name": doc.name, "task": doc.name, "depends_on": depends_on, "warnings": []}
+	keep = [row for row in doc.get("depends_on") or [] if row.get("task") != depends_on]
+	if len(keep) == len(doc.get("depends_on") or []):
+		return dict(answer, modified=str(doc.modified), removed=False)
+	doc.set("depends_on", keep)
+	warnings = _save_links(doc)
+	return dict(answer, modified=str(doc.modified), warnings=warnings, removed=True)
 
 
 # ---------------------------------------------------------------------- search

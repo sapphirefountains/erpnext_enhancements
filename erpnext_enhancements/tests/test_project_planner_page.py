@@ -61,7 +61,6 @@ API_CONTRACT = {
 	"get_route": {"resource", "date"},
 	"suggest_dates": {"task"},
 	# Phase 3A: planning helpers (tests/test_project_planner_phase3a_page.py checks each feature).
-	"shift_successors": {"task", "days", "modified", "reason", "tasks"},
 	"get_heatmap": {"start", "weeks"},
 	"get_overdue": {"limit"},
 	"bulk_update": {"tasks", "action", "date", "reason"},
@@ -69,9 +68,15 @@ API_CONTRACT = {
 	# Phase 3B (tests/test_planner_phase3b.py): draft mode adds ``draft`` to the read and to every
 	# write (send() adds it to save_task/add_crew/swap_crew), then publish or discard; My week; the
 	# printable crew sheet.
-	"publish_drafts": {"reason"},
-	"discard_drafts": {"tasks"},
+	"publish_drafts": {"reason", "project"},
+	"discard_drafts": {"tasks", "project"},
+	# P4 (tests/test_planner_autoshift.py): a project's own Publish… and Set/Reset baseline. The page no
+	# longer calls shift_successors: a change of days sends dependents=1 on the save itself.
+	"publish_project_schedule": {"project", "reason"},
+	"reset_baseline": {"project", "dry_run"},
 	"get_my_week": {"date"},
+	# P8 (tests/test_planner_today.py): the phone's Today.
+	"get_today": {"date"},
 	"crew_sheet_html": {"start", "group"},
 	# Phase 4 (tests/test_project_planner_phase4_page.py checks each feature): worked hours against
 	# the plan, the labor forecast of the project on screen, and the equipment grid of the crew view.
@@ -89,6 +94,11 @@ API_CONTRACT = {
 }
 for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
 	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}
+# P4: the "Notify crew?" answer on the live writes, and the tasks that follow on the two that move days.
+for _method in ("save_task", "add_crew", "swap_crew"):
+	API_CONTRACT[_method] = API_CONTRACT[_method] | {"notify"}
+for _method in ("save_task", "swap_crew"):
+	API_CONTRACT[_method] = API_CONTRACT[_method] | {"dependents"}
 
 # What the route view reads from get_route (spec section B) and the per-day keys the engine adds
 # to a day cell. The page only ever reads these; a rename on the server must be a conscious one.
@@ -199,7 +209,8 @@ class TestRouting(unittest.TestCase):
 		for forbidden in ("pushState", "replaceState", "window.location", "location.href", "history."):
 			self.assertNotIn(forbidden, code)
 		# Every screen change is a route, carrying the filters (S5c).
-		self.assertIn("frappe.set_route(PP.route, view, anchor, this.filter_options())", code)
+		self.assertIn("frappe.set_route(PP.route, ...parts, this.filter_options())", code)
+		self.assertIn("const parts = this.ppl_route_parts(view, anchor);", code)
 		self.assertIn("on_page_show", code)
 		self.assertRegex(
 			code,
@@ -208,13 +219,16 @@ class TestRouting(unittest.TestCase):
 
 	def test_the_four_route_shapes(self):
 		# /desk/project-planner, and /week|month|crew/<date> (the route and heatmap views are separate shapes).
+		# P5: week and month live at /calendar/week|month/<date>, the Lookahead at /lookahead/<date>, and
+		# the old /week and /month addresses redirect (scripts/test_planner_lookahead.js drives them).
 		code = _code()
 		self.assertIn('route: "project-planner"', code)
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 		self.assertIn('PP.views.includes(route[1]) ? route[1] : "week"', code)
 		self.assertIn('moment(route[2], "YYYY-MM-DD", true).isValid()', code)
 		for view in ("month", "week", "crew"):
 			self.assertIn(f'["{view}", __(', code)
+		self.assertIn("const lookahead = this.ppl_route_target(route);", code)
 
 	def test_the_route_shape(self):
 		# /desk/project-planner/route/<resource>/<date>: a full view, re-rendered from handle_route
@@ -225,8 +239,8 @@ class TestRouting(unittest.TestCase):
 		self.assertIn("frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options())", code)
 		self.assertRegex(code, r"step = \(sign\) =>\s*this\.go_route\(")
 		self.assertIn("this.load_route()", code)
-		# The route view is not one of the three calendar views.
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		# The route view is not one of the views drawn from cards.
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 		self.assertNotIn('"route"', code.split("views:")[1].split("\n")[0])
 
 	def test_the_route_view_degrades_when_the_map_cannot_load(self):

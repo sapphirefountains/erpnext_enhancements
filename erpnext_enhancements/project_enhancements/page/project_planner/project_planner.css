@@ -133,7 +133,7 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-/* ---- The toolbar (v1.687.0): the filters, alert chips, four menus, the phone's one button --- */
+/* ---- The toolbar (v1.687.0): the filters, alert chips, + Add and More, the phone's one button --- */
 
 .pp-tb-filters,
 .pp-tb-tools,
@@ -908,6 +908,109 @@
 	padding: 2px 5px;
 }
 
+/* The crew board counts in days (P7): one task's chips on neighboring days are drawn as one bar. The chip
+ * reaches across the cell's padding and its neighbor's rule (5px) and drops the edge it shares. */
+.pp-cell .pp-card.pp-span-next {
+	margin-right: -5px;
+	border-right-color: transparent;
+	z-index: 1;
+}
+
+.pp-cell .pp-card.pp-span-prev {
+	margin-left: -5px;
+	border-left-width: 0;
+}
+
+.pp-cell .pp-card.pp-span-prev .pp-card-title {
+	color: var(--sf-text-muted);
+}
+
+/* The Crew tab's header: Board | Capacity, and Show hours. */
+.pp-crewbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin: 0 0 8px;
+}
+
+.pp-crewbar-hours {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	font-size: 13px;
+	font-weight: normal;
+	cursor: pointer;
+}
+
+.pp-crewbar-hours input {
+	margin: 0;
+}
+
+/* The Crew board has its tray (Not scheduled, Needs crew) beside it rather than above; on a phone it goes back above, where it was. */
+.pp-main-crew {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.pp-main-crew > .pp-grid-wrap {
+	order: 1;
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+/* The tray stays in view beside the board and scrolls by itself: top clears Frappe's navbar (48px)
+ * and its sticky page head (60px) with a little air, and the height is the board's own cap (the
+ * same 150px), so the row is no taller than the board and the tray never sets the page's
+ * height. overscroll-behavior stops the wheel handing the page the rest of the scroll
+ * when the tray reaches its end. The board's own box (.pp-crew-view .pp-scroll) scrolls on its
+ * own too, so neither moves the other. */
+.pp-main-crew > .pp-trays {
+	order: 2;
+	flex: 0 0 260px;
+	max-width: 260px;
+	position: sticky;
+	top: 120px;
+	max-height: calc(100vh - 150px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.pp-main-crew > .pp-trays:empty {
+	display: none !important;
+}
+
+.pp-main-crew > .pp-trays .pp-tray .pp-card {
+	width: 100%;
+}
+
+@media (max-width: 767px) {
+	.pp-main-crew {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.pp-main-crew > .pp-trays {
+		order: 0;
+		flex: none;
+		max-width: none;
+		position: static;
+		max-height: none;
+		overflow-y: visible;
+	}
+}
+
+/* A printout carries the whole tray, not the part that fits a screen. */
+@media print {
+	.pp-main-crew > .pp-trays {
+		position: static;
+		max-height: none;
+		overflow: visible;
+	}
+}
+
 /* The card under a finger or the pointer while it is dragged. A 2px focus edge, not a drop
  * shadow, lifts it off the grid. */
 .pp-ghost {
@@ -1209,8 +1312,23 @@ body.pp-drag-active * {
 
 .pp-util-head {
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	margin: 0 0 8px;
+}
+
+.pp-util-title {
+	margin: 0;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+}
+
+/* Capacity (P7): the heatmap, then the Utilization table under it. */
+.pp-cap-util {
+	margin-top: 18px;
 }
 
 .pp-util-scroll {
@@ -1721,13 +1839,14 @@ body.pp-drag-active * {
 	font-weight: 600;
 }
 
-/* Draft mode on: a strip right under the toolbar, a dashed focus edge like a drafted card's, so the
- * mode is seen before anything is dragged. */
+/* The drafts strip right under the toolbar, a dashed focus edge like a drafted card's: the hold's
+ * line while "Hold all my changes" is on, then one line per project with drafts (P4), each with its
+ * Publish and Discard, so a Draft schedule is seen before anything is dragged. */
 .pp-draft-bar {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
 	padding: 8px 12px;
 	margin: -2px 0 10px;
 	border: var(--sf-border-control) dashed var(--sf-focus);
@@ -1738,6 +1857,13 @@ body.pp-drag-active * {
 
 .pp-draft-text {
 	font-weight: 600;
+}
+
+.pp-draft-line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
 }
 
 .pp-my-week {
@@ -1841,6 +1967,149 @@ body.pp-drag-active * {
 		padding: 6px 0;
 		min-height: var(--sf-touch-min);
 	}
+}
+
+/* ======================================================================================== */
+/* P8: Today (phone), the person's day and tomorrow.                                        */
+/* ======================================================================================== */
+
+.pp-today {
+	max-width: 720px;
+	padding-bottom: 24px;
+}
+
+/* Simple mode (the PPS block; docs/planner-simple-mode.md). While it shows, the planner's own chrome is
+ * hidden and the kit draws the screen (planner_kit.bundle.css, .pk-simple-*). A class rather than each
+ * element's own hide(), so the next screen's set_mode brings back exactly what it shows. */
+.pp-wrap.pp-simple-on > :not(.pp-simple) {
+	display: none !important;
+}
+
+.pp-simple {
+	max-width: 1100px;
+	padding-bottom: 24px;
+}
+
+.pp-td-day {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 10px;
+	overflow: hidden;
+}
+
+.pp-td-head {
+	padding: 8px 10px;
+	font-size: 13px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-td-now .pp-td-head b {
+	color: var(--sf-link);
+}
+
+.pp-td-mapbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 8px 10px 0;
+}
+
+.pp-td-cols {
+	display: block;
+	padding: 8px 10px;
+}
+
+.pp-td-cols.pp-nomap {
+	display: none;
+}
+
+.pp-td-cols .pp-map {
+	height: 240px;
+}
+
+.pp-td-stops {
+	min-width: 0;
+}
+
+.pp-td-stop {
+	display: flex;
+	gap: 10px;
+	padding: 10px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.pp-td-stop:first-child {
+	border-top: none;
+}
+
+/* The stop's number focuses its pin on the map. */
+.pp-td-stop[data-marker]:not([data-marker=""]) .pp-stop-num {
+	cursor: pointer;
+}
+
+/* A stop with no location is not on the map: its number is grey. */
+.pp-td-unlocated .pp-stop-num {
+	background: var(--sf-text-muted);
+}
+
+.pp-td-body {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.pp-td-when {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+}
+
+.pp-td-site {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pp-td-work {
+	font-size: 13px;
+}
+
+.pp-td-sub {
+	font-size: 13px;
+	color: var(--sf-text-muted);
+}
+
+.pp-td-addr {
+	display: inline-block;
+	font-size: 13px;
+	padding: 6px 0;
+	min-height: var(--sf-touch-min);
+	box-sizing: border-box;
+}
+
+.pp-td-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 2px;
+}
+
+.pp-td-notes {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+	white-space: pre-wrap;
+}
+
+.pp-td-foot {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pp-td-foot button {
+	min-height: var(--sf-touch-min);
 }
 
 /* ======================================================================================== */
@@ -3126,34 +3395,6 @@ body.p6b-resizing * {
 }
 
 /* ======================================================================================== */
-/* Phase 6E: Move by calendar or working days (PP6E_STYLE).                                 */
-/* ======================================================================================== */
-
-.p6e-switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.p6e-switch-label {
-	font-size: 12px;
-	color: var(--sf-text-muted);
-}
-
-.p6e-opt {
-	border-color: var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-}
-
-/* The unit in use: the primary fill and the weight. */
-.p6e-opt.p6e-on {
-	background: var(--sf-primary);
-	border-color: var(--sf-primary);
-	color: var(--sf-on-primary);
-	font-weight: var(--sf-weight-bold);
-}
-
-/* ======================================================================================== */
 /* AI draft (PPT4_STYLE).                                                                   */
 /* ======================================================================================== */
 
@@ -3198,5 +3439,788 @@ body.p6b-resizing * {
 	.t4-spin,
 	.pp-card.p6b-flash {
 		animation: none;
+	}
+}
+
+/* ======================================================================================== */
+/* P5: the Lookahead, the planner's home tab (PPL).                                          */
+/* ======================================================================================== */
+
+/* The bar over the board: its title, the range picker (2, 3, 4 or 6 weeks), the Needs crew chip and
+ * Expand all / Collapse all. */
+.ppl-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppl-head-title {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.ppl-weeks {
+	display: inline-flex;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+
+.ppl-weeks-btn {
+	border: 0;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	padding: 2px 8px;
+}
+
+.ppl-weeks-btn + .ppl-weeks-btn {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppl-weeks-btn.pp-on {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+/* The Calendar tab's Week/Month switch sits beside the tabs and reads as a smaller one. */
+.ppl-cal-seg {
+	font-size: 12px;
+}
+
+/* The board scrolls inside itself, as the crew view does, so the day headings and the names stay in
+ * view. The grid: a label column, then one column a day. */
+.ppl-scroll {
+	max-height: calc(100vh - 190px);
+	overflow: auto;
+}
+
+.ppl-grid {
+	position: relative;
+	min-width: calc(260px + var(--ppl-days, 21) * 34px);
+}
+
+.ppl-row {
+	display: grid;
+	grid-template-columns: 260px repeat(var(--ppl-days, 21), minmax(34px, 1fr));
+	grid-auto-rows: minmax(32px, auto);
+	align-items: center;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.ppl-label {
+	grid-column: 1;
+	grid-row: 1;
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding: 2px 6px;
+	background: var(--sf-surface);
+	border-right: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 12px;
+	overflow: hidden;
+}
+
+.ppl-heads {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	background: var(--sf-surface);
+}
+
+.ppl-corner {
+	z-index: 5;
+	color: var(--sf-text-muted);
+	font-weight: 600;
+}
+
+.ppl-dayhead {
+	grid-row: 1;
+	text-align: center;
+	font-size: 11px;
+	white-space: nowrap;
+	padding: 4px 0;
+	color: var(--sf-text-muted);
+	cursor: pointer;
+	position: relative;
+}
+
+.ppl-dayhead.ppl-today {
+	color: var(--sf-link);
+	font-weight: 700;
+}
+
+.ppl-note-dot {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 3px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-focus);
+	vertical-align: middle;
+}
+
+/* A day cell: the row's ground, under the bars. Weekends are quiet, a week starts with a rule, today
+ * is tinted. A task row's cells are the drop targets. */
+.ppl-day,
+.ppl-cell {
+	grid-row: 1;
+	align-self: stretch;
+	min-height: 32px;
+}
+
+.ppl-weekend {
+	background: color-mix(in srgb, var(--sf-text-muted) 6%, var(--sf-surface));
+}
+
+.ppl-week-start {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppl-day.ppl-today,
+.ppl-cell.ppl-today {
+	background: color-mix(in srgb, var(--sf-focus) 8%, var(--sf-surface));
+}
+
+.ppl-day.pp-over {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.ppl-toggle {
+	border: 0;
+	background: none;
+	color: var(--sf-text-muted);
+	width: 18px;
+	padding: 0;
+	flex: 0 0 auto;
+}
+
+.ppl-toggle-gap {
+	display: inline-block;
+	width: 18px;
+	flex: 0 0 auto;
+}
+
+.ppl-project {
+	background: var(--sf-bg);
+}
+
+.ppl-project .ppl-label {
+	background: var(--sf-bg);
+	flex-wrap: wrap;
+	row-gap: 2px;
+}
+
+.ppl-project-name {
+	font-weight: 700;
+	color: var(--sf-text-strong);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
+}
+
+.ppl-project-name:hover,
+.ppl-project-name:focus-visible {
+	text-decoration: underline;
+}
+
+.ppl-project-id,
+.ppl-pm,
+.ppl-count {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.pp-chip.ppl-draft {
+	background: color-mix(in srgb, var(--sf-focus) 14%, var(--sf-surface));
+	color: var(--sf-link);
+	font-weight: 600;
+}
+
+.pp-chip.ppl-published {
+	background: color-mix(in srgb, var(--sf-good) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.ppl-phase .ppl-label {
+	padding-left: 18px;
+}
+
+.ppl-phase-name {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.ppl-task .ppl-label {
+	padding-left: 40px;
+}
+
+.ppl-task-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+/* A collapsed project's or phase's work: the days it covers, as plain runs. */
+.ppl-roll {
+	grid-row: 1;
+	align-self: center;
+	height: 8px;
+	background: color-mix(in srgb, var(--sf-text-muted) 40%, var(--sf-surface));
+	pointer-events: none;
+}
+
+/* A bar is the task's card, laid across its days. */
+.pp-card.ppl-bar {
+	grid-row: 1;
+	align-self: center;
+	z-index: 1;
+	margin: 3px 1px;
+	padding: 1px 4px;
+	min-height: 24px;
+	display: flex;
+	align-items: center;
+	overflow: visible;
+}
+
+.ppl-bar .pp-card-top {
+	width: 100%;
+	overflow: hidden;
+}
+
+.ppl-size {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+	flex: 0 0 auto;
+}
+
+.ppl-bar .pp-card-chips {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* A bar that runs on past the window: that end is square and dashed. */
+.pp-card.ppl-cut-l {
+	border-left-style: dashed;
+}
+
+.pp-card.ppl-cut-r {
+	border-right: 2px dashed var(--sf-field-border);
+}
+
+/* The baseline (D5): a grey ghost behind the live bar. A slip past it: a thin red tail. */
+.ppl-base {
+	grid-row: 1;
+	align-self: center;
+	height: 26px;
+	margin: 0 1px;
+	background: color-mix(in srgb, var(--sf-text-muted) 18%, transparent);
+	border: var(--sf-border-hairline) dashed color-mix(in srgb, var(--sf-text-muted) 50%, transparent);
+	pointer-events: none;
+}
+
+.ppl-slip {
+	grid-row: 1;
+	align-self: end;
+	height: 3px;
+	margin-bottom: 3px;
+	background: var(--sf-danger);
+	z-index: 2;
+	pointer-events: none;
+}
+
+/* While a bar or an edge is dragged, the bars let the day cells under them take the drop. */
+body.pp-drag-active .ppl-bar,
+body.p6b-resizing .ppl-bar {
+	pointer-events: none;
+}
+
+/* A project's Not scheduled line: chips that drag onto a day. */
+.ppl-undated-row .ppl-label {
+	padding-left: 18px;
+}
+
+.ppl-undated-chips {
+	grid-row: 1;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 6px;
+}
+
+.pp-card.ppl-undated {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 240px;
+	padding: 1px 6px;
+}
+
+.ppl-undated .pp-card-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ppl-hint {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	font-style: italic;
+}
+
+.ppl-no-tasks .ppl-label {
+	color: var(--sf-text-muted);
+}
+
+.ppl-empty {
+	padding: 16px;
+	color: var(--sf-text-muted);
+	text-align: center;
+}
+
+/* Dependency arrows for the hovered or focused bar's chain, over the grid. */
+.ppl-links {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	overflow: visible;
+	z-index: 3;
+}
+
+.ppl-link {
+	fill: none;
+	stroke: var(--sf-text-strong);
+	stroke-width: 1.5;
+}
+
+.ppl-link-head {
+	fill: var(--sf-text-strong);
+	stroke: none;
+}
+
+.ppl-link.ppl-link-late {
+	stroke: var(--sf-danger);
+}
+
+.ppl-link-head.ppl-link-late {
+	fill: var(--sf-danger);
+}
+
+/* On a tablet, rows stay 40px tall (§4.2). */
+@media (pointer: coarse) {
+	.ppl-row {
+		grid-auto-rows: minmax(40px, auto);
+	}
+
+	.pp-card.ppl-bar {
+		min-height: 32px;
+	}
+}
+
+/* A phone draws a list by day (ppl_list_html): each day a section and a drop target. */
+.ppl-list-day,
+.ppl-list-undated,
+.ppl-list-empty {
+	margin-bottom: 12px;
+}
+
+.ppl-list-day > h5,
+.ppl-list-undated > h5,
+.ppl-list-empty > h5 {
+	font-size: 13px;
+	margin: 0 0 4px;
+	color: var(--sf-text-strong);
+}
+
+/* An empty day, listed so a Not scheduled chip has somewhere to land: one short line. */
+.ppl-list-day.ppl-list-free {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 4px;
+	min-height: var(--sf-touch-min);
+}
+
+.ppl-list-day.ppl-list-free > h5 {
+	margin: 0;
+}
+
+.ppl-list-day.ppl-today > h5 {
+	color: var(--sf-link);
+}
+
+.ppl-list-day .pp-card,
+.ppl-list-undated .pp-card {
+	margin-bottom: 4px;
+}
+
+.ppl-list-project {
+	padding: 4px 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+}
+
+@media (max-width: 767px) {
+	.ppl-scroll {
+		max-height: none;
+	}
+}
+
+/* ======================================================================================== */
+/* P6: the Gantt tab, one project start to finish (PPG).                                    */
+/* ======================================================================================== */
+
+/* The bar over the chart: the project picker, its schedule (Draft with Publish…, or Published and
+ * when), the baseline's date, Reset baseline, Build out ▾, then Day / Week / Month. */
+.ppg-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppg-head .ppg-project {
+	width: auto;
+	max-width: 320px;
+	font-weight: 600;
+}
+
+.ppg-bits {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.ppg-state {
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.ppg-state.ppg-draft {
+	color: var(--sf-link);
+}
+
+.ppg-state.ppg-published {
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.ppg-baseline,
+.ppg-note {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.ppg-zoom {
+	font-size: 12px;
+}
+
+/* The chart takes the height of the screen below the toolbar, as a Gantt needs room to scroll. */
+.ppg-chart {
+	height: calc(100vh - 260px);
+	min-height: 360px;
+}
+
+.ppg-empty {
+	color: var(--sf-text-muted);
+	padding: 24px 8px;
+}
+
+/* The bars (the widget's task lines, classed by the page's task_class template). The chart's canvas is
+ * the widget's, so these only add a mark to the widget's own bar: a draft is dashed, a pencil hatched,
+ * finished work faded, an overdue task outlined in the danger tone, and a bar the planner may not move
+ * does not offer to. */
+.ppg-chart .gantt_task_line.ppg-drafted {
+	border-style: dashed;
+	border-width: 2px;
+}
+
+.ppg-chart .gantt_task_line.ppg-pencil {
+	background-image: repeating-linear-gradient(
+		45deg,
+		transparent 0 4px,
+		color-mix(in srgb, var(--sf-white) 40%, transparent) 4px 7px
+	);
+}
+
+.ppg-chart .gantt_task_line.ppg-finished {
+	opacity: 0.55;
+}
+
+.ppg-chart .gantt_task_line.ppg-overdue {
+	border-color: var(--sf-danger);
+}
+
+.ppg-chart .gantt_task_line.ppg-locked {
+	cursor: default;
+}
+
+.ppg-chart .gantt_row.ppg-group-row .gantt_tree_content {
+	font-weight: 600;
+}
+
+/* ======================================================================================== */
+/* P9: the Overview tab, every job on one read-only timeline (PPO).                         */
+/* ======================================================================================== */
+
+/* The bar over the chart: the title, the months picker, Expand all, Print weekly summary, and the Draft
+ * schedules in view with their Publish…. */
+.ppo-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppo-head-title {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.ppo-months {
+	display: inline-flex;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+
+.ppo-months-btn {
+	border: 0;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	padding: 2px 8px;
+}
+
+.ppo-months-btn + .ppo-months-btn {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppo-months-btn.pp-on {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+.ppo-drafts {
+	flex-basis: 100%;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+}
+
+.ppo-draft-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ppo-note {
+	color: var(--sf-text-muted);
+	font-size: 12px;
+	margin: 0 0 4px;
+}
+
+/* Needs attention: a ruled box of one-line buttons, worst first. A line is a button because it opens
+ * its source; its icon is decoration, and the kind is read aloud (pp-sr). */
+.ppo-needs-box {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+	padding: 8px 10px;
+	margin-bottom: 10px;
+}
+
+.ppo-needs-box h5 {
+	margin: 0 0 6px;
+	color: var(--sf-text-strong);
+}
+
+.ppo-clear p {
+	margin: 0;
+	color: var(--sf-text);
+}
+
+.ppo-lines {
+	list-style: none;
+	margin: 0 0 6px;
+	padding: 0;
+}
+
+.ppo-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: var(--sf-text);
+	text-align: left;
+	padding: 3px 4px;
+	border-radius: var(--sf-radius-control);
+}
+
+.ppo-line:hover:not(:disabled),
+.ppo-line:focus-visible {
+	background: color-mix(in srgb, var(--sf-primary) 14%, transparent);
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.ppo-line:disabled {
+	cursor: default;
+}
+
+.ppo-icon {
+	flex: none;
+	width: 1.4em;
+	text-align: center;
+}
+
+.ppo-line[data-kind="behind"] .ppo-icon,
+.ppo-line[data-kind="conflicts"] .ppo-icon {
+	color: var(--sf-danger);
+}
+
+.ppo-line[data-kind="over"] .ppo-icon,
+.ppo-line[data-kind="overdue"] .ppo-icon {
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.ppo-empty {
+	color: var(--sf-text-muted);
+	padding: 24px 8px;
+}
+
+/* The chart takes the height of the screen below the toolbar and the box above it, and scrolls. */
+.ppo-chart {
+	height: calc(100vh - 420px);
+	min-height: 360px;
+}
+
+.ppo-foot {
+	margin-top: 8px;
+}
+
+/* The bars (the widget's task lines, classed by the page's task_class template). A job is a dark summary bar;
+ * a phase takes its colour from its number; Other work is the pale one. A Draft schedule is hatched and dashed,
+ * finished work faded, a phase that slipped past its baseline outlined in the danger tone. Every bar has a
+ * faint edge, so a deep colour does not vanish into a dark theme's ground. */
+.ppo-chart .gantt_task_line {
+	cursor: pointer;
+	border: var(--sf-border-hairline) solid color-mix(in srgb, var(--sf-text-strong) 35%, transparent);
+}
+
+.ppo-chart .gantt_task_line.ppo-job {
+	background-color: color-mix(in srgb, var(--sf-text-strong) 72%, transparent);
+	color: var(--sf-surface);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-1 {
+	background-color: var(--sf-violet-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-2 {
+	background-color: var(--sf-fresh-blue-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-3 {
+	background-color: var(--sf-bahama-blue);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-4 {
+	background-color: var(--sf-teal-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-5 {
+	background-color: var(--sf-green);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-6 {
+	background-color: var(--sf-navy-800);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-7 {
+	background-color: var(--sf-violet);
+	color: var(--sf-navy-900);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-0 {
+	background-color: var(--sf-sky-200);
+	color: var(--sf-navy-900);
+}
+
+.ppo-chart .gantt_task_line .gantt_task_content {
+	color: inherit;
+}
+
+.ppo-chart .gantt_task_line.ppo-draft {
+	border-style: dashed;
+	border-width: 2px;
+	background-image: repeating-linear-gradient(
+		45deg,
+		transparent 0 4px,
+		color-mix(in srgb, var(--sf-white) 40%, transparent) 4px 7px
+	);
+}
+
+.ppo-chart .gantt_task_line.ppo-estimate {
+	opacity: 0.7;
+}
+
+.ppo-chart .gantt_task_line.ppo-done {
+	opacity: 0.55;
+}
+
+.ppo-chart .gantt_task_line.ppo-slipped {
+	border-color: var(--sf-danger);
+	border-width: 2px;
+}
+
+.ppo-chart .gantt_task_line.ppo-milestone {
+	background-color: var(--sf-warn);
+	border-color: var(--sf-on-warn);
+}
+
+.ppo-chart .gantt_row.ppo-job-row .gantt_tree_content {
+	font-weight: 600;
+}
+
+@media (max-width: 767px) {
+	.ppo-chart {
+		height: calc(100vh - 360px);
 	}
 }

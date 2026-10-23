@@ -964,11 +964,15 @@ class ItemExtension {
 		const can = setup.can || {};
 		const $card = $('<section class="sf-card gi-card"></section>').appendTo($box);
 		$('<h3 class="sf-card-title gi-title"></h3>').text(__("Where it is kept")).appendTo($card);
-		if (!setup.auto_reorder) {
-			$('<p class="gi-note"></p>')
-				.text(__("Automatic reordering is off in Stock Settings: a reorder level is recorded, but nothing is requested until it is turned on."))
-				.appendTo($card);
-		}
+		// Since v1.730.0 automatic reordering is off on purpose: the level puts the item on the Reorder Board, where a
+		// buyer requests it. Saying "nothing is requested until it is turned on" sent people to switch it back on.
+		$('<p class="gi-note"></p>')
+			.text(
+				setup.auto_reorder
+					? __("Automatic reordering is also on in Stock Settings, so ERPNext raises requests from a reorder level on its own as well as listing the item on the Reorder Board.")
+					: __("A reorder level puts this item on the Reorder Board when stock falls to it. ERPNext raises no request on its own: a buyer creates it from the board.")
+			)
+			.appendTo($card);
 		const $form = $('<div class="gi-form"></div>').appendTo($card);
 		const bin = link_control($('<div class="gi-field"></div>').appendTo($form), {
 			fieldtype: "Link",

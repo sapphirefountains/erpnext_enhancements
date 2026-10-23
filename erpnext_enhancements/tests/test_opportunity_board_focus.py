@@ -1179,7 +1179,21 @@ class TestSavedViewsUseThePlannersStore(unittest.TestCase):
 	def test_the_planners_are_untouched(self):
 		self.assertEqual(
 			set(self.prefs.SCHEMA["project"]),
-			{"view", "project", "pm", "group", "foreign", "over_only", "panel", "color_by"},
+			# color_chosen is the planner UX redesign's P1 (whether the saved color_by was picked, not
+			# left at the page's default) and all_tasks is P2's (Show all tasks); the board's own views
+			# did not add either.
+			{
+				"view",
+				"project",
+				"pm",
+				"group",
+				"foreign",
+				"over_only",
+				"panel",
+				"color_by",
+				"color_chosen",
+				"all_tasks",
+			},
 		)
 		self.assertEqual(self.prefs.PLANNERS["project"], "Project Planner")
 		self.assertEqual(self.prefs.PRINT_EYEBROW["board"], "Opportunity Board")

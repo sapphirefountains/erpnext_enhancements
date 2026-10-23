@@ -7,6 +7,8 @@
 //   /desk/maintenance-planner/month/2026-10-01   the month holding that day
 //   /desk/maintenance-planner/week/2026-10-05    the week holding that day
 //   /desk/maintenance-planner/crew/2026-10-05    the crew timeline for the week holding that day
+//   /desk/maintenance-planner/simple             Simple mode: every site, a card each, Done and Coming up,
+//                                                one search box (the MPS block, at the end)
 //
 // Every move between months, weeks and views is a route, so Back and Forward step through them
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
@@ -33,14 +35,17 @@
 // Maintenance and Projects share technicians, so the same response also carries `bookings`: each
 // technician's project tasks, rental crew tasks and travel days, their free hours and days off,
 // and (when the engine provides them) their drive time, all from the shared availability engine
-// (project_enhancements.crew_availability). The bookings are read-only here: shown as Project /
-// Rental / Travel cards on their pillar's edge (Build, Rent, Neutral; maintenance_planner.css) that
-// open the Task or Travel Trip, never dragged. The free hours are the
-// engine's figure and must match the Project Planner's, so this page never works them out itself.
-// Projects moves its own bookings on the Project Planner.
+// (project_enhancements.crew_availability). The bookings are read-only here. Since P10 of the planner
+// UX redesign (D13) they are one thin grey busy strip on each technician's day ("Project: 8h", the
+// tasks on hover, a click opens the person's week); More > Display > Project work as cards brings
+// back a card each, shown as Project / Rental / Travel cards on their pillar's edge (Build, Rent,
+// Neutral; maintenance_planner.css) that open the Task or Travel Trip. Either way they are never
+// dragged. The free hours are the engine's figure and must match the Project Planner's, so this page
+// never works them out itself. Projects moves its own bookings on the Project Planner.
 //
 // What a scheduler sees and can do, the same as on the Project Planner:
-//   - "Resources available" above the calendar    each technician's hours free, Full, Over,
+//   - "Resources available" above the calendar    one summary line ("Austin: 3h free Tue · Off Thu–Fri");
+//                                                 Show opens each technician's hours free, Full, Over,
 //                                                 Holiday, Time off or Not a work day, per day
 //   - days off on the calendar                    one technician picked: their days off are shaded
 //                                                 and labeled; All: a badge for each person off
@@ -76,7 +81,11 @@ const MP = {
 	tech_key: "ee_maintenance_planner_technician",
 	projected_key: "ee_maintenance_planner_projected",
 	project_key: "ee_maintenance_planner_project_work",
-	panel_key: "ee_maintenance_planner_panel",
+	// "Resources available" starts collapsed to a summary line (P10, §4.9). A new key, so the open state the
+	// old default left in a browser is not mistaken for a choice.
+	resources_key: "ee_maintenance_planner_resources",
+	// Project work as one card each, instead of the busy strip (P10, D13). Off until it is ticked.
+	cards_key: "ee_maintenance_planner_project_cards",
 	// The filter the address carries (S5c): ?technician=<user>, or __none__ for Unassigned.
 	url_filters: ["technician"],
 	// The longest value the address may give it: a document name's limit.
@@ -89,7 +98,7 @@ const MP = {
 	project_route: "project-planner",
 	// Labels for one-off visits; any other label is a seasonal visit.
 	extra_labels: ["Extra Visit", "Chemistry Follow-Up"],
-	status_order: { draft: 0, pending: 1, projected: 2, done: 3, booking: 4 },
+	status_order: { draft: 0, move: 0, pending: 1, projected: 2, done: 3, booking: 4 },
 	// Engine booking kind -> chip text. The engine calls a project task "task".
 	booking_kinds: { task: "Project", rental: "Rental", travel: "Travel" },
 };
@@ -101,6 +110,8 @@ MP.methods = {
 	move_projected: `${MP.api}.move_projected`,
 	// Adding a helper to a visit's crew is its own POST: dropping a chip on a visit sends it.
 	add_crew: `${MP.api}.add_crew`,
+	// A Fountain Move task's day and crew (MPFM below): the Project Planner's write, on this page.
+	move_fountain_move: `${MP.api}.move_fountain_move`,
 };
 
 const mp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -161,7 +172,8 @@ class MaintenancePlanner {
 		this.technician = this.load_pref(MP.tech_key, "");
 		this.show_projected = this.load_pref(MP.projected_key, "1") !== "0";
 		this.show_project_work = this.load_pref(MP.project_key, "1") !== "0";
-		this.panel_open = this.load_pref(MP.panel_key, "1") !== "0";
+		this.show_project_cards = this.load_pref(MP.cards_key, "0") === "1";
+		this.panel_open = this.load_pref(MP.resources_key, "0") === "1";
 		this.data = null;
 		this.by_key = {};
 		this.tech_by_user = {};
@@ -178,6 +190,7 @@ class MaintenancePlanner {
 		this.page.set_secondary_action(__("Day Board"), () => frappe.set_route("maintenance-day-board"));
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		this.init_simple(); // Simple mode: the switch at the start of the bar, and its screen
 		// The person's own filter, and the one the address gave while it is on screen (S5c).
 		this.own_filters = this.filters();
 		this.url_filters = null;
@@ -189,6 +202,7 @@ class MaintenancePlanner {
 		this.init_phase6e();
 		this.init_phase_c1();
 		this.init_toolbar();
+		this.init_tour();
 		this.bind_drag();
 	}
 
@@ -197,6 +211,7 @@ class MaintenancePlanner {
 	route_target() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== MP.route) return null;
+		if (route[1] === MPS.view) return { view: MPS.view, anchor: frappe.datetime.get_today() }; // Simple mode
 		const view = MP.views.includes(route[1]) ? route[1] : "month";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
@@ -206,9 +221,11 @@ class MaintenancePlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		this.tour_route(); // P12: a tour from the last screen closes, and the first-visit check is made again
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
+		if (this.mps_take(target.view)) return; // Simple mode: its own screen, remembered on this device
 		this.load();
 	}
 
@@ -450,6 +467,14 @@ class MaintenancePlanner {
 		this.$title = $('<span class="mp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="mp-seg"></span>').appendTo($bar);
+		this.$seg = $seg;
+		// P10: a technician's way to their Today screen on the Project Planner (shown by p10_sync_myday).
+		this.$myday = $('<button type="button" class="btn btn-default btn-sm mp-tb-myday"></button>')
+			.text(__("My day"))
+			.attr("title", __("Your stops and route for today and tomorrow (the Today screen)"))
+			.on("click", () => this.p10_open_today())
+			.hide()
+			.insertAfter($seg);
 		this.$view_buttons = {};
 		[
 			["month", __("Month")],
@@ -457,6 +482,7 @@ class MaintenancePlanner {
 			["crew", __("Crew")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
+				.attr("data-tb-tab", view)
 				.text(label)
 				.on("click", () => this.go(view, this.anchor))
 				.appendTo($seg);
@@ -465,14 +491,14 @@ class MaintenancePlanner {
 		$('<span class="mp-spacer"></span>').appendTo($bar);
 		// The filter (and 6B's search, which joins it) is one group: on a phone the group moves into
 		// the "Filters and tools" sheet and back (toolbar redesign, v1.687.0). Projected visits and
-		// Project work are switches in the Display menu (MPTB).
+		// Project work are switches in More ▸ Display (MPTB).
 		this.$filters = $('<span class="mp-tb-filters"></span>').appendTo($bar);
 		this.$tech = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", __("Technician"))
 			.on("change", () => this.pick_filter(this.$tech.val() || ""))
 			.appendTo(this.$filters);
-		// The alert chips, then the four menus (both filled by MPTB), then Undo as a small icon while
-		// there is something to undo (its menu item is in Edit), ? and refresh.
+		// The alert chips, then + Add and More (both filled by MPTB), then Undo as a small icon while
+		// there is something to undo (its menu item is in More ▸ Tools), ? and refresh.
 		this.$alerts = $('<span class="mp-tb-alerts mp-tb-empty" role="group"></span>').attr("aria-label", __("Alerts")).appendTo($bar);
 		this.$tools = $('<span class="mp-tb-tools"></span>').appendTo($bar);
 		this.$undo = $('<button type="button" class="btn btn-default btn-sm mp-undo mp-empty">↶</button>')
@@ -486,8 +512,8 @@ class MaintenancePlanner {
 			.appendTo($bar);
 		this.update_undo_button();
 
-		// The key of the visit kinds is in the Display menu (MPTB's tb_kind_items) and the "?" help; it
-		// was a row of its own under the toolbar.
+		// The key of the visit kinds is in the "?" help only (legend_sections); it was a row of its own
+		// under the toolbar, then a section of More ▸ Display.
 		this.$panel = $('<div class="mp-section mp-res"></div>').appendTo(this.$body);
 		this.$tray = $('<div class="mp-tray"></div>').hide().appendTo(this.$body);
 		this.$grid_wrap = $("<div></div>").appendTo(this.$body);
@@ -507,9 +533,28 @@ class MaintenancePlanner {
 		this.render();
 	}
 
+	// Project work as a card each (P10, D13). Asking for cards asks for the work itself, so it turns Project
+	// work on; asking for the strip again leaves Project work as it is.
+	set_show_project_cards(on) {
+		this.show_project_cards = !!on;
+		this.save_pref(MP.cards_key, this.show_project_cards ? "1" : "0");
+		if (this.show_project_cards && !this.show_project_work) {
+			this.show_project_work = true;
+			this.save_pref(MP.project_key, "1");
+		}
+		this.render();
+	}
+
+	// How project work is drawn right now: nothing, a busy strip a technician-day, or a card each.
+	project_work_mode() {
+		if (!this.show_project_work) return "off";
+		return this.show_project_cards ? "cards" : "strip";
+	}
+
 	// ------------------------------------------------------------------ data
 
 	load() {
+		if (this.view === MPS.view) return this.mps_refresh(); // Simple mode: get_simple_sites
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
@@ -545,7 +590,7 @@ class MaintenancePlanner {
 			this.tech_by_user[person.user] = person;
 			this.tech_names[person.user] = person.name;
 		});
-		[].concat(data.visits || [], data.unscheduled || [], data.projected || []).forEach((card) => {
+		[].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.fm_cards()).forEach((card) => {
 			if (card.modified) this.modified[card.name] = card.modified;
 			// A helper who is not on the technician list still has a name on the card.
 			(card.crew || []).forEach((member) => {
@@ -577,7 +622,7 @@ class MaintenancePlanner {
 
 	all_cards() {
 		const data = this.data || {};
-		return [].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.booking_cards());
+		return [].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.fm_cards(), this.booking_cards());
 	}
 
 	// The engine's read-only bookings as cards, one per booking per day. Never movable: they carry
@@ -757,7 +802,8 @@ class MaintenancePlanner {
 
 	visible(card) {
 		if (card.kind === "booking") {
-			if (!this.show_project_work || this.technician === "__none__") return false;
+			// A card each only in cards mode; the strip mode draws the same bookings as a strip (MP10).
+			if (this.project_work_mode() !== "cards" || this.technician === "__none__") return false;
 			return !this.technician || card.technician === this.technician;
 		}
 		if (card.kind === "projected" && !this.show_projected) return false;
@@ -818,13 +864,13 @@ class MaintenancePlanner {
 		if (this.view === "crew") this.render_crew(cards);
 		else this.render_calendar(cards);
 		this.$hint.text(
-			this.view === "crew"
+			(this.view === "crew"
 				? __(
 						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. A visit with a crew shows in every crew member's row: drag one person's card to another row to swap only that person. Drag a technician onto a visit to add them to its crew. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day."
 				  )
 				: __(
-						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Cards marked Project, Rental and Travel are bookings of the same people: they open the task but are moved on the Project Planner."
-				  )
+						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow."
+				  )) + this.p10_hint_note()
 		);
 		this.render_phase6a();
 		this.render_phase6b();
@@ -904,7 +950,7 @@ class MaintenancePlanner {
 					.attr("title", this.drive_line(cell))
 					.appendTo($head);
 			}
-			const visit_count = day_cards.filter((card) => card.kind !== "booking").length;
+			const visit_count = day_cards.filter((card) => card.kind !== "booking" && card.kind !== "move").length;
 			if (visit_count > 1) {
 				$('<span class="mp-day-count"></span>').text(__("{0} visits", [visit_count])).appendTo($head);
 			}
@@ -920,6 +966,10 @@ class MaintenancePlanner {
 			}
 			this.p6d_day_head($day, ymd);
 			day_cards.forEach((card) => $day.append(this.card_html(card)));
+			// P10: the project work of the people on screen, one thin strip each (the cards' place when the
+			// strip is on; nothing here in cards mode).
+			const strips = this.p10_day_strips_html(ymd);
+			if (strips) $day.append(strips);
 		}
 		this.$grid_wrap.empty().removeClass("mp-month mp-week mp-crew-view").addClass(`mp-${this.view}`).append($grid);
 	}
@@ -985,14 +1035,25 @@ class MaintenancePlanner {
 		if (this.view === "crew") return;
 		const people = (this.data.technicians || []).filter((person) => person.enabled);
 		const $head = $('<div class="mp-section-head"></div>').appendTo(this.$panel);
-		$("<span></span>").text(__("Resources available")).appendTo($head);
-		$('<span class="mp-spacer"></span>').appendTo($head);
+		$('<span class="mp-res-title"></span>').text(__("Resources available")).appendTo($head);
+		// P10: closed, the panel is one summary line of who has hours free and who is off this week.
+		// The line grows to fill the head; with nothing to say the spacer does.
+		const summarised = !this.panel_open && this.p10_summary_line($head, people);
+		if (!summarised) $('<span class="mp-spacer"></span>').appendTo($head);
 		$('<button type="button" class="btn btn-default btn-xs"></button>')
 			.text(this.panel_open ? __("Hide") : __("Show"))
+			.attr("aria-expanded", this.panel_open ? "true" : "false")
+			.attr(
+				"title",
+				this.panel_open ? __("Collapse to a summary line") : __("Each technician's free hours, day by day")
+			)
 			.on("click", () => {
 				this.panel_open = !this.panel_open;
-				this.save_pref(MP.panel_key, this.panel_open ? "1" : "0");
+				this.save_pref(MP.resources_key, this.panel_open ? "1" : "0");
 				this.render_panel();
+				// The names in the redrawn panel need 6A's markup (a click for their week, the hover glow), which
+				// only a full render gave them. Closed by default since P10, Show is now how most people see them.
+				if (this.p6a) this.p6a_decorate();
 			})
 			.appendTo($head);
 		if (!this.panel_open) return;
@@ -1057,10 +1118,11 @@ class MaintenancePlanner {
 		const by_cell = {};
 		const unscheduled = [];
 		cards.forEach((card) => {
-			if (card.kind === "booking" && !this.show_project_work) return;
+			// A booking is a card in cards mode only; the strip mode draws it as a strip in the cell (P10).
+			if (card.kind === "booking" && this.project_work_mode() !== "cards") return;
 			if (card.kind === "projected" && !this.show_projected) return;
 			if (!card.date) {
-				if (card.kind === "visit") unscheduled.push(card);
+				if (card.kind === "visit" || card.kind === "move") unscheduled.push(card);
 				return;
 			}
 			// A multi-person visit sits in every crew member's row.
@@ -1075,7 +1137,9 @@ class MaintenancePlanner {
 		// Every technician, plus a disabled one who still has visits this week, plus Unassigned when
 		// any visit has nobody. The technician filter is for the calendar: here every row is a drop target.
 		const people = (this.data.technicians || []).filter(
-			(person) => person.enabled || days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length)
+			(person) =>
+				person.enabled ||
+				days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length || this.p10_has_strip(person.user, ymd))
 		);
 		const rows = people.map((person) => ({ person, user: person.user }));
 		if (days.some((ymd) => (by_cell[`|${ymd}`] || []).length)) rows.push({ person: null, user: "" });
@@ -1113,6 +1177,7 @@ class MaintenancePlanner {
 						${cap}
 						${this.p6d_cell_blocks(person, ymd)}
 						${list.map((card) => this.card_row_html(card, user)).join("")}
+						${person ? this.p10_cell_strip_html(user, ymd) : ""}
 					</div>`);
 			});
 		});
@@ -1194,6 +1259,7 @@ class MaintenancePlanner {
 	// row, and a drag needs to know which person's chip was picked up. The calendar passes none.
 	card_row_html(card, row_user) {
 		if (card.kind === "booking") return this.booking_html(card);
+		if (card.kind === "move") return this.fm_card_html(card, row_user);
 		const sub = [];
 		if (card.label) sub.push(__(card.label));
 		if (card.feature) sub.push(card.feature);
@@ -1497,6 +1563,7 @@ class MaintenancePlanner {
 			const card = this.by_key[target.key];
 			const name = this.tech_name(source.user);
 			if (!card || card.kind === "booking") return { refuse: __("Drop {0} onto a visit.", [name]) };
+			if (card.kind === "move") return this.fm_plan_person(card, source.user);
 			const site = this.site_of(card);
 			if (card.kind === "projected") {
 				return {
@@ -1518,6 +1585,7 @@ class MaintenancePlanner {
 		}
 
 		const card = source.card;
+		if (card.kind === "move") return this.fm_plan_move(source, target);
 		// C1: Draft mode holds back changes to drafted visits only; a projected one moves its contract.
 		if (card.kind === "projected" && this.draft_on) return { refuse: __(MPC1.refusals.move_projected) };
 		if (target.date !== card.date && target.date < this.today()) {
@@ -1567,6 +1635,10 @@ class MaintenancePlanner {
 		}
 		if (plan.add_crew) {
 			this.add_to_crew(plan.card, plan.add_crew);
+			return;
+		}
+		if (plan.fm) {
+			this.fm_apply(plan.card, plan.fm);
 			return;
 		}
 		this.apply(plan.card, plan.change);
@@ -1702,6 +1774,9 @@ class MaintenancePlanner {
 		// C1 draft mode: a write it cannot hold back is refused here; the rest go with draft=1.
 		if (this.c1_refuse(method)) return Promise.resolve(null);
 		args = this.c1_with_draft(method, args);
+		// P4: a live change to who is on a visit, or when, asks "Notify crew?" first.
+		const asked = this.mpas_with_notify(method, args, opts);
+		if (asked) return asked;
 		return Promise.resolve(frappe.call({ method: MP.methods[method], args }))
 			.then((r) => {
 				const result = (r && r.message) || {};
@@ -1762,7 +1837,12 @@ class MaintenancePlanner {
 							.join("")}</ul></div>`
 				)
 				.join("");
-			const where = noun === "contract" ? __("the contract's timeline") : __("the visit's timeline");
+			const where =
+				noun === "contract"
+					? __("the contract's timeline")
+					: noun === "task"
+					? __("the task's timeline")
+					: __("the visit's timeline");
 			const dialog = new frappe.ui.Dialog({
 				title: __("This booking has conflicts"),
 				fields: [
@@ -1818,6 +1898,7 @@ class MaintenancePlanner {
 		}
 		if (this.p6b_undo(snap)) return;
 		if (this.p6e_undo(snap)) return;
+		if (this.fm_undo(snap)) return;
 		const today = this.today();
 		const reason = __(MP.undo_reason);
 		if (snap.kind === "drafted") {
@@ -1858,6 +1939,8 @@ class MaintenancePlanner {
 		};
 		const date_back = !!(snap.date && snap.date >= today);
 		if (date_back) args.date = snap.date;
+		// P4: the change's "Notify crew?" answer, again. null, not undefined: an Undo is never asked.
+		args.notify = snap.notify != null ? snap.notify : null;
 		// Crew, length and Full day go back too, but only what differs now (everything, when the visit is
 		// not on screen to compare with).
 		if (snap.crew && (!card || this.crew_key(this.crew_rows(card)) !== this.crew_key(snap.crew))) {
@@ -1900,6 +1983,10 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ dialog
 
 	open_card(card) {
+		if (card.kind === "move") {
+			frappe.set_route("Form", "Task", card.name);
+			return;
+		}
 		if (card.kind === "booking") {
 			// Travel days open their trip; project and rental bookings are Tasks.
 			if (card.booking_kind === "travel") frappe.set_route("Form", "Travel Trip", card.ref);
@@ -2302,6 +2389,7 @@ const MP6A_METHODS = {
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person")];
 		this.p6c_ready();
 		this.tb_ready();
+		this.mps_kit_ready(); // Simple mode draws with the kit
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -2502,11 +2590,15 @@ const MP6A_METHODS = {
 
 	// ------------------------------------------------------------------ the quick looks
 
-	p6a_week_start() {
+	// The week the quick looks open on: the week of `on` when a day is asked for (a click on Thursday the 29th
+	// in the month view opens that week, not today's), else the week on screen, or in the month view the one
+	// holding today.
+	p6a_week_start(on) {
 		const today = this.today();
 		const { start, end } = this.range();
 		let base = this.anchor;
 		if (this.view === "month" && today >= mp_ymd(start) && today <= mp_ymd(end)) base = today;
+		if (on && moment(on, "YYYY-MM-DD", true).isValid()) base = on;
 		const day = moment(base || today, "YYYY-MM-DD");
 		return mp_ymd(day.clone().subtract((day.day() - this.first_weekday() + 7) % 7, "days"));
 	},
@@ -2525,7 +2617,7 @@ const MP6A_METHODS = {
 		this.p6a.peek = kit.peeks.person({
 			user,
 			label: this.tech_name(user),
-			start: this.p6a_week_start(),
+			start: this.p6a_week_start(selected),
 			selected: selected || null,
 			days: 7,
 			owner: MP6A.owner,
@@ -2731,6 +2823,22 @@ const MP6A_METHODS = {
 	p6a_legend() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!kit) return;
+		kit.legend(this.legend_sections(), {
+			title: __("How to read the Maintenance Planner"),
+			owner: MP6A.owner,
+			actions: this.tour_legend_actions(), // P12: Take the tour
+		});
+	},
+
+	// The "?" help, section by section: the ONE provider function. Everything the help says is built here
+	// or by a provider the sections below call, so the key of the visit kinds, the project-work strip and
+	// Resources available live in "?" and nowhere on the toolbar (P10, section 4.9). A later change (P12's
+	// tips and tutorial) adds a section here, or registers a function that returns sections:
+	//
+	//   this.p6_legend_providers.push(() => [{ title: __("..."), items: [{ sample_html: "", text: __("...") }] }]);
+	//
+	// which lands after Keyboard and Faster scheduling (p6b_legend_sections); a provider that throws is skipped.
+	legend_sections() {
 		const chip = (cls, text) => `<span class="mp-chip${cls ? ` ${cls}` : ""}">${mp_esc(__(text))}</span>`;
 		const item = (sample_html, text) => ({ sample_html, text: __(text) });
 		// A sample visit is a real card with its kind's class (S3.4e), so the legend shows exactly the
@@ -2738,81 +2846,78 @@ const MP6A_METHODS = {
 		const card = (cls, label, text) =>
 			item(`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">${mp_esc(__(label))}</span>`, text);
 		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
-		kit.legend(
-			[
-				this.p6a_tip_section(),
-				...this.p6c_legend_sections(),
-				{
-					title: __("Quick looks"),
-					items: [
-						item("", "Click a technician's name (in the panel, a crew row or the initials on a visit) to see their week: visits, project work, free hours, days off and the day's stops in driving order."),
-						item("", "Click a date to see every technician's day side by side."),
-						item("", "In a visit's side panel, Site at a glance shows the site's coming, projected and recent visits and its default crew."),
-						item("", "Drag a visit out of any of these onto a day or a technician's row to move it. Esc or Back closes the side panel."),
-						item("", "Hover over a name to light up all of that person's visits and bookings."),
-					],
-				},
-				{
-					title: __("Visit cards"),
-					items: [
-						card("", "Visit", "A scheduled visit. Drag it to another day; only a draft nobody has started moves."),
-						card("mp-seasonal", "Startup", "A seasonal visit (startup, winterization). Before it is drafted it sits on the 1st of its month."),
-						card("mp-extra", "Follow-up", "An extra visit or a chemistry follow-up."),
-						card("mp-pending", "Visit", "Pending review: the technician has sent it to the office."),
-						card("mp-done", "Visit", "Done."),
-						card("mp-projected", "Projected", "Projected from the contract, not drafted yet. It follows whenever the visit before it is done."),
-						card("mp-projected mp-movable", "Next visit", "The contract's next visit (dashed, blue edge): moving it moves the contract's next visit date."),
-						card("mp-overdue", "Visit", "Overdue: a draft whose day has passed."),
-						card("mp-booking mp-bk-task", "Project", "A project task of the same person (read-only here; moved on the Project Planner)."),
-						card("mp-booking mp-bk-rental", "Rental", "A rental crew task (read-only here)."),
-						card("mp-booking mp-bk-travel", "Travel", "A travel day (read-only here)."),
-					],
-				},
-				{
-					title: __("Chips on a visit"),
-					items: [
-						item(chip("", "Next visit"), "The contract's stored next visit date."),
-						item(chip("", "Pending review"), "Waiting for the office to approve it."),
-						item(chip("", "Full day"), "It takes each person's whole day."),
-						item(chip("", "2h each"), "How long it books each person, when that is not the default."),
-						item(chip("mp-red", "On hold"), "The account is on a service hold."),
-						item(chip("mp-red", "Chemistry"), "A reading on the visit was out of range."),
-						item(chip("mp-red", "Day off: Holiday"), "The technician does not work that day: move it or give it to someone else."),
-					],
-				},
-				{
-					title: __("People"),
-					items: [
-						item(`<span class="mp-tech mp-p6a-sample-badge">AH</span>`, "Everyone on the visit. Click one to see their week."),
-						item(`<span class="mp-tech mp-lead mp-p6a-sample-lead">JD</span>`, "Ringed: the technician who fills the visit in."),
-						item(`<span class="mp-tech mp-tech-off">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
-					],
-				},
-				{
-					title: __("A technician's day"),
-					items: [
-						item(bar("mp-green", 50), "Up to 75% of their hours booked."),
-						item(bar("mp-amber", 90), "More than 75% booked."),
-						item(bar("mp-red", 100), "Over their hours."),
-						item(`<span class="mp-p6a-sample mp-offday">${mp_esc(__("Holiday"))}</span>`, "Not working: a holiday, time off or not a work day. The type and reason of time off are never shown."),
-						item(`<span class="mp-p6a-sample mp-conflict">${mp_esc(__("1h free"))}</span>`, "Red outline: a conflict on that day."),
-						item(chip("mp-red", "Long drive"), "More driving than the Settings limit."),
-						item(`<span class="mp-p6a-sample">${MP_ROUTE_ICON}</span>`, "Open the day's route on the Project Planner. A ~ before a drive time means it is an estimate."),
-					],
-				},
-				{
-					title: __("Dragging"),
-					items: [
-						item(`<span class="mp-p6a-sample mp-over">${mp_esc(__("Drop here"))}</span>`, "Where the visit will land."),
-						item(`<span class="mp-p6a-sample mp-over-no">${mp_esc(__("Past day"))}</span>`, "A day before today: visits cannot move there."),
-						item("", "On a touch screen, hold a card for a moment before you drag it. Drag a technician's name onto a visit to add them to its crew."),
-						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
-					],
-				},
-				...this.p6d_legend_sections(),
-			].concat(this.p6b_legend_sections()),
-			{ title: __("How to read the Maintenance Planner"), owner: MP6A.owner }
-		);
+		return [
+			this.p6a_tip_section(),
+			...this.p12_legend_sections(), // P12: the views, moving a visit, Draft mode and Notify crew?
+			...this.p6c_legend_sections(),
+			{
+				title: __("Quick looks"),
+				items: [
+					item("", "Click a technician's name (in the panel, a crew row or the initials on a visit) to see their week: visits, project work, free hours, days off and the day's stops in driving order."),
+					item("", "Click a date to see every technician's day side by side."),
+					item("", "In a visit's side panel, Site at a glance shows the site's coming, projected and recent visits and its default crew."),
+					item("", "Drag a visit out of any of these onto a day or a technician's row to move it. Esc or Back closes the side panel."),
+					item("", "Hover over a name to light up all of that person's visits and bookings."),
+				],
+			},
+			// The key of the visit kinds: the toolbar's legend row, then More > Display, now only here (P10).
+			{
+				title: __("Visit cards"),
+				items: [
+					card("", "Visit", "A scheduled visit. Drag it to another day; only a draft nobody has started moves."),
+					card("mp-seasonal", "Startup", "A seasonal visit (startup, winterization). Before it is drafted it sits on the 1st of its month."),
+					card("mp-extra", "Follow-up", "An extra visit or a chemistry follow-up."),
+					card("mp-pending", "Visit", "Pending review: the technician has sent it to the office."),
+					card("mp-done", "Visit", "Done."),
+					card("mp-projected", "Projected", "Projected from the contract, not drafted yet. It follows whenever the visit before it is done."),
+					card("mp-projected mp-movable", "Next visit", "The contract's next visit (dashed, blue edge): moving it moves the contract's next visit date."),
+					card("mp-overdue", "Visit", "Overdue: a draft whose day has passed."),
+				],
+			},
+			...this.p10_legend_sections(),
+			{
+				title: __("Chips on a visit"),
+				items: [
+					item(chip("", "Next visit"), "The contract's stored next visit date."),
+					item(chip("", "Pending review"), "Waiting for the office to approve it."),
+					item(chip("", "Full day"), "It takes each person's whole day."),
+					item(chip("", "2h each"), "How long it books each person, when that is not the default."),
+					item(chip("mp-red", "On hold"), "The account is on a service hold."),
+					item(chip("mp-red", "Chemistry"), "A reading on the visit was out of range."),
+					item(chip("mp-red", "Day off: Holiday"), "The technician does not work that day: move it or give it to someone else."),
+				],
+			},
+			{
+				title: __("People"),
+				items: [
+					item(`<span class="mp-tech mp-p6a-sample-badge">AH</span>`, "Everyone on the visit. Click one to see their week."),
+					item(`<span class="mp-tech mp-lead mp-p6a-sample-lead">JD</span>`, "Ringed: the technician who fills the visit in."),
+					item(`<span class="mp-tech mp-tech-off">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
+				],
+			},
+			{
+				title: __("A technician's day"),
+				items: [
+					item(bar("mp-green", 50), "Up to 75% of their hours booked."),
+					item(bar("mp-amber", 90), "More than 75% booked."),
+					item(bar("mp-red", 100), "Over their hours."),
+					item(`<span class="mp-p6a-sample mp-offday">${mp_esc(__("Holiday"))}</span>`, "Not working: a holiday, time off or not a work day. The type and reason of time off are never shown."),
+					item(`<span class="mp-p6a-sample mp-conflict">${mp_esc(__("1h free"))}</span>`, "Red outline: a conflict on that day."),
+					item(chip("mp-red", "Long drive"), "More driving than the Settings limit."),
+					item(`<span class="mp-p6a-sample">${MP_ROUTE_ICON}</span>`, "Open the day's route on the Project Planner. A ~ before a drive time means it is an estimate."),
+				],
+			},
+			{
+				title: __("Dragging"),
+				items: [
+					item(`<span class="mp-p6a-sample mp-over">${mp_esc(__("Drop here"))}</span>`, "Where the visit will land."),
+					item(`<span class="mp-p6a-sample mp-over-no">${mp_esc(__("Past day"))}</span>`, "A day before today: visits cannot move there."),
+					item("", "On a touch screen, hold a card for a moment before you drag it. Drag a technician's name onto a visit to add them to its crew."),
+					item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
+				],
+			},
+			...this.p6d_legend_sections(),
+		].concat(this.p6b_legend_sections());
 	},
 };
 
@@ -3139,6 +3244,7 @@ const MP6B_METHODS = {
 	p6b_card_items(target) {
 		const card = target.card;
 		if (card.kind === "booking") return [];
+		if (card.kind === "move") return this.fm_card_items(card);
 		const visit = card.kind === "visit";
 		const can = !!(this.data && this.data.can_move_visits);
 		const movable = !!(visit && card.movable && can);
@@ -3439,7 +3545,6 @@ const MP6B_METHODS = {
 			.text(__("Clear"))
 			.on("click", () => this.p6b_clear_selection())
 			.appendTo($bar);
-		this.p6e_bar_switch($bar);
 		$('<span class="mp-p6b-bar-note"></span>').text(this.p6e_bar_note()).appendTo($bar);
 	},
 
@@ -3480,10 +3585,22 @@ const MP6B_METHODS = {
 	p6b_move_panel() {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length) return;
-		const panel = this.p6b_panel({
+		let panel = null;
+		panel = this.p6b_panel({
 			title: __("Move {0} visits", [cards.length]),
 			key: "mp-p6b-move",
 			fields: [
+				// Move by (calendar or working days) lived on the selection bar until the planner UX
+				// redesign (D12); it is a field here now, and a drag still uses the choice it makes.
+				{
+					fieldtype: "Select",
+					fieldname: "unit",
+					label: __("Move by"),
+					options: this.p6e_unit_options(),
+					default: this.p6e_unit_label(this.p6e_unit()),
+					description: __("Also what dragging several selected visits counts in. Remembered on this device."),
+					change: () => this.p6e_panel_unit(panel),
+				},
 				{
 					fieldtype: "Int",
 					fieldname: "days",
@@ -3525,6 +3642,11 @@ const MP6B_METHODS = {
 	},
 
 	p6b_run_moves(plans) {
+		// P4: one "Notify crew?" for every visit in the move, before the first is sent.
+		return this.mpas_batch(plans, (notify) => this.p6b_send_moves(plans, notify));
+	},
+
+	p6b_send_moves(plans, notify) {
 		plans.forEach((plan) => (plan.card.saving = true));
 		this.render();
 		const moved = [];
@@ -3538,11 +3660,9 @@ const MP6B_METHODS = {
 							return null;
 						}
 						const before = plan.card.date;
-						return this.send(
-							"move_visit",
-							{ record: plan.card.name, modified: this.modified[plan.card.name] || plan.card.modified, date: plan.date },
-							{ noun: "visit" }
-						).then((result) => {
+						const args = { record: plan.card.name, modified: this.modified[plan.card.name] || plan.card.modified, date: plan.date };
+						if (notify !== undefined) args.notify = notify;
+						return this.send("move_visit", args, { noun: "visit" }).then((result) => {
 							if (result) moved.push({ record: plan.card.name, site: this.site_of(plan.card), date: before });
 							else missed.push(plan);
 						});
@@ -3553,7 +3673,7 @@ const MP6B_METHODS = {
 			.then(() => {
 				if (moved.length) {
 					const message = __("{0} visits moved", [moved.length]);
-					const snapshot = { p6b: "many", site: __("{0} visits", [moved.length]), items: moved };
+					const snapshot = { p6b: "many", site: __("{0} visits", [moved.length]), items: moved, notify };
 					if (!this.push_undo(snapshot, message)) frappe.show_alert({ message, indicator: "green" }, 5);
 				}
 				if (missed.length) {
@@ -3607,6 +3727,8 @@ const MP6B_METHODS = {
 							record: item.record,
 							modified: this.modified[item.record] || (this.by_key[item.record] || {}).modified || "",
 							date: item.date,
+							// P4: the move's "Notify crew?" answer, again. null, not undefined: an Undo is never asked.
+							notify: snap.notify != null ? snap.notify : null,
 						},
 						{ auto_reason: __(MP.undo_reason), noun: "visit" }
 					)
@@ -3911,7 +4033,8 @@ const MP6B_METHODS = {
 			shift: e.shiftKey,
 			alt: e.altKey,
 			editable,
-			dialog: !!(window.cur_dialog && window.cur_dialog.display),
+			// P12: the first-visit tour is a dialog, and its keys are its own.
+			dialog: !!(window.cur_dialog && window.cur_dialog.display) || this.tour_open(),
 		});
 		if (!action) return;
 		if (target && target.closest && target.closest(".pk-menu")) return;
@@ -3925,6 +4048,7 @@ const MP6B_METHODS = {
 	},
 
 	p6b_run_key(action) {
+		if (this.view === MPS.view) return false; // Simple mode has no calendar to step or switch
 		if (action === "today") {
 			this.go(this.view, frappe.datetime.get_today());
 			return true;
@@ -4011,14 +4135,14 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 // The Maintenance Planner's half of Phase 6C (TASK-2026-02469; the Project Planner has the same, see
 // PP6C_METHODS there for the long version):
 //
-//   - Color by (toolbar's Display menu)      Visit type (today's colors, the default), Technician,
+//   - Color by (toolbar's More ▸ Display)      Visit type (today's colors, the default), Technician,
 //                                            Site, Visit status or Contract; the key in Display and
 //                                            in the "?" legend. Site and contract use the kit's
 //                                            stable hash, so a site is always the same color
 //   - "Highlight this site" in a visit's panel, the site drawer's header or the right-click menu, or
 //     a site in the color key                every visit of that site lights up and the rest fade;
 //                                            a toolbar pill and Esc clear it
-//   - Views (toolbar's Views menu)           named views and "last used", saved per person on the
+//   - Views (toolbar's More ▸ Views)           named views and "last used", saved per person on the
 //                                            server (api/planner_views_prefs). Only a bare
 //                                            /maintenance-planner takes the saved view, by replacing
 //                                            its history entry
@@ -4028,7 +4152,7 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 //                                            everyone's day
 //   - Tap to move                            tap a visit, then the day or a technician's day: the
 //                                            drag's own drop -> plan_drop -> apply -> send path
-//   - Print (Print menu)                     the view on screen or 6B's selection, from the loaded
+//   - Print (More ▸ Print)                     the view on screen or 6B's selection, from the loaded
 //                                            data, on the print design system's chrome (the Service
 //                                            pillar), in a browser window
 //
@@ -4051,7 +4175,11 @@ const MP6C = {
 		technician: ["text"],
 		projected: ["bool"],
 		project_work: ["bool"],
-		panel: ["bool"],
+		// P10: Project work as cards (off: the busy strip), and Resources available open (it starts collapsed).
+		// "resources" replaces the old "panel": what that key stored, from when the panel started open, is
+		// not a choice anyone made, so it is not read.
+		project_cards: ["bool"],
+		resources: ["bool"],
 		color_by: ["enum", ["default", "technician", "site", "status", "contract"]],
 	},
 	color_modes: [
@@ -4094,14 +4222,14 @@ const MP6C_METHODS = {
 			.attr("aria-label", __("Stop highlighting"))
 			.on("click", () => this.p6c_clear_highlight())
 			.appendTo(this.$p6c_pill);
-		// Color by and its key are in the toolbar's Display menu, Tap to move in Edit, the saved views in
+		// Color by and its key are in the toolbar's More ▸ Display, Tap to move in Tools, the saved views in
 		// Views and Print in Print (MPTB, v1.687.0); this block gives each menu its items
 		// (p6c_color_items, p6c_view_items, p6c_print_items).
 		this.$p6c_movebar = $('<div class="mp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
 
 		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
 		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
-		// A site in the color key highlights from the Display menu now (p6c_color_items); the key's own
+		// A site in the color key highlights from More ▸ Display now (p6c_color_items); the key's own
 		// click listener went with the key's row (v1.687.0).
 		this.$body.on("change click", () => this.p6c_state_soon());
 		this.p6c_sync_controls();
@@ -4340,7 +4468,7 @@ const MP6C_METHODS = {
 			title: __("The big picture"),
 			note:
 				mode === "default"
-					? __("Color by in the toolbar's Display menu colors the visits by technician, site, visit status or contract instead of the visit type below.")
+					? __("More ▸ Display ▸ Color by colors the visits by technician, site, visit status or contract instead of the visit type below.")
 					: "",
 			items: [
 				{
@@ -4731,6 +4859,7 @@ const MP6C_METHODS = {
 				const answer = (r && r.message) || {};
 				p6c.views = Array.isArray(answer.views) ? answer.views : [];
 				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : null;
+				this.tour_take(answer.tour); // P12: whether this person has been shown each tour
 			})
 			.catch(() => null);
 		const late = new Promise((resolve) => setTimeout(resolve, MP6C.restore_wait));
@@ -4765,6 +4894,7 @@ const MP6C_METHODS = {
 				p6c.saved_text = JSON.stringify(last);
 			}
 		}
+		if (!route[1] && this.mps_landing()) return true; // Simple mode, when this device used it last
 		const view = last && last.view;
 		if (!route[1] && view && view !== MP6C.default_view && MP6C.schema.view[1].includes(view)) {
 			frappe.route_flags = frappe.route_flags || {};
@@ -4780,7 +4910,8 @@ const MP6C_METHODS = {
 			technician: this.technician || "",
 			projected: !!this.show_projected,
 			project_work: !!this.show_project_work,
-			panel: !!this.panel_open,
+			project_cards: !!this.show_project_cards,
+			resources: !!this.panel_open,
 			color_by: this.p6c.color_by,
 		};
 		if (MP6C.schema.view[1].includes(this.view)) state.view = this.view;
@@ -4793,7 +4924,8 @@ const MP6C_METHODS = {
 		if ("technician" in view) this.technician = view.technician;
 		if ("projected" in view) this.show_projected = !!view.projected;
 		if ("project_work" in view) this.show_project_work = !!view.project_work;
-		if ("panel" in view) this.panel_open = !!view.panel;
+		if ("project_cards" in view) this.show_project_cards = !!view.project_cards;
+		if ("resources" in view) this.panel_open = !!view.resources;
 		if ("color_by" in view) this.p6c.color_by = view.color_by;
 		if (this.data && this.technician && this.technician !== "__none__") {
 			const known = ((this.data && this.data.technicians) || []).some((person) => person.user === this.technician);
@@ -4843,12 +4975,21 @@ const MP6C_METHODS = {
 			});
 	},
 
+	// The saved view that says what is on screen. A view saved before P10 has no say about project work as
+	// cards or Resources available being open (the newer keys), so those two are compared only when the
+	// view holds them; everything else must be equal, as it always was.
 	p6c_matching_view() {
-		const now = JSON.stringify(this.p6c_state());
-		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
+		const now = this.p6c_state();
+		return (
+			(this.p6c.views || []).find((entry) => {
+				const saved = this.p6c_pick(entry.data || {});
+				const keys = Object.keys(now).filter((key) => key in saved || !MP10.newer_view_keys.includes(key));
+				return JSON.stringify(keys.map((key) => now[key])) === JSON.stringify(keys.map((key) => saved[key]));
+			}) || null
+		);
 	},
 
-	// The Views menu's saved views: one radio item each (the one on screen is ticked), then Save and
+	// The saved views of More ▸ Views: one radio item each (the one on screen is ticked), then Save and
 	// Manage.
 	p6c_view_items() {
 		if (!this.p6c) return [];
@@ -4885,6 +5026,7 @@ const MP6C_METHODS = {
 		else if (view.technician) parts.push(this.tech_name(view.technician));
 		if (view.projected === false) parts.push(__("No projected visits"));
 		if (view.project_work === false) parts.push(__("No project work"));
+		else if (view.project_cards === true) parts.push(__("Project work as cards"));
 		if (view.color_by && view.color_by !== "default") parts.push(__("{0} colors", [this.p6c_mode_label(view.color_by)]));
 		return parts.join(" · ");
 	},
@@ -4935,7 +5077,7 @@ const MP6C_METHODS = {
 
 	p6c_views_html() {
 		const views = this.p6c.views || [];
-		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from the Views menu."))}</p>`;
+		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from More ▸ Views."))}</p>`;
 		const rows = views.map(
 			(entry) => `
 			<li class="mp-p6c-views-row">
@@ -4997,7 +5139,7 @@ const MP6C_METHODS = {
 		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
 	},
 
-	// The Print menu's items: the view on screen, and 6B's selection when there is one. Each runs in
+	// The More ▸ Print items: the view on screen, and 6B's selection when there is one. Each runs in
 	// the menu item's click, so its window opens on the person's own tap.
 	p6c_print_items() {
 		const selected = this.p6c_selection();
@@ -5071,8 +5213,14 @@ const MP6C_METHODS = {
 			marks.push(__(MP.booking_kinds[card.booking_kind] || "Project"));
 		} else {
 			title = card.site || card.site_full || card.name;
-			const what = card.label ? __(card.label) : card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
+			const what =
+				card.kind === "move"
+					? card.subject
+					: card.label
+					? __(card.label)
+					: card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
 			sub = [what, row ? "" : names || __("Unassigned")].filter(Boolean).join(" · ");
+			if (card.kind === "move") marks.push(__("Move"));
 			if (card.kind === "projected") marks.push(card.movable ? __("Next visit") : __("Projected"));
 			if (card.status === "pending") marks.push(__("Pending review"));
 			if (card.status === "done") marks.push(__("Done"));
@@ -5162,7 +5310,10 @@ const MP6C_METHODS = {
 						head: this.view === "week" ? this.p6c_day_label(ymd) : this.p6c_day_label(ymd, true),
 						sub: sum && kit ? kit.big_picture.team_text(sum) : "",
 						tone: month && ymd.slice(0, 7) !== month ? "out" : "",
-						items: (by_day[ymd] || []).sort((a, b) => this.compare(a, b)).map((card) => this.p6c_print_item(card, null)),
+						items: (by_day[ymd] || [])
+							.sort((a, b) => this.compare(a, b))
+							.map((card) => this.p6c_print_item(card, null))
+							.concat(this.p10_print_items(ymd, null)),
 					};
 				}),
 			});
@@ -5180,7 +5331,7 @@ const MP6C_METHODS = {
 		const by_cell = {};
 		this.all_cards().forEach((card) => {
 			if (!card.date) return;
-			if (card.kind === "booking" && !this.show_project_work) return;
+			if (card.kind === "booking" && this.project_work_mode() !== "cards") return;
 			if (card.kind === "projected" && !this.show_projected) return;
 			const owners = card.kind === "booking" ? [card.technician || ""] : this.visit_people(card);
 			(owners.length ? owners : [""]).forEach((user) => {
@@ -5189,7 +5340,9 @@ const MP6C_METHODS = {
 			});
 		});
 		const people = ((this.data && this.data.technicians) || []).filter(
-			(person) => person.enabled || days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length)
+			(person) =>
+				person.enabled ||
+				days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length || this.p10_has_strip(person.user, ymd))
 		);
 		const entries = people.map((person) => ({ person, user: person.user }));
 		if (days.some((ymd) => (by_cell[`|${ymd}`] || []).length)) entries.push({ person: null, user: "" });
@@ -5202,7 +5355,10 @@ const MP6C_METHODS = {
 				return {
 					sub: state.text,
 					tone: this.is_off(cell) ? "off" : "",
-					items: (by_cell[`${user}|${ymd}`] || []).sort((a, b) => this.compare(a, b)).map((card) => this.p6c_print_item(card, user || null)),
+					items: (by_cell[`${user}|${ymd}`] || [])
+						.sort((a, b) => this.compare(a, b))
+						.map((card) => this.p6c_print_item(card, user || null))
+						.concat(person ? this.p10_print_items(ymd, user) : []),
 				};
 			}),
 		}));
@@ -5273,7 +5429,7 @@ const MP6D_METHODS = {
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
-		// The Conflicts count is an alert chip on the toolbar and Block time an item of its Edit menu
+		// The Conflicts count is an alert chip on the toolbar and Block time an item of its More ▸ Tools
 		// (MPTB, v1.687.0): p6d_conflict_count and data.can_schedule say when.
 		const root = this.$body[0];
 		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click.
@@ -5836,7 +5992,7 @@ Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);
 //
 // Two follow-ups to Phase 6B (Nik, 2026-10-09; TASK-2026-02471), for this page:
 //
-//   - "Move by: Calendar days | Working days" in the selection bar, remembered per device. A visit is
+//   - "Move by: Calendar days | Working days" in the Move… panel, remembered per device. A visit is
 //     one day, so with working days it moves by that many weekdays (a Friday plus one is the Monday,
 //     and a drop on a weekend lands on the Monday after it). Calendar days stay the default.
 //   - "Add visit here...": a draft visit for a site, a day and a technician, made from an empty spot
@@ -5853,7 +6009,7 @@ Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);
 // method up, so init_phase6e adds the two endpoints there.
 //
 // Hooks into the class above, one line each: init_phase6e (constructor), render_phase6e (render) and
-// p6e_undo (undo). Phase 6B's block calls p6e_bar_switch, p6e_bar_note, p6e_drop_days, p6e_date,
+// p6e_undo (undo). Phase 6B's block calls p6e_bar_note, p6e_drop_days, p6e_date,
 // p6e_question and p6e_move_label / p6e_move_default / p6e_move_note for the working-days switch.
 
 const MP6E = {
@@ -5953,13 +6109,13 @@ const MP6E_METHODS = {
 		this.p6_menu_providers.push((target) => this.p6e_menu_items(target));
 		this.p6_legend_providers = this.p6_legend_providers || [];
 		this.p6_legend_providers.push(() => this.p6e_legend_sections());
-		// "Add visit…" is an item of the toolbar's Edit menu (MPTB, v1.687.0), for whoever may create
+		// "Add visit…" is an item of the toolbar's + Add menu (MPTB, v2), for whoever may create
 		// visits (data.can_create_visits).
 		this.$body[0].addEventListener("dblclick", (e) => this.p6e_dblclick(e));
 	},
 
 	render_phase6e() {
-		// Nothing of its own to draw: Add visit… is offered by the Edit menu (tb_edit_items).
+		// Nothing of its own to draw: Add visit… is offered by the + Add menu (tb_add_items).
 	},
 
 	// ------------------------------------------------------------------ move by: calendar or working days
@@ -5978,28 +6134,35 @@ const MP6E_METHODS = {
 		this.p6b_render_bar();
 	},
 
-	// "Move by: Calendar days | Working days", in the selection bar.
-	p6e_bar_switch($bar) {
-		const unit = this.p6e_unit();
-		const $switch = $('<span class="mp-p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
-		$('<span class="mp-p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
-		[
-			["calendar", __("Calendar days"), __("Every day counts, weekends too")],
-			["working", __("Working days"), __("Monday to Friday: a visit moves by that many weekdays")],
-		].forEach(([value, label, title]) => {
-			$('<button type="button" class="btn btn-default btn-xs mp-p6e-opt"></button>')
-				.toggleClass("mp-p6e-on", unit === value)
-				.attr({ "aria-pressed": unit === value ? "true" : "false", title })
-				.text(label)
-				.on("click", () => this.p6e_set_unit(value))
-				.appendTo($switch);
-		});
+	// "Move by: Calendar days | Working days", a field of the Move… panel (it was a switch on the
+	// selection bar until the planner UX redesign, D12). The Select shows the words; the unit is the key.
+	p6e_unit_label(unit) {
+		return unit === "working" ? __("Working days") : __("Calendar days");
+	},
+
+	p6e_unit_options() {
+		return MP6E.units.map((unit) => this.p6e_unit_label(unit)).join("\n");
+	},
+
+	// The panel's Select changed: remember the unit, and say what the number below counts now.
+	p6e_panel_unit(panel) {
+		if (!panel) return;
+		const picked = MP6E.units.find((unit) => this.p6e_unit_label(unit) === panel.get_value("unit"));
+		if (!picked || picked === this.p6e_unit()) return;
+		this.p6e_set_unit(picked);
+		const field = panel.fields_dict && panel.fields_dict.days;
+		if (field) {
+			if (field.df) Object.assign(field.df, { label: this.p6e_move_label(), description: this.p6e_move_note() });
+			if (typeof field.set_label === "function") field.set_label(this.p6e_move_label());
+			if (typeof field.set_description === "function") field.set_description(this.p6e_move_note());
+		}
+		panel.set_value("days", this.p6e_move_default());
 	},
 
 	p6e_bar_note() {
 		return this.p6e_unit() === "working"
-			? __("Drag any of them and they all move by the same number of working days (Monday to Friday). Each visit is saved on its own. Esc clears the selection.")
-			: __("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Esc clears the selection.");
+			? __("Drag any of them and they all move by the same number of working days (Monday to Friday). Each visit is saved on its own. Move… changes the unit. Esc clears the selection.")
+			: __("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Move… changes the unit. Esc clears the selection.");
 	},
 
 	p6e_drop_days(from, to) {
@@ -6065,7 +6228,7 @@ const MP6E_METHODS = {
 				items: [
 					{
 						sample_html: "",
-						text: __("Double-click an empty spot, or Add visit… in the toolbar's Edit menu, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
+						text: __("Double-click an empty spot, or + Add ▸ Add visit… in the toolbar, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
 					},
 				],
 			},
@@ -6077,7 +6240,7 @@ const MP6E_METHODS = {
 		const el = e.target;
 		if (!el || !el.closest) return;
 		const skip =
-			".mp-card, .mp-day-head, .mp-off-badges, .mp-chip, .mp-person, .mp-toolbar, .mp-tray, .mp-res, .mp-route, " +
+			".mp-card, .mp-busy, .mp-day-head, .mp-off-badges, .mp-chip, .mp-person, .mp-toolbar, .mp-tray, .mp-res, .mp-route, " +
 			".mp-p6b-bar, [data-route-resource], [class*='pk-'], button, a, input, select, textarea, label";
 		if (el.closest(skip)) return;
 		const target = this.p6b_target(el);
@@ -6279,13 +6442,218 @@ const MP6E_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
 
+// ====================================================================== Fountain Move jobs
+//
+// Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves". A move job is a Service
+// project with Fountain Move ticked (project_enhancements/fountain_move_jobs.py). Its tasks with
+// hours (the Move day; the office tasks have none) are cards here, `kind: "move"`, and they move
+// here: the Project Planner shows them read-only. A deliberate exception to "each planner moves only
+// its own work".
+//
+//   - get_planner's `moves` (dated, on the task's first day) and `unscheduled_moves` (the tray). A card
+//     has a visit card's shape where it matters (technician = the lead, crew = the rest, date, site,
+//     movable), so the technician filter, the crew view rows and the badges read it as a visit.
+//   - Dragging one to a day moves the task; to another person's row in the crew view hands that
+//     person's place to them; dropping a technician on it adds them. All three go to
+//     move_fountain_move, which is the Project Planner's own write (conflicts ask for a reason,
+//     overbooking warns and never blocks). Undo puts the day and the crew back.
+//   - Draft mode does not hold them back (MPC1.refusals.move_fountain_move): drafts are visits.
+//   - Their hours are already in each person's day through the shared engine; the read-only Project
+//     booking of the same task is left out (maintenance_planner._drop_move_bookings).
+//
+// Hooks into the class above, one line each: index, all_cards, render_crew (the tray), card_row_html,
+// plan_drop (twice), drop, ask_reason (noun "task"), undo, open_card and p6b_card_items.
+
+const MPFM_METHODS = {
+	fm_cards() {
+		const data = this.data || {};
+		return [].concat(data.moves || [], data.unscheduled_moves || []);
+	},
+
+	fm_card_html(card, row_user) {
+		const people = this.visit_people(card);
+		const in_row = this.view === "crew" && !!card.date;
+		const sub = [card.subject, __("{0}h", [mp_hours(card.hours)])];
+		if (card.start && card.start !== card.date) sub.push(__("from {0}", [mp_when(card.start)]));
+		if (card.end) sub.push(__("until {0}", [mp_when(card.end)]));
+		const chips = [`<span class="mp-chip mp-move-chip">${mp_esc(__("Move"))}</span>`];
+		if (card.tentative) chips.push(`<span class="mp-chip mp-pencil-chip">${mp_esc(__("Pencil"))}</span>`);
+		if (card.short > 0) {
+			chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Needs {0} more", [card.short]))}</span>`);
+		}
+		if (card.overdue) chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Overdue"))}</span>`);
+		const who = people.length ? people.map((user) => this.tech_name(user)).join(", ") : __("Unassigned");
+		const tip = [
+			card.site_full,
+			sub.join(" · "),
+			people.length > 1 ? `${__("Crew")}: ${who}` : who,
+			__("Fountain Move: moved here, read-only on the Project Planner."),
+		]
+			.filter(Boolean)
+			.join("\n");
+		const classes = ["mp-card", "mp-move"];
+		if (card.movable) classes.push("mp-movable");
+		if (card.saving) classes.push("mp-saving");
+		if (card.tentative) classes.push("mp-pencil");
+		if (card.overdue) classes.push("mp-overdue");
+		const row_attr = row_user === undefined ? "" : ` data-row-user="${mp_esc(row_user)}"`;
+		return `
+			<div class="${classes.join(" ")}" data-key="${mp_esc(card.key)}"${row_attr} tabindex="0" title="${mp_esc(tip)}">
+				<div class="mp-card-top">
+					<span class="mp-card-title">${mp_esc(card.site || card.project || card.name)}</span>
+					${this.people_badges(card, in_row)}
+				</div>
+				<div class="mp-card-sub">${mp_esc(sub.join(" · "))}</div>
+				<div class="mp-card-who">${in_row ? "" : mp_esc(who)} ${chips.join("")}</div>
+			</div>`;
+	},
+
+	// A technician dropped on a move card joins its crew (the first one on an empty task leads it).
+	fm_plan_person(card, user) {
+		const name = this.tech_name(user);
+		const site = this.site_of(card);
+		if (!card.movable) return { refuse: __("You cannot change {0}.", [site]) };
+		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
+		const people = this.visit_people(card);
+		if (people.includes(user)) return { refuse: __("{0} is already on {1}.", [name, site]) };
+		return { card, fm: { crew: people.concat([user]), added: user } };
+	},
+
+	// A move card dropped on a day (and, in the crew view, on a person's row).
+	fm_plan_move(source, target) {
+		const card = source.card;
+		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
+		if (target.date !== card.date && target.date < this.today()) {
+			return { refuse: __("Move jobs can only be moved to today or a later day.") };
+		}
+		const change = {};
+		if (target.date && target.date !== card.date) change.date = target.date;
+		const people = this.visit_people(card);
+		const row_user = source.from_user == null ? card.technician || "" : source.from_user;
+		if (target.row && (target.user || "") !== row_user) {
+			if (!target.user) {
+				return { refuse: __("Drop {0} on a technician's row to hand it over.", [this.site_of(card)]) };
+			}
+			if (people.includes(target.user)) {
+				return { refuse: __("{0} is already on {1}.", [this.tech_name(target.user), this.site_of(card)]) };
+			}
+			// That person's place goes to the new one; from the Unassigned row, they join.
+			change.crew = row_user
+				? people.map((user) => (user === row_user ? target.user : user))
+				: people.concat([target.user]);
+			change.from_user = row_user;
+			change.added = target.user;
+		}
+		return Object.keys(change).length ? { card, fm: change } : null;
+	},
+
+	// Show it straight away, save it, reload: the reload is the truth.
+	fm_apply(card, change) {
+		const before = { date: card.start || card.date || null, crew: this.visit_people(card) };
+		const site = this.site_of(card);
+		const args = { task: card.name, modified: this.modified[card.name] || card.modified };
+		if (change.date) {
+			args.date = change.date;
+			card.date = change.date;
+		}
+		if (change.crew) {
+			args.crew = JSON.stringify(change.crew);
+			card.technician = change.crew[0] || null;
+			card.crew = change.crew.slice(1).map((user) => ({ user, name: this.tech_name(user), hours: null }));
+		}
+		let message;
+		if (change.from_user && change.added) {
+			message = __("{0}: {1} handed over to {2}", [site, this.tech_name(change.from_user), this.tech_name(change.added)]);
+		} else if (change.added) {
+			message = __("{0} added to {1}", [this.tech_name(change.added), site]);
+		} else {
+			message = __("{0} moved to {1}", [site, mp_when(change.date)]);
+		}
+		if (change.date && change.crew) message += `, ${__("moved to {0}", [mp_when(change.date)])}`;
+		card.saving = true;
+		this.render();
+		return this.send("move_fountain_move", args, {
+			// The crew goes back only when this change touched it: sending it otherwise would turn a
+			// crew read from assignments into crew rows.
+			snapshot: {
+				kind: "move",
+				site,
+				task: card.name,
+				date: change.date ? before.date : null,
+				crew: change.crew ? before.crew : null,
+			},
+			message,
+			noun: "task",
+		}).finally(() => this.load());
+	},
+
+	// Undo a move-job change: its day (unless that day has passed, or it was unscheduled) and its crew.
+	fm_undo(snap) {
+		if (!snap || snap.kind !== "move") return false;
+		const card = this.by_key[`move|${snap.task}`];
+		if (!snap.crew && !(snap.date && snap.date >= this.today())) {
+			// Only a day to undo, and it is gone (scheduled from the tray, or a day that has passed).
+			frappe.show_alert(
+				{
+					message: __("{0} keeps its day: a task cannot go back to a day that has passed or to unscheduled.", [
+						snap.site,
+					]),
+					indicator: "orange",
+				},
+				8
+			);
+			return true;
+		}
+		const args = { task: snap.task, modified: this.modified[snap.task] || (card && card.modified) || "" };
+		if (snap.crew) args.crew = JSON.stringify(snap.crew);
+		const date_back = !!(snap.date && snap.date >= this.today());
+		if (date_back) args.date = snap.date;
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		this.send("move_fountain_move", args, {
+			message: __("Undone: {0}", [snap.site]),
+			auto_reason: __(MP.undo_reason),
+			noun: "task",
+		})
+			.then((result) => {
+				if (result && snap.date && !date_back) {
+					frappe.show_alert(
+						{
+							message: __(
+								"{0} keeps its day: a task cannot go back to a day that has passed or to unscheduled.",
+								[snap.site]
+							),
+							indicator: "orange",
+						},
+						10
+					);
+				}
+			})
+			.finally(() => this.load());
+		return true;
+	},
+
+	// The right-click menu of a move card: open the task or its project.
+	fm_card_items(card) {
+		const items = [{ label: __("Open task"), on_click: () => this.open_card(card) }];
+		if (card.project) {
+			items.push({ label: __("Open project"), on_click: () => frappe.set_route("Form", "Project", card.project) });
+		}
+		return items;
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPFM_METHODS);
+
 // ====================================================================== C1: Draft mode and pencil visits
 //
 // The Project Planner's draft mode and pencil, on the Maintenance Planner (v1.601.0). A Google
 // Calendar sync that pushes only committed work comes next, so the two planners need the same line
 // between "trying things" and "the schedule".
 //
-//   - "Draft mode", a switch in the toolbar's Edit menu remembered per browser (ee_maintenance_planner_draft). While it
+//   - "Draft mode", a switch in the toolbar's More ▸ Tools remembered per browser (ee_maintenance_planner_draft). While it
 //     is on, every visit write that send() makes (move_visit and add_crew: drags, the dialog, the
 //     right-click menu, the selection bar, the Conflict center's fixes, Undo) goes with draft=1 and
 //     lands on the planner's own Planner Draft Change rows (api/maintenance_drafts.py). Nobody's
@@ -6317,6 +6685,8 @@ const MPC1 = {
 	// The writes Draft mode cannot hold back (the server's maintenance_drafts.PROJECTED_REFUSAL and
 	// DRAFT_REFUSAL say the same).
 	refusals: {
+		move_fountain_move:
+			"Draft mode holds back changes to visits only. A Fountain Move task is saved at once, as it is on the Project Planner. Turn Draft mode off to move it.",
 		move_projected:
 			"Draft mode holds back changes to drafted visits only. This visit is projected from its contract, and moving it changes the contract's next visit date at once. Turn Draft mode off to move it.",
 		create_visit:
@@ -6327,7 +6697,7 @@ const MPC1 = {
 const MPC1_METHODS = {
 	init_phase_c1() {
 		this.draft_on = this.load_pref(MPC1.pref, "0") === "1";
-		// The switch is an item of the toolbar's Edit menu (MPTB, v1.687.0); the strip sits right under
+		// The switch is an item of the toolbar's More ▸ Tools (MPTB, v1.687.0); the strip sits right under
 		// the toolbar, where the switch's state shows.
 		this.$draft_bar = $('<div class="mp-draft-bar" role="region"></div>')
 			.attr("aria-label", __("Draft mode"))
@@ -6554,40 +6924,47 @@ const MPC1_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MPC1_METHODS);
 
-// ====================================================================== The toolbar (v1.687.0)
+// ====================================================================== The toolbar (v1.687.0, v2)
 //
-// The Maintenance Planner's half of the toolbar redesign Nik picked on 2026-10-14 (the Project
-// Planner's PPTB block has the long version). One bar, made shorter by four menus:
+// The Maintenance Planner's half of the toolbar redesign Nik picked on 2026-10-14, and of the next
+// step he approved on 2026-10-21 (the planner UX redesign, P1). The Project Planner's PPTB block has
+// the long version. One bar, the same structure as that planner's:
 //
 //   ‹ Today ›  title  [highlight]  Month Week Crew   search  Technician
-//   [alert chips]  Views ▾  Display ▾  Edit ▾  Print ▾  [↶]  ?  ↻
+//   [alert chips]  + Add ▾  More ▾  [↶]  ?  ↻
 //
-//   - Views ▾     the saved views (6C), Save current view as…, Manage views…
-//   - Display ▾   Color by (6C) and the key of its colors (the row it had under the toolbar); the
-//                 key of the visit kinds (the legend row it had under the toolbar); Projected visits
-//                 and Project work, each with a check mark
-//   - Edit ▾      Draft mode (C1) and Tap to move (6C); Add visit… (6E, for whoever may create
-//                 visits); Block time… (6D, schedulers); Conflicts… (6D, even at none); Undo
-//   - Print ▾     Print this view and Print selection only (6C)
+//   - + Add ▾     Add visit… (6E, for whoever may create visits) and Day note… (6D, schedulers)
+//   - More ▾      four sections:
+//       Display   Color by (6C; the default is Visit type) and the key of its colors; Projected
+//                 visits, Project work and Project work as cards (P10), each with a check mark. The
+//                 key of the visit kinds, which was the legend row under the toolbar and then a
+//                 section of Display, is in "?" only now
+//       Views     the saved views (6C), Save current view as…, Manage views…
+//       Tools     Block time… (6D, schedulers); Conflicts… (6D, even at none); Tap to move (6C);
+//                 Draft mode (C1); My day (P10, for a technician who has one); Undo
+//       Print     Print this view and Print selection only (6C); Day Board
 //   - alert chips Conflicts (6D) and Overdue, in the danger tone, a count and a word each, there only
 //                 above zero. Conflicts opens the Conflict center; Overdue opens a side panel listing
 //                 the overdue visits on screen, each of which opens its visit (the planner had no
 //                 overdue list of its own; only a red card and its chip). There is no Running over:
 //                 visits carry no clocked-against-planned hours here
 //   - ↶, ?, ↻     Undo as a small icon only while there is something to undo; the help, whose first
-//                 section is now the tips that used to be banners on load; refresh
+//                 section is the tips that used to be banners on load; refresh
 //   - Draft mode  a strip under the bar, "Draft mode on: N changes not published yet", with
 //                 Publish and Discard (C1's c1_render_bar, c1_publish, c1_discard)
+//   - the tabs    Month Week Crew are a WAI-ARIA tablist (planner_kit toolbar.tabs)
 //
-// The Day Board stays where it was, the page head's secondary button. There is no Utilization view
-// here: the Crew Utilization report is the Project Planner's view, and it counts maintenance visits
-// in every person's booked hours already.
+// The Day Board stays where it was too, the page head's secondary button, and is also in More ▸ Print.
+// The Move by switch (calendar or working days) left the selection bar for a field of the Move…
+// panel (D12). There is no Utilization view here: the Crew Utilization report is the Project
+// Planner's view, and it counts maintenance visits in every person's booked hours already.
 //
 // On a phone the bar is ‹ Today ›, the title, the view switcher and "Filters and tools", which opens
-// planner_kit.toolbar.sheet with the filter, the chips and the menus' items; Back closes it.
+// planner_kit.toolbar.sheet with the filter, the chips and the same sections; Back closes it.
 //
 // Hooks into the class above, one line each: init_toolbar (constructor), tb_ready (p6a_ready),
-// tb_render (render, p6d_after_list) and tb_close_sheet (p6b_pick).
+// tb_render (render, p6d_after_list) and tb_close_sheet (p6b_pick). P10's MP10 block at the end of the
+// page adds p10_tools_items (tb_tools_items) and p10_sync_myday (tb_render).
 
 const MPTB = {
 	phone_max: 767,
@@ -6596,19 +6973,18 @@ const MPTB = {
 };
 
 const MPTB_METHODS = {
-	// The four menus: [name, label, what is in it]. Written out as __() calls, so they are translated.
+	// The two menus: [name, label, what is in it, the button's text]. Written out as __() calls, so
+	// they are translated.
 	tb_menu_list() {
 		return [
-			["views", __("Views"), __("Your saved views")],
-			["display", __("Display"), __("Card colors, their key, and what else is drawn")],
-			["edit", __("Edit"), __("Draft mode, Tap to move, Add visit, Block time, Undo")],
-			["print", __("Print"), __("Print this view")],
+			["add", __("Add"), __("Add a visit or a day note"), __("+ Add")],
+			["more", __("More"), __("Display, Views, Tools and Print"), __("More")],
 		];
 	},
 
 	init_toolbar() {
-		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null };
-		this.tb_menu_list().forEach(([name, label, title]) => {
+		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null, tabs: null };
+		this.tb_menu_list().forEach(([name, label, title, text]) => {
 			const $button = $('<button type="button" class="btn btn-default btn-sm mp-tb-menu"></button>')
 				.attr("data-tb-menu", name)
 				.attr("title", title)
@@ -6616,7 +6992,7 @@ const MPTB_METHODS = {
 					if (!this.tb.kit) frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 				})
 				.appendTo(this.$tools);
-			$("<span></span>").text(label).appendTo($button);
+			$("<span></span>").text(text || label).appendTo($button);
 			$('<span class="mp-tb-caret" aria-hidden="true">▾</span>').appendTo($button);
 			this.tb.$menus[name] = $button;
 		});
@@ -6635,6 +7011,7 @@ const MPTB_METHODS = {
 				if (e.target === wrapper[0]) this.tb_close_menus();
 			});
 		}
+		this.init_p10();
 	},
 
 	tb_close_menus() {
@@ -6642,6 +7019,7 @@ const MPTB_METHODS = {
 		if (kit && kit.toolbar) kit.toolbar.close_all("route");
 	},
 
+	// The kit has loaded (6A's p6a_ready): the buttons become menus, the view buttons tabs.
 	tb_ready() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!this.tb || this.tb.kit || !kit || !kit.toolbar) return;
@@ -6652,81 +7030,39 @@ const MPTB_METHODS = {
 				items: () => this.tb_items(name),
 			});
 		});
+		if (this.$seg && this.$seg[0] && typeof kit.toolbar.tabs === "function") {
+			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view });
+		}
 		this.tb_render();
 	},
 
+	// One menu's items, as planner_kit.toolbar takes them.
 	tb_items(name) {
-		if (name === "views") return this.p6c_view_items();
-		if (name === "display") return this.tb_display_items();
-		if (name === "edit") return this.tb_edit_items();
-		if (name === "print") return this.p6c_print_items();
+		if (name === "add") return this.tb_add_items();
+		if (name === "more") return this.tb_sections_items(this.tb_more_sections());
 		return [];
 	},
 
-	// The visit kinds, each drawn with its card's own class, so the key and the calendar agree (the
-	// legend row under the toolbar, before v1.687.0).
-	tb_kind_items() {
-		const kinds = [
-			["", __("Scheduled visit")],
-			["mp-seasonal", __("Seasonal")],
-			["mp-extra", __("Extra / follow-up")],
-			["mp-pending", __("Pending review")],
-			["mp-done", __("Done")],
-			["mp-projected", __("Projected from the contract")],
-			["mp-overdue", __("Overdue")],
-			["mp-bk-task", __("Project task (read-only)")],
-			["mp-bk-rental", __("Rental crew (read-only)")],
-			["mp-bk-travel", __("Travel (read-only)")],
-		];
-		return [{ heading: __("Visit kinds") }].concat(
-			kinds.map(([kind, label]) => ({
-				label,
-				sample_html: `<i class="mp-swatch${kind ? ` ${kind}` : ""}"></i>`,
-				info: true,
-			}))
-		);
+	// Named sections as one list (the kit's), or, before the kit has loaded, plainly one after another.
+	tb_sections_items(sections) {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar && typeof kit.toolbar.sections_to_items === "function") return kit.toolbar.sections_to_items(sections);
+		return [].concat(...sections.map((section) => (section.items || []).filter((item) => item && !item.divider && !item.heading)));
 	},
 
-	tb_display_items() {
-		return this.p6c_color_items().concat(
-			[{ divider: true }],
-			this.tb_kind_items(),
-			[
-				{ divider: true },
-				{
-					label: __("Projected visits"),
-					checked: !!this.show_projected,
-					title: __("The visits a contract will draft next, before the scheduler drafts them"),
-					on_click: () => this.set_show_projected(!this.show_projected),
-				},
-				{
-					label: __("Project work"),
-					checked: !!this.show_project_work,
-					title: __("Project tasks, rental crew tasks and travel, read-only. Move them on the Project Planner."),
-					on_click: () => this.set_show_project_work(!this.show_project_work),
-				},
-			]
-		);
+	// More's four sections; the phone's sheet draws the same ones.
+	tb_more_sections() {
+		return [
+			{ key: "display", title: __("Display"), items: this.tb_display_items() },
+			{ key: "views", title: __("Views"), items: this.p6c_view_items() },
+			{ key: "tools", title: __("Tools"), items: this.tb_tools_items() },
+			{ key: "print", title: __("Print"), items: this.tb_print_items() },
+		];
 	},
 
-	tb_edit_items() {
-		const items = [
-			{
-				label: __("Draft mode"),
-				checked: !!this.draft_on,
-				title: __("Keep your changes to yourself until you publish them"),
-				on_click: () => this.set_draft_mode(!this.draft_on),
-			},
-		];
-		if (this.p6c) {
-			items.push({
-				label: __("Tap to move"),
-				checked: !!this.p6c.tap,
-				title: __("Tap a visit, then tap the day where it goes, instead of dragging"),
-				on_click: () => this.p6c_set_tap(!this.p6c.tap),
-			});
-		}
-		items.push({ divider: true });
+	// + Add: a visit (the double-click's form, started on the first day on screen) or a day note.
+	tb_add_items() {
+		const items = [];
 		if (this.data && this.data.can_create_visits) {
 			items.push({
 				label: __("Add visit…"),
@@ -6734,6 +7070,46 @@ const MPTB_METHODS = {
 				on_click: () => this.p6e_add_visit(null),
 			});
 		}
+		if (this.data && this.data.can_schedule) {
+			items.push({
+				label: __("Day note…"),
+				title: __("A note for everyone on a day, such as a shop meeting"),
+				on_click: () => this.p6d_note_form({ date: this.p6d_default_date() }),
+			});
+		}
+		return items;
+	},
+
+	// Display: Color by and the key of its colors, then what to draw. The key of the visit kinds is in "?"
+	// (legend_sections) and nowhere here since P10.
+	tb_display_items() {
+		return this.p6c_color_items().concat([
+			{ divider: true },
+			{
+				label: __("Projected visits"),
+				checked: !!this.show_projected,
+				title: __("The visits a contract will draft next, before the scheduler drafts them"),
+				on_click: () => this.set_show_projected(!this.show_projected),
+			},
+			{
+				label: __("Project work"),
+				checked: !!this.show_project_work,
+				title: __(
+					"Project tasks, rental crew tasks and travel, read-only: a thin grey strip on each technician's day. Move them on the Project Planner."
+				),
+				on_click: () => this.set_show_project_work(!this.show_project_work),
+			},
+			{
+				label: __("Project work as cards"),
+				checked: this.project_work_mode() === "cards",
+				title: __("Draw each project task, rental and travel day as a card instead of the strip"),
+				on_click: () => this.set_show_project_cards(this.project_work_mode() !== "cards"),
+			},
+		]);
+	},
+
+	tb_tools_items() {
+		const items = [];
 		if (this.data && this.data.can_schedule) {
 			items.push({
 				label: __("Block time…"),
@@ -6748,6 +7124,21 @@ const MPTB_METHODS = {
 			title: __("Everything wrong in the dates on screen, with one-click fixes"),
 			on_click: () => this.p6d_open_conflicts(null),
 		});
+		if (this.p6c) {
+			items.push({
+				label: __("Tap to move"),
+				checked: !!this.p6c.tap,
+				title: __("Tap a visit, then tap the day where it goes, instead of dragging"),
+				on_click: () => this.p6c_set_tap(!this.p6c.tap),
+			});
+		}
+		items.push({
+			label: __("Draft mode"),
+			checked: !!this.draft_on,
+			title: __("Keep your changes to yourself until you publish them"),
+			on_click: () => this.set_draft_mode(!this.draft_on),
+		});
+		items.push(...this.p10_tools_items());
 		const last = this.undo_stack[this.undo_stack.length - 1];
 		items.push(
 			{ divider: true },
@@ -6760,6 +7151,16 @@ const MPTB_METHODS = {
 			}
 		);
 		return items;
+	},
+
+	tb_print_items() {
+		return this.p6c_print_items().concat([
+			{
+				label: __("Day Board"),
+				title: __("Today's visits, technician by technician, to print or hand out"),
+				on_click: () => frappe.set_route("maintenance-day-board"),
+			},
+		]);
 	},
 
 	// ------------------------------------------------------------------ alert chips
@@ -6872,6 +7273,8 @@ const MPTB_METHODS = {
 		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
 		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
 		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
+		if (this.tb.tabs) this.tb.tabs.sync(this.view);
+		this.p10_sync_myday();
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
 
@@ -6912,20 +7315,1135 @@ const MPTB_METHODS = {
 		}));
 		return [
 			{ title: __("Alerts"), items: alerts },
-			{ title: __("Views"), items: keep(this.p6c_view_items()) },
-			{ title: __("Display"), items: keep(this.tb_display_items()) },
-			{ title: __("Edit"), items: keep(this.tb_edit_items()) },
-			{ title: __("Print"), items: this.p6c_print_items() },
+			{ title: __("Add"), items: this.tb_add_items() },
+		]
+			.concat(this.tb_more_sections().map((section) => ({ title: section.title, items: keep(section.items) })))
+			.concat([
+				{
+					title: __("This page"),
+					items: [
+						{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
+						{ label: __("Refresh"), on_click: () => this.load() },
+					],
+				},
+			]);
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);
+
+// ====================================================================== P4: "Notify crew?"
+//
+// P4 of the planner UX redesign (docs/planner-ux-redesign.md, D11, Nik 2026-10-21), the Maintenance
+// Planner's part: a change to a visit's day, technician or crew asks "Notify crew?" once per gesture
+// (a multi-select move asks once for all of them) before move_visit or add_crew (a technician chip
+// dropped on a visit) is sent. Notify is the default
+// when the change touches today through the 14th day (the old day or the new one), Don't notify beyond
+// that; Enter takes the default and Esc puts the change back. The answer goes as notify=1 or 0, the
+// Undo entry keeps it, and Undo sends the same answer again. Nothing is asked in Draft mode (a draft
+// tells nobody until it is published) or for a visit nobody is on.
+//
+// Hooks into the class above, one line each: mpas_with_notify (send), mpas_batch (p6b_run_moves,
+// whose moves then carry the answer), and the Undo entries' `notify` (undo, p6b_undo).
+
+const MPAS = {
+	notify_days: 14,
+	// The live writes that change who is on a visit, or when: both take `notify`.
+	notify_methods: ["move_visit", "add_crew"],
+};
+
+// Pure helpers, an identical copy of the Project Planner's PPAS_PURE.notify_window/notify_default
+// (scripts/test_planner_autoshift.js runs both through the same cases).
+const MPAS_PURE = {
+	notify_window(today) {
+		return [today, MP6B_PURE.ymd_add(today, MPAS.notify_days - 1)];
+	},
+	notify_default(spans, today) {
+		const [first, last] = MPAS_PURE.notify_window(today);
+		return (spans || []).some((span) => !!(span && span[0] && span[0] <= last && (span[1] || span[0]) >= first));
+	},
+	// The users a move_visit leaves on the visit and the ones it had: who a notice could reach.
+	// `before` is a visit card or its Undo snapshot: {technician, crew: [{user}]}.
+	people(before, args) {
+		const people = new Set();
+		if (before) {
+			if (before.technician) people.add(before.technician);
+			(before.crew || []).forEach((row) => row && row.user && people.add(row.user));
+		}
+		if (args) {
+			if (args.technician) people.add(args.technician);
+			if (args.user) people.add(args.user); // add_crew's person
+			let rows = args.crew;
+			if (typeof rows === "string") {
+				try {
+					rows = JSON.parse(rows);
+				} catch (e) {
+					rows = [];
+				}
+			}
+			(rows || []).forEach((row) => {
+				const user = row && typeof row === "object" ? row.user : row;
+				if (user) people.add(user);
+			});
+		}
+		return people;
+	},
+	// Whether a move_visit or add_crew changes what a notice is about: the day, the technician or the
+	// crew.
+	changes(args) {
+		return !!(
+			args &&
+			(args.date || args.technician !== undefined || args.crew !== undefined || args.from_user || args.user)
+		);
+	},
+};
+
+const MPAS_METHODS = {
+	// send()'s hook: a live move_visit with no answer yet gets one first. Resolves to send()'s answer;
+	// null when the planner backed out. Returns null (nothing to ask) to let send() carry on.
+	mpas_with_notify(method, args, opts) {
+		if (!MPAS.notify_methods.includes(method) || args.draft || args.notify !== undefined || !MPAS_PURE.changes(args)) return null;
+		const card = this.by_key && this.by_key[args.record];
+		const before = opts.snapshot && opts.snapshot.kind === "visit" ? opts.snapshot : card ? this.snapshot_of(card) : null;
+		const people = MPAS_PURE.people(before, args);
+		if (!people.size) return null;
+		const old_day = (before && before.date) || (card && card.date) || null;
+		const spans = [old_day, args.date || old_day].filter(Boolean).map((day) => [day, day]);
+		return this.mpas_ask(MPAS_PURE.notify_default(spans, this.today()), [...people], 1).then((notify) => {
+			if (notify === null) return null;
+			if (opts.snapshot) opts.snapshot.notify = notify;
+			return this.send(method, Object.assign({}, args, { notify }), opts);
+		});
+	},
+
+	// A multi-select move (p6b_run_moves): one question for every visit in it, asked before the first
+	// is sent, then `go(answer)`. With nobody to tell (or Draft mode) `go(undefined)` runs at once;
+	// backing out of the question runs nothing and resolves null.
+	mpas_batch(plans, go) {
+		const people = new Set();
+		const spans = [];
+		(plans || []).forEach((plan) => {
+			MPAS_PURE.people(plan.card, null).forEach((user) => people.add(user));
+			if (plan.card.date) spans.push([plan.card.date, plan.card.date]);
+			if (plan.date) spans.push([plan.date, plan.date]);
+		});
+		if (this.draft_on || !people.size) return go(undefined);
+		return this.mpas_ask(MPAS_PURE.notify_default(spans, this.today()), [...people], (plans || []).length).then(
+			(notify) => (notify === null ? null : go(notify))
+		);
+	},
+
+	mpas_ask(notify, people, count) {
+		return new Promise((resolve) => {
+			let settled = false;
+			const settle = (value) => {
+				if (settled) return;
+				settled = true;
+				resolve(value);
+			};
+			const names = people.slice(0, 6).map((user) => this.tech_name(user));
+			if (people.length > 6) names.push(__("{0} more", [people.length - 6]));
+			const ask =
+				count > 1
+					? __("Tell {0} about these {1} changes?", [names.join(", "), count])
+					: __("Tell {0} about this change?", [names.join(", ")]);
+			const why = notify
+				? __("It touches the next two weeks, so Notify is the default.")
+				: __("It is more than two weeks out, so Don't notify is the default.");
+			const dialog = new frappe.ui.Dialog({
+				title: __("Notify crew?"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "notify",
+						options: `<p>${mp_esc(ask)}</p><p class="text-muted">${mp_esc(why)} ${mp_esc(__("Esc puts the change back."))}</p>`,
+					},
+				],
+				primary_action_label: notify ? __("Notify") : __("Don't notify"),
+				primary_action: () => {
+					settle(notify ? "1" : "0");
+					dialog.hide();
+				},
+				secondary_action_label: notify ? __("Don't notify") : __("Notify"),
+				secondary_action: () => {
+					settle(notify ? "0" : "1");
+					dialog.hide();
+				},
+			});
+			dialog.onhide = () => settle(null);
+			dialog.show();
+			// The default has the focus, so Enter takes it (and a keyboard user lands on it).
+			if (typeof dialog.get_primary_btn === "function") dialog.get_primary_btn().trigger("focus");
+		});
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);
+
+// ====================================================================== Simple mode
+//
+//   /desk/maintenance-planner/simple     every maintenance site, a card each: Done and Coming up
+//
+// docs/planner-simple-mode.md (Nik, 2026-10-22; S5 "Both planners", S12 "One row per site", S14 "Visits + old
+// service tasks"). A switch, first in the bar; turned on, it opens /simple, a screen of its own, so Back returns
+// to where the person was. The screen is the kit's (planner_kit/simple.js, the Project Planner's too), drawn
+// from api/planner_simple.get_simple_sites: a card per site (a contract's project), its Maintenance Records,
+// its contract's projected visits and its project's completed tasks. It writes nothing, and the planner's
+// shortcuts do nothing on it (p6b_run_key).
+//
+// Remembered per device (S7). This planner keeps its last view per person (6C's "last used"); Simple mode is
+// the device's instead, as the Project Planner's tabs are: a flag in this browser for the signed-in user, set
+// when /simple opens and cleared when any other screen does. A bare /maintenance-planner on a device whose
+// flag is set opens Simple mode, in place (replace), so Back leaves the planner as it would have. Turning it off
+// clears the flag and opens the bare address, which lands on the person's own last view as any visit does.
+//
+// Hooks into the class above, one line each: init_simple (constructor), route_target, mps_take (handle_route),
+// mps_landing (p6c_before_route), mps_refresh (load), mps_kit_ready (p6a_ready), p6b_run_key.
+
+const MPS = {
+	view: "simple",
+	method: "erpnext_enhancements.api.planner_simple.get_simple_sites",
+	// A read: sent as a GET.
+	http: "GET",
+	// This device's "Simple mode was the last screen", per user.
+	device_pref: "ee_maintenance_planner_simple",
+};
+
+const MPS_METHODS = {
+	init_simple() {
+		this.mps = { view: null };
+		this.$simple = $('<div class="mp-simple"></div>').hide().appendTo(this.$body);
+		// The switch, first in the bar. It is off wherever the bar shows; Simple mode draws its own, on.
+		this.$simple_switch = $('<button type="button" class="btn btn-default btn-sm mp-simple-switch" role="switch" aria-checked="false"></button>')
+			.text(__("Simple"))
+			.attr("title", __("Simple mode: every site on one quiet page, visits done and coming up"))
+			.on("click", () => this.mps_enter())
+			.prependTo(this.$body.children(".mp-toolbar").first());
+	},
+
+	mps_key() {
+		return `${MPS.device_pref}:${(frappe.session && frappe.session.user) || ""}`;
+	},
+
+	// Every landing: Simple mode shows (true, nothing else to do) or goes, and this device remembers which. The
+	// flag is written only when it changes, so a device that never used Simple mode stores nothing.
+	mps_take(view) {
+		const simple = view === MPS.view;
+		const was = this.load_pref(this.mps_key(), "0") === "1";
+		if (simple !== was) this.save_pref(this.mps_key(), simple ? "1" : "0");
+		if (!simple) {
+			this.mps_hide();
+			return false;
+		}
+		if (!this.mps) this.init_simple();
+		this.$body.addClass("mp-simple-on");
+		this.$simple.show();
+		this.mps_mount();
+		this.mps_refresh();
+		return true;
+	},
+
+	mps_hide() {
+		if (this.$body) this.$body.removeClass("mp-simple-on");
+		if (this.$simple) this.$simple.hide();
+	},
+
+	// A bare address on a device that used Simple mode last: Simple mode, in place of the bare entry. A link that
+	// names a technician is a calendar's, so it never lands here.
+	mps_landing() {
+		if (this.load_pref(this.mps_key(), "0") !== "1") return false;
+		const opts = frappe.route_options || {};
+		if (MP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return false;
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		frappe.set_route(MP.route, MPS.view);
+		return true;
+	},
+
+	// The switch, on: a screen, so it is a history entry. The technician filter rides along as on every screen.
+	mps_enter() {
+		const route = frappe.get_route() || [];
+		if (route[0] === MP.route && route[1] === MPS.view) return;
+		this.self_route = [MP.route, MPS.view].join("/");
+		this.p6a_route(() => frappe.set_route(MP.route, MPS.view, this.filter_options()), false);
+	},
+
+	// The switch, off: the bare address, which lands on the person's own last view (6C), one entry after Simple.
+	mps_leave() {
+		this.save_pref(this.mps_key(), "0");
+		this.p6a_route(() => frappe.set_route(MP.route), false);
+	},
+
+	mps_refresh() {
+		if (this.mps && this.mps.view) return this.mps.view.refresh();
+		return null;
+	},
+
+	mps_mount() {
+		if (this.mps.view) return;
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) {
+			this.$simple.empty().append($('<div class="mp-simple-note"></div>').text(__("Loading…")));
+			return;
+		}
+		if (!kit.simple) {
+			// An older kit already on the Desk: a reload brings the new one.
+			this.$simple.empty().append($('<div class="mp-simple-note"></div>').text(__("Reload the page to use Simple mode.")));
+			return;
+		}
+		this.$simple.empty();
+		this.mps.view = kit.simple.mount(this.$simple[0], {
+			title: __("Maintenance Planner"),
+			placeholder: __("Search sites and customers…"),
+			noun: [__("site"), __("sites")],
+			load: (search, start, limit) => kit.quiet_call(MPS.method, { search, start, limit: limit || "" }, { method: MPS.http }),
+			open: (doctype, name) => frappe.set_route("Form", doctype, name),
+			off: () => this.mps_leave(),
+			help: () => kit.legend(kit.simple.legend_sections("sites"), { title: __("How Simple mode works"), owner: MP6A.owner }),
+			is_phone: () => this.tour_is_phone(),
+		});
+	},
+
+	// The kit loads after the first landing: a Simple screen already showing draws once it is here.
+	mps_kit_ready() {
+		if (!this.mps || this.view !== MPS.view || this.mps.view) return;
+		this.mps_mount();
+		this.mps_refresh();
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPS_METHODS);
+
+// ====================================================================== P10: Maintenance Planner simplify
+//
+// P10 of the planner UX redesign (docs/planner-ux-redesign.md section 4.9, D9 "Keep as is, simplify"
+// and D13 "Busy strip per day"; Nik, 2026-10-22: "Start"). The same Month, Week and Crew views, the
+// same cards, drags, projected and seasonal visits, draft mode and pencil; what changes is how much
+// the page puts in front of the person:
+//
+//   - Project work is a busy strip, not a card each. Each technician-day with project, rental or
+//     travel bookings gets ONE thin grey bar ("Project: 8h"; "Rental" or "Travel" when that is all
+//     there is; "+ 2h pencil" for soft hours). Hover for the tasks; a click opens that person's week
+//     (6A's person quick look, the day selected). With All technicians the strip names the person.
+//     More > Display > "Project work as cards" brings back the old read-only card each (booking_html),
+//     More > Display > "Project work" still turns the whole thing off. Free hours do not change: they
+//     are the engine's, which counts the work whether it is drawn as a strip, as cards or not at all.
+//     A Fountain Move task is not a booking here (the server drops it from `items`): its card is
+//     unchanged by any of this.
+//   - "Resources available" starts collapsed to one line for the week ("Austin: 3h free Tue · Off
+//     Thu–Fri"); Show opens the full table exactly as it was. The names in the line are the table's
+//     own chips, so a click still opens a person's week and a drag onto a visit still adds them.
+//   - The key of the visit kinds lives in "?" only (legend_sections, in 6A's block), with the strip
+//     and Resources available beside it (p10_legend_sections). Display no longer carries it.
+//   - "My day" takes a technician to their Today screen on the Project Planner (P8):
+//     /project-planner/today/<date>. In the bar for someone who cannot schedule (a technician), and in
+//     More > Tools for anyone who has a day of their own (a Planner Resource on the technician list).
+//
+// Saved views: `project_cards` (Project work as cards) and `resources` (Resources available open) join
+// the view; `resources` replaces `panel`, which the old default (open) filled in for every user, so an
+// old "last used" row cannot hold the panel open against the new default (api/planner_views_prefs).
+//
+// History: nothing here is a screen. The strip's click opens the kit's drawer (its one entry); My day
+// is a set_route, one entry, and Back returns to the planner. Showing, hiding or switching cards pushes
+// nothing.
+//
+// Hooks into the class above, one line each: constructor (the two prefs), visible and render_crew
+// (project_work_mode), render_calendar (p10_day_strips_html), render_crew (p10_cell_strip_html),
+// render_panel (p10_summary_line), render (p10_hint_note), p6c_print_calendar and p6c_print_crew
+// (p10_print_items), legend_sections (p10_legend_sections), tb_tools_items (p10_tools_items), tb_render
+// (p10_sync_myday), init_toolbar (init_p10) and p6e_dblclick (the strip is no empty spot).
+
+const MP10 = {
+	// The Project Planner's Today screen (P8): /desk/project-planner/today/<date>.
+	today_view: "today",
+	// What a view saved before P10 does not say: compared only when the saved view holds them.
+	newer_view_keys: ["project_cards", "resources"],
+	// How many separate "Nh free" stretches the summary line names for one person before "+N more".
+	summary_runs: 3,
+	// Saturday and Sunday are left out of "Off ..." (off for nearly everyone; the table still shows them).
+	weekend_days: [0, 6],
+};
+
+const MP10_PURE = {
+	// The engine's bookings of one technician-day (`items`) as one figure: the hours that are firm and the
+	// hours that are pencilled, how many there are, and the kinds that are in it (project task, rental,
+	// travel), in that order whatever order the engine listed them.
+	busy(items) {
+		let firm = 0;
+		let soft = 0;
+		let count = 0;
+		const seen = [];
+		(items || []).forEach((item) => {
+			if (!item) return;
+			const hours = Math.max(0, Number(item.hours) || 0);
+			if (item.tentative) soft += hours;
+			else firm += hours;
+			const kind = item.kind in MP.booking_kinds ? item.kind : "task";
+			if (!seen.includes(kind)) seen.push(kind);
+			count += 1;
+		});
+		const kinds = Object.keys(MP.booking_kinds).filter((kind) => seen.includes(kind));
+		const round = (value) => Math.round(value * 100) / 100;
+		return { firm: round(firm), soft: round(soft), count, kinds, kind: kinds.length === 1 ? kinds[0] : "task" };
+	},
+
+	// Indexes as runs of consecutive ones: [0, 1, 3] -> [[0, 1], [3]].
+	runs(indexes) {
+		const out = [];
+		(indexes || []).forEach((index) => {
+			const last = out[out.length - 1];
+			if (last && index === last[last.length - 1] + 1) last.push(index);
+			else out.push([index]);
+		});
+		return out;
+	},
+
+	// Days of a window as people say them: "Tue", "Thu–Fri", "Mon–Wed", "Sun, Tue".
+	range_text(indexes, names) {
+		return MP10_PURE.runs(indexes)
+			.map((run) => (run.length === 1 ? names[run[0]] : `${names[run[0]]}–${names[run[run.length - 1]]}`))
+			.join(", ");
+	},
+
+	// One technician's days (`{name, weekend, capacity, booked, free}`, or null for a day the engine sent
+	// nothing for) as the summary line says them: the days with hours free, a fully booked week, the days
+	// over, work booked on a day off, then the days off. Weekends are left out of the days off.
+	summary(days) {
+		const free = {};
+		const over = {};
+		const booked_off = [];
+		const off = [];
+		let working = 0;
+		const note = (bucket, hours, index) => {
+			const key = mp_hours(hours);
+			(bucket[key] = bucket[key] || []).push(index);
+		};
+		(days || []).forEach((day, index) => {
+			if (!day) return;
+			const capacity = Number(day.capacity) || 0;
+			const booked = Number(day.booked) || 0;
+			if (capacity <= 0) {
+				if (booked > 0.01) booked_off.push(index);
+				else if (!day.weekend) off.push(index);
+				return;
+			}
+			working += 1;
+			if (booked - capacity > 0.01) {
+				note(over, booked - capacity, index);
+				return;
+			}
+			const spare = Math.max(0, Number(day.free != null ? day.free : capacity - booked));
+			if (spare > 0.01) note(free, spare, index);
+		});
+		const names = (days || []).map((day) => (day ? day.name : ""));
+		const stretches = (bucket, label) =>
+			Object.keys(bucket)
+				.map((hours) => ({ first: bucket[hours][0], text: label(hours, MP10_PURE.range_text(bucket[hours], names)) }))
+				.sort((a, b) => a.first - b.first)
+				.map((entry) => entry.text);
+		let parts = stretches(free, (hours, when) => __("{0}h free {1}", [hours, when]));
+		if (parts.length > MP10.summary_runs) {
+			const hidden = parts.length - MP10.summary_runs;
+			parts = parts.slice(0, MP10.summary_runs).concat([__("+{0} more", [hidden])]);
+		}
+		const over_parts = stretches(over, (hours, when) => __("Over {0}h {1}", [hours, when]));
+		if (!parts.length && !over_parts.length && working) parts.push(__("Fully booked"));
+		parts = parts.concat(over_parts);
+		if (booked_off.length) parts.push(__("Booked on a day off {0}", [MP10_PURE.range_text(booked_off, names)]));
+		if (off.length) parts.push(__("Off {0}", [MP10_PURE.range_text(off, names)]));
+		return { text: parts.join(" · "), danger: over_parts.length > 0 || booked_off.length > 0 };
+	},
+};
+
+const MP10_METHODS = {
+	// Listens for a click on a busy strip (and Enter or Space on one with the keyboard). A strip is a
+	// div, not a button, so Tap to move can still drop a visit on the day when a finger lands on it.
+	init_p10() {
+		const root = this.$body && this.$body[0];
+		if (!root) return;
+		root.addEventListener("click", (e) => {
+			if (Date.now() < this.click_blocked_until) return;
+			const el = e.target && e.target.closest ? e.target.closest(".mp-busy") : null;
+			if (el) this.p10_open_busy(el);
+		});
+		root.addEventListener("keydown", (e) => {
+			if (e.key !== "Enter" && e.key !== " ") return;
+			const el = e.target && e.target.closest ? e.target.closest(".mp-busy") : null;
+			if (!el) return;
+			e.preventDefault();
+			this.p10_open_busy(el);
+		});
+	},
+
+	// ------------------------------------------------------------------ the busy strip
+
+	// The people with project work on `ymd` that the technician filter lets through, in the technician
+	// list's order. Unassigned shows none: project work belongs to a person.
+	p10_busy_users(ymd) {
+		if (this.technician === "__none__") return [];
+		const bookings = (this.data && this.data.bookings) || {};
+		let users = Object.keys(bookings).filter((user) => {
+			const cell = (bookings[user] || {})[ymd];
+			return !!(cell && (cell.items || []).length);
+		});
+		if (this.technician) users = users.filter((user) => user === this.technician);
+		const order = ((this.data && this.data.technicians) || []).map((person) => person.user);
+		const rank = (user) => (order.includes(user) ? order.indexOf(user) : order.length);
+		return users.sort((a, b) => rank(a) - rank(b) || String(this.tech_name(a)).localeCompare(String(this.tech_name(b))));
+	},
+
+	// One technician-day's strip: its figure, its words, and the tooltip that lists the tasks. null when
+	// the engine sent no bookings for it.
+	p10_busy(user, ymd) {
+		const cell = this.cell_of(user, ymd);
+		const items = (cell && cell.items) || [];
+		if (!items.length) return null;
+		const busy = MP10_PURE.busy(items);
+		const text = this.p10_busy_text(busy);
+		return {
+			user,
+			ymd,
+			items,
+			busy,
+			text,
+			tip: this.p10_busy_tip(user, ymd, items, text),
+			aria: __("{0}: {1}. Open their week.", [this.tech_name(user), text]),
+		};
+	},
+
+	// "Project: 8h", "Rental: 8h", "Travel: 3h"; pencilled hours after the firm ones.
+	// What the strip calls the work: Project, Rental or Travel when that is all there is; Project when a project
+	// task is among it (rental crew tasks and travel are part of that job's work); else the kinds that are
+	// there, "Rental + Travel". Never "Project" for a day that holds no project task.
+	p10_busy_label(busy) {
+		const names = busy.kinds.map((kind) => __(MP.booking_kinds[kind]));
+		if (busy.kinds.length === 1) return names[0];
+		return busy.kinds.includes("task") ? __(MP.booking_kinds.task) : names.join(" + ");
+	},
+
+	// "Project: 8h", "Rental: 8h", "Rental + Travel: 8h"; pencilled hours after the firm ones. A day the engine
+	// books no hours for (the weekend of a trip) is just what it is: "Travel", or "Travel: 2 items".
+	p10_busy_text(busy) {
+		const label = this.p10_busy_label(busy);
+		const hours = (value) => `${mp_hours(value)}h`;
+		if (busy.firm > 0 && busy.soft > 0) return __("{0}: {1} + {2} pencil", [label, hours(busy.firm), hours(busy.soft)]);
+		if (busy.firm > 0) return __("{0}: {1}", [label, hours(busy.firm)]);
+		if (busy.soft > 0) return __("{0}: {1} pencil", [label, hours(busy.soft)]);
+		const named = busy.kinds.map((kind) => __(MP.booking_kinds[kind])).join(" + ");
+		return busy.count > 1 ? __("{0}: {1} items", [named, busy.count]) : named;
+	},
+
+	p10_busy_tip(user, ymd, items, text) {
+		const lines = [`${this.tech_name(user)} · ${mp_when(ymd)}`, text];
+		items.forEach((item) => {
+			const kind = item.kind in MP.booking_kinds ? item.kind : "task";
+			const length = item.slot ? item.slot.join("–") : `${this.fmt_hours(item.hours)}h`;
+			const bits = [__(MP.booking_kinds[kind]), length];
+			if (item.project) bits.push(item.project);
+			if (item.tentative) bits.push(__("pencil"));
+			lines.push(`• ${item.label || item.ref} (${bits.join(", ")})`);
+		});
+		lines.push(__("Read-only here. Click for their week; move the work on the Project Planner."));
+		return lines.join("\n");
+	},
+
+	p10_first_name(user) {
+		return String(this.tech_name(user) || "").split(/\s+/)[0];
+	},
+
+	// The strip as markup. `data-pk-persons` lets the kit's hover glow light it with the person's name.
+	// With All technicians it names the person (a picked technician's column already says who).
+	p10_busy_html(entry, with_name) {
+		const pencil = entry.busy.firm <= 0 && entry.busy.soft > 0 ? " mp-busy-pencil" : "";
+		const name = with_name ? `<span class="mp-busy-name">${mp_esc(this.p10_first_name(entry.user))}</span>` : "";
+		return (
+			`<div class="mp-busy${pencil}" role="button" tabindex="0" data-busy-user="${mp_esc(entry.user)}" ` +
+			`data-busy-date="${mp_esc(entry.ymd)}" data-pk-persons="${mp_esc(encodeURIComponent(String(entry.user)))}" ` +
+			`title="${mp_esc(entry.tip)}" aria-label="${mp_esc(entry.aria)}">${name}` +
+			`<span class="mp-busy-text">${mp_esc(entry.text)}</span></div>`
+		);
+	},
+
+	// The strips of one day in the month and the week: one a technician with project work. Nothing unless
+	// the strip is how project work is drawn.
+	p10_day_strips_html(ymd) {
+		if (this.project_work_mode() !== "strip") return "";
+		const with_name = !this.technician;
+		return this.p10_busy_users(ymd)
+			.map((user) => this.p10_busy(user, ymd))
+			.filter(Boolean)
+			.map((entry) => this.p10_busy_html(entry, with_name))
+			.join("");
+	},
+
+	// Whether this person's day has a strip. A disabled technician's crew row is there only while they have
+	// something on the week, and in strip mode their project work is no card in the cell, so the row asks.
+	p10_has_strip(user, ymd) {
+		if (this.project_work_mode() !== "strip" || !user) return false;
+		const cell = this.cell_of(user, ymd);
+		return !!(cell && (cell.items || []).length);
+	},
+
+	// A crew-view cell is one person's day: the strip needs no name there.
+	p10_cell_strip_html(user, ymd) {
+		if (this.project_work_mode() !== "strip" || !user) return "";
+		const entry = this.p10_busy(user, ymd);
+		return entry ? this.p10_busy_html(entry, false) : "";
+	},
+
+	// What the printed page draws for the strips: the calendar's day (`row_user` null: everyone the filter
+	// lets through) or the crew sheet's cell (that person).
+	p10_print_items(ymd, row_user) {
+		if (this.project_work_mode() !== "strip") return [];
+		const users = row_user === null || row_user === undefined ? this.p10_busy_users(ymd) : [row_user];
+		return users
+			.map((user) => this.p10_busy(user, ymd))
+			.filter(Boolean)
+			.map((entry) => ({
+				title: entry.text,
+				sub: row_user === null || row_user === undefined ? (this.technician ? "" : this.tech_name(entry.user)) : "",
+				color: mp_token_color("--sf-ink-500", "#5c6066"),
+				dashed: false,
+				marks: [],
+				// A site's highlight fades the cards on screen and not the strip (it is no card of that site), so
+				// the printed page does the same.
+				faded: false,
+				highlight: false,
+			}));
+	},
+
+	// A click on a strip: that person's week with the day selected (6A's quick look). Before the kit has
+	// loaded, a day with a single task opens the task itself; a longer list waits for the kit.
+	p10_open_busy(el) {
+		const user = el && el.getAttribute ? el.getAttribute("data-busy-user") : "";
+		const ymd = el && el.getAttribute ? el.getAttribute("data-busy-date") : "";
+		if (!user) return;
+		if (this.p6a && this.p6a.kit) {
+			this.p6a_open_person(user, ymd || null);
+			return;
+		}
+		const cell = this.cell_of(user, ymd);
+		const items = (cell && cell.items) || [];
+		if (items.length === 1) this.open_card({ kind: "booking", booking_kind: items[0].kind, ref: items[0].ref });
+	},
+
+	// One sentence under the grid about how project work is drawn now.
+	p10_hint_note() {
+		const mode = this.project_work_mode();
+		if (mode === "strip") {
+			return ` ${__(
+				"A thin grey strip is the same people's project work that day: hover for the tasks, click for their week. It is moved on the Project Planner."
+			)}`;
+		}
+		if (mode === "cards") {
+			return ` ${__(
+				"Cards marked Project, Rental and Travel are bookings of the same people: they open the task but are moved on the Project Planner."
+			)}`;
+		}
+		return "";
+	},
+
+	// ------------------------------------------------------------------ Resources available, collapsed
+
+	// The week the summary speaks of: the week on screen, or in the month view the week holding today.
+	// Days already gone are left out of a week that is still going; a past week is shown whole.
+	p10_summary_window() {
+		const start = moment(this.p6a_week_start(), "YYYY-MM-DD");
+		const days = [];
+		for (let i = 0; i < 7; i++) days.push(mp_ymd(start.clone().add(i, "days")));
+		const today = this.today();
+		const upcoming = days.filter((ymd) => ymd >= today);
+		const label = days[0] <= today && today <= days[6] ? __("This week") : __("Week of {0}", [start.format("MMM D")]);
+		return { days: upcoming.length ? upcoming : days, label };
+	},
+
+	// Who the line speaks of: everyone on the list, or the one technician the filter picks. A person the
+	// engine sent no days for has no hours on the planner and nothing honest to say.
+	p10_summary_items(people) {
+		const win = this.p10_summary_window();
+		const only = this.technician && this.technician !== "__none__" ? this.technician : "";
+		const names = win.days.map((ymd) => moment(ymd, "YYYY-MM-DD").format("ddd"));
+		const items = [];
+		people.forEach((person) => {
+			if (only && person.user !== only) return;
+			const days = win.days.map((ymd, index) => {
+				const cell = this.cell_of(person.user, ymd);
+				if (!cell) return null;
+				const weekday = moment(ymd, "YYYY-MM-DD").day();
+				return {
+					name: names[index],
+					weekend: MP10.weekend_days.includes(weekday),
+					capacity: cell.capacity,
+					booked: cell.booked,
+					free: cell.free,
+				};
+			});
+			if (!days.some(Boolean)) return;
+			const said = MP10_PURE.summary(days);
+			if (said.text) items.push({ person, text: said.text, danger: said.danger });
+		});
+		return { label: win.label, items };
+	},
+
+	// The closed panel's one line, inside the heading. Returns whether there was anything to say.
+	p10_summary_line($head, people) {
+		const { label, items } = this.p10_summary_items(people);
+		if (!items.length) return false;
+		const html = items
+			.map(
+				(item) =>
+					`<span class="mp-res-sum-item${item.danger ? " mp-res-sum-danger" : ""}">${this.person_html(item.person, false)}` +
+					`<span class="mp-res-sum-text">${mp_esc(item.text)}</span></span>`
+			)
+			.join("");
+		const full = items.map((item) => `${item.person.name}: ${item.text}`).join("\n");
+		$('<span class="mp-res-sum"></span>')
+			.attr("title", `${label}\n${full}`)
+			.html(`<span class="mp-res-sum-lead">${mp_esc(label)}</span>${html}`)
+			.appendTo($head);
+		return true;
+	},
+
+	// ------------------------------------------------------------------ My day
+
+	// Whether the signed-in person has a day of their own on the Project Planner's Today screen: they are
+	// a technician on this planner's list with a Planner Resource. Anyone else would only get its note.
+	p10_has_day() {
+		const me = (this.tech_by_user || {})[(frappe.session && frappe.session.user) || ""];
+		return !!(me && me.resource && me.enabled !== false);
+	},
+
+	// One entry in the history; Back returns to the planner.
+	p10_open_today() {
+		if (!this.p10_has_day()) return;
+		const day = this.today();
+		this.p6a_route(() => frappe.set_route(MP.project_route, MP10.today_view, day), false);
+	},
+
+	p10_tools_items() {
+		if (!this.p10_has_day()) return [];
+		return [
 			{
-				title: __("This page"),
+				label: __("My day"),
+				title: __("Your stops and route for today and tomorrow (the Today screen on the Project Planner)"),
+				on_click: () => this.p10_open_today(),
+			},
+		];
+	},
+
+	// The bar's own link is for a technician, who cannot schedule and has little else to do here.
+	p10_sync_myday() {
+		if (!this.$myday) return;
+		this.$myday.toggle(!!(this.data && !this.data.can_schedule && this.p10_has_day()));
+	},
+
+	// ------------------------------------------------------------------ the "?" help
+
+	// Sections for "?" (legend_sections calls this one): the project-work strip, Resources available and,
+	// for someone who has one, My day. Providers other phases register (p6_legend_providers) come after.
+	p10_legend_sections() {
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		const card = (cls, label, text) =>
+			item(`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">${mp_esc(__(label))}</span>`, text);
+		const sections = [
+			{
+				title: __("Project work"),
 				items: [
-					{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
-					{ label: __("Day Board"), on_click: () => frappe.set_route("maintenance-day-board") },
-					{ label: __("Refresh"), on_click: () => this.load() },
+					item(
+						`<span class="mp-busy mp-p10-sample">${mp_esc(__("Project: 8h"))}</span>`,
+						"The project, rental and travel work of the same people is one thin grey strip on their day: the hours it books, the tasks when you hover. Click it for their week. It is read-only here; move it on the Project Planner. Free hours count it however it is drawn."
+					),
+					item(
+						"",
+						"More ▸ Display ▸ Project work turns the strips off. Project work as cards draws each task as a card instead:"
+					),
+					card("mp-booking mp-bk-task", "Project", "A project task of the same person (read-only here; moved on the Project Planner)."),
+					card("mp-booking mp-bk-rental", "Rental", "A rental crew task (read-only here)."),
+					card("mp-booking mp-bk-travel", "Travel", "A travel day (read-only here)."),
+				],
+			},
+			{
+				title: __("Resources available"),
+				items: [
+					item(
+						"",
+						"Closed, it is one line for the week: who has hours free which days, and who is off (Austin: 3h free Tue · Off Thu–Fri). Show opens each technician's free hours day by day."
+					),
+					item("", "Drag a name from the line or the table onto a visit to add them to its crew. Click a name to see their week."),
+				],
+			},
+		];
+		if (this.p10_has_day()) {
+			sections.push({
+				title: __("Your day"),
+				items: [
+					item(
+						"",
+						"My day (in the bar, and in More ▸ Tools) opens Today on the Project Planner: your stops and route for today and tomorrow."
+					),
+				],
+			});
+		}
+		return sections;
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP10_METHODS);
+
+// ====================================================================== P12: the first-visit tour, and "?" for the views
+//
+// P12 of the planner UX redesign (docs/planner-ux-redesign.md section 7; Nik, 2026-10-21: "a brief and
+// simple tutorial on the planner for every first time visitor"). This planner's half of what the Project
+// Planner's PPTOUR block does (its comment says how it works, and why each rule is so); the differences:
+//
+//   - **The steps.** A desktop's: Month, Week and Crew; dragging a visit (schedulers); the project-work
+//     strip; Resources available; who hears about a change, Notify crew? and Draft mode (schedulers);
+//     My day (a technician who has a day of their own); and "?". A phone's: your visits, the strip, My
+//     day, Filters and tools, and "?". Four to six steps either way.
+//   - **When.** On any of the three views, once the planner's data is drawn, the kit and the toolbar are
+//     built and the saved views (which carry the flags: planner_views_prefs.get_views) have answered; a
+//     phone's too, since this planner has no screen of its own for a phone.
+//   - **"?"** gets the views, moving a visit, and Draft mode with Notify crew? (p12_legend_sections),
+//     right after the tips; P10's legend_sections() calls it. The help drawer's footer has Take the tour.
+//
+// Hooks into the class above, one line each: init_tour (constructor), tour_route (handle_route), tour_take
+// (p6c_fetch_views), tour_open (p6b_key's dialog test), p12_legend_sections and tour_legend_actions
+// (legend_sections, p6a_legend).
+
+const MPTOUR = {
+	prefs: "erpnext_enhancements.api.planner_views_prefs",
+	planner: "maintenance",
+	kinds: ["desktop", "phone"],
+	local_pref: "ee_maintenance_planner_tour",
+	// The three views; every one is a screen the tour may open on.
+	screens: ["month", "week", "crew"],
+	settle_ms: 700,
+	retry_ms: 1000,
+	retries: 60,
+};
+
+// Pure: no frappe, no page. scripts/test_planner_tour.js runs it under node.
+const MPTOUR_PURE = {
+	kind(is_phone) {
+		return is_phone ? "phone" : "desktop";
+	},
+	auto_screen(view) {
+		return MPTOUR.screens.includes(view);
+	},
+	// The steps for `kind`, written out as __() calls so they are translated. `who`: {can_schedule, has_day}.
+	steps(kind, who) {
+		const w = who || {};
+		const steps = [];
+		if (kind === "phone") {
+			steps.push(
+				{
+					title: __("Your visits"),
+					text: __("The calendar shows visits by day. Tap one to open it. Month, Week and Crew along the top change the view."),
+				},
+				{
+					title: __("Project work is a strip"),
+					text: __("A thin grey strip on a day is project work for the same people. Tap it for their week. It is moved on the Project Planner."),
+				}
+			);
+			if (w.has_day) {
+				steps.push({
+					title: __("My day"),
+					text: __("My day opens Today: your stops and the route for today and tomorrow."),
+				});
+			}
+			steps.push(
+				{
+					title: __("Filters and tools"),
+					text: __("Filters and tools opens a sheet from the bottom: the technician filter, alerts, + Add and More."),
+				},
+				{
+					title: __("Help is one tap away"),
+					text: __("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again. Simple, at the start of the bar, shows every site on one page."),
+				}
+			);
+			return steps;
+		}
+		steps.push({
+			title: __("Month, Week and Crew"),
+			text: __("The tabs along the top show the same visits three ways. Month is the big picture, Week is for planning, and Crew gives each technician a row."),
+		});
+		if (w.can_schedule) {
+			steps.push({
+				title: __("Drag to reschedule"),
+				text: __("Drag a visit to another day, or onto another technician's row to hand it over. Double-click an empty spot, or use + Add, to draft a new visit."),
+				keys: __("Ctrl+Z (⌘Z on a Mac) undoes the last change."),
+			});
+		}
+		steps.push(
+			{
+				title: __("Project work is a thin strip"),
+				text: __("A grey strip on a day is that technician's project work. Hover for the tasks, click for their week. It is read-only here: move it on the Project Planner."),
+			},
+			{
+				title: __("Resources available"),
+				text: w.can_schedule
+					? __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name for their week, or drag it onto a visit to add them to its crew.")
+					: __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to see their week."),
+			}
+		);
+		if (w.can_schedule) {
+			steps.push({
+				title: __("Who hears about a change"),
+				text: __("A change to a visit asks Notify crew?, which starts on Notify for the next two weeks. To rehearse a reshuffle, turn on Draft mode in More, then Publish when it looks right."),
+				keys: __("Esc puts a change back."),
+			});
+		} else if (w.has_day) {
+			steps.push({
+				title: __("My day"),
+				text: __("My day, in the bar, opens Today: your stops and the route for today and tomorrow."),
+			});
+		}
+		steps.push({
+			title: __("Help is one click away"),
+			text: __("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print. Simple, at the start of the bar, shows every site on one quiet page."),
+		});
+		return steps;
+	},
+};
+
+const MPTOUR_METHODS = {
+	init_tour() {
+		this.tour = { seen: null, timer: null, handle: null };
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			wrapper.on("hide", (e) => {
+				if (e.target === wrapper[0]) this.tour_close("route");
+			});
+		}
+	},
+
+	tour_state() {
+		if (!this.tour) this.tour = { seen: null, timer: null, handle: null };
+		return this.tour;
+	},
+
+	// True while the tour is on screen: the page's shortcut handlers (p6b_key) treat it as a dialog.
+	tour_open() {
+		const kit = this.p6a && this.p6a.kit;
+		return !!(kit && kit.tour && typeof kit.tour.is_open === "function" && kit.tour.is_open());
+	},
+
+	tour_is_phone() {
+		return !!(window.matchMedia && window.matchMedia(`(max-width: ${MPTB.phone_max}px)`).matches);
+	},
+
+	tour_kind() {
+		return MPTOUR_PURE.kind(this.tour_is_phone());
+	},
+
+	tour_close(how) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const state = this.tour_state();
+		if (state.handle) {
+			try {
+				state.handle.close(how || "api");
+			} catch (e) {
+				state.handle = null;
+			}
+		}
+	},
+
+	tour_take(answer) {
+		try {
+			if (answer && typeof answer === "object") {
+				this.tour_state().seen = { desktop: answer.desktop === true, phone: answer.phone === true };
+			}
+			this.tour_nudge();
+		} catch (e) {
+			// A tour is never a reason for the planner to fail.
+		}
+	},
+
+	tour_route() {
+		try {
+			this.tour_close("route");
+			this.tour_nudge();
+		} catch (e) {
+			// As above.
+		}
+	},
+
+	tour_nudge(wait, tries) {
+		try {
+			const state = this.tour_state();
+			if (state.timer) clearTimeout(state.timer);
+			state.timer = setTimeout(() => this.tour_check(tries || 0), wait == null ? MPTOUR.settle_ms : wait);
+		} catch (e) {
+			// No timer, no tour.
+		}
+	},
+
+	tour_check(tries) {
+		const state = this.tour_state();
+		state.timer = null;
+		let verdict = "";
+		try {
+			verdict = this.tour_verdict();
+		} catch (e) {
+			return;
+		}
+		if (verdict === "ok") {
+			try {
+				this.tour_start(false);
+			} catch (e) {
+				// Not shown, not marked: the next visit tries again.
+			}
+		} else if (verdict === "wait" && (tries || 0) < MPTOUR.retries) this.tour_nudge(MPTOUR.retry_ms, (tries || 0) + 1);
+	},
+
+	// "ok": open it now. "wait": not yet. "": not on this screen, already seen, or no way to show it.
+	tour_verdict() {
+		if (!this.p6b_page_live()) return "";
+		const state = this.tour_state();
+		if (state.handle || this.tour_open()) return "";
+		const kit = this.p6a && this.p6a.kit;
+		if (!state.seen || !kit) return "wait";
+		if (!kit.tour) return "";
+		const kind = this.tour_kind();
+		if (state.seen[kind] || this.tour_local_seen(kind)) return "";
+		if (!MPTOUR_PURE.auto_screen(this.view)) return "";
+		if (!this.tb || !this.tb.kit) return "wait";
+		if (!this.data || this.tour_loading()) return "wait";
+		if (this.tour_busy(kit)) return "wait";
+		return "ok";
+	},
+
+	tour_loading() {
+		const $body = this.$body;
+		return !!($body && typeof $body.hasClass === "function" && $body.hasClass("mp-loading"));
+	},
+
+	// Anything on screen that is waiting for a decision, or in the way (see the Project Planner's twin).
+	tour_busy(kit) {
+		if (this.drag) return true;
+		if (kit.drawer && typeof kit.drawer.current === "function" && kit.drawer.current()) return true;
+		if (kit.guard && typeof kit.guard.top === "function" && kit.guard.top()) return true;
+		if (window.cur_dialog && window.cur_dialog.display) return true;
+		try {
+			if (document.querySelector && document.querySelector(".modal.show")) return true;
+		} catch (e) {
+			return false;
+		}
+		return false;
+	},
+
+	tour_local_key(kind) {
+		const user = (frappe.session && frappe.session.user) || "";
+		return `${MPTOUR.local_pref}:${user}:${kind}`;
+	},
+
+	tour_local_seen(kind) {
+		return this.load_pref(this.tour_local_key(kind), "") === "1";
+	},
+
+	tour_who() {
+		return { can_schedule: this.data ? !!this.data.can_schedule : false, has_day: this.p10_has_day() };
+	},
+
+	tour_start(replay) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return false;
+		const kind = this.tour_kind();
+		const state = this.tour_state();
+		const steps = MPTOUR_PURE.steps(kind, this.tour_who());
+		if (!steps.length) return false;
+		const handle = kit.tour.open({
+			title: __("Maintenance Planner tour"),
+			steps,
+			owner: MP6A.owner,
+			return_focus: replay && this.$p6a_help ? this.$p6a_help[0] : null,
+			on_close: () => {
+				if (state.handle === handle) state.handle = null;
+			},
+		});
+		state.handle = handle || null;
+		if (handle && !replay) this.tour_mark(kind);
+		return !!handle;
+	},
+
+	tour_mark(kind) {
+		const state = this.tour_state();
+		state.seen = Object.assign({ desktop: false, phone: false }, state.seen, { [kind]: true });
+		const args = { planner: MPTOUR.planner, kind };
+		const method = `${MPTOUR.prefs}.mark_tour_seen`;
+		const kit = this.p6a && this.p6a.kit;
+		const failed = () => this.save_pref(this.tour_local_key(kind), "1");
+		try {
+			const call =
+				kit && typeof kit.quiet_call === "function"
+					? kit.quiet_call(method, args)
+					: frappe.call({ method, args, silent: true });
+			Promise.resolve(call).then(null, failed);
+		} catch (e) {
+			failed();
+		}
+	},
+
+	tour_replay() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const open = () => {
+			try {
+				this.tour_start(true);
+			} catch (e) {
+				// Nothing to show.
+			}
+		};
+		if (kit.drawer && typeof kit.drawer.navigate === "function") kit.drawer.navigate(open);
+		else open();
+	},
+
+	tour_legend_actions() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return [];
+		return [
+			{
+				label: __("Take the tour"),
+				title: __("A few short steps through the planner"),
+				on_click: () => this.tour_replay(),
+			},
+		];
+	},
+
+	// ------------------------------------------------------------------ "?" for the views
+
+	p12_legend_sections() {
+		const item = (text) => ({ sample_html: "", text });
+		const chip = (label, text, tone) => ({ chip: { text: label, tone: tone || "plain" }, text });
+		return [
+			{
+				title: __("The views"),
+				note: __("Three tabs over the same visits. The planner opens on the view you used last, on any device."),
+				items: [
+					chip(__("Month"), __("The whole month, a card for each visit.")),
+					chip(__("Week"), __("One week, day by day: the view for planning visits.")),
+					chip(__("Crew"), __("A row for each technician. Drag a visit to another day on the same row, or onto another technician's row to hand it over.")),
+					chip(__("Simple"), __("The switch at the start of the bar. Every site, one card each: the visits done and the visits coming up, with one search box. Turn it off for the calendar.")),
+				],
+			},
+			{
+				title: __("Moving a visit"),
+				items: [
+					item(__("Drag a visit to another day. Only a draft nobody has started moves.")),
+					item(__("Double-click an empty spot, or use + Add ▸ Add visit…, to draft a new visit there.")),
+					item(__("Undo (Ctrl+Z, or the button in the notice) puts the last change back.")),
+				],
+			},
+			{
+				title: __("Draft mode and Notify crew?"),
+				items: [
+					chip(__("Draft mode"), __("More ▸ Tools ▸ Draft mode keeps your changes to yourself until you Publish them. Nobody is told before then, and nothing asks Notify crew?."), "amber"),
+					chip(__("Notify crew?"), __("In live mode, a change to a visit's day, technician or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back.")),
 				],
 			},
 		];
 	},
 };
 
-Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);
+Object.assign(MaintenancePlanner.prototype, MPTOUR_METHODS);

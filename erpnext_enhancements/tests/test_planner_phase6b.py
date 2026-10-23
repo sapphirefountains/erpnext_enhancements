@@ -1433,7 +1433,12 @@ class TestPages(unittest.TestCase):
 			self.assertIn("\tdrop(source, target) {\n\t\tif (this.p6b_drop(source, target)) return;", code)
 			self.assertIn("if (this.p6b_undo(snap)) return;", _method(code, "undo"))
 			self.assertIn("this.p6b_lift(drag);", _method(code, "lift"))
-			self.assertIn("].concat(this.p6b_legend_sections()),", code)
+			# P10: the Maintenance Planner returns its sections from legend_sections() instead of passing them to
+			# kit.legend, so its list ends in a semicolon, not an argument comma.
+			self.assertIn(
+				"].concat(this.p6b_legend_sections());" if code is self.mp else "].concat(this.p6b_legend_sections()),",
+				code,
+			)
 		# The Project Planner's send() routes the planner_actions writes; nothing else in it changed.
 		send = _method(self.pp, "send")
 		self.assertIn("${(this.p6_send_modules || {})[method] || PP.api}.${method}", send)
@@ -1463,9 +1468,11 @@ class TestPages(unittest.TestCase):
 		# Resize is the dialog's save (both dates through commit, so send, the reason prompt, Undo).
 		resize = _method(block, "p6b_resize_end")
 		self.assertIn(
-			'this.commit(card, "save_task", { task: card.name, start: resize.new_start, end: resize.new_end }, message)',
+			'this.commit(card, "save_task", { task: card.name, start: resize.new_start, end: resize.new_end }, message, {',
 			resize,
 		)
+		# P4: Ctrl/Cmd held as the edge is let go moves just this task (no tasks that follow).
+		self.assertIn("solo: !!resize.solo", resize)
 		# Quick add, duplicate and split create through p6b_create, which pushes an Undo that deletes.
 		self.assertIn('this.p6b_create("quick_add_task", args', block)
 		create = _method(block, "p6b_create")
@@ -1477,10 +1484,11 @@ class TestPages(unittest.TestCase):
 		self.assertIn("auto_reason: __(PP.undo_reason)", undo)
 		# Multi-select: one move_many with the snapshot, so send pushes ONE Undo entry for all of them.
 		many = _method(block, "p6b_commit_many")
-		self.assertIn(
-			'this.p6b_send("move_many", { moves: JSON.stringify(moves), draft: this.draft_on ? 1 : 0 }, { snapshot, message })',
-			many,
-		)
+		self.assertIn('const args = Object.assign({ moves: JSON.stringify(moves) }, extra);', many)
+		self.assertIn('return this.p6b_send("move_many", args, {', many)
+		self.assertIn("snapshot,", many)
+		# P4: one "Notify crew?" and the tasks that follow, for the lot (as4_prepare); send() adds draft.
+		self.assertIn("this.as4_prepare(changes, opts, go)", many)
 		# The Maintenance Planner moves visits only with its own move_visit/add_crew, through send.
 		self.assertEqual(set(re.findall(r'this\.send\(\s*"(\w+)"', self.mp_block)), {"move_visit"})
 		self.assertIn("this.add_to_crew(fresh, user)", self.mp_block)
@@ -1576,7 +1584,8 @@ class TestPages(unittest.TestCase):
 		for name in ("p6b_duplicate", "p6b_duplicate_to", "p6b_quick_add", "p6b_quick_add_save"):
 			self.assertNotIn("p6b_refuse_in_draft", _method(self.pp_block, name), name)
 		for name in ("p6b_duplicate", "p6b_quick_add_save"):
-			self.assertIn("this.draft_args()", _method(self.pp_block, name), name)
+			# P4: with the task's project, so a Draft schedule drafts it as the hold does.
+			self.assertIn("this.draft_args(", _method(self.pp_block, name), name)
 		self.assertIn("if (!this.draft_on) return false;", _method(self.pp_block, "p6b_refuse_in_draft"))
 
 	def test_resize_is_pointer_events_and_never_a_move_or_a_rental(self):
@@ -1618,7 +1627,9 @@ class TestPages(unittest.TestCase):
 		self.assertIn("calendar days", self.pp_block)
 		self.assertIn("calendar days", self.mp_block)
 		# The Maintenance Planner: one confirmation, one reason for the lot, a partial failure listed.
-		run = _method(self.mp_block, "p6b_run_moves")
+		# P4: p6b_run_moves asks "Notify crew?" once (mpas_batch), then p6b_send_moves sends them.
+		self.assertIn("this.mpas_batch(plans,", _method(self.mp_block, "p6b_run_moves"))
+		run = _method(self.mp_block, "p6b_send_moves")
 		self.assertIn("this.p6b_one_reason(", run)
 		self.assertIn("missed.push(plan)", run)
 		self.assertIn("frappe.msgprint(", run)
@@ -1745,7 +1756,7 @@ class TestPages(unittest.TestCase):
 		]
 		self.assertEqual(
 			set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods)),
-			{(n, n) for n in ("get_planner", "move_visit", "move_projected", "add_crew")},
+			{(n, n) for n in ("get_planner", "move_visit", "move_projected", "add_crew", "move_fountain_move")},
 		)
 		calls = set(re.findall(r"planner_actions\.(\w+)", _strip(self.pp_block) + _strip(self.mp_block)))
 		self.assertTrue(calls <= set(ACTIONS_CONTRACT), calls)
@@ -2005,7 +2016,7 @@ const ctx = {
 ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
 // Phase 6E's methods are mixed in too: 6B's drop, panel and bar call p6e_* for the calendar/working switch.
-vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS);", ctx);
+vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS, PPAS_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS, MPAS_METHODS);", ctx);
 const out = {};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -2148,6 +2159,8 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 		add_to_crew: (c, user) => { applied.push(["add_crew", c.name, user]); return Promise.resolve(); },
 		send: (method, args, opts) => { msent.push([method, args, Object.keys(opts || {}).sort()]); return Promise.resolve(args.record === "SMR-BAD" ? null : { name: args.record, modified: "x" }); },
 		push_undo: (snap, message) => { pushed.push([snap, message]); return true; },
+		// P4: "Notify crew?" answers Notify at once (scripts/test_planner_autoshift.js tests the question).
+		mpas_ask: (notify) => Promise.resolve(notify ? "1" : "0"),
 		today: () => "2026-10-09",
 		load_pref: (key, fallback) => fallback,
 		save_pref: () => null,
@@ -2209,13 +2222,17 @@ class TestMethodsUnderNode(unittest.TestCase):
 			_phase_source(
 				pp_code, "const PP6B = {", "Object.assign(ProjectPlanner.prototype, PP6B_METHODS);"
 			)
-			+ _phase_source(pp_code, "const PP6E = {", "Object.assign(ProjectPlanner.prototype, PP6E_METHODS);"),
+			+ _phase_source(pp_code, "const PP6E = {", "Object.assign(ProjectPlanner.prototype, PP6E_METHODS);")
+			# P4: a move goes through as4_prepare (the tasks that follow, "Notify crew?").
+			+ _phase_source(pp_code, "const PPAS = {", "Object.assign(ProjectPlanner.prototype, PPAS_METHODS);"),
 			_phase_source(
 				mp_code, "const MP6B = {", "Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);"
 			)
 			+ _phase_source(
 				mp_code, "const MP6E = {", "Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);"
-			),
+			)
+			# P4: a multi-select move asks "Notify crew?" once (mpas_batch).
+			+ _phase_source(mp_code, "const MPAS = {", "Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);"),
 		]
 		result = subprocess.run(
 			[node, "-e", METHODS_HARNESS],
@@ -2306,14 +2323,18 @@ class TestMethodsUnderNode(unittest.TestCase):
 				{"task": "TASK-2", "modified": "m2", "start": "2026-10-22", "end": "2026-10-22"},
 			],
 		)
-		self.assertEqual((moved[1]["draft"], moved[2]), (0, ["message", "snapshot"]))
+		# P4: send() adds the draft argument now (the hold's 1, or "auto"), and a move of days takes
+		# the tasks that follow along; the answer is decorated (Undo entries for those) before its toast.
+		self.assertNotIn("draft", moved[1])
+		self.assertEqual((moved[1]["dependents"], moved[2]), (1, ["decorate", "message", "snapshot"]))
 		self.assertEqual(
 			json.loads(pencilled[1]["moves"]), [{"task": "TASK-1", "modified": "m-fresh", "tentative": 1}]
 		)
 		self.assertEqual(
 			json.loads(firmed[1]["moves"]), [{"task": "TASK-2", "modified": "m2", "tentative": 0}]
 		)
-		self.assertEqual(firmed[1]["draft"], 1)
+		self.assertNotIn("dependents", firmed[1])  # a pencil moves no days
+		self.assertNotIn("draft", firmed[1])
 
 	def test_undo_of_each_kind(self):
 		sent = self.out["sent"]
@@ -2442,6 +2463,8 @@ class TestMethodsUnderNode(unittest.TestCase):
 				"p6b": "many",
 				"site": "1 visits",
 				"items": [{"record": "SMR-1", "site": "Hotel", "date": "2026-10-14"}],
+				# P4: the one "Notify crew?" answer for the move, which its Undo sends again.
+				"notify": "1",
 			},
 		)
 		self.assertEqual(message, "1 visits moved")

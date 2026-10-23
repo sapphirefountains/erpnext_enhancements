@@ -45,13 +45,17 @@ TERM_WORDS = {
 }
 
 
-def summary_html(doc):
-	"""The summary box for ``doc``, or "" for a contract type with no entry in ``BUILDERS``."""
+def summary_html(doc, period_fee=None):
+	"""The summary box for ``doc``, or "" for a contract type with no entry in ``BUILDERS``.
+
+	``period_fee`` is the maintenance agreement's Service Fee as the render context resolved it
+	(``maintenance_fee.period_fee``), passed in so the summary and the Service Plan line state one figure.
+	"""
 	builder = BUILDERS.get(doc.get("template_key"))
 	if not builder:
 		return ""
 	try:
-		rows = [row for row in builder(doc) if row]
+		rows = [row for row in (builder(doc, period_fee) if builder is _maintenance else builder(doc)) if row]
 	except Exception:
 		frappe.log_error(title="Contract summary failed", message=frappe.get_traceback())
 		return ""
@@ -119,7 +123,7 @@ def _join(parts):
 # ---------------------------------------------------------------------------
 
 
-def _maintenance(doc):
+def _maintenance(doc, period_fee=None):
 	options = {row.get("option_key"): row for row in (doc.get("service_options") or [])}
 	chosen = {key: row for key, row in options.items() if cint(row.get("included"))}
 	rows = []
@@ -134,6 +138,11 @@ def _maintenance(doc):
 		plan.append("the custom plan in Exhibit A")
 	if plan:
 		rows.append(("What we do:", _join(plan) + "."))
+
+	# Service Plan Selection, the Service Fee line: only when the agreement prints one.
+	if period_fee:
+		season = f", billed {_text(period_fee.get('season'))}" if period_fee.get("season") else ""
+		rows.append(("Service fee:", f"{_money(period_fee.get('amount'))} a {_text(period_fee.get('per'))}{season}."))
 
 	# §2.1, §5.1
 	rows.append(

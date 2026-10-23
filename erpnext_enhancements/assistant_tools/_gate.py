@@ -124,6 +124,10 @@ EXPLICIT_READONLY = {
     # AI Model Usage row. It never allocates a PDT-/SRV- number (the block list does) and
     # never invents a vendor part number; api.item_suggest holds it to both.
     "item_naming_suggest",
+    # v1.726.0 -- the Supplier Finder: who sells an item, ranked by purchase evidence. Read-only:
+    # SQL reads plus a pure rules module. With `expand` it makes one Gemini call (the AI Model
+    # Usage row is its only write) that sees the search text and the Supplier Group names only.
+    "supplier_search",
     # v1.339.0 -- the party-naming advisor for Project/Opportunity/Address. Read-only by
     # construction: frappe.get_list reads plus a pure rules module, and no validate hook
     # on any of the three for it to trip.

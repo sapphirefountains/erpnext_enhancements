@@ -9,7 +9,10 @@ included — see the sibling ``Enhancement Request Proposed Task`` for the deplo
 that rule was written after.
 
 These rows are advisory. Acting on one is ``api.feedback.review_decision`` with
-``decision="duplicate"``, which is a human closing the request against a named Task.
+``decision="duplicate"``, which is a human closing the request against a named Task — or
+``api.feedback.dismiss_duplicate``, a human ruling it out (v1.729.0). A ruled-out row is kept,
+stamped ``dismissed``/``dismissed_by``/``dismissed_on``, and every later breakdown leaves its
+Task out of the duplicate scan.
 """
 
 from frappe.model.document import Document

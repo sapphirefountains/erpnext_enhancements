@@ -1,11 +1,12 @@
-"""Count Desk (v1.700.0): link the new Desk page from the Operations Hub (a shortcut beside the Bin
+"""Count Desk (v1.736.0): link the new Desk page from the Operations Hub (a shortcut beside the Bin
 Manager, and a link in its Inventory card) and from the Inventory Enhancements workspace (a shortcut
 beside Stock Scan, and the first link of its Counts card).
 
 The Page itself (``inventory_enhancements/page/count_desk``) is new, so model sync imports it. The two
 workspace files are edited, and Workspaces are **timestamp-gated** by ``import_file``: a file is
-imported only when it reads newer than the stored row. Both now carry 2026-10-20 15:00, past the rows
-``bin_manager_hub_links`` wrote, and this patch is the belt to those suspenders, the same shape:
+imported only when it reads newer than the stored row. Both now carry a newer stamp (the Operations Hub
+2026-10-20 15:00, the Inventory workspace 2026-10-23 12:00, past the Reorder Board's), and this patch is
+the belt to those suspenders, the same shape as ``bin_manager_hub_links``:
 ``import_file_by_path(force=True)`` rebuilds each row past the age check. Idempotent; never raises
 (each step logs its own failure).
 """

@@ -17,6 +17,12 @@
  * and bin_assignments.manager_boot, which this page added.
  */
 
+// The unit-cost question (TASK-2026-02914): the same pure pieces /stock-scan asks it with, so the two
+// screens word it, check it and cap it alike. A count up from an empty bin, for an item ERPNext has
+// no cost for, is answered with {needs_valuation_rate: true, ...} instead of a save.
+export { MAX_UNIT_COST, costPromptText, isCostPrompt, unitCostProblem } from "../stock_scan/logic.js";
+import { unitCostProblem } from "../stock_scan/logic.js";
+
 export const PAGE = "bin-manager";
 export const BA = "erpnext_enhancements.inventory_enhancements.bin_assignments.";
 export const SCAN = "erpnext_enhancements.api.stock_scan.";
@@ -132,6 +138,12 @@ export function check_values(kind, row, values, current) {
 		if (row && Math.abs(qty - (Number(row.on_hand) || 0)) <= TOLERANCE) {
 			return "That is what the system already shows.";
 		}
+		// A unit cost, when the server asked for one (the key is there, and Frappe's own Float hands back null
+		// for a blank box, so null is checked too): a positive number, within the caps.
+		if ("rate" in v) {
+			const cost = unitCostProblem(v.rate === null || v.rate === undefined ? "" : v.rate, row && row.stock_uom, qty, v.max_value);
+			if (cost.problem) return cost.problem;
+		}
 		return null;
 	}
 	if (kind === "move" || kind === "boneyard") {
@@ -167,7 +179,12 @@ export function request(kind, warehouse, row, values, ref) {
 	const method = ENDPOINTS[kind];
 	if (!method) throw new Error(`unknown action ${kind}`);
 	if (kind === "undo") return { method, args: { log: v.log } };
-	if (kind === "count") return { method, args: { item_code, warehouse, qty: number(v.qty), client_ref: ref } };
+	if (kind === "count") {
+		const args = { item_code, warehouse, qty: number(v.qty), client_ref: ref };
+		// Sent only with a unit cost the person gave when asked; the server uses it only for an item with none.
+		if ("rate" in v && v.rate !== null && v.rate !== undefined && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
+		return { method, args };
+	}
 	if (kind === "move") {
 		return {
 			method,
@@ -211,9 +228,24 @@ export function permissions(boot) {
 		can_count: !!b.can_count,
 		can_move: !!b.can_move,
 		can_create_items: !!b.can_create_items,
+		// Whether an item's name links to its Item record: Item read. A boot that does not say is "yes".
+		can_open_items: b.can_open_items !== false,
 		boneyard: b.boneyard_warehouse || null,
 		boneyard_name: b.boneyard_name || b.boneyard_warehouse || null,
 	};
+}
+
+// What a save has already done to the row on screen, before the list is read again (the read follows and is
+// the truth): a move or a boneyard trip takes the quantity off, a count sets it. Mutates and returns the row
+// the page holds, so the list's identity (and with it the reorder boxes' read) does not change.
+export function apply_local(kind, row, values) {
+	if (!row) return row;
+	const qty = number((values || {}).qty);
+	if (!Number.isFinite(qty)) return row;
+	const on_hand = Number(row.on_hand) || 0;
+	if (kind === "move" || kind === "boneyard") row.on_hand = Math.max(on_hand - qty, 0);
+	else if (kind === "count") row.on_hand = Math.max(qty, 0);
+	return row;
 }
 
 // The buttons a row shows, in order. `warehouse` is the bin on screen.

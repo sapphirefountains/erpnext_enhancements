@@ -4,8 +4,9 @@ Each form opens the page that works on the same record, in the right state:
 
 * Project — View > Open in Project Planner, on an open customer job (a planner project type):
   the planner with that project as its Project filter (``?project=``, read from
-  ``frappe.route_options`` and consumed by the planner), on the week the project starts when that
-  is still ahead. A one-off: the person's remembered filters and "last used" view are untouched.
+  ``frappe.route_options`` and consumed by the planner), on the Lookahead from the week the project
+  starts when that is still ahead (P5 of the planner UX redesign; the old ``/week`` address would
+  only redirect there). A one-off: the person's remembered filters and "last used" view are untouched.
   Since S5c (v1.676.0) the key stays in the address, as the planner's Project filter: the planner
   keeps all its filters there and rewrites the entry in place when one is picked, so Back onto it
   still shows what was picked (``tests/test_planner_url_filters.py``).
@@ -81,9 +82,10 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn('frappe.ui.form.on("Project"', code)
 		self.assertIn('__("Open in Project Planner")', code)
 		self.assertIn('__("View")', code)
-		self.assertIn("const options = { project: frm.doc.name };", code)
-		self.assertIn('frappe.set_route("project-planner", options);', code)
-		self.assertIn('frappe.set_route("project-planner", "week", starts, options);', code)
+		# P6: the project's Gantt, with the project as the filter too (the Lookahead is a tab away).
+		self.assertIn(
+			'frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name })', code
+		)
 		self.assertIn('pages["project-planner"]', code)
 		self.assertIn("frm.is_new()", code)
 
@@ -182,10 +184,11 @@ class TestTheProjectPlannerRead(unittest.TestCase):
 		self.assertIn("Object.prototype.hasOwnProperty.call(opts, key)", read)
 		self.assertIn("delete opts[key];", read)
 		self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", read)
-		self.assertIn('url_filters: ["project", "pm", "group"],', code)
+		self.assertIn('url_filters: ["project", "pm", "group", "all_tasks"],', code)
 		# The link names only the project, so the PM filter is All and cannot hide its cards.
 		self.assertIn(
-			'next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };', read
+			'next = { project: named.project || "", pm: named.pm || "", group: named.group || "", all_tasks: named.all_tasks || "" };',
+			read,
 		)
 
 	def test_the_link_saves_nothing(self):

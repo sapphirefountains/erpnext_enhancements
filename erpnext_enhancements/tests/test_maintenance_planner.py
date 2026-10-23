@@ -792,7 +792,7 @@ class TestProjectBookings(unittest.TestCase):
 
 	def test_get_planner_survives_an_engine_failure(self):
 		self.result = RuntimeError("project side broke")
-		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians")
+		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians", "_move_cards")
 		saved = {name: getattr(planner, name) for name in names}
 		try:
 			planner._records_between = lambda start, end: []
@@ -800,6 +800,8 @@ class TestProjectBookings(unittest.TestCase):
 			planner._projections = lambda start, end, today: []
 			planner._decorate = lambda cards: None
 			planner._technicians = lambda cards: self.TECHS
+			# Fountain Move cards (v1.703.0) have their own suite, test_fountain_move_jobs.
+			planner._move_cards = lambda start, end, today: ([], [])
 			data = planner.get_planner("2026-10-12", "2026-10-13")
 		finally:
 			for name, value in saved.items():
@@ -858,8 +860,12 @@ class TestProjectBookings(unittest.TestCase):
 
 	def test_the_legend_names_the_new_kinds(self):
 		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
-		for label in ("Project task (read-only)", "Rental crew (read-only)", "Travel (read-only)"):
-			self.assertIn(f'__("{label}")', code)
+		# P10 of the planner UX redesign: the key of the visit kinds is the "?" help's only, and its Project
+		# work section draws a sample card of each booking kind (the cards that More > Display > Project
+		# work as cards brings back).
+		for kind, label in (("mp-bk-task", "Project"), ("mp-bk-rental", "Rental"), ("mp-bk-travel", "Travel")):
+			self.assertIn(f'card("mp-booking {kind}", "{label}"', code)
+		self.assertNotIn("tb_kind_items", code)
 
 
 def _engine_day_conflicts(capacity, off, bookings):
@@ -1329,10 +1335,11 @@ class TestPlannerParity(unittest.TestCase):
 		self.assertIn('this.view !== "crew"', panel)  # the crew view's rows are the panel
 		for text in ("{0}h free", "Full", "Over {0}h", "Holiday", "Time off", "Not a work day"):
 			self.assertIn(f'__("{text}"', code)
-		# Remembered open or closed, behind the same try/catch as every other pref.
-		self.assertIn('panel_key: "ee_maintenance_planner_panel"', code)
-		self.assertIn('this.load_pref(MP.panel_key, "1") !== "0"', code)
-		self.assertIn("this.save_pref(MP.panel_key,", code)
+		# Remembered open or closed, behind the same try/catch as every other pref. Closed to a one-line
+		# summary unless someone opened it (P10; the key is new, so what the old default left is not read).
+		self.assertIn('resources_key: "ee_maintenance_planner_resources"', code)
+		self.assertIn('this.load_pref(MP.resources_key, "0") === "1"', code)
+		self.assertIn("this.save_pref(MP.resources_key,", code)
 		self.assertEqual(code.count("localStorage"), 2)  # load_pref and save_pref, nowhere else
 		# The numbers are the engine's.
 		self.assertIn("this.data.bookings", code)
@@ -1510,14 +1517,19 @@ class TestPlannerParity(unittest.TestCase):
 		# init_phase6e adds to MP.methods so that send() reaches them)
 		self.assertEqual(
 			set(re.findall(r'this\.send\(\s*"(\w+)"', code)),
-			{"move_projected", "move_visit", "add_crew", "create_visit", "remove_created_visit"},
+			# move_fountain_move (v1.703.0): a Fountain Move task's day and crew (MPFM).
+			{"move_projected", "move_visit", "add_crew", "create_visit", "remove_created_visit", "move_fountain_move"},
 		)
 		self.assertIn('visit ? "move_visit" : "move_projected"', code)
 		self.assertIn("frappe.call({ method: MP.methods[method], args })", code)
 		methods = self._body("MP.methods = {", "};")
 		found = set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods))
 		self.assertEqual(
-			found, {(name, name) for name in ("get_planner", "move_visit", "move_projected", "add_crew")}
+			found,
+			{
+				(name, name)
+				for name in ("get_planner", "move_visit", "move_projected", "add_crew", "move_fountain_move")
+			},
 		)
 
 

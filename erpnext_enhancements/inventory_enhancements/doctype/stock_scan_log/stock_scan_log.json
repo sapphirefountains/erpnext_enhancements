@@ -289,7 +289,7 @@
    "read_only": 1
   },
   {
-   "description": "The item's reorder level in ERPNext when the run was recorded. Above 0 means a stocked item, which is what the reason is read against.",
+   "description": "The item's reorder level in ERPNext when the run was recorded. An item with a reorder rule is a stocked item (a rule that reorders at 0 has level 0), which is what the reason is read against.",
    "fieldname": "reorder_level_seen",
    "fieldtype": "Float",
    "label": "Minimum When Bought",

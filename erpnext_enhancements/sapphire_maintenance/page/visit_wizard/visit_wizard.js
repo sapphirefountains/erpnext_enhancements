@@ -401,6 +401,8 @@ const VZ_UNSENT_KEY = "vz-unsent:";
 const VZ_UNSENT_INDEX = "vz-unsent-index";
 const VZ_OUTBOX_DB = "vz-outbox";
 const VZ_OUTBOX_STORE = "items";
+// Where the feature tab strip was scrolled to (v1.712.0): {record, left}, one visit at a time.
+const VZ_TABS_SCROLL_KEY = "vz-tabs-scroll";
 
 function vz_storage() {
 	try {
@@ -830,6 +832,10 @@ class VisitWizard {
 		this.section_meta = {};
 		this.template_meta = {};
 		this.feature_names = {};
+		// v1.712.0: products sold in sizes, {family: [{item, item_name, size}]} (size_choices).
+		this.sizes = {};
+		// v1.712.0: how far the feature tab strip is scrolled, {record, left} (remember_tabs_scroll).
+		this._tabs_scroll = null;
 		// v1.614.0: the client sign-off by email — the address to prefill and the link already
 		// out (from the bootstrap), and the technician's choice on this visit (render_sign_off_email).
 		this.sign_off = {};
@@ -1424,6 +1430,7 @@ class VisitWizard {
 				this.template_meta = data.template_meta || {};
 				this.feature_names = data.features || {};
 				this.sign_off = data.sign_off || {};
+				this.sizes = data.sizes || {};
 				this.apply_state(data.state);
 				// What this phone kept for the visit (v1.596.0). Written from everything
 				// this page held for it, parked edits and an unanswered choice included, so
@@ -2132,12 +2139,21 @@ class VisitWizard {
 				: `${what}${where}: ${change.field.replace(/_/g, " ")}`;
 		};
 		const shown = (value) => (value === null || value === undefined || value === "" ? __("(blank)") : String(value));
+		// A chemical's size is a change of item (v1.712.0): named as the technician chose it, 1" or
+		// 3", not by item code.
+		const as_text = (change, value) => {
+			if (change.table === "consumables" && change.field === "item" && value) {
+				const size = (this.size_choices_for(value) || []).find((c) => c.item === value);
+				if (size) return size.item_name;
+			}
+			return shown(value);
+		};
 		const lines = choice.conflicts
 			.map(
 				(change) =>
 					`<li><b>${frappe.utils.escape_html(label(change))}</b>: ${__("this phone")} <b>${frappe.utils.escape_html(
-						shown(change.value)
-					)}</b>, ${__("the server")} <b>${frappe.utils.escape_html(shown(change.server))}</b></li>`
+						as_text(change, change.value)
+					)}</b>, ${__("the server")} <b>${frappe.utils.escape_html(as_text(change, change.server))}</b></li>`
 			)
 			.join("");
 		this.$wrap.empty().append(`
@@ -2934,6 +2950,59 @@ class VisitWizard {
 				.on("click", () => this.go(this.step_index, { feature: serial }))
 				.appendTo($tabs);
 		});
+		this.restore_tabs_scroll($tabs[0]);
+		$tabs.on("scroll", () => this.remember_tabs_scroll($tabs[0]));
+	}
+
+	// The tab strip is drawn anew on every step, tab and save, and used to come back scrolled
+	// to the start, so on a 13-fountain site the technician scrolled back to their fountain at
+	// every step (Nik, 2026-10-21: "save state of scroll position for tab bar on visit wizard").
+	// It now comes back where it was left, also after a reload (this phone's storage, one visit
+	// at a time), then moves only as far as it takes to show the tab that is open: Back/Forward
+	// or Next can open a tab that is scrolled out of sight.
+	restore_tabs_scroll(strip) {
+		if (!strip || !this.doc) return;
+		let left = null;
+		if (this._tabs_scroll && this._tabs_scroll.record === this.doc.name) {
+			left = this._tabs_scroll.left;
+		} else {
+			const store = vz_storage();
+			try {
+				const kept = store && JSON.parse(store.getItem(VZ_TABS_SCROLL_KEY) || "null");
+				if (kept && kept.record === this.doc.name) left = kept.left;
+			} catch (e) {
+				left = null; // unreadable or blocked: start at the start, as before
+			}
+		}
+		// Drawn while the page is hidden, the strip has no width and every scroll reads 0:
+		// keep what was remembered rather than overwrite it with that.
+		if (!strip.clientWidth) return;
+		if (typeof left === "number" && left > 0) strip.scrollLeft = left;
+		const active = strip.querySelector(".vz-tab.vz-active");
+		if (active) {
+			const box = strip.getBoundingClientRect();
+			const tab = active.getBoundingClientRect();
+			const start = tab.left - box.left + strip.scrollLeft;
+			const end = start + tab.width;
+			if (start < strip.scrollLeft) strip.scrollLeft = Math.max(0, start - 16);
+			else if (end > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = end - strip.clientWidth + 16;
+		}
+		this._tabs_scroll = { record: this.doc.name, left: strip.scrollLeft };
+	}
+
+	remember_tabs_scroll(strip) {
+		if (!strip || !this.doc || !strip.clientWidth) return;
+		this._tabs_scroll = { record: this.doc.name, left: strip.scrollLeft };
+		clearTimeout(this._tabs_scroll_timer);
+		const kept = this._tabs_scroll;
+		this._tabs_scroll_timer = setTimeout(() => {
+			const store = vz_storage();
+			try {
+				if (store) store.setItem(VZ_TABS_SCROLL_KEY, JSON.stringify(kept));
+			} catch (e) {
+				// full or blocked: remembered for this page only
+			}
+		}, 250);
 	}
 
 	// Required rows still unanswered on a step, counted across ALL features
@@ -3647,6 +3716,7 @@ class VisitWizard {
 			<div class="vz-card ${row.qty ? "vz-done" : ""}">
 				<div class="vz-card-title">${frappe.utils.escape_html(title)}${frappe.utils.escape_html(unit)}</div>
 				${row.default_qty ? `<div class="vz-card-sub">${__("Usually {0}", [row.default_qty])}</div>` : ""}
+				<div class="vz-seg vz-size-seg" role="radiogroup" aria-label="${__("Size")}"></div>
 				<div class="vz-stepper">
 					<button type="button" class="vz-step-btn" data-dir="-1" aria-label="${__("Less")}">−</button>
 					<div class="vz-qty">${row.qty || 0}</div>
@@ -3654,6 +3724,7 @@ class VisitWizard {
 				</div>
 			</div>
 		`);
+		this.render_size_choice($card, row);
 		const step = row.qty_step || 1;
 		const set_qty = (qty) => {
 			qty = Math.max(0, Math.round(qty * 1000) / 1000);
@@ -3681,6 +3752,49 @@ class VisitWizard {
 			$input.on("blur change", () => set_qty(parseFloat($input.val()) || 0));
 		});
 		return $card;
+	}
+
+	// The sizes of this row's product, when it is sold in two or more (v1.712.0): 1" or 3"
+	// chlorine tablets are separate Items, bought, stocked and priced apart, so choosing a size
+	// records that size's item. Every other form names the size through the item's name.
+	size_choices_for(item) {
+		if (!item) return null;
+		for (const choices of Object.values(this.sizes || {})) {
+			if ((choices || []).some((choice) => choice.item === item)) return choices;
+		}
+		return null;
+	}
+
+	render_size_choice($card, row) {
+		const $seg = $card.find(".vz-size-seg");
+		const choices = this.size_choices_for(row.item);
+		if (!choices || choices.length < 2) {
+			$seg.remove();
+			return;
+		}
+		const paint = () => {
+			$seg.find("button").each((_, button) => {
+				const on = $(button).attr("data-item") === row.item;
+				$(button).toggleClass("vz-on", on).attr("aria-checked", on ? "true" : "false");
+			});
+			// Named from the choice, not row.item_name: a size change put back from this phone
+			// (vz_reconcile) restores `item` and leaves the server's name for the other size.
+			const current = choices.find((choice) => choice.item === row.item);
+			if (current) row.item_name = current.item_name;
+			const unit = row.uom ? ` (${row.uom})` : "";
+			$card.find(".vz-card-title").text(`${row.item_name || row.item || ""}${unit}`);
+		};
+		choices.forEach((choice) => {
+			$(`<button type="button" role="radio" data-item="${frappe.utils.escape_html(choice.item)}"></button>`)
+				.text(choice.size)
+				.on("click", () => {
+					if (this.doc.docstatus !== 0 || choice.item === row.item) return;
+					this.set_row("consumables", row, "item", choice.item);
+					paint();
+				})
+				.appendTo($seg);
+		});
+		paint();
 	}
 
 	add_consumable() {

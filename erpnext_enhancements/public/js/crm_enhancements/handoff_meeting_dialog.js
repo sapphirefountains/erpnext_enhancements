@@ -32,6 +32,18 @@
  * Loaded globally via erpnext_enhancements.bundle.js rather than as a
  * doctype_js: the Closed-Won prompt in create_project_prompt.js opens this on the
  * Kanban board and the list view too, where no form script is loaded.
+ *
+ * **Google Calendar (1.733.0).** The server now books the meeting as a real Google
+ * Calendar event, organized by the clicker's own connected calendar or the shared
+ * fallback calendar, and only emails an invite when neither works
+ * (crm_enhancements/handoff_calendar.py). The dialog says which way the invite will
+ * go and offers "Connect my Google Calendar" when it is not the clicker's own.
+ * `meeting_html()` / `bind_meeting()` put the Meet link and the guests' RSVPs on the
+ * step cards; the RSVPs are fetched on a click, never on a form load.
+ *
+ * **A time that has passed is refused** (1.733.0), here and on the server. The
+ * picker is a 24-hour clock, and EV00456 was booked at 09:21 for 01:30 that
+ * morning: "1:30" meant 1:30 PM.
  */
 frappe.provide("erpnext_enhancements");
 
@@ -82,6 +94,91 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 	 * does not change between two clicks, and the dialog should open now.
 	 */
 	let options_cache = null;
+	let status_cache = null;
+
+	/**
+	 * Which way the next invite goes: the clicker's own Google Calendar, the shared
+	 * fallback calendar, or email. Cached for the page; connecting a calendar
+	 * leaves the page for Google anyway, so it is fresh when they come back.
+	 */
+	function calendar_status() {
+		if (status_cache) return Promise.resolve(status_cache);
+		return frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff_calendar.calendar_status")
+			.then((status) => {
+				status_cache = status || {};
+				return status_cache;
+			})
+			// A note, not a precondition: the server decides the path on booking.
+			.catch(() => ({}));
+	}
+
+	function calendar_note(status) {
+		const esc = frappe.utils.escape_html;
+		let text;
+		if (status.calendar_path === "own_calendar") {
+			text = __(
+				"Google Calendar sends the invites from your calendar, with a Google Meet link. Guests see each other and can RSVP."
+			);
+		} else if (status.calendar_path === "fallback_calendar") {
+			text = __(
+				"Google Calendar sends the invites from the shared organizer calendar, with a Google Meet link. Connect your own calendar to be the organizer yourself."
+			);
+		} else if (status.calendar_path === "email") {
+			text = __(
+				"Invites go by email with a calendar file, and without a Meet link. Connect your Google Calendar to send real Google invites."
+			);
+		} else {
+			return "";
+		}
+		const connect =
+			status.calendar_path !== "own_calendar" && status.google_enabled
+				? ` <button type="button" class="btn btn-xs btn-default ee-connect-gcal">${esc(
+						__("Connect my Google Calendar")
+					)}</button>`
+				: "";
+		return `<p class="text-muted small">${esc(text)}${connect}</p>`;
+	}
+
+	/**
+	 * Send the user to Google to allow access, through Frappe's own authorize flow.
+	 * The server creates their Google Calendar record (push only, never importing
+	 * their own events) and returns Google's consent URL.
+	 */
+	function connect_google_calendar() {
+		calendar_status().then((status) => {
+			const esc = frappe.utils.escape_html;
+			frappe.confirm(
+				`<p>${esc(
+					__(
+						"You'll go to Google to let ERPNext add meetings to your calendar. ERPNext only adds the meetings you schedule; it never imports your own events. Google then brings you back to your Google Calendar settings in ERPNext; come back to this page and schedule the meeting."
+					)
+				)}</p><p class="text-muted small">${esc(
+					__(
+						'If Google says "redirect_uri_mismatch", the site\'s Google sign-in is missing this redirect URI. Send it to a System Manager: {0}',
+						[status.redirect_uri || ""]
+					)
+				)}</p>`,
+				() => {
+					frappe
+						.xcall("erpnext_enhancements.crm_enhancements.handoff_calendar.connect_google_calendar")
+						.then((result) => {
+							if (result && result.url) window.location.assign(result.url);
+						});
+				}
+			);
+		});
+	}
+
+	/** True when `value` (the Datetime field's string) is earlier than now, less some slack. */
+	function has_passed(value) {
+		const start = frappe.datetime.str_to_obj(value);
+		const now = frappe.datetime.str_to_obj(frappe.datetime.now_datetime());
+		return !!(start && now && start.getTime() < now.getTime() - PAST_GRACE_MINUTES * 60 * 1000);
+	}
+
+	/** Matches PAST_GRACE_MINUTES in handoff.py, which refuses the same thing. */
+	const PAST_GRACE_MINUTES = 30;
 	function attendee_options() {
 		if (options_cache) return Promise.resolve(options_cache);
 		return frappe
@@ -116,7 +213,7 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 	 * @returns {Promise<Object>} the dialog, once the attendee suggestions are in.
 	 */
 	function open(opts) {
-		return attendee_options().then(function (options) {
+		return Promise.all([attendee_options(), calendar_status()]).then(function ([options, status]) {
 			const pick = __("Pick from the list or type any address.");
 			const dialog = new frappe.ui.Dialog({
 				title: opts.title || __("Schedule Hand-Off Meeting"),
@@ -130,12 +227,19 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 						)}</p>`,
 					},
 					{
+						fieldtype: "HTML",
+						fieldname: "calendar_note",
+						options: calendar_note(status),
+					},
+					{
 						fieldname: "starts_on",
 						label: __("Date / Time"),
 						fieldtype: "Datetime",
 						reqd: 1,
 						default: opts.default_start || default_slot(),
-						description: __("When the meeting will be held — any time from now on."),
+						description: __(
+							"When the meeting will be held — any time from now on. 24-hour clock: 1:30 PM is 13:30."
+						),
 					},
 					{
 						fieldname: "duration_minutes",
@@ -174,6 +278,18 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 						.split(",")
 						.map((address) => address.trim())
 						.filter(Boolean);
+
+					if (has_passed(values.starts_on)) {
+						frappe.msgprint({
+							title: __("That time has passed"),
+							message: __(
+								"{0} is in the past. The clock is 24-hour, so 1:30 PM is 13:30.",
+								[frappe.datetime.str_to_user(values.starts_on)]
+							),
+							indicator: "orange",
+						});
+						return;
+					}
 
 					if (!attendees.length) {
 						frappe.msgprint({
@@ -231,7 +347,135 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 				},
 			});
 			dialog.show();
+			dialog.$wrapper.find(".ee-connect-gcal").on("click", connect_google_calendar);
 			return dialog;
+		});
+	}
+
+	/**
+	 * The alert after booking, worded for the way the invite actually went, plus
+	 * every Google failure the server reported (it fell back past them).
+	 *
+	 * @param {Object} result  The schedule endpoint's response.
+	 * @param {string} what    "Hand-off meeting" / "Launch meeting".
+	 */
+	function report_booking(result, what) {
+		const esc = frappe.utils.escape_html;
+		result = result || {};
+		const google = !!result.calendar_path && result.calendar_path !== "email";
+		let message;
+		let indicator = "green";
+		if (google) {
+			message = result.rescheduled
+				? __("{0} moved. Google Calendar sent the change to every guest.", [what])
+				: __("{0} booked. Google Calendar sent the invites, with a Meet link.", [what]);
+		} else if (result.invited) {
+			message = result.rescheduled
+				? __("{0} moved. The updated invite went by email.", [what])
+				: __("{0} booked. The invites went by email.", [what]);
+		} else {
+			message = __("{0} booked, but the invite email failed — check the Error Log.", [what]);
+			indicator = "orange";
+		}
+		frappe.show_alert({ message: message, indicator: indicator });
+		const warnings = result.warnings || [];
+		if (warnings.length) {
+			frappe.msgprint({
+				title: __("Google Calendar"),
+				indicator: "orange",
+				message:
+					`<p>${esc(__("The meeting is booked. Google Calendar had trouble on the way:"))}</p><ul>` +
+					warnings.map((line) => `<li>${esc(line)}</li>`).join("") +
+					"</ul>",
+			});
+		}
+	}
+
+	const RESPONSES = {
+		accepted: { label: "Accepted", color: "#16a34a" },
+		declined: { label: "Declined", color: "#dc2626" },
+		tentative: { label: "Maybe", color: "#d97706" },
+		needsAction: { label: "No reply yet", color: "var(--text-muted)" },
+	};
+
+	function safe_link(url) {
+		return typeof url === "string" && url.indexOf("https://") === 0 ? url : "";
+	}
+
+	/**
+	 * The booked meeting on a step card: Meet link, and a "Guests & RSVPs" toggle.
+	 * Built from what the form already loaded (the Event row), so it costs no
+	 * Google call until someone clicks the toggle.
+	 *
+	 * @param {Object} meeting  `{event, google, meet_link, status}` from the server.
+	 */
+	function meeting_html(meeting) {
+		if (!meeting || !meeting.event || meeting.status === "Cancelled") return "";
+		const esc = frappe.utils.escape_html;
+		const parts = [];
+		const meet = safe_link(meeting.meet_link);
+		if (meet) {
+			parts.push(
+				`<a href="${esc(meet)}" target="_blank" rel="noopener noreferrer">${esc(__("Join Google Meet"))}</a>`
+			);
+		}
+		if (meeting.google) {
+			parts.push(
+				`<a href="#" class="ee-meeting-guests" data-event="${esc(meeting.event)}">${esc(
+					__("Guests & RSVPs")
+				)}</a>`
+			);
+		} else {
+			parts.push(`<span class="text-muted">${esc(__("Invited by email"))}</span>`);
+		}
+		return `<div class="ee-meeting" style="font-size:11px;">${parts.join(
+			" · "
+		)}<div class="ee-meeting-guest-list"></div></div>`;
+	}
+
+	function guest_list_html(data) {
+		const esc = frappe.utils.escape_html;
+		if (!data || !data.google) return "";
+		if (data.error) return `<div class="text-muted">${esc(data.error)}</div>`;
+		let html = "";
+		if (data.status === "cancelled") {
+			html += `<div class="text-muted">${esc(__("This meeting was cancelled in Google Calendar."))}</div>`;
+		}
+		html += (data.guests || [])
+			.map((guest) => {
+				const response = RESPONSES[guest.response] || RESPONSES.needsAction;
+				const who = guest.name ? `${guest.name} (${guest.email})` : guest.email;
+				return `<div>${esc(who)}${guest.organizer ? ` · ${esc(__("organizer"))}` : ""} — <span style="color:${
+					response.color
+				};">${esc(__(response.label))}</span></div>`;
+			})
+			.join("");
+		const google_link = safe_link(data.html_link);
+		if (google_link) {
+			html += `<div><a href="${esc(google_link)}" target="_blank" rel="noopener noreferrer">${esc(
+				__("Open in Google Calendar")
+			)}</a></div>`;
+		}
+		return html;
+	}
+
+	/** Wire the "Guests & RSVPs" toggles inside `$wrapper` (rendered by meeting_html). */
+	function bind_meeting($wrapper) {
+		$wrapper.find(".ee-meeting-guests").on("click", function (e) {
+			e.preventDefault();
+			const $link = $(this);
+			const $list = $link.closest(".ee-meeting").find(".ee-meeting-guest-list");
+			if ($list.children().length) {
+				$list.empty();
+				return;
+			}
+			$list.html(`<div class="text-muted">${frappe.utils.escape_html(__("Loading…"))}</div>`);
+			frappe
+				.xcall("erpnext_enhancements.crm_enhancements.handoff_calendar.meeting_guests", {
+					event: $link.attr("data-event"),
+				})
+				.then((data) => $list.html(guest_list_html(data)))
+				.catch(() => $list.empty());
 		});
 	}
 
@@ -273,12 +517,7 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 								}
 							)
 							.then(function (result) {
-								frappe.show_alert({
-									message: result.invited
-										? __("Meeting created and invites sent.")
-										: __("Meeting created, but the invite email failed — check the Error Log."),
-									indicator: result.invited ? "green" : "orange",
-								});
+								report_booking(result, __("Hand-off meeting"));
 								if (typeof opts.on_success === "function") opts.on_success(result);
 								return result;
 							});
@@ -292,5 +531,9 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 		default_slot: default_slot,
 		now_slot: now_slot,
 		schedule_for_opportunity: schedule_for_opportunity,
+		report_booking: report_booking,
+		meeting_html: meeting_html,
+		bind_meeting: bind_meeting,
+		connect_google_calendar: connect_google_calendar,
 	};
 })();

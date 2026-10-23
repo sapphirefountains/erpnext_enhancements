@@ -787,7 +787,7 @@ def _reconciliation(item, qty, rate, location):
 
 
 @frappe.whitelist(methods=["POST"])
-def set_count(item_code, warehouse, qty, client_ref):
+def set_count(item_code, warehouse, qty, client_ref, rate=None):
 	"""Correct what is on hand at a bin to ``qty`` (zero allowed): a submitted Stock
 	Reconciliation for one item at one warehouse.
 
@@ -815,18 +815,27 @@ def set_count(item_code, warehouse, qty, client_ref):
 	)
 	if problem:
 		frappe.throw(problem)
-	rate = None
-	if on_hand <= rules.TOLERANCE and count > rules.TOLERANCE:
-		rate = scan._receipt_rate(item.name, location.name, location.company)
-		if rate <= 0:
-			frappe.throw(
-				_(
-					"There is no cost on record for {0}, so a count cannot add it. Ask a Stock Manager to set its Valuation Rate."
-				).format(item.item_name or item.name)
-			)
 	_require_count()
+	typed_cost = False
+	cost = None
+	if on_hand <= rules.TOLERANCE and count > rules.TOLERANCE:
+		# From an empty bin there is no rate for ERPNext to keep. One on record is used; with none the
+		# page is asked for a unit cost (TASK-2026-02914), after the permission above so a person who
+		# cannot post the count is not asked for a price.
+		cost, prompt, typed_cost = scan._receipt_cost(item, location, rate, count)
+		if prompt:
+			return prompt
+	rate = cost
 
-	log = scan._begin_log(ref, rules.ACTION_COUNT, item, count, location, qty_before=on_hand)
+	log = scan._begin_log(
+		ref,
+		rules.ACTION_COUNT,
+		item,
+		count,
+		location,
+		qty_before=on_hand,
+		rate=rate if typed_cost else None,
+	)
 	sr = _reconciliation(item, count, rate, location)
 	scan._post(sr)
 	scan._finish_log(log, "Stock Reconciliation", sr.name)
@@ -944,6 +953,12 @@ def _trails(rows):
 	return out
 
 
+def _show_reorder(screen):
+	from erpnext_enhancements.api.planner_views_prefs import show_reorder
+
+	return show_reorder(screen)
+
+
 @frappe.whitelist(methods=["GET"])
 def manager_boot():
 	"""What the Bin Manager Desk page (``inventory_enhancements/page/bin_manager``) needs before
@@ -955,6 +970,10 @@ def manager_boot():
 	* ``can_count`` -- Stock Reconciliation create **and** submit (:func:`set_count` posts one as
 	  the user); ``can_move`` -- Stock Entry create and submit (a move posts a transfer).
 	* ``can_create_items`` -- Item create, which the quick Item is inserted with.
+	* ``can_open_items`` -- Item read: the page links an item's name to its Item record only for those who
+	  can open it.
+	* ``show_reorder`` -- the caller's own switch for the Reorder column (``planner_views_prefs``), off by
+	  default; ``False`` too when it cannot be read.
 	* ``boneyard_warehouse`` / ``boneyard_name`` -- from Inventory Scanner Settings, read here so
 	  the page never reads a Settings Single from the browser (a non-System-Manager would be
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
@@ -995,6 +1014,11 @@ def manager_boot():
 			frappe.has_permission("Stock Entry", "create") and frappe.has_permission("Stock Entry", "submit")
 		),
 		"can_create_items": bool(frappe.has_permission("Item", "create")),
+		# Whether an item's name links to its Item record (TASK-2026-02918).
+		"can_open_items": bool(frappe.has_permission("Item", "read")),
+		# Whether the caller has turned the reorder boxes on here (TASK-2026-02920): hidden unless they have,
+		# and hidden when the preference cannot be read.
+		"show_reorder": _show_reorder("bin_manager"),
 		"boneyard_warehouse": boneyard,
 		"boneyard_name": (boneyard_row.warehouse_name or boneyard_row.name) if boneyard_row else None,
 		"undo_window_minutes": cint(settings.get("undo_window_minutes")),

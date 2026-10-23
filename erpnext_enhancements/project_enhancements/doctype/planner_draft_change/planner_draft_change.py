@@ -46,6 +46,15 @@ digest, change alert, conflict-centre line or calendar event can come from it, a
 duplicate and build out use. Once published, ``created_task`` names the Task it became. The Project
 Planner reads its own ``task`` rows and its own ``New task`` rows; the Maintenance Planner reads
 only ``visit`` rows, so it never sees a ``New task`` row.
+
+**Shared on a Draft project (P3 of the Planner UX redesign).** While a project's schedule is still
+*Draft* (``Project.custom_schedule_status``), its rows are the project's, not their author's: the
+Project Planner also reads every other scheduler's ``task`` and ``New task`` rows on it
+(``api.project_planner._shared_draft_rows``), builds on them, and saves them for whoever edits
+(``ignore_permissions``, after the planner's own role gate and the task's write check), so there is
+one row per task rather than one per (owner, task). ``publish_project_schedule`` publishes them for
+everyone. The ``if_owner`` permissions below are unchanged: a list view still shows a Projects User
+only their own rows, and on a Published project the rows are private as before.
 """
 
 import frappe

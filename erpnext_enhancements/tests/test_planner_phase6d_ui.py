@@ -275,7 +275,7 @@ class TestHooks(unittest.TestCase):
 			self.assertIn('target.kind === "cell"', items)
 			self.assertIn('target.kind === "person"', items)
 			# Every action also has a way in of its own: since the toolbar redesign (v1.687.0) the
-			# Conflicts count is an alert chip and Conflicts… and Block time… are items of Edit.
+			# Conflicts count is an alert chip and Conflicts… and Block time… are items of More ▸ Tools.
 			self.assertIn("this.tb_render();", _obj_method(block, "p6d_after_list"))
 			count = _obj_method(block, "p6d_conflict_count")
 			self.assertIn("const count = center ? center.count() : null;", count)
@@ -285,7 +285,7 @@ class TestHooks(unittest.TestCase):
 			self.assertIn('target.closest("[data-p6d-conflict]")', _obj_method(block, "p6d_click"))
 		self.assertIn("Block my time", PP_BLOCK)
 		for page in (PP, MP):
-			edit = _obj_method(page, "tb_edit_items")
+			edit = _obj_method(page, "tb_tools_items")
 			self.assertIn('label: __("Block time…"),', edit)
 			self.assertIn("on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),", edit)
 			self.assertIn('label: __("Conflicts…"),', edit)
@@ -327,8 +327,9 @@ class TestFixesGoThroughTheWritePath(unittest.TestCase):
 		methods = dict(re.findall(r'\[`\$\{PP\.api\}\.(\w+)`\]: "(\w+)"', PP_BLOCK))
 		self.assertEqual(set(methods.values()), {"save_task", "swap_crew", "add_crew"})
 		self.assertTrue(all(key == value for key, value in methods.items()))
-		# Draft mode drafts every one of them: send() adds draft=1 to exactly these methods.
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew"]', PP)
+		# The hold drafts every one of them: send() adds draft=1 (P4: or "auto", so a Draft schedule
+		# drafts them too) to exactly these methods, and to move_many.
+		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', PP)
 		send = _class_method(PP, "send")
 		self.assertIn("args = this.with_draft(method, args);", send)
 		self.assertIn("this.ask_reason(result.conflicts || {})", send)

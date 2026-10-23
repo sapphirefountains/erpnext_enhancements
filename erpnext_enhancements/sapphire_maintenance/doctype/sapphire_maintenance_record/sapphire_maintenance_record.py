@@ -159,6 +159,10 @@ class SapphireMaintenanceRecord(Document):
 
 		check_follow_ups(self)
 		check_consumable_features(self)
+		# A chemical sold in sizes (1" or 3" tablets) names its size on every form (v1.712.0).
+		from erpnext_enhancements.sapphire_maintenance.item_sizes import label_consumables
+
+		label_consumables(self)
 		self._autofill_clock_in()
 		self._check_signatures()
 		self._finish_on_review()

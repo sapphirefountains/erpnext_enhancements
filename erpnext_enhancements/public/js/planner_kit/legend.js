@@ -7,7 +7,8 @@
  *       { swatch: { color: "#2563eb", style: "dashed", fill: "#eff6ff" }, text: "..." },
  *       { chip: { text: "Pencil", tone: "plain" | "red" | "amber" | "green" | "blue" }, text: "..." },
  *     ] },
- *   ], { title: "How to read the planner", owner: "pp" });
+ *   ], { title: "How to read the planner", owner: "pp",
+ *        actions: [{ label: "Take the tour", on_click: (handle) => ... }] });   // footer buttons (P12)
  *
  * `text`, `title`, `note` and a chip's text are escaped here. `sample_html` is the page's own markup
  * (its real chip and card classes, so the legend shows exactly what the calendar draws) and is
@@ -70,6 +71,9 @@ export function create_legend(env) {
 				width: opts.width || 460,
 				key: "legend",
 				owner: opts.owner || null,
+				// Footer buttons, `{label, title, primary, on_click(handle)}`: the planners put "Take the tour" here
+				// (P12), where it stays in view however long the help is.
+				actions: opts.actions || null,
 				reopen: () => open(),
 			});
 		return open();

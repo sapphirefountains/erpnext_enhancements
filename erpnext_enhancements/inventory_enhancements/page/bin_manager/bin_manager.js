@@ -51,7 +51,20 @@ frappe.pages["bin-manager"].on_page_show = function (wrapper) {
 };
 
 const BM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "bin_manager.bundle.js"];
+// The reorder boxes (v1.725.0): asked for apart from the page's own files, and optional. A page whose
+// copy of them did not load shows no Reorder column and works as before.
+const BM_REORDER_ASSETS = ["reorder_levels.bundle.js", "reorder_levels.bundle.css"];
+// The person's own switch for the Reorder column (TASK-2026-02920): off until they turn it on, and kept for
+// good in the same per-user store as the planners' saved views (api/planner_views_prefs.py).
+const BM_REORDER_PREF = "erpnext_enhancements.api.planner_views_prefs.set_show_reorder";
 const BM_PAGE = "bin-manager";
+// The Reorder Board (v1.730.0): buyers pick reorders from it now that ERPNext no longer raises them on its own, and
+// a bin or a count is where a shortage is seen. The link shows only to the roles that may open that page
+// (BOARD_ROLES in inventory_enhancements/reorder_board.py, which tests/test_bin_manager.py pins this list to). The
+// page is gated on the server too: this only keeps a link that ends in "no permission" off the screen. The check is
+// the Desk's own (frappe.user), never a read of a Settings Single.
+const BM_BOARD_ROUTE = "reorder-board";
+const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
 const BM_SEARCH_DELAY_MS = 250;
 
 class BinManagerPage {
@@ -64,6 +77,12 @@ class BinManagerPage {
 		this.ctl = null;
 		this.drawn = "";
 		this._route_timer = null;
+		this.reorder = null; // the reorder editor (public/js/reorder_levels), once its bundle is here
+		this.reorder_for = null; // the location object the editor last read the rules for
+		this.reorder_pref = null; // the person's switch once they have used it here; until then the boot's
+		this.reorder_saving = false; // a request storing the switch is in flight (remember_reorder sends one at a time)
+		this.reorder_want = null; // the latest choice to store
+		this.redraw_after_blur = false; // a table redraw is waiting for a reorder box to be left
 		// v16's frappe.require calls back even when a file failed to load (assets.js "resolve even on
 		// error"), so both globals are checked; a page without them says so instead of waiting.
 		this.ready = new Promise((resolve) => frappe.require(BM_ASSETS, resolve)).then(() => {
@@ -71,6 +90,9 @@ class BinManagerPage {
 			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller ? window.sf_bin_manager : null;
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
+		// The reorder boxes are not part of `ready`: the bins draw as soon as the page's own files are here, and
+		// the Reorder column joins them when its bundle arrives (a slow or failed bundle holds nothing up).
+		this.ready.then(() => this.load_reorder_bundle());
 		page.set_secondary_action(__("Refresh"), () => this.ctl && this.ctl.refresh(), "refresh");
 		this.bind();
 	}
@@ -104,8 +126,132 @@ class BinManagerPage {
 		};
 	}
 
+	// The reorder boxes (v1.725.0): the shared editor, once its bundle has arrived, wired to this page's
+	// root. Everything about them is optional: with no bundle there is no Reorder column.
+	load_reorder_bundle() {
+		new Promise((resolve) => {
+			try {
+				frappe.require(BM_REORDER_ASSETS, resolve);
+			} catch (e) {
+				resolve();
+			}
+		}).then(() => {
+			this.start_reorder();
+			// The bin or picker already on screen is drawn again, now with the column.
+			if (this.reorder) this.render();
+		});
+	}
+
+	start_reorder() {
+		const ro = window.sf_reorder && window.sf_reorder.version >= 1 ? window.sf_reorder : null;
+		if (!ro || !this.sf) return;
+		try {
+			this.reorder = new ro.ReorderEditor({
+				call: (method, args, opts) => this.sf.call(method, args, opts),
+				read: (code) => ro.read_boxes(this.$root[0], code),
+				paint: (code, force) => this.paint_reorder(code, force),
+				paint_all: () => this.paint_reorder(null),
+				later: (fn, ms) => setTimeout(fn, ms),
+				tr: (text) => __(text),
+				confirm: (text, yes, no) => frappe.confirm(text, yes, no),
+			});
+			ro.bind(this.$root[0], this.reorder);
+		} catch (e) {
+			this.reorder = null;
+		}
+	}
+
+	paint_reorder(code, force) {
+		const ro = window.sf_reorder;
+		if (!ro || !this.reorder) return;
+		ro.paint(this.$root[0], this.reorder, (v) => this.esc(v), (t) => __(t), code, document.activeElement, !!force, this.reorder_labels());
+	}
+
+	// The items on screen, by code, for the boxes' accessible names.
+	reorder_labels() {
+		const loc = this.ctl && this.ctl.state.location;
+		const out = {};
+		((loc && loc.items) || []).forEach((r) => {
+			out[r.item_code] = r.item_name;
+		});
+		return out;
+	}
+
+	// The rules are read once per list of items on screen: a new location object (a bin opened, a save
+	// that reloaded it) is a new list, and the same one drawn again is not asked about twice.
+	// Whether the Reorder column is on: the editor is here, and the person turned it on (this visit, or at
+	// some earlier one: manager_boot says). Off by default, and off whenever the preference could not be read.
+	reorder_shown() {
+		if (!this.reorder) return false;
+		if (this.reorder_pref !== null) return this.reorder_pref;
+		const boot = this.ctl && this.ctl.state.boot;
+		return !!(boot && boot.show_reorder === true);
+	}
+
+	// The switch in the bin's toolbar. The rules are read the first time they are shown, never before.
+	toggle_reorder() {
+		if (!this.reorder) return;
+		const on = !this.reorder_shown();
+		this.reorder_pref = on;
+		// Nothing is reset: the rules are read when the boxes are first shown for this list (sync_reorder), and
+		// showing them again for the same list needs no second read; a save reloads the list, which reads again.
+		this.render();
+		this.$root.find(".bm-reorder-toggle").trigger("focus");
+		this.remember_reorder(on);
+	}
+
+	// Stores the switch. Quick taps must not leave the store disagreeing with the screen: replies can arrive out of
+	// order, so only one request is in flight, and when it settles the latest choice is sent if it differs from
+	// what was just sent. The last tap wins on screen and in the store.
+	remember_reorder(on) {
+		if (!this.sf) return;
+		this.reorder_want = on;
+		if (this.reorder_saving) return;
+		this.reorder_saving = true;
+		const send = () => {
+			const sent = this.reorder_want;
+			let failed = false;
+			return this.sf.call(BM_REORDER_PREF, { screen: "bin_manager", value: sent ? 1 : 0 }, { quiet: true }).then(
+				() => {},
+				() => {
+					failed = true;
+				}
+			).then(() => {
+				if (this.reorder_want !== sent) return send();
+				this.reorder_saving = false;
+				if (failed) frappe.show_alert({ message: __("Could not save that choice for next time."), indicator: "orange" }, 6);
+			});
+		};
+		send();
+	}
+
+	sync_reorder(loc) {
+		if (!this.reorder_shown() || !loc || this.reorder_for === loc) return;
+		this.reorder_for = loc;
+		this.reorder.load(loc.warehouse, (loc.items || []).map((r) => r.item_code));
+	}
+
 	showing() {
 		return (frappe.get_route() || [])[0] === BM_PAGE;
+	}
+
+	// Whether this person may open the Reorder Board. Anything unreadable is "no": a missing link is a lesser
+	// fault than one that leads to a refusal.
+	can_open_board() {
+		try {
+			return BM_BOARD_ROLES.some((role) => !!(frappe.user && frappe.user.has_role(role)));
+		} catch (e) {
+			return false;
+		}
+	}
+
+	// The link to the Reorder Board, or nothing. One frappe.set_route: the board is its own history entry, so
+	// Back lands here again (on this bin, when it was one).
+	board_link() {
+		if (!this.can_open_board()) return "";
+		return `<button type="button" class="btn btn-sm btn-default bm-board-link" data-act="reorder-board">${this.esc(
+			__("Reorder Board")
+		)}</button>`;
 	}
 
 	// One show per task: a replace followed by a push fires on_page_show twice.
@@ -157,6 +303,8 @@ class BinManagerPage {
 			else if (act === "leave") this.ctl.leave_bin();
 			else if (act === "undo") this.undo(el.getAttribute("data-log"), el);
 			else if (act === "retry") this.ctl.refresh();
+			else if (act === "reorder-toggle") this.toggle_reorder();
+			else if (act === "reorder-board") frappe.set_route(BM_BOARD_ROUTE);
 			else if (act === "add") this.add_dialog();
 			else if (act === "create") this.create_dialog();
 			else if (row && act === "count") this.count_dialog(row);
@@ -164,6 +312,15 @@ class BinManagerPage {
 			else if (row && act === "boneyard") this.boneyard_dialog(row);
 			else if (row && act === "unassign") this.unassign_dialog(row);
 			else if (row && act === "keep") this.keep(row, el);
+		});
+		// A table redraw that waited for a reorder box (draw_items): run it once focus has left the boxes.
+		this.$root.on("focusout", ".ro-input", () => {
+			setTimeout(() => {
+				const active = document.activeElement;
+				if (!this.redraw_after_blur || (active && active.classList && active.classList.contains("ro-input"))) return;
+				this.redraw_after_blur = false;
+				this.render();
+			}, 0);
 		});
 		this.$root.on("input", ".bm-filter", (e) => {
 			if (!this.ctl) return;
@@ -232,6 +389,7 @@ class BinManagerPage {
 						<input type="search" class="form-control bm-filter" autocomplete="off"
 							placeholder="${this.esc(__("Find a bin: type part of its name"))}"
 							aria-label="${this.esc(__("Find a bin"))}">
+						${this.board_link()}
 					</div>
 					<div class="bm-list"></div>
 				</div>`);
@@ -305,6 +463,12 @@ class BinManagerPage {
 		this.$root.find(".bm-name").text(loc ? loc.warehouse_name : warehouse);
 		this.$root.find(".bm-trail").text(loc ? loc.trail || "" : "");
 		const actions = st.boot ? this.bm.bin_actions(perms, warehouse) : [];
+		const shown = this.reorder_shown();
+		const toggle = this.reorder
+			? ` <button type="button" class="btn btn-sm btn-default bm-reorder-toggle" data-act="reorder-toggle" aria-pressed="${shown}">${this.esc(
+					shown ? __("Hide reorder levels") : __("Show reorder levels")
+			  )}</button>`
+			: "";
 		this.$root.find(".bm-bin-actions").html(
 			actions
 				.map(
@@ -313,10 +477,11 @@ class BinManagerPage {
 							__(this.bm.ACTION_LABELS[a])
 						)}</button>`
 				)
-				.join(" ")
+				.join(" ") + toggle + (this.board_link() ? ` ${this.board_link()}` : "")
 		);
 		this.draw_notice();
 		this.draw_items(loc);
+		this.sync_reorder(loc);
 		this.draw_recent();
 	}
 
@@ -338,6 +503,14 @@ class BinManagerPage {
 
 	draw_items(loc) {
 		const el = this.$root.find(".bm-items")[0];
+		// A redraw replaces the table, and with it a reorder box being typed in: it waits until the box is
+		// left (the focusout handler in bind() draws it then), so nothing on screen goes stale.
+		const active = document.activeElement;
+		if (this.reorder && el && active && active.classList && active.classList.contains("ro-input") && el.contains(active)) {
+			this.redraw_after_blur = true;
+			return;
+		}
+		this.redraw_after_blur = false;
 		const st = this.ctl.state;
 		if (!loc) {
 			if (st.location_error) this.failed(el, st.location_error, () => this.ctl.load_location(), __("Could not load this bin."));
@@ -374,8 +547,9 @@ class BinManagerPage {
 							.join(" ")
 					: "";
 				return `<tr>
-					<td class="bm-item"><div class="bm-item-name">${this.esc(r.item_name)}</div><div class="bm-item-code">${this.esc(r.item_code)}</div></td>
+					<td class="bm-item">${this.item_cell(r, perms)}</td>
 					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
+					${this.reorder_shown() ? `<td class="bm-reorder">${window.sf_reorder.cell_html((v) => this.esc(v), (t) => __(t), this.reorder.view(r.item_code), r.item_code, r.item_name)}</td>` : ""}
 					<td class="bm-why">${chips}</td>
 					<td class="bm-row-actions">${buttons}</td>
 				</tr>`;
@@ -385,11 +559,24 @@ class BinManagerPage {
 			<thead><tr>
 				<th scope="col">${this.esc(__("Item"))}</th>
 				<th scope="col" class="bm-qty">${this.esc(__("On hand"))}</th>
+				${this.reorder_shown() ? `<th scope="col">${this.esc(__("Reorder"))}</th>` : ""}
 				<th scope="col">${this.esc(__("Listed because"))}</th>
 				<th scope="col"><span class="bm-sr">${this.esc(__("Actions"))}</span></th>
 			</tr></thead>
 			<tbody>${rows}</tbody>
 		</table>`;
+	}
+
+	// The item's name and code, as one link to its Item record where the person may open Items (TASK-2026-02918).
+	// A real anchor to the Desk form, so the Desk's own link handling routes it in place with a history entry
+	// (Back returns to the bin), Ctrl/Cmd/middle click opens a new tab, and the keyboard reaches it. The href is
+	// frappe.utils.get_form_link (/desk/item/<encoded code>, never /app, which is a full page load on v16); the
+	// text is escaped like every other cell. It sits outside every [data-act], so it triggers no row action.
+	item_cell(r, perms) {
+		const text = `<span class="bm-item-name">${this.esc(r.item_name)}</span><span class="bm-item-code">${this.esc(r.item_code)}</span>`;
+		if (perms && perms.can_open_items === false) return `<div class="bm-item-plain">${text}</div>`;
+		const href = frappe.utils.get_form_link("Item", r.item_code);
+		return `<a class="bm-item-link" href="${this.esc(href)}" title="${this.esc(__("Open the Item"))}">${text}</a>`;
 	}
 
 	draw_recent() {
@@ -440,6 +627,14 @@ class BinManagerPage {
 
 	// A dialog whose primary action is one save. Its reference is minted when it opens and sent again
 	// on a retry the server may already have saved (logic.keep_ref); a refusal is shown inside it.
+	//
+	// THE VALUES ARE THE ARGUMENT, NEVER A SECOND READING (TASK-2026-02912, "rejects 0 as a valid
+	// quantity"). Frappe's primary button reads the dialog once (FieldGroup.get_values) and passes the
+	// result to the action; and while it reads, a required field whose value is falsy (`!f.value`: a typed
+	// 0) is refreshed, which sets the box from `me.value || null` and so BLANKS the 0. A page that calls
+	// get_values()/get_value() again then finds no quantity and says "Enter the quantity you counted,
+	// 0 or more." to a person who just typed 0. So the action uses `picked`, and puts a refused 0 back in
+	// its box (restore_zeros) so the person sees what they typed.
 	save_dialog({ kind, row, title, fields, primary_label, values, on_build }) {
 		let ref = this.ctl.new_ref();
 		let busy = false;
@@ -447,22 +642,37 @@ class BinManagerPage {
 			title,
 			fields: [{ fieldtype: "HTML", fieldname: "bm_msg" }].concat(fields || []),
 			primary_action_label: primary_label,
-			primary_action: () => {
+			primary_action: (picked) => {
 				if (busy) return;
 				busy = true;
 				this.dialog_message(d, "");
 				const button = d.get_primary_btn();
 				button.prop("disabled", true);
-				this.ctl.submit(kind, row, values ? values(d) : d.get_values(true) || {}, ref).then(
-					() => {
+				const given = values ? values(d, picked) : picked || d.get_values(true) || {};
+				this.ctl.submit(kind, row, given, ref).then(
+					(out) => {
 						busy = false;
 						button.prop("disabled", false);
+						// Not a save: the server asked what one unit costs (an item ERPNext has no cost for).
+						if (out && out.prompt) {
+							// Asked again after a price was sent: say so here, rather than closing and reopening.
+							if ("rate" in given) {
+								this.dialog_message(d, __("The server still has no cost for this item. Ask a Stock Manager to set its Valuation Rate."));
+								return;
+							}
+							d.hide();
+							this.cost_dialog(kind, row, given, out.prompt);
+							return;
+						}
 						d.hide();
+						// A toast as well as the notice above the list: the dialog is gone and the row has changed.
+						if (out && out.message) frappe.show_alert({ message: this.safe(out.message), indicator: "green" }, 6);
 					},
 					(err) => {
 						busy = false;
 						button.prop("disabled", false);
 						if (!err.keep_ref) ref = this.ctl.new_ref();
+						this.restore_zeros(d, picked);
 						this.dialog_message(d, err.message || __("The server refused this request."));
 					}
 				);
@@ -471,6 +681,44 @@ class BinManagerPage {
 		if (on_build) on_build(d);
 		d.show();
 		return d;
+	}
+
+	// "What does one cost?" (TASK-2026-02914): a count up from an empty bin for an item with no cost on
+	// record. ERPNext would refuse the Stock Reconciliation, so the server posted nothing and asked. The
+	// dialog pre-fills its suggestion with where it came from, says the cost is of ONE stock unit, and
+	// counts again with `rate`. The box is not `reqd` (Frappe blanks a required 0 while reading it, see
+	// save_dialog), and logic.check_values refuses a blank, a zero, a negative and a cost above the cap in
+	// words, inside the dialog.
+	cost_dialog(kind, row, given, prompt) {
+		const copy = this.bm.costPromptText(prompt, given.qty, "count in");
+		this.save_dialog({
+			kind,
+			row,
+			title: this.safe(copy.title),
+			primary_label: copy.button,
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "bm_cost_text",
+					options: `<p>${this.esc(copy.lead)}</p><p class="bm-muted">${this.esc(copy.per)}</p><p class="bm-muted">${this.esc(copy.hint)}</p><p class="bm-muted">${this.esc(copy.note)}</p>`,
+				},
+				{ fieldtype: "Float", fieldname: "rate", label: this.safe(copy.label), default: copy.value === "" ? undefined : Number(copy.value) },
+			],
+			// Frappe's Float hands back null for a blank box and leaves it out of `picked`: the key is always
+			// set, so logic.check_values asks for the cost instead of the count going out without one.
+			values: (d, picked) => {
+				const rate = picked && picked.rate !== undefined ? picked.rate : d.get_value("rate");
+				return Object.assign({}, given, { rate: rate === undefined ? null : rate, max_value: prompt.max_value });
+			},
+		});
+	}
+
+	// Frappe blanked every required box holding a 0 while it read the dialog (see save_dialog): put the
+	// zeros back, so a refusal does not also empty the box.
+	restore_zeros(d, picked) {
+		Object.keys(picked || {}).forEach((name) => {
+			if (picked[name] === 0 && d.fields_dict[name]) d.set_value(name, 0);
+		});
 	}
 
 	dialog_message(d, text) {
@@ -525,10 +773,27 @@ class BinManagerPage {
 		const perms = this.perms();
 		let chosen = null;
 		let make_home = this.bm.make_home_after_qty(null, row.on_hand, row.on_hand);
+		// "Make <bin> this item's bin" starts hidden, and Frappe builds a control's input only while the control
+		// is shown (ControlBaseInput.refresh_input: make_input() is inside `if (disp_status != "None")`, and a
+		// hidden df is "None"). So its $input does not exist when the dialog is built, and listening on it then
+		// threw, which stopped the dialog from ever opening: the Move button did nothing (TASK-2026-02919,
+		// Parker's report, on every release since v1.693.0). The listener is attached the first time the box
+		// is shown, once its input exists. A programmatic set_value does not fire a DOM `change`, so only the
+		// person's own tick counts as touching it.
+		let home_bound = false;
+		const bind_home = (d) => {
+			const input = d.fields_dict.make_home.$input;
+			if (home_bound || !input) return;
+			home_bound = true;
+			input.on("change", () => {
+				make_home = this.bm.make_home_touched(input.prop("checked"));
+			});
+		};
 		const sync_home = (d) => {
 			const offered = this.bm.make_home_offered(perms, chosen && chosen.warehouse);
 			d.set_df_property("make_home", "hidden", offered ? 0 : 1);
 			if (!offered) return;
+			bind_home(d);
 			d.set_df_property("make_home", "label", __("Make {0} this item's bin", [this.safe(chosen.warehouse_name)]));
 			if (!!d.get_value("make_home") !== make_home.value) d.set_value("make_home", make_home.value ? 1 : 0);
 		};
@@ -578,9 +843,9 @@ class BinManagerPage {
 					description: __("Ticked when everything here moves. Stock left behind keeps this bin's claim on the item."),
 				},
 			],
-			values: (d) => ({
+			values: (d, picked) => ({
 				to_warehouse: chosen && chosen.warehouse,
-				qty: d.get_value("qty"),
+				qty: picked && picked.qty !== undefined ? picked.qty : d.get_value("qty"),
 				make_home: this.bm.make_home_offered(perms, chosen && chosen.warehouse) && !!d.get_value("make_home"),
 			}),
 			on_build: (d) => {
@@ -602,9 +867,6 @@ class BinManagerPage {
 				d.fields_dict.qty.$input.on("input change", () => {
 					make_home = this.bm.make_home_after_qty(make_home, d.fields_dict.qty.$input.val(), row.on_hand);
 					sync_home(d);
-				});
-				d.fields_dict.make_home.$input.on("change", () => {
-					make_home = this.bm.make_home_touched(d.fields_dict.make_home.$input.prop("checked"));
 				});
 				draw_dest(d);
 				sync_home(d);

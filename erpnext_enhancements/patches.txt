@@ -1446,7 +1446,51 @@ erpnext_enhancements.patches.add_boneyard_warehouse
 # the new Desk page bin-manager (a shortcut beside Stock Scan; the Inventory and Counts cards). Timestamp-bumped too;
 # this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.bin_manager_hub_links
-# Count Desk (v1.700.0): force-import the Operations Hub and the Inventory Enhancements workspace, which now link
+# Planner UX redesign P3 (v1.702.0): creates the Project schedule-state fields from their fixture records (patches run before fixture
+# sync), then sets custom_schedule_status Published on each project with dated, crewed work (10 of 661 on 2026-10-21) and Draft on any
+# blank one. Keyed on the rule, since the column's ALTER writes Draft into every row. Raw UPDATEs; never un-publishes. Cannot raise,
+# safe twice.
+erpnext_enhancements.patches.mark_project_schedule_states
+# Fountain Move jobs (v1.703.0, Nik 2026-10-21): create the Project Template "Fountain Move" (type Service) and its
+# three template Tasks (Confirm move date, 0 h; Move day, 4 h, crew 2, Outdoor; Invoice the move, 0 h) ONLY when no
+# template of that name exists, never touching one that does. One savepoint, all or nothing. Cannot raise.
+erpnext_enhancements.patches.seed_fountain_move_template
+# PRJ-00775 becomes the first move job (v1.703.0, Nik approved 2026-10-21): Custom Field custom_is_fountain_move created
+# from its fixture if missing; project_type -> Service, the box ticked, template -> Fountain Move (db.set_value); its
+# 11 Open, untouched Service-template tasks -> Canceled (none deleted; a started one is kept and logged); the 3 move
+# tasks added undated. Runs after the seed; one savepoint; safe twice; cannot raise.
+erpnext_enhancements.patches.make_prj_00775_a_move_job
+# Planner UX redesign P4 (v1.705.0, Nik 2026-10-21: "publish the 47 active Draft jobs before P4 merges"): every Active
+# customer job (the planner's own rule, crew_availability.planner_job_sql / is_planner_job) whose custom_schedule_status is
+# not Published becomes Published, before P4 drafts their edits. 47 on production on 2026-10-21. One raw UPDATE: no save,
+# no baseline, no published_on; never un-publishes; Completed/Canceled untouched. New projects still start Draft. Cannot
+# raise, safe twice. After mark_project_schedule_states, which creates the column.
+erpnext_enhancements.patches.publish_active_job_schedules
+# Planner UX redesign P9 (v1.715.0): Project Planner Settings gained weekly_summary_email (a Check, default 0 = OFF; D16, Nik
+# 2026-10-21) and weekly_summary_recipients. A default never reaches a Single's existing row, so write a row for each declared
+# default that has none (project_planner_settings.materialize_defaults): never over a stored value, no validate, and a Single
+# never saved is made whole. Switches nothing on. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_weekly_summary_setting
+# Maintenance agreement Service Fee line (v1.724.0): Service Plan Selection prints the per-period fee (the linked
+# maintenance contract's Recurring Amount, else the Annual Fee split) and drops the blank Annual total beside it. Replaces
+# the live body only when it is exactly a shipped body (v1.611.1 on prod, SHA-256); freezes paper-signed copies first and
+# waits while a signing link is out. Resets no terms. Cannot raise, safe twice.
+erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line
+# Reorder Board (v1.730.0, ER-2026-1323810, Nik 2026-10-22): Stock Settings.auto_indent 1 -> 0, so ERPNext's nightly
+# reorder_item job stops raising Material Requests (and its reorder_email_notify email) on its own; buyers request from
+# /desk/reorder-board instead. One set_single_value, only when it is on, only on a Stock Settings that has rows. Existing
+# auto-made requests untouched. Cannot raise, safe twice.
+erpnext_enhancements.patches.disable_auto_material_requests
+# Reorder Board (v1.730.0): Inventory Scanner Settings.reorder_alert_role = "Purchase Manager" where tabSingles has no row
+# for it (a new Single field's default never reaches the existing row). Never over a stored value; a never-saved Single
+# is left alone. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_reorder_alert_role
+# Dock (v1.734.0, Nik 2026-10-23): the site's layer of ERPNext's dock becomes Buying, Stock, Projects, Opportunities
+# (the stock Kanban) and CRM, every other entry, the rows this app now mounts on ERPNext's rail included, named hidden.
+# Overwrites Nik's hand-made layer of that morning once, on purpose (setup/dock_profiles.py keeps a layer a person saved
+# last). After model sync, which imports dock/erpnext_enhancements. Cannot raise, safe twice.
+erpnext_enhancements.patches.set_dock_site_layer
+# Count Desk (v1.736.0): force-import the Operations Hub and the Inventory Enhancements workspace, which now link
 # the new Desk page count-desk (a shortcut beside the Bin Manager and beside Stock Scan; the Inventory and Counts
 # cards). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.count_desk_hub_links

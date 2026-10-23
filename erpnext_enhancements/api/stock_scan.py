@@ -56,8 +56,9 @@ Things this module is careful about, each of which the obvious version gets wron
   Adjustment account.
 * **A receipt carries an explicit rate.** A Material Receipt with no ``basic_rate`` is
   refused at submit with "Valuation Rate Missing" — or, submitted straight from new,
-  silently posts stock at zero value. :func:`_receipt_rate` finds one or the save is
-  refused with a sentence.
+  silently posts stock at zero value. :func:`_receipt_rate` finds one; with none on record
+  :func:`_receipt_cost` answers ``needs_valuation_rate`` (v1.727.0), the page asks what one
+  unit costs and sends the save again with ``rate``, and nothing is posted until it has one.
 * **Taking more than is on hand is refused before a document exists**, in words that
   say what to do (``stock_scan_rules.check_take``). ERPNext would refuse it too, with
   either "Insufficient Stock" or "Valuation Rate Missing" depending on the bin's history.
@@ -298,7 +299,7 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	(ERPNext refuses one in ``validate``, but there is no unique index behind it).
 
 	Capped at ``limit`` for a phone (``truncated`` says so). The Count Desk passes ``limit=None``
-	(v1.700.0): a count sheet that silently stopped at 150 items would leave the rest of
+	(v1.736.0): a count sheet that silently stopped at 150 items would leave the rest of
 	``Stores - SF`` uncounted with nothing on screen to say so.
 	"""
 	items = frappe.db.sql(
@@ -539,9 +540,28 @@ def _plain_description(item):
 	return text[:280] + ("…" if len(text) > 280 else "")
 
 
+def _has_reorder_rule(item_code):
+	"""Whether the item has a reorder rule in ERPNext, which makes it a *stocked item*: the KPI
+	dashboard's own definition (``snapshots.STOCKED_RULE_SQL``), and the store-run reason is read
+	against it. A rule exists when it has a level above 0 or a quantity to buy, ERPNext's own
+	trigger test (``reorder_level or reorder_qty``): a rule that reorders at 0, allowed since
+	v1.728.0, is a rule. Reading the level alone (:func:`_reorder_level`) called that item unstocked
+	until v1.732.0."""
+	row = frappe.db.sql(
+		"""
+		select 1 from `tabItem Reorder`
+		where parent = %(item)s and parenttype = 'Item'
+		and (coalesce(warehouse_reorder_level, 0) > 0 or coalesce(warehouse_reorder_qty, 0) > 0)
+		limit 1
+		""",
+		{"item": item_code},
+	)
+	return bool(row)
+
+
 def _reorder_level(item_code):
-	"""The item's highest reorder level in ERPNext: above 0 makes it a *stocked item*, the KPI
-	dashboard's own definition, and the store-run reason is read against it."""
+	"""The item's highest reorder level in ERPNext, for the card and the log line to show. It is
+	not the test for a stocked item (a rule at 0 has level 0): that is :func:`_has_reorder_rule`."""
 	row = frappe.db.sql(
 		"""
 		select max(coalesce(warehouse_reorder_level, 0)) from `tabItem Reorder`
@@ -573,6 +593,8 @@ def _item_payload(item_code, location=None):
 		"is_stock_item": cint(item.is_stock_item),
 		"store_run_ok": store_run_refusal is None,
 		"reorder_level": _reorder_level(item.name),
+		# Whether it is a stocked item (v1.732.0): a rule at level 0 has "reorder_level" 0 and is one.
+		"has_reorder_rule": cint(_has_reorder_rule(item.name)),
 		"warehouse": None,
 		"warehouse_name": None,
 		"on_hand": None,
@@ -691,6 +713,132 @@ def _receipt_rate(item_code, warehouse, company):
 		frappe.db.get_value("Item", item_code, ["last_purchase_rate", "valuation_rate"], as_dict=True) or {}
 	)
 	return flt(item.get("last_purchase_rate")) or flt(item.get("valuation_rate"))
+
+
+def _suggested_unit_cost(item_code, company):
+	"""``(rate, source)``: a cost to offer a person who must type one, with where it came from; or
+	``(None, None)``. Per **stock unit**, in the company's currency, never a selling price.
+
+	In this order: the item's latest submitted purchase (Purchase Receipt, Purchase Invoice or
+	Purchase Order line, whichever is newest, ``base_net_rate`` / ``conversion_factor``); then the
+	default buying price list's Item Price in the company's currency, valid today, converted to the
+	stock unit through the item's UOM conversion. (The Item's Valuation Rate was tried by
+	:func:`_receipt_rate` already, and ``standard_rate`` is a *selling* rate, which would overstate
+	a cost: it is not offered.) A suggestion is only a pre-fill: the person confirms it, and the
+	server checks what they send as it checks any typed cost.
+
+	**Only what the caller may read.** These are raw reads, so each source is used only when the
+	caller has read permission on its doctype (a Stock User has no Purchase Invoice and no Item Price
+	read on this site), and the document the suggestion names must be readable too: a rate and a
+	document number the person could not open are not shown to them.
+	"""
+	sources = [
+		(
+			"Purchase Receipt",
+			"""select i.base_net_rate / nullif(i.conversion_factor, 0) as rate,
+				'Purchase Receipt' as doctype, p.name, p.posting_date as on_date
+			from `tabPurchase Receipt Item` i inner join `tabPurchase Receipt` p on p.name = i.parent
+			where i.item_code = %(item)s and p.docstatus = 1 and p.company = %(company)s""",
+		),
+		(
+			"Purchase Invoice",
+			"""select i.base_net_rate / nullif(i.conversion_factor, 0),
+				'Purchase Invoice', p.name, p.posting_date
+			from `tabPurchase Invoice Item` i inner join `tabPurchase Invoice` p on p.name = i.parent
+			where i.item_code = %(item)s and p.docstatus = 1 and p.company = %(company)s""",
+		),
+		(
+			"Purchase Order",
+			"""select i.base_net_rate / nullif(i.conversion_factor, 0),
+				'Purchase Order', p.name, p.transaction_date
+			from `tabPurchase Order Item` i inner join `tabPurchase Order` p on p.name = i.parent
+			where i.item_code = %(item)s and p.docstatus = 1 and p.company = %(company)s""",
+		),
+	]
+	allowed = [sql for doctype, sql in sources if frappe.has_permission(doctype, "read")]
+	if allowed:
+		rows = frappe.db.sql(
+			"select rate, doctype, name, on_date from ("
+			+ " union all ".join(allowed)
+			+ ") purchases where rate > 0 order by on_date desc limit 5",
+			{"item": item_code, "company": company},
+			as_dict=True,
+		)
+		for found in rows or []:
+			if flt(found.rate) > 0 and frappe.has_permission(found.doctype, "read", doc=found.name):
+				return flt(found.rate), _("the last purchase of it: {0} {1}, {2}").format(
+					_(found.doctype), found.name, frappe.utils.formatdate(found.on_date)
+				)
+	price_list = frappe.db.get_single_value("Buying Settings", "buying_price_list")
+	if price_list and frappe.has_permission("Item Price", "read"):
+		currency = frappe.get_cached_value("Company", company, "default_currency")
+		stock_uom = frappe.db.get_value("Item", item_code, "stock_uom")
+		prices = frappe.db.sql(
+			"""
+			select ip.price_list_rate / case
+					when ifnull(ip.uom, '') in ('', %(uom)s) then 1
+					else nullif(ucd.conversion_factor, 0)
+				end as rate
+			from `tabItem Price` ip
+			left join `tabUOM Conversion Detail` ucd
+				on ucd.parent = ip.item_code and ucd.parenttype = 'Item' and ucd.uom = ip.uom
+			where ip.item_code = %(item)s and ip.price_list = %(list)s and ip.buying = 1
+				and ifnull(ip.currency, '') in ('', %(currency)s)
+				and (ip.valid_from is null or ip.valid_from <= curdate())
+				and (ip.valid_upto is null or ip.valid_upto >= curdate())
+			order by ip.valid_from desc, ip.modified desc
+			limit 5
+			""",
+			{"item": item_code, "list": price_list, "currency": currency, "uom": stock_uom},
+		)
+		for price in prices or []:
+			if flt(price[0]) > 0:
+				return flt(price[0]), _("the {0} price list").format(price_list)
+	return None, None
+
+
+def _receipt_cost(item, location, entered, qty):
+	"""``(rate, prompt, typed)`` for stock that is being added to ``location`` at a cost.
+
+	``typed`` is True when the rate is the ``entered`` one (no cost was on record), which the caller
+	writes down; it is False for a cost on record and for a prompt.
+
+	A cost already on record wins, and an ``entered`` one is then ignored: this never lets a screen
+	restate what an item with a history costs. With none on record, a valid ``entered`` cost is
+	used for this one posting (the Item and the price lists are not touched). With neither, the
+	answer is ``(0, prompt)``: a payload for the page (``needs_valuation_rate``) to ask for a unit
+	cost with, where ERPNext would refuse the posting ("Valuation Rate Missing"). A cost that is
+	given but not allowed (zero, negative, above ``MAX_UNIT_COST``, not a number) is refused in a
+	sentence, so a typo is never answered with the prompt again as though nothing had been sent.
+	"""
+	rate = _receipt_rate(item.name, location.name, location.company)
+	if rate > 0:
+		return rate, None, False
+	typed, problem = rules.check_unit_cost(entered, item.stock_uom)
+	if problem:
+		frappe.throw(problem)
+	if typed:
+		# What a person can SAY an unpriced item is worth is capped in total as well as per unit.
+		problem = rules.check_receipt_value(qty, typed, item.stock_uom)
+		if problem:
+			frappe.throw(problem)
+		return typed, None, True
+	suggestion, source = _suggested_unit_cost(item.name, location.company)
+	return (
+		0.0,
+		{
+			"needs_valuation_rate": True,
+			"item_code": item.name,
+			"item_name": item.item_name or item.name,
+			"uom": item.stock_uom,
+			"suggestion": suggestion,
+			"source": source,
+			"qty": qty,
+			"max_rate": rules.MAX_UNIT_COST,
+			"max_value": rules.MAX_ADD_VALUE,
+		},
+		False,
+	)
 
 
 def _project(project, company, required=False):
@@ -861,6 +1009,7 @@ def add(
 	without_po=0,
 	project=None,
 	scanned_code=None,
+	rate=None,
 ):
 	"""Add stock to a location: received against an open order line, or added without one.
 
@@ -869,6 +1018,16 @@ def add(
 	a Material Receipt at the item's current cost and flags the log for review. With
 	neither, nothing is posted: the page must say which, because receiving stock that is on
 	an order *without* the order double-counts it the day the order's own receipt arrives.
+
+	**An item with no cost on record** (TASK-2026-02914): ERPNext would refuse the receipt ("Valuation
+	Rate Missing"), so nothing is posted and the answer is not a save but a payload,
+	``{needs_valuation_rate: True, item_code, item_name, uom, qty, suggestion, source, max_rate, max_value}``, and
+	the page asks for the unit cost and sends the same save again with ``rate``. The permission to
+	post the Stock Entry is checked *before* that payload, so a person who could not post it is not
+	asked for a price. ``rate`` is the cost per stock unit for this one receipt, positive and at most
+	``MAX_UNIT_COST``; it is ignored when the item has a cost on record, and the Item and the price
+	lists are never changed by it. It is written to the Stock Entry's remarks and the log row's
+	``rate``, and the log stays flagged for a stock manager's review.
 
 	Receiving on an order line is the one save here that takes a **non-stock** item: it is
 	checked with the store-run rule (``_store_run_item``), because the store-run sheet's
@@ -932,26 +1091,30 @@ def add(
 	# not reduced by a receipt; that figure is hidden on this site's Project form and read by
 	# nothing here, and the ledger by project is right.
 	offset_setting = settings.get("take_expense_account") if project else settings.get("add_offset_account")
-	rate = _receipt_rate(item.name, location.name, location.company)
-	if rate <= 0:
-		frappe.throw(
-			_(
-				"There is no cost on record for {0}, so it cannot be added without a purchase order. Receive it on its purchase order, or ask a Stock Manager to set its Valuation Rate."
-			).format(item.item_name or item.name)
-		)
 	_require("Stock Entry", "create", "submit")
+	rate, prompt, typed_cost = _receipt_cost(item, location, rate, qty)
+	if prompt:
+		return prompt
 
+	remarks = rules.remark(
+		rules.ACTION_ADD_WITHOUT_PO, who, location.name, qty, item.stock_uom, project=project
+	)
+	if typed_cost:
+		remarks += " " + _("No cost was on record: {0} entered a unit cost of {1} per {2}.").format(
+			who, flt(rate, 4), item.stock_uom
+		)
 	log = _begin_log(
-		ref, rules.ACTION_ADD_WITHOUT_PO, item, qty, location, scanned_code, project=project, needs_review=1
-	)
-	se = _stock_entry(
-		"Material Receipt",
-		location.company,
+		ref,
+		rules.ACTION_ADD_WITHOUT_PO,
+		item,
+		qty,
+		location,
+		scanned_code,
 		project=project,
-		remarks=rules.remark(
-			rules.ACTION_ADD_WITHOUT_PO, who, location.name, qty, item.stock_uom, project=project
-		),
+		needs_review=1,
+		rate=rate if typed_cost else None,
 	)
+	se = _stock_entry("Material Receipt", location.company, project=project, remarks=remarks)
 	se.append(
 		"items",
 		{

@@ -12,6 +12,7 @@ in its own module: ``erpnext_enhancements.quickbooks_time.api``.
 # Re-export the QuickBooks Online whitelisted endpoints so they remain callable
 # at the ...quickbooks_online.api.* path used by JS/hooks/Intuit webhook.
 from erpnext_enhancements.quickbooks_online.core.api import (
+	apply_matching_import,
 	confirm_match,
 	confirm_matches,
 	decide_match,
@@ -20,15 +21,18 @@ from erpnext_enhancements.quickbooks_online.core.api import (
 	disconnect_callback,
 	get_dashboard_status,
 	get_match_queue,
+	get_matching_export_status,
 	get_parked_transactions,
 	import_all,
 	link_existing_record,
 	oauth_callback,
 	preview_existing_matches,
+	preview_matching_import,
 	preview_resync,
 	quickbooks_webhook,
 	retry_failed,
 	run_resync,
+	start_matching_export,
 	start_oauth,
 	sync_entity,
 )

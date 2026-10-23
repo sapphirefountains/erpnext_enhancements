@@ -141,7 +141,7 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-/* ---- The toolbar (v1.687.0): the filter, alert chips, four menus, the phone's one button ----- */
+/* ---- The toolbar (v1.687.0): the filter, alert chips, + Add and More, the phone's one button ----- */
 
 .mp-tb-filters,
 .mp-tb-tools,
@@ -287,17 +287,6 @@
 .mp-tb-overdue-sub {
 	font-size: 12px;
 	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
-}
-
-/* A visit kind's swatch in the Display menu's key: the same edge as the card it names (the card
- * rules below list it too). */
-.mp-swatch {
-	display: inline-block;
-	width: 16px;
-	height: 11px;
-	border-radius: var(--sf-radius-none);
-	border: var(--sf-border-hairline) solid var(--sf-field-border);
-	border-left: 4px solid var(--sf-chip-edge-service);
 }
 
 .mp-section {
@@ -881,31 +870,26 @@
 	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
-/* What kind of visit a card is, by its left edge (and the toolbar legend's swatch for it). */
-.mp-card.mp-seasonal,
-.mp-swatch.mp-seasonal {
+/* What kind of visit a card is, by its left edge. */
+.mp-card.mp-seasonal {
 	border-left-color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
-.mp-card.mp-extra,
-.mp-swatch.mp-extra {
+.mp-card.mp-extra {
 	border-left-color: var(--sf-violet);
 }
 
-.mp-card.mp-pending,
-.mp-swatch.mp-pending {
+.mp-card.mp-pending {
 	border-left-color: var(--sf-warn);
 	background: color-mix(in srgb, var(--sf-warn) 14%, var(--sf-surface));
 }
 
-.mp-card.mp-done,
-.mp-swatch.mp-done {
+.mp-card.mp-done {
 	border-left-color: var(--sf-good);
 	background: color-mix(in srgb, var(--sf-good) 8%, var(--sf-surface));
 }
 
-.mp-card.mp-projected,
-.mp-swatch.mp-projected {
+.mp-card.mp-projected {
 	border-style: dashed;
 	border-left: 4px dashed var(--sf-text-muted);
 	background: transparent;
@@ -924,8 +908,7 @@
 	border-left-color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
-.mp-card.mp-overdue,
-.mp-swatch.mp-overdue {
+.mp-card.mp-overdue {
 	border-left-color: var(--sf-danger);
 }
 
@@ -939,21 +922,31 @@
 	background: color-mix(in srgb, var(--sf-pillar-build) 7%, var(--sf-surface));
 }
 
-.mp-card.mp-booking.mp-bk-task,
-.mp-swatch.mp-bk-task {
+.mp-card.mp-booking.mp-bk-task {
 	border-left-color: var(--sf-chip-edge-build);
 }
 
-.mp-card.mp-booking.mp-bk-rental,
-.mp-swatch.mp-bk-rental {
+.mp-card.mp-booking.mp-bk-rental {
 	border-left-color: var(--sf-chip-edge-rent);
 	background: color-mix(in srgb, var(--sf-pillar-rent) 10%, var(--sf-surface));
 }
 
-.mp-card.mp-booking.mp-bk-travel,
-.mp-swatch.mp-bk-travel {
+.mp-card.mp-booking.mp-bk-travel {
 	border-left-color: var(--sf-chip-edge-neutral);
 	background: color-mix(in srgb, var(--sf-chip-edge-neutral) 8%, var(--sf-surface));
+}
+
+/* A Fountain Move task (MPFM): moved here like a visit, so a solid card, on the Service pillar's tint
+   with the Rent pillar's edge, which no visit uses. */
+.mp-card.mp-move {
+	border-left-color: var(--sf-chip-edge-rent);
+	background: color-mix(in srgb, var(--sf-pillar-service) 8%, var(--sf-surface));
+}
+
+.mp-chip.mp-move-chip {
+	background: color-mix(in srgb, var(--sf-pillar-rent) 18%, var(--sf-surface));
+	color: var(--sf-text);
+	font-weight: 600;
 }
 
 /* The picked technician's free hours in a day's head: the load's status as text. */
@@ -1878,6 +1871,11 @@ body.mp-drag-active * {
 	.mp-p6c-views-row .btn {
 		min-height: var(--sf-touch-min);
 	}
+
+	/* P10: the busy strip is thin on purpose; a finger gets 32px of it. */
+	.mp-busy {
+		min-height: 32px;
+	}
 }
 
 @media (max-width: 767px) {
@@ -1935,30 +1933,6 @@ body.mp-drag-active * {
 /* ======================================================================================== */
 /* Phase 6E: Move by calendar or working days (MP6E_STYLE).                                 */
 /* ======================================================================================== */
-
-.mp-p6e-switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.mp-p6e-switch-label {
-	font-size: 12px;
-	color: var(--sf-text-muted);
-}
-
-.mp-p6e-opt {
-	border-color: var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-}
-
-/* The unit in use: the primary fill and the weight (it was violet). */
-.mp-p6e-opt.mp-p6e-on {
-	background: var(--sf-primary);
-	border-color: var(--sf-primary);
-	color: var(--sf-on-primary);
-	font-weight: var(--sf-weight-bold);
-}
 
 .mp-p6e-note {
 	font-size: 12px;
@@ -2031,9 +2005,172 @@ body.mp-drag-active * {
 	font-size: 11px;
 }
 
+/* ======================================================================================== */
+/* P10: the busy strip, Resources available as one line, My day (MP10).                     */
+/* ======================================================================================== */
+
+/* Project work (project, rental and travel bookings) as ONE thin grey strip on a technician-day,
+ * instead of a card each (D13). Read-only: the edge is the neutral chip edge and the ground a grey
+ * tint, so it recedes behind the visits. A click opens that person's week. Pencilled hours are dashed
+ * and hatched like a pencilled card. */
+.mp-busy {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	min-height: 16px;
+	padding: 0 6px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 3px solid var(--sf-chip-edge-neutral);
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-text-muted) 12%, var(--sf-surface));
+	color: var(--sf-text);
+	font-size: 11px;
+	line-height: 16px;
+	cursor: pointer;
+}
+
+.mp-busy:hover {
+	background: color-mix(in srgb, var(--sf-focus) 8%, var(--sf-surface));
+}
+
+.mp-busy:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.mp-busy.mp-busy-pencil {
+	border-top-style: dashed;
+	border-right-style: dashed;
+	border-bottom-style: dashed;
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 16%, transparent) 6px 8px
+	);
+}
+
+.mp-busy-name {
+	flex: 0 0 auto;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.mp-busy-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The "?" help's sample strip. */
+.mp-busy.mp-p10-sample {
+	display: inline-flex;
+	width: 110px;
+	cursor: default;
+}
+
+/* Resources available, closed: one line in the section's heading, a stretch a technician. It grows to
+ * fill the heading and wraps to a second row only when the technicians do not fit side by side (a
+ * stretch is never cut in half, and the title holds all of it); the names are the table's own chips,
+ * so a drag and a click on one work as they do there. */
+.mp-res-sum {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px 14px;
+	text-transform: none;
+	letter-spacing: 0;
+	font-weight: 400;
+	font-size: 12px;
+	color: var(--sf-text);
+}
+
+/* The heading keeps its words on one line; the summary beside it is what gives way. */
+.mp-res-title {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.mp-res-sum-lead {
+	flex: 0 0 auto;
+	color: var(--sf-text-muted);
+}
+
+/* A technician's stretch sits whole on a row while it fits (the row wraps before it shrinks one), and
+ * wraps inside itself only when it is wider than the row alone, as on a 375px phone: it never pushes the
+ * page sideways. */
+.mp-res-sum-item {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 100%;
+	gap: 2px;
+}
+
+.mp-res-sum-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.mp-res-sum .mp-person {
+	position: static;
+	z-index: auto;
+	display: inline-flex;
+	padding: 0 4px;
+	background: transparent;
+}
+
+.mp-res-sum .mp-person-group {
+	display: none;
+}
+
+.mp-res-sum-danger .mp-res-sum-text {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+/* My day, in the bar for a technician: bold, so it is the way into their own screen. */
+.mp-tb-myday {
+	font-weight: var(--sf-weight-bold);
+}
+
+@media (max-width: 767px) {
+	/* The heading wraps on a phone, and the month's narrow cell keeps the hours and loses the name (the
+	 * title has both). */
+	.mp-res .mp-section-head {
+		flex-wrap: wrap;
+	}
+
+	.mp-month .mp-busy-name {
+		display: none;
+	}
+}
+
 /* Nothing blinks for someone who asked for less motion. */
 @media (prefers-reduced-motion: reduce) {
 	.mp-card.mp-p6b-flash {
 		animation: none;
 	}
+}
+
+/* Simple mode (the MPS block; docs/planner-simple-mode.md). While it shows, the planner's own chrome is
+ * hidden and the kit draws the screen (planner_kit.bundle.css, .pk-simple-*). A class, so the next screen
+ * shows exactly what it showed before. */
+.mp-wrap.mp-simple-on > :not(.mp-simple) {
+	display: none !important;
+}
+
+.mp-simple {
+	max-width: 1100px;
+	padding-bottom: 24px;
+}
+
+.mp-simple-note {
+	padding: 12px 0;
+	color: var(--sf-text-muted);
 }

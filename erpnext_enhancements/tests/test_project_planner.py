@@ -1598,7 +1598,8 @@ class TestGetPlanner(unittest.TestCase):
 				}
 			],
 		):
-			data = api.get_planner("2026-10-12", "2026-10-18")
+			# all_tasks: T-NOBODY has no crew and no phase, which the display rule (TestDisplayRule) hides by default.
+			data = api.get_planner("2026-10-12", "2026-10-18", all_tasks=1)
 
 		self.assertEqual([card["name"] for card in data["tasks"]], ["T-SHORT", "T-NOBODY"])
 		short = data["tasks"][0]
@@ -1616,7 +1617,19 @@ class TestGetPlanner(unittest.TestCase):
 				("visit", "SMR-1", "2026-10-12", "RES-1"),
 			],
 		)
-		self.assertEqual(data["projects"], [{"name": "PRJ-1", "title": "Vegas", "pm": "Nik Bradshaw"}])
+		# P3: with the schedule columns present, each project says whether its schedule is published
+		# (this row has no value stored, which reads Draft).
+		self.assertEqual(
+			data["projects"],
+			[
+				{
+					"name": "PRJ-1",
+					"title": "Vegas",
+					"pm": "Nik Bradshaw",
+					"schedule": {"status": "Draft", "published_on": None, "baseline_set_on": None},
+				}
+			],
+		)
 		self.assertEqual(data["settings"], {"default_day_hours": 8.0, "maintenance_visit_hours": 2.0})
 		self.assertTrue(data["can_edit"])
 		self.assertEqual(
@@ -1634,12 +1647,169 @@ class TestGetPlanner(unittest.TestCase):
 				"projects",
 				"settings",
 				"can_edit",
+				# P2 (the display rule)
+				"all_tasks",
+				"hidden_tasks",
 				# Phase 6D (api/planner_blocks.payload_extras)
 				"day_notes",
 				"block_notes",
 				"can_schedule",
 			},
 		)
+
+
+# ---------------------------------------------------------------------- the display rule (P2)
+
+
+def _task_tree(*rows):
+	"""``frappe.tables["Task"]`` for the ancestor reads: ``(name, subject, parent_task)`` triples."""
+	table = [{"name": n, "subject": subject, "parent_task": parent} for n, subject, parent in rows]
+
+	def read(filters):
+		wanted = set((filters or {}).get("name", ["in", []])[1])
+		return [row for row in table if row["name"] in wanted]
+
+	return read
+
+
+class TestDisplayRule(unittest.TestCase):
+	"""D6 (planner UX redesign, P2): the schedule shows phase and crew work only; ``all_tasks=1`` is
+	the whole set. Display only: the engine's answer is untouched."""
+
+	def setUp(self):
+		_reset()
+		self.austin = _person("RES-1", user="austin@example.com", employee="EMP-1")
+
+	def read(self, **kwargs):
+		tasks = [
+			_task("T-PHASED", start=MON),
+			_task("T-DEEP", start=MON),
+			_task("T-CREWED", start=MON),
+			_task("T-ASSIGNED", start=TUE),
+			_task("T-STRANGER", start=TUE),
+			_task("T-ADMIN", start=MON),
+			_task("T-LOOP-A", start=MON),
+			_task("T-RENTAL", start=WED, custom_rental_booking="RB-1", custom_rental_task_kind="Setup"),
+		]
+		frappe.sql_rows["INNER JOIN `tabProject` p"] = [
+			_task("U-ADMIN", start=None),
+			_task("U-PHASED", start=None),
+			_task("U-CREWED", start=None),
+		]
+		# PRJ-1: Phase 300 > Stage 2 > a deep task; Billing is an admin group with its leaf under it.
+		frappe.tables["Task"] = _task_tree(
+			("PH-300", "Phase 300 - Rough-in", None),
+			("STAGE-2", "Stage 2", "PH-300"),
+			("BILLING", "Billing", None),
+			("T-PHASED", "Dig", "PH-300"),
+			("T-DEEP", "Trench", "STAGE-2"),
+			("T-ADMIN", "Add to Accounting", "BILLING"),
+			("T-LOOP-A", "Loop A", "T-LOOP-B"),
+			("T-LOOP-B", "Loop B", "T-LOOP-A"),
+			("U-PHASED", "Order stone", "PH-300"),
+		)
+		with _Readers(
+			[self.austin],
+			tasks=tasks,
+			crew_rows={"T-CREWED": [{"resource": "RES-1"}], "U-CREWED": [{"resource": "RES-1"}]},
+			todos={"T-ASSIGNED": ["austin@example.com"], "T-STRANGER": ["office@example.com"]},
+		):
+			return api.get_planner("2026-10-12", "2026-10-18", **kwargs)
+
+	def names(self, data):
+		return (
+			sorted(card["name"] for card in data["tasks"]),
+			sorted(card["name"] for card in data["unscheduled"]),
+		)
+
+	def test_the_default_is_phase_and_crew_work(self):
+		data = self.read()
+		self.assertEqual(
+			self.names(data),
+			(["T-ASSIGNED", "T-CREWED", "T-DEEP", "T-PHASED"], ["U-CREWED", "U-PHASED"]),
+		)
+		# Hidden: the admin leaf, an assignee who is not a Planner Resource, a loop in bad data, and the
+		# undated admin task. A rental crew task is no template task and is never counted or hidden.
+		self.assertEqual((data["all_tasks"], data["hidden_tasks"]), (False, 4))
+		self.assertEqual(data["needs_crew"], ["T-PHASED", "T-DEEP"])
+		self.assertIn(("rental", "T-RENTAL"), {(f["kind"], f["ref"]) for f in data["foreign"]})
+
+	def test_all_tasks_is_the_whole_set(self):
+		data = self.read(all_tasks=1)
+		self.assertEqual(
+			self.names(data),
+			(
+				["T-ADMIN", "T-ASSIGNED", "T-CREWED", "T-DEEP", "T-LOOP-A", "T-PHASED", "T-STRANGER"],
+				["U-ADMIN", "U-CREWED", "U-PHASED"],
+			),
+		)
+		self.assertEqual((data["all_tasks"], data["hidden_tasks"]), (True, 0))
+		# Whatever a form encodes: "1" and "true"-ish switch it on, a cleared field or "0" leave it off.
+		self.assertEqual(self.names(self.read(all_tasks="1")), self.names(data))
+		for off in (0, "0", "", "null", None):
+			self.assertEqual(self.read(all_tasks=off)["hidden_tasks"], 4, repr(off))
+
+	def test_it_is_display_only(self):
+		hidden, whole = self.read(), self.read(all_tasks=1)
+		self.assertEqual(hidden["days"], whole["days"])
+		self.assertEqual(hidden["resources"], whole["resources"])
+		# The Project filter still lists a project whose open tasks are all hidden (a remembered project
+		# must not reset because of the rule).
+		self.assertEqual([p["name"] for p in hidden["projects"]], [p["name"] for p in whole["projects"]])
+		frappe.sql_rows["FROM `tabProject` p"] = [{"name": "PRJ-1", "title": "Vegas", "pm": "Nik Bradshaw"}]
+		with _Readers([self.austin], tasks=[_task("T-ADMIN", start=MON)]):
+			only_admin = api.get_planner("2026-10-12", "2026-10-18")
+		self.assertEqual(only_admin["tasks"], [])
+		self.assertEqual([p["name"] for p in only_admin["projects"]], ["PRJ-1"])
+
+	def test_a_fountain_move_task_is_filtered_like_any_other_and_stays_read_only(self):
+		# Fountain Move (v1.703.0) marks a move project's cards read-only on the Project Planner; its tasks
+		# are subject to the display rule the same as a project's other tasks.
+		with mock.patch.object(api.fountain_move_jobs, "move_projects", lambda names: {"PRJ-1"}):
+			self.assertNotIn("T-ADMIN", self.names(self.read())[0])
+			cards = {card["name"]: card for card in self.read(all_tasks=1)["tasks"]}
+		self.assertEqual((cards["T-ADMIN"]["movable"], cards["T-ADMIN"]["fountain_move"]), (False, True))
+		self.assertFalse(cards["T-PHASED"]["movable"])
+
+	def test_a_drafted_task_is_never_hidden(self):
+		data = {
+			"tasks": [_task("NEW-1", start=MON), _task("T-ADMIN", start=MON)],
+			"crews": {},
+			"user_to_resource": {},
+		}
+		self.assertEqual(api._hidden_by_display_rule(data, [], {}, {}), {"NEW-1", "T-ADMIN"})
+		self.assertEqual(api._hidden_by_display_rule(data, [], {}, {}, drafted={"NEW-1"}), {"T-ADMIN"})
+
+	def test_tasks_under_a_phase(self):
+		frappe.tables["Task"] = _task_tree(
+			("P1", "Phase 100", None),
+			("P3", "300 Rough-in", None),
+			("P0", "Phase 3 - not a phase", None),
+			("PX", "Phase 1000", None),
+			("G", "Stage 1", "P1"),
+			("A", "a", "G"),
+			("B", "b", "P3"),
+			("C", "c", "P0"),
+			("D", "d", "PX"),
+			("E", "e", None),
+		)
+		self.assertEqual(engine.tasks_under_a_phase(["A", "B", "C", "D", "E", "MISSING", "", None]), {"A", "B"})
+		self.assertEqual(engine.tasks_under_a_phase([]), set())
+		# One read per level for the whole set, not one per task.
+		frappe.queries.clear()
+		engine.tasks_under_a_phase(["A", "B", "C", "D", "E"])
+		self.assertLessEqual(sum(1 for q in frappe.queries if q[0] == "Task"), 3)
+
+	def test_a_loop_in_the_tree_ends(self):
+		frappe.tables["Task"] = _task_tree(("X", "x", "Y"), ("Y", "y", "X"))
+		self.assertEqual(engine.tasks_under_a_phase(["X"]), set())
+
+	def test_wiring(self):
+		tree = ast.parse((Path(__file__).resolve().parents[1] / "api/project_planner.py").read_text(encoding="utf-8"))
+		fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_planner")
+		# P5 added google (the Lookahead reads with Google off); unset, it is on, as before.
+		self.assertEqual([a.arg for a in fn.args.args], ["start", "end", "draft", "all_tasks", "google"])
+		self.assertEqual([ast.literal_eval(d) for d in fn.args.defaults], [0, 0, 1])
 
 
 # ---------------------------------------------------------------------- routes (Phase 2)
@@ -2458,8 +2628,9 @@ class TestDependencyWrites(_Phase3AWrites):
 		self.assertEqual(sorted(s["task"] for s in result["skipped"]), ["TASK-4", "TASK-5"])
 		self.assertEqual(len(frappe.comments), 2)
 		self.assertIn("Reason: Pump is late", frappe.comments[0][1])
-		for name in ("TASK-1", "TASK-2", "TASK-3"):
-			self.assertIn(("check_permission", "write", name), frappe.calls)
+		self.assertIn(("check_permission", "write", "TASK-1"), frappe.calls)
+		# P4: each successor's write permission is asked once (frappe.has_permission), and one the
+		# caller cannot change is named and left (test_shift_successors_can_be_limited_...).
 
 	def test_shift_successors_can_be_limited_and_refuses_nonsense(self):
 		self._chain()
@@ -2470,11 +2641,17 @@ class TestDependencyWrites(_Phase3AWrites):
 			api.shift_successors("TASK-1", 0, MODIFIED)
 		with self.assertRaises(_Throw):
 			api.shift_successors("TASK-1", 1, "2026-01-01 00:00:00")  # stale
-		frappe.denied = {"TASK-2"}
+		# P4: a successor the caller cannot change stays where it is and is named, rather than failing
+		# the whole shift; the ones that wait on the root only through it stay too.
 		frappe.saved.clear()
-		with self.assertRaises(_PermissionError):
-			api.shift_successors("TASK-1", 1, MODIFIED)
-		self.assertEqual(frappe.saved, [])  # checked before anything is written
+		frappe.has_permission = lambda doctype, ptype=None, doc=None, **k: doc != "TASK-2"
+		result = api.shift_successors("TASK-1", 1, MODIFIED)
+		self.assertEqual(result["moved"], [])
+		self.assertEqual(
+			[(s["task"], s["reason"]) for s in result["skipped"] if s["task"] == "TASK-2"],
+			[("TASK-2", "You cannot change it.")],
+		)
+		self.assertEqual(frappe.saved, [])
 
 
 class TestBulkUpdate(_Phase3AWrites):
@@ -2893,9 +3070,15 @@ class TestWiring(unittest.TestCase):
 		# tests/test_planner_phase5.py.
 		phase5_writes = ("set_task_flags", "preview_customer_confirmation")
 		phase5_reads = ("who_is_free",)
+		# P3 of the Planner UX redesign (per-project publish and baseline) is pinned in
+		# tests/test_planner_publish_baseline.py.
+		p3_writes = ("publish_project_schedule", "reset_baseline")
+		# P8 (the phone's Today) is pinned in tests/test_planner_today.py.
+		p8_reads = ("get_today",)
 		writes = (
 			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes,
 			*phase5_writes,
+			*p3_writes,
 		)
 		# Phase 4 (tracking) reads are pinned in tests/test_planner_phase4.py.
 		phase4_reads = ("get_actuals", "get_labor_forecast", "get_equipment")
@@ -2903,6 +3086,7 @@ class TestWiring(unittest.TestCase):
 			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads,
 			*phase4_reads,
 			*phase5_reads,
+			*p8_reads,
 		)
 		self.assertEqual(set(endpoints), set(writes) | set(reads))
 		for name in writes:

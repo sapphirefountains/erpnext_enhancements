@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.700.0] - 2026-10-20
+## [1.736.0] - 2026-10-23
 
 ### Added
 - **The Count Desk: inventory counts and audits on a laptop** (`/desk/count-desk`; Nik, 2026-10-20: "the
@@ -109,6 +109,2528 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `finalize_session` still sends every counted row, so a perfect phone count still fails there. The Count
   Desk can post that count instead: it sends only the rows that changed, and finalizes with no reconciliation
   when nothing did.
+
+## [1.735.0] - 2026-10-23
+
+CRM now opens on the Opportunity Kanban, and the Buying sidebar lists Purchase Order and Material
+Request first. These are the two sidebar changes the dock usage audit in [1.734.0] recommended and left
+out of that release. The audit covered 90 days of Route History:
+- The Opportunity Kanban had 836 visits from six people. The CRM dashboard that CRM opened on had 189.
+- The Purchase Order list had 916 visits, 878 of them Parker's. The Material Request list had 133
+  from four people.
+
+### Changed
+- **CRM opens on the Opportunity Kanban.** frappe 16.50 opens a module on the first sidebar row that
+  leads anywhere (`sidebar.module_landing_route`). There is no separate landing setting. So the
+  Kanban becomes the CRM sidebar's first row.
+  - It is a URL row to `/desk/opportunity/view/kanban/Opportunity`, the same address as the dock's
+    Opportunities entry. A Sidebar Item can't name a list view, so a URL row is the only way to
+    reach the Kanban.
+  - The desk adds the CRM shell to the address, so the row is highlighted while the board is open.
+  - The dock's CRM entry opens the module's landing page, so it opens the Kanban too.
+  - The CRM dashboard is still one click away, as the second row.
+- **CRM's "Home" row is now "Dashboard".** It links the CRM dashboard, and CRM no longer opens on it.
+  Buying already labels its own dashboard row "Dashboard".
+- **Buying lists Purchase Order and Material Request first**, right under Home. Everything else keeps
+  its order.
+  - Before, ERPNext put Dashboard and Supplier above both. Purchase Order also sat below Request for
+    Quotation and Supplier Quotation.
+  - Home stays first, so Buying still opens on its workspace (203 visits from six people). Only CRM
+    was asked to open somewhere new.
+  - The Buying workspace page has no shortcuts on prod, so the sidebar is where these links live.
+
+### Added
+- **`arrange_core_sidebar_items`** (`setup/workspace_tweaks.py`), a new `after_migrate` hook that
+  runs after `add_core_sidebar_items`. It does the Buying reorder and the CRM relabel.
+  - It writes ERPNext's own rows with `db.set_value`, for the reasons the existing hooks give. A
+    `Custom Sidebar` layer that names no base row is appended at the very end. One that names a base
+    row is read as an arrangement and reorders the module. `Sidebar.validate_app_content` refuses a
+    save outside a migrate.
+  - It renumbers `idx` 1..n, and writes only where a value differs. So a second migrate writes
+    nothing.
+  - After an ERPNext re-import brings back ERPNext's order and labels, it runs in the same migrate
+    and puts ours back.
+  - A label someone else set is left alone. A site's own arrangement still wins, as before.
+- **`add_core_sidebar_items` can place a row at the top** (`after: None`) and can add URL rows.
+  - A row's identity is now what it opens: `link_to`, or `url` for a URL row. This matches frappe's
+    `sidebar.item_key`. Keyed on `link_to` alone, every URL row in a sidebar would count as the same
+    row.
+- **The Kanban row is taken away from anyone who can't read Opportunity.** frappe permission-checks
+  every sidebar row except a URL row: `desk.utils.is_item_allowed` returns True for `url`.
+  - Without this, three enabled System Users would have CRM open on a page that refuses them. They are
+    two External Contractor accounts and one HR account. They can see CRM at all only because everyone
+    can read Contact and Communication.
+  - `boot.boot_session` now calls `workspace_tweaks.drop_unreadable_sidebar_links`. It runs on every
+    boot, cached or not. For these users CRM opens on its dashboard, as it did before this release.
+  - If removing the row leaves a sidebar with nothing to open, the sidebar is removed too. That
+    matches what frappe does itself (`sidebar.resolve_sidebar`).
+
+### On deploy
+- `add_core_sidebar_items` inserts one row: the Kanban, at the top of CRM. The other 41 CRM rows
+  move down one.
+- `arrange_core_sidebar_items` renames CRM's "Home" row and renumbers six Buying rows: Purchase Order,
+  Material Request, Dashboard, Supplier, Request for Quotation and Supplier Quotation.
+- Neither hook bumps the sidebar's `modified`, and both clear the `bootinfo` cache.
+- Nothing is deleted. No patch is involved, and a failure in either hook logs an Error Log instead of
+  stopping the migrate.
+
+## [1.734.0] - 2026-10-23
+
+The Dock, the icon rail on the left, now shows one rail across ERPNext and our own modules, starts with
+Buying, Stock, Projects and the Opportunities Kanban, and is arranged for each person's job. Nik,
+2026-10-23: "The ERPNext dock should have the following entries: Buying, Stock, Projects, Opportunities
+Kanban (CRM), and do an audit to make sure we are surfacing the most used modules and doctypes", then
+"customizing it so everyone has their relevant modules ... Brian the Account Executive has CRM and maybe
+Selling and Projects, but he wouldn't need Buying". He chose the four options below the same morning:
+dock profiles rather than Module Profiles, keep a layout someone arranged themselves, the stock Kanban
+rather than the new board, and one rail.
+
+### Added
+- **This app ships its own dock, mounted on ERPNext's** (`dock/erpnext_enhancements/erpnext_enhancements.json`,
+  `mount_on: erpnext`). Its rows are appended to ERPNext's rail. The first is **Opportunities**, a URL row
+  to the stock Kanban `/desk/opportunity/view/kanban/Opportunity`. After it come Workspace pins for
+  Maintenance, Travel, Training, KPI Dashboards, Water Engineering, QuickBooks, HR, Knowledge Base, Fleet
+  and AI Governance. frappe 16.50 then shows ERPNext's rail in our modules too. Before, our sidebars drew a
+  second rail: the 22 "(Custom)" entries the 16.50 conversion wrote, which left out Travel, HR, KPI
+  Dashboards and Knowledge Base, and the rail changed under you as you crossed from Projects into
+  Maintenance. Our areas are Workspace pins rather than Sidebar rows because the workspaces ship from this
+  repo, while the "(Custom)" sidebars exist only on prod. The old 22-entry site layer is left in place,
+  unread; deleting it is a follow-up once the one rail is confirmed live.
+- **Dock profiles** (`setup/dock_profiles.py`). frappe has no per-role dock layer, only the app's file, the
+  site's arrangement and each person's own. So the app writes each enabled System User's own layer of
+  ERPNext's dock from a profile:
+
+  | Profile | Rail | Who, by Role Profile |
+  |---|---|---|
+  | Sales | Opportunities, CRM, Selling, Projects | Sales, Sales Team, Sales & Marketing (Brian, Rich) |
+  | Finance | Accounts, QuickBooks, Selling, Projects, Maintenance | Finance, Finance Team, Accounting (Lisa, Marlene) |
+  | Purchasing | Buying, Stock, Projects | Purchase, Inventory; Parker by his User form |
+  | Production Lead | Projects, Opportunities, Buying, Stock, Maintenance | Projects & Operations (Clegg) |
+  | Design | Projects, Opportunities, Buying, Water Engineering | Design Team (Logan, Nathan) |
+  | Field Tech | Maintenance, Projects, Travel, Training | Production Team, Technician (Austin, Korben, Jesse, Daniel R., Jim) |
+  | Management | Buying, Stock, Projects, Opportunities, CRM, Selling, Accounts, Maintenance, Travel, Training, KPI Dashboards, QuickBooks, AI Governance | Executive; Nik and James by their User forms |
+
+  The first matching row wins, so someone holding Design Team and Production Team is a designer. A new
+  **Dock Profile** field on the User form (Roles & Permissions, beside Role Profiles) overrides the match.
+  **Site Default**, or no match, gives the shared dock. Every layer names the whole rail, the other entries
+  as hidden, so Manage Dock offers them back in one click. Nothing is blocked: the rail only stops offering
+  an entry, and search, links and frappe's own module and workspace gates are untouched.
+  `apply_dock_profiles` runs on every migrate. A User `on_update` hook redoes one person's layer when their
+  Dock Profile, Role Profiles or enabled flag change.
+- **A layout someone arranged is theirs.** A layer last written by Administrator is the app's. Manage
+  Dock saves as the person, so once someone arranges their own layer no migrate touches it. The one
+  override is choosing a Dock Profile on their User form, which applies at once. A write made inside a User
+  save runs as whoever saved the User, so the app puts the Administrator stamp back. Administrator's own
+  layer is never managed.
+
+### Changed
+- **The shared dock is Buying, Stock, Projects, Opportunities, CRM** (patch `set_dock_site_layer`). Nik had
+  set the site's layer by hand that morning to Buying, Stock, Projects and CRM. The patch writes the same
+  layer with the Opportunities Kanban after Projects, plus every other entry named as hidden, and
+  overwrites his hand-made layer once on purpose. Without that, the "keep their own" rule would keep it
+  and this change would never land. CRM stays because its dashboard is the module's landing page (189
+  visits from six people).
+
+### Usage audit (read-only, prod, the 90 days to 2026-10-23)
+Sources: `tabRoute History` (list views, workspaces, reports and pages; v16 records no form opens there),
+`tabVersion` edits by doctype, and new documents per doctype by `creation`. Staff accounts only, Triton
+excluded.
+
+| Most visited | Visits | People |
+|---|---:|---:|
+| Purchase Order list | 916 | 3 (Parker 878) |
+| Opportunity Kanban (`/desk/opportunity/view/kanban/Opportunity`) | 836 | 6 (Brian 343, James 259) |
+| Projects workspace | 755 | 13, the widest reach of any page |
+| Customer list | 280 | 4 (Brian 206) |
+| AI Pending Action list | 269 | 1 (Nik) |
+| Guided entry: Opportunity | 264 | 5 |
+| Buying workspace | 203 | 6 |
+| CRM dashboard (the CRM sidebar's landing page) | 189 | 6 |
+| Training workspace | 176 | 3 |
+| Project list | 174 | 4 |
+| Item list / Material Request list | 146 / 133 | 5 / 4 |
+| Sapphire Maintenance workspace | 124 | 7 |
+| Home / Travel / KPI Dashboards workspaces | 93 / 89 / 66 | 8 / 6 / 9 |
+| Stock / Selling / Accounting workspaces | 34 / 34 / 29 | 5 / 7 / 5 |
+| Opportunity Board page (`/desk/opportunity-board`) | 25 | 2, nearly all Nik |
+
+Most edited: Task 4,073, Journal Entry 3,197 (Nik's QBO work), AI Pending Action 3,035, Supplier 1,837,
+Sales Invoice 1,149, Project 1,049, Opportunity 607, ToDo 387, Purchase Order 361, Customer 313,
+Item 242. Most created: Task 1,200, Item 513, ToDo 385, Purchase Receipt 152, Purchase Order 150,
+Stock Entry 102, Contact 78, Opportunity 50, Customer 30.
+
+**By job.**
+- Brian lives in the Kanban, Customers, guided Opportunity entry, the CRM dashboard and ToDo, with zero
+  Buying visits.
+- Parker lives in Purchase Orders, the Buying workspace, Material Requests, Items and Projects.
+- Clegg is in the Projects workspace (331 visits), then Opportunities, the CRM dashboard and the crew
+  planner.
+- The field techs touch Maintenance, Travel, Training and Projects at low volume.
+- Finance works QuickBooks Online, the General Ledger, Bank Reconciliation and the Chart of Accounts.
+- Design is almost only the Projects workspace.
+
+**Gaps the change closes.**
+- Heavily used but buried: the Opportunity Kanban, which ranks second overall and was reachable only through
+  the Opportunity list's redirect. Travel and KPI Dashboards, used by six and nine people, were on neither
+  rail. Maintenance was only on the second rail.
+- Surfaced but unused, now off the default rails and still one click away in Manage Dock: Manufacturing,
+  Portal and Support (fewer than 8 visits each), Assets (10) and Quality (9). On the old second rail:
+  Google Drive, Integration Hub, Devices, Product Configurator, Morning Briefing, Process Documentation,
+  Shipping and Task Enhancements, mostly Nik's own admin visits.
+
+**Workspace shortcuts recommended, not changed here.**
+- Put Purchase Order and Material Request first on Buying.
+- Open the CRM module on the Opportunity Kanban rather than the CRM dashboard, or put the Kanban first in
+  its sidebar.
+- Repoint the Opportunities entry at `/desk/opportunity-board` when P6.10 retires the stock Kanban.
+
+### On deploy
+- Model sync imports this app's dock and mounts it on ERPNext's.
+- The patch rewrites the shared layer.
+- Fixture sync adds `User.custom_dock_profile`.
+- `apply_dock_profiles` writes layers for 12 people from their Role Profiles. Nik, James and Parker hold
+  none and stay on the shared dock until their Dock Profile is set on the User form: Management, Management
+  and Purchasing.
+- No one held a layer of their own on 2026-10-23, so no personal arrangement is overwritten.
+
+## [1.733.0] - 2026-10-23
+
+The Closed-Won hand-off meeting and the project launch meeting are now real Google Calendar events. Each is one
+shared event: every guest can see the others and RSVP, it has a Google Meet link, and Google sends the invites. Nik,
+2026-10-23: the old invite "doesn't show up as a typical event. It is individually on our calendars and you can't see
+who the other guests are". It was an ERPNext Event plus an email with a `METHOD:PUBLISH` `.ics` attached, which is a
+file to add to your own calendar, so each person got a private copy. One new Settings field, one new Custom Field
+(`Project.custom_launch_event`), one Event hook, no patch, and existing Events are untouched.
+
+### Added
+- **Who organizes the meeting, in order** (`crm_enhancements/handoff_calendar.py`, Nik's choice): first the person
+  who clicks Schedule, once they have connected their Google Calendar. Then the shared calendar in the new setting
+  **ERPNext Enhancements Settings → Hand-Off Fallback Google Calendar** (`handoff_fallback_google_calendar`, a Link to
+  Google Calendar). Then email. A calendar is used only when it is enabled, set to push, and authorized (it has a
+  refresh token). Every organizer that fails is logged and reported, and the next one is tried. A Google failure never
+  rolls the step back. The response says which way the invite went (`calendar_path`: `own_calendar`,
+  `fallback_calendar`, `original_organizer` or `email`) and lists each failure in `warnings`, which the dialog shows.
+  The dialog also says, before you book, which way the invite will go.
+- **"Connect my Google Calendar"**, in the schedule dialog whenever the invite would not come from your own calendar
+  (`connect_google_calendar`). It creates your Google Calendar record and starts Frappe's own authorize flow. The
+  record is always for the session user. It has `pull_from_google_calendar` = 0, so nobody's personal events are
+  imported into ERPNext, `push_to_google_calendar` = 1, and the Calendar ID `primary`, so invites come from your own
+  calendar. A record you already own is reused, switched on, with pull turned **off** (an old record with pull on
+  would import your whole calendar every hour) and `primary` filled in when its Calendar ID is blank (or Frappe
+  would create a secondary calendar to organize from). No permission change was needed: v16 gives the automatic
+  `Desk User` role (every System User has it) `if_owner` create and write on Google Calendar. Checked on prod: there
+  is no Custom DocPerm on it.
+- **A calendar counts as yours only if you own it.** `if_owner` checks the record's `owner`, but the record's `user`
+  field is free text to whoever owns it. So anyone could create a record with `user` set to a colleague, authorize
+  it with their own Google account, and organize every meeting that colleague schedules, seeing every guest and
+  RSVP. `own_calendar` and `connect_google_calendar` now require `owner` = `user` = the session user. Connect makes a
+  fresh record (with a suffixed name, if the address is taken) rather than reuse one somebody else owns.
+- **The shared fallback calendar is never anyone's own.** Frappe's Google Calendar form requires a User, and whoever
+  sets the fallback up will likely leave it as themselves. Counted as theirs, their invites would say "from your
+  calendar" while coming from the shared account, and their Connect would re-authorize the fallback record with
+  their personal Google sign-in, so the fallback would quietly start organizing as them. `own_calendar` and
+  `connect_google_calendar` skip the record named in `handoff_fallback_google_calendar`; that person's Connect makes
+  a record of their own instead.
+- **`Project.custom_launch_event`** (Link → Event, read-only, no copy; a new Custom Field in
+  `fixtures/custom_field.json`), the twin of `Opportunity.custom_handoff_event`. Booking the launch meeting sets it,
+  and re-scheduling and the step card follow it, so renaming the Event no longer makes the next re-schedule create a
+  second one. A Project booked before the field existed has no link; for those the old lookup (the newest open Event
+  referencing the Project with the launch meeting's subject) is the fallback. No backfill. Writes are guarded with
+  `has_column`, so a site before migrate does not raise.
+- **The step card shows the meeting**: the Meet link, and a "Guests & RSVPs" toggle that lists each guest's answer
+  and links to the event in Google Calendar. This is on the Opportunity's step 2 and the Project's step 7. The
+  answers are read from Google only when someone clicks, and then kept for 2 minutes (`meeting_guests`). A form load
+  reads only the Event row, so it costs no API call. The Project's step-7 button reads "Re-schedule Launch Meeting"
+  once a launch meeting is booked.
+
+### Changed
+- **Google creates the event, and ERPNext calls the API itself instead of using Frappe's Event sync.** Frappe v16's
+  `Google Calendar` doctype still handles OAuth and tokens (`authorize_access`, `get_google_calendar_object`). The
+  event is not pushed through Frappe's `Event` hooks, for two reasons. Their `get_attendees` reads only Event
+  Participants rows, which need an Employee or Contact behind every address, so `production@` could never be a
+  guest. And they `msgprint` "Event Synced with Google Calendar." on every save. So `sync_with_google_calendar` stays
+  0, and `events().insert/patch/delete` are called with the full deduplicated guest list, `conferenceData.createRequest`
+  (`hangoutsMeet`, `conferenceDataVersion=1`) and `sendUpdates="all"`. The Event stores `google_calendar`,
+  `google_calendar_id`, `google_calendar_event_id` and `google_meet_link`, always all four together. Frappe's own
+  `on_trash` hook reads them, so deleting the Event cancels the Google event, and a blank `calendar_id` would make
+  that hook fail and block the delete. **Do not tick Sync with Google Calendar on these Events.** Frappe's
+  `on_update` would then push a second copy built from the participants grid.
+- **No double invite.** When Google sent the invite, ERPNext sends no email and no `.ics`.
+- **Re-schedule moves the same Event and the same Google event.** It used to insert a second Event and overwrite
+  `custom_handoff_event`, which left the first invite on everyone's calendar. Summit Vista has two, EV00454 and
+  EV00455, both for 2026-09-11 08:45; they are left as they are. Now the open Event is updated and its Google event
+  is patched with `sendUpdates="all"`. The guest list is merged, so guests who are still invited keep their RSVP,
+  new guests are added, and removed guests are told by Google. The launch meeting is found through
+  `Project.custom_launch_event` (above). If the original organizer's calendar can no longer be reached, a new invite goes out from the next organizer, and
+  the response says the old one may still be on guests' calendars. An Event whose earlier invite went by email, and
+  that now moves onto Google, gets that email invite withdrawn with a `METHOD:CANCEL`. An Event that stays on email
+  sends the `METHOD:CANCEL` to anyone dropped from the list. A Google event that nothing could move or replace (every
+  organizer failing) is named in the warning, because guests then have it at the old time and the email at the new.
+- **Google is the last write, and a rollback takes its invite back.** The source document's link and comment are
+  now written before Google is called (`_book_meeting(record=...)`), so as little as possible can fail after the
+  invites go out. Each successful insert also registers `frappe.db.after_rollback` to delete that Google event with
+  `sendUpdates="all"`. Until then, a lock wait or deadlock after the insert rolled the Event back while guests kept
+  the invite, and a retry sent a second one. v16 runs `after_rollback` only on a full rollback, not a savepoint's,
+  and drops it on commit. The callback only calls Google and swallows every failure, because it runs inside Frappe's
+  error handling after the database has been rolled back.
+- **A cancelled invite leaves the Event with no Google ids.** After Skip, or a Desk cancel, deletes the Google event,
+  the Event's `google_calendar`, `google_calendar_id` and `google_calendar_event_id` are blanked. Frappe's own
+  `on_trash` hook ignores `sync_with_google_calendar` and calls Google for any Event with those fields set: it marks
+  the event cancelled *without* `sendUpdates`, so guests get no notice, and it raises if the organizer's token is
+  revoked or Google Settings is off, so the Event could not be deleted. **To call off a meeting, use Skip or set the
+  Event to Cancelled; deleting a still-booked Event withdraws it without telling anyone.**
+- **The email fallback is a `METHOD:REQUEST` invite.** `travel_management/ics.py` can now write `ORGANIZER` and
+  `ATTENDEE` lines. ORGANIZER is whoever first booked the meeting (the Event's owner), not whoever clicks: every
+  invite for one meeting shares a UID, and a re-schedule or Skip that named a different organizer under it is an
+  update from a stranger, which Outlook may ignore. An event without them is written exactly as before, so the travel
+  calendars are unchanged. The UID is stable and `SEQUENCE` increases, so a re-scheduled invite replaces the old one.
+  The `.ics` part is sent as `text/calendar; method=REQUEST`, because Outlook uses that header to decide whether an
+  attachment is an invite. Replies go to the organizer by email; nothing records them, which is why Google is
+  preferred.
+
+### Fixed
+- **Skip cancels the meeting.** Skip now deletes the Google event with `sendUpdates="all"` (or emails a
+  `METHOD:CANCEL`) and sets the Event to Cancelled. The skip is recorded first, and the cancel cannot raise. Setting
+  one of these Events to Cancelled in the Desk also cancels its Google invite (new `Event` `on_update` hook,
+  `cancel_on_status_change`). The app's own saves set `flags.ee_handoff_calendar`, so the hook does not cancel twice.
+- **A meeting can no longer be booked for a time that has already passed.** EV00456 (Stephen Swenson) was booked at
+  09:21 on 2026-09-25 for 01:30 that morning. This was not a time zone bug. The site and all 20 users are on
+  America/Denver, so v16's Datetime control converts nothing, and the dialog's default would have been 09:30. The
+  picker uses a 24-hour clock (`HH:mm`), and "1:30" meant 1:30 PM. Both the server (`_meeting_start`) and the dialog
+  now refuse a start more than 30 minutes in the past, with a message that 1:30 PM is 13:30. The field's help says
+  the same.
+- **Google failures are logged without secrets and do not pop a modal.** Each Google step runs through one helper
+  that keeps only Google's HTTP status or the exception's class name. A network error's own text can contain the
+  request URL. The helper re-raises `from None`, so the original frames go no further, and it logs with
+  `title=`/`message=` keywords. It also runs with `frappe.flags.mute_messages`, because Frappe's helpers
+  `frappe.throw` on a bad calendar, and a throw queues its message before raising, so a caught failure would still
+  show the user a red modal.
+
+### Manual steps (Nik)
+- On the Google Cloud OAuth client used by **Google Settings**, add this **Authorized redirect URI** exactly:
+  `https://erp.sapphirefountains.com?cmd=frappe.integrations.doctype.google_calendar.google_calendar.google_callback`.
+  v16's `authorize_access` builds the redirect as the site root plus `?cmd=`, not `/api/method/`. Until it is added,
+  Google answers "redirect_uri_mismatch", and the dialog's Connect prompt tells the user to send this URI to a System
+  Manager. Copy the exact string the Connect prompt shows: v16's `get_url` appends `:port` when the supervisor
+  restart flags are unset. Also enable the **Google Calendar API** on that project. The flow requests the
+  `https://www.googleapis.com/auth/calendar` scope; add it to the consent screen if the app is not Internal. If the
+  consent screen is **External and in "Testing"**, Google expires refresh tokens after 7 days: publish it, or make it
+  Internal, or everyone will have to reconnect every week.
+- For the fallback, create a Google Calendar record for the shared organizer account (Calendar ID `primary`, Push to
+  Google Calendar on, Pull off), click Authorize while signed in to Google as that account, and pick the record in
+  **ERPNext Enhancements Settings → Hand-Off Fallback Google Calendar**. Until then, anyone who has not connected
+  their own calendar sends the email invite.
+- Set the fallback record's **User** to someone who will never click Connect: ideally Administrator, or the shared
+  account's own ERPNext user. The code no longer treats the fallback as anyone's own, but the record's User is still
+  what Frappe shows.
+
+### Known limits
+- **Editing an Event's time in the Desk does not move the Google event.** Only Re-schedule does. The Desk edit
+  changes ERPNext's copy alone.
+- **Ticking "Sync with Google Calendar" on one of these Events hands it to Frappe's own sync**, which builds the
+  guest list from the participants grid and so drops group addresses such as `production@`.
+- **Frappe's `google_callback` keeps the calendar being connected in one shared cache key**
+  (`frappe.cache.hset("google_calendar", ...)`, upstream), so two people connecting at the same moment can cross
+  over. Connect one person at a time.
+
+### Tests
+- `tests/test_handoff_calendar.py` (new, bench-free unittest, its own CI step), 55 tests, with a fake Google service.
+  It covers organizer order and skipping unusable calendars; group addresses as guests; the Meet request and
+  `sendUpdates`; no email when Google sent the invite; re-schedule patching the same event and adding no second
+  Event, keeping guests' RSVPs; the launch meeting moving the same way; Skip and a Desk cancel deleting the Google
+  event; a revoked token falling back, logged with keywords and no secret, and leaving no queued modal; the
+  `METHOD:REQUEST` email; the past-time refusal; the cached guest list; and the connect endpoint. Since the review:
+  a record naming you but owned by someone else is not your calendar; a rollback withdraws the Google event; the
+  source document is written before Google; a cancel blanks the Google ids; pull is turned off on reuse; the launch
+  Event is found by its link after a rename; the email ORGANIZER stays whoever first booked; and the fallback record
+  is never its User's own calendar, nor re-authorized by that person's Connect.
+
+## [1.732.0] - 2026-10-23
+
+Follow-ups to the Reorder Board (v1.730.0) that it and the reorder switch (v1.728.0) left open. No new
+endpoint, no patch, no data change.
+
+### Added
+- **A "Reorder Board" button on the Bin Manager and the Inventory Scanner Audit** (TASK-2026-02924,
+  TASK-2026-02920). #1347 left both pages alone because #1345 was editing them. On the Bin Manager it sits in the
+  picker's toolbar beside the filter box and in a bin's action row; on the Scanner Audit it is in the bar beside the
+  reorder switch. It is one `frappe.set_route("reorder-board")`, so the board is its own history entry and Back lands
+  on the same bin or count (a count is kept on the server, so leaving it loses nothing). It shows only to the roles
+  the board admits (`reorder_board.BOARD_ROLES`: Purchase Manager, Purchase User, Stock Manager, System Manager),
+  checked with the Desk's own `frappe.user.has_role`, never a Settings read; a role check that throws hides the
+  button and breaks nothing. On the Scanner Audit a tap does not take the focus off the scan box or the quantity
+  box (`mousedown` is cancelled, as on the reorder switch). The board is gated on the server too: this only keeps a
+  link that would end in "no permission" off the screen. `tests/test_bin_manager.py` pins both role lists to
+  `BOARD_ROLES` and to the board page's own roles. Coming back to the Scanner Audit from another page (the board
+  included) with an item card waiting for its count now focuses that card's counted-qty box, so the number is
+  typed where it was left; the scan box takes the focus only when no card waits (it used to take it always).
+
+### Fixed
+- **A reorder rule counts as a rule by existing, level 0 included** (the known gap #1345 named in 1.728.0).
+  "Reorder at" may be 0 since v1.728.0, but two counts still asked for a level *above* 0, so an item reordered
+  "when it runs out" was not a stocked item:
+  - the Operations KPIs `Stocked Items Out of Stock`, `Stocked Items Below Reorder` and `Stocked Items Counted
+    (90d)` (`kpi_dashboards/snapshots.py`, now one definition, `STOCKED_RULE_SQL`, shared by all four queries);
+  - the Stock Scan store run's suggested reason ("A stocked item was out" against "Not something we stock") and its
+    contradiction warning (`stock_scan._has_reorder_rule`, `has_reorder_rule` on the item card, `stockedItem` in
+    `public/js/stock_scan/logic.js`). A card from before this release has no flag, and falls back to the level.
+
+  **What counts as a rule** is ERPNext's own trigger test, `reorder_level or reorder_qty`
+  (`erpnext/stock/reorder_item.py`; `reorder_rules.is_below` has the same): a level above 0, or a quantity to
+  buy. It is "or" and not "Buy above 0" alone so that nothing leaves a count: a rule that only ever had a level
+  (older rows, written before a rule needed both numbers) stays in, a level-0 rule with a quantity joins, and a
+  row with neither is still not a rule. *Out* is still `on hand <= 0` and *counted* is
+  still a Stock Reconciliation in the last 90 days. The tests run the real queries on SQLite
+  (`tests/sqlite_sql_helper.py`): they fail on 1.730.0 (the level-0 item was absent from the out count, and the
+  coverage share was 33.3% for 40.0%).
+- **`Stocked Items Below Reorder` counts a rule at level 0 as below when the item is out.** The test is `on hand <
+  level`, as before, or `level = 0 and on hand <= 0`: a rule at 0 means "reorder when out", and with `<` alone it
+  could never count (prod allows no negative stock). It is deliberately not `<=` for every rule. The KPI tests
+  actual qty summed over every bin, while the Reorder Board tests *projected* qty (open orders counted) per
+  warehouse or group, so the two differ by design and are not the same list: measured on prod in that review, `<=` took the
+  count from 31 to 61, +30 items whose summed on hand equals their level (mostly level 1 with 1 on hand), nearly
+  all with orders already open. Pinned: level 0 with 0 on hand is below, level 0 with 1 is not, level 5 with 5 is
+  not, level 5 with 4 is.
+- **Prod effect on the next nightly snapshot (measured in the independent review of #1349).** One rule at level 0 exists
+  (3ED71A on Bin A1-3-3, 1 on hand). Stocked Items Below Reorder 31 → 31; Out of Stock 19 → 19; the stocked
+  denominator 115 → 116, because 3ED71A now counts as stocked; Counted (90d) 37.39% → 37.07%. A rule saved at 0
+  later moves the counts by one item each.
+
+### Changed
+- **Text that said automatic reordering is on.** Since v1.730.0 `Stock Settings.auto_indent` is off and a rule puts
+  the item on the Reorder Board, where a buyer decides. Corrected: the reorder-levels section of
+  `inventory_enhancements/README.md`, the `api/reorder_levels.py` module docstring, the
+  `reorder_levels/logic.js` header, `kpi_dashboards/README.md` and the Operations docstring, and the Item form's help text
+  (`form_kit/help_text/item.json`: the Stock-item, Lead-time and Reorder-levels rows).
+- **The guided Item page's note under "Where it is kept"** (`guided_item/extension.js`, from `api/item_flow.py`'s
+  `auto_reorder` flag) said, with auto-indent off, "a reorder level is recorded, but nothing is requested until it
+  is turned on", which sent people to switch it back on. It now says a level puts the item on the Reorder Board and
+  a buyer creates the request, and, if auto-indent is ever on again, that ERPNext also raises requests itself.
+  `auto_reorder` still reports the setting; only what it is used to say changed.
+- The `Stock Scan Log.reorder_level_seen` field description says a stocked item is one with a rule (a text change;
+  the field still stores the level).
+
+## [1.731.0] - 2026-10-23
+
+### Added
+- **Maintenance Chemicals Used: a report of what was put into each site's fountains, by month**
+  (TASK-2026-02480, B3 of the 2026-10-12 Maintenance tools plan). A Script Report in Sapphire Maintenance,
+  linked under Tools on the workspace beside Missed Maintenance Visits. One row per **site x month x item x
+  unit**, with the total quantity, the number of visits it was used on and the last visit date. The site and
+  item are links; a Size column shows a chlorine tablet's 1" or 3". It reads the visits' Consumables lines,
+  because since v1.594.0 chemicals are recorded on a visit and never issued from stock, so Stock Entries
+  cannot say what was used.
+  - **Units are never added together or converted.** A dose unit is free text per template line (a tablet, a
+    cap full, a tablespoon), doses are fractional, and tablets per bucket vary by brand, so there is no honest
+    factor to the stock unit. "3 cap full" and "2 tablespoon" of one product are two rows. Units match with
+    case and spacing ignored ("Cap Full" = "cap  full"), shown in the spelling used most. A line with no unit
+    (older rows, or a part) is counted in the item's own stock unit. Parts and items used are lines in the
+    same table, so they appear in their own unit the same way.
+  - **Tablet sizes need no special case:** the two sizes are two Items (v1.712.0), so grouping by item keeps
+    them apart.
+  - **Which visits count is a filter, "Visit state", defaulting to Approved.** Choices: *Approved*
+    (`docstatus` 1, the workflow's Final/Submitted), *Approved or waiting for review* (adds Pending Review)
+    and *Including drafts*; canceled visits never count. Approved is the default because a reviewer's approval
+    is what makes a visit final: it is the state the customer's report, the invoice and the schedule
+    roll-forward act on, whereas a draft can be a half-answer still on a phone and a visit in review can be
+    sent back and changed. The cost is lag: a visit shows up only once a reviewer approves it, so the open
+    month reads low until they catch up. When the filter hides visits in the period, the report's message says
+    how many were waiting for review and how many were unsent drafts, so a low number is never a silent one.
+    Lines with a quantity of 0 never count ("none used").
+  - A visit sits in the month of its Visit Date (the day the work was done), else its Scheduled Visit Date,
+    else the day it was created. The month filters take any day and snap to whole months; the default is the
+    last three full months plus the current one (on 2026-10-23, July 1 to October 31).
+  - **No price, cost or revenue column.** Billing is undecided (chemical billing is situational, v1.628.0), so
+    nothing here could be mistaken for an invoice. Nine narrow columns (890px of width) and no money column.
+  - **Roles:** Maintenance Reviewer, Maintenance Supervisor and System Manager, which are the Missed
+    Maintenance Visits report's, plus **Finance Team**, which the plan named for the finance phase. Frappe
+    also requires the *report* permission on a report's reference DocType (`get_report_doc` in
+    `desk/query_report.py`, checked with `has_permission(ref_doctype, "report")`), and Finance Team had none on
+    Sapphire Maintenance Record, so a role on the report alone would have shown the link and then refused the
+    run. Sapphire Maintenance Record now gives Finance Team **read + report** only, and that DocPerm exists
+    so the report can run, not as a privacy measure. The record's `has_permission` hook and its `1=0` permission
+    query condition (`sapphire_maintenance/permissions.py`) keep visits hidden only from a **Finance-only**
+    user, and none exists today: all six Finance Team holders (Administrator, james.harris, lisa.symanski,
+    marlene.legaspi, nikolas.bradshaw, triton) also hold Maintenance User, so they already see every visit.
+    (If a Custom DocPerm is ever added for Sapphire Maintenance Record on the site it replaces these rows
+    wholesale, and Finance Team would need re-adding there.)
+  - **Containers column.** Beside Quantity, the sum of each line's *Containers* field ("how many containers
+    this visit opened", 1 on almost every line), for the truck-restock question. It is its own unit, counted
+    in whole containers, and is never mixed into the dose Quantity; it groups exactly as Quantity does.
+  - **Prod data note:** on prod today every consumable line's unit is "Unit". Until technicians pick real dose
+    units, rows read "3 Unit" for tablets, so the unit normalisation is correct but not yet exercised by real
+    data.
+  - **Project Brief: Recent Visits now reads with `get_list`** (`project_enhancements/project_brief.py`,
+    `_maintenance_visits`). It checked `has_permission("Sapphire Maintenance Record", "read")` at doctype level
+    and then used `frappe.get_all`, which ignores permissions, so a Finance-only user (read on the doctype
+    since this release, nothing that lets them see a visit) printing a Service brief would have been shown the
+    job's recent visits. `get_list` applies the record's permission query condition. Same fields and filters.
+    `tests/test_project_brief_sections.py` pins it (its stub gains `get_list`).
+  - Aggregation is done in Python from one bound-parameter `frappe.db.sql` query (no `"sum(x) as y"` field
+    string, which Frappe 16 refuses); every filter value is a bound parameter.
+  - The workspace JSON's `modified` is bumped so the new link syncs; no force-import patch. The new report and
+    the added DocPerm sync from their JSON on `bench migrate`. No schema change, no patch.
+  - `tests/test_maintenance_chemicals_used.py` (bench-free, its own CI step): units never summed, case and
+    spacing, tablet sizes apart, no-unit lines, month edges and year wrap, the state filter and what it
+    reports as left out, the default window, a start after the end, a visit with no chemicals, bound
+    parameters, and the report's roles, DocPerm, columns and workspace link.
+
+## [1.730.0] - 2026-10-22
+
+### Added
+- **The Reorder Board, and ERPNext no longer raises Material Requests on its own** (ER-2026-1323810, Parker
+  Bailey, approved by Nik 2026-10-22; TASK-2026-02922 to -02926). Parker: "Instead I would like it to send me an
+  alert letting me know an item has fallen below the reorder point ... I think having more control over requests
+  being sent and made instead of just automatically clogging the material request table would be a lot more
+  helpful, and would allow greater control to potentially ignore items that are not pressing but still remember
+  they are below stock levels."
+  - **Why auto-indent goes off.** With `Stock Settings.auto_indent` on, ERPNext's nightly `reorder_item` job made
+    and *submitted* a Material Request for every item at or below its reorder point, whether or not anyone wanted
+    it (six on production, Oct 17-22, owner Administrator). The board replaces it, and running both would make
+    every short item twice. `patches/disable_auto_material_requests` sets `auto_indent` to 0, which Nik signs off
+    at merge. ERPNext's job begins `if cint(get_single_value("Stock Settings", "auto_indent")): return
+    _reorder_item()` (checked on the v16.50.0 tag production runs, and on the `version-16` branch), so with 0 it
+    reads no rule, makes no request and never reaches its `reorder_email_notify` email. The requests auto-indent already made are untouched; the three
+    Pending ones show on the board's On order tab. If someone switches auto-indent back on, the board says so.
+  - **The page**, `/desk/reorder-board`, has three tabs, each its own history entry (Back and Forward walk them):
+    - **Needs reorder**: at or below the reorder point, with nothing open covering it. Item, name, warehouse,
+      on hand, projected, reorder at, the suggested buy (editable; above 0, at most 100,000, whole for a whole
+      unit), UOM, default supplier, last purchase rate (Purchase Order readers only) and how long it has been
+      below. Select all or some, then **Create Material Request**.
+    - **On order**: every open request for a reorder item, staged from the documents' own links (Material
+      Request Item ← Purchase Order Item `material_request_item` ← Purchase Receipt Item `purchase_order_item`),
+      with no tracking table of our own: Draft request → Requested → PO in draft → Partially ordered / Ordered
+      (the PO, its supplier, the expected date) → Partially received → Received. **Pickup or Delivery** comes
+      from the PO's existing `custom_order_stage` (Waiting for Pickup / Waiting for Delivery). A received line
+      stays a week so the buyer sees it arrive, then drops off; a line closed short drops off at once.
+    - **Snoozed**: still below, parked, never forgotten. Un-snooze brings it back.
+  - **"Below" is ERPNext's own rule, not a second one.** `reorder_rules.is_below` and `suggested_qty` are the
+    closure inside ERPNext's `_reorder_item`, line for line, **as production runs it (ERPNext v16.50.0)**: fire
+    when `(level or qty) and projected <= level`, and buy the larger of `reorder_qty` and the deficiency
+    `level - projected`. Level 0 with a quantity is a real rule ("reorder when out of stock"). The `version-16`
+    branch has since changed the quantity to `reorder_qty + (level - projected)` when `projected + reorder_qty`
+    would not clear the level; this follows the installed tag, and the test transcribes v16.50.0. Re-read it
+    when ERPNext is upgraded. The rules and projected quantities come from ERPNext's
+    `get_items_for_reorder` and `get_item_warehouse_projected_qty`, so its filters apply (Item enabled, a stock
+    item, not past end of life, the warehouse enabled, variants inheriting the template's rules) and the projected
+    qty is read at the rule's `warehouse_group`, a missing Bin counting 0. Every rule on production has a group
+    (the 83 Inventory Room rules `All Warehouses - SF`, the bin rules `Inventory - SF`), so "below" is across
+    the group, exactly what auto-indent compared. Only Purchase rules are listed; all of production's are.
+  - **Create Material Request** shows a dialog listing the lines, then makes one **Draft** Material Request (type
+    Purchase) per company: the quantities on screen (converted to the purchase UOM as ERPNext converts them),
+    `schedule_date` today plus each item's lead time, the rule's warehouse. It is inserted as the person, so
+    ERPNext's validation and permissions apply, and opened so they review and submit it there. The server checks
+    everything again: the role, Material Request create, that each line still has a rule, is still at or below
+    its point, and is not already on an open request or order; one stale line and nothing is made, and the dialog
+    says which. **It cannot make two:** a MariaDB named lock serialises the call, the transaction is refreshed
+    under it, and the dialog's one `client_ref` makes a double click or a retry after a lost reply return the
+    request already made. The lock's name carries a hash of the site, because MariaDB named locks are
+    server-wide. A Reorder Watch row the hourly sync inserts at the same moment is caught (`DuplicateEntryError`
+    or `UniqueValidationError`, under a savepoint, messages muted) and written onto, so no modal follows a
+    successful request.
+  - **What "covered" means** (and so what keeps an item off Needs reorder and out of the digest). A request line
+    covers while something on it is **still to come**: the part not yet on a submitted Purchase Order, plus what
+    submitted orders that are not Closed, Completed or Delivered have not delivered yet.
+    - **A Purchase Order closed short covers nothing more.** Closing a PO in ERPNext v16.50.0 updates the Bin but
+      never the Material Request, which stays Ordered or Partially Received for ever. Counting it as open would pin
+      the item as covered however low it went (prod, 2026-10-22: 87 of 104 Closed POs under 100% received;
+      MAT-MR-2026-00007, Ordered, its PO-2026-00255 Closed, already had this shape). Its line drops off On order and
+      the item is judged on its stock again.
+    - **On Hold still covers**: ERPNext keeps an On Hold order in the Bin's ordered qty (only Closed and Delivered
+      drop out), so the projected qty still counts it, and the buyer can resume it.
+    - **A Draft request covers**, because ERPNext raises no requested qty for one and only this keeps the item off
+      Needs reorder; it shows on On order as "Draft request". **But a Draft older than 30 days does not**
+      (`reorder_rules.STALE_DRAFT_DAYS`): prod had MAT-MR-2025-00007, eleven months old, hiding its item. Such an
+      item comes back to Needs reorder with the Draft named on its line, "Old draft request", linked, to finish or
+      delete.
+    - **Across the rule's group.** ERPNext judges a rule on the projected qty of every warehouse under its
+      `warehouse_group`, so a request for any warehouse in the group covers it (a Draft for a sibling bin
+      included). A rule with no group counts its own warehouse; production's one rule whose group is its own bin
+      counts that bin.
+    - Material Requests that are Stopped, Cancelled or Closed never cover.
+  - **Snooze**: 1 week, 1 month (the day clamped, 31 Jan → 28 Feb), or until stock drops further (the projected
+    qty is kept and the snooze ends once it is lower; equal is not further). Who, when and an optional reason
+    are kept. The digest never names a snoozed line, and names it again once its snooze ends.
+  - **The alert: one morning digest, email plus the Desk bell.** `reorder_board.send_daily_digest` runs at
+    07:20 site time every day and names the lines that newly fell below since the last digest, or whose snooze
+    ended, with a link to the board; nothing new, nothing sent. It goes to the enabled System Users holding
+    **Inventory Scanner Settings → Reorder Alert Role** (new; default Purchase Manager), except Administrator,
+    Guest and the Triton service account: seven people on production today. One email in the app's design
+    system, its table four columns so it reads on a phone (item and name, warehouse, projected / reorder at,
+    suggested buy; the rest is on the board), and one bell notification (type Alert, linking
+    `/desk/reorder-board`) each. An hourly `sync_watch` records when each line went below, ends snoozes that ran
+    out, and forgets lines that recovered.
+  - **The first digest will be long.** Every item already below its point on the morning after the deploy has no
+    Reorder Watch row yet, so it counts as newly below: day one names everything that is short and uncovered.
+    From then on it names only what changed.
+  - **State is in the database, so a deploy's FLUSHDB costs nothing.** New DocType **Reorder Watch**, one row
+    per item and warehouse while it is below (`below_since`, `alerted_on`, the snooze, the last request the board
+    made). A line is stamped `alerted_on` in the same transaction that queues the email. Frappe re-enqueues a
+    due cron job that is no longer in the queue (`last_execution` is written when a job starts, not when it is
+    queued), and a line not yet named is still un-named the next morning.
+  - **Who may:** Purchase Manager, Purchase User, Stock Manager and System Manager open the board and ask for
+    Draft requests: the buyers and the owner of the reorder rules; not Stock User, whose job is taking and counting
+    stock. **Snooze and un-snooze are Purchasing's only** (Purchase Manager, Purchase User, System Manager: the
+    endpoints, the page and Reorder Watch's DocPerms, where Stock Manager reads only), because a snooze silences
+    the Purchase Managers' digest and Stock Manager is held by 17 people, technicians among them. Item and
+    Material Request permissions stay the framework's.
+  - **Where it is:** the digest's link and the bell, and a *Reorder Board* link in the Inventory Enhancements
+    workspace's Purchasing card, beside Find a Supplier. The workspace file's `modified` is bumped past v1.726.0's,
+    so model sync imports it; no patch is needed.
+  - **Where the brief and the Tasks differ, the brief wins** (the Task texts were AI-written): the alert is a
+    **daily** digest, not the hourly check TASK-2026-02926 suggests (Nik's decision); the endpoints live in a new
+    `api/reorder_board.py`, not `api/item_flow.py` as TASK-2026-02923 and -02925 say, because another change in
+    flight edits that file; the page is built on `sf_kit` (state panels, chips, toasts, the quiet call) as
+    TASK-2026-02924 asks.
+  - Endpoints: `api/reorder_board.py` (`get_board`, `create_material_requests`, `snooze_line`, `unsnooze_line`).
+    Rules: `inventory_enhancements/reorder_rules.py` (no Frappe). Reads and writes:
+    `inventory_enhancements/reorder_board.py`.
+  - **Patches**, both `post_model_sync`, neither can raise, both safe twice:
+    - `disable_auto_material_requests`: `Stock Settings.auto_indent` 1 → 0, one `set_single_value`, only when
+      it is on and only on a Stock Settings that has rows.
+    - `backfill_reorder_alert_role`: `Inventory Scanner Settings.reorder_alert_role` = `Purchase Manager`, only
+      where `tabSingles` has no row for it (a new Single field's default never reaches the existing row); never
+      over a stored value; a never-saved Single left alone. The digest also falls back to Purchase Manager.
+  - Tests: `tests/test_reorder_board.py`, its own CI step: the rule against a transcription of v16.50.0's over a
+    grid (level 0, the group, a missing Bin) and a case where the tag and the branch differ (level 10, qty 3,
+    projected 5: 5, not 8); coverage and every stage; a PO closed short, closed with nothing received, and On Hold;
+    old Drafts; coverage across a group; Draft-only and idempotent requests and stale refusals; the site-scoped lock
+    and the insert race; who may snooze; each snooze kind; the digest's pick, its silence and its four columns;
+    recipients; both patches (the backfill writes only where there is no row, never over a stored value, never on
+    a never-saved Single); and the page's logic under node. `test_stock_scan_surface` now counts the new backfill
+    for the new field.
+  - Not done here: a link to the board from the Bin Manager and the Inventory Scanner Audit (another change is
+    editing both). Lines from Transfer or Manufacture reorder rules are not listed (there are none on production).
+
+## [1.729.0] - 2026-10-22
+
+### Added
+- **Feedback: a reviewer can overrule the AI's duplicate flag, and add a task by hand.** Nik, 2026-10-22: "when it
+  thinks there is a duplicate task, it won't create a new task that is a duplicate of an existing task even if I know
+  it's not a duplicate". The case was ER-2026-1323804, Parker's report that the reorder level refuses 0. The
+  breakdown came back in `Breakdown Ready` with no proposed tasks, one High-confidence duplicate (TASK-2026-02912,
+  "Bin Manager rejects 0 as a valid quantity", a different bug) and the summary "no new development tasks are
+  needed". The reviewer had two buttons, "Close as duplicate of this" and Reject.
+  - **Why it happened.** Triton's breakdown prompt tells the model that a request already covered by open work should
+    come back as duplicates with few or no tasks, and `breakdown.py` treats that as a valid result. Nothing let a
+    person disagree. The duplicate panel offered only the close button. The proposal panel could edit only the rows
+    the model wrote, because `_apply_row_edits` matches rows by child-row `name` and skips any it doesn't carry.
+    `create_tasks` refuses when nothing is ticked. "Ask again" sent the same Task to the same model with the same
+    inputs, and got the same answer.
+  - **Not a duplicate** (`api.feedback.dismiss_duplicate`). Each candidate in the duplicate panel gets the button.
+    It stamps the row with three new fields on `Enhancement Request Duplicate Candidate`: `dismissed`,
+    `dismissed_by` and `dismissed_on`. The row is kept, so the request still shows what the model claimed and who
+    overruled it. The request tracks changes, so its Version history has the edit too, and the panel lists ruled-out
+    Tasks on a quiet line. A ruled-out row leaves the panel and the Claude Code brief's "not in this work item" list
+    (`brief._not_in_scope`). Every later breakdown ignores it as a duplicate.
+  - **Plan it as new work** (`plan_as_new_work`). It rules out every remaining flag, then re-runs the breakdown.
+    The re-run differs from "Ask again" in three ways. `breakdown.run_breakdown` leaves the ruled-out Tasks out of
+    `open_tasks`. `proposal.parse_breakdown(dismissed_tasks=...)` drops any the model names anyway, with the reason
+    "ruled not a duplicate by a reviewer". And `breakdown._apply` keeps the ruled-out rows when it replaces the
+    proposal. No Triton change: the payload keeps its shape and `schema_version` 2.
+  - **Why the re-run also adds a reviewer note to the description.** Removing the Task from the scan removes the
+    evidence. It does not remove the instruction. The model can still decide "already covered" from the code map,
+    the anchors or the CHANGELOG lines it is sent, and the prompt tells it to answer that with no tasks. The one fact
+    the payload otherwise lacks is that a person has already checked. `breakdown.reviewer_note` says so in a short
+    paragraph after the description. It is marked "added by ERPNext, not the requester", and it names the ruled-out
+    Tasks by subject so the plan can say how this work differs. It goes in the text, not in a new key, because
+    Triton ignores keys it does not know. It is appended after the 20,000-character cap, so a long report can't cut
+    it off. A breakdown with nothing ruled out sends the same payload as before. **Don't rely on it.** Triton's
+    prompt treats the Description section as data, so the model may ignore the note, and a requester could type the
+    same words into their own report. It is a nudge. The fix that holds is the hand-added task below.
+  - **Add a task by hand** (`add_proposed_task`). This is the way through that never needs the model. On the
+    proposal panel, and on a failed breakdown, the reviewer types a subject, project, priority, hours and an optional
+    parent group. The row is validated the way an edited row is: the same `_filter_payload` allowlist
+    (`PROPOSED_TASK_ALLOWED_FIELDS`), the same `allowed_projects()` gate and the same coercions. Those checks are now
+    one function, `_clean_row`, shared with `_apply_row_edits`. There are differences, because the row is new:
+    - A missing subject refuses the call, and so does a project outside the two configured boards. Neither is just
+      reported.
+    - A `parent_task` must be an existing group Task on the same project.
+    - A subject, and a group subject, are cut to 140 characters, the length of `Task.subject`.
+    - `added_by` is the session user. The new field on `Enhancement Request Proposed Task` is server-set and is never
+      accepted from the client.
+
+    "Create these tasks" then writes the row even when the model proposed nothing.
+  - **Remove a hand-added row** (`remove_proposed_task`). Each hand-added row that hasn't produced a Task gets a
+    Remove button. Model rows are still unticked rather than deleted, so the proposal stays a record of what the model
+    suggested. A row with a `created_task` can never be removed. Rows after the removed one move up a place, so every
+    `depends_on_idx` is remapped: one that pointed past it follows its row, and one that pointed at it is cleared.
+  - **A re-run keeps every row that isn't the model's to replace.** `_apply` replaces only the model's rows. It keeps
+    every row with `added_by`, and every row with a `created_task`, after the new model rows.
+    - **The `created_task` half fixes an older bug** that "Plan it as new work" made easy to hit. A re-run after a
+      partial confirm used to drop the rows that had already written their Task. That lost the link, and the next
+      confirm could propose and create the same work a second time. The stamp is what makes `task_writer`
+      idempotent, so it now outlives the proposal it came from.
+    - A kept row's `depends_on_idx` is cleared, because the positions it pointed at have just been renumbered. Its
+      `idx` is cleared too. Frappe v16's `Document.append` keeps a truthy `idx`, so a kept row would otherwise share
+      a position with a new model row. The same applies to kept duplicate candidates.
+  - **No unsaved edit is thrown away.** "Not a duplicate", "Plan it as new work", "Ask again", Remove and "Add to the
+    proposal" all redraw the request. Each one first saves the pending proposal edits through `save_proposal`.
+  - **One new transition: `Breakdown Failed -> Breakdown Ready`**, made only by adding a task by hand
+    (`product_feedback/states.py`). No new state. It is needed because the model can still answer "no work" after a
+    re-run, and that answer is `Breakdown Failed`, where `create_tasks` refuses. Without it, a wrong duplicate flag
+    could still stop a Task being created. The human gate is unchanged: nothing reaches `Breakdown Ready` from
+    `Submitted`, and `Breakdown Failed -> Tasks Created` stays illegal.
+  - **Who sees what.** All four endpoints are reviewer-only (`_require_reviewer`). They send the requester nothing:
+    a ruling inside the review is not a decision about their request. The requester still hears about the outcome
+    through the existing `decision_made` and `tasks_created` notifications.
+  - **Panel hints reworded** so a reviewer knows the duplicate flag and the proposal are suggestions they can
+    overrule. The "nothing ticked" refusal now names "add one by hand".
+
+### Deploy
+- Schema only: four new columns from model sync. `Enhancement Request Duplicate Candidate` gets `dismissed`
+  (Check, default 0), `dismissed_by` and `dismissed_on`. `Enhancement Request Proposed Task` gets `added_by`. These are
+  child doctypes, not Singles, so the `ALTER` writes `dismissed = 0` into every existing row. That is the right
+  value: nothing has been ruled out yet. No patch. `breakdown.dismissed_duplicates` checks `has_column` first, so a
+  sweeper run before the migrate finishes reads no rulings and does not fail.
+
+### Tests
+- `tests/test_feedback_duplicate_override.py` is a new bench-free unittest suite with a frappe stub and its own CI
+  step. It covers:
+  - the dismissal stamp and its refusals, and plan-as-new-work;
+  - the re-run: a ruled-out Task is not in the `open_tasks` sent (with a control showing an un-ruled one is), the
+    reviewer note, and a duplicate named anyway being dropped while the ruling row survives;
+  - hand-added rows and `created_task` rows surviving a re-run, with fresh positions. The stub's `append` keeps a
+    truthy `idx`, as v16's does, and this test fails if the `idx` reset is removed;
+  - the add-row endpoint, including its project refusal and the 140-character caps;
+  - removing a hand-added row, with dependencies remapped;
+  - `create_tasks` with only a hand-added row, run through the real `task_writer`.
+
+  40 of its 41 tests fail on v1.727.1. The one that passes is that control.
+- `test_feedback_breakdown_parse.py` covers a ruled-out duplicate dropped even when it was sent.
+  `test_feedback_brief.py` covers a ruled-out candidate left off the brief. `test_feedback_states.py` covers the new
+  transition. `test_feedback_code_anchors.py` gets a `has_column` and `get` on its stub, and its outline assertion
+  now includes the new `build_payload` signature.
+
+## [1.728.0] - 2026-10-22
+
+### Fixed
+- **The Bin Manager's Move button opens its dialog again** (TASK-2026-02919, Parker's report ER-2026-1323788:
+  "in the bin manager clicking the move button on an item doesn't have any function", release 1.727.1). The
+  task text guessed a missing click handler; the handler was there. `move_dialog` listened for changes on the
+  "Make <bin> this item's bin" box's `$input` while building the dialog, but that box starts hidden and Frappe
+  builds a control's input only while the control is shown (`ControlBaseInput.refresh_input` calls
+  `make_input()` inside `if (disp_status != "None")`, and a hidden field's status is "None"). So `$input` was
+  `undefined`, the page threw a `TypeError` before `d.show()`, and the click looked dead. It has been so since
+  the Bin Manager was built (v1.693.0, `9275f8b2`); no recent change caused it. It never showed in the tests
+  because the dialog stand-in gave every field an input. The listener is now attached the first time the box
+  is shown. Move was already the existing `bin_assignments.move_to` (the one Stock Scan uses) with its
+  checks: a move of 0 or more than is here is refused in words, the picker never lists the bin being managed,
+  the quantity starts at everything here, the button is off while the save is out, and a tap after a lost reply
+  is the same save.
+  - A move, a send to the boneyard and a count now **change the row on screen at once** (before the list is
+    read again, which settles it) and show a **green toast** as well as the notice above the list.
+  - `scripts/test_bin_manager.mjs`: the dialog stand-in builds no input for a hidden field, as Frappe does, so
+    the Move tests throw on the old code; new tests walk the whole move.
+
+### Changed
+- **"Reorder at" can be 0** (reverses part of the #1338 review). Nik, 2026-10-22: "The reorder at line is
+  refusing to be assigned a 0 even though running out of all stock is a very normal spot to reorder items."
+  The review had refused a level of 0 because it raises a request "whenever stock reaches 0"; that is the point.
+  ERPNext's trigger (`erpnext/stock/reorder_item.py`, version-16) is `if (reorder_level or reorder_qty) and
+  projected_qty <= reorder_level`, and `get_items_for_reorder` does not filter on level > 0: a rule at 0 with a
+  quantity raises a Material Request once projected stock reaches 0 or below, and projected stock counts open
+  Material Requests and Purchase Orders, so it does not raise a second one. **Buy still has to be above 0** (a
+  rule that buys nothing is removed), a level below 0 is still refused, and a blank "Reorder at" box on an
+  existing rule still asks to remove it: a typed 0 is a level, a blank is not. A level of 0 shows as "0", is a
+  rule when read back, and survives a reload and a resend. In `api/reorder_levels.py` `set_reorder_level` and
+  `public/js/reorder_levels/logic.js` `plan_save`; the "Buy" refusal now has a sentence about Buy only.
+  Known and left alone: the KPI dashboards (`Stocked Items Out of Stock` and friends) and
+  `stock_scan._reorder_level` call an item *stocked* when its level is above 0, so an item reordered at 0 is not
+  counted as stocked there; whether they should say "has a rule" instead is a separate decision.
+
+### Added
+- **The reorder boxes are hidden until you turn them on** (TASK-2026-02920, Parker's ER-2026-1323805). Nik,
+  2026-10-22: "I would like the reorder values to be hidden or toggleable, it's not information I need to see
+  constantly. Ideally I would only need to change and alter once." Both screens now open with a clean list: the
+  Bin Manager without its Reorder column, the Inventory Scanner Audit's item card without the Reorder at / Buy
+  boxes. One switch in each toolbar, **Show reorder levels** / **Hide reorder levels**, brings them in.
+  - **Remembered, for good, on any device.** The choice is stored per person and per screen in the same
+    place as the planners' saved views and the guided page's settings (`api/planner_views_prefs.py`: a
+    `__UserSettings` row, `Inventory Screens`, written straight to the table). Frappe's own `user_settings`
+    were not used: they are Redis-only, and a deploy flushes Redis, which would forget the choice. The
+    browser's storage is not used either. Each screen's boot already carries it (`manager_boot.show_reorder`,
+    `get_bootstrap.prefs`), so a screen opens in the right state with no request of its own and no flash.
+  - **Anything wrong is "hidden".** No row, a damaged one, a value that is not a real `true`, a database that
+    will not answer: the screen opens clean. A choice that could not be saved still works for the visit and an
+    orange note says it will not be remembered.
+  - **Tapping early, or tapping fast, never leaves the store disagreeing with the screen** (independent review
+    of #1345). The Scanner Audit's switch can be there before the start-up reply lands (the reorder bundle
+    may already be cached); the reply used to put the screen back to the older stored value after the tap
+    had saved the new one. A switch the person has used now stays as they left it, the reply no longer
+    overrules it. On both screens only one save is in flight at a time, and when it settles the latest choice
+    is sent if it differs, so replies arriving out of order cannot store an earlier tap: the last tap wins on
+    screen and in the store. A save that fails still says so, once, for the latest choice.
+  - **Nothing is read while hidden.** The rules are asked for the first time the boxes are shown, once for a
+    list; hidden boxes are not in the page at all, so they are not focusable and not tab stops.
+  - **The scanner's focus is untouched.** A tap on the switch cannot take the focus (mousedown is cancelled),
+    and after it the focus goes to the counted-quantity box (or the scan box), so the next wedge scan and its
+    Enter land where they did. Enter in a reorder box still returns to the quantity box.
+  - Tests: `tests/test_inventory_screen_prefs.py` (the store: default off, per screen, straight to the table,
+    only the caller's row, damaged and unreadable rows read as off, the role gate, an unknown screen refused;
+    the wiring), and the real pages in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js`
+    (hidden by default and nothing read; the switch shows them, reads once and saves; a saved choice opens as
+    left; an unreadable or unsaved one falls back). The reorder-at-0, Move and item-link work is exercised with
+    the boxes on. One CI step.
+- **An item's name in the Bin Manager links to its Item record** (TASK-2026-02918). A real anchor to the Desk
+  form (`/desk/item/<code>`, from `frappe.utils.get_form_link`, never `/app`, which is a full page load on
+  v16): a click goes in place with a history entry so Back returns to the bin, Ctrl/Cmd or middle click opens
+  a tab, and the keyboard reaches it. The code is URL-encoded and the text escaped. It sits outside every row
+  action. Shown only to people who may read Items (`manager_boot.can_open_items`).
+
+## [1.727.1] - 2026-10-22
+
+### Fixed
+- **The AI connector's `list_documents` no longer writes an Error Log row on every call, and its `total_count` is
+  filled in again.** Nik, 2026-10-22: "go ahead and fix this." Every `list_documents` call from Triton or any other
+  MCP client wrote one Error Log row titled "list_documents: count query failed for <DocType>". That day the rows
+  came for Task, Customer, Project, Sales Invoice and Sales Order. The documents still came back. Only the total was
+  lost: `total_count` was `null`, and `has_more` was a guess from the page size.
+  - **The upstream bug.** Frappe Assistant Core 3.0.0, the connector app on prod, counts the rows with
+    `frappe.get_list(doctype, filters=..., fields=["count(name) as count"], limit=1, ignore_permissions=False)`.
+    Frappe 16 refuses a SQL function written as a string field ("SQL functions are not allowed as strings in
+    SELECT", `frappe/database/query.py` `_validate_select_field`). This is the same rule the CLAUDE.md gotcha
+    describes for this app's own code. FAC catches the error and logs it.
+  - **Fixed upstream in FAC v3.1.0** (commit `2b834b0`, 2026-09-24). Prod still runs 3.0.0
+    (`tabInstalled Application`; the traceback's line 389 is 3.0.0's count call). Prod held 128 of these rows
+    between 2026-09-23 and 2026-10-22. **Upgrading FAC is the real fix.** This patch holds the line until then and
+    switches itself off when FAC changes. **Once FAC is upgraded, delete `ai_governance/fac_list_documents_count.py`
+    and its entry in `monkeypatches._PATCHES`.** From then on it is dead code that logs "source-mismatch" once per
+    worker. A Task on PRJ-00580 tracks the removal.
+  - **Why a monkeypatch, not a replacement tool.** FAC 3.0.0 has no supported way to override a core tool. An app
+    tool named `list_documents` would be *listed* in place of FAC's, because `ToolRegistry.get_available_tools`
+    lets hook tools overwrite plugin tools. But it would never *run*, because `ToolRegistry.get_tool` checks plugin
+    tools first. Clients would read our schema and execute FAC's code.
+  - **What it does** (`ai_governance/fac_list_documents_count.py`). It replaces the module global `frappe` inside
+    FAC's `list_documents` module, and nowhere else, with a stand-in. The stand-in passes every attribute read and
+    write through to the real `frappe`, except one call: `get_list` with exactly `fields=["count(name) as count"]`.
+    That call is answered the way Frappe 16's Desk list view counts (`frappe.desk.reportview.get_count`): the same
+    `get_list` query, with the caller's own `filters` and `ignore_permissions=False`, selecting only `name`, wrapped
+    in `SELECT COUNT(*) FROM (...)`. DocPerms, user permissions and `permission_query_conditions` therefore apply
+    exactly as they do to the listed rows. The answer comes back as `[{"count": n}]`, the shape FAC reads, so the
+    tool's output is unchanged apart from `total_count`.
+  - **Every call now runs a real count.** Under 3.0.0 the count failed before it reached the database. Now each
+    `list_documents` call runs one more query: `COUNT(*)` over the permission-filtered rows. At Sapphire's data size
+    that costs nothing. As on the Desk when a page size is given, the count gets one second on MariaDB
+    (`SET STATEMENT max_statement_time=1 FOR`). Past that, `total_count` comes back `null`, which is what 3.0.0
+    returned anyway, and nothing is logged. Any other count error still reaches FAC's own handler and its Error Log
+    row, as before.
+  - **Virtual DocTypes are left alone.** A virtual DocType has no table, and its controller ignores `run=0`, so
+    there is nothing to count. `frappe.model.utils.is_virtual_doctype` is checked first, and that count call goes to
+    the controller exactly as FAC wrote it, once.
+  - **Why the Desk's form and not the dict form `{"COUNT": "name", "as": "count"}`.** FAC itself went back and forth.
+    It shipped the dict form, then replaced it in August 2026 with the string form because the dict form raised
+    "Unknown column 'table.scalar'" on MariaDB when the filters included `docstatus`. That is every submittable
+    DocType, and `list_documents` adds `docstatus=1` to those by default. In September it went back to the dict
+    form, with the string form as a fallback. Whether 16.50 still has that problem could not be checked without
+    running code on prod. The Desk's count runs on every list view on prod every day, `docstatus` filters included.
+  - **When it does nothing.** It never raises, and it leaves FAC alone unless every check passes:
+    - FAC must be importable;
+    - the source of FAC's `list_documents` module must be byte-for-byte 3.0.0's. The sha256 is pinned, and
+      checked against the v3.0.0 tag: v3.1.0 and v3.2.1 do not match. So an upgrade, a hotfix or a local edit all
+      switch it off;
+    - the module's `frappe` must still be the real module.
+
+    The first time it stands down in a process, it writes the reason, and only the reason, to the app's file
+    log. "source-mismatch" is logged at WARNING: it is the expected state on every worker of an upgraded bench,
+    and frappe's file logger drops WARNING on a production site. "failed" and "foreign-frappe" are logged at
+    ERROR, because they mean something unexpected happened to code we read. Nothing here logs arguments, filters
+    or results. A mismatch on prod *before* an upgrade is therefore silent, so check for it after deploy: the
+    count's Error Log rows should stop. FAC is imported by dotted path only after `find_spec` finds it, so sites
+    without FAC never touch it, and the FAC-optional invariant test still holds.
+  - **Applied in every web request and background job.** `monkeypatches.ensure_applied` already runs from
+    `before_request` and `before_job`, because v16 serves hooks from the redis cache, so the bottom of `hooks.py`
+    does not run in every worker. MCP calls are ordinary web requests, so the patch is in place before FAC first
+    imports the module in a fresh worker.
+  - **Not changed.** Existing Error Log rows stay. Nik can clear them. No data is written. The write gate,
+    `_safe_execute` and every other FAC tool are untouched.
+  - Tests: `tests/test_fac_list_documents_count.py` (bench-free, its own CI step). Its `frappe` stub validates
+    every string field with Frappe 16.50's own `_validate_select_field` rule, whose two regexes
+    (`FUNCTION_CALL_PATTERN`, `ALLOWED_FIELD_PATTERN`) are copied verbatim from the v16.50.0 tag. The FAC side is a
+    throwaway `frappe_assistant_core` package whose module makes the same two calls (written for the test; FAC's
+    AGPL source is not copied in). The tests check that:
+    - unpatched, the stub reproduces the bug;
+    - patched, every field sent passes `ALLOWED_FIELD_PATTERN`, including for DocType names with spaces and
+      hyphens;
+    - the count keeps the caller's filters and permission flag, drops `limit` and runs under the one-second cap;
+    - a timeout gives `null` with no Error Log, and other errors still reach FAC's handler;
+    - a virtual DocType's call goes to its controller once, unchanged;
+    - the listing call passes through untouched;
+    - the guard leaves FAC's module untouched on a hash mismatch, without FAC, and when another `frappe` is
+      present, logs at the intended levels and never raises.
+
+## [1.727.0] - 2026-10-22
+
+### Added
+- **Adding stock to an item with no cost now asks "What does one cost?" instead of turning the person away**
+  (TASK-2026-02914, Nik: "fix please"). ERPNext will not post stock for an item it has no cost for (a Material
+  Receipt is refused with "Valuation Rate Missing", a Stock Reconciliation row with "Valuation Rate required"),
+  and `/stock-scan`'s *Add without a purchase order* and the Bin Manager's *Change quantity* up from an empty bin
+  met that with a sentence, "ask a Stock Manager to set its Valuation Rate". The task named
+  `api/inventory_scanner.py` and `www/stock-scan.html`; neither is where this happens (the Inventory Scanner
+  Audit posts nothing, it builds a *draft* reconciliation for a stock manager, and the page's code is
+  `public/js/stock_scan/`), and the refusal was never a 500: `_receipt_rate` finds a cost or the save was
+  refused with a sentence, before any document.
+  - **The prompt.** `stock_scan.add` and `bin_assignments.set_count` take an optional `rate`. With no cost on
+    record and none given they answer, not with a save, with `{needs_valuation_rate: true, item_code,
+    item_name, uom, suggestion, source, max_rate}`, and post nothing (no voucher, no log row). `/stock-scan`
+    opens a sheet and the Bin Manager a dialog: the item, "enter what ONE <unit> costs, not the total", a box
+    pre-filled with the suggestion and where it came from, Enter to submit, the button off while the save is
+    out, Cancel and Back leave nothing posted. The answer sends the same save with `rate`.
+  - **Only where ERPNext would refuse.** An item with a cost on record (a rate at that bin, the company's
+    average, its last purchase rate or Valuation Rate) is never asked, and a `rate` sent for it is ignored: a
+    screen cannot restate what an item with a history costs.
+  - **The suggestion**, in this order, with its source named: the item's latest submitted Purchase Receipt,
+    Purchase Invoice or Purchase Order line (per stock unit, in the company's currency), then the default
+    buying price list's Item Price (valid today, and converted to the stock unit through the item's UOM
+    conversion rather than skipped when it is in another unit). The Item's Valuation Rate is what
+    `_receipt_rate` already tried, and `standard_rate` is a *selling* rate that would overstate a cost, so it is
+    not offered. These are raw reads, so each source is used only when the person may read its doctype (a
+    Stock User has no Purchase Invoice and no Item Price read here) and the document it names is one they can
+    open; a rate and a document number they could not see are never shown.
+  - **What the price may be.** Positive and at most **100,000 per unit** (Nik's cap; the dearest purchase unit
+    cost on file is about 7,015): zero, negative, `nan`, `inf`, text and "2,5" are refused in words, on both
+    sides, and a refused price is not answered with the prompt again. **And a total cap: quantity times the
+    typed cost may be at most 25,000** (`MAX_ADD_VALUE`; independent review of #1343: with the quantity and the
+    unit cost each allowed 100,000, one tap could post 1e10). Above it the sentence says to receive it on its
+    purchase order or ask a Stock Manager to post it in the Desk. A refusal, not a "yes, post it": 25,000 is
+    far above anything unpriced the shop adds, and a stock manager can post the rare larger one. It limits what
+    a person can *say* an unpriced item is worth; an item with a cost on record is not held to it. It is for this one posting: the Item and
+    the price lists are not written, "Allow Zero Valuation Rate" is never set, and the voucher is posted as the
+    user (no `ignore_permissions`).
+  - **Who.** Anyone who can post the document, which is what ERPNext allows: a Stock Entry for *Add without a
+    purchase order*, a Stock Reconciliation (Stock Manager) for a count. The permission is checked before the
+    question, so a person who could not post it is never asked for a price. The cost is written to the Stock
+    Entry's remarks and the log row's `rate`, and an add without a purchase order stays flagged for a stock
+    manager's review.
+  - **Idempotent.** The question creates nothing, so its reference is free for the answer, and the sheet
+    keeps **one reference for its whole life** (the Bin Manager's dialog already did): a changed price after a
+    reply that never came is the same reference, and the server answers a seen reference with the first save,
+    so a save that did reach it cannot post a second time at the new price.
+  - **The words are true.** An add without a purchase order says a stock manager reviews it (it is flagged);
+    a count does not say so, because counts are not flagged for review.
+  - **Bin Manager.** A blank cost box comes back from Frappe's Float as `null`, which used to skip the check,
+    send the count without a cost, and reopen the question with no message; it now says "Enter the unit cost
+    per <unit>." A server that asks again after a price was sent is said so in the dialog rather than reopened.
+  - Known and left alone: a handful of bins hold stock at a zero rate, and a recount of one still meets
+    ERPNext's own path; that is a different problem from an item with no cost at all.
+  - Tests: `tests/test_unit_cost_prompt.py` (the server on the real `stock_scan.py` and `bin_assignments.py`),
+    the prompt on the real `app.js` in `scripts/test_stock_scan_client.mjs` and on the real Bin Manager page in
+    `scripts/test_bin_manager.mjs`; one CI step.
+
+## [1.726.0] - 2026-10-22
+
+### Added
+- **Find a Supplier (`/desk/supplier-finder`): who sells this, or has sold it to us.** Nik, 2026-10-22: "say I know
+  we need a pump, but I don't remember all our pump suppliers ... what if we have two pump categories and one pump
+  supplier I'm looking for is in a different supplier group." That cannot be answered with the Supplier Group field.
+  Measured on prod that day:
+  - There are 174 flat groups, and 629 of 1,193 suppliers have none.
+  - Pump suppliers sit in at least five groups.
+  - Of the suppliers we have actually bought pumps from, only one is in a group with "pump" in its name.
+
+  So one search box takes a kind of item ("pump"), a phrase ("submersible pump") or a model or part number
+  ("EQKT750", "Grundfos SQ 3-65"), and ranks suppliers by evidence:
+  - first, suppliers we bought a matching item from: submitted Purchase Order, Purchase Invoice (not returns) and
+    Purchase Receipt lines, with the date and the last nonzero price in that document's currency;
+  - then suppliers that quoted it, list it as an Item Supplier, are its default supplier or have a buying price for
+    it;
+  - last, suppliers whose only link is a matching Supplier Group or name.
+
+  A model search also lists the groups of its category (EQKT750 is a PUMP), which answers "which other pump
+  suppliers might carry this".
+  - **Duplicate supplier records fold into one row**, with the others listed as aliases. Prod had about 50 pairs
+    where the same company was entered twice, with and without "Inc." or ".com". Nothing is merged, because 918 suppliers are mapped to QuickBooks
+    vendors and merging would rewrite records the sync still owns.
+  - **The AI step only expands the query** (Nik's ruling). With "Let AI broaden the search" ticked, Gemini rewrites
+    a fuzzy search into search phrases and Supplier Group names.
+    - It sees only what was typed and the list of group names, never a supplier, an item or a price. The ranking is
+      deterministic.
+    - Not set up, rate-limited (60 per user per hour), timed out, or answering something other than the JSON asked
+      for: the keyword results come back with a one-line note. The Error Log row names the exception's class, never
+      the search.
+    - It is skipped for a model or part number, and cached for a day per search.
+  - **Where it lives** (Nik's choice):
+    - the page, linked from a new *Purchasing* card on the Inventory Enhancements workspace;
+    - a **Find suppliers** button on the Item form, and on the Purchase Order form, which asks which item when the
+      order has several;
+    - the read-only MCP tool **`supplier_search`** for Triton and Claude, with `expand` off by default.
+  - **Evidence is read for every matching item.** Only the list shown is capped (60 items, 40 suppliers), and
+    the page says "60 of 270". The independent review found that capping before the evidence read made "pvc"
+    (270 matches on prod, 94 of them bought) show 2 of the 6 suppliers we had bought PVC from.
+  - **A model match is one chunk with a digit** ("EQKT-750"). A plain word inside a longer code ("pump" in
+    CHEMPUMP-STENNER-45M1) and a category plus a size ("pvc 1-1/2", "sch 40") are ordinary matches. They no
+    longer get an "exact" badge or switch the AI step off.
+  - **Writes nothing.** It is gated on Supplier and Item read. On top of that, each source of evidence (Purchase
+    Order, Purchase Invoice, Purchase Receipt, Supplier Quotation, Item Price) is used only when the person may
+    read that doctype. A source they may not read is neither ranked on nor shown, and the answer says what was
+    hidden. The page's roles are the Purchase, Stock and Projects roles, Inventory Clerk and System Manager.
+  - The assistant tool answers compactly: 12 suppliers by default, 3 items each and 15 matching items, with the
+    totals and no ranking internals. A worst-case page answer was about 89 KB.
+  - Each screen (`?q=`, `?item=`, `?supplier=`) is its own history entry, so Back and Forward work.
+  - The decisions are pure (`inventory_enhancements/supplier_search_rules.py`). `tests/test_supplier_search_rules.py`
+    covers matching, group matching, folding and ranking. `tests/test_supplier_search_api.py` covers the AI
+    fallback, what the model sees, prices and permissions, and the tool. Both are their own CI steps.
+  - Design and the measured data are in `docs/supplier-finder.md`.
+  - Not in this release, both pending Nik's sign-off:
+    - phase 2, an index of the pre-ERPNext QuickBooks bill line descriptions, which only survive in
+      `QuickBooks Raw Payload`;
+    - the Supplier Group and duplicate-supplier cleanup.
+
+## [1.725.0] - 2026-10-22
+
+### Added
+- **Reorder level and quantity, editable in place on both inventory audit screens.** Nik, 2026-10-22: "From the
+  Inventory audit screen include the reorder threshold amount so each items reorder amount can be adjusted
+  easily without leaving the screen." He chose *both* screens that answer to that name. The **Bin Manager** has
+  a new **Reorder** column on each item of a bin, and the **Inventory Scanner Audit** shows the same two boxes
+  on the card of the item just scanned. "Threshold" could mean the trigger or the amount to buy, so there are
+  two boxes, **Reorder at** (ERPNext's `warehouse_reorder_level`: buy more when the stock falls to it) and
+  **Buy** (`warehouse_reorder_qty`: how many).
+  - **Saving.** A box saves when you leave it or press Enter, with a line under it that says *Saving…*, then
+    *Saved.*, or why not (in the words of ERPNext's refusal, or of this page's, such as "Say how many to buy each
+    time the stock falls to the reorder level."). Text that is not a number, is negative, or is above 100,000
+    is refused before any request and stays in the box to be corrected. A box left at the number it already
+    had saves nothing. Escape puts the boxes back. Two quick edits of one item go out one after the other.
+    Nothing is a history entry, so Back and Forward are the pages' own. On the scanner page Enter hands focus
+    to the counted-quantity box, so the next wedge scan is not lost.
+  - **A rule needs both numbers, both above 0, and is switched off by removing it** (independent review of
+    #1338: `Stock Settings` auto re-order is on, so every rule written here drives the nightly Material
+    Requests, which ERPNext submits). A new rule is made only when *Reorder at* and *Buy* are both given; with
+    one, the line under the boxes says "Enter both to create a reorder rule." and nothing is created. A level
+    of 0 is never saved (it raises a request whenever stock reaches 0). Clearing a box of an existing rule asks
+    "Remove this reorder rule?"; yes removes that one row through the Item document
+    (`remove_reorder_rule`), no puts the boxes back. A rule already on file with a level of 0 (one bin has it)
+    is left alone until someone edits it, and the edit then needs a level above 0.
+  - **A new rule checks stock where its neighbours do.** `warehouse_group` is what ERPNext counts the
+    projected stock of against the level, and the first version wrote the bin itself, so a rule made here
+    would order an item that has plenty on the shelf next door. It is now derived: among the existing rules on
+    warehouses at the same depth of the tree, under the nearest group above the new one that has any, the
+    most common `warehouse_group` (ties by name), ignoring rules that check their own bin. On this site that is
+    `Inventory - SF` for a bin under a Row and `All Warehouses - SF` for `Inventory Room - SF`; with no
+    neighbours at all, the parent group. Existing rules are never changed. (The guided Item flow's
+    `item_flow.save_stock` writes the same flaw, one row today on Bin A1-3-3; left as it is, a follow-up.)
+  - **Ceiling and units.** No level or quantity above 100,000 (`stock_scan_rules.MAX_QTY`, the Stock Scan
+    page's own ceiling) on either side of the wire: a barcode scanned into a focused box and followed by the
+    scanner's Enter is twelve digits. An item whose unit is counted in whole numbers
+    (`UOM.must_be_whole_number`) takes whole numbers only. "2,5" is refused, not read as 25.
+  - **Which rule.** Prod today (2026-10-22): 116 items have a reorder rule, one each, 83 of them on `Inventory
+    Room - SF` and 33 on a bin; no custom field stands in for it. An item shows the rule on the bin being
+    looked at; otherwise its own rule wherever it sits, labelled ("Rule is on Inventory Room") and edited
+    there; an item with none gets a Purchase rule made on the bin, the first time both numbers are given.
+  - **Who.** Anyone who can use the screen sees the rule. The boxes are inputs only for a person who may
+    write an Item (`Item` write); everyone else sees the numbers as text.
+  - **The endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` and
+    `set_reorder_level(item_code, warehouse, modified, level, qty, view_warehouse)`. The write is one
+    `Item.save()` as the user, so ERPNext's own validation runs (a level with no quantity, a second rule for
+    one warehouse; `remove_reorder_rule` is one `Item.remove` and `Item.save()`) and Item permission is the framework's, checked before anything else; never SQL on the child
+    table, never `ignore_permissions`. It carries the Item's `modified`: a page that is out of date writes
+    nothing, says so, and shows the current numbers. A resend, or numbers that are already those, saves nothing
+    and leaves the Item's `modified` alone.
+  - **Phones.** The boxes are 16px type (iOS zooms the page into anything smaller), 44px tall, and wrap to two
+    lines before a 375px screen would overflow; the Bin Manager's table already stacks its cells there.
+  - **Where it lives.** `public/js/reorder_levels/` (`logic.js` the decisions, `editor.js` the state and the
+    saves, `dom.js` the wiring), shipped as `reorder_levels.bundle.js` and `.css`, which each page asks for
+    apart from its own files, after them, and does without if they do not arrive or are slow: the Bin Manager
+    draws its bins first and the column joins when the bundle is here. A redraw of the bin that lands while a
+    reorder box has focus waits and runs when the box is left, so a half-typed number is not wiped and the
+    list does not stay stale.
+  - **Production.** Nothing is written by the deploy: no patch, no fixture, no migration step. Changes to rules
+    happen only when a person edits a box.
+  - Tests: `tests/test_reorder_levels.py` (the endpoints on a stub of Frappe, the source, and the editor under
+    node) and `scripts/test_reorder_levels.mjs`; one CI step. The real page scripts are run with and without
+    the bundle in `scripts/test_bin_manager.mjs` and `scripts/test_desk_page_history.js` (the scanner page).
+
+### Fixed
+- **The Bin Manager's Change quantity no longer says "Enter the quantity you counted, 0 or more." to a person who
+  typed 0** (TASK-2026-02912, "Bin Manager rejects 0 as a valid quantity"; Nik chose *error after Save* and the
+  sentence is that one). The code accepted 0 everywhere that matters (`logic.check_values`, `rules.check_count`,
+  `set_count`, all with tests); the cause was in how the dialog was read. Frappe's primary button reads the
+  dialog once (`FieldGroup.get_values`) and hands the result to the action, and in that read a required field
+  whose value is falsy (`!f.value`, which a typed 0 is) is refreshed, which sets the box from `me.value || null`
+  and blanks the 0. `save_dialog` ignored that result and called `d.get_values(true)` again, found no quantity,
+  and refused. `bin_manager.js` `save_dialog` now uses the values it is handed (the Move dialog's quantity too),
+  and a count the server refuses puts the 0 back in the box. A count to 0 is valid; a Move or Send to boneyard
+  of 0 is still refused in words ("Enter how many to move, more than 0."), a blank box and a negative number
+  still are, and the reorder rule's refusal of a level of 0 is a different thing and unchanged.
+  `scripts/test_bin_manager.mjs`: the dialog stand-in now does what Frappe v16 does on a click (one reading,
+  then the blanking), and the test fails on the old code.
+
+## [1.724.0] - 2026-10-22
+
+### Added
+- **The maintenance agreement prints its per-period Service Fee.** Nik, 2026-10-22: "add a monthly (per-period)
+  fee line to the maintenance agreement template, filled from the linked maintenance contract's Recurring Amount
+  when set, plus fix SF-MAINT-2026-0018 so Day Dairy prints $1,490 per month." Service Plan Selection priced only
+  per visit, per event and the Annual Service Fee Total, so `recurring_amount`, the amount the recurring-billing
+  job actually invoices, appeared nowhere on the agreement. Day Dairy's agreement printed no fee at all. Nik then
+  set Day Dairy's price at $1,465.00 ("make it $1,465.00 instead of $1,490.00"), the figure MNT-CON-2026-00002
+  already carried.
+  - **The line.** "Service Fee: **$1,465.00 per month**, billed May through September." Per month, quarter or
+    year follows the agreement's Invoicing Frequency. The season is the maintenance contract's Bill From / Bill
+    Through, shown only for Monthly billing, as invoicing applies it. The summary at the top gains a matching
+    "Service fee:" row. Both come from one figure resolved in `_render_context`, so they cannot disagree. The
+    template queries nothing.
+  - **Only for a stored template that has the line.** `_render_context` now receives the body it renders and
+    resolves a fee only when that body reads `period_fee` (`maintenance_fee.template_prints_fee`); the builder's
+    blanks and progress use the same gate. The summary row is Python, and the v1.611.1 body already calls
+    `summary()`, so without the gate the row would reach every agreement at deploy, including one whose signing
+    link is out while the patch below waits. Until the stored body is swapped, nothing about the fee prints.
+  - **Where the figure comes from** (`project_enhancements/maintenance_fee.py`), first match wins:
+    1. The Recurring Amount of the Sapphire Maintenance Contract whose `project_contract` is this agreement
+       (Active first, then the newest; Canceled ignored). It is used only when that contract bills on the
+       agreement's own cadence, because a Recurring Amount is "per period" of *its* cadence, and a monthly
+       amount beside a Quarterly tick in §4.2 would contradict the page.
+    2. The Annual Maintenance Fee ÷ `billed_periods_per_year`, the same split and season the maintenance
+       contract derives for itself. It is used only before that contract exists or while it bills on the same
+       cadence. A split printed beside a contract that invoices per visit would state a fee nobody is billed.
+    3. Nothing: the line is left out. It never prints $0.00 or a blank.
+  - **No line for a plan priced per visit.** Per Visit invoicing gets no line. Neither does an agreement whose
+    ticked Standard Maintenance has a per-visit rate, whatever it is invoiced on. Its Annual Fee is rate ×
+    visits, so splitting it would print a flat price nobody agreed to: Hardware Apartments ($690 a visit,
+    $17,940 a year) would have read "$1,495.00 per month". An Annually split gets no line either, because it
+    would only repeat the Annual Service Fee Total.
+  - **The Contract Builder** stops listing a blank Annual Maintenance Fee under blanks, and stops counting it in
+    progress, while a Service Fee prints and the template therefore leaves that line out
+    (`contract_builder._printed_only_when_set`).
+  - **Annual Service Fee Total** still prints whenever it is set. When a Service Fee prints and no annual total
+    is set, the blank "(if applicable)" line beside a stated fee is left out (Day Dairy). With neither figure,
+    the paper form keeps its blank. A ticked Standard Maintenance with no per-visit rate reads "base rate in the
+    Service Fee below" instead of a blank rate.
+  - **An agreement with no fee renders byte for byte as before.** The test suite rebuilds the v1.611.1 body
+    from the new one and compares the two renders, so the change reaches only agreements that have a figure.
+- **Patch `refresh_maintenance_agreement_fee_line`** brings the change to the live Contract Template, which
+  `seed_contract_templates` (insert-only) never updates. It follows the same rules as the v1.611.1 layout
+  refresh:
+  - It replaces the body only when its SHA-256 is a body this repo shipped: v1.611.1, which matched prod byte
+    for byte on 2026-10-22, or v1.611.0. Not v1.609.0: that body predates the 2026-10-13 terms, whose own patch
+    resets issued agreements before it swaps. A body edited on the site is logged and left alone.
+  - It freezes paper-signed copies first.
+  - It waits while a signing link is out.
+  - It resets no contract's terms, cannot raise, and finds the body current on a second run.
+  - **A wait is retried.** Patch Log records the patch as done even when it waited, so
+    `retry_after_migrate` (`hooks.after_migrate`) runs the same guarded swap after every migrate. It is silent
+    when there is nothing to do and installs only the v1.724.0 body (`FEE_LINE_BODY_SHA256`), so a later
+    template release is left to its own patch. A wait therefore ends at the first deploy after the last
+    signing link is signed or voided. Running the patch's `execute` by hand ends it sooner.
+
+  Signed agreements cannot change: an e-signed contract prints its request's `agreement_html`, and one marked
+  signed on paper prints `executed_html`. On prod the only signed maintenance agreement, SF-MAINT-2026-0001, was
+  frozen in v1.611.0, and no signing link was out.
+
+### Notes
+- **What changes on prod at deploy:** Day Dairy (SF-MAINT-2026-0018, from MNT-CON-2026-00002) and
+  SF-MAINT-2026-0010 ($7,920 a month, May to September, the same figure its Exhibit A states) gain the line.
+  SF-MAINT-2026-0021 (Capitol) prices $559 a visit, so it gets no line, although its maintenance contract
+  bills a flat $1,118 a month. That mismatch is for whoever priced it. Every other maintenance agreement renders
+  as before.
+- **Day Dairy's Exhibit A** (`custom_plan_details`) said $1,330.00 per month. It was changed to $1,465.00 on
+  2026-10-22, with Nik's approval, through AI Pending Action AI-PA-2026-1323674. That was a data change on prod,
+  not part of this release. Agreement and maintenance contract now state the same figure.
+- **Don't change a maintenance contract's monthly amount, billing frequency or season while its agreement is
+  out for signature.** The Service Fee is read from the maintenance contract every time the agreement renders,
+  and the executed copy is rendered again at signing. Such an edit changes what the client signs, not what they
+  were shown. The e-sign drift check records it as `document_drifted` on the signature request, but it does not
+  stop the signing.
+- **Known follow-up:** with no maintenance contract yet, a Monthly Annual Fee split uses 12 periods, because
+  the billing season lives only on the maintenance contract. A seasonal client's draft agreement therefore
+  shows a twelfth of the Annual Fee until its contract is raised. Not built here.
+
+## [1.723.0] - 2026-10-22
+
+### Added
+- **Simple mode for both planners: every job (or site), what is done and what is coming up, on one quiet page.**
+  Nik, 2026-10-22: "Add an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and
+  easily see all the data in a simple view, both historical data and future data." Designed with him first; his
+  fourteen answers (S1–S14) and the production figures behind them are `docs/planner-simple-mode.md`. The planner
+  UX redesign's main complaint was "too much to learn", so this is the opposite of a sixth tab: one switch, one
+  search box, a card per job.
+  - **A switch, not a tab** (S1). *Simple* is the first button in each planner's bar, and on the phone's Today
+    header. On, it opens `/desk/project-planner/simple` or `/desk/maintenance-planner/simple`, a screen with its own
+    history entry, so Back returns to where the person was; the planner's chrome is hidden by one class and its
+    shortcuts stand down. Off, it returns to the full planner.
+  - **Remembered per device** (S7), like the last-used tab: a phone and a desktop each keep their own. On the
+    Project Planner `simple` is one of the device's tabs, and switching off goes to the tab the device showed when
+    it was switched on (through the bare address, so the first-visit rules apply when there is none). The
+    Maintenance Planner keeps its last view per person, so its Simple mode is a device flag in the browser, written
+    only when it changes and read on a bare address before the person's own view. A link that names a filter or a
+    technician never opens Simple mode: it is a planning board's link.
+  - **One card per job** (`api/planner_simple.get_simple_jobs`; S6, S9–S11, S13): every customer job ever, any
+    status (561 on production by the planner's rule, measured 2026-10-22), with work coming up first and soonest, then the rest by last activity; 20 at a
+    time with *Show more jobs*; search across all of them by number, name, customer or PM. **Done** on the left,
+    grey, newest first; **Coming up** on the right, bold, late first; three of each and *Show all N*, and *N not
+    scheduled* for undated open work. On a phone Coming up comes first, and each item's date sits above its name (a
+    range across a year is wider than any column a 375px card can spare). A job whose schedule is still a Draft (P3)
+    says *◐ Draft schedule*, as the Overview hatches it. A job's items are the planner's display rule
+    (D6); **a job with no phase or crew work lists its own top-level groups**, "N of M done", because the 505
+    finished jobs on production (2026-10-22) predate the Phase 100–700 templates and have almost no assigned tasks, so
+    the rule alone would have shown them as empty cards. Late is by end date, never by the Overdue status (1,005 open tasks
+    carry it); on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the
+    assignees, closed ToDos included (that is who did it), drawn as initials with the names on hover.
+  - **One card per site** (`get_simple_sites`; S12, S14): every project with a maintenance contract or a
+    Maintenance Record. Its records (done once submitted or in review, as the Maintenance Planner says), its
+    contract's projected visits for the next 120 days, marked *planned*, and its project's completed tasks.
+    Records only exist from 2026-10-06 and are drafted a week ahead, so without the projections every site would
+    look finished, and without the old tasks it would have three weeks of history (Highlands has 73 visits back to
+    2019 as tasks). Only the page's sites' contracts are projected (`maintenance_planner._projections` takes an
+    optional `projects` list; the Maintenance Planner's own calls are unchanged), so a search does not project
+    every contract. A projection that fails is logged and the site still answers.
+  - **The screen is the planner kit's** (`planner_kit/simple.js`, `.pk-simple-*` in `planner_kit.bundle.css`), so
+    both planners draw the same thing. It writes nothing; a click opens the record as a normal Desk route. Its own
+    controls (the search, Show all, Show more) take no history entry; the search reads again 300 ms after the last
+    key, an answer for an older read is dropped, and a failed read says so with Try again (a quiet GET, so Frappe
+    shows no dialog of its own). A failed *search* takes the previous search's cards, count and paging away with it,
+    so Show more can never add one search's next page to another's cards; a failed *Show more* keeps the cards of
+    the same search and offers Try again in its place. A refresh (Back onto Simple mode) reads as many cards as are shown, up to 1,000,
+    more than every job on production, so nothing the person scrolled to disappears.
+  - **Whose records.** The planner's role gate says who plans; each endpoint also needs read permission on its
+    records (Project and Task for jobs; Project and Sapphire Maintenance Record for sites), and lists only the
+    projects the caller may read (`frappe.get_list("Project")`, so User Permissions and permission query
+    conditions apply), as the Gantt checks its one project. The readable names go into the page query as one
+    bound `IN`, so paging and counts stay right.
+  - **The tour and "?".** The first-visit tours are capped at six steps and the Executive Team's editor tour already
+    has six, so the switch is a sentence in each tour's last step rather than a seventh; "?" lists *Simple* beside
+    the tabs, and Simple mode's own "?" explains the cards and the marks.
+
+### Notes
+- Reads only: no DocType, Custom Field, fixture or patch, so `bench migrate` does nothing new. The deploy ships the
+  rebuilt planner kit bundle (content-hashed) and the two page scripts.
+- `tests/test_planner_simple.py` (its own CI step) pins the card rules, the bound reads, the role gates and the
+  wiring, and runs `scripts/test_planner_simple.js`; the Project Planner's landing, switch and Back/Forward are new
+  cases in `scripts/test_planner_today.js`. Four existing tests that pin the device-tab list and the "?" chips now
+  include Simple.
+
+## [1.721.0] - 2026-10-22
+
+### Added
+- **The QuickBooks Record Matching page exports to Excel and imports the worked file back.** Nik, 2026-10-22: "I
+  need an excel export of the QuickBooks Record Matching screens so Meg can work on them in Excel and later I can
+  take her work and reimport it into ERPNext". Two buttons on the page (`core/matching_excel.py`, four endpoints
+  in `core/api.py`, all behind the page's own System Manager / Accounts Manager gate):
+  - **Export to Excel** asks which rows (the page's status filters, *Needs decision* by default, less *Unmapped
+    payloads*, which have no mapping row to come back to), which record types, and whether to add the parked
+    transactions. It builds one workbook: an Instructions sheet in plain words, a sheet per master type with the
+    same rows, facts and up to five suggestions the Masters tab shows, and a Parked transactions sheet. Meg fills
+    yellow columns: **Decision** (a dropdown of the page's own Link / Keep / Retry; blank leaves the row alone),
+    **Link to** (a per-row dropdown of that row's suggestion IDs, pre-filled with the best one as the page's picker
+    is; any other ID may be typed), **Fill blank fields from QBO** and **Notes**. Hidden columns carry the mapping's
+    Row ID, a Row version and `modified`. The export is a background job the page polls: the full queue is ~2,700
+    rows on production, each with a matcher call, a similar-name query and a title lookup, which one web request
+    would race the gateway timeout with. The file is a private File owned by the person who asked.
+  - **Import from Excel** uploads through Frappe's own uploader (private, .xlsx only) and shows a **preview, never
+    an apply**: per row, *will change* (what exactly -- the new link, the import copy that merges away, the blank
+    fields it fills, the note), *already done*, *changed in ERPNext since the export*, or *cannot be applied* (an
+    unknown Row ID, edited key cells, a decision the row cannot take, a Link target that does not exist as the
+    record type the QBO record belongs to). **Apply** sends the rows ten at a time; the server classifies each
+    one again and runs only a row that is still a change, through `matching.decide` (Link, with its merge
+    policy), `matching.confirm` (Keep) and `sync.sync_entity` (Retry) -- the page's own code -- and reports what
+    applied, what was skipped because it moved after the preview, and what failed.
+  - **Each row is judged again immediately before it runs, not once per request**: a Link earlier in the same
+    request can merge an import copy away, and `rename_doc` re-points every other mapping that pointed at it. A
+    Retry goes in a request of its own, as the page's Retry does, so ten round trips to Intuit cannot outrun the
+    gateway together. A note that fails to save after its decision committed is reported on a row that applied,
+    never as a failure. A refused merge comes back as a `merge_failed` flag, not a phrase the page matches.
+  - **The export reads the queue once** (`matching.master_mapping_rows`, split out of `master_queue` with
+    `build_master_rows`) and builds it 500 rows at a time. Paging by offset would skip rows: the job takes minutes,
+    and each row someone decides on the page meanwhile leaves *Needs decision* and pulls the rows behind it past
+    an offset already read. A job a deploy kills reads as lost once it outlives its RQ timeout, not as running.
+  - **Hardened after the manager's review of the PR (2026-10-22):**
+    - *No formulas from QuickBooks data.* openpyxl stores any string that starts with `=` as a formula, so a
+      QuickBooks name like `=HYPERLINK(...)` would have run in Meg's Excel. Every string cell is now written as text
+      (`data_type = "s"`), and one starting with `=`, `+`, `-` or `@` also gets Excel's quote prefix.
+    - *Link and Keep only on master records.* A row's kind came from whether its sheet had a "Link to" header, so a
+      header pasted onto the Parked sheet made Link on an Invoice call `decide()` against a Sales Invoice. The kind
+      now comes from the row's QBO type.
+    - *Duplicate Row IDs.* The same record on two rows (a copied sheet, a pasted row) that disagree is a conflict:
+      neither is applied, and the preview says why. Copies that agree are applied once. Apply honours the
+      preview's verdict, because one row on its own cannot see its duplicate.
+    - *Notes match exactly.* "Already saved" was a substring test, so a note of "ok", "import" or "Note" counted as
+      saved inside the comment's own heading and was dropped. The import's comment now carries
+      `[Excel note <hash of the exact text>]`, and only that marker counts.
+    - *No silent empty import.* Read-only openpyxl trusts a sheet's stored `<dimension>`, so a file saved with a
+      wrong one read as zero rows with no error. Each sheet's dimensions are reset before reading, and a file with
+      no Record Matching sheet says so. A file that expands past 100 MB is refused before parsing.
+    - *The page never hangs.* Apply, the Link/Keep bulk loops (`runInChunks`, from v1.518.0) and the export poll
+      now settle on the promise `frappe.call` returns. Frappe v16 never calls its `error` callback on a
+      QueryTimeout or Deadlock, so a chunk loop waiting on it froze the screen. The poll now waits 30 minutes,
+      longer than the job's 25-minute timeout, and offers the export folder if the job still hasn't reported back.
+    - *The parked sheet is read once too* (`matching.parked_mapping_rows` + `build_parked_rows`, split out of
+      `parked_transactions`), so a Retry on the page during the export can't skip rows.
+    - *Files are cleaned up.* Exports and uploaded imports go into one File folder, `Home/QuickBooks Matching
+      Excel`, and a new **daily** scheduler job (`matching_excel.delete_old_files`) deletes those older than
+      **7 days**. They hold customer and vendor names, emails and links, and nothing else ever removes an
+      unattached private File. The job deletes **only** Files this feature made or accepted: each carries a tag
+      (`attached_to_field = "qbo_matching_excel"`, which Frappe reads only with an `attached_to_doctype`, so an
+      unattached File never has it otherwise) and is still attached to nothing. A File that is merely in the folder
+      is left alone.
+    - *Preview accepts only your own upload.* Accepting a File tags it for that job, so preview refuses another
+      person's file, a document's attachment or a public file. The page only ever sends a fresh upload, but the
+      endpoint can be called directly with any `.xlsx` the caller can read. An `_export` sheet with a blank value
+      now reports "not made by the export" instead of crashing the preview.
+    - *Key columns are locked.* Each data sheet is protected, with no password: only the yellow cells are
+      unlocked. Filtering and column widths still work; sorting is off, since it would move locked cells. The Row
+      ID / QBO type / QBO ID cross-check stays as the backstop.
+  - Nik's three calls: the decisions are the page's three, not new ones (Keep on a record the import created
+    already means "keep the new record"; blank is "ignore"); a note is saved as a Comment on the row's QuickBooks
+    Sync Mapping, with or without a decision; and two QBO records linked to one ERPNext record -- the usual QBO
+    duplicate -- is a warning on both rows, not a refusal.
+  - **Why "already done" is decided before "changed since the export".** Applying a row changes it, so a second
+    import of the same file would otherwise report every row stale; it checks first whether the row already holds
+    the decision's outcome (linked to that record and decided; reviewed; no longer parked; the note's text already
+    in a comment). Importing the same file twice changes nothing the second time.
+  - **Why the staleness check is not `modified`.** The Row version fingerprints what a decision depends on -- the
+    link, `match_status`, `conflict_status`, `reviewed_on` -- because `modified` moves on every CDC touch of the QBO
+    record, and keying on it would throw away Meg's afternoon because a phone number changed in QuickBooks. A moved
+    `modified` is shown as a warning instead. `reviewed_on` is the one that matters most and `modified` would have
+    missed it: `_stamp_reviewed` writes it with `update_modified=False`. An unlinked row's doctype and a parked
+    transaction's review fields are left out, since the page rows they are exported from never carry them.
+  - Built with openpyxl, which ships with Frappe (`openpyxl~=3.1.5` on v16), for the dropdowns: v16's
+    `frappe.utils.xlsxutils.make_xlsx` writes one plain sheet through xlsxwriter. `matching.master_queue` and
+    `parked_transactions` now also return each row's `modified`.
+  Tests: `tests/test_quickbooks_matching_excel.py` (new; its own pytest step in `ci.yml`, which installs the real
+  openpyxl) -- export shaping and the version fingerprint, the workbook's hidden columns and dropdowns, parsing by
+  header, the preview's every category, apply re-checking each row, one failure not stopping the rest, and the
+  same file imported twice changing nothing. `tests/test_whitelist_placement.py` names the four endpoints.
+
+## [1.719.0] - 2026-10-22
+
+### Changed
+- **Projects Dashboard: View More, one "+" button and an icon Columns button.** Nik, 2026-10-22: "get rid of
+  the Dashboard tab, and make a View More button that shows the Active Internal Projects, and Completed
+  Projects. Also on the Dashboard make the New Project and New Master Project be a plus button that you
+  select which you're making. Also get rid of the Reset widths button and change the columns button should be
+  changed to a little gear emoji or three dot icon." Block files only (`custom_html_blocks/projects_dashboard.*`
+  and the shared `column_selector.js`); the Portfolio Gantt widget and the planner's Overview tab that reuses it
+  are untouched.
+  - **The tab bar** leads with *Priority Overview* and *Portfolio Gantt*. A **View More** button at its end
+    reveals *Active Internal Projects*, *Completed Projects* and *Summary* as three more tabs (and reads
+    **View Less** while they show). The choice is kept per browser in `localStorage`
+    (`chb_projects_dashboard_more_v1`, with the dashboard's other saved view), never in frappe `user_settings`
+    (Redis only, flushed on every deploy). Collapsing while one of the three is open lands on Priority Overview
+    instead of leaving a tab on screen with no tab in the bar. Each extra tab keeps its own sort and column
+    menu; the search box above them is shared by all the list tabs, as it always was. The two list tabs keep their old definitions: Active Internal is an active project of an internal
+    type, Completed is every inactive project (its status column says Completed, Paid, Canceled ...).
+  - **The Dashboard tab is gone, and nothing it showed was lost.** Its six number cards and three breakdowns (by
+    status, type and completion) were on no other page, and Nik's rule is "we shouldn't have lost any
+    fidelity", so they are the **Summary** tab behind View More (Nik picked that). Same figures, same code.
+  - **New Project and New Master Project are one "+" button** at the right of the toolbar, opening a two-item
+    menu. Each item does exactly what its old button did (`frappe.new_doc`, which gives the form its own history
+    entry, so Back returns to the dashboard). Escape or a click elsewhere closes the menu, the arrow keys move
+    between the items, the button has an `aria-label` and `aria-haspopup`.
+  - **The Reset widths button is gone; resetting is not.** *Reset column widths* is now an item at the bottom of
+    the Columns menu, so a dragged column can still be put back.
+  - **Columns is a three-dot icon button** (tooltip and `aria-label` "Columns"). The icon is inline SVG, not
+    `frappe.utils.icon`: this block draws inside a shadow root, where the page's `<use href="#icon-...">` sprite
+    cannot resolve (the same reason Desk Shortcuts uses emoji). `ColumnSelector.render_button` takes a third
+    argument, `{icon, actions}`; without it the word button is exactly as before, and this block is its only
+    caller. The menu now also closes on Escape and stays open while you tick several columns (it listened for
+    clicks on `document`, where a click inside a shadow root arrives retargeted to the host and always looked
+    like a click outside). The Portfolio Gantt's own *Columns* picker in its toolbar is a different control and
+    is unchanged.
+  - **Tests.** `scripts/test_projects_dashboard_toolbar.mjs` runs the block's real script and the real
+    `ColumnSelector` against a recording stand-in for jQuery and drives the buttons (expand, collapse, remembered
+    state, collapse-from-a-hidden-tab, the "+" items, Escape, the Columns icon and its Reset action); the
+    bench-free `tests/test_projects_dashboard_toolbar.py` holds the shell, script and stylesheet in agreement
+    (the hidden-tab list, the `hidden` attribute winning over a display rule, no user_settings, the Gantt still
+    mounting through the shared widget). Both run in CI.
+  - **Deploy.** `bench migrate` overwrites the block's `html`, `script` and `style` from these files. No schema,
+    fixture or data change.
+
+## [1.717.0] - 2026-10-22
+
+### Added
+- **A sidebar you hide stays hidden on every page until you show it again** (Nik, 2026-10-22: "if they toggle
+  the sidebar once and then hide the menu picker on the left side, it should globally do that until they change
+  it back"). Decided with him the same day: the left Desk sidebar is "the menu picker"; two settings, one for the
+  left navigation and one for the record sidebar; kept **in this browser only** (localStorage), not on the user's
+  record; a phone ignores both. New `global_enhancements/sidebar_memory.js` (global bundle) and a block at the end of
+  `desk_enhancements.bundle.css`.
+  - **The record sidebar and the Training rail.** frappe v16.50.0 has no in-page toggle for the right-hand
+    sidebar of a form at all, only the Desk Settings checkbox, which is server-side and all-or-nothing. Every
+    form, and every Training page, now has a small panel icon in the page head (*Hide sidebar* / *Show sidebar*; its accessible name stays "Sidebar" and `aria-expanded` carries the state).
+    One click saves the choice and sets `ee-page-sidebar-hidden` on `<html>`; the stylesheet hides
+    `.layout-side-section.right` (the form's) and `.tn-host .layout-side-section` (the Training rail) under it. The
+    class is set when the bundle evaluates, before the desk draws a page, so a sidebar you hid is never painted and
+    then removed, and every page opened afterwards follows it. A new, unsaved record has no sidebar, so the button
+    is out of sight there until it is saved. The Training rail tells the module it mounted
+    (`ee-page-sidebar-ready`, one line in `desk_nav.js`) so the button is there on its first show.
+  - **Only from 992px up.** Below that the form's sidebar is frappe's responsive layout and the Training rail is a
+    stacked "Training menu" disclosure; hiding either would leave a phone with no way back, so the stylesheet
+    applies nothing there and the button is out of sight.
+  - **The left Desk sidebar: four gaps in what frappe already does.** frappe saves a collapse in
+    `desk-sidebar-collapsed` (written by `Sidebar.close()`/`open()`) and re-reads it each time the sidebar is
+    redrawn. Left alone, that failed four ways, each now closed by wrapping one `Sidebar` method (the original
+    still runs; everything below is desktop only, a phone drawer is left as frappe has it):
+    1. **A route with an empty sidebar reopened a collapsed one.** `restore_expanded_state()` sets the panel
+       expanded, without saving, whenever the sidebar it just drew has no items (a route whose module has no
+       Workspace Sidebar), so the panel popped open over a saved collapse and folded again on the next route.
+       The wrapper folds it again when a collapse is saved. **Not verified on production data**: I could not
+       tell which of our routes resolve to an empty sidebar; check a collapsed sidebar stays collapsed on the
+       Training pages and the planners.
+    2. **A Dock click erased the choice.** Every click on a Dock item runs `open_dock_entry()`, which switches
+       module and then calls `Sidebar.open()`: it unfolds the panel and writes `"0"`. Beside a pinned Dock
+       (everyone here) the Dock is the only way to switch module while the panel is collapsed, so collapse, click
+       Selling, and the sidebar sprang open with the choice gone in every tab. The wrapper silences `open()` for
+       the length of that call when a collapse is saved: the module still switches, the panel stays folded, the key
+       stays `"1"`, and `open()` is put back exactly as it was.
+    3. **Another tab's change was not noticed.** The module listens for the `storage` event and folds or opens
+       the live sidebar to match. This is the only place it drives the sidebar; a route change drives nothing.
+    4. **The key is per browser.** On a shared browser one person's collapse became the next person's. Each
+       person's choice is also kept as `ee-nav-collapsed@<user>` (written by a wrapper on `save_collapsed_state`)
+       and copied back into frappe's key when the bundle evaluates, before the sidebar reads it. Someone who has
+       never chosen, on a browser another person used last, starts open; the first person after this ships keeps
+       the choice they already had. The user comes from `frappe.session`, falling back to the `user_id` cookie
+       (the session is not always set when the bundle evaluates); Guest keeps the shared key.
+  - **The record-sidebar choice is per user too** (`ee-page-sidebar-hidden@<user>`), for the same reason.
+  - **Hiding the record sidebar closes an open attachment preview first.** In v16.50 the preview lives inside
+    `.layout-side-section.right`, and frappe's `:has(.attachment-preview:not(.hidden))` rule keeps the main column
+    shrunk while one is open, which left a blank gap beside the hidden sidebar until Esc. The module clicks
+    frappe's own close button, which also unbinds its Escape handler.
+  - **The button's "on" colour shows.** It carries Bootstrap's `.text-muted`, which is `!important`, so the
+    active colour is `!important` too.
+  - Storage that throws (a private window, blocked site data) is caught; the toggle still works for the life of
+    the page. The toggle is one click, a page-head button, and changes nothing about Back/Forward: no route is
+    touched.
+
+### Removed
+- **`enforce_sidebar_expanded()` in `erpnext_enhancements.js`**, an old script that removed `body.sidebar-collapsed`
+  on every desktop class change and window resize and zeroed `frappe.boot.user.sidebar_collapsed`, so that a
+  person's collapse could never hold. Nothing in frappe v16.50.0 styles on that class, so it did little visible
+  harm, but it was a second opinion fighting the desk's own state on every resize, and it contradicted the feature
+  above. `tests/test_sidebar_memory.py` fails the build if it returns.
+
+### Tests
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (78 checks:
+  the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
+  get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
+  that throws; a route change never touches the left sidebar; the empty-sidebar and Dock-click wrappers; the
+  per-user keys and the shared-browser hand-over; the attachment preview). `tests/test_sidebar_memory.py` holds the seams it
+  cannot see (the stylesheet's selectors are the ones the script's class names produce, nothing hides below 992px,
+  the always-expand script stays deleted). Both run in CI.
+
+## [1.716.2] - 2026-10-22
+
+### Changed
+Three changes to the Project form, all Nik's, 2026-10-22.
+- **The "Planner schedule" section is hidden.** "hide the planner schedule from the form view of Projects as well."
+  Asked which block he meant, he answered: just the *Planner schedule* section on the Schedule tab, the one holding
+  *Schedule status* (Draft or Published), *Schedule published on* and *Baseline set on*. It is now `hidden: 1` on the
+  `Project-custom_schedule_state_section` Custom Field, which hides the whole section. The Schedule tab keeps its
+  Gantt chart, dates, rent schedule and notes, and *View > Open in Project Planner* is untouched.
+  - **Hidden, not deleted.** Every field stays in the database and the fixture, so the planner still reads and
+    writes `custom_schedule_status`, `custom_schedule_published_on` and `custom_baseline_set_on` exactly as before
+    (Publish schedule, Set baseline, the Draft/Published gate on crew views), and a new Project still starts
+    `Draft`.
+  - **Pinned** in `tests/test_planner_publish_baseline.py` (`TestFixtures`): the section is hidden, the Gantt
+    section and its HTML field and the Schedule tab are not, and no script in the app un-hides it.
+- **The "Production Tracking" section is hidden.** "Production tracking section in the project doctype needs to be
+  hidden as well." `hidden: 1` on the `Project-custom_production_section` Custom Field (Scope tab, between Build
+  Deliverables and Service Scope), which hides Build Status, Bid Cost, Production Started and Completed, and
+  Quality Sign-Off By and Date with it.
+  - **Hidden, not deleted, and checked first for what writes to it.** Nothing on the form does. The Production
+    Builds Kanban board moves `custom_build_status` itself, quality scheduling (`quality/scheduling.py`,
+    `api/quality_due.py`) reads it, and the Project Brief prints all of them; none of that goes through the form,
+    and a hidden field still saves. No field is required, so a hidden one cannot block a save. **One thing to
+    know:** with the section hidden, Build Status can only be moved on the Production Builds board (or by
+    API), not on the Project form.
+- **The activity feed shows on the Project's Comments tab only.** "Can we move the Activity Log to only display
+  under Comments tab of the Project view." The feed is the form timeline (activity entries with their `#N` badges
+  and the comment box) that Frappe draws below the tabs. It showed on every tab; it now shows on the Comments tab
+  and on no other tab of a Project, Details included. Comments, `@mentions` and the comment box are untouched: they
+  are just visible on that one tab. Checked on prod (16.50.0) by opening a Project read-only, running this script
+  against the page and clicking through the tabs: hidden on Details, Scope and Schedule, shown on Comments.
+  - **The existing "first tab only" feature never worked on v16, and this fixes the mechanism it shares.** Since
+    v1.259.4 (TASK-2026-00353; "fixed" in v1.299.2 and v1.331.1) `activity_first_tab_only.js` and its stylesheet
+    looked for `.form-footer` inside `.form-page`. In v16 the footer is built on `page.main.parent()` (`form.js`),
+    so it sits in `.layout-main-section-wrapper` beside `.layout-main-section`, and no `.form-page` contains
+    one: `apply()` returned early on every form and the class was never set, on any doctype. Those earlier
+    CHANGELOG entries claiming it hides the feed were wrong for v16. Its tests passed against a fake DOM of the
+    same wrong shape. The class now goes on `.layout-main-section-wrapper`, and the CSS rule is
+    `.layout-main-section-wrapper.ee-activity-off-tab .form-footer`.
+  - **Tab changes are seen from the class change, not `shown.bs.tab`.** Frappe's click handler (`tab.js`) adds
+    `active` before `layout.js` calls Bootstrap's `.tab("show")`, which returns early on an already-active link, so
+    `shown.bs.tab` is not fired for a Frappe tab click. Each `.form-tabs` list is observed for its links' `class`
+    attribute instead (attached once), plus `form-refresh` and a childList observer for first paint and footer
+    rebuilds.
+  - **Only Project is switched on.** The shared script has a `HOME_TABS` map (doctype -> Tab Break fieldname,
+    `Project: custom_comments`); the tab is found by the id Frappe gives its link (`project-custom_comments-tab`).
+    **Every other doctype is unchanged: the feed stays on every tab, which is what it has really done all along.**
+    The original "first tab of every tabbed form" rule is still in the code behind `FIRST_TAB_FOR_ALL = false`.
+    Turning that on would change every tabbed form on the site at once (Task, Customer,
+    and so on) for the first time, so it is Nik's call and not a side effect of a Project change.
+    A footer that a doctype already moves inside a tab pane (ERPNext's CRM doctypes) is left alone as before.
+  - **Pinned** in `tests/test_project_form_hides.py`, which runs `scripts/test_activity_home_tab.js`: the real script
+    against a fake DOM rebuilt from the v16 structure (footer beside `.layout-main-section`, not under
+    `.form-page`; tab switches are class changes only, no `shown.bs.tab`). Covers first paint on each tab,
+    switching to and from Comments, other doctypes unchanged, no Comments tab, mid-render, one tab, a footer in a
+    pane, no footer, and two forms open at once. `tests/test_activity_first_tab_only.py` now also pins the
+    wrapper in both halves and that the script no longer relies on `shown.bs.tab` (read from the code, not its
+    comments). Own CI step.
+
+### On deploy
+`bench migrate` re-applies `fixtures/custom_field.json` and flips `hidden` on two Custom Fields
+(`Project-custom_schedule_state_section`, `Project-custom_production_section`). No patch, Property Setter, schema or
+data change. The feed change is a JS change in the global bundle.
+
+## [1.716.1] - 2026-10-22
+
+### Fixed
+- **The Project Planner's Crew tray now scrolls by itself.** Nik, 2026-10-22: "On the Crew page of the Project
+  Planner the side bar of the tasks, should scroll independently of the other scroll so that way you can select a
+  task or view a task without needing to scroll the entire page." The Not scheduled and Needs crew trays sit in a
+  260px column beside the Crew board (P7), and the column was part of the page's flow: a long list meant
+  scrolling the whole page, and the board went with it. On a wide screen the column is now
+  `position: sticky` under Frappe's navbar and page head (`top: 120px`), at most the board's own cap (the
+  viewport less 150px) tall, so the row is no taller than the board, with `overflow-y: auto` and `overscroll-behavior: contain`, so a wheel or a swipe inside it moves only
+  the tray, and one on the board (which already scrolls inside its own box) never moves the tray. Dragging a task
+  out of it onto a day works as before, and a drag held near the tray's top or bottom edge scrolls the tray, as
+  it does the board and the people panel (`p6a_edge_scroll`). On a phone the tray goes back above the board in
+  plain flow, and a printout carries the whole tray; Lookahead, Gantt, Calendar, Overview and Capacity do not
+  use the Crew layout and are unchanged. The 120px is a literal because the page's stylesheet may read only
+  `--sf-*` tokens; it is Frappe's 48px navbar and 60px page head, plus air.
+  Tests: `TestProjectPlanner` in `tests/test_s3_page_css.py` pins the sticky tray, its offset and cap, the phone
+  and print resets, and the edge-scroll hook.
+
+## [1.716.0] - 2026-10-22
+
+### Added
+- **A short first-visit tour for each planner, and "?" rewritten for the new tabs** (P12 of the Planner UX
+  redesign, the last of twelve; `docs/planner-ux-redesign.md` §7). Nik, 2026-10-21: "When we are close to
+  finishing, I'd like a brief and simple tutorial on the planner for every first time visitor." Stacked on #1331
+  (P10) and #1332 (P9): merge after both.
+  - **The tour.** A few steps in one small dialog, in plain words, one idea each; skippable at every step (Esc,
+    *Skip tour*, a press outside the card), keyboard-complete (focus on Next and trapped, the arrows step, Back and
+    Next buttons, *Done* on the last), named for a screen reader (a modal dialog named by the tour's title as an
+    `aria-label` alone, because `aria-labelledby` would win over it and the title would never be read, and
+    described by the step's sentence, "Step 2 of 5" in a polite live region) and fine at 375px (the card sits
+    along the bottom of a phone, 44px buttons on touch, long words wrap). **The Project Planner on a desktop:**
+    *Tabs along the top* (Lookahead, Gantt, Crew, Calendar), *Overview is for managers* (**Executive Team
+    only**), *Drag to move* (the tasks that follow move too; Ctrl or ⌘ moves just one), *Draft until you
+    publish* (Publish…, the baseline), *Notify crew?* and *Help is one click away*; five steps, six for the
+    Executive Team. Someone who may look but not change tasks gets *Narrow it down* (the filters), *See one job
+    start to finish* (the Gantt's job picker) and *Click for the details* in place of the editing steps: five
+    steps, six for the Executive Team, so every variant is four to six. **Who may edit** is the planner's own
+    answer (`can_edit`) when it has one, else the Desk's boot permission list (`frappe.model.can_write("Task")`),
+    which every screen has, Capacity included (it loads no planner answer, so it used to default to "may
+    edit"). Unknown is no. **On a phone, for someone with a day of their own** it is Today's: *This is your day*,
+    *Open the route*, *Block my time*, *The rest of the planner* and *Help is one tap away*, on Today. **On a
+    phone, for someone with none** (a project manager or office user who is not a Planner Resource, for whom
+    Today has nothing to show) it is a short planner tour on whichever planner screen they land on: *The Lookahead
+    is a list*, *Tabs along the top*, *Filters and tools*, *Draft until you publish* and *Notify crew?* (editors
+    only) and *Help is one tap away*. Whether they have a day is Today's answer, or the planner's list of people
+    holding their `user`; a person with a day who lands on a planner screen waits for Today. **The Maintenance
+    Planner** has its own: *Month, Week and Crew*, *Drag to
+    reschedule* and *Who hears about a change* (Notify crew?, Draft mode; schedulers only), *Project work is a thin
+    strip*, *Resources available*, *My day* (a technician with a day of their own) and help; its phone's is four
+    or five (*Your visits*, the strip, *My day*, *Filters and tools*, help).
+  - **Once per person, kept on the server.** Whether a person has been shown each planner's tour is
+    `planner_tour.seen.{desktop, phone}` in their own `__UserSettings` row for that planner, beside the saved views
+    and touching nothing in them. Not frappe's Redis-only user_settings (a deploy `FLUSHDB`s that cache) and not
+    only the browser (a person shown it at their desk is not shown it on the next machine). `get_views` now
+    answers `tour: {desktop, phone}` (so there is no extra request), and the new `mark_tour_seen(planner, kind)`
+    (POST, behind the planner's own role gate; the Opportunity Board, which shares the module, has no tour and is
+    refused before its gate) sets one flag, straight to the table in the request's transaction, once. **It is
+    marked when it shows**, as the guided page's first-time pop-up is, so a reload mid-tour never repeats it. Only
+    a real `true` counts, so a damaged row reads as not seen. A desktop's tour and a phone's are separate flags:
+    they land on different screens, so a person who has seen the tabs is still shown Today once. **If marking
+    fails**, this browser is told instead (`ee_project_planner_tour:<user>:<kind>`, the page's own storage helper),
+    so a server that is down cannot bring it back at every visit. **A deadlock on a person's first write is
+    retried once** (`mark_tour_seen` rolls back and starts again): two requests making a brand-new row at once,
+    the tour's mark and the "last used" view, can pick a victim under REPEATABLE READ. The "last used" save is not
+    retried (it is an existing path and the page saves it again on the next change).
+  - **When it opens.** Never before the page can show it: after the saved views have answered (they carry the
+    flags), the kit and the toolbar are built, and the screen's data is drawn and not loading. A desktop's opens on
+    the tabs (not the route view or My week, which have no toolbar); a phone's opens on Today for a person who has
+    a day and on a planner screen for one who has none. It waits, and asks again each second for a minute, while a drawer, a menu, the phone's sheet, a Frappe
+    dialog or a drag is on screen, and settles 0.7 s after a landing so a redirect lands first. A kit already on
+    the Desk from before this release has no `tour`, and then nothing happens. Everything is in try/catch: a tour
+    that cannot show is no reason for the planner not to.
+  - **No history, Back and Forward untouched.** The tour joins none of the kit's history guard: opening, stepping
+    through, replaying and closing it push, replace and step off nothing. A route of the planner's own or the page
+    hiding closes it. Its keys are its own (Esc and Tab on the document in the capture phase; every other key
+    stops in the card, and `p6b_key` treats it as a dialog), so `T`, `/`, `?`, `1 2 3` and the arrows do nothing to
+    the page behind it.
+  - **Re-openable.** "?" has a *Take the tour* button in the help drawer's footer (the kit's `legend` gains
+    `actions`); it closes the help and shows this device's tour again, marking nothing. Today has no toolbar and so
+    had no "?": it gets one beside *Planner*.
+  - **"?" for the new model.** The Project Planner's help gets, right after the tips: *The tabs* (a line for
+    Lookahead, Gantt, Crew with Capacity, Calendar, Overview and Today), *Where the planner opens* (the last tab per
+    device; first visit: a phone Today, a desktop the Lookahead, the Executive Team the Overview), *Moving a task*,
+    *Draft and Published* (Draft schedule, Publish…, Published, Notify crew?, Hold all my changes) and *Baseline*
+    (the grey ghost, the red tail, Reset baseline). The Maintenance Planner's `legend_sections()` (P10's one provider
+    function) gets *The views*, *Moving a visit* and *Draft mode and Notify crew?*. The tips stay as they were.
+    Every string of the tour and of these sections is written out as `__("...")` at its call site (the helpers
+    take words already translated), so a translation extractor finds it; `tests/test_planner_tour.py` pins it.
+  - **Where it lives.** `public/js/planner_kit/tour.js` in the existing `planner_kit.bundle.js` and its rules
+    (`.pk-tour-*`, tokens only, no shadow, no animation) in the existing `planner_kit.bundle.css`; the `PPTOUR` and
+    `MPTOUR` blocks, the last in each page script; one-line hooks (`init_tour`, `tour_route` in `handle_route`,
+    `tour_take` where the saved views arrive, `tour_open` in `p6b_key`, the help's sections and button). No raw
+    `/assets` path, no new browser storage except the failure fallback above (through each page's own helper).
+
+### Changed
+- **`docs/planner-ux-redesign.md` is marked as built.** Its status line says so, the §7 table gains a *Built*
+  column naming the PR of each row (P1 #1319, P2 #1322, P3 #1320, P4 #1323, P5 #1327, P6 #1330, P7 #1325, P8 #1326,
+  P9 #1332, P10 #1331, P11 #1324, P12 #1333), and a new section, *Built, and where it differs*, lists what the
+  build does differently from the approved text: the new endpoints are in their own modules, the `1` to `5` tab keys
+  still pick Week, Month and Crew, the Crew board is a chip per day joined rather than one bar, the Overdue tray and
+  the print sheet are not yet day-based or D6-filtered, and Today's new "?".
+- **READMEs.** *The first-visit tour and the help* in `project_enhancements/README.md` and
+  `sapphire_maintenance/README.md`; the planner kit's table gains `tour.open` and `legend`'s `actions`; `api/README.md`
+  gains `mark_tour_seen` and `get_views`' `tour`.
+- **Tests that pinned the old shapes now pin the new ones**: the constructor's line order (`init_tour` after
+  `init_toolbar`), the Maintenance Planner script ending with P10's block (now P12's), and the "?" sections coming
+  right after the tips (P12's sections next). `tests/test_whitelist_placement.py` knows `mark_tour_seen`.
+
+### On production
+- On every person's next visit to each planner, the tour shows once (people who have used the planner for weeks
+  included: the planner they open has changed, and Skip is one press). Nothing is written until then, and nothing
+  else changes: no patch, no fixture, no Settings field, no scheduled job.
+
+## [1.715.0] - 2026-10-22
+
+### Added
+- **The Project Planner's Overview tab, and the weekly summary** (P9 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.7; Nik's D3, D14 and D16 of 2026-10-21). For James and the approvers:
+  every active customer job on one timeline, what needs a manager, and a one-page summary to print or to
+  email on Mondays. The Monday email is **OFF** and stays off until Nik ticks a box.
+  - **The timeline** is the app's DHTMLX widget, **read-only** (no drag, no link, no write hook). One row
+    per Active customer job with a bar for its whole span; open it (or *Expand all*) and each **phase** is
+    a bar coloured by its number and drawn over its **baseline** ghost, with `+4d` in a *Behind* column
+    when it slipped and its done tasks as its progress. *Other work* (crew work under no phase) is the pale
+    bar; a dated Task flagged milestone is a diamond. A **Draft** schedule is hatched and marked ◐ and is
+    drawn from its drafts, with *Publish…* in the header (P4's own confirmation). A job with no dated work
+    falls back to the Project's own expected dates (paler, and said so), and with none is listed under the
+    chart. Clicking a job or a phase opens that job's Gantt. The widget's own export prints it or saves a PNG
+    or SVG; CSV and Excel are not offered, because they would export Projects, not this chart. 3, 6, 9 or 12
+    months (6 by default), each a route, so Back and Forward step through the months and the picker.
+  - **Needs attention** is one line per problem, worst first, each a button that opens its source: a phase
+    **behind its baseline** by more than 2 *working days* (holidays are not working days; work under no
+    phase is judged task by task, and nothing is behind without a baseline), a task **running over** its
+    estimate (Phase 4's rule), the next two weeks' unresolved **conflicts** (the Conflict center's own list,
+    without those somebody kept with a reason; the costly engine pass behind them does not depend on the
+    window, so the page keeps the list for two minutes and stepping through months does not repeat it) and
+    **overdue** work (one line per job). Nothing wrong is one line saying so. **Overdue is counted by end date, never by the status value** (spec §8): 1,005 open
+    tasks on production carry the status `Overdue`, left by an old import, so the status is not evidence of
+    anything. A task is overdue when it is open and its last day is before today. Only phase and crew work
+    counts (D6), so the ~40 template admin tasks a job gets, all dated its first day, cannot make it look
+    late the day it starts. Production's jobs have no baseline until somebody sets one from the Gantt, so
+    "behind" is empty today and the foot says how many jobs have one. A flagged milestone is a manager's
+    own marker (six exist on production), so it is a diamond whether or not the display rule would show it
+    as work; it counts as work only if the rule shows it. One read takes at most 20,000 Task rows
+    (production has about 1,400 on its 53 active customer jobs); past that the answer says so and the page
+    says some jobs may show less than they have, rather than let a job it never read look clean.
+  - **The weekly summary** (`planner_weekly_summary.py`): next week by job and by person, what moved in the
+    last seven days (read from the Version log: the first old value and the last new value of each start or
+    end, so a task moved and moved back is not listed), and the exception list. *Print weekly summary* in
+    the Overview's header and *More > Print > Weekly summary* open it in a window and print it, on the print
+    design system's chrome, every value escaped. "Next week" is the week holding today while it is a day old
+    (the Monday email, a Sunday-night print), else the following week. It describes **Published** schedules
+    only: a Draft schedule is private until it is published (D8), so the summary names it at the foot and
+    says nothing more. That includes the sections read from the availability engine, which books a Draft
+    project's *stored* tasks like any other (and books a project the page does not list as a job, such as
+    one On Hold): each booking and each conflict is judged by **its own project's schedule state** (Draft or
+    blank reads Draft), not by the list of jobs the page draws, so the by-person lines and the conflicts
+    drop every one whose project is not Published. "What moved" reads in two steps so the indexes do the
+    work: the names of the Task versions in the seven days (no `data` blob, no `LIKE`; about 140 rows a
+    week on production, in a millisecond or two), then the `data` of the few that are the summary's own
+    tasks, by primary key. The newest 2,000 are kept, and it says so when the log was longer.
+  - **The Monday email is OFF** (D16). *Project Planner Settings > Telling managers* has **Email the weekly
+    summary on Mondays** (a Check, default 0) and **Send it to** (addresses, separated by commas or new
+    lines; a line that is not an address refuses the save, by name). `send_weekly_summary` is scheduled
+    Mondays 06:15 (`15 6 * * 1`, a key used nowhere else in `scheduler_events`) and **returns before its
+    first query** unless the box is ticked and somebody is named. The page is built first (a read, so a
+    failure spends nothing and a rerun that week can still send), then the week is claimed: at most once a
+    week, through a `Planner Digest Log` row keyed `weekly-summary|<first day>` committed before the mail is sent, not
+    through redis: the production deploy `FLUSHDB`s both redis instances, so a cache marker would have
+    mailed everyone again after every merge. A send that fails after the claim is not retried (a missed
+    Monday is better than two), and a failure is logged, never raised. **The scheduled run always describes
+    and claims the week that holds today**, not the week ahead a print defaults to: run on Monday that is
+    the same week, and run late (the scheduler was down Monday, so it runs Tuesday or after) it is still
+    this week's summary under this week's key, so the following Monday finds its own key free and sends.
+    *Send me a weekly summary preview* on the Settings form emails the caller alone the email as it would
+    go (the box need not be ticked, no week is claimed), so Nik can read it before anybody is named. It
+    always answers: a caller whose User record has no usable address (Administrator) gets
+    `{sent: false, reason: "no_email"}` and nothing is built, a build or send that raises is logged and
+    answered `{sent: false, reason: "failed"}`, so the form's "No preview sent" branch always has something
+    to say.
+  - **The landing** (Nik, 2026-10-22). An **Executive Team** member's desktop *first* visit opens the
+    Overview instead of the Lookahead; after that the per-device last-used tab applies like everyone
+    else's. The Overview joins P8's remembered tabs (`PP8.tabs`); the role is read from the boot, nothing is
+    fetched. A phone's first visit is still Today. A link that names a filter never lands on the Overview
+    from the landing (it opens the Lookahead with the filter), as it never opens Today or an old Gantt. The
+    redirect replaces the bare address, so Back leaves the planner. The Overview is never in the server's
+    saved view (the tab is the device's).
+  - **Where it lives.** The spec's file list put `get_overview` and `weekly_summary_html` in
+    `api/project_planner.py`; as P5 (`planner_lookahead.py`) and P6 (`planner_gantt.py`) did, they are a
+    module of their own, `api/planner_overview.py`, because `project_planner.py` is 6,000 lines. Nothing in
+    `project_planner.py` changed. The page work is the `PPO` block of `project_planner.js` (plus one-line
+    hooks) and `ppo-` rules in its stylesheet; the CSS test's prefix list now knows the `ppo-` family.
+  - **Not done here:** the Maintenance Planner (P10), the "?" help for this tab (P12), and the 1-5 tab
+    shortcuts, which still pick the older views. Milestone diamonds show on an expanded job, not on its
+    collapsed bar.
+
+### Changed
+- **Project Planner Settings gains two fields** (`weekly_summary_email`, a Check, default 0, and
+  `weekly_summary_recipients`, no default). **A `default` on a new field of a Single never reaches the row
+  that already exists**, so `patches/backfill_weekly_summary_setting` writes the new Check's `tabSingles`
+  row (via `project_planner_settings.materialize_defaults`): only where there is none, never over a stored
+  value (an unticked box and a ticked one are decisions), with `set_single_value` (no validate), and a
+  Single never saved is made whole so no later write of one field can blank the rest (the v1.578.1 trap).
+  Switches nothing on. Cannot raise, safe twice. `None` already read as off, so the app behaves the same
+  before and after; the row only keeps the Single whole and the form honest.
+
+## [1.714.0] - 2026-10-22
+
+### Changed
+- **The Maintenance Planner is simpler: project work is a thin strip, Resources available is one line,
+  the legend row is in "?" only, and a technician has a My day link** (P10 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.9, D9 "Keep as is, simplify" and D13 "Busy strip per day"; Nik approved the
+  redesign on 2026-10-21 and started this PR on 2026-10-22). The Month, Week and Crew views, the cards, drags,
+  projected and seasonal visits, Fountain Move cards, Draft mode, pencil visits, "Notify crew?", the technician
+  filter in the address and Back and Forward are untouched. The page is `maintenance_planner.js` (a new `MP10`
+  block at the end) and its CSS. The one server change is a saved-view key (below).
+  - **Project work is one busy strip a technician-day.** The project tasks, rental crew tasks and travel of the
+    same people used to be a read-only card each, which filled the October month grid so that maintenance
+    visits were a minority of what was drawn. Now each technician-day with such work gets one thin grey bar,
+    "Project: 8h". It is labeled by what is in it: Project when a project task is among the work, "Rental" or
+    "Travel" when that is all there is, "Rental + Travel" when it is both and no project task; a day the engine
+    books no hours for (the weekend of a trip) reads just "Travel". Pencilled hours follow the firm ones
+    ("+ 2h pencil"), and a strip of pencil alone is hatched. Hover lists the tasks; a click opens the person's
+    week with the day selected (6A's person quick look, one history entry), **the week of the day clicked**: the
+    quick look used to start on the week on screen, or in the month view on today's, so a strip on the 29th
+    opened a week without it. Fixed for every way into that look that names a day (a visit panel's "Name's
+    week", the day peek's person). With *All technicians* the strip names the person. In the crew view it sits
+    in the person's cell, and **a disabled technician's row stays while they have project work that week** (it
+    is no card in the cell in strip mode, so the row has to ask). **More ▸ Display ▸ Project work as cards** brings back the old cards (and turns
+    *Project work* on, since asking for cards asks for the work); *Project work* still turns all of it off.
+    The choice is kept per browser and in the saved views. **Free hours do not change**: they are the shared
+    availability engine's, which counts the work however it is drawn, so "Full" and "Over 2h" read the same with
+    a strip, with cards or with none. The strip is a `div` with `role="button"`, not a `<button>`, so *Tap to
+    move* can still drop a visit on the day under it, and a double-click on it adds no visit. A Fountain Move
+    task is not a booking on this page (`_drop_move_bookings` removes it from `items`), so its card, drag and
+    Undo are unchanged and it is not in the strip. The printed page draws the strips too (one grey line a
+    technician-day), so "prints exactly what is on screen" still holds: a site highlight fades the cards in
+    print as on screen, and no strip, because on screen it does not.
+  - **Resources available starts collapsed to one line.** "This week: Austin: 3h free Tue · Off Thu–Fri,
+    Korben: 8h free Tue …": per technician the days with hours free (equal hours are one stretch, "8h free
+    Mon–Wed"; more than three stretches end "+N more"), "Fully booked", "Over 2h Wed", "Booked on a day off Sun"
+    (a danger) and "Off Thu–Fri" (weekends left out of the days off). The week is the one on screen, or in the
+    month the week holding today; days already gone are left out of the week that is still going. One technician
+    picked: only theirs. *Show* opens the table exactly as before; its open state is `ee_maintenance_planner_resources`
+    (a new key, so what the old open-by-default left in a browser is not read as a choice). The names in the line
+    are the table's own chips, so a click still opens a person's week and a drag onto a visit still adds them.
+    A technician's stretch sits whole on a row while it fits and wraps inside itself only when it is wider than
+    the row (a 375px phone), so it never pushes the page sideways.
+  - **The key of the visit kinds is in "?" only.** More ▸ Display no longer carries *Visit kinds* (it was the legend
+    row under the toolbar until v1.687.0, then a section of Display), so its swatch rules are gone. "?" holds them
+    under *Visit cards*, with a *Project work* section (the strip and the three sample cards), *Resources
+    available* and, for a technician, *Your day*. The help is built by one provider function, `legend_sections()`;
+    the help and tutorial work that follows adds a section there or registers a function through the existing
+    `p6_legend_providers`.
+  - **My day.** A technician (on the technician list, with a Planner Resource) has a *My day* button beside the
+    view tabs, kept on a phone, and *My day* in More ▸ Tools for anyone who has a day of their own. It opens the
+    Project Planner's Today screen for the planner's today (`/project-planner/today/<date>`, P8): one history
+    entry, and Back returns to the planner. Someone with no day of their own is offered nothing, because Today
+    would only show them a note. **It does touch the Project Planner's per-device tab memory:** opening Today
+    from here records it as that browser's last-used tab (`p8_remember_tab("today")`, written whenever Today
+    opens), so a scheduler who uses *My day* will land on Today the next time they open a bare
+    `/project-planner` on that device. That is P8's rule (Nik: "remember the last-used tab per device"), kept as
+    it is; this change adds no landing code and changes none of the Project Planner's.
+  - **The hint under the grid** says how project work is drawn now (a strip, or the cards, or nothing).
+- `api/planner_views_prefs.SCHEMA["maintenance"]` replaces `panel` with `resources` and adds `project_cards`. The
+  old default (Resources open) wrote `panel: true` into every user's "last used" row, so keeping that key would
+  have held the panel open against the new default for everyone who had used the planner. `read_store` re-cleans
+  what it reads, so a stored `panel` is dropped and no data migration is needed. A saved view from before this
+  release says nothing about the two newer keys and still matches the screen it described.
+
+### Tests
+- `scripts/test_planner_toolbar.js` runs the strips in the calendar, the crew view and the print (strip, cards,
+  off; the technician filter; escaping; pencil), the click and keys, the summary line's wording, the closed and
+  open panel, the Display switches, My day, the help's provider and the saved views.
+  `tests/test_planner_toolbar.py` has `TestMaintenanceSimplify` for the wiring (the default-collapsed pref
+  among it, which the harness cannot reach because it never runs the constructor).
+  `test_s3_page_css`, `test_maintenance_planner`, `test_planner_phase6a` and `test_planner_phase6b` pinned the
+  Display key, the old panel key and the exact text of the legend call; they now pin the new shapes.
+
+## [1.713.0] - 2026-10-21
+
+### Added
+- **The Project Planner's Crew tab counts in days, and Capacity replaces the Heatmap and Utilization tabs**
+  (P7 of the Planner UX redesign, `docs/planner-ux-redesign.md` §4.5 and D12; Nik approved the redesign
+  on 2026-10-21). The page is `project_planner.js` and its CSS; there is no server change beyond one
+  accepted saved-view value.
+  - **Crew board in days.** A task is a bar along a person's row: its chips on neighboring days are drawn
+    joined (`pp-span-prev` / `pp-span-next`) and each reads *Day 2 of 5* where it used to read its hours.
+    A chip is still the unit that is dragged, resized and tapped, so every move, hand-over
+    (`swap_crew`), resize and tap-to-move is unchanged. **Show hours** (a header checkbox, kept in this
+    browser, off) puts the hours or time slot back beside the days; the tooltip always has them. A task
+    with no hours still books a full day in the engine (only 96 of 1,764 open tasks have hours), so the
+    day cell still says *Full*, *3h free* or *Off*. *Day n of N* counts the **task's** working days from
+    its own dates, the same count as the calendar card's "5 days" (`duration_text`, P11), not how many of
+    those days a person is booked. **It is not yet one true bar:** a multi-day task is still drawn as one
+    chip per day, joined visually, because the chip is what is dragged, resized and tapped; a single
+    spanning bar is a possible follow-up for Nik.
+  - **Side tray.** *Not scheduled* and *Needs crew* sit beside the board on a laptop and above it on a
+    phone (`.pp-main-crew`; the trays and the grid now share a `.pp-main` box).
+  - **Capacity** is the Crew tab's second screen, switched from a *Board | Capacity* header, at
+    `/project-planner/crew/<date>?capacity=1`. It shows the eight-week heatmap on top and the Crew
+    Utilization report's rows under it for the same eight weeks. Every heatmap figure (percentage, booked
+    and total hours, pencilled hours, days over) and every Utilization column (capacity, booked, actual
+    (kiosk), Planned %, Actual %, the Over and Near full chips, *Open the full report*) is kept. The
+    sections load on their own, so a slow report never holds the heatmap back. ‹ › step four weeks.
+  - **The Utilization gate is unchanged**: the report's own roles (`allowed_reports`) and
+    `can_get_report("Task")`. Someone without access sees the heatmap alone and nothing is asked of the
+    server; a refusal from the server, or arriving by the old Utilization address without access, draws
+    the no-access panel in the table's place. Labor cost is not touched.
+  - **Old addresses and saved views.** `/project-planner/heatmap/<date>` and `/utilization/<date>` are
+    replaced (never pushed, so Back does not return to them) by `/crew/<date>?capacity=1` with their
+    filters, `?capacity=utilization` for the old Utilization address, which scrolls to the table. A saved
+    view or "last used" view that says `heatmap` opens Capacity and still matches Capacity as the view on
+    screen; `capacity` is saved as itself. Board and Capacity are history entries, so Back steps between
+    them.
+
+### Changed
+- The view switcher's tabs are Lookahead, Gantt, Crew and Calendar; the Heatmap and Utilization tabs and
+  their Utilization-only gate on a tab are gone (the gate now decides whether Capacity has its table). Capacity
+  has Heatmap's toolbar behavior: Draft mode, saved views and Print stay, there is no Undo.
+- `planner_views_prefs.SCHEMA["project"]["view"]` accepts `capacity` beside the legacy `heatmap`. The set of
+  keys is unchanged.
+- The Utilization table covers whole weeks (they begin on the site's first weekday, as the report's do),
+  so the month view's clipped first and last weeks are gone, and the month-stepping arrows with them.
+
+### Tests
+- `scripts/test_planner_toolbar.js` runs the Crew board's days (chips, joins, day counts, Show hours), the
+  header as routes, Capacity's two sections, the Utilization gate, and the saved-view redirects;
+  `scripts/test_planner_url_filters.js` runs Capacity's address, the old addresses' redirects and
+  `?capacity=` against a model of the v16.50 router, a filter link landing on a device whose remembered
+  tab is Capacity, and Back and Forward between Crew, Capacity and the Gantt.
+
+### Fixed
+- A link that names a filter (`/project-planner?group=Field`) opened on a device whose remembered tab is
+  Capacity (or the old Heatmap) lost its filters: the landing replaced `route_options`. It carries them now.
+- Capacity set its hint only when an answer was drawn, so the Board's or Gantt's drag help stayed under the
+  heatmap while it loaded. It is set on every load.
+- The selection bar could stay up on Capacity: `p6b_route_changed` read `?capacity=` after `handle_route` had
+  already taken it off `route_options`. It reads the page's own view.
+
+## [1.712.0] - 2026-10-21
+
+Nik, 2026-10-21: "Make the Sanctuary maintenance form not have the alkalinity and other
+measurement. Chemical controller only shows pH and ORP. and add option for what size tabits (1" or
+3") add scaletech to chemicals used, and save state of scroll position for tab bar on visit
+wizard", and then "the tabit size should reflect across all maintenance forms that have chemicals
+or items used or added". TASK-2026-02901.
+
+### Added
+- **Chemicals sold in sizes: chlorine tablets are 1" or 3" on every visit**
+  (`sapphire_maintenance/item_sizes.py`).
+  - **Why two Items.** The two sizes are bought, stocked and priced apart. So each size is its own
+    Item, and Nik chose that over one item with a size on the visit line. A size field would have
+    kept one stock bucket and one Price per Dose, and billed a 3" tablet like a 1" one.
+  - **Two new Item fields** in the Maintenance Billing section: **Size Family** (`custom_size_family`)
+    and **Size** (`custom_size`). Items with the same family are one product in different sizes.
+    They follow Price per Dose in the Item layout (`scripts/layout/specs/item.json`, field order
+    regenerated by hand), so the guided Item flow's chemical step shows them too.
+  - **In the Visit Wizard**, a chemical line whose item has two or more sizes shows a toggle (1", 3").
+    A tap records that size's item on the row. The template's item is the size a visit starts on.
+    `get_visit_bootstrap` returns the choices (`size_choices`, never raises). A server without them
+    leaves the line as it was.
+  - **On every other form** the size travels in the chemical's name. The record's `validate`
+    (`label_consumables`) and `chemical_billing.item_terms` add the size to a name that does not
+    already say it. That covers the desk form, the review email, the Visit Review page, the
+    customer's report, the portal, the sign-off page and the invoice line. Stock Scan and the
+    follow-ups' parts pick the Item itself.
+    - The size is added only where the name does not already say it as a token of its own, so
+      `1"` is not found in `11"` or `1.1"`.
+    - The result never exceeds the row's 140-character `item_name`. A long name is cut with "…" so
+      the size still shows, and a save can't fail on it.
+  - **Two places that showed the item code now show the name.**
+    - The portal's consumables table rendered `item.item` and now renders the name.
+    - The desk form's chemicals grid gains an Item Name column (`in_list_view`), so the size shows
+      without opening a row.
+    - The wizard's "Answers kept on this phone" screen names a size change by item name, not by code.
+  - Both Item fields are read behind `has_column`, so a fresh install or ERPNext's own test bootstrap
+    (before fixtures sync) saves a visit as before.
+  - `tests/test_item_sizes.py` (bench-free, own CI step) and four wizard tests in
+    `scripts/test_wizard_back_forward.mjs`: a tap records the other size's item and saves once; a size put back from the phone is named as that size; no
+    toggle for a one-size product; a submitted visit cannot change.
+- **The Visit Wizard's feature tab strip keeps its scroll position.** The strip is drawn anew on
+  every step, tab and save, and it came back scrolled to the start. On Sanctuary's 13 water features
+  the technician had to find their fountain again at every step. Now it comes back where it was left,
+  after a reload too (this phone's `localStorage`, `vz-tabs-scroll`, one visit at a time, wrapped in
+  try/catch). It then moves only as far as it takes to show the open tab, so Back/Forward or Next onto
+  a fountain scrolled out of sight shows it. A strip drawn while the page is hidden (zero width) does
+  not overwrite the remembered place. Back/Forward are untouched: the strip's position is not a
+  history entry. Five tests in `scripts/test_wizard_back_forward.mjs` cover it.
+
+### Changed (production data, done with Nik's sign-off on 2026-10-21; nothing in this release writes it)
+- **Sanctuary asks for pH and ORP only.** Its controller shows nothing else. The readings a site
+  collects already come from its own form template, so no new setting was built. The section
+  "Water Balance - Sanitizer & Alkalinity" was removed from the template "Sanctuary - Equipment
+  Room Service", which only Sanctuary uses. The open draft PRJ-00773-2026-V002 lost its 4 blank
+  Sanitizer and Total Alkalinity rows. Sanctuary has no submitted visit, and a visit's readings are
+  its own rows, so any past visit would keep its readings.
+- **Tablets.** CON-SRV-CHLORINE-TABITS is the 1" and is renamed `CHLORINE TABLETS, 1"`. New Item
+  CON-SRV-CHLORINE-TABITS-3IN `CHLORINE TABLETS, 3"` (Service, Unit, stock item, no price yet, Per
+  Dose).
+- **ScaleTech.** New Item CON-SRV-SCALETECH `SCALETECH` (Service, Unit, stock item, no price yet, Per
+  Dose). It is line 6 of the shared "Chemical Dosing" section (44 forms, 16 sites). Visits already
+  opened keep the lines they were built with; "Add another item" covers them.
+- **After this deploys:** set Size Family `Chlorine Tablets` and Size `1"` / `3"` on the two
+  tablet Items. The toggle appears only then.
+
+## [1.711.0] - 2026-10-21
+
+### Added
+- **The guided layout surfaces a record's attachments and, on an Opportunity, its stage in the head
+  band** (form kit P4.9; Nik, 2026-10-21: "Need to surface attachments and show stage of opportunity at
+  the top header for the new guided layout.").
+  - **Attachments up front, on every guided DocType.** They already existed, as a group inside the
+    *Record tools* block (v1.686.0), which a person may collapse or place away from the form, and which
+    is a closed bar on a phone. The guided page now gives them a section of their own straight under the
+    steps (`.ge-files`), open by default (folded in focus mode), whatever the notes and tools do. It
+    lists each file with its kind, size, who and when, opens it, and has **Attach a file**; **Remove**
+    shows where the Desk sidebar allows it. The rules are the sidebar's own, unchanged
+    (`can_add_file`, `can_remove_files`, `protect_attached_files`, `max_attachments`, "Home/Attachments",
+    `make_attachments_public`, frappe's own delete question).
+  - **A files chip in the head band** ("3 files" / "Attach a file" / "No files") jumps to the
+    section and opens it. It is a 44px target, so a phone reaches the files without scrolling past
+    every step.
+  - **Drag and drop, like the Desk form.** A file dropped anywhere on the page opens frappe's uploader
+    with it, as `Form.setup_file_drop` does. Every file drag over the page is claimed, so a miss no
+    longer makes the browser open the file and leave the record; a new record answers "Please save
+    before attaching.", and a person who may not attach (or a record at `max_attachments`) is told so.
+    **Where it works, exactly:** anywhere inside the guided page while a record (saved or new) is shown,
+    and inside the board's side panel while it edits a record (it keeps its files in its tools; the
+    new-record and move panels take no drop). **Where it does not:** the Desk navbar and the page head,
+    which sit outside the page, the landing and loading screens (the drop is unbound there, so
+    nothing says "still loading" over a screen with no record), and frappe's Text Editor, which takes a
+    drop on itself exactly as on the Desk form. The drop outline ends with the drag, not only with a
+    drop, so a drop the Text Editor swallows does not leave it on.
+  - **The files chip says what it does.** With no files and a right to add one it reads "Attach a file"
+    (its accessible name too) and opens the uploader; with files it reads "3 files" and scrolls to the
+    section; "No files" is shown, and only scrolls, when the person may not add one. A record whose
+    attachments failed to load says so in the section and on a drop.
+  - A tab that loaded the older kit bundle (the board's side panel does) before this deploy no longer
+    throws out of the head band: the page checks for `header_status`, and the bundle's `VERSION`
+    is 5, so the newer kit replaces the older one.
+  - A guard against a bug class: `tests/test_guided_header.py` now fails on any control character
+    in the form kit's and the guided page's CSS, JavaScript and Python. The first version of this
+    change had `content: "\2212"` written through a shell as U+0091 and a "2", so every open
+    Attachments section read "Attachments 3 … 2"; it parses, styles and ships.
+  - **The stage in the head band.** A DocType declares a header status field in its form kit config
+    (`header: {"status": {"field", "label", "tones"}}`; `get_flow` sends it as `header`), and the band
+    shows its value as a chip that follows the field the moment it changes (the Close step, a save, a
+    conflict choice), announced politely to a screen reader as "Stage: …". Only Opportunity declares
+    one. Its stage is the `status` field, the one the board's columns are made from and the completeness
+    lists are measured by, so the chip carries the board's words: Closed Won green, Lost red, On Hold
+    amber, every open stage neutral (a pillar colour keeps meaning a pillar); a stage added later still
+    shows, neutral.
+  - New pure module `public/js/form_kit/header.js` (`header_status`, `files_chip`, `files_drop`), run
+    under node by the new `tests/test_guided_header.py` (its own CI step). `tests/test_form_kit.py` holds
+    the config to the flow, the board and the DocType's real status options.
+  - **Nothing changes on production by deploying this:** no patch, no fixture, no Custom Field.
+
+## [1.709.0] - 2026-10-21
+
+### Added
+- **The Gantt tab: one project from start to finish** (P6 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.3; Nik's D1 "Gantt: phases + deps", D5, D8, D10 and D14).
+  - **Where.** `/desk/project-planner/gantt/<project>`, the second of the planner's tabs. A bare
+    `/gantt` offers a project picker. The tab opens the Project filter's project, else the one this
+    device opened last (remembered per signed-in user). Each project opened is a history entry, so Back
+    and Forward step through them; the zoom and a collapsed phase are not.
+  - **A bare `/project-planner` reopens the Gantt where this device left it** (the Sapphire Manager,
+    2026-10-21: Nik's "last-used tab per device" rule applied without an exception, so not put to him
+    again). The Gantt is one of P8's remembered tabs, and its project is kept beside it in this browser
+    (`ee_project_planner_gantt:<user>`). The bare address is replaced, never pushed, by
+    `/gantt/<that project>`, so Back leaves the planner. With no project stored, or one the server will
+    not open (deleted, or not the person's to read), the device forgets it and the address is replaced
+    by the Lookahead: no dead end, no extra entry. A link that names a filter (`?project=`, `?pm=`,
+    `?group=`) opens the Lookahead with it, never an old Gantt (and never Today). A phone's first visit
+    is still Today.
+  - **What it draws.** The app's own DHTMLX widget (the one the Project form's Schedule tab and the
+    Projects Dashboard use), fed by the planner's read, `api/planner_gantt.get_project_gantt`: the
+    project's tasks as planner cards, phase and crew work only unless More ▸ Display ▸ Show all tasks
+    (D6), drafts included (another scheduler's named). Groups are the tree, phases first in phase order,
+    and collapse. A bar shows its days and crew; a draft is dashed, a pencil hatched, finished work faded
+    and fixed. Undated work sits under *Not scheduled* at the bottom, so a Build out's new rows show at
+    once. The baseline (P3, D5) is a thin grey bar under each bar.
+  - **Every edit is the planner's.** A drag or a resize goes through the page's own `commit()`, exactly
+    as on the Calendar and the Lookahead: the reason prompt, Undo, the conflict check, P4's auto-draft
+    on a Draft schedule, the tasks that follow (both ways, by working days; hold Ctrl or ⌘ to move just
+    the one) and "Notify crew?". A past day asks first.
+  - **Link by drag.** Drag from the dot at a bar's end onto another bar and that task waits for it
+    (`planner_actions.add_dependency`, finish to start). When it would start before the other ends, the
+    planner asks for a reason, as a move does, and the reason goes on the timeline. Double-click a link
+    to remove it (`remove_dependency`). Both have Undo. A drafted new task, a phase, another project's
+    task, the task itself and a loop are refused with a sentence.
+  - **The header** carries the project's schedule (D8): ◐ *Draft schedule* with **Publish…** (P4's own
+    confirmation), or ● *Published* and when, the baseline's date, **Reset baseline** (P4's own, which
+    names how many tasks change first), **Build out ▾** (T1's grid in the side panel, opened on the grid,
+    a template, a pasted list, another project or an AI draft), and Day / Week / Month. The widget's
+    export (print, PNG, SVG, CSV, Excel, a date range) stays. A click opens the task in the side panel,
+    a right-click the planner's menu, and More ▸ Print ▸ Print this view lists the project's tasks.
+- **Embed hooks on the Gantt widget** (`public/js/gantt_widget/gantt_widget.js`), for a host with rules
+  of its own. All optional; without them the widget is unchanged.
+  - `fetch(server_config)` supplies the rows instead of `get_gantt_data`. The CSV and Excel export still
+    asks the server, with the config's doctype, fields and filters.
+  - `on_write(task, changes, {mode, event})` replaces `update_gantt_row` for a drag. A refusal puts the
+    bar back, and a refresh asked for meanwhile waits for it.
+  - `on_link` makes a link drawn by drag; DHTMLX never adds one itself, and only finish-to-start is
+    offered. Without `on_link`, links cannot be drawn at all (before, `editable.links` let one be drawn
+    that was never saved).
+  - `on_link_dblclick` and `on_task_context` take over DHTMLX's "delete link?" confirm and the
+    right-click.
+  - `baseline: true` draws `ee_baseline_start`/`_end` as a grey bar under each task. A row with
+    `ee_readonly` is never editable.
+- `api/planner_gantt.py` (`get_project_gantt`, GET) and `planner_actions.add_dependency` /
+  `remove_dependency` (POST).
+
+### Changed
+- **Project ▸ View ▸ Open in Project Planner opens that project's Gantt**, with the project as the
+  planner's filter too, so the Lookahead filtered to it is one tab away. Before, it opened the Lookahead
+  (on the week the project starts, for one that had not started).
+
+### Notes
+- **DHTMLX Standard has no task layers.** `gantt.addTaskLayer` is in the MIT bundle's source, but its
+  init mixes the layers API into the instance and then deletes `addTaskLayer` and `addLinkLayer`
+  straight away. Checked in a browser harness against the vendored v10.0.0 on 2026-10-21: `typeof
+  gantt.addTaskLayer` is `"undefined"` before and after `init()`. So the baseline is drawn by the task
+  type's renderer (`config.type_renderers`, core): it appends a bar to the task's own node, offset from
+  the task's start, which the line does not clip.
+- **A drag in the Week or Month zoom snaps to whole days**, not to a week or a month: `round_dnd_dates`
+  is off and `time_step` is a day, and the page rounds what arrives to the nearest midnight.
+- **The Gantt reads one project's Task rows itself**, never `get_planner`: a job runs for months and
+  `get_planner` computes everyone's days over 100 days at most. So a card here carries no `booked`
+  hours (nothing spread them over days), and a conflict shows when a save asks for a reason, as it
+  does everywhere.
+- **A link saves the task with ERPNext's own `reschedule_dependent_tasks` held back**
+  (`flags.ignore_reschedule`): no date changes, and that push is by calendar days (P4's merge blocker).
+  A link is not drafted on a Draft schedule; it tells nobody and moves nothing. The task's Draft rows
+  drafted against it as it was move on to the save, so they do not read as changed by someone else.
+  While More ▸ Tools ▸ Hold all my changes is on, drawing or removing a link is refused with a
+  sentence, because it would reach the tasks at once.
+- **A project that is gone, or that the person may not read, is an answer, not an error.**
+  `get_project_gantt` answers `refused: "missing" | "forbidden"` instead of raising. A 404 or 403 would
+  open Frappe's own dialog, and the 403's `re_route` sends the address back to the project after the
+  page has moved on, so it loaded and asked twice before settling. Two production users have Project User
+  Permissions. Only that answer makes the device forget its project. A request that fails (the network, a
+  timeout, a server error) keeps it and offers *Try again*. The device remembers a project only once its
+  chart has drawn, so one that will not open never replaces the last good one.
+- An Undo entry for a link is pushed only when the server says the link was made or removed (`linked`,
+  `removed`). A link that was already there is not this gesture's, and undoing it would remove a link
+  someone else made.
+- A drag the planner backs out of (a question answered No, a refusal it already explained) puts the bar
+  back with no "Could not save" toast. A baseline that starts before every task is kept on the chart's
+  scale. A phase with no dated work is left out of the tree (its undated work is under Not scheduled), not
+  drawn as an empty row with a made-up day. P4's Reset baseline messages escape the project title.
+- `project_planner.drafts_block(overlay)` is the `drafts` block `get_planner` answers with, now shared
+  with `get_project_gantt` instead of built in two places.
+- No patch, fixture or data change.
+
+## [1.708.0] - 2026-10-21
+
+### Added
+- **The Lookahead, the Project Planner's new home tab** (P5 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.2; Nik's D2 of 2026-10-21: "the screen a PM lands on").
+  - **What it shows.** Rows are projects, then their phases, then tasks. The next three weeks run
+    across, starting on the site's first weekday (Sunday on production). The range picker offers 2, 3, 4
+    or 6 weeks, and ‹ › step one week.
+  - **A bar is a task.** It shows the crew's initials, its size in days (D7: working days across its
+    span, at least one, counted as the calendar's labels count them since 1.706.0) and the chips a
+    card carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification and
+    weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it a
+    thin red tail. A bar that runs past the window is cut and dashed at that end.
+  - **Dependency arrows.** Hovering or focusing a bar draws arrows from what it waits on and to what
+    waits on it. Only that chain is drawn, because there are hundreds of links.
+  - **Phases.** A task's phase is its nearest ancestor whose subject starts with a phase number,
+    ordered by number. Work under no phase is *Other work*. A project or a phase collapses to plain runs
+    of its days, remembered in this browser.
+  - **The project row** carries its schedule (D8):
+    - ● *Published* with the date;
+    - ◐ *Draft schedule* with **Publish…** (P4's own confirmation);
+    - *Fountain Move* (read-only here; it moves on the Maintenance Planner);
+    - *No tasks yet* with **Build out**, replacing the Needs tasks tray.
+  - **Not scheduled** is a line per project whose chips drag onto a day, as the Unscheduled tray's did.
+    Every row's days take a drop, the project's and its phases' too, so a project with no dated work
+    yet (a fresh build-out opened from its form) still has days to drop on.
+    A **Needs crew** chip narrows the board to the tasks short of crew, replacing the Needs crew tray.
+    The Overdue tray stays.
+  - **On a phone** the board is a list by day, and each day is a drop target; with undated work to
+    place, every day of the window is listed, an empty one as a short line. **Print this view**
+    prints its rows as a list.
+  - **No second save path.** Every bar is the planner's own card, so drag (measured from the day under
+    the pointer), edge resize, the side panel, the right-click menu, selection, search, Color by, Tap to
+    move and double-click quick add all work as on the other tabs. Every write goes through the page's
+    `send()`: the reason prompt, P4's auto-draft on a Draft schedule, the tasks that follow, Ctrl/⌘ and
+    "Notify crew?" apply unchanged.
+  - **The server** is `api/planner_lookahead.get_lookahead(start, weeks, project, pm, group,
+    all_tasks, draft)`. It is `get_planner` over the window plus the tree, so P2's phase-and-crew rule,
+    P3's drafts and schedule state, and the Fountain Move rule are get_planner's own. It reads with
+    Google off (spec §6; `get_planner` gained `google`, unset as before). Each card gains
+    `phase`, `baseline` and `span_days`. Baselines are read only once P3's columns exist. A failure to
+    read the no-task projects is logged and the rest still answers.
+- **Calendar tab.** The week and month views move under a *Calendar* tab with a Week/Month switch, at
+  `/project-planner/calendar/week/<date>` and `/calendar/month/<date>`. The tabs are now Lookahead,
+  Crew, Calendar, Heatmap and Utilization; Heatmap and Utilization fold into Crew in P7.
+
+### Changed
+- **Landing.** The **Lookahead** is the default view: a desktop with no tab of its own (P8's per-device
+  tab store, 1.707.0) opens it, and so does Today's *Planner* button and its fallback for someone the
+  planner does not list. A phone's first visit stays Today. The Lookahead is one of the tabs a device
+  remembers, and a bare `/project-planner` is replaced by the tab's own address (`/lookahead/<today>`,
+  `/calendar/week/<today>`): an entry left bare would be taken over by the device's tab on the way Back,
+  so Back from another tab would bounce off the Lookahead. A named saved view may name the Lookahead
+  (`api/planner_views_prefs`: `lookahead` view).
+- **Old addresses redirect.** `/project-planner/week/<date>` and `/month/<date>` (bookmarks, the
+  digests, Google Calendar event links) are **replaced**, never pushed, by their `/calendar/…`
+  addresses, with the filters and any other query keys. Back from the new address goes where Back
+  from the old one would have.
+- **Every tab, week and range is a history entry** (Nik's rule: never break Back/Forward). Collapsing
+  a row and the Needs crew chip change nothing in the address.
+- The Project form's *Open in Project Planner* sends a project that starts later to the Lookahead on its
+  start week, instead of the week view.
+- A drafted new task's card names the group it is filed under (`parent_task`, carried from the draft
+  overlay through `_with_drafts`), so the Lookahead shows it under its phase. One filed under a phase
+  that is itself still a draft is *Other work* until that phase is published.
+
+### Tests
+- New: `tests/test_planner_lookahead.py` (server, on the Phase 3B harness) and
+  `tests/test_planner_lookahead_page.py`, which runs `scripts/test_planner_lookahead.js` (the board
+  under node). Each has its own CI step. The addresses, the redirects and Back/Forward run in
+  `scripts/test_planner_url_filters.js`.
+- Updated the existing pins that named the old `/week` address, the view list, the tab sync and the
+  saved-view keys.
+
+## [1.707.0] - 2026-10-21
+
+### Added
+- **Today, the phone view of the Project Planner** (P8 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.4; Nik approved the redesign on 2026-10-21, D4: "Today + tomorrow
+  list", "Today's route map", "Block my own time"). `/desk/project-planner/today/<date>` lists the
+  signed-in person's stops for the day and the day after, in route order. Each stop shows its **leave-by
+  and arrival times**, the site, what the work is ("Excavate basin · day 2/3", "Visit, 2h"), the address
+  (tap for Maps), crewmates, equipment and weather chips and the task's note. Above the stops: the day's
+  notes and the person's own blocks, and the day's **route map** (the route view's own, drawn from the
+  `get_route` payload) with *Full route* and *Open in Google Maps*. Below: **Block my time** (the My week
+  form, for the person's own time only) and **This week** (My week, unchanged). The header's *Planner*
+  button opens the week view, so nothing the planner does is lost on a phone.
+  - **`project_planner.get_today(date)`** is the back end: a GET for any planner role, found through
+    Planner Resource `user` like `get_my_week`. Each day is a `day_entry` plus the stop's `order`,
+    `leave_by` (the arrival less the drive, `route_slots`' arithmetic, so the calendar and the leave-by
+    ping say the same), `miles`, `weather`, `equipment`, `day_of` (the n-th of a multi-day task's working
+    days) and `fountain_move`; the answer carries today's whole `route_payload` for the map, and the
+    person's blocks and day notes. It writes nothing.
+  - **Landing** (Nik, 2026-10-21: "Use the spec's landing rule for P8: everyone lands on the tab they used
+    last, or Today the first time", then "Remember the last-used tab per device: my phone keeps its own
+    last tab (Today the first time) and my desktop keeps its own. Filters can stay per person."). A bare
+    `/project-planner` opens **the tab this device last showed**: week, month, crew, heatmap or Today,
+    remembered in the browser's own storage under a key that carries the signed-in user (two people on one
+    browser do not cross) and written whenever one of those screens opens. A blocked or empty store is a
+    first visit. **First visit on a device:** a phone opens Today, scheduler or technician alike; a desktop
+    opens the default calendar view (the week, as before). **Filters and colors stay per person**, in the
+    server's "last used" row as before; that row no longer holds a tab (the page stopped saving one, and
+    the landing never reads an older row's), so `planner_views_prefs` and its list of views are
+    unchanged, and "Save view as…" still carries its view as an explicit choice. The redirect replaces the
+    bare address, so Back leaves the planner; it waits for the saved filters to load. A link that names a
+    filter (the Project form's *Open in Project Planner*) opens this device's calendar tab with that
+    filter, as it always has, and never opens Today, which has no filters to show. Someone with planner access but no Planner
+    Resource, sent to Today by the landing, gets the planner they always had, not a note. Today is also
+    reachable from *Planner* and *More ▸ Views ▸ Today* (phones only).
+  - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
+    Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
+    Back).
+  - **Read-only.** The only write is the person's own block. A Fountain Move task (v1.703.0) shows a
+    *Move* chip and stays the Maintenance Planner's to schedule. The "running late" / "can't make it"
+    buttons and the phone ICS feed are declined (Nik, 2026-10-21) and are not here.
+  - **Miles.** Distances on Today are miles; routing still measures in km underneath, as the route view
+    does.
+- Tests: `tests/test_planner_today.py` (bench-free: the arithmetic, `get_today` against the Phase 3B
+  stub, the page's wiring) and `scripts/test_planner_today.js` (the real page script against a model of
+  v16.50's router: the landing, history and Back, Block my time, escaping), in their own CI step.
+
+### Changed
+- `test_project_planner` and `test_project_planner_page` list `get_today` among the planner's GET
+  endpoints and its one `date` argument.
+
+## [1.706.0] - 2026-10-21
+
+### Changed
+- **The Project Planner's calendar labels its work in days** (P11 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` D7). Only 96 of 1,764 open tasks have hours, and a task without
+  hours counts as a full day per person, so the week and month cards now read "3 days · 2 people".
+  The count is the **working days** (Monday to Friday) across the card's span, using the same
+  weekday helper as "Move by: working days", so a Friday-to-Monday task reads "2 days". A task
+  that falls only on a weekend still reads "1 day". Hours are added after the people only when the
+  task has them, and a time slot still shows as a range. The card's tooltip and the quick look at a
+  project's card follow the same label. Nothing is recalculated and nothing is stored differently:
+  the Expected hours field is unchanged.
+  - Not yet in this change: the print sheet still labels cards with hours (its Hours column and the
+    calendar card line). Printing needs its own small change to keep the column and the crew line
+    readable, so it is a follow-up.
+
+## [1.705.0] - 2026-10-21
+
+### Added
+- **Moving a task moves the tasks that follow it, later or earlier** (P4 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md`; Nik's D10 and D15 of 2026-10-21).
+  - **What moves, and by how much.** A drag, a resize, a dialog's dates, *Next free day*, a booked
+    suggestion and *Tap to move* now send `dependents=1` on `save_task` and `swap_crew`. The server
+    moves every open, dated task that waits on the moved one, directly or through others. Each moves
+    by the **working days the task's end moved**:
+    - a drag later or earlier moves them by the same amount;
+    - a resize of the right edge moves them by its change;
+    - a resize of the left edge moves nothing after it.
+  - **Working days** are Monday to Friday, minus the company's holidays from its default Holiday
+    List. A shift across Thanksgiving lands where the crew can work.
+  - **One request.** Everything is in one conflict check for the lot (`needs_reason` lists the
+    `moves`), with one reason, one notice per person and one Undo.
+  - **Ctrl (Cmd on a Mac) held as you drop moves just that one task.**
+  - A multi-select move does the same through `planner_actions.move_many(dependents=1)`. A task in
+    the selection is never moved a second time as a follower. When two selected tasks reach the same
+    follower, the nearer one, downstream, carries it with its own shift.
+  - **Which followers stay.** Finished, rental, undated and Fountain Move followers stay where they
+    are, and so do tasks the person moving cannot change. The page names each one. The walk only
+    goes on through tasks that move: a task that waits on the moved one only through a task that
+    stays, stays too.
+  - **Past the cap** of 200 followers or 25 levels, the tasks are named, never silently dropped.
+  - **Every follower is checked against every task it waits on**, wherever those go: one that now
+    starts before another of its predecessors ends gets a "Starts before …" line. Live, that asks
+    for the reason. Drafted, it is a warning, checked against the other drafts on the schedule.
+  - **Drafted followers warn.** Their new overbooking comes from one batch check for the lot and is
+    shown as a warning. A draft never asks for a reason.
+  - This replaces the "Shift N tasks that follow?" offer. `shift_successors` is still an endpoint.
+- **A Draft schedule drafts every write** (Nik's D8). The page now sends `draft="auto"` on
+  `save_task`, `add_crew`, `swap_crew` and `move_many`, unless *Hold all my changes* is on. The
+  server drafts a task whose project schedule is Draft (blank counts as Draft) and saves the rest.
+  `move_many` splits one batch between the two, and followers are drafted along.
+  - A follower in a project whose schedule says otherwise is left where it is. A draft never moves a
+    published schedule, and a live save never reaches into a Draft one.
+  - Quick add, duplicate, build out and the AI draft are drafted on a Draft schedule's project.
+  - The planner now always reads with the drafts. Another scheduler's draft shows as "Draft ·
+    Clegg" (`drafted_by`), and `drafts.projects` counts the drafts per project, out-of-date ones
+    included.
+- **A line per project with drafts in the strip under the toolbar.**
+  - A Draft schedule's line offers *Publish…*. After a confirmation, it runs
+    `publish_project_schedule`, which sets the baseline and tells each person once, and asks for a
+    reason when one is needed.
+  - Its *Discard* says how many of the drafts are other people's.
+  - A published project with held changes offers *Publish* (`publish_drafts(project=)`) and
+    *Discard*.
+  - The project peek offers *Publish schedule…* and *Set baseline…* / *Reset baseline…*. A reset
+    does a dry run first, then a confirmation that names how many tasks change.
+- **"Notify crew?"** (Nik's D11), on both planners. On a published schedule, a change to the dates
+  or crew of a task somebody is on asks once per gesture, however many tasks it moves. That includes
+  the crews of the tasks that follow, on screen.
+  - **Notify is the default** when the change touches today through the 14th day, counting the old
+    days as much as the new. It is the primary button and has the focus, so Enter takes it. Past
+    the 14th day, Don't notify is the default.
+  - **Esc puts the change back.**
+  - The answer goes as `notify=1` or `0`, and Undo sends the same answer again.
+  - **Nothing is asked** on a Draft schedule, while the hold is on, for a task nobody is on, or for
+    a pencil.
+  - On the Maintenance Planner, `move_visit` asks the same way. `add_crew` (a technician chip
+    dropped on a visit) asks too, and the server's `add_crew` now takes `notify`. A multi-select
+    move asks once for all of its visits.
+
+### Changed
+- **The board-wide switch is called "Hold all my changes" everywhere** (Nik, 2026-10-21). That is
+  the menu, the strip ("Holding your changes: N not published yet") and the toast. "Draft" now
+  means only a project's Draft schedule.
+- **Every active customer job is published on this deploy** (patch `publish_active_job_schedules`;
+  Nik, 2026-10-21: "Keep Draft/Published as designed; publish the 47 active Draft jobs before P4
+  merges"). P4 drafts every write to a Draft project, so this runs first, after P3's
+  `mark_project_schedule_states`.
+  - **The rule:** `status` Active, a customer job by the planner's own rule
+    (`crew_availability.planner_job_sql` / `is_planner_job`, so it cannot drift), and a schedule that
+    is not Published.
+  - **Measured on production on 2026-10-21, read-only: 47 projects**, all Draft, none blank. That is
+    Service 33 (PRJ-00775, the Fountain Move, among them), Design 8, Events 5 and Build 1: PRJ-00119, PRJ-00127, PRJ-00134, PRJ-00136, PRJ-00179, PRJ-00183, PRJ-00228, PRJ-00262, PRJ-00280, PRJ-00316, PRJ-00385, PRJ-00408, PRJ-00443, PRJ-00446, PRJ-00459, PRJ-00469, PRJ-00471, PRJ-00500, PRJ-00581, PRJ-00599, PRJ-00600, PRJ-00608, PRJ-00614, PRJ-00617, PRJ-00694, PRJ-00695, PRJ-00696, PRJ-00701, PRJ-00703, PRJ-00705, PRJ-00710, PRJ-00713, PRJ-00715, PRJ-00717, PRJ-00740, PRJ-00741, PRJ-00744, PRJ-00753, PRJ-00756, PRJ-00766, PRJ-00768, PRJ-00769, PRJ-00770, PRJ-00773, PRJ-00774, PRJ-00775, PRJ-00776.
+  - **How it writes:** one raw `UPDATE`, as P3's did, with no save, hooks, `modified` bump or calendar
+    sync.
+  - **Not written:** no baseline and no `custom_schedule_published_on`, as for P3's ten; the first
+    *Set baseline* gives each its baseline.
+  - **Never touched:** a Published project is never set back, and Completed and Canceled projects
+    are left alone. The patch cannot raise and is safe twice.
+  - **New projects still start Draft**, as designed (D8). Their writes are drafts until someone
+    presses *Publish…*.
+- **What today's users will notice.** After this deploy, the 10 projects P3 published and these 47
+  active jobs save live, as before, now with the "Notify crew?" question. Every other project
+  (inactive, completed or not a customer job) is a Draft schedule. A planner edit on one of those is
+  a draft, shown with a dashed outline and a strip line, and it reaches nobody until *Publish…*.
+- **Undo** of a change that moved followers is one `move_many` that puts every task back. When the
+  change was more than dates, the plain Undo's save then restores the rest of the task.
+
+### Fixed
+- **A follower that ERPNext's own reschedule pushed mid-move is put back, and the move no longer
+  fails.** ERPNext's `Task.on_update → reschedule_dependent_tasks` pushes an Open dependent the saved
+  task now overlaps to the day after its end, by the calendar, and saves it. The followers' save
+  order (furthest first when later) leaves it nothing to push. The exception is a dependent that
+  already overlapped the task before it: shifted alike, it still overlaps.
+  - **Moving earlier**, that left the copy in hand stale, so the save raised "changed since you
+    opened it" and the whole move rolled back.
+  - **Moving later**, the follower moved twice.
+  - `_save_planned` now reloads a task saved since it was loaded and gives it its planned dates
+    and pencil flag. `_settle` then puts back any follower pushed after it was saved, nearest first.
+    `move_many` uses both.
+- **A drafted chain publishes on its drafted days.** Publish used to save the drafts in the order
+  they were made, task first. ERPNext's own reschedule then pushed each drafted follower by calendar
+  days, and the follower's draft failed as "Changed by someone else". The project stayed Draft. This
+  was the main flow on the 651 Draft projects.
+  - Publish now saves the drafts furthest first.
+  - A push made during the publish is not "someone else": that draft is applied from the days it
+    was drafted from.
+  - A task pushed after it was published is put back.
+  - A change by someone else before the publish is still refused.
+
+### Notes
+- **Still live on a Draft schedule:** Split, Copy week and the Overdue tray's actions, including
+  dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
+- **Behavior change:** `move_many` now checks every task it moves against the tasks it waits on,
+  as `save_task` always has. A multi-select move earlier past a predecessor asks for a reason, even
+  with Ctrl/⌘ held.
+- **Follow-ups:**
+  - The page's own "Move by: working days" for a selection still counts Monday to Friday only; it
+    has no holiday data.
+  - `_downstream_first` walks each selected task's followers to order a large selection. That is
+    fine at today's sizes.
+- **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
+  still pushes that dependent by calendar days, as it always did.
+- Tests: `tests/test_planner_autoshift.py` (its own CI step) covers the server on the Phase 3B
+  harness, and `scripts/test_planner_autoshift.js` drives both real pages under node.
+
+## [1.704.0] - 2026-10-21
+
+### Added
+- **The Project Planner shows phase and crew work only** (P2 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` D6; Nik approved the redesign on 2026-10-21). A customer job carries
+  about 40 template admin and billing tasks, all dated its first day, and they filled the week and the
+  Unscheduled tray. `get_planner` now leaves out an open task unless it sits **under a phase group** (a
+  group Task whose subject starts with a three-digit phase number, `planner_templates.phase_number`,
+  at any depth) **or has someone on it** (a crew row, or an open assignee who is a Planner Resource).
+  The week, month and crew views and the Unscheduled tray all follow it.
+  - **`get_planner(..., all_tasks=1)`** is the whole set, as it always was. The answer says which it
+    is (`all_tasks`) and how many tasks it left out (`hidden_tasks`).
+  - **More ▸ Display ▸ Show all tasks** turns it on, and shows how many the view leaves out ("38 not
+    shown"). It is remembered per person with the view (`all_tasks` in the Project Planner's saved
+    views and "last used", so it follows them to any device), is part of the address
+    (`?all_tasks=1`, like `?project=`, `?pm=` and `?group=`, so Back, Forward and a copied link keep it)
+    and is in a saved view's summary. A link that does not name it is the default, as for the other
+    filters. The print says "Phase and crew work only (N tasks not shown)" when it left some out.
+  - **Display only.** The engine still counts every booking, so capacity, conflicts and the heatmap
+    are unchanged, and a task with a crew booking is by this rule never hidden. The Project filter
+    still lists every project with open work, so a remembered project does not reset because its tasks
+    are all admin. A task the person has drafted is never hidden, and rental crew tasks are not
+    subject to the rule.
+  - **Nothing becomes unreachable.** The project's drawer (`get_project_overview`), search
+    (`search_planner`) and the Task form are not filtered. A search result for a task the schedule
+    leaves out says why it is not drawn and offers **Show all tasks** in the same alert.
+- `crew_availability.tasks_under_a_phase(names)`: the tree question of the rule, one read per level of
+  `parent_task` for the whole set, bounded at 8 levels so a loop in bad data ends.
+
+### Changed
+- `get_planner`'s answer has two new keys, `all_tasks` and `hidden_tasks`. Its signature grew
+  `all_tasks` after `draft`, so a positional `draft` still works.
+- **The Overdue tray is not filtered** (the spec names the schedule and the Unscheduled tray). If admin
+  tasks crowd it, that is a follow-up.
+
+## [1.703.0] - 2026-10-21
+
+### Added
+- **Fountain Move jobs: a project can be a move, it gets a simple move template, and the Maintenance
+  Planner schedules it.** Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves" (first
+  job: PRJ-00775, Michelle Ainge - 4 Pots Moved). `project_enhancements/fountain_move_jobs.py`.
+  - **A move job is a Service project with the new Check *Fountain Move*** (`Project.custom_is_fountain_move`,
+    in the list's standard filters). Not a Project Type of its own, by Nik's choice, so Service reports and
+    KPIs keep counting moves, and the planners' customer-job set needed no change (Service is in it).
+  - **The Fountain Move template** (Project Template "Fountain Move", type Service), seeded once and Nik's
+    to edit: *Confirm move date with customer* (office, 0 h), *Move day* (drain, disconnect, load,
+    transport, set, reconnect, fill, startup test and walkthrough; 4 h for the crew, so 2 h each for the
+    crew of 2; Outdoor, so the weather flags apply) and *Invoice the move* (office, 0 h).
+  - **Ticking the box on a new project uses the template** (`Project.before_insert`): a blank template is
+    filled with Fountain Move and a blank type becomes Service; choosing the Fountain Move template ticks
+    the box. An explicit other template or type is never replaced. `project_template` is hidden on this
+    site's Project form, so the box is the way a Desk-created move gets its tasks; ERPNext's own
+    `after_insert` then copies them and `task_templates` carries the hours and crew size across.
+  - **An Opportunity from the /fountain-move intake** (a Fountain Move Request whose `created_opportunity`
+    it is) makes a ticked project, and the Create Project dialog preselects the Fountain Move template.
+  - **Move tasks are moved on the Maintenance Planner, read-only on the Project Planner.** A deliberate
+    exception to "each planner moves only its own work". Each open move task with hours is a card on the
+    Maintenance Planner (*Move* chip; the Unscheduled tray until it has a day): drag it to a day, onto
+    another person's row in the crew view, or drop a technician on it. The new POST
+    `maintenance_planner.move_fountain_move` saves through the Project Planner's own write, so a conflict
+    asks for a reason and overbooking warns, never blocks; Undo puts the day and crew back; Draft mode
+    refuses them (its drafts are visits). The Maintenance Planner only shows people, so a crew change keeps
+    every crew member with no login (a subcontractor, a vehicle) and anyone whose resource has since gone
+    inactive. The task's read-only *Project* booking is left off that page so it is not shown twice; the
+    hours still count in each person's day. The 0-hour office tasks get no card.
+  - On the Project Planner a move task's card is not movable, `_load` refuses a single-task edit of one
+    (save, add or swap crew, drafts), the Overdue tray's *Reschedule* reports it as failed, and *move
+    successors* skips it. Copy week still copies one (that makes new tasks, it moves nothing).
+- **Patches.** `seed_fountain_move_template` creates the template and its three template Tasks only when
+  no template of that name exists, in one savepoint. `make_prj_00775_a_move_job`, approved by Nik on
+  2026-10-21, makes PRJ-00775 the first move job: it creates the Fountain Move Custom Field from its
+  fixture when missing (patches run before fixture sync); sets `project_type` Build -> Service, ticks the
+  box and sets the template, with `db.set_value` so no Project hook re-runs; sets each of the project's 11
+  tasks from *Service Project Template* that is still Open and untouched (no assignee, hours or timesheet)
+  to **Canceled**, deleting nothing (anything started is kept and logged); and adds the three move tasks
+  **undated**, so the Move day waits in the Maintenance Planner's Unscheduled tray for its real day. Both
+  are safe twice and cannot raise.
+
+## [1.702.0] - 2026-10-21
+
+### Added
+- **Per-project schedule state and baseline for the Project Planner** (P3 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.8; Nik's D5, D8 and D11 of 2026-10-21). This is the back end
+  only. The page that calls it is P4, so nothing on screen changes yet.
+  - **Fields.** On Project: `custom_schedule_status` (*Draft* / *Published*, default Draft),
+    `custom_schedule_published_on` and `custom_baseline_set_on`, in a *Planner schedule* section on
+    the Schedule tab. On Task: `custom_baseline_start` / `custom_baseline_end`, in a collapsible
+    *Baseline* section. All are read-only and `no_copy`, so a copied project or task starts over.
+    `get_planner`'s `projects` now carry `schedule: {status, published_on, baseline_set_on}`.
+  - **`publish_project_schedule(project, reason=None)`** publishes that project's drafts. It uses
+    the existing path: one conflict check, one reason, and one notice per person. It then marks the
+    project Published and **sets the baseline**: each dated task's first and last day, copied
+    **once**. A task that already has a baseline keeps it.
+    - A publish that asks for a reason changes nothing.
+    - If a draft is skipped or fails, or a Draft project still has Draft rows the publish did not
+      reach, the project stays Draft (`drafts_left`).
+  - **`reset_baseline(project, dry_run=0)`** re-copies every task's days now, for a re-plan.
+    `dry_run=1` only counts the tasks that would change, for the confirmation. It also gives a
+    project the patch published its first baseline.
+  - **`publish_drafts(project=)` and `discard_drafts(project=)`** act on one project's drafts.
+    Without `project`, both act on the caller's own rows only, as before. A board-wide publish now
+    lists, under `skipped`, any of the caller's drafts that another scheduler's newer shared draft
+    replaced, instead of dropping them silently.
+  - **"Notify crew?"**: `notify` on `save_task`, `add_crew`, `swap_crew`, `shift_successors`,
+    `planner_actions.move_many` and `maintenance_planner.move_visit`.
+    - `1` sends the existing publish notice to the people whose bookings moved, never to the
+      person editing.
+    - `0` tells nobody.
+    - `auto` notifies when the change touches today or any of the next 13 days, before or after
+      the move.
+    - Any answer holds back that save's 48-hour change alert. Unset changes nothing, and an
+      unknown answer is refused rather than read as "don't notify".
+
+### Changed
+- **A Draft project's drafts are shared between schedulers.** Today a Planner Draft Change row
+  belongs to its author, so a schedule Nik drafts is invisible to Clegg. On a project whose
+  schedule is still Draft, `_draft_rows` now also returns the other schedulers' rows (raw SQL after
+  the role gate). The planner builds on them, so there is one row per task, and publishes them
+  with the project. This is the one change to an existing path. It touches nothing until someone
+  drafts: production had 0 Planner Draft Change rows on 2026-10-21. On a Published project, rows
+  stay private as before.
+  - **Workaround: saved with `ignore_permissions`.** The doctype's `if_owner` permission would
+    refuse a Projects User another person's row. The doctype's permissions are unchanged, so a
+    list view still shows only your own rows. The planner's role gate and the task's write check
+    run first.
+
+### Notes
+- **Patch `mark_project_schedule_states`.** It creates the five Project fields from their fixture
+  records first, because patches run before fixture sync. It then sets *Published* on every project
+  that already has dated work with someone on it. That means a Task that is not Canceled or a
+  template, has a date, and has either a Task Crew Member resource or an open ToDo for an active
+  Planner Resource's user. Any still-blank status becomes *Draft*.
+  - **Measured read-only on production (2026-10-21):** 10 of 661 projects become Published (9
+    Active, 1 Completed). The other 651 stay Draft.
+  - It is keyed on that rule, not on emptiness: the column's `ALTER` writes the default `Draft`
+    into every row.
+  - Raw `UPDATE`s, so no project is saved and `modified` does not move. It never un-publishes a
+    project, cannot raise, and is safe to run twice.
+- **Baseline and state writes are `db.set_value(update_modified=False)`, never a save.** Copying a
+  date is not an edit. So there is no assignment sync, change alert, calendar sync or ERPNext
+  reschedule of dependants, and no planner with the task open is told "changed by someone else".
+  The project's timeline gets a comment instead.
+
+### Tests
+- `tests/test_planner_publish_baseline.py` (58 tests, bench-free, its own CI step). It reuses the
+  Phase 3B harness and covers publish setting the baseline once, reset, the project filters, shared
+  drafts, the 14-day Notify default, and the patch (by the rule, safe twice, never raises).
+  `test_planner_phase3b` now models a site without the P3 columns.
+
+### After deploy
+- Open a Project's Schedule tab and check the *Planner schedule* section. PRJ-00597, 00699, 00604,
+  00219, 00706, 00130, 00438, 00567, 00754 (and the Completed PRJ-00473) should read Published;
+  the rest should read Draft.
+- `bench migrate` should print `mark_project_schedule_states: 10 project(s) already scheduled, 10
+  set Published, 0 blank set Draft.` (the last number is 651 if the column arrived without its
+  default).
+
+## [1.701.0] - 2026-10-21
+
+### Changed
+- **Planner toolbar v2: one bar with the same structure in both planners** (P1 of the planner UX
+  redesign, `docs/planner-ux-redesign.md`, approved by Nik on 2026-10-21 with "Approve as is"). The
+  four menus of v1.687.0 (Views, Display, Edit, Print) are now two: **+ Add ▾** and **More ▾**.
+  Nothing was removed; every control moved to a place the spec's feature map names.
+  - **+ Add ▾** holds *Quick add task…* (the double-click dialog, opened on today or the first day on
+    screen), *Build out tasks…* (T1's grid, for the project in the filter or one picked first) and
+    *Day note…* on the Project Planner; *Add visit…* and *Day note…* on the Maintenance Planner.
+  - **More ▾** holds four sections: **Display** (Color by and its key, *Highlight a project…*,
+    maintenance / rentals / travel, or projected visits and project work), **Views** (My week, saved
+    views), **Tools** (Copy week…, Block time…, Conflicts…, Tap to move, *Hold all my changes*, which is
+    the old board-wide Draft mode, and Undo) and **Print** (this view, selection, crew sheet; the Day
+    Board on the Maintenance Planner). The phone's "Filters and tools" sheet draws the same sections, and
+    Back still closes it. A section with nothing on the screen is left out with its heading.
+  - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
+    roving tabindex, ArrowLeft/Right/Home/End move focus. No new views yet; the control is what the
+    Lookahead, Gantt and Overview tabs of the next PRs plug into.
+  - **The Move by switch left the selection bar.** *Calendar days | Working days* is now the first
+    field of the **Move…** panel (choosing one is remembered per device as before and re-labels the
+    number below it), and dragging several selected cards still counts in the unit it picks. Split was
+    already only in the right-click menu and the task panel.
+  - **Job type is the default color on the Project Planner** (it was Task color). The stored value
+    `default` is the old Task color, and every "last used" view saved before this carries it whether or
+    not anyone had chosen it. So a Project Planner view now says whether its color was picked: a new
+    `color_chosen` flag in `api/planner_views_prefs.SCHEMA["project"]` (and the page's `PP6C.schema`, held
+    equal by a test), saved with the view on the server, so it follows the person to any device. The page
+    honors a saved `default` only when `color_chosen` is set; a "last used" view without it is dropped of
+    its color. Applying a named view saved before the flag that holds Task color counts as a choice (it was
+    a snapshot someone took). The Maintenance Planner's default is still Visit type.
+- Tests: `scripts/test_planner_toolbar.js` now covers the kit's tabs and section flattening, every old
+  control's new home in both planners (each item run and the method it reaches checked, in the menu's
+  list and in the phone's sheet), + Add, the Highlight and Build out prompts, the Move by field, the
+  color default and its migration. `test_planner_phase6d_ui`, `phase6e` and `project_planner_phase3a_page`
+  follow the renamed methods (`tb_tools_items`, `tb_add_items`) and the Move by field.
+## [1.699.2] - 2026-10-21
+
+### Added
+- **Planner UX redesign proposal** (`docs/planner-ux-redesign.md`, R1 of the Planner UX rethink,
+  TASK-2026-02828/02829). Docs only; no code or behavior changes. Nik asked on 2026-10-21 for the
+  Project and Maintenance Planners to "mimic behavior of other Construction Project Management
+  tools". The proposal rests on three things: a read-only production usage audit, a benchmark of
+  construction and field-service schedulers, and five rounds of his decisions.
+  - **The audit.** One person makes about 88% of the planner traffic. Draft changes, personal blocks
+    and saved views have never been used. 96 of 1,764 open tasks have hours. Each customer job carries
+    about 40 template admin tasks, all dated on one day.
+  - **The proposal.** A Lookahead home tab (projects → phases → tasks over three weeks), a per-project
+    Gantt on the existing DHTMLX widget, a Crew board in days with Heatmap and Utilization merged
+    into Capacity, the familiar Calendar, a managers' Overview with exceptions and a weekly summary,
+    and a phone Today view. A schedule publishes per project, which sets its baseline. Dependents
+    shift with their task, and a "Notify crew?" prompt runs after publish.
+  - **What the doc also holds.** A feature-by-feature map of where every current planner feature
+    goes, the small additive back-end needs, and a 12-PR build plan with dependencies, a merge order
+    and model sizes.
+
+## [1.699.1] - 2026-10-21
+
+### Fixed
+- **The Project Planner opened to a blank page, toolbar only, for anyone whose saved Color by was
+  "person"** (seen live 2026-10-21, v1.699.0; only Nik had that setting on production). No calendar
+  and no `get_planner` request, and the console said `TypeError: Cannot read properties of null
+  (reading 'resources')`. The v1.687.0 toolbar redesign builds the Display menu, Color by key
+  included, from page state on every `tb_render`. In "person" mode the key lists
+  `this.resources()`, which read `this.data.resources`. `this.data` is null until the first
+  `get_planner` answers, and `handle_route` calls `set_mode` (which runs `tb_render`) *before*
+  `load()`. Normally the kit is not loaded yet, so the key is empty and nothing reads the data. When
+  the planner kit was already cached, the key was built first, the throw aborted `handle_route`, and
+  `load()` never ran. The Display menu runs the same code, so there was no way to change the setting
+  from the page. `resources()` now returns an empty list while `this.data` is null. The other Color
+  by modes (project, project manager, job type, status) and the Maintenance Planner's (technician,
+  site, contract, status) were checked and already guard it. New checks in
+  `scripts/test_planner_toolbar.js` run `tb_render` and the Display items with no data in every
+  mode, in both planners.
 
 ## [1.699.0] - 2026-10-20
 

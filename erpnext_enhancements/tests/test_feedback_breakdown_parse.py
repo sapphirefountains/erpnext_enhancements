@@ -184,6 +184,51 @@ def test_duplicates_are_deduplicated():
 	assert len(result.duplicates) == 1
 
 
+def test_a_duplicate_a_reviewer_ruled_out_is_dropped_even_when_we_sent_it():
+	"""v1.729.0, ER-2026-1323804: a flag a person cleared does not come back on the re-run.
+
+	TASK-2 is in ``known_tasks`` here on purpose — the backstop must hold even if the scan
+	filter upstream is ever lost, and the reason must be the true one.
+	"""
+	result = parse_breakdown(
+		{
+			"tasks": [task()],
+			"duplicates": [
+				{"task": "TASK-2", "confidence": "High", "why": "same zero"},
+				{"task": "TASK-1", "confidence": "Low", "why": "related"},
+			],
+		},
+		target_projects=BOTH,
+		known_tasks=KNOWN,
+		max_tasks=10,
+		dismissed_tasks={"TASK-2": "Clock-in drops GPS"},
+	)
+	assert [d.task for d in result.duplicates] == ["TASK-1"]
+	assert "Duplicate 1: TASK-2 was ruled not a duplicate by a reviewer." in result.dropped
+	assert not any("was not in the tasks we sent" in reason for reason in result.dropped)
+	# The tasks are untouched: ruling out a duplicate is not a reason to lose a row.
+	assert [t.subject for t in result.tasks] == ["Do the thing"]
+
+
+def test_a_ruled_out_duplicate_left_out_of_the_scan_is_still_reported_as_ruled_out():
+	"""The real shape: ``breakdown.run_breakdown`` also drops it from ``known_tasks``."""
+	known = {name: meta for name, meta in KNOWN.items() if name != "TASK-2"}
+	result = parse_breakdown(
+		{"tasks": [task()], "duplicates": [{"task": "TASK-2", "why": "same"}]},
+		target_projects=BOTH,
+		known_tasks=known,
+		max_tasks=10,
+		dismissed_tasks=["TASK-2"],
+	)
+	assert result.duplicates == ()
+	assert result.dropped == ("Duplicate 1: TASK-2 was ruled not a duplicate by a reviewer.",)
+
+
+def test_without_dismissals_nothing_changes():
+	result = parse({"tasks": [task()], "duplicates": [{"task": "TASK-2", "why": "same"}]})
+	assert [d.task for d in result.duplicates] == ["TASK-2"]
+
+
 # ------------------------------------------------------------------------- dependencies
 
 

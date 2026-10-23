@@ -24,6 +24,9 @@ from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_reco
 # A visit by its v1.610.0 name or the random one it had before (patches/rename_hash_named_visits.py).
 from erpnext_enhancements.sapphire_maintenance.visit_names import current_visit_name
 
+# Imports only frappe, like visit_names.
+from erpnext_enhancements.sapphire_maintenance.item_sizes import size_choices
+
 DOCTYPE = "Sapphire Maintenance Record"
 # The state a technician's Finish moves a visit into. Kept in step with the record's
 # REVIEW_STATE (not imported: several bench-free suites stub that module with only the two
@@ -406,6 +409,9 @@ def get_visit_bootstrap(record):
         # v1.614.0: the address the Wrap-up's "Email the client to sign off" prefills, and the
         # link already out, if any. Never raises.
         "sign_off": _sign_off_context(doc),
+        # v1.712.0: a chemical sold in sizes (1" or 3" tablets) is a size toggle on its line.
+        # Never raises.
+        "sizes": size_choices(),
     }
 
 

@@ -3,7 +3,7 @@
 
 """Planner Phase 6E (TASK-2026-02471): four follow-ups Nik decided on 2026-10-09.
 
-1. **Move by calendar days or working days** (both planners, the selection bar). Calendar days stay
+1. **Move by calendar days or working days** (both planners, a field of the Move… panel). Calendar days stay
    the default; working days count Monday to Friday from each task's own start, send the weekend to the
    next weekday going forwards (the Friday before going backwards) and keep each task's length in
    working days. The switch is remembered per device
@@ -436,7 +436,7 @@ ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
 vm.runInContext(
 	pp_source + "\n" + mp_source +
-	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS); this.MP6E = MP6E; this.MPTB_M = MPTB_METHODS;",
+	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS, PPAS_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS, MPAS_METHODS); this.MP6E = MP6E; this.MPTB_M = MPTB_METHODS;",
 	ctx
 );
 const out = {};
@@ -468,25 +468,22 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 		load: () => null,
 		render: () => null,
 	});
-	const bar = make("<div>");
-	pp.p6e_bar_switch(bar);
-	out.pp_default = { unit: pp.p6e_unit(), buttons: buttons(bar), note: pp.p6e_bar_note(), label: pp.p6e_move_label(), default: pp.p6e_move_default(), pref: Object.assign({}, prefs), style: head.node.kids.length };
+	out.pp_default = { unit: pp.p6e_unit(), options: pp.p6e_unit_options(), shown: pp.p6e_unit_label(pp.p6e_unit()), note: pp.p6e_bar_note(), label: pp.p6e_move_label(), default: pp.p6e_move_default(), pref: Object.assign({}, prefs), style: head.node.kids.length };
 	out.pp_calendar_drop = pp.p6e_drop_days("2026-10-09", "2026-10-10");
 	out.pp_calendar_moves = pp.p6e_moves([pp.by_task["TASK-1"]], 2, (name) => `fresh-${name}`);
 	pp.p6b_move_selection(2);
 	await flush();
 	out.pp_calendar_sent = JSON.parse(sent[0][1].moves);
 	out.pp_calendar_message = sent[0][2];
-	// Choose working days from the bar: remembered, and the bar redrawn.
-	const click = make("<div>");
-	pp.p6e_bar_switch(click);
-	click.node.kids[0].node.kids[2].node.handlers.click();
+	// Choose working days in the Move… panel's Move by field: remembered, and the bar redrawn.
+	const days_field = { df: {} };
+	const panel_sets = [];
+	pp.p6e_panel_unit({ get_value: () => "Working days", fields_dict: { days: days_field }, set_value: (f, v) => panel_sets.push([f, v]) });
+	out.pp_panel = { label: days_field.df.label, description: days_field.df.description, sets: panel_sets };
 	out.pp_chosen = { unit: pp.p6e_unit(), pref: Object.assign({}, prefs), rendered: rendered.slice() };
 	pp.p6e_set_unit("nonsense");
 	out.pp_ignored = pp.p6e_unit();
-	const bar2 = make("<div>");
-	pp.p6e_bar_switch(bar2);
-	out.pp_working = { buttons: buttons(bar2), note: pp.p6e_bar_note(), label: pp.p6e_move_label(), default: pp.p6e_move_default(), field: pp.p6e_move_note() };
+	out.pp_working = { shown: pp.p6e_unit_label(pp.p6e_unit()), note: pp.p6e_bar_note(), label: pp.p6e_move_label(), default: pp.p6e_move_default(), field: pp.p6e_move_note() };
 	out.pp_working_drop = [pp.p6e_drop_days("2026-10-09", "2026-10-10"), pp.p6e_drop_days("2026-10-14", "2026-10-11"), pp.p6e_drop_days("2026-10-12", "2026-10-10")];
 	sent.length = 0;
 	out.pp_drop_handled = pp.p6b_drop({ kind: "card", card: pp.by_task["TASK-1"], from_date: "2026-10-09", from_resource: null }, { date: "2026-10-12" });
@@ -526,6 +523,8 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 		go(view, date) { this.went = [view, date]; },
 		range_days: () => ["2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14"],
 		push_undo: (snap, message) => { pushed.push([snap, message]); return true; },
+		// P4: "Notify crew?" answers Notify at once (scripts/test_planner_autoshift.js tests the question).
+		mpas_ask: (notify) => Promise.resolve(notify ? "1" : "0"),
 		send: (method, args, opts) => { msent.push([method, args, opts]); return Promise.resolve(method === "create_visit" ? { name: "SMR-NEW", modified: "mod-1", date: args.date } : { removed: "SMR-NEW" }); },
 		build_crew_editor: () => null,
 		read_crew_editor: (panel, lead) => [{ user: "korben@x.com", hours: 2 }].filter((row) => row.user !== lead),
@@ -543,13 +542,9 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 			return panel;
 		},
 	});
-	const mbar = make("<div>");
-	mp.p6e_bar_switch(mbar);
-	out.mp_default = { unit: mp.p6e_unit(), buttons: buttons(mbar), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), label: mp.p6e_move_label(), default: mp.p6e_move_default() };
+	out.mp_default = { unit: mp.p6e_unit(), options: mp.p6e_unit_options(), shown: mp.p6e_unit_label(mp.p6e_unit()), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), label: mp.p6e_move_label(), default: mp.p6e_move_default() };
 	mp.p6e_set_unit("working");
-	const mbar2 = make("<div>");
-	mp.p6e_bar_switch(mbar2);
-	out.mp_working = { unit: mp.p6e_unit(), pref: Object.assign({}, mprefs), rendered: mrendered.slice(), buttons: buttons(mbar2), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), earlier: mp.p6e_question(2, -3), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), back_drop: [mp.p6e_drop_days("2026-10-12", "2026-10-10"), mp.p6e_drop_days("2026-10-14", "2026-10-11")], back_date: mp.p6e_date("2026-10-12", -1), label: mp.p6e_move_label(), default: mp.p6e_move_default(), note: mp.p6e_bar_note() };
+	out.mp_working = { unit: mp.p6e_unit(), pref: Object.assign({}, mprefs), rendered: mrendered.slice(), shown: mp.p6e_unit_label(mp.p6e_unit()), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), earlier: mp.p6e_question(2, -3), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), back_drop: [mp.p6e_drop_days("2026-10-12", "2026-10-10"), mp.p6e_drop_days("2026-10-14", "2026-10-11")], back_date: mp.p6e_date("2026-10-12", -1), label: mp.p6e_move_label(), default: mp.p6e_move_default(), note: mp.p6e_bar_note() };
 	mp.p6e_unit_value = "working";
 	// Two visits move by the same number of weekdays; the past is still refused.
 	mp.p6b_move_selection(1);
@@ -640,11 +635,11 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 	out.mp_undo = [mp.p6e_undo({ p6e: "created", site: "Hotel", record: "SMR-NEW", modified: "mod-1" }), msent.map((s) => [s[0], s[1], s[2].message])];
 	out.mp_legend = mp.p6e_legend_sections().map((s) => s.title);
 	out.mp_methods = Object.keys(ctx.MP6E.methods).sort();
-	// The page's own state: "Add visit…" in the toolbar's Edit menu (v1.687.0; it was a toolbar
-	// button) is only there for people who may create visits.
+	// The page's own state: "Add visit…" in the toolbar's + Add menu (v2; it was a toolbar button, then
+	// an item of Edit) is only there for people who may create visits.
 	mp.undo_stack = mp.undo_stack || [];
 	mp.p6d_conflict_count = () => null;
-	const add_hidden = () => !ctx.MPTB_M.tb_edit_items.call(mp).some((item) => item.label === "Add visit…");
+	const add_hidden = () => !ctx.MPTB_M.tb_add_items.call(mp).some((item) => item.label === "Add visit…");
 	mp.data.can_create_visits = true;
 	const shown_for = add_hidden();
 	mp.data.can_create_visits = false;
@@ -668,17 +663,21 @@ class TestPagesUnderNode(unittest.TestCase):
 			t6b._phase_source(pp, "const PP6B = {", "Object.assign(ProjectPlanner.prototype, PP6B_METHODS);")
 			+ t6b._phase_source(
 				pp, "const PP6E = {", "Object.assign(ProjectPlanner.prototype, PP6E_METHODS);"
-			),
+			)
+			# P4: a move goes through as4_prepare (the tasks that follow, "Notify crew?").
+			+ t6b._phase_source(pp, "const PPAS = {", "Object.assign(ProjectPlanner.prototype, PPAS_METHODS);"),
 			t6b._phase_source(
 				mp, "const MP6B = {", "Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);"
 			)
 			+ t6b._phase_source(
 				mp, "const MP6E = {", "Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);"
 			)
-			# The toolbar's Edit menu offers 6E's Add visit… (v1.687.0).
+			# The toolbar's + Add menu offers 6E's Add visit… (v2).
 			+ t6b._phase_source(
 				mp, "const MPTB = {", "Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);"
-			),
+			)
+			# P4: a multi-select move asks "Notify crew?" once (mpas_batch).
+			+ t6b._phase_source(mp, "const MPAS = {", "Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);"),
 		]
 		result = subprocess.run(
 			[node, "-e", PAGE_HARNESS],
@@ -694,15 +693,15 @@ class TestPagesUnderNode(unittest.TestCase):
 
 	# ---------------------------------------------------------------- the Project Planner
 
-	def test_the_bar_shows_the_switch_and_calendar_days_stay_the_default(self):
+	def test_the_panel_has_the_switch_and_calendar_days_stay_the_default(self):
 		out = self.out["pp_default"]
 		self.assertEqual(out["unit"], "calendar")
-		self.assertEqual(out["buttons"], [["Calendar days", "true"], ["Working days", "false"]])
+		# Move by is a Select in the Move… panel (the planner UX redesign, D12), not a switch on the bar.
+		self.assertEqual((out["options"], out["shown"]), ("Calendar days\nWorking days", "Calendar days"))
 		self.assertIn("calendar days", out["note"])
 		self.assertEqual((out["label"], out["default"]), ("Move by (days)", 7))
 		self.assertEqual(out["pref"], {})  # reading the default writes nothing
-		# The switch's style is in project_planner.css (S3.4d, v1.664.0): its first use adds no
-		# <style> element to <head> any more.
+		# Its first use adds no <style> element to <head> (there is no switch to style any more).
 		self.assertEqual(out["style"], 0)
 		self.assertEqual(self.out["pp_calendar_drop"], 1)
 
@@ -727,10 +726,15 @@ class TestPagesUnderNode(unittest.TestCase):
 		self.assertEqual(chosen["unit"], "working")
 		self.assertEqual(chosen["pref"], {"ee_project_planner_move_by": "working"})
 		self.assertEqual(chosen["rendered"], ["working"])  # the bar is drawn again
+		# The panel's number re-labels itself and starts at a working week.
+		panel = self.out["pp_panel"]
+		self.assertEqual(panel["label"], "Move by (working days)")
+		self.assertIn("Working days (Monday to Friday)", panel["description"])
+		self.assertEqual(panel["sets"], [["days", 5]])
 		self.assertEqual(self.out["pp_ignored"], "working")  # an unknown unit changes nothing
 		self.assertEqual(self.out["pp_remembered"], "working")  # a fresh page on the same device
 		working = self.out["pp_working"]
-		self.assertEqual(working["buttons"], [["Calendar days", "false"], ["Working days", "true"]])
+		self.assertEqual(working["shown"], "Working days")
 		self.assertEqual((working["label"], working["default"]), ("Move by (working days)", 5))
 		self.assertIn("working days", working["note"])
 		self.assertIn("working days", working["field"])
@@ -773,7 +777,7 @@ class TestPagesUnderNode(unittest.TestCase):
 	def test_visits_move_by_calendar_days_unless_the_bar_says_working_days(self):
 		default = self.out["mp_default"]
 		self.assertEqual(default["unit"], "calendar")
-		self.assertEqual(default["buttons"], [["Calendar days", "true"], ["Working days", "false"]])
+		self.assertEqual((default["options"], default["shown"]), ("Calendar days\nWorking days", "Calendar days"))
 		self.assertEqual((default["date"], default["drop"]), (SAT0, 1))
 		self.assertEqual(default["question"], "Move 2 visits 1 day(s) later?")
 		self.assertEqual((default["label"], default["default"]), ("Move by (days)", 7))
@@ -781,7 +785,7 @@ class TestPagesUnderNode(unittest.TestCase):
 		self.assertEqual(working["unit"], "working")
 		self.assertEqual(working["pref"], {"ee_maintenance_planner_move_by": "working"})
 		self.assertEqual(working["rendered"], ["working"])
-		self.assertEqual(working["buttons"], [["Calendar days", "false"], ["Working days", "true"]])
+		self.assertEqual(working["shown"], "Working days")
 		self.assertEqual((working["date"], working["drop"]), (MON0, 1))
 		# Backwards, a weekend landing is the Friday before: Monday to Saturday is one back, Wednesday to
 		# Sunday three; a visit on the Monday moved one weekday earlier is the Friday.
@@ -925,11 +929,19 @@ class TestPageSource(unittest.TestCase):
 	def test_the_hooks_are_single_lines(self):
 		pp6b, mp6b = t6b._block(self.pp), t6b._block(self.mp)
 		for block in (pp6b, mp6b):
-			self.assertIn("this.p6e_bar_switch($bar);", t6b._method(block, "p6b_render_bar"))
+			# Move by left the selection bar for the Move… panel (the planner UX redesign, D12).
+			self.assertNotIn("p6e_bar_switch", t6b._method(block, "p6b_render_bar"))
+			self.assertNotIn("p6e_bar_switch", block)
 			self.assertIn(".text(this.p6e_bar_note())", t6b._method(block, "p6b_render_bar"))
 			self.assertIn("this.p6e_drop_days(", t6b._method(block, "p6b_drop"))
 			panel = t6b._method(block, "p6b_move_panel")
-			for hook in ("this.p6e_move_label()", "this.p6e_move_default()", "this.p6e_move_note()"):
+			for hook in (
+				"this.p6e_move_label()",
+				"this.p6e_move_default()",
+				"this.p6e_move_note()",
+				"this.p6e_unit_options()",
+				"this.p6e_panel_unit(panel)",
+			):
 				self.assertIn(hook, panel)
 		self.assertIn("this.p6e_moves(cards, days,", t6b._method(pp6b, "p6b_move_selection"))
 		self.assertIn("this.p6e_message(cards.length, days)", t6b._method(pp6b, "p6b_move_selection"))
@@ -1011,11 +1023,15 @@ class TestPageSource(unittest.TestCase):
 			# to the next.
 			js, tag = (PP_JS, "PP6E_STYLE") if block is self.pp_block else (MP_JS, "MP6E_STYLE")
 			raw = js.with_suffix(".css").read_text(encoding="utf-8")
-			start = raw.index("*/", raw.index("/* ===", raw.index(f"({tag}).")))
-			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 			self.assertNotIn("_STYLE = `", block)
-			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
-			self.assertTrue(classes and all(c.startswith(prefix) for c in classes), classes)
+			if f"({tag})." in raw:
+				start = raw.index("*/", raw.index("/* ===", raw.index(f"({tag}).")))
+				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
+				self.assertTrue(classes and all(c.startswith(prefix) for c in classes), classes)
+			else:
+				# The Project Planner's section held only the Move by switch, which is a panel field now.
+				self.assertIs(block, self.pp_block)
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour"):
 				self.assertNotIn(british, block.lower(), british)
 			raw = [

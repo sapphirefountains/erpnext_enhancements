@@ -287,6 +287,8 @@ doctype_js = {
 		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
 		"public/js/water_engineering/pump_curve_chart.js",
+		# v1.726.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
+		"public/js/supplier_finder_buttons.js",
 	],
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
 	# used by the design form's live dashboard; loaded before the auto-loaded form script.
@@ -344,6 +346,8 @@ doctype_js = {
 		# Purchase Receipt through api/procurement.receive_items, so received_qty, the
 		# status pill and the Order Stage all move on their own.
 		"public/js/po_receive_items.js",
+		# v1.726.0 -- "Find suppliers": who else sells this order's items (Find a Supplier page).
+		"public/js/supplier_finder_buttons.js",
 	],
 	"Material Request": [
 		"public/js/vue.global.js",
@@ -696,6 +700,11 @@ doc_events = {
 			# It runs FIRST so a refused project never seeds its tracker rows.
 			"erpnext_enhancements.process_steps.enforce_handoff_gate",
 			"erpnext_enhancements.process_steps.seed_process_steps",
+			# Fountain Move jobs (Nik, 2026-10-21): a ticked custom_is_fountain_move fills a blank
+			# project_template with "Fountain Move" (and the template ticks the box; an intake
+			# Opportunity ticks it too), so ERPNext's after_insert copies the move tasks in the same
+			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
+			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
 		],
 		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
 		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines
@@ -1081,6 +1090,13 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
+	# Hand-off and launch meetings are Google Calendar events created by this app,
+	# not by Frappe's Event sync (crm_enhancements/handoff_calendar.py). Setting one
+	# to Cancelled in the Desk withdraws its Google invite; the app's own Skip and
+	# re-schedule paths flag the Event so this does not run twice.
+	"Event": {
+		"on_update": "erpnext_enhancements.crm_enhancements.handoff_calendar.cancel_on_status_change",
+	},
 	"Opportunity": {
 		"before_validate": [
 			"erpnext_enhancements.sync_contact.sanitize_primary_address_link",
@@ -1340,6 +1356,12 @@ doc_events = {
 		# than converting a string back into a list and getting the conversion wrong.
 		"on_update": [
 			"erpnext_enhancements.training.assignment.on_user_roles_changed",
+			# Dock (v1.734.0): rewrite this person's Dock layer when their Dock Profile, Role
+			# Profiles or enabled flag change, so choosing Parker's profile shows on his next
+			# page load rather than the next deploy. Returns at once when none of the three
+			# moved; a chosen profile is applied even over a layer the person arranged, a Role
+			# Profile change is not. Never raises (setup/dock_profiles.py).
+			"erpnext_enhancements.setup.dock_profiles.on_user_update",
 		],
 	},
 	"Supplier": {
@@ -1638,6 +1660,24 @@ scheduler_events = {
 		# Settings.naming_digest_recipients; blank, or a week with nothing failing, sends
 		# nothing. Reads only, so a deploy FLUSHDB costs at most one Monday's email.
 		"0 7 * * 1": ["erpnext_enhancements.inventory_enhancements.item_naming_digest.send_weekly_digest"],
+		# inventory (v1.730.0, ER-2026-1323810): the Reorder Board's morning digest, 07:20 site time, every
+		# day (Nik, 2026-10-22: one daily digest, email + the Desk bell, to Inventory Scanner Settings'
+		# reorder_alert_role, default Purchase Manager). Names only items that newly fell below their
+		# reorder point (or whose snooze ended) since the last digest; nothing new, nothing sent. Its own
+		# key, used nowhere else in this dict ("15 7 * * *" and "0 7 * * *" are different keys). The
+		# memory is Reorder Watch rows, not a queued job, so a deploy FLUSHDB loses nothing: the scheduler
+		# re-enqueues a due job it does not find in the queue, and an un-named line is still un-named.
+		# Replaces ERPNext's auto-indent, which patches/disable_auto_material_requests switches off.
+		"20 7 * * *": ["erpnext_enhancements.inventory_enhancements.reorder_board.send_daily_digest"],
+		# Planner UX redesign P9 (v1.715.0, Nik's D16): Monday 06:15 site time, the weekly schedule
+		# summary (the page Overview prints) to the managers named in Project Planner Settings >
+		# Telling managers. OFF: it does nothing, before any query, unless weekly_summary_email is
+		# ticked AND someone is named (the box ships unticked; backfill_weekly_summary_setting writes
+		# its row). Its own key, used nowhere else in this dict ("15 6" is not "10 6", "45 6" or
+		# "30 6 * * 1-5"); a repeated key would silently replace the entry it collided with. At most
+		# one send per week through a Planner Digest Log row (a deploy FLUSHDBs redis). See
+		# project_enhancements/planner_weekly_summary.py.
+		"15 6 * * 1": ["erpnext_enhancements.project_enhancements.planner_weekly_summary.send_weekly_summary"],
 		# workforce (v1.480.0): the supervisor digest -- yesterday's hours per person,
 		# auto-closed intervals, tracking gaps, off-site clock-ins and pending time
 		# correction requests, per team (Employee.reports_to) and company-wide for HR
@@ -1798,6 +1838,10 @@ scheduler_events = {
 		# docs (WI-071). Daily and bounded (max_new) so it cannot run away; the one-time
 		# historical backfill is a manual bench execute of attachments.sync_attachments.
 		"erpnext_enhancements.quickbooks_online.core.tasks.sync_attachments_scheduled",
+		# QuickBooks Record Matching Excel round trip (v1.721.0): delete exports and uploaded
+		# imports older than 7 days from Home/QuickBooks Matching Excel. They hold customer and
+		# vendor data, and nothing else ever removes an unattached private File.
+		"erpnext_enhancements.quickbooks_online.core.matching_excel.delete_old_files",
 		# Historical opportunities (v1.629.0, WI-024, decided 2026-10-13): recompute
 		# Opportunity.custom_is_historical -- created before 2025-08-01 AND, in 90 days, no
 		# person's comment, attachment, assignment or status change and no person-to-person
@@ -1907,6 +1951,11 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# inventory (v1.730.0): the Reorder Board's Reorder Watch rows -- a row for each item and
+		# warehouse that went at or below its reorder point (below_since, to the hour), snoozes that ran
+		# out cleared for the next digest, rows for what recovered deleted. ~116 rules, reads with
+		# ERPNext's own reorder helpers. Never raises. See inventory_enhancements/reorder_board.py.
+		"erpnext_enhancements.inventory_enhancements.reorder_board.sync_watch",
 		# training: drain Training Attempt progress still sitting in Redis from a
 		# session that ended without a final beacon (closed laptop, dead phone,
 		# killed tab). Bounds progress loss at one flush interval rather than a
@@ -2009,6 +2058,9 @@ scheduler_events = {
 # read from ERPNext Enhancements Settings — see boot.py and api/collab.py.
 # Also frappe.boot.sf_normalize (form kit P2-B): the phone fields the Desk shows as
 # (801) 555-0100, absent when site_config sets disable_value_normalization.
+# And it takes the Opportunity Kanban row out of frappe.boot.module_sidebars["CRM"] for anyone
+# who cannot read Opportunity: frappe never permission-checks a sidebar URL row (v1.735.0,
+# setup/workspace_tweaks.drop_unreadable_sidebar_links).
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------
@@ -2320,7 +2372,22 @@ after_migrate = [
 	# base sidebar from ERPNext's own rows in idx order, so the rows go in at the right idx;
 	# a Custom Sidebar layer would append at the very end or reorder the module. Skips a link
 	# already there (hidden or not), re-adds after an ERPNext re-import, logs instead of raising.
+	# Since v1.735.0 also the Opportunity Kanban as the CRM sidebar's first row, so CRM opens on
+	# it (the dock usage audit of v1.734.0).
 	"erpnext_enhancements.setup.workspace_tweaks.add_core_sidebar_items",
+	# Same audit: Purchase Order and Material Request moved up under Home in the Buying sidebar,
+	# and CRM's dashboard row renamed from "Home" to "Dashboard" now that CRM opens on the Kanban.
+	# Renumbers ERPNext's own rows' idx with db.set_value, only where it differs, so a second
+	# migrate writes nothing; re-applied after an ERPNext re-import; logs instead of raising.
+	"erpnext_enhancements.setup.workspace_tweaks.arrange_core_sidebar_items",
+	# The Dock rail per job (v1.734.0, Nik 2026-10-23). Keeps the site's layer of ERPNext's dock
+	# (Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer on
+	# their dock profile: the User's Dock Profile, else the first profile their Role Profiles
+	# match. Every migrate, so an entry an app adds later reaches those layers as a hidden row.
+	# Writes only a layer that is missing or still the app's: once someone arranges theirs in
+	# Manage Dock it is theirs. After fixture sync, which adds User.custom_dock_profile; logs
+	# instead of raising (setup/dock_profiles.py).
+	"erpnext_enhancements.setup.dock_profiles.apply_dock_profiles",
 	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
 	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,
 	# a field Desktop Icon does not have (the real one is `app`) -- so `app` stays NULL,
@@ -2519,6 +2586,13 @@ after_migrate = [
 	# `_gate.py` -- not that page -- is the source of truth. The doc_event on the same doctype
 	# covers rows FAC creates AFTER this runs. Returns at once without FAC; never raises.
 	"erpnext_enhancements.ai_governance.fac_tool_categories.sync_fac_tool_categories",
+	# project_enhancements (v1.724.0): finish the maintenance agreement's Service Fee swap if the
+	# patch refresh_maintenance_agreement_fee_line had to wait on a signing link. Patch Log marks
+	# that patch done either way, so without this a wait would never be retried. The same guarded
+	# replace (shipped bodies only, paper-signed copies frozen first, nothing while a link is out),
+	# silent when there is nothing to do, and it installs only the v1.724.0 body, so a later
+	# template release is left to its own patch. One read per migrate; never raises.
+	"erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line.retry_after_migrate",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -3429,6 +3503,8 @@ assistant_tools = [
 	# invents a vendor part number; api/item_suggest.py and the pure item_suggest_rules hold it
 	# to both. Gated on Item create, as the guided page's Suggest button is.
 	"erpnext_enhancements.assistant_tools.item_naming_suggest.ItemNamingSuggest",
+	# v1.726.0 -- the Supplier Finder's door: who sells this item, ranked by purchase evidence.
+	"erpnext_enhancements.assistant_tools.supplier_search.SupplierSearch",
 	# v1.339.0 CRM -- read-only naming advisor for the three doctypes that name themselves
 	# after a party. Same posture as item_naming_check: advisory, no doc_event, every
 	# judgement in the pure crm_enhancements.party_naming_rules so CI executes it.
@@ -3457,7 +3533,7 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently three:
+# monkeypatches.py for what/why — currently four:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
@@ -3468,7 +3544,12 @@ assistant_skills = [
 #   3. templates, scripts and print formats never read knowledge base drafts
 #      (2026-10-01): their globals read tables with no permission check. Wraps
 #      Database.execute_query and File.get_content, and keeps drafts out of the
-#      document cache; see knowledge_base/template_guard.py.
+#      document cache; see knowledge_base/template_guard.py;
+#   4. the AI connector's list_documents counts its results in a form Frappe 16
+#      accepts (v1.727.1). FAC 3.0.0's string `count(name)` logged an Error Log
+#      row on every call. Inert unless FAC's module is byte-for-byte 3.0.0's, so
+#      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
+#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py.
 # Also applied from before_request and before_job (monkeypatches.ensure_applied):
 # hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches

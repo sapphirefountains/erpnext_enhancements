@@ -10,8 +10,22 @@
 }
 
 .bm-toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
 	margin-bottom: var(--sf-space-20, 16px);
+	max-width: 640px;
+}
+
+.bm-toolbar .bm-filter {
+	flex: 1 1 240px;
+	min-width: 0;
 	max-width: 480px;
+}
+
+.bm-board-link {
+	flex: 0 0 auto;
+	white-space: nowrap;
 }
 
 .bm-group {
@@ -99,6 +113,7 @@
 
 .bm-bin-actions {
 	display: flex;
+	flex-wrap: wrap;
 	gap: var(--sf-space-10, 8px);
 }
 
@@ -149,7 +164,32 @@
 }
 
 .bm-item-name {
+	display: block;
 	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-item-code {
+	display: block;
+}
+
+.bm-item-link {
+	display: block;
+	color: var(--sf-link, var(--primary));
+	text-decoration: none;
+}
+
+.bm-item-link:hover .bm-item-name {
+	text-decoration: underline;
+}
+
+.bm-item-link:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+	border-radius: var(--sf-radius-control, 4px);
+}
+
+.bm-table .bm-reorder {
+	min-width: 15em;
 }
 
 .bm-row-actions {
@@ -264,5 +304,9 @@
 	.bm-table .bm-qty,
 	.bm-row-actions {
 		text-align: left;
+	}
+	.bm-table .bm-reorder {
+		min-width: 0;
+		padding: 4px 0 8px;
 	}
 }

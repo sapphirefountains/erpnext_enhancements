@@ -16,6 +16,7 @@
   "group_subject",
   "depends_on_idx",
   "created_task",
+  "added_by",
   "description_section",
   "description"
  ],
@@ -97,6 +98,14 @@
    "description": "Stamped after creation. Its presence is what makes the confirm call idempotent — a re-run skips any row that already has one."
   },
   {
+   "fieldname": "added_by",
+   "fieldtype": "Link",
+   "label": "Added By",
+   "options": "User",
+   "read_only": 1,
+   "description": "Set when a reviewer typed this row in by hand rather than the model proposing it. A hand-added row survives a re-run of the breakdown, which replaces only the model's rows."
+  },
+  {
    "fieldname": "description_section",
    "fieldtype": "Section Break",
    "label": null
@@ -110,7 +119,7 @@
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-08-17 12:00:00.000000",
+ "modified": "2026-10-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Feedback",
  "name": "Enhancement Request Proposed Task",

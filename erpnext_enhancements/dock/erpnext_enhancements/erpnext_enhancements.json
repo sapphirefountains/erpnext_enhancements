@@ -1,0 +1,104 @@
+{
+ "app": "erpnext_enhancements",
+ "creation": "2026-10-23 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Dock",
+ "idx": 0,
+ "items": [
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "square-kanban",
+   "link_type": "URL",
+   "title": "Opportunities",
+   "url": "/desk/opportunity/view/kanban/Opportunity"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "wrench",
+   "link_to": "Sapphire Maintenance",
+   "link_type": "Workspace",
+   "title": "Maintenance"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "milestone",
+   "link_to": "Travel",
+   "link_type": "Workspace",
+   "title": "Travel"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "graduation-cap",
+   "link_to": "Training",
+   "link_type": "Workspace",
+   "title": "Training"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "dashboard",
+   "link_to": "KPI Dashboards",
+   "link_type": "Workspace",
+   "title": "KPI Dashboards"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "droplets",
+   "link_to": "Water Engineering",
+   "link_type": "Workspace",
+   "title": "Water Engineering"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "book-open-check",
+   "link_to": "QuickBooks Online",
+   "link_type": "Workspace",
+   "title": "QuickBooks"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "hr",
+   "link_to": "HR",
+   "link_type": "Workspace",
+   "title": "HR"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "book-bookmark",
+   "link_to": "Knowledge Base",
+   "link_type": "Workspace",
+   "title": "Knowledge Base"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "truck",
+   "link_to": "Fleet Maintenance",
+   "link_type": "Workspace",
+   "title": "Fleet"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "bot",
+   "link_to": "AI Governance",
+   "link_type": "Workspace",
+   "title": "AI Governance"
+  }
+ ],
+ "modified": "2026-10-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "mount_on": "erpnext",
+ "name": "erpnext_enhancements",
+ "owner": "Administrator",
+ "standard": 1,
+ "user": ""
+}

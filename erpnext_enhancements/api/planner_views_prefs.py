@@ -28,9 +28,25 @@ on**. So a view lives on the server, per user, never in the browser.
   stripes and ruled-table cell styles (``print_style``, the same chrome as the weekly crew sheet).
   The page builds the body from the data it already has on screen, with its filters, and prints it
   from a browser window: the server PDF is broken on production (``docs/pdf-generation.md``).
+* **The first-visit tour** (P12 of the planner UX redesign, ``docs/planner-ux-redesign.md``). Whether a
+  person has been shown each planner's tour is kept in the same row, under a key of its own
+  (``planner_tour``), as ``{"version": 1, "seen": {"desktop": bool, "phone": bool}}``: a desktop and a
+  phone land on different screens, so each has its own tour, shown once. :func:`get_views` carries the
+  flags (``tour``), so the page needs no request of its own to know; :func:`mark_tour_seen` sets one. The
+  page marks a tour the moment it shows it (the guided page's first-time pop-up works the same way), so
+  a reload never repeats it. Never frappe's Redis-only user_settings, which a deploy flushes, and never
+  the browser alone: a person shown the tour on one machine is not shown it again on the next.
 
-Every endpoint is gated by the calling planner's own roles (``project_planner._require_planner`` or
-``maintenance_planner._require_planner``) and acts only on ``frappe.session.user``'s row.
+Every endpoint acts only on ``frappe.session.user``'s row, and each is gated for the screen it serves:
+
+* the planner endpoints (views, tour) by the calling planner's own roles
+  (``project_planner._require_planner`` or ``maintenance_planner._require_planner``), the Opportunity
+  Board's by read permission on Opportunity;
+* the guided page's settings: the read hands back only the caller's own row, and the writers need read
+  permission on the doctype a setting is about, never a planner role;
+* the inventory screens' reorder switch (:func:`get_inventory_prefs`, :func:`set_show_reorder`, v1.728.0)
+  by ``stock_scan_rules.SCAN_ROLES`` (``_require_inventory``), the roles that may open the Bin Manager and the
+  Inventory Scanner Audit, not by a planner role.
 """
 
 import json
@@ -45,6 +61,12 @@ PLANNERS = {"project": "Project Planner", "maintenance": "Maintenance Planner", 
 #: The one top-level key of the row these endpoints own; anything else in the row is kept.
 ROW_KEY = "planner_views"
 STORE_VERSION = 1
+#: The first-visit tour's flags (P12), beside ``planner_views`` in the same row (see the module docstring).
+TOUR_ROW_KEY = "planner_tour"
+#: The planners that have a tour, and the two tours each has: a phone and a desktop land on different
+#: screens. The pages' PPTOUR.kinds and MPTOUR.kinds say the same (tests/test_planner_tour.py).
+TOUR_PLANNERS = ("project", "maintenance")
+TOUR_KINDS = ("desktop", "phone")
 
 MAX_VIEWS = 20
 MAX_NAME = 60
@@ -79,7 +101,10 @@ BOARD_SORT_KEYS = (
 #: own constants are checked against this by tests/test_planner_phase6c.py.
 SCHEMA = {
 	"project": {
-		"view": ("enum", ("week", "month", "crew", "heatmap")),
+		# "heatmap" is what a view saved before the planner UX redesign's P7 says for Capacity (the Heatmap and
+		# Utilization tabs merged into the Crew tab's Capacity screen); the page treats it as Capacity.
+		# P5: the Lookahead is a tab a view can name, and the home tab.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "capacity", "lookahead")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),
@@ -87,13 +112,24 @@ SCHEMA = {
 		"over_only": ("bool",),
 		"panel": ("bool",),
 		"color_by": ("enum", PROJECT_COLOR_MODES),
+		# Whether color_by was picked rather than left at the page's default (Job type, since the planner
+		# UX redesign). An older "last used" view stores "default" (Task color) either way, so the page
+		# honors a saved "default" only when this is set.
+		"color_chosen": ("bool",),
+		# Show all tasks (P2 of the planner UX redesign, D6): off, the default, is phase and crew work only.
+		"all_tasks": ("bool",),
 	},
 	"maintenance": {
 		"view": ("enum", ("month", "week", "crew")),
 		"technician": ("text",),
 		"projected": ("bool",),
 		"project_work": ("bool",),
-		"panel": ("bool",),
+		# P10 of the planner UX redesign: project work as cards (off: the busy strip, D13) and Resources
+		# available open (it starts collapsed). "resources" replaces "panel", which the old default (open) put
+		# in every user's "last used" row, so a stored "panel" must not hold the panel open against the new
+		# default: the page no longer reads it, and the next save drops it.
+		"project_cards": ("bool",),
+		"resources": ("bool",),
 		"color_by": ("enum", MAINTENANCE_COLOR_MODES),
 	},
 	# The board's filter bar, view and table sort (board.js VIEW_SCHEMA, key for key).
@@ -330,6 +366,27 @@ def _store_into(row, store):
 	return row
 
 
+def read_tour(row):
+	"""Which tours the row says were shown: ``{"desktop": bool, "phone": bool}``.
+
+	Only a real ``true`` counts, so a hand-edited row (``"yes"``, ``1``) or a damaged one reads as not
+	seen, which shows the tour once more rather than never.
+	"""
+	raw = row.get(TOUR_ROW_KEY) if isinstance(row, dict) else None
+	seen = raw.get("seen") if isinstance(raw, dict) else None
+	seen = seen if isinstance(seen, dict) else {}
+	return {kind: seen.get(kind) is True for kind in TOUR_KINDS}
+
+
+def _tour_into(row, seen):
+	row = dict(row or {})
+	row[TOUR_ROW_KEY] = {
+		"version": STORE_VERSION,
+		"seen": {kind: bool(seen.get(kind)) for kind in TOUR_KINDS},
+	}
+	return row
+
+
 def _now_text():
 	return str(frappe.utils.now_datetime())[:19]
 
@@ -341,11 +398,20 @@ def _now_text():
 def get_views(planner):
 	"""The caller's views for ``planner`` (``project`` | ``maintenance``).
 
-	``{"planner", "last": {view} | None, "views": [{"name", "data": {view}, "saved_on"}], "max_views"}``
+	``{"planner", "last": {view} | None, "views": [{"name", "data": {view}, "saved_on"}], "max_views",
+	"tour": {"desktop": bool, "phone": bool}}``. ``tour`` says which of the planner's first-visit tours
+	the caller has been shown (P12); the Opportunity Board has none, so it reads ``{}`` there.
 	"""
 	planner, doctype = _require(planner)
-	store = read_store(planner, _read_row(doctype))
-	return {"planner": planner, "last": store["last"], "views": store["views"], "max_views": MAX_VIEWS}
+	row = _read_row(doctype)
+	store = read_store(planner, row)
+	return {
+		"planner": planner,
+		"last": store["last"],
+		"views": store["views"],
+		"max_views": MAX_VIEWS,
+		"tour": read_tour(row) if planner in TOUR_PLANNERS else {},
+	}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -390,6 +456,41 @@ def save_last_view(planner, data):
 		store["last"] = view
 		_write_row(doctype, _store_into(row, store))
 	return {"last": view}
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_tour_seen(planner, kind):
+	"""The caller has been shown ``planner``'s ``kind`` tour (``desktop`` | ``phone``); never show it again.
+
+	Only the caller's own row, and only the flag asked for: the other tour and the saved views are kept.
+	Setting it twice writes nothing the second time. ``{"planner", "tour": {"desktop": bool, "phone": bool}}``
+	"""
+	# Before the role gate: the board's gate is a read on Opportunity, which says nothing about a tour.
+	if clean_text(planner, 20) not in TOUR_PLANNERS:
+		frappe.throw(_("That planner has no tour."))
+	planner, doctype = _require(planner)
+	kind = clean_text(kind, 20)
+	if kind not in TOUR_KINDS:
+		frappe.throw(_("Unknown tour."))
+
+	def mark():
+		row = _read_row(doctype, for_update=True)
+		seen = read_tour(row)
+		if not seen[kind]:
+			seen[kind] = True
+			_write_row(doctype, _tour_into(row, seen))
+		return seen
+
+	try:
+		seen = mark()
+	except frappe.QueryDeadlockError:
+		# A person's first save of anything on a planner makes their row, and two requests making it at once
+		# (the tour's mark and the "last used" view, a second apart at the soonest) can pick a deadlock victim
+		# under REPEATABLE READ. This request has written nothing else, so it starts again, once. The page
+		# needs no more of it: a mark that still fails is told to the browser instead (PPTOUR.tour_mark).
+		frappe.db.rollback()
+		seen = mark()
+	return {"planner": planner, "tour": seen}
 
 
 @frappe.whitelist()
@@ -659,3 +760,81 @@ def mark_guided_intro_seen():
 		store["intro_seen"] = True
 		_write_row(GUIDED_SETTINGS, _guided_into(row, store))
 	return {"intro_seen": True}
+
+
+# ---------------------------------------------------------------------- the inventory screens' switches
+#
+# TASK-2026-02920 (Parker's ER-2026-1323805; Nik, 2026-10-22: "I would like the reorder values to be hidden or
+# toggleable, it's not information I need to see constantly. Ideally I would only need to change and alter
+# once."). The Bin Manager and the Inventory Scanner Audit open with a clean list and show the reorder boxes
+# only once a person turns them on, on each screen, and the choice is theirs from then on, on any device.
+# It lives where every other per-person choice in this app does (see the module docstring): a row of its
+# own in ``__UserSettings`` (``Inventory Screens``), written straight to the table, never frappe's Redis-only
+# user_settings and never the browser alone, so a deploy cannot lose it. Reading it can never break a
+# screen: anything wrong with it (no row, a damaged one, a database that will not answer) is "hidden".
+
+INVENTORY_SETTINGS = "Inventory Screens"
+INVENTORY_ROW_KEY = "inventory_screens"
+#: The screens that have the switch, keyed as the pages say (bin_manager.js, inventory_scanner_audit.js).
+INVENTORY_SCREENS = ("bin_manager", "scanner_audit")
+
+
+def read_inventory_prefs(row):
+	"""The ``inventory_screens`` part of a ``__UserSettings`` row: ``{"show_reorder": {screen: bool}}``.
+
+	Only a real ``true`` counts, so a hand-edited row (``"yes"``, ``1``) or a damaged one reads as hidden.
+	"""
+	raw = row.get(INVENTORY_ROW_KEY) if isinstance(row, dict) else None
+	shown = raw.get("show_reorder") if isinstance(raw, dict) else None
+	shown = shown if isinstance(shown, dict) else {}
+	return {"show_reorder": {screen: shown.get(screen) is True for screen in INVENTORY_SCREENS}}
+
+
+def _inventory_into(row, prefs):
+	row = dict(row or {})
+	row[INVENTORY_ROW_KEY] = {
+		"version": STORE_VERSION,
+		"show_reorder": {screen: bool(prefs["show_reorder"].get(screen)) for screen in INVENTORY_SCREENS},
+	}
+	return row
+
+
+def show_reorder(screen):
+	"""Whether the caller has turned the reorder boxes on for ``screen``; ``False`` if anything is wrong.
+
+	Called by the screens' own boot payloads (``bin_assignments.manager_boot``,
+	``inventory_scanner.get_bootstrap``), so the screen opens in the right state with no request of its
+	own, and a preference that cannot be read must never be why a screen does not open.
+	"""
+	try:
+		return read_inventory_prefs(_read_row(INVENTORY_SETTINGS))["show_reorder"].get(screen) is True
+	except Exception:
+		return False
+
+
+def _require_inventory():
+	from erpnext_enhancements.inventory_enhancements import stock_scan_rules
+
+	if not stock_scan_rules.SCAN_ROLES.intersection(frappe.get_roles()):
+		frappe.throw(_("You are not permitted to use Stock Scan."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_inventory_prefs():
+	"""The caller's switches for the inventory screens: ``{"show_reorder": {screen: bool}}``."""
+	_require_inventory()
+	return read_inventory_prefs(_read_row(INVENTORY_SETTINGS))
+
+
+@frappe.whitelist(methods=["POST"])
+def set_show_reorder(screen, value):
+	"""Turn the reorder boxes on or off on ``screen`` for the caller, for good. Returns the screen's switch."""
+	_require_inventory()
+	screen = clean_text(screen, 20)
+	if screen not in INVENTORY_SCREENS:
+		frappe.throw(_("Unknown screen."))
+	row = _read_row(INVENTORY_SETTINGS, for_update=True)
+	prefs = read_inventory_prefs(row)
+	prefs["show_reorder"][screen] = as_flag(value)
+	_write_row(INVENTORY_SETTINGS, _inventory_into(row, prefs))
+	return {"screen": screen, "show_reorder": prefs["show_reorder"][screen]}

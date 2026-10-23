@@ -43,7 +43,7 @@ CI = REPO / ".github" / "workflows" / "ci.yml"
 PROJECT_PLANNER = APP / "project_enhancements/page/project_planner/project_planner.js"
 MAINTENANCE_PLANNER = APP / "sapphire_maintenance/page/maintenance_planner/maintenance_planner.js"
 PAGES = {
-	"project": {"path": PROJECT_PLANNER, "const": "PP", "kit": "PP6A", "keys": '["project", "pm", "group"]'},
+	"project": {"path": PROJECT_PLANNER, "const": "PP", "kit": "PP6A", "keys": '["project", "pm", "group", "all_tasks"]'},
 	"maintenance": {"path": MAINTENANCE_PLANNER, "const": "MP", "kit": "MP6A", "keys": '["technician"]'},
 }
 
@@ -174,7 +174,8 @@ class TestTheAddress(unittest.TestCase):
 		pp = _code(PROJECT_PLANNER)
 		mp = _code(MAINTENANCE_PLANNER)
 		for line in (
-			"frappe.set_route(PP.route, view, anchor, this.filter_options())",
+			# P5: a view's address is ppl_route_parts' (/lookahead/…, /calendar/week|month/…).
+			"frappe.set_route(PP.route, ...parts, this.filter_options())",
 			"frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options())",
 			"frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options())",
 		):

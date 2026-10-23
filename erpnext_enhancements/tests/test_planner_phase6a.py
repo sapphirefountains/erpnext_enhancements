@@ -1079,7 +1079,7 @@ class TestPages(unittest.TestCase):
 			self.assertIn(line, self.mp, line)
 		# Each carries the planner's filters (S5c, v1.676.0).
 		self.assertIn(
-			"this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);",
+			"this.p6a_route(() => frappe.set_route(PP.route, ...parts, this.filter_options()), true);",
 			self.pp,
 		)
 		self.assertIn(
@@ -1213,7 +1213,15 @@ class TestPages(unittest.TestCase):
 			# The tips are the help's first section since the toolbar redesign (v1.687.0), not banners
 			# under the toolbar: no hint is shown on load.
 			self.assertNotIn("kit.hint(", block)
-			self.assertIn("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),", block)
+			# The Maintenance Planner's sections are its legend_sections() since P10 of the planner UX
+			# redesign (the one provider function; p6a_legend only opens them in the kit), so the list
+			# sits one level out.
+			listed = "\n\t\t\t" if prefix == "mp" else "\n\t\t\t\t"
+			# P12 puts the new model's sections (the tabs or views, moving, Draft and Notify) right after the tips.
+			self.assertIn(
+				f"this.p6a_tip_section(),{listed}...this.p12_legend_sections(),", block
+			)
+			self.assertIn(f"{listed}...this.p6c_legend_sections(),", block)
 			self.assertIn('title: __("Tips")', block)
 			self.assertIn(f'class="btn btn-default btn-sm {prefix}-p6a-help">?</button>', block)
 			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,

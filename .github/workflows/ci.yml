@@ -281,6 +281,15 @@ jobs:
         run: node scripts/test_ai_pending_batch.mjs
       - name: Assistant tool redaction (what the read tools must never return)
         run: python -m unittest erpnext_enhancements.tests.test_assistant_tools_redaction -v
+      # Its own step: it installs its own frappe stub (whose get_list refuses a SQL function in a
+      # string, as Frappe 16 does) and a throwaway frappe_assistant_core package on sys.path, and
+      # either would cross-talk with the stub set the assistant-tool step above installs.
+      # v1.727.1: FAC 3.0.0's list_documents counted with "count(name) as count" and wrote an
+      # Error Log row on every call. Fails the build if the stand-in ever sends a string function
+      # to get_list, loses the caller's filters or ignore_permissions, rewrites the listing call,
+      # or touches FAC's module when its source is not the pinned 3.0.0 file.
+      - name: FAC list_documents count fix (Frappe 16 string-function rule)
+        run: python -m unittest erpnext_enhancements.tests.test_fac_list_documents_count -v
       # Its own step, and NOT appended to the assistant-tool step above, because that
       # step runs under the sys.modules stub set test_assistant_tools_schema installs
       # and this suite deliberately imports no frappe at all -- item_naming_rules takes
@@ -379,6 +388,11 @@ jobs:
       # would quietly stop matching and the feed would follow you around again.
       - name: Activity feed on the first tab only (JS + CSS agree)
         run: python -m unittest erpnext_enhancements.tests.test_activity_first_tab_only -v
+      # Project form (v1.716.2): the Production Tracking section is hidden (fields kept), and the
+      # activity feed shows on Project's Comments tab only. Runs scripts/test_activity_home_tab.js, the
+      # real shared script against a fake DOM; node is on PATH in this job.
+      - name: Project form hides (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a
@@ -415,6 +429,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_frappe_16_50_desk_compat -v
       - name: Desk sidebar one-time heal (executed, not grepped)
         run: node scripts/test_sidebar_collapse_heal.js
+      # A sidebar a person hides must stay hidden on every page (v1.717.0, Nik 2026-10-22).
+      # Nothing here fails loudly: the record sidebar is simply open again, a phone is left
+      # without a way back, or the left Desk sidebar fights another tab's choice. The node step
+      # executes sidebar_memory.js against a stubbed DOM; the unittest step holds the seams it
+      # cannot see (the stylesheet's selectors are the ones the script's class names produce,
+      # nothing hides below 992px, the old always-expand script stays deleted).
+      - name: Sidebar memory (stylesheet and wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_sidebar_memory -v
+      - name: Sidebar memory (executed, not grepped)
+        run: node scripts/test_sidebar_memory.js
       # An icon name no sprite has draws nothing and raises nothing: on frappe v16.50.0 five
       # slots on our Dock rail were blank, from workspace icons (money, service, water,
       # assistant, mobile) that no v16 sprite ever had, plus book-marked, which 16.50's lucide
@@ -425,6 +449,12 @@ jobs:
       # the copies the 16.50 conversion made, against a stub. Own step: own frappe stub.
       - name: Every shipped desk icon name draws on frappe v16.50 (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_icon_names -v
+      # The Dock per job (v1.734.0): the dock file this app ships mounted on ERPNext's, every
+      # profile naming only entries that rail holds, who gets which profile from their Role
+      # Profiles, and the layers it writes, never over one a person arranged. Against a stub.
+      # Own step: own frappe stub.
+      - name: Dock profiles and the shipped dock (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_dock_profiles -v
       # The payment step's follow-up button and its two whitelisted endpoints.
       # The suites that exercise the real behaviour need a bench and so never
       # run here -- which is why the seam is pinned statically: a renamed
@@ -514,6 +544,12 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_intake -v
       - name: Feedback capture retention + Error Log matching (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_jobs -v
+      # A reviewer overrules the model (v1.729.0, ER-2026-1323804): "Not a duplicate" is stamped
+      # and kept, a ruled-out Task is left out of the re-run's scan and dropped if named anyway,
+      # and a task added by hand reaches the board through the real task_writer even when the
+      # model proposed nothing. Its own step: it installs a frappe stub.
+      - name: Feedback duplicate override + add-a-task (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_duplicate_override -v
       # WI-079 slice 5, Design Review (ADR 0016 §2). Sanitize: concept HTML loses every script,
       # handler, external URL and fetching style before it is stored. Codes: a revision that
       # renumbers or renames an existing part is refused whole; the Borda tally matches the
@@ -797,6 +833,12 @@ jobs:
       # own frappe stub.
       - name: Chemical billing on approval
         run: python -m unittest erpnext_enhancements.tests.test_chemical_billing -v
+      # A chemical sold in sizes (1" or 3" chlorine tablets, v1.712.0): each size is its own
+      # Item, the wizard's toggle offers them, and every form names the size. Without it a
+      # visit, its report and its invoice say "chlorine tablets" and nobody can tell which
+      # bucket was opened. Own step for its own frappe stub.
+      - name: Chemical sizes on visits
+        run: python -m unittest erpnext_enhancements.tests.test_item_sizes -v
       # The visit roll-forward had no off-season: a drained fountain kept drafting
       # November-March visits, and a weekly site kept drafting one every week. The
       # winter pause defers those to spring. Bench-free, own frappe stub, own step.
@@ -891,6 +933,66 @@ jobs:
       # sheet escaping what people typed. Bench-free, own frappe + email_style stub, own step.
       - name: Project planner telling people (drafts, publish, digest, alerts, crew sheet)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase3b -v
+      # Planner UX redesign P3, per-project publish and baseline. Publishing a project must copy each
+      # task's baseline once (never through a save, so nobody's open planner goes stale) and change no
+      # state when it needs a reason or leaves a draft behind; publish/discard without a project must
+      # still act on the caller's own rows only; a Draft project's drafts are shared; "Notify crew?"
+      # must tell the crew and never the editor; and the migrate patch must never raise. Reuses the
+      # Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner per-project publish and baseline (P3)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_publish_baseline -v
+      # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
+      # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
+      # follower first and the planner then moves it again, so a crew turns up a day off with nothing
+      # flagged; a follower in a project whose schedule says otherwise must not cross the line; a
+      # Draft schedule must draft every write; and the page must ask "Notify crew?" once per gesture
+      # (Ctrl/Cmd moves one task, Undo puts all of them back). Reuses the Phase 3B harness, so it is
+      # unittest, in its own step; under node it runs scripts/test_planner_autoshift.js on both pages.
+      - name: Project planner tasks that follow, Draft schedules, Notify crew (P4)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_autoshift -v
+      # Planner UX redesign P5, the Lookahead (the planner's home tab). get_lookahead must be get_planner
+      # over whole weeks from the site's first weekday (Sunday on prod) with draft and all_tasks passed
+      # through, so the P2 display rule, P3's drafts and the Fountain Move read-only rule hold on it too;
+      # the tree must group projects, phases (nearest phase-numbered ancestor, by number) and tasks in a
+      # stable order, read baselines only once P3's columns exist, and survive the no-task list failing.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Lookahead, server (P5)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead -v
+      # Planner UX redesign P6, the Gantt tab, server side. get_project_gantt must be one project's whole
+      # schedule as planner cards (never get_planner, which is capped at 100 days), with the D6 display
+      # rule, drafts (another scheduler's named, a drafted new task under its group) and finished work
+      # that cannot move; add_dependency / remove_dependency must keep the planner's checks (a reason
+      # when a task would start before the one it waits on ends, on drafted days too; no draft, group,
+      # other project, self or loop) and save with ERPNext's calendar-day push held back, since no date
+      # moved. Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Gantt, server (P6)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_gantt -v
+      # Planner UX redesign P9, the Overview tab, server side. get_overview must count overdue by END DATE and
+      # never by the Overdue status (1,005 open tasks carry it on production), apply the D6 display rule so the
+      # template admin tasks cannot make a job look late, judge behind-baseline in working days and only past
+      # the threshold, fall back to the project's own dates for a job with no dated work, draw a Draft schedule
+      # from its drafts, and read every job in one bound query. Every endpoint keeps the planner's role gate.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Overview, server (P9)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_overview -v
+      # Planner UX redesign P9, the weekly summary and its Monday email. The email is OFF (the Settings Check
+      # ships unticked and the job returns before its first query), sends at most once a week through a
+      # database row (the deploy FLUSHDBs redis), never describes a Draft schedule, escapes everything typed in
+      # the printout, folds "what moved" out of the Version log, and its backfill patch fills the new Check's
+      # row only where tabSingles has none, never over a stored value, twice-safe and unable to raise.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner weekly summary, its OFF switch and its backfill (P9)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_weekly_summary -v
+      # Planner UX redesign P8, Today on the phone. get_today is the signed-in person's own day and the
+      # next (leave-by, miles, equipment, which day of a task), read-only, with today's route and the
+      # Maps key for the inline map; distances are miles on screen. Under node, scripts/test_planner_today.js
+      # runs the real page script against a model of v16.50's router: a bare /project-planner on a phone
+      # opens the tab this DEVICE showed last, or Today the first time on a phone (Nik, 2026-10-21; filters stay
+      # per person, the tab is not saved on the server), in place so Back leaves the planner; a filter link never lands on Today, the day arrows / This week / Planner each take one history
+      # entry, and Block my time is the self-only form. Reuses the Phase 3B harness, so it is unittest,
+      # in its own step.
+      - name: Project planner Today on the phone (P8)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_today -v
       # Project Planner Phase 4, tracking (v1.582.0). With one person on a job, the labor
       # forecast IS their wage, so it must reach the cost roles only: anyone else gets hours, and
       # this suite asserts their pay rates are never even read. Also pins the customer-jobs-only
@@ -1766,6 +1868,12 @@ jobs:
       # Desk form's buttons call the same shared code.
       - name: Guided record tools (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_record_tools -v
+      # v1.711.0, the guided page's head band and files section: a DocType's header status chip
+      # (header.js under node, held to the config, the board's stage field and sf_kit's chip tones)
+      # and the files (their own section, a count chip, a drop anywhere on the page) as static checks
+      # on the shell, the tools and the CSS. Imports only the config, no frappe stub.
+      - name: Guided head band and files (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_header -v
       # v1.685.0, the guided page's inputs are the form's: every set_query in ERPNext's form script
       # (version-16, trimmed into a fixture) and in every script this app runs on the form, for each
       # guided DocType (Opportunity, Item), is mirrored in the config's `queries` or waived with a
@@ -1810,6 +1918,18 @@ jobs:
       # limit. Own frappe stub (and FAC's BaseTool), so its own step; unittest classes.
       - name: Guided Item AI suggest (schema, no PDT/SRV numbers, rules + guard, graceful failure)
         run: python -m unittest erpnext_enhancements.tests.test_item_suggest -v
+      # Supplier Finder (v1.726.0): who sells an item, ranked by purchase evidence. The pure rules
+      # (inventory_enhancements/supplier_search_rules.py) hold the matching (word starts, model and
+      # part numbers squashed, synonyms, strict then partial), the group match, duplicate suppliers
+      # folded into one row, and the order: bought, then quoted/listed, then group or name only. Its
+      # own step because the endpoint suite below installs a frappe stub and this one must not see it.
+      - name: Supplier Finder rules (matching, groups, duplicate folding, evidence ranking)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_search_rules -v
+      # The endpoint and the assistant tool against a frappe stub: the AI step falls back to the
+      # keyword results when it is off, busy, failing or answering garbage; the model sees the search
+      # and the Supplier Group names only; prices only for Purchase Order readers; Supplier + Item read.
+      - name: Supplier Finder endpoint (AI fallback, what the model sees, permissions, MCP tool)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_search_api -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
@@ -2102,6 +2222,13 @@ jobs:
       # live-template patch that replaces only the shipped v1.611.0 bodies. Needs jinja2.
       - name: Rental + owner agreement layout and inputs
         run: python -m unittest erpnext_enhancements.tests.test_rental_owner_agreement_layout -v
+      # Own step: it stubs frappe and loads the real billing helper (billed_periods_per_year). The
+      # maintenance agreement's per-period Service Fee (v1.724.0): the linked maintenance contract's
+      # Recurring Amount on the agreement's cadence, else the Annual Fee split over the billed periods,
+      # else no line; the per month/quarter/year and season wording; a no-fee agreement rendering exactly
+      # as v1.611.1 did; the summary row; and the live-template patch. Needs jinja2.
+      - name: Maintenance agreement Service Fee line
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_agreement_fee_line -v
       # Own step, same stub shape as the one above. The NDA, architect and employee-contractor
       # agreements given the same theme: title block, summary, numbered clauses whose cross-references
       # still hold, an input for every doc.<field> they print, initials, the sig() block, and the
@@ -2160,6 +2287,14 @@ jobs:
         run: node scripts/test_workspace_block_return.mjs
       - name: Workspace block return (registration + lifecycle claims)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_block_return -v
+      # Projects Dashboard tab bar and toolbar (v1.719.0): View More, the "+" menu, the Columns
+      # icon button, Reset widths moved into its menu. The node harness runs the block's real
+      # script and the real ColumnSelector against a recording jQuery stand-in and drives the
+      # buttons; the unittest holds the markup, script and stylesheet in agreement. Files only.
+      - name: Projects Dashboard toolbar (node harness + shell agreement)
+        run: |
+          node scripts/test_projects_dashboard_toolbar.mjs
+          python -m unittest erpnext_enhancements.tests.test_projects_dashboard_toolbar -v
       # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
       # every block's status colours in both themes. Fails on any of the literal status hexes
       # (and their rgba() tints) the blocks used before, comments stripped so a note naming
@@ -2179,7 +2314,10 @@ jobs:
       # Replays production's Projects sidebar rows: only ERPNext's own row is flagged hidden,
       # once, and again after an ERPNext re-import; the pre-16.50 path still drops the row;
       # a failure is logged, never raised. Execs the module against a fake database passed in
-      # as `frappe`, so nothing goes in sys.modules.
+      # as `frappe`, so nothing goes in sys.modules. Since v1.735.0 also production's Buying and
+      # CRM sidebars: CRM opens on the Opportunity Kanban, Buying lists Purchase Order and
+      # Material Request under Home, a second migrate writes nothing, and the boot filter takes
+      # the Kanban row from anyone who cannot read Opportunity.
       - name: Core sidebar tweaks (16.50 Sidebar + pre-16.50 Workspace Sidebar)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_tweaks -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
@@ -2645,6 +2783,12 @@ jobs:
       # own rule, minus a paused contract's winter window, with seasonal visits.
       - name: Missed maintenance visits (not drafted, not started, not sent)
         run: python -m unittest erpnext_enhancements.tests.test_missed_visits -v
+      # Maintenance Chemicals Used (v1.731.0): doses are in the template line's own unit (a tablet,
+      # a cap full, a tablespoon) with no conversion, so one site's month must stay a row per item
+      # AND unit, chlorine tablet sizes (two Items) apart, and only approved visits counted by
+      # default. A cap full added to a tablespoon is a finance number that looks right and is not.
+      - name: Maintenance Chemicals Used (units never added, visit state, months)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_chemicals_used -v
       # A visit is dated and clocked out when the technician sends it for review (v1.595.1),
       # not at approval days later: the schedule rolls from the day the work was done, and a
       # later kiosk interval never becomes this visit's clock-out. Plus the patch that dates
@@ -3001,6 +3145,19 @@ jobs:
       # weekend, and that step 5 never escalates while step 4 does.
       - name: Closed-Won hand-off gate (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_handoff_gate -v
+      # The hand-off and launch meetings as Google Calendar events (v1.733.0). Its
+      # own step: it installs a frappe stub AND a fake of frappe's Google Calendar
+      # module in setUpModule, so it must not share a process with the gate suite
+      # above. unittest classes, so `python -m unittest` collects them.
+      #
+      # Pins who organizes (own calendar, then the fallback, then email), that
+      # group addresses are guests, that Google sends the invite with a Meet
+      # request and ERPNext then sends no email, that re-schedule moves the same
+      # Event and Google event instead of adding a second (EV00454/EV00455), that
+      # Skip cancels it, that a revoked token falls back and logs no secret, and
+      # that a time already past is refused (EV00456, booked at 09:21 for 01:30).
+      - name: Hand-off meetings on Google Calendar (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_handoff_calendar -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       # QBO attachment mirroring (v1.359.0). Its own pytest step (plain functions +
@@ -3015,6 +3172,16 @@ jobs:
       # because a shortcut without its content block renders as nothing.
       - name: QuickBooks record matching (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_matching.py -q
+      # The Record Matching page's Excel round trip (v1.721.0). Own pytest step, and the REAL
+      # openpyxl at Frappe v16's pin: the dropdowns, hidden key columns and header lookup are
+      # what is under test, and a stub would agree with anything. Guards the import's
+      # preview classification (already done before stale, or a second import of the same
+      # file reports every row stale), that apply re-checks each row and runs only the page's
+      # own Link/Keep/Retry, and that importing the same file twice changes nothing.
+      - name: QuickBooks record matching Excel round trip (bench-free pytest suite)
+        run: |
+          python -m pip install "openpyxl~=3.1.5"
+          python -m pytest erpnext_enhancements/tests/test_quickbooks_matching_excel.py -q
       - name: Stripe Payments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_stripe_payments.py -q
       # Plaid bank balances over the NATIVE ERPNext link. Own step, own frappe stub.
@@ -3220,6 +3387,13 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_opportunity_won_date_backfill.py -q
       - name: Fountain move intake (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move.py -q
+      # Fountain Move jobs (Nik, 2026-10-21). Its own step because it installs its own frappe stub.
+      # Guards the quiet, expensive failures: ticking Fountain Move replacing a template somebody
+      # chose, a seed or PRJ-00775 patch that raises (an aborted migrate is a failed deploy) or
+      # re-seeds over Nik's edits, the conversion canceling a task somebody started, and a move
+      # task turning movable on the Project Planner or vanishing from the Maintenance Planner.
+      - name: Fountain Move jobs (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_fountain_move_jobs.py -q
       # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
       # sys.modules — sharing a process with another stub-installing suite is how
       # they cross-talk. Guards two things that fail expensively and quietly: a
@@ -3396,7 +3570,54 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
-      # The Count Desk (v1.700.0): laptop counts and audits. count_desk_rules (no frappe) decides which
+      # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
+      # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
+      # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write
+      # permission is checked before anything else, an item with no rule gets one only on a bin that
+      # holds stock, the same numbers again save nothing, and the write is Item.save() as the user --
+      # no SQL on the child table, no ignore_permissions (read from the source). Then
+      # scripts/test_reorder_levels.mjs under node: a blur that changes nothing sends nothing, a level
+      # with no quantity is refused in words before a request, two quick blurs are two saves in turn,
+      # a refused save leaves the typed text in its box, a focused box is never overwritten, and
+      # nothing the editor does touches history (Back/Forward). Own frappe stub, own step.
+      - name: Reorder levels on the audit screens (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_reorder_levels -v
+      # The unit-cost prompt (v1.727.0, TASK-2026-02914), run against the real api/stock_scan.py and
+      # bin_assignments.py on test_bin_assignments' frappe stub (reused, so its own step). ERPNext refuses to
+      # post stock for an item with no cost, and adding it used to end in "ask a Stock Manager". Now nothing is
+      # posted until a unit cost comes with the save, and it is asked for ONLY when ERPNext would refuse: an item
+      # with a cost on record is never asked and a typed cost for it is ignored; permission is checked before
+      # the question; a price is positive and at most 100,000, anything else is a sentence and not another
+      # prompt; the Item and the price lists are never written; a resend posts once. The prompt itself runs on
+      # the real app.js in test_stock_scan_client.mjs and on the real Bin Manager page in test_bin_manager.
+      - name: Unit-cost prompt for stock added with no cost (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_unit_cost_prompt -v
+      # The inventory screens' reorder switch (v1.728.0, TASK-2026-02920): the Bin Manager and the Inventory
+      # Scanner Audit open with the reorder boxes hidden, and a person's choice is kept per screen in their own
+      # __UserSettings row, written straight to the table (frappe's user_settings are Redis-only and a deploy
+      # flushes Redis, which would forget it). Only a real true is on; a damaged row, a database that will not
+      # answer, an unknown screen or a missing role never leave a screen worse than hidden. Own frappe stub.
+      - name: Inventory screens' reorder switch (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_screen_prefs -v
+      # The Reorder Board (v1.730.0, ER-2026-1323810), which replaces ERPNext's auto-indent. Fails the build if
+      # "below" or the suggested qty stops agreeing with ERPNext v16's own reorder_item rule (level 0, the
+      # warehouse_group, a missing Bin), if an item on an open request (a Draft included) is offered again, if a
+      # double click or a retry makes a second Material Request, a stale line is requested, or a request is
+      # submitted or inserted with ignore_permissions; if a snooze does not end when it should, the digest repeats
+      # a line, names a snoozed one or sends with nothing new; if the service account gets the email; or if the
+      # auto_indent patch writes anything but auto_indent = 0 or can raise. Also the page's logic under node and
+      # its tabs as history entries. Own frappe stub, so its own step; unittest classes.
+      - name: Reorder Board (ERPNext's reorder rule, Draft requests, snoozes, digest, patches)
+        run: python -m unittest erpnext_enhancements.tests.test_reorder_board -v
+      # A reorder rule counts by existing (v1.732.0). "Reorder at" may be 0 since v1.728.0, but the Operations KPIs
+      # (Stocked Items Out of Stock / Below Reorder / Counted 90d) still asked for a level above 0, so an item reordered
+      # "when it runs out" was not a stocked item. Runs the real _operations_metrics on SQLite tables
+      # (tests/sqlite_sql_helper.py): a level-0 rule with a quantity joins every count, a level-only rule stays in, a
+      # row with neither is not a rule, and the four queries share one definition. The Stock Scan half is in
+      # test_bin_manager. Own frappe stub, so its own step.
+      - name: Reorder rule counts (KPI stocked items, bench-free, SQLite)
+        run: python -m unittest erpnext_enhancements.tests.test_reorder_rule_counts -v
+      # The Count Desk (v1.736.0): laptop counts and audits. count_desk_rules (no frappe) decides which
       # bins a choice covers, the sheet and its summary, and what a post does: the variance applied to
       # what is on hand NOW, so a take after the shelf was counted survives the count; nothing posted
       # for a match (ERPNext refuses an all-unchanged reconciliation), a count somebody posted since,
@@ -3645,6 +3866,53 @@ jobs:
       # control the old bars had; node is on PATH in this job, so the harness cannot skip here.
       - name: Planner toolbar menus, alert chips, draft strip and phone sheet (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_toolbar -v
+      # Planner UX redesign P5, the Lookahead tab, page side. Its bars are the planner's own cards, so
+      # every write keeps the page's one send() (reason prompt, drafts, Undo, P4's tasks that follow
+      # and "Notify crew?"); its grips sit only where a task starts or ends on screen; a Fountain Move
+      # bar is read-only; record text is escaped; the phone gets a list by day. Runs
+      # scripts/test_planner_lookahead.js against the real page script; its addresses, the old
+      # /week and /month redirects and Back/Forward run in the S5c router harness above. node is on
+      # PATH in this job, so the harness cannot skip here.
+      - name: Project planner Lookahead tab, page (P5, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead_page -v
+      # Planner UX redesign P6, the Gantt tab, page side, and the widget's embed hooks. Runs
+      # scripts/test_planner_gantt.js: the real gantt_widget.js against a recording DHTMLX stub (fetch,
+      # on_write in place of update_gantt_row, link-by-drag, link double-click, the right-click hook, the
+      # baseline drawn by a type renderer because Standard deletes addTaskLayer) and the real page script
+      # (every drag through commit(), links through send() and Undo, the header's Publish and Reset
+      # baseline handed to P4, the /gantt/<project> address). node is on PATH in this job.
+      - name: Project planner Gantt tab, page and widget hooks (P6, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_gantt_page -v
+      # Planner UX redesign P9, the Overview tab, page side. The chart is the app's DHTMLX widget READ-ONLY (no
+      # write hook, no link), the block makes only the read and the printout, never reads a Settings Single, and
+      # is a remembered device tab and the Executive Team's first desktop visit. Runs
+      # scripts/test_planner_overview.js against the real page script: the chart's rows (a bar per job, a bar per
+      # phase over its baseline ghost, milestones, a Draft schedule hatched, everything clipped to the window),
+      # Needs attention, the foot, the mounted widget's config, every control, the printed summary. The landing
+      # and Back/Forward run in the P8 router harness (test_planner_today). node is on PATH in this job.
+      - name: Project planner Overview tab, page (P9, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_overview_page -v
+      # Simple mode for both planners (docs/planner-simple-mode.md; Nik, 2026-10-22). A job's card is the planner's
+      # display rule (D6), and a job from before the phase templates lists its own top-level groups, so the 505 old
+      # jobs are not empty cards; late is by end date, never the Overdue status; a finished job has nothing late; a
+      # site's card has its Maintenance Records, its contract's projected visits and its project's completed tasks;
+      # every read is bound SQL (search text too) behind each planner's own role gate. Runs
+      # scripts/test_planner_simple.js against the real kit module and the real Maintenance Planner script (the
+      # cards, the mounted screen, the device flag); the Project Planner's landing and Back/Forward are in the P8
+      # router harness (test_planner_today). Reuses the Phase 3B harness, so it is unittest; node is on PATH here.
+      - name: Planner Simple mode, server and kit (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_simple -v
+      # Planner UX redesign P12, the first-visit tour and "?" for the new tabs (both planners). The flags are
+      # the person's own __UserSettings row for that planner, beside the saved views and without touching
+      # them (planner_views_prefs.mark_tour_seen, POST, behind the planner's role gate; against a frappe
+      # stub, so this is unittest). Runs scripts/test_planner_tour.js: the real planner_kit/tour.js on a fake
+      # DOM (a modal dialog, focus trapped, Esc / Skip / a press outside, no history) and the real page
+      # scripts with a fake kit and server: the first visit shows it and marks it, the second does not, Skip
+      # leaves it seen, Take the tour shows it again, a phone and a desktop each get their own, the Overview
+      # step is for the Executive Team only, nothing opens or throws before the data and the toolbar exist.
+      # node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner first-visit tour and the help for the new tabs (P12, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_tour -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

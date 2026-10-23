@@ -392,7 +392,7 @@ class ProjectContract(Document):
 		body = frappe.db.get_value("Contract Template", self.get("contract_template"), "body")
 		if not body:
 			frappe.throw(_("Contract Template {0} has no body.").format(self.get("contract_template")))
-		return frappe.render_template(body, _render_context(self))
+		return frappe.render_template(body, _render_context(self, body))
 
 	# The branded chrome, called by name from the print format's Jinja — whose
 	# only scope variable is `doc`, so it cannot reach contract_style directly.
@@ -513,7 +513,8 @@ def _pct(value, width=6):
 	return f"{text}%" if text else f"{_blank(width)}%"
 
 
-def _render_context(doc):
+def _render_context(doc, body=None):
+	"""``body`` is the template being rendered: the Service Fee reaches only a body that prints it."""
 	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
 	from erpnext_enhancements.project_enhancements.esign.initials import (
 		INITIALS_CAPTIONS,
@@ -524,6 +525,7 @@ def _render_context(doc):
 		signature_markup,
 		signed_signature_for,
 	)
+	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for, template_prints_fee
 
 	phases = {row.phase_key: row for row in (doc.get("phases") or [])}
 	options = {row.option_key: row for row in (doc.get("service_options") or [])}
@@ -534,6 +536,15 @@ def _render_context(doc):
 	# unchanged.
 	signature = signed_signature_for(doc)
 	initials = signed_initials(signature)
+	# The Service Fee per month/quarter/year (v1.724.0): the linked maintenance contract's
+	# Recurring Amount, else the Annual Fee split, else None and the line is left out. Only for a
+	# body that prints the line, so the summary's row cannot run ahead of a template still waiting
+	# on a signing link (refresh_maintenance_agreement_fee_line).
+	fee = (
+		period_fee_for(doc)
+		if doc.get("template_key") == "maintenance" and template_prints_fee(body)
+		else None
+	)
 
 	def _sig(party="client", width=30):
 		markup = signature_markup(signature, party=party, width=width, blank=_blank)
@@ -555,7 +566,7 @@ def _render_context(doc):
 	def _summary():
 		# "What you are agreeing to, in short": this contract's own terms in plain words,
 		# placed by the template after its title. See contract_summary.py.
-		return summary_html(doc)
+		return summary_html(doc, period_fee=fee)
 
 	return {
 		"doc": doc,
@@ -576,6 +587,7 @@ def _render_context(doc):
 		"signature": signature or frappe._dict(),
 		"phases": phases,
 		"service_options": options,
+		"period_fee": fee,
 		# WI-075 sub-phase L. The hold points this project actually contracted for, so §9.4
 		# prints the rows a system can later ask about instead of six checkboxes nobody ticks.
 		# Resolved at RENDER time on purpose: the rendered body becomes `agreement_html` when

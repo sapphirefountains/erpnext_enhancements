@@ -92,6 +92,17 @@ def get_flow(doctype, name=None):
 	if config.get("label_from"):
 		# A field labeled with another field's value, as the form relabels it (party_name).
 		out["label_from"] = {fieldname: rule["field"] for fieldname, rule in config["label_from"].items()}
+	header_status = (config.get("header") or {}).get("status")
+	if header_status:
+		# The head band's chip (v1.711.0): which field, what a screen reader calls it, and the tone of
+		# each value. The words themselves are the field's values; the page translates them.
+		out["header"] = {
+			"status": {
+				"field": header_status["field"],
+				"label": _(header_status["label"]),
+				"tones": dict(header_status.get("tones") or {}),
+			}
+		}
 	open_rule = (config.get("mine") or {}).get("open")
 	if open_rule:
 		# The statuses that close a record (Closed Won, Lost, Closed, Converted on Opportunity): the side

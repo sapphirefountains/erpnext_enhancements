@@ -1,4 +1,4 @@
-"""Whitelisted endpoints for the Count Desk (v1.700.0): physical counts and audits on a laptop.
+"""Whitelisted endpoints for the Count Desk (v1.736.0): physical counts and audits on a laptop.
 
 The Desk page ``inventory_enhancements/page/count_desk`` calls these. It answers four questions the
 phone page (Inventory Scanner Audit, ``api.inventory_scanner``) was never built to answer from a

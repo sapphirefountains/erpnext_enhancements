@@ -3,7 +3,7 @@
 A resumable physical-count workflow driven by a barcode scanner, a storage-location model
 finer-grained than ERPNext's Warehouse, and — since v1.521.0 — the **Stock Scan** page: a QR
 label on every stock-holding warehouse that opens a phone page to take parts, receive stock
-and put it away. Since v1.700.0 counts also have a laptop page, the **Count Desk**: pick bins
+and put it away. Since v1.736.0 counts also have a laptop page, the **Count Desk**: pick bins
 from the warehouse tree, type a sheet of every item they hold, review the variances, post.
 
 Backend endpoints are in `api/inventory_scanner.py` (counting on the phone), `api/count_desk.py`
@@ -22,9 +22,10 @@ model, the pure rules and the label reads.
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | The phone count page: scan a location, scan items, type what is there |
-| `page/count_desk/` | The **Count Desk** (v1.700.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
+| `page/count_desk/` | The **Count Desk** (v1.736.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
 | `count_desk_rules.py` | Every judgement the Count Desk makes: which bins a choice covers, the sheet's rows and summary, a row's save, and what posting does (each item's variance applied to what is on hand now). No Frappe, no I/O; the endpoints are `api/count_desk.py` |
 | `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
+| `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
@@ -37,6 +38,11 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
+| `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
+| `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
+| `page/reorder_board/` | The Reorder Board (v1.730.0, `/desk/reorder-board`): Needs reorder, On order and Snoozed, each its own history entry |
+| `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
 ## The count flow
@@ -54,7 +60,7 @@ Finalizing (`api.inventory_scanner.finalize_session`) aggregates the lines per
 submit; `stock_reconciliation` on the session links back to it. The Count Desk (below) posts
 a count its own way, and can open and post a count taken on the phone.
 
-**A variance is the item's, at the warehouse** (fixed in v1.700.0). Each line's `system_qty` is
+**A variance is the item's, at the warehouse** (fixed in v1.736.0). Each line's `system_qty` is
 the warehouse's on-hand, so an item spread over two Storage Locations is only short once both
 are counted. `add_count` always stamped the per-item variance on every line of the item, and
 then the session controller's `validate` overwrote it with each line's own
@@ -64,7 +70,7 @@ item's counts against the on-hand the latest of them saw.
 **The phone keeps to its own count.** A Count Desk count carries a `scope` (the bins it covers)
 and someone may have several open, so the phone page's "your open count"
 (`_active_session_name`) leaves those out and picks the most recently changed one without a
-scope. Each line records who counted it (`counted_by`, v1.700.0).
+scope. Each line records who counted it (`counted_by`, v1.736.0).
 
 Nothing in the count flow submits stock movements. The clerk counts, the Stock Manager
 decides. (The Stock Scan page, below, is the opposite by design.)
@@ -395,8 +401,8 @@ out: undo the run's lines. Undone lines do not count toward the header, so a run
 reopens as a new run's header **prefilled with the old values** (`logic.reopenedDraft`), under the
 same run id, to correct and record again. Past the undo window, Purchasing.
 
-**The reason** starts from the item: a reorder level above 0 is a *stocked item* (the KPI's own
-definition), so buying it means *A stocked item was out* (Purchasing raises the minimum); anything
+**The reason** starts from the item: an item with a reorder rule (a level above 0, or a quantity to buy
+with the level at 0: `stock_scan._has_reorder_rule`) is a *stocked item* (the KPI's own definition), so buying it means *A stocked item was out* (Purchasing raises the minimum); anything
 else, and every new item, is *Not something we stock* (twice in 60 days means add it to the kit);
 *Only for this job* is fine. A choice that contradicts the item is pointed out, not refused, and the
 reorder level seen is stored on the line (`reorder_level_seen`). `repeat_unstocked` flags the
@@ -614,7 +620,152 @@ The page's decisions are `public/js/bin_manager/logic.js` and its state and call
 `public/js/bin_manager/controller.js` (`bin_manager.bundle.js`, `window.sf_bin_manager`); the page
 script draws and wires, and its CSS is `bin_manager.css`, every selector under `.bm-`.
 
-## The Count Desk (v1.700.0)
+A bin's items: each item's name is a link to its Item record where the person may read Items
+(`can_open_items`), and **Move** is `bin_assignments.move_to` through a dialog (pick a bin that is not this
+one, a quantity of at most what is here). Frappe builds no input for a hidden field, so a listener on the
+hidden "Make <bin> this item's bin" box is attached when the box is first shown, never at build time (that threw
+and made the Move button look dead until v1.728.0).
+
+### Reorder levels on both audit screens (v1.725.0; hidden until switched on, v1.728.0)
+
+Nik, 2026-10-22: the reorder amount "adjusted easily without leaving the screen". The Bin Manager's
+**Reorder** column and the Inventory Scanner Audit's item card show an item's reorder rule and edit it
+in place: **Reorder at** (`Item Reorder.warehouse_reorder_level`, the trigger) and **Buy**
+(`warehouse_reorder_qty`, how many). ERPNext keeps one rule per warehouse in the Item's
+`reorder_levels` table, and this site has no field of its own for it (2026-10-22: 116 items with one
+rule each, 83 on `Inventory Room - SF`, 33 on a bin).
+
+* **Which rule.** The rule on the warehouse on screen; failing that the item's own rule wherever it is,
+  labelled with its warehouse and edited there; an item with none gets a Purchase rule on the bin once
+  both numbers are given.
+* **What a rule drives.** Since v1.730.0 ERPNext raises no Material Request from a rule on its own
+  (`Stock Settings.auto_indent` is off): a rule puts the item on the **Reorder Board** and in its daily
+  digest to Purchase Managers (see *The Reorder Board* below), and a buyer creates the request. Both
+  audit screens link to the board for the roles that may open it. A bad rule still sends a buyer after
+  stock nobody wanted.
+* **What a rule may be.** A rule needs **both** numbers; **Buy must be above 0, Reorder at may be 0**
+  (Nik, 2026-10-22: running out of all stock is a normal place to reorder; a rule is below its point when
+  projected stock is at or below the level, so 0 lists the item when it runs out, and open requests and
+  orders count, so it is not offered twice). A rule counts as a rule by existing, level 0 included: the
+  KPI "stocked items" and the Stock Scan reason read it that way (v1.732.0). A blank box is not a
+  0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. `remove_reorder_rule` takes
+  that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
+  digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
+  neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
+  ignored): `Inventory - SF` for a bin, `All Warehouses - SF` for the Inventory Room. Existing rules are
+  never changed. (`api.item_flow.save_stock` still writes the bin as its own group: a follow-up.)
+* **Endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` (the Stock
+  Scan roles; `can_edit` is Item write), `set_reorder_level(item_code, warehouse, modified, level, qty,
+  view_warehouse)` and `remove_reorder_rule(item_code, warehouse, modified, view_warehouse)`. The write is `Item.save()` as the user, so ERPNext validates (a level needs a
+  quantity; one rule a warehouse) and Item permission is checked first; no SQL, no `ignore_permissions`.
+  `modified` is the Item's stamp from the read: a stale page writes nothing and is shown the current
+  numbers. The same numbers again save nothing.
+* **Client.** `public/js/reorder_levels/` as `reorder_levels.bundle.js/.css` (`window.sf_reorder`),
+  required by each page apart from its own files and optional. A save is never a history entry. Tests:
+  `tests/test_reorder_levels.py`, `scripts/test_reorder_levels.mjs`.
+
+### The Reorder Board (v1.730.0)
+
+ER-2026-1323810, Parker Bailey, approved by Nik 2026-10-22: instead of ERPNext raising a Material
+Request on its own whenever an item reaches its reorder point, tell the buyers, list what is below,
+and let them choose what to request; then follow each request to the receipt. Tasks
+TASK-2026-02922 to -02926.
+
+* **Auto-indent is off.** `patches/disable_auto_material_requests` sets `Stock Settings.auto_indent` to 0,
+  so ERPNext's `reorder_item` job (`daily_long`) returns before it reads a rule and never sends its
+  `reorder_email_notify` email. Switching it back on would make both run; the board says so in a banner.
+* **The page**, `/desk/reorder-board` (`page/reorder_board/`), has three tabs, each its own history entry:
+  **Needs reorder** (`/desk/reorder-board`), **On order** (`/on-order`) and **Snoozed** (`/snoozed`).
+  It admits Purchase Manager, Purchase User, Stock Manager and System Manager (`reorder_board.BOARD_ROLES`):
+  the buyers and the owner of the rules, not Stock User, whose job is taking and counting stock. Snooze and
+  un-snooze are narrower (`SNOOZE_ROLES`: Purchase Manager, Purchase User, System Manager), because a snooze
+  silences the Purchase Managers' digest and Stock Manager is held by 17 people, technicians among them.
+* **Below, and how much:** ERPNext's rule exactly (`reorder_rules.is_below`, `suggested_qty`, copied from
+  `_reorder_item` as production's ERPNext v16.50.0 has it: the larger of the rule's quantity and the
+  deficiency; the `version-16` branch has since changed the quantity, so re-read the tag on an upgrade), on
+  the rules and projected quantities ERPNext's own `get_items_for_reorder` and
+  `get_item_warehouse_projected_qty` return: Item enabled, stock item, not past end of life, the warehouse
+  enabled, variants inheriting their template's rules, projected read at the rule's `warehouse_group` and
+  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for the Inventory Room,
+  `Inventory - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
+  a real rule. Only `Purchase` rules are listed (all of production's are).
+* **Covered** means a request or order line for that item, in the rule's scope, with **something still to
+  come** (`reorder_rules.still_to_come`): the part of a Material Request line not yet on a submitted Purchase
+  Order, plus what its submitted orders that are not Closed, Completed or Delivered have not delivered. So:
+  * a **PO closed short** covers nothing more (ERPNext closing a PO updates the Bin, never the MR, which stays
+    Ordered for ever; prod had 87 of 104 Closed POs under 100% received), and the line drops off;
+  * an **On Hold** PO still covers, because ERPNext still counts it in the Bin's ordered qty;
+  * a **Draft** request covers (it raises no requested qty, so only this keeps it off Needs reorder), unless it
+    is older than `STALE_DRAFT_DAYS` (30) by its creation: then the item returns to Needs reorder and the Draft
+    is named on its line, "Old draft request", linked, to finish or delete;
+  * Stopped, Cancelled and Closed requests never cover;
+  * the **scope** (`in_scope`) is the rule's warehouse and, for a rule with a `warehouse_group`, every warehouse
+    under that group, which is where ERPNext reads the rule's projected qty. A Draft for a sibling bin covers a
+    bin rule grouped on `Inventory - SF`, as a submitted one would by raising that group's projected qty.
+
+  A covered item is on **On order**, at its stage from the documents' own links (MR Item ← PO Item
+  `material_request_item` ← PR Item `purchase_order_item`): Draft request, Requested, PO in draft, Partially
+  ordered, Ordered, Partially received, Received. The PO's supplier, its expected date (`schedule_date`) and,
+  from `Purchase Order.custom_order_stage` (`po_order_stage.py`), **Pickup** or **Delivery**. A received line
+  stays a week (`RECEIVED_VISIBLE_DAYS`), then drops off.
+* **Create Material Request** (`reorder_board.create_requests`): the selected lines with the quantities on
+  screen, after a confirm dialog that lists them. One **Draft** Material Request (type Purchase) per company,
+  `schedule_date` today plus the item's lead time, the rule's warehouse, the quantity in the purchase UOM as
+  ERPNext converts it; inserted as the person (ERPNext's validation and permissions), never submitted, then
+  opened for review. The server re-checks the role, Material Request create, that each line still has a rule,
+  is still below and is not covered, and the quantity (above 0, at most 100,000, whole for a whole unit); one
+  stale line and nothing is made. A MariaDB named lock serialises it (its name carries a hash of the site:
+  named locks are server-wide), and `client_ref` (one per dialog) makes a retry return the request it already
+  made. A Reorder Watch row the hourly sync inserts at the same moment is caught under a savepoint with
+  messages muted (`DuplicateEntryError` or `UniqueValidationError`) and written onto.
+* **Snooze** (1 week, 1 month, or until stock drops further: the projected qty is kept and the snooze ends
+  once it is lower). A snoozed line moves to Snoozed, the digest skips it, and Un-snooze brings it back. Who,
+  when and why are kept.
+* **Reorder Watch** (`doctype/reorder_watch/`) is the board's memory, one row per item and warehouse while it
+  is below: `below_since`, `alerted_on`, the snooze, and the last request the board made. Not a tracking table:
+  stages are always read from the documents. Named `<item>::<warehouse>`. DocPerms: System Manager, Purchase
+  Manager and Purchase User write; Stock Manager reads.
+* **The alert.** `sync_watch` (hourly) inserts a row when a line goes below, deletes it when it recovers and
+  ends a snooze that ran out. `send_daily_digest` (`20 7 * * *`, site time) emails the lines whose row has no
+  `alerted_on` (newly below, or snooze ended) to the enabled System Users holding
+  `Inventory Scanner Settings.reorder_alert_role` (default Purchase Manager; Administrator, Guest and
+  `triton@` excluded), with one bell notification each linking the board, and stamps them in the same
+  transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing. The
+  email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
+  on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
+* **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
+  `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+
+### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
+
+ERPNext will not post stock for an item it has no cost for (Material Receipt: "Valuation Rate Missing";
+Stock Reconciliation row: "Valuation Rate required"). The two screens that add stock outside a purchase
+order, `/stock-scan`'s *Add without a purchase order* (`stock_scan.add`) and the Bin Manager's *Change
+quantity* up from an empty bin (`bin_assignments.set_count`), used to end in "ask a Stock Manager to set its
+Valuation Rate". They now take an optional `rate` and, with no cost on record and none given, answer
+`{needs_valuation_rate: true, item_code, item_name, uom, suggestion, source, max_rate}` and post nothing; the
+page asks, and sends the same save with `rate` (`stock_scan._receipt_cost`).
+
+* **Only where ERPNext would refuse.** A cost on record (a rate at the bin, the company average, the last
+  purchase rate, the Valuation Rate) is used and never asked for; a `rate` sent for such an item is ignored.
+* **The suggestion** (`_suggested_unit_cost`): the latest submitted Purchase Receipt / Invoice / Order line,
+  per stock unit, then the default buying price list (valid today, converted to the stock unit); its source is
+  named. Only from sources the caller may read, and never a document they cannot open. Never `standard_rate`
+  (a selling price).
+* **The price**: positive, at most 100,000 per stock unit (`stock_scan_rules.MAX_UNIT_COST`, Nik 2026-10-22)
+  and quantity times price at most 25,000 per add or count (`MAX_ADD_VALUE`; above it the stock is received on
+  its purchase order or posted by a stock manager in the Desk), for this one posting. The Item and the price lists are not written; "Allow Zero Valuation Rate" is never
+  set. Written to the Stock Entry's remarks and the log row's `rate`; an add without a purchase order stays
+  flagged for review.
+* **Who**: anyone who can post the document (Stock Entry create + submit; Stock Reconciliation for a count),
+  checked before the question. No `ignore_permissions`.
+* **The Inventory Scanner Audit** never meets this: it builds a *draft* Stock Reconciliation for a stock
+  manager to review and submit, and posts nothing.
+* Client: `public/js/stock_scan/logic.js` (`isCostPrompt`, `unitCostProblem`, `costPromptText`), shared by the
+  Bin Manager (`public/js/bin_manager/logic.js` re-exports them), `app.js` `askUnitCost`, and the Bin Manager's
+  `cost_dialog`.
+
+## The Count Desk (v1.736.0)
 
 The phone page above is a 680 px column that shows one scanned item at a time, and nothing on
 screen until something is scanned. On a laptop that is the wrong tool for the person who runs

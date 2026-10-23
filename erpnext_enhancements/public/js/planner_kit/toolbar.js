@@ -1,7 +1,16 @@
 /*
- * Planner kit: the toolbar's menu buttons and the phone's "Filters and tools" sheet (planner toolbar
- * redesign, v1.687.0). Both planners fold their toolbar into four menus (Views, Display, Edit, Print)
- * and, under 767px, into one bottom sheet.
+ * Planner kit: the toolbar's tabs, its menu buttons and the phone's "Filters and tools" sheet (planner
+ * toolbar redesign, v1.687.0; toolbar v2, P1 of the planner UX redesign). Both planners keep one bar:
+ * ‹ Today ›, the range, the view tabs, the filters, the alert chips, "+ Add ▾", "More ▾", then the
+ * undo icon, ? and refresh. More holds four sections (Display, Views, Tools, Print); under 767px the
+ * same sections fill one bottom sheet.
+ *
+ *   const tabs = planner_kit.toolbar.tabs(container, { label: "Planner views" });
+ *   tabs.sync("week");                        // aria-selected + roving tabindex from data-tb-tab
+ *
+ *   const items = planner_kit.toolbar.sections_to_items([   // one menu list out of named sections
+ *     { title: "Display", items: [...] }, { title: "Print", items: [...] },
+ *   ]);
  *
  *   const handle = planner_kit.toolbar.menu(button, {
  *     label: "Display",                     // the menu's accessible name
@@ -86,6 +95,22 @@ export function tidy(items) {
 	return out;
 }
 
+// Named sections as one menu list: a heading over each section's items, a divider between sections.
+// A section with nothing in it is left out, so a screen that offers nothing under "Display" shows no
+// "Display" heading either.
+export function sections_to_items(sections) {
+	const out = [];
+	(sections || []).forEach((section) => {
+		if (!section) return;
+		const items = tidy(section.items);
+		if (!items.some((entry) => !entry.divider && !entry.heading)) return;
+		if (out.length) out.push({ divider: true });
+		if (section.title) out.push({ heading: section.title, section: true });
+		items.forEach((entry) => out.push(entry));
+	});
+	return out;
+}
+
 export function create_toolbar(env) {
 	const doc = env.doc;
 	const win = env.win;
@@ -138,6 +163,47 @@ export function create_toolbar(env) {
 			el.appendChild(hint);
 		}
 		if (entry.title) el.setAttribute("title", entry.title);
+	}
+
+	// ------------------------------------------------------------------ the view tabs
+
+	// The bar's view switcher as a WAI-ARIA tablist. The page builds the buttons (each with a
+	// data-tb-tab naming its view) and keeps its own click handlers; this gives the group its roles,
+	// a roving tabindex (the tab on screen is the one Tab reaches) and the arrow keys. An arrow key
+	// moves focus only: choosing a tab is a route change with its own history entry, so Enter or Space
+	// (the button's click) does it, never a stray arrow.
+	function tabs(container, opts) {
+		opts = opts || {};
+		const buttons = () =>
+			Array.from(container.querySelectorAll ? container.querySelectorAll("[data-tb-tab]") : []);
+		const shown = () => buttons().filter((button) => !button.hidden && !(button.style && button.style.display === "none"));
+		container.setAttribute("role", "tablist");
+		if (opts.label) container.setAttribute("aria-label", opts.label);
+		container.addEventListener("keydown", (e) => {
+			if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+			const list = shown();
+			const index = list.indexOf(doc.activeElement);
+			if (index < 0) return;
+			e.preventDefault();
+			let next = index;
+			if (e.key === "ArrowRight") next = (index + 1) % list.length;
+			else if (e.key === "ArrowLeft") next = (index - 1 + list.length) % list.length;
+			else next = e.key === "Home" ? 0 : list.length - 1;
+			focus(list[next]);
+		});
+		function sync(selected) {
+			const list = buttons();
+			// With nothing selected (a screen that is no tab, such as My week), the first one stays reachable.
+			const active = list.find((button) => button.getAttribute("data-tb-tab") === selected) || shown()[0] || null;
+			list.forEach((button) => {
+				button.setAttribute("role", "tab");
+				const on = button.getAttribute("data-tb-tab") === selected;
+				button.setAttribute("aria-selected", on ? "true" : "false");
+				button.setAttribute("tabindex", button === active ? "0" : "-1");
+			});
+		}
+		sync(opts.selected);
+		return { sync, buttons };
 	}
 
 	// ------------------------------------------------------------------ the menu button
@@ -227,7 +293,7 @@ export function create_toolbar(env) {
 				}
 				if (entry.heading) {
 					const head = doc.createElement("div");
-					head.className = "pk-menu-title";
+					head.className = `pk-menu-title${entry.section ? " pk-tb-section" : ""}`;
 					head.setAttribute("role", "presentation");
 					head.textContent = entry.heading;
 					el.appendChild(head);
@@ -545,6 +611,8 @@ export function create_toolbar(env) {
 	return {
 		menu,
 		sheet,
+		tabs,
+		sections_to_items,
 		item_role,
 		item_active,
 		tidy,

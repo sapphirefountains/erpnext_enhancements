@@ -101,7 +101,7 @@ CONTRACT = {
 	"ADD": (
 		"add",
 		{"item_code", "warehouse", "qty", "client_ref"},
-		{"purchase_order_item", "without_po", "project", "scanned_code"},
+		{"purchase_order_item", "without_po", "project", "scanned_code", "rate"},
 	),
 	"MOVE": (
 		"move_here",
@@ -189,6 +189,8 @@ ITEM_KEYS = {
 	"is_stock_item",
 	"store_run_ok",
 	"reorder_level",
+	# whether it has a reorder rule, level 0 included: what makes it a stocked item (v1.732.0)
+	"has_reorder_rule",
 	# bin assignments: "Remove from this bin" shows by any of the three (v1.692.0), also on an
 	# item reached from Recent or "Where is it?", where no bin list is underneath
 	"assigned",
@@ -1088,7 +1090,7 @@ class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
 			"move_here": ("_transfer_source", "_require"),
 			# add's _require guards its without-PO branch (the receipt branch is checked by
 			# receive_items itself), so it is compared with that branch's _begin_log: the last.
-			"add": ("_require", "_receipt_rate"),
+			"add": ("_require", "_receipt_cost"),
 			# A store run: a store not on the list, another person's run on another day, a price,
 			# a missing job, somebody else's photo, a quick item that could not be made, and the
 			# receipt permission are all sentences before the log row (and before the Item).
@@ -2276,6 +2278,9 @@ class TestTheSettings(unittest.TestCase):
 		value = _module_constant(BACKFILL, "FIELDS")
 		self.assertIsNotNone(value, "the backfill patch has no FIELDS")
 		fields = set(ast.literal_eval(value))
+		# v1.730.0: the Reorder Board's reorder_alert_role came later, so it has its own backfill
+		# (the v1.521.0 patch has already run on every site and would never see a new field).
+		fields |= set(ast.literal_eval(_module_constant(APP / "patches" / "backfill_reorder_alert_role.py", "FIELDS")))
 		with_default = {f["fieldname"] for f in self.new_fields() if self.expected(f) is not None}
 		self.assertEqual(fields, with_default)
 		self.assertEqual(

@@ -783,6 +783,40 @@ class TestConfigSchema(unittest.TestCase):
     def test_the_config_is_structurally_sound(self):
         self.assertEqual(config.check(self.cfg), [])
 
+    def test_the_header_status_is_the_stage_field_and_is_in_the_flow(self):
+        """v1.711.0 (Nik, 2026-10-21: "show stage of opportunity at the top header"): the chip shows the
+        field the board's columns and the completeness lists are made from, and the page reads its
+        value from the flow's, so the field must be one the flow sends."""
+        status = self.cfg["header"]["status"]
+        self.assertEqual(status["field"], self.cfg["stages"]["field"])
+        self.assertTrue(self._exists(status["field"]))
+        self.assertIn(status["field"], _all_values(steps.flow_steps("Opportunity", _doc(_seed()))))
+        board = (Path(__file__).resolve().parents[1] / "crm_enhancements" / "page" / "sales_pipeline" / "sales_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('get_meta("Opportunity").get_field("status")', board, "the board's columns are the status options")
+
+    def test_every_header_tone_names_a_real_stage_and_a_real_chip_tone(self):
+        status = self.cfg["header"]["status"]
+        field = next(df for df in self.meta.fields if df.fieldname == status["field"])
+        options = {line.strip() for line in (field.options or "").splitlines()}
+        self.assertTrue(set(status["tones"]) <= options, sorted(set(status["tones"]) - options))
+        self.assertEqual(status["tones"]["Closed Won"], "good")
+        self.assertEqual(status["tones"]["Lost"], "danger")
+        self.assertTrue(set(status["tones"].values()) <= set(config.CHIP_TONES))
+
+    def test_the_schema_check_catches_a_bad_header(self):
+        broken = copy.deepcopy(self.cfg)
+        broken["header"]["status"]["tones"]["On Hold"] = "purple"
+        broken["header"]["status"]["label"] = ""
+        broken["header"]["colour"] = {}
+        problems = " ".join(config.check(broken))
+        self.assertIn("not a chip tone", problems)
+        self.assertIn("header.status needs label", problems)
+        self.assertIn("unknown header keys", problems)
+        del broken["header"]
+        self.assertEqual(config.check(broken), [], "a DocType may declare no header at all")
+
     def test_the_schema_check_catches_a_duplicate_step_key_and_a_missing_intro(self):
         broken = copy.deepcopy(self.cfg)
         broken["steps"][1]["key"] = broken["steps"][0]["key"]
@@ -1925,6 +1959,17 @@ class TestTheInputsAreTheForms(unittest.TestCase):
         self.assertEqual(payload["queries"]["party_name"]["cases"]["Lead"], {"query": "erpnext.controllers.queries.lead_query"})
         self.assertEqual(payload["label_from"], {"party_name": "opportunity_from"})
 
+    def test_get_flow_sends_the_header_status_a_doctype_declares(self):
+        payload = api.get_flow("Opportunity", _seed())
+        self.assertEqual(
+            payload["header"],
+            {"status": {"field": "status", "label": "Stage", "tones": {"Closed Won": "good", "Lost": "danger", "On Hold": "warn"}}},
+        )
+        self.assertEqual(payload["header"]["status"]["field"], "status")
+        self.assertIn("status", payload["values"])
+        self.assertIn("header", api.get_flow("Opportunity"), "a new record has a stage too")
+        self.assertNotIn("header", api.get_flow("Item"), "a DocType that declares none gets none")
+
     def test_the_query_context_holds_what_the_values_do_not(self):
         """A Prospect is searched by the deal's company, which the flow does not show; the contact
         and address pickers search the record and the parties its stakeholder rows name, as the
@@ -1995,6 +2040,8 @@ class TestEndpoints(unittest.TestCase):
                 "queries",
                 "query_context",
                 "label_from",
+                # v1.711.0: the head band's stage chip (config ``header``).
+                "header",
             },
         )
         self.assertEqual(payload["name"], name)
@@ -2471,7 +2518,8 @@ class TestItemSteps(unittest.TestCase):
                 self.assertEqual(section_of[fieldname], "details")
         self.assertEqual(
             [fieldname for fieldname, key in section_of.items() if key == "custom_maintenance_billing_section"],
-            ["custom_maintenance_billing", "custom_price_per_dose"],
+            # v1.712.0: Size Family and Size, a chemical sold in sizes (sapphire_maintenance/item_sizes.py).
+            ["custom_maintenance_billing", "custom_price_per_dose", "custom_size_family", "custom_size"],
         )
         self.assertIn("stock_uom", _value_names(_step(self.flow, "basics")))
         self.assertEqual(
@@ -2483,6 +2531,8 @@ class TestItemSteps(unittest.TestCase):
                 "custom_sds_reviewed_on",
                 "custom_maintenance_billing",
                 "custom_price_per_dose",
+                "custom_size_family",
+                "custom_size",
             ],
         )
 

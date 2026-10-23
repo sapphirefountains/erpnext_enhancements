@@ -23,6 +23,7 @@ from erpnext_enhancements.feature_flags import (
 	process_automation_enabled,
 	product_configurator_enabled,
 )
+from erpnext_enhancements.setup.workspace_tweaks import drop_unreadable_sidebar_links
 from erpnext_enhancements.utils.normalize_hook import desk_registry
 
 
@@ -108,6 +109,11 @@ def boot_session(bootinfo):
 	DocType, who keeps the form. ``accepts`` is what a new record may
 	carry over from where it was started (``form_kit.steps.prefill_fields``). Empty when
 	site_config's ``disable_guided_default`` is set, and the Desk then opens forms.
+
+	``frappe.boot.module_sidebars`` loses the URL rows this app adds to a core sidebar for anyone
+	who cannot read what they open: the Opportunity Kanban at the top of CRM, for someone without
+	read on Opportunity. frappe never permission-checks a URL row. See
+	``setup.workspace_tweaks.drop_unreadable_sidebar_links``.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -132,6 +138,7 @@ def boot_session(bootinfo):
 		bootinfo.sf_normalize = normalize_registry
 	bootinfo.sf_field_help = _field_help_doctypes()
 	bootinfo.sf_guided = _guided_doctypes()
+	drop_unreadable_sidebar_links(bootinfo)
 
 
 def _field_help_doctypes():

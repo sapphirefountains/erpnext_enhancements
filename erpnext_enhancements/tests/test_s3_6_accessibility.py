@@ -177,10 +177,10 @@ class TestPlanATripChipsAreToggleButtons(unittest.TestCase):
 
 
 class TestPlannerNavButtonsAreLabelled(unittest.TestCase):
-	"""‹ › ↻ in the toolbars, the route view's day stepper and My week's week stepper."""
+	"""‹ › ↻ in the toolbars, the route view's day stepper, My week's week stepper and Today's day stepper."""
 
 	EXPECTED = {
-		PROJECT: ["Earlier", "Later", "Refresh", "Previous day", "Next day", "Previous week", "Next week"],
+		PROJECT: ["Earlier", "Later", "Refresh", "Previous day", "Next day", "Previous week", "Next week", "Previous day", "Next day"],
 		MAINTENANCE: ["Earlier", "Later", "Refresh"],
 	}
 

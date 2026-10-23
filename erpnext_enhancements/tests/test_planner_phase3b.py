@@ -58,6 +58,8 @@ TODAY = D(2026, 10, 8)  # a Thursday
 NOW = DT(2026, 10, 8, 7, 0, 0)
 MON, TUE, WED, THU, FRI = (D(2026, 10, 12) + datetime.timedelta(days=i) for i in range(5))
 BASE = "2026-10-08 09:00:00"
+#: The columns P3 of the Planner UX redesign adds (``api.project_planner._has_schedule_columns``).
+P3_COLUMNS = ("custom_schedule_status", "custom_baseline_start")
 
 STUBBED = (
 	"frappe",
@@ -177,9 +179,11 @@ class _Row(_Doc):
 		frappe.sequence.append(f"insert:{doctype}")
 		return self
 
-	def save(self):
+	def save(self, ignore_permissions=False):
 		frappe.counter += 1
 		self["modified"] = f"2026-10-08 09:{frappe.counter:02d}:30"
+		if ignore_permissions:
+			frappe.calls.append(("save_ignoring_permissions", self["doctype"], self.get("name")))
 		rows = frappe.tables.setdefault(self["doctype"], [])
 		for index, row in enumerate(rows):
 			if row.get("name") == self.get("name"):
@@ -380,7 +384,9 @@ def _reset():
 	frappe.db = types.SimpleNamespace(
 		sql=_sql,
 		exists=_exists,
-		has_column=lambda doctype, column: True,
+		# A site from before P3 (per-project schedules): the Project and Task schedule columns are not
+		# there, so drafts stay their author's. tests/test_planner_publish_baseline.py turns them on.
+		has_column=lambda doctype, column: column not in P3_COLUMNS,
 		get_value=lambda doctype, name, field=None, *a, **k: frappe.values.get((doctype, _key(name), field)),
 		get_single_value=lambda doctype, field, *a, **k: None,
 		set_value=lambda *a, **k: frappe.db_calls.append(("set_value", a, k)),
@@ -939,7 +945,8 @@ class TestOverlay(_Base):
 		_draft_row("TASK-4", {"start": "2026-10-16"}, base="2026-09-30 00:00:00")  # changed since
 		_draft_row("TASK-5", {"start": "2026-10-26", "end": "2026-10-26"})  # drafted out of the week
 		_draft_row("TASK-2", {"start": "2026-10-16"}, owner="lisa@example.com")  # somebody else's
-		data = api.get_planner("2026-10-11", "2026-10-17", draft="1")
+		# all_tasks: the fake tasks here have no crew, and this test is about the overlay, not the display rule.
+		data = api.get_planner("2026-10-11", "2026-10-17", draft="1", all_tasks="1")
 
 		self.assertEqual(self.calls[0]["exclude"], {"TASK-1", "TASK-3", "TASK-5"})
 		cards = {card["name"]: card for card in data["tasks"]}
@@ -1543,8 +1550,10 @@ class TestWiring(unittest.TestCase):
 		functions = _functions(API_PATH)
 		for name in ("get_planner", "save_task", "add_crew", "swap_crew"):
 			args = functions[name].args
-			self.assertEqual(args.args[-1].arg, "draft", name)
-			self.assertEqual(ast.literal_eval(args.defaults[-1]), 0, name)
+			# get_planner's all_tasks (P2) and google (P5) come after draft, so a positional draft still works.
+			last = -3 if name == "get_planner" else -1
+			self.assertEqual(args.args[last].arg, "draft", name)
+			self.assertEqual(ast.literal_eval(args.defaults[last]), 0, name)
 
 	def test_hooks_register_the_digest_and_the_alert(self):
 		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
@@ -1672,15 +1681,19 @@ class TestPage(unittest.TestCase):
 			"this.init_phase3b();",
 			"const mine = this.my_week_target(route);",
 			"this.show_my_week(target.anchor);",
-			"this.draft_args())",
+			"this.draft_args(card.project))",
 			"args = this.with_draft(method, args);",
+			# P4: the read always asks for the drafts (a Draft schedule's, anyone's, show to everyone).
+			"args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks",
 			"this.render_phase3b();",
 			"Object.assign(ProjectPlanner.prototype, PP3B_METHODS);",
 		):
 			self.assertIn(line, self.code, line)
 
 	def test_draft_mode_sends_draft_on_every_write_and_the_read(self):
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew"]', self.block)
+		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', self.block)
+		# P4: off, the writes say draft="auto" and the server drafts a Draft schedule's tasks.
+		self.assertIn("PPAS_PURE.draft_value(this.draft_on)", self.block)
 		self.assertIn("{ draft: 1 }", self.block)
 		# Remembered through the page's guarded prefs, never a new localStorage call.
 		self.assertIn("this.load_pref(PP3B.pref", self.block)

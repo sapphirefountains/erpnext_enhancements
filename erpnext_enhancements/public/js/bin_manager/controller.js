@@ -209,6 +209,8 @@ export class Controller {
 
 	// One save from a dialog. Resolves { message, result }; rejects { message, keep_ref }, the
 	// dialog showing the message inline and sending the same reference again only when keep_ref.
+	// Resolves { prompt } instead when the server asked for a unit cost (logic.isCostPrompt): nothing was
+	// saved, so nothing is reported, listed or reloaded, and the page asks and submits again.
 	submit(kind, row, values, ref) {
 		const warehouse = this.state.target && this.state.target.warehouse;
 		const problem = logic.check_values(kind, row, values, warehouse);
@@ -220,7 +222,13 @@ export class Controller {
 			return Promise.reject({ message: String(e && e.message), keep_ref: false });
 		}
 		return this.env.call(req.method, req.args, { quiet: true }).then(
-			(result) => this.saved(result),
+			(result) => {
+				if (logic.isCostPrompt(result)) return { prompt: result, message: "" };
+				// The row changes now; saved() reads the list again and that is the truth. Not for a repeated save
+				// (the server returned a save it had already made): the list may have been read since.
+				if (!(result && result.repeated)) logic.apply_local(kind, row, values);
+				return this.saved(result);
+			},
 			(err) => Promise.reject({ message: (err && err.message) || "", keep_ref: logic.keep_ref(err), error: err })
 		);
 	}

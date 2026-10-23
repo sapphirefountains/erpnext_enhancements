@@ -31,13 +31,27 @@ moment routing first worked, with nothing on screen to say so. Caught on product
 `check_routes`, which reported "Google Routes is working ... turned off" before any planner had
 committed the rows. `materialize_defaults` writes every declared default that has no row, and
 `routing.start_point` calls it before caching anything, so a partial Single can no longer exist.
+
+**The weekly summary (P9, v1.715.0)** added a Check, ``weekly_summary_email`` (default 0, **off**), and
+the managers who get it, ``weekly_summary_recipients`` (addresses, no default). The Check is a new
+field on a Single that already has rows, so ``backfill_weekly_summary_setting`` writes its row with
+``materialize_defaults`` (fill-only, never over a stored value). ``None`` already reads as off
+(``planner_notices.setting``), and a blank recipients list sends nothing, so nothing is mailed until
+somebody ticks the box *and* names people. ``validate`` refuses a line that is not an address.
 """
+
+import re
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
 SETTINGS_DOCTYPE = "Project Planner Settings"
+#: The weekly summary's recipients (P9, v1.715.0): addresses split on commas, semicolons and new lines.
+_RECIPIENT_SEPARATORS = re.compile(r"[,;\n\r]+")
+#: An address, no more: one @, something either side, a dot in the domain, no spaces. The mail server
+#: is the judge of the rest; this only refuses what cannot be an address (a name, a half-typed line).
+_ADDRESS = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 #: Leave-by pings (v1.605.0): the longest lead time a ping may have.
 MAX_PING_MINUTES = 120
 
@@ -70,6 +84,32 @@ class ProjectPlannerSettings(Document):
 					self.meta.get_label("leave_by_ping_minutes"), MAX_PING_MINUTES
 				)
 			)
+		# P9 weekly summary recipients. A blank list is fine (it sends nothing); a line that is not an
+		# address is refused by name, because a typo here is a manager who silently never gets the email.
+		_good, bad = parse_recipients(self.get("weekly_summary_recipients"))
+		if bad:
+			frappe.throw(
+				_("{0}: these are not email addresses: {1}").format(
+					self.meta.get_label("weekly_summary_recipients"), ", ".join(bad)
+				)
+			)
+
+
+def parse_recipients(text):
+	"""``(addresses, not_addresses)`` from the recipients field: split on commas, semicolons and new
+	lines, trimmed, distinct (the first spelling of an address wins, compared in lower case), in order.
+	Pure. A blank or ``None`` field is ``([], [])``."""
+	good, bad, seen = [], [], set()
+	for part in _RECIPIENT_SEPARATORS.split(str(text or "")):
+		part = part.strip()
+		if not part:
+			continue
+		if not _ADDRESS.match(part):
+			bad.append(part)
+		elif part.lower() not in seen:
+			seen.add(part.lower())
+			good.append(part)
+	return good, bad
 
 
 def missing_defaults(fields, stored):

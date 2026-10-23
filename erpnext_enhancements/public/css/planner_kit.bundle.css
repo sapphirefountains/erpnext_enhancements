@@ -1455,6 +1455,14 @@ a.pk-stop-addr {
 	outline: none;
 }
 
+/* A section of the More menu (Display, Views, Tools, Print): its heading is the first line of the
+ * group, heavier than the sub-headings (Color by, Saved views) inside it. */
+.pk-tb-section {
+	padding-top: 6px;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text);
+}
+
 .pk-tb-item {
 	justify-content: flex-start;
 	gap: 8px;
@@ -1645,6 +1653,119 @@ a.pk-stop-addr {
 }
 
 /* ======================================================================================== */
+/* The first-visit tour (tour.js, P12 of the planner UX redesign).                           */
+/* ======================================================================================== */
+
+/* A small dialog over a dimmed page, drawn like the guided page's pop-up (.ge-overlay): square, an edge
+ * instead of a shadow. It is above everything the kit draws (the drawer 1025, the toast 1046, the menu
+ * 1047) and below a datepicker (9999); the page waits for the way to be clear before it opens one, so
+ * nothing the person has to decide is ever under it. The card never outgrows the screen (a width and a
+ * height in the viewport's own units) and breaks long words, so a 375px phone gets no sideways scroll. */
+.pk-tour {
+	position: fixed;
+	inset: 0;
+	z-index: 1048;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	padding: var(--sf-space-15);
+	overflow: hidden;
+	background: color-mix(in srgb, var(--sf-navy-900) 55%, transparent);
+}
+
+.pk-tour-card {
+	box-sizing: border-box;
+	width: min(460px, 100%);
+	max-height: calc(100vh - 32px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	padding: var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	line-height: var(--sf-leading-body);
+	overflow-wrap: anywhere;
+	outline: none;
+}
+
+.pk-tour-count {
+	margin: 0 0 var(--sf-space-5);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+}
+
+.pk-tour-title {
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-heading);
+}
+
+.pk-tour-text {
+	margin: 0 0 var(--sf-space-10);
+}
+
+/* The keys a step names, set apart so they are not read as part of the sentence. */
+.pk-tour-keys {
+	margin: 0 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+.pk-tour-keys[hidden] {
+	display: none;
+}
+
+/* The place in the tour: a filled dot is this step. The count above says the same in words. */
+.pk-tour-dots {
+	display: flex;
+	gap: var(--sf-space-5);
+	margin: 0 0 var(--sf-space-15);
+}
+
+.pk-tour-dot {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	width: var(--sf-space-10);
+	height: var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-surface);
+}
+
+.pk-tour-dot-on {
+	border-color: var(--sf-focus);
+	background: var(--sf-focus);
+}
+
+.pk-tour-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+
+.pk-tour-spacer {
+	flex: 1 1 auto;
+}
+
+.pk-tour-skip:focus-visible,
+.pk-tour-back:focus-visible,
+.pk-tour-next:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ======================================================================================== */
 /* Touch, phones and motion.                                                                 */
 /* ======================================================================================== */
 
@@ -1659,7 +1780,10 @@ a.pk-stop-addr {
 	.pk-hint-close,
 	.pk-day-head,
 	.pk-cc-person,
-	.pk-sheet-item {
+	.pk-sheet-item,
+	.pk-tour-skip,
+	.pk-tour-back,
+	.pk-tour-next {
 		min-height: var(--sf-touch-min);
 	}
 }
@@ -1692,12 +1816,323 @@ a.pk-stop-addr {
 		flex-basis: 88px;
 	}
 
+	/* The tour is a card along the bottom of a phone, within reach of a thumb, as the sheet is. */
+	.pk-tour {
+		align-items: flex-end;
+		padding: var(--sf-space-10) var(--sf-space-10) calc(var(--sf-space-10) + env(safe-area-inset-bottom));
+	}
+
+	.pk-tour-card {
+		width: 100%;
+		max-height: 85vh;
+		padding: var(--sf-space-15);
+	}
+
 	.pk-tl-row {
 		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.pk-tl-scale {
 		margin-left: 0;
+	}
+}
+
+/* ======================================================================================== */
+/* Simple mode (planner_kit/simple.js; docs/planner-simple-mode.md): a card per job or site,   */
+/* Done on the left in grey, Coming up on the right in bold, one search box. Both planners.    */
+/* ======================================================================================== */
+
+.pk-simple {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+}
+
+.pk-simple-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+
+.pk-simple-heading {
+	margin: 0;
+	margin-right: auto;
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-search {
+	flex: 0 1 320px;
+	min-width: 0;
+}
+
+/* The switch is on: it reads as pressed, in the focus color, and a press turns it off. */
+.pk-simple-switch {
+	border-color: var(--sf-focus);
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-status-line {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+
+.pk-simple-card {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+}
+
+.pk-simple-title {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-simple-name {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--sf-link);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-simple-name:hover {
+	text-decoration: underline;
+}
+
+.pk-simple-status {
+	padding: 0 var(--sf-space-5);
+	border-radius: var(--sf-radius-pill);
+	background: color-mix(in srgb, var(--sf-good) 12%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-xs);
+}
+
+.pk-simple-status.pk-simple-finished {
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+}
+
+/* A Draft schedule (P3): the warn tint, with the warn mix as text, never plain yellow (unreadable on white). */
+.pk-simple-draft {
+	padding: 0 var(--sf-space-5);
+	border-radius: var(--sf-radius-pill);
+	background: color-mix(in srgb, var(--sf-warn) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	font-size: var(--sf-text-xs);
+}
+
+.pk-simple-facts {
+	flex: 1 1 100%;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-halves {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.pk-simple-half {
+	min-width: 0;
+	padding: var(--sf-space-10) var(--sf-space-15);
+}
+
+.pk-simple-half + .pk-simple-half {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-simple-head {
+	margin: 0 0 var(--sf-space-5);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.pk-simple-count {
+	font-weight: var(--sf-weight-regular);
+}
+
+.pk-simple-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pk-simple-item {
+	display: block;
+}
+
+.pk-simple-row {
+	display: grid;
+	grid-template-columns: 1.2em 7.5em minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: var(--sf-space-5);
+	width: 100%;
+	padding: var(--sf-space-5) 0;
+	border: none;
+	border-radius: var(--sf-radius-none);
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-simple-row:hover {
+	background: color-mix(in srgb, var(--sf-focus) 6%, var(--sf-surface));
+}
+
+.pk-simple-row:focus-visible,
+.pk-simple-name:focus-visible,
+.pk-simple-all:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-simple-mark {
+	color: var(--sf-text-muted);
+	text-align: center;
+}
+
+.pk-simple-when {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	white-space: nowrap;
+}
+
+.pk-simple-what {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.pk-simple-phase,
+.pk-simple-note {
+	margin-left: var(--sf-space-5);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-regular);
+}
+
+.pk-simple-who {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	white-space: nowrap;
+}
+
+/* Done is history: grey. Coming up is what matters next: bold. Late says so in words and in red text. */
+.pk-simple-done .pk-simple-what,
+.pk-simple-closed .pk-simple-what {
+	color: var(--sf-text-muted);
+}
+
+.pk-simple-open .pk-simple-what,
+.pk-simple-late .pk-simple-what,
+.pk-simple-unscheduled .pk-simple-what {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-simple-late .pk-simple-mark,
+.pk-simple-late .pk-simple-when,
+.pk-simple-late .pk-simple-note {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pk-simple-done .pk-simple-mark {
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.pk-simple-empty {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.pk-simple-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-5);
+}
+
+.pk-simple-all {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--sf-link);
+	font-size: var(--sf-text-sm);
+	cursor: pointer;
+}
+
+.pk-simple-tail {
+	display: flex;
+	justify-content: center;
+}
+
+.pk-simple-finished .pk-simple-name {
+	color: var(--sf-text);
+}
+
+/* A phone: the halves stack (the script puts Coming up first), and every control is a thumb's size. */
+@media (max-width: 767px) {
+	.pk-simple-search {
+		flex: 1 1 100%;
+	}
+
+	.pk-simple-halves {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.pk-simple-half + .pk-simple-half {
+		border-left: none;
+		border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	}
+
+	/* The date sits above the name, and may wrap: a range across a year ("Dec 28 – Jan 4, 2027") is wider than
+	 * any fixed column a 375px card can spare, and ran into the name in one. The mark stays in its own column. */
+	.pk-simple-row {
+		grid-template-columns: 1.2em minmax(0, 1fr);
+		row-gap: 0;
+		min-height: var(--sf-touch-min);
+	}
+
+	.pk-simple-when {
+		white-space: normal;
+	}
+
+	.pk-simple-what,
+	.pk-simple-who {
+		grid-column: 2;
+	}
+
+	.pk-simple-name,
+	.pk-simple-all,
+	.pk-simple-switch,
+	.pk-simple-help,
+	.pk-simple-more {
+		min-height: var(--sf-touch-min);
 	}
 }
 

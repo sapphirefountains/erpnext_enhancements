@@ -123,9 +123,10 @@ NAMESPACES = {
 	# under the page body (.sales-pipeline-page) or the TV-mode body class.
 	"sales_pipeline": re.compile(r"\.sales-pipeline-[\w-]+"),
 	"plan_a_trip": re.compile(r"\.tp-[\w-]+"),
-	# The planner's own families: pp- for the page, p6b- and p6e- for two of its phases, t1- for
-	# Build out and t4- for AI draft. Short, so TestProjectPlanner checks no other file styles them.
-	"project_planner": re.compile(r"\.(?:pp|p6b|p6e|t1|t4)-[\w-]+"),
+	# The planner's own families: pp- for the page, ppl- for its Lookahead (P5), ppg- for its Gantt (P6),
+	# ppo- for its Overview (P9), p6b- and p6e- for two of its phases, t1- for Build out and t4- for AI draft. Short, so
+	# TestProjectPlanner checks no other file styles them.
+	"project_planner": re.compile(r"\.(?:pp|ppl|ppg|ppo|p6b|p6e|t1|t4)-[\w-]+"),
 	# Every class of the Maintenance Planner is mp-, its phases' too (mp-p6a-, mp-p6b- ...).
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 	"rental_planner": re.compile(r"\.rp-[\w-]+"),
@@ -716,10 +717,13 @@ class TestProjectPlanner(unittest.TestCase):
 	def test_every_color_it_reads_is_a_token_or_the_data_color(self):
 		"""No Frappe variable at all (--text-muted, --card-bg, --primary ...), not only the palette
 		ones the shared check refuses: every var() is an --sf-* token or one of the two data
-		colors the script sets."""
+		colors the script sets. The one other is a count, not a color: the Lookahead's number of day
+		columns (--ppl-days, P5), which the script sets on its grid."""
 		self.assertTrue(self.css)
 		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
-		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--pp-color", "--pp-p6c-c"])
+		self.assertEqual(
+			sorted(v for v in read if not v.startswith("--sf-")), ["--pp-color", "--pp-p6c-c", "--ppl-days"]
+		)
 
 	def test_the_data_colors_go_in_as_the_custom_property_and_the_css_paints_them(self):
 		# A person's dot (Resources available, the heatmap), a crew badge (a card, a quick look's
@@ -828,6 +832,41 @@ class TestProjectPlanner(unittest.TestCase):
 		self.assertIn("position: static", reset[0])
 		self.assertIn("max-height: none", reset[0])
 
+	def test_the_crew_tray_scrolls_by_itself(self):
+		"""v1.716.1: the Not scheduled / Needs crew tray beside the Crew board scrolled with the
+		whole page, so reaching a task near the bottom meant scrolling the board away with it. It
+		is sticky below Frappe's navbar and page head, capped to what is left of the viewport,
+		and scrolls on its own without chaining to the page."""
+		body = self._rule(".pp-main-crew > .pp-trays")
+		self.assertIn("position: sticky", body)
+		self.assertIn("overflow-y: auto", body)
+		self.assertIn("overscroll-behavior: contain", body)
+		top = int(re.search(r"top: (\d+)px", body).group(1))
+		# The 48px navbar and the 60px page head (Frappe v16) sit above it.
+		self.assertGreaterEqual(top, 48 + 60)
+		cap = int(re.search(r"max-height: calc\(100vh - (\d+)px\)", body).group(1))
+		self.assertGreaterEqual(cap, top)
+		# The row must not stretch the tray to the board's height, or sticky has nothing to do.
+		self.assertIn("align-items: flex-start", self._rule(".pp-main-crew"))
+
+	def test_the_crew_tray_is_plain_flow_on_a_phone_and_in_print(self):
+		"""On a phone the tray goes back above the board; a printout carries all of it."""
+		phones = re.findall(r"@media \(max-width: 767px\) \{(.*?)\n\}", self.css, flags=re.S)
+		blocks = [b for b in phones if ".pp-main-crew > .pp-trays" in b]
+		self.assertEqual(len(blocks), 1)
+		prints = re.findall(r"@media print \{(.*?)\n\}", self.css, flags=re.S)
+		blocks.append(next((b for b in prints if ".pp-main-crew > .pp-trays" in b), ""))
+		for block in blocks:
+			self.assertIn("position: static", block)
+			self.assertIn("max-height: none", block)
+			self.assertRegex(block, r"overflow(-y)?: visible")
+
+	def test_a_drag_near_the_crew_trays_edge_scrolls_it(self):
+		"""The tray is a scroll box now, so edge-scroll treats it as the board and the grids."""
+		m = re.search(r"p6a_edge_scroll\(x, y\) \{(.*?)\n\t\},", self.js, flags=re.S)
+		self.assertIsNotNone(m)
+		self.assertIn(".pp-main-crew > .pp-trays", m.group(1))
+
 	def test_the_s3_6_focus_ring_moved_with_the_css(self):
 		self.assertRegex(
 			self.css,
@@ -887,15 +926,15 @@ class TestProjectPlanner(unittest.TestCase):
 	def test_every_rule_styles_something_the_page_draws(self):
 		"""A rule for a class nothing draws any more is a rename on one side only. pk- classes are
 		planner_kit's (the day notes, a block, a timeline bar), which the page draws through it."""
-		drawn = set(re.findall(r"(?<![\w-])((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
-		styled = set(re.findall(r"\.((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
+		drawn = set(re.findall(r"(?<![\w-])((?:pp|ppl|ppg|ppo|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
+		styled = set(re.findall(r"\.((?:pp|ppl|ppg|ppo|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
 		self.assertTrue(styled)
 		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
 
 	def test_its_short_prefixes_are_its_own(self):
 		"""t1- and t4- are short enough for another page to pick; this page's CSS is global for the
 		session, so nothing else may style them (the Maintenance Planner's are mp-p6b- and so on)."""
-		selector = re.compile(r"(?<![\w-])\.(?:pp|p6b|p6e|t1|t4)-[a-z]")
+		selector = re.compile(r"(?<![\w-])\.(?:pp|ppl|ppg|ppo|p6b|p6e|t1|t4)-[a-z]")
 		found = []
 		for path in APP.rglob("*"):
 			if path.suffix not in (".css", ".scss", ".js", ".html") or "tests" in path.parts:
@@ -970,30 +1009,39 @@ class TestMaintenancePlanner(unittest.TestCase):
 	def test_the_legends_draw_the_cards_own_classes(self):
 		"""Both legends painted a hex per kind: the toolbar's through jQuery .css(), the help's through
 		the kit's swatch. Each is the card's own kind class now, so the legend and the calendar cannot
-		drift apart, and both follow the theme. The toolbar's legend row is the Display menu's key of
-		the visit kinds since v1.687.0 (tb_kind_items)."""
-		self.assertIn('sample_html: `<i class="mp-swatch${kind ? ` ${kind}` : ""}"></i>`,', self.js)
-		kinds = re.findall(
-			r'\["(mp-[a-z-]+)", __\("',
-			self.js[self.js.index("tb_kind_items() {") :][:1200],
-		)
+		drift apart, and both follow the theme. The toolbar's legend row was the Display menu's key of
+		the visit kinds from v1.687.0 (tb_kind_items, with a swatch of its own); since P10 of the
+		planner UX redesign the key is the "?" help's only, drawn with the cards themselves, so the
+		swatch and its rules are gone."""
+		self.assertNotIn("tb_kind_items", self.js)
+		self.assertNotIn("mp-swatch", self.js)
+		self.assertNotIn("mp-swatch", self.css)
+		help_body = self.js[self.js.index("legend_sections() {") :]
+		help_body = help_body[: help_body.index("\n\t},\n")]
+		kinds = re.findall(r'card\("((?:mp-[a-z-]+ ?)*)", "', help_body)
 		self.assertEqual(
 			kinds,
 			[
+				"",
 				"mp-seasonal",
 				"mp-extra",
 				"mp-pending",
 				"mp-done",
 				"mp-projected",
+				"mp-projected mp-movable",
 				"mp-overdue",
-				"mp-bk-task",
-				"mp-bk-rental",
-				"mp-bk-travel",
 			],
 		)
-		for kind in kinds:
+		for kind in kinds[1:]:
+			edge = kind.split()[0]
 			with self.subTest(kind=kind):
-				self.assertRegex(self.css, rf"\.mp-swatch\.{kind}\s*[,{{]")
+				self.assertRegex(self.css, rf"\.mp-card\.{edge}\s*[,{{]")
+		# The read-only bookings' samples moved with the project work section (p10_legend_sections).
+		project = self.js[self.js.index("p10_legend_sections() {") :]
+		for kind in ("mp-bk-task", "mp-bk-rental", "mp-bk-travel"):
+			with self.subTest(kind=kind):
+				self.assertIn(f'card("mp-booking {kind}"', project)
+				self.assertRegex(self.css, rf"\.mp-card\.mp-booking\.{kind}\s*[,{{]")
 		self.assertNotIn("swatch(", self.js)
 		self.assertIn('`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">', self.js)
 		self.assertIn('<span class="mp-tech mp-p6a-sample-badge">AH</span>', self.js)

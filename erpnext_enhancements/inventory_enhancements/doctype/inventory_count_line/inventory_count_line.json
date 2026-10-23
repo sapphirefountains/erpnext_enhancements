@@ -109,7 +109,7 @@
    "label": "Recount"
   },
   {
-   "description": "Who typed or scanned this count. Blank on lines from before v1.700.0: the session's Counted By counted them.",
+   "description": "Who typed or scanned this count. Blank on lines from before v1.736.0: the session's Counted By counted them.",
    "fieldname": "counted_by",
    "fieldtype": "Link",
    "label": "Counted By",

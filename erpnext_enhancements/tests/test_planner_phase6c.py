@@ -276,6 +276,24 @@ class TestCleaning(unittest.TestCase):
 		)
 		self.assertEqual(prefs.clean_view("nope", {"view": "week"}), {})
 
+	def test_a_project_view_says_whether_its_color_was_chosen(self):
+		# The page honors a saved Task color ("default", the old default) only when this is set.
+		view = prefs.clean_view("project", {"color_by": "default", "color_chosen": "1"})
+		self.assertEqual(view, {"color_by": "default", "color_chosen": True})
+		self.assertIs(prefs.clean_view("project", {"color_chosen": 0})["color_chosen"], False)
+		# It survives as "last used" and through the stored copy, and the Maintenance Planner has none.
+		self.assertIn("color_chosen", prefs.clean_view("project", {"color_chosen": True}, remembered=True))
+		self.assertNotIn("color_chosen", prefs.clean_view("maintenance", {"color_chosen": True}))
+		# P2: Show all tasks is part of a Project Planner view (and not the Maintenance Planner's).
+		self.assertEqual(prefs.clean_view("project", {"all_tasks": "1"}), {"all_tasks": True})
+		self.assertIs(prefs.clean_view("project", {"all_tasks": 0})["all_tasks"], False)
+		self.assertIn("all_tasks", prefs.clean_view("project", {"all_tasks": True}, remembered=True))
+		self.assertNotIn("all_tasks", prefs.clean_view("maintenance", {"all_tasks": True}))
+		prefs.save_last_view("project", json.dumps({"color_by": "default", "color_chosen": True}))
+		self.assertEqual(
+			prefs.get_views("project")["last"], {"color_by": "default", "color_chosen": True}
+		)
+
 	def test_last_used_never_holds_the_running_over_chip(self):
 		self.assertNotIn("over_only", prefs.clean_view("project", {"over_only": True}, remembered=True))
 		self.assertIn("over_only", prefs.clean_view("project", {"over_only": True}))
@@ -667,7 +685,13 @@ class TestPages(unittest.TestCase):
 			self.assertIn("lines: JSON.stringify(model.lines)", block)
 
 	def test_restoring_a_view_replaces_the_bare_route_and_the_route_wins(self):
-		for block, route in ((self.pp_block, "PP.route"), (self.mp_block, "MP.route")):
+		# The Project Planner's tab is the device's since P8: its landing is p8_landing, replacing the bare
+		# route there (tests/test_planner_today.py pins that).
+		body = _obj_method(self.pp_block, "p6c_before_route")
+		self.assertIn("return !route[1] && this.p8_landing();", body)
+		self.assertIn("if (!p6c.restored) {", body)
+		self.assertIn("restore_wait", _obj_method(self.pp_block, "p6c_fetch_views"))
+		for block, route in ((self.mp_block, "MP.route"),):
 			body = _obj_method(block, "p6c_before_route")
 			guard = body.index("if (!route[1] && view && view !== ")
 			flag = body.index("frappe.route_flags.replace_route = true;")
@@ -1372,10 +1396,10 @@ class TestUnderNode(unittest.TestCase):
 
 	def test_a_bare_route_is_replaced_by_the_saved_view_once(self):
 		pp = self.out["pp"]
-		self.assertIs(pp["bare_taken"], True)
-		self.assertEqual(
-			pp["bare_calls"], [{"args": ["project-planner", "crew", "2026-10-09"], "replace": True}]
-		)
+		# P8 (Nik, 2026-10-21): the Project Planner's tab is the DEVICE's (scripts/test_planner_today.js),
+		# so an old row's saved view no longer replaces the bare route. Its filters and colors still do.
+		self.assertIs(pp["bare_taken"], False)
+		self.assertEqual(pp["bare_calls"], [])
 		group, color, restored, saved, over_only = pp["bare_state"]
 		self.assertEqual((group, color, restored), ("Field", "job_type", True))
 		self.assertNotIn("evil", saved)
@@ -1388,11 +1412,9 @@ class TestUnderNode(unittest.TestCase):
 		self.assertIs(pp["named_taken"], False)
 		self.assertEqual(pp["named_calls"], [])
 		self.assertEqual(pp["named_group"], "PM")
-		# A later bare route takes the view again (replacing), and leaves the live filters alone.
-		self.assertIs(pp["again_taken"], True)
-		self.assertEqual(
-			pp["again_calls"], [{"args": ["project-planner", "crew", "2026-10-09"], "replace": True}]
-		)
+		# A later bare route leaves the live filters alone (and, since P8, takes no saved view).
+		self.assertIs(pp["again_taken"], False)
+		self.assertEqual(pp["again_calls"], [])
 		self.assertEqual(pp["again_group"], "Design")
 		self.assertIs(pp["default_taken"], False)
 		self.assertEqual(pp["default_calls"], [])
@@ -1411,17 +1433,20 @@ class TestUnderNode(unittest.TestCase):
 		pp = self.out["pp"]
 		self.assertEqual(
 			pp["state_last"],
+			# No "view": the Project Planner's tab is the device's (P8), not the person's.
 			{
-				"view": "crew",
 				"project": "",
 				"pm": "",
 				"group": "Field",
 				"foreign": True,
 				"panel": True,
 				"color_by": "pm",
+				"color_chosen": False,
+				"all_tasks": False,
 			},
 		)
 		self.assertIs(pp["state_named"]["over_only"], True)
+		self.assertEqual(pp["state_named"]["view"], "crew")  # a named view is an explicit choice
 		self.assertNotIn("view", pp["state_route"])
 		self.assertEqual(
 			self.out["picked"], {"view": "crew", "color_by": "job_type", "foreign": False, "project": "A B"}

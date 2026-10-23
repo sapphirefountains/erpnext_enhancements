@@ -348,14 +348,16 @@ def get_planner(start, end, draft=0):
 	projected = _projections(start, end, today)
 	for card in projected:
 		card["movable"] = card["movable"] and can_move_projected
+	moves, unscheduled_moves = _move_cards(start, end, today)
 
 	_decorate(visits + unscheduled + projected)
 	view = _project_view(
-		_technicians(visits + unscheduled + projected),
+		_technicians(visits + unscheduled + projected + moves + unscheduled_moves),
 		start,
 		end,
 		visit_overrides=(overlay or {}).get("engine"),
 	)
+	_drop_move_bookings(view["bookings"], moves + unscheduled_moves)
 	_set_lead_hours(visits + unscheduled + projected, view["bookings"])
 	extra = {"drafts": maintenance_drafts.summary(overlay)} if overlay is not None else {}
 	return {
@@ -366,6 +368,9 @@ def get_planner(start, end, draft=0):
 		"visits": visits,
 		"unscheduled": unscheduled,
 		"projected": projected,
+		# Fountain Move tasks (v1.703.0): moved here, read-only on the Project Planner.
+		"moves": moves,
+		"unscheduled_moves": unscheduled_moves,
 		"technicians": view["technicians"],
 		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
@@ -374,6 +379,54 @@ def get_planner(start, end, draft=0):
 		"can_create_visits": bool(frappe.has_permission("Sapphire Maintenance Record", "create")),
 		**_planner_extras(start, end, view["bookings"]),  # Phase 6D: day_notes, block_notes, can_schedule
 	}
+
+
+def _move_cards(start, end, today):
+	"""``(dated, undated)`` Fountain Move task cards (``project_enhancements.fountain_move_jobs``).
+
+	Movable for anyone who may write Tasks. Never raises: a failure is logged and the calendar shows
+	its visits without the moves, because the visits come first here.
+	"""
+	try:
+		from erpnext_enhancements.project_enhancements import fountain_move_jobs
+
+		return fountain_move_jobs.planner_cards(
+			start, end, today, bool(frappe.has_permission("Task", "write"))
+		)
+	except Exception:
+		_log_failure("Maintenance Planner: Fountain Move cards failed")
+		return [], []
+
+
+def _drop_move_bookings(bookings, moves):
+	"""Take the move tasks out of the read-only project bookings: each has a card of its own.
+
+	Only the cards (``items``) go; the day's capacity, booked and free hours still count them.
+	"""
+	refs = {card.get("name") for card in moves or [] if card.get("name")}
+	if not refs:
+		return
+	for per_day in (bookings or {}).values():
+		for cell in (per_day or {}).values():
+			cell["items"] = [
+				item for item in cell.get("items") or [] if not (item.get("kind") == "task" and item.get("ref") in refs)
+			]
+
+
+@frappe.whitelist(methods=["POST"])
+def move_fountain_move(task, modified, date=None, crew=None, reason=None):
+	"""Move a Fountain Move task to ``date`` and/or set its crew (a JSON list of users, lead first).
+
+	The Project Planner's own write does the work (``fountain_move_jobs.move_task``), so it answers
+	the same way: ``needs_reason`` with the conflicts when the change creates one and no ``reason``
+	came with it, otherwise the saved task. Overbooking warns and never blocks.
+	"""
+	_require_planner()
+	from erpnext_enhancements.project_enhancements import fountain_move_jobs
+
+	if date and getdate(date) < getdate(nowdate()):
+		frappe.throw(_("Move jobs can only be moved to today or a later day."))
+	return fountain_move_jobs.move_task(task, modified, date=date, crew=crew, reason=reason)
 
 
 # Booking kinds the Maintenance Planner shows read-only. Visits are its own cards; the engine's
@@ -642,12 +695,20 @@ def _visit_card(row, today, can_move):
 	}
 
 
-def _projections(start, end, today):
+def _projections(start, end, today, projects=None):
+	"""The projected visits of every Active contract, or (``projects``, a list of Project names) only of the
+	contracts on those projects: Simple mode (``planner_simple``) projects one page of sites, not every contract."""
+	filters = {"status": "Active"}
+	if projects is not None:
+		if not projects:
+			return []
+		filters["project"] = ["in", list(projects)]
+
 	from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
 		iter_seasonal_visits,
 	)
 
-	contracts = frappe.get_all("Sapphire Maintenance Contract", filters={"status": "Active"}, pluck="name")
+	contracts = frappe.get_all("Sapphire Maintenance Contract", filters=filters, pluck="name")
 	if not contracts:
 		return []
 
@@ -938,6 +999,7 @@ def move_visit(
 	full_day=None,
 	from_user=None,
 	tentative=None,
+	notify=None,
 	draft=0,
 ):
 	"""Reschedule an open draft visit, hand it to someone else, or change who is on it.
@@ -973,6 +1035,11 @@ def move_visit(
 	caller's Planner Draft Change row for the visit (``maintenance_drafts.draft_move``) and is saved
 	through :func:`_apply_visit`, this very path, when they publish.
 
+	``notify`` (P3, the "Notify crew?" answer): ``1`` sends the people whose visit moved, or who
+	came on or off it, the Maintenance Planner's publish notice (never the person editing), ``0``
+	sends nothing, ``auto`` notifies when the visit's day before or after is within the next 14
+	days. The answer carries ``"notified"``. Unset, nothing changes. Ignored with ``draft=1``.
+
 	Returns ``{"name", "date", "technician", "crew": [{"user", "name", "hours"}],
 	"planned_hours", "full_day", "tentative", "modified", "warnings"}``, plus ``conflicts`` when
 	saved over some.
@@ -995,7 +1062,37 @@ def move_visit(
 	doc.check_permission("write")
 	_refuse_finished(doc)
 	_check_fresh(doc, modified)
-	return _apply_visit(doc, reason=reason, **edits)
+	from erpnext_enhancements.api.maintenance_drafts import _given
+
+	if _given(notify) is None:
+		return _apply_visit(doc, reason=reason, **edits)
+	return _apply_visit_notified(doc, notify, reason=reason, **edits)
+
+
+def _apply_visit_notified(doc, notify, reason=None, **edits):
+	""":func:`_apply_visit` with a "Notify crew?" answer (P3): the visit as the engine reads it
+	before and after (``maintenance_drafts.engine_row``) goes to that planner's own publish notice,
+	so a live move with Notify tells people exactly what publishing the same draft would."""
+	from erpnext_enhancements.api import maintenance_drafts
+
+	before = maintenance_drafts.engine_row(doc)
+	return _with_visit_notice(doc, notify, before, _apply_visit(doc, reason=reason, **edits))
+
+
+def _with_visit_notice(doc, notify, before, result):
+	"""``result`` with ``"notified"``: the visit's publish notice to the people it moved when the
+	"Notify crew?" answer is Notify (``before`` is ``maintenance_drafts.engine_row`` before the edit)."""
+	from erpnext_enhancements.api import maintenance_drafts
+	from erpnext_enhancements.api.project_planner import notify_choice
+
+	if result.get("needs_reason"):
+		return result
+	after = maintenance_drafts.engine_row(doc)
+	spans = [(row["plan_date"], row["plan_date"]) for row in (before, after) if row.get("plan_date")]
+	choice = notify_choice(notify, spans, getdate(nowdate()))
+	plan = {"name": doc.name, "subject": maintenance_drafts._subject(doc), "before": before, "after": after}
+	result["notified"] = maintenance_drafts._notify_publish([plan]) if choice else 0
+	return result
 
 
 def _apply_visit(doc, reason=None, **edits):
@@ -1136,7 +1233,7 @@ def _edit_visit(
 
 
 @frappe.whitelist(methods=["POST"])
-def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
+def add_crew(record, user, modified=None, reason=None, hours=None, notify=None, draft=0):
 	"""Add a helper to a visit's crew (P1.8): a technician chip dropped on a visit.
 
 	Refuses a finished or started visit, and a projected one (it is not a record yet:
@@ -1150,6 +1247,9 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	:func:`_apply_visit`, which checks the new person's day exactly as this does.
 
 	Returns the same shape as :func:`move_visit`.
+
+	``notify`` (P4, the page's "Notify crew?" answer): as :func:`move_visit` takes it. Unset, nothing
+	changes; ignored with ``draft=1``.
 	"""
 	_require_planner()
 	if "|" in str(record or "") or not frappe.db.exists("Sapphire Maintenance Record", record):
@@ -1185,6 +1285,10 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	if user == doc.get("technician") or user in [entry["user"] for entry in current]:
 		return _visit_result(doc, [])
 
+	from erpnext_enhancements.api import maintenance_drafts
+	from erpnext_enhancements.api.maintenance_drafts import _given
+
+	before = maintenance_drafts.engine_row(doc) if _given(notify) is not None else None
 	set_crew(doc, [*current, {"user": user, "hours": hours}])
 	conflicts = {}
 	if doc.get("scheduled_visit_date"):
@@ -1199,7 +1303,7 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	result = _visit_result(doc, warnings)
 	if conflicts:
 		result["conflicts"] = conflicts
-	return result
+	return result if before is None else _with_visit_notice(doc, notify, before, result)
 
 
 def _refuse_finished(doc):

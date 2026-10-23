@@ -132,47 +132,47 @@ class TestDependenciesAndQualifications(unittest.TestCase):
 		self.assertNotIn("qualification", _method(code, "ask_reason").lower())
 		self.assertNotIn("qualification_gaps", _method(code, "send"))
 
-	def test_moving_later_offers_to_shift_the_tasks_that_follow(self):
+	def test_moving_a_task_moves_the_tasks_that_follow(self):
+		# P4 (D10, D15) replaced the "Shift N tasks that follow?" offer: the save itself carries
+		# dependents=1, so the server moves them in the same request, later or earlier (one reason, one
+		# Undo). tests/test_planner_autoshift.py and scripts/test_planner_autoshift.js test it in full.
 		code = _code_without_comments()
 		commit = _method(code, "commit")
-		self.assertIn("this.offer_shift(snapshot, method, result)", commit)
-		offer = _method(code, "offer_shift")
-		self.assertIn("result.successors", offer)
-		self.assertIn("Shift {0} tasks that follow", offer)
-		self.assertIn("working days", offer)
-		self.assertIn("frappe.confirm(", offer)
-		self.assertIn("this.shift_successors(", offer)
-		# The shift goes through send(), so a conflict asks for a reason like any other change.
-		self.assertIn('this.send("shift_successors", args)', code)
-		# It is given the successors still to move, so ERPNext's own reschedule is not doubled.
-		self.assertIn("args.tasks = JSON.stringify(names)", code)
-		# Working days skip Saturday and Sunday.
-		self.assertIn("isoWeekday() <= 5", _method(code, "working_days_between"))
+		self.assertIn("this.as4_prepare([this.as4_change(card, method, args)], opts, go)", commit)
+		self.assertNotIn("offer_shift", code)
+		self.assertNotIn('this.send("shift_successors"', code)
 
 
 class TestHeatmap(unittest.TestCase):
 	def test_the_heatmap_is_a_route_and_steps_four_weeks_as_routes(self):
 		code = _code_without_comments()
-		self.assertIn('heatmap_view: "heatmap"', code)
-		self.assertIn("heatmap_weeks: 8", code)
+		# Capacity (P7) is the Crew tab's second screen: /crew/<date>?capacity=1, and the old
+		# /heatmap/<date> address redirects to it.
+		self.assertIn('capacity_view: "capacity"', code)
+		self.assertIn("capacity_weeks: 8", code)
 		target = _method(code, "route_target")
-		self.assertIn("route[1] === PP.heatmap_view", target)
+		self.assertIn("PP.capacity_aliases[route[1]]", target)
+		self.assertIn("this.capacity_param()", target)
 		self.assertIn('moment(route[2], "YYYY-MM-DD", true).isValid()', target)
-		self.assertIn("PP.heatmap_weeks / 2", _method(code, "shift"))
+		self.assertIn("PP.capacity_weeks / 2", _method(code, "shift"))
 		# Stepping and the toolbar button are route changes, so Back and Forward step through them.
 		self.assertIn("this.go(this.view, pp_ymd(next))", _method(code, "shift"))
-		self.assertIn("[PP.heatmap_view, __(", code)
-		# It is not one of the three calendar views.
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		# The Heatmap is no tab of its own now: it is Capacity, under the Crew tab's header.
+		self.assertNotIn("[PP.heatmap_view", code)
+		self.assertIn("[PP.capacity_view, __(\"Capacity\")", _method(code, "render_crew_bar"))
+		# It is not one of the views drawn from cards.
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 
 	def test_the_heatmap_reads_get_heatmap_for_eight_weeks(self):
 		code = _code_without_comments()
 		load = _method(code, "load_heatmap")
 		self.assertIn("${PP.api}.get_heatmap", load)
-		self.assertIn("weeks: PP.heatmap_weeks", load)
+		self.assertIn("weeks: PP.capacity_weeks", load)
 		# One load per view change: the heatmap never calls get_planner.
 		self.assertNotIn("get_planner", load)
-		self.assertIn("if (this.view === PP.heatmap_view) return this.load_heatmap();", code)
+		self.assertIn("if (this.view === PP.capacity_view) return this.load_capacity();", code)
+		# Capacity loads the heatmap and the Utilization table together, each on its own.
+		self.assertIn("this.load_heatmap(token), this.load_utilization(token)", _method(code, "load_capacity"))
 
 	def test_cells_are_colored_by_firm_load_with_a_hatch_for_pencil(self):
 		code = _code_without_comments()
@@ -198,18 +198,18 @@ class TestHeatmap(unittest.TestCase):
 	def test_the_heatmap_hides_the_calendar_only_controls(self):
 		code = _code_without_comments()
 		mode = _method(code, "set_mode")
-		# The heatmap and Utilization (v1.687.0) are both boards with no calendar controls.
-		self.assertIn("const board = mode === PP.heatmap_view || mode === PP.util_view;", mode)
+		# Capacity (the heatmap and Utilization, merged by P7) is a board with no calendar controls.
+		self.assertIn("const board = mode === PP.capacity_view;", mode)
 		for control in ("$project", "$pm", "$undo"):
 			self.assertIn(control, mode)
 		self.assertIn("this.$trays.toggle(!route && !board)", mode)
 		# The calendar-only controls folded into the toolbar's menus (v1.687.0) are offered only on the
-		# calendar views: "Maintenance, rentals, travel" in Display, Copy week in Edit.
+		# calendar views: "Maintenance, rentals, travel" in Display, Copy week in Tools.
 		self.assertIn("return PP.views.includes(this.view);", _obj_method(code, "tb_calendar"))
 		self.assertIn("if (!this.tb_calendar()) return [];", _obj_method(code, "tb_display_items"))
 		self.assertIn(
 			'if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {',
-			_obj_method(code, "tb_edit_items"),
+			_obj_method(code, "tb_tools_items"),
 		)
 
 
@@ -269,9 +269,9 @@ class TestOverdueTray(unittest.TestCase):
 
 class TestCopyWeek(unittest.TestCase):
 	def test_copy_week_is_a_toolbar_action_on_week_and_crew_views(self):
-		# An item of the toolbar's Edit menu since v1.687.0, on the week and crew views, for planners.
+		# An item of the toolbar's More ▸ Tools since v1.687.0, on the week and crew views, for planners.
 		code = _code_without_comments()
-		edit = _obj_method(code, "tb_edit_items")
+		edit = _obj_method(code, "tb_tools_items")
 		self.assertIn('label: __("Copy week…"),', edit)
 		self.assertIn('this.view !== "month" && this.data && this.data.can_edit', edit)
 		self.assertIn("on_click: () => this.open_copy_week(),", edit)
@@ -317,7 +317,7 @@ class TestWeeksFollowTheSite(unittest.TestCase):
 			)
 		]
 		# range() serves every view: only its heatmap branch is checked.
-		parts.append(_method(code, "range").split("PP.heatmap_view")[1].split("if (this.view")[0])
+		parts.append(_method(code, "range").split("PP.capacity_view")[1].split("if (this.view")[0])
 		for part in parts:
 			for monday in ("isoWeekday", ".day(1)", ".weekday(", "startOf(\"isoWeek\")", "startOf(\"week\")"):
 				self.assertNotIn(monday, part)
@@ -325,7 +325,7 @@ class TestWeeksFollowTheSite(unittest.TestCase):
 
 	def test_the_page_sends_each_weeks_first_day(self):
 		code = _code_without_comments()
-		self.assertIn("args: { start: pp_ymd(start), weeks: PP.heatmap_weeks }", _method(code, "load_heatmap"))
+		self.assertIn("args: { start: pp_ymd(start), weeks: PP.capacity_weeks }", _method(code, "load_heatmap"))
 		preview = _method(code, "preview_copy")
 		self.assertIn("{ source_start, target_start,", preview)
 		# Columns come from the server's weeks (or its week_start), and a cell routes to its exact start.
@@ -338,7 +338,7 @@ class TestPhase3aConventions(unittest.TestCase):
 		code = _code_without_comments()
 		for method in ("get_heatmap", "get_overdue"):
 			self.assertIn(f"${{PP.api}}.{method}", code)
-		for method in ("shift_successors", "bulk_update", "copy_week"):
+		for method in ("bulk_update", "copy_week"):
 			self.assertRegex(code, rf'this\.send\("{method}"')
 		self.assertNotRegex(code, r"type:\s*[\"']GET[\"']")
 

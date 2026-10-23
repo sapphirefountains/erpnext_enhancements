@@ -36,6 +36,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
 | `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D) when the person has something booked, and never sending on a note or block alone (Phase 6E); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `planner_weekly_summary.py` | The weekly schedule summary and its Monday email (P9, v1.715.0, Nik's D3 and D16): `build_summary` is one read (next week by job and by person, what moved in the last seven days from `tabVersion`, the exception list), drawn as a printout on the print design system (`summary_document`) and as an email through the email shell (`summary_email`). `send_weekly_summary` is the cron job (`15 6 * * 1` in `hooks.py`): **it does nothing, before any query, unless Project Planner Settings > *Email the weekly summary on Mondays* is ticked (it ships OFF) and someone is named under *Send it to***; at most one send per week through a `Planner Digest Log` row keyed `weekly-summary|<first day>`. Published schedules only: a Draft schedule is named, never described | `build_summary`, `summary_document`, `summary_email`, `send_weekly_summary`, `send_preview` | `hooks.py` `scheduler_events`; the Overview tab's *Print weekly summary* |
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`) with its nightly refresh of the stored Labor-line figure, and the Task equipment validator | `task_actuals`, `labor_forecast`, `refresh_labor_forecasts`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `scheduler_events.daily_long`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Drawn as the Project Planner's **Utilization** view (v1.687.0), which reads it through `frappe.desk.query_report.run` and links to it |
@@ -44,7 +45,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
 | `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
-| `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
+| `fountain_move_jobs.py` | Fountain Move jobs (Nik, 2026-10-21): a **Service** project with `custom_is_fountain_move` ticked. A new ticked project gets the **Fountain Move** template when none was chosen (and that template ticks the box; an Opportunity from the /fountain-move intake ticks it and preselects the template in Create Project); its task cards are moved on the **Maintenance Planner** and are read-only on the Project Planner (`mark_read_only`, and `_load` refuses a single-task edit there). Seeds the template (Confirm move date 0 h; Move day 4 h, crew 2, Outdoor; Invoice 0 h) and converts PRJ-00775 | `apply_on_insert`, `insert_defaults`, `opportunity_defaults`, `planner_cards`, `move_task`, `mark_read_only`, `refuse_on_project_planner`, `seed_template`, `make_move_job` | `doc_events["Project"]["before_insert"]`; `api/project_planner` (`get_planner`, `_load`); `api/maintenance_planner` (`get_planner`, `move_fountain_move`); `patches/seed_fountain_move_template.py`, `patches/make_prj_00775_a_move_job.py` |
+| `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own, except on a project whose schedule is still Draft, where they are the project's and every scheduler shares them (P3) | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
 | `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
 | `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
@@ -79,6 +81,8 @@ Related code outside this folder:
 - `api/planner_ai_draft.py` — the Build out grid's **AI draft…** (T4, v1.609.0): one POST endpoint, `draft_task_breakdown`, that asks the app's Gemini client for a task breakdown and returns grid rows. It writes nothing and never picks a person or a day. See [AI draft](#ai-draft-a-task-breakdown-for-the-grid-t4-v1609).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
+- `api/planner_simple.py` and `public/js/planner_kit/simple.js` — **Simple mode** for both planners: a card per job (or site), Done and Coming up, one search box. Reads only. See [Simple mode](#simple-mode-v17230).
+- `public/js/planner_kit/tour.js` — P12: the first-visit tour, a few short steps in one modal dialog, skippable everywhere and never a history entry. See [The first-visit tour and the help](#the-first-visit-tour-and-the-help-p12-v17160-planner-ux-redesign).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
@@ -242,8 +246,8 @@ not create a line the project does not have yet.
 
 ## Projects Dashboard
 
-- **One surface (consolidated in v1.159.8):** the dashboard is the **"Projects Dashboard" Custom HTML Block**, embedded on the **Home** and **Projects** workspaces (placed by `setup.custom_html_blocks.sync_custom_html_blocks`, which also *deploys* it — the repo `.js`/`.html`/`.css` become the block's `script`/`html`/`style` on migrate, no asset build). It renders a tabbed shell — Priority Overview (default), Active Internal Projects, Completed Projects, Portfolio Gantt, Dashboard — plus **New Project** / **New Master Project** buttons, all in one IIFE (`custom_html_blocks/projects_dashboard.js`). A *second*, parallel desk-page implementation (`/app/project-dashboard`) was **removed** here; the desk shortcut + Project Enhancements workspace link now point at the Projects workspace (`retire_project_dashboard_desk_page` patch).
-- **Data source:** the whitelisted methods in `project_dashboard.py`. `get_project_data` uses bulk SQL/`get_all` for task counts and derives assignees from **ToDo** rows (Project has no `project_user` column — selecting one would raise "Unknown column"). The **Dashboard** tab computes its headline cards + status/type/completion breakdowns client-side from that same `get_project_data` payload (no separate endpoint). The Active Internal Projects tab shows only active projects whose `project_type` is internal (`INTERNAL_PROJECT_TYPES`, defined in the block JS).
+- **One surface (consolidated in v1.159.8):** the dashboard is the **"Projects Dashboard" Custom HTML Block**, embedded on the **Home** and **Projects** workspaces (placed by `setup.custom_html_blocks.sync_custom_html_blocks`, which also *deploys* it — the repo `.js`/`.html`/`.css` become the block's `script`/`html`/`style` on migrate, no asset build). It renders a tabbed shell — Priority Overview (default) and Portfolio Gantt, with Active Internal Projects, Completed Projects and Summary behind a **View More** button (v1.719.0; the old *Dashboard* tab is the Summary) — plus one **+** button whose menu holds **New Project** / **New Master Project**, all in one IIFE (`custom_html_blocks/projects_dashboard.js`). A *second*, parallel desk-page implementation (`/app/project-dashboard`) was **removed** here; the desk shortcut + Project Enhancements workspace link now point at the Projects workspace (`retire_project_dashboard_desk_page` patch).
+- **Data source:** the whitelisted methods in `project_dashboard.py`. `get_project_data` uses bulk SQL/`get_all` for task counts and derives assignees from **ToDo** rows (Project has no `project_user` column — selecting one would raise "Unknown column"). The **Summary** tab (the old *Dashboard* tab) computes its headline cards + status/type/completion breakdowns client-side from that same `get_project_data` payload (no separate endpoint). The Active Internal Projects tab shows only active projects whose `project_type` is internal (`INTERNAL_PROJECT_TYPES`, defined in the block JS).
 - **Realtime:** `publish_realtime_update(doc, method)` fires `frappe.publish_realtime("project_dashboard_updated", …)` and is registered on both **Task** `on_update` and **Project** `on_update`.
 - **Permission gating:** the block is visible to anyone who can see its workspace. `check_permission()` still gates the whitelisted reads (Custom Role + Has Role for the "Project Dashboard" page, falling back to the legacy `Project Dashboard Settings.permitted_roles`); list reads fetch with ignore-permissions (a portfolio view), while inline-edit/write endpoints enforce per-document `frappe.has_permission("Project", "write", …)`, and `update_project_details` restricts edits to a whitelisted `EDITABLE_PROJECT_FIELDS` set.
 
@@ -473,6 +477,24 @@ or sent for the client to sign in their own time.
   (Maintenance, Rental and Owner first). Each sentence restates a clause of the shipped template; change both together (a test
   checks the quoted figures against the template text). The signing page scrolls to the next initials
   box after each one, then to the signature.
+- **The maintenance agreement's Service Fee** (`maintenance_fee.py`, `period_fee` in the render context,
+  v1.724.0): "Service Fee: $1,490.00 per month, billed May through September" in Service Plan Selection, and a
+  matching summary row. The figure is the linked Sapphire Maintenance Contract's Recurring Amount when it bills on
+  the agreement's cadence. Before that contract exists, or when it bills on the same cadence without an amount, the
+  figure is the Annual Fee ÷ `billed_periods_per_year`. Otherwise no line, never $0.00.
+  - No line for Per Visit invoicing, a ticked and priced per-visit Standard rate, or an Annually split that would
+    only repeat the Annual Fee.
+  - With a Service Fee and no Annual Fee, the template drops the blank Annual Service Fee Total line, and the
+    builder's `blanks`/`progress` stop asking for it (`_printed_only_when_set`).
+  - `patches/refresh_maintenance_agreement_fee_line` brings it to the live body (v1.611.1 / v1.611.0 shipped
+    bodies only). If it has to wait on a signing link, its `retry_after_migrate` (`after_migrate`) finishes the
+    swap at the first migrate after the link closes.
+  - A fee reaches only a stored body that prints the line (`template_prints_fee`, `_render_context(doc, body)`).
+    That keeps the summary's Python-built row from appearing before the template has the line.
+  - **Don't change a maintenance contract's monthly amount, billing frequency or season while its agreement is
+    out for signature.** The fee is read from that contract every time the agreement renders, and the executed
+    copy is rendered again at signing. Such an edit changes what the client signs. The e-sign drift check marks
+    the request `document_drifted`, but it does not stop the signing.
 - **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
   which replaces the live body only when it is exactly the v1.609.0 shipped body):
   Standard Maintenance is the base rate per visit plus chemicals, always billed in addition
@@ -720,8 +742,9 @@ places at once without being told. Scope set by Nik on 2026-10-08; the whole bui
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
 **Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
-(`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
-or to `/week/<expected_start_date>` for a project that has not started yet. The button is only on
+(`public/js/project_enhancements/project_planner_link.js`) routes to that project's Gantt,
+`/desk/project-planner/gantt/<name>?project=<name>` (P6, v1.709.0; before it, the planner's default view, or
+the Lookahead on the week a project that had not started yet starts). The button is only on
 an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
 those whose roles open the page. The planner reads `project` as one of its address filters (below):
 after the last-used view is restored, so it wins over that, with the PM filter at All so it cannot
@@ -733,7 +756,7 @@ address; it now stays there, as the Project filter.)
 
 **Its filters are in the address** (custom pages S5c, v1.676.0, TASK-2026-02807). The Project,
 Project manager and Group filters ride on every planner screen as `?project=`, `?pm=` and
-`?group=`, e.g. `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`, so a copied
+`?group=`, e.g. `/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&group=Field`, so a copied
 link shows what its sender saw and a reload keeps it. The Maintenance Planner does the same for its
 Technician (`?technician=`, see the Sapphire Maintenance README). The rules, in the page's "filters
 in the address" block:
@@ -898,19 +921,18 @@ shop" is one setting), through each located task, rental crew task and maintenan
   `crew_sync` gives a tentative task no assignments, and adds the whole crew when it is firmed up,
   so nobody is notified of work that may not happen.
 - **Dependencies** (`depends_on`): moving a task to start before a predecessor ends adds a
-  "Starts before …" line under *Dependencies* in the reason prompt. After a move later, the page
-  offers to shift the tasks that follow by the same number of **working** days
-  (`shift_successors`, all-or-nothing, furthest first). ERPNext's own
-  `Task.on_update → reschedule_dependent_tasks` already pushes Open same-project dependents by
-  calendar days on every save. The planner detects those (`successors.auto_moved`) and leaves
-  them out of its offer, so nothing moves twice.
+  "Starts before …" line under *Dependencies* in the reason prompt. Since P4 a move, later or
+  earlier, takes the tasks that follow along by the same number of **working** days in the same
+  request (`dependents=1`; Ctrl/Cmd moves one task), which replaced the offer to shift them
+  (`shift_successors`, still an endpoint). See
+  [P4](#tasks-that-follow-draft-schedules-and-notify-crew-p4-planner-ux-redesign).
 - **Qualification gaps**: a task's *Qualifications needed* that no crew member holds as a current
   Employee Credential (Valid or Expiring, not expired by the task's last day) shows as a chip.
   It is a warning only.
-- **Heatmap** (`/app/project-planner/heatmap/<date>`): 8 weeks of booked vs available per person,
-  with pencil load hatched. It runs the engine with `google=False`, so cached and estimated drive
-  times only and never a fan-out of Routes calls. Weeks start on the site's **first weekday**
-  (Sunday on production), the same as the calendar.
+- **Heatmap**, now the top of **Capacity** (`/app/project-planner/crew/<date>?capacity=1`, see "The Crew
+  tab" below): 8 weeks of booked vs available per person, with pencil load hatched. It runs the engine
+  with `google=False`, so cached and estimated drive times only and never a fan-out of Routes calls.
+  Weeks start on the site's **first weekday** (Sunday on production), the same as the calendar.
 - **Overdue tray**: open, dated tasks on Active projects that ended before today, grouped by
   project, with bulk *Reschedule to…*, *Mark done* and *Cancel* (`bulk_update`: one savepoint per
   task, failures reported per task, writes "Canceled" with one l). ERPNext refuses to complete a
@@ -1117,54 +1139,112 @@ method (`init_phase6a`, `render_phase6a`, `p6a_route` in `go`, `p6a_drag_source`
 resource, no time-off reason, no money without a cost role, internal projects refused) and, under
 node, drives the kit's history handling against a fake browser history.
 
-### The toolbar (v1.687.0)
+### The toolbar (v1.687.0, v2)
 
 Nik picked the redesign from a mockup on 2026-10-14. Every phase had appended its own buttons to the
 bar (6A's help, 6B's search, 6C's Color by, Tap to move, Views and Print, 3B's Draft mode, My week and
 crew sheet, 6D's Conflicts and Block time, Phase 4's Running over and Utilization, Copy week, Undo),
-so it had grown into one long flat row. It is still **one bar**, made shorter by four menus
-(`planner_kit.toolbar.menu`); each menu's items are built when it opens, from the page's own state,
-through the methods the phases already had, and an item whose control was hidden on a screen (Copy
-week in the month view, Block time for someone who cannot schedule) is left out there.
+so it had grown into one long flat row. v1.687.0 made it **one bar** with four menus
+(`planner_kit.toolbar.menu`). **Toolbar v2** (P1 of the planner UX redesign, `docs/planner-ux-redesign.md`,
+approved 2026-10-21) folds those four into two, and gives both planners the same structure:
+
+```
+‹ Today ›  title   [Lookahead] Gantt Crew Calendar   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+```
+
+- **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
+  roving tabindex, ArrowLeft/Right/Home/End move focus (choosing one is a route change with its own
+  history entry, so Enter does it). Later PRs of the redesign swap the list for Lookahead, Gantt,
+  Crew, Calendar and Overview; the control stays.
+- **+ Add ▾** holds *Quick add task…* (the double-click's dialog, opened on today or the first day on
+  screen), *Build out tasks…* (T1's grid; for the project in the filter, else a Project is asked for
+  first) and *Day note…* (6D). The Maintenance Planner's holds *Add visit…* and *Day note…*.
+- **More ▾** holds four sections, built by `tb_more_sections()` and flattened by
+  `planner_kit.toolbar.sections_to_items` (a section with nothing on the screen is left out with its
+  heading):
+  **Display** (*Color by*, whose default is now **Job type**, and the key of its colors; *Highlight a
+  project…*; *Maintenance, rentals, travel*), **Views** (*My week*, the saved views, *Save current view
+  as…*, *Manage views…*), **Tools** (*Copy week…* on week and crew only, *Block time…*, *Conflicts…* at
+  any count, *Tap to move*, *Hold all my changes*, which is the old board-wide Draft mode, and *Undo*) and
+  **Print** (*Print this view*, *selection only*, *Print crew sheet*).
+- Each menu's items are built when it opens, from the page's own state, through the methods the
+  phases already had, and an item whose control was hidden on a screen (Copy week in the month view,
+  Block time for someone who cannot schedule) is left out there.
+- **Gone from the bar and kept elsewhere (D12):** *Split* is in the right-click menu and the task
+  panel only; the *Move by* switch (calendar or working days) is the first field of the **Move…**
+  panel on the selection bar, and a drag still counts in the unit it picks; Color by, the saved views,
+  Copy week and Print are in More.
+- **Job type is the default color.** The stored value `default` is the old *Task color*, which every
+  "last used" view carried whether or not anyone picked it, so a view now carries `color_chosen` (a bool in
+  `api/planner_views_prefs.SCHEMA["project"]`, on the server, so it follows the person to any device) and the
+  planner honors a saved `default` only when it is set.
 
 | Old control | Project Planner now | Maintenance Planner now |
 |---|---|---|
 | ‹ Today ›, title, view switcher, search, filters, ?, ↻ | in the bar (Utilization joins the switcher) | in the bar |
-| Views (saved views) | **Views ▾** with *My week*, *Save current view as…*, *Manage views…* | **Views ▾** |
-| My week | Views ▾ | (none) |
-| Color by, and its key row | **Display ▾**: radio items, then the key (a project in it is a switch for its highlight) | Display ▾, likewise (a site) |
-| Maintenance, rentals, travel / Projected visits, Project work | Display ▾ (check marks) | Display ▾ |
-| The visit-kind legend row | | Display ▾ (*Visit kinds*) and "?" |
-| Draft mode, Tap to move | **Edit ▾** (check marks) | Edit ▾ |
-| Block time, Copy week, Add visit | Edit ▾ (Copy week on week and crew only) | Edit ▾ (*Add visit…*, *Block time…*) |
-| Conflicts (N) | a **danger chip** above 0, and *Conflicts…* in Edit at any count | the same |
+| Views (saved views) | **More ▸ Views** with *My week*, *Save current view as…*, *Manage views…* | **More ▸ Views** |
+| My week | More ▸ Views | (none) |
+| Color by, and its key row | **More ▸ Display**: radio items, then the key (a project in it is a switch for its highlight) | More ▸ Display, likewise (a site) |
+| Highlight a project | More ▸ Display (*Highlight a project…*, or *Highlighting X* to switch it off), a project's name on a card, the project drawer, Esc | a site's panel, the site drawer, the key |
+| Maintenance, rentals, travel / Projected visits, Project work | More ▸ Display (check marks) | More ▸ Display (*Project work* is a thin strip a technician-day, *Project work as cards* the old cards; P10) |
+| The visit-kind legend row | | "?" only (it was More ▸ Display's *Visit kinds* from v1.687.0 to P10) |
+| Draft mode, Tap to move | **More ▸ Tools** (*Hold all my changes*, *Tap to move*; check marks) | More ▸ Tools (*Draft mode*, *Tap to move*) |
+| Block time, Copy week | More ▸ Tools (Copy week on week and crew only) | More ▸ Tools (*Block time…*) |
+| Quick add, Build out, Day note / Add visit | **+ Add** | **+ Add** (*Add visit…*, *Day note…*) |
+| Conflicts (N) | a **danger chip** above 0, and *Conflicts…* in Tools at any count | the same |
 | Running over (N) | a **warn chip** while above 0 or while it filters | (visits have no planned-vs-clocked hours) |
 | Overdue | a **danger chip** opening the Overdue tray | a **danger chip** opening a side panel listing the overdue visits on screen |
-| Undo | Edit ▾, and a small ↶ icon while there is something to undo | the same |
-| Print, Print crew sheet | **Print ▾** | Print ▾ (*Print this view*, *selection only*) |
-| Utilization (button to the report) | the fifth **view**, `/project-planner/utilization/<date>` | (none: the Project Planner's view counts visits already) |
+| Undo | More ▸ Tools, and a small ↶ icon while there is something to undo | the same |
+| Print, Print crew sheet | **More ▸ Print** | More ▸ Print (*Print this view*, *selection only*, *Day Board*) |
+| Move by (calendar or working days) | the Move… panel's first field | the same |
+| Utilization (button to the report) | the table under the heatmap on **Capacity** (the Crew tab's second screen, P7) | (none: the Project Planner's view counts visits already) |
 | First-time tip banners | the first section of "?" | the same |
-| Draft mode's bottom bar | a strip **under the toolbar**: "Draft mode on: N changes not published yet", Publish, Discard | the same |
+| Draft mode's bottom bar | a strip **under the toolbar**: "Holding your changes: N not published yet", Publish, Discard; since P4 also a line per project with drafts (*Publish…* on a Draft schedule) | "Draft mode on: N changes not published yet", Publish, Discard |
 
 **On a phone** (767px and under) the bar is ‹ Today ›, the title, the view switcher and **Filters and
 tools** (with the alerts' total), which opens `planner_kit.toolbar.sheet`: the filters and search
-(moved in from the bar, and back when it closes), the alert chips, the four menus' items, and the
+(moved in from the bar, and back when it closes), the alert chips, + Add and More's four sections as sheet sections, and the
 help, refresh (and the Day Board, on the Maintenance Planner). It takes the kit's one history entry,
 so the phone's Back closes it.
 
-**Utilization** reads the Crew Utilization report itself (`frappe.desk.query_report.run`, so the
-report's roles decide who sees it and the figures always match): the month holding the date, a row
-per person per week, with capacity, booked and clocked hours and the two percentages, a week past
-capacity carrying an *Over* chip and one at 75% or more *Near full*. ‹ › step a month. Group narrows
-it; Project and Project manager do not apply to a person's week, so they are hidden there and kept in
-the address for the next calendar view. *Open the full report* opens the report on the same month and
-group. It is not a saved-view view (`planner_views_prefs.SCHEMA` is unchanged), so "last used" keeps
-the calendar view before it.
+**The Crew tab (P7 of the planner UX redesign).** Two screens under one tab, switched by *Board | Capacity*
+in a header of their own, each its own history entry:
+
+- **Board** (`/project-planner/crew/<date>`): a task is a bar along a person's row, counted in days. The
+  chips of one task on neighboring days are drawn joined (`pp-span-prev` / `pp-span-next`) and each reads
+  *Day 2 of 5*; a chip is still the unit that is dragged, resized and tapped, so every move is unchanged.
+  *Show hours* (a browser preference, off) adds the hours or the time slot beside the days. A task with no
+  hours still books a full day (the engine's rule, `crew_availability.full_day_hours`), so the day cell
+  says *Full*, *3h free* or *Off* as before. The tray (*Not scheduled*, *Needs crew*) sits beside the board
+  on a laptop and above it on a phone. *Day n of N* counts the **task's** working days from its own dates,
+  the same count as the calendar card's *5 days* (`duration_text`), not how many of those days this person is
+  booked: someone on a Monday to Wednesday pattern has chips on three days of a task both views call five.
+  **It is not yet one true bar:** a multi-day task is still one chip per day, drawn joined, because the chip
+  is what is dragged, resized and tapped; a single spanning bar is a possible follow-up.
+- **Capacity** (`/project-planner/crew/<date>?capacity=1`): it replaces the Heatmap and Utilization views.
+  The eight-week heatmap is on top and the Crew Utilization report's rows are under it for the same eight
+  weeks (whole weeks, so the month view's clipped first and last weeks are gone). ‹ › step four weeks.
+  The two sections load and draw on their own. The table reads the report itself
+  (`frappe.desk.query_report.run`, so the report's roles decide who sees it and the figures always match),
+  one row per person per week with capacity, booked and clocked hours and the two percentages, a week past
+  capacity carrying an *Over* chip and one at 75% or more *Near full*. Its section is there only for
+  someone the boot says the report is open to (`allowed_reports` and `can_get_report("Task")`); everyone
+  else sees the heatmap alone. A refusal from the server, or arriving by the old Utilization address
+  without access, draws the no-access panel instead. Group narrows both; Project and Project manager do
+  not apply to a person's week, so they are hidden there and kept in the address. *Open the full report*
+  opens the report on the same weeks and group.
+
+Capacity is an internal view (`PP.capacity_view`) and a route of the Crew tab, never a path of its own. The
+old `/heatmap/<date>` and `/utilization/<date>` addresses are replaced (never pushed) by
+`/crew/<date>?capacity=1` (`?capacity=utilization` for the old Utilization address, which scrolls to the
+table), carrying their filters. `?capacity=` is the address's, like the filters: the page consumes it from
+`route_options`, so no later route writes it again. A saved view or "last used" view that says `heatmap`
+(`planner_views_prefs.SCHEMA` still accepts it) opens Capacity, and `capacity` is saved as itself.
 
 The page side is `PPTB_METHODS` / `MPTB_METHODS` and `PPU_METHODS`; `tests/test_planner_toolbar.py`
 runs `scripts/test_planner_toolbar.js` (the kit module on a fake DOM and a fake browser, and both
 pages' blocks with an explicit list of every old control) and `scripts/test_planner_url_filters.js`
-covers the Utilization view's address.
+covers the address of Capacity and the redirects from the old ones.
 
 ### Planner kit
 
@@ -1192,7 +1272,9 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide` | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
-| `legend(sections, {title, owner})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}` | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
+| `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
+| `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, named by `title` through `aria-label` alone, or by the step's heading when there is none, and described by the step's sentence; the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
+| `simple.mount(root, {title, placeholder, noun, load, open, off, help, is_phone})` | Simple mode's screen: the bar (heading, search, the switch shown on, "?"), a card per job or site from `load(search, start, limit)` (a promise of `get_simple_jobs`/`get_simple_sites`' answer), "N of M jobs", Show more | Draws only; `open(doctype, name)`, `off()` and `help()` are the page's. The search reads again 300 ms after the last key and closes every Show all; an answer for an older read is dropped; a failed read says so with Try again; Show all / Show fewer and Show more take no history entry. Returns `{refresh, render, root, state}`; `refresh()` reads as many cards as are shown. `simple.card_html`, `simple.initials` and `simple.legend_sections("jobs" \| "sites")` are pure |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
@@ -1346,7 +1428,7 @@ do to a drag.
   or a click on empty space clears it. Drag any selected card and they all move by **the same number of
   calendar days**, each keeping its length: the card in hand lands exactly where it is dropped, as a
   single drag does, and a weekend is not skipped (working days would land the others somewhere the
-  drag does not show; since Phase 6E the bar's *Move by: Calendar days | Working days* switch counts
+  drag does not show; since Phase 6E the *Move by: Calendar days | Working days* choice (a field of the Move… panel since toolbar v2) counts
   working days instead). A drop on another person's row is refused while several are selected (hand one
   over with the selection cleared). `move_many` checks the lot together (`preview_batch`, as
   `shift_successors` and `copy_week` do), asks for one reason, saves all or nothing, furthest first when
@@ -1403,7 +1485,7 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
 `MP6C_METHODS`, the pure half is the kit's `big_picture`, and the one backend module is
 [`api/planner_views_prefs.py`](../api/planner_views_prefs.py).
 
-- **Color by** (the toolbar's Display menu, v1.687.0). The Project Planner colors each card's left edge by *Task color* (the
+- **Color by** (More ▸ Display; the default is Job type since toolbar v2). The Project Planner colors each card's left edge by *Task color* (the
   default, today's look: the task's own color), *Person* (the lead, or in the crew view the row's
   person, in the same color as their dot and badges), *Job type*, *Project*, *Project manager* or
   *Status*; the Maintenance Planner by *Visit type* (the default, today's colors), *Technician*, *Site*,
@@ -1431,8 +1513,8 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
 - **Saved views, per person, on the server.** The toolbar's *Views* menu: *Save view as…* (a name; the
   same name replaces), switch, *Manage views…* (use, delete). A view holds the calendar view, the
   filters (Project Planner: project, PM, group, *Maintenance, rentals, travel*, *Running over*,
-  Resources available open; Maintenance Planner: technician, projected visits, project work, Resources
-  available open) and the color-by. The view **last used** is saved a moment after any change and
+  Resources available open; Maintenance Planner: technician, projected visits, project work, project
+  work as cards, Resources available open) and the color-by. The view **last used** is saved a moment after any change and
   applied when the planner opens, on any device. Two rules:
   - **The route wins.** A URL that names a view and a date is used as it is, and only the filters are
     restored on the first open. Only a bare `/app/project-planner` (or `/app/maintenance-planner`)
@@ -1544,6 +1626,38 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
   `get_my_week`, filled through `block_notes` on the server), the day's notes for their group, and a
   **Block my time** button that opens the same form limited to themselves (`self_only`: no person is
   sent).
+- **Today (the phone view, P8 of the Planner UX redesign, `docs/planner-ux-redesign.md` §4.4).**
+  `/desk/project-planner/today/<date>`: the signed-in person's stops for the day and the day after, in
+  route order, each with its leave-by and arrival times, site, what the work is ("Excavate basin · day
+  2/3", "Visit, 2h"), address (tap for Maps), crewmates, equipment and weather chips, and the day's
+  notes; the day's route map (the route view's own `draw_route_map`, fed by the `get_route` payload
+  `get_today` carries) with *Full route* and *Open in Google Maps*; **Block my time** (the My week form,
+  `self_only`) and **This week**. Distances are miles on screen (routing stays in km). Read-only: its one
+  write is the person's own block, and a Fountain Move task shows a *Move* chip and stays the
+  Maintenance Planner's to schedule. The declined field buttons ("running late", "can't make it") and
+  the phone ICS feed are not here.
+  - **Server:** `project_planner.get_today(date)` (a GET, planner roles). Found through Planner Resource
+    `user`; `{resource, label, date, tomorrow, today, can_schedule, days: [2], route, blocks, day_notes}`.
+    Each day is a `day_entry` plus `today_items`: `order`, `leave_by` (`leave_by_clock`: arrival less the
+    drive, `route_slots`' arithmetic), `miles`, `weather`, `equipment` (`engine.read_equipment`), `day_of`
+    (`task_day_of`: working days, so a weekend is not a day) and `fountain_move`.
+  - **Landing (Nik, 2026-10-21: "remember the last-used tab per device ... filters can stay per person"):**
+    a bare `/project-planner` opens the tab **this device** last showed (`p8_landing`, called from
+    `p6c_before_route` once the person's saved filters are in): week, month, crew, heatmap or Today, kept
+    in the browser's storage under `ee_project_planner_tab:<user>` (`p8_tab`, `p8_remember_tab`, written
+    in `handle_route`); a blocked or empty store is a first visit. First visit: a phone opens Today
+    (schedulers and technicians alike), a desktop the default view (the week). The server's "last used"
+    row keeps the person's **filters and colors** only: `p6c_state(true)` no longer saves a `view`, and the
+    landing never reads one (an old row's is ignored), so `planner_views_prefs.SCHEMA["project"]["view"]`
+    is unchanged (named views from *Save view as…* still carry their view). The redirect uses
+    `replace_route`, so Back leaves the planner. A link that names a filter (`?project=`, the Project
+    form's *Open in Project Planner*) opens the device's calendar tab with it, and never Today (it has no
+    filters to show). Someone the planner
+    does not list, sent to Today by the landing, gets the planner (`p8_landed`, `render_today`).
+  - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
+    Forward step through them. *Block my time* takes none of its own (the kit's form owns its Back).
+  - **Tests:** `tests/test_planner_today.py` and `scripts/test_planner_today.js` (the real page script
+    against a model of v16.50's router).
 - **Right-click menu** (6B's registry, `p6_menu_providers`): *Show conflicts* on a card in a conflict,
   *Conflicts this day*, *Add a day note…* (schedulers) and *Block time…* on a cell, *Block time…* on a
   name. Every one also has a way in without the menu.
@@ -1565,8 +1679,8 @@ Four small changes Nik decided on 2026-10-09, after using Phases 6B and 6D. The 
 `PP6E_METHODS` / `MP6E_METHODS` at the end of each page file (the Maintenance Planner's *Add visit* is
 its own section in [sapphire_maintenance/README.md](../sapphire_maintenance/README.md#maintenance-planner)).
 
-- **Move by: Calendar days | Working days** (both planners). The selection bar gets a switch beside
-  *Clear*; the choice is kept per device with the page's `save_pref` (`ee_project_planner_move_by`,
+- **Move by: Calendar days | Working days** (both planners; a field of the Move… panel since toolbar v2, it was a switch on the selection bar beside
+  *Clear*); the choice is kept per device with the page's `save_pref` (`ee_project_planner_move_by`,
   `ee_maintenance_planner_move_by`) and **calendar days stay the default**, exactly Phase 6B's move.
   With working days (Monday to Friday) every selected task moves by the same number of working days
   **counted from its own start**: a Friday plus one is the Monday, a landing on a weekend goes to the
@@ -1870,6 +1984,396 @@ Server side it is one endpoint, [`api/planner_ai_draft.draft_task_breakdown`](..
 - **Gate**: the planner roles, Task create, Project read, customer jobs only. **Model**: the app's
   `api/gemini.py` client, so its `MODEL_ID`; usage is an AI Model Usage row under `planner_task_breakdown`.
 - Tests: `tests/test_planner_ai_draft.py` (own `ci.yml` step; fake Gemini; nothing real is called).
+
+### Per-project publish and baseline (P3, v1.702.0, Planner UX redesign)
+
+The back end for Nik's D5, D8 and D11 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.8). The page
+that calls it is P4; until then nothing on screen changes.
+
+- **Each project's schedule is *Draft* or *Published*** (`Project.custom_schedule_status`, read-only,
+  `no_copy`, default Draft; a blank reads Draft). `get_planner`'s `projects` carry it as `schedule:
+  {status, published_on, baseline_set_on}`. The patch `mark_project_schedule_states` published the
+  projects that already had dated work with someone on it (10 of 661 on production) and left the
+  rest Draft.
+- **A Draft project's drafts are shared.** `_draft_rows` also returns the other schedulers' rows on a
+  Draft project (`shared: True`, raw SQL after the role gate), so one person's draft schedule is the
+  project's: anyone can see it, edit it (the row is saved with `ignore_permissions`, since
+  `if_owner` would refuse it) and publish it. On a Published project rows stay private, as before.
+- **`publish_drafts(project=)` / `discard_drafts(project=)`** act on one project's rows, shared ones
+  included. Without `project` both act on the caller's own rows only, exactly as before.
+- **`publish_project_schedule(project, reason=None)`** publishes that project's drafts (one conflict
+  check, one reason, one notice per person), then marks it Published and **sets the baseline**: each
+  dated task's first and last day into `Task.custom_baseline_start` / `custom_baseline_end`, copied
+  **once** (a task that has a baseline keeps it). A publish that asks for a reason changes nothing;
+  one that leaves a draft behind (skipped or failed) keeps the project Draft so it can be finished.
+- **`reset_baseline(project, dry_run=0)`** re-copies every task's days now (an undated task loses
+  its baseline); `dry_run=1` only counts them, for the confirmation. It is also the first *Set
+  baseline* of a project the patch published without one.
+- **Baseline and state writes are `db.set_value(update_modified=False)`**, never a save: copying a
+  date is not an edit, so no assignment sync, change alert, calendar sync or ERPNext reschedule, and
+  no planner with the task open is told it changed. The project's timeline gets a comment.
+- **"Notify crew?"**: `save_task`, `add_crew`, `swap_crew`, `shift_successors`,
+  `planner_actions.move_many` and `maintenance_planner.move_visit` take `notify`. Unset changes
+  nothing. `1` sends the publish notice to the people whose bookings moved (never the editor); `0`
+  tells nobody; `auto` is Notify when the change touches today or the 13 days after it, before or
+  after the move. Any answer holds back that save's 48-hour change alert.
+
+### Tasks that follow, Draft schedules and "Notify crew?" (P4, Planner UX redesign)
+
+Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at the end of
+`project_planner.js` (and `MPAS` at the end of `maintenance_planner.js`); the server side is in
+`api/project_planner.py` ("P4: the tasks that follow") and `planner_actions.move_many`.
+
+- **The tasks that follow move with a task, both ways.** A drag, a resize, a dialog's dates, *Next free
+  day*, a booked suggestion and *Tap to move* send `dependents=1` on `save_task` / `swap_crew`. The server
+  moves every open, dated task that waits on it, directly or through others, by the **working days its
+  end moved** (`dependent_days`). That covers a move later or earlier and a resize of the right edge;
+  a resize of the left edge moves nothing after it. It happens in the same request: one conflict check
+  for the lot (`needs_reason` then lists the `moves`), one reason, one notice per person and one Undo.
+  The answer carries `shifted`, `shift_skipped` and `shift_days`. Finished, rental, undated and
+  Fountain Move followers, and those the person cannot change, stay where they are and are named in an
+  orange alert. **The walk only goes on through tasks that move** (`_walk_followers`), so a task that
+  waits on the moved one only through a task that stays, stays too. Tasks past the cap (200, 25 levels)
+  are named. **Working days skip the company's holidays** (its default Holiday List,
+  `_shift_holidays`). **Every follower is checked against every task it waits on**, where those go
+  (`_follower_dependency_lines`). Drafted followers get one batch overbooking check
+  (`_draft_checks`), as warnings. **Hold Ctrl (Cmd on a Mac) as the card or its
+  edge is dropped** and just that task moves. A multi-select move does the same through
+  `move_many(dependents=1)`. A task that is itself in the selection is moved where it was put, never
+  again as a follower. This replaces the old "Shift N tasks that follow?" offer. `shift_successors`
+  stays as an endpoint for other callers and shares the helpers.
+- **The order of the saves is the point.** Moving later, the furthest follower is saved first and the
+  task itself last. ERPNext's own `Task.on_update → reschedule_dependent_tasks` pushes an Open dependent
+  the saved task now overlaps to the day after its end, by the calendar. Done in this order, it finds
+  nothing to push, so every follower moves by working days as D10 says. Moving earlier, the task goes
+  first. **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
+  still pushes that dependent by calendar days, as it always did.
+- **A Draft schedule drafts every write** (D8). The page sends `draft="auto"` on `save_task`, `add_crew`,
+  `swap_crew` and `move_many` unless *Hold all my changes* is on (then `draft=1`, as before). The server
+  drafts a task whose project schedule is Draft, blank included (`_drafting`), and saves the rest.
+  `move_many` splits one batch between the two. Its followers are drafted along (`_draft_followers`,
+  each from its own drafted days). A follower in a project whose schedule says otherwise is left alone
+  and named, so a draft never moves a published schedule and a live save never reaches into a draft one.
+  The creating writes (quick add, duplicate, build out, AI draft) send `draft=1` for a Draft schedule's
+  project; the page decides there, because those endpoints take only `draft=1`. **Still live on a Draft
+  schedule:** a split, Copy week and the Overdue tray's bulk actions, which have no draft form.
+- **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
+  everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
+  rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line
+  per project with drafts. A Draft schedule's line offers *Publish…*, which runs
+  `publish_project_schedule` after a confirmation, sets the baseline and tells each person once, and
+  *Discard*, which drops everyone's drafts on it after saying how many are other people's. A published
+  project with held changes gets *Publish* (`publish_drafts(project=)`) and *Discard*. With one project
+  filtered whose schedule is Draft, the line shows even before anything is drafted. While the hold is
+  on, its own line comes first ("Holding your changes: N not published yet") and only Draft schedules get
+  a line of their own. The **project peek** offers *Publish schedule…* (Draft) and *Set baseline…* /
+  *Reset baseline…* (a dry run first, then a confirmation that names how many tasks change).
+- **"Notify crew?"** (D11). On a published schedule, a change to the dates or crew of a task somebody is
+  on asks **once per gesture**, however many tasks it moves. The dialog names the people. Notify is the
+  default (the primary button, so Enter takes it) when the change touches today through the 14th day,
+  the old days counting as much as the new; past that, Don't notify is the default. **Esc puts the change
+  back**, and nothing is sent. The answer goes as `notify=1` or `0`, the Undo entry keeps it, and Undo
+  sends it again. Nothing is asked on a Draft schedule, while the hold is on, for a task nobody is on, or
+  for a pencil or firm-up. In those cases `notify` is not sent and the save behaves as before P3. The
+  Maintenance Planner asks the same way before `move_visit` (`mpas_with_notify` in its `send()`), once
+  for a multi-select move (`mpas_batch`), and never for an Undo (which sends `notify: null`).
+- **Publish keeps a drafted chain on its drafted days.** `_apply_plans` saves drafts furthest first.
+  A push by ERPNext's own reschedule made during the publish is not "changed by someone else"
+  (`since`): the push is undone and the draft applied. A push after a task was saved is put back
+  (`_settle_plans`).
+- **Undo** of a change that moved followers is one `move_many` that puts every task back on its days,
+  with the same Notify answer. When the change was more than dates, such as a crew handover with a move
+  or a dialog save, the plain Undo's `save_task` then restores the rest of the task.
+- **Tests:** `tests/test_planner_autoshift.py` covers the server on the Phase 3B harness, and
+  `scripts/test_planner_autoshift.js` drives both real pages under node.
+### The Lookahead, the planner's home tab (P5, v1.708.0, Planner UX redesign)
+
+Nik's D2 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.2): the screen a PM lands on is a lookahead
+across all jobs. Rows are projects, then their phases, then tasks; three weeks run across, starting on
+the site's first weekday (Sunday on production). It is the page's `PPL` block and
+`api/planner_lookahead.get_lookahead`.
+
+- **Addresses.** `/desk/project-planner/lookahead/<date>` (three weeks from the week holding that day;
+  `/<date>/4` for 2, 4 or 6 weeks), `/calendar/week/<date>` and `/calendar/month/<date>` for the old
+  week and month views, now under the **Calendar** tab with a Week/Month switch. The old `/week/<date>`
+  and `/month/<date>` addresses (bookmarks, the digests, the Project form's link) are **replaced**, not
+  pushed, by their new ones, with the filters and any other query keys. A bare `/project-planner` opens
+  this device's tab (P8's store; the Lookahead is one of them) and, with none, the Lookahead on a
+  desktop and Today on a phone, each replacing the bare address with its own (a bare entry would be
+  taken over by the device's tab on the way Back, so Back would bounce off it). Today's *Planner*
+  button opens the Lookahead. The tabs are Lookahead, Crew, Calendar, Heatmap and Utilization until
+  P7 folds the last two into Crew. Each tab, week and range is a route, so Back and Forward step
+  through them. Collapsing a row and the Needs crew chip are not routes.
+- **The bars are the planner's cards.** `get_lookahead` is `get_planner` over the window plus the tree,
+  so every bar is a `.pp-card[data-task]` the page already knows. A drag (measured from the day under
+  the pointer), an edge (6B's resize), a click (the side panel), a right-click (6B's menu), selection,
+  search, Color by and Tap to move all work unchanged, and every write goes through `commit`/`send`
+  with P4's auto-draft, tasks that follow, Ctrl/⌘ and "Notify crew?". There is no second save path.
+- **A bar** shows the crew's initials, the task's size in days (D7: working days across its span, at
+  least one, as P11's calendar labels count), and the chips a card
+  carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification, and
+  weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it
+  is a thin red tail. A bar that runs past the window is cut, dashed and without a grip on that end.
+  A Fountain Move task is read-only.
+- **Hovering or focusing a bar** draws arrows from what it waits on and to what waits on it. With
+  hundreds of links, only that chain is drawn.
+- **The project row** carries its schedule (D8):
+  - ● *Published* with the date;
+  - ◐ *Draft schedule* with **Publish…** (P4's own confirmation and `publish_project_schedule`);
+  - *Fountain Move*;
+  - *No tasks yet* with **Build out** (T1's grid). This replaces the Needs tasks tray.
+  Clicking the name opens the project peek.
+- **Not scheduled** is a line per project whose chips drag onto a day, as the Unscheduled tray's
+  cards did. A **Needs crew** chip in the board's own bar narrows it to the tasks short of crew,
+  which replaces the Needs crew tray. The Overdue tray stays. The Resources panel is not on this tab.
+- **Collapsing** a project or a phase draws its work as plain runs, and is remembered in this browser.
+- The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
+- **Drop targets.** Every row's days take a drop, a project's and a phase's too, so a project with no
+  dated work yet still has days to drop its Not scheduled chips on.
+- **On a phone** the board is a list by day, and each day is a drop target. With undated work to place,
+  every day of the window is listed.
+- **Google is off** on this tab (spec §6): `get_lookahead` calls `get_planner(google=0)`.
+- **Print this view** prints the board's rows as a list.
+- **The Project, PM and Group filters** apply as on every tab. Group keeps the tasks with someone of
+  that group on the crew.
+
+### The Gantt tab, one project start to finish (P6, v1.709.0, Planner UX redesign)
+
+Nik's D1 of 2026-10-21 ("Gantt: phases + deps"; `docs/planner-ux-redesign.md` §4.3): a PM plans one job
+from its first task to its last. It is the page's `PPG` block, the app's DHTMLX widget
+(`erpnext_enhancements.gantt.mount`, the Project form's Schedule tab's) and
+`api/planner_gantt.get_project_gantt`.
+
+- **Addresses.** `/desk/project-planner/gantt/<project>`; a bare `/gantt` is a project picker. The tab
+  opens the Project filter's project, else the one this device opened last (localStorage
+  `ee_project_planner_gantt_project:<user>`). Each project opened is a route, so Back and Forward step
+  through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
+  routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
+  zoom, and Today scrolls to today.
+- **The landing** (approved 2026-10-21 as Nik's per-device rule, no exception). The Gantt is one of P8's
+  remembered tabs, with its project kept beside it (`ee_project_planner_gantt:<user>`). A bare
+  `/project-planner` on a device whose tab is the Gantt is replaced by `/gantt/<that project>`; with no
+  project stored, or one the server refuses (`ppg_refused`), the device forgets it and the Lookahead
+  replaces the address instead. A link that names a filter opens the Lookahead with it.
+- **The feed is the planner's, not `api/gantt.py`'s.** `get_project_gantt` reads the project's Task rows
+  itself (a job runs for months; `get_planner` stops at 100 days) and builds each task with
+  `project_planner.build_card`, so the page indexes them as it does every tab's cards. The D6 rule
+  applies (Show all tasks in More ▸ Display), drafts show (another scheduler's named), finished work is
+  drawn faded and fixed, and canceled and template tasks are left out. No `booked` hours are claimed:
+  nothing spread them over days.
+- **The chart.** Groups are the tree (phases first, by number) and collapse; a group is drawn only
+  above something shown. A bar shows its days and crew; a draft is dashed, a pencil hatched. Undated
+  work is under *Not scheduled* at the bottom. The baseline is a thin grey bar under each bar, drawn by
+  the task type's renderer: the Standard build deletes `gantt.addTaskLayer` (see the widget's header).
+- **Every edit goes through the page.** The widget's `on_write` hook hands a drag or a resize to
+  `commit()`, so the reason prompt, Undo, the conflict check, P4's auto-draft, the tasks that follow
+  (Ctrl/⌘ for just the one) and "Notify crew?" behave as on the other tabs. `update_gantt_row` is never
+  called from the planner. A drag in Week or Month snaps to whole days.
+- **Links.** Dragging from a bar's end dot onto another bar calls `planner_actions.add_dependency`
+  through `send()` (a reason when it would start before the other ends); double-clicking a link offers
+  `remove_dependency`. Both have Undo. They save with ERPNext's calendar-day push held back, since no
+  date moves, and are live even on a Draft schedule (they tell nobody).
+- **The header**: the project picker, the schedule (Draft with Publish…, or Published and when; P4's
+  own confirmation), the baseline's date and Reset baseline (P4's), Build out ▾ (T1's grid, opened on
+  any of its starting points) and the zoom. The widget's export menu stays. A click opens the side
+  panel, a right-click the planner's menu; Print this view lists the project's tasks.
+- **Tests:** `tests/test_planner_gantt.py` (server, on the Phase 3B harness) and
+  `scripts/test_planner_gantt.js` (the real widget on a recording DHTMLX stub, and the real page), run
+  by `tests/test_planner_gantt_page.py`.
+
+### The Overview tab and the weekly summary (P9, v1.715.0, Planner UX redesign)
+
+Nik's D3 and D16 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.7), for James and the approvers: "All jobs
+on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` block,
+`api/planner_overview.get_overview` and `planner_weekly_summary.py`.
+
+- **Addresses.** `/desk/project-planner/overview/<date>` (the months from the month holding that day;
+  `/<date>/12` for 3, 9 or 12 months instead of 6). A bare or garbled one opens today's month. A step
+  (‹ ›, a month), the months picker and the tab are routes, so Back and Forward step through them;
+  Expand all, the lines list and a job's arrow are not.
+- **The landing** (Nik, 2026-10-22). An **Executive Team** member's desktop *first* visit opens the Overview
+  instead of the Lookahead (`ppo_first_tab`, from the boot's roles; nothing is fetched). After that the
+  per-device last-used tab applies like everyone else's: the Overview is one of P8's remembered tabs. A
+  phone's first visit is still Today. A link that names a filter never lands on the Overview from the
+  landing (it opens the Lookahead with the filter), as it never opens Today or an old Gantt. The redirect
+  replaces the bare address, so Back leaves the planner.
+- **The timeline** is the app's DHTMLX widget, **read-only**: no drag, no link, no write hook. One row per
+  Active customer job with a bar for its whole span; open it (or *Expand all*) and each **phase** is a bar,
+  coloured by its number (`ppo-ph-1`…`7`, design tokens) and drawn over its **baseline** ghost, with how many
+  tasks are done as its progress and `+4d` in the *Behind* column when it slipped; *Other work* is the
+  pale bar. A dated Task flagged `is_milestone` is a diamond. A **Draft** schedule is hatched, dashed and
+  marked ◐, and drawn from its drafts (the caller's, and everyone's on a Draft schedule); *Publish…* for
+  each is in the header (P4's own confirmation). A job with no dated work falls back to the Project's own
+  expected dates (drawn paler, and said so); with none, it is listed under the chart as having no dates.
+  Clicking a job or a phase opens that job's Gantt. The widget's own export draws it as a printout, PNG or
+  SVG (CSV and Excel would export Projects, which is not this chart, so they are not offered).
+- **Needs attention** is the exception list, worst first, one button per line: a phase **behind its
+  baseline** by more than 2 *working days* (`BEHIND_DAYS`; holidays are not working days; work under no
+  phase is judged task by task); a task **running over** its estimate (Phase 4's rule, for open tasks with
+  an estimate); the next two weeks' unresolved **conflicts** (the Conflict center's list, minus those kept
+  with a reason); and **overdue** work, one line per job. A line opens its source: the job's Gantt, or the
+  Crew board on the day of the first conflict. When nothing is wrong the box says so in one line. The
+  conflict list is the one costly read and does not depend on the window, so it is kept for two minutes
+  (a conflict kept with a reason stays listed that long); the Monday email always reads fresh.
+- **Overdue is counted by end date, never by the status value.** 1,005 open tasks carry the status
+  `Overdue` on production, left by an old import. A task is overdue here when it is open and its last day
+  is before today. And only phase and crew work counts (D6), so the ~40 template admin tasks a job gets,
+  all dated its first day, cannot make it look late the day it starts. Without a baseline nothing is
+  behind: production's jobs have none until someone sets one from the Gantt, so today the foot says how
+  many jobs have one.
+- **The weekly summary** is one page: next week by job and by person, what moved in the last seven days
+  (the first old value and the last new value of each start or end in the Version log), and the exception
+  list. *Print weekly summary* in the Overview's header and *More ▸ Print ▸ Weekly summary* open it in a
+  window and print it (the crew sheet's way). "Next week" is the week holding today while it is a day old,
+  else the following week (`default_summary_week`), so the Monday email and a Sunday-night print are about
+  the week ahead.
+- **The Monday email is OFF.** *Project Planner Settings > Telling managers* has **Email the weekly summary
+  on Mondays** (default 0) and **Send it to** (addresses, commas or new lines; a line that is not an
+  address refuses the save). `send_weekly_summary` runs Mondays 06:15 and returns before its first query
+  unless the box is ticked *and* someone is named. At most once per week, through a `Planner Digest Log`
+  row keyed `weekly-summary|<first day>` committed before sending (the deploy `FLUSHDB`s redis, so a cache
+  marker would mail everyone again). The page is built before the week is claimed, so a failed read does
+  not spend the week. **The scheduled run always describes and claims the week that holds today**, not the
+  week ahead (`week_holding`, unlike a print's `default_summary_week`), so a Tuesday catch-up after a
+  Monday the scheduler missed is this week's summary under this week's key, and the next Monday still
+  sends. It describes **Published** schedules only; a Draft one is named at the foot, and each booking
+  and each conflict is judged by **its own project's** schedule state (Draft or blank reads Draft,
+  `planner_overview.draft_projects`), whatever list the project is on: the engine books a Draft project's
+  stored tasks like any other, and a project on hold too. "What moved" reads the Version log in two steps
+  (the names first, through the indexes; then the data of the few that are the summary's, by primary
+  key). *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
+  box unticked, claiming nothing; it always answers (`reason`: `no_email` for a User record with no usable
+  address such as Administrator's, `failed` when building or sending raised and was logged), so the form's
+  "No preview sent" branch always has something to say. A `start` that is not a date is a clear error,
+  never a 500. `patches/backfill_weekly_summary_setting` writes the new Check's
+  `tabSingles` row where there is none (a default never reaches a Single's existing row), never over a
+  stored value, and cannot raise.
+- **The page reads no Settings.** A desk script that read a Settings Single would show "No permission for
+  X Settings" to everyone but a System Manager; the switch and the recipients are the server's.
+- **Tests:** `tests/test_planner_overview.py` and `tests/test_planner_weekly_summary.py` (server, the
+  summary, the OFF job, the patch; on the Phase 3B harness), `scripts/test_planner_overview.js` (the real
+  page: the rows, the three parts, the mounted widget, every control, the printout), run by
+  `tests/test_planner_overview_page.py`, and the landing and Back/Forward scenarios in
+  `scripts/test_planner_today.js`.
+
+### The first-visit tour and the help (P12, v1.716.0, Planner UX redesign)
+
+The last PR of the redesign (`docs/planner-ux-redesign.md` §7). Nik, 2026-10-21: "When we are close to
+finishing, I'd like a brief and simple tutorial on the planner for every first time visitor." Two things: a
+**tour** that shows once, and **"?"** rewritten for the new tabs. It is the page's `PPTOUR` block (the last in
+`project_planner.js`), the kit's `planner_kit.tour` (`planner_kit/tour.js`), and
+`planner_views_prefs.mark_tour_seen`. The Maintenance
+Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
+
+- **The desktop tour** is five steps, six for the Executive Team: *Tabs along the top* (Lookahead, Gantt, Crew,
+  Calendar), *Overview is for managers* (**Executive Team only**, the role the landing already tests), *Drag to
+  move* (the tasks that follow move too; hold Ctrl or ⌘ to move just that one), *Draft until you publish*
+  (Publish… and the baseline), *Notify crew?* (Notify, Don't notify, the next two weeks) and *Help is one click
+  away*. Someone who may look but not change tasks gets *Narrow it down* (the filters), *See one job start to
+  finish* (the Gantt tab's job picker) and *Click for the details* in place of the three editing steps, so
+  theirs is five steps, six for the Executive Team: every variant is four to six.
+  **Who may edit** is `tour_can_edit`: the planner's own answer (`data.can_edit`, the server's
+  `has_permission("Task", "write")`) when it has one, else the Desk's boot permission list
+  (`frappe.model.can_write("Task")`), which every screen has, Capacity included (it loads no planner answer, and
+  the Overview's answer says nothing about editing). **Unknown is no**: the editing steps are never a guess.
+- **The phone tour** has two forms, by whether the person has a day of their own (`tour_has_day`: Today's answer
+  carrying a `resource`, or the planner's list of people holding their `user`, which any planner screen has).
+  With a day it is Today's, five steps: *This is your day*, *Open the route*, *Block my time*, *The rest of the
+  planner* (Planner, then Filters and tools, the sheet from the bottom) and *Help is one tap away*, and it opens
+  **on Today**. With none (a project manager or office user who is not a Planner Resource, for whom Today has
+  nothing to show) it is the planner's phone tour, four to six steps, on **whichever planner screen they land
+  on**: *The Lookahead is a list*, *Tabs along the top*, *Filters and tools*, then *Draft until you publish* and
+  *Notify crew?* for those who may edit, and *Help is one tap away*. A person with a day who lands on a planner
+  screen (a link) waits for Today rather than being shown the wrong one; while it is not known which they are, it
+  waits. Both forms share the one `phone` flag. A desktop that opens Today is not shown the tabs there. The kind
+  is `p8_is_phone()`, the toolbar's own 767px.
+- **Once per person, per kind of device, on the server.** Whether a person has been shown each tour is
+  `planner_tour.seen.{desktop, phone}` in their own `__UserSettings` row for the planner (`Project Planner`),
+  beside `planner_views` and touching nothing in it. `get_views` carries it (`tour`), so the page needs no request
+  of its own; `mark_tour_seen(planner, kind)` (POST, behind the planner's role gate, the Opportunity Board
+  refused) sets one flag, straight to the table. Never frappe's Redis-only user_settings, which a deploy flushes,
+  and never the browser alone: a person shown it at their desk is not shown it on the next machine. The two
+  kinds are separate on purpose (a desktop and a phone land on different screens), so a person who has seen the
+  desktop tour is shown the phone one once. **It is marked the moment it shows** (the guided page's first-time
+  pop-up does the same), so a reload mid-tour does not repeat it; only if that request fails is this browser told
+  (`save_pref`, `ee_project_planner_tour:<user>:<kind>`), so a server that is down cannot bring it back at every
+  visit. A saved row from before P12 has no flag, so **everyone sees it once on their next visit**, the people who
+  have used the planner for weeks included: the planner they open has changed, and Skip is one press.
+- **When it opens.** Never before the page can show it: `tour_verdict` answers *wait* until the saved views have
+  answered (they carry the flags), the kit and the toolbar are built (`tb.kit`), and the screen's data is here and
+  not loading; it answers *no* on another page, on a screen with no toolbar (the route view, My week) and when the
+  kit on the Desk is older than P12 and has no `tour`. It waits, and asks again each second for a minute, while a
+  drawer, a menu, the phone's sheet (the kit's guard knows each), a Frappe dialog or a drag is on screen. A landing
+  (`handle_route` → `tour_route`) starts a 0.7 s settle, so a redirect lands first. All of it is in try/catch: a
+  tour that cannot show is no reason for the planner not to.
+- **Skippable everywhere, re-openable.** Esc, the *Skip tour* button or a press outside the card each close it as
+  skipped (it is already marked). **"?" ▸ Take the tour** is a footer button of the help drawer (`legend`'s
+  `actions`); it closes the drawer and shows the tour for this device again, marking nothing. Today has no
+  toolbar, so it gets a **?** button beside *Planner* (`tour_today_help`).
+- **No history, no Back trouble.** The tour joins none of the kit's history guard: opening, stepping, replaying
+  and closing it push, replace and step off nothing, so Back and Forward mean what they did. A route of the
+  planner's own (`handle_route`) or the page hiding closes it (`tour_close("route")`). Its keys are its own: it
+  listens on the document in the capture phase for Esc and Tab, and `p6b_key` treats it as a dialog, so the
+  planner's `T`, `/`, `?`, `1 2 3` and the arrows do nothing to the page behind it.
+- **Accessible, and fine at 375px.** A modal dialog named by the tour's title ("Project Planner tour", as an
+  `aria-label` alone: `aria-labelledby` would win over it and the title would never be read) and described by the
+  step's sentence, the count ("Step 2 of 5") in a polite live region, buttons whose names start with their
+  visible words, focus on Next and trapped, back on the control that started
+  it; 44px buttons on a touch screen; on a phone the card sits along the bottom, and long words wrap, so there is
+  no sideways scroll. The rules are `.pk-tour-*` in `planner_kit.bundle.css` (tokens only, no shadow, no
+  animation); the script is in `planner_kit.bundle.js`. No raw `/assets` path.
+- **"?" for the new tabs** (`p12_legend_sections`, right after the tips): *The tabs* (a line for Lookahead, Gantt,
+  Crew with Capacity, Calendar, Overview and Today), *Where the planner opens* (the last tab per device; a phone's
+  first visit is Today; a desktop's the Lookahead, and the Executive Team's the Overview), *Moving a task*,
+  *Draft and Published* (Draft schedule, Publish…, Published, Notify crew?, Hold all my changes) and *Baseline*
+  (the grey bar, the red tail, Reset baseline). The sections after them are the ones the earlier phases wrote.
+  The tips (the first section) stay as they were: they teach the quick looks, and the tour does not.
+- **Tests.** `tests/test_planner_tour.py` (the flags against a frappe stub, the wiring, the docs) runs
+  `scripts/test_planner_tour.js`: the real `tour.js` on a fake DOM and the real page scripts with a fake kit and a
+  fake server. First visit shows it and marks it; the second does not; Skip, Esc and a press outside leave it seen;
+  Take the tour shows it again and marks nothing; a phone and a desktop each get their own; the Overview step is for
+  the Executive Team only; no history entry, no route and no guard overlay; nothing opens or throws before the data
+  and the toolbar exist. It cannot be seen in a browser from a bench-free test, so the first look on a phone at
+  375px is a person's.
+
+### Simple mode (v1.723.0)
+
+Nik, 2026-10-22: "an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and easily
+see all the data in a simple view, both historical data and future data". The design and his decisions S1–S14 are
+[`docs/planner-simple-mode.md`](../../docs/planner-simple-mode.md).
+
+- **A switch, not a tab** (S1). *Simple* is the first button in each planner's bar (and on Today's header). On, it
+  opens `/desk/project-planner/simple` (or `/desk/maintenance-planner/simple`): a screen of its own, so Back returns
+  to where the person was. The planner's own chrome is hidden by one class (`pp-simple-on` / `mp-simple-on`) and the
+  kit draws the screen: a heading, one search box, the switch (on) and "?". The planner's shortcuts do nothing there.
+- **Remembered per device** (S7). On the Project Planner, `simple` is one of the device's tabs (`PP8.tabs`), so a
+  bare address on a device whose last screen was Simple opens it in place, and a link that names a filter never
+  does. Turned off, it goes to the tab the device showed when it was turned on (`ee_project_planner_full_tab:<user>`),
+  through the bare address and `p8_landing`, so a first visit's rules apply when there is none. The Maintenance
+  Planner keeps its last view per person; its Simple mode is a device flag
+  (`ee_maintenance_planner_simple:<user>`), written only when it changes, read on a bare address before the person's
+  own last view.
+- **A card per job** (`api/planner_simple.get_simple_jobs`, S6, S9–S11, S13). Every customer job ever, any status, the
+  ones with work coming up first and soonest, then the rest by last activity, 20 at a time with *Show more jobs*;
+  search across all of them (number, name, customer, PM). **Done** (grey, newest first) and **Coming up** (bold,
+  late first), three of each and *Show all N*; *N not scheduled* counts undated open work. A job's items are the
+  planner's display rule (D6); a job with no phase or crew work (all 505 finished jobs on production, 2026-10-22, are from before the phase
+  templates) lists its own top-level groups, each "N of M done". Late is by end date, never by the Overdue status;
+  on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the assignees,
+  open or closed, drawn as initials with the names on hover.
+- **A card per site** (`get_simple_sites`, S12, S14). Every project with a maintenance contract or a Maintenance
+  Record: its records (done once submitted or in review), its contract's projected visits for the next 120 days,
+  marked *planned*, and its project's completed tasks, its history from before the records.
+- **Reads only.** Both endpoints are GETs behind each planner's own role gate and read permission on their
+  records (Project and Task; Project and Sapphire Maintenance Record), listing only the projects the caller may
+  read (`frappe.get_list("Project")`, so User Permissions apply), raw SQL with bound parameters
+  (search text included, `%` and `_` literal). A click opens the record (a Task, a Maintenance Record, a contract or
+  the Project) as a normal Desk route.
+- **The tour and "?"**. The tour's last step mentions the switch (the tours are capped at six steps); "?" lists
+  *Simple* with the tabs, and Simple mode's own "?" explains the cards and the marks.
+- **Tests.** `tests/test_planner_simple.py` (the card rules, the bound reads, the role gates, the wiring) runs
+  `scripts/test_planner_simple.js` (the real kit module on a fake DOM, and the Maintenance Planner's device flag);
+  the Project Planner's landing, the switch and Back/Forward are in `scripts/test_planner_today.js`.
 
 ## Calendar sync (C2, v1.604.0)
 

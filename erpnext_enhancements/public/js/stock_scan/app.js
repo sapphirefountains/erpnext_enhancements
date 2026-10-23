@@ -57,6 +57,8 @@ import {
 	mintRunId,
 	money,
 	ordersAtStore,
+	costPromptText,
+	isCostPrompt,
 	parseQty,
 	plain,
 	reasonWarning,
@@ -74,6 +76,7 @@ import {
 	siteTimeMs,
 	suggestedReason,
 	undoQuestion,
+	unitCostProblem,
 	validPrice,
 	validTotal,
 } from "./logic.js";
@@ -1825,7 +1828,10 @@ export class StockScanApp {
 		const key = saveKey(Object.assign({ action }, body));
 		const kept = keptRef(this.pending.get(key), Date.now());
 		if (!kept) this.pending.delete(key);
-		const ref = kept || mintRef();
+		// One reference for the life of the "what does one cost?" sheet (`ui.ref`): a changed price after a
+		// reply that never came would otherwise be a new save, and a save that did reach the server would
+		// post twice. The server answers any resend of a reference with the first save.
+		const ref = (ui && ui.ref) || kept || mintRef();
 		body.client_ref = ref;
 		const keepChange = !!(ui && ui.keepChange);
 
@@ -1845,6 +1851,16 @@ export class StockScanApp {
 			this.saving = false;
 			this.savingView = null;
 			if (sheetUi) busy(sheetUi.button, false);
+			if (isCostPrompt(result)) {
+				// Not a save: the item has no cost on record, ERPNext would refuse the posting, and the server
+				// has posted nothing. Ask what one costs and send this save again with the answer.
+				this.updateStepper();
+				// Asked again after a price was sent: the server is not taking it. Say so in the sheet that
+				// sent it rather than stacking another question on it.
+				if (sheetUi) sheetUi.showError("The server still has no cost for this item. Ask a stock manager to set its Valuation Rate.");
+				else this.askUnitCost(v, method, args, result, ref);
+				return;
+			}
 			if (ui && ui.onDone) ui.onDone();
 			this.afterSave(v, result, keepChange);
 			// A store-run line has more to do once it is in (the run bar, the item at its bin,
@@ -1883,6 +1899,79 @@ export class StockScanApp {
 			}
 			this.updateStepper();
 		}
+	}
+
+	/**
+	 * "What does one cost?" (TASK-2026-02914). The server answered an add with `needs_valuation_rate`
+	 * (`isCostPrompt`): the item has no cost on record. The sheet pre-fills the server's suggestion with
+	 * where it came from, says it is the cost of ONE stock unit, and sends the same save again with
+	 * `rate`. Enter submits; the button is off while the save is out (`post` busies it), so a second tap
+	 * cannot post twice, and the retry has a reference of its own (`saveKey` covers `rate`), the same
+	 * on every resend of the same price. A refusal (a cost above the cap, no permission) shows inside
+	 * the sheet; Cancel and Back leave nothing posted. A sheet is already a history marker (nav.js).
+	 */
+	askUnitCost(v, method, args, prompt, ref) {
+		const copy = costPromptText(prompt, args.qty, "add");
+		const error = errorLine("ee-ss-field-error");
+		let closed = false;
+		let posting = false;
+		const field = input({
+			className: "ee-ss-input ee-ss-cost-input",
+			type: "text",
+			inputmode: "decimal",
+			enterkeyhint: "done",
+			value: copy.value,
+			label: copy.label,
+		});
+		const submit = (h, btn) => {
+			if (posting) return false;
+			const answer = unitCostProblem(field.value, prompt.uom, args.qty, prompt.max_value);
+			if (answer.problem) {
+				error.show(answer.problem);
+				field.focus();
+				return false;
+			}
+			posting = true;
+			this.post(v, method, Object.assign({}, args, { rate: answer.rate }), {
+				button: btn,
+				ref,
+				// `post` clears the line when it starts (""), and speaks only when it fails: a failure frees the button.
+				showError: (text, action) => {
+					if (text) posting = false;
+					error.show(text, action);
+				},
+				isOpen: () => !closed,
+				onDone: () => h.close("action"),
+			});
+			return false;
+		};
+		const h = sheet({
+			title: copy.title,
+			onClose: () => {
+				closed = true;
+			},
+			body: append(
+				el("div", "ee-ss-cost"),
+				el("p", "ee-ss-sheet-text", copy.lead),
+				el("label", "ee-ss-field-label", copy.label),
+				field,
+				el("p", "ee-ss-note", copy.per),
+				el("p", "ee-ss-note", copy.hint),
+				error.node,
+				el("p", "ee-ss-note", copy.note)
+			),
+			initialFocus: field,
+		});
+		const [addBtn] = h.setActions([
+			{ label: copy.button, kind: "add", large: true, close: false, onClick: (handle, btn) => submit(handle, btn) },
+			{ label: "Cancel", kind: "ghost" },
+		]);
+		field.addEventListener("keydown", (event) => {
+			if (event.key !== "Enter") return;
+			event.preventDefault();
+			if (addBtn && !addBtn.disabled) submit(h, addBtn);
+		});
+		field.select && field.select();
 	}
 
 	/**
@@ -2393,7 +2482,7 @@ export class StockScanApp {
 	 * as it is taken), its total with tax (required) and its number (optional). The line is the
 	 * item, how many, the price each before tax, why, and the job — or an explicit "No job: safety
 	 * or shop", so a blank is a decision (POL-0602 §4.7 asks for the job). The reason starts from
-	 * the item: a stocked item (a reorder level above 0) "was out", anything else is "not
+	 * the item: a stocked item (one with a reorder rule) "was out", anything else is "not
 	 * something we stock", and a contradiction is pointed out, not refused.
 	 *
 	 * A run's header is its first Posted line's (`api.stock_scan._run_head`). A run whose every
@@ -2446,7 +2535,7 @@ export class StockScanApp {
 			checking: false,
 			checkAgain: false,
 			checkTimer: null,
-			reason: last && last.reason === REASON_ONLY_THIS_JOB ? last.reason : suggestedReason(c.item ? c.item.reorder_level : 0, !c.item),
+			reason: last && last.reason === REASON_ONLY_THIS_JOB ? last.reason : suggestedReason(c.item ? c.item.reorder_level : 0, !c.item, c.item ? c.item.has_reorder_rule : undefined),
 			reasonTouched: false,
 			job: last ? last.job : this.job ? { project: this.job.project, project_name: this.job.project_name } : null,
 			noJob: last ? !!last.noJob : false,
@@ -2774,7 +2863,7 @@ export class StockScanApp {
 				s.newItem = null;
 				s.check = null;
 				quick = null;
-				if (!s.reasonTouched) s.reason = suggestedReason(found.reorder_level, false);
+				if (!s.reasonTouched) s.reason = suggestedReason(found.reorder_level, false, found.has_reorder_rule);
 				drawItem();
 				drawHints();
 				drawQty();
@@ -2918,7 +3007,7 @@ export class StockScanApp {
 				group.appendChild(row);
 			}
 			reasonBox.appendChild(group);
-			const warning = reasonWarning(s.reason, s.item ? s.item.reorder_level : 0, !s.item);
+			const warning = reasonWarning(s.reason, s.item ? s.item.reorder_level : 0, !s.item, s.item ? s.item.has_reorder_rule : undefined);
 			if (warning) reasonBox.appendChild(el("p", "ee-ss-notice", warning));
 		};
 
