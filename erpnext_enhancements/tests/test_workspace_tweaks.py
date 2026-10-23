@@ -1,4 +1,6 @@
-"""Bench-free tests for ``setup/workspace_tweaks.hide_core_sidebar_items``.
+"""Bench-free tests for ``setup/workspace_tweaks``: ``hide_core_sidebar_items``,
+``add_core_sidebar_items``, ``arrange_core_sidebar_items`` and the boot-time
+``drop_unreadable_sidebar_links``.
 
 The module is exec'd with its ``import frappe`` dropped and a fake database passed in as
 ``frappe``, the way ``test_custom_html_blocks`` runs the seeder, so nothing is put in
@@ -279,11 +281,12 @@ class _AddDb:
 		raise AssertionError(f"unexpected exists({doctype!r})")
 
 	def set_value(self, doctype, name, field, value, update_modified=True):
-		assert doctype == "Sidebar Item" and field == "idx" and update_modified is False
-		self.writes.append((name, value))
+		assert doctype == "Sidebar Item" and field in ("idx", "label") and update_modified is False
+		# An idx write is recorded as (name, idx), the shape the tests above were written against.
+		self.writes.append((name, value) if field == "idx" else (name, field, value))
 		for row in self.rows:
 			if row["name"] == name:
-				row["idx"] = value
+				row[field] = value
 
 
 class _NewRow(dict):
@@ -304,11 +307,15 @@ class _AddFrappe:
 		self.cache = _Cache()
 		self.errors = []
 
-	def get_all(self, doctype, filters, fields, order_by):
-		assert doctype == "Sidebar Item" and order_by == "idx asc", (doctype, order_by)
+	def get_all(self, doctype, filters, fields=None, order_by=None, pluck=None):
+		assert doctype == "Sidebar Item", doctype
+		# The add and the reorder read whole rows in idx order; the relabel plucks names.
+		assert (fields and order_by == "idx asc") or (pluck == "name" and not fields), order_by
 		if self.db.fail:
 			raise RuntimeError("Table 'tabSidebar Item' doesn't exist")
 		rows = [r for r in self.db.rows if all(r.get(k) == v for k, v in filters.items())]
+		if pluck:
+			return [r[pluck] for r in rows]
 		return [{f: r.get(f) for f in fields} for r in sorted(rows, key=lambda r: r["idx"])]
 
 	def get_doc(self, values):
@@ -323,13 +330,26 @@ class _AddFrappe:
 		return "Traceback (most recent call last):\n  ...\nRuntimeError: boom"
 
 
-def _run_add(db):
+def _module(fake):
 	tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
 	body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
-	fake = _AddFrappe(db)
 	ns = {"frappe": fake}
 	exec(compile(ast.Module(body=body, type_ignores=[]), str(MODULE_PATH), "exec"), ns)
+	return ns
+
+
+def _run_add(db):
+	fake = _AddFrappe(db)
+	_module(fake)["add_core_sidebar_items"]()
+	return fake
+
+
+def _run_migrate(db):
+	"""Both entry points, in hooks.py's after_migrate order."""
+	fake = _AddFrappe(db)
+	ns = _module(fake)
 	ns["add_core_sidebar_items"]()
+	ns["arrange_core_sidebar_items"]()
 	return fake
 
 
@@ -398,18 +418,31 @@ class TestAddCoreSidebarItems(unittest.TestCase):
 		_run_add(db)
 		self.assertEqual(
 			_order(db),
-			["Home", "Lead", "Opportunity", "Guided Entry", "Opportunity Board", "Customer", "Reports", "Sales Analytics"],
+			[
+				# v1.735.0: the Opportunity Kanban goes on top (see TestCrmOpensOnTheKanban).
+				"Opportunity Kanban",
+				"Home",
+				"Lead",
+				"Opportunity",
+				"Guided Entry",
+				"Opportunity Board",
+				"Customer",
+				"Reports",
+				"Sales Analytics",
+			],
 		)
 		self.assertEqual(sorted(r["idx"] for r in db.rows), list(range(1, len(db.rows) + 1)))
-		guided, board = db.inserted
+		_kanban, guided, board = db.inserted
 		self.assertEqual((guided["link_type"], guided["link_to"], guided["child"]), ("Page", "guided-entry", 0))
 		# Form kit P6: the new board sits under the guided page, at the same level.
 		self.assertEqual((board["link_type"], board["link_to"], board["child"]), ("Page", "opportunity-board", 0))
 
 	def test_icon_is_one_the_desk_can_draw(self):
 		names = {line for line in ICON_NAMES.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")}
-		db = _AddDb(_sidebar_rows())
+		db = _AddDb(_sidebar_rows() + _crm_rows(), sidebars=("Projects", "CRM"))
 		_run_add(db)
+		# The Project Planner, Crew Utilization and the Opportunity Kanban.
+		self.assertEqual(len(db.inserted), 3)
 		for row in db.inserted:
 			if row["icon"]:
 				self.assertIn(row["icon"], names)
@@ -472,6 +505,408 @@ class TestAddCoreSidebarItems(unittest.TestCase):
 		self.assertEqual(len(fake.errors), 1)
 		self.assertEqual(fake.errors[0][0], "Core sidebar item not added")
 		self.assertIn("\n", fake.errors[0][1])
+
+
+# ------------------------------------------------- the dock usage audit's sidebars (v1.735.0)
+#
+# The v1.734.0 audit (90 days of Route History to 2026-10-23) recommended two sidebar changes:
+# Purchase Order (916 visits) and Material Request (133) first on Buying, and CRM opening on the
+# Opportunity Kanban (836) rather than its dashboard (189). The rows are production's "Buying" and
+# "CRM" Sidebars, read on 2026-10-23, in idx order; no Custom Sidebar layer existed for either.
+# Row names are placeholders: the read did not select them.
+
+KANBAN = "/desk/opportunity/view/kanban/Opportunity"
+
+_BUYING_2026_10_23 = [
+	("Link", "Workspace", "Buying", "Home"),
+	("Link", "Dashboard", "Buying", "Dashboard"),
+	("Link", "DocType", "Supplier", "Supplier"),
+	("Link", "DocType", "Material Request", "Material Request"),
+	("Link", "DocType", "Request for Quotation", "Request for Quotation"),
+	("Link", "DocType", "Supplier Quotation", "Supplier Quotation"),
+	("Link", "DocType", "Purchase Order", "Purchase Order"),
+	("Link", "DocType", "Purchase Receipt", "Purchase Receipt"),
+	("Link", "DocType", "Purchase Invoice", "Purchase Invoice"),
+	("Section Break", "DocType", None, "Reports"),
+	("Link", "Report", "Purchase Analytics", "Purchase Analytics"),
+	("Link", "Report", "Purchase Order Analysis", "Purchase Order Analysis"),
+	("Link", "Report", "Purchase Register", "Purchase Register"),
+	("Link", "Report", "Supplier Quotation Comparison", "Supplier Quotation Comparison"),
+	("Link", "Report", "Accounts Payable", "Accounts Payable"),
+	("Link", "Report", "Accounts Payable Summary", "Accounts Payable Summary"),
+	("Section Break", "DocType", None, "Items"),
+	("Link", "DocType", "Item", "Item"),
+	("Link", "DocType", "Item Group", "Item Group"),
+	("Link", "DocType", "Price List", "Price List"),
+	("Section Break", "DocType", None, "Setup"),
+	("Link", "DocType", "Supplier Group", "Supplier Group"),
+	("Link", "DocType", "Supplier Scorecard", "Supplier Scorecard"),
+	("Link", "DocType", "Buying Settings", "Settings"),
+]
+
+# Through the first two sections; the other 26 rows (Maintenance, Sales Pipeline, Campaign, Setup and
+# Settings sections) only shift down with the rest.
+_CRM_2026_10_23 = [
+	("Link", "Dashboard", "CRM", "Home"),
+	("Link", "DocType", "Lead", "Lead"),
+	("Link", "DocType", "Opportunity", "Opportunity"),
+	("Link", "Page", "guided-entry", "Guided Entry"),
+	("Link", "Page", "opportunity-board", "Opportunity Board"),
+	("Link", "DocType", "Customer", "Customer"),
+	("Section Break", "DocType", None, "Reports"),
+	("Link", "Report", "Sales Analytics", "Sales Analytics"),
+	("Link", "Report", "Lead Details", "Lead Details"),
+	("Section Break", "DocType", None, "Maintenance"),
+	("Link", "DocType", "Maintenance Schedule", "Maintenance Schedule"),
+]
+
+
+def _rows(parent, spec, prefix):
+	return [
+		{
+			"name": f"{prefix}{idx:02d}",
+			"parent": parent,
+			"parenttype": "Sidebar",
+			"idx": idx,
+			"type": type_,
+			"link_type": link_type,
+			"link_to": link_to,
+			"url": None,
+			"label": label,
+			"hidden": 0,
+		}
+		for idx, (type_, link_type, link_to, label) in enumerate(spec, start=1)
+	]
+
+
+def _buying_rows():
+	return _rows("Buying", _BUYING_2026_10_23, "buy")
+
+
+def _crm_rows():
+	return _rows("CRM", _CRM_2026_10_23, "crm")
+
+
+def _labels(db, parent):
+	return [r["label"] for r in sorted((r for r in db.rows if r["parent"] == parent), key=lambda r: r["idx"])]
+
+
+def _landing(db, parent):
+	"""Where frappe 16.50's desk opens a module: the first row that leads anywhere
+	(``sidebar.module_landing_route`` over ``sidebar_item.get_route``)."""
+	for row in sorted((r for r in db.rows if r["parent"] == parent), key=lambda r: r["idx"]):
+		if row["type"] != "Link" or row.get("hidden"):
+			continue
+		return row["url"] if row["link_type"] == "URL" else (row["link_type"], row["link_to"])
+
+
+def _contiguous(test, db, parent):
+	idx = sorted(r["idx"] for r in db.rows if r["parent"] == parent)
+	test.assertEqual(idx, list(range(1, len(idx) + 1)))
+
+
+class TestCrmOpensOnTheKanban(unittest.TestCase):
+	def _migrate(self):
+		db = _AddDb(_crm_rows(), sidebars=("CRM",))
+		return db, _run_migrate(db)
+
+	def test_production_on_2026_10_23(self):
+		db, fake = self._migrate()
+		self.assertEqual(
+			_labels(db, "CRM")[:8],
+			[
+				"Opportunity Kanban",
+				"Dashboard",
+				"Lead",
+				"Opportunity",
+				"Guided Entry",
+				"Opportunity Board",
+				"Customer",
+				"Reports",
+			],
+		)
+		self.assertEqual(_landing(db, "CRM"), KANBAN)
+		_contiguous(self, db, "CRM")
+		self.assertEqual(fake.errors, [])
+		self.assertIn("bootinfo", fake.cache.deleted)
+
+	def test_the_kanban_row(self):
+		db, _ = self._migrate()
+		(row,) = db.inserted
+		self.assertEqual((row["parent"], row["parenttype"], row["parentfield"]), ("CRM", "Sidebar", "items"))
+		self.assertEqual(
+			(row["type"], row["link_type"], row["link_to"], row["url"]), ("Link", "URL", None, KANBAN)
+		)
+		self.assertEqual((row["idx"], row["child"], row["indent"], row["open_in_new_tab"]), (1, 0, 0, 0))
+		# Opens in the desk: a landing outside /desk/ goes to a new tab (`sidebar.open_landing`).
+		self.assertTrue(row["url"].startswith("/desk/"))
+		# No key of ours that is not a Sidebar Item column (`read` is for the boot filter only).
+		self.assertNotIn("read", row)
+		self.assertNotIn("after", row)
+
+	def test_the_url_is_the_one_the_dock_opens(self):
+		dock = (MODULE_PATH.parent / "dock_profiles.py").read_text(encoding="utf-8")
+		self.assertIn(f'OPPORTUNITIES = ("URL", "{KANBAN}")', dock)
+
+	def test_the_dashboard_row_is_renamed_not_moved_or_lost(self):
+		db, _ = self._migrate()
+		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("Dashboard", "CRM"))
+		self.assertEqual((row["label"], row["idx"]), ("Dashboard", 2))
+		self.assertIn((row["name"], "label", "Dashboard"), db.writes)
+
+	def test_second_migrate_changes_nothing(self):
+		db, _ = self._migrate()
+		db.writes.clear()
+		db.inserted.clear()
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, db.inserted, fake.cache.deleted, fake.errors), ([], [], [], []))
+
+	def test_erpnext_reimport_is_redone(self):
+		db, _ = self._migrate()
+		db.rows = _crm_rows()
+		db.inserted.clear()
+		_run_migrate(db)
+		self.assertEqual([r["url"] for r in db.inserted], [KANBAN])
+		self.assertEqual(_labels(db, "CRM")[:2], ["Opportunity Kanban", "Dashboard"])
+
+	def test_a_kanban_row_already_there_is_left_alone(self):
+		# A Workspace Manager moved it down and hid it in the base; it is still the same link.
+		rows = _crm_rows()
+		rows.append(
+			dict(
+				rows[0],
+				name="mine01",
+				idx=99,
+				type="Link",
+				link_type="URL",
+				link_to=None,
+				url=KANBAN,
+				label="Pipeline",
+				hidden=1,
+			)
+		)
+		db = _AddDb(rows, sidebars=("CRM",))
+		_run_migrate(db)
+		self.assertEqual(db.inserted, [])
+		self.assertEqual(next(r for r in db.rows if r["name"] == "mine01")["hidden"], 1)
+
+	def test_another_url_row_is_not_the_kanban(self):
+		# A URL row has no link_to, so identity on (link_type, link_to) would make every URL row the same.
+		rows = _crm_rows()
+		rows.append(
+			dict(
+				rows[0],
+				name="other1",
+				idx=12,
+				link_type="URL",
+				link_to=None,
+				url="https://example.com",
+				label="Elsewhere",
+			)
+		)
+		db = _AddDb(rows, sidebars=("CRM",))
+		_run_migrate(db)
+		self.assertEqual([r["url"] for r in db.inserted], [KANBAN])
+
+	def test_a_label_someone_else_set_is_kept(self):
+		rows = _crm_rows()
+		rows[0]["label"] = "Sales Dashboard"
+		db = _AddDb(rows, sidebars=("CRM",))
+		_run_migrate(db)
+		self.assertEqual(_labels(db, "CRM")[1], "Sales Dashboard")
+		self.assertFalse([w for w in db.writes if len(w) == 3])
+
+
+class TestBuyingOrder(unittest.TestCase):
+	def test_production_on_2026_10_23(self):
+		db = _AddDb(_buying_rows(), sidebars=("Buying",))
+		fake = _run_migrate(db)
+		self.assertEqual(
+			_labels(db, "Buying")[:10],
+			[
+				"Home",
+				"Purchase Order",
+				"Material Request",
+				"Dashboard",
+				"Supplier",
+				"Request for Quotation",
+				"Supplier Quotation",
+				"Purchase Receipt",
+				"Purchase Invoice",
+				"Reports",
+			],
+		)
+		# Buying still opens on its workspace.
+		self.assertEqual(_landing(db, "Buying"), ("Workspace", "Buying"))
+		# Only the six rows whose place changed, in place, without a new `modified`.
+		self.assertEqual(
+			sorted(db.writes),
+			sorted([("buy07", 2), ("buy04", 3), ("buy02", 4), ("buy03", 5), ("buy05", 6), ("buy06", 7)]),
+		)
+		self.assertEqual(db.inserted, [])
+		self.assertEqual(_labels(db, "Buying")[10:], [label for *_, label in _BUYING_2026_10_23[10:]])
+		_contiguous(self, db, "Buying")
+		self.assertEqual(fake.cache.deleted, ["bootinfo"])
+		self.assertEqual(fake.errors, [])
+
+	def test_second_migrate_changes_nothing(self):
+		db = _AddDb(_buying_rows(), sidebars=("Buying",))
+		_run_migrate(db)
+		db.writes.clear()
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, fake.cache.deleted), ([], []))
+
+	def test_erpnext_reimport_is_reordered_again(self):
+		db = _AddDb(_buying_rows(), sidebars=("Buying",))
+		_run_migrate(db)
+		db.rows = _buying_rows()
+		_run_migrate(db)
+		self.assertEqual(_labels(db, "Buying")[:3], ["Home", "Purchase Order", "Material Request"])
+
+	def test_a_missing_row_is_left_out_not_guessed(self):
+		rows = [r for r in _buying_rows() if r["link_to"] != "Material Request"]
+		for idx, row in enumerate(rows, start=1):
+			row["idx"] = idx
+		db = _AddDb(rows, sidebars=("Buying",))
+		_run_migrate(db)
+		self.assertEqual(_labels(db, "Buying")[:3], ["Home", "Purchase Order", "Dashboard"])
+		_contiguous(self, db, "Buying")
+
+	def test_a_missing_anchor_leaves_the_sidebar_alone(self):
+		rows = [r for r in _buying_rows() if r["link_type"] != "Workspace"]
+		db = _AddDb(rows, sidebars=("Buying",))
+		_run_migrate(db)
+		self.assertEqual(db.writes, [])
+
+	def test_no_buying_sidebar_nothing_happens(self):
+		db = _AddDb(_buying_rows(), sidebars=())
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, fake.errors), ([], []))
+
+	def test_before_16_50_nothing_happens(self):
+		db = _AddDb(_buying_rows() + _crm_rows(), doctypes=(), sidebars=("Buying", "CRM"))
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, db.inserted, fake.errors), ([], [], []))
+
+	def test_a_failure_is_logged_not_raised(self):
+		db = _AddDb(_buying_rows(), sidebars=("Buying",), fail=True)
+		fake = _AddFrappe(db)
+		_module(fake)["arrange_core_sidebar_items"]()
+		self.assertEqual(len(fake.errors), 1)
+		self.assertEqual(fake.errors[0][0], "Core sidebar items not arranged")
+		self.assertIn("\n", fake.errors[0][1])
+
+
+class TestWiring(unittest.TestCase):
+	APP = MODULE_PATH.parent.parent
+
+	def test_after_migrate_arranges_after_adding(self):
+		hooks = (self.APP / "hooks.py").read_text(encoding="utf-8")
+		block = hooks[hooks.index("\nafter_migrate = [") :]
+		block = block[: block.index("\n]")]
+		added = block.index('"erpnext_enhancements.setup.workspace_tweaks.add_core_sidebar_items"')
+		arranged = block.index('"erpnext_enhancements.setup.workspace_tweaks.arrange_core_sidebar_items"')
+		self.assertLess(added, arranged)
+
+	def test_boot_session_filters_the_sidebars(self):
+		tree = ast.parse((self.APP / "boot.py").read_text(encoding="utf-8"))
+		boot = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "boot_session")
+		calls = [
+			n
+			for n in ast.walk(boot)
+			if isinstance(n, ast.Call)
+			and isinstance(n.func, ast.Name)
+			and n.func.id == "drop_unreadable_sidebar_links"
+		]
+		self.assertEqual(len(calls), 1)
+		self.assertEqual([a.id for a in calls[0].args], ["bootinfo"])
+
+
+# ------------------------------------------------------------ drop_unreadable_sidebar_links
+
+
+class _BootFrappe:
+	def __init__(self, readable=(), fail=False):
+		self.readable, self.fail = set(readable), fail
+		self.errors = []
+
+	def has_permission(self, doctype, ptype):
+		assert ptype == "read"
+		if self.fail:
+			raise RuntimeError("boom")
+		return doctype in self.readable
+
+	def log_error(self, title=None, message=None):
+		self.errors.append((title, message))
+
+	@staticmethod
+	def get_traceback():
+		return "Traceback (most recent call last):\n  ...\nRuntimeError: boom"
+
+
+def _boot_item(label, link_type, link_to=None, url=None, type_="Link"):
+	return {"label": label, "type": type_, "link_type": link_type, "link_to": link_to, "url": url}
+
+
+def _boot():
+	return {
+		"module_sidebars": {
+			"CRM": {
+				"name": "CRM",
+				"items": [
+					_boot_item("Opportunity Kanban", "URL", url=KANBAN),
+					_boot_item("Dashboard", "Dashboard", "CRM"),
+					_boot_item("Contact", "DocType", "Contact"),
+					_boot_item("Elsewhere", "URL", url="https://example.com"),
+				],
+			},
+			"Buying": {"name": "Buying", "items": [_boot_item("Home", "Workspace", "Buying")]},
+		}
+	}
+
+
+def _filter(bootinfo, fake):
+	_module(fake)["drop_unreadable_sidebar_links"](bootinfo)
+	return bootinfo
+
+
+class TestDropUnreadableSidebarLinks(unittest.TestCase):
+	def test_without_read_on_opportunity_the_kanban_goes(self):
+		boot = _filter(_boot(), _BootFrappe(readable={"Contact"}))
+		labels = [i["label"] for i in boot["module_sidebars"]["CRM"]["items"]]
+		self.assertEqual(labels, ["Dashboard", "Contact", "Elsewhere"])
+		# CRM now opens on its dashboard again, as it did before v1.735.0.
+		self.assertEqual(boot["module_sidebars"]["Buying"], _boot()["module_sidebars"]["Buying"])
+
+	def test_with_read_nothing_changes(self):
+		boot = _filter(_boot(), _BootFrappe(readable={"Opportunity"}))
+		self.assertEqual(boot, _boot())
+
+	def test_a_sidebar_left_with_nothing_to_open_goes(self):
+		# frappe never builds a sidebar with no row that leads anywhere; the Kanban alone made this one.
+		boot = _boot()
+		boot["module_sidebars"]["CRM"]["items"] = [
+			_boot_item("Opportunity Kanban", "URL", url=KANBAN),
+			_boot_item("Reports", "DocType", type_="Section Break"),
+		]
+		_filter(boot, _BootFrappe())
+		self.assertNotIn("CRM", boot["module_sidebars"])
+		self.assertIn("Buying", boot["module_sidebars"])
+
+	def test_no_crm_sidebar_is_fine(self):
+		boot = {"module_sidebars": {}}
+		fake = _BootFrappe()
+		_filter(boot, fake)
+		self.assertEqual((boot, fake.errors), ({"module_sidebars": {}}, []))
+		fake = _BootFrappe()
+		_filter({}, fake)
+		self.assertEqual(fake.errors, [])
+
+	def test_a_failure_is_logged_not_raised(self):
+		fake = _BootFrappe(fail=True)
+		boot = _filter(_boot(), fake)
+		self.assertEqual(boot, _boot())
+		self.assertEqual(fake.errors[0][0], "Sidebar URL rows not filtered at boot")
 
 
 if __name__ == "__main__":
