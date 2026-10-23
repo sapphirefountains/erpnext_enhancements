@@ -15,6 +15,7 @@ Installs its own ``frappe`` stub in ``setUpModule``, which is why it has its own
 Run: python -m unittest erpnext_enhancements.tests.test_dock_profiles
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -45,6 +46,19 @@ ERPNEXT_DOCK = [
 		"Portal",
 	)
 ]
+
+# ERPNext's own Accounts entry, as its dock file titles it. The Customer row must not read the
+# same: Customer is relabelled "Accounts" on prod, and Manage Dock lists both by title.
+ERPNEXT_ACCOUNTS_TITLE = "Accounts"
+
+# Every release of the dock file: its `modified`, and a hash of its rows. frappe re-imports the
+# file only when `modified` is later than the row in the database (modules/import_file.py), so a
+# change to the rows that leaves `modified` alone never reaches a site that already has the dock.
+# Change the rows, move `modified` forward, and add a line here.
+SHIPPED_DOCKS = {
+	"2026-10-23 12:00:00.000000": "57f2f9138bc9cd0cb6ec2eb63dd0e3d05339a383900c4abd64bb39656035e858",
+	"2026-10-23 16:00:00.000000": "c0f45e1fbb5e83c5fb47d4fd7768bc5f26ca3629b1cf68e0b09f9a77d59ec90a",
+}
 
 STATE = {}
 dp = None
@@ -319,6 +333,26 @@ class TheShippedDockTest(unittest.TestCase):
 		self.assertIn(dp.OPPORTUNITIES, _shipped_keys())
 		self.assertRegex(dp.OPPORTUNITIES[1], r"^/desk/opportunity/view/kanban/Opportunity$")
 
+	def test_suppliers_and_customers_open_their_lists(self):
+		"""A dock row cannot open a DocType, so the two lists are URL rows (v1.736.0)."""
+		rows = {dp._key(row): row for row in self.dock["items"]}
+		self.assertEqual(dp.SUPPLIERS, ("URL", "/desk/supplier"))
+		self.assertEqual(dp.CUSTOMERS, ("URL", "/desk/customer"))
+		self.assertEqual(rows[dp.SUPPLIERS]["title"], "Suppliers")
+		self.assertIn("Accounts", rows[dp.CUSTOMERS]["title"])
+		self.assertNotEqual(rows[dp.CUSTOMERS]["title"], ERPNEXT_ACCOUNTS_TITLE)
+
+	def test_changed_rows_come_with_a_later_modified(self):
+		"""Otherwise migrate skips the file on a site that already holds the dock."""
+		digest = hashlib.sha256(json.dumps(self.dock["items"], sort_keys=True).encode()).hexdigest()
+		self.assertIn(self.dock["modified"], SHIPPED_DOCKS, "add this release to SHIPPED_DOCKS")
+		self.assertEqual(
+			SHIPPED_DOCKS[self.dock["modified"]],
+			digest,
+			"the rows changed: move `modified` forward and add the new hash to SHIPPED_DOCKS",
+		)
+		self.assertEqual(self.dock["modified"], max(SHIPPED_DOCKS))
+
 
 # --- the profiles -----------------------------------------------------------------------------
 
@@ -335,6 +369,19 @@ class TheProfilesTest(unittest.TestCase):
 	def test_the_site_default_is_what_nik_asked_for(self):
 		"""Nik, 2026-10-23: "Buying, Stock, Projects, Opportunities Kanban (CRM)"."""
 		self.assertEqual(dp.SITE_DEFAULT[:4], (dp.BUYING, dp.STOCK, dp.PROJECTS, dp.OPPORTUNITIES))
+
+	def test_the_ceo_profile_is_what_nik_asked_for(self):
+		"""Nik, 2026-10-23: "Projects, Opportunities, CRM, Supplier, Accounts (Customer)"."""
+		self.assertEqual(
+			dp.PROFILES["CEO"], (dp.PROJECTS, dp.OPPORTUNITIES, dp.CRM, dp.SUPPLIERS, dp.CUSTOMERS)
+		)
+		self.assertNotIn(dp.ACCOUNTS, dp.PROFILES["CEO"])
+
+	def test_the_ceo_profile_is_only_ever_chosen(self):
+		"""No Role Profile maps to it; Executive stays with Management."""
+		self.assertNotIn("CEO", [profile for profile, _ in dp.BY_ROLE_PROFILE])
+		self.assertEqual(dp.profile_for(None, {"Executive"}), "Management")
+		self.assertEqual(dp.profile_for("CEO", {"Executive"}), "CEO")
 
 	def test_sales_has_crm_selling_and_projects_but_not_buying(self):
 		"""Nik's example: Brian 'has CRM and maybe Selling and Projects, but he wouldn't need Buying'."""
@@ -490,6 +537,36 @@ class EveryonesLayerTest(unittest.TestCase):
 		self.assertEqual(_rail("parker@x"), list(dp.PROFILES["Purchasing"]))
 		self.assertEqual(_rail("austin@x"), list(dp.PROFILES["Field Tech"]))
 		self.assertNotIn(dp.BUYING, _rail("brian@x"))
+
+	def test_the_ceo_gets_his_five_and_everyone_else_holds_them_hidden(self):
+		_user("james@x", chosen="CEO")
+		dp.apply_dock_profiles()
+		self.assertEqual(
+			_rail("james@x"), [dp.PROJECTS, dp.OPPORTUNITIES, dp.CRM, dp.SUPPLIERS, dp.CUSTOMERS]
+		)
+		for person in ("brian@x", "parker@x", "austin@x", ""):
+			hidden = {dp._key(row) for row in _layer(person)["items"] if row["hidden"]}
+			with self.subTest(person=person or "site"):
+				self.assertIn(dp.SUPPLIERS, hidden)
+				self.assertIn(dp.CUSTOMERS, hidden)
+
+	def test_new_rows_reach_layers_written_before_them(self):
+		"""v1.734.0's layers lack the two rows; the next migrate adds them, hidden."""
+		_reset(with_docks=False)
+		_standard("erpnext", ERPNEXT_DOCK)
+		_standard(
+			"erpnext_enhancements", [k for k in _shipped_keys() if k not in (dp.SUPPLIERS, dp.CUSTOMERS)]
+		)
+		_user("brian@x", ("Sales",))
+		dp.apply_dock_profiles()
+		self.assertNotIn(dp.SUPPLIERS, [dp._key(row) for row in _layer("brian@x")["items"]])
+		STATE["docks"][:] = [d for d in STATE["docks"] if d["name"] != "erpnext_enhancements"]
+		_standard("erpnext_enhancements", _shipped_keys())
+		dp.apply_dock_profiles()
+		rows = {dp._key(row): row["hidden"] for row in _layer("brian@x")["items"]}
+		self.assertEqual(rows[dp.SUPPLIERS], 1)
+		self.assertEqual(rows[dp.CUSTOMERS], 1)
+		self.assertEqual(_rail("brian@x"), list(dp.PROFILES["Sales"]))
 
 	def test_no_profile_means_the_shared_dock(self):
 		dp.apply_dock_profiles()

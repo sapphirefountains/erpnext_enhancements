@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.736.0] - 2026-10-23
+
+James gets a dock of his own, a follow-up to the dock profiles of v1.734.0. Nik, 2026-10-23: "Also make
+James modules be Projects, Opportunities, CRM, Supplier, Accounts (Customer) instead of all those ones."
+
+### Added
+- **Suppliers and Accounts (Customers) on the dock.** Two new URL rows in this app's own dock: `/desk/supplier`
+  (title "Suppliers", icon `building-2`) and `/desk/customer` (title "Accounts (Customers)", icon
+  `customer`). Both are URL rows because a dock row can open a Sidebar, a Workspace or a URL, never a
+  DocType. "Accounts (Customers)" is the Customer list: Customer is relabelled Accounts on prod, and
+  ERPNext's own Accounts entry (the accounting module) is titled "Accounts", so the plain word would show
+  two identical names in Manage Dock's Hidden pane.
+- **A CEO dock profile:** Projects, Opportunities, CRM, Suppliers, Accounts (Customers), in that order. It
+  is added to `PROFILES` and to the User Dock Profile options. It is only ever chosen on the User form: no
+  Role Profile maps to it, and the Executive Role Profile still maps to Management. Every other profile is
+  unchanged. The two new rows land on everyone else's layer as hidden entries, one click away in Manage
+  Dock.
+- `test_dock_profiles` pins the CEO list, the two rows' titles, and that no Role Profile resolves to CEO.
+  It also checks that layers written before the rows existed pick them up, hidden, on the next migrate.
+  New `SHIPPED_DOCKS` check: the dock file's rows may not change unless its `modified` moves forward.
+  frappe re-imports the file only when that stamp is later than the database row's, so a rows-only edit
+  would never reach prod. This release moves it from 12:00 to 16:00.
+
+### On deploy
+- Model sync re-imports this app's dock with the two new rows.
+- `apply_dock_profiles` adds the two rows as hidden to the site's layer and to all 15 personal layers.
+  All 16 layers were still the app's on 2026-10-23, so no one's own arrangement is touched.
+- James keeps Management until his User's Dock Profile is switched to CEO. The manager files that User
+  change after deploy. The User `on_update` hook then rewrites his layer at once.
+
 ## [1.735.0] - 2026-10-23
 
 CRM now opens on the Opportunity Kanban, and the Buying sidebar lists Purchase Order and Material
