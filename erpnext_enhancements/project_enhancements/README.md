@@ -2099,18 +2099,26 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
     confirmation first names each selected task with a drafted reschedule that is not published
     (`drafted_start`). It says that the tasks drafted along with it will still publish where they
     were drafted unless someone moves them. It warns and discards nothing.
-- **ERPNext's own date checks run on the draft** (v1.741.0, `erpnext_date_problems`). A draft is never
-  saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the project's
-  schedule Draft. The three date checks ERPNext v16 makes are run on the drafted state and come back
-  as warnings under **ERPNext** ("Publish will be refused for …"). They never refuse the draft.
+- **The project's window is widened by every planner save** (v1.741.0,
+  `project_enhancements/project_window.py`, called from `_save` and `_insert_doc`). A Project's
+  expected start and end are derived on this site: the earliest task start and the latest task end,
+  recomputed on every Task save. ERPNext refuses a task outside them, so moving the last task later,
+  rescheduling an overdue task, or copying a week ahead was refused against a value about to be
+  recomputed, and Publish then left the project Draft. The window now widens first, in the same
+  transaction, and never inward, as the Gantt's drags always have. The Gantt now calls the same
+  helper.
+- **ERPNext's own date checks run on the draft** (v1.741.0, `erpnext_date_problems`). A draft is
+  never saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the
+  project's schedule Draft. The two date checks Publish cannot clear itself are run on the drafted
+  state, and come back as warnings under **ERPNext** ("Publish will be refused for …"). They never
+  refuse the draft.
   - The end is not before the start.
-  - The end is not after the parent task's end.
-  - Neither date is outside the project's expected start and end.
+  - The end is not after the parent task's end: judged only when the end moved, and against the
+    parent's drafted end when it is drafted too.
 
-  As ERPNext does, the last two judge only a date that moved, and a new task is judged on every date.
-  They cover every drafted edit of a task (`_store_draft`), its drafted followers (`_draft_checks`),
-  and drafted new tasks: quick add, duplicate and Copy week (`store_new_draft`), and a later edit of
-  one (`_store_new_edit`). The build-out grid's rows carry no dates, so there is nothing to check.
+  The project-window check is left out because Publish widens the window. Publish saves a parent
+  before its children when they end on the same day (`_publish_order`), so a child is never checked
+  against its parent's old end.
 - **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
   everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
   rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line

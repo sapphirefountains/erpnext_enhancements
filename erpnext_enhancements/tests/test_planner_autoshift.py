@@ -1412,26 +1412,13 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 	def _refused(self, result):
 		return [line for line in result["warnings"] if "Publish will be refused" in line]
 
-	def test_a_drafted_reschedule_past_the_projects_end(self):
-		self.projects["PRJ-2"]["expected_end_date"] = "2026-10-26"
-		result = self._reschedule()
-		self.assertTrue(result["updated"][0]["drafted"])  # warned, never refused
-		self.assertEqual(
-			self._refused(result),
-			[
-				"Not published yet. ERPNext: Publish will be refused for Subject TASK-A: its end (2026-10-27) is"
-				" after project PRJ-2's expected end (2026-10-26)."
-			],
-		)
-
-	def test_a_drafted_move_before_the_projects_start(self):
-		self.projects["PRJ-2"]["expected_start_date"] = "2026-10-27"
-		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-26", "end": "2026-10-27"}]
-		result = _actions().move_many(json.dumps(moves), draft="auto")
-		self.assertTrue(result["drafted"])
-		self.assertIn(
-			"its start (2026-10-26) is before project PRJ-2's expected start", " ".join(result["warnings"])
-		)
+	def test_the_projects_window_is_not_warned_about_publish_widens_it(self):
+		# v1.741.0 round 2: every planner save widens the project's derived window first, so a draft
+		# past the project's end (or before its start) is not something Publish will refuse.
+		self.projects["PRJ-2"].update(expected_start_date="2026-10-27", expected_end_date="2026-10-26")
+		self.assertEqual(self._refused(self._reschedule()), [])
+		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-20", "end": "2026-10-21"}]
+		self.assertEqual(self._refused(_actions().move_many(json.dumps(moves), draft="auto")), [])
 
 	def test_a_drafted_follower_past_its_parent_tasks_end(self):
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
@@ -1459,15 +1446,148 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 		self.assertEqual(self._refused(self._reschedule()), [])
 
 	def test_only_a_date_that_moved_is_judged_but_end_before_start_always_is(self):
-		self.projects["PRJ-2"]["expected_end_date"] = "2026-10-01"
-		doc = h._Doc(name="T", project="PRJ-2", exp_start_date="2026-10-05", exp_end_date="2026-10-02")
+		h._task("TASK-P", start="2026-09-01", end="2026-09-30", crew=(), project="PRJ-2")
+		doc = h._Doc(
+			name="T",
+			project="PRJ-2",
+			parent_task="TASK-P",
+			exp_start_date="2026-10-05",
+			exp_end_date="2026-10-02",
+		)
 		stored = {"exp_start_date": "2026-10-05", "exp_end_date": "2026-10-02"}
 		self.assertEqual(
 			self.api.erpnext_date_problems(doc, stored),
 			["its end (2026-10-02) is before its start (2026-10-05)"],
 		)
-		# A new task (no stored row) is judged on every date.
-		self.assertEqual(len(self.api.erpnext_date_problems(doc)), 3)
+		# A new task (no stored row) is judged on its end against the parent's too.
+		self.assertEqual(len(self.api.erpnext_date_problems(doc)), 2)
+
+
+class _ERPNextsProjectWindow:
+	"""ERPNext's ``validate_parent_project_dates`` simulated on save: a task outside its project's
+	expected start and end is refused, and ``frappe.db.set_value`` on a Project really moves them."""
+
+	def _simulate_erpnext(self):
+		self.widened = []
+		real_set_value = self.frappe.db.set_value
+
+		def set_value(doctype, name, field, value=None, *args, **kwargs):
+			if doctype == "Project":
+				changes = field if isinstance(field, dict) else {field: value}
+				self.widened.append((name, {key: str(day) for key, day in changes.items()}))
+				self.projects.setdefault(name, {}).update({key: str(day) for key, day in changes.items()})
+				return None
+			return real_set_value(doctype, name, field, value, *args, **kwargs)
+
+		self.frappe.db.set_value = set_value
+		real_save = h._TaskDoc.save
+		projects = self.projects
+
+		def save(doc):
+			window = projects.get(doc.get("project")) or {}
+			for field in ("exp_start_date", "exp_end_date"):
+				day = str(doc.get(field) or "")[:10]
+				if day and window.get("expected_end_date") and day > str(window["expected_end_date"])[:10]:
+					raise h._Throw(
+						f"{doc.get('name')}'s {field} cannot be after the project's Expected End Date"
+					)
+				if (
+					day
+					and window.get("expected_start_date")
+					and day < str(window["expected_start_date"])[:10]
+				):
+					raise h._Throw(
+						f"{doc.get('name')}'s {field} cannot be before the project's Expected Start Date"
+					)
+			return real_save(doc)
+
+		self.patches.append(mock.patch.object(h._TaskDoc, "save", save))
+		self.patches[-1].start()
+
+
+class TestALiveSaveWidensTheProject(_ERPNextsProjectWindow, _P4):
+	"""v1.741.0 round 2: on this site a Project's expected dates are derived from its tasks, so the
+	planner widens them before a save that needs it, as the Gantt does; never inward."""
+
+	def setUp(self):
+		super().setUp()
+		self._simulate_erpnext()
+		self.projects["PRJ-1"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		h._task("TASK-1", crew=("RES-1",))  # Mon 12 - Wed 14: the project's first and last task
+
+	def test_the_last_task_a_day_later(self):
+		result = self.api.save_task("TASK-1", BASE, end="2026-10-15")
+		self.assertNotIn("drafted", result)
+		self.assertEqual(self._saves(), ["TASK-1"])
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-15"})])
+
+	def test_the_first_task_a_day_earlier(self):
+		self.api.save_task("TASK-1", BASE, start="2026-10-09")  # keeps its length: Fri 9 - Tue 13
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_start_date": "2026-10-09"})])
+
+	def test_a_save_inside_the_window_never_moves_it(self):
+		self.api.save_task("TASK-1", BASE, end="2026-10-13")  # shorter
+		self.assertEqual(self.widened, [])
+
+	def test_the_live_overdue_tray(self):
+		self.projects["PRJ-1"].update(expected_start_date="2026-09-01", expected_end_date="2026-10-01")
+		h._task("TASK-O", start="2026-09-30", end="2026-10-01", crew=("RES-1",))
+		result = self.api.bulk_update(json.dumps(["TASK-O"]), "reschedule", "2026-10-26")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-27"})])
+
+	def test_without_it_the_save_is_refused(self):
+		# The simulation itself: what ERPNext does when the window is not widened first.
+		with mock.patch.object(self.api.project_window, "widen_for_task", lambda doc: {}):
+			with self.assertRaises(h._Throw):
+				self.api.save_task("TASK-1", BASE, end="2026-10-15")
+
+	def test_the_helper_widens_only(self):
+		widen = self.api.project_window.widen
+		self.assertEqual(widen("PRJ-1", "2026-10-13", "2026-10-13"), {})  # inside: nothing
+		self.assertEqual(
+			widen("PRJ-1", None, "2026-10-20"), {"expected_end_date": (D(2026, 10, 14), D(2026, 10, 20))}
+		)
+		self.assertEqual(
+			widen("PRJ-1", "2026-10-01", None), {"expected_start_date": (D(2026, 10, 12), D(2026, 10, 1))}
+		)
+		self.projects["PRJ-1"].update(expected_end_date=None)
+		self.assertEqual(widen("PRJ-1", None, "2026-12-01"), {})  # ERPNext checks nothing against a blank one
+		self.assertEqual(widen(None, None, "2026-12-01"), {})
+
+
+class TestADraftThatNeedsAWiderWindowPublishes(_ERPNextsProjectWindow, _OverdueFollowers):
+	"""The drafted paths: Publish saves through the same widening, so the project is not left Draft."""
+
+	def setUp(self):
+		super().setUp()
+		self._simulate_erpnext()
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+
+	def test_an_overdue_reschedule_on_a_project_whose_tasks_are_all_past(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-30", expected_end_date="2026-10-01")
+		self._reschedule()
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual([p["task"] for p in result["published"]], ["TASK-A"])
+		self.assertEqual(self.projects["PRJ-2"]["expected_end_date"], "2026-10-27")
+
+	def test_the_last_task_drafted_a_day_later(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-30", expected_end_date="2026-10-01")
+		self.assertTrue(self.api.save_task("TASK-A", BASE, end="2026-10-02")["drafted"])
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(self.projects["PRJ-2"]["expected_end_date"], "2026-10-02")
 
 
 class TestADraftedRescheduleThenPublish(_OverdueFollowers):
@@ -1667,6 +1787,29 @@ class TestCopyWeekOnADraftSchedule(_P4):
 		self.assertEqual(len(self._inserted()), 1)
 		self.assertNotIn("drafted", _actions().duplicate_task("TASK-8", draft=0))  # explicit 0: live
 
+	def test_a_drafted_copy_into_next_week_publishes_and_widens(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		widened = []
+		self.frappe.db.set_value = lambda doctype, name, field, value=None, **k: widened.append(
+			(doctype, name, field, str(value))
+		)
+		self._copy(["TASK-8"], dry_run=0, draft="auto")
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(len(self._inserted()), 1)
+		self.assertIn(("Project", "PRJ-2", "expected_end_date", "2026-10-21"), widened)
+
 	def test_a_published_projects_copy_is_inserted_as_before(self):
 		result = self._copy(["TASK-1"], dry_run=0, draft="auto")
 		((created,),) = [result["created"]]
@@ -1784,6 +1927,31 @@ class TestNoFlagMeansAuto(_P4):
 		self.assertNotIn("drafting = bool(cint(pp.given(draft)))", source)
 		# duplicate, quick add and build out, and the build-out grid's read.
 		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 4)
+
+
+class TestPublishOrder(unittest.TestCase):
+	def _plan(self, name, end, parent=None):
+		return {
+			"name": name,
+			"parent": parent,
+			"after": ({"exp_start_date": "2026-10-26", "exp_end_date": end}, []),
+		}
+
+	def test_a_parent_goes_before_its_children_on_the_same_last_day(self):
+		plans = [
+			self._plan("TASK-C", "2026-10-30", parent="TASK-P"),
+			self._plan("TASK-G", "2026-10-30", parent="TASK-C"),
+			self._plan("TASK-P", "2026-10-30"),
+			self._plan("TASK-X", "2026-11-02"),
+		]
+		# Furthest first still; on the 30th the phase, then its task, then that task's own child.
+		self.assertEqual(
+			[plan["name"] for plan in h.api._publish_order(plans)], ["TASK-X", "TASK-P", "TASK-C", "TASK-G"]
+		)
+
+	def test_a_parent_whose_end_is_earlier_still_goes_after(self):
+		plans = [self._plan("TASK-P", "2026-10-27"), self._plan("TASK-C", "2026-10-30", parent="TASK-P")]
+		self.assertEqual([plan["name"] for plan in h.api._publish_order(plans)], ["TASK-C", "TASK-P"])
 
 
 class TestWiring(unittest.TestCase):

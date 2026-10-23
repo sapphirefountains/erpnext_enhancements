@@ -684,7 +684,7 @@ def _answer(ok, rows=None, message="", **extra):
 
 
 @frappe.whitelist(methods=["POST"])
-def draft_task_breakdown(project, brief=None, grid_subjects=None, draft=0):
+def draft_task_breakdown(project, brief=None, grid_subjects=None, draft=None):
 	"""Propose a task breakdown for ``project`` for the Build out grid. **Writes nothing.**
 
 	``brief`` is the planner's optional "describe the job" (at most 1500 characters). ``grid_subjects``
@@ -719,7 +719,9 @@ def draft_task_breakdown(project, brief=None, grid_subjects=None, draft=0):
 	text = scrub(pp.given(brief), BRIEF_MAX)
 	typed = _grid_subjects(grid_subjects)
 	try:
-		context = read_context(project, draft=bool(cint(pp.given(draft))))
+		# v1.741.0: no flag reads drafts on a Draft schedule, as build_out_tasks and its grid do, so the
+		# model sees the drafted phases and tasks rather than proposing them again.
+		context = read_context(project, draft=pp.drafts_new_task(draft, project))
 		prompt = build_prompt(context, text, typed)
 		reply = _ask_model(prompt)
 	except Exception as exc:

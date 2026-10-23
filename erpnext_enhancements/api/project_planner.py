@@ -83,7 +83,12 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
-from erpnext_enhancements.project_enhancements import fountain_move_jobs, planner_tracking, routing
+from erpnext_enhancements.project_enhancements import (
+	fountain_move_jobs,
+	planner_tracking,
+	project_window,
+	routing,
+)
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -1213,9 +1218,15 @@ def _message_log():
 
 
 def _save(doc):
-	"""``doc.save()`` as the caller; what it said through msgprint comes back as warnings."""
+	"""``doc.save()`` as the caller; what it said through msgprint comes back as warnings.
+
+	v1.741.0: the project's expected window is widened first where the task now needs it
+	(``project_window.widen_for_task``): on this site it is derived from the tasks, and ERPNext would
+	otherwise refuse moving the last task later or the first one earlier. Every live planner save and
+	Publish come through here or :func:`_insert_doc`."""
 	log = _message_log()
 	mark = len(log) if log is not None else 0
+	project_window.widen_for_task(doc)
 	doc.save()
 	return _take_messages(log, mark)
 
@@ -2220,18 +2231,21 @@ def erpnext_date_problems(doc, stored=None):
 	"""What ERPNext v16's ``Task.validate_dates`` will refuse about ``doc``'s planned dates when the
 	draft is published, as sentences (v1.741.0). A draft is never saved, so without this a drafted
 	move, a drafted copy or a drafted follower that breaks one of them only fails at Publish, which
-	then leaves the project's schedule Draft. The three checks, as ``erpnext/projects/doctype/task/
-	task.py`` on version-16 makes them:
+	then leaves the project's schedule Draft. Of the checks ``erpnext/projects/doctype/task/task.py``
+	on version-16 makes, the two that Publish cannot clear itself:
 
 	* ``validate_from_to_dates``: the expected end is not before the expected start (always).
-	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's.
-	* ``validate_parent_project_dates``: neither date is outside the project's expected start and
-	  end.
+	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's. ERPNext
+	  refuses it only when the end changed (``report_date_conflict``), so with ``stored`` (the task as
+	  stored, a dict) an end that did not move is not judged; a new task (``stored`` None) is. A
+	  parent that is drafted too is judged where it is drafted to, since the two publish together, and
+	  one that is itself a drafted new task is skipped (it has no row to read yet).
 
-	ERPNext refuses the last two only when that date changed (``report_date_conflict``), so with
-	``stored`` (the task as stored, a dict) a date that did not move is not judged; a new task
-	(``stored`` None) is judged on both. A parent that is itself a drafted new task is skipped: it has
-	no row to read yet."""
+	The third, ``validate_parent_project_dates`` (neither date outside the project's expected start
+	and end), is not warned about: every planner save widens that window first
+	(``project_window.widen_for_task`` in :func:`_save` and :func:`_insert_doc`), Publish included.
+	The comparison is by date, as ERPNext's own, and an end ERPNext would fill in from
+	``expected_time`` is not judged (a planner task always has one)."""
 	problems = []
 	start, end = engine._as_date(doc.get("exp_start_date")), engine._as_date(doc.get("exp_end_date"))
 
@@ -2250,25 +2264,6 @@ def erpnext_date_problems(doc, stored=None):
 			problems.append(
 				_("its end ({0}) is after its parent task {1}'s end ({2})").format(end, parent, parent_end)
 			)
-	project = doc.get("project")
-	if project and (start or end):
-		first = engine._as_date(frappe.db.get_value("Project", project, "expected_start_date"))
-		last = engine._as_date(frappe.db.get_value("Project", project, "expected_end_date"))
-		for field, day, label in (("exp_start_date", start, _("start")), ("exp_end_date", end, _("end"))):
-			if not day or not changed(field):
-				continue
-			if last and day > last:
-				problems.append(
-					_("its {0} ({1}) is after project {2}'s expected end ({3})").format(
-						label, day, project, last
-					)
-				)
-			if first and day < first:
-				problems.append(
-					_("its {0} ({1}) is before project {2}'s expected start ({3})").format(
-						label, day, project, first
-					)
-				)
 	return problems
 
 
@@ -2747,6 +2742,7 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 		saved_point = _savepoint(point)
 		mark = len(log) if log is not None else 0
 		try:
+			project_window.widen_for_task(doc)  # v1.741.0, as _save does
 			doc.save()
 		except Exception as exc:
 			if saved_point:
@@ -3055,6 +3051,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 		)
 		if doc.get("custom_equipment"):
 			_set_equipment(new, equipment_payload(doc.get("custom_equipment")))
+		project_window.widen_for_task(new)  # v1.741.0, as _insert_doc does
 		new.insert()
 		if conflicts:
 			new.add_comment(
@@ -4241,6 +4238,7 @@ def _publish_plan(row):
 		"kwargs": payload_kwargs(load_payload(row.get("payload"))),
 		"before": (_state(stored), _current_crew(stored)),
 		"after": (_state(doc), _current_crew(doc)),
+		"parent": stored.get("parent_task") or None,  # v1.741.0, for _publish_order
 	}, None
 
 
@@ -4320,13 +4318,26 @@ def _saved_since(modified, since):
 def _publish_order(plans):
 	"""The plans furthest first, by the last day each is drafted to: a drafted follower is then saved
 	before the task it follows, so ERPNext's own push finds it already out of the way (P4), for later
-	moves and earlier ones alike. A task that waits on one not saved yet retries (``_apply_plans``)."""
+	moves and earlier ones alike. A task that waits on one not saved yet retries (``_apply_plans``).
 
-	def last_day(plan):
+	v1.741.0: on the same last day a parent task goes before the tasks filed under it. ERPNext checks
+	a child's end against its parent's end as stored, so a child drafted to end with its parent, both
+	later than the parent ends now, was saved first and refused."""
+	parents = {plan["name"]: plan.get("parent") for plan in plans}
+
+	def depth(name):
+		seen, count = {name}, 0
+		while parents.get(name) in parents and parents[name] not in seen:
+			name = parents[name]
+			seen.add(name)
+			count += 1
+		return count
+
+	def key(plan):
 		span = engine.task_span(plan["after"][0]) if plan.get("after") else None
-		return str(span[1]) if span else ""
+		return (str(span[1]) if span else "", -depth(plan["name"]))
 
-	return sorted(plans, key=last_day, reverse=True)
+	return sorted(plans, key=key, reverse=True)
 
 
 def _settle_plans(saved):
@@ -4732,9 +4743,11 @@ def spec_from_doc(doc, spec):
 
 def _insert_doc(doc):
 	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings. The one
-	insert behind every new Task the planners make, drafted or live."""
+	insert behind every new Task the planners make, drafted or live. The project's window is widened
+	first, as for :func:`_save` (v1.741.0)."""
 	log = _message_log()
 	mark = len(log) if log is not None else 0
+	project_window.widen_for_task(doc)
 	doc.insert()
 	return _take_messages(log, mark)
 
