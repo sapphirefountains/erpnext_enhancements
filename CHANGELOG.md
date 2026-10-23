@@ -116,6 +116,10 @@ Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
   - An end that ERPNext fills in from `expected_time` at save is not judged. A planner task always
     has an end.
   - The dedupe of warning lines merges identical lines from different tasks.
+- **Known limit of the widening:** it runs on the planner's and the Gantt's saves only. A Task
+  saved from the Desk form past its project's derived end is still refused by ERPNext. Widening in
+  the app's Task override (`task_enhancements/doctype/task/task.py`) would cover every save, but it
+  changes the Desk form's behaviour, so it is a separate decision.
 - **Behavior change on prod after the deploy:**
   - On a Draft-schedule project, a quick add or a build out for a project with no tasks on the
     board now makes drafts where it made live Tasks. Publish creates them.
