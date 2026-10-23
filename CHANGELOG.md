@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.739.1] - 2026-10-23
+
+Two display faults on the new ToDo form (v1.739.0), found on prod in ToDo khoaj9qnhe the day it
+shipped.
+
+### Fixed
+- **Assigned To and Assigned By showed the email address, not the person.** Both are Links to User,
+  and Frappe v16 shows a Link's title only when the target DocType has `show_title_field_in_link`
+  (`link.js` `is_title_link`). Switching that on for User would turn every User link on the site
+  into a name at once, and the server's `get_link_title` answers with the email otherwise. So the
+  ToDo form's two controls alone draw the name from boot's user info, through Link's own title
+  machinery, which maps the name back to the email when the form saves. The stored value is still
+  the email (`public/js/global_enhancements/my_work.js` `show_people_by_name`).
+- **The record card printed "Expected End Date: 10/30/2026 00:00".** ERPNext v16 declares Task's
+  Expected Start and End Date as Datetime, and prod has no override; a day picked for one is stored
+  at midnight. A fact that is a Date, or a Datetime at midnight, now prints as the date alone in the
+  person's format, and a Datetime with a real time keeps it (`assignments.shows_as_day`,
+  `api/my_work._format`). The same facts feed My Work's rows, so they read the same way there.
+
+### Notes
+- Tests: `tests/test_my_work.py` covers the day rule, the fact formatter, the two controls, and a
+  guard that no fixture switches `show_title_field_in_link` on for User.
+- When a ToDo form is read-only for the viewer, Frappe draws the two fields with its Link formatter,
+  which still shows the email. Everyone who can open a ToDo can also edit it, so that view is rare.
+
 ## [1.739.0] - 2026-10-23
 
 Assignment links now open the assignment, and the ToDo form leads with it. On 2026-10-23 Nik asked for the

@@ -132,6 +132,22 @@ def as_datetime(value):
 		return datetime.datetime.combine(day, datetime.time()) if day else None
 
 
+def shows_as_day(value, fieldtype):
+	"""Whether a date fact on a record reads as a day rather than a moment: a Date field, or a
+	Datetime whose time is midnight.
+
+	ERPNext v16 declares Task's Expected Start and End Date as **Datetime** (``task.json``; prod
+	has no override), and a day picked for one is stored at 00:00:00, so the ToDo form's record
+	card read "Expected End Date: 10/30/2026 00:00" (v1.739.0). A Datetime with a real time keeps it.
+	"""
+	if fieldtype == "Date":
+		return as_date(value) is not None
+	if fieldtype != "Datetime":
+		return False
+	moment = as_datetime(value)
+	return moment is not None and moment.time() == datetime.time()
+
+
 def due_date(date, created):
 	"""The day an assignment is due, or ``None`` when it has none.
 

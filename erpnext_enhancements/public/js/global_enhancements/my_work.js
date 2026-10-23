@@ -242,6 +242,7 @@
 
 	function draw_todo_view(frm, $slot) {
 		const doc = frm.doc;
+		show_people_by_name(frm);
 		keep_todo_heading(frm);
 		frm.__ee_mw_heading = null;
 		const ticket = (frm.__ee_mw_ticket = (frm.__ee_mw_ticket || 0) + 1);
@@ -259,6 +260,31 @@
 				$slot.data("items", view.item ? [view.item] : []);
 			})
 			.catch(() => $slot.empty());
+	}
+
+	// "Assigned To" and "Assigned By" are Links to User, and a Link shows its record's title only
+	// when the target DocType has show_title_field_in_link (link.js is_title_link) -- for User that
+	// would turn every User link on the site into a name at once, and the server's get_link_title
+	// answers with the name for nobody else. So these two controls alone draw the person's name
+	// from boot's user_info, through Link's own title machinery: title_value_map hands the email
+	// back to get_input_value, so the value saved is still the email (v1.739.1; it showed the raw
+	// address). Patched once per control; the form reuses its controls for every ToDo it opens.
+	function show_people_by_name(frm) {
+		["allocated_to", "assigned_by"].forEach((fieldname) => {
+			const control = frm.fields_dict[fieldname];
+			if (!control || control.__ee_mw_names || typeof control.translate_and_set_input_value !== "function") return;
+			control.set_link_title = function (value) {
+				this.translate_and_set_input_value(person_name(value), value);
+			};
+			control.__ee_mw_names = true;
+			if (control.value) control.refresh();
+		});
+	}
+
+	function person_name(user) {
+		if (!user) return user;
+		const name = frappe.user && typeof frappe.user.full_name === "function" ? frappe.user.full_name(user) : null;
+		return name || user;
 	}
 
 	// Frappe re-heads the form from the title field (description) on every toolbar refresh, a save
