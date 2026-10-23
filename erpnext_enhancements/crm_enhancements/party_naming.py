@@ -59,8 +59,10 @@ CORPUS_CEILING = 20000
 #: that stops existing fails loudly at the query instead of silently reading as empty.
 FIELDS = {
 	"Project": ("project_name", "project_type", "customer"),
+	# custom_opportunity_name is the Opportunity Name, the field the rules check; `title` is
+	# ERPNext's auto-filled copy of the party and is not read (party_naming_rules.DOCTYPES).
 	# opportunity_from only to link the party in the report (party_naming_rules.party_record).
-	"Opportunity": ("title", "party_name", "customer_name", "opportunity_from"),
+	"Opportunity": ("custom_opportunity_name", "party_name", "customer_name", "opportunity_from"),
 	"Address": ("address_title", "address_type"),
 }
 

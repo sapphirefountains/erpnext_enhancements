@@ -23,6 +23,14 @@ Two shapes, not one — and Address is the one people get wrong
     ^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^^^^
     party               what we are doing for them
 
+**On Opportunity that field is the Opportunity Name, not ``title``.** The form's title field
+is ``custom_opportunity_name`` (a Property Setter since June), and that is the field people
+type. ``title`` is ERPNext's own, filled from ``customer_name`` in ``Opportunity.validate`` when
+blank (``erpnext/crm/doctype/opportunity/opportunity.py``, version-16) — so it is the bare
+party on almost every record, and nothing on the form shows it. This check read ``title`` from
+v1.339.0 until v1.737.1, and the banner told 346 Opportunities that "Summit Vista - Circulation
+Pump" had no separator because it was looking at "Summit Vista".
+
 **Address does not, and appending the type by hand is a defect rather than the rule.**
 Frappe's ``Address.autoname`` already builds the record name for you (verified against
 frappe version-16, ``frappe/contacts/doctype/address/address.py``)::
@@ -130,21 +138,26 @@ SEPARATOR: Final[str] = " - "
 #:
 #: Word and Google Docs both autocorrect a spaced hyphen into an en dash as you type, and a
 #: title pasted from either carries it in looking identical at a glance. Measured on
-#: production 2026-09-14: every one of the 552 customer-facing Projects, 839 Opportunities
-#: and 1,020 Addresses uses a plain hyphen or no dash at all — **no live record uses one of
-#: these**, and the list is here to keep it that way rather than to excuse existing data.
+#: production 2026-09-14: every one of the 552 customer-facing Projects and 1,020 Addresses
+#: uses a plain hyphen or no dash at all, and the list is here to keep it that way rather than
+#: to excuse existing data. The Opportunity figure taken that day read ``title`` (see the
+#: module docstring); on the Opportunity Name, 3 of 858 use an em dash (2026-10-23), and all
+#: three were written by ``fountain_move.conversion._opportunity_title`` rather than typed.
 DASHES: Final[str] = "-‐‑‒–—−"
 
 #: Every dash with the whitespace around it. :func:`separator_match` then keeps only those
 #: with whitespace on at least one side, which is what separates a separator from a hyphen
 #: doing its ordinary job inside a word.
 #:
-#: **A bare, unspaced hyphen is deliberately not a separator.** 18 Projects, 4 Opportunities
-#: and 16 Addresses contain one, and reading them is the whole argument: *Ana Mendez-Law*,
+#: **A bare, unspaced hyphen is deliberately not a separator.** 18 Projects and 16 Addresses
+#: contain one, and reading them is the whole argument: *Ana Mendez-Law*,
 #: *Big-D Construction*, *Sarah Henley-Busse*, *Flo-Tech*, *C-Mech Engineering*,
 #: *Harris-Dudley Co.*, *2023 MLS All-Star Week*. Splitting on those would invent a party
 #: called ``Ana Mendez`` and a qualifier called ``Law`` — a false finding on a correct name,
-#: which is the one failure this module cannot afford.
+#: which is the one failure this module cannot afford. 39 Opportunity Names carry only such a
+#: hyphen (2026-10-23) and they read the same way — ``RTL-000034``, ``6-24-15``, ``Start-Up``,
+#: ``Clean-Up`` — with a handful like ``Nancy Mecham-Splash Pad Lights`` where it was meant as
+#: the separator. Those few are the price of not splitting the rest.
 _SEPARATOR_RE = re.compile(r"(?P<before>\s*)(?P<dash>[" + DASHES + r"])(?P<after>\s*)")
 
 # --- the two shapes ------------------------------------------------------------
@@ -195,8 +208,11 @@ DOCTYPES: Final[dict[str, dict]] = {
 		"party_record": ("Customer", None, "customer"),
 	},
 	"Opportunity": {
-		"field": "title",
-		"label": "Title",
+		# The Opportunity Name: the form's title field, and what people type. NOT `title`,
+		# which ERPNext fills with customer_name and never shows — see the module docstring.
+		# tests/test_party_naming_rules.py pins this to the title_field Property Setter.
+		"field": "custom_opportunity_name",
+		"label": "Opportunity Name",
 		"shape": SHAPE_PARTY_QUALIFIER,
 		"party_fields": ("customer_name", "party_name"),
 		"party_label": "Party",
@@ -285,7 +301,7 @@ EVIDENCE: Final[dict[str, str]] = {
 	),
 	PARTY_PREFIX_MISMATCH: (
 		"what comes before the separator is none of the party's names, even allowing a "
-		"shortening. 49 customer-facing Projects, 2 Opportunities and 57 Addresses, and the "
+		"shortening. 49 customer-facing Projects, 110 Opportunities and 57 Addresses, and the "
 		"shape is 'Myers Mortuary - Fountain' against a customer of 'Anderson Wahlen & "
 		"Associates' — named for the site rather than for who pays. Far more records would "
 		"qualify but never reach this check: 363 Projects stop at separator_missing first. "
@@ -304,7 +320,7 @@ EVIDENCE: Final[dict[str, str]] = {
 		"correct input is one people stop reading."
 	),
 	EDGE_WHITESPACE: (
-		"leading or trailing whitespace. 25 live Opportunity titles have it. Compared by "
+		"leading or trailing whitespace. 55 live Opportunity Names have it. Compared by "
 		"length, in Python: MariaDB's PAD SPACE collation makes the SQL form of this test "
 		"(`title <> TRIM(title)`) always false, so it reports clean on data that is broken."
 	),

@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.737.1] - 2026-10-23
+
+The naming banner on Opportunity now checks the Opportunity Name, the name the form shows. Nik reported
+"Naming: FIX — separator_missing" on CRM-OPP-2026-00173 and "many other things", although its title,
+*Summit Vista - Circulation Pump*, plainly has the separator.
+
+### Fixed
+- **The Opportunity naming check read the wrong field, from the day it shipped (v1.339.0).**
+  - The check read `Opportunity.title`. ERPNext fills that field with `customer_name` on save when it
+    is blank (`Opportunity.validate`, erpnext version-16), and it appears nowhere on the form.
+  - Since June the form's title has been `custom_opportunity_name`, the mandatory "Opportunity Name"
+    field people actually type, set by the `Opportunity-main-title_field` Property Setter.
+  - So on CRM-OPP-2026-00173 the check judged "Summit Vista", while the header right above the
+    banner read "Summit Vista - Circulation Pump".
+  - The rule was not too strict. It accepts " - " and always did. Nothing about the dash or the
+    spacing was wrong: the stored name is plain ASCII, with no en dash and no non-breaking space.
+  - `party_naming_rules.DOCTYPES["Opportunity"]` now checks `custom_opportunity_name`, labeled
+    "Opportunity Name". `party_naming.FIELDS` reads that column and no longer reads `title`.
+  - The form banner, the Party Naming Audit report, the `party_naming_check` assistant tool and the
+    nightly Opportunity naming KPI all go through these two, so all four change together.
+- **What changes on prod.** Measured on all 858 Opportunities on 2026-10-23, by running the rules over
+  every row both ways. The counts are per record, for the per-record banner the form shows.
+  - **346 were falsely told `separator_missing`.**
+    - On 208 of them nothing else is wrong, so the banner goes away.
+    - The other 138 now show a true finding about their Opportunity Name instead:
+      - 103 `party_prefix_mismatch`, for names that start with the site or a contact rather than
+        the account (*Myers Mortuary - Fountain* for Anderson Wahlen & Associates).
+      - 42 have leading or trailing whitespace.
+      - 7 have a malformed separator.
+  - **25 start showing `separator_missing`.** Their `title` happened to contain " - " because the
+    customer's own name does (*Skyline Exhibits Utah - Salt Lake City*), so the old read passed
+    them. Their Opportunity Name has no separator (*Skyline Water TV*).
+  - The banner shows on 635 Opportunities instead of 810. 487 of them really have no separator
+    in the Opportunity Name.
+  - **Opportunity Naming Compliance** on the Sales KPI dashboard goes from 2.6% to about 26% at
+    the next snapshot.
+  - The Party Naming Audit's duplicate count (`duplicate_normalised`, a STOP) falls from 524 to
+    26. `title` is the bare party name, so every Opportunity for the same customer used to read
+    as a duplicate of the others.
+- **Counts quoted in the rules' evidence and comments are re-measured on the Opportunity Name.**
+  These are in `party_naming_rules`, `hooks.py`, `party_naming_advisor.js` and the tests. The
+  figures they had quoted (769 of 823 "bare party name", 25 trailing spaces, 2 prefix mismatches,
+  "no live record uses an en or em dash") were all measured on `title`.
+
+### Notes
+- **Three Opportunity Names are written with an em dash by this app itself.**
+  `fountain_move.conversion._opportunity_title` builds `Fountain Move — <city> (<store>)`, which has
+  no party first and uses an em dash. Those records now show `separator_malformed` and
+  `party_prefix_mismatch`, which is accurate. The generator is unchanged here.
+- **An unspaced hyphen is still not a separator.** 39 Opportunity Names contain only in-word
+  hyphens: `RTL-000034`, `6-24-15`, `Start-Up`, `Ana Mendez-Law`. A few, like *Nancy
+  Mecham-Splash Pad Lights*, meant the hyphen as the separator and still read `separator_missing`.
+  That is the rule's deliberate trade (v1.442.0), unchanged.
+
+### Tests
+- `tests/test_party_naming_rules.py` (bench-free, unittest, already in CI).
+  - The Opportunity fixtures were re-read from prod with both name fields: the reported record, three
+    compliant names the old read flagged, and real failures that must still be flagged (site-named,
+    a dropped space, the generated em dash, a trailing space, and a customer name carrying " - "
+    while the Opportunity Name carries none).
+  - New `OpportunityNameFieldTest`:
+    - The verdict ignores whatever `title` holds.
+    - The checked field equals the `title_field` Property Setter in the fixtures.
+    - The field ships as a Custom Field.
+    - `party_naming.FIELDS`, read as source, selects the field the rules check.
+  - 15 of the 21 Opportunity tests fail with the field set back to `title`. 81 tests pass.
+
 ## [1.737.0] - 2026-10-23
 
 ### Added
