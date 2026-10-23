@@ -2023,7 +2023,8 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		old = _span_text(before_state)
 		holidays = _shift_holidays()
 		step = days
-		if clear_of is not None:
+		# An undated follower goes on to _follower_problem, which names it ("It has no dates").
+		if clear_of is not None and engine.task_span(before_state):
 			step = _clearing_step(doc, old, ends, holidays)
 			if not step:
 				return False  # already clear of what it waits on: it stays, and so does what follows it
@@ -2062,7 +2063,9 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 def _clearing_step(doc, old, ends, holidays):
 	""":func:`_draft_followers`' ``clear_of`` rule for one follower: the working days it moves so it
 	starts the working day after the latest new end of the tasks it waits on that the walk moved
-	(``ends``), or 0 when it already starts after them (or has no dates, which the caller reports)."""
+	(``ends``), or 0 when it already starts after them. Only the tasks moved so far count: a follower
+	that also waits on another follower at its own depth of the walk is checked before that one
+	moves, and if that leaves it starting too early, ``_draft_checks`` says so ("Starts before")."""
 	start = engine._as_date(old[0])
 	waits = [ends[row.get("task")] for row in (doc.get("depends_on") or []) if row.get("task") in ends]
 	bound = max((day for day in waits if day), default=None)
@@ -2562,8 +2565,8 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 	tasks that follow it, through ``planner_actions._draft_many`` (``move_many``'s draft path), one
 	task per savepoint so a refused one is reported in ``failed`` and the rest carry on. Its
 	followers move only where they would otherwise start by its new last day (``clear=True``; Nik,
-	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone. ``auto``: a
-	Draft schedule's task, so a follower in a published project stays (the per-project rule); under
+	2026-10-23), and one whose followers take the caller past :data:`DRAFT_LIMIT` rows is undone.
+	``auto``: a Draft schedule's task, so a follower in a published project stays (the per-project rule); under
 	the hold every follower is drafted. ``taken``: the tasks the request moves itself, never moved
 	again as a follower. Downstream first, as ``move_many`` orders them, so when two of them reach the
 	same follower the nearer one carries it."""

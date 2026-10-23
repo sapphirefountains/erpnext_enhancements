@@ -1210,6 +1210,14 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		self.assertEqual([skip["task"] for skip in result["shift_skipped"]], ["TASK-B"])
 		self.assertEqual(set(self._drafted()), {"TASK-A"})
 
+	def test_an_undated_follower_is_still_named(self):
+		self._follower("TASK-B", None, None)
+		result = self._reschedule()
+		self.assertEqual(
+			[(skip["task"], skip["reason"]) for skip in result["shift_skipped"]],
+			[("TASK-B", "It has no dates.")],
+		)
+
 	def test_a_published_follower_already_clear_is_not_named(self):
 		h._task("TASK-B", start="2026-11-02", end="2026-11-02", crew=("RES-2",))  # PRJ-1, clear
 		self._depends("TASK-B", "TASK-A")
