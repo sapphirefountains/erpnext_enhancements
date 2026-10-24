@@ -591,8 +591,9 @@ text above:
   - Every Task save widens its project's derived expected window first (a `before_validate` hook),
     the Desk form included. So moving the last task later, an overdue reschedule or a Copy week
     ahead is no longer refused, live or at Publish.
-  - ERPNext's remaining date checks (end before start, a parent's end) run on a draft, as warnings,
-    rather than only failing at Publish.
+  - ERPNext's own date checks run on a draft, as warnings, rather than only failing at Publish.
+    Since v1.743.0 that is the installed controller's `validate_dates` on an unsaved copy, so the
+    warnings follow whatever ERPNext release prod runs.
   - A dependency loop among an overdue task's followers is left where it is and named.
 - **The Overdue tray is not filtered by D6** (§6 names the schedule and the Unscheduled tray), and the **print
   sheet** still labels cards with hours (P2, P11).

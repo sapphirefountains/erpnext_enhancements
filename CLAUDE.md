@@ -140,15 +140,24 @@ Verified, and all of them expensive to rediscover:
   route that v16 still dispatches *before* it looks at `request.path`. Two design documents in
   one day cited v17 line numbers as v16 fact before this was noticed; a claim about the
   framework is only worth as much as the tree it was read from.
-  **And the version-16 branch is not production either: prod is pinned to a release tag.** Read
-  the tag that matches prod's `tabInstalled Application.app_version` (frappe and erpnext were
-  both **16.50.0** on 2026-10-23): `git show v16.50.0:<path>`, or
-  `gh api "repos/frappe/erpnext/contents/<path>?ref=v16.50.0" --jq .content | base64 -d`. The
-  branch head moves on after the tag. ERPNext's `Task.validate_parent_project_dates` is the
-  proof. At v16.50.0 it refuses any of `exp_start_date`, `exp_end_date`, `act_start_date` and
-  `act_end_date` outside the project's window, on every save. On version-16 head, changed on
-  2026-10-13, it judges only the expected dates, only when they change, and only warns on a
-  reschedule. #1361 (v1.742.0) was first written against the head and had to be redone.
+  **And neither the version-16 branch nor any one tag is production: prod's version moves.** The
+  `app-upstream-prod` run (`bench update --pull`, which follows version-16 head) upgrades prod
+  whenever it runs. On 2026-10-23 alone, prod went from frappe and erpnext **16.50.0** to frappe
+  **16.53.0** and erpnext **16.52.1** at about 17:57.
+  - **Read the tag that matches prod's current `app_version`.** Check it first with
+    ``SELECT app_name, app_version FROM `tabInstalled Application` `` (read-only, through the ERPNext
+    MCP). Then read `git show v16.52.1:<path>`, or
+    `gh api "repos/frappe/erpnext/contents/<path>?ref=v16.52.1" --jq .content | base64 -d`.
+  - **Prefer calling the framework's validators over copying their rules.** A copy is right on the
+    day it is written and wrong after the next upgrade.
+  - **The proof is ERPNext's Task date checks.** At v16.50.0, `validate_parent_project_dates`
+    refuses any of the four expected and actual dates outside the project's window, on every save.
+    From v16.52.1 it judges only the expected dates, only when a named field changed
+    (`report_date_conflict`), and only warns on a reschedule.
+  - **This cost three rounds.** #1361 (v1.742.0) was first written against the branch head, then
+    redone against 16.50.0, and its hand-copied 16.50.0 rules over-warned the same evening.
+    v1.743.0 replaced them with a call to the installed controller's `validate_dates` on an
+    unsaved copy (`api/project_planner.erpnext_date_problems`).
 - **Frappe's email wrapper is already full-width, and a narrow email is always your own
   doing.** `frappe/templates/emails/standard.html` sets its container to
   `width="{% if header or with_container %} 600 {% else %} 100% {% endif %}"`, and nothing in

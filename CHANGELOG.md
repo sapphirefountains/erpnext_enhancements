@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.743.0] - 2026-10-23
+
+### Changed
+- **A draft's date warnings now come from ERPNext's own Task controller, whatever version prod runs**
+  (Nik: "run ERPNext's own Task validators on a copy (whatever version prod runs) and turn
+  InvalidDates into warnings").
+  - **Why:** v1.742.0 copied ERPNext 16.50.0's date rules into `erpnext_date_problems` by hand.
+    About 17:57 the same day, `app-upstream-prod` (`bench update --pull`, which follows the
+    version-16 branch) moved prod to frappe **16.53.0** and erpnext **16.52.1**, and their rules
+    differ.
+    - From 16.52.1, the parent task's end and the project's window are checked through
+      `report_date_conflict`. That refuses only a new task, or one where a named field changed,
+      and only warns for a reschedule.
+    - The window check covers the expected dates only.
+
+    So the copy over-warned that evening, for example about a parent's end the draft never moved,
+    and the next upgrade can move the rules again. A copy of a framework's rules is right on the
+    day it is written.
+  - **Now:** `erpnext_date_problems` builds an **unsaved copy** of the task (`_date_check_copy`)
+    and calls the installed controller's own `validate_dates` on it.
+    - For a task that exists, the copy is the task as stored, reloaded, with the drafted dates
+      and phase on it.
+    - Its `_doc_before_save` is the stored task, so `has_value_changed` sees exactly what Publish's
+      real save will.
+    - A drafted new task is built from its values and marked `__islocal`, as `insert` would.
+  - **The copy is shown what Publish will see.** ERPNext reads two values through
+    `frappe.db.get_value`. For the length of the one check, `_as_published` shadows that call on
+    the request's own database object, `frappe.local.db` rather than the `LocalProxy` in front of
+    it. Each answer is read only when ERPNext asks for it:
+    - the project's window as the Task `before_validate` hook will have widened it
+      (`project_window.widened_window`, which writes nothing), so a window warning never names
+      what the hook fixes;
+    - the parent task's end as it will be when this task is saved at Publish
+      (`_parent_end_at_publish`). `_publish_order` saves the furthest last day first, and a parent
+      before its tasks on a tie. So the parent's draft counts only if it ends on or after the task's
+      drafted end. Otherwise the task saves first, against the parent's stored end. A drafted *new*
+      task is created only after every drafted change is saved (`publish_drafts`), so it always
+      meets the parent's draft. A parent draft that is out of date, which Publish skips, never
+      counts.
+
+      So a phase shortened from 30 Nov to 10 Nov does not warn about a task drafted to 20 Nov: that
+      task saves first and passes.
+  - `InvalidDates`, or the plain `ValidationError` an older release raises, becomes the existing
+    "Publish will be refused for …" line. A `DoesNotExistError` is not, although it is a
+    `ValidationError` too; a parent deleted since, for example, is logged instead. Anything the check says through `msgprint`, such as
+    16.52.1's reschedule warning, is taken off the response and kept as a warning too. Any other
+    exception is logged and gives no warning, so the check never blocks a draft. The copy is never
+    saved.
+  - **Cost:** the stored task is loaded once per check, and the copy is made from its `as_dict`.
+    The Draft rows are read only when a task is drafted past its parent's stored end, the one case
+    a parent's draft can change the answer. A batch's follower checks share one read.
+  - A check that fails for a non-date reason files **one** Error Log row per request, since this
+    site alerts on Error Logs. Later ones in the same request are counted on
+    `frappe.local.planner_date_check_failures`.
+  - The hand-written 16.50.0 rules are gone. The call sites and the wording stay.
+  - CLAUDE.md's gotcha now says that prod's version moves with every `bench update --pull`, to
+    read the tag matching prod's current `app_version`, and to prefer calling the framework's
+    validators over copying their rules.
+
+### Notes
+- **Behavior change on prod after the deploy:** a draft warns about exactly what the installed
+  ERPNext would refuse at Publish. On 16.52.1 that means a parent-end conflict is named only when
+  the draft changes the task's end or phase, or creates the task. The planner no longer warns about
+  an unchanged date that Publish would let through.
+- **Tests** in `tests/test_planner_autoshift.py`. The bench-free harness cannot run ERPNext's
+  controller, so it installs two stand-ins with ERPNext's own wording: one makes the checks as
+  16.50.0 does, and one as 16.52.1 does. Each case runs under both, and the warnings follow
+  whichever is installed:
+  - an end before its start;
+  - a drafted follower past its parent's end;
+  - a parent drafted later too;
+  - the project's window judged as widened, and refused as stored;
+  - a new task judged as new;
+  - the copy never saved, the task untouched, nothing left on the response;
+  - another failure gives no warning and is logged;
+  - `get_value` put back even when the check fails;
+  - a msgprint kept as a warning and taken off the response;
+  - a controller without `validate_dates`;
+  - the shadow removed again from a real-shaped database object;
+  - a missing record is not a refusal;
+  - a shortened phase not judged at its drafted end;
+  - a stale parent draft not counted;
+  - a parent drafted to end with its task saves first;
+  - a new task meets its parent's draft whatever the order;
+  - the Draft rows read only when a parent's draft can matter, and once per batch;
+  - the stored task loaded once per check;
+  - one Error Log row per request.
+
+  Between the two releases, a crew-size-only draft of a task already past its parent is judged
+  on 16.50.0 and not on 16.52.1. Without the stored task as `_doc_before_save`, without the
+  widened window, or without the drafted parent's end, the matching tests fail.
+
 ## [1.742.0] - 2026-10-23
 
 Hardening of the Project Planner's drafts, the loose ends of v1.740.0.
