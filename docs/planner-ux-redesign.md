@@ -585,6 +585,15 @@ text above:
     the task's new end, to the working day after (Nik, 2026-10-23). This is unlike a drag (D10),
     because an overdue task is weeks late.
   - *Mark done* and *Cancel* stay live (Nik, 2026-10-23), and warn first about a drafted reschedule.
+- **Draft hardening** (v1.742.0).
+  - Every planner write treats a missing draft flag as "auto", so §4.8's "every write to its tasks is
+    drafted" holds for any client, not only the page.
+  - Every Task save widens its project's derived expected window first (a `before_validate` hook),
+    the Desk form included. So moving the last task later, an overdue reschedule or a Copy week
+    ahead is no longer refused, live or at Publish.
+  - ERPNext's remaining date checks (end before start, a parent's end) run on a draft, as warnings,
+    rather than only failing at Publish.
+  - A dependency loop among an overdue task's followers is left where it is and named.
 - **The Overdue tray is not filtered by D6** (§6 names the schedule and the Unscheduled tray), and the **print
   sheet** still labels cards with hours (P2, P11).
 - **The Overview** draws a job's milestones as diamonds when the job is expanded, not on its collapsed bar (P9).

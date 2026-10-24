@@ -2055,7 +2055,10 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   each from its own drafted days). A follower in a project whose schedule says otherwise is left alone
   and named, so a draft never moves a published schedule and a live save never reaches into a draft one.
   The creating writes (quick add, duplicate, build out, AI draft) send `draft=1` for a Draft schedule's
-  project; the page decides there, because those endpoints take only `draft=1`.
+  project they know of. **Since v1.742.0 no flag means "auto" on every one of these writes**
+  (`unset_auto`; `drafts_new_task` for the creating ones), so the server drafts on a Draft schedule
+  whatever a client sends, including a quick add for a job not on the board yet. An explicit `0`
+  still saves. The caller audit for v1.742.0 found the planner pages to be the only callers.
 - **Split, Copy week and the Overdue tray on a Draft schedule** (v1.740.0). These three decide on the
   server (`_held`), and `draft=0` or no flag does not write live into a Draft schedule, so the AI
   connector or an old page cannot reach one either. `draft=1` (the hold) drafts every one of them.
@@ -2070,7 +2073,13 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
       stops it.
     - The walk is `_walk_clearing`. A follower is offered again whenever another task it waits on
       moves, so the result does not depend on the order the walk meets tasks in. A follower of two
-      selected tasks clears both.
+      selected tasks clears both, and says each warning line once.
+    - **A dependency loop stays put** (v1.742.0, `_follower_loops`). ERPNext refuses a loop on save,
+      but imported data can carry one, and the walk would push its tasks past each other until its
+      limits stopped it. So the loops among the followers are found first, from the same `Task
+      Depends On` rows. Their tasks are left where they are and named ("B and C wait on each other,
+      so their dates were left as they are"), and the rest of the walk carries on.
+    - A Fountain Move or read-only follower is named only when it is in the way (v1.742.0).
     - A drag and `move_many` still carry followers by the working days the end moved (D10). An
       overdue task is weeks late, so that rule would push work that was never in its way.
     - The room for the drafts is checked before anything is saved (`require_change_room`). The
@@ -2090,6 +2099,29 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
     confirmation first names each selected task with a drafted reschedule that is not published
     (`drafted_start`). It says that the tasks drafted along with it will still publish where they
     were drafted unless someone moves them. It warns and discards nothing.
+- **Every Task save widens its project's window first** (v1.742.0,
+  `project_enhancements/project_window.py`, a Task `before_validate` doc_event).
+  - **The problem:** a Project's expected start and end are derived on this site, the earliest task
+    start and the latest task end, recomputed after every Task save. Prod's ERPNext 16.50.0 refuses
+    a task any of whose four dates (expected and actual) falls outside them, on every save. So these
+    were all refused against a value about to be recomputed: moving the last task later,
+    rescheduling an overdue task, copying a week ahead, a crew-only edit of a task whose timesheets
+    ran on, and ERPNext's own push of a dependent. Publish then left the project Draft.
+  - **The fix:** the window now widens first, in the same transaction and never inward, for every
+    save: the Desk form, ERPNext's push, the planner, the Gantt and the rental code. The planner's
+    `_save`/`_insert_doc` and the Gantt also call it first themselves.
+- **ERPNext's own date checks run on the draft** (v1.742.0, `erpnext_date_problems`). A draft is
+  never saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the
+  project's schedule Draft. The date checks Publish cannot clear itself are run on the drafted
+  state, as ERPNext 16.50.0 (prod) makes them, on every set date of every save. They come back as
+  warnings under **ERPNext** ("Publish will be refused for …") and never refuse the draft.
+  - The expected end is not before the expected start, nor the actual end before the actual start.
+  - The end is not after the parent task's end. When the parent is drafted too, its drafted end is
+    used.
+
+  The project-window check is left out because Publish widens the window. Publish saves a parent
+  before its children when they end on the same day (`_publish_order`), so a child is never checked
+  against its parent's old end.
 - **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
   everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
   rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line

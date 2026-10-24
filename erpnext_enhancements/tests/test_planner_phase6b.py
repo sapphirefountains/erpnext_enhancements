@@ -259,6 +259,11 @@ def _exists(doctype, name=None):
 
 
 def _get_value(doctype, name, field=None, *args, **kwargs):
+	# v1.742.0: an unset draft flag drafts on a Draft schedule, and a blank status reads Draft. These
+	# suites test the live writes, so a project's schedule is Published unless a test says otherwise
+	# (tests/test_planner_autoshift.py and test_planner_draft_new_tasks.py cover the drafted ones).
+	if doctype == "Project" and field == "custom_schedule_status":
+		return frappe.values.get((doctype, name, field), "Published")
 	return frappe.values.get((doctype, name, field))
 
 

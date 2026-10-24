@@ -1524,11 +1524,27 @@ def test_write_widens_the_derived_project_window_for_a_task(env):
 	doc = FakeDoc("Task", "T1")
 	doc.project = "PRJ-1"
 	frappe.get_doc = lambda dt, n: doc
-	frappe.db.get_value = lambda dt, name, field, **k: "2026-01-05"
+	# Both dates in one read, a tuple, as frappe answers several fields (v1.742.0).
+	frappe.db.get_value = lambda dt, name, field, **k: ("2026-01-05", "2026-01-05")
 	widened = []
 	frappe.db.set_value = lambda dt, name, field, value, **k: widened.append((dt, field, str(value)))
 	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-11 00:00"})
 	assert widened == [("Project", "expected_end_date", "2026-01-10")]
+
+
+def test_write_widens_the_window_start_too(env):
+	"""v1.742.0: the expected start is derived the same way (MIN of task starts), so dragging the
+	first task earlier widens it; the shared project_window helper does both ends."""
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	doc.project = "PRJ-1"
+	frappe.get_doc = lambda dt, n: doc
+	window = {"expected_start_date": "2026-01-05", "expected_end_date": "2026-01-31"}
+	frappe.db.get_value = lambda dt, name, field, **k: tuple(window.get(key) for key in field)
+	widened = []
+	frappe.db.set_value = lambda dt, name, field, value, **k: widened.append((dt, field, str(value)))
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"start": "2026-01-02 00:00", "end": "2026-01-07 00:00"})
+	assert widened == [("Project", "expected_start_date", "2026-01-02")]
 
 
 def test_write_never_shrinks_the_project_window(env):
@@ -1536,7 +1552,9 @@ def test_write_never_shrinks_the_project_window(env):
 	doc = FakeDoc("Task", "T1")
 	doc.project = "PRJ-1"
 	frappe.get_doc = lambda dt, n: doc
-	frappe.db.get_value = lambda dt, name, field, **k: "2026-12-31"
+	# v1.742.0: the start is widened too, so the window here runs from the 1st of January.
+	window = {"expected_start_date": "2026-01-01", "expected_end_date": "2026-12-31"}
+	frappe.db.get_value = lambda dt, name, field, **k: tuple(window.get(key) for key in field)
 	widened = []
 	frappe.db.set_value = lambda *a, **k: widened.append(a)
 	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-06 00:00"})

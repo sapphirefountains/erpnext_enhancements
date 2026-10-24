@@ -83,7 +83,12 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
-from erpnext_enhancements.project_enhancements import fountain_move_jobs, planner_tracking, routing
+from erpnext_enhancements.project_enhancements import (
+	fountain_move_jobs,
+	planner_tracking,
+	project_window,
+	routing,
+)
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -129,6 +134,8 @@ SUCCESSOR_LIMIT = 200
 SUCCESSOR_DEPTH = 25
 #: The needs_reason key that dependency lines are filed under (the others are people).
 DEPENDENCY_KEY = "Dependencies"
+#: The conflict heading for what ERPNext's own Task.validate will refuse at Publish (v1.742.0).
+ERPNEXT_KEY = "ERPNext"
 #: An Employee Credential in one of these counts as held (Expired and Revoked do not).
 CURRENT_CREDENTIAL_STATUSES = ("Valid", "Expiring")
 DATE_FIELDS = ("exp_start_date", "exp_end_date", "custom_start_datetime", "custom_end_datetime")
@@ -296,6 +303,28 @@ def draft_choice(draft):
 	if isinstance(value, str) and value.strip().lower() == DRAFT_AUTO:
 		return DRAFT_AUTO
 	return bool(cint(value)) if value is not None else False
+
+
+def unset_auto(draft):
+	"""A planner write's ``draft`` with an unset one read as :data:`DRAFT_AUTO` (v1.742.0).
+
+	Until v1.742.0 an unset flag meant "save it" on ``save_task``, ``add_crew``, ``swap_crew`` and
+	``move_many``, and on the three writes that create a task, so a client that sent none (the AI
+	connector, a script, a page that did not know the project) wrote live into a schedule nobody had
+	published. The audit for this release found no caller that relies on that: the planner pages are
+	the only callers, and every write but the creating ones already says ``draft="auto"``. An
+	explicit ``0`` still saves, as before; nothing sends one."""
+	return DRAFT_AUTO if given(draft) is None else draft
+
+
+def drafts_new_task(draft, project):
+	"""Whether a write that creates a task of ``project`` (quick add, duplicate, build out) keeps it
+	as a drafted new task: ``draft=1`` always, ``0`` never, and unset or ``auto`` when the project's
+	schedule is Draft (v1.742.0; :func:`unset_auto`). Before, those took ``draft=1`` only, and the
+	page could not send it for a project not on the board yet, the usual case for a quick add or a
+	build out on a new job."""
+	choice = draft_choice(unset_auto(draft))
+	return _project_drafts(project) if choice == DRAFT_AUTO else choice
 
 
 def shift_working(value, count, holidays=()):
@@ -1189,9 +1218,15 @@ def _message_log():
 
 
 def _save(doc):
-	"""``doc.save()`` as the caller; what it said through msgprint comes back as warnings."""
+	"""``doc.save()`` as the caller; what it said through msgprint comes back as warnings.
+
+	v1.742.0: the project's expected window is widened first where the task now needs it
+	(``project_window.widen_for_task``): on this site it is derived from the tasks, and ERPNext would
+	otherwise refuse moving the last task later or the first one earlier. Every live planner save and
+	Publish come through here or :func:`_insert_doc`."""
 	log = _message_log()
 	mark = len(log) if log is not None else 0
+	project_window.widen_for_task(doc)
 	doc.save()
 	return _take_messages(log, mark)
 
@@ -1426,7 +1461,7 @@ def save_task(
 	equipment=None,
 	dependents=None,
 	notify=None,
-	draft=0,
+	draft=None,
 ):
 	"""Change a task's dates, hours, crew size, crew, qualifications, pencil flag or equipment.
 	Unset arguments stay as they are; ``crew``, ``credentials`` and ``equipment`` are JSON lists;
@@ -1460,6 +1495,7 @@ def save_task(
 	"""
 	tentative = given(tentative)
 	follow = as_bool(dependents) if given(dependents) is not None else False
+	draft = unset_auto(draft)  # v1.742.0: no flag drafts on a Draft schedule
 	if _drafting(draft, task):
 		return _store_draft_followed(
 			_draft_context(task, modified),
@@ -1493,13 +1529,14 @@ def save_task(
 
 
 @frappe.whitelist(methods=["POST"])
-def add_crew(task, resource, modified, reason=None, notify=None, draft=0):
+def add_crew(task, resource, modified, reason=None, notify=None, draft=None):
 	"""A person dropped on a task card: add them to the crew (nothing happens if they are on it).
 
 	A task crewed only by assignments gets crew rows for those people first, so adding one person
 	does not silently drop the others from the planner. ``draft=1``: into the caller's draft.
 	``notify`` and ``draft`` (``auto`` included): as :func:`save_task` takes them.
 	"""
+	draft = unset_auto(draft)  # v1.742.0
 	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
@@ -1527,7 +1564,7 @@ def swap_crew(
 	reason=None,
 	dependents=None,
 	notify=None,
-	draft=0,
+	draft=None,
 ):
 	"""A crew chip dropped on another person's row: hand that person's place on the task over,
 	keeping its hours and lead flag. With ``date``, the task also moves there, keeping its length.
@@ -1535,6 +1572,7 @@ def swap_crew(
 	:func:`save_task` takes them.
 	"""
 	follow = as_bool(dependents) if given(dependents) is not None else False
+	draft = unset_auto(draft)  # v1.742.0
 	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
@@ -2007,6 +2045,8 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	# touches it. A follower the clear walk moves twice is read again the second time (moved).
 	drafts = _draft_rows()
 	moved, named = {}, set()
+	# v1.742.0: tasks in a dependency loop are left where they are (named), before anything moves.
+	loops = _follower_loops(root, exclude) if clear_of is not None else {}
 
 	def skip(doc, problem):
 		if doc.get("name") not in named:
@@ -2019,11 +2059,22 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 		)
 		if not row:
 			return False
+		if name in loops:
+			# Named only when it is in the way: one already clear would not have moved anyway.
+			stored = frappe.get_doc("Task", name)
+			if _clearing_step(stored, _span_text(_state(stored)), ends, _shift_holidays()):
+				skip(row, _loop_text(loops[name]))
+			return False
 		# _load refuses a Fountain Move task and a task the caller cannot change, so both are named
 		# here, before a draft context is built for them.
 		move_job = _is_move_job(row.get("project"), jobs)
 		writable = frappe.has_permission("Task", "write", doc=name)
 		if move_job or not writable:
+			# v1.742.0: one already clear of what it waits on would not have moved: nothing to name.
+			if clear_of is not None:
+				stored = frappe.get_doc("Task", name)
+				if not _clearing_step(stored, _span_text(_state(stored)), ends, _shift_holidays()):
+					return False
 			skip(row, _follower_problem(row, move_job=move_job, writable=writable))
 			return False
 		context = _draft_context(name, row.get("modified"), _draft_rows() if name in moved else drafts)
@@ -2079,6 +2130,59 @@ def _draft_followers(root, days, auto=False, exclude=(), clear_of=None):
 	return shifted, skipped + _cut_skips(cut), entries
 
 
+def _follower_loops(root, exclude=()):
+	"""``{task: [the tasks of its loop]}`` for the tasks following ``root`` that wait on each other in
+	a loop (v1.742.0, the clear walk). ERPNext refuses a dependency loop on save
+	(``Task.check_recursion``), but imported data can carry one, and the clear walk would push its
+	tasks past each other until its limits stopped it: B to January, C the day after, and so on. So
+	the loops are found first, from the same ``Task Depends On`` rows, and their tasks are left where
+	they are and named; everything else carries on. A task waiting on itself is a loop of one.
+	``root`` and ``exclude`` (moved by the request itself) are never in one."""
+	out = {root, *(exclude or ())}
+	waits = {}  # task -> the tasks waiting on it
+	frontier, reached = [root], {root}
+	while frontier and len(reached) <= SUCCESSOR_LIMIT:
+		found = []
+		for row in frappe.get_all(
+			"Task Depends On",
+			filters={"parenttype": "Task", "task": ["in", frontier]},
+			fields=["parent", "task"],
+			limit_page_length=0,
+		):
+			parent, task = row.get("parent"), row.get("task")
+			if not parent or parent in out:
+				continue
+			waits.setdefault(task, set()).add(parent)
+			if parent not in reached:
+				reached.add(parent)
+				found.append(parent)
+		frontier = found
+
+	def onward(start):
+		seen, stack = set(), list(waits.get(start, ()))
+		while stack:
+			name = stack.pop()
+			if name not in seen:
+				seen.add(name)
+				stack.extend(waits.get(name, ()))
+		return seen
+
+	ahead = {name: onward(name) for name in reached - out}
+	loops = {}
+	for name, after in ahead.items():
+		if name in after:
+			loops[name] = sorted(other for other in after if name in ahead.get(other, ()))
+	return loops
+
+
+def _loop_text(names):
+	"""What a follower in a dependency loop says (:func:`_follower_loops`)."""
+	if len(names) == 1:
+		return _("{0} waits on itself, so its dates were left as they are.").format(names[0])
+	listed = _("{0} and {1}").format(", ".join(names[:-1]), names[-1])
+	return _("{0} wait on each other, so their dates were left as they are.").format(listed)
+
+
 def _walk_clearing(root, accept, exclude=()):
 	""":func:`_draft_followers`' walk for ``clear_of`` (v1.740.0): every task waiting on ``root``, and on
 	each task ``accept`` moves, is offered to ``accept``, and offered again whenever another task it
@@ -2123,6 +2227,67 @@ def _clearing_step(doc, old, ends, holidays):
 	return working_days_between(start, add_working_days(bound, 1, holidays), holidays)
 
 
+def erpnext_date_problems(doc):
+	"""What ERPNext's ``Task.validate`` will refuse about ``doc``'s dates when the draft is published,
+	as sentences (v1.742.0). A draft is never saved, so without this a drafted move, a drafted copy or
+	a drafted follower that breaks one of these only fails at Publish, which then leaves the project's
+	schedule Draft. Modelled on **ERPNext 16.50.0, the version prod runs**
+	(``erpnext/projects/doctype/task/task.py`` at tag ``v16.50.0``), not on the version-16 branch head,
+	which narrowed these checks on 2026-10-13. 16.50.0 makes them on **every** save, whether the date
+	changed or not, so a draft is judged on every set date:
+
+	* ``validate_from_to_dates``: the expected end is not before the expected start, and the actual
+	  end not before the actual start.
+	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's. A parent
+	  that is drafted too is judged where it is drafted to (Publish saves it first,
+	  :func:`_publish_order`); one that is itself a drafted new task is skipped (no row to read yet).
+
+	``validate_parent_project_dates`` (any of the four dates outside the project's expected start and
+	end) is not warned about: the Task ``before_validate`` hook widens that window first, on every
+	save (``project_window.before_task_validate``). The comparison is by date, as ERPNext's own, and
+	an end ERPNext would fill in from ``expected_time`` is not judged (a planner task always has one)."""
+	problems = []
+	for first, last, label in (
+		("exp_start_date", "exp_end_date", _("its end")),
+		("act_start_date", "act_end_date", _("its actual end")),
+	):
+		start, end = engine._as_date(doc.get(first)), engine._as_date(doc.get(last))
+		if start and end and end < start:
+			problems.append(_("{0} ({1}) is before its start ({2})").format(label, end, start))
+	end = engine._as_date(doc.get("exp_end_date"))
+	parent = doc.get("parent_task")
+	if parent and end and not is_draft_ref(parent):
+		parent_end = engine._as_date(frappe.db.get_value("Task", parent, "exp_end_date"))
+		if parent_end and end > parent_end:
+			# The parent's own draft publishes with this one, first: judge against where it is drafted to.
+			parent_end = _drafted_end(parent) or parent_end
+		if parent_end and end > parent_end:
+			problems.append(
+				_("its end ({0}) is after its parent task {1}'s end ({2})").format(end, parent, parent_end)
+			)
+	return problems
+
+
+def _drafted_end(task):
+	"""The last day ``task`` is drafted to by a draft the caller can see (:func:`_draft_rows`), or
+	None. Read only when a check would otherwise warn, so a clean draft costs nothing."""
+	try:
+		rows, _duplicates = _draft_rows()
+	except Exception:
+		return None
+	row = next((r for r in rows if r.get("task") == task), None)
+	return engine._as_date(load_payload(row.get("payload")).get("end")) if row else None
+
+
+def erpnext_date_lines(doc):
+	""":func:`erpnext_date_problems` as the lines a draft's conflicts carry under :data:`ERPNEXT_KEY`."""
+	label = doc.get("subject") or doc.get("name")
+	return [
+		_("Publish will be refused for {0}: {1}.").format(label, problem)
+		for problem in erpnext_date_problems(doc)
+	]
+
+
 def _draft_checks(roots, followers):
 	"""What a drafted move creates, as information: one batch check of the tasks drafted together
 	(``roots`` and ``followers``, each ``{"doc", "stored": (state, crew), "before": state, "after":
@@ -2143,6 +2308,11 @@ def _draft_checks(roots, followers):
 	)
 	if lines:
 		conflicts[DEPENDENCY_KEY] = lines
+	# v1.742.0: what ERPNext will refuse at Publish about a drafted follower's dates (the task each
+	# follows says so through its own _store_draft).
+	refused = [line for entry in followers for line in erpnext_date_lines(entry["doc"])]
+	if refused:
+		conflicts[ERPNEXT_KEY] = refused
 	return conflicts
 
 
@@ -2573,6 +2743,7 @@ def bulk_update(tasks, action, date=None, reason=None, draft=None):
 		saved_point = _savepoint(point)
 		mark = len(log) if log is not None else 0
 		try:
+			project_window.widen_for_task(doc)  # v1.742.0, as _save does
 			doc.save()
 		except Exception as exc:
 			if saved_point:
@@ -2670,8 +2841,10 @@ def _draft_reschedules(docs, day, auto, taken, result, log):
 		result["shift_skipped"].extend(
 			item for item in drafted.get("shift_skipped") or [] if item["task"] not in known
 		)
-		result["warnings"].extend(drafted.get("warnings") or [])
-		result["warnings"].extend(_take_messages(log, mark))
+		# v1.742.0: a follower two selected tasks both move says each of its lines once.
+		for line in [*(drafted.get("warnings") or []), *_take_messages(log, mark)]:
+			if line not in result["warnings"]:
+				result["warnings"].append(line)
 
 
 # ---------------------------------------------------------------------- Phase 3A: copy week
@@ -2879,6 +3052,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 		)
 		if doc.get("custom_equipment"):
 			_set_equipment(new, equipment_payload(doc.get("custom_equipment")))
+		project_window.widen_for_task(new)  # v1.742.0, as _insert_doc does
 		new.insert()
 		if conflicts:
 			new.add_comment(
@@ -2894,11 +3068,13 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 	if not held:
 		return {"created": created, "conflicts": conflicts, "skipped": skipped, **weeks}
 	# The drafted copies: duplicate's draft path, one New task row each and no Task.
+	warnings = []
 	for doc, values, crew, _preview_state, _held_copy in held:
 		spec = copy_spec("copy_week", doc, values, crew)
 		new = task_from_spec(spec)
 		new.check_permission("create")
 		stored = store_new_draft(spec, new)
+		warnings.extend(stored.get("warnings") or [])  # v1.742.0: what Publish will refuse
 		start, end = _span_text(_state(new))
 		created.append(
 			{
@@ -2914,7 +3090,7 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None, draft=N
 		"created": created,
 		"conflicts": conflicts,
 		"skipped": skipped,
-		"warnings": conflict_warnings(drafted_conflicts),
+		"warnings": conflict_warnings(drafted_conflicts) + warnings,
 		"drafted_conflicts": drafted_conflicts,
 		**weeks,
 	}
@@ -3874,6 +4050,11 @@ def _store_draft(
 				"Your earlier draft of this task was replaced: someone else changed the task since you drafted it."
 			)
 		)
+	# v1.742.0: what ERPNext's own validation will refuse at Publish, said now (a draft is not saved).
+	# ERPNext 16.50.0 judges every date on every save, so a crew-only draft is judged too.
+	refused = erpnext_date_lines(doc) if check and not unchanged else []
+	if refused:
+		conflicts = dict(conflicts, **{ERPNEXT_KEY: refused})
 	for label, messages in conflicts.items():
 		warnings.append(_("Not published yet. {0}: {1}").format(label, ", ".join(messages)))
 	if not check:
@@ -4059,6 +4240,7 @@ def _publish_plan(row):
 		"kwargs": payload_kwargs(load_payload(row.get("payload"))),
 		"before": (_state(stored), _current_crew(stored)),
 		"after": (_state(doc), _current_crew(doc)),
+		"parent": stored.get("parent_task") or None,  # v1.742.0, for _publish_order
 	}, None
 
 
@@ -4138,13 +4320,26 @@ def _saved_since(modified, since):
 def _publish_order(plans):
 	"""The plans furthest first, by the last day each is drafted to: a drafted follower is then saved
 	before the task it follows, so ERPNext's own push finds it already out of the way (P4), for later
-	moves and earlier ones alike. A task that waits on one not saved yet retries (``_apply_plans``)."""
+	moves and earlier ones alike. A task that waits on one not saved yet retries (``_apply_plans``).
 
-	def last_day(plan):
+	v1.742.0: on the same last day a parent task goes before the tasks filed under it. ERPNext checks
+	a child's end against its parent's end as stored, so a child drafted to end with its parent, both
+	later than the parent ends now, was saved first and refused."""
+	parents = {plan["name"]: plan.get("parent") for plan in plans}
+
+	def depth(name):
+		seen, count = {name}, 0
+		while parents.get(name) in parents and parents[name] not in seen:
+			name = parents[name]
+			seen.add(name)
+			count += 1
+		return count
+
+	def key(plan):
 		span = engine.task_span(plan["after"][0]) if plan.get("after") else None
-		return str(span[1]) if span else ""
+		return (str(span[1]) if span else "", -depth(plan["name"]))
 
-	return sorted(plans, key=last_day, reverse=True)
+	return sorted(plans, key=key, reverse=True)
 
 
 def _settle_plans(saved):
@@ -4550,9 +4745,11 @@ def spec_from_doc(doc, spec):
 
 def _insert_doc(doc):
 	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings. The one
-	insert behind every new Task the planners make, drafted or live."""
+	insert behind every new Task the planners make, drafted or live. The project's window is widened
+	first, as for :func:`_save` (v1.742.0)."""
 	log = _message_log()
 	mark = len(log) if log is not None else 0
+	project_window.widen_for_task(doc)
 	doc.insert()
 	return _take_messages(log, mark)
 
@@ -4643,6 +4840,9 @@ def store_new_draft(spec, doc, conflicts=None):
 	"card", "warnings", "conflicts"}``: no Task, no assignment, nothing anyone else can see.
 	"""
 	require_draft_room(1)
+	# v1.742.0: what ERPNext will refuse when Publish creates it, said now.
+	refused = erpnext_date_lines(doc)
+	conflicts = dict(conflicts or {}, **({ERPNEXT_KEY: refused} if refused else {}))
 	row = insert_new_draft(spec)
 	doc.name = draft_ref(row.get("name"))
 	doc.modified = row.get("modified")
@@ -4651,7 +4851,7 @@ def store_new_draft(spec, doc, conflicts=None):
 		"name": doc.name,
 		"modified": str(row.get("modified")),
 		"warnings": conflict_warnings(conflicts),
-		"conflicts": conflicts or {},
+		"conflicts": conflicts,
 		"card": _new_card(doc, spec),
 	}
 
@@ -4721,6 +4921,9 @@ def _store_new_edit(context, doc):
 	if schedule_state(stored_state, stored_crew) != schedule_state(after_state, after_crew):
 		before = engine.preview_conflicts(stored_state, stored_crew) if engine.task_span(stored_state) else {}
 		conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
+	refused = erpnext_date_lines(doc)
+	if refused:
+		conflicts[ERPNEXT_KEY] = refused
 	draft = frappe.get_doc(DRAFT_DOCTYPE, context["row"].get("name"))
 	draft.payload = dump_spec(spec)
 	_save_draft_row(draft)

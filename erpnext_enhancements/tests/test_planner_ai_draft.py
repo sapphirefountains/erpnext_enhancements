@@ -382,6 +382,9 @@ class _AiSite(build._Site):
 		}
 		self.customer_values = {"customer_type": "Company", "customer_name": "Smith Family Trust LLC"}
 		self.frappe.installed |= {"Project Scope of Work", "Scope Acceptance Criterion"}
+		# v1.742.0: with no draft flag the drafts are read on a Draft schedule (a blank status reads
+		# Draft), so the project is Published here unless a test says otherwise.
+		self.frappe.values[("Project", "PRJ-1", "custom_schedule_status")] = "Published"
 		self.frappe.tables["Project Scope of Work"] = [
 			{
 				"name": "SCOPE-1",
@@ -620,7 +623,10 @@ class TestDraftTaskBreakdown(_AiSite):
 		# The customer is read for its type, and nothing else of it.
 		customer_reads = [read for read in self.reads if read[0] == "Customer"]
 		self.assertEqual(customer_reads, [("Customer", "CUST-1", "customer_type")])
-		project_fields = next(read[2] for read in self.reads if read[0] == "Project")
+		# The Project's own fields, read in one go (its schedule state is read on its own, by name).
+		project_fields = next(
+			read[2] for read in self.reads if read[0] == "Project" and isinstance(read[2], tuple)
+		)
 		for field in project_fields:
 			self.assertNotRegex(field, r"contact|email|phone|mobile|address|owner|customer_name", field)
 		# Nothing about people or the calendar is read: no crew, no employees, no assignments.
@@ -668,7 +674,13 @@ class TestDraftTaskBreakdown(_AiSite):
 			self.ask()
 			self.model_calls.clear()
 			self.ask(draft=1)
-		self.assertEqual(seen, [False, True])
+			# v1.742.0: with no flag, a Draft schedule's drafts are read too, as the Build out grid does.
+			self.frappe.values[("Project", "PRJ-1", "custom_schedule_status")] = "Draft"
+			self.model_calls.clear()
+			self.ask()
+			self.model_calls.clear()
+			self.ask(draft=0)
+		self.assertEqual(seen, [False, True, True, False])
 
 	def test_a_scope_that_is_not_there_is_simply_left_out(self):
 		self.frappe.installed -= {"Project Scope of Work", "Scope Acceptance Criterion"}
@@ -1213,7 +1225,8 @@ class TestPageUnderNode(unittest.TestCase):
 		for labels in (out["footer"], out["footer_without_t4"]):
 			self.assertIn(labels.index(template) if template in labels else 0, (0,))
 		self.assertEqual(
-			footer, ["Paste a list…", "Copy from project…", "AI draft…", "Add row", "Create 2 tasks and 1 phase"]
+			footer,
+			["Paste a list…", "Copy from project…", "AI draft…", "Add row", "Create 2 tasks and 1 phase"],
 		)
 		# Where only the T1 block is loaded, the footer is what it was.
 		self.assertEqual(without, ["Paste a list…", "Copy from project…", "Add row", "Create tasks"])

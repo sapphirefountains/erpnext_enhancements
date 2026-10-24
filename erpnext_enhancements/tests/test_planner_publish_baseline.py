@@ -646,7 +646,10 @@ class TestWiring(unittest.TestCase):
 		):
 			names, defaults = self._args(path, name)
 			self.assertEqual(names[-2:], ["notify", "draft"], name)
-			self.assertEqual((defaults["notify"], defaults["draft"]), (None, 0), name)
+			# v1.742.0: a project planner write's draft is unset by default, read as "auto"; the
+			# Maintenance Planner's move_visit keeps 0 (its drafts are the hold only).
+			want = 0 if name == "move_visit" else None
+			self.assertEqual((defaults["notify"], defaults["draft"]), (None, want), name)
 		names, defaults = self._args(API_PATH, "shift_successors")
 		self.assertEqual((names[-1], defaults["notify"]), ("notify", None))
 

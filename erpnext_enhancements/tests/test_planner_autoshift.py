@@ -142,6 +142,10 @@ class _P4(h._Base):
 		def get_value(doctype, name, field=None, *args, as_dict=False, **kwargs):
 			if doctype == "Project" and isinstance(field, str):
 				return (self.projects.get(name) or {}).get(field)
+			if doctype == "Project" and isinstance(field, list | tuple):
+				# As frappe answers several fields: a tuple, or None for a project that is not there.
+				project = self.projects.get(name)
+				return tuple(project.get(key) for key in field) if project is not None else None
 			if doctype == "Task" and isinstance(field, str):
 				row = self._stored(name)
 				return row.get(field) if row else None
@@ -1246,35 +1250,6 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		self.assertEqual(self._drafted()["TASK-AF"], ("2026-10-30", "2026-10-30"))
 		self.assertEqual(result["shift_skipped"], [])
 
-	def test_a_dependency_cycle_ends(self):
-		self._follower("TASK-B", "2026-10-27", "2026-10-27")
-		self._follower("TASK-C", "2026-10-28", "2026-10-28", on="TASK-B")
-		self._depends("TASK-B", "TASK-C")  # a cycle ERPNext would refuse, as an import might leave it
-		with mock.patch.object(self.api, "SUCCESSOR_DEPTH", 3):
-			result = self._reschedule()  # returns: each task is offered at most SUCCESSOR_DEPTH times
-		reasons = {skip["task"]: skip["reason"] for skip in result["shift_skipped"]}
-		self.assertTrue(set(reasons) & {"TASK-B", "TASK-C"})
-		self.assertTrue(all("Too many tasks follow it" in reason for reason in reasons.values()))
-
-	def test_a_follower_of_two_selected_tasks_clears_both_in_either_order(self):
-		# R1 (TASK-A) ends Tue 27 once rescheduled, R2 (TASK-R) Wed 28; F waits on both.
-		for order in (["TASK-A", "TASK-R"], ["TASK-R", "TASK-A"]):
-			with self.subTest(order=order):
-				self.frappe.tables["Planner Draft Change"] = []
-				self.frappe.tables["Task Depends On"] = []
-				h._task("TASK-R", start="2026-09-28", end="2026-09-30", crew=("RES-1",), project="PRJ-2")
-				self._follower("TASK-F", "2026-10-27", "2026-10-27")
-				self._depends("TASK-F", "TASK-R")
-				result = self.api.bulk_update(json.dumps(order), "reschedule", "2026-10-26")
-				self.assertEqual(self._drafted()["TASK-R"], ("2026-10-26", "2026-10-28"))
-				self.assertEqual(self._drafted()["TASK-F"], ("2026-10-29", "2026-10-29"))
-				# Once in the answer, from where it was to where it ends up.
-				self.assertEqual(
-					[(m["task"], m["from"], m["to"]) for m in result["shifted"]],
-					[("TASK-F", "2026-10-27", "2026-10-29")],
-				)
-				self.frappe.docs[("Task", "TASK-F")]["depends_on"] = []
-
 	def test_a_published_follower_in_the_way_is_named_and_left(self):
 		h._task("TASK-B", start="2026-10-27", end="2026-10-27", crew=("RES-2",))  # PRJ-1, published
 		self._depends("TASK-B", "TASK-A")
@@ -1316,6 +1291,341 @@ class TestTheOverdueFollowerRule(_OverdueFollowers):
 		result = self.api.bulk_update(json.dumps(["TASK-P"]), "reschedule", "2026-10-26", draft=1)
 		self.assertEqual(self.frappe.saved, [])
 		self.assertEqual((result["shifted"], set(self._drafted())), ([], {"TASK-P"}))
+
+
+class TestALoopOfFollowers(_OverdueFollowers):
+	"""v1.742.0: ERPNext refuses a dependency loop on save, but imported data can carry one. The clear
+	walk used to push its tasks past each other until its limits stopped it (B to January, C the day
+	after); now the loop's tasks stay where they are, are named, and the rest of the walk carries on."""
+
+	def test_the_loop_stays_put_and_the_rest_carries_on(self):
+		# B waits on A and on C, C waits on B; D waits on A only. All three are in A's way (Tue 27).
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		self._follower("TASK-D", "2026-10-27", "2026-10-27")
+		result = self._reschedule()
+		# Every task where it lands: A rescheduled, D cleared to Wed 28, B and C not drafted at all.
+		self.assertEqual(
+			self._drafted(), {"TASK-A": ("2026-10-26", "2026-10-27"), "TASK-D": ("2026-10-28", "2026-10-28")}
+		)
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-D"])
+		reasons = {skip["task"]: skip["reason"] for skip in result["shift_skipped"]}
+		# C is reached only through B, which stays: B's line names the whole loop.
+		self.assertEqual(set(reasons), {"TASK-B"})
+		self.assertEqual(
+			reasons["TASK-B"], "TASK-B and TASK-C wait on each other, so their dates were left as they are."
+		)
+
+	def test_what_follows_only_through_the_loop_stays_too(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		self._follower("TASK-E", "2026-10-27", "2026-10-27", on="TASK-C")
+		result = self._reschedule()
+		self.assertEqual(set(self._drafted()), {"TASK-A"})
+		self.assertNotIn("TASK-E", {m["task"] for m in result["shifted"]})
+
+	def test_a_task_that_waits_on_itself(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._depends("TASK-B", "TASK-B")
+		result = self._reschedule()
+		self.assertEqual(set(self._drafted()), {"TASK-A"})
+		self.assertEqual(
+			result["shift_skipped"][0]["reason"],
+			"TASK-B waits on itself, so its dates were left as they are.",
+		)
+
+	def test_a_loop_already_clear_is_not_named(self):
+		self._follower("TASK-B", "2026-11-02", "2026-11-02")
+		self._follower("TASK-C", "2026-11-03", "2026-11-03", on="TASK-B")
+		self._depends("TASK-B", "TASK-C")
+		result = self._reschedule()
+		self.assertEqual((result["shift_skipped"], set(self._drafted())), ([], {"TASK-A"}))
+
+	def test_finding_the_loops(self):
+		self._follower("TASK-B", "2026-10-27", "2026-10-27")
+		self._follower("TASK-C", "2026-10-27", "2026-10-27", on="TASK-B")
+		self._follower("TASK-G", "2026-10-27", "2026-10-27", on="TASK-C")
+		self._depends("TASK-B", "TASK-G")  # B -> C -> G -> B
+		self._follower("TASK-D", "2026-10-27", "2026-10-27")
+		loops = self.api._follower_loops("TASK-A")
+		self.assertEqual(
+			loops, {name: ["TASK-B", "TASK-C", "TASK-G"] for name in ("TASK-B", "TASK-C", "TASK-G")}
+		)
+		self.assertEqual(self.api._follower_loops("TASK-A", exclude={"TASK-C"}), {})  # moved by the request
+
+
+class TestFollowersNamedOnlyWhenInTheWay(_OverdueFollowers):
+	"""v1.742.0: a Fountain Move or read-only follower that was already clear is not reported."""
+
+	def _fountain_move(self):
+		self.patches.append(
+			mock.patch.object(
+				h.api.fountain_move_jobs, "move_projects", lambda names: {"PRJ-3"} & set(names or ())
+			)
+		)
+		self.patches[-1].start()
+		self.projects["PRJ-3"] = {"custom_schedule_status": "Draft"}
+
+	def test_a_clear_fountain_move_is_not_named(self):
+		self._fountain_move()
+		h._task("TASK-M", start="2026-11-02", end="2026-11-02", crew=("RES-2",), project="PRJ-3")
+		self._depends("TASK-M", "TASK-A")
+		self.assertEqual(self._reschedule()["shift_skipped"], [])
+
+	def test_a_fountain_move_in_the_way_is_named(self):
+		self._fountain_move()
+		h._task("TASK-M", start="2026-10-27", end="2026-10-27", crew=("RES-2",), project="PRJ-3")
+		self._depends("TASK-M", "TASK-A")
+		self.assertEqual([skip["task"] for skip in self._reschedule()["shift_skipped"]], ["TASK-M"])
+
+	def test_a_clear_read_only_follower_is_not_named(self):
+		self._follower("TASK-R", "2026-11-02", "2026-11-02")
+		real = self.frappe.has_permission
+		self.frappe.has_permission = lambda doctype=None, ptype=None, doc=None, **k: doc != "TASK-R" and real(
+			doctype, ptype, doc=doc, **k
+		)
+		self.assertEqual(self._reschedule()["shift_skipped"], [])
+
+
+class TestOneLinePerWarning(_OverdueFollowers):
+	def test_a_follower_two_selected_tasks_move_says_each_line_once(self):
+		h._task("TASK-R", start="2026-09-28", end="2026-09-30", crew=("RES-1",), project="PRJ-2")
+		self._follower("TASK-F", "2026-10-27", "2026-10-27")
+		self._depends("TASK-F", "TASK-R")
+		# Lisa is overbooked wherever F is drafted away from its stored day: both passes say so.
+		self.batch_hook = lambda changes: (
+			{"Lisa Park": ["Over on Thu"]}
+			if any(
+				state.get("name") == "TASK-F"
+				and not str(state.get("exp_start_date")).startswith("2026-10-27")
+				for state, _crew in changes
+			)
+			else {}
+		)
+		result = self.api.bulk_update(json.dumps(["TASK-A", "TASK-R"]), "reschedule", "2026-10-26")
+		lines = [line for line in result["warnings"] if "Over on Thu" in line]
+		self.assertEqual(len(lines), 1, result["warnings"])
+
+
+class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
+	"""v1.742.0: what ERPNext v16's Task.validate_dates will refuse at Publish is said on the draft,
+	as a warning, rather than only when Publish fails and leaves the schedule Draft."""
+
+	def _refused(self, result):
+		return [line for line in result["warnings"] if "Publish will be refused" in line]
+
+	def test_the_projects_window_is_not_warned_about_publish_widens_it(self):
+		# v1.742.0 round 2: every planner save widens the project's derived window first, so a draft
+		# past the project's end (or before its start) is not something Publish will refuse.
+		self.projects["PRJ-2"].update(expected_start_date="2026-10-27", expected_end_date="2026-10-26")
+		self.assertEqual(self._refused(self._reschedule()), [])
+		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-20", "end": "2026-10-21"}]
+		self.assertEqual(self._refused(_actions().move_many(json.dumps(moves), draft="auto")), [])
+
+	def test_a_drafted_follower_past_its_parent_tasks_end(self):
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		result = self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+		self.assertIn(
+			"Publish will be refused for Subject TASK-B: its end (2026-10-29) is after its parent task TASK-P's"
+			" end (2026-10-28).",
+			" ".join(result["warnings"]),
+		)
+
+	def test_a_parent_drafted_later_too_is_judged_where_it_is_drafted(self):
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"})  # the phase, drafted later
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		result = self._reschedule()
+		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
+		self.assertNotIn("parent task", " ".join(result["warnings"]))
+
+	def test_a_draft_that_breaks_nothing_says_nothing(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-01", expected_end_date="2026-12-31")
+		self.assertEqual(self._refused(self._reschedule()), [])
+
+	def test_every_set_date_is_judged_as_erpnext_16_50_does(self):
+		# ERPNext 16.50.0 (prod) makes these checks on every save, changed or not.
+		h._task("TASK-P", start="2026-09-01", end="2026-09-30", crew=(), project="PRJ-2")
+		doc = h._Doc(
+			name="T",
+			project="PRJ-2",
+			parent_task="TASK-P",
+			exp_start_date="2026-10-05",
+			exp_end_date="2026-10-02",
+			act_start_date="2026-10-03",
+			act_end_date="2026-10-01",
+		)
+		self.assertEqual(
+			self.api.erpnext_date_problems(doc),
+			[
+				"its end (2026-10-02) is before its start (2026-10-05)",
+				"its actual end (2026-10-01) is before its start (2026-10-03)",
+				"its end (2026-10-02) is after its parent task TASK-P's end (2026-09-30)",
+			],
+		)
+
+	def test_a_crew_only_draft_is_judged_too(self):
+		# The task already ends after its parent: Publish of any draft of it will be refused.
+		h._task("TASK-P", start="2026-09-01", end="2026-10-01", crew=(), project="PRJ-2")
+		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
+		self.frappe.docs[("Task", "TASK-A")]["exp_end_date"] = "2026-10-02"
+		result = self.api.add_crew("TASK-A", "RES-2", BASE)
+		self.assertTrue(result["drafted"])
+		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(result)))
+		# Even a draft that moves nobody's hours (crew size only) is saved, and so judged, at Publish.
+		self.frappe.tables["Planner Draft Change"] = []
+		sized = self.api.save_task("TASK-A", BASE, crew_size=3)
+		self.assertTrue(sized["drafted"])
+		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(sized)))
+
+
+class _ERPNextsProjectWindow:
+	"""ERPNext 16.50.0's ``validate_parent_project_dates`` simulated on save: a task any of whose four
+	dates (expected and actual, start and end) falls outside its project's expected start and end is
+	refused, on every save, and ``frappe.db.set_value`` on a Project really moves them."""
+
+	def _simulate_erpnext(self):
+		self.widened = []
+		real_set_value = self.frappe.db.set_value
+
+		def set_value(doctype, name, field, value=None, *args, **kwargs):
+			if doctype == "Project":
+				changes = field if isinstance(field, dict) else {field: value}
+				self.widened.append((name, {key: str(day) for key, day in changes.items()}))
+				self.projects.setdefault(name, {}).update({key: str(day) for key, day in changes.items()})
+				return None
+			return real_set_value(doctype, name, field, value, *args, **kwargs)
+
+		self.frappe.db.set_value = set_value
+		real_save = h._TaskDoc.save
+		projects = self.projects
+
+		def save(doc):
+			window = projects.get(doc.get("project")) or {}
+			for field in ("exp_start_date", "exp_end_date", "act_start_date", "act_end_date"):
+				day = str(doc.get(field) or "")[:10]
+				if day and window.get("expected_end_date") and day > str(window["expected_end_date"])[:10]:
+					raise h._Throw(
+						f"{doc.get('name')}'s {field} cannot be after the project's Expected End Date"
+					)
+				if (
+					day
+					and window.get("expected_start_date")
+					and day < str(window["expected_start_date"])[:10]
+				):
+					raise h._Throw(
+						f"{doc.get('name')}'s {field} cannot be before the project's Expected Start Date"
+					)
+			return real_save(doc)
+
+		self.patches.append(mock.patch.object(h._TaskDoc, "save", save))
+		self.patches[-1].start()
+
+
+class TestALiveSaveWidensTheProject(_ERPNextsProjectWindow, _P4):
+	"""v1.742.0 round 2: on this site a Project's expected dates are derived from its tasks, so the
+	planner widens them before a save that needs it, as the Gantt does; never inward."""
+
+	def setUp(self):
+		super().setUp()
+		self._simulate_erpnext()
+		self.projects["PRJ-1"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		h._task("TASK-1", crew=("RES-1",))  # Mon 12 - Wed 14: the project's first and last task
+
+	def test_the_last_task_a_day_later(self):
+		result = self.api.save_task("TASK-1", BASE, end="2026-10-15")
+		self.assertNotIn("drafted", result)
+		self.assertEqual(self._saves(), ["TASK-1"])
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-15"})])
+
+	def test_the_first_task_a_day_earlier(self):
+		self.api.save_task("TASK-1", BASE, start="2026-10-09")  # keeps its length: Fri 9 - Tue 13
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_start_date": "2026-10-09"})])
+
+	def test_a_multi_select_move_and_a_fountain_move(self):
+		# move_many and the Maintenance Planner's Fountain Move both save through _save / _apply.
+		moves = [{"task": "TASK-1", "modified": BASE, "start": "2026-10-19", "end": "2026-10-21"}]
+		self.assertEqual(_actions().move_many(json.dumps(moves))["moved"][0]["to"], "2026-10-19")
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-21"})])
+		source = (APP / "project_enhancements/fountain_move_jobs.py").read_text(encoding="utf-8")
+		self.assertIn("return project_planner._apply(", source)
+
+	def test_a_crew_only_edit_of_a_task_whose_timesheets_ran_past_the_end(self):
+		# 16.50.0 judges act_end_date too, on every save: a crew change alone was refused.
+		self.frappe.docs[("Task", "TASK-1")]["act_end_date"] = "2026-10-16"
+		result = self.api.add_crew("TASK-1", "RES-2", BASE)
+		self.assertNotIn("drafted", result)
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-16"})])
+
+	def test_a_save_inside_the_window_never_moves_it(self):
+		self.api.save_task("TASK-1", BASE, end="2026-10-13")  # shorter
+		self.assertEqual(self.widened, [])
+
+	def test_the_live_overdue_tray(self):
+		self.projects["PRJ-1"].update(expected_start_date="2026-09-01", expected_end_date="2026-10-01")
+		h._task("TASK-O", start="2026-09-30", end="2026-10-01", crew=("RES-1",))
+		result = self.api.bulk_update(json.dumps(["TASK-O"]), "reschedule", "2026-10-26")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(self.widened, [("PRJ-1", {"expected_end_date": "2026-10-27"})])
+
+	def test_without_it_the_save_is_refused(self):
+		# The simulation itself: what ERPNext does when the window is not widened first.
+		with mock.patch.object(self.api.project_window, "widen_for_task", lambda doc: {}):
+			with self.assertRaises(h._Throw):
+				self.api.save_task("TASK-1", BASE, end="2026-10-15")
+
+	def test_the_helper_widens_only(self):
+		widen = self.api.project_window.widen
+		self.assertEqual(widen("PRJ-1", "2026-10-13", "2026-10-13"), {})  # inside: nothing
+		self.assertEqual(
+			widen("PRJ-1", None, "2026-10-20"), {"expected_end_date": (D(2026, 10, 14), D(2026, 10, 20))}
+		)
+		self.assertEqual(
+			widen("PRJ-1", "2026-10-01", None), {"expected_start_date": (D(2026, 10, 12), D(2026, 10, 1))}
+		)
+		self.projects["PRJ-1"].update(expected_end_date=None)
+		self.assertEqual(widen("PRJ-1", None, "2026-12-01"), {})  # ERPNext checks nothing against a blank one
+		self.assertEqual(widen(None, None, "2026-12-01"), {})
+
+
+class TestADraftThatNeedsAWiderWindowPublishes(_ERPNextsProjectWindow, _OverdueFollowers):
+	"""The drafted paths: Publish saves through the same widening, so the project is not left Draft."""
+
+	def setUp(self):
+		super().setUp()
+		self._simulate_erpnext()
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+
+	def test_an_overdue_reschedule_on_a_project_whose_tasks_are_all_past(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-30", expected_end_date="2026-10-01")
+		self._reschedule()
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual([p["task"] for p in result["published"]], ["TASK-A"])
+		self.assertEqual(self.projects["PRJ-2"]["expected_end_date"], "2026-10-27")
+
+	def test_the_last_task_drafted_a_day_later(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-30", expected_end_date="2026-10-01")
+		self.assertTrue(self.api.save_task("TASK-A", BASE, end="2026-10-02")["drafted"])
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(self.projects["PRJ-2"]["expected_end_date"], "2026-10-02")
 
 
 class TestADraftedRescheduleThenPublish(_OverdueFollowers):
@@ -1507,6 +1817,37 @@ class TestCopyWeekOnADraftSchedule(_P4):
 				self.assertTrue(result["created"][0]["drafted"])
 		self.assertEqual(self._inserted(), [])
 
+	def test_duplicate_with_no_flag_drafts_on_a_draft_schedule(self):
+		drafted = _actions().duplicate_task("TASK-8")
+		self.assertTrue(drafted["drafted"] and drafted["name"].startswith("draft-new:"))
+		live = _actions().duplicate_task("TASK-1")
+		self.assertNotIn("drafted", live)
+		self.assertEqual(len(self._inserted()), 1)
+		self.assertNotIn("drafted", _actions().duplicate_task("TASK-8", draft=0))  # explicit 0: live
+
+	def test_a_drafted_copy_into_next_week_publishes_and_widens(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		widened = []
+		self.frappe.db.set_value = lambda doctype, name, field, value=None, **k: widened.append(
+			(doctype, name, field, str(value))
+		)
+		self._copy(["TASK-8"], dry_run=0, draft="auto")
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(len(self._inserted()), 1)
+		self.assertIn(("Project", "PRJ-2", "expected_end_date", "2026-10-21"), widened)
+
 	def test_a_published_projects_copy_is_inserted_as_before(self):
 		result = self._copy(["TASK-1"], dry_run=0, draft="auto")
 		((created,),) = [result["created"]]
@@ -1578,6 +1919,239 @@ class TestSplitOnADraftSchedule(_P4):
 			_actions().split_task("TASK-8", "2026-10-13", BASE)
 
 
+class TestNoFlagMeansAuto(_P4):
+	"""v1.742.0: an unset draft flag drafts on a Draft schedule on every planner write, as it already did
+	for Split, Copy week and the Overdue tray. The audit found no caller relying on unset meaning live:
+	the two planner pages are the only callers. An explicit 0 still saves."""
+
+	def test_save_task_add_crew_swap_crew_and_move_many(self):
+		h._task("TASK-8", crew=("RES-1",), project="PRJ-2")
+		self.assertTrue(self.api.save_task("TASK-8", BASE, start="2026-10-19")["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		self.assertTrue(self.api.add_crew("TASK-8", "RES-2", BASE)["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		self.assertTrue(self.api.swap_crew("TASK-8", "RES-1", "RES-2", BASE)["drafted"])
+		self.frappe.tables["Planner Draft Change"] = []
+		moves = [{"task": "TASK-8", "modified": BASE, "start": "2026-10-19", "end": "2026-10-21"}]
+		self.assertTrue(_actions().move_many(json.dumps(moves))["drafted"])
+		self.assertEqual(self.frappe.saved, [])
+
+	def test_an_explicit_0_still_saves(self):
+		h._task("TASK-8", crew=("RES-1",), project="PRJ-2")
+		self.assertNotIn("drafted", self.api.save_task("TASK-8", BASE, start="2026-10-19", draft=0))
+		self.assertEqual(self._saves(), ["TASK-8"])
+
+	def test_a_published_schedule_saves_with_no_flag(self):
+		h._task("TASK-1", crew=("RES-1",))
+		self.assertNotIn("drafted", self.api.save_task("TASK-1", BASE, start="2026-10-19"))
+		self.assertEqual(self._saves(), ["TASK-1"])
+
+	def test_a_new_tasks_rule(self):
+		rule = self.api.drafts_new_task
+		self.assertEqual(
+			[rule(None, "PRJ-2"), rule("auto", "PRJ-2"), rule("", "PRJ-2"), rule(0, "PRJ-2")],
+			[True, True, True, False],
+		)
+		self.assertEqual([rule(None, "PRJ-1"), rule(1, "PRJ-1"), rule("0", "PRJ-1")], [False, True, False])
+		self.frappe.db.has_column = lambda doctype, column: column not in h.P3_COLUMNS
+		self.assertIs(rule(None, "PRJ-2"), False)  # before the P3 columns: live, as before
+
+	def test_the_build_out_grid_reads_by_the_same_rule(self):
+		source = ACTIONS_PATH.read_text(encoding="utf-8")
+		self.assertIn("_project_task_rows(project, draft=pp.drafts_new_task(draft, project))", source)
+
+	def test_the_three_creating_writes_use_it(self):
+		source = ACTIONS_PATH.read_text(encoding="utf-8")
+		self.assertNotIn("drafting = bool(cint(pp.given(draft)))", source)
+		# duplicate, quick add and build out, and the build-out grid's read.
+		self.assertEqual(source.count("pp.drafts_new_task(draft, "), 4)
+
+
+class TestTheTaskHookWidensEverySave(_P4):
+	"""v1.742.0 round 3: the widening is a Task ``before_validate`` doc_event, so every save gets it:
+	the Desk form, ERPNext's own dependent push, the planner, the Gantt and the rental code."""
+
+	def setUp(self):
+		super().setUp()
+		self.widened = []
+		self.frappe.db.set_value = lambda doctype, name, field, value=None, **k: self.widened.append(
+			(doctype, name, field, str(value))
+		)
+		self.projects["PRJ-1"].update(expected_start_date="2026-10-12", expected_end_date="2026-10-14")
+		self.hook = self.api.project_window.before_task_validate
+
+	def _task(self, **dates):
+		return h._Doc(doctype="Task", name="TASK-9", project="PRJ-1", **dates)
+
+	def test_a_desk_save_past_the_end(self):
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-20"))
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-20")])
+
+	def test_an_actual_end_past_the_end(self):
+		# A crew-only edit of a task whose timesheets ran on: its actual end is what is outside.
+		self.hook(
+			self._task(exp_start_date="2026-10-12", exp_end_date="2026-10-13", act_end_date="2026-10-17")
+		)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-17")])
+
+	def test_a_dependent_erpnexts_reschedule_pushes_past_the_end(self):
+		# Task.reschedule_dependent_tasks saves the pushed dependent through the same validate.
+		pushed = self._task(exp_start_date="2026-10-15", exp_end_date="2026-10-16")
+		pushed.flags = types.SimpleNamespace(ignore_recursion_check=True)
+		self.hook(pushed)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_end_date", "2026-10-16")])
+
+	def test_the_start_side(self):
+		self.hook(
+			self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-13", act_start_date="2026-10-08")
+		)
+		self.assertEqual(self.widened, [("Project", "PRJ-1", "expected_start_date", "2026-10-08")])
+
+	def test_never_inward(self):
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-13"))
+		self.assertEqual(self.widened, [])
+
+	def test_not_a_task_or_no_project(self):
+		self.hook(h._Doc(doctype="Project", name="PRJ-1", exp_end_date="2026-12-01"))
+		self.hook(h._Doc(doctype="Task", name="T", project=None, exp_end_date="2026-12-01"))
+		self.hook(types.SimpleNamespace(doctype="Task"))  # a doc without the fields at all
+		self.assertEqual(self.widened, [])
+
+	def test_it_never_raises_on_anything_but_the_database_failing(self):
+		def boom(*args, **kwargs):
+			raise RuntimeError("no Project table yet (ERPNext's own test bootstrap)")
+
+		self.frappe.db.get_value = boom
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertEqual(self.widened, [])
+		self.assertTrue(self.frappe.errors)
+
+	def _mariadb(self):
+		"""``frappe.db``'s error kinds and checks, as frappe 16.50.0's MariaDBExceptionUtil has them."""
+
+		class OperationalError(Exception):
+			pass
+
+		class InternalError(Exception):
+			pass
+
+		class InterfaceError(Exception):
+			pass
+
+		class QueryDeadlockError(Exception):  # frappe.exceptions: plain Exception subclasses
+			pass
+
+		class QueryTimeoutError(Exception):
+			pass
+
+		db = self.frappe.db
+		db.OperationalError, db.InternalError, db.InterfaceError = (
+			OperationalError,
+			InternalError,
+			InterfaceError,
+		)
+		self.patches.append(
+			mock.patch.object(self.frappe, "QueryDeadlockError", QueryDeadlockError, create=True)
+		)
+		self.patches.append(
+			mock.patch.object(self.frappe, "QueryTimeoutError", QueryTimeoutError, create=True)
+		)
+		for patch in self.patches[-2:]:
+			patch.start()
+		self.interface_error = InterfaceError
+		db.is_deadlocked = lambda e: bool(e.args) and e.args[0] in (1213, 1020)
+		db.is_timedout = lambda e: bool(e.args) and e.args[0] == 1205
+		db.is_missing_table_or_column = lambda e: bool(e.args) and e.args[0] in (1054, 1146)
+		return OperationalError, InternalError
+
+	def _wrapped(self, kind, cause):
+		"""As frappe 16.50.0's Database.sql raises it: ``raise frappe.QueryDeadlockError(e) from e``."""
+		try:
+			raise kind(cause) from cause
+		except kind as error:
+			return error
+
+	def test_a_deadlock_while_widening_is_raised(self):
+		# InnoDB has rolled the whole transaction back: carrying on would commit half a Publish.
+		operational, internal = self._mariadb()
+		for error in (
+			# What frappe's db.sql actually raises: its own kinds, from the pymysql error.
+			self._wrapped(
+				self.frappe.QueryDeadlockError, operational(1213, "Deadlock found when trying to get lock")
+			),
+			self._wrapped(self.frappe.QueryTimeoutError, operational(1205, "Lock wait timeout exceeded")),
+			# And the raw kinds, as any other path may raise them.
+			operational(1213, "Deadlock found when trying to get lock"),
+			internal(1927, "Connection was killed"),
+			self.interface_error(0, ""),
+		):
+
+			def write(*args, error=error, **kwargs):
+				raise error
+
+			self.frappe.db.set_value = write
+			with self.subTest(error=error.args[0]), self.assertRaises(type(error)):
+				self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertEqual(self.frappe.errors, [])
+
+	def test_a_missing_column_is_still_swallowed(self):
+		operational, _internal = self._mariadb()
+
+		def read(*args, **kwargs):
+			raise operational(1054, "Unknown column 'expected_start_date' in 'field list'")
+
+		self.frappe.db.get_value = read
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-12-01"))
+		self.assertTrue(self.frappe.errors)
+
+	def test_both_dates_are_read_at_once(self):
+		reads = []
+		real = self.frappe.db.get_value
+		self.frappe.db.get_value = lambda doctype, name, field=None, *a, **k: reads.append(
+			(doctype, field)
+		) or real(doctype, name, field, *a, **k)
+		self.hook(self._task(exp_start_date="2026-10-13", exp_end_date="2026-10-20"))
+		self.assertEqual(reads, [("Project", ("expected_start_date", "expected_end_date"))])
+
+	def test_it_is_the_tasks_before_validate_hook(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		events = next(
+			node.value
+			for node in tree.body
+			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
+		)
+		task = ast.literal_eval(events)["Task"]
+		self.assertEqual(
+			task["before_validate"],
+			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		)
+
+
+class TestPublishOrder(unittest.TestCase):
+	def _plan(self, name, end, parent=None):
+		return {
+			"name": name,
+			"parent": parent,
+			"after": ({"exp_start_date": "2026-10-26", "exp_end_date": end}, []),
+		}
+
+	def test_a_parent_goes_before_its_children_on_the_same_last_day(self):
+		plans = [
+			self._plan("TASK-C", "2026-10-30", parent="TASK-P"),
+			self._plan("TASK-G", "2026-10-30", parent="TASK-C"),
+			self._plan("TASK-P", "2026-10-30"),
+			self._plan("TASK-X", "2026-11-02"),
+		]
+		# Furthest first still; on the 30th the phase, then its task, then that task's own child.
+		self.assertEqual(
+			[plan["name"] for plan in h.api._publish_order(plans)], ["TASK-X", "TASK-P", "TASK-C", "TASK-G"]
+		)
+
+	def test_a_parent_whose_end_is_earlier_still_goes_after(self):
+		plans = [self._plan("TASK-P", "2026-10-27"), self._plan("TASK-C", "2026-10-30", parent="TASK-P")]
+		self.assertEqual([plan["name"] for plan in h.api._publish_order(plans)], ["TASK-C", "TASK-P"])
+
+
 class TestWiring(unittest.TestCase):
 	def _args(self, path, name):
 		fn = next(
@@ -1600,6 +2174,21 @@ class TestWiring(unittest.TestCase):
 		for name in ("bulk_update", "copy_week"):
 			names, defaults = self._args(API_PATH, name)
 			self.assertEqual(names[-1], "draft", name)
+			self.assertIsNone(defaults["draft"], name)
+
+	def test_every_planner_write_takes_draft_unset(self):
+		# v1.742.0: unset reads as "auto" (project_planner.unset_auto / drafts_new_task).
+		for path, name in (
+			(API_PATH, "save_task"),
+			(API_PATH, "add_crew"),
+			(API_PATH, "swap_crew"),
+			(ACTIONS_PATH, "move_many"),
+			(ACTIONS_PATH, "duplicate_task"),
+			(ACTIONS_PATH, "quick_add_task"),
+			(ACTIONS_PATH, "build_out_tasks"),
+			(ACTIONS_PATH, "get_build_out_context"),
+		):
+			_names, defaults = self._args(path, name)
 			self.assertIsNone(defaults["draft"], name)
 
 	def test_the_maintenance_add_crew_takes_the_answer_too(self):

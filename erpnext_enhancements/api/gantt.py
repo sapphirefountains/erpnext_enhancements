@@ -66,6 +66,7 @@ from frappe import _
 from frappe.model import default_fields, no_value_fields
 from frappe.utils import cint, cstr, flt, get_datetime, getdate
 
+from erpnext_enhancements.project_enhancements import project_window
 from erpnext_enhancements.utils.spreadsheet import build_payload
 
 MAX_ROWS = 1000
@@ -818,7 +819,7 @@ def _to_stored_datetime(value, fieldtype, is_end):
 
 
 def _widen_parent_project_window(doc):
-	"""Let a Task be dragged past its project's end date.
+	"""Let a Task be dragged past its project's end date (or before its start).
 
 	ERPNext's ``Task.validate_parent_project_dates`` throws ``InvalidDates``
 	("Task's Expected End Date cannot be after Project's Expected End Date")
@@ -831,21 +832,14 @@ def _widen_parent_project_window(doc):
 
 	Widening the window first clears that hurdle; the sync hook then sets the
 	authoritative value straight after the save. No-op for any other doctype,
-	and never shrinks the window.
+	and never shrinks the window. Since v1.742.0 the widening is shared
+	(``project_enhancements.project_window``, also a Task ``before_validate``
+	doc_event for every save), and it widens the start too: the expected start is
+	derived the same way, as MIN(task start).
 	"""
-	if doc.doctype != "Task" or not doc.get("project") or not doc.get("exp_end_date"):
+	if doc.doctype != "Task":
 		return
-	project_end = frappe.db.get_value("Project", doc.project, "expected_end_date")
-	if not project_end:
-		return
-	if get_datetime(doc.exp_end_date).date() > get_datetime(project_end).date():
-		frappe.db.set_value(
-			"Project",
-			doc.project,
-			"expected_end_date",
-			get_datetime(doc.exp_end_date).date(),
-			update_modified=False,
-		)
+	project_window.widen_for_task(doc)
 
 
 @frappe.whitelist()
