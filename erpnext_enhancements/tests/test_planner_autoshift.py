@@ -1572,7 +1572,7 @@ class _BothReleases:
 		# widened one, so the warning never names what the before_validate hook fixes.
 		self.frappe.tables["Planner Draft Change"] = []
 		with mock.patch.object(
-			h.api.project_window, "widened_window", lambda doc: (h.D(2026, 9, 30), h.D(2026, 10, 1))
+			h.api.project_window, "widened_window", lambda doc, *read: (h.D(2026, 9, 30), h.D(2026, 10, 1))
 		):
 			self.assertIn(
 				"cannot be after the Project's Expected End Date", " ".join(self._refused(self._reschedule()))
@@ -1628,6 +1628,44 @@ class _BothReleases:
 			" ".join(result["warnings"]),
 		)
 		self.assertEqual(self.frappe.local.message_log, [])
+
+	def test_on_a_real_database_object_the_shadow_is_removed_again(self):
+		# On a site, get_value is a method of frappe.local.db's class, not an instance attribute.
+		stub = self.frappe.db
+
+		class Database:
+			def get_value(self, *args, **kwargs):
+				return stub.get_value(*args, **kwargs)
+
+		db = Database()
+		with mock.patch.object(self.frappe.local, "db", db, create=True):
+			self._parent(end="2026-10-01")
+			result = self._reschedule()
+		self.assertNotIn("get_value", vars(db))
+		self.assertIn("parent task's Expected End Date", " ".join(result["warnings"]))
+
+	def test_a_missing_record_is_not_a_date_refusal(self):
+		class Missing(_ValidationError):
+			pass
+
+		def gone(doc):
+			raise Missing("Task TASK-P not found")
+
+		self.patches.append(mock.patch.object(self.frappe, "DoesNotExistError", Missing, create=True))
+		self.patches[-1].start()
+		with mock.patch.object(h._TaskDoc, "validate_dates", gone, create=True):
+			self.assertEqual(self._refused(self._reschedule()), [])
+		self.assertTrue(self.frappe.errors)
+
+	def test_the_parent_and_window_are_read_only_when_asked(self):
+		calls = []
+		with (
+			mock.patch.object(self.api, "_drafted_end", lambda task: calls.append(task)),
+			mock.patch.object(h._TaskDoc, "validate_dates", lambda doc: None, create=True),
+		):
+			self._parent(end="2026-10-01")
+			self._reschedule()
+		self.assertEqual(calls, [])
 
 	def test_a_controller_without_validate_dates_checks_nothing(self):
 		for kind in (h._TaskDoc, h._Row):

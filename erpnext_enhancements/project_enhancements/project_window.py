@@ -41,22 +41,27 @@ def _day(value):
 		return None
 
 
-def stored_window(project):
+#: A Project's expected window, as one read asks for it.
+WINDOW_FIELDS = ("expected_start_date", "expected_end_date")
+
+
+def stored_window(project, get_value=None):
 	"""``(expected start, expected end)`` of ``project`` as stored, as dates (None where unset or the
 	project is not there). One read of both: a tuple of fields, which frappe's ``get_value`` makes of a
-	list anyway, answers a tuple of values, or None."""
-	row = frappe.db.get_value("Project", project, ("expected_start_date", "expected_end_date"))
+	list anyway, answers a tuple of values, or None. ``get_value``: the read to use (the planner's
+	draft check passes the real one while it shadows ``frappe.db.get_value``)."""
+	row = (get_value or frappe.db.get_value)("Project", project, WINDOW_FIELDS)
 	if not (isinstance(row, list | tuple) and len(row) == 2):
 		return None, None
 	return _day(row[0]), _day(row[1])
 
 
-def widened_window(doc):
+def widened_window(doc, get_value=None):
 	"""``(expected start, expected end)`` of ``doc``'s project as :func:`widen_for_task` would leave it
 	for ``doc``, without writing anything (v1.743.0): what ERPNext's own check sees at the save, since
 	the Task ``before_validate`` hook widens first. The planner's draft-time check
 	(``api/project_planner.erpnext_date_problems``) shows ERPNext's controller this window."""
-	first, last = stored_window(doc.get("project"))
+	first, last = stored_window(doc.get("project"), get_value)
 	days = [day for day in (_day(doc.get(field)) for field in TASK_DATE_FIELDS) if day]
 	if days and first and min(days) < first:
 		first = min(days)

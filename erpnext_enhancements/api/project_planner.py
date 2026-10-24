@@ -2257,7 +2257,9 @@ def erpnext_date_problems(doc, new=False):
 		copy = _date_check_copy(doc, new)
 		check = getattr(copy, "validate_dates", None)
 	except Exception:
-		frappe.log_error(title="Project Planner: draft date check could not start", message=frappe.get_traceback())
+		frappe.log_error(
+			title="Project Planner: draft date check could not start", message=frappe.get_traceback()
+		)
 		return []
 	if not callable(check):
 		return []
@@ -2276,7 +2278,13 @@ def erpnext_date_problems(doc, new=False):
 		with _as_published(copy):
 			check()
 	except Exception as exc:
-		if refused and isinstance(exc, refused):
+		# DoesNotExistError is a ValidationError too, but not a date refusal (a parent deleted since).
+		missing = getattr(frappe, "DoesNotExistError", None)
+		if (
+			refused
+			and isinstance(exc, refused)
+			and not (isinstance(missing, type) and isinstance(exc, missing))
+		):
 			problems.append(_problem_text(exc))
 		else:
 			frappe.log_error(title="Project Planner: draft date check failed", message=frappe.get_traceback())
@@ -2320,26 +2328,43 @@ def _as_published(copy):
 	meet them: the copy's project window as the Task ``before_validate`` hook will have widened it, and
 	its parent task's end as drafted when the parent has a draft. Every other read goes through.
 
-	Done by shadowing ``frappe.db.get_value`` on the request's own database object
-	(``frappe.local.db``) and putting it back in ``finally``: the controller reads both values through
-	that one call, nothing else in the request runs in between, and no other request shares the
-	object. Patching the controller instead would mean copying its code again, which is what this
-	replaced."""
-	db = frappe.db
-	own = "get_value" in vars(db)
+	Done by shadowing ``get_value`` on the request's own database object, ``frappe.local.db`` (not
+	``frappe.db``, which is a ``LocalProxy`` in front of it), and putting it back in ``finally``: the
+	controller reads both values through that one call, nothing else in the request runs in between,
+	and no other request shares the object. Each answer is read only when ERPNext asks for it, through
+	the real call, so a check that never reaches the parent or the window costs nothing more. Patching
+	the controller instead would mean copying its code again, which is what this replaced."""
+	db = getattr(frappe.local, "db", None) or frappe.db
+	own = "get_value" in getattr(db, "__dict__", {})
 	real = db.get_value
 	project, parent = copy.get("project"), copy.get("parent_task")
-	window = project_window.widened_window(copy) if project else None
-	parent_end = _drafted_end(parent) if parent and not is_draft_ref(parent) else None
+	answers = {}
+
+	def window():
+		if "window" not in answers:
+			answers["window"] = project_window.widened_window(copy, real)
+		return answers["window"]
+
+	def parent_end():
+		if "parent" not in answers:
+			answers["parent"] = _drafted_end(parent)
+		return answers["parent"]
 
 	def get_value(doctype, filters=None, fieldname="name", *args, **kwargs):
 		fields = tuple(fieldname) if isinstance(fieldname, list | tuple) else (fieldname,)
-		if doctype == "Project" and filters == project and window and fields == _WINDOW_FIELDS:
+		if doctype == "Project" and project and filters == project and fields == _WINDOW_FIELDS:
 			if kwargs.get("as_dict"):
-				return frappe._dict(zip(_WINDOW_FIELDS, window, strict=True))
-			return window
-		if doctype == "Task" and filters == parent and parent_end and fields == ("exp_end_date",):
-			return parent_end
+				return frappe._dict(zip(_WINDOW_FIELDS, window(), strict=True))
+			return window()
+		if (
+			doctype == "Task"
+			and parent
+			and filters == parent
+			and fields == ("exp_end_date",)
+			and not is_draft_ref(parent)
+			and parent_end()
+		):
+			return parent_end()
 		return real(doctype, filters, fieldname, *args, **kwargs)
 
 	db.get_value = get_value
@@ -2352,7 +2377,7 @@ def _as_published(copy):
 			del db.get_value
 
 
-_WINDOW_FIELDS = ("expected_start_date", "expected_end_date")
+_WINDOW_FIELDS = project_window.WINDOW_FIELDS
 
 
 def _drafted_end(task):

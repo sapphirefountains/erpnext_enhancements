@@ -34,13 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - A drafted new task is built from its values and marked `__islocal`, as `insert` would.
   - **The copy is shown what Publish will see.** ERPNext reads two values through
     `frappe.db.get_value`. For the length of the one check, `_as_published` shadows that call on
-    the request's own database object and answers them:
+    the request's own database object, `frappe.local.db` rather than the `LocalProxy` in front of
+    it. Each answer is read only when ERPNext asks for it:
     - the project's window as the Task `before_validate` hook will have widened it
       (`project_window.widened_window`, which writes nothing), so a window warning never names
       what the hook fixes;
     - a drafted parent task's end as drafted, since Publish saves the parent first.
   - `InvalidDates`, or the plain `ValidationError` an older release raises, becomes the existing
-    "Publish will be refused for …" line. Anything the check says through `msgprint`, such as
+    "Publish will be refused for …" line. A `DoesNotExistError` is not, although it is a
+    `ValidationError` too; a parent deleted since, for example, is logged instead. Anything the check says through `msgprint`, such as
     16.52.1's reschedule warning, is taken off the response and kept as a warning too. Any other
     exception is logged and gives no warning, so the check never blocks a draft. The copy is never
     saved.
@@ -67,7 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - another failure gives no warning and is logged;
   - `get_value` put back even when the check fails;
   - a msgprint kept as a warning and taken off the response;
-  - a controller without `validate_dates`.
+  - a controller without `validate_dates`;
+  - the shadow removed again from a real-shaped database object;
+  - a missing record is not a refusal;
+  - the parent's draft and the window are read only when asked.
 
   Between the two releases, a crew-size-only draft of a task already past its parent is judged
   on 16.50.0 and not on 16.52.1. Without the stored task as `_doc_before_save`, without the
