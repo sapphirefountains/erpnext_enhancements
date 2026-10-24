@@ -39,13 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the project's window as the Task `before_validate` hook will have widened it
       (`project_window.widened_window`, which writes nothing), so a window warning never names
       what the hook fixes;
-    - a drafted parent task's end as drafted, since Publish saves the parent first.
+    - the parent task's end as it will be when this task is saved at Publish
+      (`_parent_end_at_publish`). `_publish_order` saves the furthest last day first, and a parent
+      before its tasks on a tie. So the parent's draft counts only if it ends on or after the task's
+      drafted end. Otherwise the task saves first, against the parent's stored end. A parent draft
+      that is out of date, which Publish skips, never counts.
+
+      So a phase shortened from 30 Nov to 10 Nov does not warn about a task drafted to 20 Nov: that
+      task saves first and passes.
   - `InvalidDates`, or the plain `ValidationError` an older release raises, becomes the existing
     "Publish will be refused for …" line. A `DoesNotExistError` is not, although it is a
     `ValidationError` too; a parent deleted since, for example, is logged instead. Anything the check says through `msgprint`, such as
     16.52.1's reschedule warning, is taken off the response and kept as a warning too. Any other
     exception is logged and gives no warning, so the check never blocks a draft. The copy is never
     saved.
+  - **Cost:** the stored task is loaded once per check, and the copy is made from its `as_dict`.
+    The Draft rows are read only when a task is drafted past its parent's stored end, the one case
+    a parent's draft can change the answer. A batch's follower checks share one read.
+  - A check that fails for a non-date reason files **one** Error Log row per request, since this
+    site alerts on Error Logs. Later ones in the same request are counted on
+    `frappe.local.planner_date_check_failures`.
   - The hand-written 16.50.0 rules are gone. The call sites and the wording stay.
   - CLAUDE.md's gotcha now says that prod's version moves with every `bench update --pull`, to
     read the tag matching prod's current `app_version`, and to prefer calling the framework's
@@ -72,7 +85,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a controller without `validate_dates`;
   - the shadow removed again from a real-shaped database object;
   - a missing record is not a refusal;
-  - the parent's draft and the window are read only when asked.
+  - a shortened phase not judged at its drafted end;
+  - a stale parent draft not counted;
+  - a parent drafted to end with its task saves first;
+  - the Draft rows read only when a parent's draft can matter, and once per batch;
+  - the stored task loaded once per check;
+  - one Error Log row per request.
 
   Between the two releases, a crew-size-only draft of a task already past its parent is judged
   on 16.50.0 and not on 16.52.1. Without the stored task as `_doc_before_save`, without the
