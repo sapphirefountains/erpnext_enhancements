@@ -145,7 +145,7 @@ Verified, and all of them expensive to rediscover:
   whenever it runs. On 2026-10-23 alone, prod went from frappe and erpnext **16.50.0** to frappe
   **16.53.0** and erpnext **16.52.1** at about 17:57.
   - **Read the tag that matches prod's current `app_version`.** Check it first with
-    `SELECT app_name, app_version FROM tabInstalled Application` (read-only, through the ERPNext
+    ``SELECT app_name, app_version FROM `tabInstalled Application` `` (read-only, through the ERPNext
     MCP). Then read `git show v16.52.1:<path>`, or
     `gh api "repos/frappe/erpnext/contents/<path>?ref=v16.52.1" --jq .content | base64 -d`.
   - **Prefer calling the framework's validators over copying their rules.** A copy is right on the

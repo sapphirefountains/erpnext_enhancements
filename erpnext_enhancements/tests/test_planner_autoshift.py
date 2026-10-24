@@ -1507,6 +1507,11 @@ class _StubTaskController:
 		for kind in (h._TaskDoc, h._Row):
 			self.patches.append(mock.patch.object(kind, "validate_dates", tracked, create=True))
 			self.patches[-1].start()
+		# Document.as_dict, which the copy is made from (one load of the stored task).
+		self.patches.append(
+			mock.patch.object(h._TaskDoc, "as_dict", lambda doc: copy.deepcopy(dict(doc)), create=True)
+		)
+		self.patches[-1].start()
 		self.patches.append(
 			mock.patch.object(
 				frappe, "exceptions", types.SimpleNamespace(InvalidDates=_InvalidDates), create=True
@@ -1524,6 +1529,17 @@ class _NativeChecks(_StubTaskController, _OverdueFollowers):
 	def setUp(self):
 		super().setUp()
 		self._install_controller()
+		# As on a site, a Task built from a dict (the copy, from the stored task's as_dict) is the Task
+		# controller's class too.
+		real = self.frappe.get_doc
+
+		def get_doc(doctype, name=None):
+			if isinstance(doctype, dict) and doctype.get("doctype") == "Task":
+				return h._TaskDoc(copy.deepcopy(doctype))
+			return real(doctype, name)
+
+		self.patches.append(mock.patch.object(self.frappe, "get_doc", get_doc))
+		self.patches[-1].start()
 
 	def _refused(self, result):
 		return [line for line in result["warnings"] if "Publish will be refused" in line]
@@ -1561,6 +1577,30 @@ class _BothReleases:
 	def test_a_parent_drafted_later_too_is_judged_where_it_is_drafted(self):
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
 		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"})
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		self.assertNotIn("parent task", " ".join(self._reschedule()["warnings"]))
+
+	def test_a_shortened_phase_is_not_judged_at_its_drafted_end(self):
+		# P stored to 30 Nov, drafted to 10 Nov; C drafted to 20 Nov. Publish saves C first (its last
+		# day is later), against P's stored end, and it passes: no warning.
+		h._task("TASK-P", start="2026-10-01", end="2026-11-30", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-10"})
+		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
+		self.assertEqual(self._refused(self.api.save_task("TASK-A", BASE, start="2026-11-19")), [])
+
+	def test_a_stale_parent_draft_does_not_count(self):
+		# P's draft is out of date (P changed since), so Publish skips it: C is judged against P's end.
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"}, base="2026-10-01 00:00:00")
+		self._follower("TASK-B", "2026-10-27", "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
+		self.assertIn("parent task's Expected End Date 2026-10-28", " ".join(self._reschedule()["warnings"]))
+
+	def test_a_parent_drafted_to_end_with_its_task_saves_first(self):
+		# Same last day: Publish saves the parent first (v1.742.0), so its drafted end is what counts.
+		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-10-29"})
 		self._follower("TASK-B", "2026-10-27", "2026-10-28")
 		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
 		self.assertNotIn("parent task", " ".join(self._reschedule()["warnings"]))
@@ -1657,15 +1697,45 @@ class _BothReleases:
 			self.assertEqual(self._refused(self._reschedule()), [])
 		self.assertTrue(self.frappe.errors)
 
-	def test_the_parent_and_window_are_read_only_when_asked(self):
-		calls = []
-		with (
-			mock.patch.object(self.api, "_drafted_end", lambda task: calls.append(task)),
-			mock.patch.object(h._TaskDoc, "validate_dates", lambda doc: None, create=True),
-		):
-			self._parent(end="2026-10-01")
-			self._reschedule()
-		self.assertEqual(calls, [])
+	def test_the_drafts_are_read_only_when_a_parents_draft_can_matter(self):
+		reads = []
+		real = self.api._draft_rows
+		self._parent(end="2026-10-31")  # the task, rescheduled to end 27 Oct, stays inside it
+		with mock.patch.object(self.api, "_draft_rows", lambda *a: reads.append(1) or real(*a)):
+			before = len(reads)
+			result = self._reschedule()
+		# The reschedule itself reads the drafts (its own context); the check adds nothing.
+		self.assertEqual(self._refused(result), [])
+		checks = len(reads) - before
+		with mock.patch.object(self.api, "_draft_rows", lambda *a: reads.append(1) or real(*a)):
+			self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")])
+		self.assertEqual(len(reads) - before, checks)
+
+	def test_a_batch_reads_the_drafts_once(self):
+		self._parent(end="2026-10-01")
+		h._draft_row("TASK-P", {"start": "2026-09-01", "end": "2026-10-30"})
+		self.frappe.docs[("Task", "TASK-A")].update(exp_end_date="2026-10-20")
+		reads = []
+		real = self.api._draft_rows
+		shared = {}
+		with mock.patch.object(self.api, "_draft_rows", lambda *a: reads.append(1) or real(*a)):
+			for _i in range(3):
+				self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")], drafts=shared)
+		self.assertEqual(len(reads), 1)
+
+	def test_the_stored_task_is_loaded_once_per_check(self):
+		loads = []
+		real = self.frappe.get_doc
+		self.frappe.get_doc = lambda doctype, name=None: loads.append((doctype, name)) or real(doctype, name)
+		self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")])
+		self.assertEqual([load for load in loads if load == ("Task", "TASK-A")], [("Task", "TASK-A")])
+
+	def test_a_failing_check_files_one_error_log_per_request(self):
+		with mock.patch.object(h._TaskDoc, "validate_dates", lambda doc: 1 / 0, create=True):
+			for _i in range(3):
+				self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")])
+		self.assertEqual(len(self.frappe.errors), 1)
+		self.assertEqual(self.frappe.local.planner_date_check_failures, 3)
 
 	def test_a_controller_without_validate_dates_checks_nothing(self):
 		for kind in (h._TaskDoc, h._Row):
