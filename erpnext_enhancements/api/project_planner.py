@@ -2405,13 +2405,18 @@ def _parent_end_at_publish(copy, parent, stored_end, real, drafts):
 	:func:`_publish_order` saves the drafts furthest last day first, a parent before its tasks on a
 	tie. So the parent's draft is already saved when the task is, and is what ERPNext reads, only if
 	the parent is drafted to end on or after the task's drafted end; otherwise the task is saved first,
-	against the parent's end as stored. A parent draft that is out of date (its task changed since) is
-	skipped by Publish, so it never counts. And when the task ends on or before the parent's stored end,
-	either answer passes, so the drafts are not read at all: only a task drafted past its parent's
-	stored end costs the read, once per ``drafts`` (a batch shares it)."""
+	against the parent's end as stored. A drafted **new** task (``copy`` is ``__islocal``) is created
+	only after every drafted change is saved (``publish_drafts``: ``_apply_plans``, then
+	``_create_new_tasks``), so it always meets the parent's draft. A parent draft that is out of date
+	(its task changed since) is skipped by Publish, so it never counts.
+
+	For a task that exists, when it ends on or before the parent's stored end either answer passes,
+	so the drafts are not read at all: only a task drafted past its parent's stored end costs the read,
+	once per ``drafts`` (a batch shares it)."""
 	end = engine._as_date(copy.get("exp_end_date"))
 	stored = engine._as_date(stored_end)
-	if not end or not stored or end <= stored:
+	new = bool(copy.get("__islocal"))
+	if not end or not stored or (end <= stored and not new):
 		return stored_end
 	if "rows" not in drafts:
 		try:
@@ -2422,7 +2427,9 @@ def _parent_end_at_publish(copy, parent, stored_end, real, drafts):
 	if not row or not same_moment(row.get("base_modified"), real("Task", parent, "modified")):
 		return stored_end
 	drafted = engine._as_date(load_payload(row.get("payload")).get("end"))
-	return drafted if drafted and drafted >= end else stored_end
+	if not drafted:
+		return stored_end
+	return drafted if new or drafted >= end else stored_end
 
 
 def erpnext_date_lines(doc, new=False, drafts=None):

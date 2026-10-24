@@ -1597,6 +1597,19 @@ class _BothReleases:
 		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
 		self.assertIn("parent task's Expected End Date 2026-10-28", " ".join(self._reschedule()["warnings"]))
 
+	def test_a_new_task_meets_its_parents_draft_whatever_the_order(self):
+		# New tasks are created after every drafted change is saved, so a shortened phase does count.
+		h._task("TASK-P", start="2026-10-01", end="2026-11-30", crew=(), project="PRJ-2")
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-10"})
+		values = {"subject": "Pump", "project": "PRJ-2", "parent_task": "TASK-P"}
+		late = h._Doc(values, name="draft-new:X", exp_start_date="2026-11-19", exp_end_date="2026-11-20")
+		self.assertIn(
+			"parent task's Expected End Date 2026-11-10",
+			" ".join(self.api.erpnext_date_problems(late, new=True)),
+		)
+		inside = h._Doc(values, name="draft-new:Y", exp_start_date="2026-11-02", exp_end_date="2026-11-03")
+		self.assertEqual(self.api.erpnext_date_problems(inside, new=True), [])
+
 	def test_a_parent_drafted_to_end_with_its_task_saves_first(self):
 		# Same last day: Publish saves the parent first (v1.742.0), so its drafted end is what counts.
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")

@@ -42,8 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the parent task's end as it will be when this task is saved at Publish
       (`_parent_end_at_publish`). `_publish_order` saves the furthest last day first, and a parent
       before its tasks on a tie. So the parent's draft counts only if it ends on or after the task's
-      drafted end. Otherwise the task saves first, against the parent's stored end. A parent draft
-      that is out of date, which Publish skips, never counts.
+      drafted end. Otherwise the task saves first, against the parent's stored end. A drafted *new*
+      task is created only after every drafted change is saved (`publish_drafts`), so it always
+      meets the parent's draft. A parent draft that is out of date, which Publish skips, never
+      counts.
 
       So a phase shortened from 30 Nov to 10 Nov does not warn about a task drafted to 20 Nov: that
       task saves first and passes.
@@ -88,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a shortened phase not judged at its drafted end;
   - a stale parent draft not counted;
   - a parent drafted to end with its task saves first;
+  - a new task meets its parent's draft whatever the order;
   - the Draft rows read only when a parent's draft can matter, and once per batch;
   - the stored task loaded once per check;
   - one Error Log row per request.
