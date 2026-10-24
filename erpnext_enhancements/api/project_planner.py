@@ -2227,45 +2227,132 @@ def _clearing_step(doc, old, ends, holidays):
 	return working_days_between(start, add_working_days(bound, 1, holidays), holidays)
 
 
-def erpnext_date_problems(doc):
-	"""What ERPNext's ``Task.validate`` will refuse about ``doc``'s dates when the draft is published,
-	as sentences (v1.742.0). A draft is never saved, so without this a drafted move, a drafted copy or
-	a drafted follower that breaks one of these only fails at Publish, which then leaves the project's
-	schedule Draft. Modelled on **ERPNext 16.50.0, the version prod runs**
-	(``erpnext/projects/doctype/task/task.py`` at tag ``v16.50.0``), not on the version-16 branch head,
-	which narrowed these checks on 2026-10-13. 16.50.0 makes them on **every** save, whether the date
-	changed or not, so a draft is judged on every set date:
+def erpnext_date_problems(doc, new=False):
+	"""What ERPNext's own Task date checks will refuse when this draft is published, as sentences
+	(v1.743.0, Nik: "run ERPNext's own Task validators on a copy (whatever version prod runs) and turn
+	InvalidDates into warnings"). A draft is never saved, so without this a drafted move, copy or
+	follower that breaks one only fails at Publish, which then leaves the project's schedule Draft.
 
-	* ``validate_from_to_dates``: the expected end is not before the expected start, and the actual
-	  end not before the actual start.
-	* ``validate_parent_expected_end_date``: the expected end is not after the parent task's. A parent
-	  that is drafted too is judged where it is drafted to (Publish saves it first,
-	  :func:`_publish_order`); one that is itself a drafted new task is skipped (no row to read yet).
+	**The installed controller judges, not a copy of its rules.** v1.742.0 copied ERPNext 16.50.0's
+	rules by hand; the next ``bench update --pull`` moved prod to 16.52.1, whose checks differ (the
+	parent's end and the project's window judged only when a named field changed, the window on the
+	expected dates only, a warning instead of a refusal for a reschedule), and the copy over-warned the
+	same day. So the task is rebuilt **in memory** (:func:`_date_check_copy`: the stored task with the
+	drafted dates, or for ``new`` a task-to-be) and the controller's own ``validate_dates`` runs on it:
 
-	``validate_parent_project_dates`` (any of the four dates outside the project's expected start and
-	end) is not warned about: the Task ``before_validate`` hook widens that window first, on every
-	save (``project_window.before_task_validate``). The comparison is by date, as ERPNext's own, and
-	an end ERPNext would fill in from ``expected_time`` is not judged (a planner task always has one)."""
+	* the copy's ``_doc_before_save`` is the task as stored, so ``has_value_changed`` (which reads
+	  ``get_doc_before_save``) sees exactly what the real save at Publish will; a new task has none and
+	  is ``__islocal``, as ``insert`` makes it;
+	* ERPNext reads the project's window and the parent's end through ``frappe.db.get_value``, and
+	  :func:`_as_published` answers those two reads as Publish will meet them: the window widened by the
+	  Task ``before_validate`` hook (``project_window.widened_window``, so it never warns about what
+	  that hook fixes) and a drafted parent at its drafted end (Publish saves it first);
+	* the copy is never saved, and what the check says through ``msgprint`` (a reschedule's warning
+	  included) is taken off the response and kept as a warning too.
+
+	``InvalidDates`` (and the plain ``ValidationError`` an older ``validate_from_to_dates`` raises)
+	becomes the sentence; anything else is logged and gives no warning, so the check never blocks a
+	draft. A controller without ``validate_dates`` checks nothing."""
+	try:
+		copy = _date_check_copy(doc, new)
+		check = getattr(copy, "validate_dates", None)
+	except Exception:
+		frappe.log_error(title="Project Planner: draft date check could not start", message=frappe.get_traceback())
+		return []
+	if not callable(check):
+		return []
+	refused = tuple(
+		kind
+		for kind in (
+			getattr(getattr(frappe, "exceptions", None), "InvalidDates", None),
+			getattr(frappe, "ValidationError", None),
+		)
+		if isinstance(kind, type) and issubclass(kind, BaseException)
+	)
 	problems = []
-	for first, last, label in (
-		("exp_start_date", "exp_end_date", _("its end")),
-		("act_start_date", "act_end_date", _("its actual end")),
-	):
-		start, end = engine._as_date(doc.get(first)), engine._as_date(doc.get(last))
-		if start and end and end < start:
-			problems.append(_("{0} ({1}) is before its start ({2})").format(label, end, start))
-	end = engine._as_date(doc.get("exp_end_date"))
-	parent = doc.get("parent_task")
-	if parent and end and not is_draft_ref(parent):
-		parent_end = engine._as_date(frappe.db.get_value("Task", parent, "exp_end_date"))
-		if parent_end and end > parent_end:
-			# The parent's own draft publishes with this one, first: judge against where it is drafted to.
-			parent_end = _drafted_end(parent) or parent_end
-		if parent_end and end > parent_end:
-			problems.append(
-				_("its end ({0}) is after its parent task {1}'s end ({2})").format(end, parent, parent_end)
-			)
-	return problems
+	log = _message_log()
+	mark = len(log) if log is not None else 0
+	try:
+		with _as_published(copy):
+			check()
+	except Exception as exc:
+		if refused and isinstance(exc, refused):
+			problems.append(_problem_text(exc))
+		else:
+			frappe.log_error(title="Project Planner: draft date check failed", message=frappe.get_traceback())
+	finally:
+		said = [_problem_text(text) for text in _take_messages(log, mark)]
+	return problems + [text for text in said if text and text not in problems]
+
+
+def _problem_text(value):
+	"""A refusal or a message as one plain sentence, without its links or a final full stop."""
+	text = frappe.utils.strip_html_tags(str(value or "")).strip()
+	return " ".join(text.split()).rstrip(".")
+
+
+def _date_check_copy(doc, new=False):
+	"""The unsaved Task :func:`erpnext_date_problems` judges: for a task that exists, the stored task
+	with ``doc``'s drafted dates (and phase) on it, its ``_doc_before_save`` the stored task; for
+	``new`` (or a ``draft-new:`` name), a task-to-be with ``doc``'s values, marked ``__islocal`` with
+	nothing before it. Loaded fresh, so nothing the check does can touch the draft's own document."""
+	values = {field: doc.get(field) for field in (*_CHECKED_DATES, "parent_task", "project")}
+	name = doc.get("name")
+	if new or not name or is_draft_ref(name):
+		copy = frappe.get_doc(dict(values, doctype="Task", subject=doc.get("subject"), name=name))
+		copy.update({"__islocal": 1})
+		copy._doc_before_save = None
+		return copy
+	stored = frappe.get_doc("Task", name)
+	copy = frappe.get_doc("Task", name)
+	copy.update(values)
+	copy._doc_before_save = stored
+	return copy
+
+
+#: The Task dates a draft can carry that ERPNext's date checks read.
+_CHECKED_DATES = ("exp_start_date", "exp_end_date", "act_start_date", "act_end_date")
+
+
+@contextlib.contextmanager
+def _as_published(copy):
+	"""For the length of one check, answer the two reads ERPNext's date checks make as Publish will
+	meet them: the copy's project window as the Task ``before_validate`` hook will have widened it, and
+	its parent task's end as drafted when the parent has a draft. Every other read goes through.
+
+	Done by shadowing ``frappe.db.get_value`` on the request's own database object
+	(``frappe.local.db``) and putting it back in ``finally``: the controller reads both values through
+	that one call, nothing else in the request runs in between, and no other request shares the
+	object. Patching the controller instead would mean copying its code again, which is what this
+	replaced."""
+	db = frappe.db
+	own = "get_value" in vars(db)
+	real = db.get_value
+	project, parent = copy.get("project"), copy.get("parent_task")
+	window = project_window.widened_window(copy) if project else None
+	parent_end = _drafted_end(parent) if parent and not is_draft_ref(parent) else None
+
+	def get_value(doctype, filters=None, fieldname="name", *args, **kwargs):
+		fields = tuple(fieldname) if isinstance(fieldname, list | tuple) else (fieldname,)
+		if doctype == "Project" and filters == project and window and fields == _WINDOW_FIELDS:
+			if kwargs.get("as_dict"):
+				return frappe._dict(zip(_WINDOW_FIELDS, window, strict=True))
+			return window
+		if doctype == "Task" and filters == parent and parent_end and fields == ("exp_end_date",):
+			return parent_end
+		return real(doctype, filters, fieldname, *args, **kwargs)
+
+	db.get_value = get_value
+	try:
+		yield
+	finally:
+		if own:
+			db.get_value = real
+		else:
+			del db.get_value
+
+
+_WINDOW_FIELDS = ("expected_start_date", "expected_end_date")
 
 
 def _drafted_end(task):
@@ -2279,12 +2366,12 @@ def _drafted_end(task):
 	return engine._as_date(load_payload(row.get("payload")).get("end")) if row else None
 
 
-def erpnext_date_lines(doc):
+def erpnext_date_lines(doc, new=False):
 	""":func:`erpnext_date_problems` as the lines a draft's conflicts carry under :data:`ERPNEXT_KEY`."""
 	label = doc.get("subject") or doc.get("name")
 	return [
 		_("Publish will be refused for {0}: {1}.").format(label, problem)
-		for problem in erpnext_date_problems(doc)
+		for problem in erpnext_date_problems(doc, new=new)
 	]
 
 
@@ -4841,7 +4928,7 @@ def store_new_draft(spec, doc, conflicts=None):
 	"""
 	require_draft_room(1)
 	# v1.742.0: what ERPNext will refuse when Publish creates it, said now.
-	refused = erpnext_date_lines(doc)
+	refused = erpnext_date_lines(doc, new=True)
 	conflicts = dict(conflicts or {}, **({ERPNEXT_KEY: refused} if refused else {}))
 	row = insert_new_draft(spec)
 	doc.name = draft_ref(row.get("name"))
@@ -4921,7 +5008,7 @@ def _store_new_edit(context, doc):
 	if schedule_state(stored_state, stored_crew) != schedule_state(after_state, after_crew):
 		before = engine.preview_conflicts(stored_state, stored_crew) if engine.task_span(stored_state) else {}
 		conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
-	refused = erpnext_date_lines(doc)
+	refused = erpnext_date_lines(doc, new=True)
 	if refused:
 		conflicts[ERPNEXT_KEY] = refused
 	draft = frappe.get_doc(DRAFT_DOCTYPE, context["row"].get("name"))

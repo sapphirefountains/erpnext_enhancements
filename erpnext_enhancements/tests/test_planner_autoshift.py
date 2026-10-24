@@ -1409,20 +1409,142 @@ class TestOneLinePerWarning(_OverdueFollowers):
 		self.assertEqual(len(lines), 1, result["warnings"])
 
 
-class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
-	"""v1.742.0: what ERPNext v16's Task.validate_dates will refuse at Publish is said on the draft,
-	as a warning, rather than only when Publish fails and leaves the schedule Draft."""
+class _ValidationError(Exception):
+	pass
+
+
+class _InvalidDates(_ValidationError):
+	pass
+
+
+def _day10(value):
+	return str(value)[:10] if value else None
+
+
+class _StubTaskController:
+	"""ERPNext's Task date checks as two releases make them, installed on the stub's Task documents
+	(the bench-free harness cannot run the real controller). ``version`` picks which: "16.50.0" judges
+	every set date on every save and throws; "16.52.1" (prod since 2026-10-23) judges the parent's end
+	and the project's expected dates only when a named field changed, through ``report_date_conflict``,
+	and only msgprints for a reschedule. The messages are ERPNext's own wording."""
+
+	version = "16.52.1"
+
+	def _install_controller(self):
+		frappe, version = self.frappe, self.version
+
+		def validate_from_to_dates(doc, start_field, end_field):
+			start, end = _day10(doc.get(start_field)), _day10(doc.get(end_field))
+			if start and end and end < start:
+				raise _InvalidDates(f"{end_field} must be after {start_field}")
+
+		def has_value_changed(doc, field):
+			before = doc.get("_doc_before_save")
+			if not before:
+				return True
+			return (
+				_day10(before.get(field)) != _day10(doc.get(field))
+				if "date" in field
+				else before.get(field) != doc.get(field)
+			)
+
+		def report_date_conflict(doc, message, *fields):
+			if not (doc.get("flags") or {}).get("rescheduled"):
+				if doc.get("__islocal") or any(has_value_changed(doc, field) for field in fields):
+					raise _InvalidDates(message)
+				return
+			frappe.local.message_log.append(json.dumps({"message": f"Schedule Conflict: {message}"}))
+
+		def conflict(doc, message, *fields):
+			if version == "16.50.0":
+				raise _InvalidDates(message)
+			report_date_conflict(doc, message, *fields)
+
+		def validate_dates(doc):
+			validate_from_to_dates(doc, "exp_start_date", "exp_end_date")
+			validate_from_to_dates(doc, "act_start_date", "act_end_date")
+			parent, end = doc.get("parent_task"), _day10(doc.get("exp_end_date"))
+			if parent and end:
+				parent_end = _day10(frappe.db.get_value("Task", parent, "exp_end_date"))
+				if parent_end and end > parent_end:
+					conflict(
+						doc,
+						"Expected End Date should be less than or equal to parent task's Expected End Date "
+						f"{parent_end}.",
+						"exp_end_date",
+						"parent_task",
+					)
+			if doc.get("project"):
+				first, last = frappe.db.get_value(
+					"Project", doc.get("project"), ["expected_start_date", "expected_end_date"]
+				) or (None, None)
+				fields = ("exp_start_date", "exp_end_date")
+				if version == "16.50.0":
+					fields += ("act_start_date", "act_end_date")
+				for field in fields:
+					day = _day10(doc.get(field))
+					if day and last and day > _day10(last):
+						conflict(
+							doc,
+							f"{doc.get('name')}'s {field} cannot be after the Project's Expected End Date.",
+							field,
+							"project",
+						)
+					if day and first and day < _day10(first):
+						conflict(
+							doc,
+							f"{doc.get('name')}'s {field} cannot be before the Project's Expected Start Date.",
+							field,
+							"project",
+						)
+
+		self.checked = []
+
+		def tracked(doc):
+			self.checked.append(dict(doc))
+			return validate_dates(doc)
+
+		for kind in (h._TaskDoc, h._Row):
+			self.patches.append(mock.patch.object(kind, "validate_dates", tracked, create=True))
+			self.patches[-1].start()
+		self.patches.append(
+			mock.patch.object(
+				frappe, "exceptions", types.SimpleNamespace(InvalidDates=_InvalidDates), create=True
+			)
+		)
+		self.patches.append(mock.patch.object(frappe, "ValidationError", _ValidationError, create=True))
+		for patch in self.patches[-2:]:
+			patch.start()
+
+
+class _NativeChecks(_StubTaskController, _OverdueFollowers):
+	"""v1.743.0: the draft's date warnings come from ERPNext's own Task controller (whatever version is
+	installed) run on an unsaved copy, not from a copy of its rules."""
+
+	def setUp(self):
+		super().setUp()
+		self._install_controller()
 
 	def _refused(self, result):
 		return [line for line in result["warnings"] if "Publish will be refused" in line]
 
-	def test_the_projects_window_is_not_warned_about_publish_widens_it(self):
-		# v1.742.0 round 2: every planner save widens the project's derived window first, so a draft
-		# past the project's end (or before its start) is not something Publish will refuse.
-		self.projects["PRJ-2"].update(expected_start_date="2026-10-27", expected_end_date="2026-10-26")
-		self.assertEqual(self._refused(self._reschedule()), [])
-		moves = [{"task": "TASK-A", "modified": BASE, "start": "2026-10-20", "end": "2026-10-21"}]
-		self.assertEqual(self._refused(_actions().move_many(json.dumps(moves), draft="auto")), [])
+	def _parent(self, end="2026-10-01"):
+		h._task("TASK-P", start="2026-09-01", end=end, crew=(), project="PRJ-2")
+		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
+
+
+class _BothReleases:
+	"""What both releases refuse, so the warnings are the same whichever is installed."""
+
+	def test_an_end_before_its_start(self):
+		self.frappe.docs[("Task", "TASK-A")].update(act_start_date="2026-10-05", act_end_date="2026-10-02")
+		result = self._reschedule()
+		self.assertEqual(
+			self._refused(result),
+			[
+				"Not published yet. ERPNext: Publish will be refused for Subject TASK-A: act_end_date must be after act_start_date."
+			],
+		)
 
 	def test_a_drafted_follower_past_its_parent_tasks_end(self):
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
@@ -1431,58 +1553,113 @@ class TestERPNextsOwnDateChecksOnADraft(_OverdueFollowers):
 		result = self._reschedule()
 		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
 		self.assertIn(
-			"Publish will be refused for Subject TASK-B: its end (2026-10-29) is after its parent task TASK-P's"
-			" end (2026-10-28).",
+			"Publish will be refused for Subject TASK-B: Expected End Date should be less than or equal to "
+			"parent task's Expected End Date 2026-10-28",
 			" ".join(result["warnings"]),
 		)
 
 	def test_a_parent_drafted_later_too_is_judged_where_it_is_drafted(self):
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
-		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"})  # the phase, drafted later
+		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"})
 		self._follower("TASK-B", "2026-10-27", "2026-10-28")
 		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
-		result = self._reschedule()
-		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
-		self.assertNotIn("parent task", " ".join(result["warnings"]))
+		self.assertNotIn("parent task", " ".join(self._reschedule()["warnings"]))
 
-	def test_a_draft_that_breaks_nothing_says_nothing(self):
-		self.projects["PRJ-2"].update(expected_start_date="2026-09-01", expected_end_date="2026-12-31")
+	def test_the_projects_window_is_judged_as_the_hook_will_have_widened_it(self):
+		self.projects["PRJ-2"].update(expected_start_date="2026-09-30", expected_end_date="2026-10-01")
 		self.assertEqual(self._refused(self._reschedule()), [])
-
-	def test_every_set_date_is_judged_as_erpnext_16_50_does(self):
-		# ERPNext 16.50.0 (prod) makes these checks on every save, changed or not.
-		h._task("TASK-P", start="2026-09-01", end="2026-09-30", crew=(), project="PRJ-2")
-		doc = h._Doc(
-			name="T",
-			project="PRJ-2",
-			parent_task="TASK-P",
-			exp_start_date="2026-10-05",
-			exp_end_date="2026-10-02",
-			act_start_date="2026-10-03",
-			act_end_date="2026-10-01",
-		)
-		self.assertEqual(
-			self.api.erpnext_date_problems(doc),
-			[
-				"its end (2026-10-02) is before its start (2026-10-05)",
-				"its actual end (2026-10-01) is before its start (2026-10-03)",
-				"its end (2026-10-02) is after its parent task TASK-P's end (2026-09-30)",
-			],
-		)
-
-	def test_a_crew_only_draft_is_judged_too(self):
-		# The task already ends after its parent: Publish of any draft of it will be refused.
-		h._task("TASK-P", start="2026-09-01", end="2026-10-01", crew=(), project="PRJ-2")
-		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
-		self.frappe.docs[("Task", "TASK-A")]["exp_end_date"] = "2026-10-02"
-		result = self.api.add_crew("TASK-A", "RES-2", BASE)
-		self.assertTrue(result["drafted"])
-		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(result)))
-		# Even a draft that moves nobody's hours (crew size only) is saved, and so judged, at Publish.
+		# The same draft against the window as stored: ERPNext would refuse it. The copy is shown the
+		# widened one, so the warning never names what the before_validate hook fixes.
 		self.frappe.tables["Planner Draft Change"] = []
+		with mock.patch.object(
+			h.api.project_window, "widened_window", lambda doc: (h.D(2026, 9, 30), h.D(2026, 10, 1))
+		):
+			self.assertIn(
+				"cannot be after the Project's Expected End Date", " ".join(self._refused(self._reschedule()))
+			)
+
+	def test_a_new_task_past_its_parent_is_judged_as_new(self):
+		h._task("TASK-P", start="2026-10-01", end="2026-10-14", crew=(), project="PRJ-2")
+		_actions_spec = {
+			"values": {
+				"subject": "Pump",
+				"project": "PRJ-2",
+				"parent_task": "TASK-P",
+				"exp_start_date": "2026-10-19",
+				"exp_end_date": "2026-10-20",
+			}
+		}
+		self.assertTrue(
+			self.api.erpnext_date_problems(h._Doc(_actions_spec["values"], name="draft-new:X"), new=True)
+		)
+		self.assertTrue(self.checked[-1].get("__islocal"))
+
+	def test_the_copy_is_never_saved_and_the_task_is_untouched(self):
+		self._parent(end="2026-10-01")
+		before = copy.deepcopy(self.frappe.docs[("Task", "TASK-A")])
+		self._reschedule()
+		self.assertEqual(self.frappe.saved, [])  # no save of the copy (nor of anything)
+		self.assertEqual([s for s in self.frappe.sequence if s.startswith(("save:Task", "insert:Task"))], [])
+		self.assertEqual(self.frappe.docs[("Task", "TASK-A")], before)
+		self.assertEqual(self.frappe.local.message_log, [])  # nothing pops up
+
+	def test_any_other_failure_gives_no_warning_and_is_logged(self):
+		def broken(doc):
+			raise KeyError("a controller this code does not know")
+
+		with mock.patch.object(h._TaskDoc, "validate_dates", broken, create=True):
+			self.assertEqual(self._refused(self._reschedule()), [])
+		self.assertTrue(self.frappe.errors)
+
+	def test_get_value_is_put_back_even_when_the_check_fails(self):
+		real = self.frappe.db.get_value
+		with mock.patch.object(h._TaskDoc, "validate_dates", lambda doc: 1 / 0, create=True):
+			self._reschedule()
+		self.assertIs(self.frappe.db.get_value, real)
+
+	def test_what_the_check_msgprints_is_a_warning_and_off_the_response(self):
+		def says(doc):
+			self.frappe.local.message_log.append(json.dumps({"message": "<b>Schedule Conflict</b>: moved"}))
+
+		with mock.patch.object(h._TaskDoc, "validate_dates", says, create=True):
+			result = self._reschedule()
+		self.assertIn(
+			"Publish will be refused for Subject TASK-A: Schedule Conflict: moved.",
+			" ".join(result["warnings"]),
+		)
+		self.assertEqual(self.frappe.local.message_log, [])
+
+	def test_a_controller_without_validate_dates_checks_nothing(self):
+		for kind in (h._TaskDoc, h._Row):
+			self.patches.append(mock.patch.object(kind, "validate_dates", None, create=True))
+			self.patches[-1].start()
+		self.assertEqual(self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")]), [])
+
+
+class TestNativeChecksOnERPNext16_52(_BothReleases, _NativeChecks):
+	"""Prod since 2026-10-23 17:57: a date that did not change is not judged."""
+
+	version = "16.52.1"
+
+	def test_a_crew_size_draft_of_a_task_already_past_its_parent_is_not_judged(self):
+		self._parent(end="2026-10-01")  # TASK-A ends 1 Oct, already on its parent's end: fine
+		self.frappe.docs[("Task", "TASK-P")]["exp_end_date"] = "2026-09-30"  # now past it, unchanged
 		sized = self.api.save_task("TASK-A", BASE, crew_size=3)
 		self.assertTrue(sized["drafted"])
-		self.assertIn("after its parent task TASK-P's end", " ".join(self._refused(sized)))
+		self.assertEqual(self._refused(sized), [])
+
+
+class TestNativeChecksOnERPNext16_50(_BothReleases, _NativeChecks):
+	"""Prod until 2026-10-23: every set date judged on every save."""
+
+	version = "16.50.0"
+
+	def test_a_crew_size_draft_of_a_task_already_past_its_parent_is_judged(self):
+		self._parent(end="2026-10-01")
+		self.frappe.docs[("Task", "TASK-P")]["exp_end_date"] = "2026-09-30"
+		sized = self.api.save_task("TASK-A", BASE, crew_size=3)
+		self.assertTrue(sized["drafted"])
+		self.assertIn("parent task's Expected End Date 2026-09-30", " ".join(self._refused(sized)))
 
 
 class _ERPNextsProjectWindow:

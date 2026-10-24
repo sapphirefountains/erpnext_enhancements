@@ -11,11 +11,13 @@ fall outside them (``InvalidDates``). Refusing a save against a value that the s
 recompute is a contradiction, and it blocked the commonest edits there are: the last task one day
 later, the first one day earlier, any save of a task on a job whose tasks are all in the past.
 
-**Prod runs ERPNext 16.50.0**, and there the check is broader than on the version-16 branch head
-(which changed it on 2026-10-13, after that tag): it judges ``exp_start_date``, ``exp_end_date``,
-``act_start_date`` and ``act_end_date``, on every save, changed or not. So a crew-only edit of a task
-whose timesheets ran past the derived end is refused too, and so is the save of an Open dependent
-that ``Task.reschedule_dependent_tasks`` pushes past the project's end (and the save that pushed it).
+How broad the check is depends on the ERPNext release prod runs, which ``bench update --pull`` moves.
+ERPNext 16.50.0 (prod until 2026-10-23) judged ``exp_start_date``, ``exp_end_date``, ``act_start_date``
+and ``act_end_date`` on every save, changed or not. So a crew-only edit of a task whose timesheets ran
+past the derived end was refused too, and so was the save of an Open dependent that
+``Task.reschedule_dependent_tasks`` pushes past the project's end (and the save that pushed it).
+16.52.1 (prod since) judges the expected dates only, and only when they or the project changed.
+Widening over all four dates covers both.
 
 So the widening is a Task ``before_validate`` doc_event (:func:`before_task_validate`, v1.742.0),
 which frappe 16.50.0's ``Document.run_before_save_methods`` runs before the controller's
@@ -39,6 +41,30 @@ def _day(value):
 		return None
 
 
+def stored_window(project):
+	"""``(expected start, expected end)`` of ``project`` as stored, as dates (None where unset or the
+	project is not there). One read of both: a tuple of fields, which frappe's ``get_value`` makes of a
+	list anyway, answers a tuple of values, or None."""
+	row = frappe.db.get_value("Project", project, ("expected_start_date", "expected_end_date"))
+	if not (isinstance(row, list | tuple) and len(row) == 2):
+		return None, None
+	return _day(row[0]), _day(row[1])
+
+
+def widened_window(doc):
+	"""``(expected start, expected end)`` of ``doc``'s project as :func:`widen_for_task` would leave it
+	for ``doc``, without writing anything (v1.743.0): what ERPNext's own check sees at the save, since
+	the Task ``before_validate`` hook widens first. The planner's draft-time check
+	(``api/project_planner.erpnext_date_problems``) shows ERPNext's controller this window."""
+	first, last = stored_window(doc.get("project"))
+	days = [day for day in (_day(doc.get(field)) for field in TASK_DATE_FIELDS) if day]
+	if days and first and min(days) < first:
+		first = min(days)
+	if days and last and max(days) > last:
+		last = max(days)
+	return first, last
+
+
 def widen(project, start=None, end=None):
 	"""Move ``project``'s expected start back to ``start`` and its expected end on to ``end`` where
 	they do not already reach them. Only a set date is moved (ERPNext checks nothing against an unset
@@ -46,12 +72,7 @@ def widen(project, start=None, end=None):
 	if not project:
 		return {}
 	start, end = _day(start), _day(end)
-	# One read of both. A tuple of fields: frappe 16.50.0's get_value turns a list into one anyway,
-	# and answers a tuple of values, or None for a project that is not there.
-	row = frappe.db.get_value("Project", project, ("expected_start_date", "expected_end_date"))
-	first, last = (
-		_day(value) for value in (row if isinstance(row, list | tuple) and len(row) == 2 else (None, None))
-	)
+	first, last = stored_window(project)
 	changed = {}
 	if start and first and start < first:
 		changed["expected_start_date"] = (first, start)

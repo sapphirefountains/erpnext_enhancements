@@ -2110,18 +2110,23 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   - **The fix:** the window now widens first, in the same transaction and never inward, for every
     save: the Desk form, ERPNext's push, the planner, the Gantt and the rental code. The planner's
     `_save`/`_insert_doc` and the Gantt also call it first themselves.
-- **ERPNext's own date checks run on the draft** (v1.742.0, `erpnext_date_problems`). A draft is
-  never saved, so `Task.validate` never sees it until Publish, and a refusal there leaves the
-  project's schedule Draft. The date checks Publish cannot clear itself are run on the drafted
-  state, as ERPNext 16.50.0 (prod) makes them, on every set date of every save. They come back as
-  warnings under **ERPNext** ("Publish will be refused for …") and never refuse the draft.
-  - The expected end is not before the expected start, nor the actual end before the actual start.
-  - The end is not after the parent task's end. When the parent is drafted too, its drafted end is
-    used.
+- **ERPNext's own date checks run on the draft** (`erpnext_date_problems`; v1.742.0, and since v1.743.0
+  the installed controller's own). A draft is never saved, so `Task.validate` never sees it until
+  Publish, and a refusal there leaves the project's schedule Draft.
+  - **How it runs:** an unsaved copy of the task carries the drafted dates (`_date_check_copy`).
+    Its `_doc_before_save` is the stored task, or none for a new task, so ERPNext's
+    `has_value_changed` judges as at Publish. The installed ERPNext's `validate_dates` runs on the
+    copy, whatever release prod is on.
+  - **What the copy is shown:** for that one call, `_as_published` answers ERPNext's two reads as
+    Publish will meet them. The project's window is as the `before_validate` hook will have widened
+    it, and a drafted parent is at its drafted end.
+  - **What comes back:** a refusal (`InvalidDates`), and anything the check msgprints, comes back as
+    a warning under **ERPNext** ("Publish will be refused for …"). It never refuses the draft. Any
+    other failure is logged and says nothing.
 
-  The project-window check is left out because Publish widens the window. Publish saves a parent
-  before its children when they end on the same day (`_publish_order`), so a child is never checked
-  against its parent's old end.
+  Copying ERPNext's rules instead was tried in v1.742.0, and prod's next upgrade made the copy
+  wrong the same day. Publish saves a parent before its children when they end on the same day
+  (`_publish_order`), so a child is never checked against its parent's old end.
 - **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
   everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
   rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line
