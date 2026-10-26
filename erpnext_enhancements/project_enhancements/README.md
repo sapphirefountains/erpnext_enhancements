@@ -30,7 +30,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
 | `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement beside the form lighting up the part being filled in (v1.612.0); "With the client" mode has the client initial each clause in the agreement as it is filled in and sign at the end, executed in the builder (`sign_here`); or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `agreement_sections`, `progress`, `get_builder`, `save_builder`, `issue_contract`, `sign_here`, `start_card_on_file`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
-| `signed_copy.py` | **Signed copy** (v1.744.0): what the button opens for a Signed contract (the e-signed PDF, a filed scan, else the executed copy) and filing a paper scan. A file is offered only when frappe's own download check would serve it. See [Signed copy](#signed-copy-v17440) | `signed_copy`, `signed_copy_for`, `get_signed_copy`, `record_signed_scan`; pure `pick_signed_file`, `is_signed_copy_name` | `ProjectContract.onload` and `SapphireMaintenanceContract.onload`; `contract_viewer.open_signed_copy`; `doctype/project_contract/project_contract_list.js` |
+| `signed_copy.py` | **Signed copy** (v1.744.0): what the button opens for a Signed contract (the e-signed PDF, a filed scan, else the executed copy) and filing a paper scan. A file is offered only when frappe's own download check would serve it. See [Signed copy](#signed-copy-v17440) | `signed_copy`, `signed_copy_for`, `get_signed_copy`, `record_signed_scan`; pure `pick_signed_file`, `is_signed_copy_name` | `ProjectContract.onload` and `SapphireMaintenanceContract.onload`; `contract_viewer.open_signed_copy`; `doctype/project_contract/project_contract_list.js`; the Contracts tab (`contracts_tab.js`, v1.745.0) |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
@@ -564,9 +564,10 @@ or sent for the client to sign in their own time.
 
 **Signed copy** opens what a customer signed in one click. It is on a Signed Project Contract, on a
 Sapphire Maintenance Contract beside *View Agreement* (when the agreement it was mapped from is
-Signed), and on each Signed row of the Project Contract list. Before it, the e-signed PDF was
-reachable only from the Attachments sidebar. Nothing in the Desk read the Signature Request's
-`signed_document`.
+Signed), on each Signed row of the Project Contract list, and (v1.745.0) on each row of the
+**Contracts tab** on the Project and Customer forms that has a Signed agreement behind it. Before
+it, the e-signed PDF was reachable only from the Attachments sidebar. Nothing in the Desk read the
+Signature Request's `signed_document`.
 
 - **What it opens** (`signed_copy.signed_copy`, in order):
   1. the latest Signed request's `signed_document`, the PDF the customer was emailed;
@@ -592,9 +593,20 @@ reachable only from the Attachments sidebar. Nothing in the Desk read the Signat
   agreement). The PDF then opens inside the click. A window opened after a round trip is what popup
   blockers stop, Safari first. The list has no onload, so it fetches `get_signed_copy` on click and
   offers a link if the window is blocked.
+- **The Contracts tab** (`public/js/project_enhancements/contracts_tab.js`, v1.745.0) works like
+  the list: it has no onload either, so it fetches on click through the same two viewer calls.
+  `get_contracts` only says *which* contract a row opens, as `signed_copy_of`, and never resolves
+  a file while listing. A Project Contract row gets it when its own status is Signed, subcontracts
+  included. The status decides, not `executed`, because a paper-signed contract has no Signed
+  request. A maintenance contract row gets it when its agreement is Signed, and opens that
+  agreement's copy. `_agreement_statuses` reads those statuses in one `get_list` for the whole
+  list, so an agreement this reader cannot read has no status and no button, as on the
+  maintenance form.
 - `tests/test_signed_copy` (bench-free, its own CI step) pins the order, the name match
   (SF-MAINT-2026-0001 does not claim SF-MAINT-2026-00010's PDF), the download check, the filing
-  refusals and the wiring.
+  refusals and the wiring. For the Contracts tab it also pins which rows get the button, that the
+  agreement-status lookup is one query, that listing costs the same queries for one row or many,
+  and that `contracts_tab.js` calls the viewer's opener rather than a copy of it.
 
 ## Project Brief sections (v1.444.0)
 

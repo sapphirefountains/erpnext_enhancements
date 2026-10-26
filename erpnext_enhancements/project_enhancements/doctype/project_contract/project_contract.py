@@ -850,7 +850,11 @@ def get_contracts(source_doctype, source_name):
 	  so rather than pretending an agreement exists.
 
 	Metadata only — each body is fetched by :func:`get_contract_html` when the
-	reader opens a row, so a busy customer still lists in two small queries.
+	reader opens a row, so a busy customer still lists in a few small batched
+	queries, none of them per row. The same goes for the row's *Signed copy*
+	button (``signed_copy_of``, v1.745.0): the row names the Signed contract to
+	open, and what it opens is resolved by ``signed_copy.get_signed_copy`` on
+	click, never here.
 
 	Permission-filtered via ``get_list``; a doctype the user cannot read is
 	skipped rather than raising, because this tab is an aside on someone else's
@@ -930,6 +934,10 @@ def _project_contract_rows(filters):
 		row.is_subcontract = 1 if row.party_type == "Supplier" else 0
 		row.doctype_name = "Project Contract"
 		row.readable = 1  # has legal language of its own
+		# Signed copy: the form's and the list's condition, the status. Not
+		# `executed`, which only an e-signature sets: a contract signed on paper
+		# still has a scan or a frozen copy to show.
+		row.signed_copy_of = row.name if row.status == "Signed" else None
 		row.sort_date = str(row.get("contract_date") or "")
 	return rows
 
@@ -939,7 +947,9 @@ def _maintenance_contract_rows(filters):
 
 	Listed beside the agreements because "what maintenance are we committed to
 	on this job" is answered by this document, not by the signed agreement. Its
-	``project_contract`` link (when it has one) is what the row opens.
+	``project_contract`` link (when it has one) is what the row opens, and when
+	that agreement is Signed the row offers its Signed copy, as the maintenance
+	contract's own form does beside View Agreement.
 	"""
 	if not frappe.db.exists("DocType", "Sapphire Maintenance Contract"):
 		return []
@@ -964,6 +974,7 @@ def _maintenance_contract_rows(filters):
 		],
 		order_by="start_date desc, creation desc",
 	)
+	agreement_status = _agreement_statuses({row.project_contract for row in rows if row.project_contract})
 	for row in rows:
 		row.doctype_name = "Sapphire Maintenance Contract"
 		row.type_label = _("Maintenance Contract (operational)")
@@ -976,8 +987,34 @@ def _maintenance_contract_rows(filters):
 		# rendering legal text nobody signed.
 		row.agreement = row.project_contract
 		row.readable = 1 if row.project_contract else 0
+		row.agreement_status = agreement_status.get(row.project_contract)
+		row.signed_copy_of = row.project_contract if row.agreement_status == "Signed" else None
 		row.sort_date = str(row.get("start_date") or "")
 	return rows
+
+
+def _agreement_statuses(names):
+	"""``{agreement: status}`` for the agreements the maintenance rows link to.
+
+	One query for the whole list, never one per row. Through ``get_list``, so an
+	agreement this reader cannot read has no status and its row no Signed copy,
+	as ``signed_copy.signed_copy_for`` decides for the maintenance contract's
+	form: its readers are not all the agreement's.
+	"""
+	if not names or not frappe.has_permission("Project Contract", "read"):
+		return {}
+	try:
+		return {
+			row.name: row.status
+			for row in frappe.get_list(
+				"Project Contract",
+				filters={"name": ["in", sorted(names)]},
+				fields=["name", "status"],
+			)
+		}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: agreement status lookup failed")
+		return {}
 
 
 # ---------------------------------------------------------------------------

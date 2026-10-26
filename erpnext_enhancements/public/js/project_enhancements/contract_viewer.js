@@ -20,10 +20,13 @@
  * "Signed copy" (v1.744.0, `open_signed_copy`) also lives here: on a Signed
  * contract it opens the signed PDF, else the executed copy with a note that no
  * signed scan is on file and an Attach scan shortcut. What to open is decided
- * on the server (project_enhancements/signed_copy.py).
+ * on the server (project_enhancements/signed_copy.py). Its callers are the two
+ * contract forms, the Project Contract list and, from v1.745.0, the Contracts
+ * tab's rows (contracts_tab.js).
  *
- * Loaded via hooks.py `doctype_js` for Project, Project Contract and Sapphire
- * Maintenance Contract, and `doctype_list_js` for the Project Contract list.
+ * Loaded via hooks.py `doctype_js` for Project, Customer, Project Contract and
+ * Sapphire Maintenance Contract, and `doctype_list_js` for the Project
+ * Contract list.
  */
 
 frappe.provide("erpnext_enhancements.contract_viewer");

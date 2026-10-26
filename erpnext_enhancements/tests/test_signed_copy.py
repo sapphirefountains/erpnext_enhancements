@@ -21,12 +21,17 @@ What a mistake here costs, and why each case exists:
   contract signed.
 * **A form that will not open.** ``signed_copy`` runs in two forms' onload, so a failed lookup is
   logged and answered, never raised.
+* **The Contracts tab's button on the wrong row, or a slower tab** (v1.745.0). A row gets it when
+  its own status is Signed, or its maintenance contract's agreement is, and never from
+  ``executed``, which a paper signature never sets. An agreement the reader cannot read gives no
+  button. The statuses come from one query for the whole list, and listing never resolves a file.
 
 Run: python -m unittest erpnext_enhancements.tests.test_signed_copy -v
 """
 
 import ast
 import json
+import re
 import sys
 import types
 import unittest
@@ -60,6 +65,12 @@ class Site:
         self.errors = []
         self.calls = []
         self.fail_get_all = False
+        # The Contracts tab (v1.745.0): maintenance contracts, agreements this reader's get_list
+        # leaves out, doctypes they cannot read at all, and a failing agreement-status lookup.
+        self.maintenance = []
+        self.unreadable = set()
+        self.no_read_doctypes = set()
+        self.fail_status_lookup = False
 
 
 SITE = Site()
@@ -70,6 +81,17 @@ class _Dict(dict):
 
     def __setattr__(self, key, value):
         self[key] = value
+
+
+def _matches(row, filters):
+    """Equality, or ``["in", [...]]``: the two filter shapes the code under test sends."""
+    for key, want in filters.items():
+        if isinstance(want, (list, tuple)) and want and want[0] == "in":
+            if row.get(key) not in want[1]:
+                return False
+        elif row.get(key) != want:
+            return False
+    return True
 
 
 def _install_frappe_stub():
@@ -128,12 +150,26 @@ def _install_frappe_stub():
             return row.get(fieldname) if row else None
         raise AssertionError(f"unexpected get_value on {doctype}")
 
-    frappe.db = types.SimpleNamespace(get_value=get_value)
+    frappe.db = types.SimpleNamespace(
+        get_value=get_value,
+        exists=lambda doctype, name=None, *a, **k: (doctype, name) == ("DocType", "Sapphire Maintenance Contract"),
+    )
 
-    def get_all(doctype, filters=None, fields=None, order_by=None, **kwargs):
+    def get_all(doctype, filters=None, fields=None, order_by=None, as_list=False, **kwargs):
         SITE.calls.append(("get_all", doctype))
         if SITE.fail_get_all:
             raise RuntimeError("database went away")
+        if doctype == "Contract Template":
+            return [(name, f"{name} (title)") for name in filters["name"][1]]
+        if doctype == "Contract Signature Request":
+            return [
+                _Dict(project_contract=r["project_contract"])
+                for r in SITE.requests
+                if _matches(r, filters)
+            ]
+        if doctype == "Project Contract":
+            # Not permission-filtered, as frappe's get_all is not: SITE.unreadable is ignored.
+            return [_Dict({f: r.get(f) for f in fields}) for r in SITE.contracts.values() if _matches(r, filters)]
         assert doctype == "File", doctype
         rows = [
             r
@@ -146,7 +182,30 @@ def _install_frappe_stub():
         return [_Dict({f: r.get(f) for f in fields}) for r in rows]
 
     frappe.get_all = get_all
-    frappe.has_permission = lambda doctype=None, ptype="read", doc=None, **k: ptype in SITE.perms
+
+    def get_list(doctype, filters=None, fields=None, order_by=None, **kwargs):
+        # Permission-filtered, as frappe's is: an agreement in SITE.unreadable is not returned,
+        # unless the caller passes ignore_permissions, which frappe honors on get_list too. The
+        # keyword arguments are recorded so a test can assert that nobody did.
+        SITE.calls.append(("get_list", doctype, filters, dict(kwargs)))
+        if doctype == "Project Contract":
+            if SITE.fail_status_lookup and "name" in (filters or {}):
+                raise RuntimeError("database went away")
+            source = [
+                r
+                for r in SITE.contracts.values()
+                if kwargs.get("ignore_permissions") or r["name"] not in SITE.unreadable
+            ]
+        elif doctype == "Sapphire Maintenance Contract":
+            source = SITE.maintenance
+        else:
+            raise AssertionError(f"unexpected get_list on {doctype}")
+        return [_Dict({f: r.get(f) for f in fields}) for r in source if _matches(r, filters or {})]
+
+    frappe.get_list = get_list
+    frappe.has_permission = lambda doctype=None, ptype="read", doc=None, **k: (
+        ptype in SITE.perms and doctype not in SITE.no_read_doctypes
+    )
 
     model = types.ModuleType("frappe.model")
     document = types.ModuleType("frappe.model.document")
@@ -188,6 +247,9 @@ def _install_frappe_stub():
             SITE.saved_files.append((self.name, ignore_permissions))
 
     def get_doc(doctype, name=None):
+        SITE.calls.append(("get_doc", doctype))
+        if doctype in ("Project", "Customer"):
+            return Document(doctype=doctype, name=name)
         if doctype == "Project Contract":
             if name not in SITE.contracts:
                 raise DoesNotExistError(name)
@@ -584,6 +646,196 @@ class TestOnload(Base):
         self.assertIsNone(smc.get_onload("signed_copy"))
 
 
+# The Contracts tab's rows (v1.745.0). Every name below is made up.
+PROJECT = "PROJ-TEST-0001"
+CUSTOMER = "Example Fountain Owner"
+
+
+def _tab_contract(name, status, **fields):
+    fields.setdefault("project", PROJECT)
+    fields.setdefault("party_type", "Customer")
+    fields.setdefault("party", CUSTOMER)
+    fields.setdefault("contract_template", "Example Owner Contract")
+    fields.setdefault("template_key", "owner")
+    return _contract(name, status=status, **fields)
+
+
+def _maintenance(name, agreement=None, **fields):
+    row = {
+        "name": name,
+        "status": "Active",
+        "customer": CUSTOMER,
+        "project": PROJECT,
+        "project_contract": agreement,
+        "start_date": "2099-01-01",
+    }
+    row.update(fields)
+    SITE.maintenance.append(row)
+    return row
+
+
+def _signed_request(contract):
+    SITE.requests.append(
+        {"name": f"CSR-{contract}", "project_contract": contract, "status": "Signed", "signed_on": "2099-01-02"}
+    )
+
+
+class TestContractsTab(Base):
+    """Which rows of the Contracts tab carry Signed copy, and what that costs the list."""
+
+    def _rows(self, source_doctype="Project", source_name=PROJECT):
+        return {row.name: row for row in project_contract.get_contracts(source_doctype, source_name)}
+
+    def _status_lookups(self):
+        return [c for c in SITE.calls if c[:2] == ("get_list", "Project Contract") and "name" in c[2]]
+
+    def test_a_signed_contract_names_itself(self):
+        _tab_contract("SF-OWNER-2099-0001", "Signed")
+        _signed_request("SF-OWNER-2099-0001")
+        row = self._rows()["SF-OWNER-2099-0001"]
+        self.assertEqual(row.signed_copy_of, "SF-OWNER-2099-0001")
+        self.assertEqual(row.executed, 1)
+
+    def test_a_paper_signed_contract_gets_it_without_a_signed_request(self):
+        # The status decides, as on the form and the list: `executed` is set only by an
+        # e-signature, and a paper-signed contract still has a scan or a frozen copy to show.
+        _tab_contract("SF-OWNER-2099-0002", "Signed")
+        row = self._rows()["SF-OWNER-2099-0002"]
+        self.assertEqual(row.executed, 0)
+        self.assertEqual(row.signed_copy_of, "SF-OWNER-2099-0002")
+
+    def test_an_unsigned_contract_gets_none(self):
+        for i, status in enumerate(("Draft", "Out for Signature", "Void", None)):
+            _tab_contract(f"SF-OWNER-2099-001{i}", status)
+        rows = self._rows()
+        self.assertEqual(len(rows), 4)
+        for name, row in rows.items():
+            self.assertIsNone(row.signed_copy_of, name)
+
+    def test_a_signed_subcontract_counts_too(self):
+        _tab_contract("SF-SOW-2099-0001", "Signed", party_type="Supplier", party="Example Pumps LLC")
+        _tab_contract("SF-SOW-2099-0002", "Out for Signature", party_type="Supplier", party="Example Pumps LLC")
+        rows = self._rows()
+        self.assertEqual(rows["SF-SOW-2099-0001"].is_subcontract, 1)
+        self.assertEqual(rows["SF-SOW-2099-0001"].signed_copy_of, "SF-SOW-2099-0001")
+        self.assertIsNone(rows["SF-SOW-2099-0002"].signed_copy_of)
+
+    def test_a_maintenance_row_opens_its_signed_agreement(self):
+        _tab_contract("SF-MAINT-2099-0001", "Signed", template_key="maintenance")
+        _tab_contract("SF-MAINT-2099-0002", "Out for Signature", template_key="maintenance")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        _maintenance("MNT-TEST-0002", agreement="SF-MAINT-2099-0002")
+        _maintenance("MNT-TEST-0003")
+        rows = self._rows()
+
+        signed = rows["MNT-TEST-0001"]
+        self.assertEqual(signed.agreement_status, "Signed")
+        self.assertEqual(signed.signed_copy_of, "SF-MAINT-2099-0001")
+
+        pending = rows["MNT-TEST-0002"]
+        self.assertEqual(pending.agreement_status, "Out for Signature")
+        self.assertIsNone(pending.signed_copy_of)
+
+        # No agreement: unchanged, still "schedule only" with nothing to open.
+        bare = rows["MNT-TEST-0003"]
+        self.assertIsNone(bare.agreement_status)
+        self.assertIsNone(bare.signed_copy_of)
+        self.assertEqual(bare.readable, 0)
+
+    def test_an_agreement_the_reader_cannot_read_gets_no_button(self):
+        # As signed_copy_for decides for the maintenance form: its readers are not all the
+        # agreement's. The row itself is listed exactly as before.
+        _tab_contract("SF-MAINT-2099-0001", "Signed", template_key="maintenance", project="PROJ-TEST-0099")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        SITE.unreadable.add("SF-MAINT-2099-0001")
+        row = self._rows()["MNT-TEST-0001"]
+        self.assertIsNone(row.agreement_status)
+        self.assertIsNone(row.signed_copy_of)
+        self.assertEqual(row.readable, 1)
+        # The guarantee is the permission filter, so the lookup must not switch it off.
+        (lookup,) = self._status_lookups()
+        self.assertFalse(lookup[3].get("ignore_permissions"), lookup)
+
+    def test_the_agreement_status_lookup_is_one_query_for_the_whole_list(self):
+        for i in range(1, 4):
+            _tab_contract(f"SF-MAINT-2099-000{i}", "Signed", template_key="maintenance", project="PROJ-TEST-0099")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        _maintenance("MNT-TEST-0002", agreement="SF-MAINT-2099-0002")
+        _maintenance("MNT-TEST-0003", agreement="SF-MAINT-2099-0003")
+        _maintenance("MNT-TEST-0004", agreement="SF-MAINT-2099-0003")  # renewal, same agreement
+        _maintenance("MNT-TEST-0005")
+        rows = self._rows()
+
+        lookups = self._status_lookups()
+        self.assertEqual(len(lookups), 1, SITE.calls)
+        self.assertEqual(
+            lookups[0][2], {"name": ["in", ["SF-MAINT-2099-0001", "SF-MAINT-2099-0002", "SF-MAINT-2099-0003"]]}
+        )
+        self.assertEqual(
+            {name: row.signed_copy_of for name, row in rows.items()},
+            {
+                "MNT-TEST-0001": "SF-MAINT-2099-0001",
+                "MNT-TEST-0002": "SF-MAINT-2099-0002",
+                "MNT-TEST-0003": "SF-MAINT-2099-0003",
+                "MNT-TEST-0004": "SF-MAINT-2099-0003",
+                "MNT-TEST-0005": None,
+            },
+        )
+        self.assertFalse([c for c in SITE.calls if c[0] == "get_value"], SITE.calls)
+        self.assertFalse([c for c in SITE.calls if c == ("get_doc", "Project Contract")], SITE.calls)
+
+    def test_no_lookup_when_nothing_links_an_agreement_or_agreements_are_unreadable(self):
+        _maintenance("MNT-TEST-0001")
+        self._rows()
+        self.assertEqual(self._status_lookups(), [])
+
+        SITE.reset()
+        _tab_contract("SF-MAINT-2099-0001", "Signed", template_key="maintenance", project="PROJ-TEST-0099")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        SITE.no_read_doctypes = {"Project Contract"}
+        row = self._rows()["MNT-TEST-0001"]
+        self.assertEqual(self._status_lookups(), [])
+        self.assertIsNone(row.signed_copy_of)
+
+    def test_a_failed_status_lookup_still_lists_the_rows(self):
+        _tab_contract("SF-MAINT-2099-0001", "Signed", template_key="maintenance", project="PROJ-TEST-0099")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        SITE.fail_status_lookup = True
+        row = self._rows()["MNT-TEST-0001"]
+        self.assertIsNone(row.signed_copy_of)
+        self.assertEqual(SITE.errors, ["Project Contract: agreement status lookup failed"])
+
+    def test_listing_never_resolves_a_signed_copy_and_costs_the_same_for_one_row_or_many(self):
+        def build(n):
+            SITE.reset()
+            for i in range(n):
+                _tab_contract(f"SF-OWNER-2099-01{i:02d}", "Signed")
+                _signed_request(f"SF-OWNER-2099-01{i:02d}")
+                _tab_contract(f"SF-MAINT-2099-01{i:02d}", "Signed", template_key="maintenance", project="X")
+                _maintenance(f"MNT-TEST-01{i:02d}", agreement=f"SF-MAINT-2099-01{i:02d}")
+            rows = project_contract.get_contracts("Project", PROJECT)
+            self.assertEqual(sum(1 for row in rows if row.signed_copy_of), 2 * n)
+            return list(SITE.calls)
+
+        one, many = build(1), build(6)
+        self.assertEqual(len(one), len(many), (one, many))
+        # What Signed copy opens is asked on click (get_signed_copy), never while listing.
+        for calls in (one, many):
+            self.assertNotIn(("get_all", "File"), calls)
+            self.assertNotIn(("get_value", "Contract Signature Request", ["name", "signed_document"]), calls)
+
+    def test_the_customer_tab_offers_it_on_the_customers_own_agreements(self):
+        _tab_contract("SF-OWNER-2099-0001", "Signed")
+        _tab_contract("SF-SOW-2099-0001", "Signed", party_type="Supplier", party="Example Pumps LLC")
+        _tab_contract("SF-MAINT-2099-0001", "Signed", template_key="maintenance")
+        _maintenance("MNT-TEST-0001", agreement="SF-MAINT-2099-0001")
+        rows = self._rows("Customer", CUSTOMER)
+        # A subcontract on their job is our commitment to a supplier, not theirs: not listed.
+        self.assertNotIn("SF-SOW-2099-0001", rows)
+        self.assertEqual(rows["SF-OWNER-2099-0001"].signed_copy_of, "SF-OWNER-2099-0001")
+        self.assertEqual(rows["MNT-TEST-0001"].signed_copy_of, "SF-MAINT-2099-0001")
+
+
 class TestWiring(Base):
     """The Desk side, read as text: a button that calls a method nobody exports does nothing."""
 
@@ -631,6 +883,50 @@ class TestWiring(Base):
         self.assertIn("public/js/project_enhancements/contract_viewer.js", entries)
         # frappe loads the doctype's own *_list.js unasked; listing it as well loads it twice.
         self.assertNotIn("project_enhancements/doctype/project_contract/project_contract_list.js", entries)
+
+    @staticmethod
+    def _code_only(js):
+        """JS with its comments removed, so an assertion is about what runs, not what is said."""
+        js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+        return re.sub(r"//.*$", "", js, flags=re.M)
+
+    def test_contracts_tab_rows_open_the_signed_copy_through_the_shared_opener(self):
+        code = self._code_only(self._read("public", "js", "project_enhancements", "contracts_tab.js"))
+        # The row carries the server's answer to "which contract", and the button is drawn only then.
+        self.assertIn('data-signed-copy-of="${esc(row.signed_copy_of || "")}"', code)
+        self.assertIn('const signed_copy_of = $card.attr("data-signed-copy-of");', code)
+        self.assertIn("if (signed_copy_of) {", code)
+        # The list's two calls, on the viewer's exports: fetch on click, then open.
+        self.assertIn("const viewer = erpnext_enhancements.contract_viewer;", code)
+        self.assertRegex(
+            code,
+            r"viewer\s*\.fetch_signed_copy\(signed_copy_of\)\s*"
+            r"\.then\(\(info\) => viewer\.open_signed_copy\(info, \{ template_key \}\)\)",
+        )
+        # A maintenance row styles its agreement as the maintenance form does.
+        self.assertRegex(code, r'doctype === "Sapphire Maintenance Contract"\s*\?\s*"maintenance"')
+        # The click stops propagation, as Open and Generate Agreement do. Consistency only: the
+        # toggle is bound to .ee-contract-head, a sibling of the actions row, so a click here
+        # could not expand the card either way.
+        button = code[code.index('__("Signed copy")') : code.index("fetch_signed_copy(signed_copy_of)")]
+        self.assertIn("e.stopPropagation();", button)
+        # And no copy of the opener: the endpoint, the window and the dialogs stay in the viewer.
+        for own in ("get_signed_copy", "signed_copy.", "window.open", "open_file", "frappe.ui.Dialog"):
+            self.assertNotIn(own, code, own)
+        self.assertNotRegex(code, r"function\s+(fetch_signed_copy|open_signed_copy)\b")
+
+    def test_contracts_tab_loads_after_the_viewer_on_both_forms(self):
+        tree = ast.parse(self._read("hooks.py"))
+        form_js = next(
+            ast.literal_eval(node.value)
+            for node in tree.body
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "doctype_js" for t in node.targets)
+        )
+        viewer = "public/js/project_enhancements/contract_viewer.js"
+        tab = "public/js/project_enhancements/contracts_tab.js"
+        for doctype in ("Project", "Customer"):
+            entries = form_js[doctype]
+            self.assertLess(entries.index(viewer), entries.index(tab), doctype)
 
     def test_the_esign_pdf_name_is_the_convention_this_looks_for(self):
         lifecycle = self._read("project_enhancements", "esign", "lifecycle.py")
