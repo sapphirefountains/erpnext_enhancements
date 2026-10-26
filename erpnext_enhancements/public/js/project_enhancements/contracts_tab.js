@@ -21,7 +21,16 @@
  * Rendering and styling both come from the server (contract_viewer.js), so an
  * agreement cannot read differently here than it does in the customer's PDF.
  *
- * Loaded via hooks.py `doctype_js` for Project and Customer.
+ * "Signed copy" (v1.745.0) is on every row with a Signed agreement behind it:
+ * a Signed Project Contract, subcontracts included, and a maintenance contract
+ * whose agreement is Signed. It opens what the customer signed without opening
+ * the contract first. The row only names which contract (`signed_copy_of`,
+ * from get_contracts); what to open is asked on click and opened by the shared
+ * opener in contract_viewer.js, the same two calls the Project Contract list
+ * makes.
+ *
+ * Loaded via hooks.py `doctype_js` for Project and Customer, after
+ * contract_viewer.js.
  */
 
 (function () {
@@ -135,7 +144,8 @@
 					data-doctype="${esc(row.doctype_name)}"
 					data-agreement="${esc(row.agreement || row.name)}"
 					data-readable="${row.readable ? 1 : 0}"
-					data-template-key="${esc(row.template_key || "")}">
+					data-template-key="${esc(row.template_key || "")}"
+					data-signed-copy-of="${esc(row.signed_copy_of || "")}">
 				<div class="ee-contract-head">
 					<span class="ee-contract-caret">${caret}</span>
 					<span class="ee-contract-title">${esc(row.type_label || "")}</span>
@@ -221,6 +231,30 @@
 						})
 					);
 				}
+			}
+
+			// What the customer signed, one click from the tab. The tab has no
+			// __onload, so this asks on click, as the Project Contract list does.
+			// A maintenance row opens its agreement's copy, styled as the
+			// maintenance contract's own form styles it.
+			const signed_copy_of = $card.attr("data-signed-copy-of");
+			if (signed_copy_of) {
+				const template_key =
+					doctype === "Sapphire Maintenance Contract"
+						? "maintenance"
+						: $card.attr("data-template-key");
+				$actions.append(
+					$(`<button class="btn btn-xs btn-default">${__("Signed copy")}</button>`).on(
+						"click",
+						(e) => {
+							e.stopPropagation();
+							const viewer = erpnext_enhancements.contract_viewer;
+							viewer
+								.fetch_signed_copy(signed_copy_of)
+								.then((info) => viewer.open_signed_copy(info, { template_key }));
+						}
+					)
+				);
 			}
 
 			$actions.append(

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.745.0] - 2026-10-26
+
+### Added
+- **"Signed copy" on the Contracts tab, so what a customer signed is one click from the Project or
+  Customer form.** v1.744.0 put the button on the two contract forms and the Project Contract list,
+  but the Contracts tab, where a job's or a customer's agreements are actually read, still meant
+  opening each contract first. Each row with a Signed agreement behind it now has a *Signed copy*
+  button beside *Open*. It opens exactly what the other buttons open: the e-signed PDF, else a
+  filed scan, else the executed copy under a note (with Attach scan for a Contract Manager).
+  - **Which rows.** A Project Contract row whose status is Signed, subcontracts included. The
+    status decides, as on the form and the list, not the row's `executed` flag ("signed copy on
+    file"): only an e-signature sets that, and a contract signed on paper still has a scan or a
+    frozen copy to show. A Sapphire Maintenance Contract row whose agreement (`project_contract`)
+    is Signed, as on the maintenance form beside *View Agreement*; it opens that agreement's copy.
+    A maintenance row with no agreement is unchanged.
+  - **The same opener, no new endpoint.** The tab has no `__onload`, so, like the list, it calls
+    `contract_viewer.fetch_signed_copy` on click and hands the answer to `open_signed_copy`.
+    `signed_copy.get_signed_copy` checks the reader may read the contract, and the opener already
+    offers a link when the browser blocks the window. The click stops propagation, as *Open* and
+    *Generate Agreement* do, so it does not also expand the row.
+  - **The tab still lists in a few batched queries, none per row.** `get_contracts` only says
+    which contract a row opens (`signed_copy_of`) and never resolves a file while listing. The
+    maintenance rows' agreement statuses (`agreement_status`, new) come from one `get_list` for the
+    whole list, permission-filtered, so an agreement this reader cannot read has no status and its
+    row no button. `signed_copy_for` makes the same choice for the maintenance form, because a
+    maintenance contract's readers are not all its agreement's. The docstring's old "two small
+    queries" was already out of date, and now says "a few small batched queries, none of them per
+    row."
+  - **Nothing writes.** Signed records, Attach scan and the existing *Open* and *Generate
+    Agreement* buttons behave as before. No patch, no fixture, no migration.
+  - `tests/test_signed_copy` gains 13 cases, in the same unittest CI step:
+    - which rows get the button (paper-signed, subcontract, unsigned, maintenance with a Signed,
+      pending, unreadable or missing agreement, and the Customer tab);
+    - the status lookup is one query, and none when nothing links an agreement;
+    - listing makes the same calls for one row as for six, and never touches a File or a
+      Signature Request lookup;
+    - `contracts_tab.js` uses the viewer's two calls behind `e.stopPropagation()`, with no copy of
+      the endpoint, the window or the dialogs;
+    - hooks.py loads the viewer before the tab on both forms.
+    Each was mutation-checked against the bug it names. Not clicked in a real Desk: there is no
+    bench here.
+
 ## [1.744.1] - 2026-10-26
 
 ### Fixed
