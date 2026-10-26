@@ -1281,6 +1281,12 @@ doc_events = {
 		# core Contact.autoname reads links[0], so an insert carrying only the
 		# Account must get its Customer row before the name is set (contacts_ux.py)
 		"before_insert": "erpnext_enhancements.contacts_ux.sync_contact_account_links",
+		# One phone_nos row per number, compared in the stored E.164 form (v1.745.1). frappe's
+		# User -> Contact sync (user.create_contact) adds User.phone when no row equals it as a
+		# raw string; Contact Phone rows are stored +1... (normalize_hook), so every User save --
+		# and every deploy, through the Role Profile fixtures -- appended another copy. Runs
+		# before doc_events["*"] (frappe composes the doctype's first); never raises.
+		"before_validate": "erpnext_enhancements.utils.contact_phones.dedupe_contact_phones",
 		"validate": [
 			# account/link sync first so the title below sees the final link set
 			"erpnext_enhancements.contacts_ux.sync_contact_account_links",

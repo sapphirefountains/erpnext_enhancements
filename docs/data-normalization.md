@@ -336,6 +336,7 @@ string exactly. Every consumer in this app, 2026-10-13:
 | e-sign `_email_matches`, visit sign-off `clean_email` | casefold / lowercase both sides | OK |
 | `sync_contact` (`sync_from_contact`, `sync_from_main_doc`) | `!=` between copies | OK — both sides normalized on save; a legacy copy causes one re-save of the party, which normalizes it too |
 | `sync_employee_phone_to_user` | copies `cell_number` to `User.phone` | OK — v16's Phone check allows `+` and `,` |
+| frappe `user.create_contact` (every `User.on_update`), `Contact.add_phone` | adds `User.phone` / `User.mobile_no` to the User's Contact unless a row equals it **as a raw string** (v16.53.0 `user.py` line 1500, `contact.py` line 162). `User` is not in the registry, so `User.phone` stays as typed | **BROKE, missed by this audit until v1.745.1**: `801-555-0100` never equals a stored `+18015550100`, so every User save appended a copy and every deploy did it once per fixture Role Profile the User holds — two staff Contacts reached 394 and 254 rows. Fixed: `utils/contact_phones.dedupe_contact_phones` (Contact `before_validate`) keeps one row per number, compared in the stored form; `patches/dedupe_contact_phone_rows` removed the copies |
 | `dev_checks._cleanup` | `custom_phone_number = "+18015550999"` | OK — already E.164 |
 | Kiosk / PIN, web lead ingress, Google sync | no phone or email lookup | — |
 

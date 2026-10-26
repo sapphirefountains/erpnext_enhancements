@@ -1987,6 +1987,12 @@ jobs:
       # (site_config disable_value_normalization) stops it; it never raises. Own frappe stub.
       - name: Normalize on save hook (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_normalize_hook -v
+      # One phone row per number on a Contact (utils/contact_phones.py, v1.745.1). Replays
+      # frappe v16.53.0's User -> Contact sync, which compares a raw User.phone with rows stored
+      # +1... and appended a copy on every User save, through the before_validate handlers
+      # hooks.py wires; plus the one-shot cleanup patch against an in-memory table. Own stub.
+      - name: Contact phone dedupe (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_contact_phone_dedupe -v
       # The Desk shows a stored +18015550100 as (801) 555-0100 (public/js/normalize/
       # desk_display.js): the formatter and control decisions run under node, the bundle
       # imports the module, and boot honours the kill switch. Also the P2-C soft warning on a
