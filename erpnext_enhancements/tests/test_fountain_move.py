@@ -806,6 +806,23 @@ def test_guest_has_no_docperm_on_the_request():
 	assert "All" not in roles
 
 
+def test_ip_fields_are_labelled_for_what_they_are_on_this_host():
+	"""The claimed address is the submitter's (nginx realip, utils/client_ip.py); the
+	peer is local nginx. The old descriptions said the claimed one was attacker-controlled."""
+	import json
+
+	doc = json.loads(_read("erpnext_enhancements/crm_enhancements/doctype/fountain_move_request/fountain_move_request.json"))
+	by_name = {f.get("fieldname"): f for f in doc["fields"]}
+	claimed, peer = by_name["submitter_ip_claimed"], by_name["submitter_ip_peer"]
+	assert claimed["label"] == "Submitter IP"
+	assert peer["label"] == "Proxy Peer IP"
+	assert "UNTRUSTED" not in claimed["description"]
+	assert "realip" in claimed["description"]
+	assert "utils/client_ip.py" in claimed["description"]
+	assert "127.0.0.1" in peer["description"]
+	assert "not the submitter" in peer["description"]
+
+
 # --- scheduling preference slots ---------------------------------------------
 
 

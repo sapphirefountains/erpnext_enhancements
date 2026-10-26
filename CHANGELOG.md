@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.744.1] - 2026-10-26
+
+### Fixed
+- **The Certificate of Electronic Signature printed the proxy's address, 127.0.0.1, as the
+  signer's IP.** Nik noticed it on the first contract signed by email link, SF-MAINT-2026-0010
+  (CSR-2026-00003, signed 2026-10-26 08:30). `esign/lifecycle.completion_certificate` printed
+  `signer_ip_peer`, and on this host the peer is never the signer.
+  - **Why the peer is always local nginx.** Traffic reaches the app through Google's load
+    balancer, then nginx, then bench/gunicorn on localhost. `frappe.request.remote_addr` is the
+    TCP peer that connected to gunicorn, so it is nginx on every request.
+  - **Why the "claimed" address is the real one.** `signer_ip_claimed` is
+    `frappe.local.request_ip`, which frappe takes from the first `X-Forwarded-For` entry. nginx's
+    realip file (`infra/configs/nginx-realip.conf`: `set_real_ip_from` the Google front-end
+    ranges and both load-balancer addresses, `real_ip_recursive on`) rewrites `$remote_addr` to
+    the real client, and bench's nginx template then writes `X-Forwarded-For` as `$remote_addr`.
+    So the client cannot choose it. This has held since 2026-08-03, a forged `X-Forwarded-For`
+    sent on 2026-09-22 never got through, and `utils/client_ip.check_client_ip_derivation` alerts
+    daily if it regresses. The field descriptions that called it "UNTRUSTED" were written for a
+    proxy setup this host does not have, and the certificate trusted the wrong field because of
+    them.
+  - **Now:** the certificate prints `signer_ip_claimed`. If `utils/client_ip.classify` says it is
+    not a public address, the cell still shows what was recorded but adds a short note:
+    *(load balancer address, not from the signer)*, *(local server address, not from the
+    signer)*, *(private network address, not from the signer)*, *(not a valid IP address)*, or
+    *Not recorded*. Every value is still escaped. An in-person signing records the presenting
+    device's address, which is public and needs no note.
+  - **What the note can and cannot catch.** It flags the proxy addresses `utils/client_ip.py`
+    knows about: the Google front-end ranges, the two load-balancer addresses, loopback and
+    private ranges. A proxy it does not know is not flagged. If a new load-balancer address appears
+    without being added to `nginx-realip.conf`, or a CDN such as Cloudflare is put in front of
+    erp, nginx's right-to-left walk stops on that proxy's address. That address classifies as
+    `public`, the certificate prints it with no note, and the daily check stays quiet too. Adding
+    such a proxy means adding it to `nginx-realip.conf` and `LB_FRONTEND_ADDRESSES` together.
+  - **No apostrophes in the notes.** Frappe v16's `escape_html` writes `'` as `&apos;`. That
+    entity is stored in `agreement_html`, and old Outlook shows it literally when the agreement is
+    emailed inline because the PDF failed. The test stub's `escape_html` now escapes `'` the same
+    way, so an exact-match assertion behaves as it would on prod.
+  - **Labels and descriptions, fieldnames unchanged** (prod has data in them). On Contract
+    Signature Request, `signer_ip_claimed` is now *Signer IP* and `signer_ip_peer` is *Proxy Peer
+    IP*. On Fountain Move Request, which stores the same pair, `submitter_ip_claimed` is now
+    *Submitter IP* and `submitter_ip_peer` is *Proxy Peer IP*. The descriptions say what each
+    address is on this host: the client address from the load balancer and realip, spoof-resistant
+    while the daily client-IP check stays quiet; and local nginx, kept only to diagnose the proxy
+    chain. Both doctype JSONs' `modified` is bumped so migrate re-syncs them. The
+    `SignatureEvidence` docstring says the same. The assistant tool still redacts both IP fields.
+  - **SF-MAINT-2026-0010 is deliberately left as signed.** No patch re-renders or edits any signed
+    request's `agreement_html`, `agreement_hash` or PDF. The stored `agreement_html` is hashed and
+    is the record of what was executed, so its certificate keeps reading 127.0.0.1. The signer's
+    real address is already on the request in `signer_ip_claimed`. Only contracts signed after this
+    release print the client address, and the *Signer IP* description says so ("for requests signed
+    from v1.744.1 on").
+  - **Tests:** `tests/test_contract_esign.py` (the "Contract e-signature" CI step) now renders the
+    certificate. It checks that the claimed address is printed, the peer is not, every non-public
+    category is qualified, a missing or malformed value says so, and the value is still escaped.
+    The suite's frappe stub gains the three `frappe.utils` names `lifecycle` imports. The doctype
+    test now asserts the new labels and descriptions instead of "UNTRUSTED". A matching
+    Fountain Move Request check is in `tests/test_fountain_move.py`.
+
 ## [1.744.0] - 2026-10-26
 
 ### Added
