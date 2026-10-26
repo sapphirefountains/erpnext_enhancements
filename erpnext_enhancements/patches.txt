@@ -1497,3 +1497,9 @@ erpnext_enhancements.patches.count_desk_hub_links
 # ToDo form (v1.739.0, Nik 2026-10-23): delete the three system-generated Property Setters that have hidden ToDo's Due Date
 # since the 2025-12-10 calendar migration, so the form and the list show it again. Never raises, safe twice.
 erpnext_enhancements.patches.show_todo_due_date
+# Contact phone rows (v1.745.1): frappe's User -> Contact sync compared a raw User.phone with rows stored +1... and
+# appended a copy on every User save, so every deploy (Role Profile fixtures re-save their Users) grew two staff Contacts
+# by 3 and 2 rows -- 394 and 254 by 2026-10-26. Keeps the first row of each number, folds the primary flags onto it,
+# deletes the rest, renumbers idx; only Contacts with a repeated number. One savepoint per Contact; prints counts before
+# and after. Cannot raise, safe twice.
+erpnext_enhancements.patches.dedupe_contact_phone_rows

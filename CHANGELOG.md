@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.745.1] - 2026-10-26
+
+### Fixed
+- **Two staff Contacts no longer gain a copy of their phone number on every deploy.** From
+  v1.618.0 (2026-10-13) on, each deploy added three rows to one Contact's phone table and two to
+  the other's, all the same number, until they held 394 and 254. Any save of either User added
+  one more. The cause is frappe's own User → Contact sync meeting form kit P2-B's normalize on
+  save. Each link was read in frappe at the v16.53.0 tag, production's version, and confirmed
+  against production's `tabVersion`:
+  - **What saves the Users.** `bench migrate` imports `fixtures/role_profile.json` with
+    `force=True`. `RoleProfile.on_update` then runs `update_all_users`, which re-saves every User
+    holding that profile. One User holds three of the fixture profiles and the other two: that
+    is the three and two saves per deploy. On 2026-10-26 15:23 every one of them was a Version
+    owned by Administrator, adding a single Contact Phone row.
+  - **What appends.** `User.on_update` enqueues `user.create_contact`. For a User who already has
+    a Contact, it adds `User.phone` "if phone does not exists in contact". It checks with
+    `any(new_contact.phone == user.phone ...)` (`user.py` line 1500) and then
+    `Contact.add_phone`'s `frappe.db.exists` (`contact.py` line 162). Both compare raw strings.
+  - **Why it never matched.** `User` is not in the normalization registry, so `User.phone` keeps
+    the form it was typed in (`801-555-0100`). Contact Phone rows are stored as `+18015550100`.
+    The raw number never equals a stored row, so a copy is appended, the hook normalizes it, and
+    the next save appends another. The other two Users with a phone are not affected: one is
+    already stored in the `+1…` form and the other is disabled.
+  - **The fix is a guard on Contact, not a change to frappe.** `create_contact` is reached through
+    `frappe.enqueue` by dotted path, so patching it would mean monkey-patching a module attribute
+    in a worker. That is fragile, and it misses every other caller of `add_phone`. Normalizing
+    `User.phone` would fix this one caller, but it changes what a User stores, and login by
+    mobile number (`User.mobile_no`) and Call via Triton both read that. Instead,
+    `utils/contact_phones.dedupe_contact_phones` runs as `doc_events["Contact"]["before_validate"]`.
+    It drops any row whose number another row already holds, compared by the stored E.164 form.
+    It keeps the first row and moves every primary flag of the number's rows onto it. That never
+    adds a second primary, so `Contact.set_primary` cannot refuse the save. The appended copy is
+    dropped before validate, the Contact saves unchanged, and no Version is written.
+    It runs whatever the `disable_value_normalization` kill switch says, because it writes no
+    value. It never raises and never logs a number.
+  - **Cleanup:** `patches/dedupe_contact_phone_rows` (post model sync) applies the same rule
+    once to the stored rows. It writes through `frappe.db`, one savepoint per Contact, and only
+    touches Contacts with a repeated number. It prints the row count before and after, never
+    raises, and is safe to run twice. Expected on production: 646 rows removed (393 and 253),
+    822 → 176. Four other Contacts hold two different numbers each and are left alone. Each
+    deploy before this one adds five rows to the count.
+  - `tests/test_contact_phone_dedupe.py` (bench-free, its own CI step) replays the frappe sync
+    through the `before_validate` handlers `hooks.py` wires. Two saves with a raw-format number
+    leave one row; without the guard the same replay appends a copy every time.
+    `docs/data-normalization.md`'s audit of who compares a phone now lists this caller, which it
+    missed.
+
 ## [1.745.0] - 2026-10-26
 
 ### Added
