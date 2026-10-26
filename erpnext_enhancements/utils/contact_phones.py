@@ -31,8 +31,9 @@ any row whose number another row already holds, compared by :func:`phone_key` â€
 form ``normalize.phone`` gives, so ``801-555-0100``, ``(801) 555-0100`` and
 ``+18015550100`` are one number. Frappe composes ``doc_events[doctype]`` before
 ``doc_events["*"]``, so this runs before ``normalize_doc``; comparing keys makes the order
-irrelevant. The appended copy is dropped in memory, the Contact saves unchanged, and no
-Version is written.
+irrelevant. The appended copy is dropped before validate, so no duplicate row is written, and
+once the table is clean no Version is recorded. ``create_contact`` still calls
+``contact.save()``, so the Contact's ``modified`` moves on every User save, as it always did.
 
 **Which row survives.** The first row in table order of each number; the rest are removed.
 It takes every primary flag the number's rows carried (``is_primary_phone``,
@@ -92,23 +93,50 @@ def merged_flags(kept, dropped):
 
 
 def dedupe_contact_phones(doc, method=None):
-	"""``doc_events["Contact"]["before_validate"]``: one row per number. Never raises."""
+	"""``doc_events["Contact"]["before_validate"]``: one row per number. Never raises.
+
+	All or nothing. The plan is worked out first; the copies are removed, and only then do the
+	kept rows take their merged flags, so a flag is never set while a copy that carries it is
+	still in the table. If anything fails partway, the table's rows, ``idx`` and flags are put
+	back exactly as they were: a half-applied merge could leave two rows marked primary, which
+	``Contact.set_primary`` refuses, and the save would fail.
+	"""
 	try:
-		for kept, dropped in duplicate_groups(list(doc.get(TABLE) or [])):
-			for flag, value in merged_flags(kept, dropped).items():
-				kept.set(flag, value)
-			for row in dropped:
-				# Document.remove takes the row out of the table and renumbers idx; the save then
-				# deletes a stored row that is no longer listed (Document.update_child_table).
-				doc.remove(row)
+		table = doc.get(TABLE)
+		groups = duplicate_groups(list(table or []))
+		if not groups:
+			return
+		plan = [(kept, dropped, merged_flags(kept, dropped)) for kept, dropped in groups]
+		before = [(row, row.get("idx"), {flag: row.get(flag) for flag in PRIMARY_FLAGS}) for row in table]
+		try:
+			for _kept, dropped, _flags in plan:
+				for row in dropped:
+					# Document.remove takes the row out of the table and renumbers idx; the save then
+					# deletes a stored row that is no longer listed (Document.update_child_table).
+					doc.remove(row)
+			for kept, _dropped, flags in plan:
+				for flag, value in flags.items():
+					kept.set(flag, value)
+		except Exception:
+			_restore(table, before)
+			raise
 	except Exception as exc:
 		try:
 			frappe.log_error(
 				title="Contact phone dedupe skipped",
 				message=(
-					f"Contact: {type(exc).__name__}. The Contact saved with its phone rows as they were; "
-					"utils/contact_phones.py never logs the number."
+					f"Contact {getattr(doc, 'name', None)}: {type(exc).__name__}. The Contact saved with "
+					"its phone rows as they were; utils/contact_phones.py never logs the number."
 				),
 			)
 		except Exception:
 			pass
+
+
+def _restore(table, before):
+	"""Put the table back as it was, in place: the same list Document.remove changed."""
+	table[:] = [row for row, _idx, _flags in before]
+	for row, idx, flags in before:
+		row.idx = idx
+		for flag, value in flags.items():
+			row.set(flag, value)

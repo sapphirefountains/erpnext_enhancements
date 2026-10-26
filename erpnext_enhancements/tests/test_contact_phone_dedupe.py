@@ -365,6 +365,89 @@ class TestTheDocEvent(_Reset):
         guard.dedupe_contact_phones(Broken([FakeRow(STORED, name="a"), FakeRow(RAW)]))
         self.assertEqual(len(_frappe().logged), 1)
         self.assertNotIn("555", repr(_frappe().logged))
+        # The Contact is named, so a logged skip can be traced to its record.
+        self.assertIn("Contact CONTACT-0001:", _frappe().logged[0][1]["message"])
+
+    @staticmethod
+    def _two_repeated_numbers(row_class=FakeRow, contact_class=FakeContact):
+        # STORED is held by a and b (b is the primary phone); OTHER by c and d (d the primary
+        # mobile). A clean run keeps a and c and moves the flags onto them.
+        return contact_class(
+            [
+                row_class(STORED, name="a"),
+                FakeRow(RAW, is_primary_phone=1, name="b"),
+                FakeRow(OTHER, name="c"),
+                FakeRow("801.555.0199", is_primary_mobile_no=1, name="d"),
+            ]
+        )
+
+    @staticmethod
+    def _snapshot(contact):
+        return [(row.name, row.idx, row.phone, row.is_primary_phone, row.is_primary_mobile_no) for row in contact.phone_nos]
+
+    def _assert_left_as_it_was(self, contact, before, table):
+        self.assertIs(contact.phone_nos, table)  # the same list, restored in place
+        self.assertEqual(self._snapshot(contact), before)
+        for flag in guard.PRIMARY_FLAGS:
+            self.assertLessEqual(sum(guard.is_set(row.get(flag)) for row in contact.phone_nos), 1)
+        self.assertEqual(len(_frappe().logged), 1)
+        self.assertIn("Contact CONTACT-0001:", _frappe().logged[0][1]["message"])
+
+    def test_a_clean_run_folds_both_flags(self):
+        contact = self._two_repeated_numbers()
+        guard.dedupe_contact_phones(contact)
+        self.assertEqual(self._snapshot(contact), [("a", 1, STORED, 1, 0), ("c", 2, OTHER, 0, 1)])
+
+    def test_a_removal_failing_partway_leaves_rows_and_flags_exactly_as_they_were(self):
+        class SecondRemoveFails(FakeContact):
+            removes = 0
+
+            def remove(self, row):
+                self.removes += 1
+                if self.removes == 2:
+                    raise RuntimeError("remove refused")
+                super().remove(row)
+
+        contact = self._two_repeated_numbers(contact_class=SecondRemoveFails)
+        before, table = self._snapshot(contact), contact.phone_nos
+        guard.dedupe_contact_phones(contact)
+        self.assertEqual(contact.removes, 2)  # the first copy really was removed, then put back
+        self._assert_left_as_it_was(contact, before, table)
+
+    def test_a_flag_failing_after_the_removals_leaves_rows_and_flags_exactly_as_they_were(self):
+        class FirstSetFails(FakeRow):
+            sets = 0
+
+            def set(self, key, value):
+                self.sets += 1
+                if self.sets == 1:
+                    raise RuntimeError("set refused")
+                super().set(key, value)
+
+        contact = self._two_repeated_numbers(row_class=FirstSetFails)
+        before, table = self._snapshot(contact), contact.phone_nos
+        guard.dedupe_contact_phones(contact)
+        self._assert_left_as_it_was(contact, before, table)
+
+    def test_flags_are_set_only_after_every_copy_is_removed(self):
+        events = []
+
+        class Recording(FakeContact):
+            def remove(self, row):
+                events.append(("remove", row.name))
+                super().remove(row)
+
+        class RecordingRow(FakeRow):
+            def set(self, key, value):
+                events.append(("set", self.name))
+                super().set(key, value)
+
+        contact = self._two_repeated_numbers(row_class=RecordingRow, contact_class=Recording)
+        guard.dedupe_contact_phones(contact)
+        removals = [i for i, event in enumerate(events) if event[0] == "remove"]
+        sets = [i for i, event in enumerate(events) if event[0] == "set"]
+        self.assertEqual(len(removals), 2)
+        self.assertTrue(sets and min(sets) > max(removals))
 
     def test_a_failing_log_error_is_swallowed_too(self):
         def boom(*a, **k):

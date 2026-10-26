@@ -39,9 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     It drops any row whose number another row already holds, compared by the stored E.164 form.
     It keeps the first row and moves every primary flag of the number's rows onto it. That never
     adds a second primary, so `Contact.set_primary` cannot refuse the save. The appended copy is
-    dropped before validate, the Contact saves unchanged, and no Version is written.
+    dropped before validate, so no duplicate row is written, and once the table is clean no
+    Version is recorded. `create_contact` still calls `contact.save()`, so the Contact's
+    `modified` moves on every User save, as it did before.
+    The guard is all or nothing. It removes the copies first and sets the kept rows' flags last.
+    If anything fails partway, it puts the rows, `idx` and flags back as they were, so a
+    half-applied merge can never leave two primaries.
     It runs whatever the `disable_value_normalization` kill switch says, because it writes no
-    value. It never raises and never logs a number.
+    value. It never raises. Its Error Log names the Contact and never the number.
   - **Cleanup:** `patches/dedupe_contact_phone_rows` (post model sync) applies the same rule
     once to the stored rows. It writes through `frappe.db`, one savepoint per Contact, and only
     touches Contacts with a repeated number. It prints the row count before and after, never
