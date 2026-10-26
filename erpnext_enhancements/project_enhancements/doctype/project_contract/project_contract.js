@@ -18,6 +18,11 @@
  *   form's current values so an unsaved draft shows what it will say. Print /
  *   PDF is offered from inside the dialog. See public/js/project_enhancements/
  *   contract_viewer.js.
+ * - "Signed copy" on a Signed contract opens the signed PDF (the e-signed copy,
+ *   or a scan filed for a paper signature), else the executed copy with a note
+ *   that no signed scan is on file and an Attach scan shortcut. The server's
+ *   answer arrives with the form (__onload.signed_copy), so the PDF opens in
+ *   the click itself. See project_enhancements/signed_copy.py.
  * - Signed Maintenance Services Agreements get "Create > Maintenance
  *   Contract", mapping the legal terms into an operational Sapphire
  *   Maintenance Contract (visit scheduling + modular visit forms).
@@ -169,6 +174,19 @@ frappe.ui.form.on("Project Contract", {
 					title: __("Preview — {0}", [frm.doc.title || frm.doc.name]),
 				})
 			);
+		}
+
+		// What was actually signed, in one click (v1.744.0). The answer came with
+		// the form, so a PDF opens inside the click rather than after a round trip
+		// a popup blocker would stop.
+		const signed_copy = frm.doc.__onload && frm.doc.__onload.signed_copy;
+		if (frm.doc.status === "Signed" && signed_copy) {
+			frm.add_custom_button(__("Signed copy"), () =>
+				erpnext_enhancements.contract_viewer.open_signed_copy(signed_copy, {
+					template_key: frm.doc.template_key,
+					on_filed: () => frm.reload_doc(),
+				})
+			).addClass("btn-primary");
 		}
 
 		if (frm.doc.template_key === "maintenance" && frm.doc.status === "Signed") {

@@ -136,6 +136,14 @@ class ProjectContract(Document):
 
 		self.name = make_autoname(series + ".", doc=self)
 
+	def onload(self):
+		# The "Signed copy" button (v1.744.0) opens what this finds in the click itself; a
+		# window opened after a round trip is one popup blockers stop. See signed_copy.py.
+		if self.get("status") == "Signed":
+			from erpnext_enhancements.project_enhancements.signed_copy import signed_copy
+
+			self.set_onload("signed_copy", signed_copy(self))
+
 	def validate(self):
 		self._fetch_template_props()
 		if self.get("template_key") in PLAN_OPTION_KEYS and not self.get("docstatus"):

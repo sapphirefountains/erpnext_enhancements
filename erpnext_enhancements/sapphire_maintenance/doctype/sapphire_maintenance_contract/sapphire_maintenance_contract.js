@@ -17,6 +17,9 @@
  * - "View Agreement" reads the signed Maintenance Services Agreement this
  *   contract was mapped from, in full (public/js/project_enhancements/
  *   contract_viewer.js) — the legal language lives there, not here.
+ * - "Signed copy" beside it, when that agreement is Signed: the signed PDF,
+ *   else its executed copy (v1.744.0). The server sends the answer with the
+ *   form (__onload.signed_copy), and only to a reader of the agreement.
  */
 frappe.ui.form.on("Sapphire Maintenance Contract", {
 	setup(frm) {
@@ -60,6 +63,15 @@ frappe.ui.form.on("Sapphire Maintenance Contract", {
 					print_name: frm.doc.project_contract,
 				})
 			);
+			const signed_copy = frm.doc.__onload && frm.doc.__onload.signed_copy;
+			if (signed_copy) {
+				frm.add_custom_button(__("Signed copy"), () =>
+					erpnext_enhancements.contract_viewer.open_signed_copy(signed_copy, {
+						template_key: "maintenance",
+						on_filed: () => frm.reload_doc(),
+					})
+				);
+			}
 		}
 
 		// Which visit form each kind of visit opens with (v1.620.0): the regular visit, a water

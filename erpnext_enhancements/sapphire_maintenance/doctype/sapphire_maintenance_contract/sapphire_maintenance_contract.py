@@ -54,6 +54,16 @@ WINTERIZATION_LABEL = "Winterization"
 INITIAL_TERM_YEARS = {"One (1) Year": 1, "Two (2) Years": 2}
 
 class SapphireMaintenanceContract(Document):
+	def onload(self):
+		# "Signed copy" beside View Agreement (v1.744.0), when the agreement this was mapped from
+		# is Signed and this reader may read it. Never raises. See project_enhancements/signed_copy.py.
+		if self.get("project_contract"):
+			from erpnext_enhancements.project_enhancements.signed_copy import signed_copy_for
+
+			signed = signed_copy_for(self.get("project_contract"))
+			if signed:
+				self.set_onload("signed_copy", signed)
+
 	def validate(self):
 		if self.is_new() and self.get("renewal_increase_percent") in (None, ""):
 			self.renewal_increase_percent = _agreed_increase(self.get("project_contract"))

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.744.0] - 2026-10-26
+
+### Added
+- **"Signed copy": one click from a signed contract to what was signed.** Nik asked how to easily
+  view a signed agreement. Until now the only way to an e-signed contract's PDF was the form's
+  Attachments sidebar. `esign/lifecycle._build_signed_pdf` attaches a private `<name>-signed.pdf`
+  and records it on the Contract Signature Request as `signed_document`, and nothing in the Desk
+  read that field. A contract marked signed on paper had no PDF at all, and nothing said whether
+  anyone had kept a scan. On prod today that is SF-MAINT-2026-0010 (e-signed, PDF attached) and
+  SF-MAINT-2026-0001 (signed on paper, executed copy frozen, no scan).
+  - **Where:** a primary **Signed copy** button on a Signed Project Contract; the same button
+    beside *View Agreement* on a Sapphire Maintenance Contract whose agreement is Signed; and a
+    *Signed copy* button on each Signed row of the Project Contract list.
+  - **What it opens** (`project_enhancements/signed_copy.py`, in order):
+    1. the latest Signed request's `signed_document`;
+    2. an attachment named `<contract>-signed…` (the e-sign PDF if the request lost its link, or
+       a filed scan);
+    3. no file: the executed copy in the contract viewer, under a note. On a paper-signed contract
+       the note says no scanned signed copy is on file. A Contract Manager also gets **Attach
+       scan** (upload a PDF, PNG or JPEG, or take a photo) and *Use as signed copy* beside any PDF
+       or picture already attached under another name.
+    4. A contract marked signed before v1.611.0 froze its copy may have no file and nothing frozen.
+       It gets a plain message, not a live render, which could show today's template as what was
+       signed.
+  - **Private-file permissions stay frappe's.** A file is offered only when frappe's
+    `find_file_by_url` says this reader could download it. That is the same check
+    `download_private_file` runs before it serves `/private/files/…` (frappe v16.53.0). If it
+    fails, the button falls through to the executed copy, never to a link that answers 403. The
+    button never serves the file itself.
+  - **Filing a scan** (`record_signed_scan`, POST) is for Contract Manager and System Manager only,
+    the roles that may mark a contract signed, and only on a paper-signed contract: an e-signed
+    contract's PDF is the record. The file must be attached to that contract. It is renamed
+    `<contract>-signed-scan.<ext>` and made private, and a timeline comment says who filed it. The
+    rename is the whole of "filed", so no new field and no migration.
+  - **Why the forms get the answer in `__onload`** (`ProjectContract.onload`;
+    `SapphireMaintenanceContract.onload` through `signed_copy_for`, which first checks the reader
+    may read the agreement): the PDF opens inside the click. A window opened after a round trip is
+    exactly what popup blockers stop, Safari first. The list has no onload. It fetches
+    `get_signed_copy` on click, and if the window is blocked it shows a link instead of doing
+    nothing. Both onloads log and answer rather than raise, so a failed lookup never stops a form
+    opening.
+  - **Wiring:** `doctype/project_contract/project_contract_list.js` (new, loaded by frappe
+    unasked). `doctype_list_js["Project Contract"]` loads `contract_viewer.js` on the list, because
+    `doctype_js` does not reach list views. `contract_viewer.open()` takes an optional note and
+    secondary action.
+  - **Tests:** `tests/test_signed_copy.py`, bench-free, in its own CI step (35 cases). It covers
+    the order; the name match (SF-MAINT-2026-0001 never claims SF-MAINT-2026-00010's PDF); the
+    download check; who sees Attach scan and the unfiled files; never raising in onload; each
+    refusal of `record_signed_scan`; both onloads; and the JS and hooks wiring.
+  - **On deploy:** no patch, no fixture, no data written. The two new endpoints and two onloads
+    only read, except `record_signed_scan`, which runs only when a Contract Manager files a scan.
+
 ## [1.743.0] - 2026-10-23
 
 ### Changed

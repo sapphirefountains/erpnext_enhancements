@@ -488,6 +488,10 @@ doctype_list_js = {
 	# step-by-step entry, travel_management/page/plan_a_trip) instead of a blank
 	# form, via frappe's own listview_settings.primary_action hook.
 	"Travel Trip": "public/js/travel/travel_trip_list.js",
+	# "Signed copy" on each Signed row (v1.744.0). The button itself is the doctype's own
+	# project_contract_list.js, which frappe loads unasked; the shared opener it calls is in the
+	# contract viewer, which doctype_js does not reach on a list.
+	"Project Contract": "public/js/project_enhancements/contract_viewer.js",
 }
 doctype_calendar_js = {
 	"Asset Booking": "public/js/asset_booking_calendar.js",
