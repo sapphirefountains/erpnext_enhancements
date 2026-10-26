@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `contract_viewer.fetch_signed_copy` on click and hands the answer to `open_signed_copy`.
     `signed_copy.get_signed_copy` checks the reader may read the contract, and the opener already
     offers a link when the browser blocks the window. The click stops propagation, as *Open* and
-    *Generate Agreement* do, so it does not also expand the row.
+    *Generate Agreement* do. That is for consistency only: the row's expand toggle is bound to its
+    header, and the buttons sit in a sibling row, so a click on them never expanded it.
   - **The tab still lists in a few batched queries, none per row.** `get_contracts` only says
     which contract a row opens (`signed_copy_of`) and never resolves a file while listing. The
     maintenance rows' agreement statuses (`agreement_status`, new) come from one `get_list` for the
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the status lookup is one query, and none when nothing links an agreement;
     - listing makes the same calls for one row as for six, and never touches a File or a
       Signature Request lookup;
+    - the status lookup leaves the permission filter on (no `ignore_permissions`);
     - `contracts_tab.js` uses the viewer's two calls behind `e.stopPropagation()`, with no copy of
       the endpoint, the window or the dialogs;
     - hooks.py loads the viewer before the tab on both forms.

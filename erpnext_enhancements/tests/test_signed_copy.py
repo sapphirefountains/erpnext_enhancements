@@ -184,12 +184,18 @@ def _install_frappe_stub():
     frappe.get_all = get_all
 
     def get_list(doctype, filters=None, fields=None, order_by=None, **kwargs):
-        # Permission-filtered, as frappe's is: an agreement in SITE.unreadable is not returned.
-        SITE.calls.append(("get_list", doctype, filters))
+        # Permission-filtered, as frappe's is: an agreement in SITE.unreadable is not returned,
+        # unless the caller passes ignore_permissions, which frappe honors on get_list too. The
+        # keyword arguments are recorded so a test can assert that nobody did.
+        SITE.calls.append(("get_list", doctype, filters, dict(kwargs)))
         if doctype == "Project Contract":
             if SITE.fail_status_lookup and "name" in (filters or {}):
                 raise RuntimeError("database went away")
-            source = [r for r in SITE.contracts.values() if r["name"] not in SITE.unreadable]
+            source = [
+                r
+                for r in SITE.contracts.values()
+                if kwargs.get("ignore_permissions") or r["name"] not in SITE.unreadable
+            ]
         elif doctype == "Sapphire Maintenance Contract":
             source = SITE.maintenance
         else:
@@ -746,6 +752,9 @@ class TestContractsTab(Base):
         self.assertIsNone(row.agreement_status)
         self.assertIsNone(row.signed_copy_of)
         self.assertEqual(row.readable, 1)
+        # The guarantee is the permission filter, so the lookup must not switch it off.
+        (lookup,) = self._status_lookups()
+        self.assertFalse(lookup[3].get("ignore_permissions"), lookup)
 
     def test_the_agreement_status_lookup_is_one_query_for_the_whole_list(self):
         for i in range(1, 4):
@@ -896,7 +905,9 @@ class TestWiring(Base):
         )
         # A maintenance row styles its agreement as the maintenance form does.
         self.assertRegex(code, r'doctype === "Sapphire Maintenance Contract"\s*\?\s*"maintenance"')
-        # The click must not also toggle the card, as Open and Generate Agreement do not.
+        # The click stops propagation, as Open and Generate Agreement do. Consistency only: the
+        # toggle is bound to .ee-contract-head, a sibling of the actions row, so a click here
+        # could not expand the card either way.
         button = code[code.index('__("Signed copy")') : code.index("fetch_signed_copy(signed_copy_of)")]
         self.assertIn("e.stopPropagation();", button)
         # And no copy of the opener: the endpoint, the window and the dialogs stay in the viewer.
