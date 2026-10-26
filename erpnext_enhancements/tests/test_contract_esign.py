@@ -77,6 +77,10 @@ def _install_frappe_stub():
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+    # lifecycle imports these at module level; the certificate cases never call them.
+    utils.get_datetime = lambda value=None: value
+    utils.getdate = lambda value=None: value
+    utils.now_datetime = lambda: None
     frappe.utils = utils
 
     sys.modules["frappe"] = frappe
@@ -359,10 +363,20 @@ class TestDoctypeContract(unittest.TestCase):
                 field.get("read_only"), f"{field.get('fieldname')} is writable on an append-only record"
             )
 
-    def test_both_ip_addresses_are_recorded_and_the_claimed_one_is_labelled_untrusted(self):
+    def test_both_ip_addresses_are_recorded_and_labelled_for_what_they_are_on_this_host(self):
+        """The claimed address is the signer's: nginx realip derives it from the load
+        balancer (utils/client_ip.py). The peer is local nginx. The old labels said the
+        opposite, and the certificate believed them and printed 127.0.0.1."""
         by_name = {f.get("fieldname"): f for f in self.doc["fields"]}
-        self.assertIn("signer_ip_peer", by_name)
-        self.assertIn("UNTRUSTED", by_name["signer_ip_claimed"].get("description", ""))
+        claimed, peer = by_name["signer_ip_claimed"], by_name["signer_ip_peer"]
+        self.assertEqual(claimed.get("label"), "Signer IP")
+        self.assertEqual(peer.get("label"), "Proxy Peer IP")
+        self.assertNotIn("UNTRUSTED", claimed.get("description", ""))
+        self.assertIn("realip", claimed.get("description", ""))
+        self.assertIn("utils/client_ip.py", claimed.get("description", ""))
+        self.assertIn("Certificate of Electronic Signature prints", claimed.get("description", ""))
+        self.assertIn("127.0.0.1", peer.get("description", ""))
+        self.assertIn("not the signer", peer.get("description", ""))
 
     def test_esign_disclosure_is_captured_separately_from_consent(self):
         """§16.6 of the agreement is the contract asserting its own
@@ -375,6 +389,82 @@ class TestDoctypeContract(unittest.TestCase):
             "esign_disclosure_version",
         ):
             self.assertIn(required, names)
+
+
+class _Row(dict):
+    """A dict with attribute reads, like ``frappe._dict``."""
+
+    __getattr__ = dict.get
+
+
+class TestCompletionCertificate(unittest.TestCase):
+    """The certificate's "IP address" row prints the signer's address.
+
+    It printed ``signer_ip_peer``, which on this host is always local nginx, so
+    CSR-2026-00003 (the first contract signed by email link) reads 127.0.0.1. That
+    record is left as signed: its agreement_html is hashed, and the real address is
+    already in signer_ip_claimed.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from erpnext_enhancements.project_enhancements.esign import lifecycle
+
+        cls.lifecycle = lifecycle
+
+    def _certificate(self, **overrides):
+        values = {
+            "name": "CSR-2026-00099",
+            "signed_name": "Jane Signer",
+            "signed_title": "Owner",
+            "signer_email": "jane@example.com",
+            "signature_mode": "Typed",
+            "signed_on": "2026-10-26 08:30:00",
+            "signed_tz": "America/Denver",
+            "signer_ip_claimed": "216.162.1.2",
+            "signer_ip_peer": "127.0.0.1",
+        }
+        values.update(overrides)
+        return self.lifecycle.completion_certificate(_Row(values))
+
+    def _ip_cell(self, html):
+        match = re.search(r"<tr><td><b>IP address</b></td><td>(.*?)</td></tr>", html)
+        self.assertIsNotNone(match, "the certificate has no IP address row")
+        return match.group(1)
+
+    def test_the_signers_address_is_printed_not_the_proxy_peer(self):
+        html = self._certificate()
+        self.assertEqual(self._ip_cell(html), "216.162.1.2")
+        self.assertNotIn("127.0.0.1", html)
+
+    def test_an_in_person_signing_prints_the_presenting_devices_address_unqualified(self):
+        STATE["signature"] = "Pat Presenter"  # the presenter's full_name lookup
+        try:
+            html = self._certificate(signing_channel="In Person", presented_by="pat@example.com")
+        finally:
+            STATE["signature"] = None
+        self.assertIn("presented by Pat Presenter", html)
+        self.assertEqual(self._ip_cell(html), "216.162.1.2")
+
+    def test_a_non_public_address_is_shown_but_never_as_the_signers(self):
+        """loopback, private, a Google front end, the load balancer's own address."""
+        for address in ("127.0.0.1", "10.0.0.5", "35.191.1.1", "136.68.113.208"):
+            with self.subTest(address=address):
+                cell = self._ip_cell(self._certificate(signer_ip_claimed=address))
+                self.assertTrue(cell.startswith(address + " ("), cell)
+                self.assertIn("not the signer", cell)
+
+    def test_a_missing_or_malformed_address_says_so(self):
+        for missing in (None, "", "  "):
+            with self.subTest(value=missing):
+                self.assertEqual(self._ip_cell(self._certificate(signer_ip_claimed=missing)), "Not recorded")
+        cell = self._ip_cell(self._certificate(signer_ip_claimed="216.162.1.2, 35.191.1.1"))
+        self.assertEqual(cell, "216.162.1.2, 35.191.1.1 (not a valid IP address)")
+
+    def test_the_recorded_address_is_still_escaped(self):
+        html = self._certificate(signer_ip_claimed='<img src=x onerror="1">')
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img", self._ip_cell(html))
 
 
 class TestExecutionOrdering(unittest.TestCase):

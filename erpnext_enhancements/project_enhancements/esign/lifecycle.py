@@ -43,6 +43,7 @@ from frappe.utils import escape_html, get_datetime, getdate, now_datetime
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements.project_enhancements.esign.tokens import hash_token, text_fingerprint
+from erpnext_enhancements.utils.client_ip import classify
 
 SIGNABLE_CONTRACT_STATUSES = ("Out for Signature",)
 
@@ -55,6 +56,14 @@ class SignatureEvidence:
 	server-observed (addresses, agent, verdicts). Nothing a client could assert
 	about *itself* is trusted — see the ``scrolled_to_end`` field description on
 	the doctype.
+
+	Of the two addresses, ``ip_claimed`` is the signer's. Despite its name it is not
+	a header the client chose: it is ``frappe.local.request_ip``, and on this host
+	(GCLB -> nginx -> bench) nginx's realip file rewrites the client address from the
+	load balancer's ``X-Forwarded-For`` before bench forwards it, so a forged header
+	does not survive. ``utils/client_ip.py`` explains the chain and checks it daily.
+	``ip_peer`` is the TCP peer that reached the app server, which here is always
+	local nginx (127.0.0.1). It is kept only to diagnose the proxy chain.
 	"""
 
 	mode: str = "Typed"
@@ -62,7 +71,9 @@ class SignatureEvidence:
 	signed_title: str = ""
 	signature_image: str = ""
 	email_confirmed: int = 0
+	# The signer's address, and the one the certificate prints (see the docstring).
 	ip_claimed: str = ""
+	# Local nginx on this host, never the signer.
 	ip_peer: str = ""
 	user_agent: str = ""
 	turnstile: dict = field(default_factory=dict)
@@ -291,7 +302,7 @@ def completion_certificate(request, contract=None):
 		(frappe._("Email"), request.signer_email),
 		(frappe._("Method"), frappe._("Drawn signature") if request.signature_mode == "Drawn" else frappe._("Typed signature")),
 		(frappe._("Signed at"), f"{request.signed_on} ({request.signed_tz or ''})"),
-		(frappe._("IP address"), request.signer_ip_peer),
+		(frappe._("IP address"), _certificate_ip(request.signer_ip_claimed)),
 		(frappe._("Reference"), request.name),
 	]
 	if request.get("signing_channel") == "In Person":
@@ -320,6 +331,31 @@ def completion_certificate(request, contract=None):
 		f'<table class="ct-table">{cells}</table>'
 		"</div>"
 	)
+
+
+def _certificate_ip(address):
+	"""The certificate's "IP address" cell: the signer's address, plainly qualified when it is not one.
+
+	Prints ``signer_ip_claimed``, the client address after the load balancer and nginx
+	realip (see :class:`SignatureEvidence`). It used to print ``signer_ip_peer``, which on
+	this host is always local nginx, which is why CSR-2026-00003's executed copy reads
+	127.0.0.1. If the realip derivation ever regresses, the recorded address is still shown,
+	but never as the signer's. An in-person signing records the presenting device's
+	address, which is public and needs no note.
+	"""
+	text = str(address or "").strip()
+	kind = classify(text)
+	if kind == "public":
+		return text
+	if kind == "missing":
+		return frappe._("Not recorded")
+	if kind in ("gclb_proxy", "load_balancer"):
+		return frappe._("{0} (load balancer address, not the signer's)").format(text)
+	if kind == "loopback":
+		return frappe._("{0} (local server address, not the signer's)").format(text)
+	if kind == "private":
+		return frappe._("{0} (private network address, not the signer's)").format(text)
+	return frappe._("{0} (not a valid IP address)").format(text)
 
 
 def _utc_stamp():

@@ -594,18 +594,18 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "X-Forwarded-For as presented by the client. UNTRUSTED — attacker-controlled unless the edge proxy overwrites rather than appends. Kept for correlation only; never used as a security decision on its own.",
+   "description": "The submitter's address: the client address after the Google load balancer and nginx's realip rewrite (frappe's request_ip). On this host a forged X-Forwarded-For does not get through, for as long as the daily client-IP check (utils/client_ip.py) stays quiet. Never used as a security decision on its own.",
    "fieldname": "submitter_ip_claimed",
    "fieldtype": "Data",
    "in_standard_filter": 1,
-   "label": "Submitter IP (Claimed)",
+   "label": "Submitter IP",
    "read_only": 1
   },
   {
-   "description": "The actual TCP peer address frappe saw.",
+   "description": "The TCP peer that reached the app server. On this host that is always local nginx (127.0.0.1), so it is not the submitter. Kept only to diagnose the proxy chain.",
    "fieldname": "submitter_ip_peer",
    "fieldtype": "Data",
-   "label": "Submitter IP (Peer)",
+   "label": "Proxy Peer IP",
    "read_only": 1
   },
   {
@@ -640,7 +640,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-23 12:00:00.000000",
+ "modified": "2026-10-26 10:30:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "Fountain Move Request",

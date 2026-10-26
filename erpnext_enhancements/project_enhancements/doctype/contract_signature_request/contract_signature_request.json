@@ -442,17 +442,17 @@
    "read_only": 1
   },
   {
-   "description": "UNTRUSTED — taken from the X-Forwarded-For header, which the caller controls. Recorded for correlation only and never used as a security decision on its own. Compare against the peer address beside it.",
+   "description": "The signer's address: the client address after the Google load balancer and nginx's realip rewrite (frappe's request_ip). On this host a forged X-Forwarded-For does not get through, for as long as the daily client-IP check (utils/client_ip.py) stays quiet. The Certificate of Electronic Signature prints this address.",
    "fieldname": "signer_ip_claimed",
    "fieldtype": "Data",
-   "label": "Signer IP (claimed)",
+   "label": "Signer IP",
    "read_only": 1
   },
   {
-   "description": "The TCP peer address the request actually arrived from.",
+   "description": "The TCP peer that reached the app server. On this host that is always local nginx (127.0.0.1), so it is not the signer. Kept only to diagnose the proxy chain.",
    "fieldname": "signer_ip_peer",
    "fieldtype": "Data",
-   "label": "Signer IP (peer)",
+   "label": "Proxy Peer IP",
    "read_only": 1
   },
   {
@@ -648,7 +648,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-13 21:00:00.000000",
+ "modified": "2026-10-26 10:30:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Contract Signature Request",
