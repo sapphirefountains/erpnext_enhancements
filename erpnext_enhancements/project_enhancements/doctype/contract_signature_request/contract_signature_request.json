@@ -442,7 +442,7 @@
    "read_only": 1
   },
   {
-   "description": "The signer's address: the client address after the Google load balancer and nginx's realip rewrite (frappe's request_ip). On this host a forged X-Forwarded-For does not get through, for as long as the daily client-IP check (utils/client_ip.py) stays quiet. The Certificate of Electronic Signature prints this address.",
+   "description": "The signer's address: the client address after the Google load balancer and nginx's realip rewrite (frappe's request_ip). On this host a forged X-Forwarded-For does not get through, for as long as the daily client-IP check (utils/client_ip.py) stays quiet. The Certificate of Electronic Signature prints this address (for requests signed from v1.744.1 on).",
    "fieldname": "signer_ip_claimed",
    "fieldtype": "Data",
    "label": "Signer IP",

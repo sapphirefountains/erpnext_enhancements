@@ -339,9 +339,17 @@ def _certificate_ip(address):
 	Prints ``signer_ip_claimed``, the client address after the load balancer and nginx
 	realip (see :class:`SignatureEvidence`). It used to print ``signer_ip_peer``, which on
 	this host is always local nginx, which is why CSR-2026-00003's executed copy reads
-	127.0.0.1. If the realip derivation ever regresses, the recorded address is still shown,
-	but never as the signer's. An in-person signing records the presenting device's
+	127.0.0.1. If the realip derivation regresses, the recorded address is still shown, with
+	a note, when it is one of the proxies ``utils/client_ip.py`` knows about: the Google
+	front-end ranges, the two load-balancer addresses, loopback and private ranges. That is
+	the limit. A proxy it does not know — a new load-balancer address added without updating
+	``nginx-realip.conf``, or a CDN such as Cloudflare put in front of erp — is where
+	nginx's walk stops, so it classifies as public and prints with no note, and the daily
+	check stays quiet as well. An in-person signing records the presenting device's
 	address, which is public and needs no note.
+
+	No apostrophes in the notes: frappe's ``escape_html`` writes ``'`` as ``&apos;``, which
+	old Outlook shows literally in the inline-agreement email fallback.
 	"""
 	text = str(address or "").strip()
 	kind = classify(text)
@@ -350,11 +358,11 @@ def _certificate_ip(address):
 	if kind == "missing":
 		return frappe._("Not recorded")
 	if kind in ("gclb_proxy", "load_balancer"):
-		return frappe._("{0} (load balancer address, not the signer's)").format(text)
+		return frappe._("{0} (load balancer address, not from the signer)").format(text)
 	if kind == "loopback":
-		return frappe._("{0} (local server address, not the signer's)").format(text)
+		return frappe._("{0} (local server address, not from the signer)").format(text)
 	if kind == "private":
-		return frappe._("{0} (private network address, not the signer's)").format(text)
+		return frappe._("{0} (private network address, not from the signer)").format(text)
 	return frappe._("{0} (not a valid IP address)").format(text)
 
 

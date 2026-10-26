@@ -76,6 +76,7 @@ def _install_frappe_stub():
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+        .replace("'", "&apos;")  # as frappe v16's escape_html does
     )
     # lifecycle imports these at module level; the certificate cases never call them.
     utils.get_datetime = lambda value=None: value
@@ -374,7 +375,10 @@ class TestDoctypeContract(unittest.TestCase):
         self.assertNotIn("UNTRUSTED", claimed.get("description", ""))
         self.assertIn("realip", claimed.get("description", ""))
         self.assertIn("utils/client_ip.py", claimed.get("description", ""))
-        self.assertIn("Certificate of Electronic Signature prints", claimed.get("description", ""))
+        self.assertIn(
+            "Certificate of Electronic Signature prints this address (for requests signed from v1.744.1 on)",
+            claimed.get("description", ""),
+        )
         self.assertIn("127.0.0.1", peer.get("description", ""))
         self.assertIn("not the signer", peer.get("description", ""))
 
@@ -446,13 +450,27 @@ class TestCompletionCertificate(unittest.TestCase):
         self.assertIn("presented by Pat Presenter", html)
         self.assertEqual(self._ip_cell(html), "216.162.1.2")
 
-    def test_a_non_public_address_is_shown_but_never_as_the_signers(self):
-        """loopback, private, a Google front end, the load balancer's own address."""
-        for address in ("127.0.0.1", "10.0.0.5", "35.191.1.1", "136.68.113.208"):
+    def test_a_known_proxy_address_is_shown_but_never_as_the_signers(self):
+        """loopback, private, a Google front end, the load balancer's own address.
+
+        Only the proxies utils/client_ip.py knows: an unknown one classifies as public.
+        """
+        expected = {
+            "127.0.0.1": "127.0.0.1 (local server address, not from the signer)",
+            "10.0.0.5": "10.0.0.5 (private network address, not from the signer)",
+            "35.191.1.1": "35.191.1.1 (load balancer address, not from the signer)",
+            "136.68.113.208": "136.68.113.208 (load balancer address, not from the signer)",
+        }
+        for address, cell in expected.items():
             with self.subTest(address=address):
-                cell = self._ip_cell(self._certificate(signer_ip_claimed=address))
-                self.assertTrue(cell.startswith(address + " ("), cell)
-                self.assertIn("not the signer", cell)
+                self.assertEqual(self._ip_cell(self._certificate(signer_ip_claimed=address)), cell)
+
+    def test_no_note_carries_an_apostrophe(self):
+        """escape_html writes ' as &apos;, which old Outlook shows literally in the
+        inline-agreement email fallback."""
+        for address in ("127.0.0.1", "10.0.0.5", "35.191.1.1", "136.68.113.208", "x", ""):
+            with self.subTest(address=address):
+                self.assertNotIn("&apos;", self._ip_cell(self._certificate(signer_ip_claimed=address)))
 
     def test_a_missing_or_malformed_address_says_so(self):
         for missing in (None, "", "  "):

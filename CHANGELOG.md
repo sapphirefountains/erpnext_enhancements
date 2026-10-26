@@ -29,11 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     them.
   - **Now:** the certificate prints `signer_ip_claimed`. If `utils/client_ip.classify` says it is
     not a public address, the cell still shows what was recorded but adds a short note:
-    *(load balancer address, not the signer's)*, *(local server address, not the signer's)*,
-    *(private network address, not the signer's)*, *(not a valid IP address)*, or *Not recorded*.
-    So a broken realip chain can never print a proxy as the signer. Every value is still escaped.
-    An in-person signing records the presenting device's address, which is public and needs no
-    note.
+    *(load balancer address, not from the signer)*, *(local server address, not from the
+    signer)*, *(private network address, not from the signer)*, *(not a valid IP address)*, or
+    *Not recorded*. Every value is still escaped. An in-person signing records the presenting
+    device's address, which is public and needs no note.
+  - **What the note can and cannot catch.** It flags the proxy addresses `utils/client_ip.py`
+    knows about: the Google front-end ranges, the two load-balancer addresses, loopback and
+    private ranges. A proxy it does not know is not flagged. If a new load-balancer address appears
+    without being added to `nginx-realip.conf`, or a CDN such as Cloudflare is put in front of
+    erp, nginx's right-to-left walk stops on that proxy's address. That address classifies as
+    `public`, the certificate prints it with no note, and the daily check stays quiet too. Adding
+    such a proxy means adding it to `nginx-realip.conf` and `LB_FRONTEND_ADDRESSES` together.
+  - **No apostrophes in the notes.** Frappe v16's `escape_html` writes `'` as `&apos;`. That
+    entity is stored in `agreement_html`, and old Outlook shows it literally when the agreement is
+    emailed inline because the PDF failed. The test stub's `escape_html` now escapes `'` the same
+    way, so an exact-match assertion behaves as it would on prod.
   - **Labels and descriptions, fieldnames unchanged** (prod has data in them). On Contract
     Signature Request, `signer_ip_claimed` is now *Signer IP* and `signer_ip_peer` is *Proxy Peer
     IP*. On Fountain Move Request, which stores the same pair, `submitter_ip_claimed` is now
@@ -46,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     request's `agreement_html`, `agreement_hash` or PDF. The stored `agreement_html` is hashed and
     is the record of what was executed, so its certificate keeps reading 127.0.0.1. The signer's
     real address is already on the request in `signer_ip_claimed`. Only contracts signed after this
-    release print the client address.
+    release print the client address, and the *Signer IP* description says so ("for requests signed
+    from v1.744.1 on").
   - **Tests:** `tests/test_contract_esign.py` (the "Contract e-signature" CI step) now renders the
     certificate. It checks that the claimed address is printed, the peer is not, every non-public
     category is qualified, a missing or malformed value says so, and the value is still escaped.
