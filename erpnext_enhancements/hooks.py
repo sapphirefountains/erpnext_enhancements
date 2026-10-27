@@ -2086,6 +2086,10 @@ scheduler_events = {
 # And it takes the Opportunity Kanban row out of frappe.boot.module_sidebars["CRM"] for anyone
 # who cannot read Opportunity: frappe never permission-checks a sidebar URL row (v1.735.0,
 # setup/workspace_tweaks.drop_unreadable_sidebar_links).
+# And it cuts frappe.boot.desktop_icons, the Desk home grid, down to the field technicians' eight
+# (Maintenance, Morning Briefing, CRM, Projects, Time Kiosk, Travel, Training, Stock Scan, the same
+# as their Dock rail) for anyone whose dock profile is Field Tech. Hides tiles only; System and
+# Workspace Managers keep the whole grid (v1.750.0, setup/dock_profiles.trim_home_grid).
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------

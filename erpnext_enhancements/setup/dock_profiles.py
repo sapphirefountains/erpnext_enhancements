@@ -33,6 +33,12 @@ as whoever saved it, so the stamp is put back to Administrator afterwards.
 Nothing here can hide a module from anyone: the rail only stops offering it. Search, links and
 Manage Dock still reach everything, and the reach gate frappe applies on every boot (module
 visibility, workspace roles) is untouched.
+
+The home grid follows the same profile (v1.750.0). A profile in ``HOME_GRIDS`` also decides the
+tiles on the person's Desk home grid: ``trim_home_grid`` (``extend_bootinfo``, via
+``boot.boot_session``) keeps only those, in that order. Only Field Tech has one. Like the rail, it
+offers rather than grants: it keeps tiles frappe already allowed the person and drops the rest, and
+it changes no permission. It runs on every boot, so a change of profile shows on the next page load.
 """
 
 import frappe
@@ -71,6 +77,30 @@ KPI_DASHBOARDS = ("Workspace", "KPI Dashboards")
 WATER_ENGINEERING = ("Workspace", "Water Engineering")
 QUICKBOOKS = ("Workspace", "QuickBooks Online")
 AI_GOVERNANCE = ("Workspace", "AI Governance")
+MORNING_BRIEFING = ("Workspace", "Morning Briefing")
+# Two web apps outside the desk, as URL rows to the desk pages that send the browser on to them. A
+# dock row opens through frappe.set_route, which reads any path as a desk route, so a row naming
+# /kiosk would open /desk/kiosk and find nothing. Both pages leave with location.replace, so Back
+# returns to the page the rail was clicked on (v1.750.0).
+TIME_KIOSK = ("URL", "/desk/time-kiosk")
+STOCK_SCAN = ("URL", "/desk/stock-scan")
+
+# The field technicians' desk: the rail and the home grid list the same things in the same order.
+# Nik, 2026-10-27: "Maintenance, Morning Briefing, CRM, Project and Time Kiosk as the only icons
+# they see when they login", then "match them to each other. I forgot Travel, Training, and the
+# Inventory Scanner thing" (Stock Scan). Each entry is the rail's key and the home grid's Desktop
+# Icon, by docname, so the two cannot drift apart. Maintenance's tile is named for its workspace
+# and only labelled "Maintenance" (desktop_icon_map.DISPLAY_LABELS).
+FIELD_TECH = (
+	(MAINTENANCE, "Sapphire Maintenance"),
+	(MORNING_BRIEFING, "Morning Briefing"),
+	(CRM, "CRM"),
+	(PROJECTS, "Projects"),
+	(TIME_KIOSK, "Time Kiosk"),
+	(TRAVEL, "Travel"),
+	(TRAINING, "Training"),
+	(STOCK_SCAN, "Stock Scan"),
+)
 
 # Nik, 2026-10-23: "Buying, Stock, Projects, Opportunities Kanban (CRM)". CRM stays after them:
 # its dashboard is the module's landing page and had 189 visits from six people.
@@ -104,8 +134,17 @@ PROFILES = {
 	"Purchasing": (BUYING, STOCK, PROJECTS),
 	"Production Lead": (PROJECTS, OPPORTUNITIES, BUYING, STOCK, MAINTENANCE),
 	"Design": (PROJECTS, OPPORTUNITIES, BUYING, WATER_ENGINEERING),
-	"Field Tech": (MAINTENANCE, PROJECTS, TRAVEL, TRAINING),
+	"Field Tech": tuple(entry for entry, _tile in FIELD_TECH),
 }
+
+# Profile -> the Desktop Icons (docnames) its home grid holds, in order. A profile not named here
+# keeps the whole grid frappe draws for the person.
+HOME_GRIDS = {
+	"Field Tech": tuple(tile for _entry, tile in FIELD_TECH),
+}
+
+# Never trimmed, whatever their profile: the people who look after the desk keep all of it.
+UNTRIMMED_ROLES = frozenset({"System Manager", "Workspace Manager"})
 
 # Role Profile -> dock profile for a User whose Dock Profile is blank. First match wins, so the
 # order is the precedence: Logan holds Design Team and Production Team and is a designer, Lisa
@@ -382,3 +421,57 @@ def on_user_update(doc, method=None):
 		apply_for_user(doc.name, force=bool(before is not None and chosen_changed))
 	except Exception:
 		frappe.log_error(title=f"Dock profile not applied: {doc.name}", message=frappe.get_traceback())
+
+
+# --- the home grid ----------------------------------------------------------------------------
+
+
+def home_grid(icons, tiles):
+	"""Return the home grid cut down to `tiles` (Desktop Icon docnames), in their order. Pure.
+
+	`icons` is the grid frappe already built for this person (`bootinfo.desktop_icons`), so a tile
+	it refused them stays out: this hides, it never grants. Each kept tile is a copy, shown even
+	where the site hid it (CRM is hidden on everyone's grid), at the top level (CRM and Projects
+	sit in ERPNext's folder, which is not one of them), and numbered in `tiles` order, which is the
+	order the grid sorts by. Returns None when none of the tiles is there, and the grid is left
+	whole rather than empty.
+	"""
+	by_name = {icon.get("name"): icon for icon in icons or [] if icon.get("name")}
+	kept = []
+	for tile in tiles:
+		icon = by_name.get(tile)
+		if icon is None:
+			continue
+		copy = type(icon)(icon)
+		copy.update({"hidden": 0, "parent_icon": None, "idx": len(kept) + 1})
+		kept.append(copy)
+	return kept or None
+
+
+def trim_home_grid(bootinfo):
+	"""``extend_bootinfo`` (via ``boot.boot_session``): give a person whose profile has a home grid
+	only that grid's tiles.
+
+	Prod draws the home screen as the Desktop Icon grid (Desktop Settings -> Desktop Page is
+	"Desktop Icons"), from `bootinfo.desktop_icons`. A saved home layout is drawn only as far as
+	this list goes: frappe 16.53's `arrange_layout` leaves out a saved tile that is not in it. On the
+	Apps screen the list is absent and nothing happens. Never raises: boot runs on every page.
+	"""
+	try:
+		icons = bootinfo.get("desktop_icons")
+		if not icons:
+			return
+		user = frappe.session.user
+		if UNTRIMMED_ROLES & set(frappe.get_roles(user)):
+			return
+		person = next(iter(_people(user)), None)
+		if not person:
+			return
+		tiles = HOME_GRIDS.get(profile_for(person["chosen"], person["role_profiles"]))
+		if not tiles:
+			return
+		trimmed = home_grid(icons, tiles)
+		if trimmed:
+			bootinfo["desktop_icons"] = trimmed
+	except Exception:
+		frappe.log_error(title="Home grid not trimmed at boot", message=frappe.get_traceback())

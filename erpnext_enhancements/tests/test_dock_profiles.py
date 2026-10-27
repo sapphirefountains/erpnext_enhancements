@@ -10,6 +10,10 @@ hold is skipped without a word, so a typo in an entry would just be missing from
 And a layer written whole replaces the rail, so writing over one a person arranged would throw
 their arrangement away (Nik, 2026-10-23: "Keep their own").
 
+Since v1.750.0 the field technicians' profile also decides their Desk home grid
+(``trim_home_grid``), and the rail and the grid must list the same eight things. Pinned here too,
+along with the two desk pages that carry the rail to the kiosk and Stock Scan.
+
 Installs its own ``frappe`` stub in ``setUpModule``, which is why it has its own CI step.
 
 Run: python -m unittest erpnext_enhancements.tests.test_dock_profiles
@@ -26,6 +30,7 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1]
 DOCK_FILE = APP / "dock" / "erpnext_enhancements" / "erpnext_enhancements.json"
 HOOKS = APP / "hooks.py"
+BOOT = APP / "boot.py"
 PATCHES_TXT = APP / "patches.txt"
 
 # ERPNext v16.50.0's own dock (erpnext/dock/erpnext/erpnext.json), as prod held it on 2026-10-23.
@@ -58,6 +63,7 @@ ERPNEXT_ACCOUNTS_TITLE = "Accounts"
 SHIPPED_DOCKS = {
 	"2026-10-23 12:00:00.000000": "57f2f9138bc9cd0cb6ec2eb63dd0e3d05339a383900c4abd64bb39656035e858",
 	"2026-10-23 16:00:00.000000": "c0f45e1fbb5e83c5fb47d4fd7768bc5f26ca3629b1cf68e0b09f9a77d59ec90a",
+	"2026-10-27 12:00:00.000000": "bc0d11f00b0429f2553ce3d8360fb6b72c8a6a75a0a4f42db40cf1d2a9184bd7",
 }
 
 STATE = {}
@@ -195,6 +201,8 @@ def _install_frappe_stub():
 	)
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(k.get("title") or a)
 	frappe.get_traceback = lambda: "traceback"
+	frappe.session = types.SimpleNamespace(user="Administrator")
+	frappe.get_roles = lambda user=None: list(STATE["roles"].get(user, ()))
 	sys.modules["frappe"] = frappe
 
 
@@ -227,6 +235,7 @@ def _reset(with_docks=True):
 			"has_dock_field": True,
 			"dock_tables": True,
 			"session_user": "Administrator",
+			"roles": {},
 		}
 	)
 	if with_docks:
@@ -735,9 +744,188 @@ class UserSaveTest(unittest.TestCase):
 		self.assertEqual(STATE["errors"], [])
 
 
+# --- the field technicians' home grid (v1.750.0) ----------------------------------------------
+
+# Nik, 2026-10-27, in his order, then the three he added: the rail's entry and the home grid's tile.
+NIKS_FIELD_TECH_DESK = [
+	(("Workspace", "Sapphire Maintenance"), "Sapphire Maintenance"),
+	(("Workspace", "Morning Briefing"), "Morning Briefing"),
+	(("Sidebar", "CRM"), "CRM"),
+	(("Sidebar", "Projects"), "Projects"),
+	(("URL", "/desk/time-kiosk"), "Time Kiosk"),
+	(("Workspace", "Travel"), "Travel"),
+	(("Workspace", "Training"), "Training"),
+	(("URL", "/desk/stock-scan"), "Stock Scan"),
+]
+FIELD_TECH_TILES = [tile for _entry, tile in NIKS_FIELD_TECH_DESK]
+
+# ERPNext's own tiles among them; every other one is a tile this app makes.
+ERPNEXT_TILES = {"CRM", "Projects"}
+
+
+def _icon(name, **fields):
+	return _Row({"name": name, "label": name, "hidden": 0, "parent_icon": None, "idx": 0, **fields})
+
+
+def _site_grid():
+	"""A grid as frappe builds it: the eight among others, CRM hidden and in ERPNext's folder."""
+	return [
+		_icon("Buying", parent_icon="ERPNext", idx=1),
+		_icon("Stock Scan", idx=1),
+		_icon("Time Kiosk", idx=1),
+		_icon("Projects", parent_icon="ERPNext", idx=1),
+		_icon("CRM", parent_icon="ERPNext", hidden=1, idx=1),
+		_icon("ERPNext", hidden=1, idx=101),
+		_icon("Accounting", icon_type="Folder", idx=1),
+		_icon("Training"),
+		_icon("Travel"),
+		_icon("Morning Briefing"),
+		_icon("Sapphire Maintenance", label="Maintenance"),
+		_icon("Sales Hub"),
+	]
+
+
+class TheFieldTechDeskTest(unittest.TestCase):
+	def test_the_rail_and_the_grid_are_what_nik_asked_for(self):
+		self.assertEqual(list(dp.FIELD_TECH), NIKS_FIELD_TECH_DESK)
+		self.assertEqual(list(dp.PROFILES["Field Tech"]), [entry for entry, _tile in NIKS_FIELD_TECH_DESK])
+		self.assertEqual(list(dp.HOME_GRIDS["Field Tech"]), FIELD_TECH_TILES)
+
+	def test_only_the_field_techs_grid_is_cut(self):
+		self.assertEqual(set(dp.HOME_GRIDS), {"Field Tech"})
+
+	def test_every_tile_is_one_a_site_has(self):
+		"""A tile the grid does not hold is skipped in silence, so a typo would just go missing."""
+		from erpnext_enhancements.setup.desktop_icon_map import TILES
+
+		for tile in FIELD_TECH_TILES:
+			with self.subTest(tile=tile):
+				self.assertTrue(tile in TILES or tile in ERPNEXT_TILES)
+
+	def test_the_kiosk_and_stock_scan_rows_open_desk_pages_that_leave_for_the_web_apps(self):
+		"""A rail row opens through frappe.set_route, so it needs a desk page, which sends the
+		browser on with location.replace so Back is not trapped on it."""
+		for (link_type, url), www, page_dir in (
+			(dp.TIME_KIOSK, "/kiosk", APP / "workforce" / "page" / "time_kiosk"),
+			(dp.STOCK_SCAN, "/stock-scan", APP / "inventory_enhancements" / "page" / "stock_scan"),
+		):
+			with self.subTest(url=url):
+				self.assertEqual(link_type, "URL")
+				page = _json(page_dir / f"{page_dir.name}.json")
+				self.assertEqual(url, "/desk/" + page["name"])
+				self.assertEqual(page["page_name"], page["name"])
+				script = (page_dir / f"{page_dir.name}.js").read_text(encoding="utf-8")
+				self.assertRegex(script, r"window\.location\.replace\(['\"]" + re.escape(www) + r"['\"]\)")
+				self.assertTrue((APP / "www" / f"{www.strip('/')}.html").exists())
+
+	def test_the_stock_scan_page_admits_whoever_stock_scan_does(self):
+		from erpnext_enhancements.inventory_enhancements.stock_scan_rules import SCAN_ROLES
+
+		page = _json(APP / "inventory_enhancements" / "page" / "stock_scan" / "stock_scan.json")
+		self.assertEqual({row["role"] for row in page["roles"]}, set(SCAN_ROLES))
+		self.assertEqual(page["module"], "Inventory Enhancements")
+
+
+class HomeGridTest(unittest.TestCase):
+	def test_keeps_the_tiles_in_order_shown_and_at_the_top_level(self):
+		grid = dp.home_grid(_site_grid(), dp.HOME_GRIDS["Field Tech"])
+		self.assertEqual([icon["name"] for icon in grid], FIELD_TECH_TILES)
+		self.assertEqual([icon["idx"] for icon in grid], list(range(1, 9)))
+		self.assertTrue(all(icon["hidden"] == 0 and icon["parent_icon"] is None for icon in grid))
+		self.assertEqual(grid[0]["label"], "Maintenance")
+		self.assertIsInstance(grid[0], _Row)
+
+	def test_copies_rather_than_changing_frappes_list(self):
+		site = _site_grid()
+		dp.home_grid(site, dp.HOME_GRIDS["Field Tech"])
+		crm = next(icon for icon in site if icon["name"] == "CRM")
+		self.assertEqual((crm["hidden"], crm["parent_icon"], crm["idx"]), (1, "ERPNext", 1))
+
+	def test_a_tile_frappe_refused_stays_out(self):
+		"""It hides; it never grants. A tile not in frappe's list for this person is not added."""
+		site = [icon for icon in _site_grid() if icon["name"] != "Stock Scan"]
+		grid = dp.home_grid(site, dp.HOME_GRIDS["Field Tech"])
+		self.assertEqual([icon["name"] for icon in grid], FIELD_TECH_TILES[:-1])
+
+	def test_none_of_them_leaves_the_grid_alone(self):
+		self.assertIsNone(dp.home_grid([_icon("Buying")], dp.HOME_GRIDS["Field Tech"]))
+		self.assertIsNone(dp.home_grid([], dp.HOME_GRIDS["Field Tech"]))
+
+
+class TrimHomeGridTest(unittest.TestCase):
+	"""Prod's people on 2026-10-27, by the Role Profiles they hold."""
+
+	def setUp(self):
+		_reset(with_docks=False)
+		_user("tech@x", ("Production Team", "Training Learner"))
+		_user("lead@x", ("Production Team", "Projects & Operations", "Maintenance Supervisor"))
+		_user("finance@x", ("Finance Team", "Production Team", "Maintenance Reviewer"))
+		_user("designer@x", ("Design Team", "Production Team"))
+		_user("ops@x")
+		_user("sales@x", ("Sales", "Sales Team"))
+
+	def _boot(self, user, roles=()):
+		dp.frappe.session.user = user
+		STATE["roles"][user] = roles
+		bootinfo = {"desktop_icons": _site_grid()}
+		dp.trim_home_grid(bootinfo)
+		return [icon["name"] for icon in bootinfo["desktop_icons"]]
+
+	def tearDown(self):
+		dp.frappe.session.user = "Administrator"
+
+	def test_a_technician_gets_the_eight(self):
+		self.assertEqual(self._boot("tech@x", ("Production Team", "Maintenance Manager")), FIELD_TECH_TILES)
+		self.assertEqual(STATE["errors"], [])
+
+	def test_production_team_alongside_another_job_keeps_the_whole_grid(self):
+		whole = [icon["name"] for icon in _site_grid()]
+		for person in ("lead@x", "finance@x", "designer@x", "ops@x", "sales@x"):
+			with self.subTest(person=person):
+				self.assertEqual(self._boot(person, ("Production Team",)), whole)
+
+	def test_the_dock_profile_on_the_user_form_decides_both_ways(self):
+		_user("marketing@x", ("Sales Team",), chosen="Field Tech")
+		_user("tech2@x", ("Production Team",), chosen="Site Default")
+		self.assertEqual(self._boot("marketing@x"), FIELD_TECH_TILES)
+		self.assertEqual(len(self._boot("tech2@x")), len(_site_grid()))
+
+	def test_system_and_workspace_managers_keep_the_whole_grid(self):
+		for role in ("System Manager", "Workspace Manager"):
+			with self.subTest(role=role):
+				self.assertEqual(len(self._boot("tech@x", ("Production Team", role))), len(_site_grid()))
+
+	def test_the_apps_screen_has_no_grid_to_cut(self):
+		dp.frappe.session.user = "tech@x"
+		bootinfo = {}
+		dp.trim_home_grid(bootinfo)
+		self.assertEqual(bootinfo, {})
+		self.assertEqual(STATE["errors"], [])
+
+	def test_administrator_and_a_disabled_or_unknown_user_are_left_alone(self):
+		STATE["users"][0]["enabled"] = 0
+		for person in ("Administrator", "tech@x", "nobody@x"):
+			with self.subTest(person=person):
+				self.assertEqual(len(self._boot(person)), len(_site_grid()))
+
+	def test_never_raises(self):
+		STATE["fail_get_all"].add("User")
+		self.assertEqual(len(self._boot("tech@x")), len(_site_grid()))
+		self.assertEqual(STATE["errors"], ["Home grid not trimmed at boot"])
+
+
 class WiringTest(unittest.TestCase):
 	def setUp(self):
 		self.hooks = HOOKS.read_text(encoding="utf-8")
+
+	def test_boot_trims_the_home_grid(self):
+		"""``extend_bootinfo`` runs on every boot, cached or not, after frappe built the grid."""
+		self.assertIn('extend_bootinfo = "erpnext_enhancements.boot.boot_session"', self.hooks)
+		boot = BOOT.read_text(encoding="utf-8")
+		body = boot[boot.index("def boot_session(bootinfo):") :]
+		body = body[: body.index("\ndef ")]
+		self.assertIn("\n\ttrim_home_grid(bootinfo)\n", body)
+		self.assertIn("from erpnext_enhancements.setup.dock_profiles import trim_home_grid", boot)
 
 	def test_after_migrate_applies_the_profiles(self):
 		block = self.hooks[self.hooks.index("\nafter_migrate = [") :]
