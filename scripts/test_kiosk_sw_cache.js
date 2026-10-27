@@ -27,13 +27,15 @@
  *     session merely expired, and the worker deletes what it kept;
  *   - **an answer is kept only when the server's echo names the person the page claims**;
  *   - **one person's answers on the phone at a time**;
- *   - **a sign-out forgets everything** (answers, the page, queued points), answers the request
- *     unchanged, and tells open kiosk windows; anything else forgets nothing;
+ *   - **a sign-out uploads queued points first, then, only if the server accepted it, forgets the
+ *     answers and the page**, answers the request unchanged, and tells open kiosk windows; a
+ *     failed sign-out, or anything else, forgets nothing;
  *   - **nothing asked for before a forget is kept after it** (the epoch);
  *   - **a /kiosk load sent to the login page forgets the answers and the page**, not the queued
  *     points;
- *   - **each person's queued points upload under their own marker only**, wait for them, and go
- *     when somebody else's kiosk takes the phone;
+ *   - **each person's queued points upload under their own marker only**: they wait, untouched,
+ *     while somebody else has the phone, and go up when their own person comes back (Nik,
+ *     2026-10-27); only a full phone drops any, the oldest first;
  *   - **a deploy still drops the previous deploy's answers**;
  *   - **the email never reaches the server**, and the cache key's parameter never does either.
  *
@@ -209,7 +211,7 @@ const indexedDB = {
 			const handle = {
 				objectStoreNames: { contains: (n) => db.stores.has(n) },
 				createObjectStore: (n, opts) => db.stores.set(n, { keyPath: opts.keyPath, rows: new Map() }),
-				transaction: (n) => ({ objectStore: () => storeApi(db.stores.get(n)) }),
+				transaction: (n) => ({ objectStore: () => storeApi(db.stores.get(n), n) }),
 			};
 			if (upgrade) {
 				db.version = version;
@@ -233,9 +235,20 @@ function idbRequest(fn) {
 	});
 	return req;
 }
-function storeApi(s) {
+// Rows a store may hold before a put answers QuotaExceededError (a full phone), by store name.
+let idbQuota = {};
+function storeApi(s, name) {
 	return {
-		put: (v) => idbRequest(() => s.rows.set(v[s.keyPath], JSON.parse(JSON.stringify(v)))),
+		put: (v) =>
+			idbRequest(() => {
+				const key = v[s.keyPath];
+				if (idbQuota[name] && s.rows.size >= idbQuota[name] && !s.rows.has(key)) {
+					const e = new Error("The quota has been exceeded.");
+					e.name = "QuotaExceededError";
+					throw e;
+				}
+				s.rows.set(key, JSON.parse(JSON.stringify(v)));
+			}),
 		get: (k) => idbRequest(() => s.rows.get(k)),
 		getAll: () => idbRequest(() => [...s.rows.values()]),
 		delete: (k) => idbRequest(() => s.rows.delete(k)),
@@ -261,6 +274,7 @@ const net = {
 	session: null, // who the browser's sid is signed in as, or null
 	jar: {}, // the browser's cookies that matter here: ee_kiosk_key
 	logged: [], // Time Kiosk Log rows: "<client_id>:<whose session>"
+	batchKeys: [], // the offline_key of every batch that reached the server: "pat", "sam" or "-"
 	log: [], // every request that left the phone: "METHOD path?query"
 	sentHeaders: [], // every X-Kiosk-Key value the server saw
 	holdNext: false,
@@ -339,6 +353,7 @@ const net = {
 		return new FakeResponse(`asset ${url.pathname}`);
 	},
 	batch(body) {
+		net.batchKeys.push(body.offline_key === PATK ? "pat" : body.offline_key === SAMK ? "sam" : body.offline_key || "-");
 		if (!net.session) return new FakeResponse("", { status: 403 });
 		const points = body.points || [];
 		// log_geolocation_batch -> kiosk_offline.belongs_to_session
@@ -465,7 +480,8 @@ const call = (worker, page, url) => request(worker, url, { key: askingKey(page) 
 let seq = 0;
 async function queuePoint(worker, page) {
 	const id = `pt${++seq}`;
-	await message(worker, "enqueue", { client_id: id, latitude: 40.7, longitude: -111.9, owner: page.key });
+	const timestamp = `2026-10-27 10:${String(Math.floor(seq / 60)).padStart(2, "0")}:${String(seq % 60).padStart(2, "0")}`;
+	await message(worker, "enqueue", { client_id: id, timestamp, latitude: 40.7, longitude: -111.9, owner: page.key });
 	return id;
 }
 
@@ -502,8 +518,9 @@ function reset() {
 	store.clear();
 	idb.clear();
 	windows = [];
-	Object.assign(net, { online: true, session: null, jar: {}, logged: [], log: [], sentHeaders: [], holdNext: false, holdBeforeNext: false, failLogout: 0, held: [], gateway: 0 });
+	Object.assign(net, { online: true, session: null, jar: {}, logged: [], batchKeys: [], log: [], sentHeaders: [], holdNext: false, holdBeforeNext: false, failLogout: 0, held: [], gateway: 0 });
 	pauseKeys = null;
+	idbQuota = {};
 }
 
 // A fresh phone with this deploy's worker, and Pat signed in and through every screen online.
@@ -576,13 +593,14 @@ for (const [route, how] of [
 		check("the kept page (Pat's) refuses to draw", [page.user, page.refused], [PAT, true]);
 		check("… and the worker deleted every kept answer", keptAnswers(), []);
 		check("… and the kept page", hasShell(), false);
-		check("… and Pat's queued points", queuedPoints(), []);
+		check("… but Pat's queued point is kept, for Pat (Nik, 2026-10-27)", queuedPoints(), [`${id}:pat`]);
 		check("a request still claiming Pat gets nothing", (await request(w, DAY, { key: PATK })).status, 504);
 		const again = await openKiosk(w);
 		check("opening it again offline finds nothing kept", [again.status, again.body], [503, "Offline"]);
 		net.online = true;
 		const sams = await openKiosk(w);
 		check("online, Sam gets Sam's own kiosk", [sams.user, sams.refused], [SAM, false]);
+		check("… and Pat's point is neither sent nor filed under Sam", [net.logged, net.batchKeys.includes("pat"), queuedPoints()], [[], false, [`${id}:pat`]]);
 	});
 }
 
@@ -815,29 +833,49 @@ scenario("each person's queued points go up under their own marker only", async 
 	check("… and leave the queue", queuedPoints(), []);
 });
 
-scenario("somebody else's kiosk taking the phone deletes the last person's points", async () => {
+scenario("the last person's points wait for them while somebody else has the phone", async () => {
 	const { w } = await patsPhone();
 	const pats = await openKiosk(w);
 	net.online = false;
-	await queuePoint(w, pats);
+	const a = await queuePoint(w, pats);
 	net.online = true;
 	net.expire();
 	await signIn(w, SAM);
+	const sams = await openKiosk(w);
+	check("Sam's kiosk has the phone; Pat's point is kept, still Pat's", queuedPoints(), [`${a}:pat`]);
+	const own = await queuePoint(w, sams);
+	check("Sam's own point goes up as Sam's", net.logged, [`${own}:sam`]);
+	check("no batch of Pat's ever left the phone under Sam", net.batchKeys.includes("pat"), false);
+	await request(w, "/api/method/logout", { method: "POST" });
+	check("Sam signing out keeps Pat's point too", queuedPoints(), [`${a}:pat`]);
+	await signIn(w, PAT);
 	await openKiosk(w);
-	check("Sam's kiosk configured the worker, and Pat's point is gone", queuedPoints(), []);
-	await message(w, "flush");
-	check("nothing of Pat's was ever filed", net.logged, []);
+	check("Pat signs in again and opens the kiosk: Pat's point goes up, as Pat's", net.logged, [`${own}:sam`, `${a}:pat`]);
+	check("… and leaves the queue", queuedPoints(), []);
 });
 
 scenario("points queued before this release (no marker) upload as before", async () => {
 	const { w } = await patsPhone();
 	net.online = false;
-	await message(w, "enqueue", { client_id: "legacy1", latitude: 40.7, longitude: -111.9 });
+	await message(w, "enqueue", { client_id: "legacy1", timestamp: "2026-10-27 09:00:00", latitude: 40.7, longitude: -111.9 });
 	net.online = true;
 	await message(w, "config", { csrf_token: "csrf", max_batch_size: 50, owner: PATK });
-	check("a person's kiosk leaves untagged points alone", queuedPoints(), ["legacy1:-"]);
-	await message(w, "flush");
-	check("they upload under the session, with no offline_key", net.logged, ["legacy1:pat"]);
+	check("a kiosk taking the phone sends them under the session, with no offline_key", [net.logged, net.batchKeys], [["legacy1:pat"], ["-"]]);
+	check("… and they leave the queue", queuedPoints(), []);
+});
+
+scenario("a full phone drops the oldest queued points first, and only then", async () => {
+	const { w } = await patsPhone();
+	const pats = await openKiosk(w);
+	net.online = false;
+	idbQuota = { GeoQueue: 3 };
+	const ids = [];
+	for (let i = 0; i < 3; i++) ids.push(await queuePoint(w, pats));
+	check("room for three: all three kept", queuedPoints(), ids.map((id) => `${id}:pat`).sort());
+	ids.push(await queuePoint(w, pats));
+	check("a fourth on a full phone: the oldest goes, the newest is kept", queuedPoints(), ids.slice(1).map((id) => `${id}:pat`).sort());
+	ids.push(await queuePoint(w, pats));
+	check("and again: oldest first", queuedPoints(), ids.slice(2).map((id) => `${id}:pat`).sort());
 });
 
 scenario("a deploy drops the previous deploy's answers", async () => {

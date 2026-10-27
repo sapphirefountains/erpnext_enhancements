@@ -60,10 +60,10 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
       - A sign-out is now passed through and its answer returned unchanged. First the worker
         uploads what is queued, while the session that owns it still exists (waiting at most
         5 seconds). Then, **only when the server accepted the sign-out**, it deletes every kept
-        answer, the kept page and every point still queued, and tells open `/kiosk` windows to
-        reload. A sign-out that failed (no signal, a server error) leaves the session and the
-        marker alive, so it deletes nothing: the person who is still signed in keeps their kiosk
-        and their unsent points.
+        answer and the kept page, and tells open `/kiosk` windows to reload. It never deletes
+        queued points: any it could not send wait for their person. A sign-out that failed (no
+        signal, a server error) leaves the session and the marker alive, so it deletes nothing:
+        the person who is still signed in keeps their kiosk.
       - A `/kiosk` load answered with a redirect forgets the answers and the page.
       - Only a real (200) page is kept. Before, whatever came back was kept, a redirect included.
       - An **epoch** stops an answer or page that was in flight during a forget from being kept
@@ -75,16 +75,23 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
         rejected `other_person`, which is transient, so the points stay queued.
       - Before, Pat's unsent points, flushed after Sam signed in, were filed as Sam's
         `Time Kiosk Log` rows with no interval.
-      - **Another person's points are deleted** when somebody else's kiosk takes the phone. They
-        can never be uploaded under that session, and raw positions should not linger on a shared
-        phone. They upload normally if their own person signs back in first.
-      - A sign-out the server accepts deletes every point still queued, after first trying to
-        upload them.
+      - **Another person's points wait for them.** Nik decided on 2026-10-27: "Keep them until
+        the previous person signs in again, then upload them." The worker uploads only the points
+        of the person whose kiosk has the phone now. Everybody else's stay queued, still tagged,
+        with no expiry, and go up the next time their own person's kiosk opens on the phone:
+        the kiosk's `config` message also sends what that person left queued. They never leave the
+        phone under anybody else's session, and the server's `other_person` refusal is the
+        backstop if the worker is wrong about who has the phone.
+      - **The one drop is a phone out of storage.** When IndexedDB refuses a new point
+        (`QuotaExceededError`), the oldest tenth of the queue goes, oldest first by timestamp,
+        and the new point is stored.
+      - A sign-out never deletes queued points; it first tries to upload them.
       - Points queued before this release carry no marker and upload as before.
     - **Settings → Sign out** (new). The installed app has no address bar, so it had no way to
       hand the phone over. The button asks first. It warns when you are still clocked in, since
       signing out does not clock you out, and says how many location points and photos have not
-      uploaded yet. It then posts `/api/method/logout` and reloads: the kiosk never writes the
+      uploaded yet (points stay on the phone for that person; photos should be left to finish).
+      It then posts `/api/method/logout` and reloads: the kiosk never writes the
       URL, and `/kiosk` sends a signed-out visitor to the sign-in page.
     - **The marker's `Secure` flag follows the request's scheme**, exactly as frappe's own cookies
       do, not the site's configured address. A `Secure` cookie set over plain http is dropped, and
@@ -103,7 +110,7 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
   - **Tests:**
     - `scripts/test_kiosk_sw_cache.js` (new) runs the real worker over a stand-in phone and server.
       The phone has Cache Storage, IndexedDB, open windows and a cookie jar. The server behaves
-      like frappe and `kiosk_offline`. **113 checks over 25 scenarios**, including:
+      like frappe and `kiosk_offline`. **123 checks over 26 scenarios**, including:
       - expiry followed by a new sign-in through the password form, `POST /` `cmd=login`, and a
         Google-style GET redirect, each followed by an offline open;
       - a sign-out from desk, `/logout`, `web_logout`, v2 and Settings;
@@ -113,10 +120,12 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
       - answers and pages in flight during a sign-out, an answer that lands while the logout is
         on its way, and a sign-out that lands while an answer is being saved;
       - a gateway 502 on `/kiosk`;
-      - the location queue under two people;
+      - the location queue under two people: the last person's points wait while somebody else
+        has the phone, survive that person's sign-out, and go up when their own person comes
+        back; a full phone drops the oldest first;
       - a deploy;
       - a worker restart.
-      Against main's worker, 50 checks fail. A mutation sweep removing each of the new guards in
+      Against main's worker, 51 checks fail. A mutation sweep removing each of the new guards in
       turn is caught every time, both epoch checks in `keepAnswer` included. A run that stops
       before every scenario has finished now exits 1, so a promise that never settles cannot pass
       the bare `node` CI step.

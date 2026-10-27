@@ -152,8 +152,8 @@
       fix_source: source || 'Watch',
       device_agent: navigator.userAgent,
       // Whose point this is: kiosk-sw.js uploads each person's points under their own key
-      // only, and deletes them if somebody else's kiosk takes the phone. Not sent to the server
-      // as part of the point.
+      // only, and keeps them while somebody else's kiosk has the phone, until their own person
+      // comes back. Not sent to the server as part of the point.
       owner: state.owner,
     };
   }

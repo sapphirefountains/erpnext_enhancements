@@ -26,12 +26,13 @@
  *               (+ /kiosk-manifest.json) → cache-first with background refresh.
  *               A sign-out POST uploads queued points first, is passed on and
  *               answered unchanged, and, only when the server accepted it,
- *               forgets every kept answer, the kept shell and every queued point,
- *               then tells open kiosk windows; every other non-GET or cross-origin
- *               request is passed through.
- *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB and drops
- *               anybody else's queued points; 'forget' forgets what is kept for a
- *               person the marker cookie no longer names; 'enqueue' persists a
+ *               forgets every kept answer and the kept shell, then tells open
+ *               kiosk windows; queued points are never deleted by it. Every other
+ *               non-GET or cross-origin request is passed through.
+ *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB and whose
+ *               kiosk has the phone (only that person's queued points upload);
+ *               'forget' forgets what is kept for a person the marker cookie no
+ *               longer names; 'enqueue' persists a
  *               point and tries to flush; 'flush' flushes on demand; 'stats'
  *               answers { queued } over the MessageChannel port the page sends
  *               with it (the Settings tab's diagnostics).
@@ -134,13 +135,29 @@ function tx(db, store, mode) {
   return db.transaction(store, mode).objectStore(store);
 }
 
-async function putPoint(point) {
+async function putPointOnce(point) {
   const db = await openDB();
   return new Promise((res, rej) => {
     const r = tx(db, QUEUE_STORE, 'readwrite').put(point);
     r.onsuccess = res;
     r.onerror = () => rej(r.error);
   });
+}
+
+// Queued points are never dropped on a timer or for belonging to somebody else
+// (they wait for their own person: see "What the kiosk keeps"). The one exception
+// is a phone out of storage: then the oldest tenth of the queue goes, oldest
+// first by timestamp, to make room for the new point.
+async function putPoint(point) {
+  try {
+    await putPointOnce(point);
+  } catch (e) {
+    if (!e || e.name !== 'QuotaExceededError') throw e;
+    const queued = (await getAllPoints())
+      .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+    await deletePoints(queued.slice(0, Math.max(1, Math.ceil(queued.length / 10))).map((q) => q.client_id));
+    await putPointOnce(point);
+  }
 }
 
 async function getAllPoints() {
@@ -195,14 +212,18 @@ async function flushQueue() {
     const csrf = await getMeta('csrf_token');
     const batchSize = (await getMeta('max_batch_size')) || 50;
 
-    // One run of batches per person the points were queued for, each sent with that
-    // person's marker as offline_key. The server refuses a batch for anybody but the
-    // session's user (every point rejected other_person, a transient reject), so one
-    // person's unsent positions are never filed as another's; they wait for their own
-    // person, or go when somebody else's kiosk takes the phone (dropPointsNotOf).
+    // Only the points of the person whose kiosk has the phone now (the marker the
+    // page last configured, 'owner'), sent with that marker as offline_key, plus
+    // points queued before markers existed. Anybody else's stay queued, untouched,
+    // until their own person's kiosk configures the worker again (Nik, 2026-10-27:
+    // "Keep them until the previous person signs in again, then upload them"). They
+    // never leave the phone under somebody else's session: if 'owner' is stale, the
+    // server refuses the batch (other_person, a transient reject) as the backstop.
+    const current = (await getMeta('owner')) || '';
     const byOwner = new Map();
     for (const p of await getAllPoints()) {
       const owner = p.owner || '';
+      if (owner && owner !== current) continue;
       if (!byOwner.has(owner)) byOwner.set(owner, []);
       byOwner.get(owner).push(p);
     }
@@ -279,18 +300,21 @@ async function ensureSync() {
 //     looks only under the marker the asking page names;
 //   - keeping an answer for somebody new forgets everybody else's (keepAnswer);
 //   - a sign-out uploads what is queued first and, once the server has accepted
-//     it, forgets every answer, the kept page and every point still queued, then
-//     tells any open kiosk window (signOut); a sign-out that failed forgets nothing; /kiosk answered with a redirect (the
-//     server says nobody is signed in) forgets the answers and the page; and a page
-//     that finds itself drawn for somebody the marker cookie no longer names asks
-//     for the same ('forget');
+//     it, forgets every answer and the kept page, then tells any open kiosk window
+//     (signOut); a sign-out that failed forgets nothing. /kiosk answered with a
+//     redirect (the server says nobody is signed in) forgets the answers and the
+//     page, and so does a page that finds itself drawn for somebody the marker
+//     cookie no longer names ('forget');
 //   - a queued location point carries its person's marker, is uploaded under that
 //     marker only (the server refuses another person's: other_person), and is
-//     deleted when somebody else's kiosk takes the phone ('config' / 'forget').
+//     kept, untouched, while somebody else's kiosk has the phone, and uploaded
+//     the next time its own person's kiosk configures the worker ('config'); only
+//     a phone out of storage drops any, the oldest first (putPoint).
 // Answers and the page live in CACHE, so a deploy's activate still drops them.
 // The worker cannot read cookies (not every browser lets one), so it never decides
 // who is signed in: the page reads the marker cookie and says. Any script on the
-// site could send any KEY_HEADER; the echo check and the deletes are the control.
+// site could send any KEY_HEADER; the echo check, the server's other_person refusal
+// and the deletes are the control.
 
 // Whose answers are kept, as last seen. A hint only: the worker is stopped when it
 // is idle and this is lost, after which the next keep looks at every entry.
@@ -348,13 +372,6 @@ async function forgetKept() {
   await forgetAnswers(null, true);
 }
 
-// Queued points tagged for anybody but `owner` ('' = everybody tagged). A point
-// queued before v1.753.2 carries no marker and is left to upload as before.
-async function dropPointsNotOf(owner) {
-  const points = await getAllPoints();
-  await deletePoints(points.filter((p) => p.owner && p.owner !== owner).map((p) => p.client_id));
-}
-
 async function tellKioskWindows() {
   const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   for (const w of windows) {
@@ -371,11 +388,13 @@ const FLUSH_BEFORE_SIGN_OUT_MS = 5000;
 // back unchanged. Only when the server accepted it is anything forgotten: every
 // kept answer and the kept page (forgetKept bumps the epoch, so nothing fetched
 // before now is kept when it lands, and whatever landed while the logout was on
-// its way goes with the rest), every point still queued (raw positions do not
-// outlive a sign-out), and then open kiosk windows are told, and reload into the
-// sign-in page. A sign-out that failed (no signal, a server error) left the session
-// and the marker cookie alive: deleting then would protect nobody, and would cost
-// the person still signed in their kept kiosk and their unsent points.
+// its way goes with the rest), and nobody's kiosk has the phone any more ('owner'),
+// and then open kiosk windows are told, and reload into the sign-in page. Queued
+// points are never deleted here: any the upload could not send stay tagged, and go
+// up the next time their person's kiosk configures the worker. A sign-out that
+// failed (no signal, a server error) left the session and the marker cookie alive:
+// forgetting then would protect nobody and cost the person still signed in their
+// kept kiosk.
 async function signOut(req) {
   let timer;
   await Promise.race([
@@ -386,7 +405,7 @@ async function signOut(req) {
   const res = await fetch(req);
   if (res.ok) {
     await forgetKept().catch(() => {});
-    await getAllPoints().then((points) => deletePoints(points.map((p) => p.client_id))).catch(() => {});
+    await setMeta('owner', '').catch(() => {});
     await tellKioskWindows().catch(() => {});
   }
   return res;
@@ -530,9 +549,11 @@ self.addEventListener('fetch', (event) => {
 // --- Messaging from the page ----------------------------------------------
 // The page (geo.js) drives the worker via postMessage({ type, data }):
 //   config  → persist csrf_token / max_batch_size for later uploads; with owner (the
-//             page's offline marker), delete queued points tagged for anybody else
+//             page's offline marker), record whose kiosk has the phone now: only
+//             that person's queued points are uploaded, anybody else's wait
 //   forget  → (app.js showSignedOut) forget every kept answer and the kept page, and
-//             queued points tagged for anybody but data.owner (whom the cookie names)
+//             record data.owner (whom the cookie names now) as having the phone;
+//             queued points are kept
 //   enqueue → store one point (tagged with its person's marker, geo.js), then
 //             attempt an immediate flush
 //   flush   → flush the queue on demand (e.g. on reconnect / app resume)
@@ -552,16 +573,20 @@ self.addEventListener('message', (event) => {
     event.waitUntil((async () => {
       if (data.csrf_token) await setMeta('csrf_token', data.csrf_token);
       if (data.max_batch_size) await setMeta('max_batch_size', data.max_batch_size);
-      // The page's person now has the phone: anybody else's queued points can never
-      // be uploaded under this session, so they go rather than linger.
-      if (data.owner) await dropPointsNotOf(data.owner);
+      // Whose kiosk has the phone now: flushQueue uploads only this person's points.
+      // Anybody else's stay queued for them. Then send what this person left
+      // queued, so points kept from an earlier session go up when they come back,
+      // not only once they next clock in (with nothing queued, nothing is sent).
+      if ('owner' in data) await setMeta('owner', data.owner || '');
+      if (data.owner && !(await flushQueue())) await ensureSync();
     })());
   } else if (type === 'forget') {
     // A page drawn for somebody the marker cookie no longer names (app.js
     // showSignedOut). data.owner is whom the cookie names now ('' for nobody).
+    // Queued points are kept, for their own person's next sign-in.
     event.waitUntil((async () => {
       await forgetKept();
-      await dropPointsNotOf((data && data.owner) || '');
+      await setMeta('owner', (data && data.owner) || '');
     })());
   } else if (type === 'enqueue') {
     event.waitUntil((async () => {

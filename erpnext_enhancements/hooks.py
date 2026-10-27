@@ -3039,7 +3039,8 @@ auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_a
 #
 # The Time Kiosk's marker (v1.753.2) is the same pattern for /kiosk: www/kiosk.py sets
 # `ee_kiosk_key`, a kept kiosk page whose boot key is not the cookie's refuses to draw and has
-# kiosk-sw.js delete what it keeps (answers, the page, queued points), and the same two hooks
+# kiosk-sw.js delete what it keeps (answers and the page; queued points wait for their own
+# person), and the same two hooks
 # remove it. on_login is what covers a session that expired followed by somebody else's sign-in by
 # ANY route, including the GET ones (login_via_google, which is how Sapphire signs in, and
 # login_via_key all reach post_login). See workforce/kiosk_offline.py.

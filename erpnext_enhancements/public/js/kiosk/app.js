@@ -1532,8 +1532,9 @@
     navigator.serviceWorker.ready.then(function (reg) {
       var target = reg.active || navigator.serviceWorker.controller;
       if (target) {
-        // owner: the worker deletes queued points tagged for anybody else (they can never be
-        // uploaded under this session).
+        // owner: whose kiosk has the phone now. The worker uploads only this person's queued
+        // points (and sends any they left from an earlier session); anybody else's wait for
+        // them.
         target.postMessage({
           type: 'config',
           data: { csrf_token: CSRF, max_batch_size: SETTINGS.max_batch_size || 50, owner: askingKey() },
@@ -1616,10 +1617,8 @@
     return Promise.resolve(queued).catch(function () { return 0; }).then(function (points) {
       var lines = [];
       if (clockedIn) lines.push('You’re still clocked in. Signing out does not clock you out.');
-      if (points || photos) {
-        lines.push('Not uploaded yet: ' + [points ? plural(points, 'location point') : '', photos ? plural(photos, 'photo') : '']
-          .filter(Boolean).join(' and ') + '. Wait for them to send before you sign out.');
-      }
+      if (points) lines.push(plural(points, 'location point') + ' not uploaded yet: they stay on this phone and go up the next time you open the kiosk here.');
+      if (photos) lines.push(plural(photos, 'photo') + ' not uploaded yet: wait for them to send before you sign out.');
       if (!lines.length) lines.push('Anything the kiosk saved on this phone is deleted, so the next person can sign in.');
       return UI.ask({ title: 'Sign out?', message: lines.join(' '), ok: 'Sign out', okKind: 'stop', cancel: 'Cancel' });
     }).then(function (yes) {

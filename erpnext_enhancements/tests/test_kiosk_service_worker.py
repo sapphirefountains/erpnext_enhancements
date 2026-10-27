@@ -416,7 +416,14 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
         self.assertLess(body.index("flushQueue()"), body.index("await fetch(req)"))
         self.assertIn("setTimeout(resolve, FLUSH_BEFORE_SIGN_OUT_MS)", body)
         guarded = body[body.index("if (res.ok) {") :]
-        for step in ("await forgetKept().catch(() => {});", "deletePoints(", "await tellKioskWindows().catch(() => {});"):
+        # Queued points are never deleted by a sign-out: they were offered for upload first, and
+        # any left wait for their own person (Nik, 2026-10-27).
+        self.assertNotIn("deletePoints(", body)
+        for step in (
+            "await forgetKept().catch(() => {});",
+            "await setMeta('owner', '').catch(() => {});",
+            "await tellKioskWindows().catch(() => {});",
+        ):
             self.assertIn(step, guarded)
             self.assertEqual(body.count(step), 1, f"{step} happens outside the res.ok guard")
         self.assertNotIn("finally", body)
@@ -435,7 +442,17 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
         )
         code = _code()
         self.assertIn("JSON.stringify(owner ? { points: batch, offline_key: owner } : { points: batch })", code)
-        self.assertIn("if (data.owner) await dropPointsNotOf(data.owner);", code)
+        # Nik, 2026-10-27: another person's points are kept until they sign in again, then sent.
+        # The worker uploads only the points of whoever's kiosk has the phone, and nothing deletes
+        # anybody's points for belonging to somebody else.
+        self.assertIn("if ('owner' in data) await setMeta('owner', data.owner || '');", code)
+        self.assertIn("if (data.owner && !(await flushQueue())) await ensureSync();", code)
+        self.assertIn("if (owner && owner !== current) continue;", _function("async function flushQueue"))
+        self.assertNotIn("dropPointsNotOf", code)
+        # The one drop: a phone out of storage, oldest first.
+        put = _function("async function putPoint(point)")
+        self.assertIn("e.name !== 'QuotaExceededError'", put)
+        self.assertIn("String(a.timestamp).localeCompare(String(b.timestamp))", put)
 
     def test_settings_has_a_sign_out(self):
         """The installed app has no address bar: without it there is no way to hand
