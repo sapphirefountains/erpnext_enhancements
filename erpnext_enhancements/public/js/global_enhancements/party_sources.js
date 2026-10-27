@@ -24,6 +24,50 @@ export function is_account_doctype(doctype) {
 }
 
 /**
+ * The Account / Supplier column (v1.746.0, TASK-2026-02942): what a directory row says about whose
+ * person or address it is, for both faces. It replaced "Linked To", every party the row is linked
+ * to by ID, so someone on five jobs showed five Projects beside the one company they work for.
+ *
+ * `accounts` is the row's `accounts` from sync_contact (`_account_links`): its Customers and
+ * Suppliers as [{doctype, name, title}], Customers first, then title order. `doctype` / `name` are
+ * the open record's. Returns what to show, in order, or [] when the row is on neither (both faces
+ * then show a muted "None", which keeps one filed only under a job visible for cleanup):
+ *
+ *   {own: true, words}  the open Customer or Supplier itself, first and unlinked. It is on nearly
+ *                       every row of its own form, and dropping it would leave a row that belongs
+ *                       only to it reading "None". `words` is "This account" or "This supplier",
+ *                       English for the face's __(): written out, because Customer's label on this
+ *                       site is the plural "Accounts".
+ *   {own: false, doctype, name, label, hover, tag}
+ *                       any other: `label` is the display name (the ID when blank), `hover` the ID
+ *                       when it differs, `tag` "Supplier" (English, for __()) on a Supplier and null
+ *                       on a Customer: the small tag that tells the two kinds apart.
+ *
+ * Plain data, never markup: each face escapes or writes it as text.
+ */
+export function account_entries(accounts, doctype, name) {
+	const list = Array.isArray(accounts) ? accounts.filter((a) => a && a.doctype && a.name) : [];
+	const is_own = (a) => is_account_doctype(doctype) && a.doctype === doctype && a.name === name;
+	const own = list
+		.filter(is_own)
+		.map((a) => ({ own: true, words: a.doctype === "Supplier" ? "This supplier" : "This account" }));
+	const others = list
+		.filter((a) => !is_own(a))
+		.map((a) => {
+			const label = a.title || a.name;
+			return {
+				own: false,
+				doctype: a.doctype,
+				name: a.name,
+				label: label,
+				hover: label !== a.name ? a.name : null,
+				tag: a.doctype === "Supplier" ? "Supplier" : null,
+			};
+		});
+	return own.concat(others);
+}
+
+/**
  * Every party the record draws its directory from: the record itself, its Customer or Supplier, the
  * deal a Project was won from, its party (party_type, or an Opportunity's opportunity_from), and each
  * table row naming a party or a Dynamic Link. De-duplicated on the (doctype, name) PAIR: keying on

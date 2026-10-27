@@ -10,17 +10,22 @@
  * supplier", and then for the address table to match. Both tables now draw the column with
  * `accounts_cell`, from the `accounts` that `sync_contact.get_contacts_for_context` and
  * `get_addresses_for_context` put on each row (the server half is `AccountColumnTest` in
- * tests/test_contact_endpoint_permissions.py). This runs the real method against the v16
- * helpers it calls, on a Project form and on the Customer and Supplier forms, where the open
- * party is kept quiet. Every name here is invented.
+ * tests/test_contact_endpoint_permissions.py), by the rule in party_sources.js
+ * (`account_entries`), which the guided page's People & places list follows too
+ * (tests/test_guided_record_tools.py runs the rule itself). This runs the real method, with the
+ * real party_sources.js installed the way erpnext_enhancements.bundle.js installs it, against the
+ * v16 helpers it calls: on a Project form, on the Customer and Supplier forms, where the open
+ * party is kept quiet, and on a tab still holding a bundle from before the rule. Every name here
+ * is invented.
  *
  * Run: node scripts/test_directory_account_column.mjs
  */
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -55,7 +60,18 @@ function test(name, fn) {
 // has them (utils.js, router.js, urllib.js). escape_html is copied, not approximated: the test
 // is about what reaches the page.
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#x60;", "=": "&#x3D;" };
-globalThis.erpnext_enhancements = {};
+
+// party_sources.js is an ES module in a package that is not "type": "module", so it is imported from a
+// copy beside a package.json that says it is (as scripts/test_party_sources.mjs does).
+const SOURCES_JS = path.join(path.dirname(CONTROLLER_JS), "party_sources.js");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "account-column-"));
+fs.writeFileSync(path.join(tmp, "package.json"), '{"type": "module"}');
+fs.copyFileSync(SOURCES_JS, path.join(tmp, "party_sources.js"));
+const party_sources = await import(pathToFileURL(path.join(tmp, "party_sources.js")).href);
+fs.rmSync(tmp, { recursive: true, force: true });
+const RULES = Object.assign({}, party_sources);
+
+globalThis.erpnext_enhancements = { party_sources: RULES };
 globalThis.__ = (text, args) =>
 	(args || []).reduce((out, value, i) => out.replace(`{${i}}`, value), text);
 globalThis.frappe = {
@@ -230,6 +246,21 @@ test("on a Project or Opportunity, the job's Customer is a normal link", () => {
 		assert.deepEqual(quiet(html), [], `${doctype}: a non-party form kept its party quiet`);
 		assert.equal(entries(html).length, 1, doctype);
 	}
+});
+
+// A tab still holding a bundle from before v1.746.0 (party_sources without account_entries, or none).
+
+test("a tab on an older bundle gets an empty cell until it reloads, not a TypeError", () => {
+	const row = { accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] };
+	try {
+		globalThis.erpnext_enhancements.party_sources = Object.assign({}, RULES, { account_entries: undefined });
+		assert.equal(cell(row), "");
+		globalThis.erpnext_enhancements.party_sources = undefined;
+		assert.equal(cell(row), "");
+	} finally {
+		globalThis.erpnext_enhancements.party_sources = RULES;
+	}
+	assert.equal(entries(cell(row)).length, 1, "the rules were not restored");
 });
 
 // Both tables use the one cell.

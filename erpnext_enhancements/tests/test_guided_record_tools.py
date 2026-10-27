@@ -192,6 +192,17 @@ out.sources = {
 	party: [ps.form_party("Opportunity", { name: "O", opportunity_from: "Prospect", party_name: "P" }), ps.form_party("Project", { name: "P", customer: "C" }), ps.form_party("Customer", { name: "C" }), ps.form_party("Opportunity", { opportunity_from: "Lead", party_name: "L" })],
 	account: [ps.is_account_doctype("Customer"), ps.is_account_doctype("Opportunity")],
 };
+// v1.746.0: the Account / Supplier rule both faces draw (every name invented).
+const acct = (doctype, name, title) => ({ doctype, name, title });
+const both = [acct("Customer", "CUST-0042", "Bluebird Water Gardens"), acct("Customer", "Harbor Plaza", ""), acct("Supplier", "Harbor Plaza", "Harbor Plaza")];
+out.accounts = {
+	project: ps.account_entries(both, "Project", "PROJ-1"),
+	customer: ps.account_entries(both, "Customer", "Harbor Plaza"),
+	supplier: ps.account_entries(both, "Supplier", "Harbor Plaza"),
+	none: [ps.account_entries([], "Customer", "X"), ps.account_entries(undefined, "Project", "P"), ps.account_entries("oops", "Project", "P"), ps.account_entries([null, { doctype: "Customer" }], "Project", "P")],
+	unsaved: ps.account_entries(both, "Customer", ""),
+	opportunity: ps.account_entries(both, "Opportunity", "CUST-0042"),
+};
 console.log(JSON.stringify(out));
 """
 
@@ -385,6 +396,79 @@ class TestTheDecisionsUnderNode(unittest.TestCase):
 			],
 		)
 		self.assertEqual(s["account"], [True, False])
+
+	def test_the_account_supplier_rule(self):
+		"""v1.746.0 (TASK-2026-02942): what both faces show for a row, from party_sources.js."""
+		a = self.out["accounts"]
+		bluebird = {
+			"own": False,
+			"doctype": "Customer",
+			"name": "CUST-0042",
+			"label": "Bluebird Water Gardens",
+			"hover": "CUST-0042",
+			"tag": None,
+		}
+		harbor_customer = {
+			"own": False,
+			"doctype": "Customer",
+			"name": "Harbor Plaza",
+			"label": "Harbor Plaza",
+			"hover": None,
+			"tag": None,
+		}
+		harbor_supplier = dict(harbor_customer, doctype="Supplier", tag="Supplier")
+		# A job: every company a link, the server's order kept, the ID on hover only when it differs.
+		self.assertEqual(a["project"], [bluebird, harbor_customer, harbor_supplier])
+		# Its own form: the party is quiet, first and unlinked; a same-named party of the other kind is not it.
+		self.assertEqual(a["customer"], [{"own": True, "words": "This account"}, bluebird, harbor_supplier])
+		self.assertEqual(a["supplier"], [{"own": True, "words": "This supplier"}, bluebird, harbor_customer])
+		# Neither: empty, which both faces show as a muted "None"; junk is dropped, not drawn.
+		self.assertEqual(a["none"], [[], [], [], []])
+		# Only a saved Customer or Supplier has an own party.
+		self.assertEqual(a["unsaved"], a["project"])
+		self.assertEqual(a["opportunity"], a["project"])
+
+
+class TestTheAccountSupplierLine(unittest.TestCase):
+	"""v1.746.0 (TASK-2026-02942): People & places says whose person or address each row is, as the
+	Desk directory's Account / Supplier column does, by the one rule in party_sources.js."""
+
+	def test_the_guided_list_draws_the_shared_rule(self):
+		code = _code(UI_JS)
+		self.assertIn("account_entries } from \"../../global_enhancements/party_sources.js\";", code)
+		self.assertIn("this.accounts_line($meta, c);", code)
+		self.assertIn("this.accounts_line($meta, a);", code)
+		self.assertIn("account_entries(record && record.accounts, this.doctype, this.name)", code)
+		self.assertNotIn("linked_to(", code)
+		self.assertNotIn('__("Linked to {0}"', code)
+
+	def test_the_guided_line_writes_text_never_markup(self):
+		code = _code(UI_JS)
+		body = code[code.index("accounts_line($meta, record) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn('.text(`${__("Account / Supplier")}:`)', body)
+		self.assertIn('.text(__("None"))', body)
+		self.assertIn(".text(__(e.words))", body)
+		self.assertIn(".text(e.label)", body)
+		self.assertIn('.attr("title", e.hover)', body)
+		self.assertIn('.attr("href", frappe.utils.get_form_link(e.doctype, e.name))', body)
+		self.assertIn(".text(__(e.tag))", body)
+		for markup in (".html(", ".append(", "innerHTML", "`<"):
+			self.assertNotIn(markup, body)
+
+	def test_the_desk_cell_draws_the_same_rule_behind_the_bundle_guard(self):
+		code = _code(CONTROLLER_JS)
+		self.assertIn('if (!rules || typeof rules.account_entries !== "function") return "";', code)
+		self.assertIn(
+			"rules.account_entries(record && record.accounts, frm.doctype, frm.doc && frm.doc.name)", code
+		)
+
+	def test_the_links_are_styled_as_links(self):
+		css = _text(CSS)
+		rule = css[css.index(".ge-tools-account a {") :]
+		rule = rule[: rule.index("}")]
+		self.assertIn("color: var(--sf-link);", rule)
+		self.assertIn("min-height: var(--sf-touch-min);", rule)
 
 
 # ---------------------------------------------------------------------------------------- server

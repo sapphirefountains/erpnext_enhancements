@@ -408,50 +408,35 @@ erpnext_enhancements.unified_controller = {
 
 	// The Account / Supplier cell of both tables (v1.746.0, TASK-2026-02942): whose person or
 	// whose address this is. Until then the column was "Linked To", every party the record is
-	// linked to, so someone on five jobs showed five Projects and Opportunities beside the one
-	// company they work for. Now it is the Customers and Suppliers only, from the row's
-	// `accounts` (sync_contact._account_links, which also orders them): each by its display
-	// name, linked to the record, with the ID on hover. A Supplier carries a small tag, since a
-	// Customer reads "Account" on this site and the two otherwise look alike. A row on neither
-	// shows a muted "None", which keeps one filed only under a job visible for cleanup.
-	//
-	// On a Customer or Supplier form the open party is in nearly every row, so it is kept quiet
-	// rather than dropped: a muted "This account" / "This supplier", first and unlinked (you are
-	// on it). Dropping it would leave a row that belongs only to this company reading "None",
-	// which says the opposite, and keeping it tells a row of its own apart from one inherited
-	// through a Project Stakeholder row. Other companies keep their links, which is the line
-	// worth noticing there. The words are written out rather than built from __(doctype):
-	// Customer's label is the plural "Accounts". Every name is escaped: names are typed by people.
+	// linked to, by ID. What it shows is party_sources.js `account_entries`, the rule the guided
+	// page's People & places list follows too: the row's Customers and Suppliers by display name,
+	// each linked to its record with the ID on hover; a Supplier tagged, since a Customer reads
+	// "Account" on this site and the two otherwise look alike; on a Customer or Supplier form,
+	// that party a muted, unlinked "This account" / "This supplier", first; a muted "None" when
+	// there are neither. This draws it as HTML, so every name is escaped: names are typed by
+	// people. A tab still on a bundle from before v1.746.0 has no account_entries and gets an
+	// empty cell until it reloads, not a TypeError (as ee_party_rules above).
 	// scripts/test_directory_account_column.mjs runs this method.
 	accounts_cell: function (record) {
 		const esc = frappe.utils.escape_html;
-		const accounts = (record && record.accounts) || [];
-		if (!accounts.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
-		const own = this.frm && this.is_party_form() ? this.party_context() : null;
-		const is_own = (a) => !!own && a.doctype === own.doctype && a.name === own.name;
-		return accounts
-			.filter(is_own)
-			.map((a) => {
-				const words = a.doctype === "Supplier" ? __("This supplier") : __("This account");
-				return `<div class="text-muted">${esc(words)}</div>`;
+		const rules = ee_party_rules();
+		if (!rules || typeof rules.account_entries !== "function") return "";
+		const frm = this.frm || {};
+		const entries = rules.account_entries(record && record.accounts, frm.doctype, frm.doc && frm.doc.name);
+		if (!entries.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
+		return entries
+			.map((e) => {
+				if (e.own) return `<div class="text-muted">${esc(__(e.words))}</div>`;
+				const url = frappe.urllib.get_full_url(
+					`/desk/${frappe.router.slug(e.doctype)}/${encodeURIComponent(e.name)}`,
+				);
+				const hover = e.hover ? ` title="${esc(e.hover)}"` : "";
+				const tag = e.tag
+					? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__(e.tag))}</span>`
+					: "";
+				// The URL needs no escaping: encodeURIComponent leaves no quote, bracket or ampersand.
+				return `<div><a href="${url}" target="_blank"${hover}>${esc(e.label)}</a>${tag}</div>`;
 			})
-			.concat(
-				accounts
-					.filter((a) => !is_own(a))
-					.map((a) => {
-						const url = frappe.urllib.get_full_url(
-							`/desk/${frappe.router.slug(a.doctype)}/${encodeURIComponent(a.name)}`,
-						);
-						const label = a.title || a.name;
-						const hover = label !== a.name ? ` title="${esc(a.name)}"` : "";
-						const tag =
-							a.doctype === "Supplier"
-								? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__("Supplier"))}</span>`
-								: "";
-						// The URL needs no escaping: encodeURIComponent leaves no quote, bracket or ampersand.
-						return `<div><a href="${url}" target="_blank"${hover}>${esc(label)}</a>${tag}</div>`;
-					}),
-			)
 			.join("");
 	},
 

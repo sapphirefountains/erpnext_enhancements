@@ -35,7 +35,9 @@
  *                 address_list_html): the same lists through the same sync_contact endpoints, with the
  *                 same sources (global_enhancements/party_sources.js, which the form's widget calls
  *                 too), New contact / address (contacts_ux.create_for), Link existing, Import, Set
- *                 primary (the record's own field, saved through the editor), Unlink
+ *                 primary (the record's own field, saved through the editor), Unlink, and each
+ *                 row's Account / Supplier line (party_sources.js account_entries, the Desk
+ *                 table's column, v1.746.0)
  *   Connections   the dashboard's linked documents (meta.__dashboard, counts from
  *                 frappe.desk.notifications.get_open_count), each opening its list filtered to this
  *                 record
@@ -59,7 +61,7 @@ import * as rules from "../record_tools.js";
 // Imported, not read off the editor's kit: a tab that loaded an older kit bundle before a deploy has
 // a window.sf_form_kit without these.
 import * as header from "../header.js";
-import { party_sources, primary_address_field, primary_address_name, form_party, is_account_doctype } from "../../global_enhancements/party_sources.js";
+import { party_sources, primary_address_field, primary_address_name, form_party, is_account_doctype, account_entries } from "../../global_enhancements/party_sources.js";
 import * as record_actions from "../../global_enhancements/record_actions.js";
 
 const API = "erpnext_enhancements.form_kit.api.";
@@ -1254,7 +1256,7 @@ export class RecordTools {
 				const $reach = $('<div class="ge-tools-reach"></div>').appendTo($meta);
 				if (c.custom_email) $("<a></a>").attr("href", `mailto:${c.custom_email}`).text(c.custom_email).appendTo($reach);
 				if (phone) $("<a></a>").attr("href", `tel:${phone}`).text(shown_phone(phone)).appendTo($reach);
-				this.linked_to($meta, c.links);
+				this.accounts_line($meta, c);
 				const $tools = $('<div class="ge-tools-item-tools"></div>').appendTo($item);
 				if (can_set && primary !== c.name) this.button($tools, __("Set primary"), () => this.set_primary("Contact", c.name, full_name), "quiet");
 				if (perms.write) this.button($tools, __("Unlink"), () => this.unlink("Contact", c.name, full_name), "quiet");
@@ -1282,7 +1284,7 @@ export class RecordTools {
 				const $meta = $item.find(".ge-tools-item-main");
 				const kind = [a.address_type ? __(a.address_type) : "", a.address_title].filter(Boolean).join(" · ");
 				if (kind) $('<div class="ge-tools-item-meta"></div>').text(kind).appendTo($meta);
-				this.linked_to($meta, a.links);
+				this.accounts_line($meta, a);
 				const $tools = $('<div class="ge-tools-item-tools"></div>').appendTo($item);
 				if (can_set && primary !== a.name) this.button($tools, __("Set primary"), () => this.set_primary("Address", a.name, text), "quiet");
 				if (perms.write) this.button($tools, __("Unlink"), () => this.unlink("Address", a.name, text), "quiet");
@@ -1316,9 +1318,33 @@ export class RecordTools {
 		return $item;
 	}
 
-	linked_to($meta, links) {
-		const names = (links || []).map((l) => `${l.name} (${__(l.doctype)})`);
-		if (names.length) $('<div class="ge-tools-item-meta"></div>').text(__("Linked to {0}", [names.join(", ")])).appendTo($meta);
+	// The Desk directory's Account / Supplier column as a line under the contact or address
+	// (v1.746.0, TASK-2026-02942); it was "Linked to", every party by ID. The same rule decides it
+	// (party_sources.js account_entries): the Customers and Suppliers by display name, each linked
+	// to its record with the ID on hover, a Supplier tagged, this record itself a quiet "This
+	// account" / "This supplier" when it is a Customer or Supplier, and a quiet "None" when there
+	// are neither. Written as text, never markup.
+	accounts_line($meta, record) {
+		const entries = account_entries(record && record.accounts, this.doctype, this.name);
+		const $line = $('<div class="ge-tools-item-meta ge-tools-accounts"></div>').appendTo($meta);
+		$('<span class="ge-tools-accounts-label"></span>').text(`${__("Account / Supplier")}:`).appendTo($line);
+		if (!entries.length) {
+			$('<span class="ge-tools-account"></span>').text(__("None")).appendTo($line);
+			return;
+		}
+		entries.forEach((e) => {
+			const $entry = $('<span class="ge-tools-account"></span>').appendTo($line);
+			if (e.own) {
+				$entry.text(__(e.words));
+				return;
+			}
+			const $link = $('<a target="_blank" rel="noopener noreferrer"></a>')
+				.attr("href", frappe.utils.get_form_link(e.doctype, e.name))
+				.text(e.label)
+				.appendTo($entry);
+			if (e.hover) $link.attr("title", e.hover);
+			if (e.tag) $('<span class="ge-tools-badge ge-tools-badge--quiet"></span>').text(__(e.tag)).appendTo($entry);
+		});
 	}
 
 	// The app's Contact / Address quick entry (contacts_ux.create_for), with this record as its

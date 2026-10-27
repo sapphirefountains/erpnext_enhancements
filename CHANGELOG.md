@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.746.0] - 2026-10-27
 
 ### Changed
-- **The Contact and Address Directories say whose person, or whose address, each row is**
-  (TASK-2026-02942). Their "Linked To" columns are now **Account / Supplier**. "Linked To" listed
+- **The Contact and Address Directories, and the guided page's People & places, say whose person,
+  or whose address, each row is** (TASK-2026-02942). Their "Linked To" columns are now **Account / Supplier**. "Linked To" listed
   every record a Contact or Address is linked to, by ID, so someone on five jobs showed five
   Projects and Opportunities beside the one company they work for. Nik asked for "this contact
   belongs to this customer, or this contact belongs to this supplier" instead (2026-10-27), and
@@ -42,13 +42,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     makes two title queries, not fifty. Select is enough to see a title: it is what a Link field
     to that party shows, and Frappe's own form load reads it without checking the linked
     record. `links` is unchanged, because the guided page's People & places list still reads it.
+  - **The guided page says it the same way.** People & places (the guided page's record tools,
+    and the board's side panel, which runs the same editor) put "Linked to CUST-0042 (Customer),
+    PROJ-0118 (Project), ..." under each contact and address. That line is now "Account /
+    Supplier:" with the same entries: display names linked to their records, the Supplier tag,
+    "This account" / "This supplier" on that record's own page, "None" for neither. Nik approved
+    it on the same day. One rule decides both faces: `party_sources.account_entries`, in the
+    module the Desk widget and the record tools already share. The Desk writes its entries as
+    escaped HTML; the guided page writes them with `.text()` and `.attr()`. A Desk tab still on a
+    bundle from before the rule gets an empty cell until it reloads, not a TypeError.
   - **Display only.** No data changes, and the Contact and Address forms still show every link.
     The tables have no filter, search or sort, so nothing else was keyed on the old columns.
   - Tests: `AccountColumnTest` in `tests/test_contact_endpoint_permissions.py` (which links,
     which titles, the order, one title query per doctype, and no lookup for a party the reader
-    cannot select, for contacts and addresses), and `scripts/test_directory_account_column.mjs`,
-    its own CI step, which runs the shared cell renderer on Project, Customer and Supplier forms
-    and checks both tables use it.
+    cannot select, for contacts and addresses); `scripts/test_directory_account_column.mjs`, its
+    own CI step, which runs the Desk cell with the real `party_sources.js` on Project, Customer
+    and Supplier forms and on an older bundle, and checks both tables use it; and
+    `tests/test_guided_record_tools.py`, which runs `account_entries` under node and checks the
+    guided line draws it as text.
 
 ## [1.745.1] - 2026-10-26
 
