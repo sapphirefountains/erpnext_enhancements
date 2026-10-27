@@ -1195,6 +1195,7 @@ class TestTechnicianView(unittest.TestCase):
 				"group": "Field",
 				"user": "korben@example.com",
 				"color": None,
+				"employee": "HR-EMP-00003",
 			},
 			{
 				"name": "RES-4",
@@ -1230,6 +1231,8 @@ class TestTechnicianView(unittest.TestCase):
 		self.assertEqual(people["austin@example.com"]["group"], "PM")
 		self.assertEqual(people["austin@example.com"]["color"], "#2563eb")
 		self.assertNotIn("helper", people["austin@example.com"])
+		# The Employee is what a tap on a name opens (v1.751.0); a resource without one says None.
+		self.assertIsNone(people["austin@example.com"]["employee"])
 		self.assertEqual(
 			people["korben@example.com"],
 			{
@@ -1239,6 +1242,7 @@ class TestTechnicianView(unittest.TestCase):
 				"resource": "RES-3",
 				"group": "Field",
 				"color": None,
+				"employee": "HR-EMP-00003",
 				"helper": True,
 			},
 		)

@@ -613,6 +613,24 @@
 	background: var(--sf-bg);
 }
 
+/* A booking with a record behind it: a tap opens that record (records.js). */
+.pk-item.pk-open {
+	cursor: pointer;
+}
+
+.pk-item.pk-open:hover,
+.pk-item.pk-open:focus-visible {
+	background: var(--sf-bg);
+}
+
+.pk-item.pk-open:hover .pk-item-label {
+	text-decoration: underline;
+}
+
+.pk-item.pk-open.pk-grab {
+	cursor: grab;
+}
+
 .pk-dragging {
 	opacity: 0.35;
 }

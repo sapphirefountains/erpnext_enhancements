@@ -61,7 +61,9 @@
 //                                                 one person's chip to another row moves only
 //                                                 that person (move_visit with from_user when
 //                                                 the dragged person is a helper)
-//   - the card's dialog                           technician, crew (with optional hours each),
+//   - click a card                                its record: the Sapphire Maintenance Record (a
+//                                                 projected visit, its contract), a move's Task (MPR)
+//   - hold or right-click it, Quick edit          technician, crew (with optional hours each),
 //                                                 planned hours and Full day
 //   - the route icon on a technician's day        the Project Planner's route view for that day
 // Overbooking warns and never blocks: when a move would put a technician over their hours, on a
@@ -866,10 +868,10 @@ class MaintenancePlanner {
 		this.$hint.text(
 			(this.view === "crew"
 				? __(
-						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. A visit with a crew shows in every crew member's row: drag one person's card to another row to swap only that person. Drag a technician onto a visit to add them to its crew. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day."
+						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. A visit with a crew shows in every crew member's row: drag one person's card to another row to swap only that person. Drag a technician onto a visit to add them to its crew. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day. Click a visit to open it; hold or right-click it for Quick edit."
 				  )
 				: __(
-						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow."
+						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Click a visit to open it (a dashed one opens its contract); hold or right-click it for Quick edit."
 				  )) + this.p10_hint_note()
 		);
 		this.render_phase6a();
@@ -1381,7 +1383,7 @@ class MaintenancePlanner {
 			const card_el = e.target.closest(".mp-card");
 			if (!card_el) return;
 			const card = this.by_key[card_el.getAttribute("data-key")];
-			if (card) this.open_card(card);
+			if (card) this.mpr_open_card(card);
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
@@ -1389,7 +1391,7 @@ class MaintenancePlanner {
 			if (!card_el) return;
 			e.preventDefault();
 			const card = this.by_key[card_el.getAttribute("data-key")];
-			if (card) this.open_card(card);
+			if (card) this.mpr_open_card(card);
 		});
 	}
 
@@ -2337,7 +2339,7 @@ const MP6A = {
 	// The first-time tips: since the toolbar redesign (v1.687.0) the first section of the "?" help,
 	// not banners under the toolbar.
 	hints: [
-		["mp-person-peek", "Click a technician's name to see their week without leaving the calendar."],
+		["mp-person-peek", "Click a technician's name to open their employee record; hold or right-click it to see their week."],
 		["mp-day-peek", "Click a date to see every technician's day side by side."],
 		["mp-glow", "Hover over a name to light up all of that person's visits."],
 	],
@@ -2515,7 +2517,10 @@ const MP6A_METHODS = {
 			el.setAttribute("tabindex", "0");
 			if (!el.getAttribute("data-pp6a-tip")) {
 				el.setAttribute("data-pp6a-tip", "1");
-				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${__("Click to see their week.")}`.trim());
+				el.setAttribute(
+					"title",
+					`${el.getAttribute("title") || ""}\n${__("Click to open their employee record; hold or right-click for their week.")}`.trim()
+				);
 			}
 		});
 		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
@@ -2578,7 +2583,7 @@ const MP6A_METHODS = {
 		const person = target.closest("[data-pk-person]");
 		if (person) {
 			take();
-			this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")));
+			this.mpr_open_person(decodeURIComponent(person.getAttribute("data-pk-person"))); // MPR: their Employee record
 			return;
 		}
 		const day = target.closest("[data-pp6a-day]");
@@ -2624,6 +2629,7 @@ const MP6A_METHODS = {
 			push: this.$body[0],
 			width: MP6A.widths.person,
 			can_drag: (booking) => this.p6a_can_drag(booking),
+			on_open: (record) => this.mpr_peek_open(record),
 			on_full_route: (resource, ymd) =>
 				kit.drawer.navigate(() => frappe.set_route(MP.project_route, "route", resource, ymd)),
 			actions: this.p6d_person_actions(user),
@@ -2643,6 +2649,7 @@ const MP6A_METHODS = {
 			only: (person) => !listed.size || (person.user && listed.has(person.user)),
 			person_key: (person) => person.user || person.resource,
 			can_drag: (booking) => this.p6a_can_drag(booking),
+			on_open: (record) => this.mpr_peek_open(record),
 			on_person: (person) => {
 				if (person.user) this.p6a_open_person(person.user, ymd);
 			},
@@ -2669,8 +2676,9 @@ const MP6A_METHODS = {
 			on_click: (e) => {
 				const row = e.target && e.target.closest ? e.target.closest("[data-mp6a-visit]") : null;
 				if (!row || Date.now() < this.click_blocked_until) return;
+				// MPR: a visit opens its record (a projected one, its contract).
 				const found = this.by_key[row.getAttribute("data-mp6a-visit")];
-				if (found) this.open_card(found);
+				if (found) this.mpr_open_card(found);
 				else if (row.getAttribute("data-mp6a-record")) {
 					const name = row.getAttribute("data-mp6a-record");
 					kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Record", name));
@@ -2853,9 +2861,10 @@ const MP6A_METHODS = {
 			{
 				title: __("Quick looks"),
 				items: [
-					item("", "Click a technician's name (in the panel, a crew row or the initials on a visit) to see their week: visits, project work, free hours, days off and the day's stops in driving order."),
+					item("", "Click a visit to open it, or a technician's name (in the panel, a crew row or the initials on a visit) to open their employee record. Back returns here."),
+					item("", "Hold a technician's name (or right-click it) for their week: visits, project work, free hours, days off and the day's stops in driving order."),
 					item("", "Click a date to see every technician's day side by side."),
-					item("", "In a visit's side panel, Site at a glance shows the site's coming, projected and recent visits and its default crew."),
+					item("", "Hold a visit (or right-click it) for Quick edit, its side panel. Site at a glance there shows the site's coming, projected and recent visits and its default crew."),
 					item("", "Drag a visit out of any of these onto a day or a technician's row to move it. Esc or Back closes the side panel."),
 					item("", "Hover over a name to light up all of that person's visits and bookings."),
 				],
@@ -2890,7 +2899,7 @@ const MP6A_METHODS = {
 			{
 				title: __("People"),
 				items: [
-					item(`<span class="mp-tech mp-p6a-sample-badge">AH</span>`, "Everyone on the visit. Click one to see their week."),
+					item(`<span class="mp-tech mp-p6a-sample-badge">AH</span>`, "Everyone on the visit. Click one to open their employee record."),
 					item(`<span class="mp-tech mp-lead mp-p6a-sample-lead">JD</span>`, "Ringed: the technician who fills the visit in."),
 					item(`<span class="mp-tech mp-tech-off">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
 				],
@@ -3257,11 +3266,14 @@ const MP6B_METHODS = {
 			: card.status !== "draft"
 			? __("Finished")
 			: __("Read-only");
+		// MPR: a tap opens the visit's record, so the side panel a tap used to open is Quick edit, first.
+		const record = visit ? __("Open visit") : card.contract ? __("Open contract") : "";
 		const items = [
-			{ label: __("Edit"), on_click: () => this.open_card(card) },
+			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
+			record ? { label: record, on_click: () => this.mpr_open_card(card) } : null,
 			{ label: __("Assign to…"), hint: movable ? "" : why, disabled: !movable, on_click: () => this.p6b_assign(card) },
 			this.p6b_next_free_item(card, movable, why),
-		];
+		].filter(Boolean);
 		if (card.project || card.technician) items.push({ divider: true });
 		if (card.project) items.push({ label: __("Site at a glance"), on_click: () => this.p6a_open_site(card) });
 		if (card.technician) {
@@ -4534,7 +4546,7 @@ const MP6C_METHODS = {
 				},
 				{
 					sample_html: "",
-					text: __("Tap to move: tap a visit, then tap the day (or a technician's day in the crew view) where it goes. On by default on a touch screen; it asks for a reason and can be undone like a drag."),
+					text: __("Tap to move: tap a visit, then tap the day (or a technician's day in the crew view) where it goes. Off unless you turn it on (More ▸ Tools), or pick Move with taps… on a visit's menu; it asks for a reason and can be undone like a drag."),
 				},
 				{
 					sample_html: "",
@@ -4746,11 +4758,11 @@ const MP6C_METHODS = {
 		}
 	},
 
+	// This device's choice, else off. A touch screen started in Tap to move until 2026-10-27, when Nik
+	// made a tap open the visit (MPR); it is one switch away in More ▸ Tools, and "Move with taps…" is on
+	// every visit's menu.
 	p6c_tap_default() {
-		const saved = this.load_pref(MP6C.tap_pref, "");
-		if (saved === "1") return true;
-		if (saved === "0") return false;
-		return this.p6c_coarse();
+		return this.load_pref(MP6C.tap_pref, "") === "1";
 	},
 
 	p6c_set_tap(on) {
@@ -4787,7 +4799,7 @@ const MP6C_METHODS = {
 		if (Date.now() < this.click_blocked_until) return;
 		if (
 			target.closest(
-				".mp-p6c-movebar, button, a, input, select, textarea, label, [data-route-resource], [data-pk-person], [data-pp6a-day]"
+				".mp-p6c-movebar, button, a, input, select, textarea, label, [data-route-resource], [data-pk-person], [data-pp6a-day], [data-p6d-conflict]"
 			)
 		) {
 			return;
@@ -4891,7 +4903,7 @@ const MP6C_METHODS = {
 			.on("click", () => {
 				const card = this.by_key[moving.key] || moving.source.card;
 				this.p6c_disarm();
-				this.open_card(card);
+				this.mpr_open_card(card);
 			})
 			.appendTo($movebar);
 		$('<button type="button" class="btn btn-default btn-sm"></button>')
@@ -7294,7 +7306,7 @@ const MPTB_METHODS = {
 				const el = e.target && e.target.closest ? e.target.closest("[data-tb-overdue]") : null;
 				if (!el) return;
 				const card = this.by_key[el.getAttribute("data-tb-overdue")];
-				if (card) this.open_card(card);
+				if (card) this.mpr_open_card(card); // MPR: the visit's record
 			},
 		});
 	},
@@ -8122,7 +8134,7 @@ const MP10_METHODS = {
 						"",
 						"Closed, it is one line for the week: who has hours free which days, and who is off (Austin: 3h free Tue · Off Thu–Fri). Show opens each technician's free hours day by day."
 					),
-					item("", "Drag a name from the line or the table onto a visit to add them to its crew. Click a name to see their week."),
+					item("", "Drag a name from the line or the table onto a visit to add them to its crew. Click a name to open their employee record; hold it for their week."),
 				],
 			},
 		];
@@ -8142,6 +8154,64 @@ const MP10_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP10_METHODS);
+
+// ====================================================================== MPR: a tap opens the record
+//
+// Nik, 2026-10-27: "When using the Project Planner or other planners, tapping the task should take you to
+// the task, tapping the project should take you to the project, and so on." The Project Planner's PPR block
+// says what he picked; here that means:
+//   a visit card (the calendar, the crew view, the tray, Site at a
+//   glance, the Overdue list, the Tap to move bar's Open)         its Sapphire Maintenance Record
+//   a projected visit (no record yet)                              the Sapphire Maintenance Contract
+//   a Fountain Move card                                           its Task
+//   project work shown as cards                                    its Task or Travel Trip
+//   a technician's name or initials                                their Employee record (or Planner
+//                                                                  Resource); a person who can read neither
+//                                                                  sees their week, as before
+//   a booking in a person's week or everyone's day                 its record (planner_kit/peeks.js)
+// The side panel a tap used to open is Quick edit, first on the hold / right-click menu, and a technician's
+// week is See their week on a name's. A date keeps "everyone's day", and the grey project-work strip keeps
+// the person's week: neither is one record. Tap to move is off by default on a touch screen
+// (p6c_tap_default). Before the kit has loaded, a tap does what it did.
+
+const MPR_METHODS = {
+	mpr_kit() {
+		const kit = this.p6a && this.p6a.kit;
+		return kit && kit.records ? kit : null;
+	},
+
+	// Opens the record behind `item` (records.record_of's kinds). False when there is none, this person
+	// cannot read it, or the kit has not loaded: the caller does what a tap did.
+	mpr_open(kind, item) {
+		const kit = this.mpr_kit();
+		return !!(kit && kit.records.open_item(kind, item));
+	},
+
+	mpr_open_card(card) {
+		if (!card) return;
+		if (card.kind === "visit" && this.mpr_open("visit", { name: card.name })) return;
+		if (card.kind === "projected" && this.mpr_open("projected", card)) return;
+		if (card.kind === "move" && this.mpr_open("move", { name: card.name })) return;
+		if (card.kind === "booking" && this.mpr_open(card.booking_kind === "travel" ? "travel" : "task", { ref: card.ref })) return;
+		this.open_card(card);
+	},
+
+	mpr_open_person(user) {
+		if (!user) return;
+		const person = (this.tech_by_user && this.tech_by_user[user]) || {};
+		if (!this.mpr_open("person", { employee: person.employee, resource: person.resource })) this.p6a_open_person(user);
+	},
+
+	// A booking tapped in a person's week or everyone's day. The click that ends a drag out of the drawer
+	// is not a tap.
+	mpr_peek_open(record) {
+		const kit = this.mpr_kit();
+		if (!kit || Date.now() < this.click_blocked_until) return;
+		kit.records.open(record);
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPR_METHODS);
 
 // ====================================================================== P12: the first-visit tour, and "?" for the views
 //
@@ -8235,8 +8305,8 @@ const MPTOUR_PURE = {
 			{
 				title: __("Resources available"),
 				text: w.can_schedule
-					? __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name for their week, or drag it onto a visit to add them to its crew.")
-					: __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to see their week."),
+					? __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to open their employee record (hold it for their week), or drag it onto a visit to add them to its crew.")
+					: __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to open their employee record; hold it for their week."),
 			}
 		);
 		if (w.can_schedule) {

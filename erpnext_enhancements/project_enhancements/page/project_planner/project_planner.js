@@ -51,7 +51,8 @@
 //   - in the crew view, drag a task chip to
 //     another day on the same row                 save_task(start)
 //     or onto another person's row                swap_crew          (and the day, if it changed)
-//   - click a card                                a dialog for dates, hours, crew and
+//   - click a card                                its Task, the record (PPR, at the end)
+//   - hold or right-click it, Quick edit          a panel for dates, hours, crew and
 //                                                 qualifications                       save_task
 //   - "Suggest dates" on a card or its dialog     suggest_dates, then Book -> save_task
 //   - the route icon / drive line on a person's
@@ -978,14 +979,14 @@ class ProjectPlanner {
 		this.$hint.text(
 			lookahead
 				? __(
-						"Drag a bar to another day to move it and the tasks that follow; drag its edge to change its days. Drag a Not scheduled task onto a day to schedule it. Click a bar to open the task, a project's name for the project at a glance."
+						"Drag a bar to another day to move it and the tasks that follow; drag its edge to change its days. Drag a Not scheduled task onto a day to schedule it. Click a bar or a task's name to open the task, a project's name to open the project; hold or right-click for Quick edit and Project at a glance."
 				  )
 				: this.view === "crew"
 				? __(
 						"A task is a bar along a person's row, counted in days (Show hours adds the hours). Drag it to another day on the same row to move it, or onto someone else's row to hand their place on the crew to that person. Tasks still to schedule, and tasks that need a crew, wait in the tray beside the board. On a touch screen, hold for a moment first."
 				  )
 				: __(
-						"Drag a task card to another day to move it; it keeps its length. Drag a person from Resources available onto a task to add them to its crew. On a touch screen, hold for a moment first. Click a card to change its dates, hours and crew."
+						"Drag a task card to another day to move it; it keeps its length. Drag a person from Resources available onto a task to add them to its crew. On a touch screen, hold for a moment first. Click a card to open its task; hold or right-click it for Quick edit (dates, hours and crew)."
 				  )
 		);
 		this.render_phase3b();
@@ -1543,7 +1544,7 @@ class ProjectPlanner {
 		const sub = [hours, booking.tentative ? __("Pencil") : ""].filter(Boolean).join(" · ");
 		return `
 			<div class="pp-fcard pp-k-${pp_esc(booking.kind || "other")}${pencil}" data-ref="${pp_esc(booking.ref || "")}"
-				data-kind="${pp_esc(booking.kind || "")}" data-date="${pp_esc(ymd)}" tabindex="0"
+				data-kind="${pp_esc(booking.kind || "")}" data-date="${pp_esc(ymd)}" data-projected="${booking.projected ? "1" : ""}" tabindex="0"
 				title="${pp_esc([booking.label, sub].filter(Boolean).join("\n"))}">
 				<div class="pp-fcard-title">${pp_esc(booking.label || booking.ref)}</div>
 				<div class="pp-fcard-sub">${pp_esc(sub)}</div>
@@ -1742,9 +1743,13 @@ class ProjectPlanner {
 			</div>`;
 	}
 
-	open_foreign(kind, ref, ymd) {
+	// PPR: a booking opens its own record (a visit its Sapphire Maintenance Record, a projected visit its
+	// contract, a rental or a task hidden from the board its Task, travel its Travel Trip). What follows is
+	// what a tap did before, for when the kit has not loaded or the person cannot read the record.
+	open_foreign(kind, ref, ymd, projected) {
+		if (ref && this.ppr_open(kind, { ref, projected: !!projected })) return;
 		if (kind === "travel" && ref) frappe.set_route("Form", "Travel Trip", ref);
-		else if (kind === "rental" && ref) frappe.set_route("Form", "Task", ref);
+		else if ((kind === "rental" || kind === "task") && ref) frappe.set_route("Form", "Task", ref);
 		else if (kind === "visit") {
 			// The Maintenance Planner page is not open to Projects Users.
 			const roles = ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"];
@@ -1785,7 +1790,7 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard")) return;
+			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard, [data-ppr-task]")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -1805,10 +1810,7 @@ class ProjectPlanner {
 		}
 		const equip_el = target.closest(".pp-ecard[data-etask]");
 		if (equip_el) {
-			const name = equip_el.getAttribute("data-etask");
-			const task = this.by_task[name];
-			if (task) this.open_card(task);
-			else frappe.set_route("Form", "Task", name);
+			this.ppr_open_task(equip_el.getAttribute("data-etask"));
 			return;
 		}
 		const firm_el = target.closest(".pp-firm[data-firm]");
@@ -1820,10 +1822,7 @@ class ProjectPlanner {
 		const od_el = target.closest(".pp-od-card[data-od-task]");
 		if (od_el) {
 			if (target.closest("input, button")) return;
-			const name = od_el.getAttribute("data-od-task");
-			const task = this.by_task[name];
-			if (task) this.open_card(task);
-			else frappe.set_route("Form", "Task", name);
+			this.ppr_open_task(od_el.getAttribute("data-od-task"));
 			return;
 		}
 		const suggest_el = target.closest(".pp-suggest[data-suggest]");
@@ -1835,18 +1834,25 @@ class ProjectPlanner {
 		const card_el = target.closest(".pp-card[data-task]");
 		if (card_el) {
 			const card = this.by_task[card_el.getAttribute("data-task")];
-			if (card) this.open_card(card);
+			if (card) this.ppr_open_card(card);
+			return;
+		}
+		// PPR: a phase's or a task's name on the Lookahead.
+		const label_el = target.closest("[data-ppr-task]");
+		if (label_el) {
+			this.ppr_open_task(label_el.getAttribute("data-ppr-task"));
 			return;
 		}
 		const foreign_el = target.closest(".pp-fcard");
 		if (!foreign_el) return;
 		const item = this.by_foreign[foreign_el.getAttribute("data-fkey")];
-		if (item) this.open_foreign(item.kind, item.ref, item.date);
+		if (item) this.open_foreign(item.kind, item.ref, item.date, item.projected);
 		else
 			this.open_foreign(
 				foreign_el.getAttribute("data-kind"),
 				foreign_el.getAttribute("data-ref"),
-				foreign_el.getAttribute("data-date")
+				foreign_el.getAttribute("data-date"),
+				foreign_el.getAttribute("data-projected") === "1"
 			);
 	}
 
@@ -3108,7 +3114,7 @@ class ProjectPlanner {
 		});
 		rows.forEach((row) => {
 			html.push(
-				`<div class="pp-hm-name"><span class="pp-dot" style="--pp-color: ${pp_esc(
+				`<div class="pp-hm-name pp-p6a-name" data-pk-person="${pp_esc(encodeURIComponent(row.name))}" role="button" tabindex="0"><span class="pp-dot" style="--pp-color: ${pp_esc(
 					this.resource_color(row.name)
 				)}"></span><span title="${pp_esc(row.label)}">${pp_esc(row.label)}</span></div>`
 			);
@@ -3456,11 +3462,13 @@ class ProjectPlanner {
 			const missing = located
 				? ""
 				: `<div class="pp-stop-missing">${pp_esc(__("No location — set the task's address"))}</div>`;
+			// PPR: a visit's and a trip's stop open their records too.
+			const open_label = { task: __("Open task"), rental: __("Open task"), visit: __("Open visit"), travel: __("Open trip") }[stop.kind];
 			const open =
-				(stop.kind === "task" || stop.kind === "rental") && stop.ref
-					? `<span class="pp-stop-link" role="button" tabindex="0" data-open-task="${pp_esc(stop.ref)}">${pp_esc(
-							__("Open task")
-					  )}</span>`
+				open_label && stop.ref
+					? `<span class="pp-stop-link" role="button" tabindex="0" data-open-task="${pp_esc(stop.ref)}" data-open-kind="${pp_esc(
+							stop.kind
+					  )}" data-open-projected="${stop.projected ? "1" : ""}">${pp_esc(open_label)}</span>`
 					: "";
 			html.push(`
 				<div class="pp-stop${located ? "" : " pp-unlocated"}" data-marker="${pp_esc(located ? stop.order : "")}">
@@ -3493,7 +3501,13 @@ class ProjectPlanner {
 		$list.find("[data-open-task]").on("click keydown", (e) => {
 			if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return;
 			e.stopPropagation();
-			frappe.set_route("Form", "Task", e.currentTarget.getAttribute("data-open-task"));
+			const el = e.currentTarget;
+			this.open_foreign(
+				el.getAttribute("data-open-kind") || "task",
+				el.getAttribute("data-open-task"),
+				null,
+				el.getAttribute("data-open-projected") === "1"
+			);
 		});
 		$list.find(".pp-stop[data-marker]").on("click", (e) => {
 			const order = e.currentTarget.getAttribute("data-marker");
@@ -5228,7 +5242,7 @@ const PP6A = {
 	// The first-time tips. They used to be banners under the toolbar on load; since the toolbar redesign
 	// (v1.687.0) they are the first section of the "?" help, and take no row of their own.
 	hints: [
-		["pp-person-peek", "Click a person's name to see their week without leaving the calendar."],
+		["pp-person-peek", "Click a person's name to open their employee record; hold or right-click it to see their week."],
 		["pp-day-peek", "Click a date to see everyone's day side by side."],
 		["pp-glow", "Hover over a name to light up all of that person's bookings."],
 	],
@@ -5262,7 +5276,7 @@ const PP6A_METHODS = {
 			"keydown",
 			(e) => {
 				if (e.key !== "Enter" && e.key !== " ") return;
-				const el = e.target && e.target.closest ? e.target.closest(".pp-p6a-name, [data-pp6a-day]") : null;
+				const el = e.target && e.target.closest ? e.target.closest(".pp-p6a-name, [data-pp6a-day], [data-pk-project]") : null;
 				if (!el || e.target !== el) return;
 				e.preventDefault();
 				e.stopPropagation();
@@ -5423,7 +5437,10 @@ const PP6A_METHODS = {
 			el.setAttribute("tabindex", "0");
 			if (!el.getAttribute("data-pp6a-tip")) {
 				el.setAttribute("data-pp6a-tip", "1");
-				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${__("Click to see their week.")}`.trim());
+				el.setAttribute(
+					"title",
+					`${el.getAttribute("title") || ""}\n${__("Click to open their employee record; hold or right-click for their week.")}`.trim()
+				);
 			}
 		});
 		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
@@ -5445,7 +5462,7 @@ const PP6A_METHODS = {
 					const rest = this.duration_text(card);
 					sub.innerHTML =
 						`<span class="pp-p6a-proj" data-pk-project="${pp_esc(key(card.project))}" title="${pp_esc(
-							__("See this project at a glance")
+							__("Open the project")
 						)}">${pp_esc(card.project_title || card.project)}</span>` + (rest ? ` · ${pp_esc(rest)}` : "");
 				}
 			}
@@ -5482,16 +5499,23 @@ const PP6A_METHODS = {
 			e.stopPropagation();
 			e.preventDefault();
 		};
+		// PPR: a name or a project opens its record. Nothing else on this element answers the same tap:
+		// a project's name inside a day note is also the note's target (p6d_click), and a card's project
+		// name was 6C's highlight (now on the menu).
+		const take_all = () => {
+			e.stopImmediatePropagation();
+			e.preventDefault();
+		};
 		const person = target.closest("[data-pk-person]");
 		if (person) {
-			take();
-			this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")));
+			take_all();
+			this.ppr_open_person(decodeURIComponent(person.getAttribute("data-pk-person")));
 			return;
 		}
 		const project = target.closest("[data-pk-project]");
 		if (project) {
-			take();
-			this.p6a_open_project(decodeURIComponent(project.getAttribute("data-pk-project")));
+			take_all();
+			this.ppr_open_project(decodeURIComponent(project.getAttribute("data-pk-project")));
 			return;
 		}
 		const day = target.closest("[data-pp6a-day]");
@@ -5502,7 +5526,7 @@ const PP6A_METHODS = {
 		}
 		if (target.closest(".pp-route-title") && this.route_resource) {
 			take();
-			this.p6a_open_person(this.route_resource, this.route_date);
+			this.ppr_open_person(this.route_resource, this.route_date);
 		}
 	},
 
@@ -5550,6 +5574,7 @@ const PP6A_METHODS = {
 			push: this.$body[0],
 			width: PP6A.widths.person,
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
+			on_open: (record) => this.ppr_peek_open(record),
 			on_full_route: (who, ymd) => kit.drawer.navigate(() => this.go_route(who, ymd)),
 			actions: this.p6d_person_actions(resource),
 		});
@@ -5567,6 +5592,7 @@ const PP6A_METHODS = {
 			width: PP6A.widths.day,
 			person_key: (person) => person.resource,
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
+			on_open: (record) => this.ppr_peek_open(record),
 			on_person: (person) => this.p6a_open_person(person.resource, ymd),
 			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
 			...this.p6d_day_peek_opts(),
@@ -5603,8 +5629,11 @@ const PP6A_METHODS = {
 			on_click: (e) => {
 				const row = e.target && e.target.closest ? e.target.closest("[data-pp6a-task]") : null;
 				if (!row || Date.now() < this.click_blocked_until) return;
-				const card = this.p6a_card(row.getAttribute("data-pp6a-task"));
-				if (card) this.open_card(card);
+				// PPR: a task opens the Task (a drafted new one, its side panel).
+				const name = row.getAttribute("data-pp6a-task");
+				const card = this.p6a_card(name);
+				if (card) this.ppr_open_card(card);
+				else this.ppr_open_task(name);
 			},
 		});
 		const load = () => {
@@ -5712,7 +5741,7 @@ const PP6A_METHODS = {
 					card.name
 			  )}" data-pk-date="${pp_esc(card.start || "")}" data-pk-resource=""`
 			: "";
-		const tip = [card.subject, sub, grab ? __("Drag onto the calendar to move it; click to edit it.") : ""]
+		const tip = [card.subject, sub, grab ? __("Drag onto the calendar to move it; click to open the task.") : __("Click to open the task.")]
 			.filter(Boolean)
 			.join("\n");
 		return `
@@ -5813,7 +5842,7 @@ const PP6A_METHODS = {
 			parts.push(`<p class="pk-note">${pp_esc(__("Showing the first {0} open tasks.", [data.limit]))}</p>`);
 		}
 		if (data.can_edit && (tasks.length || undated.length)) {
-			parts.push(`<p class="pk-note">${pp_esc(__("Drag a task onto a day or a person's row to move it. Click it to edit it."))}</p>`);
+			parts.push(`<p class="pk-note">${pp_esc(__("Drag a task onto a day or a person's row to move it. Click it to open the task."))}</p>`);
 		}
 		return `<div class="pp-p6a-project">${parts.join("")}</div>`;
 	},
@@ -5843,9 +5872,10 @@ const PP6A_METHODS = {
 				{
 					title: __("Quick looks"),
 					items: [
-						item("", "Click a person's name (in the panel, a crew row or a crew badge) to see their week: bookings, free hours, days off and the day's stops in driving order."),
+						item("", "Click a task, a project's name or a person's name to open its record: the Task, the Project, their employee record. Back returns here."),
+						item("", "Hold a person's name (or right-click it) for their week: bookings, free hours, days off and the day's stops in driving order."),
 						item("", "Click a date to see everyone's day side by side."),
-						item("", "Click a project's name on a card to see the whole project on a timeline, with hours and the labor forecast."),
+						item("", "Hold a card (or right-click it) for Quick edit and Project at a glance: the whole project on a timeline, with hours and the labor forecast."),
 						item("", "Drag a task out of any of these onto a day or a person's row to move it. Esc or Back closes the side panel."),
 						item("", "Hover over a name to light up all of that person's bookings, or over a project's name to light up its cards."),
 					],
@@ -6261,6 +6291,16 @@ const PP6B_METHODS = {
 				el: card_el,
 			};
 		}
+		// PPR: a task's name on the Lookahead has its card's menu; a project's name off a card has its own.
+		const label_el = el.closest("[data-ppr-task]");
+		if (label_el) {
+			const card = this.by_task[label_el.getAttribute("data-ppr-task")];
+			return card ? { kind: "card", card, ymd: card.start || null, resource: null, el: label_el } : null;
+		}
+		const project_el = el.closest("[data-pk-project]");
+		if (project_el) {
+			return { kind: "project", project: decodeURIComponent(project_el.getAttribute("data-pk-project")), el: project_el };
+		}
 		const person_el = el.closest(".pp-person[data-resource]");
 		if (person_el) {
 			const resource = person_el.getAttribute("data-resource");
@@ -6320,6 +6360,7 @@ const PP6B_METHODS = {
 	p6b_menu_title(target) {
 		if (target.kind === "card") return target.card.subject || target.card.name;
 		if (target.kind === "person") return this.resource_label(target.resource);
+		if (target.kind === "project") return (this.by_project[target.project] || {}).title || target.project;
 		return [target.resource ? this.resource_label(target.resource) : "", target.ymd ? pp_when(target.ymd) : ""]
 			.filter(Boolean)
 			.join(" · ");
@@ -6330,6 +6371,7 @@ const PP6B_METHODS = {
 		if (target.kind === "person") {
 			return [{ label: __("See their week"), on_click: () => this.p6a_open_person(target.resource) }];
 		}
+		if (target.kind === "project") return this.ppr_project_items(target.project);
 		if (target.kind === "cell") return this.p6b_cell_items(target);
 		return [];
 	},
@@ -6394,8 +6436,10 @@ const PP6B_METHODS = {
 			: "";
 		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
 		const multi = !!(card.start && end > card.start);
+		// PPR: a tap opens the Task, so the side panel a tap used to open is Quick edit, first.
 		const items = [
-			{ label: __("Edit"), on_click: () => this.open_card(card) },
+			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
+			fresh ? null : { label: __("Open task"), on_click: () => this.ppr_open_task(card.name) },
 			{
 				label: __("Assign to…"),
 				hint: editable ? "" : why,
@@ -6424,7 +6468,7 @@ const PP6B_METHODS = {
 				disabled: !creating || !card.start,
 				on_click: () => this.p6b_split(card, target),
 			},
-		];
+		].filter(Boolean);
 		if (card.project) {
 			items.push(
 				{ divider: true },
@@ -7111,8 +7155,9 @@ const PP6B_METHODS = {
 		document.body.classList.remove("p6b-resizing");
 		if (resize.label) resize.label.remove();
 		this.$grid_wrap[0].querySelectorAll(".p6b-span").forEach((el) => el.classList.remove("p6b-span"));
-		if (!save || (resize.new_start === resize.start && resize.new_end === resize.end)) return;
+		// A press on a grip is a resize, never a tap: one that changed nothing must not open the task (PPR).
 		this.click_blocked_until = Date.now() + 400;
+		if (!save || (resize.new_start === resize.start && resize.new_end === resize.end)) return;
 		const card = resize.card;
 		const subject = card.subject || card.name;
 		const message =
@@ -8197,7 +8242,7 @@ const PP6C_METHODS = {
 					},
 					{
 						sample_html: "",
-						text: __("Tap to move: tap a card, then tap the day (or a person's day in the crew view) where it goes. On by default on a touch screen; it asks for a reason and can be undone like a drag."),
+						text: __("Tap to move: tap a card, then tap the day (or a person's day in the crew view) where it goes. Off unless you turn it on (More ▸ Tools), or pick Move with taps… on a card's menu; it asks for a reason and can be undone like a drag."),
 					},
 					{
 						sample_html: "",
@@ -8271,7 +8316,18 @@ const PP6C_METHODS = {
 	},
 
 	p6c_menu_items(target) {
-		if (!this.p6c || !target || target.kind !== "card" || !target.card) return [];
+		if (!this.p6c || !target) return [];
+		// PPR: a project's name opens the Project, so its highlight is on its menu too.
+		if (target.kind === "project" && target.project) {
+			const on = this.p6c.highlight && this.p6c.highlight.key === target.project;
+			return [
+				{
+					label: on ? __("Stop highlighting this project") : __("Highlight this project"),
+					on_click: () => this.p6c_toggle_highlight(target.project),
+				},
+			];
+		}
+		if (target.kind !== "card" || !target.card) return [];
 		const card = target.card;
 		const items = [];
 		if (card.project) {
@@ -8402,12 +8458,11 @@ const PP6C_METHODS = {
 		}
 	},
 
-	// This device's choice (a tablet stays a tablet), else on for a touch screen.
+	// This device's choice, else off. A touch screen started in Tap to move until 2026-10-27, when Nik
+	// made a tap open the task (PPR); it is one switch away in More ▸ Tools, and "Move with taps…" is on
+	// every card's menu.
 	p6c_tap_default() {
-		const saved = this.load_pref(PP6C.tap_pref, "");
-		if (saved === "1") return true;
-		if (saved === "0") return false;
-		return this.p6c_coarse();
+		return this.load_pref(PP6C.tap_pref, "") === "1";
 	},
 
 	p6c_set_tap(on) {
@@ -8442,7 +8497,11 @@ const PP6C_METHODS = {
 		if (!target || !target.closest || !this.$body[0].contains(target)) return;
 		if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
 		if (!PP.views.includes(this.view) || Date.now() < this.click_blocked_until) return;
-		if (target.closest(".pp-p6c-movebar, button, a, input, select, textarea, label, .pp-route, [data-pk-person], [data-pp6a-day]")) {
+		if (
+			target.closest(
+				".pp-p6c-movebar, button, a, input, select, textarea, label, .pp-route, [data-pk-person], [data-pp6a-day], [data-pk-project], [data-p6d-conflict]"
+			)
+		) {
 			return;
 		}
 		const take = () => {
@@ -8555,7 +8614,7 @@ const PP6C_METHODS = {
 				.on("click", () => {
 					this.p6c_disarm();
 					const fresh = this.by_task[card.name] || card;
-					this.open_card(fresh);
+					this.ppr_open_card(fresh);
 				})
 				.appendTo($movebar);
 		}
@@ -10386,8 +10445,10 @@ const PPT1_METHODS = {
 	},
 
 	t1_menu_items(target) {
-		if (!this.t1_can() || !target || target.kind !== "card" || !target.card || !target.card.project) return [];
-		const project = target.card.project;
+		// A card's project, or a project's own name (PPR: its menu, now that a tap opens the Project).
+		const project =
+			target && target.kind === "project" ? target.project : target && target.kind === "card" && target.card ? target.card.project : null;
+		if (!this.t1_can() || !project) return [];
 		return [{ label: __("Build out tasks for this project…"), on_click: () => this.t1_open_build_out(project) }];
 	},
 
@@ -10458,12 +10519,12 @@ const PPT1_METHODS = {
 			const $main = $('<div class="t1-tray-main"></div>').appendTo($row);
 			$('<span class="t1-tray-title" role="button" tabindex="0"></span>')
 				.text(row.title || row.name)
-				.attr("title", __("See the project at a glance"))
-				.on("click", () => this.p6a_open_project(row.name))
+				.attr("title", __("Open the project"))
+				.on("click", () => this.ppr_open_project(row.name))
 				.on("keydown", (e) => {
 					if (e.key === "Enter" || e.key === " ") {
 						e.preventDefault();
-						this.p6a_open_project(row.name);
+						this.ppr_open_project(row.name);
 					}
 				})
 				.appendTo($main);
@@ -12575,7 +12636,9 @@ const PPL_METHODS = {
 			const subject = phase.name ? phase.subject || phase.name : __("Other work");
 			rows.push(`<div class="ppl-row ppl-phase" role="row">
 				<div class="ppl-label" role="rowheader">${this.ppl_toggle_html(fkey, phase_open, __("Show or hide {0}", [subject]))}
-					<span class="ppl-phase-name" title="${pp_esc(subject)}">${pp_esc(subject)}</span>
+					<span class="ppl-phase-name"${
+						phase.name ? ` data-ppr-task="${pp_esc(phase.name)}" role="button" tabindex="0"` : ""
+					} title="${pp_esc(subject)}">${pp_esc(subject)}</span>
 					<span class="ppl-count">${pp_esc(counts)}</span>
 				</div>${this.ppl_cells_html(days, true)}${phase_open ? "" : this.ppl_roll_html(tasks, first, last)}</div>`);
 			if (phase_open) tasks.forEach((card) => rows.push(this.ppl_task_row(card, days, first, last)));
@@ -12595,7 +12658,7 @@ const PPL_METHODS = {
 		const can_edit = !!(this.data && this.data.can_edit);
 		const parts = [
 			`<span class="ppl-project-name" data-pk-project="${pp_esc(encodeURIComponent(project.name))}" tabindex="0" role="button" title="${pp_esc(
-				__("{0}: open the project at a glance", [title])
+				__("{0}: open the project (hold or right-click for more)", [title])
 			)}">${pp_esc(title)}</span>`,
 		];
 		if (title !== project.name) parts.push(`<span class="ppl-project-id">${pp_esc(project.name)}</span>`);
@@ -12657,9 +12720,9 @@ const PPL_METHODS = {
 			  )}"></span>`
 			: "";
 		return `<div class="ppl-row ppl-task" role="row" data-ppl-row="${pp_esc(card.name)}">
-			<div class="ppl-label" role="rowheader"><span class="ppl-task-name" title="${pp_esc(subject)}">${pp_esc(
-			subject
-		)}</span>${marks.join("")}</div>${this.ppl_cells_html(days, true)}${ghost}${tail}${cols ? this.ppl_bar_html(card, cols, first) : ""}</div>`;
+			<div class="ppl-label" role="rowheader"><span class="ppl-task-name" data-ppr-task="${pp_esc(
+			card.name
+		)}" role="button" tabindex="0" title="${pp_esc(subject)}">${pp_esc(subject)}</span>${marks.join("")}</div>${this.ppl_cells_html(days, true)}${ghost}${tail}${cols ? this.ppl_bar_html(card, cols, first) : ""}</div>`;
 	},
 
 	// A bar: the task's card, spanning its days, with its crew's initials, its size in working days and
@@ -13420,7 +13483,7 @@ const PPG_METHODS = {
 		}
 		this.$hint.text(
 			__(
-				"Drag a bar to move it and the tasks that follow (hold Ctrl or ⌘ to move just that one); drag its end to change its days. Drag from the dot at a bar's end onto another bar to make that task wait for it; double-click a link to remove it. Click a bar to open the task."
+				"Drag a bar to move it and the tasks that follow (hold Ctrl or ⌘ to move just that one); drag its end to change its days. Drag from the dot at a bar's end onto another bar to make that task wait for it; double-click a link to remove it. Click a bar or a phase to open its task; right-click a bar for Quick edit."
 			)
 		);
 		this.render_phase3b();
@@ -13737,9 +13800,14 @@ const PPG_METHODS = {
 		return true;
 	},
 
+	// PPR: a bar or a phase (a group Task) opens its Task; a drafted new task its side panel. "Not scheduled"
+	// is no record.
 	ppg_click(task) {
-		const card = task && task.ref_name && this.by_task[task.ref_name];
-		if (card) this.open_card(card);
+		const name = task && task.ref_name;
+		if (!name) return;
+		const card = this.by_task[name];
+		if (card) this.ppr_open_card(card);
+		else if (task.ref_doctype === "Task") this.ppr_open_task(name);
 	},
 
 	// The 6B right-click menu, for a bar or a row.
@@ -13975,6 +14043,7 @@ const PPO_PURE = {
 					text: phase.subject,
 					type: "task",
 					parent: id,
+					ee_task: phase.name || "", // the phase's group Task (PPR); Other work has none
 					start_date: PPG_PURE.wire(bar.start),
 					end_date: PPG_PURE.wire_end(bar.end),
 					progress: phase.progress || 0,
@@ -14002,6 +14071,7 @@ const PPO_PURE = {
 					text: mile.subject,
 					type: "milestone",
 					parent: id,
+					ee_task: mile.name,
 					start_date: PPG_PURE.wire(mile.date),
 					ee_readonly: true,
 					ee_project: job.name,
@@ -14346,10 +14416,30 @@ const PPO_METHODS = {
 		else this.go("crew", target.date || this.today());
 	},
 
-	// A row (a job, a phase or a milestone) opens its job's Gantt.
+	// PPR: a row opens its record (Nik, 2026-10-27): a phase or a milestone its Task, a job (and Other work)
+	// the Project. Before the kit has loaded, the job's Gantt, as a row did before. Right-click a row for its
+	// Gantt (ppo_menu); an exception line still opens it too.
 	ppo_click(task) {
+		if (!task) return;
+		if (task.ee_task && this.ppr_open("task", { name: task.ee_task })) return;
+		const project = task.ee_project;
+		if (project && !this.ppr_open("project", { project })) this.ppg_open(project);
+	},
+
+	ppo_menu(task, e) {
+		const kit = this.ppr_kit();
 		const project = task && task.ee_project;
-		if (project) this.ppg_open(project);
+		if (!kit || !project) return;
+		if (e && e.preventDefault) e.preventDefault();
+		const items = [];
+		if (task.ee_task) items.push({ label: __("Open task"), on_click: () => this.ppr_open_task(task.ee_task) });
+		items.push(...this.ppr_project_items(project));
+		kit.menu({
+			anchor: { x: (e && e.clientX) || 0, y: (e && e.clientY) || 0 },
+			items,
+			title: String(task.text || project).replace(/^◐ /, ""),
+			owner: PP6A.owner,
+		});
 	},
 
 	// ------------------------------------------------------------------ the chart
@@ -14388,6 +14478,7 @@ const PPO_METHODS = {
 			toolbar: { export: { title: __("Project Planner Overview"), subtitle: this.ppo_title(), filename: "project-planner-overview", formats: ["print", "png", "svg"] } },
 			fetch: () => Promise.resolve(PPO_PURE.chart_rows(this.data || {}, (job) => this.ppo_job_visible(job), this.ppo_state().expanded, say)),
 			on_task_click: (id, task) => this.ppo_click(task),
+			on_task_context: (id, task, e) => this.ppo_menu(task, e),
 		});
 	},
 
@@ -15193,6 +15284,98 @@ const PPS_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPS_METHODS);
 
+// ====================================================================== PPR: a tap opens the record
+//
+// Nik, 2026-10-27: "When using the Project Planner or other planners, tapping the task should take you to
+// the task, tapping the project should take you to the project, and so on." He picked:
+//   - the record opens in the same tab (planner_kit/records.js, frappe.set_route through the drawer), so
+//     Back returns to the planner on the same tab, dates and filters;
+//   - what a tap opened before is on the hold / right-click menu: Quick edit (the side panel), Project at a
+//     glance, a person's week (See their week);
+//   - Tap to move is off by default on a touch screen (p6c_tap_default), still in More ▸ Tools and as
+//     "Move with taps…" on a card's menu;
+//   - an Overview row opens its record too, and a person's name their Employee record.
+// What a tap opens:
+//   a task card, bar or chip, a tray card, a task's or a phase's
+//   name on the Lookahead, a Gantt bar or phase, an overdue or
+//   equipment row, a task in the project drawer                  the Task (a drafted new task is not a
+//                                                                Task yet: its side panel, as before)
+//   a project's name (a card, the Lookahead, Needs tasks, a day
+//   note), an Overview job                                       the Project
+//   a person's name or initials (Resources, Crew rows,
+//   Capacity, the route's title)                                 the Employee; without one, the Planner
+//                                                                Resource; a person who can read neither
+//                                                                sees their week, as before
+//   a maintenance visit, a rental, travel, a task hidden from
+//   the board, and a booking in a person's week or everyone's
+//   day (planner_kit/peeks.js)                                   its own record (open_foreign)
+// A date keeps "everyone's day": it has no record. A tap is a press that moves less than 6 px (a mouse) or
+// lifts before the 300 ms hold that starts a drag (a finger); a 500 ms hold opens the menu, and the click
+// that ends a drag or a resize is never a tap (click_blocked_until). Held changes are on the server
+// (Planner Draft Change), so leaving loses none; the side panel's own unsaved edits ask first
+// (records.open). Before the kit has loaded, a moment after the first landing, a tap does what it did.
+
+const PPR_METHODS = {
+	ppr_kit() {
+		const kit = this.p6a && this.p6a.kit;
+		return kit && kit.records ? kit : null;
+	},
+
+	// Opens the record behind `item` (records.record_of's kinds). False when there is none (a drafted new
+	// task, a record this person cannot read) or the kit has not loaded: the caller does what a tap did.
+	ppr_open(kind, item) {
+		const kit = this.ppr_kit();
+		return !!(kit && kit.records.open_item(kind, item));
+	},
+
+	// A task's card, bar or chip.
+	ppr_open_card(card) {
+		if (card && !this.ppr_open("task", card)) this.open_card(card);
+	},
+
+	// A task by name: its card when the board has it, else the Task (a group Task, one off the board).
+	ppr_open_task(name) {
+		if (!name) return;
+		const card = this.by_task[name];
+		if (card) this.ppr_open_card(card);
+		else if (!this.ppr_open("task", { name })) frappe.set_route("Form", "Task", name);
+	},
+
+	ppr_open_project(project) {
+		if (project && !this.ppr_open("project", { project })) this.p6a_open_project(project);
+	},
+
+	ppr_open_person(resource, selected) {
+		if (!resource) return;
+		const person = this.by_resource[resource] || {};
+		if (!this.ppr_open("person", { employee: person.employee, resource })) this.p6a_open_person(resource, selected);
+	},
+
+	// A booking tapped in a person's week or everyone's day. The click that ends a drag out of the drawer
+	// is not a tap.
+	ppr_peek_open(record) {
+		const kit = this.ppr_kit();
+		if (!kit || Date.now() < this.click_blocked_until) return;
+		kit.records.open(record);
+	},
+
+	// A project's menu (hold or right-click its name, or an Overview row): what a tap on the name opened
+	// before, and its Gantt.
+	ppr_project_items(project) {
+		const items = [
+			{ label: __("Open project"), on_click: () => this.ppr_open_project(project) },
+			{ label: __("Project at a glance"), on_click: () => this.p6a_open_project(project) },
+		];
+		if (this.by_project[project] && PP.views.includes(this.view)) {
+			items.push({ label: __("Show only this project"), on_click: () => this.p6a_filter_project(project) });
+		}
+		items.push({ label: __("Open in Gantt"), on_click: () => this.ppg_open(project) });
+		return items;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPR_METHODS);
+
 // ====================================================================== P12: the first-visit tour, and "?" for the new tabs
 //
 // P12 of the planner UX redesign (docs/planner-ux-redesign.md section 7; Nik, 2026-10-21: "When we are
@@ -15271,7 +15454,7 @@ const PPTOUR_PURE = {
 		const steps = [
 			{
 				title: __("The Lookahead is a list"),
-				text: __("On a phone the Lookahead lists every job by day. Tap a task to open it, or a job's name for the job at a glance."),
+				text: __("On a phone the Lookahead lists every job by day. Tap a task or a job's name to open it; hold one for more."),
 			},
 			{
 				title: __("Tabs along the top"),
@@ -15385,7 +15568,7 @@ const PPTOUR_PURE = {
 				},
 				{
 					title: __("Click for the details"),
-					text: __("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
+					text: __("Click a bar for its task, a project's name for the project, or a date for everyone's day. Hold or right-click a bar for Quick edit, or a person's name for their week."),
 				}
 			);
 		}
@@ -15675,7 +15858,7 @@ const PPTOUR_METHODS = {
 				note: __("Four views of one schedule, and a fifth for managers. Today is the phone's."),
 				items: [
 					chip(__("Lookahead"), __("Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published.")),
-					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, click a job in the Overview, or use the Project form's Open in Project Planner.")),
+					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, right-click a job in the Overview (Open in Gantt), or use the Project form's Open in Project Planner.")),
 					chip(__("Crew"), __("Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it.")),
 					chip(__("Calendar"), __("The week and month grids you know: cards, double-click to add, drag to move.")),
 					chip(__("Overview"), __("Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print.")),

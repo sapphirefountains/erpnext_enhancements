@@ -483,8 +483,12 @@ def _project_view(technicians, start, end, visit_overrides=None):
 		resources = {r.get("name"): r for r in data.get("resources") or []}
 		for person in people:
 			resource = resources.get(user_to_resource.get(person.get("user"))) or {}
+			# The Employee is what a tap on a technician's name opens (v1.751.0).
 			person.update(
-				resource=resource.get("name"), group=resource.get("group"), color=resource.get("color")
+				resource=resource.get("name"),
+				group=resource.get("group"),
+				color=resource.get("color"),
+				employee=resource.get("employee"),
 			)
 		known = {p["user"] for p in people}
 		helpers = sorted(
@@ -504,6 +508,7 @@ def _project_view(technicians, start, end, visit_overrides=None):
 					"resource": resource.get("name"),
 					"group": resource.get("group"),
 					"color": resource.get("color"),
+					"employee": resource.get("employee"),
 					"helper": True,
 				}
 			)

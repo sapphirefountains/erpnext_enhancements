@@ -16,12 +16,18 @@
  * that and changes only where it is drawn. The fields are made at once, in a hidden holder attached
  * to the page (as a Dialog's are, in its hidden modal), so a page may bind its buttons with
  * `$wrapper.find(...)` before `show()`; `show()` moves them into the drawer.
+ *
+ * `panel.unsaved()` says whether the open panel holds edits that are not saved, so a tap that opens a
+ * record (records.js) can ask before it throws them away. The panel remembers its values the first time
+ * the person touches it (a pointer or a key inside it, never a page's own set_value or a reply filling
+ * in a row), and has changes when they differ from that.
  */
 
 export function create_panel(env) {
 	const doc = env.doc;
 	const drawer = env.drawer;
 	let holder = null;
+	let current = null;
 
 	function staging() {
 		if (!holder) {
@@ -54,6 +60,25 @@ export function create_panel(env) {
 			this.field_group.make();
 			this.fields_dict = this.field_group.fields_dict;
 			this.fields_list = this.field_group.fields_list;
+			this.touched = null;
+			const touch = (e) => {
+				if (this.touched === null && e && e.isTrusted !== false) this.touched = this.values_key();
+			};
+			this.container.addEventListener("pointerdown", touch, true);
+			this.container.addEventListener("keydown", touch, true);
+		}
+
+		values_key() {
+			try {
+				return JSON.stringify(this.get_values(true) || {});
+			} catch (e) {
+				return "";
+			}
+		}
+
+		// Edits since the person first touched the panel (see the header).
+		is_dirty() {
+			return this.is_open() && this.touched !== null && this.values_key() !== this.touched;
 		}
 
 		get_values(ignore_errors) {
@@ -117,6 +142,7 @@ export function create_panel(env) {
 				on_close: (how) => {
 					this.display = false;
 					this.handle = null;
+					if (current === this) current = null;
 					// The drawer has taken the fields out of the page. A page that reads them after
 					// hide() (a late reply filling in a row) still can: jQuery finds in a detached tree.
 					if (typeof this.onhide === "function") this.onhide(how);
@@ -124,6 +150,8 @@ export function create_panel(env) {
 				},
 			});
 			this.display = true;
+			this.touched = null;
+			current = this;
 			return this;
 		}
 
@@ -142,7 +170,9 @@ export function create_panel(env) {
 		}
 	}
 
-	return function panel(opts) {
+	const panel = function panel(opts) {
 		return new Panel(opts);
 	};
+	panel.unsaved = () => !!(current && current.is_dirty());
+	return panel;
 }

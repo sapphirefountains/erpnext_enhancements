@@ -722,6 +722,8 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 							"hours": booking["hours"],
 							# v1.601.0: a pencilled maintenance visit is drawn as a pencil here too.
 							"tentative": bool(booking.get("tentative")),
+							# A projected visit has no record yet: a tap opens the contract (v1.751.0).
+							"projected": bool(booking.get("projected")),
 						}
 					)
 

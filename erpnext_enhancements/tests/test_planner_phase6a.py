@@ -1105,7 +1105,11 @@ class TestPages(unittest.TestCase):
 		self.assertIn("Object.assign(ProjectPlanner.prototype, PP6A_METHODS);", self.pp)
 		self.assertIn("Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);", self.mp)
 
-	def test_every_name_opens_the_person_peek(self):
+	def test_every_name_opens_the_person(self):
+		# Since 2026-10-27 (Nik: a tap opens the record) a name opens the person's Employee record through
+		# ppr_open_person / mpr_open_person, which fall back to this person peek when there is no record to
+		# open; the peek itself is "See their week" on the name's menu. tests/test_planner_tap_opens.py has
+		# the rest.
 		pp, mp = self.pp_block, self.mp_block
 		for needle in (
 			'root.querySelectorAll(".pp-person[data-resource]")',
@@ -1114,7 +1118,7 @@ class TestPages(unittest.TestCase):
 			'badge.setAttribute("data-pk-person", key(member.resource))',
 			'target.closest(".pp-route-title") && this.route_resource',
 			'const person = target.closest("[data-pk-person]");',
-			'this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")))',
+			'this.ppr_open_person(decodeURIComponent(person.getAttribute("data-pk-person")))',
 		):
 			self.assertIn(needle, pp, needle)
 		for needle in (
@@ -1122,7 +1126,7 @@ class TestPages(unittest.TestCase):
 			'el.setAttribute("data-pk-person", key(el.getAttribute("data-user")))',
 			'el.querySelectorAll(".mp-techs .mp-tech")',
 			'el.querySelectorAll(".mp-off-badges .mp-tech")',
-			'this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")))',
+			'this.mpr_open_person(decodeURIComponent(person.getAttribute("data-pk-person")))',
 		):
 			self.assertIn(needle, mp, needle)
 		# The click is taken in the capture phase, before the card's own click opens the task.

@@ -164,6 +164,27 @@
 	font-size: 11px;
 }
 
+/* The fountain's name opens its Asset: a button that reads as the label it replaced. */
+.rp-asset {
+	display: block;
+	max-width: 100%;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rp-asset:hover,
+.rp-asset:focus-visible {
+	text-decoration: underline;
+}
+
 /* One hairline per day: --rp-day is the day's width, set by the script with the track's. */
 .rp-track {
 	position: relative;

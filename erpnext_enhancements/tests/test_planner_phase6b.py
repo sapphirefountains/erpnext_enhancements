@@ -1756,8 +1756,10 @@ class TestPages(unittest.TestCase):
 			self.assertIn('$(document).trigger("p6-selection-changed", [this]);', block)
 			self.assertIn("this.p6_legend_providers = this.p6_legend_providers || [];", block)
 		items = _method(self.pp_block, "p6b_card_items")
+		# A tap opens the Task since 2026-10-27, so the side panel is Quick edit, and Open task is here too.
 		for label in (
-			"Edit",
+			"Quick edit",
+			"Open task",
 			"Assign to…",
 			"Firm up",
 			"Pencil",
@@ -1772,7 +1774,7 @@ class TestPages(unittest.TestCase):
 		self.assertIn('label: __("Add task here…")', self.pp_block)
 		self.assertIn('label: __("See their week")', self.pp_block)
 		mp_items = _method(self.mp_block, "p6b_card_items")
-		for label in ("Edit", "Assign to…", "Site at a glance"):
+		for label in ("Quick edit", "Open visit", "Open contract", "Assign to…", "Site at a glance"):
 			self.assertIn(f'__("{label}")', mp_items)
 		# Visits have no duplicate, split or pencil, and project work keeps the browser's menu.
 		for absent in ("Duplicate", "Split", "Pencil", "Add visit"):
@@ -2593,7 +2595,8 @@ class TestMethodsUnderNode(unittest.TestCase):
 		self.assertEqual(
 			out["pp_items"],
 			[
-				"Edit",
+				"Quick edit",
+				"Open task",
 				"Assign to…",
 				"Move to next free day (Looking…)",
 				"Pencil (Make it tentative)",
@@ -2610,8 +2613,8 @@ class TestMethodsUnderNode(unittest.TestCase):
 		self.assertIn("Split across days… [off] (Not in Draft mode)", out["pp_items_draft"])
 		self.assertIn("Assign to…", out["pp_items_draft"])  # drafting an existing task is fine
 		rental = out["pp_items_rental"]
-		self.assertEqual(rental[0], "Edit")
-		self.assertTrue(all("[off]" in item for item in rental[1:]), rental)
+		self.assertEqual(rental[:2], ["Quick edit", "Open task"])
+		self.assertTrue(all("[off]" in item for item in rental[2:]), rental)
 		self.assertIn("Assign to… [off] (Follows its Rental Booking)", rental)
 		one_day = out["pp_items_one_day"]
 		self.assertIn("Firm up", one_day)
@@ -2767,7 +2770,8 @@ class TestMethodsUnderNode(unittest.TestCase):
 		self.assertEqual(
 			out["mp_items"],
 			[
-				"Edit",
+				"Quick edit",
+				"Open visit",
 				"Assign to…",
 				"Move to next free day (Looking…)",
 				"--",
