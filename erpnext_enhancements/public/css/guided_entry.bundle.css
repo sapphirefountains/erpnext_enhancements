@@ -2538,8 +2538,9 @@ body.ge-page-active .triton-fab {
 		display: block;
 	}
 }
-/* A file dragged over the page lands in both lists, so both are outlined. */
+/* A file dragged over the page lands in both lists, so both are outlined, inside the edge as the
+   section is: outside it would cross the next group's rule. */
 .ge-app.is-dropping-files .ge-tools-group[data-tool="attachments"] {
 	outline: 3px dashed var(--sf-focus);
-	outline-offset: var(--sf-space-5);
+	outline-offset: -3px;
 }

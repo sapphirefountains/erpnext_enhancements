@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     same list read out twice. So the group stays hidden in those layouts. CSS decides rather than
     the script because the view can change and the window can be resized without the tools being
     drawn again.
+  - **Focus comes back after a redraw.** Every attach, remove or drop redraws the lists, which
+    deletes the button that was used, and now it happens in two lists. frappe v16's
+    `Dialog.handle_focus` puts focus back after a dialog only on a `Form` route, and the guided page
+    is not one. So after Remove, Attach a file or the uploader, focus fell to `<body>`, and a keyboard
+    or screen-reader user started again from the top of the page. `refocus_files` puts it back,
+    triggered by the dialog's `hidden.bs.modal` (the uploader's, and the one `frappe.confirm`
+    returns) and by each redraw. It goes to the control the person used while that still exists (so
+    No on the question returns to its Remove), else that list's **Attach a file** if that was what
+    they used, else that list's summary. After a drop it goes back to whatever they had focused, a
+    field they were typing in, without scrolling the page. It acts only while focus has fallen to the
+    page or to a dialog already hidden, and it waits for a dialog that is still open. Anyone who has
+    moved on keeps their focus.
   - **Unchanged:** the middle section and the head band's chip, which Nik chose in v1.711.0 for
     phones and for people who collapse the tools. The chip still opens and scrolls to the section.
     Drop-to-attach works anywhere on the page, and while a file is dragged over it both lists are
@@ -49,7 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     both lists. It also checks that the counts, the chip and **Attach a file** match there,
     including at `max_attachments`, without write, after a failed load and in focus mode, and that
     the side panel keeps one closed list. Against v1.745.1's code it fails, because the side column
-    has no list. `TestTheGroupShowsBesideTheForm` holds the stylesheet to the rule above.
+    has no list. Its dialogs take focus and hide the way bootstrap's do, so it also follows focus in
+    each case above: Remove answered Yes and No, attach and cancel, a redraw while the uploader is
+    still open, a drop from a field and from nothing, the chip, a realtime reload, and a person who
+    has moved on. Seven of those fail with `refocus_files` disabled. `TestTheGroupShowsBesideTheForm` holds the stylesheet to the rule above.
   - **Nothing is stored or migrated.** No patch, fixture or Custom Field.
 
 ## [1.746.0] - 2026-10-27

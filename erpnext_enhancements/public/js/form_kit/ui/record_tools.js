@@ -146,6 +146,7 @@ export class RecordTools {
 		this.$files_dock = null;
 		this.$files = null;
 		this.files_count = null;
+		this.files_return = null;
 		this.load_failed = false;
 		this.dock_reset();
 		if (!$box.length) {
@@ -386,8 +387,13 @@ export class RecordTools {
 			event.preventDefault();
 			event.stopPropagation();
 			const warn = (text) => this.sf().toast(text, { tone: "warning", timeout: 5000 });
-			if (verdict === "attach") this.attach(files);
-			else if (verdict === "save") warn(__("Please save before attaching."));
+			if (verdict === "attach") {
+				// Focus goes back to what the person had (a field they were typing in) once the uploader
+				// closes, without scrolling the page; nothing focused before, nothing moved after.
+				const before = document.activeElement;
+				this.files_return = before && before !== document.body ? { el: before, quiet: true } : null;
+				this.attach(files);
+			} else if (verdict === "save") warn(__("Please save before attaching."));
 			else if (verdict === "failed") warn(__("This record's attachments could not be loaded, so files cannot be added yet. Reload the page to try again."));
 			else if (verdict === "wait") warn(__("This record's files are still loading. Try again in a moment."));
 			else warn(__("You cannot attach files to this record."));
@@ -410,8 +416,10 @@ export class RecordTools {
 			can_add: this.can_add_file(),
 		});
 		if (action === "save") this.sf().toast(__("Please save before attaching."), { tone: "warning", timeout: 5000 });
-		else if (action === "attach") this.attach();
-		else if (typeof this.ed.show_files === "function") this.ed.show_files();
+		else if (action === "attach") {
+			this.files_return = { el: this.ed.$root.find(".ge-files-chip")[0] };
+			this.attach();
+		} else if (typeof this.ed.show_files === "function") this.ed.show_files();
 	}
 
 	sf() {
@@ -448,8 +456,7 @@ export class RecordTools {
 				// Each list of files says so itself: an empty "Attachments" would read as no files, and a
 				// drop is told the same instead of "still loading".
 				this.load_failed = true;
-				this.file_lists().forEach(($body) => {
-					$body.empty();
+				this.redraw_files(($body) => {
 					if (this.$dock.length) $('<p class="ge-muted ge-tools-none"></p>').text(__("The attachments could not be loaded. Reload the page to try again.")).appendTo($body);
 				});
 				this.$activity.empty();
@@ -693,17 +700,71 @@ export class RecordTools {
 			write: perms.write,
 			delete: perms.delete,
 		});
-		this.file_lists().forEach(($body) => this.draw_files($body.empty(), files, can_add, can_remove));
+		this.redraw_files(($body) => this.draw_files($body, files, can_add, can_remove));
+	}
+
+	// Every list emptied and drawn again. A control in a list that had focus goes with the old list (an
+	// upload finishing, a remove, a realtime reload) and focus falls to the page, so which list held it
+	// is noted first and refocus_files puts it back there.
+	redraw_files(draw) {
+		const active = document.activeElement;
+		const $was = this.file_lists().find(($body) => !!active && $body[0].contains(active));
+		const was = $was ? { list: $was[0], to: $(active).hasClass("ge-tools-add") ? "attach" : "summary" } : null;
+		this.file_lists().forEach(($body) => draw($body.empty()));
+		this.refocus_files(was);
+	}
+
+	// Focus back where the person was working, once it has fallen to the page: frappe returns it after a
+	// dialog only on a Form route, and the guided page is not one. In order: what they used (the button,
+	// the chip, the field they had before a drop) while it is still there; else that list's "Attach a
+	// file", if that is what they used and it is still offered; else that list's summary, or the first
+	// list on screen. Nothing moves while focus is on anything else on screen: a person who has moved
+	// on keeps it. While a dialog that is still open holds it (the uploader on its last file), this
+	// waits for it to close. A control inside a dialog already hidden counts as lost: the browser may
+	// still report it as focused when bootstrap's hidden event fires.
+	refocus_files(was) {
+		const want = this.files_return || was;
+		this.files_return = null;
+		if (!want) return;
+		const shown = (el) => !!el && document.contains(el) && el.getClientRects().length > 0;
+		const active = document.activeElement;
+		if (active && active !== document.body && shown(active)) {
+			const $modal = $(active).closest(".modal");
+			if ($modal.length) {
+				this.files_return = want;
+				$modal.one("hidden.bs.modal", () => this.refocus_files());
+			}
+			return;
+		}
+		const summary = (list) => $(list).closest("details").children("summary")[0];
+		let target = shown(want.el) ? want.el : null;
+		if (!target) {
+			const lists = this.file_lists().map(($body) => $body[0]);
+			const list = lists.includes(want.list) && shown(summary(want.list)) ? want.list : lists.find((l) => shown(summary(l)));
+			const attach = list && want.to === "attach" ? $(list).find(".ge-tools-add")[0] : null;
+			target = shown(attach) ? attach : list ? summary(list) : null;
+		}
+		if (target) target.focus({ preventScroll: !!want.quiet });
+	}
+
+	// frappe's dialog (the uploader, the question before a remove): when it closes, refocus_files.
+	on_closed(dialog) {
+		const $wrapper = dialog && dialog.$wrapper;
+		if ($wrapper && typeof $wrapper.one === "function") $wrapper.one("hidden.bs.modal", () => this.refocus_files());
 	}
 
 	// One list of the record's files, with Attach a file and each file's Remove.
 	draw_files($body, files, can_add, can_remove) {
 		const meta = this.meta();
 		const perms = this.perms();
+		const list = $body[0];
 		if (can_add) {
 			$('<button type="button" class="sf-btn sf-btn--secondary ge-tools-add"></button>')
 				.text(__("Attach a file"))
-				.on("click", () => this.attach())
+				.on("click", (event) => {
+					this.files_return = { el: event.currentTarget, list, to: "attach" };
+					this.attach();
+				})
 				.appendTo($body);
 		} else if (perms.write && meta.max_attachments) {
 			$('<p class="ge-muted ge-tools-note"></p>')
@@ -737,7 +798,10 @@ export class RecordTools {
 				$('<button type="button" class="sf-btn sf-btn--quiet ge-tools-item-btn"></button>')
 					.text(__("Remove"))
 					.attr("aria-label", __("Remove {0}", [file.file_name || file.name]))
-					.on("click", () => this.remove_file(file))
+					.on("click", (event) => {
+						this.files_return = { el: event.currentTarget, list, to: "summary" };
+						this.remove_file(file);
+					})
 					.appendTo($item);
 			}
 		});
@@ -758,7 +822,7 @@ export class RecordTools {
 		const make = () => {
 			const restrictions = {};
 			if (meta.max_attachments) restrictions.max_number_of_files = meta.max_attachments - count;
-			return new frappe.ui.FileUploader({
+			const uploader = new frappe.ui.FileUploader({
 				doctype,
 				docname: name,
 				folder: "Home/Attachments",
@@ -768,6 +832,8 @@ export class RecordTools {
 				// Files dropped on the page, as the form's drop passes them.
 				files: dropped && dropped.length ? dropped : undefined,
 			});
+			this.on_closed(uploader && uploader.dialog);
+			return uploader;
 		};
 		this.dialog(() => {
 			if (frappe.ui.FileUploader) return make();
@@ -779,8 +845,8 @@ export class RecordTools {
 	remove_file(file) {
 		const rows = ((this.info && this.info.attachments) || []).filter((row) => row.file_name === file.file_name);
 		const targets = rows.length ? rows : [file];
-		this.dialog(() =>
-			frappe.confirm(__("Are you sure you want to delete the attachment?"), () => {
+		this.dialog(() => {
+			const asked = frappe.confirm(__("Are you sure you want to delete the attachment?"), () => {
 				Promise.all(
 					targets.map((row) =>
 						this.sf().call(
@@ -795,8 +861,10 @@ export class RecordTools {
 						this.reload();
 					})
 					.catch((err) => this.refused(err, __("The attachment was not removed.")));
-			})
-		);
+			});
+			this.on_closed(asked);
+			return asked;
+		});
 	}
 
 	// ------------------------------------------------------------------ activity

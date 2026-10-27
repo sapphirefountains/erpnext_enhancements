@@ -1175,6 +1175,22 @@ class El {
 		walk(this);
 		return out;
 	}
+	focus(opts) {
+		document.activeElement = this;
+		this.focus_opts = opts || {};
+	}
+	// Not rendered: hidden, display:none (`gone`, the stylesheet's part), or inside a closed details.
+	getClientRects() {
+		for (let n = this; n; n = n.parent) {
+			if ("hidden" in n.attrs || n.gone) return [];
+			if (n.parent && n.parent.tag === "details" && !("open" in n.parent.attrs) && n.tag !== "summary") return [];
+		}
+		return [{}];
+	}
+}
+// A browser moves focus to the body when the focused element leaves the document.
+function lose_focus(el) {
+	if (globalThis.document && el.contains(document.activeElement)) document.activeElement = document.body;
 }
 
 // One compound selector: a tag, .classes, [attr] and [attr="value"].
@@ -1207,6 +1223,7 @@ function matches(el, selector, top) {
 	});
 }
 function detach(el) {
+	lose_focus(el);
 	if (el.parent) el.parent.children = el.parent.children.filter((c) => c !== el);
 	el.parent = null;
 }
@@ -1268,6 +1285,14 @@ class Q {
 		this.els.forEach((e) => (e.handlers = e.handlers.filter((h) => !h.ev.endsWith(ns))));
 		return this;
 	}
+	one(events, handler) {
+		const self = this;
+		const once = function (event) {
+			self.els.forEach((e) => (e.handlers = e.handlers.filter((h) => h.handler !== once)));
+			return handler.call(this, event);
+		};
+		return this.on(events, once);
+	}
 	trigger(type) { this.els.forEach((e) => fire(e, type)); return this; }
 	appendTo(target) {
 		const parent = target.els[0];
@@ -1281,7 +1306,10 @@ class Q {
 	append(child) { $(child).appendTo(this); return this; }
 	empty() {
 		this.els.forEach((e) => {
-			e.children.forEach((c) => (c.parent = null));
+			e.children.forEach((c) => {
+				lose_focus(c);
+				c.parent = null;
+			});
 			e.children = [];
 			e.own_text = "";
 		});
@@ -1321,17 +1349,49 @@ function fire(el, type, extra) {
 globalThis.window = globalThis;
 globalThis.$ = $;
 globalThis.__ = (s, a) => (a ? s.replace(/\{(\d+)\}/g, (m, i) => a[i]) : s);
+const BODY = new El("body");
+globalThis.document = { body: BODY, activeElement: BODY, contains: (el) => BODY === el || BODY.contains(el) };
 let wide = true;
 globalThis.matchMedia = () => ({ matches: wide });
+// frappe's dialogs as bootstrap shows and hides them: focus moves into one; on hide it is display:none
+// before "hidden.bs.modal" fires, with the browser possibly still naming its button as focused.
+function open_dialog() {
+	const $wrapper = $('<div class="modal"></div>').appendTo($(BODY));
+	$('<button type="button" class="btn"></button>').appendTo($wrapper)[0].focus();
+	return { $wrapper };
+}
+function close_dialog(d) {
+	d.$wrapper[0].gone = true;
+	fire(d.$wrapper[0], "hidden");
+	d.$wrapper.remove();
+}
 const uploads = [];
+let asked = null;
 let meta = {};
 globalThis.frappe = {
 	session: { user: "tester@example.com" },
 	get_meta: () => meta,
 	datetime: { prettyDate: () => "just now", str_to_user: (s) => String(s) },
-	ui: { FileUploader: function (opts) { uploads.push(opts); } },
-	confirm: (message, yes) => yes(),
+	ui: {
+		FileUploader: function (opts) {
+			this.opts = opts;
+			this.dialog = open_dialog();
+			uploads.push(this);
+		},
+	},
+	confirm: (message, yes) => {
+		asked = { d: open_dialog(), yes };
+		return asked.d;
+	},
 };
+// The person answers frappe's question: Yes runs the remove, then the dialog hides.
+function answer(yes) {
+	const a = asked;
+	asked = null;
+	if (yes) a.yes();
+	close_dialog(a.d);
+}
+const last_upload = () => uploads[uploads.length - 1];
 
 const server = { rows: [], permissions: { write: 1, delete: 1 }, fail: false, removed: [] };
 const row = (name, file_name, extra) => Object.assign({ name, file_name, file_url: "/files/" + file_name, file_size: 2048 }, extra || {});
@@ -1354,11 +1414,12 @@ const sf = {
 
 // The guided page's shell, as render_shell draws it (the parts the tools touch), tools beside the form.
 function guided_root() {
-	const root = $('<div class="ge-app" data-ge-tools="side"></div>');
+	const root = $('<div class="ge-app" data-ge-tools="side"></div>').appendTo($(BODY));
 	$('<div class="ge-band-actions"></div>').appendTo(root);
 	$('<button type="button" class="ge-files-chip" hidden></button>').appendTo(root);
 	const main = $('<main class="ge-main"></main>').appendTo(root);
-	$('<section class="ge-stage"></section>').appendTo(main);
+	const stage = $('<section class="ge-stage"></section>').appendTo(main);
+	$('<input type="text" class="ge-field">').appendTo(stage);
 	$('<section class="ge-files" hidden></section>').appendTo(main);
 	const aside = $('<div class="ge-aside"></div>').appendTo(root);
 	$('<section class="ge-tools" hidden></section>').appendTo(aside);
@@ -1366,7 +1427,7 @@ function guided_root() {
 }
 // The board's side panel: no files section, no chip.
 function panel_root() {
-	const root = $('<div class="fk-panel"></div>');
+	const root = $('<div class="fk-panel"></div>').appendTo($(BODY));
 	$('<div class="fk-head-row"></div>').appendTo(root);
 	$('<section class="ge-tools fk-tools" hidden></section>').appendTo(root);
 	return root;
@@ -1422,6 +1483,18 @@ function snap(root) {
 		tool_order: root.find(".ge-tools").children(".ge-tools-group").els.map((e) => e.attrs["data-tool"]),
 	};
 }
+// Where focus is: "group" / "dock" (which list), "page", "body", then the element and its kind.
+function where(root) {
+	const a = document.activeElement;
+	if (!a || a === BODY) return "body";
+	const inside = (sel) => root.find(sel).els.some((e) => e.contains(a));
+	const place = inside(GROUP) ? "group" : inside(".ge-files") ? "dock" : root[0].contains(a) ? "page" : "elsewhere";
+	const kind = { "ge-tools-add": ".attach", "ge-tools-item-btn": ".remove", "ge-files-chip": ".chip", "ge-field": ".field" };
+	const k = Object.keys(kind).find((c) => a.classes().includes(c));
+	return `${place} ${a.tag}${k ? kind[k] : ""}${document.contains(a) ? "" : " (detached)"}`;
+}
+const remove_btn = (root, sel, name) =>
+	$(root.find(sel + " .ge-tools-item").els.find((li) => $(li).find(".ge-tools-file").text() === name)).find(".ge-tools-item-btn")[0];
 
 const out = {};
 
@@ -1435,37 +1508,98 @@ out.loaded = snap(root);
 t.attach();
 out.uploads_after_attach = uploads.length;
 server.rows.push(row("F4", "valve-spec.pdf"));
-uploads[uploads.length - 1].on_success();
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
 await wait(350);
 out.attached = snap(root);
 
 // Remove, from the side column's list: frappe's question, every row of that name, then both lists.
-const $remove = root.find(GROUP + " .ge-tools-item").els.find((li) => $(li).find(".ge-tools-file").text() === "site-plan.pdf");
-fire($($remove).find(".ge-tools-item-btn")[0], "click");
+// Focus goes back to the Remove button as the question closes, and to that list's summary once the
+// redraw takes the button away.
+fire(remove_btn(root, GROUP, "site-plan.pdf"), "click");
+answer(true);
+out.focus_remove_side_closed = where(root);
 await wait(5);
 out.removed_fids = server.removed.slice();
 out.removed = snap(root);
+out.focus_remove_side = where(root);
 
 // Remove, from the middle section's list: the same.
-const $remove_mid = root.find(".ge-files .ge-tools-item").els.find((li) => $(li).find(".ge-tools-file").text() === "valve-spec.pdf");
-fire($($remove_mid).find(".ge-tools-item-btn")[0], "click");
+fire(remove_btn(root, ".ge-files", "valve-spec.pdf"), "click");
+answer(true);
 await wait(5);
 out.removed_mid = snap(root);
+out.focus_remove_mid = where(root);
 
-// A file dropped on the page opens the uploader with it; on_success, both lists.
+// A file dropped on the page while a field has focus opens the uploader with it; on_success, both
+// lists, and focus goes back to the field without scrolling the page.
+root.find(".ge-field")[0].focus();
 const dropped = fire(root[0], "drop", { originalEvent: { dataTransfer: { types: ["Files"], files: [{ name: "drop.png" }] } } });
 out.drop_claimed = !!dropped.defaultPrevented;
-out.drop_files = (uploads[uploads.length - 1].files || []).length;
+out.drop_files = (last_upload().opts.files || []).length;
 server.rows.push(row("F5", "drop.png"));
-uploads[uploads.length - 1].on_success();
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
 await wait(350);
 out.dropped = snap(root);
+out.focus_drop = where(root);
+out.focus_drop_quiet = !!(document.activeElement.focus_opts || {}).preventScroll;
+
+// ---- focus, case by case ----
+// "Remove", then No: back on that Remove button, nothing redrawn.
+fire(remove_btn(root, ".ge-files", "pump-photo.jpg"), "click");
+answer(false);
+await wait(5);
+out.focus_remove_no = where(root);
+// "Attach a file" in the side list, a file uploaded: on the new list's Attach a file.
+fire(root.find(GROUP + " .ge-tools-add")[0], "click");
+server.rows.push(row("F9", "pond-liner.pdf"));
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
+out.focus_attach_closed = where(root);
+await wait(350);
+out.focus_attach = where(root);
+// "Attach a file" in the middle section, the uploader closed with nothing: back on that button.
+const mid_attach = root.find(".ge-files .ge-tools-add")[0];
+fire(mid_attach, "click");
+close_dialog(last_upload().dialog);
+out.focus_attach_cancel = where(root);
+out.focus_attach_cancel_same = document.activeElement === mid_attach;
+// The redraw lands while the uploader is still open (more files to go): it waits for it to close.
+fire(root.find(GROUP + " .ge-tools-add")[0], "click");
+const open_uploader = last_upload();
+t.reload();
+await wait(5);
+out.focus_while_open = where(root);
+close_dialog(open_uploader.dialog);
+out.focus_after_open = where(root);
+// A realtime reload while a file's link in the middle section has focus: that list's summary.
+root.find(".ge-files .ge-tools-file")[0].focus();
+t.reload();
+await wait(5);
+out.focus_reload = where(root);
+// Removed, and the person moved on to a field before the redraw: focus stays in the field.
+fire(remove_btn(root, GROUP, "pond-liner.pdf"), "click");
+answer(true);
+root.find(".ge-field")[0].focus();
+await wait(5);
+out.focus_moved_on = where(root);
+// A drop with nothing focused moves nothing.
+BODY.focus();
+fire(root[0], "drop", { originalEvent: { dataTransfer: { types: ["Files"], files: [{ name: "x.png" }] } } });
+close_dialog(last_upload().dialog);
+out.focus_drop_none = where(root);
 
 // A reload after a change made elsewhere (another tab took every file away).
 server.rows = [];
 t.reload();
 await wait(5);
 out.reloaded_empty = snap(root);
+// The chip says "Attach a file" now; its uploader closed with nothing: back on the chip.
+root.find(".ge-files-chip")[0].focus();
+t.chip_action();
+close_dialog(last_upload().dialog);
+out.focus_chip = where(root);
 
 // max_attachments reached: no Attach a file in either list, the same note in both.
 meta = { max_attachments: 2 };
@@ -1574,6 +1708,45 @@ class TestTheFilesInBothPlaces(unittest.TestCase):
 		self.assertTrue(self.out["drop_claimed"])
 		self.assertEqual(self.out["drop_files"], 1, "the uploader opens with the dropped file")
 		self.assertSameInBoth(self.out["dropped"], ["pump-photo.jpg", "drop.png"], 2)
+
+	# Focus after a redraw (review of v1.748.0): the button used goes with the old list, and frappe
+	# returns focus after a dialog only on a Form route, so without this it fell to <body>.
+
+	def test_after_a_remove_focus_is_on_that_list_s_summary(self):
+		self.assertEqual(
+			self.out["focus_remove_side_closed"], "group button.remove", "as the question closes"
+		)
+		self.assertEqual(self.out["focus_remove_side"], "group summary", "once the redraw takes the button")
+		self.assertEqual(self.out["focus_remove_mid"], "dock summary")
+
+	def test_a_remove_answered_no_returns_to_its_button(self):
+		self.assertEqual(self.out["focus_remove_no"], "dock button.remove")
+
+	def test_after_an_attach_focus_is_on_that_list_s_attach_a_file(self):
+		self.assertEqual(self.out["focus_attach_closed"], "group button.attach")
+		self.assertEqual(
+			self.out["focus_attach"], "group button.attach", "the new list's, not a detached one"
+		)
+		self.assertEqual(self.out["focus_attach_cancel"], "dock button.attach")
+		self.assertTrue(self.out["focus_attach_cancel_same"])
+
+	def test_a_redraw_while_the_uploader_is_open_waits_for_it(self):
+		self.assertEqual(self.out["focus_while_open"], "elsewhere button", "the dialog keeps its focus")
+		self.assertEqual(self.out["focus_after_open"], "group button.attach")
+
+	def test_after_a_drop_focus_returns_to_the_field_without_scrolling(self):
+		self.assertEqual(self.out["focus_drop"], "page input.field")
+		self.assertTrue(self.out["focus_drop_quiet"])
+		self.assertEqual(self.out["focus_drop_none"], "body", "nothing focused before, nothing moved")
+
+	def test_the_chip_gets_focus_back(self):
+		self.assertEqual(self.out["focus_chip"], "page button.chip")
+
+	def test_a_realtime_redraw_keeps_focus_in_its_list(self):
+		self.assertEqual(self.out["focus_reload"], "dock summary")
+
+	def test_a_person_who_moved_on_keeps_their_focus(self):
+		self.assertEqual(self.out["focus_moved_on"], "page input.field")
 
 	def test_a_reload_refreshes_both_down_to_none(self):
 		s = self.out["reloaded_empty"]

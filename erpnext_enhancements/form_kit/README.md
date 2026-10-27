@@ -314,8 +314,12 @@ the new guided layout." Both are for the guided page's band and body; the decisi
   group starts open, and the stylesheet shows it only while the tools sit in the side column on a wide
   screen (`data-ge-tools="side"`, at least 1024px). Below the form, behind their bar, in focus mode or
   on a phone the tools share the files section's column, and a second copy of the same list a little
-  further down would add nothing. A **files chip** in the band shows the count ("3 files", "Attach a file" while
-  there are none and the person may add one, "No files" when they may not) and opens and scrolls to the
+  further down would add nothing. Each redraw takes away the button that was used, and frappe returns
+  focus after a dialog only on a Form route, so `refocus_files` puts it back: on the control the person
+  used while it is still there, else on that list's **Attach a file** or its summary, or, after a drop,
+  on whatever they had focused before. It does this only while focus has fallen to the page.
+  A **files chip** in the band shows the count ("3 files", "Attach a file" while there are none and
+  the person may add one, "No files" when they may not) and opens and scrolls to the
   section, or, with no files yet and a right to add one, opens the uploader as its "Attach a file" says; it is hidden until the files have loaded, so it never says "none" before it knows.
 - **Drag and drop.** A file dropped anywhere on the page (or on the side panel while it edits a record; not on the landing screen, the Desk navbar or frappe's Text Editor) opens frappe's uploader
   with it, as `Form.setup_file_drop` does for the Desk form (`files`, folder "Home/Attachments"), so
