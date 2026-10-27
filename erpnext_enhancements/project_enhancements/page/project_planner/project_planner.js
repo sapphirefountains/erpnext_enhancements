@@ -9788,8 +9788,8 @@ const PP6D_METHODS = {
 
 	// A record in a conflict: this planner's task opens in its side panel; anything else is a link.
 	p6d_open_item(conflict, item) {
-		const kit = this.p6d_kit();
-		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		// A route off the planner: the Undo toast goes first, then the drawer (PPR's ppr_leave).
+		const go = (fn) => this.ppr_leave(fn);
 		if (item.own && item.doctype === "Task") {
 			const card = this.by_task[item.name];
 			if (card) this.open_card(card);

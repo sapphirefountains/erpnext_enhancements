@@ -86,8 +86,8 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   - Every way off the planner now closes the Undo toast first, because it has no route hook and would
     otherwise stay clickable on the Form. That covers a tap, the card menu's *Open project*, Quick
     edit's *Open task* / *Open project* / *Open visit form* / *Open contract*, the drawers' *Open
-    project* and *Open Maintenance Profile*, the search's jump to an undated task, and every fallback
-    (`ppr_leave`, `mpr_leave`).
+    project* and *Open Maintenance Profile*, the search's jump to an undated task, the Conflict
+    center's links, and every fallback (`ppr_leave`, `mpr_leave`).
   - Quick edit's own links now go through `records.open` too, so they ask before dropping the panel's
     unsaved edits. Before this they dropped them silently, which predates this release.
 - **Who may open what is decided per record, on the server** (`api/planner_open.py`; found in review).

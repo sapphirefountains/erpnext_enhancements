@@ -2576,7 +2576,8 @@ their week". He picked each part:
 - **Undo never overwrites a Form's edit.** Each Undo entry remembers the `modified` its own write left
   (`ppr_after`, `mpr_after`); a reload that finds the task or visit changed since (the Task form) drops the
   entry and its toast. Every way off the planner closes the Undo toast first: `records.open`, and
-  `ppr_leave` / `mpr_leave` for the rest (a fallback, Quick edit's links, the drawers' Open buttons).
+  `ppr_leave` / `mpr_leave` for the rest (a fallback, Quick edit's links, the drawers' Open buttons,
+  the Conflict center's links).
 - **Fallbacks.** Before the kit has loaded (a moment after the first landing), or when the person may not
   open the record (by role, `frappe.model.can_read`, or per record, above), a tap does what it did before;
   a fallback route still goes through the drawer (`p6b_navigate`).

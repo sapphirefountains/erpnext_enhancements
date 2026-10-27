@@ -909,6 +909,25 @@ test("Maintenance Planner: a Fountain Move's Open project and a fallback close t
 	d.log.length = 0;
 	mp.mpr_leave(() => mpCtx.frappe.set_route("visit-wizard", { record: "SMR-1" }));
 	check("a route records.open does not take: the toast, then the drawer", d.log.map((e) => e[0]), ["kit-toast-closed", "kit-navigate", "page-route"]);
+	d.log.length = 0;
+	mp.p6d_open_item({ date: "2026-10-27" }, { planner: "travel", name: "TRIP-1" });
+	mpCtx.Page.prototype.open_card.call(mp, { kind: "move", name: "TASK-FM" }); // mpr_open_card's fallback (the fixture stubs open_card)
+	check("the Conflict center's links and open_card's routes too", d.log.map((e) => e[0]), ["kit-toast-closed", "kit-navigate", "page-route", "kit-toast-closed", "kit-navigate", "page-route"]);
+});
+
+test("Project Planner: the Conflict center's links close the Undo toast first", () => {
+	const { pp, d } = planner();
+	ppCtx.frappe.user = { has_role: () => true };
+	pp.p6d_open_item({ date: "2026-10-27" }, { planner: "travel", name: "TRIP-1" });
+	pp.p6d_open_item({ date: "2026-10-27" }, { planner: "maintenance", name: "SMR-1" });
+	check("a trip and the Maintenance Planner's week", d.log, [
+		["kit-toast-closed"],
+		["kit-navigate"],
+		["page-route", "Form", "Travel Trip", "TRIP-1"],
+		["kit-toast-closed"],
+		["kit-navigate"],
+		["page-route", "maintenance-planner", "week", "2026-10-27"],
+	]);
 });
 
 test("Maintenance Planner: an Undo whose visit changed on its form is dropped", () => {

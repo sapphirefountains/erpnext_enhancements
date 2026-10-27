@@ -1991,14 +1991,16 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ dialog
 
 	open_card(card) {
+		// A move or project work is a route off the planner (mpr_open_card's fallback): the Undo toast goes
+		// first, then any drawer (mpr_leave).
 		if (card.kind === "move") {
-			frappe.set_route("Form", "Task", card.name);
+			this.mpr_leave(() => frappe.set_route("Form", "Task", card.name));
 			return;
 		}
 		if (card.kind === "booking") {
 			// Travel days open their trip; project and rental bookings are Tasks.
-			if (card.booking_kind === "travel") frappe.set_route("Form", "Travel Trip", card.ref);
-			else frappe.set_route("Form", "Task", card.ref);
+			if (card.booking_kind === "travel") this.mpr_leave(() => frappe.set_route("Form", "Travel Trip", card.ref));
+			else this.mpr_leave(() => frappe.set_route("Form", "Task", card.ref));
 			return;
 		}
 		const rows = [];
@@ -5928,8 +5930,8 @@ const MP6D_METHODS = {
 	// A record in a conflict: a visit of this planner opens in its side panel; a project task opens on
 	// the Project Planner; a trip or a rental crew task opens its form.
 	p6d_open_item(conflict, item) {
-		const kit = this.p6d_kit();
-		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		// A route off the planner: the Undo toast goes first, then the drawer (MPR's mpr_leave).
+		const go = (fn) => this.mpr_leave(fn);
 		if (item.own) {
 			const card = (item.key && this.by_key[item.key]) || this.by_key[item.name];
 			if (card && card.kind !== "booking") this.open_card(card);
