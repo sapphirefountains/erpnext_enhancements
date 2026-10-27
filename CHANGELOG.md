@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.750.1] - 2026-10-27
 
+ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
+
 ### Fixed
 - **Privacy: on a shared phone, the Time Kiosk no longer shows one technician another's My Day,
   history, correction requests or Map trail when offline.** An independent review of the kiosk
