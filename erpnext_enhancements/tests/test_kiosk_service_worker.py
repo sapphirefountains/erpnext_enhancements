@@ -30,7 +30,7 @@ caches, never another worker's (see ``TestActivateDeletesOnlyItsOwnCaches``; the
 itinerary's offline copy is the other worker it used to wipe).
 
 The one exception is whose answers the kiosk worker replays offline
-(``TestKeptAnswersArePerPerson``, v1.750.1). It kept every kiosk GET under its URL
+(``TestKeptAnswersArePerPerson``, v1.751.1). It kept every kiosk GET under its URL
 alone, so on a shared phone the next technician, offline, saw the last one's My
 Day, history, correction requests and Map trail. That is behaviour, not scope, so
 ``scripts/test_kiosk_sw_cache.js`` runs the real worker in node over a stand-in

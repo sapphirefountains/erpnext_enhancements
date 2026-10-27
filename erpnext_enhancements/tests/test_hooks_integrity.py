@@ -314,11 +314,11 @@ class TestLoginAndLogoutHooks(unittest.TestCase):
     The two here (Plan a Trip PR 4, v1.549.0) delete the /itinerary offline marker, the cookie
     that decides whose itinerary a phone may show with no signal. Without `on_logout` a signed-out
     phone keeps showing the last person's trip offline; without `on_login` so does one whose
-    session merely expired, to whoever signs in next. The Time Kiosk's pair (v1.750.1) does the
+    session merely expired, to whoever signs in next. The Time Kiosk's pair (v1.751.1) does the
     same for the kiosk's kept page, answers and queued points.
     """
 
-    # The Time Kiosk's marker (v1.750.1, workforce/kiosk_offline.py) is the same pattern, so the
+    # The Time Kiosk's marker (v1.751.1, workforce/kiosk_offline.py) is the same pattern, so the
     # same two rules bind its hooks.
     TARGETS = (
         ("on_logout", "erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"),

@@ -3090,7 +3090,7 @@ jobs:
       # cache-first with ignoreSearch, which froze JavaScript across the site for
       # any browser that had ever opened /kiosk -- found with a training player
       # four releases stale that no ?v= could reach.
-      # Also whose answers it replays offline (v1.750.1): every kiosk GET was kept under
+      # Also whose answers it replays offline (v1.751.1): every kiosk GET was kept under
       # its URL alone, so on a shared phone the next technician, offline, saw the last
       # one's My Day, history, correction requests and Map trail, and the kept /kiosk page
       # outlived every sign-out. Now an offline marker cookie (workforce/kiosk_offline.py,

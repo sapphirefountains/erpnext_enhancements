@@ -15,7 +15,7 @@
  * `phoneKey`, `askingKey`, and `init`'s refusal); `tests/test_kiosk_service_worker.py` pins those
  * lines in app.js, so the model and the page cannot drift apart unnoticed.
  *
- * The bug it started from (on main until v1.750.1): the worker kept every GET under
+ * The bug it started from (on main until v1.751.1): the worker kept every GET under
  * `/api/method/erpnext_enhancements.api.time_kiosk.` under its URL alone and replayed it offline,
  * so on a shared phone the next technician to sign in, offline, was handed the last one's My Day,
  * history, correction requests and Map trail, and the kept /kiosk page outlived every sign-out.

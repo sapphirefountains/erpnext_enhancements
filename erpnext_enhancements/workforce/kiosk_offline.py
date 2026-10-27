@@ -178,7 +178,7 @@ def belongs_to_session(offline_key):
 	"""True unless ``offline_key`` names somebody other than the session's user.
 
 	For ``log_geolocation_batch``: a queued batch tagged with another person's key is refused. An
-	empty key (a point queued before v1.750.1, or a page whose marker could not be made) is not
+	empty key (a point queued before v1.751.1, or a page whose marker could not be made) is not
 	refused, as before. A key the server cannot check is refused: nobody's points are filed under
 	a session that cannot be shown to be theirs.
 	"""

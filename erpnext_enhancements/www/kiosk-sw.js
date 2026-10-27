@@ -346,7 +346,7 @@ async function forgetKept() {
 }
 
 // Queued points tagged for anybody but `owner` ('' = everybody tagged). A point
-// queued before v1.750.1 carries no marker and is left to upload as before.
+// queued before v1.751.1 carries no marker and is left to upload as before.
 async function dropPointsNotOf(owner) {
   const points = await getAllPoints();
   await deletePoints(points.filter((p) => p.owner && p.owner !== owner).map((p) => p.client_id));
