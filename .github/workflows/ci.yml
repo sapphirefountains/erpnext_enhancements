@@ -2017,6 +2017,13 @@ jobs:
       # hooks.py wires; plus the one-shot cleanup patch against an in-memory table. Own stub.
       - name: Contact phone dedupe (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_contact_phone_dedupe -v
+      # One copy of each file on a Project made from an Opportunity (utils/attachment_copies.py,
+      # v1.749.1). The Project on_update hook and the creation job both copied every attachment,
+      # so each arrived twice, four times when the Opportunity held it twice. The rules, the hook
+      # against an in-memory tabFile, and the one-shot cleanup patch (keeps one row per stored
+      # file, never deletes a stored file). Own stub; the job's side is test_project_creation_progress.
+      - name: Project attachment copies (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_attachment_copies -v
       # The Desk shows a stored +18015550100 as (801) 555-0100 (public/js/normalize/
       # desk_display.js): the formatter and control decisions run under node, the bundle
       # imports the module, and boot honours the kill switch. Also the P2-C soft warning on a

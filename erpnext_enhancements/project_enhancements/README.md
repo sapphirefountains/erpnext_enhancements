@@ -8,7 +8,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 
 | File | Purpose | Key functions / classes | Wiring |
 |---|---|---|---|
-| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `after_save` → `sync_attachments_from_opportunity`; `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
+| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `on_update` → `sync_attachments_from_opportunity` (one copy of each file, by `utils/attachment_copies.files_to_copy`, v1.749.1); `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
 | `doctype/master_project/master_project.py` | Master Project controller; rollup of member Projects + Tasks | `MasterProject.get_projects_and_tasks` | Doctype controller |
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project_notes`, `project_stakeholder`, `{build,design,rent,service}_customer_requests`, `{build,design,rent,service}_deliverables` | Project child tables ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
@@ -2773,7 +2773,7 @@ while they are being constructed.
 
 ## `hooks.py` touchpoints
 
-- `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
+- `doc_events`: Project `on_update` → `sync_attachments_from_opportunity` (the creation job asks the same `utils/attachment_copies` rule, so a file arrives once, v1.749.1); Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
 - `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0), then `planner_tracking.validate_equipment` (one row per vehicle/asset, label filled, v1.582.0) and `customer_confirmations.keep_stamps`; `on_update` also runs `customer_confirmations.on_task_update` before `crew_sync`; `before_insert` → `task_templates.copy_template_planning` (v1.583.0).
 - `scheduler_events` (every 10 minutes) → `customer_confirmations.send_due_confirmations`, a no-op while the switch is off (v1.583.0).
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).

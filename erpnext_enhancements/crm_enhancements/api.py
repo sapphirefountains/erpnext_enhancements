@@ -22,6 +22,7 @@ from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
 from erpnext_enhancements.crm_enhancements import project_creation_progress as progress
 from erpnext_enhancements.crm_enhancements.project_copy import copy_site_and_budget
+from erpnext_enhancements.utils import attachment_copies
 
 
 def _notify_recipients(users):
@@ -649,8 +650,19 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				"File",
 				filters={"attached_to_doctype": "Opportunity", "attached_to_name": opportunity_name},
 				fields=["file_name", "file_url", "is_private", "folder"],
+				order_by="creation asc",
 			)
-			for attachment in attachments:
+			# The Project's on_update hook (sync_attachments_from_opportunity) has usually copied
+			# these already, inside project.insert above. Until v1.749.1 this loop copied every one
+			# again, so each file arrived twice, and a file the Opportunity holds twice arrived four
+			# times. It now copies only what the Project does not hold, one of each, by the hook's
+			# own rule. A failed insert still stops the creation at this step, as before.
+			held = frappe.get_all(
+				"File",
+				filters={"attached_to_doctype": "Project", "attached_to_name": project.name},
+				fields=["file_name", "file_url"],
+			)
+			for attachment in attachment_copies.files_to_copy(held, attachments):
 				file_doc = frappe.new_doc("File")
 				file_doc.file_name = attachment.file_name
 				file_doc.file_url = attachment.file_url
