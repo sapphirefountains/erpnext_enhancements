@@ -645,14 +645,15 @@ class TestImportContacts(unittest.TestCase):
 	# -- widened stub --------------------------------------------------------
 
 	def _get_all(self, doctype, filters=None, pluck=None, fields=None, **kwargs):
-		if doctype == "Contact":
+		if doctype in ("Contact", "Customer", "Supplier"):
 			# get_contacts_for_context reads the Dynamic Link rows first, keyed on the
 			# (link_doctype, link_name) pair (the generic branch below serves those), then
 			# the Contacts by name: {"name": ["in", [...]]}. Before v1.561.1 it passed the
-			# child-table filter form on link_name alone.
+			# child-table filter form on link_name alone. Since v1.746.0 it also reads the
+			# linked Customers' and Suppliers' titles by name, for the Account / Supplier column.
 			wanted = (filters or {}).get("name")
 			names = wanted[1] if isinstance(wanted, (list, tuple)) else []
-			return [_Dict(STATE["Contact"][n]) for n in sorted(names) if n in STATE["Contact"]]
+			return [_Dict(STATE[doctype][n]) for n in sorted(names) if n in STATE[doctype]]
 
 		table = STATE.get(doctype)
 		if table is None:

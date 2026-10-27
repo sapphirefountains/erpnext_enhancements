@@ -456,8 +456,10 @@ def _visible_links(parenttype, record_names, parties):
     """Each record's Dynamic Links as ``{record: [{name, doctype}, ...]}``, less the parties
     the caller may not see.
 
-    The directory's "Linked To" column names every party a Contact or Address belongs to.
-    Until the v1.561.1 review it named them all, so read on one Customer also showed the
+    The address directory's "Linked To" column names every party an Address belongs to, and the
+    contact directory's Account / Supplier column the Customers and Suppliers among them
+    (:func:`_account_links`, v1.746.0; it was a "Linked To" column too until then).
+    Until the v1.561.1 review those columns named every link, so read on one Customer also showed the
     names of every other party its contacts were linked to: other customers, Leads,
     Projects. A link is now kept when the caller holds **select** on its party, the
     permission Frappe uses for "may see this name in a Link field" (``has_permission``
@@ -482,6 +484,62 @@ def _visible_links(parenttype, record_names, parties):
         if visible[pair]:
             link_map.setdefault(row.parent, []).append({"name": row.link_name, "doctype": row.link_doctype})
     return link_map
+
+
+#: The parties the contact directory's Account / Supplier column names (v1.746.0), each with the
+#: field that holds its display name (ERPNext's own title field for both doctypes).
+ACCOUNT_TITLE_FIELDS = {"Customer": "customer_name", "Supplier": "supplier_name"}
+
+
+def _account_links(link_map):
+    """Each record's Customer and Supplier links with their display names, as
+    ``{record: [{"doctype", "name", "title"}, ...]}``: the directory's Account / Supplier column.
+
+    Until v1.746.0 the contact table's "Linked To" column listed every party in ``link_map``,
+    so a person on five jobs showed five Projects and Opportunities beside the one company they
+    work for. The column now answers only "whose person is this": the Customers (this site's
+    "Accounts") first, then the Suppliers, each in title order, one entry per party. The Contact
+    form itself still shows every link.
+
+    ``link_map`` is :func:`_visible_links`' answer, so every party named here has already passed
+    the select check. The titles are read for those parties only, in one query per doctype
+    however many rows there are. Select is enough to see a title: it is what a Link field to the
+    party shows. Frappe's form load (``set_link_titles``) reads it without checking the linked
+    record, and the Link search returns it to a select-only user. A party with a blank title, or
+    with no row, shows its name.
+    """
+    wanted = {}
+    for links in link_map.values():
+        for link in links:
+            if link["doctype"] in ACCOUNT_TITLE_FIELDS:
+                wanted.setdefault(link["doctype"], set()).add(link["name"])
+
+    titles = {}
+    for doctype, names in wanted.items():
+        title_field = ACCOUNT_TITLE_FIELDS[doctype]
+        for row in frappe.get_all(
+            doctype, filters={"name": ["in", sorted(names)]}, fields=["name", title_field]
+        ):
+            titles[(doctype, row.name)] = row.get(title_field)
+
+    order = list(ACCOUNT_TITLE_FIELDS)
+    accounts = {}
+    for record, links in link_map.items():
+        entries = {}
+        for link in links:
+            pair = (link["doctype"], link["name"])
+            if link["doctype"] in ACCOUNT_TITLE_FIELDS and pair not in entries:
+                entries[pair] = {
+                    "doctype": link["doctype"],
+                    "name": link["name"],
+                    "title": titles.get(pair) or link["name"],
+                }
+        if entries:
+            accounts[record] = sorted(
+                entries.values(),
+                key=lambda e: (order.index(e["doctype"]), str(e["title"]).casefold(), e["name"]),
+            )
+    return accounts
 
 
 def _requested_links(link_doctype, link_name, links):
@@ -646,6 +704,10 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
     whole gate, as it was for the Desk: the directory is a view of a party's people for
     whoever may open that party, not a Contact list. Each row's ``links`` name only the
     parties the user may select (:func:`_visible_links`).
+
+    Each row also carries ``accounts``, the Customer and Supplier ones among those links with
+    their display names (:func:`_account_links`, v1.746.0), which the widget's Account /
+    Supplier column shows. ``links`` stays for the guided page's record tools.
     """
     parties = _readable_parties(sources)
     if not parties:
@@ -671,9 +733,11 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
         return []
 
     link_map = _visible_links("Contact", [c.name for c in contact_list], parties)
+    account_map = _account_links(link_map)
 
     for c in contact_list:
         c.links = link_map.get(c.name, [])
+        c.accounts = account_map.get(c.name, [])
 
     return contact_list
 

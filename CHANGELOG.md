@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.746.0] - 2026-10-27
+
+### Changed
+- **The Contact Directory says whose person each contact is.** Its "Linked To" column is now
+  **Account / Supplier**. "Linked To" listed every record a Contact is linked to, by ID, so
+  someone on five jobs showed five Projects and Opportunities beside the one company they work
+  for. Nik asked for "this contact belongs to this customer, or this contact belongs to this
+  supplier" instead (2026-10-27). The directory is the contact table on the Customer, Supplier,
+  Opportunity, Project and Master Project forms (`unified_tab_controller.js`).
+  - **What the cell shows.** One entry per Customer and per Supplier the Contact is linked to,
+    and nothing else. Each is shown by its display name (`customer_name` / `supplier_name`, or
+    the ID when that is blank), linked to the record, with the ID on hover. Suppliers carry a
+    small "Supplier" tag, because a Customer reads "Account" on this site and the two otherwise
+    look alike. Customers come first, then Suppliers, each in name order. A Contact on neither
+    shows a muted "None", so a person filed only under a job stays visible for cleanup. Every
+    name is escaped; the old column put raw names into the page.
+  - **The header reads "Account / Supplier",** to match the site's "Accounts" label for Customer.
+  - **Where the data comes from.** `sync_contact.get_contacts_for_context` now puts `accounts` on
+    each row (`_account_links`). It is built from the links the row already carried, which
+    passed the v1.561.1 select check, so it names no party the reader could not already see. The
+    display names come from one `get_all` per doctype, so a directory of fifty contacts makes two
+    title queries, not fifty. Select is enough to see a title: it is what a Link field to that
+    party shows, and Frappe's own form load reads it without checking the linked record. `links`
+    is unchanged, because the guided page's People & places list still reads it.
+  - **Display only.** No data changes. The Contact form still shows every link, and the address
+    table keeps its "Linked To" column. The table has no filter, search or sort, so nothing else
+    was keyed on the old column.
+  - Tests: `AccountColumnTest` in `tests/test_contact_endpoint_permissions.py` (which links, which
+    titles, the order, one title query per doctype, and no lookup for a party the reader cannot
+    select), and `scripts/test_contact_account_column.mjs`, its own CI step, which runs the real
+    cell renderer.
+
 ## [1.745.1] - 2026-10-26
 
 ### Fixed

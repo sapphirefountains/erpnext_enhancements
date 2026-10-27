@@ -318,7 +318,7 @@ erpnext_enhancements.unified_controller = {
 								<th>Title</th>
 								<th>Email</th>
 								<th>Phone</th>
-								<th>Linked To</th>
+								<th>${__("Account / Supplier")}</th>
 								<th>Actions</th>
 							</tr>
 						</thead>
@@ -355,15 +355,6 @@ erpnext_enhancements.unified_controller = {
 					// Shown (801) 555-0100, dialed as stored (+18015550100): form kit P2-B.
 					const phone_link = phone ? `<a href="tel:${phone}">${shown_phone(phone)}</a>` : "";
 
-					const linked_to_links = (c.links || [])
-						.map((l) => {
-							const url = frappe.urllib.get_full_url(
-								`/desk/${frappe.router.slug(l.doctype)}/${encodeURIComponent(l.name)}`,
-							);
-							return `<a href="${url}" target="_blank">${l.name} (${l.doctype})</a>`;
-						})
-						.join(", ");
-
 					table += `
 						<tr data-name="${c.name}">
 							<td>
@@ -373,7 +364,7 @@ erpnext_enhancements.unified_controller = {
 							<td>${c.custom_title || ""}</td>
 							<td>${email_link}</td>
 							<td>${phone_link}</td>
-							<td><span style="font-size: 12px;">${linked_to_links}</span></td>
+							<td>${this.contact_accounts_cell(c)}</td>
 							<td>
 								<button class="btn btn-xs btn-default edit-contact" data-name="${c.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
@@ -413,6 +404,36 @@ erpnext_enhancements.unified_controller = {
 				});
 			},
 		});
+	},
+
+	// The Account / Supplier cell (v1.746.0): whose person this is. Until then the column was
+	// "Linked To", every party the Contact is linked to, so someone on five jobs showed five
+	// Projects and Opportunities beside the one company they work for. Now it is the Customers
+	// and Suppliers only, from the row's `accounts` (sync_contact._account_links, which also
+	// orders them): each by its display name, linked to the record, with the ID on hover. A
+	// Supplier carries a small tag, since a Customer reads "Account" on this site and the two
+	// otherwise look alike. A Contact on neither shows a muted "None", which keeps a person filed
+	// only under a job visible for cleanup. Every name is escaped: names are typed by people.
+	// scripts/test_contact_account_column.mjs runs this method.
+	contact_accounts_cell: function (contact) {
+		const esc = frappe.utils.escape_html;
+		const accounts = (contact && contact.accounts) || [];
+		if (!accounts.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
+		return accounts
+			.map((a) => {
+				const url = frappe.urllib.get_full_url(
+					`/desk/${frappe.router.slug(a.doctype)}/${encodeURIComponent(a.name)}`,
+				);
+				const label = a.title || a.name;
+				const hover = label !== a.name ? ` title="${esc(a.name)}"` : "";
+				const tag =
+					a.doctype === "Supplier"
+						? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__("Supplier"))}</span>`
+						: "";
+				// The URL needs no escaping: encodeURIComponent leaves no quote, bracket or ampersand.
+				return `<div><a href="${url}" target="_blank"${hover}>${esc(label)}</a>${tag}</div>`;
+			})
+			.join("");
 	},
 
 	render_address_table: function () {
