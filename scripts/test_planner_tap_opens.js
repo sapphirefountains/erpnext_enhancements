@@ -324,6 +324,23 @@ test("The side panel: a late reply the page sets through the panel is not the pe
 	check("key order never makes a difference", kit.canonical({ b: 1, a: { d: 2, c: [{ f: 1, e: 2 }] } }), '{"a":{"c":[{"e":2,"f":1}],"d":2},"b":1}');
 });
 
+test("The side panel: a page's own controls in it count too (the Maintenance Planner's crew boxes)", () => {
+	const { env } = panelEnv();
+	const panel = kit.create_panel(env);
+	const p = panel({ title: "Plaza", fields: [] });
+	p.show();
+	const crew = [{ user: "austin@example.com", hours: null }];
+	p.add_values(() => crew.slice());
+	p.container.fire("pointerdown"); // the finger lands on a helper's box
+	check("nothing ticked yet", panel.unsaved(), false);
+	crew.push({ user: "jesse@example.com", hours: null }); // the tick
+	check("a helper ticked is an unsaved edit", panel.unsaved(), true);
+	p.add_values(() => {
+		throw new Error("a control that is gone");
+	});
+	check("a broken reader never breaks the question", panel.unsaved(), true);
+});
+
 // ------------------------------------------------------------------ 4. the quick looks
 
 function week(bookings) {
@@ -570,6 +587,7 @@ function planner(opts) {
 								return fn();
 							},
 						},
+						toast: { close: () => d.log.push(["kit-toast-closed"]) },
 					},
 			  },
 		p6c: { highlight: null },
@@ -691,7 +709,21 @@ test("Project Planner: a fallback route still goes through the drawer", () => {
 	const { pp, d } = planner({ readable: ["Project"] }); // this role reads no Task (frappe.model.can_read)
 	pp.ppr_open_task("T-OFF-BOARD");
 	pp.open_foreign("rental", "TASK-R", "2026-10-27", false, true);
-	check("an open drawer's history entry is replaced, never stacked on", d.log, [["kit-navigate"], ["page-route", "Form", "Task", "T-OFF-BOARD"], ["kit-navigate"], ["page-route", "Form", "Task", "TASK-R"]]);
+	check(
+		"the Undo toast goes, and an open drawer's history entry is replaced, never stacked on",
+		d.log,
+		[["kit-toast-closed"], ["kit-navigate"], ["page-route", "Form", "Task", "T-OFF-BOARD"], ["kit-toast-closed"], ["kit-navigate"], ["page-route", "Form", "Task", "TASK-R"]]
+	);
+});
+
+test("Project Planner: every way to a record closes the Undo toast first", () => {
+	const { pp, d } = planner();
+	const items = pp.p6b_card_items({ kind: "card", card: pp.by_task.T1, ymd: "2026-10-27" });
+	items.find((item) => item.label === "Open project").on_click();
+	check("the card menu's Open project: through records.open", d.log, [["toast-closed"], ["navigate"], ["route", "Form", "Project", "PRJ-1"]]);
+	const reader = planner({ readable: ["Task"] }); // this role reads no Project
+	reader.pp.p6b_card_items({ kind: "card", card: reader.pp.by_task.T1, ymd: "2026-10-27" }).find((item) => item.label === "Open project").on_click();
+	check("and when records.open cannot, still the toast first", reader.d.log, [["kit-toast-closed"], ["kit-navigate"], ["page-route", "Form", "Project", "PRJ-1"]]);
 });
 
 test("Project Planner: an Undo whose task changed on its form is dropped", () => {
@@ -800,7 +832,20 @@ function maintenance(opts) {
 			"jesse@example.com": { user: "jesse@example.com", employee: "HR-EMP-9", resource: "RES-9", open_as: null },
 			"lisa@example.com": { user: "lisa@example.com", open_as: null },
 		},
-		p6a: o.no_kit ? { kit: null } : { kit: { records: d.records } },
+		p6a: o.no_kit
+			? { kit: null }
+			: {
+					kit: {
+						records: d.records,
+						toast: { close: () => d.log.push(["kit-toast-closed"]) },
+						drawer: {
+							navigate(fn) {
+								d.log.push(["kit-navigate"]);
+								return fn();
+							},
+						},
+					},
+			  },
 		open_card: (card) => seen.push(["panel", card.kind, card.name || card.key]),
 		p6a_open_person: (user) => seen.push(["week", user]),
 		p6a_open_site: () => seen.push(["site"]),
@@ -853,6 +898,17 @@ test("Maintenance Planner: a technician's name opens their Employee record", () 
 	const visit = new El("div.mp-card", { "data-key": "SMR-1" }, mp.$body[0]);
 	const helper = mp.p6b_target(new El("span.mp-tech", { "data-pk-person": encodeURIComponent("jesse@example.com") }, visit));
 	check("a helper's initials hold their own week, not the lead's", [helper.kind, helper.user], ["person", "jesse@example.com"]);
+});
+
+test("Maintenance Planner: a Fountain Move's Open project and a fallback close the Undo toast", () => {
+	const { mp, d } = maintenance();
+	mpCtx.frappe.set_route = (...args) => d.log.push(["page-route"].concat(args));
+	const items = mp.fm_card_items({ kind: "move", name: "TASK-FM", project: "PRJ-1" });
+	items[1].on_click();
+	check("Open project: through records.open", d.log, [["toast-closed"], ["navigate"], ["route", "Form", "Project", "PRJ-1"]]);
+	d.log.length = 0;
+	mp.mpr_leave(() => mpCtx.frappe.set_route("visit-wizard", { record: "SMR-1" }));
+	check("a route records.open does not take: the toast, then the drawer", d.log.map((e) => e[0]), ["kit-toast-closed", "kit-navigate", "page-route"]);
 });
 
 test("Maintenance Planner: an Undo whose visit changed on its form is dropped", () => {

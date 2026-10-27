@@ -1323,7 +1323,7 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `escape(value)` | The one HTML-escaping helper of the kit's renderers (`& < > " ' \``); it is sf_kit's `esc` (`public/js/sf_kit/esc.js`), re-exported | Pages keep their own `pp_esc` / `mp_esc`; `safe_color`, `glow_key(s)` and `format.{hours, drive, day_label, add_days}` beside it |
 | `drawer.open({title, subtitle, body, tools, actions, width, key, owner, push, reopen, on_click, on_close})` | The right-side drawer. `body` is an HTML string (already escaped), an Element or jQuery; `actions` are footer buttons `{label, primary, on_click(handle)}`; `push` is an element squeezed by the drawer's width on a wide screen so the calendar is not hidden under it; `on_click(e, handle)` is one delegated listener for whatever the body shows (Enter/Space on a `role="button"` counts); `reopen` is how Forward opens it again | Returns a handle (`set_title`, `set_subtitle`, `set_body`, `set_tools`, `set_actions`, `close`, `is_open`, `body`). A second `open` replaces the first in place. Esc and Back close it. Full width under 768px. No backdrop: the page stays usable. `owner` says which page opened it (the planners share one drawer element) |
 | `drawer.route(fn, keep)` / `drawer.navigate(fn)` | A route change of the page's own while a drawer may be open: `route(() => frappe.set_route(...), true)` keeps the drawer open over the new route; `navigate(fn)` closes it first (an "Open project" button) | Either way the kit's history entry is replaced by the route, so Back never lands on a drawer that has gone |
-| `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide` | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog. `panel.unsaved()` (v1.751.0): the open panel's values differ from what they were at the person's first pointer or key inside it (a page's own `set_value` never counts) |
+| `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide`, `add_values(fn)` (a page's own controls in the panel, for `unsaved()`) | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog. `panel.unsaved()` (v1.751.0): the open panel's values differ from what they were at the person's first pointer or key inside it (a page's own `set_value` never counts) |
 | `records.record_of(kind, item)` / `records.open(record)` / `records.open_item(kind, item)` | A tap opens the item's record (v1.751.0): `task`, `move`, `rental` → Task; `visit` → Sapphire Maintenance Record, or with `projected` its Sapphire Maintenance Contract; `projected` → the contract; `travel` → Travel Trip; `project` → Project; `person` → as its `open_as` says (Employee or Planner Resource; none without it); `asset` → Asset | `record_of` is null for a drafted new task, for driving, a block or a note, for a row the server marked `open: false` (`api/planner_open.py`), and for a doctype `frappe.model.can_read` refuses, so the page keeps its old answer. `open` routes `("Form", doctype, name)` through `drawer.navigate`, in the same tab, after a `frappe.confirm` when `panel.unsaved()`, and closes the Undo toast first |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
@@ -2562,16 +2562,21 @@ their week". He picked each part:
   marks it: a person's `open_as` (`Employee`, `Planner Resource` or none) on `get_planner`, Capacity
   (`get_heatmap`), the route and the Maintenance Planner's technicians; a visit's or trip's `open` on the
   foreign bookings, the route's stops, the quick looks and the Maintenance Planner's project work. A
-  refused name shows their week; a refused trip says so; a refused visit keeps its old note. Task,
+  refused name shows their week; a refused trip says so; a refused visit keeps its old note. A role with
+  no read on a doctype at all is answered before the query (`frappe.has_permission`), because
+  `get_list` refuses through `frappe.throw`, whose message would reach the Desk as a red dialog even
+  when caught; anything a refused query still logs is cut back off. Task,
   Project and Asset are not asked: on production their only links to Employee ignore user permissions,
   there is one Company, the two Project User Permissions are outside users, and strict mode is off.
 - **Nothing is lost.** Held changes are server rows (`Planner Draft Change`), so leaving loses none; the
   page instance keeps the Undo stack, the selection and the build-out grid in memory across a Form and Back.
   The side panel's own unsaved edits ask first (`planner_kit.panel.unsaved()`, counted from the person's
-  first touch, never from the page's `set_value`; a late reply set through the panel moves the baseline).
+  first touch, never from the page's `set_value`; a late reply set through the panel moves the baseline;
+  a page's own controls count through `dialog.add_values(fn)`, the Maintenance Planner's crew boxes).
 - **Undo never overwrites a Form's edit.** Each Undo entry remembers the `modified` its own write left
   (`ppr_after`, `mpr_after`); a reload that finds the task or visit changed since (the Task form) drops the
-  entry and its toast. Opening a record closes the Undo toast.
+  entry and its toast. Every way off the planner closes the Undo toast first: `records.open`, and
+  `ppr_leave` / `mpr_leave` for the rest (a fallback, Quick edit's links, the drawers' Open buttons).
 - **Fallbacks.** Before the kit has loaded (a moment after the first landing), or when the person may not
   open the record (by role, `frappe.model.can_read`, or per record, above), a tap does what it did before;
   a fallback route still goes through the drawer (`p6b_navigate`).

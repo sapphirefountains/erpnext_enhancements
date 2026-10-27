@@ -73,6 +73,9 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   - So a page's own `set_value` never counts as an edit. A late reply set through the panel after
     that moves the baseline with it. One written straight into `fields_dict` is not seen, and at
     worst asks once for nothing.
+  - A page's own controls in the panel count too, through `dialog.add_values(fn)`. The Maintenance
+    Planner's crew checkboxes and hour boxes are drawn outside the FieldGroup, so ticking a helper and
+    then tapping another visit used to lose the tick without asking.
 - **Undo survives a trip to the Form, but never overwrites what was done there.** Until now an
   Undo pressed after Form → Back sent the newest `modified` the planner had read. So undoing a drag
   after the dates were edited on the Task form silently wrote the old dates, hours and crew back
@@ -80,8 +83,13 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   - Each Undo entry now remembers the `modified` its own write left (`ppr_after` / `mpr_after`).
   - A reload that finds one of its tasks or visits changed since drops the entry and its toast. Both
     planners.
-  - Opening a record also closes the Undo toast, which has no route hook and would otherwise stay
-    clickable on the Form.
+  - Every way off the planner now closes the Undo toast first, because it has no route hook and would
+    otherwise stay clickable on the Form. That covers a tap, the card menu's *Open project*, Quick
+    edit's *Open task* / *Open project* / *Open visit form* / *Open contract*, the drawers' *Open
+    project* and *Open Maintenance Profile*, the search's jump to an undated task, and every fallback
+    (`ppr_leave`, `mpr_leave`).
+  - Quick edit's own links now go through `records.open` too, so they ask before dropping the panel's
+    unsaved edits. Before this they dropped them silently, which predates this release.
 - **Who may open what is decided per record, on the server** (`api/planner_open.py`; found in review).
   `frappe.model.can_read` in the browser knows only which doctypes a role reads.
   - **Employee:** on production, 14 of the 17 planner users read Employee through a Custom DocPerm,
@@ -106,15 +114,23 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
     - There is one Company.
     - The two Project User Permissions belong to outside users with no planner role.
     - Strict user permissions are off.
-  - **If deciding fails,** a planner still answers: nothing opens, and the reason goes to the Error
-    Log.
+  - **A role that cannot read a doctype at all** is answered before the query
+    (`frappe.has_permission(doctype, "read")`), so nothing of that doctype opens and nothing is said.
+    `get_list` refuses through `frappe.throw`, which writes "Insufficient Permission" into the
+    message log before it raises. A caught refusal would still have reached the Desk as a red dialog
+    on every load, for example for a Projects User and the Maintenance Records. Whatever a refused or
+    failed query still left in the log is cut back off.
+  - **Any other failure** to decide also opens nothing and never costs a planner its answer. That
+    error alone goes to the Error Log, titled "Planner: which … records open".
 - **When a tap does what it did before.** Before the kit has loaded (a moment after the first
   landing), a tap does what it did before. The same goes for a record this person may not open, by
   role or per record. A fallback route still goes through the drawer, so an open drawer's history
   entry is replaced, not stacked on.
-- **Long press works on iOS on the Gantt and Overview tabs.** Their menus came only from DHTMLX's
-  `contextmenu`, which iOS Safari never fires on a long press, so Quick edit and *Open in Gantt* were
-  out of reach on an iPad.
+- **A long press on the Gantt and Overview tabs opens their menus on a touch screen.** Their menus
+  came only from DHTMLX's `contextmenu`, which iOS Safari never fires on a long press, so Quick edit
+  and *Open in Gantt* were out of reach on an iPad. Not yet tried on an iPad: the press, the menu and
+  the swallowed click are pinned in the tests, and the DHTMLX `locate` it relies on was checked in a
+  desktop browser.
   - The widget now opens the host's menu on a touch hold of 500 ms that moves less than 6 px.
   - It swallows the click the lifting finger makes.
   - Bars and rows select no text and show no callout on touch screens.
@@ -122,8 +138,8 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   - A person's initials on a card, the route view's title, Capacity's names and the Needs tasks
     title now each have their own menu: *See their week*, or the project's menu for Needs tasks.
   - On the Maintenance Planner, a helper's initials open the helper's own week, not the lead's.
-  - These names, the Lookahead's names and a day note's project link select no text and show no iOS
-    callout while held.
+  - On a touch screen, these names, the Lookahead's names and a day note's project link select no
+    text and show no iOS callout while held. With a mouse they can still be selected and copied.
 
 ### Added
 - `public/js/planner_kit/records.js`, one map from what a planner draws to its record, on
@@ -139,8 +155,7 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
     resources, which already had it. The route answer also carries its person's `employee` and
     `open_as`, so a direct landing on the route view knows who its title is.
   - **Per-record answers:** `open_as` and `open`, from `api/planner_open.py`.
-- Removed: 6C's `p6c_body_click`, which highlighted a project on a click of its name; Highlight is on
-  the menu now. Also removed: both planners' unused `p6c_coarse`.
+
 - `tests/test_planner_tap_opens.py` (its own CI step) runs `scripts/test_planner_tap_opens.js`
   against the real kit modules and both real page scripts.
   - The harness models permissions per record, as production has them, so the review's "Not
@@ -149,6 +164,12 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   - `test_project_planner` and `test_maintenance_planner` check the marks on the real payloads.
   - The 6A, 6B, Lookahead, Overview and Maintenance Planner suites now pin the new behavior where
     they pinned the old one.
+
+### Removed
+- 6C's `p6c_body_click`, which highlighted a project when its name was clicked. A tap opens the Project
+  now, and Highlight is on the project's menu.
+- Both planners' `p6c_coarse`, which nothing calls since Tap to move stopped defaulting on for a touch
+  screen.
 
 ## [1.750.0] - 2026-10-27
 

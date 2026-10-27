@@ -77,7 +77,9 @@ class _PermissionError(Exception):
 
 
 def setUpModule():
-	"""A ``frappe`` with what planner_open uses: get_list, PermissionError, log_error."""
+	"""A ``frappe`` with what planner_open uses: has_permission, get_list, PermissionError, the message
+	log, log_error. ``throw`` writes to the message log before it raises, as frappe 16.53.0's does
+	(``utils/messages.py``): that is what turns a caught refusal into a red dialog on the Desk."""
 	global planner_open
 	for name in ("frappe", "erpnext_enhancements.api.planner_open"):
 		_saved[name] = sys.modules.pop(name, None)
@@ -85,6 +87,15 @@ def setUpModule():
 	frappe.PermissionError = _PermissionError
 	frappe.errors = []
 	frappe.calls = []
+	frappe.local = types.SimpleNamespace(message_log=[])
+	frappe.no_read = set()
+	frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: doctype not in frappe.no_read
+
+	def throw(message, exc=Exception):
+		frappe.local.message_log.append({"message": message, "indicator": "red"})
+		raise exc(message)
+
+	frappe.throw = throw
 	frappe.log_error = lambda *a, **k: frappe.errors.append(k)
 	frappe.get_traceback = lambda: "traceback"
 	sys.modules["frappe"] = frappe
@@ -107,12 +118,14 @@ def _allow(readable):
 	def get_list(doctype, filters=None, pluck=None, **kwargs):
 		frappe.calls.append((doctype, filters, pluck, kwargs))
 		if readable.get(doctype) == "no-role":
-			raise _PermissionError(doctype)
+			frappe.throw(f"Insufficient Permission for {doctype}", _PermissionError)
 		names = filters["name"][1]
 		allowed = readable.get(doctype)
 		return [n for n in names if allowed is None or n in allowed]
 
 	frappe.calls = []
+	frappe.no_read = set()
+	frappe.local.message_log = []
 	frappe.get_list = get_list
 
 
@@ -203,8 +216,8 @@ class TestThePages(unittest.TestCase):
 		self.assertIn('if (!this.ppr_open("person", known)) this.p6a_open_person(resource, selected);', self.pp_code)
 		self.assertIn("const known = { employee: person.employee, resource: person.resource, open_as: person.open_as };", self.mp_code)
 		# A fallback route still goes through the drawer, so an open drawer's entry is replaced.
-		self.assertIn('this.p6b_navigate(() => frappe.set_route("Form", "Task", name));', self.pp_code)
-		self.assertIn('this.p6b_navigate(() => frappe.set_route("Form", "Travel Trip", ref));', self.pp_code)
+		self.assertIn('this.ppr_leave(() => frappe.set_route("Form", "Task", name));', self.pp_code)
+		self.assertIn('this.ppr_leave(() => frappe.set_route("Form", "Travel Trip", ref));', self.pp_code)
 		self.assertTrue(_method(self.mp, "\tmpr_open_card(card) {").rstrip().endswith("this.open_card(card);"))
 
 	def test_every_tap_target_is_routed(self):
@@ -285,22 +298,55 @@ class TestThePages(unittest.TestCase):
 		self.assertIn('open_label && stop.ref && stop.open !== false', self.pp_code)
 		self.assertNotIn('travel: __("Open trip")', self.pp_code)
 
+	def test_every_way_out_closes_the_undo_toast(self):
+		leave = _method(self.pp, "\tppr_leave(fn) {")
+		self.assertLess(leave.index("this.p6a_close_toast();"), leave.index("return this.p6b_navigate(fn);"))
+		mp_leave = _method(self.mp, "\tmpr_leave(fn) {")
+		self.assertLess(mp_leave.index("this.p6a_close_toast()"), mp_leave.index("kit.drawer.navigate(fn)"))
+		# Quick edit's own links: records.open first (it asks over the panel's edits), the old way after.
+		self.assertIn('if (action === "task" && this.ppr_open("task", card)) return;', self.pp_code)
+		self.assertIn('if (action === "form" && this.mpr_open("visit", { name: card.name })) return;', self.mp_code)
+		for code in (self.pp_code, self.mp_code):
+			self.assertNotIn('kit.drawer.navigate(() => frappe.set_route("Form"', code)
+		self.assertNotIn('this.p6b_navigate(() => frappe.set_route("Form"', self.pp_code)
+
+	def test_the_crew_boxes_are_part_of_the_panels_values(self):
+		self.assertIn(
+			'if (typeof dialog.add_values === "function") dialog.add_values(() => this.read_crew_editor(dialog, ""));',
+			_method(self.mp, "\tbuild_crew_editor(dialog, card) {"),
+		)
+		self.assertIn("add_values(fn) {", _read(KIT / "panel.js"))
+
+	def test_a_role_with_no_read_is_answered_before_the_query(self):
+		openable = _pyfunc(_read(OPEN_API), "openable")
+		self.assertLess(openable.index('if not frappe.has_permission(doctype, "read"):'), openable.index("frappe.get_list("))
+		self.assertEqual(openable.count("_drop_messages(mark)"), 2)
+
 	def test_the_dead_code_is_gone(self):
 		for code in (self.pp, self.mp):
 			self.assertNotIn("p6c_coarse", code)
 		self.assertNotIn("p6c_body_click", self.pp)
 
-	def test_hold_targets_select_nothing(self):
+	def test_hold_targets_select_nothing_on_a_touch_screen_only(self):
+		# A finger's hold opens the menu, so nothing is selected under it; a mouse can still select and
+		# copy a name (the v1.751.0 re-review), so the rules sit in a coarse-pointer block.
 		css = _read(PP_JS.with_suffix(".css"))
-		rule = css[css.index(".ppl-task-name[data-ppr-task],\n.ppl-phase-name[data-ppr-task],\n.ppl-project-name,") :]
-		rule = rule[: rule.index("}")]
-		for selector in (".pp-p6a-proj", ".t1-tray-title", ".pp-hm-name.pp-p6a-name", ".pp-route-title"):
+		start = css.index("@media (pointer: coarse) {\n\t.ppl-task-name[data-ppr-task],\n\t.ppl-phase-name[data-ppr-task],")
+		rule = css[start : css.index("\n}\n", start)]
+		for selector in (".ppl-project-name", ".pp-p6a-proj", ".t1-tray-title", ".pp-hm-name.pp-p6a-name", ".pp-route-title"):
 			self.assertIn(selector, rule)
 		self.assertIn("-webkit-touch-callout: none;", rule)
 		self.assertIn("user-select: none;", rule)
+		bare = re.sub(r"@media \(pointer: coarse\) \{.*?\n\}\n", "", css, flags=re.S)
+		self.assertNotIn(".ppl-project-name,\n", bare)
 		kit_css = _read(KIT_CSS)
-		note = kit_css[kit_css.index(".pk-note-project[data-pk-project] {") :]
-		self.assertIn("-webkit-touch-callout: none;", note[: note.index("}")])
+		coarse = kit_css[kit_css.rindex("@media (pointer: coarse) {") :]
+		coarse = coarse[: coarse.index("\n}\n")]
+		self.assertIn(".pk-note-project[data-pk-project] {", coarse)
+		self.assertIn("-webkit-touch-callout: none;", coarse)
+		outside = kit_css.replace(coarse, "")
+		note = outside[outside.index(".pk-note-project[data-pk-project] {") :]
+		self.assertNotIn("user-select", note[: note.index("}")])
 
 	def test_a_grip_is_never_a_tap(self):
 		body = _method(self.pp, "\tp6b_resize_end(save) {")
@@ -402,14 +448,32 @@ class TestPlannerOpen(unittest.TestCase):
 			["Sapphire Maintenance Contract", "Sapphire Maintenance Record", "Travel Trip"],
 		)
 
-	def test_no_role_or_a_failure_opens_nothing_and_never_breaks_the_planner(self):
-		_allow({"Travel Trip": "no-role"})
-		self.assertEqual(planner_open.openable("Travel Trip", ["TRIP-1"]), set())
+	def test_a_role_with_no_read_is_answered_before_the_query(self):
+		# A Projects User on the Project Planner holds no permission on Sapphire Maintenance Record or
+		# Contract: get_list would throw, and throw leaves "Insufficient Permission" for the Desk.
+		_allow({})
 		frappe = sys.modules["frappe"]
-		frappe.get_list = lambda *a, **k: 1 / 0
+		frappe.no_read = {"Sapphire Maintenance Record"}
+		self.assertEqual(planner_open.openable("Sapphire Maintenance Record", ["SMR-1"]), set())
+		self.assertEqual((frappe.calls, frappe.local.message_log), ([], []))
+
+	def test_a_refusal_or_a_failure_opens_nothing_and_leaves_no_message(self):
+		_allow({"Travel Trip": "no-role"})
+		frappe = sys.modules["frappe"]
+		earlier = {"message": "The page's own message"}
+		frappe.local.message_log = [earlier]
+		self.assertEqual(planner_open.openable("Travel Trip", ["TRIP-1"]), set())
+		self.assertEqual(frappe.local.message_log, [earlier])  # only what the refusal wrote is cut
+
+		def broken(*a, **k):
+			frappe.local.message_log.append({"message": "half-written"})
+			raise ZeroDivisionError
+
+		frappe.get_list = broken
 		frappe.errors = []
 		self.assertEqual(planner_open.openable("Employee", ["E1"]), set())
 		self.assertEqual(frappe.errors[0]["title"], "Planner: which Employee records open")
+		self.assertEqual(frappe.local.message_log, [earlier])
 
 	def test_day_bookings_walks_the_engines_days(self):
 		days = {"RES-1": {"2026-10-27": {"bookings": [{"kind": "task"}]}, "2026-10-28": {}}, "RES-2": None}

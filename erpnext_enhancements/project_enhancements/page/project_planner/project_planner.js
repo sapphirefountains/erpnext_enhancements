@@ -1752,13 +1752,13 @@ class ProjectPlanner {
 		if (kind === "travel" && open === false) {
 			// Only its travelers and the travel coordinators may open a trip (travel_management/permissions).
 			frappe.show_alert({ message: __("Away on a trip: only its travelers and the travel coordinators can open it."), indicator: "blue" });
-		} else if (kind === "travel" && ref) this.p6b_navigate(() => frappe.set_route("Form", "Travel Trip", ref));
-		else if ((kind === "rental" || kind === "task") && ref) this.p6b_navigate(() => frappe.set_route("Form", "Task", ref));
+		} else if (kind === "travel" && ref) this.ppr_leave(() => frappe.set_route("Form", "Travel Trip", ref));
+		else if ((kind === "rental" || kind === "task") && ref) this.ppr_leave(() => frappe.set_route("Form", "Task", ref));
 		else if (kind === "visit") {
 			// The Maintenance Planner page is not open to Projects Users.
 			const roles = ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"];
 			if (frappe.user && frappe.user.has_role && frappe.user.has_role(roles)) {
-				this.p6b_navigate(() => frappe.set_route("maintenance-planner", "week", ymd || this.anchor));
+				this.ppr_leave(() => frappe.set_route("maintenance-planner", "week", ymd || this.anchor));
 			} else {
 				frappe.show_alert({ message: __("A maintenance visit: it moves on the Maintenance Planner."), indicator: "blue" });
 			}
@@ -2455,11 +2455,15 @@ class ProjectPlanner {
 		}
 		dialog.$wrapper.find("[data-action]").on("click", (e) => {
 			const action = e.currentTarget.getAttribute("data-action");
+			// PPR: Open task / Open project go through records.open, which asks over this panel's unsaved
+			// edits, closes the Undo toast and then the panel (an older kit: the old way, below).
+			if (action === "task" && this.ppr_open("task", card)) return;
+			if (action === "project" && this.ppr_open("project", { project: card.project })) return;
 			dialog.hide();
 			if (this.p6a_action(action, card)) return;
 			if (this.p6c_action(action, card)) return;
-			if (action === "task") frappe.set_route("Form", "Task", card.name);
-			else if (action === "project") frappe.set_route("Form", "Project", card.project);
+			if (action === "task") this.ppr_leave(() => frappe.set_route("Form", "Task", card.name));
+			else if (action === "project") this.ppr_leave(() => frappe.set_route("Form", "Project", card.project));
 			else if (action === "suggest") this.suggest_dates(card);
 			else if (action === "firm") this.firm_up(card);
 			else this.phase5_action(action, card);
@@ -5623,7 +5627,7 @@ const PP6A_METHODS = {
 		const actions = [
 			{
 				label: __("Open project"),
-				on_click: () => kit.drawer.navigate(() => frappe.set_route("Form", "Project", project)),
+				on_click: () => this.ppr_leave(() => frappe.set_route("Form", "Project", project)), // and the Undo toast
 			},
 		];
 		if (known && PP.views.includes(this.view)) {
@@ -6505,7 +6509,9 @@ const PP6B_METHODS = {
 				{ label: __("Project at a glance"), on_click: () => this.p6a_open_project(card.project) },
 				{
 					label: __("Open project"),
-					on_click: () => this.p6b_navigate(() => frappe.set_route("Form", "Project", card.project)),
+					on_click: () =>
+						this.ppr_open("project", { project: card.project }) ||
+						this.ppr_leave(() => frappe.set_route("Form", "Project", card.project)),
 				}
 			);
 		}
@@ -7679,7 +7685,7 @@ const PP6B_METHODS = {
 				this.p6b_flash_pending();
 				return;
 			}
-			this.p6b_navigate(() => frappe.set_route("Form", "Task", item.name));
+			this.ppr_leave(() => frappe.set_route("Form", "Task", item.name)); // PPR: and the Undo toast
 			return;
 		}
 		this.p6b.flash = { name: item.name, date: start, wait: true };
@@ -15379,7 +15385,15 @@ const PPR_METHODS = {
 		if (!name) return;
 		const card = this.by_task[name];
 		if (card) this.ppr_open_card(card);
-		else if (!this.ppr_open("task", { name })) this.p6b_navigate(() => frappe.set_route("Form", "Task", name));
+		else if (!this.ppr_open("task", { name })) this.ppr_leave(() => frappe.set_route("Form", "Task", name));
+	},
+
+	// A route off the planner that is not a record records.open may open (a fallback, another page): the
+	// Undo toast goes first (it has no route hook, so it would stay clickable on the Form), then the drawer,
+	// so its history entry is replaced rather than stacked on.
+	ppr_leave(fn) {
+		this.p6a_close_toast();
+		return this.p6b_navigate(fn);
 	},
 
 	ppr_open_project(project) {

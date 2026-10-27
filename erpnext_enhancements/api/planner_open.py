@@ -40,21 +40,43 @@ PROJECTED_DOCTYPE = "Sapphire Maintenance Contract"
 
 
 def openable(doctype, names):
-	"""The subset of ``names`` this user may open, as a set. One query; none for no names."""
+	"""The subset of ``names`` this user may open, as a set. One query; none for no names.
+
+	A role with no read on the doctype (or only select) opens none of it, and is answered before the
+	query: ``frappe.get_list`` refuses through ``frappe.throw``, which writes "Insufficient Permission"
+	into the message log before it raises, so the Desk would show it as a red dialog on every planner
+	load even though the error is caught here. Whatever a refused or failed query still left in the log
+	is cut back off (``_drop_messages``): the planner asked this on its own, nobody pressed anything."""
 	wanted = sorted({str(n) for n in names or () if n})
 	if not wanted:
 		return set()
+	if not frappe.has_permission(doctype, "read"):
+		return set()
+	mark = _message_count()
 	try:
 		rows = frappe.get_list(doctype, filters={"name": ["in", wanted]}, pluck="name", limit_page_length=0)
 	except frappe.PermissionError:
-		# No read on the doctype at all: nothing of it opens.
+		_drop_messages(mark)
 		return set()
 	except Exception:
 		# Deciding what a tap opens must never cost a planner its answer: nothing opens (a tap does what
-		# it did before) and the reason is logged.
+		# it did before), and the error goes to the Error Log.
+		_drop_messages(mark)
 		frappe.log_error(title=f"Planner: which {doctype} records open", message=frappe.get_traceback())
 		return set()
 	return {str(name) for name in rows or ()}
+
+
+def _message_count():
+	log = getattr(getattr(frappe, "local", None), "message_log", None)
+	return len(log) if isinstance(log, list) else None
+
+
+def _drop_messages(mark):
+	"""Cut the message log back to ``mark`` entries: what the refused query wrote into it."""
+	log = getattr(getattr(frappe, "local", None), "message_log", None)
+	if mark is not None and isinstance(log, list) and len(log) > mark:
+		frappe.local.message_log = log[:mark]
 
 
 def open_as(person, employees, resources, resource_key="name"):

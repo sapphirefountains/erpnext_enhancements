@@ -1369,10 +1369,6 @@ a.pk-stop-addr {
 
 .pk-note-project[data-pk-project] {
 	cursor: pointer;
-	/* A tap opens the project and a hold its menu (2026-10-27): nothing selected under the finger. */
-	-webkit-user-select: none;
-	user-select: none;
-	-webkit-touch-callout: none;
 }
 
 .pk-note-project[data-pk-project]:hover {
@@ -1807,6 +1803,14 @@ a.pk-stop-addr {
 	.pk-tour-back,
 	.pk-tour-next {
 		min-height: var(--sf-touch-min);
+	}
+
+	/* A day note's project name: a tap opens the project and a hold its menu (2026-10-27), so nothing is
+	   selected under a finger. Touch screens only: a mouse can still select and copy the name. */
+	.pk-note-project[data-pk-project] {
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
 	}
 }
 

@@ -2126,6 +2126,16 @@ class TestGetRoute(unittest.TestCase):
 			got = api.get_route("RES-1", "2026-10-12")
 		self.assertIsNone(got["open_as"])  # the page shows their week, as a tap did before
 
+	def test_a_role_with_no_read_is_told_nothing(self):
+		# A Projects User holds no permission on Sapphire Maintenance Record: answered before get_list,
+		# whose refusal (frappe.throw) would leave "Insufficient Permission" for the Desk to show.
+		frappe.has_permission = lambda doctype=None, ptype=None, *a, **k: doctype != "Sapphire Maintenance Record"
+		with self._readers():
+			got = api.get_route("RES-1", "2026-10-12")
+		self.assertEqual({s["ref"]: s["open"] for s in got["stops"]}["SMR-1"], False)
+		self.assertNotIn("Sapphire Maintenance Record", [q[0] for q in frappe.queries if q[1].get("get_list")])
+		self.assertEqual(frappe.local.message_log, [])
+
 	def test_a_projected_visits_stop_says_so(self):
 		# Its ref is its contract: "Open visit" must open the contract, never a record named after it.
 		person = {"name": "RES-1", "label": "Austin Healey"}

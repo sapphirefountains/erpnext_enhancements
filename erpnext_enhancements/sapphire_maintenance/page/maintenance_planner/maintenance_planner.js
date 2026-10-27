@@ -2169,12 +2169,16 @@ class MaintenancePlanner {
 		if (card.movable && card.kind === "visit") this.build_crew_editor(dialog, card);
 		dialog.$wrapper.find("[data-action]").on("click", (e) => {
 			const action = e.currentTarget.getAttribute("data-action");
+			// MPR: the visit's and the contract's forms go through records.open, which asks over this panel's
+			// unsaved edits (crew ticks included), closes the Undo toast and then the panel.
+			if (action === "form" && this.mpr_open("visit", { name: card.name })) return;
+			if (action === "contract" && this.mpr_open("projected", { contract: card.contract })) return;
 			dialog.hide();
 			if (this.p6a_action(action, card)) return;
 			if (this.p6c_action(action, card)) return;
-			if (action === "form") frappe.set_route("Form", "Sapphire Maintenance Record", card.name);
-			else if (action === "wizard") frappe.set_route("visit-wizard", { record: card.name });
-			else if (action === "contract") frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract);
+			if (action === "form") this.mpr_leave(() => frappe.set_route("Form", "Sapphire Maintenance Record", card.name));
+			else if (action === "wizard") this.mpr_leave(() => frappe.set_route("visit-wizard", { record: card.name }));
+			else if (action === "contract") this.mpr_leave(() => frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract));
 			else this.phase5_action(action, card);
 		});
 	}
@@ -2214,6 +2218,9 @@ class MaintenancePlanner {
 				.val(hours)
 				.appendTo($row);
 		});
+		// The checkboxes are this page's, outside the panel's fields: a tick is an unsaved edit too, so a tap
+		// on another visit asks first (planner_kit/panel.js, records.open).
+		if (typeof dialog.add_values === "function") dialog.add_values(() => this.read_crew_editor(dialog, ""));
 		// The technician is not also a crew member: grey that row out as the technician changes.
 		const sync = () => {
 			const lead = dialog.get_value("technician") || "";
@@ -2689,7 +2696,7 @@ const MP6A_METHODS = {
 				if (found) this.mpr_open_card(found);
 				else if (row.getAttribute("data-mp6a-record")) {
 					const name = row.getAttribute("data-mp6a-record");
-					kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Record", name));
+					this.mpr_leave(() => frappe.set_route("Form", "Sapphire Maintenance Record", name));
 				}
 			},
 		});
@@ -2710,7 +2717,7 @@ const MP6A_METHODS = {
 						actions.push({
 							label: __("Open Maintenance Profile"),
 							on_click: () =>
-								kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Profile", data.profile.name)),
+								this.mpr_leave(() => frappe.set_route("Form", "Sapphire Maintenance Profile", data.profile.name)),
 						});
 					}
 					const contract = (data.contracts || [])[0];
@@ -2718,7 +2725,7 @@ const MP6A_METHODS = {
 						actions.push({
 							label: __("Open contract"),
 							on_click: () =>
-								kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Contract", contract.name)),
+								this.mpr_leave(() => frappe.set_route("Form", "Sapphire Maintenance Contract", contract.name)),
 						});
 					}
 					handle.set_actions(actions);
@@ -6709,9 +6716,14 @@ const MPFM_METHODS = {
 
 	// The right-click menu of a move card: open the task or its project.
 	fm_card_items(card) {
-		const items = [{ label: __("Open task"), on_click: () => this.open_card(card) }];
+		const items = [{ label: __("Open task"), on_click: () => this.mpr_open_card(card) }];
 		if (card.project) {
-			items.push({ label: __("Open project"), on_click: () => frappe.set_route("Form", "Project", card.project) });
+			items.push({
+				label: __("Open project"),
+				on_click: () =>
+					this.mpr_open("project", { project: card.project }) ||
+					this.mpr_leave(() => frappe.set_route("Form", "Project", card.project)),
+			});
 		}
 		return items;
 	},
@@ -8243,6 +8255,14 @@ const MPR_METHODS = {
 	// Their Employee record, or their Planner Resource; their week when the server said neither opens
 	// for this person (`open_as`, api/planner_open.py: most planner users may open no Employee but
 	// their own).
+	// A route off the planner that records.open does not take (an older kit, the Visit Wizard): the Undo
+	// toast goes first (it has no route hook), then the drawer, so its history entry is replaced.
+	mpr_leave(fn) {
+		if (this.p6a_close_toast) this.p6a_close_toast();
+		const kit = this.p6a && this.p6a.kit;
+		return kit ? kit.drawer.navigate(fn) : fn();
+	},
+
 	mpr_open_person(user) {
 		if (!user) return;
 		const person = (this.tech_by_user && this.tech_by_user[user]) || {};

@@ -22,7 +22,9 @@
  * the person touches it (a pointer or a key inside it, never a page's own set_value or a reply filling
  * in a row), and has changes when they differ from that. A value the page sets through the panel after
  * that (a late reply) moves the remembered value with it, so it is never counted as the person's edit;
- * one written straight into `fields_dict` is not seen, and at worst asks once for nothing.
+ * one written straight into `fields_dict` is not seen, and at worst asks once for nothing. Controls a page
+ * draws into the panel itself, outside the FieldGroup (the Maintenance Planner's crew checkboxes), count
+ * too once the page hands over what they say: `dialog.add_values(() => ...)`.
  */
 
 // JSON with every object's keys sorted, so two reads of the same values always compare equal.
@@ -81,6 +83,7 @@ export function create_panel(env) {
 			this.fields_dict = this.field_group.fields_dict;
 			this.fields_list = this.field_group.fields_list;
 			this.touched = null;
+			this.extras = [];
 			const touch = (e) => {
 				if (this.touched === null && e && e.isTrusted !== false) this.touched = this.values_key();
 			};
@@ -89,11 +92,26 @@ export function create_panel(env) {
 		}
 
 		values() {
+			let base;
 			try {
-				return this.get_values(true) || {};
+				base = this.get_values(true) || {};
 			} catch (e) {
-				return {};
+				base = {};
 			}
+			if (!this.extras.length) return base;
+			const extra = this.extras.map((fn) => {
+				try {
+					return fn();
+				} catch (e) {
+					return null;
+				}
+			});
+			return Object.assign({}, base, { __extra: extra });
+		}
+
+		// The page's own controls in the panel (see the header): what `fn()` returns is part of the values.
+		add_values(fn) {
+			if (typeof fn === "function") this.extras.push(fn);
 		}
 
 		values_key() {
