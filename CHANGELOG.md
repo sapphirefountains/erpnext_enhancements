@@ -82,6 +82,57 @@ ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).
     `wp_register_ability_args` filter changes another plugin's behaviour, so it is Nik's decision.
     Until then the connection guide tells every Claude user not to run them.
 
+## [1.749.1] - 2026-10-27
+
+### Fixed
+- **A Project made from an Opportunity gets one copy of each attachment, not two or four.** Found
+  while verifying v1.749.0 on prod. Brian's PRJ-00777 (09:23 that morning) held 4 rows of "Design
+  Specs - Waterfall Feature.pdf" and 2 of each of its other three files. Across production, 20
+  Projects held 71 extra File rows. 67 came from this; the other 4, on three Projects, are one file
+  uploaded to the Project twice, which Frappe stores once and points both rows at.
+  - **Two paths copy and neither looked at the other.** The Project `on_update` hook
+    `project_enhancements.sync_attachments_from_opportunity` fires inside the creation job's
+    `project.insert` and copied the Opportunity's files. A moment later, the job's own
+    "attachments" step in `crm_enhancements/api.py` copied every one again without checking. The
+    hook also compared names only against what the Project held *before* its loop, so a file the
+    Opportunity carried twice (PRJ-00777's source had "Design Specs" attached twice, 27 seconds
+    apart) came over twice from each path.
+  - **Both now ask one rule**, `utils/attachment_copies.files_to_copy` (pure, no frappe). It skips
+    a file the Project already holds, by the same stored URL or the same name (the hook's
+    long-standing rule). It takes one of each file even when the sources repeat it, because what
+    the Project holds grows as rows are picked. Among the sources only the URL counts, so two
+    different files that share a name both come over, as before. The job reads the Project's files
+    after the hook ran, so it adds only what the hook did not.
+  - **A failed copy still stops the creation** at the attachments step, with the reason in the
+    progress dialog, exactly as v1.749.0 reports it. Only *which* files are copied changed.
+  - **The stored extras are removed** by the one-shot patch `dedupe_project_attachment_rows`. Nik
+    approved it on 2026-10-27: "keep one of each, never delete the actual files".
+    - For each Project it keeps the oldest File row of each exact `file_url` (`creation`, then
+      `name`) and deletes the rest with `frappe.db.delete`. That is a plain `DELETE`, so
+      `File.on_trash` and its removal of the stored file never run. The kept row and the
+      Opportunity's own row still point at the same file.
+    - Folders, rows with no URL, and two different files that only share a name are never
+      touched. The comparison is exact, character for character, in Python (`extra_copies`),
+      because MariaDB's PAD SPACE, case-insensitive `group by` that finds the candidates would
+      call `plan.pdf` and `PLAN.pdf ` the same file.
+    - The 4 rows uploaded twice go too, since each is the same stored file. Their kept row is then
+      the file's only row, so deleting it later from the sidebar removes the file, as for any
+      attachment held once. Every kept row copied from an Opportunity still shares its file with
+      the Opportunity's row.
+    - The attachment lines already in a Project's timeline stay as history.
+    - It runs one savepoint per Project, prints the counts before and after, cannot raise, and is
+      safe twice. Expected on prod: 71 rows removed from 20 Projects.
+  - Tests:
+    - `tests/test_project_attachment_copies.py` (new CI step, bench-free) covers both rules, the
+      hook against an in-memory `tabFile` (including a second save) and the patch on PRJ-00777's
+      shape: kept rows, untouched folders and Opportunity rows, a failing Project rolled back,
+      `execute` never raising, and a second run that writes nothing.
+    - `test_project_creation_progress` covers the job's side: a file the Project lacks is copied
+      once, one the hook already copied is not copied again, and an Opportunity holding a file
+      twice yields one copy. Its stub now answers the Project's and the Opportunity's file queries
+      separately.
+    - Putting either old loop back fails these tests: 2 for the job, 3 for the hook.
+
 ## [1.749.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).

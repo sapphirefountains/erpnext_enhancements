@@ -9,6 +9,7 @@ from frappe import _
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements import procurement_quantities
+from erpnext_enhancements.utils import attachment_copies
 
 
 def require_project_read(project_name):
@@ -670,16 +671,21 @@ def sync_attachments_from_opportunity(doc, method):
 	Reads the persisted ``custom_opportunity`` link (with a fallback to the
 	legacy in-memory ``custom_sales_opportunity`` attribute, which only ever
 	existed within the creation request — see opportunity_enhancements.py,
-	v1.3.0 note). Idempotent: files already on the Project (by file_name) are
-	never re-copied, so running on every save just picks up late additions.
+	v1.3.0 note). Idempotent: a file the Project already holds (same stored URL or
+	same name) is never re-copied, and a file the sources carry twice is copied
+	once (``attachment_copies.files_to_copy``, v1.749.1), so running on every save
+	just picks up late additions. The creation job asks the same rule a moment
+	after this runs inside its ``project.insert``.
 	"""
 	source_opportunity = doc.get("custom_opportunity") or doc.get("custom_sales_opportunity")
 	if not source_opportunity:
 		return
 
-	# 1. Get the list of files ALREADY on this Project (prevent duplicates)
+	# 1. Get the files ALREADY on this Project (prevent duplicates)
 	existing_files = frappe.get_all(
-		"File", filters={"attached_to_doctype": "Project", "attached_to_name": doc.name}, pluck="file_name"
+		"File",
+		filters={"attached_to_doctype": "Project", "attached_to_name": doc.name},
+		fields=["file_name", "file_url"],
 	)
 
 	# 2. Identify all related IDs (Opportunity + original Lead)
@@ -705,28 +711,28 @@ def sync_attachments_from_opportunity(doc, method):
 		"File",
 		filters={"attached_to_name": ["in", ids_to_check]},
 		fields=["file_name", "file_url", "is_private", "attached_to_name"],
+		order_by="creation asc",
 	)
 
 	copied_count = 0
 
-	# 4. Copy the files
-	for file in source_files:
-		if file.file_name not in existing_files:
-			try:
-				new_file = frappe.get_doc(
-					{
-						"doctype": "File",
-						"file_name": file.file_name,
-						"file_url": file.file_url,
-						"attached_to_doctype": "Project",
-						"attached_to_name": doc.name,
-						"is_private": file.is_private,
-					}
-				)
-				new_file.insert(ignore_permissions=True)
-				copied_count += 1
-			except Exception as e:
-				frappe.log_error(f"Error copying {file.file_name}: {e!s}")
+	# 4. Copy the files the Project does not hold yet, one of each
+	for file in attachment_copies.files_to_copy(existing_files, source_files):
+		try:
+			new_file = frappe.get_doc(
+				{
+					"doctype": "File",
+					"file_name": file.file_name,
+					"file_url": file.file_url,
+					"attached_to_doctype": "Project",
+					"attached_to_name": doc.name,
+					"is_private": file.is_private,
+				}
+			)
+			new_file.insert(ignore_permissions=True)
+			copied_count += 1
+		except Exception as e:
+			frappe.log_error(f"Error copying {file.file_name}: {e!s}")
 
 	# 5. Success Message
 	if copied_count > 0:

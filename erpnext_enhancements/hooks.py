@@ -755,8 +755,11 @@ doc_events = {
 			# Copy Opportunity/Lead attachments onto the Project. This was wired to
 			# `after_save`, which Frappe never dispatches server-side, so it had never run
 			# — Opportunity→Project conversions silently carried no files across. `on_update`
-			# fires on the conversion insert AND on later saves (its idempotent file_name
-			# guard makes the repeat picks-up-late-additions safe).
+			# fires on the conversion insert AND on later saves. utils/attachment_copies decides
+			# what to copy: nothing the Project already holds (same URL or name) and one of
+			# each file the sources repeat. The creation job asks the same rule, a moment after
+			# this runs inside its insert; until v1.749.1 each file arrived twice (four times
+			# when the Opportunity held it twice). patches/dedupe_project_attachment_rows.
 			"erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 			# workforce (v1.480.0): geocode the project's site when its address text
 			# changed or it has no coordinates yet, so the Time Kiosk can tell an

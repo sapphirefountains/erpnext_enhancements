@@ -89,6 +89,15 @@ TABLES = {
 }
 
 
+#: The Opportunity's one attachment, unless a test says otherwise.
+SITE_PLAN = {
+	"file_name": "site-plan.pdf",
+	"file_url": "/private/files/site-plan.pdf",
+	"is_private": 1,
+	"folder": "",
+}
+
+
 def _event(*entry):
 	STATE["events"].append(entry)
 
@@ -173,14 +182,10 @@ def _install_frappe_stub():
 		if doctype == "File":
 			if STATE.get("fail_at") == "attachments":
 				raise RuntimeError("the file table is unhappy")
-			return [
-				_Dict(
-					file_name="site-plan.pdf",
-					file_url="/private/files/site-plan.pdf",
-					is_private=1,
-					folder="",
-				)
-			]
+			# v1.749.1: the job asks what the Project already holds (the on_update hook copies first).
+			if (filters or {}).get("attached_to_doctype") == "Project":
+				return [_Dict(row) for row in STATE.get("project_files", [])]
+			return [_Dict(row) for row in STATE.get("opportunity_files", [SITE_PLAN])]
 		return []
 
 	def enqueue(method, **kwargs):
@@ -426,6 +431,28 @@ class TestTheJob(unittest.TestCase):
 		self.assertTrue(status["drive_success"])
 		self.assertEqual([user for _m, user in _statuses()], [INBOX, REQUESTER])
 		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[INBOX]])
+
+	def _attachments_copied(self):
+		"""File inserts the job made before it committed: the attachments step's, not the Drive link's."""
+		events = STATE["events"]
+		end = events.index(("commit",))
+		return [e for e in events[:end] if e[:2] == ("insert", "File")]
+
+	def test_an_attachment_the_project_lacks_is_copied_once(self):
+		_run_job()
+		self.assertEqual(len(self._attachments_copied()), 1)
+
+	def test_an_attachment_the_hook_already_copied_is_not_copied_again(self):
+		# The Project's on_update hook runs inside project.insert and copies first (v1.749.1).
+		STATE["project_files"] = [dict(SITE_PLAN)]
+		_run_job()
+		self.assertEqual(self._attachments_copied(), [])
+		self.assertEqual(_final_state()["result"]["status"], "success")
+
+	def test_a_file_the_opportunity_holds_twice_is_copied_once(self):
+		STATE["opportunity_files"] = [dict(SITE_PLAN), dict(SITE_PLAN), {**SITE_PLAN, "file_name": "site-plan (1).pdf"}]
+		_run_job()
+		self.assertEqual(len(self._attachments_copied()), 1)
 
 	def test_the_outcome_is_recorded_before_it_is_broadcast(self):
 		# A client that hears the status and then asks project_creation_state must read the outcome.
