@@ -36,7 +36,12 @@ from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, exclude_filters, has_field, is_historical
+from erpnext_enhancements.crm_enhancements.historical import (
+	HISTORICAL_FIELD,
+	exclude_filters,
+	has_field,
+	is_historical,
+)
 from erpnext_enhancements.feature_flags import process_automation_enabled
 
 
