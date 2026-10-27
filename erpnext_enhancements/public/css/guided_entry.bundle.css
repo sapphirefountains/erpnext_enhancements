@@ -2521,3 +2521,26 @@ body.ge-page-active .triton-fab {
 		flex: 1 0 100%;
 	}
 }
+
+/* ---- The files in the record tools as well (v1.748.0) ----
+   Nik, 2026-10-27: "I expect the attachments in the right-hand column on the guided page." The tools'
+   Attachments group lists what the files section lists (record_tools.js file_lists). It shows only
+   where the tools sit in the side column beside the form, as the Desk sidebar keeps a record's files.
+   Below the form, behind their bar (focus mode puts them there too), or under 1024px, where the side
+   column drops under the form, the tools share the files section's column, so the group would list the
+   same files twice in a row and stays hidden. Scoped to the guided page: the board's side panel is not
+   .ge-app, has no files section, and keeps the group as it was. */
+.ge-app .ge-tools-group[data-tool="attachments"] {
+	display: none;
+}
+@media (min-width: 1024px) {
+	.ge-app[data-ge-tools="side"] .ge-aside .ge-tools-group[data-tool="attachments"] {
+		display: block;
+	}
+}
+/* A file dragged over the page lands in both lists, so both are outlined, inside the edge as the
+   section is: outside it would cross the next group's rule. */
+.ge-app.is-dropping-files .ge-tools-group[data-tool="attachments"] {
+	outline: 3px dashed var(--sf-focus);
+	outline-offset: -3px;
+}

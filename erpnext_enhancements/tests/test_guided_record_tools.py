@@ -1137,5 +1137,703 @@ class TestReplyFollowsTheRecord(unittest.TestCase):
 		self.assertEqual(self.out["slow_dialog_same"]["opened"], 1)
 
 
+# v1.748.0: on the guided page the record's files are listed twice, in the files section under the steps
+# (v1.711.0) and in the tools' Attachments group in the side column. Nik, 2026-10-27: "I expect the
+# attachments in the right-hand column on the guided page." The real RecordTools runs here, mount to
+# render, against a small stand-in for jQuery and the DOM (enough of both for what the files code calls)
+# and a stand-in server, so an attach, a remove, a drop and a reload are each followed into both lists.
+# render_meta, render_activity and the Actions button are stubbed: they are not the files.
+FILES_RUNNER = r"""
+import { pathToFileURL } from "node:url";
+const [dir] = process.argv.slice(2);
+
+class El {
+	constructor(tag) {
+		this.tag = tag;
+		this.attrs = {};
+		this.children = [];
+		this.parent = null;
+		this.own_text = "";
+		this.handlers = [];
+	}
+	classes() {
+		return (this.attrs.class || "").split(/\s+/).filter(Boolean);
+	}
+	text() {
+		return this.own_text + this.children.map((c) => c.text()).join("");
+	}
+	contains(other) {
+		for (let n = other; n; n = n.parent) if (n === this) return true;
+		return false;
+	}
+	descendants() {
+		const out = [];
+		const walk = (n) => n.children.forEach((c) => {
+			out.push(c);
+			walk(c);
+		});
+		walk(this);
+		return out;
+	}
+	focus(opts) {
+		document.activeElement = this;
+		this.focus_opts = opts || {};
+	}
+	// Not rendered: hidden, display:none (`gone`, the stylesheet's part), or inside a closed details.
+	getClientRects() {
+		for (let n = this; n; n = n.parent) {
+			if ("hidden" in n.attrs || n.gone) return [];
+			if (n.parent && n.parent.tag === "details" && !("open" in n.parent.attrs) && n.tag !== "summary") return [];
+		}
+		return [{}];
+	}
+}
+// A browser moves focus to the body when the focused element leaves the document.
+function lose_focus(el) {
+	if (globalThis.document && el.contains(document.activeElement)) document.activeElement = document.body;
+}
+
+// One compound selector: a tag, .classes, [attr] and [attr="value"].
+function compound(text) {
+	const out = { tag: null, classes: [], attrs: [] };
+	const re = /([a-z][a-z0-9]*)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/iy;
+	while (re.lastIndex < text.length) {
+		const m = re.exec(text);
+		if (!m) throw new Error("selector not understood: " + text);
+		if (m[1]) out.tag = m[1].toLowerCase();
+		else if (m[2]) out.classes.push(m[2]);
+		else out.attrs.push([m[3], m[4]]);
+	}
+	return out;
+}
+function is(el, c) {
+	if (c.tag && el.tag !== c.tag) return false;
+	const classes = el.classes();
+	if (!c.classes.every((k) => classes.includes(k))) return false;
+	return c.attrs.every(([k, v]) => (v === undefined ? k in el.attrs : el.attrs[k] === v));
+}
+// "a b, c": each group's last compound is the element, the rest its ancestors below `top`.
+function matches(el, selector, top) {
+	return selector.split(",").some((group) => {
+		const parts = group.trim().split(/\s+/).map(compound);
+		if (!is(el, parts[parts.length - 1])) return false;
+		let i = parts.length - 2;
+		for (let n = el.parent; n && n !== top && i >= 0; n = n.parent) if (is(n, parts[i])) i -= 1;
+		return i < 0;
+	});
+}
+function detach(el) {
+	lose_focus(el);
+	if (el.parent) el.parent.children = el.parent.children.filter((c) => c !== el);
+	el.parent = null;
+}
+function parse(html) {
+	const m = html.trim().match(/^<([a-z][a-z0-9]*)([^>]*)>/i);
+	if (!m) throw new Error("not an element: " + html);
+	const el = new El(m[1].toLowerCase());
+	const re = /([\w:-]+)(?:="([^"]*)")?/g;
+	let a;
+	while ((a = re.exec(m[2]))) el.attrs[a[1]] = a[2] === undefined ? "" : a[2];
+	return el;
+}
+
+class Q {
+	constructor(els) {
+		this.els = els.filter(Boolean).filter((e, i, all) => all.indexOf(e) === i);
+		this.els.forEach((e, i) => (this[i] = e));
+		this.length = this.els.length;
+	}
+	first() { return new Q(this.els.slice(0, 1)); }
+	each(fn) { this.els.forEach((e, i) => fn.call(e, i, e)); return this; }
+	text(v) {
+		if (v === undefined) return this.els.map((e) => e.text()).join("");
+		this.empty();
+		this.els.forEach((e) => (e.own_text = String(v)));
+		return this;
+	}
+	attr(k, v) {
+		if (k && typeof k === "object") {
+			Object.keys(k).forEach((key) => this.attr(key, k[key]));
+			return this;
+		}
+		if (v === undefined) return this.els[0] ? this.els[0].attrs[k] : undefined;
+		this.els.forEach((e) => (e.attrs[k] = String(v)));
+		return this;
+	}
+	removeAttr(k) { this.els.forEach((e) => delete e.attrs[k]); return this; }
+	// The DOM reflects hidden, open and disabled as attributes.
+	prop(k, v) {
+		if (v === undefined) return this.els[0] ? k in this.els[0].attrs : undefined;
+		this.els.forEach((e) => (v ? (e.attrs[k] = "") : delete e.attrs[k]));
+		return this;
+	}
+	hasClass(c) { return this.els.some((e) => e.classes().includes(c)); }
+	addClass(c) {
+		this.els.forEach((e) => !e.classes().includes(c) && (e.attrs.class = (e.classes().concat(c)).join(" ")));
+		return this;
+	}
+	removeClass(c) {
+		this.els.forEach((e) => (e.attrs.class = e.classes().filter((k) => k !== c).join(" ")));
+		return this;
+	}
+	toggleClass(c, on) { return on ? this.addClass(c) : this.removeClass(c); }
+	on(events, handler) {
+		events.split(/\s+/).forEach((ev) => this.els.forEach((e) => e.handlers.push({ ev, handler })));
+		return this;
+	}
+	off(ns) {
+		this.els.forEach((e) => (e.handlers = e.handlers.filter((h) => !h.ev.endsWith(ns))));
+		return this;
+	}
+	one(events, handler) {
+		const self = this;
+		const once = function (event) {
+			self.els.forEach((e) => (e.handlers = e.handlers.filter((h) => h.handler !== once)));
+			return handler.call(this, event);
+		};
+		return this.on(events, once);
+	}
+	trigger(type) { this.els.forEach((e) => fire(e, type)); return this; }
+	appendTo(target) {
+		const parent = target.els[0];
+		this.els.forEach((e) => {
+			detach(e);
+			e.parent = parent;
+			parent.children.push(e);
+		});
+		return this;
+	}
+	append(child) { $(child).appendTo(this); return this; }
+	empty() {
+		this.els.forEach((e) => {
+			e.children.forEach((c) => {
+				lose_focus(c);
+				c.parent = null;
+			});
+			e.children = [];
+			e.own_text = "";
+		});
+		return this;
+	}
+	remove() { this.els.forEach(detach); return this; }
+	find(selector) {
+		return new Q([].concat(...this.els.map((e) => e.descendants().filter((d) => matches(d, selector, e)))));
+	}
+	closest(selector) {
+		return new Q(this.els.map((e) => {
+			for (let n = e; n; n = n.parent) if (matches(n, selector, null)) return n;
+			return null;
+		}));
+	}
+	children(selector) {
+		return new Q([].concat(...this.els.map((e) => e.children.filter((c) => !selector || matches(c, selector, e)))));
+	}
+}
+function $(x) {
+	if (x === undefined || x === null) return new Q([]);
+	if (x instanceof Q) return x;
+	if (x instanceof El) return new Q([x]);
+	if (Array.isArray(x)) return new Q(x);
+	return new Q([parse(String(x))]);
+}
+function fire(el, type, extra) {
+	const event = Object.assign(
+		{ type, target: el, currentTarget: el, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {} },
+		extra || {}
+	);
+	el.handlers.filter((h) => h.ev.split(".")[0] === type).forEach((h) => h.handler.call(el, event));
+	return event;
+}
+
+// ---- frappe, the server and the shells ----
+globalThis.window = globalThis;
+globalThis.$ = $;
+globalThis.__ = (s, a) => (a ? s.replace(/\{(\d+)\}/g, (m, i) => a[i]) : s);
+const BODY = new El("body");
+globalThis.document = { body: BODY, activeElement: BODY, contains: (el) => BODY === el || BODY.contains(el) };
+let wide = true;
+globalThis.matchMedia = () => ({ matches: wide });
+// frappe's dialogs as bootstrap shows and hides them: focus moves into one; on hide it is display:none
+// before "hidden.bs.modal" fires, with the browser possibly still naming its button as focused.
+function open_dialog() {
+	const $wrapper = $('<div class="modal"></div>').appendTo($(BODY));
+	$('<button type="button" class="btn"></button>').appendTo($wrapper)[0].focus();
+	return { $wrapper };
+}
+function close_dialog(d) {
+	d.$wrapper[0].gone = true;
+	fire(d.$wrapper[0], "hidden");
+	d.$wrapper.remove();
+}
+const uploads = [];
+let asked = null;
+let meta = {};
+globalThis.frappe = {
+	session: { user: "tester@example.com" },
+	get_meta: () => meta,
+	datetime: { prettyDate: () => "just now", str_to_user: (s) => String(s) },
+	ui: {
+		FileUploader: function (opts) {
+			this.opts = opts;
+			this.dialog = open_dialog();
+			uploads.push(this);
+		},
+	},
+	confirm: (message, yes) => {
+		asked = { d: open_dialog(), yes };
+		return asked.d;
+	},
+};
+// The person answers frappe's question: Yes runs the remove, then the dialog hides.
+function answer(yes) {
+	const a = asked;
+	asked = null;
+	if (yes) a.yes();
+	close_dialog(a.d);
+}
+const last_upload = () => uploads[uploads.length - 1];
+
+const server = { rows: [], permissions: { write: 1, delete: 1 }, fail: false, removed: [] };
+const row = (name, file_name, extra) => Object.assign({ name, file_name, file_url: "/files/" + file_name, file_size: 2048 }, extra || {});
+const sf = {
+	call(method, args) {
+		if (method.endsWith(".record_info")) {
+			if (server.fail) return Promise.reject(new Error("offline"));
+			return Promise.resolve(JSON.parse(JSON.stringify({ attachments: server.rows, permissions: server.permissions, docstatus: 0 })));
+		}
+		if (method === "frappe.desk.form.utils.remove_attach") {
+			server.removed.push(args.fid);
+			server.rows = server.rows.filter((r) => r.name !== args.fid);
+			return Promise.resolve({});
+		}
+		return Promise.reject(new Error("unexpected call " + method));
+	},
+	toast() {},
+	state: { render() {} },
+};
+
+// The guided page's shell, as render_shell draws it (the parts the tools touch), tools beside the form.
+function guided_root() {
+	const root = $('<div class="ge-app" data-ge-tools="side"></div>').appendTo($(BODY));
+	$('<div class="ge-band-actions"></div>').appendTo(root);
+	$('<button type="button" class="ge-files-chip" hidden></button>').appendTo(root);
+	const main = $('<main class="ge-main"></main>').appendTo(root);
+	const stage = $('<section class="ge-stage"></section>').appendTo(main);
+	$('<input type="text" class="ge-field">').appendTo(stage);
+	$('<section class="ge-files" hidden></section>').appendTo(main);
+	const aside = $('<div class="ge-aside"></div>').appendTo(root);
+	$('<section class="ge-tools" hidden></section>').appendTo(aside);
+	return root;
+}
+// The board's side panel: no files section, no chip.
+function panel_root() {
+	const root = $('<div class="fk-panel"></div>').appendTo($(BODY));
+	$('<div class="fk-head-row"></div>').appendTo(root);
+	$('<section class="ge-tools fk-tools" hidden></section>').appendTo(root);
+	return root;
+}
+
+const { RecordTools } = await import(pathToFileURL(dir + "/form_kit/ui/record_tools.js").href);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function mount(root, opts) {
+	const o = opts || {};
+	const ed = {
+		$root: root,
+		id_prefix: o.id_prefix || "ge",
+		doctype: "Opportunity",
+		name: "CRM-OPP-TEST-1",
+		is_new: false,
+		values: {},
+		sf,
+		files_open_default: () => !o.focus,
+	};
+	const t = new RecordTools(ed);
+	t.draw_actions_button = () => {};
+	t.render_meta = () => {};
+	t.render_activity = () => {};
+	t.mount();
+	await wait(5);
+	return t;
+}
+
+function read_list($body) {
+	if (!$body.length) return null;
+	return {
+		files: $body.find(".ge-tools-file").els.map((e) => e.text()),
+		hrefs: $body.find(".ge-tools-file").els.map((e) => e.attrs.href),
+		attach: $body.find(".ge-tools-add").els.map((e) => e.text()),
+		removes: $body.find(".ge-tools-item-btn").length,
+		notes: $body.find(".ge-tools-none, .ge-tools-note").els.map((e) => e.text()),
+	};
+}
+const GROUP = '.ge-tools-group[data-tool="attachments"]';
+function snap(root) {
+	const $chip = root.find(".ge-files-chip");
+	return {
+		dock: read_list(root.find(".ge-files .ge-files-body")),
+		group: read_list(root.find(GROUP + " .ge-tools-body")),
+		dock_count: root.find(".ge-files-count").text(),
+		group_count: root.find(GROUP + " .ge-tools-count").text(),
+		chip: $chip.length ? $chip.find(".ge-files-chip-text").text() : null,
+		chip_aria: $chip.length ? $chip.attr("aria-label") || null : null,
+		dock_open: root.find(".ge-files-group").length ? root.find(".ge-files-group").prop("open") : null,
+		group_open: root.find(GROUP).prop("open"),
+		group_in_tools: root.find(".ge-tools " + GROUP).length === 1,
+		tool_order: root.find(".ge-tools").children(".ge-tools-group").els.map((e) => e.attrs["data-tool"]),
+	};
+}
+// Where focus is: "group" / "dock" (which list), "page", "body", then the element and its kind.
+function where(root) {
+	const a = document.activeElement;
+	if (!a || a === BODY) return "body";
+	const inside = (sel) => root.find(sel).els.some((e) => e.contains(a));
+	const place = inside(GROUP) ? "group" : inside(".ge-files") ? "dock" : root[0].contains(a) ? "page" : "elsewhere";
+	const kind = { "ge-tools-add": ".attach", "ge-tools-item-btn": ".remove", "ge-files-chip": ".chip", "ge-field": ".field" };
+	const k = Object.keys(kind).find((c) => a.classes().includes(c));
+	return `${place} ${a.tag}${k ? kind[k] : ""}${document.contains(a) ? "" : " (detached)"}`;
+}
+const remove_btn = (root, sel, name) =>
+	$(root.find(sel + " .ge-tools-item").els.find((li) => $(li).find(".ge-tools-file").text() === name)).find(".ge-tools-item-btn")[0];
+
+const out = {};
+
+// A record with three rows, two of one file name (the sidebar draws one, and removes both).
+server.rows = [row("F1", "site-plan.pdf", { is_private: 1 }), row("F2", "site-plan.pdf"), row("F3", "pump-photo.jpg")];
+const root = guided_root();
+const t = await mount(root);
+out.loaded = snap(root);
+
+// Attach: the uploader's on_success reloads (300 ms later); both lists follow.
+t.attach();
+out.uploads_after_attach = uploads.length;
+server.rows.push(row("F4", "valve-spec.pdf"));
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
+await wait(350);
+out.attached = snap(root);
+
+// Remove, from the side column's list: frappe's question, every row of that name, then both lists.
+// Focus goes back to the Remove button as the question closes, and to that list's summary once the
+// redraw takes the button away.
+fire(remove_btn(root, GROUP, "site-plan.pdf"), "click");
+answer(true);
+out.focus_remove_side_closed = where(root);
+await wait(5);
+out.removed_fids = server.removed.slice();
+out.removed = snap(root);
+out.focus_remove_side = where(root);
+
+// Remove, from the middle section's list: the same.
+fire(remove_btn(root, ".ge-files", "valve-spec.pdf"), "click");
+answer(true);
+await wait(5);
+out.removed_mid = snap(root);
+out.focus_remove_mid = where(root);
+
+// A file dropped on the page while a field has focus opens the uploader with it; on_success, both
+// lists, and focus goes back to the field without scrolling the page.
+root.find(".ge-field")[0].focus();
+const dropped = fire(root[0], "drop", { originalEvent: { dataTransfer: { types: ["Files"], files: [{ name: "drop.png" }] } } });
+out.drop_claimed = !!dropped.defaultPrevented;
+out.drop_files = (last_upload().opts.files || []).length;
+server.rows.push(row("F5", "drop.png"));
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
+await wait(350);
+out.dropped = snap(root);
+out.focus_drop = where(root);
+out.focus_drop_quiet = !!(document.activeElement.focus_opts || {}).preventScroll;
+
+// ---- focus, case by case ----
+// "Remove", then No: back on that Remove button, nothing redrawn.
+fire(remove_btn(root, ".ge-files", "pump-photo.jpg"), "click");
+answer(false);
+await wait(5);
+out.focus_remove_no = where(root);
+// "Attach a file" in the side list, a file uploaded: on the new list's Attach a file.
+fire(root.find(GROUP + " .ge-tools-add")[0], "click");
+server.rows.push(row("F9", "pond-liner.pdf"));
+last_upload().opts.on_success();
+close_dialog(last_upload().dialog);
+out.focus_attach_closed = where(root);
+await wait(350);
+out.focus_attach = where(root);
+// "Attach a file" in the middle section, the uploader closed with nothing: back on that button.
+const mid_attach = root.find(".ge-files .ge-tools-add")[0];
+fire(mid_attach, "click");
+close_dialog(last_upload().dialog);
+out.focus_attach_cancel = where(root);
+out.focus_attach_cancel_same = document.activeElement === mid_attach;
+// The redraw lands while the uploader is still open (more files to go): it waits for it to close.
+fire(root.find(GROUP + " .ge-tools-add")[0], "click");
+const open_uploader = last_upload();
+t.reload();
+await wait(5);
+out.focus_while_open = where(root);
+close_dialog(open_uploader.dialog);
+out.focus_after_open = where(root);
+// A realtime reload while a file's link in the middle section has focus: that list's summary.
+root.find(".ge-files .ge-tools-file")[0].focus();
+t.reload();
+await wait(5);
+out.focus_reload = where(root);
+// Removed, and the person moved on to a field before the redraw: focus stays in the field.
+fire(remove_btn(root, GROUP, "pond-liner.pdf"), "click");
+answer(true);
+root.find(".ge-field")[0].focus();
+await wait(5);
+out.focus_moved_on = where(root);
+// A drop with nothing focused moves nothing.
+BODY.focus();
+fire(root[0], "drop", { originalEvent: { dataTransfer: { types: ["Files"], files: [{ name: "x.png" }] } } });
+close_dialog(last_upload().dialog);
+out.focus_drop_none = where(root);
+
+// A reload after a change made elsewhere (another tab took every file away).
+server.rows = [];
+t.reload();
+await wait(5);
+out.reloaded_empty = snap(root);
+// The chip says "Attach a file" now; its uploader closed with nothing: back on the chip.
+root.find(".ge-files-chip")[0].focus();
+t.chip_action();
+close_dialog(last_upload().dialog);
+out.focus_chip = where(root);
+
+// max_attachments reached: no Attach a file in either list, the same note in both.
+meta = { max_attachments: 2 };
+server.rows = [row("F6", "a.pdf"), row("F7", "b.pdf")];
+const full_root = guided_root();
+await mount(full_root);
+out.full = snap(full_root);
+meta = {};
+
+// No write: nothing to add or remove in either.
+server.permissions = { write: 0, delete: 0 };
+server.rows = [row("F8", "c.pdf")];
+const read_root = guided_root();
+await mount(read_root);
+out.read_only = snap(read_root);
+server.permissions = { write: 1, delete: 1 };
+
+// The record's files could not be read: both lists say so.
+server.fail = true;
+const failed_root = guided_root();
+await mount(failed_root);
+out.failed = snap(failed_root);
+server.fail = false;
+
+// A narrow screen in focus mode: the section folds (focus), the group still starts open (the
+// stylesheet shows it only beside the form, so whenever it shows it is open).
+server.rows = [];
+wide = false;
+const narrow_root = guided_root();
+await mount(narrow_root, { focus: true });
+out.narrow_focus = snap(narrow_root);
+wide = true;
+
+// The board's side panel: one list, in the tools, closed as before; no section, no chip.
+const p_root = panel_root();
+await mount(p_root, { id_prefix: "fkp" });
+out.panel = snap(p_root);
+
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestTheFilesInBothPlaces(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		node = shutil.which("node")
+		with tempfile.TemporaryDirectory() as tmp:
+			folder = Path(tmp)
+			(folder / "package.json").write_text('{"type": "module"}', encoding="utf-8")
+			shutil.copytree(FORM_KIT_JS, folder / "form_kit")
+			(folder / "global_enhancements").mkdir()
+			shutil.copy(SOURCES_JS, folder / "global_enhancements" / "party_sources.js")
+			shutil.copy(ACTIONS_JS, folder / "global_enhancements" / "record_actions.js")
+			(folder / "runner.mjs").write_text(FILES_RUNNER, encoding="utf-8")
+			proc = subprocess.run(
+				[node, str(folder / "runner.mjs"), str(folder)],
+				capture_output=True,
+				text=True,
+				encoding="utf-8",
+				timeout=60,
+			)
+		if proc.returncode != 0:
+			raise AssertionError(f"node failed:\n{proc.stderr}")
+		cls.out = json.loads(proc.stdout)
+
+	def assertSameInBoth(self, snap, files, count):
+		self.assertIsNotNone(snap["dock"], "the files section is drawn")
+		self.assertIsNotNone(snap["group"], "the tools' group is drawn")
+		self.assertEqual(snap["dock"], snap["group"], "both lists are the same list")
+		self.assertEqual(snap["dock"]["files"], files)
+		self.assertEqual(snap["dock_count"], snap["group_count"])
+		self.assertEqual(snap["dock_count"], str(count) if count else "")
+
+	def test_both_places_list_the_same_files_with_the_same_count(self):
+		s = self.out["loaded"]
+		self.assertSameInBoth(s, ["site-plan.pdf", "pump-photo.jpg"], 2)
+		self.assertEqual(s["chip"], "2 files")
+		self.assertEqual(s["chip_aria"], "2 files attached")
+		self.assertEqual(s["group"]["attach"], ["Attach a file"])
+		self.assertEqual(s["group"]["removes"], 2)
+		self.assertEqual(s["group"]["hrefs"], ["/files/site-plan.pdf", "/files/pump-photo.jpg"])
+
+	def test_the_group_is_in_the_tools_where_it_was_and_starts_open(self):
+		s = self.out["loaded"]
+		self.assertTrue(s["group_in_tools"])
+		self.assertEqual(s["tool_order"], ["attachments", "activity"])
+		self.assertTrue(s["group_open"])
+		self.assertTrue(s["dock_open"])
+
+	def test_an_attach_refreshes_both(self):
+		self.assertEqual(self.out["uploads_after_attach"], 1)
+		s = self.out["attached"]
+		self.assertSameInBoth(s, ["site-plan.pdf", "pump-photo.jpg", "valve-spec.pdf"], 3)
+		self.assertEqual(s["chip"], "3 files")
+
+	def test_a_remove_from_either_list_refreshes_both(self):
+		# Both rows of the one file name go, as the Desk sidebar removes them.
+		self.assertEqual(self.out["removed_fids"], ["F1", "F2"])
+		self.assertSameInBoth(self.out["removed"], ["pump-photo.jpg", "valve-spec.pdf"], 2)
+		self.assertEqual(self.out["removed"]["chip"], "2 files")
+		self.assertSameInBoth(self.out["removed_mid"], ["pump-photo.jpg"], 1)
+		self.assertEqual(self.out["removed_mid"]["chip"], "1 file")
+
+	def test_a_drop_refreshes_both(self):
+		self.assertTrue(self.out["drop_claimed"])
+		self.assertEqual(self.out["drop_files"], 1, "the uploader opens with the dropped file")
+		self.assertSameInBoth(self.out["dropped"], ["pump-photo.jpg", "drop.png"], 2)
+
+	# Focus after a redraw (review of v1.748.0): the button used goes with the old list, and frappe
+	# returns focus after a dialog only on a Form route, so without this it fell to <body>.
+
+	def test_after_a_remove_focus_is_on_that_list_s_summary(self):
+		self.assertEqual(
+			self.out["focus_remove_side_closed"], "group button.remove", "as the question closes"
+		)
+		self.assertEqual(self.out["focus_remove_side"], "group summary", "once the redraw takes the button")
+		self.assertEqual(self.out["focus_remove_mid"], "dock summary")
+
+	def test_a_remove_answered_no_returns_to_its_button(self):
+		self.assertEqual(self.out["focus_remove_no"], "dock button.remove")
+
+	def test_after_an_attach_focus_is_on_that_list_s_attach_a_file(self):
+		self.assertEqual(self.out["focus_attach_closed"], "group button.attach")
+		self.assertEqual(
+			self.out["focus_attach"], "group button.attach", "the new list's, not a detached one"
+		)
+		self.assertEqual(self.out["focus_attach_cancel"], "dock button.attach")
+		self.assertTrue(self.out["focus_attach_cancel_same"])
+
+	def test_a_redraw_while_the_uploader_is_open_waits_for_it(self):
+		self.assertEqual(self.out["focus_while_open"], "elsewhere button", "the dialog keeps its focus")
+		self.assertEqual(self.out["focus_after_open"], "group button.attach")
+
+	def test_after_a_drop_focus_returns_to_the_field_without_scrolling(self):
+		self.assertEqual(self.out["focus_drop"], "page input.field")
+		self.assertTrue(self.out["focus_drop_quiet"])
+		self.assertEqual(self.out["focus_drop_none"], "body", "nothing focused before, nothing moved")
+
+	def test_the_chip_gets_focus_back(self):
+		self.assertEqual(self.out["focus_chip"], "page button.chip")
+
+	def test_a_realtime_redraw_keeps_focus_in_its_list(self):
+		self.assertEqual(self.out["focus_reload"], "dock summary")
+
+	def test_a_person_who_moved_on_keeps_their_focus(self):
+		self.assertEqual(self.out["focus_moved_on"], "page input.field")
+
+	def test_a_reload_refreshes_both_down_to_none(self):
+		s = self.out["reloaded_empty"]
+		self.assertSameInBoth(s, [], 0)
+		self.assertEqual(
+			s["dock"]["notes"], ["No files attached. Drop files anywhere on this page, or attach one."]
+		)
+		self.assertEqual(s["chip"], "Attach a file")
+
+	def test_max_attachments_agrees_in_both(self):
+		s = self.out["full"]
+		self.assertSameInBoth(s, ["a.pdf", "b.pdf"], 2)
+		self.assertEqual(s["group"]["attach"], [])
+		self.assertEqual(s["group"]["notes"], ["The most files this record can hold (2) are attached."])
+		self.assertEqual(s["chip"], "2 files")
+
+	def test_no_write_agrees_in_both(self):
+		s = self.out["read_only"]
+		self.assertSameInBoth(s, ["c.pdf"], 1)
+		self.assertEqual(s["group"]["attach"], [])
+		self.assertEqual(s["group"]["removes"], 0)
+
+	def test_a_failed_load_says_so_in_both(self):
+		s = self.out["failed"]
+		self.assertEqual(s["dock"], s["group"])
+		self.assertEqual(
+			s["group"]["notes"], ["The attachments could not be loaded. Reload the page to try again."]
+		)
+		self.assertEqual(s["group"]["files"], [])
+
+	def test_focus_mode_folds_the_section_and_the_group_stays_open(self):
+		s = self.out["narrow_focus"]
+		self.assertFalse(s["dock_open"], "focus mode folds the section (files_open_default)")
+		self.assertTrue(s["group_open"])
+		self.assertSameInBoth(s, [], 0)
+
+	def test_the_side_panel_keeps_one_list_in_the_tools(self):
+		s = self.out["panel"]
+		self.assertIsNone(s["dock"])
+		self.assertIsNone(s["chip"])
+		self.assertTrue(s["group_in_tools"])
+		self.assertFalse(s["group_open"], "closed in the panel, as the activity is")
+		self.assertEqual(s["group"]["files"], [])
+		self.assertEqual(s["group"]["notes"], ["No files attached."], "the panel does not mention dropping")
+
+
+class TestTheGroupShowsBesideTheForm(unittest.TestCase):
+	"""The stylesheet, not the script, decides where the tools' Attachments group shows: it follows the
+	view (data-ge-tools) and the window width without a redraw."""
+
+	@classmethod
+	def setUpClass(cls):
+		css = _text(CSS)
+		cls.block = css[css.index("/* ---- The files in the record tools as well (v1.748.0)") :]
+		cls.rules = re.sub(r"/\*[\s\S]*?\*/", "", cls.block)
+
+	def test_hidden_on_the_guided_page_unless_the_tools_sit_beside_the_form(self):
+		self.assertRegex(
+			self.rules, r'\.ge-app \.ge-tools-group\[data-tool="attachments"\] \{\s*display: none;\s*\}'
+		)
+		self.assertRegex(
+			self.rules,
+			r'@media \(min-width: 1024px\) \{\s*\.ge-app\[data-ge-tools="side"\] \.ge-aside '
+			r'\.ge-tools-group\[data-tool="attachments"\] \{\s*display: block;',
+		)
+
+	def test_the_width_is_the_one_the_page_drops_the_side_column_at(self):
+		css = _text(CSS)
+		self.assertIn("@media (max-width: 1023px) {", css)
+		self.assertIn('window.matchMedia("(min-width: 1024px)")', _code(UI_JS))
+
+	def test_side_is_a_value_the_view_offers(self):
+		view = _code(FORM_KIT_JS / "view.js")
+		self.assertIn('tools: ["side", "below", "collapsed"],', view)
+		self.assertIn('const tools = focus ? "collapsed" : v.tools;', view, "focus mode never shows it")
+
+	def test_only_the_guided_page_is_touched(self):
+		for line in self.rules.splitlines():
+			if 'data-tool="attachments"' in line:
+				self.assertTrue(line.strip().startswith(".ge-app"), line)
+		self.assertNotIn(".fk-panel", self.rules)
+
+	def test_tokens_only(self):
+		self.assertNotRegex(self.block, r"#[0-9a-fA-F]{3,8}\b")
+		self.assertNotRegex(self.block, r"\brgba?\(")
+		self.assertIn("var(--sf-focus)", self.block)
+
+
 if __name__ == "__main__":
 	unittest.main()
