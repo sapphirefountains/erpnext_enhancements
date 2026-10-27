@@ -3114,7 +3114,7 @@ jobs:
       # working on a phone in a mechanical room.
       - name: Kiosk PWA theme + front-end contract
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend erpnext_enhancements.tests.test_kiosk_photo_gate_chip erpnext_enhancements.tests.test_kiosk_time_editing_ui -v
-      # The kiosk's Photos tab (v1.751.0). Whose photos: the employee comes from the session
+      # The kiosk's Photos tab (v1.752.0). Whose photos: the employee comes from the session
       # only, and a thumbnail of somebody else's job -- or of a File on no job at all -- is
       # refused before the file is opened, so a technician can never page through a
       # colleague's customer sites by guessing File names. What counts: an "Add files" picture
