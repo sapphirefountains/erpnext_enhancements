@@ -55,14 +55,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.workforce import (
-    client_time,
-    costing,
-    kiosk_files,
-    photo_gate,
-    sites,
-    tracking_health,
-)
+from erpnext_enhancements.workforce import client_time, costing, photo_gate, sites, tracking_health
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
@@ -1500,6 +1493,10 @@ def _make_kiosk_file_private(file_doc):
     """
     if cint(file_doc.is_private):
         return
+    # Imported here, not at the top: suites that load this module stub the
+    # workforce package with only the modules imported above.
+    from erpnext_enhancements.workforce import kiosk_files
+
     reason = kiosk_files.why_not_movable(
         file_doc.as_dict(),
         kiosk_files.rows_sharing_bytes(file_doc.name, file_doc.content_hash, file_doc.file_url),
