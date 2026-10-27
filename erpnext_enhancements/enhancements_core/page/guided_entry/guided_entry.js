@@ -1403,7 +1403,8 @@ class GuidedEntry {
 		if (attrs.tools === "side") $tools.insertAfter(this.$root.find(".ge-summary"));
 		else $tools.appendTo($main);
 		// The files stay straight under the steps, whatever the notes and tools do (v1.711.0), and
-		// fold away in focus mode as the notes and tools do; the band's chip opens them.
+		// fold away in focus mode as the notes and tools do; the band's chip opens them. The tools list
+		// them too, in a group the stylesheet shows only while the tools sit beside the form (v1.748.0).
 		this.$root.find(".ge-files").insertAfter(this.$root.find(".ge-stage"));
 		const focus = attrs.focus === "on";
 		if (focus !== this.files_focus) {

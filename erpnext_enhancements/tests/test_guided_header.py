@@ -296,7 +296,9 @@ class TestTheShellDrawsThem(unittest.TestCase):
 
 	def test_the_tools_fill_the_section_and_the_chip(self):
 		self.assertIn('this.$dock = $root.find(".ge-files")', self.tools)
-		self.assertIn("this.$dock.length ? this.dock_files() : this.group(", self.tools)
+		# v1.748.0: the section AND the tools' group, both drawn by render_files (test_guided_record_tools).
+		self.assertIn("this.$files_dock = this.$dock.length ? this.dock_files() : null;", self.tools)
+		self.assertIn('this.$files = this.group("attachments", __("Attachments"), ', self.tools)
 		self.assertIn("this.show_count(files.length)", self.tools)
 		self.assertIn("header.files_chip_label(n, this.can_add_file())", self.tools)
 		self.assertNotIn("this.ed.kit.files", self.tools, "imported, not read off a kit an older tab may hold")
