@@ -29,10 +29,19 @@ The same goes for what each worker deletes when it activates: only its own older
 caches, never another worker's (see ``TestActivateDeletesOnlyItsOwnCaches``; the
 itinerary's offline copy is the other worker it used to wipe).
 
+The one exception is whose answers the kiosk worker replays offline
+(``TestKeptAnswersArePerPerson``, v1.750.1). It kept every kiosk GET under its URL
+alone, so on a shared phone the next technician, offline, saw the last one's My
+Day, history, correction requests and Map trail. That is behaviour, not scope, so
+``scripts/test_kiosk_sw_cache.js`` runs the real worker in node over a stand-in
+Cache Storage and network, and ``TestKeptAnswersHarness`` runs that script.
+
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker
 """
 
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -40,6 +49,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 KIOSK_WORKER = APP / "www/kiosk-sw.js"
 WALL_WORKER = APP / "www/wall-sw.js"
+KIOSK_APP = APP / "public/js/kiosk/app.js"
+SW_CACHE_HARNESS = REPO_ROOT / "scripts" / "test_kiosk_sw_cache.js"
 
 # Back-compat alias: the kiosk classes below were written against a single WORKER.
 # wall-sw.js is a trimmed clone of the kiosk worker, registered at the SAME root
@@ -295,6 +306,82 @@ class TestBothWorkersCloneBeforeConsuming(unittest.TestCase):
                 f"{worker.name} should clone synchronously into `copy` before the "
                 f"response is returned to respondWith",
             )
+
+
+def _api_branch():
+    """The fetch handler's kiosk-API branch: from its guard to the shell's."""
+    handler = _fetch_handler()
+    start = handler.index("url.pathname.startsWith(API_PREFIX)")
+    return handler[start : handler.index("PRECACHE_PATHS.has", start)]
+
+
+class TestKeptAnswersArePerPerson(unittest.TestCase):
+    """The seams the node harness cannot see: what app.js sends, and the shape of
+    the worker's API branch. The behaviour itself is TestKeptAnswersHarness's.
+
+    Every kiosk GET (get_my_day, get_my_history, get_my_correction_requests,
+    get_my_trail, the current status) used to be kept under its URL alone and
+    replayed offline to whoever asked, so on a shared phone the next technician
+    saw the last one's. The page now names whose screen is asking, and the worker
+    files and finds answers under that name only.
+    """
+
+    def test_every_kiosk_call_names_whose_screen_is_asking(self):
+        self.assertIn(
+            "headers['X-Kiosk-User'] = encodeURIComponent(BOOT.user || '');",
+            KIOSK_APP.read_text(encoding="utf-8"),
+            "app.js's api() must name the signed-in user on every call, or the "
+            "worker keeps and replays nothing",
+        )
+
+    def test_the_worker_reads_that_header(self):
+        self.assertIn("const USER_HEADER = 'X-Kiosk-User';", _code())
+        self.assertIn("const user = req.headers.get(USER_HEADER);", _api_branch())
+
+    def test_a_call_that_names_nobody_goes_to_the_network(self):
+        branch = _api_branch()
+        self.assertLess(branch.index("if (!user) return;"), branch.index("respondWith"))
+
+    def test_answers_are_never_kept_or_found_by_url_alone(self):
+        branch = _api_branch()
+        for by_url in ("put(req", "caches.match(req)", "cache.match(req)"):
+            self.assertNotIn(by_url, branch, f"{by_url} files or finds an answer under its URL alone")
+        self.assertIn("caches.match(key)", branch)
+        self.assertIn("keepAnswer(user, key, fresh.clone())", branch)
+
+    def test_a_sign_out_is_seen_before_the_get_only_guard(self):
+        """Sign-outs are POSTs; checked after `req.method !== 'GET'` they never are."""
+        handler = _fetch_handler()
+        self.assertLess(handler.index("if (isSignOut(req, url))"), handler.index("req.method !== 'GET'"))
+        self.assertIn("event.waitUntil(forgetEverybody()", handler)
+
+    def test_kept_answers_live_in_the_deploy_cache(self):
+        """So a deploy's activate drops them with the rest of the old cache."""
+        code = _code()
+        keep = code[code.index("async function keepAnswer") :]
+        self.assertIn("await caches.open(CACHE);", keep[: keep.index("\n}")])
+
+    def test_the_worker_has_no_jinja(self):
+        """Frappe serves www/*.js through TemplatePage, so a double brace or a Jinja
+        tag anywhere in the file, comments included, rewrites the worker. (A closer
+        on its own is plain text to Jinja; only an opener starts anything.)"""
+        raw = KIOSK_WORKER.read_text(encoding="utf-8")
+        for tag in ("{{", "{%", "{#"):
+            self.assertNotIn(tag, raw)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestKeptAnswersHarness(unittest.TestCase):
+    """Runs scripts/test_kiosk_sw_cache.js: the real worker, a stand-in Cache Storage
+    and network, two technicians on one phone, sign-outs and a deploy."""
+
+    def test_the_harness_passes(self):
+        result = subprocess.run(
+            [shutil.which("node"), str(SW_CACHE_HARNESS)], capture_output=True, text=True, timeout=120
+        )
+        output = (result.stdout + result.stderr)[-4000:]
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("checks passed", result.stdout, output)
 
 
 if __name__ == "__main__":

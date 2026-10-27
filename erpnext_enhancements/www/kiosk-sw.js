@@ -21,8 +21,11 @@
  *               token), never another worker's, then clients.claim() so this worker
  *               controls already-open tabs.
  *   - fetch:    /kiosk navigations → network-first with a cached-shell fallback;
- *               our /assets (+ /kiosk-manifest.json) → cache-first with background
- *               refresh. Non-GET and cross-origin requests are passed through.
+ *               kiosk GET APIs → network-first with a fallback to the answer kept
+ *               for the SAME person (see "Kept API answers" below); our /assets
+ *               (+ /kiosk-manifest.json) → cache-first with background refresh.
+ *               A sign-out POST forgets every kept answer and the kept shell; it,
+ *               like every other non-GET or cross-origin request, is passed through.
  *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB; 'enqueue'
  *               persists a point and tries to flush; 'flush' flushes on demand;
  *               'stats' answers { queued } over the MessageChannel port the page
@@ -48,6 +51,18 @@ const CACHE = 'time-kiosk-' + VERSION;
 const SYNC_TAG = 'flush-geo';
 const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';
+// The kiosk's GET APIs, which this worker keeps and replays offline, per person.
+const API_PREFIX = '/api/method/erpnext_enhancements.api.time_kiosk.';
+// app.js names the person its screen belongs to (BOOT.user, URI-encoded) on every
+// kiosk call in this header, and this query parameter carries that name in a kept
+// answer's cache key. The key is only ever a cache address; it is never fetched.
+const USER_HEADER = 'X-Kiosk-User';
+const USER_PARAM = '__kiosk_user';
+// Frappe's sign-out requests (read from v16.53.0): desk's Log out POSTs
+// /api/method/logout, and the /logout page (the website's Logout link) POSTs '/'
+// with the method in an X-Frappe-CMD header. web_logout is the same, POST only.
+const SIGN_OUT_PATH = /^\/api\/(?:v\d+\/)?method\/(?:logout|web_logout)$/;
+const SIGN_OUT_CMDS = new Set(['logout', 'web_logout']);
 
 // Every js/css URL kiosk.html loads, and nothing else (tests/test_kiosk_frontend.py
 // checks both directions). Leaflet is deliberately absent: it is frappe's vendored
@@ -223,6 +238,65 @@ async function ensureSync() {
   }
 }
 
+// --- Kept API answers, one person at a time -------------------------------
+// Most kiosk GETs are about the person asking: get_my_day, get_my_history,
+// get_my_correction_requests, get_my_trail, the current status. They used to be
+// kept under their URL alone, so on a shared phone the next technician, offline,
+// was handed the last one's day, history, correction requests and Map trail.
+// Now an answer is kept under the person app.js names in USER_HEADER, an offline
+// replay looks only under the name the asking page sends, and the phone holds
+// one person's answers at a time:
+//   - keeping an answer for somebody new forgets everybody else's (keepAnswer);
+//   - a sign-out forgets everybody's, and the kept /kiosk page with them, which
+//     carries that person's boot payload (forgetEverybody).
+// All of it lives in CACHE, so a deploy's activate still drops it with the rest.
+// The worker cannot read cookies (not every browser lets one), so it never
+// decides who is signed in: the page says whose screen is asking.
+
+// Whose answers are kept, as last seen. A hint only: the worker is stopped when it
+// is idle and this is lost, after which the next keep looks at every entry.
+let keptFor = null;
+
+function userKey(req, user) {
+  const url = new URL(req.url);
+  url.searchParams.set(USER_PARAM, user);
+  return url.href;
+}
+
+function isSignOut(req, url) {
+  if (req.method !== 'POST' || url.origin !== self.location.origin) return false;
+  return SIGN_OUT_PATH.test(url.pathname) || SIGN_OUT_CMDS.has(req.headers.get('X-Frappe-CMD') || '');
+}
+
+// Delete kept API answers from this worker's caches: every one when `keep` is
+// null, else every one not kept for `keep`. With `withShell`, the kept page too.
+async function forgetAnswers(keep, withShell) {
+  const names = (await caches.keys()).filter((k) => k.startsWith('time-kiosk-'));
+  for (const name of names) {
+    const cache = await caches.open(name);
+    if (withShell) await cache.delete('/kiosk');
+    for (const req of await cache.keys()) {
+      const url = new URL(req.url);
+      if (!url.pathname.startsWith(API_PREFIX)) continue;
+      if (keep === null || url.searchParams.get(USER_PARAM) !== keep) await cache.delete(req);
+    }
+  }
+}
+
+async function keepAnswer(user, key, response) {
+  if (user !== keptFor) {
+    await forgetAnswers(user, false);
+    keptFor = user;
+  }
+  const cache = await caches.open(CACHE);
+  await cache.put(key, response);
+}
+
+async function forgetEverybody() {
+  keptFor = null;
+  await forgetAnswers(null, true);
+}
+
 // --- Lifecycle -------------------------------------------------------------
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -251,8 +325,15 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // Somebody is signing out, from desk or the /logout page (this worker is at root
+  // scope, so it sees both): forget what the kiosk kept for them before the next
+  // person picks the phone up. The request itself goes on untouched.
+  if (isSignOut(req, url)) {
+    event.waitUntil(forgetEverybody().catch(() => {}));
+    return;
+  }
+  if (req.method !== 'GET') return;
   if (url.origin !== self.location.origin) return;
 
   // App navigation: network-first, fall back to cached shell when offline.
@@ -272,21 +353,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Kiosk GET APIs (options, status, today's visits, maintenance context):
-  // network-first, falling back to the last good response so the idle screen
-  // and form links still render in a dead zone (equipment rooms). POSTs
-  // (clock actions) are untouched — they need the server.
-  if (url.pathname.startsWith('/api/method/erpnext_enhancements.api.time_kiosk.')) {
+  // Kiosk GET APIs (options, status, today's visits, maintenance context, My Day,
+  // the Map trail): network-first, falling back to the last good response so the
+  // idle screen and form links still render in a dead zone (equipment rooms).
+  // POSTs (clock actions) are untouched — they need the server. Kept and replayed
+  // per person (see "Kept API answers" above): a call that names nobody is neither
+  // kept nor replayed, it just goes to the network.
+  if (url.pathname.startsWith(API_PREFIX)) {
+    const user = req.headers.get(USER_HEADER);
+    if (!user) return;
+    const key = userKey(req, user);
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
         if (fresh && fresh.ok) {
-          const cache = await caches.open(CACHE);
-          cache.put(req, fresh.clone());
+          // Cloned here, before the response is returned (see the shell below).
+          event.waitUntil(keepAnswer(user, key, fresh.clone()).catch(() => {}));
         }
         return fresh;
       } catch (e) {
-        return (await caches.match(req)) || new Response('', { status: 504 });
+        return (await caches.match(key)) || new Response('', { status: 504 });
       }
     })());
     return;

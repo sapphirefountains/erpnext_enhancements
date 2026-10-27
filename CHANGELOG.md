@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.750.1] - 2026-10-27
+
+### Fixed
+- **Privacy: on a shared phone, the Time Kiosk no longer shows one technician another's My Day,
+  history, correction requests or Map trail when offline.** An independent review of the kiosk
+  Photos tab (#1374) found it on 2026-10-27. The root-scope worker (`www/kiosk-sw.js`) kept every
+  GET under `/api/method/erpnext_enhancements.api.time_kiosk.` under its **URL alone**, with no
+  per-user part and no `Vary`, and replayed it whenever the network failed.
+  - **How it leaked.** `get_my_day`, `get_my_history`, `get_my_correction_requests` (`myday.js`),
+    `get_my_trail` (`map.js`) and `get_current_status` are all person-specific. Their URLs are the
+    same for everyone on a given day. When Sam signed in after Pat and the phone then lost
+    signal, every screen Sam had not yet loaded online was answered from Pat's copy.
+  - **Nothing ever cleared it.** The kiosk has no sign-out of its own. A sign-out elsewhere
+    (desk, the `/logout` page) left the kept answers **and** the kept `/kiosk` page in place, and
+    that page carries Pat's boot payload. Offline, anyone who opened `/kiosk` afterwards got
+    Pat's screen. Only a deploy's cache rotation removed them.
+  - **The fix, one person at a time:**
+    - `app.js`'s `api()` now sends `X-Kiosk-User` (`BOOT.user`, URI-encoded) on every call.
+    - The worker keeps each answer under that name: a `__kiosk_user` parameter on the cache key,
+      which is never sent to the server. Offline, it replays only the answer kept for the name
+      the asking page sends.
+    - A call without the header is neither kept nor replayed.
+    - Keeping an answer for somebody new deletes everybody else's.
+    - **A sign-out deletes every kept answer and the kept `/kiosk` page.** The worker is
+      root-scope, so it sees the sign-out request even from desk, and lets it through untouched.
+      It matches desk's `POST /api/method/logout` and the `/logout` page's `POST /` with
+      `X-Frappe-CMD: logout`, both read from frappe v16.53.0 (prod's version today), plus
+      `web_logout` and `/api/v2/method/logout`.
+    - The answers stay in the per-deploy `CACHE`, so a deploy still drops them.
+  - **Why the page names the person, and the worker does not work it out.** A worker cannot read
+    cookies in every browser. A name sent with each request is also race-free: keeping the user
+    in the worker from a `config` message would leave a window, just after sign-in, where the
+    new person's first offline request could still be answered as the last person. Two other
+    keys were ruled out:
+    - **The CSRF token.** Already on every request, but frappe creates it lazily per session
+      (`sessions.get_csrf_token`). A session that went straight from `/login` to `/kiosk` can
+      boot with none, which would turn offline replay off for that person.
+    - **frappe's `user_id` cookie.** The itinerary already found it unusable offline (`www/README`).
+  - **Not covered** (`www/README`):
+    - An iPhone home-screen app keeps its own cookies and storage apart from Safari, so a
+      sign-out in Safari does not reach it. The app is still signed in, too.
+    - Sessions ended elsewhere (expiry, *Logout All Sessions*) send the phone nothing.
+  - **Tests.** `scripts/test_kiosk_sw_cache.js` runs the real worker in node, over a stand-in
+    Cache Storage and a network that answers as whoever the server thinks is signed in. 40 checks
+    over 11 scenarios: own answers replay offline; the next person gets a 504, not the last
+    person's, even before their own first answer is kept; one person's answers at a time,
+    including after a worker restart; sign-outs from desk, `/logout`, `web_logout` and v2 forget
+    everything, while other POSTs and another site's logout forget nothing; a call that names
+    nobody; only a good answer is kept; a deploy drops the old deploy's answers; the name never
+    leaves the phone. **Against the pre-fix worker, 19 of the 40 checks fail.**
+    `tests/test_kiosk_service_worker.py` runs the harness. It also pins what the harness cannot
+    see: the header in `app.js`; no keep or match by URL in the API branch; the sign-out check
+    before the GET-only guard; and no Jinja opener in the worker, since TemplatePage serves
+    `www/*.js`. CI runs the harness as its own `node` step as well.
+
 ## [1.750.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).

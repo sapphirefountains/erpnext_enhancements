@@ -102,6 +102,10 @@
     var isGet = opts.method === 'GET';
     var url = '/api/method/' + method;
     var headers = { 'Accept': 'application/json', 'X-Frappe-CSRF-Token': CSRF };
+    // Whose screen is asking. kiosk-sw.js keeps and replays offline answers per
+    // person by it, so a shared phone never shows one technician another's day.
+    // URI-encoded because a header value must be Latin-1 and a user id need not be.
+    headers['X-Kiosk-User'] = encodeURIComponent(BOOT.user || '');
     var init = { method: isGet ? 'GET' : 'POST', headers: headers, credentials: 'same-origin' };
 
     if (isGet) {
