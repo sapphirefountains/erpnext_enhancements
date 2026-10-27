@@ -245,10 +245,13 @@ class TestQueriesMirrorTheForm(unittest.TestCase):
 	def test_the_dynamic_address_field_is_still_the_three(self):
 		# Since v1.686.0 the controller's primary_address_link_field() delegates to party_sources.js
 		# primary_address_field(), shared with the guided page's record tools: the rule is read there.
+		# Since v1.746.0 it answers for the form a directory reply was requested for, else this.frm,
+		# and still hands that form's own fields to the shared rule.
 		code = _code(UNIFIED.read_text(encoding="utf-8"))
 		delegate = code[code.index("primary_address_link_field: function") :]
 		delegate = delegate[: delegate.index("\n\t},")]
-		self.assertIn("rules.primary_address_field(this.frm.meta.fields || [])", delegate)
+		self.assertTrue(delegate.startswith("primary_address_link_field: function (frm) {"), delegate)
+		self.assertIn("return rules ? rules.primary_address_field((frm || this.frm).meta.fields || []) : null;", delegate)
 		shared = _code((JS / "global_enhancements" / "party_sources.js").read_text(encoding="utf-8"))
 		body = shared[shared.index("export function primary_address_field(fields) {") :]
 		body = body[: body.index("\n}\n")]

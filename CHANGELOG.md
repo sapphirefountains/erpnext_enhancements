@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.745.2] - 2026-10-27
+## [1.746.1] - 2026-10-27
 
 ### Changed
 - **Project: the Department field is hidden on the Details tab.** Nik, 2026-10-27: "On the Project
@@ -19,6 +19,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     so hiding it changes no behaviour.
   - **Undo** by removing the record and adding a one-shot patch that deletes it
     (`fixtures/README.md`). Fixture sync only creates and updates.
+## [1.746.0] - 2026-10-27
+
+### Changed
+- **The Contact and Address Directories, and the guided page's People & places, say whose person,
+  or whose address, each row is** (TASK-2026-02942). Their "Linked To" columns are now **Account / Supplier**. "Linked To" listed
+  every record a Contact or Address is linked to, by ID, so someone on five jobs showed five
+  Projects and Opportunities beside the one company they work for. Nik asked for "this contact
+  belongs to this customer, or this contact belongs to this supplier" instead (2026-10-27), and
+  then for the address table to match. The directories are the two tables on the Customer,
+  Supplier, Opportunity, Project and Master Project forms (`unified_tab_controller.js`); the
+  address table is on the Contact form too.
+  - **What the cell shows.** One entry per Customer and per Supplier the record is linked to,
+    and nothing else. Each is shown by its display name (`customer_name` / `supplier_name`, or
+    the ID when that is blank), linked to the record, with the ID on hover. Suppliers carry a
+    small "Supplier" tag, because a Customer reads "Account" on this site and the two otherwise
+    look alike. Customers come first, then Suppliers, each in name order. A row on neither
+    shows a muted "None", so a person or address filed only under a job stays visible for
+    cleanup. Every name is escaped; the old column put raw names into the page.
+  - **On a Customer or Supplier form, that party is kept quiet rather than dropped.** It appears
+    in nearly every row there, so it reads a muted, unlinked "This account" / "This supplier",
+    first in the cell, and other companies keep their links. Dropping it would make a row that
+    belongs only to this company read "None", which says the opposite; keeping it also tells a
+    row of the company's own apart from one inherited through a Project Stakeholder row. On a
+    Project or Opportunity the job's Customer is a normal link.
+  - **The header reads "Account / Supplier",** to match the site's "Accounts" label for Customer.
+    "This account" is written out rather than built from the doctype's label for the same
+    reason: that label is the plural "Accounts".
+  - **One cell, one helper.** Both tables draw the column with `accounts_cell`, from the
+    `accounts` that `sync_contact.get_contacts_for_context` and `get_addresses_for_context` now
+    put on each row (`_account_links`). It is built from the links the row already carried,
+    which passed the v1.561.1 select check, so it names no party the reader could not already
+    see. The display names come from one `get_all` per doctype, so a directory of fifty rows
+    makes two title queries, not fifty. Select is enough to see a title: it is what a Link field
+    to that party shows, and Frappe's own form load reads it without checking the linked
+    record. `links` is unchanged, for API callers: no UI reads it since this release, so dropping it
+    from the payload is a possible later clean-up.
+  - **The guided page says it the same way.** People & places (the guided page's record tools,
+    and the board's side panel, which runs the same editor) put "Linked to CUST-0042 (Customer),
+    PROJ-0118 (Project), ..." under each contact and address. That line is now "Account /
+    Supplier:" with the same entries: display names linked to their records, the Supplier tag,
+    "This account" / "This supplier" on that record's own page, "None" for neither. Nik approved
+    it on the same day. One rule decides both faces: `party_sources.account_entries`, in the
+    module the Desk widget and the record tools already share. The Desk writes its entries as
+    escaped HTML; the guided page writes them with `.text()` and `.attr()`. A Desk tab still on a
+    bundle from before the rule gets an empty cell until it reloads, not a TypeError.
+  - **Desk details from the reviews.** Each table's renders are numbered, and a reply is drawn
+    only while its render is still the latest (the record tools' `people_seq` pattern). Before,
+    two overlapping renders (a refresh plus the `primary_address` event, or a quick double
+    refresh) each appended a table. A reply that landed after a move to another record was drawn
+    with that record's answers, because the controller is one object for every form and Frappe
+    keeps one form object per DocType. That reply is now dropped. A current reply takes the
+    cell, the Primary badge and the account-wide primary from the form it was requested for,
+    never from the one open when it lands. The loading line also has its own class
+    (`ee-dir-loading`), the only thing a reply removes: it used to clear every `.text-muted`
+    element, the new "None" and "This account" cells included.
+  - **Display only.** No data changes, and the Contact and Address forms still show every link.
+    The tables have no filter, search or sort, so nothing else was keyed on the old columns.
+  - Tests: `AccountColumnTest` in `tests/test_contact_endpoint_permissions.py` (which links,
+    which titles, the order, one title query per doctype, and no lookup for a party the reader
+    cannot select, for contacts and addresses); `scripts/test_directory_account_column.mjs`, its
+    own CI step, which runs the Desk cell with the real `party_sources.js` on Project, Customer
+    and Supplier forms and on an older bundle, and checks both tables use it; and
+    `tests/test_guided_record_tools.py`, which runs `account_entries` under node and checks the
+    guided line draws it as text.
 
 ## [1.745.1] - 2026-10-26
 

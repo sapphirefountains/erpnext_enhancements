@@ -282,7 +282,8 @@ def _install_stub():
 
 	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
 		STATE["queries"].append((doctype, filters))
-		if doctype in ("Contact", "Address"):
+		# Customer and Supplier: the Account / Supplier column's title lookup (v1.746.0).
+		if doctype in ("Contact", "Address", "Customer", "Supplier"):
 			wanted = (filters or {}).get("name")
 			assert isinstance(wanted, (list, tuple)) and wanted[0] == "in", filters
 			table = STATE["tables"][doctype]
@@ -613,6 +614,202 @@ class DirectoryLinksTest(Base):
 			self._links(addresses, "A-NW"),
 			{("Customer", "Northwind Fountains"), ("Supplier", "Harbor Plaza")},
 		)
+
+
+class AccountColumnTest(Base):
+	"""The directory's Account / Supplier column (v1.746.0, TASK-2026-02942): ``accounts`` on each
+	contact and address row.
+
+	It replaced "Linked To" in both tables, which listed every party a record is linked to. The
+	column names only the Customers and Suppliers, by display name, from the links the caller may
+	already see.
+	"""
+
+	def _accounts(self, rows, name):
+		return next(r for r in rows if r["name"] == name)["accounts"]
+
+	def _add_customer(self, name, title):
+		STATE["tables"]["Customer"][name] = {"name": name, "customer_name": title}
+
+	def _title_queries(self):
+		return [doctype for doctype, _ in STATE["queries"] if doctype in ("Customer", "Supplier")]
+
+	def test_a_customer_is_named_by_its_display_name(self):
+		"""The ID is what the old column showed; the person reading it wants the company."""
+		self._add_customer("CUST-0042", "Bluebird Water Gardens")
+		STATE["Dynamic Link"].append(_link("C-NW-1", "Contact", "Customer", "CUST-0042"))
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Customer", "CUST-0042", "select")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND], "Customer", "Northwind Fountains")
+
+		self.assertEqual(
+			self._accounts(contacts, "C-NW-1"),
+			[
+				{"doctype": "Customer", "name": "CUST-0042", "title": "Bluebird Water Gardens"},
+				{"doctype": "Customer", "name": "Northwind Fountains", "title": "Northwind Fountains"},
+			],
+		)
+		self.assertQuiet()
+
+	def test_projects_opportunities_and_leads_are_left_out(self):
+		"""Nik's request: not a list of every job the person was added to."""
+		STATE["Dynamic Link"].append(_link("C-NW-2", "Contact", "Lead", "LEAD-0001"))
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Project", "PROJ-0001", "select")
+		grant("Lead", "LEAD-0001", "select")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		ben = next(r for r in contacts if r["name"] == "C-NW-2")
+		self.assertEqual(
+			{(l["doctype"], l["name"]) for l in ben["links"]},
+			{("Customer", "Northwind Fountains"), ("Project", "PROJ-0001"), ("Lead", "LEAD-0001")},
+			"links stays whole for API callers (no UI reads it since v1.746.0)",
+		)
+		self.assertEqual(
+			ben["accounts"],
+			[{"doctype": "Customer", "name": "Northwind Fountains", "title": "Northwind Fountains"}],
+		)
+
+	def test_a_contact_on_no_customer_or_supplier_gets_an_empty_list(self):
+		"""The widget shows "None" for it, so the person stays visible for cleanup."""
+		grant("Project", "PROJ-0001", "read")
+		contacts = sync_contact.get_contacts_for_context([PROJECT], "Project", "PROJ-0001")
+
+		self.assertEqual(self._accounts(contacts, "C-PROJ"), [])
+		self.assertEqual(self._title_queries(), [], "a title was looked up with no account to name")
+
+	def test_customers_come_before_suppliers_then_title_order(self):
+		STATE["tables"]["Supplier"]["Harbor Plaza"]["supplier_name"] = "Acme Pump Supply"
+		self._add_customer("CUST-0042", "bluebird Water Gardens")
+		for party in (("Supplier", "Harbor Plaza"), ("Customer", "CUST-0042")):
+			STATE["Dynamic Link"].append(_link("C-NW-1", "Contact", *party))
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Customer", "CUST-0042", "select")
+		grant("Supplier", "Harbor Plaza", "select")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(
+			[(a["doctype"], a["title"]) for a in self._accounts(contacts, "C-NW-1")],
+			[
+				("Customer", "bluebird Water Gardens"),
+				("Customer", "Northwind Fountains"),
+				("Supplier", "Acme Pump Supply"),
+			],
+		)
+
+	def test_a_customer_and_a_supplier_sharing_a_name_are_both_named(self):
+		"""Keyed on the (doctype, name) pair, as the rest of the directory is."""
+		STATE["Dynamic Link"].append(_link("C-HP", "Contact", "Supplier", "Harbor Plaza"))
+		grant("Customer", "Harbor Plaza", "read")
+		grant("Supplier", "Harbor Plaza", "select")
+		contacts = sync_contact.get_contacts_for_context([{"doctype": "Customer", "name": "Harbor Plaza"}])
+
+		self.assertEqual(
+			[(a["doctype"], a["name"]) for a in self._accounts(contacts, "C-HP")],
+			[("Customer", "Harbor Plaza"), ("Supplier", "Harbor Plaza")],
+		)
+
+	def test_a_party_the_caller_may_not_select_is_not_named_or_looked_up(self):
+		STATE["tables"]["Supplier"]["Harbor Plaza"]["supplier_name"] = "Acme Pump Supply"
+		STATE["Dynamic Link"].append(_link("C-NW-2", "Contact", "Supplier", "Harbor Plaza"))
+		grant("Customer", "Northwind Fountains", "read")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(
+			[(a["doctype"], a["name"]) for a in self._accounts(contacts, "C-NW-2")],
+			[("Customer", "Northwind Fountains")],
+		)
+		self.assertNotIn("Supplier", self._title_queries(), "the hidden Supplier's title was read")
+		self.assertQuiet()
+
+	def test_titles_are_read_in_one_query_per_doctype(self):
+		"""Batched: twenty rows on twenty companies still make two title queries."""
+		for i in range(10):
+			contact, customer, supplier = f"C-BULK-{i}", f"CUST-1{i:03}", f"SUP-1{i:03}"
+			STATE["tables"]["Contact"][contact] = {"name": contact, "first_name": f"Person {i}"}
+			self._add_customer(customer, f"Example Account {i}")
+			STATE["tables"]["Supplier"][supplier] = {"name": supplier, "supplier_name": f"Example Vendor {i}"}
+			STATE["Dynamic Link"] += [
+				_link(contact, "Contact", "Project", "PROJ-0001"),
+				_link(contact, "Contact", "Customer", customer),
+				_link(contact, "Contact", "Supplier", supplier),
+			]
+			grant("Customer", customer, "select")
+			grant("Supplier", supplier, "select")
+		grant("Project", "PROJ-0001", "read")
+		contacts = sync_contact.get_contacts_for_context([PROJECT], "Project", "PROJ-0001")
+
+		self.assertEqual(sorted(self._title_queries()), ["Customer", "Supplier"])
+		self.assertEqual(
+			self._accounts(contacts, "C-BULK-7"),
+			[
+				{"doctype": "Customer", "name": "CUST-1007", "title": "Example Account 7"},
+				{"doctype": "Supplier", "name": "SUP-1007", "title": "Example Vendor 7"},
+			],
+		)
+
+	def test_a_blank_title_shows_the_name(self):
+		"""The fixture Supplier has no supplier_name."""
+		STATE["Dynamic Link"].append(_link("C-SUP", "Contact", "Customer", "Northwind Fountains"))
+		STATE["tables"]["Customer"]["Northwind Fountains"]["customer_name"] = ""
+		grant("Supplier", "Harbor Plaza", "read")
+		grant("Customer", "Northwind Fountains", "select")
+		contacts = sync_contact.get_contacts_for_context([{"doctype": "Supplier", "name": "Harbor Plaza"}])
+
+		self.assertEqual(
+			self._accounts(contacts, "C-SUP"),
+			[
+				{"doctype": "Customer", "name": "Northwind Fountains", "title": "Northwind Fountains"},
+				{"doctype": "Supplier", "name": "Harbor Plaza", "title": "Harbor Plaza"},
+			],
+		)
+
+	def test_a_repeated_link_row_is_one_entry(self):
+		STATE["Dynamic Link"].append(_link("C-NW-1", "Contact", "Customer", "Northwind Fountains"))
+		grant("Customer", "Northwind Fountains", "read")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(len(self._accounts(contacts, "C-NW-1")), 1)
+
+	def test_addresses_carry_accounts_the_same_way(self):
+		"""The address table's column, from the same helper: Customers and Suppliers only."""
+		STATE["tables"]["Supplier"]["Harbor Plaza"]["supplier_name"] = "Acme Pump Supply"
+		STATE["tables"]["Address"]["A-JOB"] = {"name": "A-JOB", "address_line1": "4 Example Way"}
+		STATE["Dynamic Link"] += [
+			_link("A-NW", "Address", "Project", "PROJ-0001"),
+			_link("A-NW", "Address", "Supplier", "Harbor Plaza"),
+			_link("A-JOB", "Address", "Project", "PROJ-0001"),
+		]
+		grant("Project", "PROJ-0001", "read")
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Supplier", "Harbor Plaza", "select")
+		addresses = sync_contact.get_addresses_for_context([PROJECT, NORTHWIND], "Project", "PROJ-0001")
+
+		self.assertEqual(
+			self._accounts(addresses, "A-NW"),
+			[
+				{"doctype": "Customer", "name": "Northwind Fountains", "title": "Northwind Fountains"},
+				{"doctype": "Supplier", "name": "Harbor Plaza", "title": "Acme Pump Supply"},
+			],
+		)
+		self.assertEqual(self._accounts(addresses, "A-JOB"), [], "a job-only address names no account")
+		self.assertEqual(
+			{(l["doctype"], l["name"]) for l in next(a for a in addresses if a["name"] == "A-NW")["links"]},
+			{("Customer", "Northwind Fountains"), ("Project", "PROJ-0001"), ("Supplier", "Harbor Plaza")},
+		)
+		self.assertEqual(sorted(self._title_queries()), ["Customer", "Supplier"])
+		self.assertQuiet()
+
+	def test_an_address_party_the_caller_may_not_select_is_not_named(self):
+		STATE["Dynamic Link"].append(_link("A-NW", "Address", "Supplier", "Harbor Plaza"))
+		grant("Customer", "Northwind Fountains", "read")
+		addresses = sync_contact.get_addresses_for_context([NORTHWIND])
+
+		self.assertEqual(
+			[(a["doctype"], a["name"]) for a in self._accounts(addresses, "A-NW")],
+			[("Customer", "Northwind Fountains")],
+		)
+		self.assertNotIn("Supplier", self._title_queries())
 
 
 def _add_numbered_customer():
