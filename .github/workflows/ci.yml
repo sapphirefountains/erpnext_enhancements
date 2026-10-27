@@ -3121,7 +3121,9 @@ jobs:
       # whose photo row is stuck Pending is shown and NOT reported as "not uploaded" (all three
       # such rows on prod are like that), and captures whose bytes never arrived keep their job
       # on screen. Thumbnails come out upright (a phone stores a portrait shot sideways plus an
-      # EXIF tag). And the endpoints stay outside api.time_kiosk, whose GETs the service worker
+      # EXIF tag), and decoding is bounded first: EPS bytes named .jpg never reach Ghostscript,
+      # and a 0.66 MB PNG that decodes to 1.4 GB is refused before it can take a worker down.
+      # And the endpoints stay outside api.time_kiosk, whose GETs the service worker
       # replays offline per URL rather than per person -- one technician's list on the next
       # one's screen. Own frappe stub, own step; Pillow for the thumbnail class.
       - name: Kiosk Photos tab (own photos only, thumbnails, grouping)

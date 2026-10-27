@@ -1034,6 +1034,9 @@ body {
 /* ------------------------------------------------------------------------ */
 
 .tk-photo-filters { display: flex; flex-direction: column; gap: 12px; }
+/* The shared segmented control is 44px (the theme picker); these chips are tapped on
+   site, often with gloves, so they meet the file's 48px rule. */
+.tk-photo-filters .tk-seg button { min-height: 48px; }
 .tk-photo-list { display: flex; flex-direction: column; gap: 12px; }
 .tk-photo-day { margin: 8px 0 -4px; }
 .tk-photo-job { flex: 1; min-width: 0; }

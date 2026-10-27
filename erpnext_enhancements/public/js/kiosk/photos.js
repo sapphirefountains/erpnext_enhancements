@@ -220,9 +220,10 @@
         h('span', { class: 'tk-chip', text: plural(photos.length, 'photo', 'photos') }),
       ]),
       grid,
+      // "Yet", not "never": a capture still uploading from this phone is Pending too.
       g.waiting ? h('p', { class: 'tk-note tk-photo-waiting' }, [
-        h('span', { class: 'tk-chip is-amber', text: g.waiting + ' not uploaded' }),
-        ' ' + plural(g.waiting, 'photo', 'photos') + ' taken on this job never reached the office.',
+        h('span', { class: 'tk-chip is-amber', text: g.waiting + ' not uploaded yet' }),
+        ' ' + plural(g.waiting, 'photo', 'photos') + ' from this job ' + (g.waiting === 1 ? 'hasn’t' : 'haven’t') + ' reached the office yet.',
       ]) : null,
     ]);
   }

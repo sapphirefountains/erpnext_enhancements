@@ -55,9 +55,14 @@ leaves no unlinked Files behind).
   to). Nothing here hands out bytes it has not checked.
 - **Thumbnails are this module's own bytes**, so ``photo_thumbnail`` checks the
   File is an image attached to a Job Interval of the session employee before
-  it opens it. Frappe's ``File.make_thumbnail`` is deliberately not used: for a
-  private file it writes the thumbnail under ``public/``, where anyone can read
-  it without signing in.
+  it opens it, and answers a File that is missing and one that is somebody
+  else's with the same 404, so a guessed name learns nothing. Frappe's
+  ``File.make_thumbnail`` is deliberately not used: for a private file it writes
+  the thumbnail under ``public/``, where anyone can read it without signing in.
+- **Decoding is bounded before it starts** (``make_thumbnail``): an allowlist of
+  formats, so bytes that are really EPS never reach Ghostscript whatever the
+  file is called, and a pixel cap on everything the JPEG decoder cannot shrink
+  while it reads, so one small PNG cannot take a worker's memory.
 - **Not under ``api.time_kiosk.``** on purpose. ``www/kiosk-sw.js`` answers every
   GET under that prefix network-first and keeps the last response for offline,
   keyed by URL rather than by person. A shared phone that goes offline would
@@ -97,8 +102,25 @@ THUMB_QUALITY = 72
 #: ``public/js/kiosk/app.js``: a PDF quote attached to a job is not a photo of it.
 IMAGE_EXTENSIONS = ("jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp")
 _IMAGE_RE = re.compile(r"\.(?:" + "|".join(IMAGE_EXTENSIONS) + r")$", re.IGNORECASE)
-#: The same rule for MariaDB, applied to ``LOWER(file_url)``.
+#: The same rule for MariaDB, applied to ``LOWER(file_url)``. Neither side trims, so
+#: the list and the thumbnail endpoint can never disagree about a file.
 _IMAGE_SQL_RE = r"\.(" + "|".join(IMAGE_EXTENSIONS) + r")$"
+
+#: The only formats Pillow may open for a thumbnail. Pillow identifies a file by
+#: its bytes, never its name, so without this an EPS saved as ``.jpg`` opens as
+#: EPS and runs Ghostscript when it is loaded. HEIC is absent on purpose: Pillow
+#: cannot read it without a plugin, so it gets the "No preview" tile either way.
+#: There is no "MPO" opener to list: the JPEG plugin opens a multi-picture JPEG
+#: and reports its format as MPO.
+THUMB_FORMATS = ("JPEG", "PNG", "WEBP", "GIF", "BMP")
+#: Formats ``Image.draft`` can shrink while decoding (MPO is a JPEG container).
+DRAFT_FORMATS = ("JPEG", "MPO")
+#: Pixel cap for every other format, which decodes at full size: a 13,000 px
+#: square RGBA PNG is 0.66 MB on disk and about 1.4 GB in memory. 40 MP is above
+#: any phone camera's PNG and well below what a worker can spare. A JPEG is
+#: bounded instead by ``draft`` (up to 1/8 a side) and by Pillow's own
+#: decompression-bomb check, which refuses one over about 179 MP at open.
+MAX_PIXELS = 40_000_000
 
 #: Photo rows whose bytes the office has not got.
 UNSETTLED_STATES = ("Pending", "Failed")
@@ -112,8 +134,9 @@ THUMBNAIL_METHOD = "/api/method/erpnext_enhancements.api.kiosk_photos.photo_thum
 
 
 def is_image(file_url):
-    """True when the File's URL ends in an image extension."""
-    return bool(file_url) and bool(_IMAGE_RE.search(str(file_url).strip()))
+    """True when the File's URL ends in an image extension. Exactly the rule the
+    SQL applies (``LOWER(file_url) REGEXP``), untrimmed like it."""
+    return bool(file_url) and bool(_IMAGE_RE.search(str(file_url)))
 
 
 def range_bounds(period=None, date=None, today=None):
@@ -230,15 +253,26 @@ def build_groups(intervals, files, photo_rows, project_titles=None, task_titles=
 def make_thumbnail(raw, size=THUMB_PX, quality=THUMB_QUALITY):
     """JPEG bytes of ``raw`` shrunk to ``size`` on its longest side, upright.
 
+    ``Image.open`` reads only the header, so both limits are checked before a
+    single pixel is decoded: the format must be in ``THUMB_FORMATS``, and an image
+    the JPEG decoder cannot shrink must be within ``MAX_PIXELS``.
+
     Phones store a portrait photo as a landscape image plus an EXIF orientation
     tag; ``exif_transpose`` applies the tag, or every thumbnail lies on its side.
     ``draft`` lets the JPEG decoder skip most of a 12-megapixel image instead of
-    decoding all of it to throw it away. Raises on anything Pillow cannot read
+    decoding all of it to throw it away. Raises on anything refused or unreadable
     (HEIC without a plugin, a truncated upload); the caller turns that into a 404.
     """
     from PIL import Image, ImageOps
 
-    image = Image.open(io.BytesIO(raw))
+    # Register every plugin first: with ``formats``, Image.open looks each name up
+    # directly, and a name whose plugin is not registered yet raises KeyError
+    # instead of being skipped. It only pre-registers some of them itself.
+    Image.init()
+    image = Image.open(io.BytesIO(raw), formats=THUMB_FORMATS)
+    width, height = image.size
+    if image.format not in DRAFT_FORMATS and width * height > MAX_PIXELS:
+        raise ValueError(f"{width}x{height} {image.format} is over the {MAX_PIXELS:,}-pixel cap")
     image.draft("RGB", (size * 2, size * 2))
     image = ImageOps.exif_transpose(image)
     image.thumbnail((size, size))
@@ -383,27 +417,25 @@ def photo_thumbnail(photo=None, v=None):
 
     ``v`` is only a cache key (the start of the File's content hash) and is not
     read. Anything that is not an image on the caller's own Job Interval is
-    refused before the file is opened.
+    refused before the file is opened, and always with the same 404: a File that
+    does not exist and one on somebody else's job must look alike, or the error
+    itself confirms that a guessed name is real.
     """
     employee = _require_session_employee()
-    if not photo:
-        frappe.throw(_("Which photo?"), frappe.DoesNotExistError)
 
-    row = frappe.db.get_value(
-        "File",
-        photo,
-        ["name", "file_url", "is_folder", "attached_to_doctype", "attached_to_name"],
-        as_dict=True,
-    )
-    if not row:
-        frappe.throw(_("That photo does not exist."), frappe.DoesNotExistError)
+    row = None
+    if photo:
+        row = frappe.db.get_value(
+            "File",
+            photo,
+            ["name", "file_url", "is_folder", "attached_to_doctype", "attached_to_name"],
+            as_dict=True,
+        )
     owner = None
-    if row.attached_to_doctype == "Job Interval" and row.attached_to_name:
+    if row and row.attached_to_doctype == "Job Interval" and row.attached_to_name:
         owner = frappe.db.get_value("Job Interval", row.attached_to_name, "employee")
-    if owner != employee:
-        frappe.throw(_("You can only see photos of your own jobs."), frappe.PermissionError)
-    if cint(row.is_folder) or not is_image(row.file_url):
-        frappe.throw(_("That file is not a photo."), frappe.DoesNotExistError)
+    if not row or owner != employee or cint(row.is_folder) or not is_image(row.file_url):
+        frappe.throw(_("That photo does not exist."), frappe.DoesNotExistError)
 
     # Read the bytes directly. File.get_content() tries to decode them as text
     # first, and a JPEG can happen to be valid windows-1252.
@@ -415,8 +447,9 @@ def photo_thumbnail(photo=None, v=None):
     try:
         thumb = make_thumbnail(raw)
     except Exception:
-        # HEIC without a plugin, or a truncated upload: no preview. The kiosk
-        # draws a plain tile, and the photo still opens full size.
+        # HEIC without a plugin, a format or size make_thumbnail refuses, or a
+        # truncated upload: no preview. The kiosk draws a plain tile, and the
+        # photo still opens full size through Frappe's own permission check.
         frappe.throw(_("No preview for this photo."), frappe.DoesNotExistError)
 
     frappe.local.response.filename = f"{row.name}.jpg"
