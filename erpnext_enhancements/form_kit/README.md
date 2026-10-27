@@ -305,7 +305,16 @@ the new guided layout." Both are for the guided page's band and body; the decisi
   keeps the old Attachments group in the tools when it does not (the side panel). It is the same body:
   the same list, the same **Attach a file**, the same **Remove** (`rules.can_add_file`,
   `can_remove_files`, `protect_attached_files`, `max_attachments`, frappe's own question), so the rules
-  were not touched. A **files chip** in the band shows the count ("3 files", "Attach a file" while
+  were not touched. **Since v1.748.0 the guided page lists them in the tools' Attachments group as
+  well.** Nik, 2026-10-27: "I expect the attachments in the right-hand column on the guided page." The
+  Desk sidebar and the board's side panel keep them on the side, so a page that had them only in the
+  middle read as "only sometimes". `render_files` decides once (the files, `can_add_file`,
+  `can_remove_files`) and `draw_files` draws that answer into every list `file_lists` returns, so the
+  two lists, both counts and the chip change together on an attach, a remove, a drop or a reload. The
+  group starts open, and the stylesheet shows it only while the tools sit in the side column on a wide
+  screen (`data-ge-tools="side"`, at least 1024px). Below the form, behind their bar, in focus mode or
+  on a phone the tools share the files section's column, and a second copy of the same list a little
+  further down would add nothing. A **files chip** in the band shows the count ("3 files", "Attach a file" while
   there are none and the person may add one, "No files" when they may not) and opens and scrolls to the
   section, or, with no files yet and a right to add one, opens the uploader as its "Attach a file" says; it is hidden until the files have loaded, so it never says "none" before it knows.
 - **Drag and drop.** A file dropped anywhere on the page (or on the side panel while it edits a record; not on the landing screen, the Desk navbar or frappe's Text Editor) opens frappe's uploader
@@ -337,7 +346,7 @@ button (`.ge-band-actions`, `.fk-head-row`).
 | Follow | Follow / Unfollow, where the DocType tracks changes and the person gets follow emails | `frappe.desk.form.document_follow.update_follow`, the form menu's rule |
 | Tags | tags; add (with suggestions) and remove, with write | `frappe.desk.doctype.tag.tag.add_tag/remove_tag/get_tags` |
 | Shared with | who has it shared, read only; sharing itself is on the full form | docinfo `shared` (frappe's Share is the form's own) |
-| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule). On the guided page they have a section of their own, not a place in this block (v1.711.0, below) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
+| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule). On the guided page they also have a section of their own under the steps (v1.711.0, above); this block's group shows there only while the tools sit beside the form (v1.748.0) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
 | Activity | created, last edited, Versions as sentences (the timeline's display rule per field), emails (as text, Reply), assignment / attachment / info / workflow logs, milestones; ERPNext's open ToDos and Events with Done; New email, New task, New event | `frappe.desk.form.load.get_docinfo` and the open half of `erpnext.crm.utils.get_open_activities` (`get_open_todos` / `get_open_events`, behind its own permission check) through `record_info`; `frappe.views.CommunicationComposer`; `frappe.views.InteractionComposer` set up as `crm_activities.js` does; `frappe.client.set_value` for Done |
 | People & places | where the form has `contact_list_html` / `address_list_html`: the same lists, New contact / address, Link existing (with "Also add to"), Import contacts, Set primary, Unlink | `sync_contact.get_contacts_for_context` and the rest of the widget's endpoints; `global_enhancements/party_sources.js`, which `unified_tab_controller.js` calls too; `contacts_ux.create_for`; Set primary writes the record's own field through the editor's save queue |
 | Connections | the dashboard's linked documents with counts, each opening its list filtered to this record | `meta.__dashboard` (this app's `override_doctype_dashboards` included), `frappe.desk.notifications.get_open_count`, `dashboard.js`'s list filter |

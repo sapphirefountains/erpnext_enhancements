@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.748.0] - 2026-10-27
+
+### Added
+- **The guided page lists a record's attachments in the right-hand column too, in the record tools'
+  Attachments group.** Nik, 2026-10-27, asked whether he expected them there: "Yes: I expect the
+  attachments in the right-hand column on the guided page." He had been finding attachments on
+  Opportunities "only sometimes". Nothing failed to load: a check on a production Opportunity that
+  day loaded them four times out of four, with nothing in the Error Log. The cause was where they
+  were drawn. Since v1.711.0 the guided page listed them only in the middle column, in a section
+  under the steps (`.ge-files`), plus the count chip in the head band. The Desk form's sidebar and
+  the Opportunity Board's side panel both keep them on the side. Someone who opens a record from
+  the Kanban view and looks at the side column found the Summary, Activity, People & places and
+  Connections there, but no attachments. That inconsistency read as "only sometimes".
+  - **One list, drawn into both places.** `ui/record_tools.js` used to give the guided page the
+    section *instead of* the tools' group (`$dock.length ? dock_files() : group(...)`). It now
+    draws both. `render_files` decides once: the files (one row per file name, as the sidebar
+    draws them), `can_add_file` (write, and the DocType's `max_attachments` against every row) and
+    `can_remove_files` (`protect_attached_files`). The new `draw_files` draws that answer into each
+    list `file_lists` returns. The tools' count, the section's count, the band's chip and **Attach a
+    file** cannot disagree, and an attach, a remove from either list, a drop or a reload redraws
+    both at once. The failure note ("The attachments could not be loaded …") appears in both.
+  - **Where the group shows is the stylesheet's call.** It shows only while the tools sit in the
+    side column on a wide screen: `.ge-app[data-ge-tools="side"] .ge-aside`, at 1024px and up,
+    which is where the page keeps its side column. There it starts open. When the tools are placed
+    below the form, folded behind their bar, in focus mode (which puts them there) or on anything
+    under 1024px (where the side column drops under the form), the tools share the middle column
+    with the files section. A second copy of the same list a little further down that column
+    would only repeat it: two **Attach a file** buttons, two **Remove** buttons per file, and the
+    same list read out twice. So the group stays hidden in those layouts. CSS decides rather than
+    the script because the view can change and the window can be resized without the tools being
+    drawn again.
+  - **Unchanged:** the middle section and the head band's chip, which Nik chose in v1.711.0 for
+    phones and for people who collapse the tools. The chip still opens and scrolls to the section.
+    Drop-to-attach works anywhere on the page, and while a file is dragged over it both lists are
+    outlined. The board's side panel has no section and is not `.ge-app`, so its Attachments group
+    is drawn and opened exactly as before.
+  - **Tests.** `tests/test_guided_record_tools.py` gains `TestTheFilesInBothPlaces`. It runs the
+    real `RecordTools`, from mount to render, under node. A small stand-in for jQuery and the DOM
+    and a stand-in server let it follow an attach, a remove from each list, a drop and a reload into
+    both lists. It also checks that the counts, the chip and **Attach a file** match there,
+    including at `max_attachments`, without write, after a failed load and in focus mode, and that
+    the side panel keeps one closed list. Against v1.745.1's code it fails, because the side column
+    has no list. `TestTheGroupShowsBesideTheForm` holds the stylesheet to the rule above.
+  - **Nothing is stored or migrated.** No patch, fixture or Custom Field.
+
 ## [1.745.1] - 2026-10-26
 
 ### Fixed

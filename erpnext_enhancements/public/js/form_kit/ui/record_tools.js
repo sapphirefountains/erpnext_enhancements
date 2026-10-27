@@ -23,8 +23,11 @@
  *                 frappe's own question. Since v1.711.0 the guided page gives them a section of
  *                 their own under the steps (.ge-files) and a count in the head band
  *                 (.ge-files-chip), because they sat in the record tools, which a person may
- *                 collapse or place away from the form; the side panel has no such section and
- *                 keeps them in the tools
+ *                 collapse or place away from the form. Since v1.748.0 they are in the tools'
+ *                 Attachments group as well, where the Desk sidebar and the board's side panel keep
+ *                 them: one list, drawn into both by the one renderer (render_files), and shown by
+ *                 the stylesheet only while the tools sit in the side column on a wide screen. The
+ *                 side panel has no section and keeps them in the tools alone
  *   Activity      the timeline with "Show all activity" on: created, last edited, Versions (as
  *                 sentences, version_timeline_content_builder.js's rules), emails, the assignment,
  *                 attachment, info and workflow logs, milestones; ERPNext's CRM Activities (open
@@ -138,6 +141,8 @@ export class RecordTools {
 		const $box = $root.find(".ge-tools");
 		this.$box = $box;
 		this.$dock = $root.find(".ge-files");
+		this.$files_dock = null;
+		this.$files = null;
 		this.files_count = null;
 		this.load_failed = false;
 		this.dock_reset();
@@ -231,7 +236,11 @@ export class RecordTools {
 		this.$people = $('<div class="ge-tools-meta"></div>').appendTo($box);
 		this.sf().state.render(this.$people, "loading");
 		const wide = !!(window.matchMedia && window.matchMedia("(min-width: 1024px)").matches) && this.ed.id_prefix !== "fkp";
-		this.$files = this.$dock.length ? this.dock_files() : this.group("attachments", __("Attachments"), wide);
+		// The files: the guided page's section (v1.711.0) and the tools' group, both drawn from one list
+		// (file_lists). The group starts open on the guided page, because the stylesheet shows it only
+		// beside the form on a wide screen; in the side panel it opens as the activity does.
+		this.$files_dock = this.$dock.length ? this.dock_files() : null;
+		this.$files = this.group("attachments", __("Attachments"), !!this.$dock.length || wide);
 		this.$activity = this.group("activity", __("Activity"), wide);
 		const widgets = rules.directory_widgets((this.meta().fields || []).map((f) => f.fieldname));
 		if (widgets.contacts || widgets.addresses) {
@@ -282,6 +291,12 @@ export class RecordTools {
 		$('<h2 class="ge-files-title"></h2>').text(__("Attachments")).appendTo($summary);
 		$('<span class="ge-files-count"></span>').appendTo($summary);
 		return $('<div class="ge-files-body"></div>').appendTo($details);
+	}
+
+	// Every place the record's files are listed: the files section (the guided page only) and the
+	// tools' group. Each is drawn from the same answer, at the same moment, so they never disagree.
+	file_lists() {
+		return [this.$files_dock, this.$files].filter(($body) => $body && $body.length);
 	}
 
 	// The count, in the files section and the band's chip.
@@ -428,11 +443,13 @@ export class RecordTools {
 					body: (err && err.message) || "",
 					on_action: retry,
 				});
-				// The files section says so itself: an empty "Attachments" would read as no files, and a
+				// Each list of files says so itself: an empty "Attachments" would read as no files, and a
 				// drop is told the same instead of "still loading".
 				this.load_failed = true;
-				this.$files.empty();
-				if (this.$dock.length) $('<p class="ge-muted ge-tools-none"></p>').text(__("The attachments could not be loaded. Reload the page to try again.")).appendTo(this.$files);
+				this.file_lists().forEach(($body) => {
+					$body.empty();
+					if (this.$dock.length) $('<p class="ge-muted ge-tools-none"></p>').text(__("The attachments could not be loaded. Reload the page to try again.")).appendTo($body);
+				});
 				this.$activity.empty();
 			});
 	}
@@ -657,6 +674,8 @@ export class RecordTools {
 
 	// ------------------------------------------------------------------ attachments
 
+	// One answer for every list (file_lists): the files, whether one may be added and whether one may
+	// be removed are decided once, so the counts, the chip and "Attach a file" agree wherever they show.
 	render_files() {
 		const info = this.info;
 		const meta = this.meta();
@@ -665,14 +684,21 @@ export class RecordTools {
 		const files = rules.unique_files(all);
 		this.count("attachments", files.length || "");
 		this.show_count(files.length);
-		const $body = this.$files.empty();
+		const can_add = this.can_add_file();
 		const can_remove = rules.can_remove_files({
 			protect_attached_files: meta.protect_attached_files,
 			docstatus: info.docstatus,
 			write: perms.write,
 			delete: perms.delete,
 		});
-		if (this.can_add_file()) {
+		this.file_lists().forEach(($body) => this.draw_files($body.empty(), files, can_add, can_remove));
+	}
+
+	// One list of the record's files, with Attach a file and each file's Remove.
+	draw_files($body, files, can_add, can_remove) {
+		const meta = this.meta();
+		const perms = this.perms();
+		if (can_add) {
 			$('<button type="button" class="sf-btn sf-btn--secondary ge-tools-add"></button>')
 				.text(__("Attach a file"))
 				.on("click", () => this.attach())
@@ -683,7 +709,7 @@ export class RecordTools {
 				.appendTo($body);
 		}
 		if (!files.length) {
-			const dropping = this.$dock.length && this.can_add_file();
+			const dropping = this.$dock.length && can_add;
 			$('<p class="ge-muted ge-tools-none"></p>')
 				.text(dropping ? __("No files attached. Drop files anywhere on this page, or attach one.") : __("No files attached."))
 				.appendTo($body);

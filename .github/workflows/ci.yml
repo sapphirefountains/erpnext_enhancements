@@ -1870,7 +1870,8 @@ jobs:
       # attachments, activity, assigned to, tags, follow, people and places, connections and Actions
       # menu for any guided DocType. The pure decisions and the directory's shared party rules under
       # node; form_kit.api.record_info against a frappe stub (its own, so its own step); and that the
-      # Desk form's buttons call the same shared code.
+      # Desk form's buttons call the same shared code. v1.748.0: the real RecordTools under node, on a
+      # stand-in DOM, lists the files in the guided page's section and the tools' group alike.
       - name: Guided record tools (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_record_tools -v
       # v1.711.0, the guided page's head band and files section: a DocType's header status chip
