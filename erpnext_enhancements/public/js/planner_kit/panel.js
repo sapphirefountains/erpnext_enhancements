@@ -20,8 +20,28 @@
  * `panel.unsaved()` says whether the open panel holds edits that are not saved, so a tap that opens a
  * record (records.js) can ask before it throws them away. The panel remembers its values the first time
  * the person touches it (a pointer or a key inside it, never a page's own set_value or a reply filling
- * in a row), and has changes when they differ from that.
+ * in a row), and has changes when they differ from that. A value the page sets through the panel after
+ * that (a late reply) moves the remembered value with it, so it is never counted as the person's edit;
+ * one written straight into `fields_dict` is not seen, and at worst asks once for nothing.
  */
+
+// JSON with every object's keys sorted, so two reads of the same values always compare equal.
+export function canonical(value) {
+	const sort = (v) => {
+		if (Array.isArray(v)) return v.map(sort);
+		if (v && typeof v === "object") {
+			return Object.keys(v)
+				.sort()
+				.reduce((out, key) => Object.assign(out, { [key]: sort(v[key]) }), {});
+		}
+		return v;
+	};
+	try {
+		return JSON.stringify(sort(value));
+	} catch (e) {
+		return "";
+	}
+}
 
 export function create_panel(env) {
 	const doc = env.doc;
@@ -68,12 +88,28 @@ export function create_panel(env) {
 			this.container.addEventListener("keydown", touch, true);
 		}
 
-		values_key() {
+		values() {
 			try {
-				return JSON.stringify(this.get_values(true) || {});
+				return this.get_values(true) || {};
 			} catch (e) {
-				return "";
+				return {};
 			}
+		}
+
+		values_key() {
+			return canonical(this.values());
+		}
+
+		// The page set these fields itself (a late reply): they are not the person's edits.
+		rebase(fieldnames) {
+			if (this.touched === null) return;
+			const base = JSON.parse(this.touched || "{}");
+			const now = this.values();
+			fieldnames.forEach((name) => {
+				if (name in now) base[name] = now[name];
+				else delete base[name];
+			});
+			this.touched = canonical(base);
 		}
 
 		// Edits since the person first touched the panel (see the header).
@@ -90,11 +126,15 @@ export function create_panel(env) {
 		}
 
 		set_value(fieldname, value) {
-			return this.field_group.set_value(fieldname, value);
+			const done = this.field_group.set_value(fieldname, value);
+			Promise.resolve(done).then(() => this.rebase([fieldname]));
+			return done;
 		}
 
 		set_values(values) {
-			return this.field_group.set_values(values);
+			const done = this.field_group.set_values(values);
+			Promise.resolve(done).then(() => this.rebase(Object.keys(values || {})));
+			return done;
 		}
 
 		get_field(fieldname) {

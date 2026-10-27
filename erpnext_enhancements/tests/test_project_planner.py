@@ -172,6 +172,10 @@ def _reset():
 	}
 	frappe.log_error = lambda *a, **k: frappe.errors.append((a, k))
 	frappe.get_all = _get_all
+	# v1.751.0 (api/planner_open): what this user may open, per record. Everything, unless a test says
+	# which names of a doctype User Permissions and row rules leave them (frappe.readable).
+	frappe.readable = {}
+	frappe.get_list = _get_list
 	frappe.get_doc = lambda doctype, name=None: frappe.docs[(doctype, name)]
 	frappe.get_cached_doc = _get_cached_doc
 	frappe.get_meta = lambda doctype: frappe.metas.get(doctype, _Meta([]))
@@ -193,6 +197,14 @@ def _reset():
 	]
 	frappe.enqueued = []
 	frappe.enqueue = lambda *a, **k: frappe.enqueued.append((a, k))
+
+
+def _get_list(doctype, filters=None, pluck=None, **kwargs):
+	"""planner_open's question: which of these names may the caller open."""
+	frappe.queries.append((doctype, {"filters": filters, "pluck": pluck, "get_list": True, **kwargs}))
+	names = list(((filters or {}).get("name") or ["in", []])[1])
+	allowed = frappe.readable.get(doctype)
+	return [name for name in names if allowed is None or name in allowed]
 
 
 def _get_all(doctype, filters=None, fields=None, pluck=None, as_list=False, **kwargs):
@@ -1617,6 +1629,9 @@ class TestGetPlanner(unittest.TestCase):
 				("visit", "SMR-1", "2026-10-12", "RES-1"),
 			],
 		)
+		# v1.751.0: what a tap opens for this caller (api/planner_open): Austin's Employee, the visit.
+		self.assertEqual([(r["name"], r["open_as"]) for r in data["resources"]], [("RES-1", "Employee")])
+		self.assertEqual({f["ref"]: (f.get("open"), f.get("projected")) for f in data["foreign"]}["SMR-1"], (True, False))
 		# P3: with the schedule columns present, each project says whether its schedule is published
 		# (this row has no value stored, which reads Draft).
 		self.assertEqual(
@@ -2070,11 +2085,14 @@ class TestGetRoute(unittest.TestCase):
 		self.assertEqual(
 			set(got),
 			{
-				"resource", "label", "date", "day_start", "start", "end", "stops", "drive_minutes", "km",
-				"miles", "source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids",
-				"use_routes_api", "travel", "off",
+				"resource", "label", "employee", "open_as", "date", "day_start", "start", "end", "stops",
+				"drive_minutes", "km", "miles", "source", "long_drive", "unlocated", "maps_url", "maps_key",
+				"map_ids", "use_routes_api", "travel", "off",
 			},
 		)
+		# v1.751.0: a tap on the title opens the person's Employee; each stop says whether it may open.
+		self.assertEqual((got["employee"], got["open_as"]), ("EMP-1", "Employee"))
+		self.assertEqual([(s["ref"], s["open"], s["projected"]) for s in got["stops"]], [("SMR-1", True, False), ("T-X", True, False), ("T-O", True, False)])
 		# Shown in miles (Nik, 2026-10-09); measured in km underneath, so both travel together.
 		self.assertAlmostEqual(got["miles"], round(got["km"] / api.KM_PER_MILE, 1))
 		self.assertTrue(all(("miles" in s) for s in got["stops"]))
@@ -2090,6 +2108,40 @@ class TestGetRoute(unittest.TestCase):
 		self.assertEqual((got["start"], got["maps_url"], got["drive_minutes"]), (None, None, 0.0))
 		self.assertEqual(len(got["stops"]), 3)
 		self.assertTrue(all(s["arrive"] is None and not s["located"] for s in got["stops"]))
+
+	def test_a_tap_opens_only_what_this_person_may_open(self):
+		# Production, 2026-10-27: most planner users hold one Employee User Permission, their own, so every
+		# other Employee (and a Planner Resource naming one) is "Not permitted"; a Projects User sees only
+		# its customers' Maintenance Records. get_list answers it per record (api/planner_open).
+		frappe.readable = {"Employee": set(), "Sapphire Maintenance Record": set()}
+		with self._readers():
+			got = api.get_route("RES-1", "2026-10-12")
+		self.assertEqual(got["open_as"], "Planner Resource")
+		self.assertEqual({s["ref"]: s["open"] for s in got["stops"]}, {"SMR-1": False, "T-X": True, "T-O": True})
+		lists = [q for q in frappe.queries if q[1].get("get_list")]
+		self.assertEqual(sorted(q[0] for q in lists), ["Employee", "Planner Resource", "Sapphire Maintenance Record"])
+		self.assertTrue(all(q[1]["filters"]["name"][0] == "in" for q in lists))
+		frappe.readable["Planner Resource"] = set()
+		with self._readers():
+			got = api.get_route("RES-1", "2026-10-12")
+		self.assertIsNone(got["open_as"])  # the page shows their week, as a tap did before
+
+	def test_a_projected_visits_stop_says_so(self):
+		# Its ref is its contract: "Open visit" must open the contract, never a record named after it.
+		person = {"name": "RES-1", "label": "Austin Healey"}
+		projected = {"kind": "visit", "ref": "MNT-CON-1", "label": "Projected visit: Highlands", "hours": 2, "projected": {"contract": "MNT-CON-1"}}
+		stored = {"kind": "visit", "ref": "SMR-1", "label": "Highlands", "hours": 2}
+		unrouted = api.route_payload(person, MON, {"bookings": [projected, stored]}, None, {}, {}, {}, {}, None)
+		self.assertEqual({s["ref"]: s["projected"] for s in unrouted["stops"]}, {"MNT-CON-1": True, "SMR-1": False})
+		route = {
+			"shop": (40.0, -111.0),
+			"stops": [dict(ref="MNT-CON-1", kind="visit", label="x", project=None, slot=None, hours=2, point=(40.1, -111.1), booking=projected)],
+			"unlocated": [dict(ref="SMR-1", kind="visit", label="y", project=None, slot=None, hours=2, point=None, booking=stored)],
+			"legs": [],
+			"points": [],
+		}
+		routed = api.route_payload(person, MON, {"bookings": [projected, stored]}, route, {}, {}, {}, {}, None)
+		self.assertEqual({s["ref"]: s["projected"] for s in routed["stops"]}, {"MNT-CON-1": True, "SMR-1": False})
 
 	def test_an_unknown_resource_is_refused(self):
 		with self._readers(), self.assertRaises(_Throw):

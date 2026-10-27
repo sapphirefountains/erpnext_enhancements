@@ -861,6 +861,7 @@ class ProjectPlanner {
 			this.by_task[card.name] = card;
 			if (card.modified) this.modified[card.name] = card.modified;
 		});
+		this.ppr_drop_stale_undo(); // PPR: an Undo whose task was changed elsewhere since (the Task form)
 		(data.resources || []).forEach((resource) => (this.by_resource[resource.name] = resource));
 		(data.projects || []).forEach((project) => (this.by_project[project.name] = project));
 		(data.foreign || []).forEach((item) => (this.by_foreign[item.key] = item));
@@ -1544,7 +1545,7 @@ class ProjectPlanner {
 		const sub = [hours, booking.tentative ? __("Pencil") : ""].filter(Boolean).join(" · ");
 		return `
 			<div class="pp-fcard pp-k-${pp_esc(booking.kind || "other")}${pencil}" data-ref="${pp_esc(booking.ref || "")}"
-				data-kind="${pp_esc(booking.kind || "")}" data-date="${pp_esc(ymd)}" data-projected="${booking.projected ? "1" : ""}" tabindex="0"
+				data-kind="${pp_esc(booking.kind || "")}" data-date="${pp_esc(ymd)}" data-projected="${booking.projected ? "1" : ""}" data-open="${booking.open === false ? "0" : "1"}" tabindex="0"
 				title="${pp_esc([booking.label, sub].filter(Boolean).join("\n"))}">
 				<div class="pp-fcard-title">${pp_esc(booking.label || booking.ref)}</div>
 				<div class="pp-fcard-sub">${pp_esc(sub)}</div>
@@ -1746,15 +1747,18 @@ class ProjectPlanner {
 	// PPR: a booking opens its own record (a visit its Sapphire Maintenance Record, a projected visit its
 	// contract, a rental or a task hidden from the board its Task, travel its Travel Trip). What follows is
 	// what a tap did before, for when the kit has not loaded or the person cannot read the record.
-	open_foreign(kind, ref, ymd, projected) {
-		if (ref && this.ppr_open(kind, { ref, projected: !!projected })) return;
-		if (kind === "travel" && ref) frappe.set_route("Form", "Travel Trip", ref);
-		else if ((kind === "rental" || kind === "task") && ref) frappe.set_route("Form", "Task", ref);
+	open_foreign(kind, ref, ymd, projected, open) {
+		if (ref && this.ppr_open(kind, { ref, projected: !!projected, open })) return;
+		if (kind === "travel" && open === false) {
+			// Only its travelers and the travel coordinators may open a trip (travel_management/permissions).
+			frappe.show_alert({ message: __("Away on a trip: only its travelers and the travel coordinators can open it."), indicator: "blue" });
+		} else if (kind === "travel" && ref) this.p6b_navigate(() => frappe.set_route("Form", "Travel Trip", ref));
+		else if ((kind === "rental" || kind === "task") && ref) this.p6b_navigate(() => frappe.set_route("Form", "Task", ref));
 		else if (kind === "visit") {
 			// The Maintenance Planner page is not open to Projects Users.
 			const roles = ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"];
 			if (frappe.user && frappe.user.has_role && frappe.user.has_role(roles)) {
-				frappe.set_route("maintenance-planner", "week", ymd || this.anchor);
+				this.p6b_navigate(() => frappe.set_route("maintenance-planner", "week", ymd || this.anchor));
 			} else {
 				frappe.show_alert({ message: __("A maintenance visit: it moves on the Maintenance Planner."), indicator: "blue" });
 			}
@@ -1846,13 +1850,14 @@ class ProjectPlanner {
 		const foreign_el = target.closest(".pp-fcard");
 		if (!foreign_el) return;
 		const item = this.by_foreign[foreign_el.getAttribute("data-fkey")];
-		if (item) this.open_foreign(item.kind, item.ref, item.date, item.projected);
+		if (item) this.open_foreign(item.kind, item.ref, item.date, item.projected, item.open);
 		else
 			this.open_foreign(
 				foreign_el.getAttribute("data-kind"),
 				foreign_el.getAttribute("data-ref"),
 				foreign_el.getAttribute("data-date"),
-				foreign_el.getAttribute("data-projected") === "1"
+				foreign_el.getAttribute("data-projected") === "1",
+				foreign_el.getAttribute("data-open") !== "0"
 			);
 	}
 
@@ -2180,8 +2185,13 @@ class ProjectPlanner {
 					);
 				}
 				if (opts.decorate) opts.decorate(result, opts);
-				const toasted = opts.snapshot ? this.push_undo(opts.snapshot, opts.message) : false;
+				// Before push_undo, which stamps the entry with what this write left (PPR): the task, and the
+				// tasks a move took along or a bulk change wrote.
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
+				[].concat(result.moved || [], result.updated || [], result.shifted || []).forEach((entry) => {
+					if (entry && entry.task && entry.modified) this.modified[entry.task] = entry.modified;
+				});
+				const toasted = opts.snapshot ? this.push_undo(opts.snapshot, opts.message) : false;
 				if (opts.message && !toasted) frappe.show_alert({ message: opts.message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) =>
 					frappe.show_alert({ message: warning, indicator: "orange" }, 10)
@@ -2235,6 +2245,7 @@ class ProjectPlanner {
 	}
 
 	push_undo(snapshot, message) {
+		this.ppr_stamp_undo(snapshot); // PPR: what the write left, so a later change elsewhere retires it
 		this.undo_stack.push(snapshot);
 		while (this.undo_stack.length > PP.undo_max) this.undo_stack.shift();
 		this.update_undo_button();
@@ -3030,7 +3041,8 @@ class ProjectPlanner {
 						by_start[key] = cell;
 					});
 				}
-				return { name, label: person.label || name, group: person.group || "", by_start, ordered };
+				// PPR: what a tap on the name opens (api/planner_open), as the planner's own resources carry it.
+				return { name, label: person.label || name, group: person.group || "", employee: person.employee || null, open_as: person.open_as || null, by_start, ordered };
 			}
 		);
 		return { weeks, rows };
@@ -3462,10 +3474,11 @@ class ProjectPlanner {
 			const missing = located
 				? ""
 				: `<div class="pp-stop-missing">${pp_esc(__("No location — set the task's address"))}</div>`;
-			// PPR: a visit's and a trip's stop open their records too.
-			const open_label = { task: __("Open task"), rental: __("Open task"), visit: __("Open visit"), travel: __("Open trip") }[stop.kind];
+			// PPR: a visit's stop opens its record too (its contract when projected), and only a record this
+			// person may open has the link (stop.open, api/planner_open). Travel is never a stop.
+			const open_label = { task: __("Open task"), rental: __("Open task"), visit: __("Open visit") }[stop.kind];
 			const open =
-				open_label && stop.ref
+				open_label && stop.ref && stop.open !== false
 					? `<span class="pp-stop-link" role="button" tabindex="0" data-open-task="${pp_esc(stop.ref)}" data-open-kind="${pp_esc(
 							stop.kind
 					  )}" data-open-projected="${stop.projected ? "1" : ""}">${pp_esc(open_label)}</span>`
@@ -5242,7 +5255,7 @@ const PP6A = {
 	// The first-time tips. They used to be banners under the toolbar on load; since the toolbar redesign
 	// (v1.687.0) they are the first section of the "?" help, and take no row of their own.
 	hints: [
-		["pp-person-peek", "Click a person's name to open their employee record; hold or right-click it to see their week."],
+		["pp-person-peek", "Click a person's name to open their employee record (their week when it is not yours to open); hold or right-click it for their week."],
 		["pp-day-peek", "Click a date to see everyone's day side by side."],
 		["pp-glow", "Hover over a name to light up all of that person's bookings."],
 	],
@@ -5437,10 +5450,12 @@ const PP6A_METHODS = {
 			el.setAttribute("tabindex", "0");
 			if (!el.getAttribute("data-pp6a-tip")) {
 				el.setAttribute("data-pp6a-tip", "1");
-				el.setAttribute(
-					"title",
-					`${el.getAttribute("title") || ""}\n${__("Click to open their employee record; hold or right-click for their week.")}`.trim()
-				);
+				// What a tap opens for this person (open_as, api/planner_open.py): their record, else their week.
+				const opens = ((this.by_resource || {})[el.getAttribute("data-resource")] || {}).open_as;
+				const tip = opens
+					? __("Click to open their record; hold or right-click for their week.")
+					: __("Click to see their week.");
+				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${tip}`.trim());
 			}
 		});
 		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
@@ -6279,6 +6294,17 @@ const PP6B_METHODS = {
 		if (el.closest("button, a, input, select, textarea, .pp-toolbar, .pp-fcard, .pp-route, .p6b-bar, .pp-draft-bar")) {
 			return null;
 		}
+		// PPR: a person's initials on a card, a Capacity row and the route's title are names: a tap opens
+		// their Employee record, so their week is on the menu.
+		const named = el.closest(".pp-card [data-pk-person], .pp-hm-name[data-pk-person]");
+		if (named) {
+			const resource = decodeURIComponent(named.getAttribute("data-pk-person"));
+			return { kind: "person", resource, user: this.p6b_user(resource), el: named };
+		}
+		const title = el.closest(".pp-route-title");
+		if (title && this.route_resource) {
+			return { kind: "person", resource: this.route_resource, user: this.p6b_user(this.route_resource), el: title };
+		}
 		const card_el = el.closest(".pp-card[data-task]");
 		if (card_el) {
 			const card = this.by_task[card_el.getAttribute("data-task")];
@@ -6326,9 +6352,13 @@ const PP6B_METHODS = {
 	// Opens the menu for whatever is under `el`. False (and the browser's own menu) when there is
 	// nothing of ours there or the kit has not loaded.
 	p6b_open_for(el, anchor, from_touch) {
-		if (!this.p6b_kit() || !this.data || !PP.views.includes(this.view)) return false;
+		if (!this.p6b_kit()) return false;
 		const target = this.p6b_target(el);
 		if (!target) return false;
+		// PPR: a name and a project's name have their menu on every screen (the route's title, Capacity);
+		// a card's and a day's are the calendar views'.
+		const anywhere = target.kind === "person" || target.kind === "project";
+		if (!anywhere && (!this.data || !PP.views.includes(this.view))) return false;
 		// The page's own items, then every provider's (6C, 6D-UI): a target with none of ours can still
 		// carry theirs, and a provider that throws is skipped.
 		const items = this.p6b_menu_items(target);
@@ -6359,7 +6389,7 @@ const PP6B_METHODS = {
 
 	p6b_menu_title(target) {
 		if (target.kind === "card") return target.card.subject || target.card.name;
-		if (target.kind === "person") return this.resource_label(target.resource);
+		if (target.kind === "person") return this.resource_label(target.resource, this.ppr_person(target.resource).label);
 		if (target.kind === "project") return (this.by_project[target.project] || {}).title || target.project;
 		return [target.resource ? this.resource_label(target.resource) : "", target.ymd ? pp_when(target.ymd) : ""]
 			.filter(Boolean)
@@ -7988,9 +8018,8 @@ const PP6C_METHODS = {
 		// card's own click see it.
 		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
 		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
-		// After 6A's capture listener on the same element: a project's name on a card highlights it
-		// (6A opens its drawer from the same click).
-		this.$body[0].addEventListener("click", (e) => this.p6c_body_click(e), true);
+		// A project's name on a card used to highlight it here; since v1.751.0 a tap opens the Project and
+		// Highlight is on the project's menu (p6c_menu_items).
 		this.$body.on("change click", () => this.p6c_state_soon());
 		this.p6c_sync_controls();
 		this.p6c_fetch_views();
@@ -8295,14 +8324,6 @@ const PP6C_METHODS = {
 		});
 	},
 
-	// A project's name on a card (6A made it a target), or an entry of the color key.
-	p6c_body_click(e) {
-		const target = e.target;
-		if (!this.p6c || !target || !target.closest || Date.now() < this.click_blocked_until) return;
-		const chip = target.closest(".pp-card [data-pk-project]");
-		if (chip) this.p6c_highlight(decodeURIComponent(chip.getAttribute("data-pk-project")));
-	},
-
 	p6c_links(card) {
 		if (!this.p6c || !card || !card.project) return [];
 		const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
@@ -8449,14 +8470,6 @@ const PP6C_METHODS = {
 	},
 
 	// ------------------------------------------------------------------ tap to move
-
-	p6c_coarse() {
-		try {
-			return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-		} catch (e) {
-			return false;
-		}
-	},
 
 	// This device's choice, else off. A touch screen started in Tap to move until 2026-10-27, when Nik
 	// made a tap open the task (PPR); it is one switch away in More ▸ Tools, and "Move with taps…" is on
@@ -10517,16 +10530,12 @@ const PPT1_METHODS = {
 		shown.forEach((row) => {
 			const $row = $('<div class="t1-tray-row"></div>').appendTo($tray);
 			const $main = $('<div class="t1-tray-main"></div>').appendTo($row);
+			// A project's name like any other (PPR): 6A's click opens the Project, Enter clicks it, and a hold
+			// or right-click has the project's menu (p6b_target).
 			$('<span class="t1-tray-title" role="button" tabindex="0"></span>')
 				.text(row.title || row.name)
-				.attr("title", __("Open the project"))
-				.on("click", () => this.ppr_open_project(row.name))
-				.on("keydown", (e) => {
-					if (e.key === "Enter" || e.key === " ") {
-						e.preventDefault();
-						this.ppr_open_project(row.name);
-					}
-				})
+				.attr("title", __("Open the project (hold or right-click for more)"))
+				.attr("data-pk-project", encodeURIComponent(row.name))
 				.appendTo($main);
 			const note = __("No tasks yet");
 			$('<span class="t1-tray-sub"></span>')
@@ -15315,6 +15324,37 @@ Object.assign(ProjectPlanner.prototype, PPS_METHODS);
 // (Planner Draft Change), so leaving loses none; the side panel's own unsaved edits ask first
 // (records.open). Before the kit has loaded, a moment after the first landing, a tap does what it did.
 
+// The pure half, for scripts/test_planner_tap_opens.js.
+const PPR_PURE = {
+	// Every task an Undo entry would write: `task` wherever it appears (the task, the tasks that followed
+	// it, a selection's items, a build-out's rows), at most three levels down.
+	undo_tasks(snapshot) {
+		const out = new Set();
+		const walk = (value, depth) => {
+			if (!value || typeof value !== "object" || depth > 3) return;
+			if (Array.isArray(value)) {
+				value.forEach((entry) => walk(entry, depth + 1));
+				return;
+			}
+			Object.keys(value).forEach((key) => {
+				if (key === "ppr_after") return;
+				if (key === "task" && typeof value[key] === "string" && value[key]) out.add(value[key]);
+				else walk(value[key], depth + 1);
+			});
+		};
+		walk(snapshot, 0);
+		return Array.from(out);
+	},
+	// Whether a task of the entry has changed since its own write. A task not on screen cannot say.
+	stale(snapshot, current) {
+		const after = (snapshot && snapshot.ppr_after) || {};
+		return Object.keys(after).some((name) => {
+			const now = current(name);
+			return !!now && now !== after[name];
+		});
+	},
+};
+
 const PPR_METHODS = {
 	ppr_kit() {
 		const kit = this.p6a && this.p6a.kit;
@@ -15333,22 +15373,61 @@ const PPR_METHODS = {
 		if (card && !this.ppr_open("task", card)) this.open_card(card);
 	},
 
-	// A task by name: its card when the board has it, else the Task (a group Task, one off the board).
+	// A task by name: its card when the board has it, else the Task (a group Task, one off the board),
+	// through the drawer either way, so an open drawer's history entry is replaced.
 	ppr_open_task(name) {
 		if (!name) return;
 		const card = this.by_task[name];
 		if (card) this.ppr_open_card(card);
-		else if (!this.ppr_open("task", { name })) frappe.set_route("Form", "Task", name);
+		else if (!this.ppr_open("task", { name })) this.p6b_navigate(() => frappe.set_route("Form", "Task", name));
 	},
 
 	ppr_open_project(project) {
 		if (project && !this.ppr_open("project", { project })) this.p6a_open_project(project);
 	},
 
+	// Who a resource is, from whichever answer is on screen: the planner's, Capacity's or the route's.
+	// Each carries `open_as`, what this person may open for them (api/planner_open.py).
+	ppr_person(resource) {
+		if (this.by_resource[resource]) return this.by_resource[resource];
+		const row = ((this.heatmap && this.heatmap.rows) || []).find((entry) => entry.name === resource);
+		if (row) return row;
+		const route = this.route_data;
+		if (route && route.resource === resource) return route;
+		return {};
+	},
+
+	// Their Employee record, or their Planner Resource; their week when the server said neither opens
+	// for this person (on production most planner users may open no Employee but their own).
 	ppr_open_person(resource, selected) {
 		if (!resource) return;
-		const person = this.by_resource[resource] || {};
-		if (!this.ppr_open("person", { employee: person.employee, resource })) this.p6a_open_person(resource, selected);
+		const person = this.ppr_person(resource);
+		const known = { employee: person.employee, resource, open_as: person.open_as };
+		if (!this.ppr_open("person", known)) this.p6a_open_person(resource, selected);
+	},
+
+	// Undo across a trip to a Task form: the planner's Undo writes every field it saved, with the newest
+	// `modified` the planner has seen, so an Undo of a drag pressed after the dates were edited on the
+	// form would put the form's edit back silently. Each entry remembers what its own write left
+	// (`ppr_after`, stamped by push_undo once send() has recorded it); a reload that finds one of its
+	// tasks changed since drops the entry, and its toast.
+	ppr_stamp_undo(snapshot) {
+		if (!snapshot || typeof snapshot !== "object") return;
+		const after = {};
+		PPR_PURE.undo_tasks(snapshot).forEach((name) => {
+			if (this.modified[name]) after[name] = this.modified[name];
+		});
+		snapshot.ppr_after = after;
+	},
+
+	ppr_drop_stale_undo() {
+		const stack = this.undo_stack || [];
+		const kept = stack.filter((snap) => !PPR_PURE.stale(snap, (name) => (this.by_task[name] || {}).modified));
+		if (kept.length === stack.length) return;
+		const top = stack[stack.length - 1];
+		this.undo_stack = kept;
+		if (kept[kept.length - 1] !== top && this.p6a_close_toast) this.p6a_close_toast();
+		if (this.update_undo_button) this.update_undo_button();
 	},
 
 	// A booking tapped in a person's week or everyone's day. The click that ends a drag out of the drawer

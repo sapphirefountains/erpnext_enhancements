@@ -608,6 +608,14 @@ frappe.provide("erpnext_enhancements.gantt");
 					if (e && e.target && e.target.closest && e.target.closest(".gantt_tree_icon")) {
 						return true;
 					}
+					// A press on a bar's resize edge is a resize, never a tap (v1.751.0), and the
+					// click a finger makes lifting off a long press already opened the menu.
+					if (e && e.target && e.target.closest && e.target.closest(".gantt_task_drag")) {
+						return true;
+					}
+					if (Date.now() < (this._swallow_click_until || 0)) {
+						return true;
+					}
 					this.config.on_task_click(id, g.isTaskExists(id) ? g.getTask(id) : null);
 					return true;
 				});
@@ -719,7 +727,57 @@ frappe.provide("erpnext_enhancements.gantt");
 					this.config.on_task_context(id, g.getTask(id), e);
 					return false; // dhtmlx then prevents the browser's own menu
 				});
+				this._init_long_press(g);
 			}
+		}
+
+		/**
+		 * A touch long press opens the host's menu, as a right-click does: iOS Safari never fires
+		 * `contextmenu` on a long press, so the planners' Gantt and Overview menus (Quick edit, Open in
+		 * Gantt) were out of reach on an iPad (v1.751.0). Half a second without moving 6 px, the
+		 * planners' own numbers; the click the lifting finger makes is swallowed (onTaskClick above),
+		 * so the row is not also opened. A press that moves is the chart's own drag or scroll.
+		 */
+		_init_long_press(g) {
+			const el = this.chart_el;
+			if (!el || typeof el.addEventListener !== "function") {
+				return;
+			}
+			const LONG_MS = 500;
+			const MOVE_PX = 6;
+			let press = null;
+			el.addEventListener("pointerdown", (e) => {
+				press =
+					e.pointerType === "touch" && !(e.button > 0)
+						? { id: e.pointerId, x: e.clientX, y: e.clientY, at: Date.now(), target: e.target, moved: false }
+						: null;
+			});
+			el.addEventListener("pointermove", (e) => {
+				if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > MOVE_PX) {
+					press.moved = true;
+				}
+			});
+			el.addEventListener("pointercancel", () => {
+				press = null;
+			});
+			el.addEventListener("pointerup", (e) => {
+				const held = press;
+				press = null;
+				if (!held || e.pointerId !== held.id || held.moved || Date.now() - held.at < LONG_MS || this.destroyed) {
+					return;
+				}
+				const id = g.locate({ target: held.target, srcElement: held.target });
+				if (!id || !g.isTaskExists(id)) {
+					return;
+				}
+				this._swallow_click_until = Date.now() + 700;
+				this.config.on_task_context(id, g.getTask(id), {
+					clientX: e.clientX,
+					clientY: e.clientY,
+					target: held.target,
+					preventDefault() {},
+				});
+			});
 		}
 
 		/** A link drawn by drag, handed to the host. Finish-to-start only. */

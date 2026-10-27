@@ -14,8 +14,14 @@ What this pins, and what would fail quietly otherwise:
 
 * **One map from what a planner draws to its record** (``planner_kit/records.js``), run under node with
   every kind: a drafted new task is no Task yet, a projected visit is its contract however the page
-  carries it, a person without an Employee is their Planner Resource, and a record this person cannot
-  read is none, so the page keeps its old answer instead of sending them to "Not permitted".
+  carries it, and a record this person cannot open is none, so the page keeps its old answer instead of
+  sending them to "Not permitted".
+* **Who may open what is decided per record, on the server** (``api/planner_open.py``, the v1.751.0
+  review). ``frappe.model.can_read`` sees only doctypes; on production 14 of the 17 planner users hold an
+  Employee User Permission for their own record alone, so every other Employee, and every Planner Resource
+  naming one, is refused them, and a Travel Trip or a Maintenance Record can be refused by its own row
+  rules. Each payload a tap reads marks it: a person's ``open_as``, a booking's ``open``. Unit tests
+  below run the module against a stub whose ``get_list`` refuses rows the way production does.
 * **Opening goes through ``drawer.navigate``**, in the same tab, so an open drawer's history entry is
   replaced rather than stacked on (Nik's Back/Forward rule), and **asks first** when the side panel holds
   edits that are not saved; a page's own ``set_value`` is never an edit.
@@ -24,14 +30,17 @@ What this pins, and what would fail quietly otherwise:
   what a tap needs (a projected visit's flag, a technician's Employee), Tap to move's default, the blocks'
   order, the styles and the CI step.
 
-Bench-free: reads files and runs node; no frappe.
+Bench-free: reads files and runs node; ``api/planner_open.py`` against a small ``frappe`` stub.
 
 Run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens
 """
 
+import importlib
 import re
 import shutil
 import subprocess
+import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -45,8 +54,66 @@ MP_JS = APP / "sapphire_maintenance" / "page" / "maintenance_planner" / "mainten
 RP_JS = APP / "asset_management" / "page" / "rental_planner" / "rental_planner.js"
 PP_API = APP / "api" / "project_planner.py"
 MP_API = APP / "api" / "maintenance_planner.py"
+PV_API = APP / "api" / "planner_views.py"
+OPEN_API = APP / "api" / "planner_open.py"
+WIDGET = APP / "public" / "js" / "gantt_widget" / "gantt_widget.js"
+WIDGET_CSS = APP / "public" / "css" / "gantt_widget.bundle.css"
 HARNESS = REPO_ROOT / "scripts" / "test_planner_tap_opens.js"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+_saved = {}
+planner_open = None
+
+
+def _pyfunc(source, name):
+	"""One Python function's text, up to the next top-level definition."""
+	start = source.index(f"def {name}(")
+	end = re.compile(r"\n(?:def |@|class )").search(source, start + 1)
+	return source[start : end.start() if end else len(source)]
+
+
+class _PermissionError(Exception):
+	pass
+
+
+def setUpModule():
+	"""A ``frappe`` with what planner_open uses: get_list, PermissionError, log_error."""
+	global planner_open
+	for name in ("frappe", "erpnext_enhancements.api.planner_open"):
+		_saved[name] = sys.modules.pop(name, None)
+	frappe = types.ModuleType("frappe")
+	frappe.PermissionError = _PermissionError
+	frappe.errors = []
+	frappe.calls = []
+	frappe.log_error = lambda *a, **k: frappe.errors.append(k)
+	frappe.get_traceback = lambda: "traceback"
+	sys.modules["frappe"] = frappe
+	planner_open = importlib.import_module("erpnext_enhancements.api.planner_open")
+
+
+def tearDownModule():
+	sys.modules.pop("erpnext_enhancements.api.planner_open", None)
+	for name, module in _saved.items():
+		if module is None:
+			sys.modules.pop(name, None)
+		else:
+			sys.modules[name] = module
+
+
+def _allow(readable):
+	"""get_list as production answers it: role, User Permissions and row rules, per record."""
+	frappe = sys.modules["frappe"]
+
+	def get_list(doctype, filters=None, pluck=None, **kwargs):
+		frappe.calls.append((doctype, filters, pluck, kwargs))
+		if readable.get(doctype) == "no-role":
+			raise _PermissionError(doctype)
+		names = filters["name"][1]
+		allowed = readable.get(doctype)
+		return [n for n in names if allowed is None or n in allowed]
+
+	frappe.calls = []
+	frappe.get_list = get_list
 
 
 def _read(path):
@@ -82,6 +149,11 @@ class TestTheKit(unittest.TestCase):
 		self.assertIn("env.drawer.navigate(route)", records)
 		self.assertIn("env.unsaved()", records)
 		self.assertIn("env.frappe.confirm(", records)
+		# The server's answer per row, and a person only as the server marked them.
+		self.assertIn("if (it.open === false) return null;", records)
+		self.assertIn("if (it.open_as === DOCTYPES.employee) return pick(DOCTYPES.employee, it.employee);", records)
+		# An Undo toast belongs to the planner: closed before the Form opens.
+		self.assertIn('if (env.toast && typeof env.toast.close === "function") env.toast.close();', records)
 		# Same tab, always: nothing opens a window.
 		self.assertNotIn("window.open", records)
 		self.assertNotIn("_blank", records)
@@ -92,6 +164,9 @@ class TestTheKit(unittest.TestCase):
 		self.assertIn('this.container.addEventListener("keydown", touch, true);', panel)
 		self.assertIn("e.isTrusted !== false", panel)
 		self.assertIn("panel.unsaved = () => !!(current && current.is_dirty());", panel)
+		# A late reply set through the panel moves the remembered value; keys never reorder a compare.
+		self.assertIn("Promise.resolve(done).then(() => this.rebase([fieldname]));", panel)
+		self.assertIn("return canonical(this.values());", panel)
 
 	def test_the_quick_looks_mark_and_open_their_bookings(self):
 		peeks = _strip_comments(_read(KIT / "peeks.js"))
@@ -124,10 +199,12 @@ class TestThePages(unittest.TestCase):
 		self.assertIn("return !!(kit && kit.records.open_item(kind, item));", self.mp_code)
 		# A drafted new task, no kit, or no permission: what a tap did before.
 		self.assertIn('if (card && !this.ppr_open("task", card)) this.open_card(card);', self.pp_code)
-		self.assertIn(
-			'if (!this.ppr_open("person", { employee: person.employee, resource })) this.p6a_open_person(resource, selected);',
-			self.pp_code,
-		)
+		self.assertIn("const known = { employee: person.employee, resource, open_as: person.open_as };", self.pp_code)
+		self.assertIn('if (!this.ppr_open("person", known)) this.p6a_open_person(resource, selected);', self.pp_code)
+		self.assertIn("const known = { employee: person.employee, resource: person.resource, open_as: person.open_as };", self.mp_code)
+		# A fallback route still goes through the drawer, so an open drawer's entry is replaced.
+		self.assertIn('this.p6b_navigate(() => frappe.set_route("Form", "Task", name));', self.pp_code)
+		self.assertIn('this.p6b_navigate(() => frappe.set_route("Form", "Travel Trip", ref));', self.pp_code)
 		self.assertTrue(_method(self.mp, "\tmpr_open_card(card) {").rstrip().endswith("this.open_card(card);"))
 
 	def test_every_tap_target_is_routed(self):
@@ -137,7 +214,7 @@ class TestThePages(unittest.TestCase):
 			"this.ppr_open_task(od_el.getAttribute(\"data-od-task\"));",
 			"if (card) this.ppr_open_card(card);",
 			'const label_el = target.closest("[data-ppr-task]");',
-			"this.open_foreign(item.kind, item.ref, item.date, item.projected);",
+			"this.open_foreign(item.kind, item.ref, item.date, item.projected, item.open);",
 		):
 			self.assertIn(needle, activate, needle)
 		click = _method(self.pp, "\tp6a_click(e) {")
@@ -169,6 +246,62 @@ class TestThePages(unittest.TestCase):
 			self.assertIn(f'return this.load_pref({pref}.tap_pref, "") === "1";', body)
 			self.assertNotIn("p6c_coarse", body)
 
+	def test_capacity_and_the_route_know_who_a_name_is(self):
+		person = _method(self.pp, "\tppr_person(resource) {")
+		self.assertIn("this.heatmap && this.heatmap.rows", person)
+		self.assertIn("route.resource === resource", person)
+		self.assertIn('employee: person.employee || null, open_as: person.open_as || null', self.pp)
+
+	def test_names_have_their_menu_everywhere(self):
+		target = _method(self.pp, "\tp6b_target(el) {")
+		self.assertIn('el.closest(".pp-card [data-pk-person], .pp-hm-name[data-pk-person]")', target)
+		self.assertIn('el.closest(".pp-route-title")', target)
+		self.assertLess(target.index('".pp-card [data-pk-person]'), target.index('el.closest(".pp-card[data-task]")'))
+		opening = _method(self.pp, "\tp6b_open_for(el, anchor, from_touch) {")
+		self.assertIn('const anywhere = target.kind === "person" || target.kind === "project";', opening)
+		self.assertIn('.attr("data-pk-project", encodeURIComponent(row.name))', self.pp)  # Needs tasks
+		mp_target = _method(self.mp, "\tp6b_target(el) {")
+		self.assertLess(mp_target.index('".mp-card [data-pk-person]"'), mp_target.index('".mp-card[data-key]"'))
+
+	def test_undo_is_retired_when_its_record_changed_elsewhere(self):
+		send = _method(self.pp, "\tsend(method, args, opts) {")
+		self.assertLess(
+			send.index("if (result.name && result.modified) this.modified[result.name] = result.modified;"),
+			send.index("this.push_undo(opts.snapshot, opts.message)"),
+		)
+		self.assertEqual(send.count("this.modified[result.name] = result.modified"), 1)
+		self.assertIn("this.ppr_stamp_undo(snapshot);", _method(self.pp, "\tpush_undo(snapshot, message) {"))
+		self.assertIn("this.ppr_drop_stale_undo();", _method(self.pp, "\tindex() {"))
+		self.assertIn("this.mpr_stamp_undo(snapshot);", _method(self.mp, "\tpush_undo(snapshot, message) {"))
+		self.assertIn("this.mpr_drop_stale_undo(fresh);", _method(self.mp, "\tindex() {"))
+		self.assertEqual(self.mp_code.count("this.modified[result.name] = result.modified"), 1)
+
+	def test_a_trip_this_person_may_not_open_is_never_routed(self):
+		self.assertIn('data-open="${booking.open === false ? "0" : "1"}"', self.pp)
+		self.assertIn('if (kind === "travel" && open === false) {', self.pp_code)
+		self.assertIn("open: item.open,", self.mp_code)
+		self.assertIn("if (card.open === false) {", _method(self.mp, "\tmpr_open_card(card) {"))
+		# The route view's link: a visit (its contract when projected), and only one this person may open.
+		self.assertIn('open_label && stop.ref && stop.open !== false', self.pp_code)
+		self.assertNotIn('travel: __("Open trip")', self.pp_code)
+
+	def test_the_dead_code_is_gone(self):
+		for code in (self.pp, self.mp):
+			self.assertNotIn("p6c_coarse", code)
+		self.assertNotIn("p6c_body_click", self.pp)
+
+	def test_hold_targets_select_nothing(self):
+		css = _read(PP_JS.with_suffix(".css"))
+		rule = css[css.index(".ppl-task-name[data-ppr-task],\n.ppl-phase-name[data-ppr-task],\n.ppl-project-name,") :]
+		rule = rule[: rule.index("}")]
+		for selector in (".pp-p6a-proj", ".t1-tray-title", ".pp-hm-name.pp-p6a-name", ".pp-route-title"):
+			self.assertIn(selector, rule)
+		self.assertIn("-webkit-touch-callout: none;", rule)
+		self.assertIn("user-select: none;", rule)
+		kit_css = _read(KIT_CSS)
+		note = kit_css[kit_css.index(".pk-note-project[data-pk-project] {") :]
+		self.assertIn("-webkit-touch-callout: none;", note[: note.index("}")])
+
 	def test_a_grip_is_never_a_tap(self):
 		body = _method(self.pp, "\tp6b_resize_end(save) {")
 		self.assertLess(
@@ -191,13 +324,115 @@ class TestThePages(unittest.TestCase):
 
 
 class TestThePayloads(unittest.TestCase):
-	def test_a_projected_visit_says_so_on_the_project_planner(self):
-		self.assertIn('"projected": bool(booking.get("projected")),', _read(PP_API))
+	def test_a_projected_visit_says_so_everywhere_a_tap_reads_it(self):
+		pp = _read(PP_API)
+		self.assertIn('"projected": bool(booking.get("projected")),', pp)
+		# The route view: the routed stops carry their booking, and the unrouted ones are given it.
+		self.assertIn('booking = stop.get("booking") or {}', pp)
+		self.assertIn('"booking": b,', pp)
+		self.assertIn('"projected": bool(booking.get("projected")),', _read(PV_API))
+
+	def test_every_payload_a_tap_reads_is_marked_for_its_caller(self):
+		pp = _read(PP_API)
+		self.assertIn('planner_open.mark_people(data["resources"])', _pyfunc(pp, "get_planner"))
+		self.assertIn('planner_open.mark_bookings(planner_open.day_bookings(data["days"]))', _pyfunc(pp, "get_planner"))
+		self.assertIn('planner_open.mark_people(data["resources"])', _pyfunc(pp, "get_heatmap"))
+		route = _pyfunc(pp, "get_route")
+		self.assertIn("planner_open.mark_people([person])", route)
+		self.assertIn('planner_open.mark_bookings(cell.get("bookings"))', route)
+		self.assertIn('"open_as": person.get("open_as"),', pp)
+		pv = _read(PV_API)
+		self.assertEqual(pv.count('planner_open.mark_bookings(planner_open.day_bookings(data.get("days")))'), 2)
+		self.assertIn('"open": booking.get("open", True),', pv)
+		mp = _read(MP_API)
+		self.assertIn('planner_open.mark_people(people, resource_key="resource")', mp)
+		self.assertIn('**({"open": False} if b.get("open") is False else {}),', mp)
+		self.assertIn("employee=None, open_as=None", mp)
 
 	def test_a_technician_carries_their_employee(self):
 		api = _read(MP_API)
 		self.assertIn('employee=resource.get("employee"),', api)
 		self.assertIn('"employee": resource.get("employee"),', api)
+
+
+class TestPlannerOpen(unittest.TestCase):
+	"""api/planner_open.py against a get_list that refuses rows the way production does (2026-10-27)."""
+
+	def test_one_query_per_doctype_and_only_names(self):
+		_allow({})
+		self.assertEqual(planner_open.openable("Employee", ["E2", None, "E1", "E1", ""]), {"E1", "E2"})
+		((doctype, filters, pluck, kwargs),) = sys.modules["frappe"].calls
+		self.assertEqual((doctype, filters, pluck, kwargs), ("Employee", {"name": ["in", ["E1", "E2"]]}, "name", {"limit_page_length": 0}))
+		_allow({})
+		self.assertEqual(planner_open.openable("Employee", []), set())
+		self.assertEqual(sys.modules["frappe"].calls, [])
+
+	def test_a_person_opens_what_this_user_may_open(self):
+		# Production: an Employee User Permission for their own record only. Planner Resource links to
+		# Employee without ignoring user permissions, so a subcontractor's (no Employee) still opens.
+		_allow({"Employee": {"EMP-ME"}, "Planner Resource": {"RES-ME", "RES-SUB"}})
+		people = [
+			{"name": "RES-ME", "employee": "EMP-ME"},
+			{"name": "RES-KYLE", "employee": "EMP-KYLE"},
+			{"name": "RES-SUB", "employee": None},
+		]
+		planner_open.mark_people(people)
+		self.assertEqual([p["open_as"] for p in people], ["Employee", None, "Planner Resource"])
+		self.assertEqual(sorted(c[0] for c in sys.modules["frappe"].calls), ["Employee", "Planner Resource"])
+		# The Maintenance Planner keys a person by user and names the resource `resource`.
+		_allow({})
+		techs = [{"user": "a@x.com", "name": "Austin", "resource": "RES-A", "employee": None}]
+		planner_open.mark_people(techs, resource_key="resource")
+		self.assertEqual(techs[0]["open_as"], "Planner Resource")
+
+	def test_bookings_with_rows_of_their_own_are_marked_and_the_rest_left(self):
+		_allow({"Sapphire Maintenance Record": {"SMR-MINE"}, "Travel Trip": set(), "Sapphire Maintenance Contract": {"CON-1"}})
+		bookings = [
+			{"kind": "visit", "ref": "SMR-MINE"},
+			{"kind": "visit", "ref": "SMR-THEIRS"},
+			{"kind": "visit", "ref": "CON-1", "projected": {"contract": "CON-1"}},
+			{"kind": "travel", "ref": "TRIP-1"},
+			{"kind": "task", "ref": "TASK-1"},
+			{"kind": "drive", "ref": None},
+		]
+		planner_open.mark_bookings(bookings)
+		self.assertEqual([b.get("open") for b in bookings], [True, False, True, False, None, None])
+		self.assertEqual(
+			sorted(c[0] for c in sys.modules["frappe"].calls),
+			["Sapphire Maintenance Contract", "Sapphire Maintenance Record", "Travel Trip"],
+		)
+
+	def test_no_role_or_a_failure_opens_nothing_and_never_breaks_the_planner(self):
+		_allow({"Travel Trip": "no-role"})
+		self.assertEqual(planner_open.openable("Travel Trip", ["TRIP-1"]), set())
+		frappe = sys.modules["frappe"]
+		frappe.get_list = lambda *a, **k: 1 / 0
+		frappe.errors = []
+		self.assertEqual(planner_open.openable("Employee", ["E1"]), set())
+		self.assertEqual(frappe.errors[0]["title"], "Planner: which Employee records open")
+
+	def test_day_bookings_walks_the_engines_days(self):
+		days = {"RES-1": {"2026-10-27": {"bookings": [{"kind": "task"}]}, "2026-10-28": {}}, "RES-2": None}
+		self.assertEqual(planner_open.day_bookings(days), [{"kind": "task"}])
+		self.assertEqual(planner_open.day_bookings(None), [])
+
+
+class TestTheGanttWidget(unittest.TestCase):
+	def test_a_long_press_opens_the_hosts_menu_and_an_edge_is_never_a_tap(self):
+		widget = _read(WIDGET)
+		self.assertIn("this._init_long_press(g);", widget)
+		press = widget[widget.index("_init_long_press(g) {") :]
+		press = press[: press.index("\n\t\t}\n")]
+		self.assertIn('e.pointerType === "touch"', press)
+		self.assertIn("const LONG_MS = 500;", press)
+		self.assertIn("const MOVE_PX = 6;", press)
+		self.assertIn("this._swallow_click_until = Date.now() + 700;", press)
+		self.assertIn("g.locate(", press)
+		self.assertIn('e.target.closest(".gantt_task_drag")', widget)
+		self.assertIn("if (Date.now() < (this._swallow_click_until || 0)) {", widget)
+		css = _read(WIDGET_CSS)
+		self.assertIn("@media (pointer: coarse) {", css)
+		self.assertIn("-webkit-touch-callout: none;", css[css.index("@media (pointer: coarse) {") :])
 
 
 class TestTheWiring(unittest.TestCase):

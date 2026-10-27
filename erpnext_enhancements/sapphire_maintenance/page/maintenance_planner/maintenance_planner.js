@@ -592,8 +592,10 @@ class MaintenancePlanner {
 			this.tech_by_user[person.user] = person;
 			this.tech_names[person.user] = person.name;
 		});
+		const fresh = {}; // MPR: the stored `modified` of everything on screen, for mpr_drop_stale_undo
 		[].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.fm_cards()).forEach((card) => {
 			if (card.modified) this.modified[card.name] = card.modified;
+			if (card.modified) fresh[card.name] = card.modified;
 			// A helper who is not on the technician list still has a name on the card.
 			(card.crew || []).forEach((member) => {
 				if (member && member.user && member.name && !this.tech_names[member.user]) {
@@ -601,6 +603,7 @@ class MaintenancePlanner {
 				}
 			});
 		});
+		this.mpr_drop_stale_undo(fresh); // MPR: an Undo whose visit was changed elsewhere since (its form)
 	}
 
 	fill_technicians() {
@@ -648,6 +651,7 @@ class MaintenancePlanner {
 						hours: item.hours,
 						slot: item.slot,
 						tentative: !!item.tentative,
+						open: item.open, // MPR: false for a trip this person may not open (api/planner_open)
 					});
 				});
 			});
@@ -1800,6 +1804,8 @@ class MaintenancePlanner {
 					message += ". " + __("The visit is drafted and on the technician's list.");
 				}
 				if (message && result.draft_saved) message += ` (${__("draft, not published")})`;
+				// Before push_undo, which stamps the entry with what this write left (MPR).
+				if (result.name && result.modified) this.modified[result.name] = result.modified;
 				let toasted = false;
 				if (opts.snapshot) {
 					// A projected visit moved into the drafting window becomes a record at once, and its
@@ -1811,7 +1817,6 @@ class MaintenancePlanner {
 						message
 					);
 				}
-				if (result.name && result.modified) this.modified[result.name] = result.modified;
 				if (message && !toasted) frappe.show_alert({ message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) =>
 					frappe.show_alert({ message: warning, indicator: "orange" }, 10)
@@ -1873,6 +1878,7 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ undo
 
 	push_undo(snapshot, message) {
+		this.mpr_stamp_undo(snapshot); // MPR: what the write left, so a later change elsewhere retires it
 		this.undo_stack.push(snapshot);
 		while (this.undo_stack.length > MP.undo_max) this.undo_stack.shift();
 		this.update_undo_button();
@@ -2339,7 +2345,7 @@ const MP6A = {
 	// The first-time tips: since the toolbar redesign (v1.687.0) the first section of the "?" help,
 	// not banners under the toolbar.
 	hints: [
-		["mp-person-peek", "Click a technician's name to open their employee record; hold or right-click it to see their week."],
+		["mp-person-peek", "Click a technician's name to open their employee record (their week when it is not yours to open); hold or right-click it for their week."],
 		["mp-day-peek", "Click a date to see every technician's day side by side."],
 		["mp-glow", "Hover over a name to light up all of that person's visits."],
 	],
@@ -2517,10 +2523,12 @@ const MP6A_METHODS = {
 			el.setAttribute("tabindex", "0");
 			if (!el.getAttribute("data-pp6a-tip")) {
 				el.setAttribute("data-pp6a-tip", "1");
-				el.setAttribute(
-					"title",
-					`${el.getAttribute("title") || ""}\n${__("Click to open their employee record; hold or right-click for their week.")}`.trim()
-				);
+				// What a tap opens for this person (open_as, api/planner_open.py): their record, else their week.
+				const opens = ((this.tech_by_user || {})[el.getAttribute("data-user")] || {}).open_as;
+				const tip = opens
+					? __("Click to open their record; hold or right-click for their week.")
+					: __("Click to see their week.");
+				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${tip}`.trim());
 			}
 		});
 		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
@@ -3139,6 +3147,13 @@ const MP6B_METHODS = {
 		if (!el || !el.closest || !this.$body[0].contains(el)) return null;
 		if (el.closest("button, a, input, select, textarea, .mp-toolbar, .mp-draft-bar, .mp-route, [data-route-resource], .mp-p6b-bar")) {
 			return null;
+		}
+		// MPR: initials on a card are a person's name: a tap opens their Employee record, so a hold or a
+		// right-click has their own week (a helper's too, not only the lead's).
+		const named = el.closest(".mp-card [data-pk-person]");
+		if (named) {
+			const user = decodeURIComponent(named.getAttribute("data-pk-person"));
+			return { kind: "person", user, resource: this.p6b_resource(user), el: named };
 		}
 		const card_el = el.closest(".mp-card[data-key]");
 		if (card_el) {
@@ -4749,14 +4764,6 @@ const MP6C_METHODS = {
 	},
 
 	// ------------------------------------------------------------------ tap to move
-
-	p6c_coarse() {
-		try {
-			return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-		} catch (e) {
-			return false;
-		}
-	},
 
 	// This device's choice, else off. A touch screen started in Tap to move until 2026-10-27, when Nik
 	// made a tap open the visit (MPR); it is one switch away in More ▸ Tools, and "Move with taps…" is on
@@ -8174,6 +8181,35 @@ Object.assign(MaintenancePlanner.prototype, MP10_METHODS);
 // the person's week: neither is one record. Tap to move is off by default on a touch screen
 // (p6c_tap_default). Before the kit has loaded, a tap does what it did.
 
+// The pure half, for scripts/test_planner_tap_opens.js.
+const MPR_PURE = {
+	// Every record an Undo entry would write: a visit (`record`) or a Fountain Move's Task (`task`).
+	undo_names(snapshot) {
+		const out = new Set();
+		const walk = (value, depth) => {
+			if (!value || typeof value !== "object" || depth > 3) return;
+			if (Array.isArray(value)) {
+				value.forEach((entry) => walk(entry, depth + 1));
+				return;
+			}
+			Object.keys(value).forEach((key) => {
+				if (key === "mpr_after") return;
+				if ((key === "record" || key === "task") && typeof value[key] === "string" && value[key]) out.add(value[key]);
+				else walk(value[key], depth + 1);
+			});
+		};
+		walk(snapshot, 0);
+		return Array.from(out);
+	},
+	stale(snapshot, current) {
+		const after = (snapshot && snapshot.mpr_after) || {};
+		return Object.keys(after).some((name) => {
+			const now = current(name);
+			return !!now && now !== after[name];
+		});
+	},
+};
+
 const MPR_METHODS = {
 	mpr_kit() {
 		const kit = this.p6a && this.p6a.kit;
@@ -8192,14 +8228,47 @@ const MPR_METHODS = {
 		if (card.kind === "visit" && this.mpr_open("visit", { name: card.name })) return;
 		if (card.kind === "projected" && this.mpr_open("projected", card)) return;
 		if (card.kind === "move" && this.mpr_open("move", { name: card.name })) return;
-		if (card.kind === "booking" && this.mpr_open(card.booking_kind === "travel" ? "travel" : "task", { ref: card.ref })) return;
+		if (card.kind === "booking") {
+			const kind = card.booking_kind === "travel" ? "travel" : "task";
+			if (this.mpr_open(kind, { ref: card.ref, open: card.open })) return;
+			if (card.open === false) {
+				// Only its travelers and the travel coordinators may open a trip (travel_management/permissions).
+				frappe.show_alert({ message: __("Away on a trip: only its travelers and the travel coordinators can open it."), indicator: "blue" });
+				return;
+			}
+		}
 		this.open_card(card);
 	},
 
+	// Their Employee record, or their Planner Resource; their week when the server said neither opens
+	// for this person (`open_as`, api/planner_open.py: most planner users may open no Employee but
+	// their own).
 	mpr_open_person(user) {
 		if (!user) return;
 		const person = (this.tech_by_user && this.tech_by_user[user]) || {};
-		if (!this.mpr_open("person", { employee: person.employee, resource: person.resource })) this.p6a_open_person(user);
+		const known = { employee: person.employee, resource: person.resource, open_as: person.open_as };
+		if (!this.mpr_open("person", known)) this.p6a_open_person(user);
+	},
+
+	// Undo across a trip to a visit's form (the Project Planner's PPR block says why): each entry
+	// remembers what its own write left, and a reload that finds the record changed since drops it.
+	mpr_stamp_undo(snapshot) {
+		if (!snapshot || typeof snapshot !== "object") return;
+		const after = {};
+		MPR_PURE.undo_names(snapshot).forEach((name) => {
+			if (this.modified[name]) after[name] = this.modified[name];
+		});
+		snapshot.mpr_after = after;
+	},
+
+	mpr_drop_stale_undo(fresh) {
+		const stack = this.undo_stack || [];
+		const kept = stack.filter((snap) => !MPR_PURE.stale(snap, (name) => fresh[name]));
+		if (kept.length === stack.length) return;
+		const top = stack[stack.length - 1];
+		this.undo_stack = kept;
+		if (kept[kept.length - 1] !== top && this.p6a_close_toast) this.p6a_close_toast();
+		if (this.update_undo_button) this.update_undo_button();
 	},
 
 	// A booking tapped in a person's week or everyone's day. The click that ends a drag out of the drawer

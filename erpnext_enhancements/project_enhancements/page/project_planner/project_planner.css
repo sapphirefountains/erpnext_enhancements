@@ -3698,6 +3698,20 @@ body.p6b-resizing * {
 	text-decoration: underline;
 }
 
+/* A hold on a name opens its menu (a tap opens the record, 2026-10-27): no text selection and no iOS
+   callout under the finger, as on a card and a person's chip. */
+.ppl-task-name[data-ppr-task],
+.ppl-phase-name[data-ppr-task],
+.ppl-project-name,
+.pp-p6a-proj,
+.t1-tray-title,
+.pp-hm-name.pp-p6a-name,
+.pp-route-title {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
 /* A collapsed project's or phase's work: the days it covers, as plain runs. */
 .ppl-roll {
 	grid-row: 1;

@@ -19,12 +19,17 @@
  *   projected            a Maintenance Planner projected card: its contract.
  *   travel               a Travel Trip.
  *   project              a Project (`project`, else `name`).
- *   person               the Employee (`employee`); without one (a subcontractor), the Planner Resource.
+ *   person               what the server said this person may open (`open_as`, api/planner_open.py): the
+ *                        Employee (`employee`) or the Planner Resource (`resource`); without `open_as`,
+ *                        nothing, and the page shows their week.
  *   asset                an Asset.
  *   drive, block, note   nothing: driving is padding, a block and a note have forms of their own.
  *
- * `record_of` returns null for a record this user cannot read (`frappe.model.can_read`), so a page can
- * keep its old answer (a quick look, a note) rather than send someone to "Not permitted".
+ * `record_of` returns null for a record this user cannot read, so a page can keep its old answer (a quick
+ * look, a note) rather than send someone to "Not permitted". Two checks, because neither is enough alone:
+ * `frappe.model.can_read` knows only which doctypes a role reads, and the server marks the rows a User
+ * Permission or a doctype's own row rules refuse (`open: false` on a booking, `open_as` on a person; on
+ * production most planner users may open no Employee but their own).
  *
  * `open` goes through `drawer.navigate`, which closes an open drawer first so the Form route replaces the
  * drawer's history entry instead of stacking on it (history.js). Back then returns to the planner on the
@@ -66,6 +71,7 @@ function contract_of(item) {
 // `can_read(doctype)`: optional; without it every doctype counts as readable (the tests' pure calls).
 export function record_of(kind, item, can_read) {
 	const it = item || {};
+	if (it.open === false) return null; // the server's answer for this row (api/planner_open.py)
 	const pick = (doctype, name) => {
 		const value = text(name).trim();
 		if (!value) return null;
@@ -89,7 +95,9 @@ export function record_of(kind, item, can_read) {
 		case "project":
 			return pick(DOCTYPES.project, it.project || it.name);
 		case "person":
-			return pick(DOCTYPES.employee, it.employee) || pick(DOCTYPES.resource, it.resource);
+			if (it.open_as === DOCTYPES.employee) return pick(DOCTYPES.employee, it.employee);
+			if (it.open_as === DOCTYPES.resource) return pick(DOCTYPES.resource, it.resource);
+			return null;
 		case "asset":
 			return pick(DOCTYPES.asset, it.asset || it.name);
 		default:
@@ -111,6 +119,8 @@ export function create_records(env) {
 	function open(record) {
 		if (!record || !record.doctype || !record.name) return false;
 		const go = () => {
+			// An Undo toast belongs to the planner: on the Form it would undo blind (it has no route hook).
+			if (env.toast && typeof env.toast.close === "function") env.toast.close();
 			const route = () => env.frappe.set_route("Form", record.doctype, record.name);
 			return env.drawer ? env.drawer.navigate(route) : route();
 		};

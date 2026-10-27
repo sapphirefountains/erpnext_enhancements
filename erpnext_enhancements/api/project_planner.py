@@ -82,6 +82,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
+from erpnext_enhancements.api import planner_open
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 from erpnext_enhancements.project_enhancements import (
 	fountain_move_jobs,
@@ -637,6 +638,9 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 		)
 	else:
 		data = engine._compute(start, end, equipment=True, google=google)
+	# v1.751.0: what a tap may open for this person: a name's Employee, a visit, a trip (planner_open).
+	planner_open.mark_people(data["resources"])
+	planner_open.mark_bookings(planner_open.day_bookings(data["days"]))
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	unscheduled_rows = _unscheduled()
 	crew_rows, todo_users = engine.read_crews([row.get("name") for row in unscheduled_rows])
@@ -722,8 +726,10 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 							"hours": booking["hours"],
 							# v1.601.0: a pencilled maintenance visit is drawn as a pencil here too.
 							"tentative": bool(booking.get("tentative")),
-							# A projected visit has no record yet: a tap opens the contract (v1.751.0).
+							# A projected visit has no record yet: a tap opens the contract, and only
+							# what this person may open opens at all (v1.751.0, planner_open).
 							"projected": bool(booking.get("projected")),
+							"open": booking.get("open", True),
 						}
 					)
 
@@ -2605,6 +2611,7 @@ def get_heatmap(start, weeks=HEATMAP_DEFAULT_WEEKS):
 	first = week_start(getdate(start), first_day)
 	last = first + datetime.timedelta(days=7 * count - 1)
 	data = engine._compute(first, last, google=False)
+	planner_open.mark_people(data["resources"])  # v1.751.0: what a tap on a name opens
 	week_list = []
 	for index in range(count):
 		begins = first + datetime.timedelta(days=7 * index)
@@ -3384,6 +3391,7 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 					"slot": b.get("slot"),
 					"hours": flt(b.get("hours")),
 					"point": None,
+					"booking": b,
 				}
 				for b in bookings
 				if b.get("kind") in routing.STOP_KINDS
@@ -3394,6 +3402,7 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 
 	stops = []
 	for index, stop in enumerate(ordered):
+		booking = stop.get("booking") or {}
 		detail = (details or {}).get(stop.get("ref")) or {}
 		point = stop.get("point") if route else None
 		timing = times["stops"][index] if times else {}
@@ -3419,6 +3428,9 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 				"km": round(flt(driven["km"]), 1) if driven else None,
 				"miles": round(to_miles(driven["km"]), 1) if driven else None,
 				"located": point is not None,
+				# v1.751.0: a projected visit's ref is its contract, and what this person may open.
+				"projected": bool(booking.get("projected")),
+				"open": booking.get("open", True),
 			}
 		)
 
@@ -3435,6 +3447,9 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 	return {
 		"resource": person.get("name"),
 		"label": person.get("label"),
+		# What a tap on the title opens (v1.751.0, planner_open.mark_people).
+		"employee": person.get("employee"),
+		"open_as": person.get("open_as"),
 		"date": str(day),
 		"day_start": routing.fmt_clock(routing.parse_minutes(day_start)),
 		"start": shop_end(),
@@ -3617,6 +3632,8 @@ def get_route(resource, date):
 	if not person:
 		frappe.throw(_("{0} is not an active Planner Resource.").format(resource))
 	cell = (data["days"].get(resource) or {}).get(str(day)) or {}
+	planner_open.mark_people([person])  # v1.751.0: the title and the stops open what this person may
+	planner_open.mark_bookings(cell.get("bookings"))
 	route = (data.get("routes") or {}).get((resource, day))
 	stop_bookings = [b for b in cell.get("bookings") or [] if b.get("kind") in routing.STOP_KINDS]
 	details = routing.locate(stop_bookings, detail=True) if stop_bookings else {}

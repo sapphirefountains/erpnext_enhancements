@@ -717,7 +717,10 @@ class TestPages(unittest.TestCase):
 			self.assertNotIn("setTimeout(() => this.p6c_arm", block)
 			# Taken before the quick looks and the card's own click see it.
 			self.assertIn('document.addEventListener("click", (e) => this.p6c_tap_click(e), true);', block)
-			self.assertIn('matchMedia("(pointer: coarse)")', block)
+			# Off unless this device turned it on: a tap opens the record since v1.751.0 (Nik,
+			# 2026-10-27), so a touch screen no longer starts in Tap to move.
+			self.assertNotIn('matchMedia("(pointer: coarse)")', block)
+			self.assertIn('"") === "1";', _obj_method(block, "p6c_tap_default"))
 			bare = _strip(block)
 			for write in ("save_task", "move_visit", "move_projected", "add_crew", "swap_crew"):
 				self.assertNotIn(write, bare, write)
@@ -749,11 +752,10 @@ class TestPages(unittest.TestCase):
 			self.assertIn('target.kind !== "card"', items)
 		self.assertIn('__("Highlight this project")', self.pp_block)
 		self.assertIn('__("Highlight this site")', self.mp_block)
-		# A project's name on a card highlights it (after 6A's own capture listener opened its drawer).
-		self.assertIn('target.closest(".pp-card [data-pk-project]")', self.pp_block)
-		self.assertIn(
-			'this.$body[0].addEventListener("click", (e) => this.p6c_body_click(e), true);', self.pp_block
-		)
+		# A project's name opens the Project since v1.751.0, so its highlight is on the project's menu
+		# (and the card's), never a click on the name.
+		self.assertNotIn("p6c_body_click", self.pp_block)
+		self.assertIn('if (target.kind === "project" && target.project) {', _obj_method(self.pp_block, "p6c_menu_items"))
 		# Esc yields to a drawer or menu on top, to a Frappe dialog and to a drag.
 		for block in (self.pp_block, self.mp_block):
 			keydown = _obj_method(block, "p6c_keydown")
