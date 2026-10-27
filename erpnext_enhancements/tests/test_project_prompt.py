@@ -274,7 +274,13 @@ class TestCreationStatusRecipients(FrappeTestCase):
 			patch.object(frappe, "sendmail") as sendmail,
 		):
 			create_project_from_opportunity_background("OPP-0001", users, "PT-0001")
-		return [c.kwargs["user"] for c in publish.call_args_list], sendmail
+		# Only the outcome's broadcast: since v1.747.0 the job also pushes each step to the
+		# requester (ee_project_creation_progress), which says nothing about who hears the outcome.
+		return [
+			c.kwargs["user"]
+			for c in publish.call_args_list
+			if c.kwargs.get("event") == "project_creation_status"
+		], sendmail
 
 	def test_requester_hears_back_when_only_inboxes_are_listed(self):
 		recipients, sendmail = self._run_failing_job(INBOXES)

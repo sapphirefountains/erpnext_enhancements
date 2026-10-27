@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.747.0] - 2026-10-27
+
+### Added
+- **"Create Project in PM System" shows its progress, and the page refreshes when it is done.**
+  Nik, 2026-10-27: "create a progress bar to show it's current progress in creation and auto
+  refresh the page when it's done so the new fields show up." Until now the Create Project
+  dialog said "started in the background" and closed, and the Created Project link appeared only
+  after a manual reload, unless a realtime event happened to arrive.
+  - **Real progress, from the job.** Creation was already a background job on the `long` queue,
+    so it stays one, and the job now reports each step as it starts:
+    1. checking the hand-off;
+    2. making the project and its template's tasks;
+    3. copying the attachments;
+    4. linking the project to the opportunity;
+    5. making the Google Drive folder.
+
+    The new `crm_enhancements/project_creation_progress.py` sends each step to the person who
+    clicked as `ee_project_creation_progress`, and records it in the cache. The dialog's bar is
+    the count of finished steps, with "Step 2 of 5: Creating the project and its tasks" beside
+    it, and "Waiting for a background worker..." until a worker picks the job up. The steps are
+    not equal in length, so the bar does not pretend they are. It is not a time estimate.
+  - **One dialog for every way in.** The bar lives in `create_project_prompt.js`. That file
+    serves the Hand-Off Process tab's button, the Closed Won prompt, and the guided page's
+    "Create project now?". So it works on whichever surface started the creation.
+  - **When it ends**, the dialog closes and the record reloads where it is showing: the Desk
+    form (`frm.reload_doc()`) and the guided page (`sf-record-changed`, whose reload keeps
+    unsent edits). An alert then links the new Project. A Desk form with unsaved edits is not
+    reloaded under them. The job saves the opportunity, so those edits could not be saved
+    anyway, and the person is asked to reload instead. The Hand-Off tab's button now asks for a
+    save first.
+  - **When it fails**, the bar closes and the reason is shown, escaped. A `frappe.throw` message
+    is shown as written. Anything else is named by the step it stopped at. The message links the
+    exact Error Log, which now carries the Opportunity as its reference, and offers Try again.
+  - **Deploys.** Every deploy FLUSHDBs both Redis instances, which can take the queued job away
+    without a word. A socket that drops misses an event for good. So when the events go quiet
+    for 15 seconds, the dialog asks the new `project_creation_state` endpoint where things
+    stand. Its answer is built from the cached state, the RQ job's status and the Opportunity's
+    link. A job that is gone is reported as stopped, with Try again, rather than waited on
+    forever.
+  - Closing the dialog only stops the watching. The job carries on, and the surfaces' own
+    listeners report the outcome as before. Opening the dialog again during a creation shows that
+    creation, not a form that would start a second one.
+
+### Fixed
+- **A retried creation can no longer make a second Project.** "Start it again" has to be safe
+  once a deploy can kill a creation, and three paths were not:
+  - **Duplicate jobs.** `enqueue_project_creation` now queues one job id per Opportunity with
+    `deduplicate=True`. Frappe's `enqueue` (read at the v16.53.0 tag) then queues nothing while
+    that job is queued or started. A second click, a second tab or a colleague gets the running
+    creation's progress instead.
+  - **Racing jobs.** The job takes the Opportunity's row lock (`get_value(..., for_update=True)`)
+    before anything else. A second job, queued some other way, waits for the first to commit and
+    then finds its Project.
+  - **Rollback.** A failure before the link is committed is now rolled back. The job caught every
+    exception and returned normally, and the worker's closing commit kept whatever had been
+    inserted. That left a Project with no link from its Opportunity, which a retry then
+    duplicated.
+  - **Already-linked Opportunities.** One that already has its Project used to make the job
+    return silently. Now it reports `exists`, to the requester only, with no email.
+  - **Back-linked Projects.** The Desk's *Create > Project* and the Closed Won Reconciliation
+    report set `Project.custom_opportunity` without filling in `custom_created_project`. A Project
+    that points back at the Opportunity this way is now linked, the oldest first, and no second
+    one is made. `reconciliation.py` already refuses two Projects for one Opportunity, because
+    they double-count its revenue.
+- **The Opportunity form's creation listener is registered once.** `opportunity.js` added a
+  `project_creation_status` listener on every `refresh`, and the reload after a creation is
+  itself a refresh. So a form opened a few times answered one creation with that many alerts and
+  reloads. The listener is now module-level behind a flag. It stands aside while the progress
+  dialog watches the same creation, and otherwise reports with the dialog's own words and reload
+  rule.
+
+### Tests
+- `tests/test_project_creation_progress.py` (bench-free, own CI step) runs the real job, enqueue
+  and state endpoint against a frappe stub: the steps in order, each to the requester; the steps
+  the job reports are exactly the ones the dialog lists; every outcome recorded before it is
+  broadcast; the lock first; no second Project; and a rollback before the link. A copy without
+  the rollback, or without the lock, fails it.
+- `scripts/test_project_creation_progress.mjs` (node, own CI step) runs the real
+  `create_project_prompt.js` and `opportunity.js` against a stubbed frappe: the bar, the reloads,
+  the dirty form, failure, a flushed job, resuming, closing early, and the one-time listener.
+- `tests/test_project_prompt.py` (bench only) now counts only the outcome's broadcast when it
+  checks who hears it.
+
 ## [1.745.1] - 2026-10-26
 
 ### Fixed

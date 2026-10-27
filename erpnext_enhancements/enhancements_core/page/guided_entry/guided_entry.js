@@ -612,6 +612,10 @@ class GuidedEntry {
 
 	on_project_status(data) {
 		if (this.doctype !== "Opportunity" || !this.showing() || data.opportunity_name !== this.name) return;
+		// v1.747.0: while the progress dialog (create_project_prompt.js) watches this creation, it says
+		// how it went and reloads this page itself, through sf-record-changed.
+		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
+		if (crm && crm.is_tracking_project_creation && crm.is_tracking_project_creation(data.opportunity_name)) return;
 		// An open form of the same record says this already (opportunity.js binds it there).
 		const view = frappe.views && frappe.views.formview && frappe.views.formview.Opportunity;
 		const form_says = !!(view && view.frm && view.frm.doc && view.frm.doc.name === data.opportunity_name);
@@ -632,8 +636,12 @@ class GuidedEntry {
 						message: `${__("Project {0} was created, but its Drive folder was not.", [link])}<pre>${frappe.utils.escape_html(String(data.drive_error))}</pre>`,
 					});
 				}
+			} else if (data.status === "exists" && data.project) {
+				// v1.747.0: it already had one (or one already pointed at it, and is now linked).
+				this.sf.toast(__("This opportunity has project {0}.", [data.project]), { tone: "success", timeout: 8000 });
 			} else {
-				this.sf.toast(__("Project creation failed. The Error Log has the details."), { tone: "warning", timeout: 8000 });
+				const failed = __("Project creation failed. The Error Log has the details.");
+				this.sf.toast(data.reason ? `${failed} ${data.reason}` : failed, { tone: "warning", timeout: 8000 });
 			}
 		}
 		this.reload_record();

@@ -371,11 +371,24 @@
 		});
 	}
 
+	// The dialog shows the creation's progress and reloads this form when the project exists
+	// (create_project_prompt.js, v1.747.0), so there is no on_success reload here.
 	function create_project(frm) {
-		erpnext_enhancements.crm.open_create_project_dialog(frm.doc.name, {
-			frm: frm,
-			on_success: () => frm.reload_doc(),
-		});
+		// The job saves this opportunity when it links the project, so edits not saved yet
+		// would then be refused by a save, and lost by the reload. Saved first, on purpose.
+		if (frm.is_dirty()) {
+			frappe.msgprint({
+				title: __("Save first"),
+				indicator: "orange",
+				message: frappe.utils.escape_html(
+					__(
+						"Save your changes to this opportunity before creating its project: creating the project updates the opportunity."
+					)
+				),
+			});
+			return;
+		}
+		erpnext_enhancements.crm.open_create_project_dialog(frm.doc.name, { frm: frm });
 	}
 
 	function mark_complete(frm) {

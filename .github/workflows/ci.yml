@@ -1968,6 +1968,24 @@ jobs:
       # warning for a deal still on a Lead (Nik's field review, 2026-10-13).
       - name: Opportunity to Project copy and Lead warning (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_project_copy -v
+      # v1.747.0, "Create Project in PM System" shows a progress bar and refreshes the page. Runs the
+      # real background job, the enqueue and the state endpoint against a frappe stub (its own, so its
+      # own step): each step reported in order to the requester, counting one more finished (a bar
+      # driven by anything else is a guess); every outcome recorded and broadcast, the already-linked
+      # one included (it used to send nothing, so a bar waiting on it would never end); and no second
+      # Project on a retry after a deploy flushed the queue — the row lock first, a back-linked
+      # Project linked rather than duplicated, and a failure before the link rolled back (the worker's
+      # closing commit used to keep a half-made Project).
+      - name: Project creation progress and no second Project (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_creation_progress -v
+      # Its client half, executed: the dialog's bar moves one step per event and ignores other deals';
+      # watching starts before the request, so a fast job is heard by the dialog; the Desk form and
+      # the guided page reload once when it is over (a form with unsaved edits is asked first); a
+      # failure says why, escaped, with Try again; a job a deploy flushed is said to have stopped
+      # rather than waited on forever; and opportunity.js's listener is registered once (it was
+      # added on every refresh, so one creation got as many alerts and reloads).
+      - name: Project creation progress dialog and page refresh (bench-free, node)
+        run: node scripts/test_project_creation_progress.mjs
       # Form kit P2-A. The normalization library (utils/normalize.py) and its JavaScript
       # twin (public/js/normalize/normalize.js) run the SAME 163 cases from
       # tests/fixtures/normalize_cases.json, so the Desk and the server cannot disagree

@@ -11,15 +11,16 @@ This module backs the custom Opportunity workflow used by Sapphire Fountains:
   background worker creates a Project from the Opportunity, copies its
   attachments, and (via :mod:`erpnext_enhancements.google_drive.drive_utils`)
   provisions a Google Drive folder tree, then notifies the requesting users in
-  real time and by email.
-
-No code here is changed by this docstring pass; comments only.
+  real time and by email. Since v1.747.0 it reports each step as it starts
+  (:mod:`~erpnext_enhancements.crm_enhancements.project_creation_progress`), so
+  the dialog shows a progress bar and the page refreshes when it is done.
 """
 
 import frappe
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
+from erpnext_enhancements.crm_enhancements import project_creation_progress as progress
 from erpnext_enhancements.crm_enhancements.project_copy import copy_site_and_budget
 
 
@@ -58,7 +59,11 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 			Project. Required.
 
 	Returns:
-		dict: ``{"status": "queued"}`` once the job is enqueued.
+		dict: ``{"status": "queued", "phase", "state", "steps"}`` once the job is
+		enqueued; ``{"status": "running", ...}`` with the same keys when a job
+		for this Opportunity is already queued or running (nothing new is
+		queued); ``{"status": "exists", "project"}`` when it already has its
+		Project. The client draws its progress bar from ``steps``.
 
 	Raises:
 		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing,
@@ -67,7 +72,8 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 
 	Side effects:
 		Enqueues :func:`create_project_from_opportunity_background` (queue
-		``long``, 1800s timeout).
+		``long``, 1800s timeout) under one job id per Opportunity, deduplicated,
+		and records the queued state for the progress dialog.
 	"""
 	# Normalized here so a field holding only separators ("," / " ") is refused up
 	# front rather than queueing a job that notifies nobody.
@@ -88,15 +94,32 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	if not project_template:
 		frappe.throw("Please select a Project Template.")
 
+	# v1.747.0. Already made: say so rather than queue a job that would only find it.
+	project = frappe.db.get_value("Opportunity", opportunity_name, "custom_created_project")
+	if project:
+		return {"status": "exists", "project": project}
+
+	# Already on its way (a double click, a second tab, or a colleague on the same deal): that
+	# creation is the one to watch. Asked before mark_queued, which would otherwise overwrite the
+	# running job's progress with "queued".
+	current = progress.creation_state(opportunity_name)
+	if current["phase"] in ("queued", "running"):
+		return {"status": "running", **current}
+
+	state = progress.mark_queued(opportunity_name, frappe.session.user)
+	# One job id per Opportunity, deduplicated: frappe.enqueue queues nothing while a job with this
+	# id is queued or started. The job's own row lock covers the rest (a job queued some other way).
 	frappe.enqueue(
 		"erpnext_enhancements.crm_enhancements.api.create_project_from_opportunity_background",
 		queue="long",
 		timeout=1800,
+		job_id=progress.job_id(opportunity_name),
+		deduplicate=True,
 		opportunity_name=opportunity_name,
 		users=users,
 		project_template=project_template,  # Pass the template to the background job
 	)
-	return {"status": "queued"}
+	return {"status": "queued", "phase": "queued", "state": state, "steps": progress.steps()}
 
 
 def sync_opportunity_tags(doc, method=None):
@@ -177,14 +200,56 @@ class _HandoffBlocked(Exception):
 	"""
 
 
+class _ProjectExists(Exception):
+	"""The Opportunity already has its Project, so this job makes none (v1.747.0).
+
+	Control flow like :class:`_HandoffBlocked`: it unwinds to the handler that
+	still reports back, because the person watching the progress bar has to be
+	told how it ended. Carries the Project's name.
+	"""
+
+
+def _failure_reason(exc, step):
+	"""What the progress dialog says went wrong, in words a person can act on.
+
+	A ``frappe.throw`` message is written for people, so it is passed on as it
+	is. Anything else is only named by the step it stopped at: its text is a
+	traceback's last line, and the Error Log (linked beside it) has the rest.
+	"""
+	if isinstance(exc, frappe.ValidationError):
+		message = frappe.utils.strip_html_tags(str(exc) or "").strip()
+		if message:
+			return message
+	label = dict(progress.STEPS).get(step, step)
+	return frappe._("It stopped at: {0}.").format(frappe._(label))
+
+
 # The background worker now accepts 'project_template' and uses it.
 def create_project_from_opportunity_background(opportunity_name, users, project_template):
 	"""Create a Project from an Opportunity (runs on the ``long`` worker queue).
 
 	Enqueued by :func:`enqueue_project_creation`. Runs the whole flow as
 	Administrator (restoring the original session user in a ``finally`` block)
-	and is idempotent: it returns early if the Opportunity already has
-	``custom_created_project`` set.
+	and is idempotent, so a creation a deploy interrupted can simply be started
+	again (v1.747.0):
+
+	* it locks the Opportunity's row (``SELECT ... FOR UPDATE``) before anything
+	  else, so a second job waits for the first to commit and then finds its
+	  Project;
+	* it makes nothing when the Opportunity already has
+	  ``custom_created_project``, and reports ``exists``;
+	* when a Project already points back at the Opportunity
+	  (``Project.custom_opportunity``, set by the Desk's *Create > Project* and
+	  by the Closed Won Reconciliation report, neither of which fills in
+	  ``custom_created_project``) it links that one and makes no second;
+	* a failure before the link is committed rolls back, so a retry never finds
+	  half a Project. Until v1.747.0 the exception was caught and the job
+	  returned normally, and the worker's closing commit kept whatever had been
+	  inserted.
+
+	Each step below reports itself as it starts
+	(:func:`~erpnext_enhancements.crm_enhancements.project_creation_progress.mark_step`),
+	to the person who clicked only.
 
 	Steps:
 		1. Create a new Project, optionally applying ``project_template`` (with a
@@ -232,13 +297,45 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	# UnboundLocalError killed the job before anyone heard the project existed.
 	drive_success = False
 	drive_error_details = None
+	# v1.747.0: what the progress dialog is told. The job was queued as the person who clicked,
+	# so this is them; the steps run as Administrator below.
+	requester = frappe.session.user
+	step = "check"
+	existing_project = None
+	adopted = False
+	failure_reason = None
+	error_log = None
+	# Set once the Project and the Opportunity's link to it are committed together. Before that, a
+	# failure rolls back; after it, the Project exists whatever goes wrong next.
+	committed = False
 	try:
 		original_user = frappe.session.user
 		try:
 			frappe.set_user("Administrator")
+			progress.mark_step(opportunity_name, requester, step)
+			# The row lock comes first, so a second job for this Opportunity waits here for the
+			# first to commit and then finds its Project, instead of making another.
+			frappe.db.get_value("Opportunity", opportunity_name, "custom_created_project", for_update=True)
 			opp = frappe.get_doc("Opportunity", opportunity_name)
 			if opp.custom_created_project:
-				return
+				raise _ProjectExists(opp.custom_created_project)
+
+			# A Project that already points back at this Opportunity is its Project: the Desk's
+			# Create > Project and the reconciliation report set that back-link without filling in
+			# custom_created_project. Linked, not duplicated; two Projects claiming one Opportunity
+			# double-count its revenue (reconciliation.py refuses the same thing).
+			back_linked = None
+			if frappe.db.has_column("Project", "custom_opportunity"):
+				back_linked = frappe.db.get_value(
+					"Project", {"custom_opportunity": opportunity_name}, "name", order_by="creation asc"
+				)
+			if back_linked:
+				opp.custom_created_project = back_linked
+				opp.save(ignore_permissions=True)
+				frappe.db.commit()
+				committed = True
+				adopted = True
+				raise _ProjectExists(back_linked)
 
 			# Hand-off gate (PRO-0204, 2026-08-06). The authoritative check is
 			# Project before_insert, which this path would hit anyway — but that
@@ -262,6 +359,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				# handler that lets the broadcast run.
 				raise _HandoffBlocked(blocked_reason)
 
+			step = "project"
+			progress.mark_step(opportunity_name, requester, step)
 			project = frappe.new_doc("Project")
 			project.status = "Active"
 
@@ -418,6 +517,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				project.db_set("status", "Active")
 				project.status = "Active"
 
+			step = "attachments"
+			progress.mark_step(opportunity_name, requester, step)
 			attachments = frappe.get_all(
 				"File",
 				filters={"attached_to_doctype": "Opportunity", "attached_to_name": opportunity_name},
@@ -434,10 +535,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 					file_doc.folder = attachment.folder
 				file_doc.insert(ignore_permissions=True)
 
+			step = "link"
+			progress.mark_step(opportunity_name, requester, step)
 			project_doc = project.as_dict()
 			opp.custom_created_project = project.name
 			opp.save(ignore_permissions=True)
 			frappe.db.commit()
+			committed = True
 
 			# Deferred Closed-Won team SMS (PRO-0204 Step 1): the alert is coupled to
 			# the Project actually existing, so it fires here rather than on the
@@ -455,6 +559,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			drive_error_details = None
 
 			# Provision Google Drive Folders
+			step = "drive"
+			progress.mark_step(opportunity_name, requester, step)
 			if not project.get("custom_drive_folder_id"):
 				try:
 					from erpnext_enhancements.google_drive.drive_utils import (
@@ -514,35 +620,88 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		# An expected refusal, already logged with its reason. Deliberately not
 		# re-logged as a traceback: this is the process working, not a fault.
 		pass
-	except Exception:
-		frappe.log_error(title="CRM Enhancements App Background Job Failed", message=frappe.get_traceback())
+	except _ProjectExists as exists:
+		# Not a failure either: the Opportunity has its Project, and the person who
+		# asked is told which one.
+		existing_project = str(exists)
+	except Exception as exc:
+		# Nothing half-made may outlive a failure before the link was committed: the
+		# worker commits when this function returns, so without the rollback it kept
+		# whatever had been inserted, and a retry made a second Project.
+		if not committed:
+			frappe.db.rollback()
+			project_doc = None
+		log = frappe.log_error(
+			title="CRM Enhancements App Background Job Failed",
+			message=frappe.get_traceback(),
+			reference_doctype="Opportunity",
+			reference_name=opportunity_name,
+		)
+		error_log = getattr(log, "name", None)
+		failure_reason = _failure_reason(exc, step)
 
 	# The real-time broadcast logic remains the same. Normalized again rather than
 	# trusting the caller: this is the last point before frappe.sendmail, and a
 	# blank recipient poisons the whole message at the SMTP layer.
 	users = _notify_recipients(users)
 
+	if project_doc:
+		status = "success"
+	elif existing_project:
+		status = "exists"
+	elif blocked_reason:
+		status = "blocked"
+	else:
+		status = "failed"
+
 	message_payload = {
-		"status": "success" if project_doc else ("blocked" if blocked_reason else "failed"),
+		"status": status,
 		"project_doc": project_doc,
 		"opportunity_name": opportunity_name,
+		# The Project's name on every outcome that has one (v1.747.0), so the
+		# dialog can link it without reaching into project_doc.
+		"project": (project_doc or {}).get("name") or existing_project,
 	}
 	if blocked_reason:
 		message_payload["blocked_reason"] = blocked_reason
+	if existing_project:
+		message_payload["adopted"] = adopted
+	if status == "failed":
+		message_payload["reason"] = failure_reason or ""
+		message_payload["failed_step"] = step
+		message_payload["error_log"] = error_log
 
 	if project_doc:
 		message_payload["drive_success"] = drive_success
 		if drive_error_details:
 			message_payload["drive_error"] = str(drive_error_details)
 
+	# Recorded before the broadcast, so a client that hears it and then asks
+	# (project_creation_state) already reads the outcome.
+	progress.mark_finished(
+		opportunity_name,
+		requester,
+		{
+			key: message_payload.get(key)
+			for key in (
+				"status", "project", "adopted", "blocked_reason", "reason", "failed_step",
+				"error_log", "drive_success",
+			)
+		}
+		| {"drive_error": bool(drive_error_details)},
+		step=None if status in ("success", "exists") else step,
+	)
+
 	# Whenever a status goes out, the requester gets it too, listed or not. Since
 	# v1.529.0 the list defaults to group inboxes, which are not Users and have no
 	# desk session to receive it — so without this the person who clicked Create
 	# Project would hear nothing back, the hand-off gate's refusal included. The
-	# session is theirs again here: the ``finally`` above restored it. (The one
-	# path that sends nothing is the early return for an opportunity that already
-	# has a project — a second job queued before the first finished.)
-	realtime_to = list(dict.fromkeys([*users, frappe.session.user]))
+	# session is theirs again here: the ``finally`` above restored it. An
+	# Opportunity that already had its Project tells only the requester: nothing
+	# new happened for the list to hear about.
+	realtime_to = (
+		[frappe.session.user] if status == "exists" else list(dict.fromkeys([*users, frappe.session.user]))
+	)
 	for user in realtime_to:
 		frappe.publish_realtime(
 			event="project_creation_status",

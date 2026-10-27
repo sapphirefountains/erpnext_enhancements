@@ -29,12 +29,32 @@
  * Project creation has no manual button on the form: this prompt, the form's
  * reopen-on-load check (mode "reopen"; see opportunity.js) and the Hand-Off
  * Process tab are the entry points.
+ *
+ * Once queued, the creation is watched (v1.747.0): a progress dialog lists the
+ * background job's steps and fills its bar as each one finishes, from the
+ * job's own `ee_project_creation_progress` events
+ * (crm_enhancements/project_creation_progress.py). When it is over the
+ * dialog closes, the record reloads wherever it is showing (the Desk form,
+ * and the guided page through `sf-record-changed`), and a short alert links
+ * the new Project. Every entry point shares this, so it works on whichever
+ * surface started the creation. While it watches, the surfaces' own
+ * `project_creation_status` listeners stand aside (`is_tracking_project_creation`)
+ * so nothing is said or reloaded twice; once it is closed, they take over.
  */
 frappe.provide("erpnext_enhancements.crm");
 
 (function () {
 	const EVENT = "ee_prompt_create_project";
 	const open_prompts = {}; // opportunity_name -> true while a prompt/dialog is showing
+
+	const PROGRESS_EVENT = "ee_project_creation_progress";
+	const STATUS_EVENT = "project_creation_status";
+	const STATE_METHOD =
+		"erpnext_enhancements.crm_enhancements.project_creation_progress.project_creation_state";
+	// This long without an event and the dialog asks the server where things stand: a deploy
+	// empties the job queue without a word, and a socket that drops misses an event for good.
+	const QUIET_MS = 15000;
+	const trackers = {}; // opportunity_name -> the tracker watching its creation
 
 	// The "Create Project" dialog (template + users to notify), defaulting the
 	// notify list to the group inboxes. Mirrors the dialog the old "Create
@@ -51,8 +71,36 @@ frappe.provide("erpnext_enhancements.crm");
 	 * Reads the server's own `gate_open` rather than re-deriving the predicate
 	 * from the pieces: this check and the insert have to agree, and there are now
 	 * two ways to open the gate.
+	 *
+	 * Asks first whether a creation is already under way (v1.747.0): one is then
+	 * shown, rather than a form that would start a second. This is what makes a
+	 * reload mid-creation, or a colleague on the same deal, safe.
 	 */
 	function open_create_project_dialog(opportunity_name, opts) {
+		opts = opts || {};
+		if (trackers[opportunity_name]) {
+			trackers[opportunity_name].show();
+			return;
+		}
+		frappe
+			.xcall(STATE_METHOD, { opportunity_name: opportunity_name })
+			.catch(function () {
+				return null; // advisory: the server refuses a second job anyway
+			})
+			.then(function (state) {
+				if (state && (state.phase === "queued" || state.phase === "running")) {
+					make_tracker(opportunity_name, opts).begin(state);
+					return;
+				}
+				if (state && state.project) {
+					report(opportunity_name, { status: "exists", project: state.project }, opts);
+					return;
+				}
+				check_gate_then_open(opportunity_name, opts);
+			});
+	}
+
+	function check_gate_then_open(opportunity_name, opts) {
 		frappe
 			.xcall("erpnext_enhancements.crm_enhancements.handoff.handoff_state", {
 				opportunity: opportunity_name,
@@ -189,6 +237,11 @@ frappe.provide("erpnext_enhancements.crm");
 					// can hand the form back exactly as it was.
 					dialog.set_message(__("Adding job to the queue..."));
 
+					// Watching starts before the request, not after it: a quick worker
+					// can report the first step, or even finish, before the reply
+					// arrives, and those events must reach the tracker rather than
+					// the surfaces' own listeners.
+					const tracker = make_tracker(opportunity_name, opts);
 					frappe.call({
 						method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
 						args: {
@@ -202,20 +255,25 @@ frappe.provide("erpnext_enhancements.crm");
 						// (HTTP 417). Without it the dialog sat on "Queuing..." with
 						// the fields gone.
 						error: function () {
+							tracker.cancel();
 							dialog.clear_message();
 							primary_btn.prop("disabled", false).html(primary_label);
 						},
 						callback: function (r) {
 							dialog.hide();
-							if (r.message && r.message.status === "queued") {
-								frappe.show_alert({
-									message: __(
-										"Project creation started in the background. Awaiting completion..."
-									),
-									indicator: "blue",
-								});
-								if (typeof opts.on_success === "function") opts.on_success();
+							const result = r.message || {};
+							if (result.status === "exists") {
+								tracker.cancel();
+								report(opportunity_name, { status: "exists", project: result.project }, opts);
+								return;
 							}
+							// "running": someone (or another tab) had already started it,
+							// and that creation is the one shown.
+							if (result.status === "queued" || result.status === "running") {
+								tracker.begin(result);
+								return;
+							}
+							tracker.cancel();
 						},
 					});
 				},
@@ -223,6 +281,325 @@ frappe.provide("erpnext_enhancements.crm");
 
 			dialog.show();
 		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Progress (v1.747.0)
+	// -----------------------------------------------------------------------
+
+	const PROGRESS_STYLE = `
+		<style>
+			.ee-pc-text { font-weight: 600; color: var(--heading-color); margin-bottom: 8px; }
+			.ee-pc-bar { height: 10px; margin-bottom: 12px; }
+			.ee-pc-steps { list-style: none; padding: 0; margin: 0 0 8px; }
+			.ee-pc-step { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--text-muted); }
+			.ee-pc-step.done { color: var(--text-color); }
+			.ee-pc-step.done .ee-pc-mark { color: #16a34a; font-weight: 700; }
+			.ee-pc-step.current { color: var(--heading-color); font-weight: 600; }
+			.ee-pc-mark { display: inline-flex; justify-content: center; width: 16px; flex: none; }
+		</style>
+	`;
+
+	// What the bar shows for `state` (the job's ee_project_creation_progress payload): how many
+	// of `steps` are finished, never an estimate of time. The steps are not equal in length (the
+	// project with its template's tasks, and the Drive folder, are the slow ones), so the text
+	// names the step it is on as well as the share done.
+	function progress_view(steps, state) {
+		state = state || {};
+		const total = steps.length;
+		const done = Math.max(0, Math.min(total, Number(state.done) || 0));
+		const running = state.phase === "running";
+		const current = running
+			? steps.findIndex(function (s) {
+					return s.key === state.step;
+				})
+			: -1;
+		let text = __("Waiting for a background worker...");
+		if (running) {
+			text =
+				current >= 0
+					? __("Step {0} of {1}: {2}", [current + 1, total, steps[current].label])
+					: __("Working...");
+		}
+		return {
+			percent: total ? Math.round((done * 100) / total) : 0,
+			text: text,
+			rows: steps.map(function (s, i) {
+				return { label: s.label, state: i < done ? "done" : i === current ? "current" : "pending" };
+			}),
+		};
+	}
+
+	function progress_html(view) {
+		const esc = frappe.utils.escape_html;
+		const rows = view.rows
+			.map(function (row) {
+				const mark =
+					row.state === "done"
+						? "✓"
+						: row.state === "current"
+							? '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>'
+							: "";
+				return `<li class="ee-pc-step ${row.state}"><span class="ee-pc-mark">${mark}</span><span>${esc(
+					row.label
+				)}</span></li>`;
+			})
+			.join("");
+		const percent = Number(view.percent) || 0;
+		return `${PROGRESS_STYLE}
+			<div class="ee-pc">
+				<div class="ee-pc-text" aria-live="polite">${esc(view.text)}</div>
+				<div class="progress ee-pc-bar">
+					<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+						style="width: ${percent}%" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"
+						aria-label="${esc(__("Project creation progress"))}"></div>
+				</div>
+				<ol class="ee-pc-steps">${rows}</ol>
+				<p class="text-muted small">${esc(
+					__("You can close this: the project keeps being made, and this page refreshes when it is done.")
+				)}</p>
+			</div>`;
+	}
+
+	// The job's project_creation_status payload, and the server's recorded state, as one shape.
+	function outcome_from_status(data) {
+		data = data || {};
+		return {
+			status: data.status,
+			project: data.project || (data.project_doc && data.project_doc.name) || "",
+			adopted: !!data.adopted,
+			blocked_reason: data.blocked_reason || "",
+			reason: data.reason || "",
+			error_log: data.error_log || "",
+			// The traceback text from the event; the recorded state keeps only that it happened.
+			drive_error: data.drive_error || "",
+		};
+	}
+
+	function outcome_from_state(state) {
+		if (state.phase === "finished") return outcome_from_status((state.state && state.state.result) || {});
+		// Linked, with nothing recorded about how (the record expired): it has its project.
+		if (state.project) return { status: "exists", project: state.project };
+		// "lost" or "idle" while something was being watched: the job is gone, and with it
+		// anything it would have said. A deploy empties both Redis instances at once.
+		return { status: "lost" };
+	}
+
+	function project_link(project) {
+		return `<a href="/desk/project/${encodeURIComponent(project)}">${frappe.utils.escape_html(project)}</a>`;
+	}
+
+	// The record as the server now has it, wherever it is showing. The guided page reloads on
+	// sf-record-changed and keeps any edit it has not sent (guided_entry.js). A Desk form with
+	// unsaved edits is not reloaded under them: the job saved the opportunity when it linked the
+	// project, so a save of those edits would be refused anyway, and the person is asked first.
+	function refresh_record(opportunity_name, opts) {
+		opts = opts || {};
+		if (!opts.form_only) $(document).trigger("sf-record-changed", ["Opportunity", opportunity_name]);
+		const route = (frappe.get_route && frappe.get_route()) || [];
+		if (!opts.form_only && route[0] === "List" && typeof cur_list !== "undefined" && cur_list && cur_list.refresh) {
+			cur_list.refresh(); // the Kanban board / list the prompt was answered on
+		}
+		const form = [opts.frm, typeof cur_frm !== "undefined" ? cur_frm : null].find(function (f) {
+			return f && f.doctype === "Opportunity" && f.doc && f.doc.name === opportunity_name;
+		});
+		if (!form) return;
+		if (!form.is_dirty()) {
+			form.reload_doc();
+			return;
+		}
+		// Off screen, its own "changed on the server" notice is waiting for when it comes back.
+		if (route[0] !== "Form" || route[2] !== opportunity_name) return;
+		frappe.msgprint({
+			title: __("Reload to see the project"),
+			indicator: "orange",
+			message: frappe.utils.escape_html(
+				__(
+					"The project was made and this opportunity was updated on the server, but this form has unsaved changes. Copy anything you need from it, then reload."
+				)
+			),
+			primary_action: {
+				label: __("Reload"),
+				action: function () {
+					frappe.hide_msgprint();
+					form.reload_doc();
+				},
+			},
+		});
+	}
+
+	// How a creation ended, said once: the progress dialog says it while it watches, and the
+	// surfaces' listeners (opportunity.js, the guided page) when it does not.
+	function report(opportunity_name, outcome, opts) {
+		opts = opts || {};
+		const esc = frappe.utils.escape_html;
+		const status = outcome.status;
+		if ((status === "success" || status === "exists") && outcome.project) {
+			refresh_record(opportunity_name, opts);
+			const link = project_link(outcome.project);
+			let message = __("Project {0} created.", [link]);
+			if (status === "exists") {
+				message = outcome.adopted
+					? __("Linked project {0}: it already pointed at this opportunity, so no second project was made.", [
+							link,
+						])
+					: __("This opportunity has project {0}.", [link]);
+			}
+			frappe.show_alert({ message: message, indicator: "green" }, 10);
+			if (outcome.drive_error) {
+				const details =
+					typeof outcome.drive_error === "string"
+						? `<details><summary>${esc(__("Technical details"))}</summary><pre>${esc(
+								outcome.drive_error
+							)}</pre></details>`
+						: "";
+				frappe.msgprint({
+					title: __("Google Drive Integration Failed"),
+					indicator: "orange",
+					message: `<p>${__("Project {0} was created, but its Google Drive folder was not.", [
+						link,
+					])}</p>${details}<p><a href="/desk/error-log">${esc(__("Check the Error Log"))}</a></p>`,
+				});
+			}
+			if (status === "success" && typeof opts.on_success === "function") opts.on_success(outcome.project);
+			return;
+		}
+		if (status === "blocked") {
+			frappe.msgprint({
+				title: __("Hand-Off Required"),
+				indicator: "orange",
+				message: esc(outcome.blocked_reason || ""),
+			});
+			return;
+		}
+		// Failed, or lost to a deploy or a worker restart. Nothing is left half-made either way:
+		// the job rolls a failure back until the link is committed, and on a retry it links a
+		// Project that already points here rather than making a second.
+		const lost = status !== "failed";
+		let message = lost
+			? esc(
+					__(
+						"The background job stopped before it finished: a deploy or a server restart clears the queue. No project was linked to this opportunity, so it is safe to start again."
+					)
+				)
+			: esc(outcome.reason || __("The project could not be created."));
+		if (!lost) {
+			const log = outcome.error_log
+				? `/desk/error-log/${encodeURIComponent(outcome.error_log)}`
+				: "/desk/error-log";
+			message += ` <a href="${log}">${esc(__("The Error Log has the details."))}</a>`;
+		}
+		frappe.msgprint({
+			title: lost ? __("Project creation stopped") : __("Project creation failed"),
+			indicator: "red",
+			message: `<p>${message}</p>`,
+			primary_action: {
+				label: __("Try again"),
+				action: function () {
+					frappe.hide_msgprint();
+					open_create_project_dialog(opportunity_name, { frm: opts.frm, on_success: opts.on_success });
+				},
+			},
+		});
+	}
+
+	/**
+	 * Watch one creation: listen for its progress and its outcome, and once `begin` has the
+	 * steps, show them in a dialog. Made before the enqueue request goes, so nothing the job
+	 * says while the request is in flight is missed (or heard by the surfaces instead).
+	 *
+	 * When the events go quiet for QUIET_MS it asks project_creation_state, which is how a job a
+	 * deploy flushed out of the queue is noticed rather than waited on forever. Closing the
+	 * dialog stops the watching only; the job carries on and the surfaces report it.
+	 */
+	function make_tracker(opportunity_name, opts) {
+		if (trackers[opportunity_name]) return trackers[opportunity_name];
+		const t = { steps: [], state: { phase: "queued", done: 0 }, heard: false, over: false, timer: null, dialog: null };
+
+		function paint() {
+			if (t.dialog) t.dialog.fields_dict.progress.$wrapper.html(progress_html(progress_view(t.steps, t.state)));
+		}
+		function arm() {
+			clearTimeout(t.timer);
+			t.timer = setTimeout(check, QUIET_MS);
+		}
+		function check() {
+			frappe
+				.xcall(STATE_METHOD, { opportunity_name: opportunity_name })
+				.then(function (state) {
+					if (t.over || !state) return;
+					if (state.phase === "queued" || state.phase === "running") {
+						if (state.state) t.state = state.state;
+						paint();
+						arm();
+						return;
+					}
+					finish(outcome_from_state(state));
+				})
+				.catch(function () {
+					if (!t.over) arm();
+				});
+		}
+		function on_progress(data) {
+			if (t.over || !data || data.opportunity !== opportunity_name) return;
+			t.heard = true;
+			t.state = data;
+			paint();
+			if (t.dialog) arm();
+		}
+		function on_status(data) {
+			if (t.over || !data || data.opportunity_name !== opportunity_name) return;
+			finish(outcome_from_status(data));
+		}
+		function release() {
+			clearTimeout(t.timer);
+			frappe.realtime.off(PROGRESS_EVENT, on_progress);
+			frappe.realtime.off(STATUS_EVENT, on_status);
+			if (trackers[opportunity_name] === t) delete trackers[opportunity_name];
+		}
+		function finish(outcome) {
+			t.over = true;
+			release();
+			if (t.dialog) t.dialog.hide();
+			report(opportunity_name, outcome, opts);
+		}
+
+		t.begin = function (start) {
+			if (t.over) return; // it finished while the request was in flight, and has said so
+			start = start || {};
+			if (start.steps && start.steps.length) t.steps = start.steps;
+			if (!t.heard && start.state) t.state = start.state;
+			t.dialog = new frappe.ui.Dialog({
+				title: __("Creating Project"),
+				fields: [{ fieldtype: "HTML", fieldname: "progress" }],
+			});
+			t.dialog.onhide = function () {
+				if (t.over) return;
+				t.over = true;
+				release();
+				frappe.show_alert({
+					message: __("The project is still being created. This page refreshes when it is done."),
+					indicator: "blue",
+				});
+			};
+			paint();
+			t.dialog.show();
+			arm();
+		};
+		t.show = function () {
+			if (t.dialog) t.dialog.show();
+		};
+		t.cancel = function () {
+			if (t.over) return;
+			t.over = true;
+			release();
+			if (t.dialog) t.dialog.hide();
+		};
+
+		frappe.realtime.on(PROGRESS_EVENT, on_progress);
+		frappe.realtime.on(STATUS_EVENT, on_status);
+		trackers[opportunity_name] = t;
+		return t;
 	}
 
 	// Ask for whatever step is next, and route Yes/No.
@@ -302,10 +679,9 @@ frappe.provide("erpnext_enhancements.crm");
 		const ask_create = function () {
 			ask(__("Create project now?"), function () {
 				done();
-				open_create_project_dialog(opportunity_name, {
-					frm: opts.frm,
-					on_success: refresh_view,
-				});
+				// No on_success: the progress dialog reloads the record when the project exists
+				// (refresh_record), which is when there is something new to show.
+				open_create_project_dialog(opportunity_name, { frm: opts.frm });
 			});
 		};
 
@@ -351,6 +727,17 @@ frappe.provide("erpnext_enhancements.crm");
 
 	erpnext_enhancements.crm.open_create_project_dialog = open_create_project_dialog;
 	erpnext_enhancements.crm.confirm_won_next_step = confirm_won_next_step;
+	// While true, the progress dialog reports and reloads for this opportunity, and the
+	// surfaces' own project_creation_status listeners stand aside.
+	erpnext_enhancements.crm.is_tracking_project_creation = function (opportunity_name) {
+		return !!trackers[opportunity_name];
+	};
+	// The Desk form's listener (opportunity.js) when nothing is watching: the same words and the
+	// same reload rule as the dialog. form_only, because the guided page has its own listener.
+	erpnext_enhancements.crm.report_project_creation_status = function (data, frm) {
+		if (!data || !data.opportunity_name) return;
+		report(data.opportunity_name, outcome_from_status(data), { frm: frm, form_only: true });
+	};
 	// Kept as an alias: the name it went out under, and a site Client Script may
 	// well be calling it.
 	erpnext_enhancements.crm.confirm_create_project = confirm_won_next_step;
