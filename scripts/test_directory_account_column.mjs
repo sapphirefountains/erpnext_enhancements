@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 /**
- * The contact directory's Account / Supplier column, executed rather than grepped (v1.746.0).
+ * The directory's Account / Supplier column, executed rather than grepped (v1.746.0,
+ * TASK-2026-02942).
  *
- * Until v1.746.0 the contact table in unified_tab_controller.js had a "Linked To" column
- * listing every party a Contact is linked to, by ID, so someone on five jobs showed five
- * Projects and Opportunities beside the one company they work for. Nik asked for "this
- * contact belongs to this customer, or this contact belongs to this supplier". The column
- * is now `contact_accounts_cell`, fed by the `accounts` that
- * `sync_contact.get_contacts_for_context` puts on each row (the server half is
- * `AccountColumnTest` in tests/test_contact_endpoint_permissions.py). This runs the real
- * method against the v16 helpers it calls. Every name here is invented.
+ * Until v1.746.0 the contact and address tables in unified_tab_controller.js each had a
+ * "Linked To" column listing every party a record is linked to, by ID, so someone on five
+ * jobs showed five Projects and Opportunities beside the one company they work for. Nik
+ * asked for "this contact belongs to this customer, or this contact belongs to this
+ * supplier", and then for the address table to match. Both tables now draw the column with
+ * `accounts_cell`, from the `accounts` that `sync_contact.get_contacts_for_context` and
+ * `get_addresses_for_context` put on each row (the server half is `AccountColumnTest` in
+ * tests/test_contact_endpoint_permissions.py). This runs the real method against the v16
+ * helpers it calls, on a Project form and on the Customer and Supplier forms, where the open
+ * party is kept quiet. Every name here is invented.
  *
- * Run: node scripts/test_contact_account_column.mjs
+ * Run: node scripts/test_directory_account_column.mjs
  */
 
 import assert from "node:assert/strict";
@@ -69,21 +72,30 @@ vm.runInThisContext(fs.readFileSync(CONTROLLER_JS, "utf8"), { filename: CONTROLL
 
 const controller = globalThis.erpnext_enhancements.unified_controller;
 assert.ok(controller, "the controller did not register itself");
-assert.equal(typeof controller.contact_accounts_cell, "function");
+assert.equal(typeof controller.accounts_cell, "function");
 
-const cell = (contact) => controller.contact_accounts_cell(contact);
+/** The cell for one row, drawn on a form of this doctype and name (a Project unless said). */
+function cell(record, doctype = "Project", name = "PROJ-0001") {
+	controller.frm = { doctype, doc: { name } };
+	return controller.accounts_cell(record);
+}
 const account = (doctype, name, title) => ({ doctype, name, title });
 
-/** The cell parsed into its entries: what a person sees and where each one goes. */
+/** The cell's linked entries: what a person sees and where each one goes. */
 function entries(html) {
 	return [...html.matchAll(/<div><a href="([^"]*)" target="_blank"(?: title="([^"]*)")?>(.*?)<\/a>(.*?)<\/div>/g)].map(
 		(m) => ({ href: m[1], hover: m[2] || null, text: m[3], tag: m[4] })
 	);
 }
 
+/** The cell's quiet entries (the open party on its own form). */
+function quiet(html) {
+	return [...html.matchAll(/<div class="text-muted">(.*?)<\/div>/g)].map((m) => m[1]);
+}
+
 // -------------------------------------------------------------------- the cases
 
-test("a Contact on no Customer or Supplier shows a muted None", () => {
+test("a row on no Customer or Supplier shows a muted None", () => {
 	assert.equal(cell({ name: "C-1", accounts: [] }), '<span class="text-muted">None</span>');
 	assert.equal(cell({ name: "C-1" }), '<span class="text-muted">None</span>', "a row with no accounts key");
 });
@@ -151,16 +163,92 @@ test("names are escaped, in the text, the hover and the URL", () => {
 	assert.ok(!only.href.includes('"') && !only.href.includes("<"), "the URL broke out of its attribute");
 });
 
-test("the contact table heads the column Account / Supplier and fills it from this method", () => {
-	const source = controller.render_contact_table.toString();
-	assert.ok(source.includes('${__("Account / Supplier")}'), "the header is not Account / Supplier");
-	assert.ok(!source.includes("Linked To"), "the contact table still has a Linked To column");
-	assert.ok(source.includes("this.contact_accounts_cell(c)"), "the cell is not drawn by contact_accounts_cell");
+// The open party on its own form: kept, quiet, first and unlinked.
+
+test("on a Customer form, that Customer reads a quiet, unlinked This account", () => {
+	const html = cell(
+		{ accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] },
+		"Customer",
+		"CUST-0042"
+	);
+	assert.deepEqual(quiet(html), ["This account"]);
+	assert.deepEqual(entries(html), [], "the open record was linked to itself");
+	assert.ok(!html.includes("None"), "a row of this account's own read None");
 });
+
+test("on a Customer form, other companies keep their links, after This account", () => {
+	const html = cell(
+		{
+			accounts: [
+				account("Customer", "CUST-0042", "Bluebird Water Gardens"),
+				account("Customer", "CUST-0099", "Zephyr Plaza Owners"),
+				account("Supplier", "SUP-0007", "Acme Pump Supply"),
+			],
+		},
+		"Customer",
+		"CUST-0099"
+	);
+	assert.ok(html.indexOf("This account") < html.indexOf("Bluebird"), "the open party is not first");
+	assert.deepEqual(quiet(html), ["This account"]);
+	assert.deepEqual(
+		entries(html).map((e) => e.text),
+		["Bluebird Water Gardens", "Acme Pump Supply"]
+	);
+});
+
+test("on a Supplier form, that Supplier reads This supplier", () => {
+	const html = cell(
+		{ accounts: [account("Supplier", "SUP-0007", "Acme Pump Supply")] },
+		"Supplier",
+		"SUP-0007"
+	);
+	assert.deepEqual(quiet(html), ["This supplier"]);
+	assert.deepEqual(entries(html), []);
+});
+
+test("a Customer sharing the open Supplier's name is not the open party", () => {
+	const html = cell(
+		{
+			accounts: [
+				account("Customer", "Harbor Plaza", "Harbor Plaza"),
+				account("Supplier", "Harbor Plaza", "Harbor Plaza"),
+			],
+		},
+		"Supplier",
+		"Harbor Plaza"
+	);
+	assert.deepEqual(quiet(html), ["This supplier"]);
+	assert.deepEqual(
+		entries(html).map((e) => e.href),
+		["https://erp.example.com/desk/customer/Harbor%20Plaza"]
+	);
+});
+
+test("on a Project or Opportunity, the job's Customer is a normal link", () => {
+	for (const doctype of ["Project", "Opportunity", "Master Project", "Contact"]) {
+		const html = cell({ accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] }, doctype, "CUST-0042");
+		assert.deepEqual(quiet(html), [], `${doctype}: a non-party form kept its party quiet`);
+		assert.equal(entries(html).length, 1, doctype);
+	}
+});
+
+// Both tables use the one cell.
+
+for (const [table, row] of [
+	["render_contact_table", "this.accounts_cell(c)"],
+	["render_address_table", "this.accounts_cell(a)"],
+]) {
+	test(`${table} heads the column Account / Supplier and fills it from accounts_cell`, () => {
+		const source = controller[table].toString();
+		assert.ok(source.includes('${__("Account / Supplier")}'), "the header is not Account / Supplier");
+		assert.ok(!source.includes("Linked To"), "the table still has a Linked To column");
+		assert.ok(source.includes(row), "the cell is not drawn by accounts_cell");
+	});
+}
 
 console.log("");
 if (failures) {
-	console.error(`contact account column: ${failures} of ${checks} FAILED`);
+	console.error(`directory account column: ${failures} of ${checks} FAILED`);
 	process.exit(2);
 }
-console.log(`contact account column: ${checks} assertions passed`);
+console.log(`directory account column: ${checks} assertions passed`);

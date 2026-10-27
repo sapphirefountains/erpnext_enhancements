@@ -456,10 +456,10 @@ def _visible_links(parenttype, record_names, parties):
     """Each record's Dynamic Links as ``{record: [{name, doctype}, ...]}``, less the parties
     the caller may not see.
 
-    The address directory's "Linked To" column names every party an Address belongs to, and the
-    contact directory's Account / Supplier column the Customers and Suppliers among them
-    (:func:`_account_links`, v1.746.0; it was a "Linked To" column too until then).
-    Until the v1.561.1 review those columns named every link, so read on one Customer also showed the
+    These links feed both directory tables' Account / Supplier column, which names the
+    Customers and Suppliers among them (:func:`_account_links`, v1.746.0). Until then each
+    table had a "Linked To" column naming every link, and until the v1.561.1 review it named
+    them whether or not the caller could see them, so read on one Customer also showed the
     names of every other party its contacts were linked to: other customers, Leads,
     Projects. A link is now kept when the caller holds **select** on its party, the
     permission Frappe uses for "may see this name in a Link field" (``has_permission``
@@ -486,20 +486,20 @@ def _visible_links(parenttype, record_names, parties):
     return link_map
 
 
-#: The parties the contact directory's Account / Supplier column names (v1.746.0), each with the
-#: field that holds its display name (ERPNext's own title field for both doctypes).
+#: The parties the directory's Account / Supplier column names (v1.746.0), each with the field
+#: that holds its display name (ERPNext's own title field for both doctypes).
 ACCOUNT_TITLE_FIELDS = {"Customer": "customer_name", "Supplier": "supplier_name"}
 
 
 def _account_links(link_map):
-    """Each record's Customer and Supplier links with their display names, as
+    """Each Contact's or Address's Customer and Supplier links with their display names, as
     ``{record: [{"doctype", "name", "title"}, ...]}``: the directory's Account / Supplier column.
 
-    Until v1.746.0 the contact table's "Linked To" column listed every party in ``link_map``,
-    so a person on five jobs showed five Projects and Opportunities beside the one company they
-    work for. The column now answers only "whose person is this": the Customers (this site's
-    "Accounts") first, then the Suppliers, each in title order, one entry per party. The Contact
-    form itself still shows every link.
+    Until v1.746.0 (TASK-2026-02942) both directory tables had a "Linked To" column listing
+    every party in ``link_map``, so a person on five jobs showed five Projects and Opportunities
+    beside the one company they work for. The column now answers only "whose person (or whose
+    address) is this": the Customers (this site's "Accounts") first, then the Suppliers, each
+    in title order, one entry per party. The Contact and Address forms still show every link.
 
     ``link_map`` is :func:`_visible_links`' answer, so every party named here has already passed
     the select check. The titles are read for those parties only, in one query per doctype
@@ -879,7 +879,8 @@ def get_addresses_for_context(sources, context_doctype=None, context_name=None):
 
     Address counterpart of :func:`get_contacts_for_context`, with the same gate: only
     the addresses of sources the user may read, each naming only the parties the user
-    may select (v1.561.1).
+    may select (v1.561.1). Each row carries ``accounts`` the same way, for the address
+    table's Account / Supplier column (v1.746.0).
     """
     parties = _readable_parties(sources)
     if not parties:
@@ -906,8 +907,11 @@ def get_addresses_for_context(sources, context_doctype=None, context_name=None):
 
     link_map = _visible_links("Address", [a.name for a in address_list], parties)
 
+    account_map = _account_links(link_map)
+
     for a in address_list:
         a.links = link_map.get(a.name, [])
+        a.accounts = account_map.get(a.name, [])
 
     return address_list
 

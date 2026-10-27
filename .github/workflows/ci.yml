@@ -2156,7 +2156,7 @@ jobs:
       # updates every row they match); every name the request carries is the same string in the
       # permission check and in the query (an integer passed has_permission on one party and then
       # matched every party starting with that number); and a row's "Linked To" names only parties
-      # the caller may select. v1.746.0 (AccountColumnTest): the contact directory's Account /
+      # the caller may select. v1.746.0 (AccountColumnTest): both directory tables' Account /
       # Supplier column is built from those same visible links, and reads the titles in one query
       # per doctype rather than one per row.
       - name: Contact, address and ship-to endpoint permissions (bench-free)
@@ -2167,14 +2167,16 @@ jobs:
       # the (doctype, name) pair since v1.561.1, and its contacts silently left the directory.
       - name: Directory party sources keep same-named parties (bench-free, node)
         run: node scripts/test_party_sources.mjs
-      # v1.746.0: the contact directory's "Linked To" column listed every party a Contact is linked
-      # to, by ID, so a person on five jobs showed five Projects beside the company they work for.
-      # It is now Account / Supplier: the Customers and Suppliers only, by display name, a Supplier
-      # tagged, "None" when there are neither, every name escaped. Runs the real cell renderer; the
-      # server half (which links, which titles, one title query per doctype) is AccountColumnTest
-      # in the endpoint-permissions step above.
-      - name: Contact directory shows Account / Supplier, not every link (bench-free, node)
-        run: node scripts/test_contact_account_column.mjs
+      # v1.746.0 (TASK-2026-02942): the directory's contact and address tables each had a "Linked
+      # To" column listing every party a record is linked to, by ID, so a person on five jobs showed
+      # five Projects beside the company they work for. Both are now Account / Supplier: the
+      # Customers and Suppliers only, by display name, a Supplier tagged, "None" when there are
+      # neither, every name escaped, and on a Customer or Supplier form that party a quiet, unlinked
+      # "This account" / "This supplier". Runs the one shared cell renderer and checks both tables
+      # use it; the server half (which links, which titles, one title query per doctype) is
+      # AccountColumnTest in the endpoint-permissions step above.
+      - name: Directory tables show Account / Supplier, not every link (bench-free, node)
+        run: node scripts/test_directory_account_column.mjs
       # v1.575.0, from the 2026-10-06 link audit: the directory's Link Existing linked a contact to
       # the open form AND its Customer AND every Project Stakeholder, so a county health inspector
       # added to a Harwood project became a Harwood and a Layton Construction contact. New Contact /
