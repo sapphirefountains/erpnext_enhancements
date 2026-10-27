@@ -1,11 +1,11 @@
-"""Make the Time Kiosk's "Add files" uploads private, and link the photo rows they left Pending (v1.750.1).
+"""Make the Time Kiosk's "Add files" uploads private, and link the photo rows they left Pending (v1.751.1).
 
-Until v1.750.1 the kiosk's **Add files** button uploaded with ``is_private=0``, so every file it
+Until v1.751.1 the kiosk's **Add files** button uploaded with ``is_private=0``, so every file it
 took landed under ``/files/``, where anybody holding the URL could download it without signing
 in. ``api.time_kiosk.link_attachment`` then copied each one onto the job's Project and Task, public
 too. And the photo row the same button registers was handed the file's display name instead of
 its docname, so ``_attach_photo_file`` never found the File and the row stayed ``Pending``.
-v1.750.1 fixes all three for new uploads. This patch fixes what they already stored.
+v1.751.1 fixes all three for new uploads. This patch fixes what they already stored.
 
 **What it changes.**
 

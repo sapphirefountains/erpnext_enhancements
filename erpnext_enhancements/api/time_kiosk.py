@@ -1203,12 +1203,12 @@ def link_attachment(file_name, project=None, task=None):
 
     ``file_name`` is the File's docname, and the File must be attached to one of
     the caller's own intervals. The copies go to THAT interval's Project and
-    Task (v1.750.1); ``project`` and ``task`` are ignored. They were trusted
+    Task (v1.751.1); ``project`` and ``task`` are ignored. They were trusted
     until then, and the copies are inserted with ``ignore_permissions``, so a
     caller could hang a file on any Project or Task. A page cached before that
     release still sends them.
 
-    Every copy is private (v1.750.1). The kiosk uploaded these public until then:
+    Every copy is private (v1.751.1). The kiosk uploaded these public until then:
     photographs of customers' property at an unauthenticated ``/files/`` URL. An
     original that still arrives public, from a page cached before that release,
     is made private first (``_make_kiosk_file_private``).
@@ -1460,13 +1460,13 @@ def _attach_photo_file(row, file_name, interval):
 
 
 def _assert_kiosk_file(file_doc, interval_name):
-    """Refuse a File the caller did not upload to this job (v1.750.1).
+    """Refuse a File the caller did not upload to this job (v1.751.1).
 
     Allowed: a File attached to the interval itself, which is where both kiosk
     upload paths put it, or one the caller uploaded that is attached to nothing
     yet. The caller must already be known to own ``interval_name``.
 
-    Until v1.750.1 any File docname was accepted. ``record_job_photo`` would make
+    Until v1.751.1 any File docname was accepted. ``record_job_photo`` would make
     it private (moving the bytes, and repointing every File that shares its
     ``content_hash``), anchor it to the caller's interval if it was unattached,
     and fan it out to the Project, all for a file that was never theirs.
@@ -1484,7 +1484,7 @@ def _assert_kiosk_file(file_doc, interval_name):
 
 
 def _make_kiosk_file_private(file_doc):
-    """Make a kiosk File private, unless its bytes are in use elsewhere (v1.750.1).
+    """Make a kiosk File private, unless its bytes are in use elsewhere (v1.751.1).
 
     Frappe moves the bytes into ``private/files`` and repoints every File that
     shares the ``content_hash``. A public kiosk row can share a website asset's
@@ -1495,7 +1495,7 @@ def _make_kiosk_file_private(file_doc):
     uploader's own kiosk rows (``kiosk_files.why_not_movable``); otherwise the
     call is refused and nothing moves.
 
-    Public Files are not refused outright: a page cached before v1.750.1 still
+    Public Files are not refused outright: a page cached before v1.751.1 still
     uploads public, and refusing would leave its upload public and uncopied.
     """
     if cint(file_doc.is_private):

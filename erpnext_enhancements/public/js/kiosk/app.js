@@ -802,7 +802,7 @@
 
   // `fileDoc` is the File's docname from upload_file, and `interval` the Job
   // Interval it was uploaded to, captured when the upload started. Both go
-  // through unchanged: until v1.750.1 the photo registration below was handed
+  // through unchanged: until v1.751.1 the photo registration below was handed
   // `r.file_name`, the display name, which record_job_photo cannot look up, so
   // every attached image stayed "Pending". No project or task is sent: the
   // server copies the file to its own interval's Project and Task, so a job
@@ -859,7 +859,7 @@
     var interval = ci.name;
     var fd = new FormData();
     fd.append('file', file, file.name);
-    // Private, like the camera path below (v1.750.1): these are photographs and
+    // Private, like the camera path below (v1.751.1): these are photographs and
     // documents from customers' property, and a public /files/ URL is
     // unauthenticated and effectively permanent.
     fd.append('is_private', '1');

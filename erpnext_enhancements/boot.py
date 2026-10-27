@@ -23,6 +23,7 @@ from erpnext_enhancements.feature_flags import (
 	process_automation_enabled,
 	product_configurator_enabled,
 )
+from erpnext_enhancements.setup.dock_profiles import trim_home_grid
 from erpnext_enhancements.setup.workspace_tweaks import drop_unreadable_sidebar_links
 from erpnext_enhancements.utils.normalize_hook import desk_registry
 
@@ -114,6 +115,12 @@ def boot_session(bootinfo):
 	who cannot read what they open: the Opportunity Kanban at the top of CRM, for someone without
 	read on Opportunity. frappe never permission-checks a URL row. See
 	``setup.workspace_tweaks.drop_unreadable_sidebar_links``.
+
+	``frappe.boot.desktop_icons`` (the Desk home grid) is cut down to the profile's tiles for anyone
+	whose dock profile has a home grid: the field technicians get Maintenance, Morning Briefing,
+	CRM, Projects, Time Kiosk, Travel, Training and Stock Scan, the same as their Dock rail. Hiding
+	only; System Managers and Workspace Managers keep the whole grid. See
+	``setup.dock_profiles.trim_home_grid``.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -139,6 +146,7 @@ def boot_session(bootinfo):
 	bootinfo.sf_field_help = _field_help_doctypes()
 	bootinfo.sf_guided = _guided_doctypes()
 	drop_unreadable_sidebar_links(bootinfo)
+	trim_home_grid(bootinfo)
 
 
 def _field_help_doctypes():

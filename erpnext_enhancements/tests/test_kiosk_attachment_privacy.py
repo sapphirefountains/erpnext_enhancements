@@ -1,4 +1,4 @@
-"""Bench-free tests for the Time Kiosk's "Add files" privacy fix (v1.750.1).
+"""Bench-free tests for the Time Kiosk's "Add files" privacy fix (v1.751.1).
 
 What was wrong, confirmed on production on 2026-10-27:
 
@@ -687,7 +687,7 @@ class TestAttachPhotoFile(_ServerCase):
 		self.assertEqual(row.image, "/private/files/f-1.jpg")
 
 	def test_a_display_name_finds_no_file_and_leaves_the_row_pending(self):
-		"""What the kiosk sent until v1.750.1."""
+		"""What the kiosk sent until v1.751.1."""
 		self.add_file("f-1", file_name="IMG_0001.jpeg")
 		row = _Dict(captured_on=None)
 		self.assertFalse(self.ns["_attach_photo_file"](row, "IMG_0001.jpeg", self.interval()))
@@ -745,7 +745,7 @@ class TestLinkAttachment(_ServerCase):
 		)
 
 	def test_a_public_original_is_made_private_before_it_is_copied(self):
-		"""A page cached before v1.750.1 still uploads public."""
+		"""A page cached before v1.751.1 still uploads public."""
 		file = self.add_file("f-1", private=0)
 		self.ns["link_attachment"]("f-1")
 		self.assertEqual((file.is_private, file.saved), (1, 1))
@@ -994,7 +994,7 @@ class _PatchCase(unittest.TestCase):
 		created=T0,
 		row=True,
 	):
-		"""One "Add files" image as the kiosk stored it before v1.750.1."""
+		"""One "Add files" image as the kiosk stored it before v1.751.1."""
 		url = f"/files/{stem}.png"
 		self.disk("public", f"{stem}.png")
 		self.file(f"{stem}-ji", url, parent=interval, content_hash=content_hash, created=created)
