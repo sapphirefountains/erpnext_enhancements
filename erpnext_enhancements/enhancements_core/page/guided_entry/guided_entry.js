@@ -607,6 +607,9 @@ class GuidedEntry {
 		if (this.nudged.has(this.name)) return;
 		this.nudged.add(this.name);
 		if (v.status !== "Closed Won" || v.custom_created_project || v.custom_is_historical) return;
+		// v1.749.0: the check this page makes for its own edits. Creating the project needs write
+		// on the Opportunity, so a read-only visitor is not asked to start what will be refused.
+		if (!(this.flow && this.flow.can_write)) return;
 		crm.confirm_won_next_step(this.name, { mode: "reopen" });
 	}
 

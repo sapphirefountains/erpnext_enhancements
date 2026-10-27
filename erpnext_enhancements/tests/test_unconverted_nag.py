@@ -223,6 +223,46 @@ class TestHistoricalDealsAreNotNagged(unittest.TestCase):
         self.assertIn(["Opportunity", "custom_is_historical", "!=", 1], seen.get("filters"))
 
 
+class TestNoWonTextForAHistoricalDeal(unittest.TestCase):
+    """v1.749.0: the hand-off can now link a Project the reconciliation report back-linked to
+    a deal won long before ERPNext. `deliver_closed_won_alerts` then runs for it, and a "WON:"
+    text about it would announce a sale that closed years ago. RUN, not grepped."""
+
+    def _deliver(self, historical):
+        mod = _module()
+        fake = sys.modules["frappe"]
+        asked, sent, checked = [], [], []
+        saved = (mod.process_automation_enabled, mod._alert_recipients, mod._deliver, mod.is_historical)
+        mod.process_automation_enabled = lambda: True
+        mod.is_historical = lambda name: checked.append(name) or historical
+        mod._alert_recipients = lambda flag: asked.append(flag) or [{"user_id": "x@example.com"}]
+        mod._deliver = lambda *a, **k: sent.append((a, k))
+        fake.db.get_value = lambda *a, **k: _Opp(
+            name="CRM-OPP-2099-00001",
+            customer_name="Acme Water Co",
+            party_name="ACC-0001",
+            custom_opportunity_summary="",
+            custom_created_project="PRJ-0003",
+        )
+        try:
+            mod.deliver_closed_won_alerts("CRM-OPP-2099-00001")
+        finally:
+            del fake.db.get_value
+            mod.process_automation_enabled, mod._alert_recipients, mod._deliver, mod.is_historical = saved
+        return checked, asked, sent
+
+    def test_a_historical_deal_gets_no_text(self):
+        checked, asked, sent = self._deliver(historical=True)
+        self.assertEqual(checked, ["CRM-OPP-2099-00001"])
+        self.assertEqual((asked, sent), ([], []))
+
+    def test_any_other_won_deal_still_gets_it(self):
+        _checked, asked, sent = self._deliver(historical=False)
+        self.assertEqual(asked, ["closed_won"])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("WON: Acme Water Co", sent[0][0][1])
+
+
 class TestItIsWiredIntoCi(unittest.TestCase):
     def test_ci_runs_this_suite(self):
         """The bench-only `test_status_alerts.py` is named nowhere in ci.yml, which is

@@ -177,6 +177,8 @@
 			// Pre-ERPNext and untouched for 90 days (crm_enhancements/historical.py).
 			// Reported on both branches of handoff_state; the doc is the fallback.
 			historical: !!(state && "is_historical" in s ? s.is_historical : frm.doc.custom_is_historical),
+			// Creating the project needs write on the Opportunity (v1.749.0): doc-aware, as the server checks.
+			can_write: !!frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc),
 		};
 	}
 
@@ -341,7 +343,8 @@
 		}
 		// Offered strictly on the server's own predicate, so the tab can never
 		// show a button whose insert is guaranteed to be refused.
-		if (!f.project && (f.gate_open || !f.gate_applies)) {
+		// Nor to someone who may only read the deal: the server refuses them (enqueue_project_creation).
+		if (!f.project && f.can_write && (f.gate_open || !f.gate_applies)) {
 			at(
 				STEP_PROJECT,
 				button("create", __("Create Project in PM System"), booking_first ? "default" : lead)

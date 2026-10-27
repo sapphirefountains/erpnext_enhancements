@@ -84,6 +84,9 @@ function make_world() {
 		route: ["Form", "Opportunity", OPP],
 		answers: {},
 		http: {},
+		form_handlers: {},
+		confirms: [],
+		can_write: true,
 	};
 
 	class Dialog {
@@ -188,7 +191,7 @@ function make_world() {
 			);
 			return promise;
 		},
-		ui: { Dialog, form: { on: () => {} } },
+		ui: { Dialog, form: { on: (doctype, handlers) => (w.form_handlers[doctype] = handlers) } },
 		realtime: {
 			on(event, fn) {
 				(w.listeners[event] = w.listeners[event] || []).push(fn);
@@ -201,7 +204,11 @@ function make_world() {
 		set_route: (...args) => w.routes.push(args),
 		msgprint: (opts) => w.msgprints.push(opts),
 		hide_msgprint: () => (w.hidden_msgprints += 1),
-		confirm: () => null,
+		confirm: (message) => {
+			w.confirms.push(message);
+			return null;
+		},
+		perm: { has_perm: (doctype, level, ptype, doc) => (ptype === "write" ? w.can_write : true) },
 		get_route: () => w.route,
 		utils: {
 			escape_html,
@@ -706,6 +713,36 @@ await check("closed early where a surface reports, the fallback stays quiet", as
 		w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 		await settle();
 		assert.equal(w.alerts.length, 0, `${where}: its own listener says it, not this`);
+	}
+});
+
+await check("the reopen prompt asks only someone who may change the deal", async () => {
+	// opportunity.js's real refresh on a won deal with no project: a writer is asked, a reader is not
+	// (creating the project needs write on the Opportunity, so a reader would only be refused).
+	for (const can_write of [true, false]) {
+		const w = make_world();
+		w.can_write = can_write;
+		w.answers["erpnext_enhancements.crm_enhancements.handoff.handoff_state"] = {
+			available: true,
+			enabled: true,
+			gate_applies: true,
+			held: false,
+			event: "EV-0001",
+		};
+		vm.runInContext(fs.readFileSync(OPPORTUNITY_JS, "utf8"), w.sandbox, { filename: OPPORTUNITY_JS });
+		const handlers = w.form_handlers.Opportunity;
+		const frm = Object.assign(w.frm(), {
+			doc: { name: OPP, status: "Closed Won", custom_created_project: "", custom_value_stream: [] },
+			is_new: () => false,
+			remove_custom_button: () => {},
+			add_custom_button: () => {},
+			tags: null,
+		});
+		handlers.onload(frm);
+		handlers.refresh(frm);
+		await settle();
+		assert.equal(w.confirms.length, can_write ? 1 : 0, can_write ? "a writer is asked" : "a reader is not");
+		if (can_write) assert.match(w.confirms[0], /Create project now\?/);
 	}
 });
 

@@ -217,6 +217,8 @@ def _install_frappe_stub():
 				return STATE["locked_value"]
 			return STATE["opp"].get("custom_created_project")
 		if doctype == "Project":
+			if isinstance(filters, str):  # one Project by name: the row lock on the one found
+				return filters if filters in STATE["back_projects"] else None
 			# Back-linked Projects, oldest first, with the job's own status filter applied.
 			excluded = (filters or {}).get("status", [None, []])[1]
 			for name, row in sorted(STATE["back_projects"].items(), key=lambda item: item[1]["creation"]):
@@ -283,6 +285,8 @@ def _install_frappe_stub():
 	def get_job_status(job_id):
 		STATE["job_ids"].append(job_id)
 		status = STATE.get("job_status")
+		if isinstance(status, list):  # one answer per ask, in order
+			status = status.pop(0) if status else None
 		if isinstance(status, Exception):
 			raise status
 		return status
@@ -476,8 +480,12 @@ class TestTheJob(unittest.TestCase):
 		self.assertEqual(
 			project_lookup[1], {"custom_opportunity": OPP, "status": ["not in", ["Cancelled", "Canceled"]]}
 		)
-		self.assertTrue(project_lookup[3], "the back-link is read under the lock too")
+		# Not a locking read: custom_opportunity has no index, so FOR UPDATE would lock every row of
+		# tabProject it scans, and the gaps, until the link commits (the v1.749.0 review).
+		self.assertFalse(project_lookup[3], "the back-link query must not lock")
 		self.assertEqual(project_lookup[4], "creation asc")
+		locks = [c for c in STATE["db_calls"] if c[0] == "Project" and c[3]]
+		self.assertEqual(locks, [("Project", "PRJ-0003", "name", True, None)], "only the found row, by name")
 		status, user = _statuses()[0]
 		self.assertEqual(
 			(status["status"], status["project"], status["adopted"]), ("exists", "PRJ-0003", True)
@@ -653,13 +661,17 @@ class TestTheEnqueue(unittest.TestCase):
 		self.assertEqual(STATE["events"], [], "nothing recorded, not even the queued state")
 
 	def test_a_deduplicated_no_op_reports_the_job_that_is_there(self):
-		# Another request queued this Opportunity's job between the check and the enqueue.
+		# Another request queued this Opportunity's job between the check and the enqueue: the
+		# first ask finds no job, frappe.enqueue then deduplicates (returns None), and the second
+		# ask finds the other request's job.
 		STATE["enqueue_returns"] = None
-		STATE["job_status"] = JobStatus.STARTED
+		STATE["job_status"] = [None, JobStatus.QUEUED]
 		result = self._enqueue()
-		self.assertEqual(result["status"], "running")
-		self.assertIn(result["phase"], ("queued", "running"))
-		self.assertEqual(result["job"], "started")
+		self.assertEqual(len(STATE["enqueued"]), 1, "the enqueue was reached, and deduplicated")
+		self.assertEqual(result["status"], "running", "not the 'queued' this call never made")
+		self.assertEqual((result["phase"], result["job"]), ("queued", "queued"))
+		self.assertEqual([s["key"] for s in result["steps"]], list(progress.STEP_KEYS))
+		self.assertEqual(STATE["job_ids"], [f"ee-project-from-opportunity-{OPP}"] * 2)
 
 	def test_a_bad_address_is_refused_before_anything_is_recorded(self):
 		with self.assertRaises(StubThrow):
@@ -784,6 +796,26 @@ class TestTheSurfaces(unittest.TestCase):
 			"on_success", body, "the dialog reloads when the project exists; a second reload is noise"
 		)
 		self.assertNotIn("reload_doc", body)
+
+	def test_only_someone_who_may_change_the_deal_is_offered_the_creation(self):
+		# v1.749.0 review: enqueue_project_creation needs write on the Opportunity, so a reader who
+		# was asked "Create project now?" filled in the dialog only to be refused.
+		guided = (self.JS / "enhancements_core" / "page" / "guided_entry" / "guided_entry.js").read_text(
+			encoding="utf-8"
+		)
+		nudge = _js_without_comments(_method_body(guided, "\tnudge_won_without_project() {"))
+		self.assertLess(
+			nudge.index("if (!(this.flow && this.flow.can_write)) return;"),
+			nudge.index("crm.confirm_won_next_step("),
+			"the guided page's own edit check, before it asks",
+		)
+		tab = _js_without_comments(
+			(self.JS / "public" / "js" / "crm_enhancements" / "opportunity_handoff.js").read_text(
+				encoding="utf-8"
+			)
+		)
+		self.assertIn('can_write: !!frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc),', tab)
+		self.assertIn("if (!f.project && f.can_write && (f.gate_open || !f.gate_applies)) {", tab)
 
 
 if __name__ == "__main__":

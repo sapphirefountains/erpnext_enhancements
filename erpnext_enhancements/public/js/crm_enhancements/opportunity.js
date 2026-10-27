@@ -134,6 +134,10 @@ frappe.ui.form.on("Opportunity", {
 			frm.doc.status === "Closed Won" &&
 			!frm.doc.custom_created_project &&
 			!frm.doc.custom_is_historical &&
+			// v1.749.0: only someone who may change it is asked. Creating the project needs write
+			// on the Opportunity (enqueue_project_creation), so a read-only visitor would fill in
+			// the dialog only to be refused. Doc-aware: user permissions and shares count.
+			frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc) &&
 			erpnext_enhancements.crm &&
 			erpnext_enhancements.crm.confirm_won_next_step
 		) {

@@ -422,7 +422,15 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			# custom_created_project. Linked, not duplicated; two Projects claiming one Opportunity
 			# double-count its revenue (reconciliation.py refuses the same thing). A cancelled one
 			# is not its Project (a PM retired it), so it is passed over and a new one is made.
-			# Locked too, so the Project cannot change under the link.
+			#
+			# A plain read, deliberately NOT for_update. Project.custom_opportunity has no index,
+			# so a locking read scans tabProject, and under REPEATABLE READ InnoDB locks every row
+			# it scans and the gaps between them: in the usual case (no back-link) the whole table,
+			# held until the link commits, through the template's task creation. Every Project
+			# save and insert on the site would wait on it, past the 50 s lock timeout for a long
+			# template (v1.749.0 review). The Opportunity's row lock above already serializes this
+			# job; the one Project found is then locked by name, its primary key, which locks that
+			# row alone.
 			back_linked = None
 			if frappe.db.has_column("Project", "custom_opportunity"):
 				back_linked = frappe.db.get_value(
@@ -430,9 +438,9 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 					{"custom_opportunity": opportunity_name, "status": ["not in", CANCELLED_PROJECT]},
 					"name",
 					order_by="creation asc",
-					for_update=True,
 				)
 			if back_linked:
+				frappe.db.get_value("Project", back_linked, "name", for_update=True)
 				step = "link"
 				progress.mark_step(opportunity_name, requester, step)
 				opp.custom_created_project = back_linked
