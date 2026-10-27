@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the steps (`.ge-files`), plus the count chip in the head band. The Desk form's sidebar and
   the Opportunity Board's side panel both keep them on the side. Someone who opens a record from
   the Kanban view and looks at the side column found the Summary, Activity, People & places and
-  Connections there, but no attachments. That inconsistency read as "only sometimes".
+  Connections there, but no attachments. That inconsistency read as "only sometimes". The work is
+  tracked as TASK-2026-02985 on PRJ-00580 (Misc Tasks).
   - **One list, drawn into both places.** `ui/record_tools.js` used to give the guided page the
     section *instead of* the tools' group (`$dock.length ? dock_files() : group(...)`). It now
     draws both. `render_files` decides once: the files (one row per file name, as the sidebar
