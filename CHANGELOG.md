@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.750.0] - 2026-10-27
 
+ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).
+
 ### Added
 - **Phase 1 of AI-assisted SEO for www.sapphirefountains.com: a read-only WordPress mu-plugin of
   Sapphire SEO abilities, with its install guide and a Claude connection guide**
