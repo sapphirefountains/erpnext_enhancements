@@ -199,31 +199,28 @@ const caches = {
 	},
 };
 
-// IndexedDB, just enough of it for openDB / tx / put / get / getAll / delete.
+// IndexedDB, enough of it for the worker, and failing the way browsers do. A transaction settles
+// after its requests: `oncomplete`, or `onabort` with `error` set, rolling its writes back. A full
+// disk is reported exactly as Chromium, Firefox and Safari report it: the put REQUEST succeeds, and
+// the TRANSACTION then aborts at commit with a QuotaExceededError. Stores have indexes; opening at
+// a higher version runs `onupgradeneeded` with a versionchange transaction (objectStore,
+// indexNames, createIndex, openCursor with update/continue) and fires `onsuccess` only once that
+// transaction's work is done.
 const idb = new Map();
-const indexedDB = {
-	open(name, version) {
-		const req = { onupgradeneeded: null, onsuccess: null, onerror: null };
-		setImmediate(() => {
-			let db = idb.get(name);
-			const upgrade = !db || db.version < version;
-			if (!db) idb.set(name, (db = { version, stores: new Map() }));
-			const handle = {
-				objectStoreNames: { contains: (n) => db.stores.has(n) },
-				createObjectStore: (n, opts) => db.stores.set(n, { keyPath: opts.keyPath, rows: new Map() }),
-				transaction: (n) => ({ objectStore: () => storeApi(db.stores.get(n), n) }),
-			};
-			if (upgrade) {
-				db.version = version;
-				if (req.onupgradeneeded) req.onupgradeneeded({ target: { result: handle } });
-			}
-			if (req.onsuccess) req.onsuccess({ target: { result: handle } });
-		});
-		return req;
-	},
-};
-function idbRequest(fn) {
+const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+// Rows a store may hold when a transaction commits, by store name; over it, the commit aborts.
+let idbQuota = {};
+function quotaError() {
+	const e = new Error("The quota has been exceeded.");
+	e.name = "QuotaExceededError";
+	return e;
+}
+function makeStore(keyPath) {
+	return { keyPath, rows: new Map(), indexes: new Map() };
+}
+function idbRequest(fn, owner) {
 	const req = { result: undefined, error: null, onsuccess: null, onerror: null };
+	if (owner) owner.pending += 1;
 	setImmediate(() => {
 		try {
 			req.result = fn();
@@ -232,28 +229,110 @@ function idbRequest(fn) {
 			req.error = e;
 			if (req.onerror) req.onerror({ target: req });
 		}
+		if (owner) owner.settle();
 	});
 	return req;
 }
-// Rows a store may hold before a put answers QuotaExceededError (a full phone), by store name.
-let idbQuota = {};
-function storeApi(s, name) {
-	return {
+function makeTransaction(db, name) {
+	const s = db.stores.get(name);
+	const undo = new Map(); // key -> the row before this transaction touched it (or undefined)
+	const t = { oncomplete: null, onabort: null, error: null, pending: 0, done: false };
+	t.settle = () => {
+		t.pending -= 1;
+		if (t.pending || t.done) return;
+		t.done = true;
+		setImmediate(() => {
+			if (idbQuota[name] && s.rows.size > idbQuota[name]) {
+				for (const [k, before] of undo) before === undefined ? s.rows.delete(k) : s.rows.set(k, before);
+				t.error = quotaError();
+				if (t.onabort) t.onabort({ target: t });
+			} else if (t.oncomplete) t.oncomplete({ target: t });
+		});
+	};
+	const remember = (k) => {
+		if (!undo.has(k)) undo.set(k, clone(s.rows.get(k)));
+	};
+	const matching = (index, key) => [...s.rows.values()].filter((v) => v[s.indexes.get(index)] === key);
+	t.objectStore = () => ({
 		put: (v) =>
 			idbRequest(() => {
-				const key = v[s.keyPath];
-				if (idbQuota[name] && s.rows.size >= idbQuota[name] && !s.rows.has(key)) {
-					const e = new Error("The quota has been exceeded.");
-					e.name = "QuotaExceededError";
-					throw e;
-				}
-				s.rows.set(key, JSON.parse(JSON.stringify(v)));
-			}),
-		get: (k) => idbRequest(() => s.rows.get(k)),
-		getAll: () => idbRequest(() => [...s.rows.values()]),
-		delete: (k) => idbRequest(() => s.rows.delete(k)),
-	};
+				const k = v[s.keyPath];
+				remember(k);
+				s.rows.set(k, clone(v));
+			}, t),
+		get: (k) => idbRequest(() => clone(s.rows.get(k)), t),
+		getAll: () => idbRequest(() => [...s.rows.values()].map(clone), t),
+		delete: (k) =>
+			idbRequest(() => {
+				remember(k);
+				s.rows.delete(k);
+			}, t),
+		index: (index) => ({
+			getAll: (key) => idbRequest(() => matching(index, key).map(clone), t),
+			count: (key) => idbRequest(() => matching(index, key).length, t),
+		}),
+	});
+	return t;
 }
+const indexedDB = {
+	open(name, version) {
+		const req = { onupgradeneeded: null, onsuccess: null, onerror: null };
+		setImmediate(async () => {
+			let db = idb.get(name);
+			const upgrade = !db || db.version < version;
+			if (!db) idb.set(name, (db = { version, stores: new Map() }));
+			const handle = {
+				objectStoreNames: { contains: (n) => db.stores.has(n) },
+				createObjectStore: (n, opts) => db.stores.set(n, makeStore(opts.keyPath)),
+				transaction: (n) => makeTransaction(db, n),
+			};
+			if (upgrade) {
+				db.version = version;
+				const work = [];
+				const versionchange = {
+					objectStore: (n) => {
+						const s = db.stores.get(n);
+						return {
+							indexNames: { contains: (i) => s.indexes.has(i) },
+							createIndex: (i, keyPath) => s.indexes.set(i, keyPath),
+							openCursor() {
+								const cur = { onsuccess: null };
+								const keys = [...s.rows.keys()];
+								let i = 0;
+								work.push(
+									new Promise((finished) => {
+										const step = () => {
+											if (i >= keys.length) {
+												if (cur.onsuccess) cur.onsuccess({ target: { result: null } });
+												return finished();
+											}
+											const k = keys[i];
+											const cursor = {
+												value: clone(s.rows.get(k)),
+												update: (v) => s.rows.set(k, clone(v)),
+												continue: () => {
+													i += 1;
+													setImmediate(step);
+												},
+											};
+											if (cur.onsuccess) cur.onsuccess({ target: { result: cursor } });
+										};
+										setImmediate(step);
+									})
+								);
+								return cur;
+							},
+						};
+					},
+				};
+				if (req.onupgradeneeded) req.onupgradeneeded({ target: { result: handle, transaction: versionchange } });
+				await Promise.all(work);
+			}
+			if (req.onsuccess) req.onsuccess({ target: { result: handle } });
+		});
+		return req;
+	},
+};
 function queuedPoints() {
 	const db = idb.get("TimeKioskDB");
 	const q = db && db.stores.get("GeoQueue");
@@ -280,6 +359,7 @@ const net = {
 	holdNext: false,
 	holdBeforeNext: false, // the next request is answered only at release(), not when it is sent
 	failLogout: 0, // a status the next logouts answer with instead of signing out
+	failBatch: 0, // a status every location batch answers with instead of being filed
 	held: [],
 	gateway: 0, // a status the gateway answers /kiosk with instead (a deploy restarting the bench)
 	onLogin(user) {
@@ -354,6 +434,7 @@ const net = {
 	},
 	batch(body) {
 		net.batchKeys.push(body.offline_key === PATK ? "pat" : body.offline_key === SAMK ? "sam" : body.offline_key || "-");
+		if (net.failBatch) return new FakeResponse("", { status: net.failBatch });
 		if (!net.session) return new FakeResponse("", { status: 403 });
 		const points = body.points || [];
 		// log_geolocation_batch -> kiosk_offline.belongs_to_session
@@ -487,6 +568,16 @@ async function queuePoint(worker, page) {
 
 const signIn = (worker, user) => request(worker, "/api/method/login", { method: "POST", signIn: user });
 
+// The worker's answer to {type: 'stats'} (geo.js KioskGeo.queuedCount sends the page's owner).
+async function stats(worker, data) {
+	let reply = null;
+	const port = { postMessage: (m) => (reply = m) };
+	await drain(dispatch(worker, "message", { data: { type: "stats", data }, ports: [port] }).waits);
+	return reply && reply.queued;
+}
+
+const sync = (worker) => drain(dispatch(worker, "sync", { tag: "flush-geo" }).waits);
+
 const api = (method, query) => `${API}${method}${query ? "?" + query : ""}`;
 const DAY = api("get_my_day", "date=2026-10-27");
 const HISTORY = api("get_my_history", "days=14");
@@ -518,7 +609,7 @@ function reset() {
 	store.clear();
 	idb.clear();
 	windows = [];
-	Object.assign(net, { online: true, session: null, jar: {}, logged: [], batchKeys: [], log: [], sentHeaders: [], holdNext: false, holdBeforeNext: false, failLogout: 0, held: [], gateway: 0 });
+	Object.assign(net, { online: true, session: null, jar: {}, logged: [], batchKeys: [], log: [], sentHeaders: [], holdNext: false, holdBeforeNext: false, failLogout: 0, failBatch: 0, held: [], gateway: 0 });
 	pauseKeys = null;
 	idbQuota = {};
 }
@@ -594,6 +685,10 @@ for (const [route, how] of [
 		check("… and the worker deleted every kept answer", keptAnswers(), []);
 		check("… and the kept page", hasShell(), false);
 		check("… but Pat's queued point is kept, for Pat (Nik, 2026-10-27)", queuedPoints(), [`${id}:pat`]);
+		net.online = true;
+		await sync(w);
+		check("… and the refusal told the worker Pat no longer has the phone: a sync sends nothing of Pat's", net.batchKeys.includes("pat"), false);
+		net.online = false;
 		check("a request still claiming Pat gets nothing", (await request(w, DAY, { key: PATK })).status, 504);
 		const again = await openKiosk(w);
 		check("opening it again offline finds nothing kept", [again.status, again.body], [503, "Offline"]);
@@ -876,6 +971,62 @@ scenario("a full phone drops the oldest queued points first, and only then", asy
 	check("a fourth on a full phone: the oldest goes, the newest is kept", queuedPoints(), ids.slice(1).map((id) => `${id}:pat`).sort());
 	ids.push(await queuePoint(w, pats));
 	check("and again: oldest first", queuedPoints(), ids.slice(2).map((id) => `${id}:pat`).sort());
+});
+
+scenario("the queued count is the asking person's own", async () => {
+	const { w } = await patsPhone();
+	const pats = await openKiosk(w);
+	net.online = false;
+	await queuePoint(w, pats);
+	await queuePoint(w, pats);
+	check("Pat's Settings counts Pat's two points", await stats(w, { owner: PATK }), 2);
+	net.online = true;
+	net.expire();
+	await signIn(w, SAM);
+	const sams = await openKiosk(w);
+	net.online = false;
+	await queuePoint(w, sams);
+	check("Sam's Settings counts only Sam's point, not Pat's two", await stats(w, { owner: SAMK }), 1);
+	check("a page from before this release (no owner sent) counts whoever's kiosk has the phone", await stats(w), 1);
+	check("all three are still on the phone", queuedPoints().length, 3);
+});
+
+scenario("a sign-out leaves nobody holding the phone", async () => {
+	const { w } = await patsPhone();
+	net.expire();
+	await signIn(w, SAM);
+	const sams = await openKiosk(w);
+	net.online = false;
+	const id = await queuePoint(w, sams);
+	net.online = true;
+	net.failBatch = 503; // the upload before the sign-out cannot get through
+	await request(w, "/api/method/logout", { method: "POST" });
+	net.failBatch = 0;
+	check("Sam's point is still queued after Sam's sign-out", queuedPoints(), [`${id}:sam`]);
+	net.batchKeys = [];
+	await signIn(w, PAT); // on desk; Pat never opens the kiosk
+	await sync(w);
+	check("a sync under Pat's session sends nothing of Sam's", net.batchKeys.includes("sam"), false);
+	net.expire();
+	await signIn(w, SAM);
+	await openKiosk(w);
+	check("Sam opens the kiosk again: Sam's point goes up as Sam's", [net.logged, queuedPoints()], [[`${id}:sam`], []]);
+});
+
+scenario("a phone with a queue from before the owner index keeps it and sends it", async () => {
+	reset();
+	// TimeKioskDB at version 2 (before v1.753.2): no index, and a point with no owner at all.
+	const v2 = { version: 2, stores: new Map([["GeoQueue", makeStore("client_id")], ["Meta", makeStore("key")]]) };
+	v2.stores.get("GeoQueue").rows.set("old1", { client_id: "old1", timestamp: "2026-10-26 17:00:00", latitude: 40.7, longitude: -111.9 });
+	idb.set("TimeKioskDB", v2);
+	const w = loadWorker("BUILD1");
+	await lifecycle(w);
+	await signIn(w, PAT);
+	await openKiosk(w);
+	const db = idb.get("TimeKioskDB");
+	check("the upgrade to v3 added the owner index", [db.version, db.stores.get("GeoQueue").indexes.get("owner")], [3, "owner"]);
+	check("the old point went up under the session, with no offline_key", [net.logged, net.batchKeys], [["old1:pat"], ["-"]]);
+	check("… and left the queue", queuedPoints(), []);
 });
 
 scenario("a deploy drops the previous deploy's answers", async () => {

@@ -84,7 +84,17 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
         backstop if the worker is wrong about who has the phone.
       - **The one drop is a phone out of storage.** When IndexedDB refuses a new point
         (`QuotaExceededError`), the oldest tenth of the queue goes, oldest first by timestamp,
-        and the new point is stored.
+        and the new point is stored. Browsers report a full disk as the *transaction* aborting
+        at commit, after the put request itself succeeded, so a put now settles on the
+        transaction (`oncomplete` / `onabort`); settling on the request would have called a
+        rolled-back point stored and never dropped anything.
+      - **Reads are bounded by person.** `TimeKioskDB` goes to v3 with an `owner` index on
+        `GeoQueue`, and the upgrade gives every older point `owner: ''`. A flush reads only the
+        current person's points (and points with no marker), and a count counts them, so points
+        left by somebody who never comes back don't slow every new point down.
+      - **The queued count is the asking person's own.** `geo.js` sends its owner with the
+        `stats` request, so Settings' "Queued points" and the sign-out dialog never count, or
+        promise to send, the previous person's points.
       - A sign-out never deletes queued points; it first tries to upload them.
       - Points queued before this release carry no marker and upload as before.
     - **Settings → Sign out** (new). The installed app has no address bar, so it had no way to
@@ -110,7 +120,7 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
   - **Tests:**
     - `scripts/test_kiosk_sw_cache.js` (new) runs the real worker over a stand-in phone and server.
       The phone has Cache Storage, IndexedDB, open windows and a cookie jar. The server behaves
-      like frappe and `kiosk_offline`. **123 checks over 26 scenarios**, including:
+      like frappe and `kiosk_offline`. **136 checks over 29 scenarios**, including:
       - expiry followed by a new sign-in through the password form, `POST /` `cmd=login`, and a
         Google-style GET redirect, each followed by an offline open;
       - a sign-out from desk, `/logout`, `web_logout`, v2 and Settings;
@@ -122,10 +132,13 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
       - a gateway 502 on `/kiosk`;
       - the location queue under two people: the last person's points wait while somebody else
         has the phone, survive that person's sign-out, and go up when their own person comes
-        back; a full phone drops the oldest first;
+        back; a full phone drops the oldest first, with the stand-in IndexedDB failing a full
+        disk at commit exactly as browsers do; the count is the asking person's own; a sign-out
+        and a refused page each leave nobody holding the phone; a v2 queue survives the upgrade
+        to v3 and is still sent;
       - a deploy;
       - a worker restart.
-      Against main's worker, 51 checks fail. A mutation sweep removing each of the new guards in
+      Against main's worker, 61 checks fail. A mutation sweep removing each of the new guards in
       turn is caught every time, both epoch checks in `keepAnswer` included. A run that stops
       before every scenario has finished now exits 1, so a promise that never settles cannot pass
       the bare `node` CI step.

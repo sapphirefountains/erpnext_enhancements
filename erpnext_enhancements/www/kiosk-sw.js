@@ -106,13 +106,17 @@ function versioned(url) {
 // --- IndexedDB -------------------------------------------------------------
 // Two object stores, created/upgraded in openDB().onupgradeneeded:
 //   GeoQueue — pending geolocation points, keyed by the page-assigned client_id
-//              (the dedupe key the server echoes back as accepted/rejected).
+//              (the dedupe key the server echoes back as accepted/rejected), with
+//              an 'owner' index (v3): whose point it is, the person's offline
+//              marker, '' for none. A flush or a count reads one person's points
+//              through it, however many somebody who never came back left behind.
 //   Meta     — small config kv: csrf_token + max_batch_size, keyed by `key`.
 // Bump DB_VERSION (independently of the Cache version) when the schema changes.
 const DB_NAME = 'TimeKioskDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const QUEUE_STORE = 'GeoQueue';
 const META_STORE = 'Meta';
+const OWNER_INDEX = 'owner';
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -125,6 +129,19 @@ function openDB() {
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: 'key' });
       }
+      // v3: the owner index. A point queued before it has no owner, and an index
+      // leaves out a record without its key, so each one gets owner '' (no marker:
+      // uploaded under the session, as before) in the same upgrade.
+      const queue = e.target.transaction.objectStore(QUEUE_STORE);
+      if (!queue.indexNames.contains(OWNER_INDEX)) {
+        queue.createIndex(OWNER_INDEX, 'owner');
+        queue.openCursor().onsuccess = (ev) => {
+          const cursor = ev.target.result;
+          if (!cursor) return;
+          if (typeof cursor.value.owner !== 'string') cursor.update(Object.assign({}, cursor.value, { owner: '' }));
+          cursor.continue();
+        };
+      }
     };
     req.onsuccess = (e) => resolve(e.target.result);
     req.onerror = (e) => reject(e.target.error);
@@ -135,12 +152,18 @@ function tx(db, store, mode) {
   return db.transaction(store, mode).objectStore(store);
 }
 
+// Settled by the TRANSACTION, not the put request: a browser reports a full disk
+// (QuotaExceededError) as the transaction aborting at commit, after the request
+// itself has succeeded, and the point is rolled back. Resolving on the request's
+// onsuccess would call that a stored point. Every failed transaction aborts, so
+// onabort is the one rejection.
 async function putPointOnce(point) {
   const db = await openDB();
   return new Promise((res, rej) => {
-    const r = tx(db, QUEUE_STORE, 'readwrite').put(point);
-    r.onsuccess = res;
-    r.onerror = () => rej(r.error);
+    const t = db.transaction(QUEUE_STORE, 'readwrite');
+    t.oncomplete = () => res();
+    t.onabort = () => rej(t.error || new Error('IndexedDB transaction aborted'));
+    t.objectStore(QUEUE_STORE).put(point);
   });
 }
 
@@ -149,6 +172,8 @@ async function putPointOnce(point) {
 // is a phone out of storage: then the oldest tenth of the queue goes, oldest
 // first by timestamp, to make room for the new point.
 async function putPoint(point) {
+  // A page from before v3 (mid-deploy) sends no owner: '' keeps it in the index.
+  if (typeof point.owner !== 'string') point = Object.assign({}, point, { owner: '' });
   try {
     await putPointOnce(point);
   } catch (e) {
@@ -165,6 +190,25 @@ async function getAllPoints() {
   return new Promise((res, rej) => {
     const r = tx(db, QUEUE_STORE, 'readonly').getAll();
     r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+// One person's queued points ('' = points with no marker), through the owner index.
+async function pointsOf(owner) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const r = tx(db, QUEUE_STORE, 'readonly').index(OWNER_INDEX).getAll(owner);
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+async function countOf(owner) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const r = tx(db, QUEUE_STORE, 'readonly').index(OWNER_INDEX).count(owner);
+    r.onsuccess = () => res(r.result || 0);
     r.onerror = () => rej(r.error);
   });
 }
@@ -220,13 +264,8 @@ async function flushQueue() {
     // never leave the phone under somebody else's session: if 'owner' is stale, the
     // server refuses the batch (other_person, a transient reject) as the backstop.
     const current = (await getMeta('owner')) || '';
-    const byOwner = new Map();
-    for (const p of await getAllPoints()) {
-      const owner = p.owner || '';
-      if (owner && owner !== current) continue;
-      if (!byOwner.has(owner)) byOwner.set(owner, []);
-      byOwner.get(owner).push(p);
-    }
+    const byOwner = new Map([['', await pointsOf('')]]);
+    if (current) byOwner.set(current, await pointsOf(current));
 
     for (const [owner, queued] of byOwner) {
       let points = queued;
@@ -557,16 +596,22 @@ self.addEventListener('fetch', (event) => {
 //   enqueue → store one point (tagged with its person's marker, geo.js), then
 //             attempt an immediate flush
 //   flush   → flush the queue on demand (e.g. on reconnect / app resume)
-//   stats   → reply { queued: <points still in IndexedDB> } on event.ports[0]
-//             (the page sends a MessageChannel port; KioskGeo.queuedCount)
+//   stats   → reply { queued: <the asking person's points still in IndexedDB,
+//             plus points with no marker> } on event.ports[0] (the page sends a
+//             MessageChannel port and data.owner; KioskGeo.queuedCount)
 // 'enqueue' and 'flush' register a Background Sync as a fallback if the flush fails.
 self.addEventListener('message', (event) => {
   const { type, data } = event.data || {};
   if (type === 'stats') {
+    // The asking page's own points (data.owner, geo.js), plus points with no
+    // marker: never the previous person's, which are not this person's to send.
     const port = event.ports && event.ports[0];
     event.waitUntil((async () => {
       let queued = 0;
-      try { queued = (await getAllPoints()).length; } catch (e) { queued = 0; }
+      try {
+        const owner = data && typeof data.owner === 'string' ? data.owner : ((await getMeta('owner')) || '');
+        queued = (await countOf('')) + (owner ? await countOf(owner) : 0);
+      } catch (e) { queued = 0; }
       if (port) port.postMessage({ queued });
     })());
   } else if (type === 'config') {

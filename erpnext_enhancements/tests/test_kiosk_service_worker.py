@@ -447,7 +447,25 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
         # anybody's points for belonging to somebody else.
         self.assertIn("if ('owner' in data) await setMeta('owner', data.owner || '');", code)
         self.assertIn("if (data.owner && !(await flushQueue())) await ensureSync();", code)
-        self.assertIn("if (owner && owner !== current) continue;", _function("async function flushQueue"))
+        flush = _function("async function flushQueue")
+        self.assertIn("const byOwner = new Map([['', await pointsOf('')]]);", flush)
+        self.assertIn("if (current) byOwner.set(current, await pointsOf(current));", flush)
+        # Bounded reads: one person's points through the owner index, never the whole store,
+        # so points left by somebody who never comes back cannot slow every new point down.
+        self.assertNotIn("getAllPoints", flush)
+        self.assertIn("const DB_VERSION = 3;", code)
+        self.assertIn("queue.createIndex(OWNER_INDEX, 'owner');", code)
+        self.assertIn(".index(OWNER_INDEX).getAll(owner)", _function("async function pointsOf"))
+        self.assertIn(".index(OWNER_INDEX).count(owner)", _function("async function countOf"))
+        # The count is the asking person's own (geo.js sends its owner with the request).
+        self.assertIn("queued = (await countOf('')) + (owner ? await countOf(owner) : 0);", code)
+        geo = (APP / "public/js/kiosk/geo.js").read_text(encoding="utf-8")
+        self.assertIn("target.postMessage({ type: 'stats', data: { owner: state.owner } }, [ch.port2]);", geo)
+        # A full disk is a transaction abort at commit, not a failed put request.
+        put_once = _function("async function putPointOnce(point)")
+        self.assertIn("t.oncomplete = () => res();", put_once)
+        self.assertIn("t.onabort = () => rej(t.error", put_once)
+        self.assertNotIn("r.onsuccess", put_once)
         self.assertNotIn("dropPointsNotOf", code)
         # The one drop: a phone out of storage, oldest first.
         put = _function("async function putPoint(point)")

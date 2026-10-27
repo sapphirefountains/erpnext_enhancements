@@ -425,7 +425,9 @@
             clearTimeout(timer);
             if (!settled) { settled = true; resolve(ev.data && typeof ev.data.queued === 'number' ? ev.data.queued : null); }
           };
-          target.postMessage({ type: 'stats' }, [ch.port2]);
+          // Only this person's points are theirs to count (the worker keeps the previous
+          // person's for them, untouched).
+          target.postMessage({ type: 'stats', data: { owner: state.owner } }, [ch.port2]);
         }).catch(function () { clearTimeout(timer); if (!settled) { settled = true; resolve(null); } });
       });
     },
