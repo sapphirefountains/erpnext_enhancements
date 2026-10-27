@@ -2269,6 +2269,14 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
   through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
   routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
   zoom, and Today scrolls to today.
+- **`?build_out=template`** (v1.749.0, TASK-2026-02984). The Opportunity hand-off's "Build out from a
+  planner template", offered once its Project is made (`crm_enhancements/create_project_prompt.js`),
+  lands on `/gantt/<project>?project=<project>&build_out=template`. Once that project has loaded
+  (`ppg_build_out_if_asked`), Build out opens on *Start from template…*, by the same path as the
+  header's Build out ▾ (`ppg_open_build_out`). It happens once. `build_out` is a one-shot key
+  (`PP.once_params`): `handle_route` takes it off `route_options` and `write_filter_url` leaves it out
+  of the address, so Back, Forward and a reload show the Gantt and nothing more. On any other screen,
+  with any other value, or after a refusal, it does nothing.
 - **The landing** (approved 2026-10-21 as Nik's per-device rule, no exception). The Gantt is one of P8's
   remembered tabs, with its project kept beside it (`ee_project_planner_gantt:<user>`). A bare
   `/project-planner` on a device whose tab is the Gantt is replaced by `/gantt/<that project>`; with no

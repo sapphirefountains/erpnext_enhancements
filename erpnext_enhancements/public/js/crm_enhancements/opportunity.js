@@ -18,7 +18,8 @@
  *    from the Hand-Off Process tab (opportunity_handoff.js).
  *  - Listen on the `project_creation_status` realtime channel to report
  *    background project-creation success/failure (incl. Google Drive folder
- *    provisioning results).
+ *    provisioning results). Registered once, and quiet while the progress
+ *    dialog in create_project_prompt.js is watching that creation (v1.749.0).
  */
 function sync_tags_from_child_table(frm) {
 	let value_streams = (frm.doc.custom_value_stream || [])
@@ -133,6 +134,10 @@ frappe.ui.form.on("Opportunity", {
 			frm.doc.status === "Closed Won" &&
 			!frm.doc.custom_created_project &&
 			!frm.doc.custom_is_historical &&
+			// v1.749.0: only someone who may change it is asked. Creating the project needs write
+			// on the Opportunity (enqueue_project_creation), so a read-only visitor would fill in
+			// the dialog only to be refused. Doc-aware: user permissions and shares count.
+			frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc) &&
 			erpnext_enhancements.crm &&
 			erpnext_enhancements.crm.confirm_won_next_step
 		) {
@@ -142,74 +147,29 @@ frappe.ui.form.on("Opportunity", {
 				frm: frm,
 			});
 		}
-
-		// The real-time listener for completion remains exactly the same.
-		frappe.realtime.on("project_creation_status", function (data) {
-			if (data.opportunity_name === frm.doc.name) {
-				// The hand-off gate refused this one (PRO-0204). Reported as its own
-				// status rather than a generic failure so the user is told what to
-				// do instead of being handed "creation failed" for a process step
-				// they can complete in two clicks on this very form.
-				if (data.status === "blocked") {
-					frappe.msgprint({
-						title: __("Hand-Off Required"),
-						indicator: "orange",
-						message: frappe.utils.escape_html(data.blocked_reason || ""),
-					});
-					frm.reload_doc();
-					return;
-				}
-				if (data.status === "success") {
-					let success_message = __("Project {0} created successfully.", [
-						`<a href="/desk/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
-					]);
-
-					if (data.drive_success) {
-						success_message = __(
-							"Project {0} created and Google Drive directory provisioned successfully.",
-							[
-								`<a href="/desk/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
-							]
-						);
-					}
-
-					frappe.show_alert(
-						{
-							message: success_message,
-							indicator: "green",
-						},
-						10
-					);
-
-					if (data.drive_error) {
-						let msg = `
-							<p>Project created, but folder provisioning failed.</p>
-							<details>
-								<summary>Technical Error Details</summary>
-								<pre style="margin-top: 10px; padding: 10px; background-color: var(--subtle-fg); border: 1px solid var(--border-color);">${data.drive_error}</pre>
-							</details>
-							<p><a href="/desk/error-log">Check Error Log</a></p>
-						`;
-						frappe.msgprint({
-							title: __("Google Drive Integration Failed"),
-							indicator: "orange",
-							message: msg,
-						});
-					}
-
-					frm.reload_doc();
-				} else {
-					frappe.show_alert(
-						{
-							message: __(
-								"Project creation failed. Please check the Error Log for details."
-							),
-							indicator: "red",
-						},
-						10
-					);
-				}
-			}
-		});
 	},
 });
+
+// The real-time listener for completion, registered once (v1.749.0). It was registered in
+// `refresh`, which runs on every load and reload, so a form opened a few times answered one
+// creation with that many alerts and reloads — the reload after a creation itself added one.
+//
+// While the progress dialog (create_project_prompt.js) watches this creation it says how it
+// went and reloads the record; this stands aside. Otherwise — the dialog closed early, or the
+// event is for someone in the notify list — this reports it with the dialog's own words, and
+// reloads the form unless it holds unsaved edits.
+if (!frappe._ee_opportunity_creation_listener) {
+	frappe._ee_opportunity_creation_listener = true;
+	frappe.realtime.on("project_creation_status", function (data) {
+		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
+		if (!data || !crm || !crm.report_project_creation_status) return;
+		if (crm.is_tracking_project_creation && crm.is_tracking_project_creation(data.opportunity_name)) return;
+		const view = frappe.views && frappe.views.formview && frappe.views.formview.Opportunity;
+		const frm = view && view.frm;
+		if (!frm || !frm.doc || frm.doc.name !== data.opportunity_name) return;
+		// The hand-off gate's refusal (PRO-0204) comes through as its own status, so the user is
+		// told what to do instead of being handed "creation failed" for a process step they can
+		// complete in two clicks on this very form.
+		crm.report_project_creation_status(data, frm);
+	});
+}

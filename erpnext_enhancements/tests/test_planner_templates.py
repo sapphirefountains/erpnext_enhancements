@@ -986,6 +986,48 @@ class TestEndpoints(_SeededSite):
 		self.assertEqual([r["needs"] for r in rows], [[], ["row:1"]])
 
 
+class TestBuildOutOffer(_SeededSite):
+	"""planner_template_offer (v1.749.0, TASK-2026-02984): whether the hand-off's success message offers
+	"Build out from a planner template". Only where the link would work; a no never refuses."""
+
+	def test_offered_to_a_planner_who_may_build_out_when_a_template_exists(self):
+		self.seed()
+		self.assertEqual(api().planner_template_offer(), {"offer": True})
+
+	def test_not_offered_outside_the_planner_roles_and_nothing_is_read(self):
+		self.seed()
+		self.frappe.roles = ["Sales User"]
+		self.frappe.queries.clear()
+		self.assertEqual(api().planner_template_offer(), {"offer": False})
+		self.assertEqual(self.frappe.queries, [])
+
+	def test_administrator_is_let_in_as_the_planner_lets_them(self):
+		self.seed()
+		self.frappe.roles = []
+		self.frappe.session.user = "Administrator"
+		self.assertEqual(api().planner_template_offer(), {"offer": True})
+
+	def test_not_offered_without_task_write(self):
+		# The Build out grid needs it (the planner's can_edit); the link would open a Gantt and stop.
+		self.seed()
+		self.frappe.perms["write"] = False
+		self.assertEqual(api().planner_template_offer(), {"offer": False})
+
+	def test_not_offered_without_an_enabled_planner_template(self):
+		self.assertEqual(api().planner_template_offer(), {"offer": False}, "no templates")
+		self.seed()
+		for row in self.frappe.tables["Project Template"]:
+			row["disabled"] = 1
+		self.assertEqual(api().planner_template_offer(), {"offer": False}, "all disabled")
+		self.frappe.tables["Project Template"].append({"name": "Fountain Build", "custom_template_kind": None, "disabled": 0})
+		self.assertEqual(api().planner_template_offer(), {"offer": False}, "a job template is not a planner template")
+
+	def test_not_offered_before_the_template_fields_exist(self):
+		self.seed()
+		self.frappe.db.has_column = lambda doctype, column: False
+		self.assertEqual(api().planner_template_offer(), {"offer": False})
+
+
 class TestBuildOutChecklists(_SeededSite):
 	def setUp(self):
 		super().setUp()

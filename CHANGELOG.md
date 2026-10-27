@@ -7,6 +7,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.749.0] - 2026-10-27
+
+ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
+
+### Added
+- **"Create Project in PM System" shows its progress, and the page refreshes when it is done.**
+  Nik, 2026-10-27: "create a progress bar to show it's current progress in creation and auto
+  refresh the page when it's done so the new fields show up." Until now the Create Project
+  dialog said "started in the background" and closed, and the Created Project link appeared only
+  after a manual reload, unless a realtime event happened to arrive.
+  - **Real progress, from the job.** Creation was already a background job on the `long` queue,
+    so it stays one, and the job now reports each step as it starts:
+    1. checking the hand-off;
+    2. making the project and its template's tasks;
+    3. copying the attachments;
+    4. linking the project to the opportunity;
+    5. making the Google Drive folder.
+
+    The new `crm_enhancements/project_creation_progress.py` sends each step to the person who
+    clicked as `ee_project_creation_progress`, and records it in the cache. The dialog's bar is
+    the count of finished steps, with "Step 2 of 5: Creating the project and its tasks" beside
+    it, and "Waiting for a background worker..." until a worker picks the job up. The steps are
+    not equal in length, so the bar does not pretend they are. It is not a time estimate.
+  - **One dialog for every way in.** The bar lives in `create_project_prompt.js`. That file
+    serves the Hand-Off Process tab's button, the Closed Won prompt, and the guided page's
+    "Create project now?". So it works on whichever surface started the creation.
+  - **When it ends**, the dialog closes and the record reloads where it is showing: the Desk
+    form (`frm.reload_doc()`) and the guided page (`sf-record-changed`, whose reload keeps
+    unsent edits). An alert then links the new Project. A Desk form with unsaved edits is not
+    reloaded under them. The job saves the opportunity, so those edits could not be saved
+    anyway, and the person is asked to reload instead. The Hand-Off tab's button now asks for a
+    save first.
+  - **When it fails**, the bar closes and the reason is shown, escaped. A `frappe.throw` message
+    is shown as written. Anything else is named by the step it stopped at. The message links the
+    exact Error Log, which now carries the Opportunity as its reference, and offers Try again.
+  - **Deploys.** Every deploy FLUSHDBs both Redis instances, which can take the queued job away
+    without a word. A socket that drops misses an event for good. So when the events go quiet
+    for 15 seconds, the dialog asks the new `project_creation_state` endpoint where things
+    stand. Its answer is built from the cached state, the RQ job's status and the Opportunity's
+    link. A job that is gone is reported as stopped, with Try again, rather than waited on
+    forever.
+  - Closing the dialog only stops the watching. The job carries on, and the surfaces' own
+    listeners report the outcome as before. Opening the dialog again during a creation shows that
+    creation, not a form that would start a second one.
+- **The next step: "Build out from a planner template".** Nik approved this on 2026-10-27 ("Yes
+  go with your recommendation"). The Create Project dialog's template list stays job templates
+  only. Created from scratch, the Project Planner's phase templates and bundles
+  (`custom_template_kind` set) would date every task on the project's first day. They go onto a
+  job that already exists, through the planner's Build out › *Start from template…*.
+  - **What it does.** Once the Project is made, the success message offers that step. One click
+    opens the new Project's Gantt in the Project Planner, with Build out open on *Start from
+    template…*. This works from the dialog's alert, and from the Desk form's and the guided page's
+    own messages when the dialog was closed early.
+  - **Who sees it.** It is offered only where it would work: to someone whose roles open the
+    planner (`boot.page_info`), and only when the new `api/planner_templates.planner_template_offer`
+    says yes. That needs a planner role, Task write (the Build out grid's own `can_edit`) and at
+    least one enabled planner template. Otherwise the message is the plain one, with nothing extra.
+    A project that was already there offers nothing.
+  - **The link.** It is `frappe.set_route("project-planner", "gantt", <project>, { project,
+    build_out: "template" })`, the Project form's own *Open in Project Planner* plus one key. It is
+    a history entry of its own, so Back returns to the opportunity.
+  - **Back and Forward.** `build_out` is the planner's first one-shot key (`PP.once_params`). Like
+    `?capacity=`, `handle_route` takes it off `route_options` on landing, so no later route writes
+    it again. `write_filter_url` also leaves it out of the address. So Back, Forward and a reload of
+    that entry show the Gantt and never open the dialog a second time.
+  - **When it opens.** The grid opens once the Gantt's own project has loaded (`ppg_load`), and not
+    after a refusal or a failed load. It opens through the same path as the Gantt header's Build
+    out ▾ menu (`ppg_open_build_out`, now shared by both).
+
+### Fixed
+- **A retried creation can no longer make a second Project.** "Start it again" has to be safe
+  once a deploy can kill a creation, and three paths were not:
+  - **Duplicate jobs.** `enqueue_project_creation` now queues one job id per Opportunity with
+    `deduplicate=True`. Frappe's `enqueue` (read at the v16.53.0 tag) then queues nothing while
+    that job is queued or started. A second click, a second tab or a colleague gets the running
+    creation's progress instead.
+  - **Racing jobs.** The job takes the Opportunity's row lock (`get_value(..., for_update=True)`)
+    before anything else, and acts on the value that locked read returns. Under REPEATABLE READ,
+    an earlier plain read would pin an older snapshot. A second job, queued some other way, waits
+    for the first to commit and then finds its Project. If `enqueue` deduplicates anyway, because
+    another request queued the job in between, the caller is told about that job as it stands,
+    not a "queued" it never made.
+  - **Rollback.** A failure before the link is committed is now rolled back. The job caught every
+    exception and returned normally, and the worker's closing commit kept whatever had been
+    inserted. That left a Project with no link from its Opportunity, which a retry then
+    duplicated.
+  - **Already-linked Opportunities.** One that already has its Project used to make the job
+    return silently. Now it reports `exists`, to the requester only, with no email.
+  - **Back-linked Projects.** The Desk's *Create > Project* and the Closed Won Reconciliation
+    report set `Project.custom_opportunity` without filling in `custom_created_project`. A Project
+    that points back at the Opportunity this way is now linked, the oldest first, and no second
+    one is made. `reconciliation.py` already refuses two Projects for one Opportunity, because
+    they double-count its revenue.
+    - **The back-link query takes no lock.** `Project.custom_opportunity` has no index, so a
+      `FOR UPDATE` read of it scans `tabProject`. Under REPEATABLE READ, InnoDB locks every row
+      it scans and the gaps between them: in the usual case (no back-link) the whole table,
+      held until the link commits, through the template's task creation. Every Project save
+      and insert on the site would have waited on it, and a long template could push them
+      past the 50 s lock timeout. An earlier draft of this release did exactly that; the
+      review caught it before merge.
+    - **What locks instead.** The Opportunity's row lock already serializes this job. The one
+      Project found is then locked by name, its primary key, which locks that row alone. A
+      comment at the query says why, so nobody puts `for_update` back. No index is added here.
+    - A Project in Cancelled or Canceled is passed over: a PM retired it, so a new one is made
+      instead. ("Canceled" is this site's spelling and "Cancelled" ERPNext's own.)
+    - A linked Project gets what a made one gets after the link. It gets the Closed-Won team SMS,
+      because this job is that alert's only sender and no job ever finished for that Opportunity,
+      so the team has not heard. If it has no Drive folder, it gets one; `_provision_project_drive`
+      is now shared by both paths, and a failure there is reported but never undoes the link.
+    - It gets no "New Project Created" email, because nothing is new.
+- **No "WON:" text for a historical deal.** `deliver_closed_won_alerts` now returns early when
+  the Opportunity is flagged historical (`custom_is_historical`). Linking a Project that the
+  reconciliation report back-linked to a deal won long before ERPNext would otherwise text the
+  team about a sale that closed years ago. Historical deals are already left out of every
+  won-without-project warning and the Closed-Won KPIs.
+- **Only someone who may change the deal is offered the creation.** Creating the project needs
+  write on the Opportunity, so a reader who was asked "Create project now?" on opening a won
+  deal would fill in the dialog only to be refused. The reopen prompt now asks only a writer:
+  - the Desk form uses `frappe.perm.has_perm(doctype, 0, "write", doc)`, which is doc-aware,
+    so user permissions and shares count;
+  - the guided page uses its own edit check, `flow.can_write`.
+
+  The Hand-Off tab's Create Project in PM System button follows the same rule.
+- **Starting a creation needs write access to the Opportunity.** `enqueue_project_creation` checks
+  nothing. Its job runs as Administrator, and since this release it can link an existing Project,
+  so any desk user could do that to any Opportunity and read back the creation's state, which
+  holds the requester's address and an Error Log's name. It now begins with
+  `frappe.has_permission("Opportunity", "write", doc=..., throw=True)`. `project_creation_state`'s
+  read check is the same rule for reading.
+- **The progress dialog can no longer get stuck, or fill the screen with popups.**
+  - **A stuck request.** It settled on the enqueue's `error:` callback, which v16 never calls on a
+    `QueryTimeoutError` or `QueryDeadlockError`: `request.js` shows its own message and returns.
+    The tracker was then left waiting and swallowed every later click until a reload. It now
+    settles on the promise `frappe.call` returns, which always settles.
+  - **Popups during a deploy.** The state check and the Build out offer went through
+    `frappe.xcall`. v16's 502 and 504 handlers put up a message for every one, and during a
+    deploy that is every poll. They now go through a quiet `fetch` (`quiet_call`, the shape of
+    `feedback/transport.js`), with a 10 s timeout. While the server is away, the dialog keeps its
+    bar and shows one line, "Reconnecting to the server...", until it answers.
+  - **Status order.** `phase_of` reads a recorded "finished" before RQ's "started": the job writes
+    its outcome a moment before RQ marks it done.
+- **Closed early on the Kanban board or the list, the outcome is still said.** There, no surface
+  listens: the Desk form and the guided page have their own listeners. So a dialog closed early
+  leaves a one-shot listener (`report_when_done`). It reports and repaints the list only where
+  neither of those surfaces will.
+- **The Opportunity form's creation listener is registered once.** `opportunity.js` added a
+  `project_creation_status` listener on every `refresh`, and the reload after a creation is
+  itself a refresh. So a form opened a few times answered one creation with that many alerts and
+  reloads. The listener is now module-level behind a flag. It stands aside while the progress
+  dialog watches the same creation, and otherwise reports with the dialog's own words and reload
+  rule.
+
+### Tests
+- `tests/test_project_creation_progress.py` (bench-free, own CI step) runs the real job, enqueue
+  and state endpoint against a frappe stub: the steps in order, each to the requester; the steps
+  the job reports are exactly the ones the dialog lists; every outcome recorded before it is
+  broadcast; the lock first; no second Project; and a rollback before the link. A copy without
+  the rollback, or without the lock, fails it.
+- `scripts/test_project_creation_progress.mjs` (node, own CI step) runs the real
+  `create_project_prompt.js` and `opportunity.js` against a stubbed frappe: the bar, the reloads,
+  the dirty form, failure, a flushed job, resuming, closing early, and the one-time listener.
+- `tests/test_project_prompt.py` (bench only) now counts only the outcome's broadcast when it
+  checks who hears it.
+- The Build out step:
+  - `scripts/test_project_creation_progress.mjs` checks the offer: shown only with the planner
+    page and the server's yes, never for an existing project, and its click is the route above.
+  - `scripts/test_planner_url_filters.js` runs the round trip on its model of v16.50's router:
+    - the landing consumes `build_out` and the address drops it;
+    - Start from template… opens once;
+    - Back, Forward and a reload ask nothing;
+    - another screen, an unknown value, another project's answer or a refusal opens nothing.
+
+    A copy that keeps the key in the address, or leaves it in `route_options`, fails it.
+  - `tests/test_planner_templates.py` (`TestBuildOutOffer`) covers the gate.
+- The review's fixes:
+  - **Server** (`tests/test_project_creation_progress.py`, 35 tests): the write check refuses
+    before anything is recorded; the locked read's value is the one acted on; the back-link is
+    locked and passes over Cancelled and Canceled; a linked Project gets the SMS and its Drive
+    folder (a Drive failure is reported, not fatal); a deduplicated no-op reports the job that is
+    there; a recorded "finished" wins over RQ's "started".
+  - **Client** (`scripts/test_project_creation_progress.mjs`, 26 checks): a request that fails
+    without any callback leaves nothing watching, and the next click works; a 502 while polling is
+    one "Reconnecting" line and no popup, then the steps again; closed early on the Kanban board,
+    the outcome is said there once and the board repaints, and stays quiet where the form or the
+    guided page reports.
+  - Each was mutation-checked: without the write check, the Cancelled filter, the linked
+    Project's SMS, the early-close reporter or the reconnecting state, its suite fails.
+- The re-review's fixes:
+  - `tests/test_project_creation_progress.py`: the back-link query is not a locking read, and
+    the only lock is on the found Project, by name. The deduplicated-enqueue test now reaches
+    the `None` branch: the first check finds no job, and the second finds the other request's.
+    There are also source checks of the reader gate on the guided page and the Hand-Off tab.
+  - `tests/test_unconverted_nag.py` (bench-free; `test_status_alerts.py` runs nowhere in CI)
+    runs `deliver_closed_won_alerts`: no text for a historical deal, and the usual one otherwise.
+  - `scripts/test_project_creation_progress.mjs` runs `opportunity.js`'s real `refresh` on a won
+    deal with no project: a writer is asked, a reader is not.
+  - Mutation-checked: putting `for_update` back on the back-link query, dropping the dedupe
+    branch, the historical guard or the reader gate each fails its suite.
+
 ## [1.748.0] - 2026-10-27
 
 ### Added

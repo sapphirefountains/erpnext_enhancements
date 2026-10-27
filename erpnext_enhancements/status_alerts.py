@@ -36,7 +36,12 @@ from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, exclude_filters, has_field
+from erpnext_enhancements.crm_enhancements.historical import (
+	HISTORICAL_FIELD,
+	exclude_filters,
+	has_field,
+	is_historical,
+)
 from erpnext_enhancements.feature_flags import process_automation_enabled
 
 
@@ -153,8 +158,16 @@ def deliver_closed_won_alerts(opportunity):
 	:mod:`erpnext_enhancements.crm_enhancements.project_prompt`), so the alert only
 	goes out once the Project exists — answering "No" to the create prompt sends
 	nothing.
+
+	Never for a historical deal (``custom_is_historical``, v1.749.0). A deal won long
+	before ERPNext can get its Project linked now (the hand-off links one the Closed
+	Won Reconciliation report back-linked), and a "WON:" text about it would tell the
+	team a long-closed sale just happened. Historical deals are already left out of
+	every won-without-project warning and the Closed-Won KPIs (crm_enhancements/historical.py).
 	"""
 	if _in_maintenance_context() or not process_automation_enabled():
+		return
+	if is_historical(opportunity):
 		return
 	recipients = _alert_recipients("closed_won")
 	if not recipients:

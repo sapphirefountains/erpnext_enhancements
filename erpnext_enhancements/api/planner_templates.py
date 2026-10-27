@@ -10,6 +10,8 @@ through ``planner_actions.build_out_tasks`` like any other rows (as drafts in Dr
   hours, phase, crew size, ``needs`` as ``row:N``), plus each picked phase's procurement checklist, in
   ONE answer. The rules (order inside a phase, 500 and 600 side by side, 800 never) are
   ``project_enhancements/planner_templates.py``'s, which is pure and tested on its own.
+* :func:`planner_template_offer` (v1.749.0) answers whether the hand-off's success message offers
+  "Build out from a planner template": a planner role, Task write, and at least one template.
 
 Templates are ERPNext Project Templates edited in the Desk (System Manager, Projects Manager); see
 ``project_enhancements/README.md`` "How to edit". They are read with ``get_all``: the planner role is
@@ -140,6 +142,31 @@ def get_planner_templates():
 			entry["loose"] = structure.get("loose") or 0
 			phase_templates.append(entry)
 	return {"phase_templates": phase_templates, "bundles": bundles, "ready": True}
+
+
+@frappe.whitelist()
+def planner_template_offer():
+	"""Whether to offer "Build out from a planner template" after a hand-off makes its Project.
+
+	v1.749.0 (TASK-2026-02984). Nik kept the hand-off's Create Project list to job templates:
+	created from scratch, a phase template or bundle would have every task dated on the project's
+	first day. So once the Project exists, the success message (``create_project_prompt.js``) offers
+	the next step instead: the new Project in the Project Planner, with Build out's *Start from
+	template...* open.
+
+	``{"offer": bool}``. True only when that link would work for the person asking: they hold a
+	planner role (as :func:`get_planner_templates` requires), they may write Tasks (the Build out
+	grid's own condition, the planner's ``can_edit``), and the site has at least one enabled planner
+	template. Never refuses: a False answer only means the message has no link.
+	"""
+	if frappe.session.user != "Administrator" and not pp.PLANNER_ROLES & set(frappe.get_roles()):
+		return {"offer": False}
+	if not frappe.has_permission("Task", "write"):
+		return {"offer": False}
+	if not _ready():
+		return {"offer": False}
+	enabled = {"custom_template_kind": ["in", list(tpl.KINDS)], "disabled": 0}
+	return {"offer": bool(frappe.db.exists(TEMPLATE_DOCTYPE, enabled))}
 
 
 def _bundle_requests(bundles, bundle_phase):

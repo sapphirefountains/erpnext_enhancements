@@ -607,11 +607,18 @@ class GuidedEntry {
 		if (this.nudged.has(this.name)) return;
 		this.nudged.add(this.name);
 		if (v.status !== "Closed Won" || v.custom_created_project || v.custom_is_historical) return;
+		// v1.749.0: the check this page makes for its own edits. Creating the project needs write
+		// on the Opportunity, so a read-only visitor is not asked to start what will be refused.
+		if (!(this.flow && this.flow.can_write)) return;
 		crm.confirm_won_next_step(this.name, { mode: "reopen" });
 	}
 
 	on_project_status(data) {
 		if (this.doctype !== "Opportunity" || !this.showing() || data.opportunity_name !== this.name) return;
+		// v1.749.0: while the progress dialog (create_project_prompt.js) watches this creation, it says
+		// how it went and reloads this page itself, through sf-record-changed.
+		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
+		if (crm && crm.is_tracking_project_creation && crm.is_tracking_project_creation(data.opportunity_name)) return;
 		// An open form of the same record says this already (opportunity.js binds it there).
 		const view = frappe.views && frappe.views.formview && frappe.views.formview.Opportunity;
 		const form_says = !!(view && view.frm && view.frm.doc && view.frm.doc.name === data.opportunity_name);
@@ -624,7 +631,23 @@ class GuidedEntry {
 				});
 			} else if (data.status === "success" && data.project_doc) {
 				const link = frappe.utils.get_form_link("Project", data.project_doc.name, true);
-				this.sf.toast(__("Project {0} was created.", [data.project_doc.name]), { tone: "success", timeout: 8000 });
+				const project = data.project_doc.name;
+				const made = __("Project {0} was created.", [project]);
+				// v1.749.0: the next step the dialog offers too, only where it would work (build_out_offer).
+				const offer = crm && crm.build_out_offer ? crm.build_out_offer() : Promise.resolve(false);
+				offer.then((yes) =>
+					this.sf.toast(
+						made,
+						yes
+							? {
+									tone: "success",
+									timeout: 15000,
+									action_label: __("Build out from a planner template"),
+									on_action: () => crm.open_planner_build_out(project),
+								}
+							: { tone: "success", timeout: 8000 }
+					)
+				);
 				if (data.drive_error) {
 					frappe.msgprint({
 						title: __("Google Drive Integration Failed"),
@@ -632,8 +655,12 @@ class GuidedEntry {
 						message: `${__("Project {0} was created, but its Drive folder was not.", [link])}<pre>${frappe.utils.escape_html(String(data.drive_error))}</pre>`,
 					});
 				}
+			} else if (data.status === "exists" && data.project) {
+				// v1.749.0: it already had one (or one already pointed at it, and is now linked).
+				this.sf.toast(__("This opportunity has project {0}.", [data.project]), { tone: "success", timeout: 8000 });
 			} else {
-				this.sf.toast(__("Project creation failed. The Error Log has the details."), { tone: "warning", timeout: 8000 });
+				const failed = __("Project creation failed. The Error Log has the details.");
+				this.sf.toast(data.reason ? `${failed} ${data.reason}` : failed, { tone: "warning", timeout: 8000 });
 			}
 		}
 		this.reload_record();

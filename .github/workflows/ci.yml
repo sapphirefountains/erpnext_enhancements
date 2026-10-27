@@ -1137,6 +1137,8 @@ jobs:
       # and that the seed patch is idempotent, never overwrites, rolls a refused template back whole and
       # never raises. Under node it opens the dialog through a stand-in that asks get_data while the
       # dialog is being constructed (the v1.602.1 trap). Reuses Phase 6B's fake site, so it is unittest.
+      # v1.749.0 (TestBuildOutOffer): planner_template_offer, whether the hand-off's success message
+      # offers "Build out from a planner template": a planner role, Task write and an enabled template.
       - name: Project planner phase templates and task bundles (T3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_templates -v
       # Project Planner T4 (v1.609.0), the Build out grid's "AI draft…". The model is a fake: nothing here
@@ -1971,6 +1973,25 @@ jobs:
       # warning for a deal still on a Lead (Nik's field review, 2026-10-13).
       - name: Opportunity to Project copy and Lead warning (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_project_copy -v
+      # v1.749.0, "Create Project in PM System" shows a progress bar and refreshes the page. Runs the
+      # real background job, the enqueue and the state endpoint against a frappe stub (its own, so its
+      # own step): each step reported in order to the requester, counting one more finished (a bar
+      # driven by anything else is a guess); every outcome recorded and broadcast, the already-linked
+      # one included (it used to send nothing, so a bar waiting on it would never end); and no second
+      # Project on a retry after a deploy flushed the queue — the row lock first, a back-linked
+      # Project linked rather than duplicated, and a failure before the link rolled back (the worker's
+      # closing commit used to keep a half-made Project).
+      - name: Project creation progress and no second Project (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_creation_progress -v
+      # Its client half, executed: the dialog's bar moves one step per event and ignores other deals';
+      # watching starts before the request, so a fast job is heard by the dialog; the Desk form and
+      # the guided page reload once when it is over (a form with unsaved edits is asked first); a
+      # failure says why, escaped, with Try again; a job a deploy flushed is said to have stopped
+      # rather than waited on forever; and opportunity.js's listener is registered once (it was
+      # added on every refresh, so one creation got as many alerts and reloads). TASK-2026-02984: a
+      # project just made offers "Build out from a planner template" only where it would work.
+      - name: Project creation progress dialog and page refresh (bench-free, node)
+        run: node scripts/test_project_creation_progress.mjs
       # Form kit P2-A. The normalization library (utils/normalize.py) and its JavaScript
       # twin (public/js/normalize/normalize.js) run the SAME 163 cases from
       # tests/fixtures/normalize_cases.json, so the Desk and the server cannot disagree
@@ -3899,6 +3920,8 @@ jobs:
       # so 6A's and 6D's requires in one tick each added a <link>. Runs
       # scripts/test_planner_url_filters.js, the real page scripts against a model of v16.50's
       # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
+      # v1.749.0: the hand-off's /gantt/<project>?build_out=template, a one-shot taken off route_options
+      # and the address on landing, so Back, Forward and a reload never open Start from template again.
       - name: Custom pages S5c planner filters in the address (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v
       # Planner toolbar redesign (v1.687.0). Both planners' bars fold into Views / Display / Edit /

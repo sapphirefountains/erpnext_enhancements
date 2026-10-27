@@ -1385,10 +1385,13 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 				self.assertIn(f"const {name} = {{", js)
 				self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', js)
 				# One frappe.require, behind p6a_require, which 6A and 6D share (S5c, v1.676.0): two in
-				# one tick each appended a <link>, and the stylesheet was on the page twice.
+				# one tick each appended a <link>, and the stylesheet was on the page twice. The Project
+				# Planner's Gantt waits on the same request before the hand-off's Build out link opens
+				# the grid (ppg_build_out_if_asked, v1.749.0): a third caller, still one request.
 				self.assertEqual(len(re.findall(r"frappe\.require\(", js)), 1)
 				self.assertIn(f"Promise.resolve(frappe.require({name}.kit))", js)
-				self.assertEqual(len(re.findall(r"this\.p6a_require\(\(\) => this\.", js)), 2)
+				callers = 3 if name == "PP6A" else 2
+				self.assertEqual(len(re.findall(r"this\.p6a_require\(\(\) => this\.", js)), callers)
 		styles = _js_code(_read(KIT_DIR / "styles.js"))
 		self.assertIn('export const CSS = "";', styles)
 		self.assertNotIn("@import", styles)

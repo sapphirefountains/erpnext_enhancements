@@ -103,6 +103,10 @@ const PP = {
 	// all_tasks (P2, D6) is a filter like the rest, "1" when "Show all tasks" is on and "" (the default,
 	// phase and crew work only) when not; the server filters, so a change of it loads the week again.
 	url_filters: ["project", "pm", "group", "all_tasks"],
+	// Keys an address gives once, to do one thing on landing, and which are then taken out of it: Back,
+	// Forward and a reload of that entry must not do it again. ?build_out=template is the hand-off's
+	// "Build out from a planner template" (v1.749.0; ppg_take_build_out).
+	once_params: ["build_out"],
 	// The longest value the address may give one of them: a document name's limit.
 	url_value_max: 140,
 	hold_ms: 300,
@@ -332,6 +336,7 @@ class ProjectPlanner {
 		if (frappe.route_options && typeof frappe.route_options === "object") {
 			delete frappe.route_options.capacity;
 		}
+		this.ppg_take_build_out(target); // v1.749.0: ?build_out=template, consumed like the flag above
 		if (target.redirect) return this.ppl_redirect(target.redirect);
 		this.take_route_filters();
 		this.view = target.view;
@@ -506,7 +511,8 @@ class ProjectPlanner {
 	// The page's one history write: the filters on screen into the entry on screen, in place. Only
 	// while the router is on the planner's own path (a late render must not write another page's
 	// address) and never over filters the page has not read yet (a Back the router is still routing).
-	// The path as the router wrote it (a shell segment included), any key that is not the planner's,
+	// The path as the router wrote it (a shell segment included), any key that is not the planner's
+	// (except PP.once_params, which have done their one thing and go),
 	// the hash and history.state are kept. Values are encoded as v16.50's set_route encodes them, so
 	// the router reads the address it would have written and pushes no duplicate, except that an
 	// apostrophe is written as the browser itself writes it in a query (%27): left bare, the address
@@ -523,7 +529,7 @@ class ProjectPlanner {
 			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
 		});
 		new URLSearchParams(window.location.search).forEach((value, key) => {
-			if (!PP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
+			if (!PP.url_filters.includes(key) && !PP.once_params.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
 		});
 		const search = pairs.length ? `?${pairs.join("&")}` : "";
 		if (search === window.location.search) return;
@@ -12996,6 +13002,9 @@ const PPG = {
 	},
 	// The synthetic row the undated work hangs under. Not a Task name: those never contain a colon.
 	not_scheduled: "ppg:not-scheduled",
+	// /gantt/<project>?build_out=template opens Build out on Start from template… (v1.749.0).
+	build_out_param: "build_out",
+	build_out_template: "template",
 	row_height: 34,
 };
 
@@ -13191,6 +13200,46 @@ const PPG_METHODS = {
 		this.ppg_destroy();
 	},
 
+	// v1.749.0 (TASK-2026-02984). The Opportunity's hand-off, once it has made the Project, offers
+	// "Build out from a planner template" (create_project_prompt.js): /gantt/<project>?build_out=template.
+	// The key is taken off route_options here, on every landing, so no later route writes it again, and
+	// write_filter_url leaves it out of the address (PP.once_params): Back, Forward and a reload of this
+	// entry show the Gantt and nothing more. Only the landing that carried it asks, and only for the
+	// Gantt's own project; ppg_load acts on it once that project has loaded.
+	ppg_take_build_out(target) {
+		const state = this.ppg_state();
+		const opts = frappe.route_options;
+		let value = "";
+		if (opts && typeof opts === "object" && Object.prototype.hasOwnProperty.call(opts, PPG.build_out_param)) {
+			value = String(opts[PPG.build_out_param] == null ? "" : opts[PPG.build_out_param]).trim().toLowerCase();
+			delete opts[PPG.build_out_param];
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
+		state.build_out = target.view === PPG.view && target.project && value === PPG.build_out_template ? target.project : "";
+	},
+
+	// The Gantt's project has loaded: open Build out on Start from template… if the landing asked. Once.
+	ppg_build_out_if_asked(answer) {
+		const state = this.ppg_state();
+		const project = state.build_out;
+		state.build_out = "";
+		if (!project || project !== state.project || !answer || !answer.gantt || answer.gantt.project !== project) return null;
+		const title = answer.gantt.title || this.as4_project_title(project);
+		// The grid lives in the planner kit's drawer, which may still be on its way.
+		return this.p6a_require(() => this.ppg_open_build_out(project, title, __("Start from template…")));
+	},
+
+	// T1's grid for `project`, then, with `label`, one of its footer's starting points as if clicked.
+	// Build out ▾ (ppg_build_menu) and the hand-off's link both come through here.
+	ppg_open_build_out(project, title, label) {
+		return Promise.resolve(this.t1_open_build_out(project, title)).then(() => {
+			const grid = this.t1 && this.t1.grid;
+			if (!label || !grid || grid.project !== project) return;
+			const action = this.t1_actions(grid, 0, 0).find((item) => item.label === label);
+			if (action && action.on_click) action.on_click();
+		});
+	},
+
 	// The project the Gantt tab opens: the Project filter's, else this device's last one.
 	ppg_default_project() {
 		return this.project || this.ppg_state().project || this.ppg_remembered();
@@ -13266,10 +13315,12 @@ const PPG_METHODS = {
 				this.write_filter_url();
 				this.$title.text(this.title());
 				this.render();
+				this.ppg_build_out_if_asked(answer); // v1.749.0: the hand-off's Build out link
 			},
 			() => {
 				if (token !== this.request) return;
 				this.$body.removeClass("pp-loading");
+				this.ppg_state().build_out = ""; // nothing is known about the project: no grid over it
 				this.ppg_trouble();
 			}
 		);
@@ -13292,6 +13343,7 @@ const PPG_METHODS = {
 	// picker with a sentence.
 	ppg_refused(answer) {
 		const state = this.ppg_state();
+		state.build_out = "";
 		if (state.project && this.ppg_remembered() === state.project) this.ppg_remember("");
 		if (state.landed && state.landed === state.project) {
 			state.landed = null;
@@ -13474,13 +13526,7 @@ const PPG_METHODS = {
 		const state = this.ppg_state();
 		const project = state.project;
 		const title = this.as4_project_title(project);
-		const open = (label) => () =>
-			Promise.resolve(this.t1_open_build_out(project, title)).then(() => {
-				const grid = this.t1 && this.t1.grid;
-				if (!label || !grid || grid.project !== project) return;
-				const action = this.t1_actions(grid, 0, 0).find((item) => item.label === label);
-				if (action && action.on_click) action.on_click();
-			});
+		const open = (label) => () => this.ppg_open_build_out(project, title, label);
 		const starts = this.t1_actions({}, 0, 0).filter((item) => !item.primary && item.label !== __("Add row"));
 		const items = [{ label: __("Build out grid…"), on_click: open(null) }].concat(
 			starts.map((item) => ({ label: item.label, title: item.title, on_click: open(item.label) }))
