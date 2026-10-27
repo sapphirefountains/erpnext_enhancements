@@ -375,7 +375,7 @@
 	}
 
 	// The dialog shows the creation's progress and reloads this form when the project exists
-	// (create_project_prompt.js, v1.747.0), so there is no on_success reload here.
+	// (create_project_prompt.js, v1.749.0), so there is no on_success reload here.
 	function create_project(frm) {
 		// The job saves this opportunity when it links the project, so edits not saved yet
 		// would then be refused by a save, and lost by the reload. Saved first, on purpose.

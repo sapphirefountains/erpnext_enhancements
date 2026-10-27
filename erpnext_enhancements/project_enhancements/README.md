@@ -2269,7 +2269,7 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
   through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
   routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
   zoom, and Today scrolls to today.
-- **`?build_out=template`** (v1.747.0, TASK-2026-02984). The Opportunity hand-off's "Build out from a
+- **`?build_out=template`** (v1.749.0, TASK-2026-02984). The Opportunity hand-off's "Build out from a
   planner template", offered once its Project is made (`crm_enhancements/create_project_prompt.js`),
   lands on `/gantt/<project>?project=<project>&build_out=template`. Once that project has loaded
   (`ppg_build_out_if_asked`), Build out opens on *Start from template…*, by the same path as the

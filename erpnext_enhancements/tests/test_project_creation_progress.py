@@ -1,4 +1,4 @@
-"""Bench-free tests for the progress of "Create Project in PM System" (v1.747.0).
+"""Bench-free tests for the progress of "Create Project in PM System" (v1.749.0).
 
 Nik, 2026-10-27: "create a progress bar to show it's current progress in creation and auto
 refresh the page when it's done so the new fields show up." The bar is drawn from what the
@@ -12,7 +12,7 @@ What these guard, most expensive first:
 * **A second Project.** Every deploy FLUSHDBs the job queue, so "start it again" has to be safe.
   The job takes the Opportunity's row lock before anything else, makes nothing for an
   Opportunity that has its Project, links a Project that already points back at it instead of
-  making another, and rolls a failure back until the link is committed. Before v1.747.0 a
+  making another, and rolls a failure back until the link is committed. Before v1.749.0 a
   failure was caught, the job returned normally, and the worker's closing commit kept whatever
   had been inserted, so a retry made a duplicate.
 * **A bar that lies.** The steps the job reports must be the steps the dialog lists, in order,

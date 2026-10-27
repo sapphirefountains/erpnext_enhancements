@@ -105,7 +105,7 @@ const PP = {
 	url_filters: ["project", "pm", "group", "all_tasks"],
 	// Keys an address gives once, to do one thing on landing, and which are then taken out of it: Back,
 	// Forward and a reload of that entry must not do it again. ?build_out=template is the hand-off's
-	// "Build out from a planner template" (v1.747.0; ppg_take_build_out).
+	// "Build out from a planner template" (v1.749.0; ppg_take_build_out).
 	once_params: ["build_out"],
 	// The longest value the address may give one of them: a document name's limit.
 	url_value_max: 140,
@@ -336,7 +336,7 @@ class ProjectPlanner {
 		if (frappe.route_options && typeof frappe.route_options === "object") {
 			delete frappe.route_options.capacity;
 		}
-		this.ppg_take_build_out(target); // v1.747.0: ?build_out=template, consumed like the flag above
+		this.ppg_take_build_out(target); // v1.749.0: ?build_out=template, consumed like the flag above
 		if (target.redirect) return this.ppl_redirect(target.redirect);
 		this.take_route_filters();
 		this.view = target.view;
@@ -13002,7 +13002,7 @@ const PPG = {
 	},
 	// The synthetic row the undated work hangs under. Not a Task name: those never contain a colon.
 	not_scheduled: "ppg:not-scheduled",
-	// /gantt/<project>?build_out=template opens Build out on Start from template… (v1.747.0).
+	// /gantt/<project>?build_out=template opens Build out on Start from template… (v1.749.0).
 	build_out_param: "build_out",
 	build_out_template: "template",
 	row_height: 34,
@@ -13200,7 +13200,7 @@ const PPG_METHODS = {
 		this.ppg_destroy();
 	},
 
-	// v1.747.0 (TASK-2026-02984). The Opportunity's hand-off, once it has made the Project, offers
+	// v1.749.0 (TASK-2026-02984). The Opportunity's hand-off, once it has made the Project, offers
 	// "Build out from a planner template" (create_project_prompt.js): /gantt/<project>?build_out=template.
 	// The key is taken off route_options here, on every landing, so no later route writes it again, and
 	// write_filter_url leaves it out of the address (PP.once_params): Back, Forward and a reload of this
@@ -13315,7 +13315,7 @@ const PPG_METHODS = {
 				this.write_filter_url();
 				this.$title.text(this.title());
 				this.render();
-				this.ppg_build_out_if_asked(answer); // v1.747.0: the hand-off's Build out link
+				this.ppg_build_out_if_asked(answer); // v1.749.0: the hand-off's Build out link
 			},
 			() => {
 				if (token !== this.request) return;

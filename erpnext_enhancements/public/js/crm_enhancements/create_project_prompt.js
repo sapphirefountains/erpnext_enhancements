@@ -30,7 +30,7 @@
  * reopen-on-load check (mode "reopen"; see opportunity.js) and the Hand-Off
  * Process tab are the entry points.
  *
- * Once queued, the creation is watched (v1.747.0): a progress dialog lists the
+ * Once queued, the creation is watched (v1.749.0): a progress dialog lists the
  * background job's steps and fills its bar as each one finishes, from the
  * job's own `ee_project_creation_progress` events
  * (crm_enhancements/project_creation_progress.py). When it is over the
@@ -57,7 +57,7 @@ frappe.provide("erpnext_enhancements.crm");
 	const QUIET_TIMEOUT_MS = 10000;
 	const trackers = {}; // opportunity_name -> the tracker watching its creation
 
-	// A read that says nothing when it fails (v1.747.0 review). frappe.call's own handlers put up a
+	// A read that says nothing when it fails (v1.749.0 review). frappe.call's own handlers put up a
 	// message for a 502 or a 504, which during a deploy is every poll, and on a QueryTimeoutError
 	// frappe.xcall never settles at all. The creation state and the Build out offer are advisory
 	// reads, so they go through fetch (as feedback/transport.js does), settle on every outcome, a
@@ -104,7 +104,7 @@ frappe.provide("erpnext_enhancements.crm");
 	 * from the pieces: this check and the insert have to agree, and there are now
 	 * two ways to open the gate.
 	 *
-	 * Asks first whether a creation is already under way (v1.747.0): one is then
+	 * Asks first whether a creation is already under way (v1.749.0): one is then
 	 * shown, rather than a form that would start a second. This is what makes a
 	 * reload mid-creation, or a colleague on the same deal, safe.
 	 */
@@ -322,7 +322,7 @@ frappe.provide("erpnext_enhancements.crm");
 	}
 
 	// -----------------------------------------------------------------------
-	// Progress (v1.747.0)
+	// Progress (v1.749.0)
 	// -----------------------------------------------------------------------
 
 	const PROGRESS_STYLE = `
@@ -431,7 +431,7 @@ frappe.provide("erpnext_enhancements.crm");
 	}
 
 	// -----------------------------------------------------------------------
-	// The next step: Build out from a planner template (v1.747.0, TASK-2026-02984)
+	// The next step: Build out from a planner template (v1.749.0, TASK-2026-02984)
 	//
 	// Nik kept this dialog's template list to job templates: the Project Planner's phase templates
 	// and bundles (Project Template custom_template_kind) would have every task dated on the

@@ -1137,7 +1137,7 @@ jobs:
       # and that the seed patch is idempotent, never overwrites, rolls a refused template back whole and
       # never raises. Under node it opens the dialog through a stand-in that asks get_data while the
       # dialog is being constructed (the v1.602.1 trap). Reuses Phase 6B's fake site, so it is unittest.
-      # v1.747.0 (TestBuildOutOffer): planner_template_offer, whether the hand-off's success message
+      # v1.749.0 (TestBuildOutOffer): planner_template_offer, whether the hand-off's success message
       # offers "Build out from a planner template": a planner role, Task write and an enabled template.
       - name: Project planner phase templates and task bundles (T3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_templates -v
@@ -1973,7 +1973,7 @@ jobs:
       # warning for a deal still on a Lead (Nik's field review, 2026-10-13).
       - name: Opportunity to Project copy and Lead warning (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_project_copy -v
-      # v1.747.0, "Create Project in PM System" shows a progress bar and refreshes the page. Runs the
+      # v1.749.0, "Create Project in PM System" shows a progress bar and refreshes the page. Runs the
       # real background job, the enqueue and the state endpoint against a frappe stub (its own, so its
       # own step): each step reported in order to the requester, counting one more finished (a bar
       # driven by anything else is a guess); every outcome recorded and broadcast, the already-linked
@@ -3920,7 +3920,7 @@ jobs:
       # so 6A's and 6D's requires in one tick each added a <link>. Runs
       # scripts/test_planner_url_filters.js, the real page scripts against a model of v16.50's
       # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
-      # v1.747.0: the hand-off's /gantt/<project>?build_out=template, a one-shot taken off route_options
+      # v1.749.0: the hand-off's /gantt/<project>?build_out=template, a one-shot taken off route_options
       # and the address on landing, so Back, Forward and a reload never open Start from template again.
       - name: Custom pages S5c planner filters in the address (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v

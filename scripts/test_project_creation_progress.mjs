@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * "Create Project in PM System" shows its progress and refreshes the page (v1.747.0), executed
+ * "Create Project in PM System" shows its progress and refreshes the page (v1.749.0), executed
  * against a stubbed frappe rather than grepped. Nik, 2026-10-27: "create a progress bar to show
  * it's current progress in creation and auto refresh the page when it's done so the new fields
  * show up."
@@ -642,7 +642,7 @@ await check("the form's listener ignores another deal's creation", async () => {
 	assert.equal(w.alerts.length, 0);
 });
 
-// ---- 8: the review's hardening (v1.747.0) -----------------------------------------------------
+// ---- 8: the review's hardening (v1.749.0) -----------------------------------------------------
 
 await check("a request that fails without any callback (a QueryTimeout) leaves nothing watching", async () => {
 	// v16 runs neither callback nor error on a QueryTimeoutError; only the jqXHR settles.

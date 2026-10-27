@@ -987,7 +987,7 @@ class TestEndpoints(_SeededSite):
 
 
 class TestBuildOutOffer(_SeededSite):
-	"""planner_template_offer (v1.747.0, TASK-2026-02984): whether the hand-off's success message offers
+	"""planner_template_offer (v1.749.0, TASK-2026-02984): whether the hand-off's success message offers
 	"Build out from a planner template". Only where the link would work; a no never refuses."""
 
 	def test_offered_to_a_planner_who_may_build_out_when_a_template_exists(self):

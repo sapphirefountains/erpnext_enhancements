@@ -19,7 +19,7 @@
  *  - Listen on the `project_creation_status` realtime channel to report
  *    background project-creation success/failure (incl. Google Drive folder
  *    provisioning results). Registered once, and quiet while the progress
- *    dialog in create_project_prompt.js is watching that creation (v1.747.0).
+ *    dialog in create_project_prompt.js is watching that creation (v1.749.0).
  */
 function sync_tags_from_child_table(frm) {
 	let value_streams = (frm.doc.custom_value_stream || [])
@@ -150,7 +150,7 @@ frappe.ui.form.on("Opportunity", {
 	},
 });
 
-// The real-time listener for completion, registered once (v1.747.0). It was registered in
+// The real-time listener for completion, registered once (v1.749.0). It was registered in
 // `refresh`, which runs on every load and reload, so a form opened a few times answered one
 // creation with that many alerts and reloads — the reload after a creation itself added one.
 //

@@ -274,7 +274,7 @@ class TestCreationStatusRecipients(FrappeTestCase):
 			patch.object(frappe, "sendmail") as sendmail,
 		):
 			create_project_from_opportunity_background("OPP-0001", users, "PT-0001")
-		# Only the outcome's broadcast: since v1.747.0 the job also pushes each step to the
+		# Only the outcome's broadcast: since v1.749.0 the job also pushes each step to the
 		# requester (ee_project_creation_progress), which says nothing about who hears the outcome.
 		return [
 			c.kwargs["user"]

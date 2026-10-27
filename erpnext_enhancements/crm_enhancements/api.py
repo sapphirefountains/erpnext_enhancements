@@ -11,7 +11,7 @@ This module backs the custom Opportunity workflow used by Sapphire Fountains:
   background worker creates a Project from the Opportunity, copies its
   attachments, and (via :mod:`erpnext_enhancements.google_drive.drive_utils`)
   provisions a Google Drive folder tree, then notifies the requesting users in
-  real time and by email. Since v1.747.0 it reports each step as it starts
+  real time and by email. Since v1.749.0 it reports each step as it starts
   (:mod:`~erpnext_enhancements.crm_enhancements.project_creation_progress`), so
   the dialog shows a progress bar and the page refreshes when it is done.
 """
@@ -78,7 +78,7 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	Raises:
 		frappe.PermissionError: when the caller may not write the Opportunity.
 	"""
-	# Write access to the deal, first (v1.747.0 review). The job runs as Administrator: it
+	# Write access to the deal, first (v1.749.0 review). The job runs as Administrator: it
 	# makes a Project, saves the Opportunity, and can link an existing Project to it. Until
 	# now any desk user could start that for any Opportunity, and read back its creation
 	# state (the requester, the Error Log's name). project_creation_state's read check is
@@ -104,7 +104,7 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	if not project_template:
 		frappe.throw("Please select a Project Template.")
 
-	# v1.747.0. Already made: say so rather than queue a job that would only find it.
+	# v1.749.0. Already made: say so rather than queue a job that would only find it.
 	project = frappe.db.get_value("Opportunity", opportunity_name, "custom_created_project")
 	if project:
 		return {"status": "exists", "project": project}
@@ -220,7 +220,7 @@ CANCELLED_PROJECT = ["Cancelled", "Canceled"]
 
 
 class _ProjectExists(Exception):
-	"""The Opportunity already has its Project, so this job makes none (v1.747.0).
+	"""The Opportunity already has its Project, so this job makes none (v1.749.0).
 
 	Control flow like :class:`_HandoffBlocked`: it unwinds to the handler that
 	still reports back, because the person watching the progress bar has to be
@@ -261,7 +261,7 @@ def _send_closed_won_alerts(opportunity_name):
 def _provision_project_drive(project, opp):
 	"""Give ``project`` its Google Drive folder: ``(drive_success, error_details, folder_id)``.
 
-	Shared by a Project this job made and one it linked (v1.747.0). Never raises: a Drive failure
+	Shared by a Project this job made and one it linked (v1.749.0). Never raises: a Drive failure
 	is logged and reported, and never undoes the Project, which is committed before this runs.
 	"""
 	try:
@@ -321,7 +321,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	Enqueued by :func:`enqueue_project_creation`. Runs the whole flow as
 	Administrator (restoring the original session user in a ``finally`` block)
 	and is idempotent, so a creation a deploy interrupted can simply be started
-	again (v1.747.0):
+	again (v1.749.0):
 
 	* it locks the Opportunity's row (``SELECT ... FOR UPDATE``) before anything
 	  else, so a second job waits for the first to commit and then finds its
@@ -336,7 +336,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	  one gets after the link: the team SMS and, if it has none, its Drive
 	  folder. It gets no "New Project Created" email;
 	* a failure before the link is committed rolls back, so a retry never finds
-	  half a Project. Until v1.747.0 the exception was caught and the job
+	  half a Project. Until v1.749.0 the exception was caught and the job
 	  returned normally, and the worker's closing commit kept whatever had been
 	  inserted.
 
@@ -390,7 +390,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	# UnboundLocalError killed the job before anyone heard the project existed.
 	drive_success = False
 	drive_error_details = None
-	# v1.747.0: what the progress dialog is told. The job was queued as the person who clicked,
+	# v1.749.0: what the progress dialog is told. The job was queued as the person who clicked,
 	# so this is them; the steps run as Administrator below.
 	requester = frappe.session.user
 	step = "check"
@@ -728,7 +728,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		"status": status,
 		"project_doc": project_doc,
 		"opportunity_name": opportunity_name,
-		# The Project's name on every outcome that has one (v1.747.0), so the
+		# The Project's name on every outcome that has one (v1.749.0), so the
 		# dialog can link it without reaching into project_doc.
 		"project": (project_doc or {}).get("name") or existing_project,
 	}

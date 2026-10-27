@@ -1387,7 +1387,7 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 				# One frappe.require, behind p6a_require, which 6A and 6D share (S5c, v1.676.0): two in
 				# one tick each appended a <link>, and the stylesheet was on the page twice. The Project
 				# Planner's Gantt waits on the same request before the hand-off's Build out link opens
-				# the grid (ppg_build_out_if_asked, v1.747.0): a third caller, still one request.
+				# the grid (ppg_build_out_if_asked, v1.749.0): a third caller, still one request.
 				self.assertEqual(len(re.findall(r"frappe\.require\(", js)), 1)
 				self.assertIn(f"Promise.resolve(frappe.require({name}.kit))", js)
 				callers = 3 if name == "PP6A" else 2

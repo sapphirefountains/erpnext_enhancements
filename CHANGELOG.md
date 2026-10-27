@@ -99,7 +99,17 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
     report set `Project.custom_opportunity` without filling in `custom_created_project`. A Project
     that points back at the Opportunity this way is now linked, the oldest first, and no second
     one is made. `reconciliation.py` already refuses two Projects for one Opportunity, because
-    they double-count its revenue. The back-link is read under the lock too.
+    they double-count its revenue.
+    - **The back-link query takes no lock.** `Project.custom_opportunity` has no index, so a
+      `FOR UPDATE` read of it scans `tabProject`. Under REPEATABLE READ, InnoDB locks every row
+      it scans and the gaps between them: in the usual case (no back-link) the whole table,
+      held until the link commits, through the template's task creation. Every Project save
+      and insert on the site would have waited on it, and a long template could push them
+      past the 50 s lock timeout. An earlier draft of this release did exactly that; the
+      review caught it before merge.
+    - **What locks instead.** The Opportunity's row lock already serializes this job. The one
+      Project found is then locked by name, its primary key, which locks that row alone. A
+      comment at the query says why, so nobody puts `for_update` back. No index is added here.
     - A Project in Cancelled or Canceled is passed over: a PM retired it, so a new one is made
       instead. ("Canceled" is this site's spelling and "Cancelled" ERPNext's own.)
     - A linked Project gets what a made one gets after the link. It gets the Closed-Won team SMS,
@@ -107,6 +117,19 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
       so the team has not heard. If it has no Drive folder, it gets one; `_provision_project_drive`
       is now shared by both paths, and a failure there is reported but never undoes the link.
     - It gets no "New Project Created" email, because nothing is new.
+- **No "WON:" text for a historical deal.** `deliver_closed_won_alerts` now returns early when
+  the Opportunity is flagged historical (`custom_is_historical`). Linking a Project that the
+  reconciliation report back-linked to a deal won long before ERPNext would otherwise text the
+  team about a sale that closed years ago. Historical deals are already left out of every
+  won-without-project warning and the Closed-Won KPIs.
+- **Only someone who may change the deal is offered the creation.** Creating the project needs
+  write on the Opportunity, so a reader who was asked "Create project now?" on opening a won
+  deal would fill in the dialog only to be refused. The reopen prompt now asks only a writer:
+  - the Desk form uses `frappe.perm.has_perm(doctype, 0, "write", doc)`, which is doc-aware,
+    so user permissions and shares count;
+  - the guided page uses its own edit check, `flow.can_write`.
+
+  The Hand-Off tab's Create Project in PM System button follows the same rule.
 - **Starting a creation needs write access to the Opportunity.** `enqueue_project_creation` checks
   nothing. Its job runs as Administrator, and since this release it can link an existing Project,
   so any desk user could do that to any Opportunity and read back the creation's state, which
@@ -171,6 +194,17 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
     guided page reports.
   - Each was mutation-checked: without the write check, the Cancelled filter, the linked
     Project's SMS, the early-close reporter or the reconnecting state, its suite fails.
+- The re-review's fixes:
+  - `tests/test_project_creation_progress.py`: the back-link query is not a locking read, and
+    the only lock is on the found Project, by name. The deduplicated-enqueue test now reaches
+    the `None` branch: the first check finds no job, and the second finds the other request's.
+    There are also source checks of the reader gate on the guided page and the Hand-Off tab.
+  - `tests/test_unconverted_nag.py` (bench-free; `test_status_alerts.py` runs nowhere in CI)
+    runs `deliver_closed_won_alerts`: no text for a historical deal, and the usual one otherwise.
+  - `scripts/test_project_creation_progress.mjs` runs `opportunity.js`'s real `refresh` on a won
+    deal with no project: a writer is asked, a reader is not.
+  - Mutation-checked: putting `for_update` back on the back-link query, dropping the dedupe
+    branch, the historical guard or the reader gate each fails its suite.
 
 ## [1.748.0] - 2026-10-27
 

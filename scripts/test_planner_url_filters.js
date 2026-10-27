@@ -1110,7 +1110,7 @@ const TECHS = {
 	projected: [],
 };
 
-// ------------------------------------------------------------------ the hand-off's Build out link (v1.747.0)
+// ------------------------------------------------------------------ the hand-off's Build out link (v1.749.0)
 //
 // TASK-2026-02984: once the hand-off has made the Project, its success message offers "Build out from a
 // planner template" (create_project_prompt.js), which is set_route("project-planner", "gantt", <project>,

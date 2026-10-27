@@ -615,7 +615,7 @@ class GuidedEntry {
 
 	on_project_status(data) {
 		if (this.doctype !== "Opportunity" || !this.showing() || data.opportunity_name !== this.name) return;
-		// v1.747.0: while the progress dialog (create_project_prompt.js) watches this creation, it says
+		// v1.749.0: while the progress dialog (create_project_prompt.js) watches this creation, it says
 		// how it went and reloads this page itself, through sf-record-changed.
 		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
 		if (crm && crm.is_tracking_project_creation && crm.is_tracking_project_creation(data.opportunity_name)) return;
@@ -633,7 +633,7 @@ class GuidedEntry {
 				const link = frappe.utils.get_form_link("Project", data.project_doc.name, true);
 				const project = data.project_doc.name;
 				const made = __("Project {0} was created.", [project]);
-				// v1.747.0: the next step the dialog offers too, only where it would work (build_out_offer).
+				// v1.749.0: the next step the dialog offers too, only where it would work (build_out_offer).
 				const offer = crm && crm.build_out_offer ? crm.build_out_offer() : Promise.resolve(false);
 				offer.then((yes) =>
 					this.sf.toast(
@@ -656,7 +656,7 @@ class GuidedEntry {
 					});
 				}
 			} else if (data.status === "exists" && data.project) {
-				// v1.747.0: it already had one (or one already pointed at it, and is now linked).
+				// v1.749.0: it already had one (or one already pointed at it, and is now linked).
 				this.sf.toast(__("This opportunity has project {0}.", [data.project]), { tone: "success", timeout: 8000 });
 			} else {
 				const failed = __("Project creation failed. The Error Log has the details.");

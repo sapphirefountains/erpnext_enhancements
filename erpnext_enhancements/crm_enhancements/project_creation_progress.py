@@ -1,8 +1,8 @@
-"""Live progress for "Create Project in PM System" (v1.747.0).
+"""Live progress for "Create Project in PM System" (v1.749.0).
 
 Making a Project from an Opportunity runs as a background job on the ``long`` queue
 (:func:`~erpnext_enhancements.crm_enhancements.api.create_project_from_opportunity_background`).
-Until v1.747.0 the dialog said "started in the background" and went away, and the page changed
+Until v1.749.0 the dialog said "started in the background" and went away, and the page changed
 only if the realtime status happened to arrive. This module is what lets the person who clicked
 watch it happen, on the Desk form and the guided page alike:
 
