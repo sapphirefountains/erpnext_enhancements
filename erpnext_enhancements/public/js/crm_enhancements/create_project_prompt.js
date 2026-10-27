@@ -389,6 +389,63 @@ frappe.provide("erpnext_enhancements.crm");
 		return `<a href="/desk/project/${encodeURIComponent(project)}">${frappe.utils.escape_html(project)}</a>`;
 	}
 
+	// -----------------------------------------------------------------------
+	// The next step: Build out from a planner template (v1.747.0, TASK-2026-02984)
+	//
+	// Nik kept this dialog's template list to job templates: the Project Planner's phase templates
+	// and bundles (Project Template custom_template_kind) would have every task dated on the
+	// project's first day if a project were created from them. They go onto a job that exists,
+	// through the planner's Build out > Start from template…. So once the Project is made, the
+	// success message offers that, and one click opens the new Project's Gantt in the planner with
+	// Start from template… open. It is offered only where it would work: to someone whose roles
+	// open the planner (boot.page_info), and only when the server says they may build out and a
+	// planner template exists (api/planner_templates.planner_template_offer). Otherwise the
+	// message is the plain one, with nothing extra.
+	// -----------------------------------------------------------------------
+
+	const OFFER_METHOD = "erpnext_enhancements.api.planner_templates.planner_template_offer";
+	const BUILD_OUT_ACTION = "ee_build_out_from_template";
+
+	// Resolves true when the link would work for this person, false otherwise (a failed ask included).
+	function build_out_offer() {
+		const pages = (frappe.boot && frappe.boot.page_info) || {};
+		if (!pages["project-planner"]) return Promise.resolve(false);
+		return frappe
+			.xcall(OFFER_METHOD)
+			.then(function (r) {
+				return !!(r && r.offer);
+			})
+			.catch(function () {
+				return false;
+			});
+	}
+
+	// set_route with an options object, as the Project form's Open in Project Planner does: on v16 it
+	// fills route_options and writes the query, and it is a history entry of its own, so Back comes
+	// back here. The planner takes build_out off the address as it lands (ppg_take_build_out), so
+	// Back, Forward and a reload of that entry show the Gantt and never open the dialog again.
+	function open_planner_build_out(project) {
+		frappe.set_route("project-planner", "gantt", project, { project: project, build_out: "template" });
+	}
+
+	function announce_created(project, message) {
+		build_out_offer().then(function (offer) {
+			if (!offer) {
+				frappe.show_alert({ message: message, indicator: "green" }, 10);
+				return;
+			}
+			const action = `<a href="#" data-action="${BUILD_OUT_ACTION}">${frappe.utils.escape_html(
+				__("Build out from a planner template")
+			)}</a>`;
+			frappe.show_alert({ message: `${message} ${action}`, indicator: "green" }, 15, {
+				[BUILD_OUT_ACTION]: function (e) {
+					if (e && e.preventDefault) e.preventDefault();
+					open_planner_build_out(project);
+				},
+			});
+		});
+	}
+
 	// The record as the server now has it, wherever it is showing. The guided page reloads on
 	// sf-record-changed and keeps any edit it has not sent (guided_entry.js). A Desk form with
 	// unsaved edits is not reloaded under them: the job saved the opportunity when it linked the
@@ -445,7 +502,9 @@ frappe.provide("erpnext_enhancements.crm");
 						])
 					: __("This opportunity has project {0}.", [link]);
 			}
-			frappe.show_alert({ message: message, indicator: "green" }, 10);
+			// A project just made offers the next step; one that was already there does not.
+			if (status === "success") announce_created(outcome.project, message);
+			else frappe.show_alert({ message: message, indicator: "green" }, 10);
 			if (outcome.drive_error) {
 				const details =
 					typeof outcome.drive_error === "string"
@@ -738,6 +797,9 @@ frappe.provide("erpnext_enhancements.crm");
 		if (!data || !data.opportunity_name) return;
 		report(data.opportunity_name, outcome_from_status(data), { frm: frm, form_only: true });
 	};
+	// The guided page's own report (when the dialog is not watching) offers the same next step.
+	erpnext_enhancements.crm.build_out_offer = build_out_offer;
+	erpnext_enhancements.crm.open_planner_build_out = open_planner_build_out;
 	// Kept as an alias: the name it went out under, and a site Client Script may
 	// well be calling it.
 	erpnext_enhancements.crm.confirm_create_project = confirm_won_next_step;

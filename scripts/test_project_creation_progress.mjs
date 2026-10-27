@@ -21,6 +21,10 @@
  *      that would start a second one.
  *   6. Closing the dialog only stops the watching; the Desk form's own listener, registered once,
  *      then reports. While the dialog watches, that listener stands aside.
+ *   7. A project just made offers the next step, "Build out from a planner template" (TASK-2026-02984):
+ *      only to someone the planner lets in (boot.page_info, then the server's planner_template_offer),
+ *      never for a project that was already there, and its click is set_route to the new Project's
+ *      Gantt with build_out=template (the planner's half is in scripts/test_planner_url_filters.js).
  *
  * Every name here is invented. Run: node scripts/test_project_creation_progress.mjs
  */
@@ -71,6 +75,7 @@ function make_world() {
 		alerts: [],
 		msgprints: [],
 		triggers: [],
+		routes: [],
 		xcalls: [],
 		calls: [],
 		listeners: {},
@@ -173,7 +178,8 @@ function make_world() {
 				w.listeners[event] = (w.listeners[event] || []).filter((f) => f !== fn);
 			},
 		},
-		show_alert: (opts, seconds) => w.alerts.push(opts),
+		show_alert: (opts, seconds, actions) => w.alerts.push(Object.assign({}, opts, { seconds, actions })),
+		set_route: (...args) => w.routes.push(args),
 		msgprint: (opts) => w.msgprints.push(opts),
 		hide_msgprint: () => (w.hidden_msgprints += 1),
 		confirm: () => null,
@@ -286,6 +292,7 @@ await check("the bar counts the job's finished steps and the page refreshes", as
 		drive_success: true,
 	});
 	assert.equal(bar.shown, false, "the bar closes");
+	await settle(); // the alert waits for the Build out offer's answer
 	assert.equal(frm.reloads, 1, "the Desk form reloads once");
 	assert.deepEqual(
 		w.triggers.map((t) => [t.event, ...t.args]),
@@ -344,6 +351,7 @@ await check("a job that finishes before the request returns is reported once, wi
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	request.callback({ message: queued });
 	assert.equal(w.dialog("Creating Project"), undefined);
+	await settle();
 	assert.equal(w.alerts.length, 1);
 	assert.equal(frm.reloads, 1);
 });
@@ -502,6 +510,7 @@ await check("closing the dialog stops watching; the form's listener, registered 
 	assert.match(w.alerts.pop().message, /still being created/);
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	assert.equal(frm.reloads, 1, "the form's listener reloads it");
+	await settle();
 	assert.equal(w.alerts.length, 1);
 	assert.equal(w.triggers.length, 0, "form_only: the guided page has its own listener");
 });
@@ -515,7 +524,74 @@ await check("while the dialog watches, the form's listener stays quiet", async (
 	request.callback({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	assert.equal(frm.reloads, 1, "reloaded once, by the dialog");
+	await settle();
 	assert.equal(w.alerts.length, 1, "said once");
+});
+
+// ---- 7: the next step, Build out from a planner template (TASK-2026-02984) --------------------
+
+const OFFER = "erpnext_enhancements.api.planner_templates.planner_template_offer";
+
+// A made project, with the planner's page among this person's (boot.page_info) unless told not.
+async function made(w, { planner = true } = {}) {
+	if (planner) w.frappe.boot.page_info = { "project-planner": {} };
+	const frm = w.frm();
+	const request = await start(w, frm);
+	request.callback({ message: queued });
+	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
+	await settle();
+	return frm;
+}
+
+await check("the success message offers Build out from a planner template, which opens the planner on it", async () => {
+	const w = make_world();
+	w.answers[OFFER] = { offer: true };
+	await made(w);
+	const said = w.alerts.pop();
+	assert.match(said.message, /PRJ-0001/, "still the success message");
+	assert.match(said.message, /data-action="ee_build_out_from_template">Build out from a planner template<\/a>/);
+	assert.ok(said.seconds >= 15, "long enough to reach for");
+	assert.equal(typeof said.actions.ee_build_out_from_template, "function", "show_alert binds the link to it");
+	let prevented = false;
+	said.actions.ee_build_out_from_template({ preventDefault: () => (prevented = true) });
+	assert.equal(prevented, true, "the href=# is not followed");
+	// As JSON: the options object was made in the script's own realm, with its own Object prototype.
+	assert.equal(
+		JSON.stringify(w.routes.pop()),
+		JSON.stringify(["project-planner", "gantt", "PRJ-0001", { project: "PRJ-0001", build_out: "template" }])
+	);
+});
+
+await check("no link for someone the planner does not let in, and the server is not asked", async () => {
+	const w = make_world();
+	w.answers[OFFER] = { offer: true };
+	await made(w, { planner: false });
+	assert.ok(!w.alerts.pop().message.includes("data-action"));
+	assert.equal(w.xcalls.filter((c) => c.method === OFFER).length, 0);
+});
+
+await check("no link when the server says no (no template, no Task write), or cannot be asked", async () => {
+	for (const answer of [{ offer: false }, () => Promise.reject(new Error("down"))]) {
+		const w = make_world();
+		w.answers[OFFER] = answer;
+		await made(w);
+		const said = w.alerts.pop();
+		assert.match(said.message, /PRJ-0001/, "the plain message still comes");
+		assert.ok(!said.message.includes("data-action"));
+		assert.equal(said.actions, undefined);
+	}
+});
+
+await check("a project that was already there offers no next step", async () => {
+	const w = make_world();
+	w.frappe.boot.page_info = { "project-planner": {} };
+	w.answers[OFFER] = { offer: true };
+	const request = await start(w, w.frm());
+	request.callback({ message: queued });
+	w.emit("project_creation_status", { opportunity_name: OPP, status: "exists", project: "PRJ-0003" });
+	await settle();
+	assert.ok(!w.alerts.pop().message.includes("data-action"));
+	assert.equal(w.xcalls.filter((c) => c.method === OFFER).length, 0);
 });
 
 await check("the form's listener ignores another deal's creation", async () => {

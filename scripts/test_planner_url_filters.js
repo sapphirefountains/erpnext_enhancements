@@ -1110,6 +1110,87 @@ const TECHS = {
 	projected: [],
 };
 
+// ------------------------------------------------------------------ the hand-off's Build out link (v1.747.0)
+//
+// TASK-2026-02984: once the hand-off has made the Project, its success message offers "Build out from a
+// planner template" (create_project_prompt.js), which is set_route("project-planner", "gantt", <project>,
+// { project, build_out: "template" }). build_out is a one-shot (PP.once_params): taken off route_options
+// on landing, left out of the address, and acted on once, when the Gantt's own project has loaded.
+
+const GUIDED = "/desk/crm/guided-entry/Opportunity/CRM-OPP-2099-00001/handoff";
+const START = "Start from template…";
+
+// The Gantt's loaded answer, and the Build out grid as a recorder: what opened, and what was clicked.
+function buildOutRecorder(pp) {
+	const seen = { opened: [], clicked: [] };
+	pp.p6a_require = (callback) => Promise.resolve().then(callback);
+	pp.t1_open_build_out = (project, title) => {
+		seen.opened.push([project, title]);
+		pp.t1 = { grid: { project } };
+		return Promise.resolve();
+	};
+	pp.t1_actions = () => [{ label: START, on_click: () => seen.clicked.push(START) }, { label: "Add row", on_click: () => seen.clicked.push("Add row") }];
+	return seen;
+}
+const ganttAnswer = (project) => ({ gantt: { project, title: "Plaza fountain" }, can_edit: true });
+
+test("Build out link: the Gantt opens on Start from template once, and the address drops the request", async () => {
+	const desk = makeDesk({ start: GUIDED });
+	const pp = projectPlanner(desk);
+	const seen = buildOutRecorder(pp);
+	desk.go("project-planner", "gantt", "PRJ-00001", { project: "PRJ-00001", build_out: "template" });
+	check("the Gantt of the new project", [pp.view, desk.route], ["gantt", ["project-planner", "gantt", "PRJ-00001"]]);
+	check("the project filter, as the form's own Open in Project Planner gives it", f3(pp).project, "PRJ-00001");
+	check("route_options consumed: nothing for the next route to write", desk.frappe.route_options, null);
+	check("one entry, the address without the request", desk.urls(), [GUIDED, "/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001"]);
+	check("asked, for the Gantt's own project", pp.ppg_state().build_out, "PRJ-00001");
+	await pp.ppg_build_out_if_asked(ganttAnswer("PRJ-00001"));
+	check("Build out opened on the project, Start from template… clicked", [seen.opened, seen.clicked], [[["PRJ-00001", "Plaza fountain"]], [START]]);
+	await pp.ppg_build_out_if_asked(ganttAnswer("PRJ-00001"));
+	check("once: a second load opens nothing", seen.clicked.length, 1);
+	desk.back();
+	check("Back: the hand-off page", desk.here(), GUIDED);
+	desk.forward();
+	check("Forward: the Gantt", [pp.view, desk.route[2]], ["gantt", "PRJ-00001"]);
+	check("and nothing asked again", pp.ppg_state().build_out, "");
+});
+
+test("Build out link: a reload of the entry is the Gantt, nothing more", () => {
+	const desk = makeDesk({ start: GUIDED });
+	projectPlanner(desk);
+	desk.go("project-planner", "gantt", "PRJ-00001", { project: "PRJ-00001", build_out: "template" });
+	desk.reload();
+	const pp = projectPlanner(desk);
+	desk.land();
+	check("the reloaded entry's address", desk.here(), "/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001");
+	check("asks nothing", pp.ppg_state().build_out, "");
+});
+
+test("Build out link: the request means nothing on another screen or with another value, and still leaves", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/lookahead/2026-10-12?project=PRJ-00001&build_out=template" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	check("not the Gantt: nothing asked", pp.ppg_state().build_out, "");
+	check("and the address drops it, in place", desk.urls(), ["/desk/project-planner/lookahead/2026-10-12?project=PRJ-00001"]);
+	desk.go("project-planner", "gantt", "PRJ-00002", { build_out: "everything" });
+	check("a value it does not know: nothing asked", pp.ppg_state().build_out, "");
+	check("and gone from the address too", desk.here(), "/desk/project-planner/gantt/PRJ-00002");
+	check("consumed", desk.frappe.route_options, null);
+});
+
+test("Build out link: an answer for another project, or a refusal, opens no grid", async () => {
+	const desk = makeDesk({ start: GUIDED });
+	const pp = projectPlanner(desk);
+	const seen = buildOutRecorder(pp);
+	desk.go("project-planner", "gantt", "PRJ-00001", { project: "PRJ-00001", build_out: "template" });
+	await pp.ppg_build_out_if_asked(ganttAnswer("PRJ-00002"));
+	check("another project's answer: nothing", seen.opened, []);
+	desk.go("project-planner", "gantt", "PRJ-00001", { project: "PRJ-00001", build_out: "template" });
+	pp.ppg_refused({ refused: "forbidden", projects: [] });
+	await pp.ppg_build_out_if_asked(ganttAnswer("PRJ-00001"));
+	check("after a refusal: nothing", seen.opened, []);
+});
+
 test("Maintenance Planner: a link with a technician opens the planner on them", () => {
 	const desk = makeDesk({ start: "/desk/maintenance-planner/week/2026-10-12?technician=tech2%40example.com" });
 	desk.prefs[MP_TECH] = "tech1@example.com";

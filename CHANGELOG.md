@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.747.0] - 2026-10-27
 
+ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
+
 ### Added
 - **"Create Project in PM System" shows its progress, and the page refreshes when it is done.**
   Nik, 2026-10-27: "create a progress bar to show it's current progress in creation and auto
@@ -49,6 +51,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Closing the dialog only stops the watching. The job carries on, and the surfaces' own
     listeners report the outcome as before. Opening the dialog again during a creation shows that
     creation, not a form that would start a second one.
+- **The next step: "Build out from a planner template".** Nik approved this on 2026-10-27 ("Yes
+  go with your recommendation"). The Create Project dialog's template list stays job templates
+  only. Created from scratch, the Project Planner's phase templates and bundles
+  (`custom_template_kind` set) would date every task on the project's first day. They go onto a
+  job that already exists, through the planner's Build out › *Start from template…*.
+  - **What it does.** Once the Project is made, the success message offers that step. One click
+    opens the new Project's Gantt in the Project Planner, with Build out open on *Start from
+    template…*. This works from the dialog's alert, and from the Desk form's and the guided page's
+    own messages when the dialog was closed early.
+  - **Who sees it.** It is offered only where it would work: to someone whose roles open the
+    planner (`boot.page_info`), and only when the new `api/planner_templates.planner_template_offer`
+    says yes. That needs a planner role, Task write (the Build out grid's own `can_edit`) and at
+    least one enabled planner template. Otherwise the message is the plain one, with nothing extra.
+    A project that was already there offers nothing.
+  - **The link.** It is `frappe.set_route("project-planner", "gantt", <project>, { project,
+    build_out: "template" })`, the Project form's own *Open in Project Planner* plus one key. It is
+    a history entry of its own, so Back returns to the opportunity.
+  - **Back and Forward.** `build_out` is the planner's first one-shot key (`PP.once_params`). Like
+    `?capacity=`, `handle_route` takes it off `route_options` on landing, so no later route writes
+    it again. `write_filter_url` also leaves it out of the address. So Back, Forward and a reload of
+    that entry show the Gantt and never open the dialog a second time.
+  - **When it opens.** The grid opens once the Gantt's own project has loaded (`ppg_load`), and not
+    after a refusal or a failed load. It opens through the same path as the Gantt header's Build
+    out ▾ menu (`ppg_open_build_out`, now shared by both).
 
 ### Fixed
 - **A retried creation can no longer make a second Project.** "Start it again" has to be safe
@@ -89,6 +115,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the dirty form, failure, a flushed job, resuming, closing early, and the one-time listener.
 - `tests/test_project_prompt.py` (bench only) now counts only the outcome's broadcast when it
   checks who hears it.
+- The Build out step:
+  - `scripts/test_project_creation_progress.mjs` checks the offer: shown only with the planner
+    page and the server's yes, never for an existing project, and its click is the route above.
+  - `scripts/test_planner_url_filters.js` runs the round trip on its model of v16.50's router:
+    - the landing consumes `build_out` and the address drops it;
+    - Start from template… opens once;
+    - Back, Forward and a reload ask nothing;
+    - another screen, an unknown value, another project's answer or a refusal opens nothing.
+
+    A copy that keeps the key in the address, or leaves it in `route_options`, fails it.
+  - `tests/test_planner_templates.py` (`TestBuildOutOffer`) covers the gate.
 
 ## [1.745.1] - 2026-10-26
 

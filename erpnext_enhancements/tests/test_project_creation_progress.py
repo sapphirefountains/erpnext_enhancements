@@ -670,6 +670,10 @@ class TestTheSurfaces(unittest.TestCase):
 		self.assertLess(guard, body.index("this.reload_record()"), "a watched creation must not reload twice")
 		self.assertLess(guard, body.index("frappe.msgprint("))
 		self.assertIn('data.status === "exists"', body, "an already-linked deal is not a failure")
+		# TASK-2026-02984: its own success toast offers the next step the dialog offers, on the same gate.
+		self.assertIn("crm.build_out_offer()", body)
+		self.assertIn('action_label: __("Build out from a planner template")', body)
+		self.assertIn("on_action: () => crm.open_planner_build_out(project)", body)
 
 	def test_the_hand_off_tab_saves_first_and_leaves_the_reload_to_the_dialog(self):
 		source = (self.JS / "public" / "js" / "crm_enhancements" / "opportunity_handoff.js").read_text(

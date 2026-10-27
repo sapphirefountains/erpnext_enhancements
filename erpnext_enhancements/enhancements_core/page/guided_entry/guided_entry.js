@@ -628,7 +628,23 @@ class GuidedEntry {
 				});
 			} else if (data.status === "success" && data.project_doc) {
 				const link = frappe.utils.get_form_link("Project", data.project_doc.name, true);
-				this.sf.toast(__("Project {0} was created.", [data.project_doc.name]), { tone: "success", timeout: 8000 });
+				const project = data.project_doc.name;
+				const made = __("Project {0} was created.", [project]);
+				// v1.747.0: the next step the dialog offers too, only where it would work (build_out_offer).
+				const offer = crm && crm.build_out_offer ? crm.build_out_offer() : Promise.resolve(false);
+				offer.then((yes) =>
+					this.sf.toast(
+						made,
+						yes
+							? {
+									tone: "success",
+									timeout: 15000,
+									action_label: __("Build out from a planner template"),
+									on_action: () => crm.open_planner_build_out(project),
+								}
+							: { tone: "success", timeout: 8000 }
+					)
+				);
 				if (data.drive_error) {
 					frappe.msgprint({
 						title: __("Google Drive Integration Failed"),
