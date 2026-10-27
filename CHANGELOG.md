@@ -52,12 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     module the Desk widget and the record tools already share. The Desk writes its entries as
     escaped HTML; the guided page writes them with `.text()` and `.attr()`. A Desk tab still on a
     bundle from before the rule gets an empty cell until it reloads, not a TypeError.
-  - **Two Desk details from the review.** Each table's reply removes only its own loading line
-    (`ee-dir-loading`). It used to clear every `.text-muted` element, and the new "None" and
-    "This account" cells are muted too, so a second, overlapping render stripped them from the
-    table the first had drawn. The cell is also drawn for the form that asked, captured before
-    the request: the controller is one object for every form, so reading it when the reply
-    landed could mark the wrong row as the open party after a quick move to another form.
+  - **Desk details from the reviews.** Each table's renders are numbered, and a reply is drawn
+    only while its render is still the latest (the record tools' `people_seq` pattern). Before,
+    two overlapping renders (a refresh plus the `primary_address` event, or a quick double
+    refresh) each appended a table. A reply that landed after a move to another record was drawn
+    with that record's answers, because the controller is one object for every form and Frappe
+    keeps one form object per DocType. That reply is now dropped. A current reply takes the
+    cell, the Primary badge and the account-wide primary from the form it was requested for,
+    never from the one open when it lands. The loading line also has its own class
+    (`ee-dir-loading`), the only thing a reply removes: it used to clear every `.text-muted`
+    element, the new "None" and "This account" cells included.
   - **Display only.** No data changes, and the Contact and Address forms still show every link.
     The tables have no filter, search or sort, so nothing else was keyed on the old columns.
   - Tests: `AccountColumnTest` in `tests/test_contact_endpoint_permissions.py` (which links,

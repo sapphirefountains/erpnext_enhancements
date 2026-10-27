@@ -119,23 +119,24 @@ erpnext_enhancements.unified_controller = {
 	// why the map used to show "Invalid address reference format" there —
 	// while Project / Master Project use the app's custom `primary_address`
 	// Link field.
-	primary_address_link_field: function () {
+	//
+	// These four take the form to answer for, defaulting to this.frm. The directory tables pass the
+	// form their request was sent for, because they answer when the reply lands (v1.746.0; see
+	// render_contact_table).
+	primary_address_link_field: function (frm) {
 		// The rule lives in party_sources.js since v1.686.0, shared with the guided page's record tools.
 		const rules = ee_party_rules();
-		return rules ? rules.primary_address_field(this.frm.meta.fields || []) : null;
+		return rules ? rules.primary_address_field((frm || this.frm).meta.fields || []) : null;
 	},
 
-	primary_address_name: function () {
-		const link_field = this.primary_address_link_field();
-		return (
-			(link_field && this.frm.doc[link_field]) ||
-			this.frm.doc.customer_address ||
-			this.frm.doc.supplier_address
-		);
+	primary_address_name: function (frm) {
+		frm = frm || this.frm;
+		const link_field = this.primary_address_link_field(frm);
+		return (link_field && frm.doc[link_field]) || frm.doc.customer_address || frm.doc.supplier_address;
 	},
 
-	primary_contact_name: function () {
-		return this.frm.doc.primary_contact || null;
+	primary_contact_name: function (frm) {
+		return (frm || this.frm).doc.primary_contact || null;
 	},
 
 	// ---------------------------------------------------------------- primaries
@@ -162,8 +163,8 @@ erpnext_enhancements.unified_controller = {
 	//     contacts ended up flagged primary for the same account at once.
 	PARTY_DOCTYPES: ["Customer", "Supplier"],
 
-	is_party_form: function () {
-		return this.PARTY_DOCTYPES.indexOf(this.frm.doctype) !== -1;
+	is_party_form: function (frm) {
+		return this.PARTY_DOCTYPES.indexOf((frm || this.frm).doctype) !== -1;
 	},
 
 	// The account whose GLOBAL flag this form may write, or null. Always the open
@@ -239,6 +240,15 @@ erpnext_enhancements.unified_controller = {
 	},
 
 	render_contact_table: function () {
+		// Each render is numbered, and a reply is drawn only while its render is still the latest
+		// (v1.746.0, the record tools' people_seq pattern). Without it two overlapping renders (a
+		// refresh plus the primary_address event, or a quick double refresh) each appended a table,
+		// and a reply that landed after a move to another record was drawn with that record's
+		// answers: this controller is one object for every form, and Frappe keeps one frm per
+		// DocType, so even the captured frm then holds the new record. Numbered before the early
+		// return, so moving to a form without this table retires a pending reply too. The reply
+		// computes everything else from the captured frm, never this.frm.
+		const seq = (this.contact_seq = (this.contact_seq || 0) + 1);
 		const frm = this.frm;
 		if (!frm.fields_dict.contact_list_html) return;
 
@@ -304,6 +314,7 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
+				if (seq !== this.contact_seq) return;
 				wrapper.find(".ee-dir-loading").remove();
 				if (!r.message || r.message.length === 0) {
 					wrapper.append(
@@ -328,8 +339,8 @@ erpnext_enhancements.unified_controller = {
 						<tbody>
 				`;
 
-				const primary_contact_name = this.primary_contact_name();
-				const on_party_form = this.is_party_form();
+				const primary_contact_name = this.primary_contact_name(frm);
+				const on_party_form = this.is_party_form(frm);
 				r.message.forEach((c) => {
 					const first_name = c.first_name || "";
 					const last_name = c.last_name || "";
@@ -456,6 +467,8 @@ erpnext_enhancements.unified_controller = {
 	},
 
 	render_address_table: function () {
+		// Numbered, as the contact table's renders are (see there).
+		const seq = (this.address_seq = (this.address_seq || 0) + 1);
 		const frm = this.frm;
 		if (!frm.fields_dict.address_list_html) return;
 
@@ -499,6 +512,7 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
+				if (seq !== this.address_seq) return;
 				wrapper.find(".ee-dir-loading").remove();
 				// Retires the "no address yet" banner on a just-created Customer or
 				// Supplier as soon as one exists (party_quick_entry.js).
@@ -528,8 +542,8 @@ erpnext_enhancements.unified_controller = {
 						<tbody>
 				`;
 
-				const primary_address_name = this.primary_address_name();
-				const on_party_form = this.is_party_form();
+				const primary_address_name = this.primary_address_name(frm);
+				const on_party_form = this.is_party_form(frm);
 				r.message.forEach((a) => {
 					const full_address =
 						a.custom_full_address ||

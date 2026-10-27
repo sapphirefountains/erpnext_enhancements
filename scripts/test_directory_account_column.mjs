@@ -276,14 +276,14 @@ for (const [table, row] of [
 	});
 }
 
-// ------------------------------------------- the tables themselves (the 56d0cdd4 review's fixes)
+// ------------------------------------------------- the tables themselves (the #1367 reviews' fixes)
 //
 // Each render empties the field, shows a loading line, asks the server, and draws the table when
-// the reply lands. A fake jQuery keeps the field as an HTML string, which is all these two need:
-// what the reply removes, and which form the cell is drawn for.
+// the reply lands. A fake jQuery keeps each form's field as an HTML string, which is all these
+// need: how many tables a field ends with, which reply drew it, and which form its answers are for.
+// Every render is numbered, and only the latest one's reply draws (the record tools' people_seq).
 
-const FIELD = {}; // what frm.fields_dict.<x>_list_html.wrapper is
-let field = null; // that field's fake jQuery
+const FIELDS = new Map(); // a form's wrapper element -> its fake field
 const replies = []; // frappe.call options, answered by the test
 
 class FakeField {
@@ -320,10 +320,10 @@ class FakeField {
 }
 
 globalThis.$ = (arg) => {
-	if (arg === FIELD) return field;
+	if (FIELDS.has(arg)) return FIELDS.get(arg);
 	const node = {
 		appendTo: (target) => {
-			if (target === field) field.append(String(arg));
+			if (target instanceof FakeField) target.append(String(arg));
 			return node;
 		},
 		on: () => node,
@@ -332,62 +332,137 @@ globalThis.$ = (arg) => {
 };
 globalThis.frappe.call = (options) => replies.push(options);
 
-function form(doctype, name, html_field) {
+/** A form carrying one directory table, with its own field. */
+function form(doctype, name, html_field, doc = {}, fields = []) {
+	const element = {};
+	const field = new FakeField();
+	FIELDS.set(element, field);
 	return {
 		doctype,
-		doc: { name },
-		meta: { fields: [] },
-		fields_dict: { [html_field]: { wrapper: FIELD } },
+		doc: Object.assign({ name }, doc),
+		meta: { fields },
+		fields_dict: { [html_field]: { wrapper: element } },
 		is_new: () => false,
+		field,
 	};
 }
 
+/** Open a form the way init does, and render one table on it. */
+function render(table, frm) {
+	controller.frm = frm;
+	controller[table]();
+}
+
+const tables_in = (field) => field.content.split("<table ").length - 1;
+const row_of = (field, name) => {
+	const m = field.content.match(new RegExp(`<tr data-name="${name}">([\\s\\S]*?)</tr>`));
+	return m ? m[1] : null;
+};
+const PRIMARY = ">Primary</span>";
+const ACCOUNT_PRIMARY = ">Account primary</span>";
+
 const TABLES = [
-	["render_contact_table", "contact_list_html"],
-	["render_address_table", "address_list_html"],
+	["render_contact_table", "contact_list_html", "is_primary_contact", "primary_contact", []],
+	[
+		"render_address_table",
+		"address_list_html",
+		"is_primary_address",
+		"primary_address",
+		[{ fieldname: "primary_address", fieldtype: "Link" }],
+	],
 ];
 
-for (const [table, html_field] of TABLES) {
-	test(`${table}: an overlapping render keeps the first table's muted cells`, () => {
-		field = new FakeField();
-		replies.length = 0;
-		controller.frm = form("Customer", "CUST-0042", html_field);
-		controller[table]();
-		controller[table]();
-		assert.equal(replies.length, 2);
-		const rows = [
-			{ name: "ROW-1", accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] },
-			{ name: "ROW-2", accounts: [] },
-		];
-		replies[0].callback({ message: rows });
-		replies[1].callback({ message: rows });
-		const count = (text) => field.content.split(text).length - 1;
-		assert.equal(count("Fetching"), 0, "the loading line is still there");
-		assert.equal(count('<div class="text-muted">This account</div>'), 2, "a This account cell was stripped");
-		assert.equal(count('<span class="text-muted">None</span>'), 2, "a None cell was stripped");
+for (const [table, html_field, flag, own_field, link_fields] of TABLES) {
+	test(`${table}: two overlapping renders draw one table, the latest`, () => {
+		for (const order of [
+			[0, 1],
+			[1, 0],
+		]) {
+			replies.length = 0;
+			const frm = form("Customer", "CUST-0042", html_field);
+			render(table, frm);
+			render(table, frm);
+			assert.equal(replies.length, 2);
+			const answers = [
+				[{ name: "OLD-ROW", accounts: [] }],
+				[
+					{ name: "ROW-1", accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] },
+					{ name: "ROW-2", accounts: [] },
+				],
+			];
+			for (const i of order) replies[i].callback({ message: answers[i] });
+			const field = frm.field;
+			assert.equal(tables_in(field), 1, `replies in order ${order}: not one table`);
+			assert.equal(row_of(field, "OLD-ROW"), null, `replies in order ${order}: the older render drew`);
+			assert.ok(row_of(field, "ROW-1") && row_of(field, "ROW-2"), "the latest render's rows are missing");
+			assert.ok(!field.content.includes("Fetching"), "the loading line is still there");
+			assert.ok(row_of(field, "ROW-1").includes('<div class="text-muted">This account</div>'));
+			assert.ok(row_of(field, "ROW-2").includes('<span class="text-muted">None</span>'));
+		}
 	});
 
-	test(`${table}: the cell is drawn for the form it was requested for`, () => {
-		field = new FakeField();
+	test(`${table}: a late reply after a move to another form is dropped`, () => {
 		replies.length = 0;
-		controller.frm = form("Customer", "CUST-0042", html_field);
-		controller[table]();
-		// The person moves to a Supplier before the reply lands.
-		controller.frm = form("Supplier", "SUP-0007", html_field);
+		const first = form("Customer", "CUST-0042", html_field);
+		render(table, first);
+		const second = form("Supplier", "SUP-0007", html_field);
+		render(table, second);
+		const row = {
+			name: "ROW-1",
+			accounts: [
+				account("Customer", "CUST-0042", "Bluebird Water Gardens"),
+				account("Supplier", "SUP-0007", "Acme Pump Supply"),
+			],
+		};
+		replies[0].callback({ message: [row] });
+		assert.equal(tables_in(first.field), 0, "the first form drew a reply nobody is looking at");
+		assert.equal(tables_in(second.field), 0, "the late reply reached the second form");
+		replies[1].callback({ message: [row] });
+		assert.equal(tables_in(second.field), 1);
+		assert.ok(second.field.content.includes('<div class="text-muted">This supplier</div>'));
+		assert.ok(second.field.content.includes(">Bluebird Water Gardens</a>"));
+	});
+
+	test(`${table}: a late reply after a move to another record of the same DocType is dropped`, () => {
+		// Frappe keeps one frm per DocType, so the captured frm holds the new record by then.
+		replies.length = 0;
+		const frm = form("Customer", "CUST-0042", html_field);
+		render(table, frm);
+		frm.doc = { name: "CUST-0099" };
+		render(table, frm);
+		replies[0].callback({
+			message: [{ name: "OLD-ROW", accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] }],
+		});
+		assert.equal(tables_in(frm.field), 0, "the first record's reply was drawn on the second");
+		replies[1].callback({
+			message: [{ name: "ROW-1", accounts: [account("Customer", "CUST-0099", "Zephyr Plaza Owners")] }],
+		});
+		assert.equal(tables_in(frm.field), 1);
+		assert.ok(row_of(frm.field, "ROW-1").includes('<div class="text-muted">This account</div>'));
+	});
+
+	test(`${table}: a reply is drawn for the form it was requested for`, () => {
+		// No newer render, but this.frm moved on: the cell, the Primary badge and the account-wide
+		// primary all answer for the form that asked.
+		replies.length = 0;
+		const asked = form("Customer", "CUST-0042", html_field, { [own_field]: "ROW-1" }, link_fields);
+		render(table, asked);
+		controller.frm = form("Project", "PROJ-0001", html_field, { [own_field]: "ROW-2" }, link_fields);
 		replies[0].callback({
 			message: [
-				{
-					name: "ROW-1",
-					accounts: [
-						account("Customer", "CUST-0042", "Bluebird Water Gardens"),
-						account("Supplier", "SUP-0007", "Acme Pump Supply"),
-					],
-				},
+				{ name: "ROW-1", accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] },
+				{ name: "ROW-2", accounts: [account("Supplier", "SUP-0007", "Acme Pump Supply")] },
+				{ name: "ROW-3", accounts: [], [flag]: 1 },
 			],
 		});
-		assert.ok(field.content.includes('<div class="text-muted">This account</div>'), "the requesting Customer is not quiet");
-		assert.ok(!field.content.includes("This supplier"), "the form opened since was treated as the open party");
-		assert.ok(field.content.includes(">Acme Pump Supply</a>"), "the Supplier lost its link");
+		const field = asked.field;
+		assert.equal(tables_in(field), 1);
+		assert.ok(row_of(field, "ROW-1").includes('<div class="text-muted">This account</div>'), "the cell");
+		assert.ok(row_of(field, "ROW-1").includes(PRIMARY), "the Primary badge left the asking form's primary");
+		assert.ok(!row_of(field, "ROW-2").includes(PRIMARY), "the Primary badge followed this.frm");
+		// On a Customer the account-wide flag is this form's own primary, not "Account primary".
+		assert.ok(row_of(field, "ROW-3").includes(PRIMARY), "is_party_form read this.frm");
+		assert.ok(!row_of(field, "ROW-3").includes(ACCOUNT_PRIMARY));
 	});
 }
 

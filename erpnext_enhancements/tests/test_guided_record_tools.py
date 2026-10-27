@@ -878,7 +878,8 @@ class TestTheDeskFormSharesTheCode(unittest.TestCase):
 	def test_the_widget_calls_party_sources(self):
 		code = _code(CONTROLLER_JS)
 		self.assertIn("rules ? rules.party_sources(frm.doctype, frm.doc, frm.meta.fields || []) : []", code)
-		self.assertIn("rules ? rules.primary_address_field(this.frm.meta.fields || []) : null", code)
+		# v1.746.0: for the form a directory reply was requested for, else this.frm.
+		self.assertIn("rules ? rules.primary_address_field((frm || this.frm).meta.fields || []) : null", code)
 		self.assertIn("return rules.form_party(frm.doctype, frm.doc || {});", code)
 
 	def test_a_tab_on_the_old_bundle_gets_an_empty_directory_not_a_type_error(self):
