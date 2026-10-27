@@ -306,3 +306,15 @@
 	background: #a0a8b5;
 	pointer-events: none;
 }
+
+/* A touch long press on a bar or a row opens the host's menu (v1.753.0, _init_long_press): no
+   text selection and no iOS callout under the finger while it is held. Touch screens only, so a
+   mouse can still select the grid's text. */
+@media (pointer: coarse) {
+	.ee-gantt-widget .gantt_task_line,
+	.ee-gantt-widget .gantt_row {
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
+	}
+}

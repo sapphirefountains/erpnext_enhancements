@@ -1121,6 +1121,11 @@ so as not to lose context overall." Everything here applies to **both** planners
 planner kit's side drawer (below), which leaves the calendar visible and usable behind it: it still
 scrolls, and cards still move by drag.
 
+Since v1.753.0 a tap on a name, a project's name or a card opens its **record** (Nik, 2026-10-27; see
+[A tap opens the record](#a-tap-opens-the-record-v17530)). The person peek, the project peek and the side
+panel below are on the hold / right-click menu instead (*See their week*, *Project at a glance*, *Quick
+edit*); a date still opens the day peek.
+
 - **Person peek.** Click a name anywhere it appears (Resources available, a crew-view row, a crew
   badge on a card, the route view's title; on the Maintenance Planner also a visit's initials and an
   "off" badge) and the drawer shows that person's week, starting on the site's first weekday: each
@@ -1318,7 +1323,8 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `escape(value)` | The one HTML-escaping helper of the kit's renderers (`& < > " ' \``); it is sf_kit's `esc` (`public/js/sf_kit/esc.js`), re-exported | Pages keep their own `pp_esc` / `mp_esc`; `safe_color`, `glow_key(s)` and `format.{hours, drive, day_label, add_days}` beside it |
 | `drawer.open({title, subtitle, body, tools, actions, width, key, owner, push, reopen, on_click, on_close})` | The right-side drawer. `body` is an HTML string (already escaped), an Element or jQuery; `actions` are footer buttons `{label, primary, on_click(handle)}`; `push` is an element squeezed by the drawer's width on a wide screen so the calendar is not hidden under it; `on_click(e, handle)` is one delegated listener for whatever the body shows (Enter/Space on a `role="button"` counts); `reopen` is how Forward opens it again | Returns a handle (`set_title`, `set_subtitle`, `set_body`, `set_tools`, `set_actions`, `close`, `is_open`, `body`). A second `open` replaces the first in place. Esc and Back close it. Full width under 768px. No backdrop: the page stays usable. `owner` says which page opened it (the planners share one drawer element) |
 | `drawer.route(fn, keep)` / `drawer.navigate(fn)` | A route change of the page's own while a drawer may be open: `route(() => frappe.set_route(...), true)` keeps the drawer open over the new route; `navigate(fn)` closes it first (an "Open project" button) | Either way the kit's history entry is replaced by the route, so Back never lands on a drawer that has gone |
-| `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide` | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog |
+| `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide`, `add_values(fn)` (a page's own controls in the panel, for `unsaved()`) | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog. `panel.unsaved()` (v1.753.0): the open panel's values differ from what they were at the person's first pointer or key inside it (a page's own `set_value` never counts) |
+| `records.record_of(kind, item)` / `records.open(record)` / `records.open_item(kind, item)` | A tap opens the item's record (v1.753.0): `task`, `move`, `rental` → Task; `visit` → Sapphire Maintenance Record, or with `projected` its Sapphire Maintenance Contract; `projected` → the contract; `travel` → Travel Trip; `project` → Project; `person` → as its `open_as` says (Employee or Planner Resource; none without it); `asset` → Asset | `record_of` is null for a drafted new task, for driving, a block or a note, for a row the server marked `open: false` (`api/planner_open.py`), and for a doctype `frappe.model.can_read` refuses, so the page keeps its old answer. `open` routes `("Form", doctype, name)` through `drawer.navigate`, in the same tab, after a `frappe.confirm` when `panel.unsaved()`, and closes the Undo toast first |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
 | `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
@@ -1326,7 +1332,7 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `simple.mount(root, {title, placeholder, noun, load, open, off, help, is_phone})` | Simple mode's screen: the bar (heading, search, the switch shown on, "?"), a card per job or site from `load(search, start, limit)` (a promise of `get_simple_jobs`/`get_simple_sites`' answer), "N of M jobs", Show more | Draws only; `open(doctype, name)`, `off()` and `help()` are the page's. The search reads again 300 ms after the last key and closes every Show all; an answer for an older read is dropped; a failed read says so with Try again; Show all / Show fewer and Show more take no history entry. Returns `{refresh, render, root, state}`; `refresh()` reads as many cards as are shown. `simple.card_html`, `simple.initials` and `simple.legend_sections("jobs" \| "sites")` are pure |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
-| `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
+| `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). A booking with a record carries `data-pk-open` / `data-pk-open-name` (v1.753.0) and a tap on it goes to `on_open(record)`, else `records.open`. Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
 | `conflicts.center({planner, owner, push, width, range, can_schedule, draft, block_note, run_fix, open_item, exclude, pick_context, on_list})` | The Conflict center drawer (Phase 6D UI), one per page | `open(focus)`, `schedule()`, `refresh()`, `list()`, `count()`, `index()`, `find(doctype, name, key)`, `is_open()`. Pure renderers beside it: `html`, `picker_html`, `free_people`, `fix_args`, `open_count`, `index_by_ref` |
 | `blocks.form({...})`, `blocks.note_form({...})`, `blocks.chip_html(block, ctx)`, `blocks.notes_html(notes, ctx)`, `blocks.note_list_html(notes, ctx)` | Personal blocks and day notes on screen (Phase 6D UI): the two small forms (frappe Dialogs, so the drawer under them stays) and the markup | The note on a chip is only `ctx.note` (the page's `block_notes`); `get_notes(date)` reads one day's notes; `block_text`, `block_window`, `block_slot` |
 | `toolbar.menu(button, {label, items, on_close})` | The toolbar's menu buttons (v1.687.0): `items()` is called each time the menu opens and returns `{label, on_click, hint, title, disabled}`, `{label, checked}` (a `menuitemcheckbox`), `{label, radio: true, checked}` (a `menuitemradio`), `{label, info: true, sample_html}` (read-only, a key entry), `{heading}` or `{divider: true}` | The WAI-ARIA menu button: `aria-haspopup` / `aria-expanded` / `aria-controls` on the button, `aria-checked` and a check mark on a switch; arrow keys wrap, Home/End jump, Esc closes and gives focus back, Tab and a click elsewhere close it, an item closes it before it runs. **No history entry** (unlike `menu`, which is an overlay of `history.js`). Its list carries `pk-menu`, so the planners' shortcut handlers leave its keys alone. Returns `{open, close, is_open, element, items}` |
@@ -2501,6 +2507,87 @@ see all the data in a simple view, both historical data and future data". The de
 - **Tests.** `tests/test_planner_simple.py` (the card rules, the bound reads, the role gates, the wiring) runs
   `scripts/test_planner_simple.js` (the real kit module on a fake DOM, and the Maintenance Planner's device flag);
   the Project Planner's landing, the switch and Back/Forward are in `scripts/test_planner_today.js`.
+
+### A tap opens the record (v1.753.0)
+
+Nik, 2026-10-27: "When using the Project Planner or other planners, tapping the task should take you to the
+task, tapping the project should take you to the project, and so on." This replaces the R1 rule "clicking a
+bar opens the task in the side panel" (`docs/planner-ux-redesign.md` §4.2) and 6A's "click a name to see
+their week". He picked each part:
+
+- **The same tab.** A record opens with `frappe.set_route("Form", …)` through the kit's `drawer.navigate`, so
+  an open drawer's history entry is replaced and Back returns to the planner on the same tab, dates and
+  filters (the address holds them; the page reloads its data on show).
+- **What a tap opened before is on the hold / right-click menu**, so nothing is lost: **Quick edit** (the
+  side panel, first on a card's menu, with *Open task* / *Open visit* / *Open contract* after it), *Project
+  at a glance*, and a person's week (*See their week* on a name's menu: Resources, a crew row, a person's
+  initials on a card, the route's title, Capacity's names). A project's name off a card (Lookahead, Needs
+  tasks, a day note) has a menu of its own: Open project, Project at a glance, Show only this project, Open
+  in Gantt, and 6C's Highlight. An Overview row's right-click (or, on a touch screen, a half-second hold:
+  the Gantt widget's `_init_long_press`, since iOS fires no `contextmenu`) has the same, with its Task. On
+  the Maintenance Planner a helper's initials hold the helper's own week.
+- **Tap to move is off by default** on a touch screen (it was on for `pointer: coarse`); More ▸ Tools and
+  *Move with taps…* on a card's menu still turn it on. A device that chose it keeps it.
+- **What a tap opens**:
+
+  | Planner | Item | Opens |
+  |---|---|---|
+  | Project Planner (Lookahead, Calendar, Crew, trays, phone list) | a task's card, bar or chip; a task's or a phase's name on the Lookahead; an overdue or equipment row; the move bar's *Open* | the Task (a phase is its group Task) |
+  | | a drafted new task (`draft-new:`) | its side panel, as before: there is no Task yet |
+  | | a project's name (card, Lookahead, Needs tasks, a day note) | the Project |
+  | | a person's name or initials (Resources, Crew rows, Capacity, the route's title) | their Employee, else their Planner Resource, whichever this person may open; else their week |
+  | | a maintenance visit / a projected visit | the Sapphire Maintenance Record / its Sapphire Maintenance Contract |
+  | | a rental, a task hidden from the board, travel | the Task, the Task, the Travel Trip |
+  | | a route stop's *Open* link | its Task or visit (a projected visit's contract); travel is never a stop |
+  | Gantt tab | a bar, a phase | its Task (*Not scheduled* is no record) |
+  | Overview tab | a job / a phase or milestone / *Other work* | the Project / its Task / the Project (right-click: *Open in Gantt*) |
+  | Maintenance Planner | a visit card (calendar, crew view, tray, Site at a glance, Overdue list) | its Sapphire Maintenance Record |
+  | | a projected visit / a Fountain Move / project work as cards | the contract / the Task / the Task or Travel Trip |
+  | | a technician's name or initials | their Employee (as the Project Planner's names) |
+  | Both quick looks | a booking in a person's week or everyone's day | its record |
+  | Rental Planner | a fountain's name | its Asset (its bars already opened their bookings) |
+
+  A date keeps *everyone's day*, and the Maintenance Planner's grey project-work strip keeps the person's
+  week: neither is one record. In everyone's day, a name still opens that person's week inside the drawer.
+- **A tap, not a drag.** Unchanged thresholds: a mouse press that moves 6 px is a drag, a finger lifts a card
+  after a 300 ms hold, and a 500 ms hold that does not move opens the menu; the click that ends a drag,
+  a resize (now also one that changed nothing) or a long press is swallowed (`click_blocked_until`). The
+  Gantt tab's DHTMLX drag fires no `onTaskClick` (checked in a browser with real input, for a move and a
+  resize); a plain press on a bar's resize edge does, and the widget skips it (`.gantt_task_drag`).
+- **Who may open what, per record** (`api/planner_open.py`). `frappe.model.can_read` knows only doctypes.
+  On production most planner users hold an Employee User Permission for their own record alone, so every
+  other Employee, and every Planner Resource naming one, is refused them; a non-coordinator opens only
+  the trips they are on, and a Projects User only their customers' Maintenance Records. So each payload a
+  tap reads asks `frappe.get_list` once per doctype (roles, User Permissions and row rules together) and
+  marks it: a person's `open_as` (`Employee`, `Planner Resource` or none) on `get_planner`, Capacity
+  (`get_heatmap`), the route and the Maintenance Planner's technicians; a visit's or trip's `open` on the
+  foreign bookings, the route's stops, the quick looks and the Maintenance Planner's project work. A
+  refused name shows their week; a refused trip says so; a refused visit keeps its old note. A role with
+  no read on a doctype at all is answered before the query (`frappe.has_permission`), because
+  `get_list` refuses through `frappe.throw`, whose message would reach the Desk as a red dialog even
+  when caught; anything a refused query still logs is cut back off. Task,
+  Project and Asset are not asked: on production their only links to Employee ignore user permissions,
+  there is one Company, the two Project User Permissions are outside users, and strict mode is off.
+- **Nothing is lost.** Held changes are server rows (`Planner Draft Change`), so leaving loses none; the
+  page instance keeps the Undo stack, the selection and the build-out grid in memory across a Form and Back.
+  The side panel's own unsaved edits ask first (`planner_kit.panel.unsaved()`, counted from the person's
+  first touch, never from the page's `set_value`; a late reply set through the panel moves the baseline;
+  a page's own controls count through `dialog.add_values(fn)`, the Maintenance Planner's crew boxes).
+- **Undo never overwrites a Form's edit.** Each Undo entry remembers the `modified` its own write left
+  (`ppr_after`, `mpr_after`); a reload that finds the task or visit changed since (the Task form) drops the
+  entry and its toast. Every way off the planner closes the Undo toast first: `records.open`, and
+  `ppr_leave` / `mpr_leave` for the rest (a fallback, Quick edit's links, the drawers' Open buttons,
+  the Conflict center's links).
+- **Fallbacks.** Before the kit has loaded (a moment after the first landing), or when the person may not
+  open the record (by role, `frappe.model.can_read`, or per record, above), a tap does what it did before;
+  a fallback route still goes through the drawer (`p6b_navigate`).
+- **Where.** `public/js/planner_kit/records.js` (`record_of`, `open`; on `window.planner_kit.records`), the
+  `PPR` and `MPR` blocks of the two pages (before the tour's, which stays last), `ppo_menu` on the
+  Overview, the Gantt widget's long press, `api/planner_open.py`, and the payload fields: `projected` on
+  foreign bookings, route stops and quick-look bookings; `employee` on the Maintenance Planner's
+  technicians and the route; `open_as` and `open`.
+- **Tests.** `tests/test_planner_tap_opens.py` (the wiring) runs `scripts/test_planner_tap_opens.js`: the real
+  kit modules and both real page scripts, every item kind, the fallbacks and the unsaved-edits prompt.
 
 ## Calendar sync (C2, v1.604.0)
 
