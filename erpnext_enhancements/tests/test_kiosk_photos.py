@@ -299,6 +299,11 @@ class TestGrouping(unittest.TestCase):
         self.assertEqual((groups[0]["project_title"], groups[0]["task_title"]), ("Main Fountain", "TASK-1"))
 
 
+def _sql_call():
+    """The one ``frappe.db.sql`` call ``get_my_photos`` made: ``("sql", query, values)``."""
+    return next(c for c in STATE["calls"] if c[0] == "sql")
+
+
 class TestGetMyPhotos(unittest.TestCase):
     def test_no_employee_is_a_permission_error(self):
         _reset(employees={})
@@ -308,7 +313,7 @@ class TestGetMyPhotos(unittest.TestCase):
     def test_the_employee_is_the_session_users(self):
         _reset(intervals=[_interval("JI-1")], files={"F1": _file("F1", "JI-1")})
         out = kp.get_my_photos(period="all")
-        sql = [c for c in STATE["calls"] if c[0] == "sql"][0]
+        sql = _sql_call()
         self.assertEqual(sql[2]["employee"], "EMP-1")
         self.assertNotIn("from_dt", sql[2])
         self.assertEqual([g["job_interval"] for g in out["groups"]], ["JI-1"])
@@ -323,7 +328,7 @@ class TestGetMyPhotos(unittest.TestCase):
     def test_the_seven_day_window_is_bound_not_formatted_in(self):
         _reset()
         kp.get_my_photos()
-        _, query, values = [c for c in STATE["calls"] if c[0] == "sql"][0]
+        _, query, values = _sql_call()
         self.assertEqual((values["from_dt"], values["to_dt"]),
                          ("2026-10-21 00:00:00", "2026-10-27 23:59:59.999999"))
         self.assertNotIn("2026-10", query)
@@ -334,14 +339,14 @@ class TestGetMyPhotos(unittest.TestCase):
         files = {f"F{i}": _file(f"F{i}", f"JI-{i}") for i in range(4)}
         _reset(intervals=intervals, files=files)
         out = kp.get_my_photos(page_length=3)
-        values = [c for c in STATE["calls"] if c[0] == "sql"][0][2]
+        values = _sql_call()[2]
         self.assertEqual(values["limit"], 4)
         self.assertEqual((len(out["groups"]), out["has_more"], out["next_start"]), (3, True, 3))
 
     def test_the_sql_filters_on_images_with_a_bound_pattern(self):
         _reset()
         kp.get_my_photos()
-        _, query, values = [c for c in STATE["calls"] if c[0] == "sql"][0]
+        _, query, values = _sql_call()
         self.assertIn("REGEXP %(image_re)s", query)
         pattern = re.compile(values["image_re"])
         self.assertTrue(pattern.search("/private/files/image.jpg"))

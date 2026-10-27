@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.751.0] - 2026-10-27
+
+### Added
+- **A Photos tab in the Time Kiosk: the job photos the signed-in technician has taken, by day and
+  job.** Nik asked on 2026-10-27 for "an easy way for technicians to see the photos they've
+  uploaded through the Time Kiosk", and picked every recommended option: a tab of its own
+  (Clock · My Day · **Photos** · Map · Settings), the last 7 days by default, own photos only,
+  view only.
+  - **What it shows.** Newest day first, one card per job (project, task, clock-in to
+    clock-out) with three or four thumbnails across. Chips for Today / 7 days / 30 days / All,
+    and a date picker for one day. Ten jobs load at a time; **Load more** fetches the next ten,
+    and a job is never split across pages. A tap opens the full photo in a full-screen sheet;
+    ‹ ›, a swipe or the arrow keys step through every photo on screen, and **Open full size**
+    gives the browser's own viewer for pinch-zoom. The viewer is one sheet, so Back closes it
+    and stepping pushes no history entry (`scripts/test_kiosk_history.js` now drives it).
+  - **Where a kiosk photo lives, and why the list is built from Files.** "Take photo" leaves a
+    private File on the Job Interval and a `Job Interval Photo` row pointing at it. "Add files"
+    leaves a File on the Job Interval (and copies on the Project and Task), and for an image
+    also a photo row, which never points at its File: `countAttachedImageAsJobPhoto` passes the
+    File's file name where `record_job_photo` wants its docname, so the row stays Pending for
+    good (all three such rows on prod are in that state). So the tab lists **image Files attached
+    to the technician's own Job Intervals**, whichever button made them, and takes the shutter
+    time and caption from the photo row when there is one.
+  - **"N not uploaded".** A photo row still Pending or Failed with no File behind it is a picture
+    the phone took and the office never got; the bytes cannot be replayed once the kiosk reloads.
+    The job's card says so. Those stuck "Add files" rows would be counted too, so an image File on
+    the same job that no row points at is taken to be the photo one of them meant: waiting =
+    unsettled rows - unlinked image Files, never below zero. That is exact for every row on prod
+    and stays right once the button is fixed.
+  - **Whose photos.** `api/kiosk_photos.py` takes the employee from the session, the same rule as
+    every `api.time_kiosk` endpoint, and has no `employee` parameter. Each technician signs in to
+    the kiosk with their own account, so a handed-over phone shows whoever is signed in on it.
+    The full photo opens through Frappe's own file route with `?fid=<File>`, which checks
+    permission on exactly that File row.
+  - **Thumbnails are a new endpoint, `photo_thumbnail`.** Phone photos here run 1 to 5 MB, too
+    much for a grid on a cellular connection. It refuses anything that is not an image on one of
+    the caller's own Job Intervals before opening it, applies the EXIF orientation (phones store
+    a portrait photo sideways plus a tag), and returns a 360 px JPEG. The browser caches it
+    `private` with `Vary: Cookie`, under a URL that changes with the file's content hash.
+    Frappe's `File.make_thumbnail` is deliberately not used: for a private file it writes the
+    thumbnail under `public/`, readable by anyone without signing in. A file Pillow cannot read
+    (HEIC without a plugin) gets a 404 and a plain "No preview" tile that still opens.
+  - **Deliberately not under `api.time_kiosk.`** The kiosk's root-scope service worker answers
+    every GET under that prefix network-first and keeps the last response for offline, keyed by
+    URL rather than by person. A photo list there would be shown to the next person on a shared
+    phone that goes offline, and every thumbnail would pile up in the worker's cache. So the tab
+    needs a connection and says so, like the Map.
+  - **Tests:** `tests/test_kiosk_photos.py` (bench-free, own `frappe` stub, own CI step with
+    Pillow): the prod shapes above, the period and paging rules, the bound SQL, whose
+    thumbnail is refused before the file is opened, the EXIF rotation, and that every name
+    `photos.js` dials is a GET-only whitelisted def outside the worker's prefix.
+    `test_kiosk_frontend.py` adds `photos.js` to the shell's script list and load order.
+
 ## [1.750.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).
