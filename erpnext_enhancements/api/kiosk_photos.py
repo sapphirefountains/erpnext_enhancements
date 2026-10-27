@@ -59,10 +59,12 @@ leaves no unlinked Files behind).
   else's with the same 404, so a guessed name learns nothing. Frappe's
   ``File.make_thumbnail`` is deliberately not used: for a private file it writes
   the thumbnail under ``public/``, where anyone can read it without signing in.
-- **Decoding is bounded before it starts** (``make_thumbnail``): an allowlist of
-  formats, so bytes that are really EPS never reach Ghostscript whatever the
-  file is called, and a pixel cap on everything the JPEG decoder cannot shrink
-  while it reads, so one small PNG cannot take a worker's memory.
+- **Decoding is bounded before it starts** (``make_thumbnail``,
+  ``decode_problem``): an allowlist of formats, so bytes that are really EPS
+  never reach Ghostscript whatever the file is called, and size limits read from
+  the header, so a small file cannot decode to an image that takes a worker's
+  memory. The limits and what each one cost before it existed are with the
+  ``MAX_*`` constants below.
 - **Not under ``api.time_kiosk.``** on purpose. ``www/kiosk-sw.js`` answers every
   GET under that prefix network-first and keeps the last response for offline,
   keyed by URL rather than by person. A shared phone that goes offline would
@@ -110,17 +112,37 @@ _IMAGE_SQL_RE = r"\.(" + "|".join(IMAGE_EXTENSIONS) + r")$"
 #: its bytes, never its name, so without this an EPS saved as ``.jpg`` opens as
 #: EPS and runs Ghostscript when it is loaded. HEIC is absent on purpose: Pillow
 #: cannot read it without a plugin, so it gets the "No preview" tile either way.
+#: So is WebP: Pillow builds libwebp's animation decoder, whole RGBA canvases and
+#: all, inside ``Image.open`` itself, still image or not, so a 41 KB 16 MP WebP
+#: took 119 MB before any size check could run. No camera writes WebP; one added
+#: through "Add files" gets the plain tile and still opens full size.
 #: There is no "MPO" opener to list: the JPEG plugin opens a multi-picture JPEG
 #: and reports its format as MPO.
-THUMB_FORMATS = ("JPEG", "PNG", "WEBP", "GIF", "BMP")
+THUMB_FORMATS = ("JPEG", "PNG", "GIF", "BMP")
 #: Formats ``Image.draft`` can shrink while decoding (MPO is a JPEG container).
 DRAFT_FORMATS = ("JPEG", "MPO")
-#: Pixel cap for every other format, which decodes at full size: a 13,000 px
-#: square RGBA PNG is 0.66 MB on disk and about 1.4 GB in memory. 40 MP is above
-#: any phone camera's PNG and well below what a worker can spare. A JPEG is
-#: bounded instead by ``draft`` (up to 1/8 a side) and by Pillow's own
-#: decompression-bomb check, which refuses one over about 179 MP at open.
-MAX_PIXELS = 40_000_000
+
+# Decoding limits. All of them are read from the header (and, for a JPEG, from the
+# size ``draft`` will decode at) before a single pixel is decoded, because a small
+# file can decode to a very large image. The figures are the extra peak memory of
+# one thumbnail, measured with Pillow 12.3.0 on 2026-10-27; a phone camera's JPEG
+# costs about 10 MB. A few requests run at once, one per worker, and ``v`` is not
+# read, so a cache-busting URL makes every request decode again.
+
+#: A JPEG's header size. Covers any phone camera's normal output (a 50 MP sensor
+#: is 8160x6120), which ``draft`` then decodes at 1/8 a side.
+MAX_JPEG_PIXELS = 60_000_000
+#: A progressive JPEG keeps a coefficient buffer for the WHOLE image, about 3.4
+#: bytes a pixel, whatever ``draft`` asks for: a 1.2 MB 12000x12000 one took
+#: 425 MB. Phone cameras write baseline JPEGs; 16 MP is about 55 MB.
+MAX_PROGRESSIVE_PIXELS = 16_000_000
+#: What may actually be decoded: the size after ``draft`` for a JPEG, the header
+#: size for everything else, which decodes at full size. ``draft`` shrinks by the
+#: SHORTER side, so a 65500x1439 strip (1.4 MB) gets no reduction and took 723 MB.
+#: 16 MP covers a 5K screenshot (14.7 MP, 60 MB as an RGB PNG) and a phone
+#: panorama after ``draft``. The dearest image it lets through is a 16 MP RGBA
+#: PNG, 130 MB, because resizing RGBA makes a premultiplied full-size copy.
+MAX_DECODE_PIXELS = 16_000_000
 
 #: Photo rows whose bytes the office has not got.
 UNSETTLED_STATES = ("Pending", "Failed")
@@ -250,32 +272,53 @@ def build_groups(intervals, files, photo_rows, project_titles=None, task_titles=
     return groups
 
 
+def decode_problem(fmt, size, drafted, progressive=False):
+    """Why an image may not be decoded for a thumbnail, or None.
+
+    ``size`` is the header's, ``drafted`` the size it will actually decode at (the
+    same, unless ``draft`` shrank a JPEG). Pure, so every limit is tested without
+    building the huge files the limits exist for.
+    """
+    width, height = size
+    pixels = width * height
+    if fmt in DRAFT_FORMATS:
+        if pixels > MAX_JPEG_PIXELS:
+            return f"{width}x{height} JPEG is over the {MAX_JPEG_PIXELS:,}-pixel cap"
+        if progressive and pixels > MAX_PROGRESSIVE_PIXELS:
+            return f"{width}x{height} progressive JPEG is over the {MAX_PROGRESSIVE_PIXELS:,}-pixel cap"
+    if drafted[0] * drafted[1] > MAX_DECODE_PIXELS:
+        return f"{width}x{height} {fmt} would decode at {drafted[0]}x{drafted[1]}, over the {MAX_DECODE_PIXELS:,}-pixel cap"
+    return None
+
+
 def make_thumbnail(raw, size=THUMB_PX, quality=THUMB_QUALITY):
     """JPEG bytes of ``raw`` shrunk to ``size`` on its longest side, upright.
 
-    ``Image.open`` reads only the header, so both limits are checked before a
-    single pixel is decoded: the format must be in ``THUMB_FORMATS``, and an image
-    the JPEG decoder cannot shrink must be within ``MAX_PIXELS``.
+    ``Image.open`` reads only the header, so every limit is checked before a
+    single pixel is decoded: the format must be in ``THUMB_FORMATS``, and
+    ``decode_problem`` must find nothing wrong with its size.
 
+    ``draft`` lets the JPEG decoder skip most of a 12-megapixel image instead of
+    decoding all of it to throw it away; for any other format it does nothing.
     Phones store a portrait photo as a landscape image plus an EXIF orientation
     tag; ``exif_transpose`` applies the tag, or every thumbnail lies on its side.
-    ``draft`` lets the JPEG decoder skip most of a 12-megapixel image instead of
-    decoding all of it to throw it away. Raises on anything refused or unreadable
-    (HEIC without a plugin, a truncated upload); the caller turns that into a 404.
+    Raises on anything refused or unreadable (HEIC without a plugin, a truncated
+    upload); the caller turns that into a 404.
     """
     from PIL import Image, ImageOps
 
-    # Register every plugin first: with ``formats``, Image.open looks each name up
-    # directly, and a name whose plugin is not registered yet raises KeyError
-    # instead of being skipped. It only pre-registers some of them itself.
-    Image.init()
     image = Image.open(io.BytesIO(raw), formats=THUMB_FORMATS)
-    width, height = image.size
-    if image.format not in DRAFT_FORMATS and width * height > MAX_PIXELS:
-        raise ValueError(f"{width}x{height} {image.format} is over the {MAX_PIXELS:,}-pixel cap")
+    header = image.size
     image.draft("RGB", (size * 2, size * 2))
-    image = ImageOps.exif_transpose(image)
+    problem = decode_problem(image.format, header, image.size, bool(image.info.get("progressive")))
+    if problem:
+        raise ValueError(problem)
+    # Shrink first, then turn upright. exif_transpose returns a copy, and of the
+    # full-size image that copy was the largest allocation of all; thumbnail()
+    # keeps the EXIF block, so the orientation is still there to apply. Only the
+    # first frame of an animated GIF is ever decoded: nothing here seeks.
     image.thumbnail((size, size))
+    image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
     out = io.BytesIO()

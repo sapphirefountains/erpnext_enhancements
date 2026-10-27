@@ -19,8 +19,9 @@ ERPNext Task TASK-2026-02990 (PRJ-00580, Misc Tasks).
   view only.
   - **What it shows.** Newest day first, one card per job (project, task, clock-in to
     clock-out) with three or four thumbnails across. Chips for Today / 7 days / 30 days / All
-    (48 px tall here; the shared segmented control is 44 px), and a date picker for one day. Ten jobs load at a time; **Load more** fetches the next ten,
-    and a job is never split across pages. A tap opens the full photo in a full-screen sheet;
+    (48 px tall here; the shared segmented control is 44 px), and a date picker for one day.
+    Ten jobs load at a time; **Load more** fetches the next ten, and a job is never split
+    across pages. A tap opens the full photo in a full-screen sheet;
     ‹ ›, a swipe or the arrow keys step through every photo on screen, and **Open full size**
     gives the browser's own viewer for pinch-zoom. The viewer is one sheet, so Back closes it
     and stepping pushes no history entry (`scripts/test_kiosk_history.js` now drives it).
@@ -53,25 +54,47 @@ ERPNext Task TASK-2026-02990 (PRJ-00580, Misc Tasks).
     The browser caches it `private` with `Vary: Cookie`, under a URL that changes with the
     file's content hash. Frappe's `File.make_thumbnail` is deliberately not used: for a private
     file it writes the thumbnail under `public/`, readable by anyone without signing in. A file
-    Pillow cannot read (HEIC without a plugin) gets a 404 and a plain "No preview" tile that
-    still opens.
-  - **Decoding is bounded before it starts.** `Image.open` reads only the header, so both limits
-    apply before a pixel is decoded:
-    - **A format allowlist** (JPEG, PNG, WebP, GIF, BMP). Pillow picks the decoder from the
-      bytes, not the name, so an EPS saved as `.jpg` would otherwise open as EPS and run
-      Ghostscript on load.
-    - **A 40-megapixel cap on everything but JPEG.** `draft` lets the JPEG decoder shrink up to
-      1/8 a side while it reads, and Pillow's own bomb check refuses a JPEG over about 179 MP.
-      A PNG decodes at full size: a 13,000 px square RGBA PNG is 0.66 MB on disk and about
-      1.4 GB in memory, and a few at once would take the Gunicorn workers down.
+    Pillow may not or cannot read (HEIC without a plugin, WebP, anything over a limit below)
+    gets a 404 and a plain "No preview" tile that still opens full size.
+  - **Decoding is bounded before it starts.** A small file can decode to a huge image, a few
+    requests run at once, and `v` is not read, so a cache-busting URL decodes every time. So
+    every limit is read from the header (and, for a JPEG, from the size `draft` will decode
+    at) before a pixel is decoded, in `decode_problem`. Peak extra memory of one thumbnail,
+    measured with Pillow 12.3.0, before and after:
 
-    Both are refused with the same 404.
+    | Image (size on disk) | Before | After |
+    |---|---|---|
+    | 65500x1439 baseline JPEG strip (1.4 MB) | 723 MB | refused, 2 MB |
+    | 40000x1439 baseline JPEG strip (0.9 MB) | 443 MB | refused, 1 MB |
+    | 12000x12000 progressive JPEG (1.2 MB) | 425 MB | refused, 2 MB |
+    | 6000x6000 animated WebP, 10 frames (0.8 MB) | 554 MB | refused, 1 MB |
+    | 4000x4000 still WebP (41 KB) | 120 MB | refused, 1 MB |
+    | 4000x4000 RGBA PNG (60 KB) | 132 MB | 130 MB, served |
+    | 5120x2880 PNG, a 5K screenshot | | 60 MB, served |
+    | 12 MP and 50 MP phone JPEGs | 10 MB | 6 MB, served |
+    | 4000x4000 animated GIF, 10 frames | 34 MB | 17 MB, served, first frame only |
+
+    - **A format allowlist: JPEG, PNG, GIF, BMP.** Pillow picks the decoder from the bytes, not
+      the name, so an EPS saved as `.jpg` would otherwise open as EPS and run Ghostscript on
+      load. WebP is out because Pillow builds libwebp's animation decoder, whole RGBA canvases
+      and all, inside `Image.open`, still image or not: no check after opening can stop it.
+    - **A JPEG's header is capped at 60 MP**, which covers any phone camera's normal output.
+    - **A progressive JPEG at 16 MP.** It keeps a coefficient buffer for the whole image,
+      about 3.4 bytes a pixel, whatever `draft` asks for.
+    - **What is actually decoded is capped at 16 MP**: the size after `draft` for a JPEG, the
+      header size for everything else. `draft` divides by the shorter side, so a strip gets
+      no reduction at all; a 5K screenshot is 14.7 MP.
+    - **The image is shrunk before it is turned upright.** `exif_transpose` copies its input,
+      and on the full-size image that copy was the largest single allocation.
+    - **Only the first frame** of an animated GIF is read; nothing seeks.
+
+    All of them get the same 404.
   - **Deliberately not under `api.time_kiosk.`** The kiosk's root-scope service worker answers
     every GET under that prefix network-first and keeps the last response for offline, keyed by
     URL rather than by person. A photo list there would be shown to the next person on a shared
     phone that goes offline, and every thumbnail would pile up in the worker's cache. So the tab
     needs a connection and says so, like the Map.
-  - **Tests:** `tests/test_kiosk_photos.py`, 44 tests, all on made-up data (the repo is public).
+  - **Tests:** `tests/test_kiosk_photos.py`, 56 tests, all on made-up data (the repo is public).
     It is bench-free, has its own `frappe` stub and its own CI step with Pillow. It covers:
     - the prod shapes above, and the period and paging rules;
     - ownership through the SQL: the stub's `frappe.db.sql` applies each condition of the real
@@ -80,11 +103,16 @@ ERPNext Task TASK-2026-02990 (PRJ-00580, Misc Tasks).
     - that nothing reads `form_dict`, the request or `**kwargs` for an employee;
     - thumbnails: refused before the file is opened, including a File on another doctype that
       shares a name with one of the caller's Job Intervals; missing and foreign alike;
-    - the EPS allowlist, the pixel cap (and that it spares JPEG), and the EXIF rotation;
+    - the decoding limits on the measured shapes (pure, with the real limits), then each
+      refusal on a small image under a lowered limit, with `ImageFile.load` patched to fail:
+      a limit checked after anything has been decoded fails the test;
+    - the EPS allowlist, WebP never opened, only a GIF's first frame read, and the EXIF
+      rotation;
     - that the Python and SQL image rules agree, and that every name `photos.js` dials is a
       GET-only whitelisted def outside the worker's prefix.
 
-    Every mutation the review named, and five more, now fails the suite.
+    Sixteen mutations of the module each fail the suite now, including all the review found
+    surviving and moving the size check after `exif_transpose`.
     `test_kiosk_frontend.py` adds `photos.js` to the shell's script list and load order.
 
 ## [1.750.0] - 2026-10-27

@@ -464,17 +464,17 @@ class TestGetMyPhotos(unittest.TestCase):
         self.assertFalse(pattern.search("/files/quote.pdf"))
 
 
-def _jpeg(size=(800, 400), orientation=None):
+def _jpeg(size=(800, 400), orientation=None, progressive=False, mode="RGB"):
     from PIL import Image
 
-    image = Image.new("RGB", size, (200, 30, 30))
+    image = Image.new(mode, size, 120)
     buf = io.BytesIO()
+    kwargs = {"progressive": progressive}
     if orientation:
         exif = image.getexif()
         exif[0x0112] = orientation
-        image.save(buf, format="JPEG", exif=exif)
-    else:
-        image.save(buf, format="JPEG")
+        kwargs["exif"] = exif
+    image.save(buf, format="JPEG", **kwargs)
     return buf.getvalue()
 
 
@@ -486,8 +486,82 @@ def _png(size, mode="RGB"):
     return buf.getvalue()
 
 
+class TestDecodeLimits(unittest.TestCase):
+    """``decode_problem`` with the real limits, on the shapes the review measured. Pure: no
+    image is built, which is the only way to test a 65,500 px strip cheaply."""
+
+    def ok(self, fmt, size, drafted=None, progressive=False):
+        return kp.decode_problem(fmt, size, drafted or size, progressive) is None
+
+    def test_phone_cameras_pass(self):
+        self.assertTrue(self.ok("JPEG", (4032, 3024), (1008, 756)))  # 12 MP, drafted 1/4
+        self.assertTrue(self.ok("JPEG", (8160, 6120), (1020, 765)))  # 50 MP, drafted 1/8
+        self.assertTrue(self.ok("MPO", (4032, 3024), (1008, 756)))
+        self.assertTrue(self.ok("JPEG", (4032, 3024), (1008, 756), progressive=True))
+        self.assertTrue(self.ok("JPEG", (16000, 3000), (4000, 750)))  # a phone panorama
+
+    def test_a_jpeg_header_over_sixty_megapixels(self):
+        self.assertFalse(self.ok("JPEG", (12000, 12000), (1500, 1500)))
+        self.assertFalse(self.ok("MPO", (12000, 12000), (1500, 1500)))
+
+    def test_a_strip_draft_cannot_shrink(self):
+        """1.4 MB on disk, 723 MB to decode: ``draft`` divides by the shorter side."""
+        self.assertFalse(self.ok("JPEG", (65500, 1439)))
+        self.assertFalse(self.ok("JPEG", (40000, 1439)))  # under the header cap, caught here
+
+    def test_a_progressive_jpeg_is_judged_by_its_full_size(self):
+        """Its coefficient buffer is full size whatever ``draft`` asks for."""
+        self.assertFalse(self.ok("JPEG", (5000, 4000), (1250, 1000), progressive=True))
+        self.assertTrue(self.ok("JPEG", (5000, 4000), (1250, 1000), progressive=False))
+
+    def test_everything_else_decodes_at_full_size(self):
+        self.assertTrue(self.ok("PNG", (5120, 2880)))  # a 5K screenshot
+        self.assertTrue(self.ok("GIF", (4000, 4000)))
+        self.assertFalse(self.ok("PNG", (6325, 6325)))
+        self.assertFalse(self.ok("BMP", (5000, 4000)))
+
+    def test_the_limits_are_where_the_review_put_them(self):
+        self.assertEqual(kp.MAX_JPEG_PIXELS, 60_000_000)
+        self.assertLessEqual(kp.MAX_PROGRESSIVE_PIXELS, 16_000_000)
+        self.assertTrue(14_745_600 <= kp.MAX_DECODE_PIXELS <= 24_000_000, "a 5K screenshot must fit")
+        self.assertNotIn("WEBP", kp.THUMB_FORMATS)
+
+
+class _Limits:
+    """Temporarily lower the module's limits, so a refusal is tested on a small image."""
+
+    def __init__(self, **limits):
+        self.limits, self.saved = limits, {}
+
+    def __enter__(self):
+        for name, value in self.limits.items():
+            self.saved[name] = getattr(kp, name)
+            setattr(kp, name, value)
+
+    def __exit__(self, *exc):
+        for name, value in self.saved.items():
+            setattr(kp, name, value)
+
+
+def _no_decoding():
+    """Any pixel decoded while this is active fails the test: a limit checked after
+    ``load()`` (``thumbnail`` and ``exif_transpose`` both load) protects nothing."""
+    from unittest import mock
+
+    from PIL import ImageFile
+
+    def load(self):
+        raise AssertionError("decoded before the size check")
+
+    return mock.patch.object(ImageFile.ImageFile, "load", load)
+
+
 @unittest.skipUnless(HAVE_PIL, "Pillow is not installed")
 class TestMakeThumbnail(unittest.TestCase):
+    def refused_before_decoding(self, raw):
+        with _no_decoding(), self.assertRaisesRegex(ValueError, "pixel cap"):
+            kp.make_thumbnail(raw)
+
     def test_upright_and_small(self):
         """A landscape sensor image tagged "rotate 90 CW", as a phone stores a portrait shot."""
         from PIL import Image
@@ -495,6 +569,11 @@ class TestMakeThumbnail(unittest.TestCase):
         out = Image.open(io.BytesIO(kp.make_thumbnail(_jpeg(orientation=6))))
         self.assertEqual(out.size, (180, 360))
         self.assertEqual(out.format, "JPEG")
+
+    def test_the_guard_does_catch_a_decode(self):
+        """Anti-vacuity for every test that uses ``_no_decoding``."""
+        with _no_decoding(), self.assertRaisesRegex(AssertionError, "decoded before"):
+            kp.make_thumbnail(_jpeg((20, 20)))
 
     def test_eps_bytes_named_like_a_photo_never_reach_ghostscript(self):
         """Pillow picks the decoder from the bytes. Without the allowlist these open as EPS
@@ -505,21 +584,57 @@ class TestMakeThumbnail(unittest.TestCase):
         with self.assertRaises(UnidentifiedImageError):
             kp.make_thumbnail(eps)
 
-    def test_a_png_over_the_pixel_cap_is_refused_before_it_is_decoded(self):
-        # 42 MP, a few hundred KB on disk; mode "1" keeps building it cheap here.
-        raw = _png((7000, 6000), mode="1")
-        with self.assertRaisesRegex(ValueError, "pixel cap"):
-            kp.make_thumbnail(raw)
+    @unittest.skipUnless(HAVE_PIL and __import__("PIL.features").features.check("webp"), "no WebP support")
+    def test_a_webp_is_never_opened(self):
+        """Pillow allocates libwebp's whole canvases inside Image.open, before any check."""
+        from PIL import Image, UnidentifiedImageError
 
-    def test_the_cap_spares_jpeg_which_draft_shrinks_while_decoding(self):
-        saved = kp.MAX_PIXELS
-        kp.MAX_PIXELS = 100
-        try:
-            self.assertTrue(kp.make_thumbnail(_jpeg((20, 20))).startswith(b"\xff\xd8"))
-            with self.assertRaisesRegex(ValueError, "pixel cap"):
-                kp.make_thumbnail(_png((20, 20)))
-        finally:
-            kp.MAX_PIXELS = saved
+        buf = io.BytesIO()
+        Image.new("RGB", (20, 20)).save(buf, format="WEBP")
+        with self.assertRaises(UnidentifiedImageError):
+            kp.make_thumbnail(buf.getvalue())
+
+    def test_a_png_over_the_decode_cap_with_the_real_limit(self):
+        # 16.4 MP, a few KB on disk; mode "1" keeps building it cheap here.
+        self.refused_before_decoding(_png((4100, 4000), mode="1"))
+
+    def test_a_jpeg_over_the_header_cap(self):
+        with _Limits(MAX_JPEG_PIXELS=1_000):
+            self.refused_before_decoding(_jpeg((64, 64)))
+
+    def test_a_strip_that_draft_cannot_shrink(self):
+        with _Limits(MAX_DECODE_PIXELS=50_000):
+            self.refused_before_decoding(_jpeg((2000, 40), mode="L"))
+
+    def test_the_size_after_draft_is_what_counts_for_a_jpeg(self):
+        """8.3 MP in the header, 0.5 MP once drafted: served under a 0.6 MP decode limit."""
+        with _Limits(MAX_DECODE_PIXELS=600_000):
+            self.assertTrue(kp.make_thumbnail(_jpeg((2880, 2880), mode="L")).startswith(b"\xff\xd8"))
+            self.refused_before_decoding(_png((800, 800)))
+
+    def test_a_progressive_jpeg_over_its_cap(self):
+        with _Limits(MAX_PROGRESSIVE_PIXELS=1_000):
+            self.refused_before_decoding(_jpeg((64, 64), progressive=True))
+            self.assertTrue(kp.make_thumbnail(_jpeg((64, 64))).startswith(b"\xff\xd8"))
+
+    def test_only_the_first_frame_of_an_animated_gif_is_read(self):
+        from unittest import mock
+
+        from PIL import GifImagePlugin, Image
+
+        frames = [Image.new("P", (40, 40), i) for i in range(4)]
+        buf = io.BytesIO()
+        frames[0].save(buf, format="GIF", save_all=True, append_images=frames[1:])
+        seen = []
+        real = GifImagePlugin.GifImageFile._seek
+
+        def spy(self, frame, *args, **kwargs):
+            seen.append(frame)
+            return real(self, frame, *args, **kwargs)
+
+        with mock.patch.object(GifImagePlugin.GifImageFile, "_seek", spy):
+            self.assertTrue(kp.make_thumbnail(buf.getvalue()).startswith(b"\xff\xd8"))
+        self.assertEqual(set(seen), {0}, "a frame after the first was read")
 
 
 @unittest.skipUnless(HAVE_PIL, "Pillow is not installed")

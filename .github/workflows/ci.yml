@@ -3121,8 +3121,10 @@ jobs:
       # whose photo row is stuck Pending is shown and NOT reported as "not uploaded" (all three
       # such rows on prod are like that), and captures whose bytes never arrived keep their job
       # on screen. Thumbnails come out upright (a phone stores a portrait shot sideways plus an
-      # EXIF tag), and decoding is bounded first: EPS bytes named .jpg never reach Ghostscript,
-      # and a 0.66 MB PNG that decodes to 1.4 GB is refused before it can take a worker down.
+      # EXIF tag), and decoding is bounded before a pixel is decoded: EPS bytes named .jpg never
+      # reach Ghostscript, WebP is never opened, and a 1.4 MB JPEG strip that draft cannot shrink
+      # (723 MB), a progressive JPEG (its buffer is full size whatever draft asks) or a big PNG
+      # is refused before it can take a worker down -- each test fails if anything decodes first.
       # And the endpoints stay outside api.time_kiosk, whose GETs the service worker
       # replays offline per URL rather than per person -- one technician's list on the next
       # one's screen. Own frappe stub, own step; Pillow for the thumbnail class.
