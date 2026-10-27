@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.751.0] - 2026-10-27
 
+ERPNext Task TASK-2026-02990 (PRJ-00580, Misc Tasks).
+
 ### Added
 - **A Photos tab in the Time Kiosk: the job photos the signed-in technician has taken, by day and
   job.** Nik asked on 2026-10-27 for "an easy way for technicians to see the photos they've
