@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.750.1] - 2026-10-27
 
+ERPNext Task TASK-2026-02992 (PRJ-00580, Misc Tasks).
+
 **This release carries a patch that writes production data on deploy: it moves 6 stored files
 and updates 16 File rows and 3 photo rows. Nik approves the merge explicitly.**
 
