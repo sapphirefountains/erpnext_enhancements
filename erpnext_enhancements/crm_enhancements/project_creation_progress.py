@@ -159,10 +159,13 @@ def phase_of(state, job, project):
 	* ``idle`` — nothing is known: no creation was asked for, or what was known has expired.
 	"""
 	recorded = (state or {}).get("phase")
-	if job in ACTIVE_JOB_STATES:
-		return "running" if recorded == "running" else "queued"
+	# The job's own word first: mark_finished is written before the job function returns, so for a
+	# moment RQ still says "started" about a job that has already said how it ended. A new job
+	# cannot meet an old "finished" here, because the enqueue writes "queued" over it first.
 	if recorded == "finished":
 		return "finished"
+	if job in ACTIVE_JOB_STATES:
+		return "running" if recorded == "running" else "queued"
 	if project:
 		return "done"
 	if recorded in ("queued", "running"):

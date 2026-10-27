@@ -164,6 +164,9 @@ def _install_frappe_stub():
 			return STATE["opp"]
 		if doctype == "Project Template":
 			return FakeDoc("Project Template", name, tasks=[])
+		if doctype == "Project" and name in STATE["back_projects"]:
+			row = STATE["back_projects"][name]
+			return FakeDoc("Project", name, project_name=row.get("title", name), **row)
 		raise AssertionError(f"unexpected get_doc({doctype!r})")
 
 	def get_all(doctype, filters=None, fields=None, **kwargs):
@@ -196,17 +199,30 @@ def _install_frappe_stub():
 		STATE["errors"].append((title, kwargs))
 		return types.SimpleNamespace(name="ERR-0001")
 
-	def has_permission(doctype=None, ptype="read", doc=None, **kwargs):
-		return STATE.get("permitted", True)
+	def has_permission(doctype=None, ptype="read", doc=None, user=None, throw=False, **kwargs):
+		STATE["perm_checks"].append((doctype, ptype, doc))
+		permitted = STATE.get("permitted", True)
+		if throw and not permitted:
+			raise StubPermissionError(f"No permission for {doctype} {doc}")
+		return permitted
 
 	db = types.SimpleNamespace()
 
 	def get_value(doctype, filters=None, fieldname=None, for_update=False, order_by=None, **kwargs):
 		STATE["db_calls"].append((doctype, filters, fieldname, for_update, order_by))
 		if doctype == "Opportunity":
+			# The locked read can see a link the document loaded beside it does not (another job
+			# committed in between): the job must act on this value.
+			if for_update and "locked_value" in STATE:
+				return STATE["locked_value"]
 			return STATE["opp"].get("custom_created_project")
 		if doctype == "Project":
-			return STATE.get("back_linked")
+			# Back-linked Projects, oldest first, with the job's own status filter applied.
+			excluded = (filters or {}).get("status", [None, []])[1]
+			for name, row in sorted(STATE["back_projects"].items(), key=lambda item: item[1]["creation"]):
+				if row.get("status") not in excluded:
+					return name
+			return None
 		return None
 
 	def has_column(doctype, column):
@@ -342,6 +358,8 @@ def _reset(**overrides):
 			"Opportunity", OPP, custom_opportunity_name="Lakeside Plaza Fountain", party_name="Acme Water Co"
 		),
 		job_status=None,
+		back_projects={},
+		perm_checks=[],
 	)
 	STATE.update(overrides)
 	sys.modules["frappe"].cache.store.clear()
@@ -392,7 +410,9 @@ class TestTheJob(unittest.TestCase):
 			encoding="utf-8"
 		)
 		reported = __import__("re").findall(r'^\t+step = "(\w+)"', source, flags=__import__("re").M)
-		self.assertEqual(tuple(reported), progress.STEP_KEYS)
+		# A linked Project takes two of the steps again (link, then drive), so the keys are compared
+		# as a set; the order a made Project reports them in is test_each_step_is_reported_in_order.
+		self.assertEqual(set(reported), set(progress.STEP_KEYS))
 
 	def test_success_is_broadcast_with_the_project_and_emailed(self):
 		_run_job()
@@ -429,22 +449,80 @@ class TestTheJob(unittest.TestCase):
 		self.assertFalse(status["adopted"])
 		self.assertEqual(_final_state()["result"]["status"], "exists")
 
-	def test_a_project_pointing_back_is_linked_not_duplicated(self):
-		STATE["back_linked"] = "PRJ-0003"
+	def test_the_locked_reads_value_is_the_one_acted_on(self):
+		# The document loaded beside it says nothing is linked; the locked read says another job did.
+		STATE["locked_value"] = "PRJ-0009"
 		_run_job()
 		self.assertEqual(STATE["projects"], [])
-		self.assertIn(("save", "Opportunity", "PRJ-0003"), STATE["events"])
+		status, _user = _statuses()[0]
+		self.assertEqual((status["status"], status["project"]), ("exists", "PRJ-0009"))
+
+	def test_a_project_pointing_back_is_linked_not_duplicated(self):
+		STATE["back_projects"] = {
+			"PRJ-0003": {
+				"status": "Active",
+				"creation": "2099-01-02",
+				"custom_drive_folder_id": "FOLDER-OLD",
+			},
+			"PRJ-0004": {"status": "Active", "creation": "2099-03-01"},
+		}
+		_run_job()
+		self.assertEqual(STATE["projects"], [])
+		self.assertIn(("save", "Opportunity", "PRJ-0003"), STATE["events"], "the oldest claim is the Project")
 		self.assertLess(
 			STATE["events"].index(("save", "Opportunity", "PRJ-0003")), STATE["events"].index(("commit",))
 		)
 		project_lookup = next(c for c in STATE["db_calls"] if c[0] == "Project")
-		self.assertEqual(project_lookup[1], {"custom_opportunity": OPP})
-		self.assertEqual(project_lookup[4], "creation asc", "the oldest claim is the Project")
+		self.assertEqual(
+			project_lookup[1], {"custom_opportunity": OPP, "status": ["not in", ["Cancelled", "Canceled"]]}
+		)
+		self.assertTrue(project_lookup[3], "the back-link is read under the lock too")
+		self.assertEqual(project_lookup[4], "creation asc")
 		status, user = _statuses()[0]
 		self.assertEqual(
 			(status["status"], status["project"], status["adopted"]), ("exists", "PRJ-0003", True)
 		)
-		self.assertEqual(STATE["sent"], [])
+		self.assertEqual(STATE["sent"], [], "no New Project Created email: nothing is new")
+		self.assertTrue(status["drive_success"], "it already has its folder")
+
+	def test_a_linked_project_gets_the_team_sms_and_its_drive_folder(self):
+		STATE["back_projects"] = {
+			"PRJ-0003": {"status": "Open", "creation": "2099-01-02", "title": "Lakeside"}
+		}
+		_run_job()
+		methods = [method for method, _kw in STATE["enqueued"]]
+		self.assertEqual(methods, ["erpnext_enhancements.status_alerts.deliver_closed_won_alerts"])
+		self.assertIn(("insert", "File", None), STATE["events"], "the Drive link is attached")
+		self.assertLess(STATE["events"].index(("commit",)), STATE["events"].index(("insert", "File", None)))
+		status, _user = _statuses()[0]
+		self.assertEqual(
+			(status["status"], status["adopted"], status["drive_success"]), ("exists", True, True)
+		)
+		self.assertEqual(
+			[(step, done) for step, done, _u in _progress_events()], [("check", 0), ("link", 3), ("drive", 4)]
+		)
+		self.assertEqual(_final_state()["done"], len(progress.STEPS))
+
+	def test_a_linked_projects_drive_failure_is_reported_not_fatal(self):
+		STATE["back_projects"] = {"PRJ-0003": {"status": "Open", "creation": "2099-01-02"}}
+		STATE["fail_at"] = "drive"
+		_run_job()
+		self.assertNotIn(("rollback",), STATE["events"])
+		status, _user = _statuses()[0]
+		self.assertEqual((status["status"], status["project"]), ("exists", "PRJ-0003"))
+		self.assertIn("drive_error", status)
+		self.assertTrue(_final_state()["result"]["drive_error"])
+
+	def test_a_cancelled_project_is_passed_over_and_a_new_one_made(self):
+		# A PM retired it; relinking it would bring back a dead job, without a Drive folder or the SMS.
+		STATE["back_projects"] = {
+			"PRJ-0002": {"status": "Cancelled", "creation": "2099-01-01"},
+			"PRJ-0005": {"status": "Canceled", "creation": "2099-01-02"},
+		}
+		_run_job()
+		self.assertEqual(len(STATE["projects"]), 1)
+		status, _user = _statuses()[0]
+		self.assertEqual((status["status"], status["project"]), ("success", "PRJ-0001"))
 
 	def test_a_blocked_hand_off_stops_at_the_check(self):
 		STATE["blocked"] = "Schedule the Hand-Off Meeting on the Opportunity first."
@@ -565,6 +643,24 @@ class TestTheEnqueue(unittest.TestCase):
 		self.assertEqual(self._enqueue(), {"status": "exists", "project": "PRJ-0007"})
 		self.assertEqual(STATE["enqueued"], [])
 
+	def test_starting_it_needs_write_access_to_the_opportunity(self):
+		# The job runs as Administrator and can link a Project; nobody without write may start it.
+		STATE["permitted"] = False
+		with self.assertRaises(StubPermissionError):
+			self._enqueue()
+		self.assertEqual(STATE["perm_checks"], [("Opportunity", "write", OPP)])
+		self.assertEqual(STATE["enqueued"], [])
+		self.assertEqual(STATE["events"], [], "nothing recorded, not even the queued state")
+
+	def test_a_deduplicated_no_op_reports_the_job_that_is_there(self):
+		# Another request queued this Opportunity's job between the check and the enqueue.
+		STATE["enqueue_returns"] = None
+		STATE["job_status"] = JobStatus.STARTED
+		result = self._enqueue()
+		self.assertEqual(result["status"], "running")
+		self.assertIn(result["phase"], ("queued", "running"))
+		self.assertEqual(result["job"], "started")
+
 	def test_a_bad_address_is_refused_before_anything_is_recorded(self):
 		with self.assertRaises(StubThrow):
 			api.enqueue_project_creation(OPP, users="Pat Example", project_template="Fountain Build")
@@ -584,6 +680,8 @@ class TestWhereItStands(unittest.TestCase):
 			(("queued", "started", None), "queued"),
 			(("finished", None, "PRJ-0001"), "finished"),
 			(("finished", "finished", None), "finished"),
+			# The job has said how it ended while RQ still says started: its own word wins.
+			(("finished", "started", None), "finished"),
 			((None, None, "PRJ-0001"), "done"),
 			(("running", None, None), "lost"),
 			(("queued", None, None), "lost"),

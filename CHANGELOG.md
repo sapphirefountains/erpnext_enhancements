@@ -84,8 +84,11 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
     that job is queued or started. A second click, a second tab or a colleague gets the running
     creation's progress instead.
   - **Racing jobs.** The job takes the Opportunity's row lock (`get_value(..., for_update=True)`)
-    before anything else. A second job, queued some other way, waits for the first to commit and
-    then finds its Project.
+    before anything else, and acts on the value that locked read returns. Under REPEATABLE READ,
+    an earlier plain read would pin an older snapshot. A second job, queued some other way, waits
+    for the first to commit and then finds its Project. If `enqueue` deduplicates anyway, because
+    another request queued the job in between, the caller is told about that job as it stands,
+    not a "queued" it never made.
   - **Rollback.** A failure before the link is committed is now rolled back. The job caught every
     exception and returned normally, and the worker's closing commit kept whatever had been
     inserted. That left a Project with no link from its Opportunity, which a retry then
@@ -96,7 +99,36 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
     report set `Project.custom_opportunity` without filling in `custom_created_project`. A Project
     that points back at the Opportunity this way is now linked, the oldest first, and no second
     one is made. `reconciliation.py` already refuses two Projects for one Opportunity, because
-    they double-count its revenue.
+    they double-count its revenue. The back-link is read under the lock too.
+    - A Project in Cancelled or Canceled is passed over: a PM retired it, so a new one is made
+      instead. ("Canceled" is this site's spelling and "Cancelled" ERPNext's own.)
+    - A linked Project gets what a made one gets after the link. It gets the Closed-Won team SMS,
+      because this job is that alert's only sender and no job ever finished for that Opportunity,
+      so the team has not heard. If it has no Drive folder, it gets one; `_provision_project_drive`
+      is now shared by both paths, and a failure there is reported but never undoes the link.
+    - It gets no "New Project Created" email, because nothing is new.
+- **Starting a creation needs write access to the Opportunity.** `enqueue_project_creation` checks
+  nothing. Its job runs as Administrator, and since this release it can link an existing Project,
+  so any desk user could do that to any Opportunity and read back the creation's state, which
+  holds the requester's address and an Error Log's name. It now begins with
+  `frappe.has_permission("Opportunity", "write", doc=..., throw=True)`. `project_creation_state`'s
+  read check is the same rule for reading.
+- **The progress dialog can no longer get stuck, or fill the screen with popups.**
+  - **A stuck request.** It settled on the enqueue's `error:` callback, which v16 never calls on a
+    `QueryTimeoutError` or `QueryDeadlockError`: `request.js` shows its own message and returns.
+    The tracker was then left waiting and swallowed every later click until a reload. It now
+    settles on the promise `frappe.call` returns, which always settles.
+  - **Popups during a deploy.** The state check and the Build out offer went through
+    `frappe.xcall`. v16's 502 and 504 handlers put up a message for every one, and during a
+    deploy that is every poll. They now go through a quiet `fetch` (`quiet_call`, the shape of
+    `feedback/transport.js`), with a 10 s timeout. While the server is away, the dialog keeps its
+    bar and shows one line, "Reconnecting to the server...", until it answers.
+  - **Status order.** `phase_of` reads a recorded "finished" before RQ's "started": the job writes
+    its outcome a moment before RQ marks it done.
+- **Closed early on the Kanban board or the list, the outcome is still said.** There, no surface
+  listens: the Desk form and the guided page have their own listeners. So a dialog closed early
+  leaves a one-shot listener (`report_when_done`). It reports and repaints the list only where
+  neither of those surfaces will.
 - **The Opportunity form's creation listener is registered once.** `opportunity.js` added a
   `project_creation_status` listener on every `refresh`, and the reload after a creation is
   itself a refresh. So a form opened a few times answered one creation with that many alerts and
@@ -126,6 +158,20 @@ ERPNext Task TASK-2026-02984 (PRJ-00580, Misc Tasks).
 
     A copy that keeps the key in the address, or leaves it in `route_options`, fails it.
   - `tests/test_planner_templates.py` (`TestBuildOutOffer`) covers the gate.
+- The review's fixes:
+  - **Server** (`tests/test_project_creation_progress.py`, 35 tests): the write check refuses
+    before anything is recorded; the locked read's value is the one acted on; the back-link is
+    locked and passes over Cancelled and Canceled; a linked Project gets the SMS and its Drive
+    folder (a Drive failure is reported, not fatal); a deduplicated no-op reports the job that is
+    there; a recorded "finished" wins over RQ's "started".
+  - **Client** (`scripts/test_project_creation_progress.mjs`, 26 checks): a request that fails
+    without any callback leaves nothing watching, and the next click works; a 502 while polling is
+    one "Reconnecting" line and no popup, then the steps again; closed early on the Kanban board,
+    the outcome is said there once and the board repaints, and stays quiet where the form or the
+    guided page reports.
+  - Each was mutation-checked: without the write check, the Cancelled filter, the linked
+    Project's SMS, the early-close reporter or the reconnecting state, its suite fails.
+
 ## [1.746.0] - 2026-10-27
 
 ### Changed

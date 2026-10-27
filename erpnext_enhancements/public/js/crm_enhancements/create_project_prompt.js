@@ -54,7 +54,39 @@ frappe.provide("erpnext_enhancements.crm");
 	// This long without an event and the dialog asks the server where things stand: a deploy
 	// empties the job queue without a word, and a socket that drops misses an event for good.
 	const QUIET_MS = 15000;
+	const QUIET_TIMEOUT_MS = 10000;
 	const trackers = {}; // opportunity_name -> the tracker watching its creation
+
+	// A read that says nothing when it fails (v1.747.0 review). frappe.call's own handlers put up a
+	// message for a 502 or a 504, which during a deploy is every poll, and on a QueryTimeoutError
+	// frappe.xcall never settles at all. The creation state and the Build out offer are advisory
+	// reads, so they go through fetch (as feedback/transport.js does), settle on every outcome, a
+	// timeout included, and leave the words to the dialog.
+	function quiet_call(method, args) {
+		const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+		const timer = controller ? setTimeout(() => controller.abort(), QUIET_TIMEOUT_MS) : null;
+		return fetch(`/api/method/${method}`, {
+			method: "POST",
+			credentials: "same-origin",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+				"X-Frappe-CSRF-Token": frappe.csrf_token,
+			},
+			body: JSON.stringify(args || {}),
+			signal: controller ? controller.signal : undefined,
+		})
+			.then(function (res) {
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				return res.json();
+			})
+			.then(function (body) {
+				return body ? body.message : undefined;
+			})
+			.finally(function () {
+				if (timer) clearTimeout(timer);
+			});
+	}
 
 	// The "Create Project" dialog (template + users to notify), defaulting the
 	// notify list to the group inboxes. Mirrors the dialog the old "Create
@@ -82,8 +114,7 @@ frappe.provide("erpnext_enhancements.crm");
 			trackers[opportunity_name].show();
 			return;
 		}
-		frappe
-			.xcall(STATE_METHOD, { opportunity_name: opportunity_name })
+		quiet_call(STATE_METHOD, { opportunity_name: opportunity_name })
 			.catch(function () {
 				return null; // advisory: the server refuses a second job anyway
 			})
@@ -242,26 +273,27 @@ frappe.provide("erpnext_enhancements.crm");
 					// arrives, and those events must reach the tracker rather than
 					// the surfaces' own listeners.
 					const tracker = make_tracker(opportunity_name, opts);
-					frappe.call({
-						method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
-						args: {
-							opportunity_name: opportunity_name,
-							// The list that was checked, not the raw field, so the
-							// server validates exactly what passed here.
-							users: addresses.join(", "),
-							project_template: values.project_template,
-						},
-						// v16 runs only this, never `callback`, on a frappe.throw
-						// (HTTP 417). Without it the dialog sat on "Queuing..." with
-						// the fields gone.
-						error: function () {
-							tracker.cancel();
-							dialog.clear_message();
-							primary_btn.prop("disabled", false).html(primary_label);
-						},
-						callback: function (r) {
+					// Settled on the request's own promise, not its callbacks: v16 runs
+					// neither `callback` nor `error` on a QueryTimeoutError or a
+					// QueryDeadlockError (request.js shows its own message and returns),
+					// and a tracker left waiting there swallowed every later click until
+					// a reload. The jqXHR frappe.call returns always settles. A refusal
+					// (frappe.throw, HTTP 417) still shows its message as before.
+					Promise.resolve(
+						frappe.call({
+							method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
+							args: {
+								opportunity_name: opportunity_name,
+								// The list that was checked, not the raw field, so the
+								// server validates exactly what passed here.
+								users: addresses.join(", "),
+								project_template: values.project_template,
+							},
+						})
+					)
+						.then(function (r) {
 							dialog.hide();
-							const result = r.message || {};
+							const result = (r && r.message) || {};
 							if (result.status === "exists") {
 								tracker.cancel();
 								report(opportunity_name, { status: "exists", project: result.project }, opts);
@@ -274,8 +306,14 @@ frappe.provide("erpnext_enhancements.crm");
 								return;
 							}
 							tracker.cancel();
-						},
-					});
+						})
+						.catch(function () {
+							// Refused or failed: the form comes back exactly as it was, and
+							// nothing is left watching.
+							tracker.cancel();
+							dialog.clear_message();
+							primary_btn.prop("disabled", false).html(primary_label);
+						});
 				},
 			});
 
@@ -304,7 +342,7 @@ frappe.provide("erpnext_enhancements.crm");
 	// of `steps` are finished, never an estimate of time. The steps are not equal in length (the
 	// project with its template's tasks, and the Drive folder, are the slow ones), so the text
 	// names the step it is on as well as the share done.
-	function progress_view(steps, state) {
+	function progress_view(steps, state, reconnecting) {
 		state = state || {};
 		const total = steps.length;
 		const done = Math.max(0, Math.min(total, Number(state.done) || 0));
@@ -321,6 +359,9 @@ frappe.provide("erpnext_enhancements.crm");
 					? __("Step {0} of {1}: {2}", [current + 1, total, steps[current].label])
 					: __("Working...");
 		}
+		// The server did not answer the last check (a deploy restarts it): one calm line, the bar as
+		// it was, and the next check in QUIET_MS. Never a popup per poll.
+		if (reconnecting) text = __("Reconnecting to the server...");
 		return {
 			percent: total ? Math.round((done * 100) / total) : 0,
 			text: text,
@@ -410,8 +451,7 @@ frappe.provide("erpnext_enhancements.crm");
 	function build_out_offer() {
 		const pages = (frappe.boot && frappe.boot.page_info) || {};
 		if (!pages["project-planner"]) return Promise.resolve(false);
-		return frappe
-			.xcall(OFFER_METHOD)
+		return quiet_call(OFFER_METHOD)
 			.then(function (r) {
 				return !!(r && r.offer);
 			})
@@ -562,31 +602,65 @@ frappe.provide("erpnext_enhancements.crm");
 		});
 	}
 
+	// Who reports a creation whose dialog was closed early: the Desk form's listener while that
+	// Opportunity's form is loaded (opportunity.js), the guided page while it shows it
+	// (guided_entry.js). Anywhere else, the Kanban board or the list, nobody would.
+	function surface_reports(opportunity_name) {
+		const view = frappe.views && frappe.views.formview && frappe.views.formview.Opportunity;
+		if (view && view.frm && view.frm.doc && view.frm.doc.name === opportunity_name) return true;
+		const route = (frappe.get_route && frappe.get_route()) || [];
+		return route[0] === "guided-entry" && route[1] === "Opportunity" && route[2] === opportunity_name;
+	}
+
+	// Closed early: when the outcome arrives, say it here if no surface will, once. A dialog opened
+	// again for it (a new tracker) says it instead.
+	function report_when_done(opportunity_name, opts) {
+		const on_status = function (data) {
+			if (!data || data.opportunity_name !== opportunity_name) return;
+			frappe.realtime.off(STATUS_EVENT, on_status);
+			if (trackers[opportunity_name] || surface_reports(opportunity_name)) return;
+			report(opportunity_name, outcome_from_status(data), opts);
+		};
+		frappe.realtime.on(STATUS_EVENT, on_status);
+	}
+
 	/**
 	 * Watch one creation: listen for its progress and its outcome, and once `begin` has the
 	 * steps, show them in a dialog. Made before the enqueue request goes, so nothing the job
 	 * says while the request is in flight is missed (or heard by the surfaces instead).
 	 *
 	 * When the events go quiet for QUIET_MS it asks project_creation_state, which is how a job a
-	 * deploy flushed out of the queue is noticed rather than waited on forever. Closing the
-	 * dialog stops the watching only; the job carries on and the surfaces report it.
+	 * deploy flushed out of the queue is noticed rather than waited on forever. The ask is quiet
+	 * (quiet_call): while the server is away the dialog says "Reconnecting" and asks again.
+	 * Closing the dialog stops the watching only; the job carries on, and the surfaces report it
+	 * (report_when_done where none does).
 	 */
 	function make_tracker(opportunity_name, opts) {
 		if (trackers[opportunity_name]) return trackers[opportunity_name];
-		const t = { steps: [], state: { phase: "queued", done: 0 }, heard: false, over: false, timer: null, dialog: null };
+		const t = {
+			steps: [],
+			state: { phase: "queued", done: 0 },
+			heard: false,
+			over: false,
+			timer: null,
+			dialog: null,
+			reconnecting: false,
+		};
 
 		function paint() {
-			if (t.dialog) t.dialog.fields_dict.progress.$wrapper.html(progress_html(progress_view(t.steps, t.state)));
+			if (!t.dialog) return;
+			t.dialog.fields_dict.progress.$wrapper.html(progress_html(progress_view(t.steps, t.state, t.reconnecting)));
 		}
 		function arm() {
 			clearTimeout(t.timer);
 			t.timer = setTimeout(check, QUIET_MS);
 		}
 		function check() {
-			frappe
-				.xcall(STATE_METHOD, { opportunity_name: opportunity_name })
+			quiet_call(STATE_METHOD, { opportunity_name: opportunity_name })
 				.then(function (state) {
-					if (t.over || !state) return;
+					if (t.over) return;
+					if (!state) throw new Error("no answer");
+					t.reconnecting = false;
 					if (state.phase === "queued" || state.phase === "running") {
 						if (state.state) t.state = state.state;
 						paint();
@@ -596,12 +670,16 @@ frappe.provide("erpnext_enhancements.crm");
 					finish(outcome_from_state(state));
 				})
 				.catch(function () {
-					if (!t.over) arm();
+					if (t.over) return;
+					t.reconnecting = true;
+					paint();
+					arm();
 				});
 		}
 		function on_progress(data) {
 			if (t.over || !data || data.opportunity !== opportunity_name) return;
 			t.heard = true;
+			t.reconnecting = false;
 			t.state = data;
 			paint();
 			if (t.dialog) arm();
@@ -640,6 +718,7 @@ frappe.provide("erpnext_enhancements.crm");
 					message: __("The project is still being created. This page refreshes when it is done."),
 					indicator: "blue",
 				});
+				report_when_done(opportunity_name, opts);
 			};
 			paint();
 			t.dialog.show();

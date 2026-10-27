@@ -83,6 +83,7 @@ function make_world() {
 		hidden_msgprints: 0,
 		route: ["Form", "Opportunity", OPP],
 		answers: {},
+		http: {},
 	};
 
 	class Dialog {
@@ -166,8 +167,26 @@ function make_world() {
 			if (answer === undefined) return Promise.reject(new Error(`no answer for ${method}`));
 			return Promise.resolve().then(() => (typeof answer === "function" ? answer(args) : answer));
 		},
+		// The jqXHR frappe.call returns, as a promise the scenario settles: respond() or fail().
 		call(opts) {
-			w.calls.push(opts);
+			let resolve, reject;
+			const promise = new Promise((yes, no) => {
+				resolve = yes;
+				reject = no;
+			});
+			w.calls.push(
+				Object.assign(opts, {
+					async respond(r) {
+						resolve(r);
+						await settle();
+					},
+					async fail() {
+						reject(new Error("HTTP 417"));
+						await settle();
+					},
+				})
+			);
+			return promise;
 		},
 		ui: { Dialog, form: { on: () => {} } },
 		realtime: {
@@ -196,6 +215,18 @@ function make_world() {
 		views: { formview: {} },
 		boot: {},
 	};
+	sandbox.fetch = (url, init) => {
+		const method = String(url).replace("/api/method/", "");
+		const args = JSON.parse((init && init.body) || "{}");
+		w.xcalls.push({ method, args, quiet: true });
+		if (w.http[method]) return Promise.resolve({ ok: false, status: w.http[method], json: () => Promise.resolve({}) });
+		const answer = w.answers[method];
+		if (answer === undefined) return Promise.reject(new TypeError(`no answer for ${method}`));
+		return Promise.resolve()
+			.then(() => (typeof answer === "function" ? answer(args) : answer))
+			.then((message) => ({ ok: true, status: 200, json: () => Promise.resolve({ message }) }));
+	};
+	sandbox.AbortController = AbortController;
 	sandbox.frappe = frappe;
 	w.sandbox = sandbox;
 	w.frappe = frappe;
@@ -263,7 +294,7 @@ await check("the bar counts the job's finished steps and the page refreshes", as
 	const frm = w.frm();
 	const request = await start(w, frm);
 	assert.equal(w.crm().is_tracking_project_creation(OPP), true, "watching starts before the request goes");
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	const bar = w.dialog("Creating Project");
 	assert.ok(bar && bar.shown, "the progress dialog shows");
 	assert.equal(w.dialog("Create Project").shown, false, "the form dialog is gone");
@@ -312,7 +343,7 @@ await check("a form with unsaved edits is asked, not reloaded under them", async
 	const w = make_world();
 	const frm = w.frm({ dirty: true });
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	assert.equal(frm.reloads, 0);
 	const ask = w.msgprints.pop();
@@ -326,7 +357,7 @@ await check("a dirty form that is not on screen is left alone", async () => {
 	const w = make_world();
 	const frm = w.frm({ dirty: true });
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.route = ["guided-entry", "Opportunity", OPP];
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	assert.equal(frm.reloads, 0);
@@ -339,7 +370,7 @@ await check("a job that reports before the request returns is heard by the dialo
 	const frm = w.frm();
 	const request = await start(w, frm);
 	w.emit("ee_project_creation_progress", { opportunity: OPP, phase: "running", step: "check", done: 0 });
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	const bar = w.dialog("Creating Project");
 	assert.match(bar.html, /Step 1 of 5: Checking the hand-off/, "the reply's older 'queued' does not overwrite it");
 });
@@ -349,7 +380,7 @@ await check("a job that finishes before the request returns is reported once, wi
 	const frm = w.frm();
 	const request = await start(w, frm);
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	assert.equal(w.dialog("Creating Project"), undefined);
 	await settle();
 	assert.equal(w.alerts.length, 1);
@@ -359,7 +390,7 @@ await check("a job that finishes before the request returns is reported once, wi
 await check("a refusal of the request hands the form back and stops watching", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.error();
+	await request.fail();
 	assert.equal(w.crm().is_tracking_project_creation(OPP), false);
 	assert.equal(w.dialog("Create Project").message, null, "the form's fields come back");
 });
@@ -369,7 +400,7 @@ await check("a refusal of the request hands the form back and stops watching", a
 await check("a failure closes the bar, says why (escaped), links the Error Log and offers Try again", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", {
 		opportunity_name: OPP,
 		status: "failed",
@@ -394,7 +425,7 @@ await check("a failure closes the bar, says why (escaped), links the Error Log a
 await check("a job a deploy flushed is said to have stopped, not waited on forever", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.answers[STATE_METHOD] = { phase: "running", project: null, state: { phase: "running", step: "attachments", done: 2 }, steps: STEPS };
 	w.run_timers(15000);
 	await settle();
@@ -415,7 +446,7 @@ await check("a quiet job that did finish is reported from the recorded outcome",
 	const w = make_world();
 	const frm = w.frm();
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.answers[STATE_METHOD] = {
 		phase: "finished",
 		project: "PRJ-0001",
@@ -432,7 +463,7 @@ await check("a quiet job that did finish is reported from the recorded outcome",
 await check("a blocked hand-off says what to do", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "blocked", blocked_reason: "Book the <b>meeting</b> first." });
 	const said = w.msgprints.pop();
 	assert.equal(said.title, "Hand-Off Required");
@@ -443,7 +474,7 @@ await check("a project that already pointed here is reported as linked, not made
 	const w = make_world();
 	const frm = w.frm();
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "exists", project: "PRJ-0003", adopted: true });
 	assert.match(w.alerts[0].message, /Linked project .*PRJ-0003.*no second project/);
 	assert.equal(frm.reloads, 1);
@@ -466,7 +497,7 @@ await check("opening the dialog during a creation shows that creation", async ()
 await check("a second click while watching brings the same dialog back", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	const asked = w.xcalls.length;
 	w.crm().open_create_project_dialog(OPP, {});
 	assert.equal(w.xcalls.length, asked);
@@ -476,14 +507,14 @@ await check("a second click while watching brings the same dialog back", async (
 await check("the server's 'already running' reply is watched like a fresh one", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: { ...queued, status: "running", phase: "running", state: { phase: "running", step: "drive", done: 4 } } });
+	await request.respond({ message: { ...queued, status: "running", phase: "running", state: { phase: "running", step: "drive", done: 4 } } });
 	assert.match(w.dialog("Creating Project").html, /Step 5 of 5/);
 });
 
 await check("labels from the server are escaped in the step list", async () => {
 	const w = make_world();
 	const request = await start(w, w.frm());
-	request.callback({ message: { ...queued, steps: [{ key: "check", label: "<script>x</script>" }] } });
+	await request.respond({ message: { ...queued, steps: [{ key: "check", label: "<script>x</script>" }] } });
 	const html = w.dialog("Creating Project").html;
 	assert.ok(!html.includes("<script>x"), "no markup from a label");
 	assert.match(html, /&lt;script&gt;x/);
@@ -501,7 +532,7 @@ await check("closing the dialog stops watching; the form's listener, registered 
 	assert.equal((w.listeners.project_creation_status || []).length, 1, "one listener, however often the script runs");
 
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("ee_project_creation_progress", { opportunity: OPP, phase: "running", step: "project", done: 1 });
 	// While the dialog watches, the form's listener stands aside: one alert and one reload.
 	const bar = w.dialog("Creating Project");
@@ -521,7 +552,7 @@ await check("while the dialog watches, the form's listener stays quiet", async (
 	vm.runInContext(fs.readFileSync(OPPORTUNITY_JS, "utf8"), w.sandbox, { filename: OPPORTUNITY_JS });
 	w.frappe.views.formview.Opportunity = { frm };
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	assert.equal(frm.reloads, 1, "reloaded once, by the dialog");
 	await settle();
@@ -537,7 +568,7 @@ async function made(w, { planner = true } = {}) {
 	if (planner) w.frappe.boot.page_info = { "project-planner": {} };
 	const frm = w.frm();
 	const request = await start(w, frm);
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
 	await settle();
 	return frm;
@@ -587,7 +618,7 @@ await check("a project that was already there offers no next step", async () => 
 	w.frappe.boot.page_info = { "project-planner": {} };
 	w.answers[OFFER] = { offer: true };
 	const request = await start(w, w.frm());
-	request.callback({ message: queued });
+	await request.respond({ message: queued });
 	w.emit("project_creation_status", { opportunity_name: OPP, status: "exists", project: "PRJ-0003" });
 	await settle();
 	assert.ok(!w.alerts.pop().message.includes("data-action"));
@@ -602,6 +633,80 @@ await check("the form's listener ignores another deal's creation", async () => {
 	w.emit("project_creation_status", { opportunity_name: "CRM-OPP-2099-00002", status: "success", project: "PRJ-0009" });
 	assert.equal(frm.reloads, 0);
 	assert.equal(w.alerts.length, 0);
+});
+
+// ---- 8: the review's hardening (v1.747.0) -----------------------------------------------------
+
+await check("a request that fails without any callback (a QueryTimeout) leaves nothing watching", async () => {
+	// v16 runs neither callback nor error on a QueryTimeoutError; only the jqXHR settles.
+	const w = make_world();
+	const request = await start(w, w.frm());
+	await request.fail();
+	assert.equal(w.crm().is_tracking_project_creation(OPP), false);
+	const asked = w.xcalls.length;
+	w.crm().open_create_project_dialog(OPP, {});
+	await settle();
+	assert.equal(w.xcalls[asked].method, STATE_METHOD, "the next click is not swallowed");
+	assert.equal(w.dialogs.filter((d) => d.title === "Create Project").length, 2);
+});
+
+await check("the state reads are quiet: a server away for a deploy is one calm 'reconnecting' line", async () => {
+	const w = make_world();
+	const request = await start(w, w.frm());
+	await request.respond({ message: queued });
+	const bar = w.dialog("Creating Project");
+	w.http[STATE_METHOD] = 502;
+	w.run_timers(15000);
+	await settle();
+	assert.equal(w.msgprints.length, 0, "no popup for a 502");
+	assert.match(bar.html, /Reconnecting to the server/);
+	assert.equal(bar.shown, true, "still watching");
+	assert.equal(w.pending_timers() > 0, true, "and it asks again");
+	w.run_timers(15000);
+	await settle();
+	assert.equal(w.msgprints.length, 0, "nor one per poll");
+	delete w.http[STATE_METHOD];
+	w.answers[STATE_METHOD] = { phase: "running", project: null, state: { phase: "running", step: "link", done: 3 }, steps: STEPS };
+	w.run_timers(15000);
+	await settle();
+	assert.match(bar.html, /Step 4 of 5/, "back to the steps once it answers");
+	assert.ok(!bar.html.includes("Reconnecting"));
+	w.emit("ee_project_creation_progress", { opportunity: OPP, phase: "running", step: "drive", done: 4 });
+	assert.match(bar.html, /Step 5 of 5/);
+});
+
+await check("closed early on the Kanban board, the outcome is still said there, once", async () => {
+	const w = make_world();
+	let refreshed = 0;
+	w.sandbox.cur_list = { refresh: () => (refreshed += 1) };
+	const request = await start(w, undefined);
+	await request.respond({ message: queued });
+	w.route = ["List", "Opportunity", "Kanban", "Sales Pipeline"];
+	w.dialog("Creating Project").hide();
+	w.alerts.length = 0;
+	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
+	await settle();
+	assert.equal(w.alerts.length, 1, "said on the board");
+	assert.match(w.alerts[0].message, /PRJ-0001/);
+	assert.equal(refreshed, 1, "and the board repaints");
+	w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
+	await settle();
+	assert.equal(w.alerts.length, 1, "once");
+});
+
+await check("closed early where a surface reports, the fallback stays quiet", async () => {
+	for (const where of ["form", "guided"]) {
+		const w = make_world();
+		if (where === "form") w.frappe.views.formview.Opportunity = { frm: w.frm() };
+		const request = await start(w, undefined);
+		await request.respond({ message: queued });
+		w.route = where === "form" ? ["Form", "Opportunity", OPP] : ["guided-entry", "Opportunity", OPP, "handoff"];
+		w.dialog("Creating Project").hide();
+		w.alerts.length = 0;
+		w.emit("project_creation_status", { opportunity_name: OPP, status: "success", project: "PRJ-0001" });
+		await settle();
+		assert.equal(w.alerts.length, 0, `${where}: its own listener says it, not this`);
+	}
 });
 
 console.log(`create project progress: ${passed} checks passed`);

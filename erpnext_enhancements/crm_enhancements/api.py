@@ -74,7 +74,17 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		Enqueues :func:`create_project_from_opportunity_background` (queue
 		``long``, 1800s timeout) under one job id per Opportunity, deduplicated,
 		and records the queued state for the progress dialog.
+
+	Raises:
+		frappe.PermissionError: when the caller may not write the Opportunity.
 	"""
+	# Write access to the deal, first (v1.747.0 review). The job runs as Administrator: it
+	# makes a Project, saves the Opportunity, and can link an existing Project to it. Until
+	# now any desk user could start that for any Opportunity, and read back its creation
+	# state (the requester, the Error Log's name). project_creation_state's read check is
+	# the same rule's other half.
+	frappe.has_permission("Opportunity", "write", doc=opportunity_name, throw=True)
+
 	# Normalized here so a field holding only separators ("," / " ") is refused up
 	# front rather than queueing a job that notifies nobody.
 	users = _notify_recipients(users)
@@ -109,7 +119,7 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	state = progress.mark_queued(opportunity_name, frappe.session.user)
 	# One job id per Opportunity, deduplicated: frappe.enqueue queues nothing while a job with this
 	# id is queued or started. The job's own row lock covers the rest (a job queued some other way).
-	frappe.enqueue(
+	job = frappe.enqueue(
 		"erpnext_enhancements.crm_enhancements.api.create_project_from_opportunity_background",
 		queue="long",
 		timeout=1800,
@@ -119,6 +129,10 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		users=users,
 		project_template=project_template,  # Pass the template to the background job
 	)
+	if job is None:
+		# Deduplicated after all: another request queued this Opportunity's job between the check
+		# above and here. Report that job as it stands rather than a "queued" this call never made.
+		return {"status": "running", **progress.creation_state(opportunity_name)}
 	return {"status": "queued", "phase": "queued", "state": state, "steps": progress.steps()}
 
 
@@ -200,6 +214,11 @@ class _HandoffBlocked(Exception):
 	"""
 
 
+#: A Project in either of these is not an Opportunity's Project to link: "Canceled" is this site's
+#: spelling (a Property Setter), "Cancelled" ERPNext's own.
+CANCELLED_PROJECT = ["Cancelled", "Canceled"]
+
+
 class _ProjectExists(Exception):
 	"""The Opportunity already has its Project, so this job makes none (v1.747.0).
 
@@ -224,6 +243,77 @@ def _failure_reason(exc, step):
 	return frappe._("It stopped at: {0}.").format(frappe._(label))
 
 
+def _send_closed_won_alerts(opportunity_name):
+	"""Queue the Closed-Won team SMS (PRO-0204 Step 1) for an Opportunity that now has its Project.
+
+	The alert is coupled to the Project actually existing, so it fires from this job rather than
+	on the won-save, and this job is its only sender. enqueue_after_commit=False: the Opportunity
+	is already committed, so the job reads a consistent row even if the Drive step after it fails.
+	"""
+	frappe.enqueue(
+		"erpnext_enhancements.status_alerts.deliver_closed_won_alerts",
+		opportunity=opportunity_name,
+		queue="short",
+		enqueue_after_commit=False,
+	)
+
+
+def _provision_project_drive(project, opp):
+	"""Give ``project`` its Google Drive folder: ``(drive_success, error_details, folder_id)``.
+
+	Shared by a Project this job made and one it linked (v1.747.0). Never raises: a Drive failure
+	is logged and reported, and never undoes the Project, which is committed before this runs.
+	"""
+	try:
+		from erpnext_enhancements.google_drive.drive_utils import (
+			provision_project_folder_for_opportunity,
+		)
+
+		# Project folder name "<Project ID> - <Opportunity Name>", e.g.
+		# "PRJ-00123 - Smith Residence" (project_name was set above from the
+		# Opportunity's custom_opportunity_name). .strip(" -") leaves just the
+		# ID if the name is blank.
+		project_folder_name = f"{project.name} - {project.project_name}".strip(" -")
+		party_name = project.customer or opp.party_name or "Unknown Customer"
+
+		# Reuse the Opportunity's Drive folder when it has one: rename it in
+		# place (its files come along) and add the project subfolders; else
+		# create a fresh project folder tree under the customer.
+		folder_id, web_view_link = provision_project_folder_for_opportunity(
+			opp.get("custom_drive_folder_id"),
+			project_folder_name,
+			party_name,
+			project_type=project.get("project_type"),
+		)
+
+		# Update Project
+		project.db_set("custom_drive_folder_id", folder_id)
+
+		# Attach link
+		drive_link_doc = frappe.new_doc("File")
+		drive_link_doc.file_url = web_view_link
+		drive_link_doc.attached_to_doctype = "Project"
+		drive_link_doc.attached_to_name = project.name
+		drive_link_doc.is_private = 0
+		drive_link_doc.insert(ignore_permissions=True)
+
+		# Audit trail (the opportunity/customer provisioning logs too).
+		from erpnext_enhancements.google_drive.drive_sync import log_sync
+
+		log_sync(
+			"Provision Folder", "Success",
+			reference_doctype="Project", reference_name=project.name,
+			file_name=project_folder_name, drive_file_id=folder_id,
+		)
+
+		frappe.db.commit()
+		return True, None, folder_id
+	except Exception:
+		details = frappe.get_traceback()
+		frappe.log_error(title="[Google Drive Integration] Folder Creation Failed", message=details)
+		return False, details, None
+
+
 # The background worker now accepts 'project_template' and uses it.
 def create_project_from_opportunity_background(opportunity_name, users, project_template):
 	"""Create a Project from an Opportunity (runs on the ``long`` worker queue).
@@ -241,7 +331,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	* when a Project already points back at the Opportunity
 	  (``Project.custom_opportunity``, set by the Desk's *Create > Project* and
 	  by the Closed Won Reconciliation report, neither of which fills in
-	  ``custom_created_project``) it links that one and makes no second;
+	  ``custom_created_project``) it links that one and makes no second. Not a
+	  cancelled one, which is passed over. The linked Project gets what a made
+	  one gets after the link: the team SMS and, if it has none, its Drive
+	  folder. It gets no "New Project Created" email;
 	* a failure before the link is committed rolls back, so a retry never finds
 	  half a Project. Until v1.747.0 the exception was caught and the job
 	  returned normally, and the worker's closing commit kept whatever had been
@@ -315,26 +408,51 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			progress.mark_step(opportunity_name, requester, step)
 			# The row lock comes first, so a second job for this Opportunity waits here for the
 			# first to commit and then finds its Project, instead of making another.
-			frappe.db.get_value("Opportunity", opportunity_name, "custom_created_project", for_update=True)
+			# The value the locked read returns is the one acted on: under REPEATABLE READ an
+			# earlier plain read in this transaction would pin an older snapshot.
+			linked = frappe.db.get_value(
+				"Opportunity", opportunity_name, "custom_created_project", for_update=True
+			)
 			opp = frappe.get_doc("Opportunity", opportunity_name)
-			if opp.custom_created_project:
-				raise _ProjectExists(opp.custom_created_project)
+			if linked:
+				raise _ProjectExists(linked)
 
 			# A Project that already points back at this Opportunity is its Project: the Desk's
 			# Create > Project and the reconciliation report set that back-link without filling in
 			# custom_created_project. Linked, not duplicated; two Projects claiming one Opportunity
-			# double-count its revenue (reconciliation.py refuses the same thing).
+			# double-count its revenue (reconciliation.py refuses the same thing). A cancelled one
+			# is not its Project (a PM retired it), so it is passed over and a new one is made.
+			# Locked too, so the Project cannot change under the link.
 			back_linked = None
 			if frappe.db.has_column("Project", "custom_opportunity"):
 				back_linked = frappe.db.get_value(
-					"Project", {"custom_opportunity": opportunity_name}, "name", order_by="creation asc"
+					"Project",
+					{"custom_opportunity": opportunity_name, "status": ["not in", CANCELLED_PROJECT]},
+					"name",
+					order_by="creation asc",
+					for_update=True,
 				)
 			if back_linked:
+				step = "link"
+				progress.mark_step(opportunity_name, requester, step)
 				opp.custom_created_project = back_linked
 				opp.save(ignore_permissions=True)
 				frappe.db.commit()
 				committed = True
 				adopted = True
+				existing_project = back_linked
+				# The team SMS goes out, as for a Project made here: this job is its only sender,
+				# and an Opportunity with no custom_created_project never had a job finish for it,
+				# so the team has not heard. No "New Project Created" email: nothing is new.
+				_send_closed_won_alerts(opportunity_name)
+				# Nor is it left without a Drive folder when it never had one.
+				step = "drive"
+				progress.mark_step(opportunity_name, requester, step)
+				project = frappe.get_doc("Project", back_linked)
+				if project.get("custom_drive_folder_id"):
+					drive_success = True
+				else:
+					drive_success, drive_error_details, _folder = _provision_project_drive(project, opp)
 				raise _ProjectExists(back_linked)
 
 			# Hand-off gate (PRO-0204, 2026-08-06). The authoritative check is
@@ -543,17 +661,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			frappe.db.commit()
 			committed = True
 
-			# Deferred Closed-Won team SMS (PRO-0204 Step 1): the alert is coupled to
-			# the Project actually existing, so it fires here rather than on the
-			# won-save. enqueue_after_commit=False — the Opportunity is already
-			# committed above, so the job reads a consistent row even if the Drive
-			# step below fails.
-			frappe.enqueue(
-				"erpnext_enhancements.status_alerts.deliver_closed_won_alerts",
-				opportunity=opportunity_name,
-				queue="short",
-				enqueue_after_commit=False,
-			)
+			# Deferred Closed-Won team SMS (PRO-0204 Step 1), now _send_closed_won_alerts.
+			_send_closed_won_alerts(opportunity_name)
 
 			drive_success = False
 			drive_error_details = None
@@ -562,56 +671,9 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			step = "drive"
 			progress.mark_step(opportunity_name, requester, step)
 			if not project.get("custom_drive_folder_id"):
-				try:
-					from erpnext_enhancements.google_drive.drive_utils import (
-						provision_project_folder_for_opportunity,
-					)
-
-					# Project folder name "<Project ID> - <Opportunity Name>", e.g.
-					# "PRJ-00123 - Smith Residence" (project_name was set above from the
-					# Opportunity's custom_opportunity_name). .strip(" -") leaves just the
-					# ID if the name is blank.
-					project_folder_name = f"{project.name} - {project.project_name}".strip(" -")
-					party_name = project.customer or opp.party_name or "Unknown Customer"
-
-					# Reuse the Opportunity's Drive folder when it has one: rename it in
-					# place (its files come along) and add the project subfolders; else
-					# create a fresh project folder tree under the customer.
-					folder_id, web_view_link = provision_project_folder_for_opportunity(
-						opp.get("custom_drive_folder_id"),
-						project_folder_name,
-						party_name,
-						project_type=project.get("project_type"),
-					)
-
-					# Update Project
-					project.db_set("custom_drive_folder_id", folder_id)
+				drive_success, drive_error_details, folder_id = _provision_project_drive(project, opp)
+				if folder_id:
 					project_doc["custom_drive_folder_id"] = folder_id
-
-					# Attach link
-					drive_link_doc = frappe.new_doc("File")
-					drive_link_doc.file_url = web_view_link
-					drive_link_doc.attached_to_doctype = "Project"
-					drive_link_doc.attached_to_name = project.name
-					drive_link_doc.is_private = 0
-					drive_link_doc.insert(ignore_permissions=True)
-
-					# Audit trail (the opportunity/customer provisioning logs too).
-					from erpnext_enhancements.google_drive.drive_sync import log_sync
-
-					log_sync(
-						"Provision Folder", "Success",
-						reference_doctype="Project", reference_name=project.name,
-						file_name=project_folder_name, drive_file_id=folder_id,
-					)
-
-					frappe.db.commit()
-					drive_success = True
-				except Exception:
-					drive_error_details = frappe.get_traceback()
-					frappe.log_error(
-						title="[Google Drive Integration] Folder Creation Failed", message=drive_error_details
-					)
 
 		finally:
 			frappe.set_user(original_user)
@@ -671,7 +733,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		message_payload["failed_step"] = step
 		message_payload["error_log"] = error_log
 
-	if project_doc:
+	if project_doc or adopted:
 		message_payload["drive_success"] = drive_success
 		if drive_error_details:
 			message_payload["drive_error"] = str(drive_error_details)
