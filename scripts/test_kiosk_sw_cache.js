@@ -136,6 +136,15 @@ const keyOf = (req, ignoreSearch) => {
 // Cache Storage, shared by every worker this run loads (the phone's, across deploys).
 const store = new Map();
 
+// Arm with pauseNextKeys(): the next caches.keys() waits until release() is called. One call only.
+let pauseKeys = null;
+function pauseNextKeys() {
+	let release;
+	const promise = new Promise((r) => (release = r));
+	pauseKeys = { hit: false, promise, release };
+	return pauseKeys;
+}
+
 function openCache(name) {
 	if (!store.has(name)) store.set(name, new Map());
 	const m = store.get(name);
@@ -174,6 +183,10 @@ const caches = {
 		return undefined;
 	},
 	async keys() {
+		if (pauseKeys && !pauseKeys.hit) {
+			pauseKeys.hit = true;
+			await pauseKeys.promise;
+		}
 		return [...store.keys()];
 	},
 	async has(name) {
@@ -251,6 +264,8 @@ const net = {
 	log: [], // every request that left the phone: "METHOD path?query"
 	sentHeaders: [], // every X-Kiosk-Key value the server saw
 	holdNext: false,
+	holdBeforeNext: false, // the next request is answered only at release(), not when it is sent
+	failLogout: 0, // a status the next logouts answer with instead of signing out
 	held: [],
 	gateway: 0, // a status the gateway answers /kiosk with instead (a deploy restarting the bench)
 	onLogin(user) {
@@ -273,6 +288,10 @@ const net = {
 	async fetch(input, init) {
 		const req = typeof input === "string" || !(input instanceof FakeRequest) ? new FakeRequest(input, init) : input;
 		if (!net.online) throw new TypeError("Failed to fetch");
+		if (net.holdBeforeNext) {
+			net.holdBeforeNext = false;
+			return new Promise((resolve) => net.held.push(() => resolve(net.answer(req))));
+		}
 		const res = net.answer(req);
 		if (net.holdNext) {
 			net.holdNext = false;
@@ -289,6 +308,7 @@ const net = {
 		const cmd = req.headers.get("X-Frappe-CMD");
 		if (req.method === "POST") {
 			if (/\/method\/(web_)?logout$/.test(url.pathname) || cmd === "logout" || cmd === "web_logout") {
+				if (net.failLogout) return new FakeResponse("Internal Server Error", { status: net.failLogout });
 				net.onLogout();
 				return new FakeResponse("{}", { status: 200, headers: { "x-signed-out": "yes" } });
 			}
@@ -482,7 +502,8 @@ function reset() {
 	store.clear();
 	idb.clear();
 	windows = [];
-	Object.assign(net, { online: true, session: null, jar: {}, logged: [], log: [], sentHeaders: [], holdNext: false, held: [], gateway: 0 });
+	Object.assign(net, { online: true, session: null, jar: {}, logged: [], log: [], sentHeaders: [], holdNext: false, holdBeforeNext: false, failLogout: 0, held: [], gateway: 0 });
+	pauseKeys = null;
 }
 
 // A fresh phone with this deploy's worker, and Pat signed in and through every screen online.
@@ -594,7 +615,7 @@ scenario("signing out from desk forgets everything and tells the kiosk", async (
 	check("the sign-out reached the server, and its answer came back unchanged", [out.status, out.headers.get("x-signed-out"), net.session], [200, "yes", null]);
 	check("after: no kept answers", keptAnswers(), []);
 	check("after: no kept page", hasShell(), false);
-	check("after: no queued points", queuedPoints(), []);
+	check("after: no queued points: the one queued offline was sent first, as Pat's", [queuedPoints(), net.logged.length, net.logged[0].endsWith(":pat")], [[], 1, true]);
 	check("the open kiosk window is told, and only it", [kiosk.told, desk.told], [["signed-out"], []]);
 	net.online = false;
 	const shell = await request(w, "/kiosk", { mode: "navigate" });
@@ -615,12 +636,72 @@ scenario("signing out from the /logout page, web_logout, v2 or the kiosk's Setti
 	}
 });
 
-scenario("a sign-out with no signal still forgets", async () => {
+scenario("a sign-out that fails forgets nothing", async () => {
+	for (const [label, how] of [
+		["with no signal", () => (net.online = false)],
+		["with a server error", () => (net.failLogout = 500)],
+	]) {
+		const { w } = await patsPhone();
+		const pats = await openKiosk(w);
+		net.online = false;
+		const ids = [await queuePoint(w, pats), await queuePoint(w, pats)];
+		net.online = true;
+		const kiosk = openWindow("/kiosk");
+		how();
+		const out = await request(w, "/api/method/logout", { method: "POST" });
+		check(`${label}: the failure is handed back as it was`, out.status, label === "with no signal" ? "network error" : 500);
+		check(`${label}: Pat is still signed in, marker and all`, [net.session, phoneKey() === PATK], [PAT, true]);
+		check(`${label}: Pat's kept answers and page are still there`, [keptAnswers().length, hasShell()], [5, true]);
+		check(`${label}: Pat's points are still queued (or were sent)`, queuedPoints().length + net.logged.length, ids.length);
+		check(`${label}: no kiosk window was told to reload`, kiosk.told, []);
+		net.online = false;
+		net.failLogout = 0;
+		const page = await openKiosk(w);
+		check(`${label}: offline, Pat's kiosk still opens for Pat`, [page.status, page.user, page.refused], [200, PAT, false]);
+	}
+});
+
+scenario("a sign-out sends the queued points first, as the person who is signing out", async () => {
 	const { w } = await patsPhone();
+	const pats = await openKiosk(w);
 	net.online = false;
-	const out = await request(w, "/api/method/logout", { method: "POST" });
-	check("the request fails as it would have", out.status, "network error");
-	check("but nothing kept is left", [keptAnswers().length, hasShell()], [0, false]);
+	const a = await queuePoint(w, pats);
+	const b = await queuePoint(w, pats);
+	net.online = true; // back in signal; nothing has flushed yet
+	await request(w, "/api/method/logout", { method: "POST" });
+	check("both points were filed, as Pat's", net.logged, [`${a}:pat`, `${b}:pat`]);
+	check("… before the logout went out", net.log.findIndex((l) => l.startsWith(`POST ${BATCH}`)) < net.log.indexOf("POST /api/method/logout"), true);
+	check("… and the queue is empty", queuedPoints(), []);
+});
+
+scenario("an answer that lands while the logout is on its way goes with the rest", async () => {
+	const { w } = await patsPhone();
+	const pats = { key: PATK };
+	net.holdBeforeNext = true;
+	const out = request(w, "/api/method/logout", { method: "POST" });
+	for (let i = 0; i < 50 && !net.held.length; i++) await tick();
+	check("the logout has left but the server has not processed it", [net.held.length, net.session], [1, PAT]);
+	await call(w, pats, api("get_my_trail", "date=2026-10-28"));
+	check("meanwhile a new answer of Pat's was kept", keptAnswers().filter((k) => k.includes("get_my_trail")).length, 2);
+	net.release();
+	await out;
+	check("once the server accepted the logout, it went with everything else", [keptAnswers(), hasShell()], [[], false]);
+});
+
+scenario("a sign-out that lands while an answer is being saved stops the save", async () => {
+	await patsPhone();
+	// A worker the browser restarted: it no longer remembers whose answers it keeps, so the next
+	// save first sweeps the cache, and that sweep is where the sign-out lands.
+	const w = loadWorker("BUILD1");
+	const pause = pauseNextKeys();
+	const saving = request(w, HISTORY, { key: PATK });
+	for (let i = 0; i < 50 && !pause.hit; i++) await tick();
+	check("the save is under way", pause.hit, true);
+	if (!pause.hit) pauseKeys = null; // never reached: do not let the sign-out wait on it instead
+	await request(w, "/api/method/logout", { method: "POST" });
+	pause.release();
+	await saving;
+	check("the save that resumed after the sign-out kept nothing", [keptAnswers(), hasShell()], [[], false]);
 });
 
 scenario("nothing else forgets anything", async () => {
@@ -790,6 +871,16 @@ scenario("the email never reaches the server, and neither does the cache key", a
 	check("the API requests went out as the page made them", net.log.includes(`GET ${DAY}`), true);
 });
 
+// A scenario whose promise never settles ends the run with nothing left to do, and node then exits
+// 0 without a summary: the bare `node` CI step would pass. So a run that did not finish fails.
+let finished = false;
+process.on("exit", (code) => {
+	if (!finished && code === 0) {
+		console.error(`\nthe run stopped after ${checks} checks, before every scenario finished (a promise never settled)`);
+		process.exitCode = 1;
+	}
+});
+
 (async () => {
 	for (const t of tests) {
 		console.log(t.name);
@@ -804,5 +895,6 @@ scenario("the email never reaches the server, and neither does the cache key", a
 		console.error(`\n${failures} of ${checks} checks failed`);
 		process.exit(1);
 	}
+	finished = true;
 	console.log(`\nall ${checks} checks passed (${tests.length} scenarios)`);
 })();

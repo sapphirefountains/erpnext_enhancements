@@ -58,8 +58,9 @@ What removes it, and what does not (frappe v16, ``frappe/auth.py``), exactly as 
 
 ``Path=/`` (frappe v16's ``CookieManager`` has no path argument, and the logout and login requests
 that must see it are not under ``/kiosk``), not HttpOnly (the page reads it with no server to
-ask), ``SameSite=Lax`` (so it rides the top-level GET back from Google's sign-in), ``Secure`` on
-https.
+ask), ``SameSite=Lax`` (so it rides the top-level GET back from Google's sign-in), ``Secure``
+when the request came over https (frappe's own rule, not the site's configured address: a
+``Secure`` cookie set over plain http is dropped, and a dropped marker would lock the kiosk).
 
 Every hook here runs on every sign-in, sign-out or kiosk request, so none may raise.
 """
@@ -101,14 +102,14 @@ def key_for(user):
 
 
 def _secure():
-	"""True when the site is served over https (the request says so, or its own address does)."""
+	"""True when this request came over https, exactly as frappe's own ``CookieManager`` decides.
+
+	Not the site's configured address: a ``Secure`` cookie set over plain http is dropped by the
+	browser, and a kiosk whose marker is dropped refuses to draw (``app.js``). Following the
+	request means the marker is stored wherever the session cookie is.
+	"""
 	request = getattr(frappe.local, "request", None)
-	if getattr(request, "scheme", None) == "https":
-		return True
-	try:
-		return str(frappe.utils.get_url() or "").startswith("https://")
-	except Exception:
-		return False
+	return getattr(request, "scheme", None) == "https"
 
 
 def set_marker(user):

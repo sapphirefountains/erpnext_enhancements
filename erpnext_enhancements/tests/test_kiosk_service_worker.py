@@ -407,13 +407,20 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
         self.assertLess(handler.index("if (isSignOut(req, url))"), handler.index("req.method !== 'GET'"))
         self.assertIn("event.respondWith(signOut(req));", handler)
 
-    def test_a_sign_out_never_blocks_the_logout(self):
-        """Forgetting is best effort around the request: a cache error must not stop
-        the person signing out, nor replace the server's answer."""
+    def test_a_sign_out_uploads_first_and_forgets_only_when_accepted(self):
+        """Queued points go up while the session that owns them still exists (bounded,
+        so a weak signal cannot hold the sign-out up). A failed sign-out (no signal, a
+        server error) leaves the session alive, so it forgets nothing. Forgetting is
+        best effort: a cache error must not replace the server's answer."""
         body = _function("async function signOut(req)")
-        self.assertIn("return await fetch(req);", body)
-        self.assertEqual(body.count("await forgetKept().catch(() => {});"), 2)
-        self.assertIn("finally", body)
+        self.assertLess(body.index("flushQueue()"), body.index("await fetch(req)"))
+        self.assertIn("setTimeout(resolve, FLUSH_BEFORE_SIGN_OUT_MS)", body)
+        guarded = body[body.index("if (res.ok) {") :]
+        for step in ("await forgetKept().catch(() => {});", "deletePoints(", "await tellKioskWindows().catch(() => {});"):
+            self.assertIn(step, guarded)
+            self.assertEqual(body.count(step), 1, f"{step} happens outside the res.ok guard")
+        self.assertNotIn("finally", body)
+        self.assertTrue(body.rstrip().endswith("return res;"))
 
     def test_kept_answers_live_in_the_deploy_cache(self):
         """So a deploy's activate drops them with the rest of the old cache."""
@@ -439,8 +446,11 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
         app = KIOSK_APP.read_text(encoding="utf-8")
         body = app[app.index("  function signOut() {") :]
         body = body[: body.index("\n  }\n")]
-        self.assertIn("return UI.ask({", body)
-        self.assertIn("api('logout', {}).then(function () {\n        window.location.reload();", body)
+        self.assertIn("return UI.ask({ title: 'Sign out?'", body)
+        self.assertIn("return api('logout', {}).then(function () {\n        window.location.reload();", body)
+        # It says how much has not uploaded yet, from the worker's queue and the photo queue.
+        self.assertIn("window.KioskGeo.queuedCount", body)
+        self.assertIn("photoQueue().length", body)
         self.assertIn("signOut: signOut,", app)
 
     def test_the_worker_has_no_jinja(self):

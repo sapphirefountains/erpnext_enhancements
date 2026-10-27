@@ -24,9 +24,10 @@
  *               kiosk GET APIs → network-first with a fallback to the answer kept
  *               for the SAME person (see "Kept API answers" below); our /assets
  *               (+ /kiosk-manifest.json) → cache-first with background refresh.
- *               A sign-out POST is passed on and answered unchanged, and forgets
- *               every kept answer, the kept shell and every queued point, then
- *               tells open kiosk windows; every other non-GET or cross-origin
+ *               A sign-out POST uploads queued points first, is passed on and
+ *               answered unchanged, and, only when the server accepted it,
+ *               forgets every kept answer, the kept shell and every queued point,
+ *               then tells open kiosk windows; every other non-GET or cross-origin
  *               request is passed through.
  *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB and drops
  *               anybody else's queued points; 'forget' forgets what is kept for a
@@ -277,8 +278,9 @@ async function ensureSync() {
 //     one person while the session is another's keeps nothing); an offline replay
 //     looks only under the marker the asking page names;
 //   - keeping an answer for somebody new forgets everybody else's (keepAnswer);
-//   - a sign-out forgets every answer, the kept page and every queued point, then
-//     tells any open kiosk window (signOut); /kiosk answered with a redirect (the
+//   - a sign-out uploads what is queued first and, once the server has accepted
+//     it, forgets every answer, the kept page and every point still queued, then
+//     tells any open kiosk window (signOut); a sign-out that failed forgets nothing; /kiosk answered with a redirect (the
 //     server says nobody is signed in) forgets the answers and the page; and a page
 //     that finds itself drawn for somebody the marker cookie no longer names asks
 //     for the same ('forget');
@@ -360,21 +362,34 @@ async function tellKioskWindows() {
   }
 }
 
-// A sign-out (desk, the /logout page, Settings → Sign out): forget before it leaves,
-// so an answer already in flight is not kept (epoch); let it through; forget again
-// once the server has answered, for anything fetched in between; delete every
-// queued point (raw positions do not outlive a sign-out); then tell open kiosk
-// windows, which reload into the sign-in page. All of that whether or not the
-// request reached the server: the person meant to leave.
+// How long a sign-out waits for queued points to upload before it goes ahead.
+const FLUSH_BEFORE_SIGN_OUT_MS = 5000;
+
+// A sign-out (desk, the /logout page, Settings → Sign out). First upload what is
+// queued, while the session that owns it still exists (bounded, so one bar of
+// signal cannot hold the sign-out up). Then pass the request on and hand its answer
+// back unchanged. Only when the server accepted it is anything forgotten: every
+// kept answer and the kept page (forgetKept bumps the epoch, so nothing fetched
+// before now is kept when it lands, and whatever landed while the logout was on
+// its way goes with the rest), every point still queued (raw positions do not
+// outlive a sign-out), and then open kiosk windows are told, and reload into the
+// sign-in page. A sign-out that failed (no signal, a server error) left the session
+// and the marker cookie alive: deleting then would protect nobody, and would cost
+// the person still signed in their kept kiosk and their unsent points.
 async function signOut(req) {
-  await forgetKept().catch(() => {});
-  try {
-    return await fetch(req);
-  } finally {
+  let timer;
+  await Promise.race([
+    flushQueue().catch(() => {}),
+    new Promise((resolve) => { timer = setTimeout(resolve, FLUSH_BEFORE_SIGN_OUT_MS); }),
+  ]);
+  clearTimeout(timer);
+  const res = await fetch(req);
+  if (res.ok) {
     await forgetKept().catch(() => {});
-    await deletePoints((await getAllPoints()).map((p) => p.client_id)).catch(() => {});
+    await getAllPoints().then((points) => deletePoints(points.map((p) => p.client_id))).catch(() => {});
     await tellKioskWindows().catch(() => {});
   }
+  return res;
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -407,9 +422,9 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
   // Somebody is signing out, from desk, the /logout page or the kiosk's Settings
-  // (this worker is at root scope, so it sees all three): forget what the kiosk
-  // kept before the next person picks the phone up. The request is passed on, and
-  // its answer returned, unchanged (signOut).
+  // (this worker is at root scope, so it sees all three): once the server accepts
+  // it, forget what the kiosk kept before the next person picks the phone up. The
+  // request is passed on, and its answer returned, unchanged (signOut).
   if (isSignOut(req, url)) {
     event.respondWith(signOut(req));
     return;

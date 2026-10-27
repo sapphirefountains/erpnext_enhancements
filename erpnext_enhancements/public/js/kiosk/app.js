@@ -1609,17 +1609,24 @@
   // the sign-in page itself, and the kiosk never writes the URL (see ui.js, "History").
   function signOut() {
     var clockedIn = app.status === 'Open' || app.status === 'Paused';
-    return UI.ask({
-      title: 'Sign out?',
-      message: clockedIn
-        ? 'You’re still clocked in. Signing out does not clock you out.'
-        : 'Anything the kiosk saved on this phone is deleted, so the next person can sign in.',
-      ok: 'Sign out',
-      okKind: 'stop',
-      cancel: 'Cancel',
+    var photos = photoQueue().length;
+    var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
+    // How many location points the worker still holds (0 when it cannot say).
+    var queued = window.KioskGeo.queuedCount ? window.KioskGeo.queuedCount() : 0;
+    return Promise.resolve(queued).catch(function () { return 0; }).then(function (points) {
+      var lines = [];
+      if (clockedIn) lines.push('You’re still clocked in. Signing out does not clock you out.');
+      if (points || photos) {
+        lines.push('Not uploaded yet: ' + [points ? plural(points, 'location point') : '', photos ? plural(photos, 'photo') : '']
+          .filter(Boolean).join(' and ') + '. Wait for them to send before you sign out.');
+      }
+      if (!lines.length) lines.push('Anything the kiosk saved on this phone is deleted, so the next person can sign in.');
+      return UI.ask({ title: 'Sign out?', message: lines.join(' '), ok: 'Sign out', okKind: 'stop', cancel: 'Cancel' });
     }).then(function (yes) {
       if (!yes) return;
       app.signingOut = true;
+      // The worker uploads queued points first, and forgets what the kiosk kept only if the
+      // server accepts the sign-out; a failed one leaves everything as it was.
       return api('logout', {}).then(function () {
         window.location.reload();
       }, function (e) {

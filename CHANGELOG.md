@@ -57,9 +57,13 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
         nothing.
       - Offline, it replays only the asking page's own answers.
       - Keeping an answer for somebody new deletes everybody else's.
-      - A sign-out is now passed through and its answer returned unchanged. Around it, the worker
-        deletes every kept answer, the kept page and every queued point, then tells open `/kiosk`
-        windows to reload.
+      - A sign-out is now passed through and its answer returned unchanged. First the worker
+        uploads what is queued, while the session that owns it still exists (waiting at most
+        5 seconds). Then, **only when the server accepted the sign-out**, it deletes every kept
+        answer, the kept page and every point still queued, and tells open `/kiosk` windows to
+        reload. A sign-out that failed (no signal, a server error) leaves the session and the
+        marker alive, so it deletes nothing: the person who is still signed in keeps their kiosk
+        and their unsent points.
       - A `/kiosk` load answered with a redirect forgets the answers and the page.
       - Only a real (200) page is kept. Before, whatever came back was kept, a redirect included.
       - An **epoch** stops an answer or page that was in flight during a forget from being kept
@@ -74,12 +78,17 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
       - **Another person's points are deleted** when somebody else's kiosk takes the phone. They
         can never be uploaded under that session, and raw positions should not linger on a shared
         phone. They upload normally if their own person signs back in first.
-      - A sign-out deletes every queued point.
+      - A sign-out the server accepts deletes every point still queued, after first trying to
+        upload them.
       - Points queued before this release carry no marker and upload as before.
     - **Settings → Sign out** (new). The installed app has no address bar, so it had no way to
-      hand the phone over. The button asks first, and warns when you are still clocked in, since
-      signing out does not clock you out. It then posts `/api/method/logout` and reloads: the
-      kiosk never writes the URL, and `/kiosk` sends a signed-out visitor to the sign-in page.
+      hand the phone over. The button asks first. It warns when you are still clocked in, since
+      signing out does not clock you out, and says how many location points and photos have not
+      uploaded yet. It then posts `/api/method/logout` and reloads: the kiosk never writes the
+      URL, and `/kiosk` sends a signed-out visitor to the sign-in page.
+    - **The marker's `Secure` flag follows the request's scheme**, exactly as frappe's own cookies
+      do, not the site's configured address. A `Secure` cookie set over plain http is dropped, and
+      a kiosk whose marker is dropped would refuse to draw.
   - **What the marker is not: a lock.** Any script on the site could send any `X-Kiosk-Key`, and
     the phone's developer tools can read Cache Storage. The server's echo check and the deletes
     are the control.
@@ -94,24 +103,28 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
   - **Tests:**
     - `scripts/test_kiosk_sw_cache.js` (new) runs the real worker over a stand-in phone and server.
       The phone has Cache Storage, IndexedDB, open windows and a cookie jar. The server behaves
-      like frappe and `kiosk_offline`. **95 checks over 22 scenarios**, including:
+      like frappe and `kiosk_offline`. **113 checks over 25 scenarios**, including:
       - expiry followed by a new sign-in through the password form, `POST /` `cmd=login`, and a
         Google-style GET redirect, each followed by an offline open;
-      - a sign-out from desk, `/logout`, `web_logout`, v2 and Settings, and one with no signal;
+      - a sign-out from desk, `/logout`, `web_logout`, v2 and Settings;
+      - a sign-out that fails, with no signal and with a server error, which forgets nothing;
+      - queued points sent before the sign-out, as the person signing out;
       - the echo check;
-      - answers and pages in flight during a sign-out;
+      - answers and pages in flight during a sign-out, an answer that lands while the logout is
+        on its way, and a sign-out that lands while an answer is being saved;
       - a gateway 502 on `/kiosk`;
       - the location queue under two people;
       - a deploy;
       - a worker restart.
-      Against main's worker, 48 of the 95 fail. A mutation sweep over the new guards is caught,
-      except the second epoch check inside `keepAnswer`, which only matters if a forget lands
-      mid-save.
+      Against main's worker, 50 checks fail. A mutation sweep removing each of the new guards in
+      turn is caught every time, both epoch checks in `keepAnswer` included. A run that stops
+      before every scenario has finished now exits 1, so a promise that never settles cannot pass
+      the bare `node` CI step.
     - `scripts/test_kiosk_history.js` now also boots the **real** `app.js`:
       - with the marker gone, or somebody else's, it shows the refusal and the `forget` message;
       - with the marker matching, every call carries the key;
       - after the cookie changes under an open page, its calls name nobody.
-      245 checks.
+      263 checks, #1374's Photos scenario included.
     - `tests/test_kiosk_offline.py` (new, 19 tests) covers the marker module, run from source over
       a stand-in `frappe`.
     - `tests/test_kiosk_service_worker.py` runs the worker harness and pins the seams, including

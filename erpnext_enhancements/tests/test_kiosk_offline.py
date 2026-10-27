@@ -142,10 +142,13 @@ class TestTheMarker(unittest.TestCase):
 		self.assertNotIn("path", keywords)
 		self.assertLessEqual(keywords, allowed)
 
-	def test_secure_whenever_the_site_is_https(self):
+	def test_secure_follows_the_request_like_frappes_own_cookies(self):
+		"""Not the site's configured address: a Secure cookie set over plain http is dropped,
+		and a kiosk whose marker is dropped refuses to draw."""
 		for scheme, url, secure in (
 			("https", "http://localhost:8000", True),
-			("http", "https://erp.example.com", True),
+			("https", "https://erp.example.com", True),
+			("http", "https://erp.example.com", False),
 			("http", "http://localhost:8000", False),
 		):
 			with self.subTest(scheme=scheme, url=url):
