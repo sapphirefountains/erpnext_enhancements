@@ -119,23 +119,24 @@ erpnext_enhancements.unified_controller = {
 	// why the map used to show "Invalid address reference format" there —
 	// while Project / Master Project use the app's custom `primary_address`
 	// Link field.
-	primary_address_link_field: function () {
+	//
+	// These four take the form to answer for, defaulting to this.frm. The directory tables pass the
+	// form their request was sent for, because they answer when the reply lands (v1.746.0; see
+	// render_contact_table).
+	primary_address_link_field: function (frm) {
 		// The rule lives in party_sources.js since v1.686.0, shared with the guided page's record tools.
 		const rules = ee_party_rules();
-		return rules ? rules.primary_address_field(this.frm.meta.fields || []) : null;
+		return rules ? rules.primary_address_field((frm || this.frm).meta.fields || []) : null;
 	},
 
-	primary_address_name: function () {
-		const link_field = this.primary_address_link_field();
-		return (
-			(link_field && this.frm.doc[link_field]) ||
-			this.frm.doc.customer_address ||
-			this.frm.doc.supplier_address
-		);
+	primary_address_name: function (frm) {
+		frm = frm || this.frm;
+		const link_field = this.primary_address_link_field(frm);
+		return (link_field && frm.doc[link_field]) || frm.doc.customer_address || frm.doc.supplier_address;
 	},
 
-	primary_contact_name: function () {
-		return this.frm.doc.primary_contact || null;
+	primary_contact_name: function (frm) {
+		return (frm || this.frm).doc.primary_contact || null;
 	},
 
 	// ---------------------------------------------------------------- primaries
@@ -162,8 +163,8 @@ erpnext_enhancements.unified_controller = {
 	//     contacts ended up flagged primary for the same account at once.
 	PARTY_DOCTYPES: ["Customer", "Supplier"],
 
-	is_party_form: function () {
-		return this.PARTY_DOCTYPES.indexOf(this.frm.doctype) !== -1;
+	is_party_form: function (frm) {
+		return this.PARTY_DOCTYPES.indexOf((frm || this.frm).doctype) !== -1;
 	},
 
 	// The account whose GLOBAL flag this form may write, or null. Always the open
@@ -239,6 +240,15 @@ erpnext_enhancements.unified_controller = {
 	},
 
 	render_contact_table: function () {
+		// Each render is numbered, and a reply is drawn only while its render is still the latest
+		// (v1.746.0, the record tools' people_seq pattern). Without it two overlapping renders (a
+		// refresh plus the primary_address event, or a quick double refresh) each appended a table,
+		// and a reply that landed after a move to another record was drawn with that record's
+		// answers: this controller is one object for every form, and Frappe keeps one frm per
+		// DocType, so even the captured frm then holds the new record. Numbered before the early
+		// return, so moving to a form without this table retires a pending reply too. The reply
+		// computes everything else from the captured frm, never this.frm.
+		const seq = (this.contact_seq = (this.contact_seq || 0) + 1);
 		const frm = this.frm;
 		if (!frm.fields_dict.contact_list_html) return;
 
@@ -253,7 +263,10 @@ erpnext_enhancements.unified_controller = {
 			return;
 		}
 
-		wrapper.html('<div class="text-muted">Fetching aggregated contacts...</div>');
+		// Its own class, which is all the reply removes: the table's "None" and "This account" cells
+		// are text-muted too, and clearing every .text-muted stripped them from a table an earlier,
+		// overlapping render had already drawn (the 56d0cdd4 review).
+		wrapper.html('<div class="text-muted ee-dir-loading">Fetching aggregated contacts...</div>');
 
 		const btn_container = $(
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
@@ -301,7 +314,8 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
-				wrapper.find(".text-muted").remove();
+				if (seq !== this.contact_seq) return;
+				wrapper.find(".ee-dir-loading").remove();
 				if (!r.message || r.message.length === 0) {
 					wrapper.append(
 						'<div class="alert alert-warning">No contacts linked to any related parties yet.</div>',
@@ -318,15 +332,15 @@ erpnext_enhancements.unified_controller = {
 								<th>Title</th>
 								<th>Email</th>
 								<th>Phone</th>
-								<th>Linked To</th>
+								<th>${__("Account / Supplier")}</th>
 								<th>Actions</th>
 							</tr>
 						</thead>
 						<tbody>
 				`;
 
-				const primary_contact_name = this.primary_contact_name();
-				const on_party_form = this.is_party_form();
+				const primary_contact_name = this.primary_contact_name(frm);
+				const on_party_form = this.is_party_form(frm);
 				r.message.forEach((c) => {
 					const first_name = c.first_name || "";
 					const last_name = c.last_name || "";
@@ -355,15 +369,6 @@ erpnext_enhancements.unified_controller = {
 					// Shown (801) 555-0100, dialed as stored (+18015550100): form kit P2-B.
 					const phone_link = phone ? `<a href="tel:${phone}">${shown_phone(phone)}</a>` : "";
 
-					const linked_to_links = (c.links || [])
-						.map((l) => {
-							const url = frappe.urllib.get_full_url(
-								`/desk/${frappe.router.slug(l.doctype)}/${encodeURIComponent(l.name)}`,
-							);
-							return `<a href="${url}" target="_blank">${l.name} (${l.doctype})</a>`;
-						})
-						.join(", ");
-
 					table += `
 						<tr data-name="${c.name}">
 							<td>
@@ -373,7 +378,7 @@ erpnext_enhancements.unified_controller = {
 							<td>${c.custom_title || ""}</td>
 							<td>${email_link}</td>
 							<td>${phone_link}</td>
-							<td><span style="font-size: 12px;">${linked_to_links}</span></td>
+							<td>${this.accounts_cell(c, frm)}</td>
 							<td>
 								<button class="btn btn-xs btn-default edit-contact" data-name="${c.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
@@ -415,7 +420,55 @@ erpnext_enhancements.unified_controller = {
 		});
 	},
 
+	// The Account / Supplier cell of both tables (v1.746.0, TASK-2026-02942): whose person or
+	// whose address this is. Until then the column was "Linked To", every party the record is
+	// linked to, by ID. What it shows is party_sources.js `account_entries`, the rule the guided
+	// page's People & places list follows too: the row's Customers and Suppliers by display name,
+	// each linked to its record with the ID on hover; a Supplier tagged, since a Customer reads
+	// "Account" on this site and the two otherwise look alike; on a Customer or Supplier form,
+	// that party a muted, unlinked "This account" / "This supplier", first; a muted "None" when
+	// there are neither. This draws it as HTML, so every name is escaped: names are typed by
+	// people. A tab still on a bundle from before v1.746.0 has no account_entries and gets an
+	// empty cell until it reloads, not a TypeError (as ee_party_rules above).
+	//
+	// `frm` is the form the table was requested for, which the caller captured before its
+	// frappe.call, never this.frm read when the reply lands: this controller is one object for
+	// every form, and moving to another form while the request was out marked the wrong row as
+	// "This account" / "This supplier" (the 56d0cdd4 review).
+	// scripts/test_directory_account_column.mjs runs this method.
+	accounts_cell: function (record, frm) {
+		const esc = frappe.utils.escape_html;
+		const rules = ee_party_rules();
+		if (!rules || typeof rules.account_entries !== "function") return "";
+		frm = frm || {};
+		const entries = rules.account_entries(record && record.accounts, frm.doctype, frm.doc && frm.doc.name);
+		if (!entries.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
+		return entries
+			.map((e) => {
+				// The rule's words go through literal __() calls, so Frappe's translation extractor,
+				// which reads only __("...") literals, finds them.
+				if (e.own) {
+					const words = e.words === "This supplier" ? __("This supplier") : __("This account");
+					return `<div class="text-muted">${esc(words)}</div>`;
+				}
+				const url = frappe.urllib.get_full_url(
+					`/desk/${frappe.router.slug(e.doctype)}/${encodeURIComponent(e.name)}`,
+				);
+				const hover = e.hover ? ` title="${esc(e.hover)}"` : "";
+				const tag = e.tag
+					? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__("Supplier"))}</span>`
+					: "";
+				// The URL needs no escaping in this double-quoted attribute: encodeURIComponent
+				// leaves no double quote, angle bracket or ampersand. It does leave ', which is
+				// harmless between double quotes.
+				return `<div><a href="${url}" target="_blank"${hover}>${esc(e.label)}</a>${tag}</div>`;
+			})
+			.join("");
+	},
+
 	render_address_table: function () {
+		// Numbered, as the contact table's renders are (see there).
+		const seq = (this.address_seq = (this.address_seq || 0) + 1);
 		const frm = this.frm;
 		if (!frm.fields_dict.address_list_html) return;
 
@@ -430,7 +483,8 @@ erpnext_enhancements.unified_controller = {
 			return;
 		}
 
-		wrapper.html('<div class="text-muted">Fetching aggregated addresses...</div>');
+		// Its own class, as the contact table's loading line (see there).
+		wrapper.html('<div class="text-muted ee-dir-loading">Fetching aggregated addresses...</div>');
 
 		const btn_container = $(
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
@@ -458,7 +512,8 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
-				wrapper.find(".text-muted").remove();
+				if (seq !== this.address_seq) return;
+				wrapper.find(".ee-dir-loading").remove();
 				// Retires the "no address yet" banner on a just-created Customer or
 				// Supplier as soon as one exists (party_quick_entry.js).
 				const party_quick_entry = erpnext_enhancements.party_quick_entry;
@@ -480,15 +535,15 @@ erpnext_enhancements.unified_controller = {
 								<th>Address</th>
 								<th>Type</th>
 								<th>Address Title</th>
-								<th>Linked To</th>
+								<th>${__("Account / Supplier")}</th>
 								<th>Actions</th>
 							</tr>
 						</thead>
 						<tbody>
 				`;
 
-				const primary_address_name = this.primary_address_name();
-				const on_party_form = this.is_party_form();
+				const primary_address_name = this.primary_address_name(frm);
+				const on_party_form = this.is_party_form(frm);
 				r.message.forEach((a) => {
 					const full_address =
 						a.custom_full_address ||
@@ -506,15 +561,6 @@ erpnext_enhancements.unified_controller = {
 							: "";
 					const address_url = frappe.urllib.get_full_url(`/desk/address/${encodeURIComponent(a.name)}`);
 
-					const linked_to_links = (a.links || [])
-						.map((l) => {
-							const url = frappe.urllib.get_full_url(
-								`/desk/${frappe.router.slug(l.doctype)}/${encodeURIComponent(l.name)}`,
-							);
-							return `<a href="${url}" target="_blank">${l.name} (${l.doctype})</a>`;
-						})
-						.join(", ");
-
 					table += `
 						<tr data-name="${a.name}">
 							<td>
@@ -523,7 +569,7 @@ erpnext_enhancements.unified_controller = {
 							</td>
 							<td>${a.address_type || ""}</td>
 							<td>${a.address_title || ""}</td>
-							<td><span style="font-size: 12px;">${linked_to_links}</span></td>
+							<td>${this.accounts_cell(a, frm)}</td>
 							<td>
 								<button class="btn btn-xs btn-default edit-address" data-name="${a.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
