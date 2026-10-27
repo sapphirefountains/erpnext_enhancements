@@ -36,14 +36,15 @@ export function is_account_doctype(doctype) {
  *   {own: true, words}  the open Customer or Supplier itself, first and unlinked. It is on nearly
  *                       every row of its own form, and dropping it would leave a row that belongs
  *                       only to it reading "None". `words` is "This account" or "This supplier",
- *                       English for the face's __(): written out, because Customer's label on this
- *                       site is the plural "Accounts".
+ *                       written out because Customer's label on this site is the plural "Accounts".
  *   {own: false, doctype, name, label, hover, tag}
  *                       any other: `label` is the display name (the ID when blank), `hover` the ID
- *                       when it differs, `tag` "Supplier" (English, for __()) on a Supplier and null
- *                       on a Customer: the small tag that tells the two kinds apart.
+ *                       when it differs, `tag` "Supplier" on a Supplier and null on a Customer: the
+ *                       small tag that tells the two kinds apart.
  *
- * Plain data, never markup: each face escapes or writes it as text.
+ * Plain data, never markup: each face escapes or writes it as text. `words` and `tag` are English
+ * keys, not display text: each face draws them through literal __("This account")-style calls,
+ * because Frappe's translation extractor reads only literals.
  */
 export function account_entries(accounts, doctype, name) {
 	const list = Array.isArray(accounts) ? accounts.filter((a) => a && a.doctype && a.name) : [];

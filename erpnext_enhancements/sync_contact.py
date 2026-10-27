@@ -707,7 +707,9 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
 
     Each row also carries ``accounts``, the Customer and Supplier ones among those links with
     their display names (:func:`_account_links`, v1.746.0), which the widget's Account /
-    Supplier column shows. ``links`` stays for the guided page's record tools.
+    Supplier column shows. ``links`` stays for API callers; no UI reads it since v1.746.0 (both
+    the Desk widget and the guided page draw ``accounts``), so dropping it from the payload is a
+    possible later clean-up.
     """
     parties = _readable_parties(sources)
     if not parties:

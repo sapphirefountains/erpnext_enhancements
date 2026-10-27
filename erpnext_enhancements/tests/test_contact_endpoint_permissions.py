@@ -663,7 +663,7 @@ class AccountColumnTest(Base):
 		self.assertEqual(
 			{(l["doctype"], l["name"]) for l in ben["links"]},
 			{("Customer", "Northwind Fountains"), ("Project", "PROJ-0001"), ("Lead", "LEAD-0001")},
-			"links, which the guided page's record tools read, must stay whole",
+			"links stays whole for API callers (no UI reads it since v1.746.0)",
 		)
 		self.assertEqual(
 			ben["accounts"],

@@ -448,13 +448,23 @@ class TestTheAccountSupplierLine(unittest.TestCase):
 		body = body[: body.index("\n\t}\n")]
 		self.assertIn('.text(`${__("Account / Supplier")}:`)', body)
 		self.assertIn('.text(__("None"))', body)
-		self.assertIn(".text(__(e.words))", body)
+		self.assertIn('.text(e.words === "This supplier" ? __("This supplier") : __("This account"))', body)
 		self.assertIn(".text(e.label)", body)
 		self.assertIn('.attr("title", e.hover)', body)
 		self.assertIn('.attr("href", frappe.utils.get_form_link(e.doctype, e.name))', body)
 		self.assertIn(".text(__(e.tag))", body)
 		for markup in (".html(", ".append(", "innerHTML", "`<"):
 			self.assertNotIn(markup, body)
+
+	def test_the_words_reach_the_translation_extractor(self):
+		"""Frappe's extractor reads only __("...") literals, so the rule's words are written out
+		where they are drawn (the 295c3bfa review). "Supplier" is a DocType name, in the catalogue
+		from the DocType itself; the guided tools never write one, the Desk cell does."""
+		for path in (UI_JS, CONTROLLER_JS):
+			code = _code(path)
+			self.assertIn('__("This account")', code, path.name)
+			self.assertIn('__("This supplier")', code, path.name)
+		self.assertIn('esc(__("Supplier"))', _code(CONTROLLER_JS))
 
 	def test_the_desk_cell_draws_the_same_rule_behind_the_bundle_guard(self):
 		code = _code(CONTROLLER_JS)

@@ -41,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     see. The display names come from one `get_all` per doctype, so a directory of fifty rows
     makes two title queries, not fifty. Select is enough to see a title: it is what a Link field
     to that party shows, and Frappe's own form load reads it without checking the linked
-    record. `links` is unchanged, because the guided page's People & places list still reads it.
+    record. `links` is unchanged, for API callers: no UI reads it since this release, so dropping it
+    from the payload is a possible later clean-up.
   - **The guided page says it the same way.** People & places (the guided page's record tools,
     and the board's side panel, which runs the same editor) put "Linked to CUST-0042 (Customer),
     PROJ-0118 (Project), ..." under each contact and address. That line is now "Account /

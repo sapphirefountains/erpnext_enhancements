@@ -1334,8 +1334,12 @@ export class RecordTools {
 		}
 		entries.forEach((e) => {
 			const $entry = $('<span class="ge-tools-account"></span>').appendTo($line);
+			// The rule's words go through literal __() calls, so Frappe's translation extractor, which
+			// reads only __("...") literals, finds them. The tag below is the exception: it is a DocType's
+			// name, which this file never writes (the tools single out no DocType), and the catalogue has
+			// it from the DocType itself and from the Desk cell's literal.
 			if (e.own) {
-				$entry.text(__(e.words));
+				$entry.text(e.words === "This supplier" ? __("This supplier") : __("This account"));
 				return;
 			}
 			const $link = $('<a target="_blank" rel="noopener noreferrer"></a>')

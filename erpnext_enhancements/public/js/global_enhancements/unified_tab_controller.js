@@ -434,13 +434,18 @@ erpnext_enhancements.unified_controller = {
 		if (!entries.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
 		return entries
 			.map((e) => {
-				if (e.own) return `<div class="text-muted">${esc(__(e.words))}</div>`;
+				// The rule's words go through literal __() calls, so Frappe's translation extractor,
+				// which reads only __("...") literals, finds them.
+				if (e.own) {
+					const words = e.words === "This supplier" ? __("This supplier") : __("This account");
+					return `<div class="text-muted">${esc(words)}</div>`;
+				}
 				const url = frappe.urllib.get_full_url(
 					`/desk/${frappe.router.slug(e.doctype)}/${encodeURIComponent(e.name)}`,
 				);
 				const hover = e.hover ? ` title="${esc(e.hover)}"` : "";
 				const tag = e.tag
-					? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__(e.tag))}</span>`
+					? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__("Supplier"))}</span>`
 					: "";
 				// The URL needs no escaping in this double-quoted attribute: encodeURIComponent
 				// leaves no double quote, angle bracket or ampersand. It does leave ', which is
