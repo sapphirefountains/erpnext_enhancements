@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.751.0] - 2026-10-27
 
+ERPNext Task TASK-2026-02989 (PRJ-00580, Misc Tasks).
+
 ### Added
 - **Field technicians see eight things on the Desk home grid, and the same eight on their Dock
   rail.** Nik asked for "Maintenance, Morning Briefing, CRM, Project and Time Kiosk as the only
@@ -27,9 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **The home grid.** Prod draws its home screen as the Desktop Icon grid: frappe 16.53.0, with
     Desktop Settings → Desktop Page set to "Desktop Icons". The grid comes from
     `frappe.boot.desktop_icons`. `trim_home_grid`, called from `boot.boot_session`
-    (`extend_bootinfo`), keeps only the eight. It runs on every boot, cached or not. CRM is hidden
-    on everyone's grid today, so for technicians it is shown. CRM and Projects also come out of
-    ERPNext's hidden folder onto the top level.
+    (`extend_bootinfo`), keeps only the eight. It runs on every boot, cached or not. CRM's own tile
+    is hidden on everyone's grid today, so for technicians it is shown. (CRM and Projects name
+    ERPNext's App icon as their parent. That icon is hidden, and frappe already draws the children
+    of a hidden parent at the top level, so Projects is on the top level for everyone.)
   - **It hides; it never grants.** It keeps only tiles frappe already allowed the person, so a
     tile frappe refuses stays out. No DocPerm, Block Module, Module Profile or workspace role
     changes. Timesheets, Maintenance Visits, ToDo and My Work open exactly as before, through
@@ -46,11 +49,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     would land on `/desk/stock-scan` and find nothing. `location.replace` keeps the page out of
     history, so Back returns to where the rail was clicked (Nik's Back/Forward rule). It takes the
     same roles as Stock Scan itself (`stock_scan_rules.SCAN_ROLES`).
-  - **A saved home layout.** frappe 16.53 draws a saved `Desktop Layout` only as far as the boot
-    list goes, so a technician cannot bring other tiles back with one. But a layout's own hidden
-    flags still win, and a tile it never held is not drawn. So someone who saved a layout and then
-    becomes a technician, or the reverse, needs Reset Layout once. No technician had a saved
-    layout on 2026-10-27.
+  - **Known edges.**
+    - **Where login lands.** After login frappe sends a System User to `frappe.apps.get_default_path()`.
+      With `User.default_app` set to `erpnext` that is ERPNext's `app_home`, the Home workspace at
+      `/desk/home`, not the grid. One technician had that on 2026-10-27, and Nik is clearing it in
+      the Desk. The other four land on `/desk` only because the apps screen lists two desk apps:
+      ERPNext and Frappe Assistant Core, whose `add_to_apps_screen` entry counts while its
+      `can_use_faco` returns a non-empty dict. With one app, `get_default_path` returns that app's
+      route, so if Frappe Assistant Core went away all five would land on `/desk/home`.
+    - **A saved home layout.** frappe 16.53 draws a saved `Desktop Layout` only as far as the boot
+      list goes, so a technician cannot bring other tiles back with one. Folders are the exception:
+      `arrange_layout` never marks a Folder not permitted, so a folder in a saved layout still
+      draws, empty. A layout's own hidden flags still win, and a tile it never held is not drawn.
+      So someone who saved a layout and then becomes a technician, or the reverse, needs Reset
+      Layout once. No technician had a saved layout on 2026-10-27.
+    - **A workspace made from the grid.** Desk User may create a Workspace, so a technician can
+      add one through Edit Layout → "+ Workspace". Its tile shows until the next page load, then
+      `trim_home_grid` drops it. The workspace itself stays.
+    - **The rail can drift from the grid.** A technician who rearranges their own rail in Manage
+      Dock keeps it, because that layer is now theirs, while the grid stays at the eight.
+    - **Field Tech plus System Manager or Workspace Manager** gets the eight-entry rail but the
+      whole grid. Nobody was in that position on 2026-10-27.
+  - A failure inside `trim_home_grid` writes one Error Log per worker process, not one per page
+    load: it runs for every non-manager on every boot.
   - Tests: `tests/test_dock_profiles.py` (existing CI step) pins Nik's list and order on both the
     rail and the grid. It covers who is trimmed and who is not, that a refused tile is never
     added, that frappe's list is copied rather than changed, the two redirect pages, and the boot

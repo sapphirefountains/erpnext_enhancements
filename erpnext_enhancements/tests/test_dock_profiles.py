@@ -857,6 +857,7 @@ class TrimHomeGridTest(unittest.TestCase):
 
 	def setUp(self):
 		_reset(with_docks=False)
+		dp._home_grid_failure_logged = False
 		_user("tech@x", ("Production Team", "Training Learner"))
 		_user("lead@x", ("Production Team", "Projects & Operations", "Maintenance Supervisor"))
 		_user("finance@x", ("Finance Team", "Production Team", "Maintenance Reviewer"))
@@ -911,6 +912,13 @@ class TrimHomeGridTest(unittest.TestCase):
 	def test_never_raises(self):
 		STATE["fail_get_all"].add("User")
 		self.assertEqual(len(self._boot("tech@x")), len(_site_grid()))
+		self.assertEqual(STATE["errors"], ["Home grid not trimmed at boot"])
+
+	def test_a_failure_that_keeps_happening_is_logged_once_per_process(self):
+		"""It runs for every non-manager on every page load, so it must not log on every one."""
+		STATE["fail_get_all"].add("User")
+		for person in ("tech@x", "sales@x", "tech@x"):
+			self._boot(person)
 		self.assertEqual(STATE["errors"], ["Home grid not trimmed at boot"])
 
 

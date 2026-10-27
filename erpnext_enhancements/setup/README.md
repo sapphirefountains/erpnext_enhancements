@@ -258,19 +258,36 @@ Training, Stock Scan. Each entry pairs the rail's key with the home grid's Deskt
 - **How.** Prod draws the home screen as the Desktop Icon grid (Desktop Settings -> Desktop Page
   is "Desktop Icons"), from `frappe.boot.desktop_icons`. `trim_home_grid`, from `boot.py`'s
   `extend_bootinfo`, keeps only the profile's tiles, shown, at the top level and numbered in
-  order. CRM is hidden on everyone else's grid, and it and Projects sit in ERPNext's hidden
-  folder. It runs on every boot, cached or not, so a profile change shows on the next page load.
-  On the Apps screen there is no such list and nothing happens.
+  order. CRM's own tile is hidden on everyone else's grid, which is the flag that matters. (CRM
+  and Projects name ERPNext's App icon as their parent; that icon is hidden, and frappe's
+  `prepare()` already draws a hidden parent's children at the top level.) It runs on every boot,
+  cached or not, so a profile change shows on the next page load. On the Apps screen there is no
+  such list and nothing happens. A failure is logged once per worker process, not on every page
+  load.
 - **Hides, never grants.** It keeps only tiles frappe already allowed the person
   (`get_desktop_icons`' role, module and sidebar checks), so a tile frappe refuses stays out. No
   DocPerm, Block Module, Module Profile or workspace role changes. Timesheets, Maintenance Visits,
   ToDo and My Work are reached exactly as before, through links, search and the rail.
+- **Where login lands is not this code's.** After login frappe sends a System User to
+  `frappe.apps.get_default_path()`. A `User.default_app` of `erpnext` makes that ERPNext's
+  `app_home`, the Home workspace (`/desk/home`), not the grid; one technician had it on
+  2026-10-27 and it is cleared on the User form (Default App). The rest land on `/desk` only
+  because the apps screen lists two desk apps, ERPNext and Frappe Assistant Core (its
+  `add_to_apps_screen` entry counts while `can_use_faco` returns a non-empty dict). With a single
+  app `get_default_path` returns that app's route, so without Frappe Assistant Core every
+  technician would land on `/desk/home`.
 - **A saved home layout.** frappe 16.53 draws a saved `Desktop Layout` only as far as the boot
   list goes (`arrange_layout` in `desktop_icons.bundle.js` leaves out a saved tile not in it), so
-  a technician's saved layout cannot bring other tiles back. Two edges remain, and no technician
-  had a saved layout on 2026-10-27: a layout's own hidden flags win, and a tile it never held is
-  not drawn. So someone who saved a layout and then becomes a technician, or saves one as a
-  technician and later stops being one, needs **Reset Layout** (the grid's menu) once.
+  a technician's saved layout cannot bring other tiles back. It never marks a **Folder** not
+  permitted, though, so a folder in a saved layout still draws, empty. Two more edges, and no
+  technician had a saved layout on 2026-10-27: a layout's own hidden flags win, and a tile it
+  never held is not drawn. So someone who saved a layout and then becomes a technician, or saves
+  one as a technician and later stops being one, needs **Reset Layout** (the grid's menu) once.
+- **A workspace made from the grid** (Edit Layout → "+ Workspace", which Desk User may do) shows
+  its tile until the next page load, then `trim_home_grid` drops it. The workspace stays.
+- **The rail and the grid can drift.** A technician who rearranges their rail in Manage Dock
+  keeps it (the layer is theirs now), while the grid stays at the eight. And a Field Tech who
+  also holds System Manager or Workspace Manager gets the eight-entry rail but the whole grid.
 
 ## Writing a new one
 

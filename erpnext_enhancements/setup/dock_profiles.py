@@ -146,6 +146,9 @@ HOME_GRIDS = {
 # Never trimmed, whatever their profile: the people who look after the desk keep all of it.
 UNTRIMMED_ROLES = frozenset({"System Manager", "Workspace Manager"})
 
+# Set once `trim_home_grid` has logged a failure in this worker process (see its docstring).
+_home_grid_failure_logged = False
+
 # Role Profile -> dock profile for a User whose Dock Profile is blank. First match wins, so the
 # order is the precedence: Logan holds Design Team and Production Team and is a designer, Lisa
 # holds Finance Team and Production Team and works in finance, and Clegg holds Production Team
@@ -431,10 +434,11 @@ def home_grid(icons, tiles):
 
 	`icons` is the grid frappe already built for this person (`bootinfo.desktop_icons`), so a tile
 	it refused them stays out: this hides, it never grants. Each kept tile is a copy, shown even
-	where the site hid it (CRM is hidden on everyone's grid), at the top level (CRM and Projects
-	sit in ERPNext's folder, which is not one of them), and numbered in `tiles` order, which is the
-	order the grid sorts by. Returns None when none of the tiles is there, and the grid is left
-	whole rather than empty.
+	where the site hid it (CRM's own tile is hidden on everyone's grid), at the top level so none
+	lands in a folder that is not kept, and numbered in `tiles` order, which is the order the grid
+	sorts by. (CRM and Projects name ERPNext's App icon as their parent, but that icon is hidden and
+	frappe draws a hidden parent's children at the top level anyway.) Returns None when none of the
+	tiles is there, and the grid is left whole rather than empty.
 	"""
 	by_name = {icon.get("name"): icon for icon in icons or [] if icon.get("name")}
 	kept = []
@@ -456,7 +460,12 @@ def trim_home_grid(bootinfo):
 	"Desktop Icons"), from `bootinfo.desktop_icons`. A saved home layout is drawn only as far as
 	this list goes: frappe 16.53's `arrange_layout` leaves out a saved tile that is not in it. On the
 	Apps screen the list is absent and nothing happens. Never raises: boot runs on every page.
+
+	It runs for everyone who is not a manager, on every boot, before it can know whether they have a
+	home grid (the profile needs their Role Profiles). So a failure that keeps happening is logged
+	once per worker process rather than once per page load.
 	"""
+	global _home_grid_failure_logged
 	try:
 		icons = bootinfo.get("desktop_icons")
 		if not icons:
@@ -474,4 +483,6 @@ def trim_home_grid(bootinfo):
 		if trimmed:
 			bootinfo["desktop_icons"] = trimmed
 	except Exception:
-		frappe.log_error(title="Home grid not trimmed at boot", message=frappe.get_traceback())
+		if not _home_grid_failure_logged:
+			_home_grid_failure_logged = True
+			frappe.log_error(title="Home grid not trimmed at boot", message=frappe.get_traceback())
