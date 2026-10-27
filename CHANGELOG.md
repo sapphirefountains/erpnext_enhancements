@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.751.0] - 2026-10-27
+## [1.752.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
 
@@ -170,6 +170,76 @@ ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
   now, and Highlight is on the project's menu.
 - Both planners' `p6c_coarse`, which nothing calls since Tap to move stopped defaulting on for a touch
   screen.
+
+## [1.751.0] - 2026-10-27
+
+ERPNext Task TASK-2026-02989 (PRJ-00580, Misc Tasks).
+
+### Added
+- **Field technicians see eight things on the Desk home grid, and the same eight on their Dock
+  rail.** Nik asked for "Maintenance, Morning Briefing, CRM, Project and Time Kiosk as the only
+  icons they see when they login". He then asked to "match them to each other" and added Travel,
+  Training and Stock Scan. Both now read, in order: Maintenance, Morning Briefing, CRM, Projects,
+  Time Kiosk, Travel, Training, Stock Scan. One tuple, `setup/dock_profiles.FIELD_TECH`, pairs
+  each rail entry with its home tile, so the two cannot drift apart.
+  - **Who.** Whoever's dock profile (v1.734.0) resolves to Field Tech. That means the Production
+    Team (or Technician) Role Profile with no broader one ahead of it, or Field Tech chosen on the
+    User form. On prod that is five enabled users, all with a Junior or Senior Technician
+    designation. A new technician given the Production Team Role Profile gets it with no other
+    step. Production Team holders with another job keep the whole grid: Projects & Operations,
+    Design Team and Finance Team all come first. So does anyone holding System Manager or
+    Workspace Manager. The manager roles every technician already holds through Production Team
+    (Maintenance, Projects, Stock Manager and others) decide nothing.
+  - **The home grid.** Prod draws its home screen as the Desktop Icon grid: frappe 16.53.0, with
+    Desktop Settings → Desktop Page set to "Desktop Icons". The grid comes from
+    `frappe.boot.desktop_icons`. `trim_home_grid`, called from `boot.boot_session`
+    (`extend_bootinfo`), keeps only the eight. It runs on every boot, cached or not. CRM's own tile
+    is hidden on everyone's grid today, so for technicians it is shown. (CRM and Projects name
+    ERPNext's App icon as their parent. That icon is hidden, and frappe already draws the children
+    of a hidden parent at the top level, so Projects is on the top level for everyone.)
+  - **It hides; it never grants.** It keeps only tiles frappe already allowed the person, so a
+    tile frappe refuses stays out. No DocPerm, Block Module, Module Profile or workspace role
+    changes. Timesheets, Maintenance Visits, ToDo and My Work open exactly as before, through
+    links, search and the rail.
+  - **The rail.** The Field Tech profile is now the same eight. Before, it was Maintenance,
+    Projects, Travel and Training. The app's dock gains three rows: Morning Briefing, Time Kiosk
+    (`/desk/time-kiosk`) and Stock Scan (`/desk/stock-scan`). Its `modified` moves to
+    2026-10-27 12:00. On deploy, `apply_dock_profiles` rewrites the five technicians' layers, all
+    still the app's. It also adds the three rows, hidden, to every other layer the app owns, so
+    nobody else's rail changes.
+  - **New desk page `/desk/stock-scan`.** It only sends the browser on to `/stock-scan`, with
+    `location.replace`, the way `/desk/time-kiosk` already sends it to `/kiosk`. A rail row opens
+    through `frappe.set_route`, which reads any path as a desk route. A row naming `/stock-scan`
+    would land on `/desk/stock-scan` and find nothing. `location.replace` keeps the page out of
+    history, so Back returns to where the rail was clicked (Nik's Back/Forward rule). It takes the
+    same roles as Stock Scan itself (`stock_scan_rules.SCAN_ROLES`).
+  - **Known edges.**
+    - **Where login lands.** After login frappe sends a System User to `frappe.apps.get_default_path()`.
+      With `User.default_app` set to `erpnext` that is ERPNext's `app_home`, the Home workspace at
+      `/desk/home`, not the grid. One technician had that on 2026-10-27, and Nik is clearing it in
+      the Desk. The other four land on `/desk` only because the apps screen lists two desk apps:
+      ERPNext and Frappe Assistant Core, whose `add_to_apps_screen` entry counts while its
+      `can_use_faco` returns a non-empty dict. With one app, `get_default_path` returns that app's
+      route, so if Frappe Assistant Core went away all five would land on `/desk/home`.
+    - **A saved home layout.** frappe 16.53 draws a saved `Desktop Layout` only as far as the boot
+      list goes, so a technician cannot bring other tiles back with one. Folders are the exception:
+      `arrange_layout` never marks a Folder not permitted, so a folder in a saved layout still
+      draws, empty. A layout's own hidden flags still win, and a tile it never held is not drawn.
+      So someone who saved a layout and then becomes a technician, or the reverse, needs Reset
+      Layout once. No technician had a saved layout on 2026-10-27.
+    - **A workspace made from the grid.** Desk User may create a Workspace, so a technician can
+      add one through Edit Layout → "+ Workspace". Its tile shows until the next page load, then
+      `trim_home_grid` drops it. The workspace itself stays.
+    - **The rail can drift from the grid.** A technician who rearranges their own rail in Manage
+      Dock keeps it, because that layer is now theirs, while the grid stays at the eight.
+    - **Field Tech plus System Manager or Workspace Manager** gets the eight-entry rail but the
+      whole grid. Nobody was in that position on 2026-10-27.
+  - A failure inside `trim_home_grid` writes one Error Log per worker process, not one per page
+    load: it runs for every non-manager on every boot.
+  - Tests: `tests/test_dock_profiles.py` (existing CI step) pins Nik's list and order on both the
+    rail and the grid. It covers who is trimmed and who is not, that a refused tile is never
+    added, that frappe's list is copied rather than changed, the two redirect pages, and the boot
+    wiring.
 
 ## [1.750.0] - 2026-10-27
 

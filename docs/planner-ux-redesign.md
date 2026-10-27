@@ -228,7 +228,7 @@ and **More ▾**, then ?. The phone keeps the bottom sheet from v1.687.0.
 - **The window** is 3 weeks by default (2 / 3 / 4 / 6 in the range picker) and starts on the site's first
   weekday (Sunday on prod). ‹ › step one week.
 - **Clicking a bar** opens the task in the side panel (the 6A panel, unchanged). Right-click opens the 6B menu,
-  plus Split, Duplicate to…, Copy to another week (D12). *(Since v1.751.0 a click opens the Task itself and the
+  plus Split, Duplicate to…, Copy to another week (D12). *(Since v1.752.0 a click opens the Task itself and the
   panel is Quick edit on that menu: see "Built, and where it differs".)*
 - **On a tablet:** Tap to move works as it does today, and rows stay 40 px tall. **On a phone** the
   Lookahead becomes a list grouped by day, because a 21-column grid doesn't fit.
@@ -601,7 +601,7 @@ text above:
 - **The Overview** draws a job's milestones as diamonds when the job is expanded, not on its collapsed bar (P9).
 - **Today's help.** Today has no toolbar, so it has no "?"; P12 gave it a "?" button beside *Planner*, so the
   phone's help and tour are not two screens away.
-- **A tap opens the record** (v1.751.0; Nik, 2026-10-27: "tapping the task should take you to the task,
+- **A tap opens the record** (v1.752.0; Nik, 2026-10-27: "tapping the task should take you to the task,
   tapping the project should take you to the project, and so on"). This replaces §4.2's "clicking a bar opens
   the task in the side panel" and "clicking the project name opens the existing project peek", and 6A's "click
   a name to see their week", on both planners. A bar opens its Task, a project's name its Project, a visit its

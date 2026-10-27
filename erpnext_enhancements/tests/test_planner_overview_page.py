@@ -100,7 +100,7 @@ class TestTheBlock(unittest.TestCase):
 		self.assertIn("editable: {},", mount)
 		for hook in ("on_write", "on_link", "on_link_dblclick", "on_task_expand"):
 			self.assertNotIn(hook, mount, hook)
-		# A right-click is a menu that only opens records and the job's Gantt (a tap opens the record, v1.751.0).
+		# A right-click is a menu that only opens records and the job's Gantt (a tap opens the record, v1.752.0).
 		self.assertIn("on_task_context: (id, task, e) => this.ppo_menu(task, e),", mount)
 		self.assertIn("baseline: true,", mount)
 		self.assertIn('zoom: "month",', mount)

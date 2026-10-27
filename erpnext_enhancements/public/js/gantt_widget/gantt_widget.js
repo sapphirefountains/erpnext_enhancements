@@ -608,7 +608,7 @@ frappe.provide("erpnext_enhancements.gantt");
 					if (e && e.target && e.target.closest && e.target.closest(".gantt_tree_icon")) {
 						return true;
 					}
-					// A press on a bar's resize edge is a resize, never a tap (v1.751.0), and the
+					// A press on a bar's resize edge is a resize, never a tap (v1.752.0), and the
 					// click a finger makes lifting off a long press already opened the menu.
 					if (e && e.target && e.target.closest && e.target.closest(".gantt_task_drag")) {
 						return true;
@@ -734,7 +734,7 @@ frappe.provide("erpnext_enhancements.gantt");
 		/**
 		 * A touch long press opens the host's menu, as a right-click does: iOS Safari never fires
 		 * `contextmenu` on a long press, so the planners' Gantt and Overview menus (Quick edit, Open in
-		 * Gantt) were out of reach on an iPad (v1.751.0). Half a second without moving 6 px, the
+		 * Gantt) were out of reach on an iPad (v1.752.0). Half a second without moving 6 px, the
 		 * planners' own numbers; the click the lifting finger makes is swallowed (onTaskClick above),
 		 * so the row is not also opened. A press that moves is the chart's own drag or scroll.
 		 */

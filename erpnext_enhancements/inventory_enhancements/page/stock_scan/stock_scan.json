@@ -1,0 +1,30 @@
+{
+ "content": "",
+ "creation": "2026-10-27 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "scan-qr-code",
+ "modified": "2026-10-27 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "stock-scan",
+ "owner": "Administrator",
+ "page_name": "stock-scan",
+ "roles": [
+  {
+   "role": "Inventory Clerk"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Stock Scan"
+}

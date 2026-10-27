@@ -485,7 +485,7 @@ def _project_view(technicians, start, end, visit_overrides=None):
 		resources = {r.get("name"): r for r in data.get("resources") or []}
 		for person in people:
 			resource = resources.get(user_to_resource.get(person.get("user"))) or {}
-			# The Employee is what a tap on a technician's name opens (v1.751.0).
+			# The Employee is what a tap on a technician's name opens (v1.752.0).
 			person.update(
 				resource=resource.get("name"),
 				group=resource.get("group"),
@@ -514,7 +514,7 @@ def _project_view(technicians, start, end, visit_overrides=None):
 					"helper": True,
 				}
 			)
-		# v1.751.0: what a tap on a name opens for this person, and which trips they may open.
+		# v1.752.0: what a tap on a name opens for this person, and which trips they may open.
 		from erpnext_enhancements.api import planner_open
 
 		planner_open.mark_people(people, resource_key="resource")
@@ -553,7 +553,7 @@ def _booking_cell(cell):
 				"slot": b.get("slot"),
 				# A pencil task is drawn as one (v1.601.0); the key is there only when it is.
 				**({"tentative": True} if b.get("tentative") else {}),
-				# A trip this person may not open says so (v1.751.0); the key is there only then.
+				# A trip this person may not open says so (v1.752.0); the key is there only then.
 				**({"open": False} if b.get("open") is False else {}),
 			}
 			for b in cell.get("bookings") or []

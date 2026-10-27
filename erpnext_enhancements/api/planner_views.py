@@ -171,7 +171,7 @@ def booking_entry(booking, stop=None):
 		"arrive": stop.get("arrive"),
 		"address": stop.get("address"),
 		"order": stop.get("order"),
-		# v1.751.0: a tap opens the booking's record. A projected visit's ref is its contract, and
+		# v1.752.0: a tap opens the booking's record. A projected visit's ref is its contract, and
 		# ``open`` (planner_open.mark_bookings) says whether this person may open it.
 		"projected": bool(booking.get("projected")),
 		"open": booking.get("open", True),
