@@ -27,7 +27,7 @@ every time, so they both *create* what's missing and *correct* drift.
 | `custom_fields.py` | `after_migrate` | Provisions the "Contacts & Addresses" tab — Primary Contact link, directory widgets, primary address + location map — on the party doctypes, plus a Comments tab for Master Project (every other doctype's is fixture-owned) |
 | `supplier_groups.py` | `after_migrate` | Relabels `supplier_group` to "Primary Supplier Group" and adds the additional-groups Table MultiSelect plus the denormalized text fields `supplier_query.sync_supplier_groups` populates |
 | `workspace_tweaks.py` | `after_migrate` | Re-asserts overrides on core (erpnext-owned) workspaces and sidebars. Hides the "Project" link in the Projects sidebar: drops the row from the `Workspace Sidebar` before frappe 16.50, and from 16.50 sets `hidden` on ERPNext's own `Sidebar Item` row (a `Custom Sidebar` layer would reorder the sidebar; see the function's docstring). Since v1.583.1 it also **adds** the Project Planner (after Task) and the Crew Utilization report (after the module's other reports) to the Projects sidebar (`add_core_sidebar_items`): ERPNext's own rows are inserted at the right `idx` with `db_insert`, a link already there is left alone even if hidden, and the rows come back after an ERPNext re-import. Since v1.735.0 (the dock usage audit of v1.734.0) it puts the Opportunity Kanban, a URL row, at the top of the CRM sidebar, so CRM opens on it; `arrange_core_sidebar_items` moves Purchase Order and Material Request up under Home in Buying and renames CRM's dashboard row from "Home" to "Dashboard", writing `idx` and `label` only where they differ. `drop_unreadable_sidebar_links`, called from `boot.py`, takes the Kanban row away from anyone who cannot read Opportunity, because frappe never permission-checks a URL row |
-| `dock_profiles.py` | `after_migrate`, User `on_update` | The Dock rail per job (v1.734.0). Writes the site's layer of ERPNext's dock (`SITE_DEFAULT`: Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer from their dock profile: `User.custom_dock_profile` when set, else the first `BY_ROLE_PROFILE` match. Only a layer that is missing or still the app's (last written by Administrator) is written, so one a person arranged in Manage Dock is kept; choosing a Dock Profile on the User form is the one override. See "The Dock per job" below |
+| `dock_profiles.py` | `after_migrate`, User `on_update`, `extend_bootinfo` (via `boot.py`) | The Dock rail per job (v1.734.0). Writes the site's layer of ERPNext's dock (`SITE_DEFAULT`: Buying, Stock, Projects, Opportunities, CRM) and each enabled System User's own layer from their dock profile: `User.custom_dock_profile` when set, else the first `BY_ROLE_PROFILE` match. Only a layer that is missing or still the app's (last written by Administrator) is written, so one a person arranged in Manage Dock is kept; choosing a Dock Profile on the User form is the one override. Since v1.751.0 the same profile also cuts the field technicians' Desk home grid down to the eight things on their rail (`trim_home_grid`, every boot). See "The Dock per job" below |
 | `desktop_icon_map.py` | — | Data only: the Desk home-grid tile for each module (slug, glyph, colour). Importless on purpose — the generator and the bench-free test read it without a frappe stub |
 | `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, creates the tile for a workspace core never gave one, appends the `ADD_TO_SAVED_LAYOUTS` tiles to every saved home-screen layout that lacks them, and shows each `DISPLAY_LABELS` tile under its display name (Sapphire Maintenance as **Maintenance**, v1.592.0: label, legacy Workspace Sidebar title and saved layouts, never a docname or URL) |
 
@@ -202,7 +202,12 @@ layer, so a dock that differs by job is written one person at a time.
   Kanban, Suppliers (`/desk/supplier`) and Accounts (Customers) (`/desk/customer`; Customer is
   relabelled Accounts on prod, and the row's title keeps it apart from ERPNext's Accounts module),
   then Workspace pins for Maintenance, Travel, Training, KPI Dashboards, Water Engineering,
-  QuickBooks, HR, Knowledge Base, Fleet and AI Governance. **Change a row, move the file's
+  QuickBooks, HR, Knowledge Base, Fleet, AI Governance and Morning Briefing, then two more URL
+  rows, Time Kiosk (`/desk/time-kiosk`) and Stock Scan (`/desk/stock-scan`), v1.751.0. Those two
+  name desk pages, not the web apps themselves: a rail row opens through `frappe.set_route`, which
+  reads any path as a desk route, so a row naming `/kiosk` would open `/desk/kiosk` and find
+  nothing. Each page sends the browser on with `location.replace`, so Back returns to where the
+  rail was clicked. **Change a row, move the file's
   `modified` forward**: frappe re-imports it only when that is later than the database row, and
   `test_dock_profiles.SHIPPED_DOCKS` fails the build until you do. The desk then shows ERPNext's rail in
   our modules too (`frappe.boot.app_rail_host`), where before our sidebars drew a second rail:
@@ -234,6 +239,55 @@ layer, so a dock that differs by job is written one person at a time.
 - **The site's layer** is written once by the patch `set_dock_site_layer`, which overwrote Nik's
   hand-made layer of 2026-10-23 on purpose. After that it is the app's, and `apply_dock_profiles`
   keeps it current until someone arranges it again.
+
+### The field technicians' home grid (v1.751.0)
+
+Nik, 2026-10-27: technicians should see only "Maintenance, Morning Briefing, CRM, Project and Time
+Kiosk" when they log in, and then "match them to each other", adding Travel, Training and Stock
+Scan. So the **Field Tech** profile's rail and home grid list the same eight, in this order, from
+one tuple, `FIELD_TECH`: Maintenance, Morning Briefing, CRM, Projects, Time Kiosk, Travel,
+Training, Stock Scan. Each entry pairs the rail's key with the home grid's Desktop Icon docname.
+
+- **Who.** Whoever's dock profile resolves to Field Tech: the Production Team (or Technician)
+  Role Profile with no broader one ahead of it in `BY_ROLE_PROFILE`, or Field Tech chosen on the
+  User form. On 2026-10-27 that was five enabled users. Production Team holders with another job
+  (Projects & Operations, Design Team, Finance Team) and Site Default keep the whole grid, and
+  so does anyone holding **System Manager** or **Workspace Manager** (`UNTRIMMED_ROLES`). The
+  manager *roles* technicians hold (Maintenance, Projects, Stock Manager and so on, all from the
+  Production Team profile) decide nothing.
+- **How.** Prod draws the home screen as the Desktop Icon grid (Desktop Settings -> Desktop Page
+  is "Desktop Icons"), from `frappe.boot.desktop_icons`. `trim_home_grid`, from `boot.py`'s
+  `extend_bootinfo`, keeps only the profile's tiles, shown, at the top level and numbered in
+  order. CRM's own tile is hidden on everyone else's grid, which is the flag that matters. (CRM
+  and Projects name ERPNext's App icon as their parent; that icon is hidden, and frappe's
+  `prepare()` already draws a hidden parent's children at the top level.) It runs on every boot,
+  cached or not, so a profile change shows on the next page load. On the Apps screen there is no
+  such list and nothing happens. A failure is logged once per worker process, not on every page
+  load.
+- **Hides, never grants.** It keeps only tiles frappe already allowed the person
+  (`get_desktop_icons`' role, module and sidebar checks), so a tile frappe refuses stays out. No
+  DocPerm, Block Module, Module Profile or workspace role changes. Timesheets, Maintenance Visits,
+  ToDo and My Work are reached exactly as before, through links, search and the rail.
+- **Where login lands is not this code's.** After login frappe sends a System User to
+  `frappe.apps.get_default_path()`. A `User.default_app` of `erpnext` makes that ERPNext's
+  `app_home`, the Home workspace (`/desk/home`), not the grid; one technician had it on
+  2026-10-27 and it is cleared on the User form (Default App). The rest land on `/desk` only
+  because the apps screen lists two desk apps, ERPNext and Frappe Assistant Core (its
+  `add_to_apps_screen` entry counts while `can_use_faco` returns a non-empty dict). With a single
+  app `get_default_path` returns that app's route, so without Frappe Assistant Core every
+  technician would land on `/desk/home`.
+- **A saved home layout.** frappe 16.53 draws a saved `Desktop Layout` only as far as the boot
+  list goes (`arrange_layout` in `desktop_icons.bundle.js` leaves out a saved tile not in it), so
+  a technician's saved layout cannot bring other tiles back. It never marks a **Folder** not
+  permitted, though, so a folder in a saved layout still draws, empty. Two more edges, and no
+  technician had a saved layout on 2026-10-27: a layout's own hidden flags win, and a tile it
+  never held is not drawn. So someone who saved a layout and then becomes a technician, or saves
+  one as a technician and later stops being one, needs **Reset Layout** (the grid's menu) once.
+- **A workspace made from the grid** (Edit Layout → "+ Workspace", which Desk User may do) shows
+  its tile until the next page load, then `trim_home_grid` drops it. The workspace stays.
+- **The rail and the grid can drift.** A technician who rearranges their rail in Manage Dock
+  keeps it (the layer is theirs now), while the grid stays at the eight. And a Field Tech who
+  also holds System Manager or Workspace Manager gets the eight-entry rail but the whole grid.
 
 ## Writing a new one
 
