@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.750.1] - 2026-10-27
+
+**This release carries a patch that writes production data on deploy: it moves 6 stored files
+and updates 16 File rows and 3 photo rows. Nik approves the merge explicitly.**
+
+### Security
+- **The Time Kiosk's "Add files" button uploads privately, and the files it already stored
+  publicly are made private** (`public/js/kiosk/app.js`, `api/time_kiosk.py`,
+  `patches/privatize_kiosk_attachment_files.py`). Found while scoping the kiosk Photos tab
+  (#1374); Nik decided on 2026-10-27 that it ships on its own. An independent review confirmed
+  each point on production (frappe 16.53.0).
+  - **Public uploads.** `uploadFile` sent `is_private '0'`, so every file landed under
+    `/files/`, where anybody holding the URL could download it without signing in. These are
+    photographs of customers' property. The camera path beside it had always uploaded
+    privately; now both do.
+  - **Public copies.** `link_attachment` copied each File onto the job's Project and Task with
+    the original's `is_private`, so the copies were public too. Every copy is now private. An
+    original that still arrives public, from a page cached before this release, is made
+    private first. That save sits outside the endpoint's `try`: if it fails after frappe has
+    moved the bytes, the request must roll back, because frappe's rollback watcher is what
+    moves them back.
+  - **Any File could be claimed.** `record_job_photo(file_name=…)` accepted any File docname.
+    It made that File private, which moves the bytes and repoints every File sharing its
+    `content_hash`. It anchored the File to the caller's interval if it was unattached, and the
+    routing job then copied it to the Project. `link_attachment` likewise copied any File onto
+    any Project with `ignore_permissions`. Both now go through `_assert_kiosk_file`, and the
+    check runs before anything is written. A File is accepted when it is attached to the
+    caller's own interval, or when it is the caller's own upload and attached to nothing yet.
+    Anything else raises `PermissionError`.
+
+### Fixed
+- **An image added with "Add files" now counts as a job photo, and is no longer stuck at
+  Pending.** `linkFile` handed `countAttachedImageAsJobPhoto` the display name (`r.file_name`).
+  `record_job_photo` wants the File's docname, so `_attach_photo_file` found nothing and the
+  `Job Interval Photo` row stayed `Pending` for good. The upload's `data.message.name` now goes
+  through unchanged, with the interval it was uploaded to. The registration targets that
+  interval rather than whichever job is current when the reply lands, because the server only
+  accepts a File attached to the interval it is registered on. The chip moves only when the two
+  match.
+
+### Changed
+- **One-time patch `privatize_kiosk_attachment_files` (post_model_sync).** On production on
+  2026-10-27 it found 6 public image Files on Job Intervals (5 PNG screenshots and 1 JPEG job
+  photo), with 6 Project and 4 Task copies: 16 File rows. It also found 3 photo rows stuck at
+  Pending, each on a different interval.
+  - **Files.** Each stored file gets one `File.save` with `is_private = 1`. In frappe 16.53.0,
+    `File.handle_is_private_changed` moves the bytes to `private/files`, and
+    `update_existing_file_docs` repoints every row that shares the `content_hash`, which is how
+    the copies go private with it. A `Job Interval Photo.image` holding the old URL is
+    repointed too.
+  - **A taken name.** When `private/files` already holds the name (production has `image.jpg`
+    and `Image.jpg` there), frappe raises `FileExistsError`. The patch then moves the file
+    under frappe's own suffixed form (stem, last six characters of the hash, extension) and
+    repoints the rows in SQL. The move is the last step.
+  - **Skipped and reported:** a hash group whose rows do not all share one URL, compared with
+    `BINARY` (MariaDB's collation matches `image.jpg` to `Image.jpg`), since frappe's sibling
+    update would repoint the other file; a file with no hash; and a file missing from disk.
+  - **Stuck rows.** Each Pending row with no file is linked to the image File on its interval
+    that is no row's `file_doc` yet and was created at most two minutes before the row's
+    `captured_on`. On production the gaps were all under a second. A row is linked only when
+    the pairing is one to one. It gets `file_doc`, `image` and `Uploaded`, and the interval's
+    `photos_pending_upload` is recomputed. The two other Pending rows on production are camera
+    captures whose bytes never arrived. They have no file and stay Pending.
+  - **Savepoints and the disk.** One savepoint per file, and a commit after each. In 16.53.0 a
+    savepoint rollback undoes the database only, and frappe runs its file-moving rollback
+    watchers on a full rollback alone. So when a save fails after the move, the patch moves the
+    bytes back itself. The commit also clears the stale watcher.
+  - **Not done.** No routing job is enqueued, because the copies already exist and a deploy
+    flushes the queue. The attachment lines already in the timelines keep the old `/files/`
+    URL, as frappe leaves them on any privacy change.
+  - Prints its counts before and after. Never raises; safe to run twice.
+
+### Tests
+- `tests/test_kiosk_attachment_privacy.py` (59 tests, bench-free, own CI step) covers:
+  - the page contract;
+  - `_assert_kiosk_file`, `_attach_photo_file` and `link_attachment`, run from the real source
+    against a stub;
+  - the patch, against an in-memory `tabFile` and a real temporary files tree. A fake
+    `File.save` there does what 16.53.0's `handle_is_private_changed` does.
+- `test_kiosk_photo_gate_chip` follows the new guard.
+
 ## [1.750.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).

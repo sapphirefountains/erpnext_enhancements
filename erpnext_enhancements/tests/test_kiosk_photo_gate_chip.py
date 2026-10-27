@@ -62,8 +62,10 @@ class TestTheAttachmentPathFeedsTheChip(unittest.TestCase):
                 self.assertIn(ext, fn)
 
     def test_it_does_nothing_without_an_active_interval(self):
+        # v1.750.1 added the File docname to the guard; test_kiosk_attachment_privacy
+        # pins what is sent.
         fn = _function(self.js, "countAttachedImageAsJobPhoto")
-        self.assertIn("if (!ci.name) return;", fn)
+        self.assertIn("if (!ci.name || !fileDoc) return;", fn)
 
     def test_it_registers_a_real_job_photo_row(self):
         """Incrementing the local counter alone would clear the chip while leaving

@@ -1193,10 +1193,33 @@ def link_attachment(file_name, project, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
     the same attachment is also visible on the linked Project and Task.
-    """
-    try:
-        original = frappe.get_doc("File", file_name)
 
+    ``file_name`` is the File's docname. The File must be one the caller uploaded
+    to one of their own intervals (``_assert_kiosk_file``), because the original
+    is made private here and a kiosk call must never move somebody else's file.
+
+    Every copy is private (v1.750.1). The kiosk uploaded these public until then:
+    photographs of customers' property at an unauthenticated ``/files/`` URL. An
+    original that still arrives public, from a page cached before that release,
+    is made private first; Frappe moves the bytes and repoints every File that
+    shares its ``content_hash``.
+    """
+    original = frappe.get_doc("File", file_name)
+    employee = _session_employee()
+    interval_name = original.attached_to_name if original.attached_to_doctype == "Job Interval" else None
+    if interval_name and (
+        not employee or frappe.db.get_value("Job Interval", interval_name, "employee") != employee
+    ):
+        frappe.throw(_("You can only add files to your own jobs."), frappe.PermissionError)
+    _assert_kiosk_file(original, interval_name)
+
+    # Outside the try on purpose: if this save fails after Frappe has moved the
+    # file, the request must roll back, because that rollback is what moves it back.
+    if not cint(original.is_private):
+        original.is_private = 1
+        original.save(ignore_permissions=True)
+
+    try:
         targets = [("Project", project)]
         if task:
             targets.append(("Task", task))
@@ -1217,12 +1240,13 @@ def link_attachment(file_name, project, task=None):
                     "attached_to_doctype": doctype,
                     "attached_to_name": docname,
                     "folder": original.folder,
-                    "is_private": original.is_private
+                    "is_private": 1
                 })
                 linked.insert(ignore_permissions=True)
 
         return {
             "status": "success",
+            "name": original.name,
             "file_name": original.file_name,
             "file_url": original.file_url
         }
@@ -1407,6 +1431,9 @@ def _attach_photo_file(row, file_name, interval):
         # rather than recording a photo that does not exist.
         return False
 
+    # Before anything is written: the privacy flip below moves the file on disk.
+    _assert_kiosk_file(file_doc, interval.name)
+
     if not cint(file_doc.is_private):
         file_doc.is_private = 1
         file_doc.save(ignore_permissions=True)
@@ -1425,6 +1452,26 @@ def _attach_photo_file(row, file_name, interval):
         }, update_modified=False)
 
     return True
+
+
+def _assert_kiosk_file(file_doc, interval_name):
+    """Refuse a File the caller did not upload to this job (v1.750.1).
+
+    Allowed: a File attached to the interval itself, which is where both kiosk
+    upload paths put it, or one the caller uploaded that is attached to nothing
+    yet. The caller must already be known to own ``interval_name``.
+
+    Until v1.750.1 any File docname was accepted. ``record_job_photo`` would make
+    it private (moving the bytes, and repointing every File that shares its
+    ``content_hash``), anchor it to the caller's interval if it was unattached,
+    and fan it out to the Project, all for a file that was never theirs.
+    """
+    if interval_name and file_doc.attached_to_doctype == "Job Interval" \
+            and file_doc.attached_to_name == interval_name:
+        return
+    if not file_doc.attached_to_doctype and file_doc.owner == frappe.session.user:
+        return
+    frappe.throw(_("You can only use files you uploaded to this job."), frappe.PermissionError)
 
 
 # ---------------------------------------------------------------------------
