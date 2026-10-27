@@ -7,6 +7,170 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.753.0] - 2026-10-27
+
+ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
+
+### Changed
+- **A tap on a planner item opens its record.** Nik asked on 2026-10-27: "When using the Project
+  Planner or other planners, tapping the task should take you to the task, tapping the project should
+  take you to the project, and so on." Until now a tap on a task opened the quick-edit side panel, a
+  project's name opened "Project at a glance", and a person's name opened their week. On a phone or
+  tablet, Tap to move was on by default, so a tap picked the card up instead. He picked each part
+  through four questions:
+  - **The record opens in the same tab**, the Desk norm. It goes through the kit's
+    `drawer.navigate`, so an open drawer's history entry is replaced rather than stacked on. Back
+    returns to the planner on the same tab, dates and filters (Nik's Back/Forward rule).
+  - **What a tap opened before is on the hold / right-click menu**, so nothing is lost:
+    - **Quick edit** (the side panel) comes first on a card's menu, then *Open task*, *Open visit*
+      or *Open contract*.
+    - *Project at a glance* and *See their week* stay on the menus.
+    - A project's name off a card has its own menu: Open project, Project at a glance, Show only
+      this project, Open in Gantt, Highlight.
+    - Nik declined a pencil button on every bar and dropping the panel.
+  - **Tap to move is off by default on a touch screen.** It is still in More ▸ Tools and on a card's
+    menu as *Move with taps…*. A device that chose it keeps it.
+  - **Also opened on a tap:**
+    - Overview rows: a job opens its Project, a phase or milestone its Task. The job's Gantt moved to
+      the row's right-click menu.
+    - A Rental Planner fountain's name opens its Asset.
+    - A person's name or initials open their Employee record. He chose this over keeping their week
+      on a tap. This holds only for someone who may open that record: see "Who may open what" below.
+- **What opens where.**
+  - **Project Planner.** These open their Task: a task's card, bar or chip; a task's or phase's name
+    on the Lookahead (both new targets); a Gantt bar or phase; an overdue or equipment row.
+  - A project's name opens the Project; this covers a day note's project link, which used to open the
+    day instead.
+  - A maintenance visit opens its Sapphire Maintenance Record. It used to jump to the Maintenance
+    Planner's week. A projected visit opens its contract.
+  - A rental's work and a task hidden from the board open their Task, and travel its Travel Trip.
+    The hidden task used to open nothing.
+  - A route stop's *Open* link now covers visits too (a projected one opens its contract). Travel is
+    never a route stop.
+  - **Maintenance Planner:** a visit card (on the calendar, the crew view, the tray, Site at a
+    glance or the Overdue list) opens its record; a technician's name opens their Employee.
+  - **The quick looks:** in a person's week or everyone's day, a booking opens its record.
+  - **Unchanged on purpose:**
+    - A date keeps "everyone's day", and the grey project-work strip keeps the person's week:
+      neither is one record.
+    - A drafted new task is not a Task yet, so it still opens its side panel.
+    - The Simple mode cards, the Day Board, the My Work calendar and the two Project Gantts already
+      opened records.
+- **A tap is still told apart from a drag**, with the old thresholds:
+  - With a mouse, a press that moves 6 px is a drag.
+  - A finger lifts a card after a 300 ms hold, and a 500 ms hold that doesn't move opens the menu.
+  - The click that ends a drag or a long press is swallowed.
+  - **New:** a press on a resize grip that changed nothing no longer falls through to open the task.
+  - The Gantt tab's DHTMLX bars fire no `onTaskClick` after a drag or a resize. This was checked in
+    a browser with real mouse input, because DHTMLX ignores synthetic events. A plain press on a
+    bar's resize edge does fire one, checked the same way. The widget now skips it
+    (`.gantt_task_drag`), like the planner's own grips.
+- **Nothing is lost by leaving.** Held planner changes are `Planner Draft Change` rows on the
+  server. The page instance keeps its Undo stack, selection and build-out grid across a Form and
+  Back. The side panel's unsaved edits ask first:
+  - `planner_kit.panel.unsaved()` takes its baseline at the person's first pointer or key inside the
+    panel.
+  - So a page's own `set_value` never counts as an edit. A late reply set through the panel after
+    that moves the baseline with it. One written straight into `fields_dict` is not seen, and at
+    worst asks once for nothing.
+  - A page's own controls in the panel count too, through `dialog.add_values(fn)`. The Maintenance
+    Planner's crew checkboxes and hour boxes are drawn outside the FieldGroup, so ticking a helper and
+    then tapping another visit used to lose the tick without asking.
+- **Undo survives a trip to the Form, but never overwrites what was done there.** Until now an
+  Undo pressed after Form → Back sent the newest `modified` the planner had read. So undoing a drag
+  after the dates were edited on the Task form silently wrote the old dates, hours and crew back
+  over that edit.
+  - Each Undo entry now remembers the `modified` its own write left (`ppr_after` / `mpr_after`).
+  - A reload that finds one of its tasks or visits changed since drops the entry and its toast. Both
+    planners.
+  - Every way off the planner now closes the Undo toast first, because it has no route hook and would
+    otherwise stay clickable on the Form. That covers a tap, the card menu's *Open project*, Quick
+    edit's *Open task* / *Open project* / *Open visit form* / *Open contract*, the drawers' *Open
+    project* and *Open Maintenance Profile*, the search's jump to an undated task, the Conflict
+    center's links, and every fallback (`ppr_leave`, `mpr_leave`).
+  - Quick edit's own links now go through `records.open` too, so they ask before dropping the panel's
+    unsaved edits. Before this they dropped them silently, which predates this release.
+- **Who may open what is decided per record, on the server** (`api/planner_open.py`; found in review).
+  `frappe.model.can_read` in the browser knows only which doctypes a role reads.
+  - **Employee:** on production, 14 of the 17 planner users read Employee through a Custom DocPerm,
+    and each also holds one Employee User Permission, for their own record. So every other Employee
+    is "Not permitted" for them, whatever their role.
+  - **Planner Resource** links to Employee without ignoring user permissions, so its fallback is
+    refused the same way.
+  - **Travel Trip:** a non-coordinator may open only the trips they are on.
+  - **Sapphire Maintenance Record:** a Projects User may open only their customers' visits.
+  - **How the payloads carry it:** each payload a tap reads now asks `frappe.get_list` once per
+    doctype. That applies roles, User Permissions and row rules together. The payloads are
+    `get_planner`, Capacity (`get_heatmap`), `get_route`, both quick looks and the Maintenance
+    Planner's technicians and project work.
+    - A person carries `open_as`: Employee, else Planner Resource, else none.
+    - A visit or trip carries `open`.
+  - **What a refused tap does:**
+    - A name shows that person's week, as before.
+    - A trip the person is not on says so, instead of opening "Not permitted".
+    - A visit keeps its old note.
+  - **Not asked about** (checked on production, read-only): Task, Project and Asset.
+    - Their only links to Employee ignore user permissions.
+    - There is one Company.
+    - The two Project User Permissions belong to outside users with no planner role.
+    - Strict user permissions are off.
+  - **A role that cannot read a doctype at all** is answered before the query
+    (`frappe.has_permission(doctype, "read")`), so nothing of that doctype opens and nothing is said.
+    `get_list` refuses through `frappe.throw`, which writes "Insufficient Permission" into the
+    message log before it raises. A caught refusal would still have reached the Desk as a red dialog
+    on every load, for example for a Projects User and the Maintenance Records. Whatever a refused or
+    failed query still left in the log is cut back off.
+  - **Any other failure** to decide also opens nothing and never costs a planner its answer. That
+    error alone goes to the Error Log, titled "Planner: which … records open".
+- **When a tap does what it did before.** Before the kit has loaded (a moment after the first
+  landing), a tap does what it did before. The same goes for a record this person may not open, by
+  role or per record. A fallback route still goes through the drawer, so an open drawer's history
+  entry is replaced, not stacked on.
+- **A long press on the Gantt and Overview tabs opens their menus on a touch screen.** Their menus
+  came only from DHTMLX's `contextmenu`, which iOS Safari never fires on a long press, so Quick edit
+  and *Open in Gantt* were out of reach on an iPad. Not yet tried on an iPad: the press, the menu and
+  the swallowed click are pinned in the tests, and the DHTMLX `locate` it relies on was checked in a
+  desktop browser.
+  - The widget now opens the host's menu on a touch hold of 500 ms that moves less than 6 px.
+  - It swallows the click the lifting finger makes.
+  - Bars and rows select no text and show no callout on touch screens.
+- **The menus are where the docs say.**
+  - A person's initials on a card, the route view's title, Capacity's names and the Needs tasks
+    title now each have their own menu: *See their week*, or the project's menu for Needs tasks.
+  - On the Maintenance Planner, a helper's initials open the helper's own week, not the lead's.
+  - On a touch screen, these names, the Lookahead's names and a day note's project link select no
+    text and show no iOS callout while held. With a mouse they can still be selected and copied.
+
+### Added
+- `public/js/planner_kit/records.js`, one map from what a planner draws to its record, on
+  `window.planner_kit.records` (`record_of`, `open`, `open_item`).
+  - The pages' `PPR` / `MPR` blocks sit before the tour's, which stays last.
+  - The quick looks mark their bookings `data-pk-open`.
+- Payload fields carry what a tap needs:
+  - **Projected visits:** `get_planner`'s `foreign[].projected`, the route's `stops[].projected`, and
+    the quick looks' `bookings[].projected`. A projected visit's ref is its contract. Before this, the
+    route view's and the quick looks' *Open* sent a projected visit to a Sapphire Maintenance Record
+    named after its contract, which doesn't exist.
+  - **Employees:** the Maintenance Planner's `technicians[].employee`, from the shared engine's
+    resources, which already had it. The route answer also carries its person's `employee` and
+    `open_as`, so a direct landing on the route view knows who its title is.
+  - **Per-record answers:** `open_as` and `open`, from `api/planner_open.py`.
+
+- `tests/test_planner_tap_opens.py` (its own CI step) runs `scripts/test_planner_tap_opens.js`
+  against the real kit modules and both real page scripts.
+  - The harness models permissions per record, as production has them, so the review's "Not
+    permitted" case fails there.
+  - The test also unit-tests `planner_open` against a `get_list` that refuses rows.
+  - `test_project_planner` and `test_maintenance_planner` check the marks on the real payloads.
+  - The 6A, 6B, Lookahead, Overview and Maintenance Planner suites now pin the new behavior where
+    they pinned the old one.
+
+### Removed
+- 6C's `p6c_body_click`, which highlighted a project when its name was clicked. A tap opens the Project
+  now, and Highlight is on the project's menu.
+- Both planners' `p6c_coarse`, which nothing calls since Tap to move stopped defaulting on for a touch
+  screen.
+
 ## [1.752.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02990 (PRJ-00580, Misc Tasks).

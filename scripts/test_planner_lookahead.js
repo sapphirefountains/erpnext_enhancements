@@ -288,7 +288,17 @@ test("The board: projects, then phases, then tasks, in the server's order", () =
 	const html = grid(pp);
 	check("project rows", project_rows(html), ["PRJ-1", "PRJ-2", "PRJ-3"]);
 	check("task rows", shown_rows(html), ["T2", "T1", "T3", "T4"]);
-	check("the phases and Other work", ["Phase 300 — Rough-in", "Phase 400 — Mechanical", "Other work"].map((s) => html.includes(`<span class="ppl-phase-name" title="${s}">${s}</span>`)), [true, true, true]);
+	// A phase's name opens its group Task (a tap opens the record, 2026-10-27); Other work is no Task.
+	check(
+		"the phases and Other work",
+		[
+			["Phase 300 — Rough-in", ' data-ppr-task="P300" role="button" tabindex="0"'],
+			["Phase 400 — Mechanical", ' data-ppr-task="P400" role="button" tabindex="0"'],
+			["Other work", ""],
+		].map(([s, open]) => html.includes(`<span class="ppl-phase-name"${open} title="${s}">${s}</span>`)),
+		[true, true, true]
+	);
+	check("a task's name opens its Task", html.includes('<span class="ppl-task-name" data-ppr-task="T1" role="button" tabindex="0" title="Excavate basin">'), true);
 	check("21 day headings, a day note marked", [(html.match(/class="ppl-dayhead/g) || []).length, (html.match(/ppl-note-dot/g) || []).length], [21, 1]);
 	check("today's heading", /class="ppl-dayhead ppl-today[^"]*" data-pp6a-day="2026-10-21"/.test(html), true);
 	check("every task row's days are drop targets", (row_of(html, "T1").match(/class="ppl-day[^"]*" data-date="/g) || []).length, 21);

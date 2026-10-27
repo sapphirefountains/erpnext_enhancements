@@ -461,6 +461,8 @@ test("Rows: a bar per job for its whole span, its phases under it, milestones as
 	check("Other work is neutral, with no ghost", [other.ee_class, other.ee_baseline_start], ["ppo-bar ppo-ph-0", undefined]);
 	const m = byId(rows, "ms:M1");
 	check("a milestone is a diamond with its day", [m.type, m.start_date, m.parent, m.ee_dates, m.ee_class], ["milestone", "2026-12-15 00:00", "job:PRJ-1", "Dec 15", "ppo-milestone"]);
+	// A tap opens the record (2026-10-27): a phase its group Task, a milestone its Task; a job and Other work have none.
+	check("the Task a row opens", [j.ee_task, p.ee_task, other.ee_task, m.ee_task], [undefined, "G300", "", "M1"]);
 	check("the job's worst slip is in its Behind column", [j.ee_slip, j.ee_note], ["+6d", "6 working days behind its baseline"]);
 });
 
@@ -590,7 +592,8 @@ test("The chart: read-only, with the baseline layer, the month zoom and an expor
 	const pp = planner();
 	const { widget } = widgetRows(pp);
 	const c = widget.config;
-	check("nothing to drag or link", [c.editable, "on_write" in c, "on_link" in c, "on_link_dblclick" in c, "on_task_context" in c], [{}, false, false, false, false]);
+	check("nothing to drag or link", [c.editable, "on_write" in c, "on_link" in c, "on_link_dblclick" in c], [{}, false, false, false]);
+	check("a right-click is a menu of records and the Gantt", typeof c.on_task_context, "function");
 	check("baseline, today, tooltip, month zoom", [c.baseline, c.today, c.tooltip, c.zoom], [true, true, true, "month"]);
 	check("the export draws from the rows: print, PNG, SVG", c.toolbar.export.formats, ["print", "png", "svg"]);
 	check("unscheduled rows are not shown", c.gantt.show_unscheduled, false);
@@ -600,7 +603,7 @@ test("The chart: read-only, with the baseline layer, the month zoom and an expor
 	check("a row class for jobs", [c.templates.grid_row_class(null, null, { ee_class: "ppo-job ppo-draft" }), c.templates.grid_row_class(null, null, { ee_class: "ppo-bar" })], ["ppo-job-row", ""]);
 });
 
-test("The chart: rows come from the live answer and the live filters, and a click opens that job's Gantt", async () => {
+test("The chart: rows come from the live answer and the live filters, and a click opens the row's record", async () => {
 	const pp = planner();
 	const { widget } = widgetRows(pp);
 	const rows = await widget.config.fetch();
@@ -613,7 +616,25 @@ test("The chart: rows come from the live answer and the live filters, and a clic
 	widget.config.on_task_click("phase:PRJ-1:G300", { ee_project: "PRJ-1" });
 	widget.config.on_task_click("x", null);
 	widget.config.on_task_click("y", { ee_project: "" });
-	check("a row, a missing row and a row with no project", pp.opened, [{ gantt: "PRJ-1" }]);
+	check("before the kit has loaded: a row opens its job's Gantt, as before", pp.opened, [{ gantt: "PRJ-1" }]);
+	// With the kit: a phase or a milestone opens its Task, a job (and Other work) the Project (Nik, 2026-10-27).
+	pp.opened = [];
+	const records = [];
+	pp.p6a = { kit: { records: { open_item: (kind, item) => records.push([kind, item.name || item.project]) > 0 } } };
+	widget.config.on_task_click("phase:PRJ-1:G300", { ee_project: "PRJ-1", ee_task: "G300" });
+	widget.config.on_task_click("ms:M1", { ee_project: "PRJ-1", ee_task: "M1" });
+	widget.config.on_task_click("phase:PRJ-1:other", { ee_project: "PRJ-1", ee_task: "" });
+	widget.config.on_task_click("job:PRJ-2", { ee_project: "PRJ-2" });
+	check("each row's record", records, [["task", "G300"], ["task", "M1"], ["project", "PRJ-1"], ["project", "PRJ-2"]]);
+	check("and never the Gantt", pp.opened, []);
+	// A right-click: the row's Task, the Project, Project at a glance and its Gantt.
+	let menu = null;
+	pp.p6a.kit.menu = (opts) => (menu = opts);
+	let prevented = false;
+	widget.config.on_task_context("ms:M1", { ee_project: "PRJ-1", ee_task: "M1", text: "Hand-off" }, { clientX: 5, clientY: 6, preventDefault: () => (prevented = true) });
+	check("the row's menu", [menu.items.map((item) => item.label), menu.title, menu.anchor, prevented], [["Open task", "Open project", "Project at a glance", "Open in Gantt"], "Hand-off", { x: 5, y: 6 }, true]);
+	menu.items[3].on_click();
+	check("Open in Gantt", pp.opened, [{ gantt: "PRJ-1" }]);
 });
 
 test("The chart: a missing widget library says so instead of throwing", () => {
