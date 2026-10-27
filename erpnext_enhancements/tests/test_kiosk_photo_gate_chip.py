@@ -62,7 +62,7 @@ class TestTheAttachmentPathFeedsTheChip(unittest.TestCase):
                 self.assertIn(ext, fn)
 
     def test_it_does_nothing_without_an_active_interval(self):
-        # v1.751.1 added the File docname to the guard; test_kiosk_attachment_privacy
+        # v1.753.1 added the File docname to the guard; test_kiosk_attachment_privacy
         # pins what is sent.
         fn = _function(self.js, "countAttachedImageAsJobPhoto")
         self.assertIn("if (!ci.name || !fileDoc) return;", fn)

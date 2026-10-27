@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 """The Time Kiosk's uploaded files: when one may be made private, and relinking the photo rows
-an old page left Pending (v1.751.1).
+an old page left Pending (v1.753.1).
 
 ## When a public File may be made private
 
@@ -24,7 +24,7 @@ privacy flips, and ``patches/privatize_kiosk_attachment_files`` before each save
 
 ## Relinking photo rows
 
-Until v1.751.1 the kiosk registered an "Add files" image with the file's display name instead of
+Until v1.753.1 the kiosk registered an "Add files" image with the file's display name instead of
 its docname, so ``_attach_photo_file`` never found the File and the ``Job Interval Photo`` row
 stayed ``Pending``. A device keeps its cached ``app.js`` for at least one session after a deploy
 (``kiosk-sw.js`` serves it cache-first), so such rows keep appearing for a while after the fix

@@ -8,7 +8,7 @@
     * declare the PWA (web manifest, theme-color, Apple/standalone meta tags,
       touch icon) so the browser offers "Install app";
     * load the kiosk styles (css/kiosk/kiosk.css) and front-end scripts
-      (js/kiosk/ui.js, geo.js, myday.js, map.js, settings.js, app.js — in that
+      (js/kiosk/ui.js, geo.js, myday.js, photos.js, map.js, settings.js, app.js — in that
       order; app.js mounts the others);
     * hand the server-computed boot payload to the front-end as window.KIOSK_BOOT
       / window.KIOSK_CSRF / window.KIOSK_BUILD (see kiosk.py::get_context).
@@ -115,6 +115,7 @@
 <script src="/assets/erpnext_enhancements/js/kiosk/ui.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/geo.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/myday.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/photos.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/global_enhancements/google_maps_loader.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/map.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/settings.js?v={{ deploy_version }}"></script>

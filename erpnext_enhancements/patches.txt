@@ -1510,7 +1510,7 @@ erpnext_enhancements.patches.dedupe_contact_phone_rows
 # file_url, deletes the rest with a plain DELETE (File.on_trash never runs, so no stored file is touched); folders
 # and URL-less rows untouched. Nik approved 2026-10-27. One savepoint per Project; prints counts. Cannot raise, safe twice.
 erpnext_enhancements.patches.dedupe_project_attachment_rows
-# Kiosk "Add files" privacy (v1.751.1): the button uploaded with is_private=0 and link_attachment copied each file onto
+# Kiosk "Add files" privacy (v1.753.1): the button uploaded with is_private=0 and link_attachment copied each file onto
 # the Project and Task public too, so job photos sat at unauthenticated /files/ URLs; its photo rows were handed the
 # display name, not the File docname, and stayed Pending. Makes every public File on a Job Interval private (one
 # File.save per stored file; frappe moves the bytes and repoints the copies by content_hash; a name taken in

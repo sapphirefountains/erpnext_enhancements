@@ -3114,7 +3114,7 @@ jobs:
       # working on a phone in a mechanical room.
       - name: Kiosk PWA theme + front-end contract
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend erpnext_enhancements.tests.test_kiosk_photo_gate_chip erpnext_enhancements.tests.test_kiosk_time_editing_ui -v
-      # Kiosk "Add files" privacy (v1.751.1): the page uploads privately and hands the File
+      # Kiosk "Add files" privacy (v1.753.1): the page uploads privately and hands the File
       # docname and its interval to record_job_photo; the kiosk endpoints run from the real
       # source against a stub (a row pointing at a website asset is never made private; copies
       # go to the File's own interval); workforce/kiosk_files (movability, pairing, relink and
@@ -3123,6 +3123,24 @@ jobs:
       # FileExistsError rename, the bytes moved back after a savepoint rollback). Own stub.
       - name: Kiosk Add files privacy (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_attachment_privacy -v
+      # The kiosk's Photos tab (v1.752.0). Whose photos: the employee comes from the session
+      # only, and a thumbnail of somebody else's job -- or of a File on no job at all -- is
+      # refused before the file is opened, so a technician can never page through a
+      # colleague's customer sites by guessing File names. What counts: an "Add files" picture
+      # whose photo row is stuck Pending is shown and NOT reported as "not uploaded" (all three
+      # such rows on prod are like that), and captures whose bytes never arrived keep their job
+      # on screen. Thumbnails come out upright (a phone stores a portrait shot sideways plus an
+      # EXIF tag), and decoding is bounded before a pixel is decoded: EPS bytes named .jpg never
+      # reach Ghostscript, WebP is never opened, and a 1.4 MB JPEG strip that draft cannot shrink
+      # (723 MB), a progressive JPEG (its buffer is full size whatever draft asks) or a big PNG
+      # is refused before it can take a worker down -- each test fails if anything decodes first.
+      # And the endpoints stay outside api.time_kiosk, whose GETs the service worker
+      # replays offline per URL rather than per person -- one technician's list on the next
+      # one's screen. Own frappe stub, own step; Pillow for the thumbnail class.
+      - name: Kiosk Photos tab (own photos only, thumbnails, grouping)
+        run: |
+          python -m pip install "Pillow~=12.3.0"
+          python -m unittest erpnext_enhancements.tests.test_kiosk_photos -v
       # The v1.481.0 Google Maps migration, which removed Leaflet from both maps
       # outright. Three static contracts, none needing a browser: that
       # google_maps_loader.js is the ONLY file that injects the Maps API (four
