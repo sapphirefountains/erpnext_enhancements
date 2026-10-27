@@ -2176,7 +2176,10 @@ jobs:
       # "This account" / "This supplier". Runs the one shared cell renderer, with the real
       # party_sources.js whose account_entries rule it draws (the guided page's People & places line
       # draws the same rule, run in the guided record tools step), checks both tables use it and
-      # that a tab on an older bundle gets an empty cell rather than a TypeError; the server half
+      # that a tab on an older bundle gets an empty cell rather than a TypeError. Also runs both
+      # tables' renders against a fake field: an overlapping render must not strip the first
+      # table's muted cells, and a reply that lands after a move to another form is drawn for the
+      # form that asked (both from the 56d0cdd4 review). The server half
       # (which links, which titles, one title query per doctype) is AccountColumnTest in the
       # endpoint-permissions step above.
       - name: Directory tables show Account / Supplier, not every link (bench-free, node)

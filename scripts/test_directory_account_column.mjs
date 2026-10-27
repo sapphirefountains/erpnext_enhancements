@@ -90,10 +90,9 @@ const controller = globalThis.erpnext_enhancements.unified_controller;
 assert.ok(controller, "the controller did not register itself");
 assert.equal(typeof controller.accounts_cell, "function");
 
-/** The cell for one row, drawn on a form of this doctype and name (a Project unless said). */
+/** The cell for one row, drawn for a form of this doctype and name (a Project unless said). */
 function cell(record, doctype = "Project", name = "PROJ-0001") {
-	controller.frm = { doctype, doc: { name } };
-	return controller.accounts_cell(record);
+	return controller.accounts_cell(record, { doctype, doc: { name } });
 }
 const account = (doctype, name, title) => ({ doctype, name, title });
 
@@ -266,14 +265,129 @@ test("a tab on an older bundle gets an empty cell until it reloads, not a TypeEr
 // Both tables use the one cell.
 
 for (const [table, row] of [
-	["render_contact_table", "this.accounts_cell(c)"],
-	["render_address_table", "this.accounts_cell(a)"],
+	["render_contact_table", "this.accounts_cell(c, frm)"],
+	["render_address_table", "this.accounts_cell(a, frm)"],
 ]) {
 	test(`${table} heads the column Account / Supplier and fills it from accounts_cell`, () => {
 		const source = controller[table].toString();
 		assert.ok(source.includes('${__("Account / Supplier")}'), "the header is not Account / Supplier");
 		assert.ok(!source.includes("Linked To"), "the table still has a Linked To column");
 		assert.ok(source.includes(row), "the cell is not drawn by accounts_cell");
+	});
+}
+
+// ------------------------------------------- the tables themselves (the 56d0cdd4 review's fixes)
+//
+// Each render empties the field, shows a loading line, asks the server, and draws the table when
+// the reply lands. A fake jQuery keeps the field as an HTML string, which is all these two need:
+// what the reply removes, and which form the cell is drawn for.
+
+const FIELD = {}; // what frm.fields_dict.<x>_list_html.wrapper is
+let field = null; // that field's fake jQuery
+const replies = []; // frappe.call options, answered by the test
+
+class FakeField {
+	constructor() {
+		this.content = "";
+	}
+	empty() {
+		this.content = "";
+		return this;
+	}
+	html(markup) {
+		this.content = markup;
+		return this;
+	}
+	append(markup) {
+		this.content += markup;
+		return this;
+	}
+	find(selector) {
+		const cls = selector.replace(/^\./, "");
+		const self = this;
+		// Removes each element carrying the class; none of the ones that matter here nest.
+		const element = new RegExp(`<(\\w+) class="(?:[^"]*\\s)?${cls}(?:\\s[^"]*)?"[^>]*>[^<]*</\\1>`, "g");
+		return {
+			remove() {
+				self.content = self.content.replace(element, "");
+				return this;
+			},
+			on() {
+				return this;
+			},
+		};
+	}
+}
+
+globalThis.$ = (arg) => {
+	if (arg === FIELD) return field;
+	const node = {
+		appendTo: (target) => {
+			if (target === field) field.append(String(arg));
+			return node;
+		},
+		on: () => node,
+	};
+	return node;
+};
+globalThis.frappe.call = (options) => replies.push(options);
+
+function form(doctype, name, html_field) {
+	return {
+		doctype,
+		doc: { name },
+		meta: { fields: [] },
+		fields_dict: { [html_field]: { wrapper: FIELD } },
+		is_new: () => false,
+	};
+}
+
+const TABLES = [
+	["render_contact_table", "contact_list_html"],
+	["render_address_table", "address_list_html"],
+];
+
+for (const [table, html_field] of TABLES) {
+	test(`${table}: an overlapping render keeps the first table's muted cells`, () => {
+		field = new FakeField();
+		replies.length = 0;
+		controller.frm = form("Customer", "CUST-0042", html_field);
+		controller[table]();
+		controller[table]();
+		assert.equal(replies.length, 2);
+		const rows = [
+			{ name: "ROW-1", accounts: [account("Customer", "CUST-0042", "Bluebird Water Gardens")] },
+			{ name: "ROW-2", accounts: [] },
+		];
+		replies[0].callback({ message: rows });
+		replies[1].callback({ message: rows });
+		const count = (text) => field.content.split(text).length - 1;
+		assert.equal(count("Fetching"), 0, "the loading line is still there");
+		assert.equal(count('<div class="text-muted">This account</div>'), 2, "a This account cell was stripped");
+		assert.equal(count('<span class="text-muted">None</span>'), 2, "a None cell was stripped");
+	});
+
+	test(`${table}: the cell is drawn for the form it was requested for`, () => {
+		field = new FakeField();
+		replies.length = 0;
+		controller.frm = form("Customer", "CUST-0042", html_field);
+		controller[table]();
+		// The person moves to a Supplier before the reply lands.
+		controller.frm = form("Supplier", "SUP-0007", html_field);
+		replies[0].callback({
+			message: [
+				{
+					name: "ROW-1",
+					accounts: [
+						account("Customer", "CUST-0042", "Bluebird Water Gardens"),
+						account("Supplier", "SUP-0007", "Acme Pump Supply"),
+					],
+				},
+			],
+		});
+		assert.ok(field.content.includes('<div class="text-muted">This account</div>'), "the requesting Customer is not quiet");
+		assert.ok(!field.content.includes("This supplier"), "the form opened since was treated as the open party");
+		assert.ok(field.content.includes(">Acme Pump Supply</a>"), "the Supplier lost its link");
 	});
 }
 

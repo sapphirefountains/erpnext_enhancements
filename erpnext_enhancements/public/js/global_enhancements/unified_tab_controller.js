@@ -253,7 +253,10 @@ erpnext_enhancements.unified_controller = {
 			return;
 		}
 
-		wrapper.html('<div class="text-muted">Fetching aggregated contacts...</div>');
+		// Its own class, which is all the reply removes: the table's "None" and "This account" cells
+		// are text-muted too, and clearing every .text-muted stripped them from a table an earlier,
+		// overlapping render had already drawn (the 56d0cdd4 review).
+		wrapper.html('<div class="text-muted ee-dir-loading">Fetching aggregated contacts...</div>');
 
 		const btn_container = $(
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
@@ -301,7 +304,7 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
-				wrapper.find(".text-muted").remove();
+				wrapper.find(".ee-dir-loading").remove();
 				if (!r.message || r.message.length === 0) {
 					wrapper.append(
 						'<div class="alert alert-warning">No contacts linked to any related parties yet.</div>',
@@ -364,7 +367,7 @@ erpnext_enhancements.unified_controller = {
 							<td>${c.custom_title || ""}</td>
 							<td>${email_link}</td>
 							<td>${phone_link}</td>
-							<td>${this.accounts_cell(c)}</td>
+							<td>${this.accounts_cell(c, frm)}</td>
 							<td>
 								<button class="btn btn-xs btn-default edit-contact" data-name="${c.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
@@ -416,12 +419,17 @@ erpnext_enhancements.unified_controller = {
 	// there are neither. This draws it as HTML, so every name is escaped: names are typed by
 	// people. A tab still on a bundle from before v1.746.0 has no account_entries and gets an
 	// empty cell until it reloads, not a TypeError (as ee_party_rules above).
+	//
+	// `frm` is the form the table was requested for, which the caller captured before its
+	// frappe.call, never this.frm read when the reply lands: this controller is one object for
+	// every form, and moving to another form while the request was out marked the wrong row as
+	// "This account" / "This supplier" (the 56d0cdd4 review).
 	// scripts/test_directory_account_column.mjs runs this method.
-	accounts_cell: function (record) {
+	accounts_cell: function (record, frm) {
 		const esc = frappe.utils.escape_html;
 		const rules = ee_party_rules();
 		if (!rules || typeof rules.account_entries !== "function") return "";
-		const frm = this.frm || {};
+		frm = frm || {};
 		const entries = rules.account_entries(record && record.accounts, frm.doctype, frm.doc && frm.doc.name);
 		if (!entries.length) return `<span class="text-muted">${esc(__("None"))}</span>`;
 		return entries
@@ -434,7 +442,9 @@ erpnext_enhancements.unified_controller = {
 				const tag = e.tag
 					? `<span class="badge badge-light" style="font-size: 10px; margin-left: 6px; vertical-align: middle;">${esc(__(e.tag))}</span>`
 					: "";
-				// The URL needs no escaping: encodeURIComponent leaves no quote, bracket or ampersand.
+				// The URL needs no escaping in this double-quoted attribute: encodeURIComponent
+				// leaves no double quote, angle bracket or ampersand. It does leave ', which is
+				// harmless between double quotes.
 				return `<div><a href="${url}" target="_blank"${hover}>${esc(e.label)}</a>${tag}</div>`;
 			})
 			.join("");
@@ -455,7 +465,8 @@ erpnext_enhancements.unified_controller = {
 			return;
 		}
 
-		wrapper.html('<div class="text-muted">Fetching aggregated addresses...</div>');
+		// Its own class, as the contact table's loading line (see there).
+		wrapper.html('<div class="text-muted ee-dir-loading">Fetching aggregated addresses...</div>');
 
 		const btn_container = $(
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
@@ -483,7 +494,7 @@ erpnext_enhancements.unified_controller = {
 				context_name: frm.doc.name,
 			},
 			callback: (r) => {
-				wrapper.find(".text-muted").remove();
+				wrapper.find(".ee-dir-loading").remove();
 				// Retires the "no address yet" banner on a just-created Customer or
 				// Supplier as soon as one exists (party_quick_entry.js).
 				const party_quick_entry = erpnext_enhancements.party_quick_entry;
@@ -539,7 +550,7 @@ erpnext_enhancements.unified_controller = {
 							</td>
 							<td>${a.address_type || ""}</td>
 							<td>${a.address_title || ""}</td>
-							<td>${this.accounts_cell(a)}</td>
+							<td>${this.accounts_cell(a, frm)}</td>
 							<td>
 								<button class="btn btn-xs btn-default edit-address" data-name="${a.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
