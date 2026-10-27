@@ -1,12 +1,14 @@
 <?php
 /**
- * Just enough WordPress, Slim SEO and Bricks for scripts/test_sf_seo_abilities.php
- * to run the SEO abilities' callbacks without a WordPress install.
+ * Just enough WordPress and Slim SEO for scripts/test_sf_seo_abilities.php to
+ * run the SEO abilities' callbacks without a WordPress install. Bricks is
+ * present only as its constants: the plugin reads Bricks data, never renders it.
  *
  * Each stub does what the real function does for the inputs the plugin gives
  * it, and no more. The sample site in $GLOBALS['sf_fake'] is five published
- * items chosen so that every flag but two fires at least once, plus a draft.
- * Tests change it to steer a case; sf_fake_reset() puts it back.
+ * items chosen so that most flags fire at least once, plus a draft. Tests
+ * change it to steer a case (`deny` takes capabilities away from the caller);
+ * sf_fake_reset() puts it back.
  */
 
 namespace SlimSEO\MetaTags {
@@ -30,6 +32,23 @@ namespace SlimSEO\MetaTags {
 			return str_replace( '{{ site.url }}', 'https://www.example.com', $text );
 		}
 	}
+
+	/**
+	 * Slim SEO's content reader: for a Bricks page, its filtered render of the
+	 * page's own elements; otherwise the saved post content.
+	 */
+	class Data {
+		public static function get_post_content( int $post_id = 0, string $content = '' ): string {
+			if ( ! empty( $GLOBALS['sf_fake']['slim_content_throws'] ) ) {
+				throw new \RuntimeException( 'renamed in a Slim SEO update' );
+			}
+			if ( isset( $GLOBALS['sf_fake']['slim_content'][ $post_id ] ) ) {
+				return $GLOBALS['sf_fake']['slim_content'][ $post_id ];
+			}
+			$post = $GLOBALS['sf_fake']['posts'][ $post_id ] ?? null;
+			return $post ? $post->post_content : '';
+		}
+	}
 }
 
 namespace SlimSEO {
@@ -47,18 +66,6 @@ namespace SlimSEO {
 	}
 }
 
-namespace Bricks {
-
-	/** Bricks' renderer: records which post was global while it ran, and echoes as elements may. */
-	class Frontend {
-		public static function render_data( $data ) {
-			$GLOBALS['sf_fake']['bricks_saw_post'] = isset( $GLOBALS['post'] ) ? $GLOBALS['post']->ID : null;
-			echo '<h3>Echoed by an element</h3>';
-			return '<section><h1>Fountain Design</h1><h2>Our process</h2></section>';
-		}
-	}
-}
-
 namespace {
 
 	define( 'SLIM_SEO_VER', '4.11.4' );
@@ -69,6 +76,9 @@ namespace {
 
 	/** A key-shaped value that must never reach a response. Not a real key. */
 	const SF_FAKE_AI_KEY = 'fixture-ai-key-must-not-leak-0000';
+
+	/** The password page's stored description: only someone who can edit it may see it. */
+	const SF_FAKE_PRIVATE_DESCRIPTION = 'Members-only pricing for 2027 service contracts, visible only behind the password.';
 
 	class WP_Post {
 		public $ID                = 0;
@@ -131,8 +141,13 @@ namespace {
 			'set_transient_calls'   => 0,
 			'http_calls'            => 0,
 			'http'                  => null,
-			'bricks_saw_post'       => null,
 			'caps'                  => array(),
+			'deny'                  => array(),
+			'wc_pages'              => array(),
+			'slim_content_throws'   => false,
+			'slim_content'          => array(
+				11 => '<section><h1>Fountain Design</h1><h2>Our process</h2></section>',
+			),
 			'options'               => array(
 				'show_on_front'   => 'page',
 				'page_on_front'   => 10,
@@ -158,7 +173,15 @@ namespace {
 					)
 				),
 				13 => new WP_Post( array( 'ID' => 13, 'post_type' => 'product', 'post_title' => 'Three-Tier Fountain', 'post_content' => '<h2>Specifications</h2>' ) ),
-				14 => new WP_Post( array( 'ID' => 14, 'post_type' => 'page', 'post_title' => 'Private Pricing', 'post_password' => 'letmein' ) ),
+				14 => new WP_Post(
+					array(
+						'ID'            => 14,
+						'post_type'     => 'page',
+						'post_title'    => 'Private Pricing',
+						'post_password' => 'letmein',
+						'post_content'  => '<h2>Pricing tiers</h2><p>Members only.</p><img class="wp-image-24" src="tiers.png">',
+					)
+				),
 				15 => new WP_Post( array( 'ID' => 15, 'post_type' => 'page', 'post_title' => 'Draft', 'post_status' => 'draft' ) ),
 			),
 			'permalinks'            => array(
@@ -198,10 +221,14 @@ namespace {
 						'canonical'   => '{{ site.url }}/shop/three-tier/',
 					),
 				),
+				14 => array(
+					'slim_seo' => array( 'description' => SF_FAKE_PRIVATE_DESCRIPTION ),
+				),
 				20 => array( '_wp_attachment_image_alt' => '' ),
 				21 => array( '_wp_attachment_image_alt' => 'A fountain drained for winter' ),
 				22 => array( '_wp_attachment_image_alt' => '' ),
 				23 => array( '_wp_attachment_image_alt' => 'Plaza fountain at dusk' ),
+				24 => array( '_wp_attachment_image_alt' => '' ),
 			),
 			'thumbnails'            => array( 11 => 20 ),
 			'attachments'           => array(
@@ -209,6 +236,7 @@ namespace {
 				21 => array( 'title' => 'drained', 'parent' => 0 ),
 				22 => array( 'title' => 'hero-final-v2', 'parent' => 0 ),
 				23 => array( 'title' => 'plaza', 'parent' => 11 ),
+				24 => array( 'title' => 'tiers', 'parent' => 0 ),
 			),
 			'effective_title'       => array(
 				10 => 'Sapphire Fountains: Fountain Design, Build, Service and Rental',
@@ -254,9 +282,14 @@ namespace {
 
 	/* -- Users ------------------------------------------------------------- */
 
+	/** Grants everything except the capabilities a test lists in sf_fake['deny']. */
 	function current_user_can( $capability, ...$args ) {
 		$GLOBALS['sf_fake']['caps'][] = $capability;
-		return true;
+		return ! in_array( $capability, $GLOBALS['sf_fake']['deny'], true );
+	}
+
+	function wc_get_page_id( $page ) {
+		return $GLOBALS['sf_fake']['wc_pages'][ $page ] ?? -1;
 	}
 
 	/* -- Options, transients ---------------------------------------------- */

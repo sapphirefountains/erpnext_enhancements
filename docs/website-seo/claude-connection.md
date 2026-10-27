@@ -10,17 +10,24 @@ public.** Every value below in `<angle brackets>` is a placeholder.
 
 ## Before you connect: what the AI will be able to do
 
-The `seo-agent` user is an Editor. Through MCP the AI can run every ability that lists itself on
-the server and that an Editor may run. That covers:
+The AI signs in as `seo-agent`, which must be a **Contributor**. Through MCP it can run every ability
+that lists itself on the server and that a Contributor may run:
 
-- **our three:** read-only;
-- **core's site, user and environment info:** read-only;
-- **Slim SEO's own abilities, including `slim-seo/update-post-meta-tags`.** These can change any
-  page's title, description, canonical and noindex on the live site, with no approval step. See
-  [Read this first](README.md#read-this-first-slim-seo-already-lets-an-ai-write).
+- **our three `sapphire-seo` abilities:** read-only;
+- **core's user info,** about `seo-agent` itself. Core's site and environment info need
+  `manage_options`, so they are refused.
 
-Until Nik decides how to close that, **phase 1 is read-only by instruction.** Tell Claude not to
-run any `update-*` ability. Copy suggested changes to Marketing for approval instead.
+It can't run any of Slim SEO's or WooCommerce's abilities:
+
+- **Slim SEO's update abilities** check `edit_post` and `edit_term`, which a Contributor fails on
+  every published page, product and category. Its read abilities check the same.
+- **WooCommerce's abilities** need WooCommerce's own capabilities, which a Contributor doesn't have.
+
+**As an Editor, it could rewrite any page's SEO settings live, with no approval.** That is why the
+role matters; see
+[Read this first](README.md#read-this-first-the-ais-user-must-be-a-contributor-not-an-editor).
+The application password also works for the whole REST API, not only MCP. Whatever the role allows,
+anyone holding the password can do.
 
 ---
 
@@ -29,40 +36,77 @@ run any `update-*` ability. Copy suggested changes to Marketing for approval ins
 The AI signs in as its own WordPress user, **`seo-agent`**, never as a person. That way its access
 can be revoked without touching anyone's login, and anything it does is labelled as the AI's.
 
-- **Role: Editor.** Our abilities need `edit_posts`, which Editors have. Don't make it an
-  Administrator: that would also unlock Slim SEO's site-wide update abilities and WooCommerce's
-  product and order write abilities.
-- **Sign-in: an application password, one per person and machine.** In wp-admin, go to **Users →
-  seo-agent → Application Passwords**. Name it after who and where, e.g. `Claude Code - Nik -
-  desktop`, and choose **Add New Application Password**.
+- **Role: Contributor.** Our abilities need `edit_posts`, which a Contributor has, and the MCP
+  Adapter needs `read`. Nothing more:
+  - Not Editor or Author: an Editor unlocks Slim SEO's update abilities, and an Author can publish.
+  - Not Shop Manager or Administrator: those also unlock WooCommerce's write abilities and Slim
+    SEO's site-wide ones.
+  - A custom role with only `read` and `edit_posts` works too.
+- **If `seo-agent` is already an Editor** (it was made one on 2026-10-27): go to wp-admin →
+  **Users → seo-agent → Role → Contributor → Update User**. Its application passwords keep
+  working, so nobody needs to reconnect.
+- **Sign-in: an application password, one per person and machine.** Go to **Users → seo-agent →
+  Application Passwords**. Name it after who and where, e.g. `Claude Code - Nik - desktop`, and
+  choose **Add New Application Password**.
 - **WordPress shows the password once,** as six groups of four characters. WordPress ignores the
   spaces, so you can paste it with or without them.
-
-Nik created the user and connected Claude Code this way on 2026-10-27.
 
 ---
 
 ## 2. Add the server to Claude Code (Windows)
 
-In a terminal:
+The command pins the proxy, Automattic's
+[`@automattic/mcp-wordpress-remote`](https://github.com/Automattic/mcp-wordpress-remote), to an
+exact version: **0.5.4**, the current release on 2026-10-27, published 2026-10-20. `@latest` would
+download whatever is newest each time Claude Code starts, and run it with the password in its
+environment.
 
-```bash
-claude mcp add sapphire-wordpress --scope user -e WP_API_URL=https://www.sapphirefountains.com/wp-json/mcp/mcp-adapter-default-server -e WP_API_USERNAME=seo-agent -e WP_API_PASSWORD="<application password>" -- cmd /c npx -y "@automattic/mcp-wordpress-remote@latest"
+In **PowerShell 7**, read the password into a variable first, so that it never appears in your
+command history:
+
+```powershell
+$pw = Read-Host -Prompt "seo-agent application password" -MaskInput
+claude mcp add sapphire-wordpress --scope user -e WP_API_URL=https://www.sapphirefountains.com/wp-json/mcp/mcp-adapter-default-server -e WP_API_USERNAME=seo-agent -e "WP_API_PASSWORD=$pw" -- cmd /c npx -y "@automattic/mcp-wordpress-remote@0.5.4"
+Remove-Variable pw
 ```
+
+What the parts mean:
 
 - **The server name comes first.** Everything after `--` is the command Claude Code runs.
 - **`cmd /c` is needed on Windows.** `npx` is a `.cmd` script there, and Claude Code can't start it
   directly. On macOS or Linux, drop `cmd /c`.
 - **`WP_API_URL` is the full MCP endpoint,** not just the site address.
-- **The proxy is Automattic's
-  [`@automattic/mcp-wordpress-remote`](https://github.com/Automattic/mcp-wordpress-remote).** It
-  turns Claude's MCP traffic into signed requests to that endpoint.
-- **`--scope user` stores this in your own `%USERPROFILE%\.claude.json`,** in plain text, for every
-  project on this machine. Never use `--scope project`: that writes a `.mcp.json` into the repo you
-  are standing in.
+- **`--scope user` stores this in your own `%USERPROFILE%\.claude.json`,** for every project on
+  this machine. The password sits there **in plain text**, so treat that file like a password.
+  Never use `--scope project`: that writes a `.mcp.json` into the repo you are standing in.
 - **For staging,** add a second server with its own name and the staging host, e.g.
   `sapphire-wordpress-staging` with
   `WP_API_URL=https://<staging host>/wp-json/mcp/mcp-adapter-default-server`.
+
+**If you typed the password into the command itself,** PowerShell saved that line to its history
+file. Open the file and delete the line that contains `WP_API_PASSWORD`:
+
+```powershell
+notepad (Get-PSReadLineOption).HistorySavePath
+```
+
+### Upgrading the proxy on purpose
+
+1. Read the proxy's
+   [release notes](https://github.com/Automattic/mcp-wordpress-remote/releases).
+2. Check the current version:
+
+   ```bash
+   npm view @automattic/mcp-wordpress-remote version
+   ```
+
+3. Remove the server and add it again with the new version number:
+
+   ```bash
+   claude mcp remove sapphire-wordpress --scope user
+   ```
+
+4. Update the version in this guide in the same PR, so everyone pins the same one.
 
 ---
 
@@ -72,7 +116,7 @@ claude mcp add sapphire-wordpress --scope user -e WP_API_URL=https://www.sapphir
 claude mcp list
 ```
 
-You should see `sapphire-wordpress: cmd /c npx -y @automattic/mcp-wordpress-remote@latest - ✓
+You should see `sapphire-wordpress: cmd /c npx -y @automattic/mcp-wordpress-remote@0.5.4 - ✓
 Connected`. Inside a Claude Code session, `/mcp` lists its three tools:
 
 | Tool | What it does |
@@ -85,7 +129,7 @@ Connected`. Inside a Claude Code session, `/mcp` lists its three tools:
 
 **If it shows ✗ Failed:**
 
-- **401** means the user name or password is wrong, or the password was revoked.
+- **`401 incorrect_password`** means the password is wrong or was revoked.
 - **An HTML 403 with a Cloudflare Ray ID** means Cloudflare stopped the request before WordPress
   saw it. See [If Cloudflare blocks it](README.md#if-cloudflare-blocks-it).
 - **`npx` not found** means Node.js isn't installed or isn't on the `PATH`.
@@ -105,13 +149,13 @@ Start with the summary. It is one call, and it tells Claude the rules and thresh
 3. *"Run sapphire-seo/page-detail for /fountain-design/ with live_check true. Compare the stored,
    effective and served title and description. List the headings and the schema types the page
    serves."*
-4. *"Run audit-content for post_type product, flagged only, 100 per page. Which products have no
-   description of their own? Draft one for each, 50–160 characters."*
+4. *"Run audit-content for post_type product with flag description_missing, 25 per page, and page
+   through all of them. Draft a description of 50–160 characters for each."*
 5. *"For our ten most important pages, which images are missing alt text? Suggest alt text for each
    one, describing what the photo shows."*
 
-Add this to any prompt, until the Slim SEO question is settled: *"This is read-only. Do not run
-any ability whose name contains update, create or delete."*
+Phase 1 is read-only. Suggestions go to Marketing for approval; nothing is changed on the site
+from Claude.
 
 ---
 
@@ -124,5 +168,5 @@ any ability whose name contains update, create or delete."*
 | Remove it from your machine | `claude mcp remove sapphire-wordpress --scope user` |
 | A password leaked | Revoke that row first, then make a new one. Nobody needs to change their own login. |
 
-Removing the mu-plugin removes only the three `sapphire-seo` abilities. Slim SEO's, WooCommerce's
-and core's abilities stay on the server for as long as `seo-agent` can sign in.
+Removing the mu-plugin removes only the three `sapphire-seo` abilities. Everything else `seo-agent`
+may run stays on the server for as long as it can sign in.

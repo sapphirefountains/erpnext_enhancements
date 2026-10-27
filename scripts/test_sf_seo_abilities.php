@@ -6,7 +6,10 @@
  * The plugin runs on WP Engine, not here, so this is the only place its rules
  * are checked before somebody uploads it. Run with: php scripts/test_sf_seo_abilities.php
  *
- * Four things are guarded, each because getting it wrong is silent:
+ * What is guarded, each because getting it wrong is silent or takes the site down:
+ *  - the file loads twice without a fatal (a second copy in mu-plugins/ would
+ *    otherwise break every request, and recovery mode cannot pause it), and
+ *    starts with `<?php` and no byte-order mark;
  *  - the flag rules at their boundaries (a threshold off by one reports a
  *    clean site, or flags every page);
  *  - every ability's contract: edit_posts, listed on the MCP server, annotated
@@ -16,9 +19,12 @@
  *    against its own output schema. Core validates the output after every
  *    call, and a mismatch fails the call, so a schema typo would make the
  *    ability fail on every request. There is no WordPress in CI; this is the
- *    nearest check to one;
- *  - the read-only promise: no write call anywhere in the file except the one
- *    read-cache transient. Checked on tokens, so a comment cannot fool it.
+ *    nearest check to one. Denied callers and password-protected pages
+ *    included;
+ *  - the read-only promise, on tokens so a comment cannot fool it: no write
+ *    function but the one read-cache transient, no $wpdb call but a prepared
+ *    SELECT, no dynamic calls, and nothing that renders blocks, shortcodes or
+ *    Bricks elements.
  */
 
 define( 'ABSPATH', __DIR__ . '/' );
@@ -26,6 +32,11 @@ define( 'ABSPATH', __DIR__ . '/' );
 require __DIR__ . '/fixtures/sf_seo_fake_wordpress.php';
 
 $plugin = dirname( __DIR__ ) . '/docs/website-seo/sf-seo-abilities.php';
+require $plugin;
+$hooks_after_first_load = $GLOBALS['sf_test_hooks'];
+
+// A second copy of the file, as "sf-seo-abilities (1).php" would be. Without the
+// guard this line is a fatal "Cannot redeclare", and the test stops here.
 require $plugin;
 
 $failures = 0;
@@ -67,6 +78,11 @@ function record( array $over = array() ) {
 function flags_for( array $over, $dup_title = false, $dup_desc = false ) {
 	return SF_SEO_Rules::flags( record( $over ), $dup_title, $dup_desc );
 }
+
+/* --- Loading ---------------------------------------------------------------- */
+
+check_same( $hooks_after_first_load, $GLOBALS['sf_test_hooks'], 'a second copy of the file loads without a fatal and hooks nothing more' );
+check_same( "<?php\n", substr( file_get_contents( $plugin ), 0, 6 ), 'the file starts with <?php: no byte-order mark, no blank line (either is output before headers)' );
 
 /* --- Registration contract ------------------------------------------------ */
 
@@ -135,11 +151,14 @@ foreach ( $GLOBALS['sf_test_abilities'] as $name => $args ) {
 }
 
 $GLOBALS['sf_fake']['caps'] = array();
-sf_seo_can_audit( array() );
+check_same( true, sf_seo_can_audit( array() ), 'a user with edit_posts may audit' );
 check_same( array( 'edit_posts' ), $GLOBALS['sf_fake']['caps'], 'the permission check asks for edit_posts, nothing weaker' );
+$GLOBALS['sf_fake']['deny'] = array( 'edit_posts' );
+check_same( false, sf_seo_can_audit( array() ), 'a user without edit_posts (a Subscriber) may not' );
+$GLOBALS['sf_fake']['deny'] = array();
 
 $audit_input = $GLOBALS['sf_test_abilities']['sapphire-seo/audit-content']['input_schema'];
-check_same( 100, $audit_input['properties']['per_page']['maximum'] ?? null, 'the schema caps per_page at 100' );
+check_same( 25, $audit_input['properties']['per_page']['maximum'] ?? null, 'the schema caps per_page at 25 (100 rows overran Claude Code\'s 25k-token result cap)' );
 check_same( SF_SEO_Rules::FLAGS, $audit_input['properties']['flag']['enum'] ?? null, 'the flag filter accepts exactly the documented flags' );
 
 /* --- Read-only: no write call anywhere in the plugin ------------------------ */
@@ -152,7 +171,7 @@ foreach ( token_get_all( file_get_contents( $plugin ) ) as $token ) {
 	}
 	$significant[] = $token;
 }
-$code    = implode(
+$code = implode(
 	' ',
 	array_map(
 		function ( $token ) {
@@ -161,40 +180,107 @@ $code    = implode(
 		$significant
 	)
 );
-$called  = array();
-$methods = array();
+
+// PHP 8 reads `\update_post_meta` and `Foo\bar` as one name token, not T_STRING,
+// so a leading backslash would otherwise walk a write call straight past this.
+$name_tokens = array( T_STRING );
+foreach ( array( 'T_NAME_FULLY_QUALIFIED', 'T_NAME_QUALIFIED', 'T_NAME_RELATIVE' ) as $constant ) {
+	if ( defined( $constant ) ) {
+		$name_tokens[] = constant( $constant );
+	}
+}
+$arrow = array( T_OBJECT_OPERATOR, T_DOUBLE_COLON );
+if ( defined( 'T_NULLSAFE_OBJECT_OPERATOR' ) ) {
+	$arrow[] = T_NULLSAFE_OBJECT_OPERATOR;
+}
+$type_of = function ( $token ) {
+	return is_array( $token ) ? $token[0] : $token;
+};
+
+$called     = array(); // function name => token index
+$methods    = array();
+$dynamic    = array();
+$wpdb_calls = array();
 foreach ( $significant as $i => $token ) {
-	if ( ! is_array( $token ) || T_STRING !== $token[0] ) {
-		continue;
-	}
 	$next = $significant[ $i + 1 ] ?? null;
-	if ( '(' !== $next ) {
+	$prev = $significant[ $i - 1 ] ?? null;
+
+	// $fn( ... ) or $object->$method( ... ): a call nobody can read off the page.
+	if ( T_VARIABLE === $type_of( $token ) && '(' === $next ) {
+		$dynamic[] = $token[1];
+	}
+	if ( ! in_array( $type_of( $token ), $name_tokens, true ) || '(' !== $next ) {
 		continue;
 	}
-	$prev = $significant[ $i - 1 ] ?? null;
-	if ( is_array( $prev ) && in_array( $prev[0], array( T_OBJECT_OPERATOR, T_DOUBLE_COLON ), true ) ) {
-		$methods[] = strtolower( $token[1] );
-	} elseif ( ! ( is_array( $prev ) && T_FUNCTION === $prev[0] ) ) {
-		$called[] = strtolower( $token[1] );
+	$name = strtolower( ltrim( $token[1], '\\' ) );
+	if ( in_array( $type_of( $prev ), $arrow, true ) ) {
+		$methods[] = $name;
+		$object    = $significant[ $i - 2 ] ?? null;
+		if ( T_VARIABLE === $type_of( $object ) && '$wpdb' === $object[1] ) {
+			$wpdb_calls[] = array( $name, $i );
+		}
+	} elseif ( ! in_array( $type_of( $prev ), array( T_FUNCTION, T_NEW ), true ) ) {
+		$called[ $i ] = substr( $name, (int) strrpos( '\\' . $name, '\\' ) );
 	}
 }
 
 $forbidden = array(
+	// Writes.
 	'update_post_meta', 'add_post_meta', 'delete_post_meta',
 	'update_metadata', 'add_metadata', 'delete_metadata',
 	'update_option', 'add_option', 'delete_option',
 	'update_site_option', 'add_site_option', 'delete_site_option',
 	'set_site_transient', 'delete_transient', 'delete_site_transient',
-	'update_user_meta', 'add_user_meta', 'update_term_meta', 'add_term_meta',
+	'update_user_meta', 'add_user_meta', 'update_user_option', 'update_term_meta', 'add_term_meta',
 	'wp_update_post', 'wp_insert_post', 'wp_delete_post', 'wp_trash_post', 'wp_publish_post',
 	'wp_insert_attachment', 'wp_update_attachment_metadata',
 	'wp_set_object_terms', 'wp_set_post_terms', 'wp_insert_term', 'wp_update_term',
 	'wp_insert_user', 'wp_update_user', 'wp_remote_post', 'wp_safe_remote_post', 'wp_remote_request',
-	'file_put_contents', 'fwrite', 'unlink', 'rename',
+	'wp_cache_set', 'wp_cache_add', 'wp_cache_replace', 'wp_cache_delete',
+	'wp_schedule_event', 'wp_schedule_single_event', 'wp_mail', 'mail', 'setcookie',
+	'file_put_contents', 'fopen', 'fwrite', 'unlink', 'rename',
+	'exec', 'shell_exec', 'system', 'passthru', 'proc_open', 'popen',
+	// Calls whose target is decided at run time.
+	'call_user_func', 'call_user_func_array', 'forward_static_call', 'forward_static_call_array',
+	// Rendering that runs other code: dynamic blocks, shortcodes, hooks.
+	'do_blocks', 'render_block', 'do_shortcode', 'apply_filters', 'do_action',
 );
-check_same( array(), array_values( array_intersect( $forbidden, $called ) ), 'the plugin calls no write function' );
-check_same( array(), array_values( array_intersect( array( 'query', 'insert', 'update', 'delete', 'replace' ), $methods ) ), 'the plugin calls no $wpdb write method' );
-check_same( 1, count( array_keys( $called, 'set_transient', true ) ), 'the read cache is the one write, made in one place' );
+check_same( array(), array_values( array_unique( array_intersect( $called, $forbidden ) ) ), 'the plugin calls no write, dynamic-dispatch or rendering function' );
+check_same( array(), $dynamic, 'the plugin makes no variable function or method calls' );
+check_same( array(), array_values( array_intersect( $methods, array( 'render_data' ) ) ), 'the plugin never renders Bricks elements itself' );
+
+$transient_calls = array_keys( $called, 'set_transient', true );
+check_same( 1, count( $transient_calls ), 'the read cache is the one write, made in one place' );
+check_same( 'SF_SEO_CACHE_KEY', $significant[ $transient_calls[0] + 2 ][1] ?? null, 'and it writes only the cache key' );
+
+// Every $wpdb call is a SELECT, prepared: get_* take a $wpdb->prepare() whose
+// SQL starts with SELECT. get_row() and get_var() run whatever they are given.
+$wpdb_problems = array();
+$prepared      = 0;
+foreach ( $wpdb_calls as list( $method, $i ) ) {
+	if ( ! in_array( $method, array( 'prepare', 'get_row', 'get_var', 'get_results', 'get_col' ), true ) ) {
+		$wpdb_problems[] = "\$wpdb->$method() is not a read";
+		continue;
+	}
+	if ( 'prepare' === $method ) {
+		$first = $significant[ $i + 2 ] ?? null;
+		if ( '"' === $first ) {
+			$first = $significant[ $i + 3 ] ?? null;
+		}
+		$sql = is_array( $first ) ? ltrim( $first[1], "'\"" ) : '';
+		if ( ! preg_match( '/^\s*SELECT\b/i', $sql ) ) {
+			$wpdb_problems[] = '$wpdb->prepare() SQL does not start with SELECT: ' . substr( $sql, 0, 40 );
+		}
+		++$prepared;
+		continue;
+	}
+	$arg = array_slice( $significant, $i + 2, 3 );
+	if ( ! ( T_VARIABLE === $type_of( $arg[0] ?? null ) && '$wpdb' === $arg[0][1] && 'prepare' === strtolower( $arg[2][1] ?? '' ) ) ) {
+		$wpdb_problems[] = "\$wpdb->$method() is not given a \$wpdb->prepare() query";
+	}
+}
+check_same( array(), $wpdb_problems, 'every $wpdb call is a prepared SELECT' );
+check( $prepared >= 2, 'the $wpdb check saw the fingerprint queries (it is not checking nothing)' );
 check( false === stripos( $code, '__return_true' ), 'no permission is __return_true' );
 check(
 	array() === array_filter(
@@ -290,7 +376,8 @@ $canonical_cases = array(
 	array( '', 'https://www.example.com/a/', false, 'a blank canonical means the page itself' ),
 	array( 'https://www.example.com/a', 'https://www.example.com/a/', false, 'a trailing slash is the same page' ),
 	array( 'http://WWW.example.com/a/', 'https://www.example.com/a/', false, 'scheme and host case are the same page' ),
-	array( '/a/', 'https://www.example.com/a/', false, 'a relative canonical to the same path is the same page' ),
+	array( '/b/', 'https://www.example.com/a/', false, 'a relative canonical is never output by Slim SEO, so it points nowhere' ),
+	array( 'not a url', 'https://www.example.com/a/', false, 'neither is a malformed one' ),
 	array( 'https://www.example.com/b/', 'https://www.example.com/a/', true, 'another path is elsewhere' ),
 	array( 'https://example.com/a/', 'https://www.example.com/a/', true, 'another host is elsewhere' ),
 	array( 'https://www.example.com/a/?ref=x', 'https://www.example.com/a/', true, 'a query string is another URL' ),
@@ -298,6 +385,12 @@ $canonical_cases = array(
 foreach ( $canonical_cases as $case ) {
 	check_same( $case[2], SF_SEO_Rules::canonical_elsewhere( $case[0], $case[1] ), 'canonical: ' . $case[3] );
 }
+check_same( array( true, false, false ), array( SF_SEO_Rules::canonical_is_output( 'https://x.com/a/' ), SF_SEO_Rules::canonical_is_output( '/a/' ), SF_SEO_Rules::canonical_is_output( 'ftp://x.com/a' ) ), 'Slim SEO outputs only an absolute http(s) canonical' );
+
+check_same( true, SF_SEO_Rules::same_site_host( 'sapphirefountains.com', 'www.sapphirefountains.com' ), 'the apex host is this site' );
+check_same( true, SF_SEO_Rules::same_site_host( 'WWW.SapphireFountains.com', 'www.sapphirefountains.com' ), 'host case does not matter' );
+check_same( false, SF_SEO_Rules::same_site_host( 'evil-sapphirefountains.com', 'www.sapphirefountains.com' ), 'a look-alike host is not' );
+check_same( false, SF_SEO_Rules::same_site_host( '', 'www.sapphirefountains.com' ), 'no host is not' );
 
 /* --- Duplicates ------------------------------------------------------------- */
 
@@ -321,6 +414,9 @@ check_same( array( 'noindex' ), $flagged[12]['flags'], 'a noindexed page is not 
 check_same( array( 10, 11 ), $flagged[13]['duplicate_description_of'], 'an unknown effective description falls back to the stored one for duplicates' );
 check( in_array( 'duplicate_description', $flagged[10]['flags'], true ), 'shared descriptions are flagged' );
 
+$records[13]['protected'] = true;
+check_same( array(), SF_SEO_Rules::apply_flags( $records )[13]['duplicate_description_of'], 'a password-protected page\'s description is never compared (it would reveal which public page it matches)' );
+
 /* --- Filtering, paging, summary ------------------------------------------- */
 
 $list = array(
@@ -338,12 +434,13 @@ check_same( array( 2, 3, 4 ), $ids( SF_SEO_Rules::filter( $list, 'any', true ) )
 check_same( array( 2, 3 ), $ids( SF_SEO_Rules::filter( $list, 'any', false, 'noindex' ) ), 'one flag' );
 check_same( array( 3 ), $ids( SF_SEO_Rules::filter( $list, 'post', true, 'noindex' ) ), 'filters combine' );
 
-check_same( 100, SF_SEO_Rules::paging( 1, 500, 1000 )['per_page'], 'per_page is capped at 100 whatever is asked' );
-check_same( 50, SF_SEO_Rules::paging( 1, 0, 10 )['per_page'], 'a zero per_page falls back to 50' );
+check_same( 25, SF_SEO_Rules::paging( 1, 500, 1000 )['per_page'], 'per_page is capped at 25 whatever is asked' );
+check_same( 25, SF_SEO_Rules::paging( 1, 26, 1000 )['per_page'], 'one over the cap is the cap' );
+check_same( 25, SF_SEO_Rules::paging( 1, 0, 10 )['per_page'], 'a zero per_page falls back to 25' );
 check_same( 1, SF_SEO_Rules::paging( 0, 10, 10 )['page'], 'page is at least 1' );
-check_same( 3, SF_SEO_Rules::paging( 1, 50, 101 )['total_pages'], '101 items at 50 a page is 3 pages' );
-check_same( 100, SF_SEO_Rules::paging( 3, 50, 101 )['offset'], 'page 3 at 50 starts at 100' );
-check_same( 0, SF_SEO_Rules::paging( 1, 50, 0 )['total_pages'], 'no items is no pages' );
+check_same( 6, SF_SEO_Rules::paging( 1, 20, 101 )['total_pages'], '101 items at 20 a page is 6 pages' );
+check_same( 40, SF_SEO_Rules::paging( 3, 20, 101 )['offset'], 'page 3 at 20 starts at 40' );
+check_same( 0, SF_SEO_Rules::paging( 1, 20, 0 )['total_pages'], 'no items is no pages' );
 
 $summary = SF_SEO_Rules::summarize( $list );
 check_same( 4, $summary['total'], 'summary counts every item' );
@@ -551,14 +648,17 @@ check_same( 'https://www.example.com/fountain-design/', $items[11]['canonical'][
 check_same( array( 'description_too_short', 'noindex' ), $items[12]['flags'], 'blog post: a short description, and noindexed' );
 check_same( 'post', $items[12]['noindex_source'], 'blog post: noindexed by its own setting' );
 check_same( true, $items[12]['noindex'], 'blog post: noindex is reported' );
+check_same( null, $items[12]['canonical']['effective'], 'blog post: a noindexed page outputs no canonical (Slim SEO removes it)' );
 
 check_same( array( 'title_missing', 'duplicate_description', 'canonical_elsewhere' ), $items[13]['flags'], 'product: no title of its own, shared description, canonical elsewhere' );
 check_same( 'slim_seo_default', $items[13]['title']['source'], 'product: no product template, so Slim SEO\'s default title' );
 check_same( 'https://www.example.com/shop/three-tier/', $items[13]['canonical']['effective'], 'product: the canonical\'s {{ site.url }} is rendered' );
 check_same( '{{ site.url }}/shop/three-tier/', $items[13]['canonical']['stored'], 'product: the stored canonical is shown as stored' );
 
-check_same( array( 'title_missing', 'description_missing', 'description_not_output' ), $items[14]['flags'], 'password page: no description is output' );
+check_same( array( 'title_missing', 'description_not_output' ), $items[14]['flags'], 'password page: a description is stored, but none is output' );
 check_same( 'password_protected', $items[14]['description']['source'], 'password page: says why there is no description' );
+check_same( array( true, false ), array( $items[14]['protected'], $items[14]['withheld'] ), 'password page: protected, and shown in full to someone who can edit it' );
+check_same( SF_FAKE_PRIVATE_DESCRIPTION, $items[14]['description']['stored'], 'password page: its editor sees the stored description' );
 
 check_same( false, $audit['from_cache'], 'the first audit is built, not cached' );
 check_same( 1, $GLOBALS['sf_fake']['set_transient_calls'], 'building the audit writes the read cache once' );
@@ -591,13 +691,36 @@ check_same( array( 12, 13 ), $ids_of( $page2 ), 'page 2 of 2-per-page' );
 check_same( 3, $page2['total_pages'], 'five items at two a page is three pages' );
 check_same( 0, count( run_ability( 'sapphire-seo/audit-content', array( 'page' => 9 ) )['items'] ), 'a page past the end is empty, not an error' );
 
-check_same( 100, sf_seo_audit_content( array( 'per_page' => 500 ) )['per_page'], 'the callback caps per_page at 100 even if the schema were bypassed' );
+check_same( 25, sf_seo_audit_content( array( 'per_page' => 500 ) )['per_page'], 'the callback caps per_page at 25 even if the schema were bypassed' );
+check( schema_errors( array( 'per_page' => 26 ), $GLOBALS['sf_test_abilities']['sapphire-seo/audit-content']['input_schema'] ), 'and the schema refuses 26' );
 
 $from_get = run_ability( 'sapphire-seo/audit-content', array( 'flagged_only' => 'false', 'per_page' => '2', 'page' => '1' ), false );
 check_same( array( false, 2 ), array( $from_get['filters']['flagged_only'], $from_get['per_page'] ), 'string input, as a REST GET delivers it before WordPress 7.1, is read correctly' );
 
 $junk = sf_seo_audit_content( array( 'post_type' => 'attachment', 'flag' => 'drop table' ) );
 check_same( array( 'any', null ), array( $junk['filters']['post_type'], $junk['filters']['flag'] ), 'unknown post types and flags are ignored, not passed on' );
+
+// A password-protected page, seen by someone who cannot edit it (a Contributor).
+$GLOBALS['sf_fake']['deny'] = array( 'edit_post' );
+$redacted                   = by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] )[14];
+check_same( array( true, null ), array( $redacted['withheld'], $redacted['description']['stored'] ), 'password page: its stored description is withheld from someone who cannot edit it' );
+$withheld = run_ability( 'sapphire-seo/page-detail', array( 'id' => 14 ) )['item'];
+check_same( array( true, true, array(), array() ), array( $withheld['images']['withheld'], $withheld['headings']['withheld'], $withheld['images']['missing_alt'], $withheld['headings']['items'] ), 'password page: its images and headings are withheld too' );
+check_same( null, $withheld['description']['stored'], 'password page: page detail withholds the description as well' );
+$GLOBALS['sf_fake']['deny'] = array();
+check_same( SF_FAKE_PRIVATE_DESCRIPTION, $GLOBALS['sf_fake']['transients'][ SF_SEO_CACHE_KEY ]['items'][14]['description']['stored'] ?? null, 'the cache is shared: withholding happens on the way out, never in the cache' );
+check_same( SF_FAKE_PRIVATE_DESCRIPTION, by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] )[14]['description']['stored'], 'so the next caller who can edit it still sees it' );
+
+$open = run_ability( 'sapphire-seo/page-detail', array( 'id' => 14 ) )['item'];
+check_same( array( array( 'level' => 2, 'text' => 'Pricing tiers' ) ), $open['headings']['items'], 'password page: its editor gets its headings' );
+check_same( array( 24 ), array_column( $open['images']['missing_alt'], 'id' ), 'password page: and its images' );
+
+// WooCommerce's own noindexed pages.
+$GLOBALS['sf_fake']['wc_pages'] = array( 'cart' => 11 );
+$woo                            = by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] );
+check_same( array( true, 'woocommerce' ), array( $woo[11]['noindex'], $woo[11]['noindex_source'] ), 'WooCommerce\'s cart page is reported noindexed, by WooCommerce' );
+check( ! in_array( 'duplicate_description', $woo[13]['flags'], true ), 'and no longer counts as a duplicate of the product' );
+$GLOBALS['sf_fake']['wc_pages'] = array();
 
 // One page.
 $GLOBALS['sf_fake']['caps'] = array();
@@ -621,19 +744,22 @@ check_same(
 );
 check_same( 'IMG_2034', $item['images']['missing_alt'][0]['file_title'], 'images: the file title is given (Slim SEO falls back to it)' );
 
-check_same( 'bricks', $item['headings']['source'], 'headings: a Bricks page is read through Bricks\' renderer' );
+check_same( 'slim_seo', $item['headings']['source'], 'headings: a Bricks page is read through Slim SEO\'s filtered content, not rendered here' );
 check_same(
 	array(
 		array( 'level' => 1, 'text' => 'Fountain Design' ),
 		array( 'level' => 2, 'text' => 'Our process' ),
-		array( 'level' => 3, 'text' => 'Echoed by an element' ),
 	),
 	$item['headings']['items'],
-	'headings: what Bricks returns and what its elements echo'
+	'headings: the ones in the content Slim SEO reads'
 );
 check_same( 1, $item['headings']['h1_count'], 'headings: h1 count' );
-check_same( 11, $GLOBALS['sf_fake']['bricks_saw_post'], 'Bricks renders with the page as the global post' );
-check_same( null, $GLOBALS['post'] ?? null, 'the global post is put back afterwards' );
+
+$GLOBALS['sf_fake']['slim_content_throws'] = true;
+$fallback                                  = run_ability( 'sapphire-seo/page-detail', array( 'id' => 11 ) )['item']['headings'];
+check_same( array( 'post_content', false ), array( $fallback['source'], $fallback['available'] ), 'headings: if Slim SEO\'s reader fails, a Bricks page says so instead of rendering Bricks itself' );
+check( false !== strpos( $fallback['note'], 'live_check' ), 'headings: and points at live_check' );
+$GLOBALS['sf_fake']['slim_content_throws'] = false;
 
 check_same( true, $item['schema']['slim_seo_builtin']['active'], 'schema: Slim SEO\'s built-in schema is on' );
 check( in_array( 'WebPage', $item['schema']['slim_seo_builtin']['types'], true ) && ! in_array( 'Article', $item['schema']['slim_seo_builtin']['types'], true ), 'schema: a page gets WebPage, not Article' );
@@ -648,10 +774,16 @@ $GLOBALS['sf_fake']['features_off'] = array();
 
 $product = run_ability( 'sapphire-seo/page-detail', array( 'url' => '/product/three-tier-fountain/' ) )['item'];
 check_same( 13, $product['id'], 'a root-relative URL finds the product' );
-check_same( array( 'post_content', array( array( 'level' => 2, 'text' => 'Specifications' ) ) ), array( $product['headings']['source'], $product['headings']['items'] ), 'a page without Bricks data is read from its content' );
+check_same( array( 'slim_seo', array( array( 'level' => 2, 'text' => 'Specifications' ) ) ), array( $product['headings']['source'], $product['headings']['items'] ), 'a page without Bricks data is read from its saved content' );
 
 check_same( 12, run_ability( 'sapphire-seo/page-detail', array( 'url' => 'https://www.example.com/blog/winterizing/' ) )['item']['id'], 'an absolute URL finds the post' );
+check_same( 11, run_ability( 'sapphire-seo/page-detail', array( 'url' => 'https://example.com/fountain-design/' ) )['item']['id'], 'the apex host is this site too' );
 check_same( 10, run_ability( 'sapphire-seo/page-detail', array( 'url' => 'https://www.example.com/' ) )['item']['id'], 'the home URL finds the static front page' );
+
+$GLOBALS['sf_fake']['deny'] = array( 'read_post' );
+$forbidden_page             = run_ability( 'sapphire-seo/page-detail', array( 'id' => 11 ) );
+check( $forbidden_page instanceof WP_Error && 'sf_seo_forbidden' === $forbidden_page->get_error_code(), 'page detail refuses a page the caller cannot read' );
+$GLOBALS['sf_fake']['deny'] = array();
 
 $errors = array(
 	array( array(), 'sf_seo_missing_target' ),
@@ -695,6 +827,10 @@ $GLOBALS['sf_fake']['http'] = array(
 $blocked = run_ability( 'sapphire-seo/page-detail', array( 'id' => 12, 'live_check' => true ) )['item']['live_check'];
 check( false === $blocked['fetched'] && 403 === $blocked['status'] && false !== strpos( (string) $blocked['error'], 'Cloudflare' ), 'live check: a Cloudflare challenge is reported as one' );
 
+$GLOBALS['sf_fake']['http'] = new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out after 15001 milliseconds' );
+$timeout                    = run_ability( 'sapphire-seo/page-detail', array( 'id' => 12, 'live_check' => true ) )['item']['live_check'];
+check_same( array( false, null, 'cURL error 28: Operation timed out after 15001 milliseconds' ), array( $timeout['fetched'], $timeout['status'], $timeout['error'] ), 'live check: a failed request is reported with its reason' );
+
 $calls  = $GLOBALS['sf_fake']['http_calls'];
 $locked = run_ability( 'sapphire-seo/page-detail', array( 'id' => 14, 'live_check' => true ) )['item']['live_check'];
 check( false === $locked['fetched'] && $calls === $GLOBALS['sf_fake']['http_calls'], 'live check: a password-protected page is not fetched' );
@@ -708,7 +844,7 @@ check_same(
 		'title_too_short'        => 0,
 		'title_too_long'         => 1,
 		'duplicate_title'        => 0,
-		'description_missing'    => 2,
+		'description_missing'    => 1,
 		'description_not_output' => 1,
 		'description_too_short'  => 1,
 		'description_too_long'   => 0,

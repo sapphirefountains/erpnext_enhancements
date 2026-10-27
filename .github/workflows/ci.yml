@@ -3449,11 +3449,14 @@ jobs:
         run: node scripts/test_sf_attribution.js
       # The SEO abilities mu-plugin lives in docs/website-seo/ and runs on WP Engine, not here,
       # so this is the only check before somebody uploads it. php -l first: a parse error in an
-      # mu-plugin takes the whole site down, and an mu-plugin has no Deactivate button. Then the
+      # mu-plugin takes the whole site down, and an mu-plugin has no Deactivate button (nor does a
+      # second copy that redeclares a function, so the suite loads the file twice). Then the
       # flag thresholds at their boundaries, each ability's contract (edit_posts, listed on the
       # MCP server, annotated read-only), every callback's result against its own output schema
       # (core fails the call on a mismatch, so a schema typo breaks the ability on every request),
-      # and that the file makes no write call but its one read-cache transient. Uses the runner's
+      # password-protected pages withheld from callers who can't edit them, and a token-level
+      # guard: no write but the one read-cache transient, no $wpdb call but a prepared SELECT, no
+      # dynamic calls, no rendering of blocks, shortcodes or Bricks elements. Uses the runner's
       # preinstalled PHP; the suite stubs WordPress itself (scripts/fixtures/sf_seo_fake_wordpress.php).
       - name: WordPress SEO abilities mu-plugin (php)
         run: |
