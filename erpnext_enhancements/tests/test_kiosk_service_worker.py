@@ -315,51 +315,133 @@ def _api_branch():
     return handler[start : handler.index("PRECACHE_PATHS.has", start)]
 
 
+def _navigation_branch():
+    """The fetch handler's /kiosk navigation branch: from its guard to the API's."""
+    handler = _fetch_handler()
+    start = handler.index("url.pathname === '/kiosk'")
+    return handler[start : handler.index("url.pathname.startsWith(API_PREFIX)", start)]
+
+
+def _function(signature):
+    """A top-level function of the worker, comments stripped: from `signature` to its closing brace."""
+    code = _code()
+    body = code[code.index(signature) :]
+    return body[: body.index("\n}")]
+
+
 class TestKeptAnswersArePerPerson(unittest.TestCase):
-    """The seams the node harness cannot see: what app.js sends, and the shape of
-    the worker's API branch. The behaviour itself is TestKeptAnswersHarness's.
+    """The seams the node harness cannot see: what the page sends and decides, and
+    the shape of the worker's branches. The behaviour itself is
+    TestKeptAnswersHarness's, and the page's refusal also runs in the real app.js
+    in scripts/test_kiosk_history.js.
 
     Every kiosk GET (get_my_day, get_my_history, get_my_correction_requests,
     get_my_trail, the current status) used to be kept under its URL alone and
     replayed offline to whoever asked, so on a shared phone the next technician
-    saw the last one's. The page now names whose screen is asking, and the worker
-    files and finds answers under that name only.
+    saw the last one's. The page now names the offline marker
+    (workforce/kiosk_offline.py) of whose screen is asking, while the phone's
+    ee_kiosk_key cookie still holds it, and the worker files and finds answers
+    under that marker only, when the server's echo agrees.
     """
 
-    def test_every_kiosk_call_names_whose_screen_is_asking(self):
-        self.assertIn(
-            "headers['X-Kiosk-User'] = encodeURIComponent(BOOT.user || '');",
-            KIOSK_APP.read_text(encoding="utf-8"),
-            "app.js's api() must name the signed-in user on every call, or the "
-            "worker keeps and replays nothing",
-        )
+    def test_the_page_lines_the_harness_models(self):
+        """scripts/test_kiosk_sw_cache.js models the page with exactly these lines
+        (its openKiosk / askingKey). If they change, change the model with them."""
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        for line in (
+            "var OFFLINE_KEY = BOOT.offline_key || '';",
+            r"var m = /(?:^|;\s*)ee_kiosk_key=([^;]*)/.exec(document.cookie || '');",
+            "function askingKey() { return OFFLINE_KEY && phoneKey() === OFFLINE_KEY ? OFFLINE_KEY : ''; }",
+            "if (OFFLINE_KEY && phoneKey() !== OFFLINE_KEY) { showSignedOut(root); return; }",
+            "navigator.serviceWorker.controller.postMessage({ type: 'forget', data: { owner: phoneKey() } });",
+            "data: { csrf_token: CSRF, max_batch_size: SETTINGS.max_batch_size || 50, owner: askingKey() },",
+        ):
+            self.assertIn(line, app)
+
+    def test_the_refusal_comes_before_anything_is_drawn_or_fetched(self):
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        init = app[app.index("  function init() {") :]
+        self.assertLess(init.index("showSignedOut(root); return;"), init.index("buildShell(root);"))
+
+    def test_every_kiosk_call_names_the_marker_not_the_email(self):
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        self.assertIn("if (key) headers['X-Kiosk-Key'] = key;", app)
+        self.assertNotIn("X-Kiosk-User", app)
+        self.assertNotIn("X-Kiosk-User", _code())
 
     def test_the_worker_reads_that_header(self):
-        self.assertIn("const USER_HEADER = 'X-Kiosk-User';", _code())
-        self.assertIn("const user = req.headers.get(USER_HEADER);", _api_branch())
+        self.assertIn("const KEY_HEADER = 'X-Kiosk-Key';", _code())
+        self.assertIn("const owner = req.headers.get(KEY_HEADER);", _api_branch())
 
     def test_a_call_that_names_nobody_goes_to_the_network(self):
         branch = _api_branch()
-        self.assertLess(branch.index("if (!user) return;"), branch.index("respondWith"))
+        self.assertLess(branch.index("if (!owner) return;"), branch.index("respondWith"))
 
     def test_answers_are_never_kept_or_found_by_url_alone(self):
         branch = _api_branch()
         for by_url in ("put(req", "caches.match(req)", "cache.match(req)"):
             self.assertNotIn(by_url, branch, f"{by_url} files or finds an answer under its URL alone")
         self.assertIn("caches.match(key)", branch)
-        self.assertIn("keepAnswer(user, key, fresh.clone())", branch)
+        self.assertIn("keepAnswer(owner, key, fresh.clone(), at)", branch)
+
+    def test_an_answer_is_kept_only_when_the_server_echo_agrees(self):
+        self.assertIn("fresh.headers.get(KEY_HEADER) === owner", _api_branch())
+
+    def test_nothing_asked_for_before_a_forget_is_kept(self):
+        code = _code()
+        self.assertIn("epoch += 1;", code[code.index("async function forgetKept") :][:200])
+        self.assertIn("const at = epoch;", _api_branch())
+        nav = _navigation_branch()
+        self.assertIn("const at = epoch;", nav)
+        self.assertIn("keepPage(fresh.clone(), at)", nav)
+
+    def test_only_a_real_page_is_kept_and_a_redirect_forgets(self):
+        nav = _navigation_branch()
+        self.assertIn("fresh.type === 'opaqueredirect' || fresh.redirected", nav)
+        self.assertIn("} else if (fresh.ok) {", nav)
+        self.assertNotIn("cache.put('/kiosk', fresh.clone())", nav)
 
     def test_a_sign_out_is_seen_before_the_get_only_guard(self):
         """Sign-outs are POSTs; checked after `req.method !== 'GET'` they never are."""
         handler = _fetch_handler()
         self.assertLess(handler.index("if (isSignOut(req, url))"), handler.index("req.method !== 'GET'"))
-        self.assertIn("event.waitUntil(forgetEverybody()", handler)
+        self.assertIn("event.respondWith(signOut(req));", handler)
+
+    def test_a_sign_out_never_blocks_the_logout(self):
+        """Forgetting is best effort around the request: a cache error must not stop
+        the person signing out, nor replace the server's answer."""
+        body = _function("async function signOut(req)")
+        self.assertIn("return await fetch(req);", body)
+        self.assertEqual(body.count("await forgetKept().catch(() => {});"), 2)
+        self.assertIn("finally", body)
 
     def test_kept_answers_live_in_the_deploy_cache(self):
         """So a deploy's activate drops them with the rest of the old cache."""
+        self.assertIn("await caches.open(CACHE);", _function("async function keepAnswer"))
+
+    def test_queued_points_carry_their_person(self):
+        geo = (APP / "public/js/kiosk/geo.js").read_text(encoding="utf-8")
+        self.assertIn("owner: state.owner,", geo)
+        self.assertIn("setOwner: function (key) { state.owner = key || ''; return this; },", geo)
+        self.assertIn(
+            "window.KioskGeo.configure(SETTINGS).setOwner(OFFLINE_KEY)", KIOSK_APP.read_text(encoding="utf-8")
+        )
         code = _code()
-        keep = code[code.index("async function keepAnswer") :]
-        self.assertIn("await caches.open(CACHE);", keep[: keep.index("\n}")])
+        self.assertIn("JSON.stringify(owner ? { points: batch, offline_key: owner } : { points: batch })", code)
+        self.assertIn("if (data.owner) await dropPointsNotOf(data.owner);", code)
+
+    def test_settings_has_a_sign_out(self):
+        """The installed app has no address bar: without it there is no way to hand
+        the phone over. It posts /api/method/logout (which the worker sees) and then
+        reloads, because the kiosk never writes the URL (test_kiosk_frontend)."""
+        settings = (APP / "public/js/kiosk/settings.js").read_text(encoding="utf-8")
+        self.assertIn("text: 'Sign out', on: { click: function () { ctx.signOut(); } }", settings)
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        body = app[app.index("  function signOut() {") :]
+        body = body[: body.index("\n  }\n")]
+        self.assertIn("return UI.ask({", body)
+        self.assertIn("api('logout', {}).then(function () {\n        window.location.reload();", body)
+        self.assertIn("signOut: signOut,", app)
 
     def test_the_worker_has_no_jinja(self):
         """Frappe serves www/*.js through TemplatePage, so a double brace or a Jinja
@@ -372,8 +454,9 @@ class TestKeptAnswersArePerPerson(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
 class TestKeptAnswersHarness(unittest.TestCase):
-    """Runs scripts/test_kiosk_sw_cache.js: the real worker, a stand-in Cache Storage
-    and network, two technicians on one phone, sign-outs and a deploy."""
+    """Runs scripts/test_kiosk_sw_cache.js: the real worker over a stand-in phone and
+    server, two technicians on one phone, every sign-in route (Google's GET
+    included), expiry, sign-outs, races, the location queue and a deploy."""
 
     def test_the_harness_passes(self):
         result = subprocess.run(

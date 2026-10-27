@@ -76,6 +76,7 @@
     statusCb: null,
     status: 'off',
     permission: 'unknown', // granted | denied | prompt | unknown
+    owner: '',           // the offline marker of the person this page is for (setOwner)
   };
 
   function setStatus(s) {
@@ -150,6 +151,10 @@
       log_status: navigator.onLine ? 'Success' : 'Offline Sync',
       fix_source: source || 'Watch',
       device_agent: navigator.userAgent,
+      // Whose point this is: kiosk-sw.js uploads each person's points under their own key
+      // only, and deletes them if somebody else's kiosk takes the phone. Not sent to the server
+      // as part of the point.
+      owner: state.owner,
     };
   }
 
@@ -256,6 +261,10 @@
       if (settings) state.settings = Object.assign({}, DEFAULTS, settings);
       return this;
     },
+
+    // The offline marker of the person this page is for (app.js, BOOT.offline_key). Every
+    // queued point carries it (buildPoint).
+    setOwner: function (key) { state.owner = key || ''; return this; },
 
     onStatus: function (cb) { state.statusCb = cb; return this; },
 

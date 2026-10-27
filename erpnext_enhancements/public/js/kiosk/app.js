@@ -75,6 +75,19 @@
   // rotates the SW cache automatically.
   var BUILD = window.KIOSK_BUILD || '';
   var API = 'erpnext_enhancements.api.time_kiosk.';
+  // The offline marker (workforce/kiosk_offline.py): the key this page was drawn for, and the
+  // ee_kiosk_key cookie that says whose kiosk this phone is NOW. A sign-out, or a sign-in as
+  // anybody else (by any route, Google included), removes the cookie, so a kept copy of this
+  // page served offline can tell it is no longer the signed-in person's. Empty when the server
+  // could not make one: then nothing is refused, kept or replayed.
+  var OFFLINE_KEY = BOOT.offline_key || '';
+  function phoneKey() {
+    var m = /(?:^|;\s*)ee_kiosk_key=([^;]*)/.exec(document.cookie || '');
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  // The key a call names in X-Kiosk-Key: this page's while the phone is still this person's,
+  // else none, and kiosk-sw.js then neither keeps nor replays anything for the call.
+  function askingKey() { return OFFLINE_KEY && phoneKey() === OFFLINE_KEY ? OFFLINE_KEY : ''; }
 
   var app = {
     status: null,            // 'Open' | 'Paused' | 'Idle'
@@ -90,6 +103,7 @@
     breakAlerted: false,
     dayComplete: null,       // shift summary shown after a successful Stop
     swReg: null,
+    signingOut: false,       // Settings → Sign out in flight: the worker's 'signed-out' is ours
     installPrompt: null,     // the deferred beforeinstallprompt event
     badges: {},
   };
@@ -102,10 +116,10 @@
     var isGet = opts.method === 'GET';
     var url = '/api/method/' + method;
     var headers = { 'Accept': 'application/json', 'X-Frappe-CSRF-Token': CSRF };
-    // Whose screen is asking. kiosk-sw.js keeps and replays offline answers per
-    // person by it, so a shared phone never shows one technician another's day.
-    // URI-encoded because a header value must be Latin-1 and a user id need not be.
-    headers['X-Kiosk-User'] = encodeURIComponent(BOOT.user || '');
+    // Whose screen is asking, as the offline marker (never the email). kiosk-sw.js keeps an
+    // answer under it only when the server's echo agrees, and replays only this person's.
+    var key = askingKey();
+    if (key) headers['X-Kiosk-Key'] = key;
     var init = { method: isGet ? 'GET' : 'POST', headers: headers, credentials: 'same-origin' };
 
     if (isGet) {
@@ -1515,9 +1529,11 @@
     navigator.serviceWorker.ready.then(function (reg) {
       var target = reg.active || navigator.serviceWorker.controller;
       if (target) {
+        // owner: the worker deletes queued points tagged for anybody else (they can never be
+        // uploaded under this session).
         target.postMessage({
           type: 'config',
-          data: { csrf_token: CSRF, max_batch_size: SETTINGS.max_batch_size || 50 },
+          data: { csrf_token: CSRF, max_batch_size: SETTINGS.max_batch_size || 50, owner: askingKey() },
         });
       }
     }).catch(function () { /* noop */ });
@@ -1540,6 +1556,12 @@
       })
       .catch(function () { /* SW optional; app still works online */ });
     navigator.serviceWorker.ready.then(sendSWConfig);
+
+    // Somebody signed out on this phone (desk, /logout, or Settings here): the worker has
+    // deleted what the kiosk kept and says so. Reload, and the server sends us to sign in.
+    navigator.serviceWorker.addEventListener('message', function (ev) {
+      if (ev.data && ev.data.type === 'signed-out' && !app.signingOut) window.location.reload();
+    });
 
     // When an updated worker takes control mid-session, reload once so the
     // page runs the code it just precached — but never while the user is
@@ -1576,6 +1598,57 @@
   function refreshApp() {
     var reload = function () { window.location.reload(); };
     if (app.swReg) app.swReg.update().then(reload, reload); else reload();
+  }
+
+  // Settings → Sign out. The installed app has no address bar, so this is its only way out.
+  // kiosk-sw.js sees the logout go by and deletes what the kiosk kept on the phone; the server's
+  // on_logout removes the offline marker. Then a reload: /kiosk sends a signed-out visitor to
+  // the sign-in page itself, and the kiosk never writes the URL (see ui.js, "History").
+  function signOut() {
+    var clockedIn = app.status === 'Open' || app.status === 'Paused';
+    return UI.ask({
+      title: 'Sign out?',
+      message: clockedIn
+        ? 'You’re still clocked in. Signing out does not clock you out.'
+        : 'Anything the kiosk saved on this phone is deleted, so the next person can sign in.',
+      ok: 'Sign out',
+      okKind: 'stop',
+      cancel: 'Cancel',
+    }).then(function (yes) {
+      if (!yes) return;
+      app.signingOut = true;
+      return api('logout', {}).then(function () {
+        window.location.reload();
+      }, function (e) {
+        app.signingOut = false;
+        toast(navigator.onLine ? humanError(e) : 'Signing out needs a connection.', 'red', 4000);
+      });
+    });
+  }
+
+  // A kept copy of this page, served offline, that was drawn for somebody who is no longer
+  // signed in on this phone (they signed out, or somebody else signed in): show nothing of
+  // theirs, and have the worker delete what it keeps for them.
+  function showSignedOut(root) {
+    UI.clear(root);
+    root.removeAttribute('aria-busy');
+    root.appendChild(h('div', { class: 'tk-view', id: 'tk-view' }, [
+      h('header', { class: 'tk-hero is-idle', id: 'tk-hero' }, [
+        h('p', { class: 'tk-hero-title', text: 'Signed out' }),
+        h('p', { class: 'tk-hero-sub', text: 'Nobody is signed in to the kiosk on this phone.' }),
+      ]),
+      h('div', { class: 'tk-stack' }, [
+        h('div', { class: 'tk-card' }, [
+          h('p', { class: 'tk-note', text: 'Connect to the internet, then sign in with your own account.' }),
+          // A reload: with a signal, /kiosk opens for whoever is signed in now, or sends a
+          // signed-out visitor to the sign-in page; without one, this screen again.
+          h('button', { type: 'button', class: 'tk-btn tk-btn-primary', style: { marginTop: '12px' }, text: 'Sign in', on: { click: function () { window.location.reload(); } } }),
+        ]),
+      ]),
+    ]));
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'forget', data: { owner: phoneKey() } });
+    }
   }
 
   // -- Clock / timer -------------------------------------------------------
@@ -1717,13 +1790,15 @@
   // -- Init ----------------------------------------------------------------
   function init() {
     var root = $('kiosk-root');
+    // Whose kiosk this phone is now (the marker cookie) is not whose this page is: refuse.
+    if (OFFLINE_KEY && phoneKey() !== OFFLINE_KEY) { showSignedOut(root); return; }
     buildShell(root);
     root.removeAttribute('aria-busy');
     cacheEls();
     wire();
     UI.theme.syncMeta();
 
-    window.KioskGeo.configure(SETTINGS).onStatus(renderTrack);
+    window.KioskGeo.configure(SETTINGS).setOwner(OFFLINE_KEY).onStatus(renderTrack);
     // Ask for location permission on visit, so it's granted before clock-in.
     window.KioskGeo.warmup();
     registerServiceWorker();
@@ -1754,6 +1829,7 @@
         }
       },
       refreshApp: refreshApp,
+      signOut: signOut,
       promptInstall: promptInstall,
       canInstall: function () { return !!app.installPrompt; },
       setBadge: setBadge,

@@ -13,56 +13,112 @@ ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
 
 ### Fixed
 - **Privacy: on a shared phone, the Time Kiosk no longer shows one technician another's My Day,
-  history, correction requests or Map trail when offline.** An independent review of the kiosk
-  Photos tab (#1374) found it on 2026-10-27. The root-scope worker (`www/kiosk-sw.js`) kept every
-  GET under `/api/method/erpnext_enhancements.api.time_kiosk.` under its **URL alone**, with no
-  per-user part and no `Vary`, and replayed it whenever the network failed.
+  history, correction requests or Map trail, offline or after a change of person.** An independent
+  review of the kiosk Photos tab (#1374) found it on 2026-10-27. The root-scope worker
+  (`www/kiosk-sw.js`) kept every GET under `/api/method/erpnext_enhancements.api.time_kiosk.` under
+  its **URL alone**, with no per-user part and no `Vary`, and replayed it whenever the network
+  failed.
   - **How it leaked.** `get_my_day`, `get_my_history`, `get_my_correction_requests` (`myday.js`),
     `get_my_trail` (`map.js`) and `get_current_status` are all person-specific. Their URLs are the
     same for everyone on a given day. When Sam signed in after Pat and the phone then lost
     signal, every screen Sam had not yet loaded online was answered from Pat's copy.
-  - **Nothing ever cleared it.** The kiosk has no sign-out of its own. A sign-out elsewhere
-    (desk, the `/logout` page) left the kept answers **and** the kept `/kiosk` page in place, and
-    that page carries Pat's boot payload. Offline, anyone who opened `/kiosk` afterwards got
-    Pat's screen. Only a deploy's cache rotation removed them.
-  - **The fix, one person at a time:**
-    - `app.js`'s `api()` now sends `X-Kiosk-User` (`BOOT.user`, URI-encoded) on every call.
-    - The worker keeps each answer under that name: a `__kiosk_user` parameter on the cache key,
-      which is never sent to the server. Offline, it replays only the answer kept for the name
-      the asking page sends.
-    - A call without the header is neither kept nor replayed.
-    - Keeping an answer for somebody new deletes everybody else's.
-    - **A sign-out deletes every kept answer and the kept `/kiosk` page.** The worker is
-      root-scope, so it sees the sign-out request even from desk, and lets it through untouched.
-      It matches desk's `POST /api/method/logout` and the `/logout` page's `POST /` with
-      `X-Frappe-CMD: logout`, both read from frappe v16.53.0 (prod's version today), plus
-      `web_logout` and `/api/v2/method/logout`.
-    - The answers stay in the per-deploy `CACHE`, so a deploy still drops them.
-  - **Why the page names the person, and the worker does not work it out.** A worker cannot read
-    cookies in every browser. A name sent with each request is also race-free: keeping the user
-    in the worker from a `config` message would leave a window, just after sign-in, where the
-    new person's first offline request could still be answered as the last person. Two other
-    keys were ruled out:
-    - **The CSRF token.** Already on every request, but frappe creates it lazily per session
-      (`sessions.get_csrf_token`). A session that went straight from `/login` to `/kiosk` can
-      boot with none, which would turn offline replay off for that person.
-    - **frappe's `user_id` cookie.** The itinerary already found it unusable offline (`www/README`).
+  - **Nothing ever cleared it.** The kiosk had no sign-out of its own. A sign-out elsewhere left the
+    kept answers **and** the kept `/kiosk` page in place, and that page carries Pat's boot payload.
+    Only a deploy's cache rotation removed them.
+  - **Why the first fix was not enough.** The first draft of this release keyed answers by the
+    page's `BOOT.user` and forgot on a sign-out the worker saw. The review reproduced the gap:
+    Pat's session expires (no sign-out is ever seen), Sam signs in, and the phone is offline
+    before Sam's `/kiosk` loads. `/kiosk` then falls back to **Pat's** kept page, whose boot says
+    Pat, and Pat's answers replay. Treating a login like a logout in the worker would not have
+    closed it either: Sapphire signs in with Google, and `login_via_google` (like
+    `login_via_key`) arrives as a GET redirect, which no POST matcher sees.
+  - **The fix, the itinerary's pattern** (`travel_management/itinerary_offline.py`). The page,
+    which can read cookies, decides whose kept kiosk may draw. The worker keeps and deletes
+    accordingly.
+    - **The offline marker** (`workforce/kiosk_offline.py`, new):
+      - `kiosk.py` sets the `ee_kiosk_key` cookie on every render, and the boot carries the same
+        key as `offline_key`. The cookie is an HMAC of the user with its own context, never the
+        email. It lasts 30 days, is `Path=/` and `SameSite=Lax`, and is not HttpOnly, so the page
+        can read it.
+      - `on_logout` removes it on every sign-out. `on_login` removes it on a sign-in as anybody
+        else. That works for every route, because the password form, `POST /` with `cmd=login`,
+        `login_via_google` and `login_via_key` all reach `post_login`.
+    - **The page** (`app.js`):
+      - A page whose `offline_key` is not the cookie's draws nothing and shows **Signed out**.
+        It also posts `forget` to the worker.
+      - While the cookie still holds the key, every call names it in `X-Kiosk-Key`. The email is
+        no longer sent.
+    - **The worker** (`kiosk-sw.js`):
+      - It keeps each answer under the marker, as a `__kiosk_key` cache-key parameter that is
+        never sent to the server.
+      - It keeps an answer only when the server's echo agrees. A new `after_request` hook,
+        `kiosk_offline.stamp_response`, labels every kiosk GET answer with the marker of the
+        session that answered. So a stale window that claims Pat while the session is Sam's keeps
+        nothing.
+      - Offline, it replays only the asking page's own answers.
+      - Keeping an answer for somebody new deletes everybody else's.
+      - A sign-out is now passed through and its answer returned unchanged. Around it, the worker
+        deletes every kept answer, the kept page and every queued point, then tells open `/kiosk`
+        windows to reload.
+      - A `/kiosk` load answered with a redirect forgets the answers and the page.
+      - Only a real (200) page is kept. Before, whatever came back was kept, a redirect included.
+      - An **epoch** stops an answer or page that was in flight during a forget from being kept
+        after it, or from disturbing the next person's.
+    - **Queued location points carry their person:**
+      - `geo.js` tags each point with the marker. The worker uploads one run of batches per
+        marker, sent as `offline_key`.
+      - `log_geolocation_batch` refuses a batch for anybody but the session's user: every point is
+        rejected `other_person`, which is transient, so the points stay queued.
+      - Before, Pat's unsent points, flushed after Sam signed in, were filed as Sam's
+        `Time Kiosk Log` rows with no interval.
+      - **Another person's points are deleted** when somebody else's kiosk takes the phone. They
+        can never be uploaded under that session, and raw positions should not linger on a shared
+        phone. They upload normally if their own person signs back in first.
+      - A sign-out deletes every queued point.
+      - Points queued before this release carry no marker and upload as before.
+    - **Settings → Sign out** (new). The installed app has no address bar, so it had no way to
+      hand the phone over. The button asks first, and warns when you are still clocked in, since
+      signing out does not clock you out. It then posts `/api/method/logout` and reloads: the
+      kiosk never writes the URL, and `/kiosk` sends a signed-out visitor to the sign-in page.
+  - **What the marker is not: a lock.** Any script on the site could send any `X-Kiosk-Key`, and
+    the phone's developer tools can read Cache Storage. The server's echo check and the deletes
+    are the control.
   - **Not covered** (`www/README`):
-    - An iPhone home-screen app keeps its own cookies and storage apart from Safari, so a
-      sign-out in Safari does not reach it. The app is still signed in, too.
-    - Sessions ended elsewhere (expiry, *Logout All Sessions*) send the phone nothing.
-  - **Tests.** `scripts/test_kiosk_sw_cache.js` runs the real worker in node, over a stand-in
-    Cache Storage and a network that answers as whoever the server thinks is signed in. 40 checks
-    over 11 scenarios: own answers replay offline; the next person gets a 504, not the last
-    person's, even before their own first answer is kept; one person's answers at a time,
-    including after a worker restart; sign-outs from desk, `/logout`, `web_logout` and v2 forget
-    everything, while other POSTs and another site's logout forget nothing; a call that names
-    nobody; only a good answer is kept; a deploy drops the old deploy's answers; the name never
-    leaves the phone. **Against the pre-fix worker, 19 of the 40 checks fail.**
-    `tests/test_kiosk_service_worker.py` runs the harness. It also pins what the harness cannot
-    see: the header in `app.js`; no keep or match by URL in the API branch; the sign-out check
-    before the GET-only guard; and no Jinja opener in the worker, since TemplatePage serves
-    `www/*.js`. CI runs the harness as its own `node` step as well.
+    - **An iPhone home-screen app** keeps its own cookies and storage apart from Safari, so a
+      sign-out in Safari does not reach it. Settings → Sign out works inside it.
+    - **A session that merely expires, or one ended elsewhere** (*Logout All Sessions*, a password
+      change), sends the phone nothing. Offline, the phone still opens that person's kept kiosk
+      until somebody signs in on it, or until `/kiosk` loads with a signal and is sent to the
+      login page. The itinerary deliberately accepts the same limit. Somebody else's sign-in does
+      clear it, which the first draft wrongly said it did not.
+  - **Tests:**
+    - `scripts/test_kiosk_sw_cache.js` (new) runs the real worker over a stand-in phone and server.
+      The phone has Cache Storage, IndexedDB, open windows and a cookie jar. The server behaves
+      like frappe and `kiosk_offline`. **95 checks over 22 scenarios**, including:
+      - expiry followed by a new sign-in through the password form, `POST /` `cmd=login`, and a
+        Google-style GET redirect, each followed by an offline open;
+      - a sign-out from desk, `/logout`, `web_logout`, v2 and Settings, and one with no signal;
+      - the echo check;
+      - answers and pages in flight during a sign-out;
+      - a gateway 502 on `/kiosk`;
+      - the location queue under two people;
+      - a deploy;
+      - a worker restart.
+      Against main's worker, 48 of the 95 fail. A mutation sweep over the new guards is caught,
+      except the second epoch check inside `keepAnswer`, which only matters if a forget lands
+      mid-save.
+    - `scripts/test_kiosk_history.js` now also boots the **real** `app.js`:
+      - with the marker gone, or somebody else's, it shows the refusal and the `forget` message;
+      - with the marker matching, every call carries the key;
+      - after the cookie changes under an open page, its calls name nobody.
+      245 checks.
+    - `tests/test_kiosk_offline.py` (new, 19 tests) covers the marker module, run from source over
+      a stand-in `frappe`.
+    - `tests/test_kiosk_service_worker.py` runs the worker harness and pins the seams, including
+      the exact `app.js` lines the harness's page model mirrors.
+    - `test_hooks_integrity` holds the kiosk's hooks to the same rules as the itinerary's.
+    - A bench test in `test_geo_telemetry.py` covers the batch refusal.
+    - CI runs the harness and the marker suite as their own steps.
 
 ## [1.750.0] - 2026-10-27
 

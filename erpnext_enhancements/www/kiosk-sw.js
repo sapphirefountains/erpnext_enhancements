@@ -24,12 +24,16 @@
  *               kiosk GET APIs → network-first with a fallback to the answer kept
  *               for the SAME person (see "Kept API answers" below); our /assets
  *               (+ /kiosk-manifest.json) → cache-first with background refresh.
- *               A sign-out POST forgets every kept answer and the kept shell; it,
- *               like every other non-GET or cross-origin request, is passed through.
- *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB; 'enqueue'
- *               persists a point and tries to flush; 'flush' flushes on demand;
- *               'stats' answers { queued } over the MessageChannel port the page
- *               sends with it (the Settings tab's diagnostics).
+ *               A sign-out POST is passed on and answered unchanged, and forgets
+ *               every kept answer, the kept shell and every queued point, then
+ *               tells open kiosk windows; every other non-GET or cross-origin
+ *               request is passed through.
+ *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB and drops
+ *               anybody else's queued points; 'forget' forgets what is kept for a
+ *               person the marker cookie no longer names; 'enqueue' persists a
+ *               point and tries to flush; 'flush' flushes on demand; 'stats'
+ *               answers { queued } over the MessageChannel port the page sends
+ *               with it (the Settings tab's diagnostics).
  *   - sync:     the SYNC_TAG Background Sync event re-runs flushQueue() once the
  *               browser regains connectivity.
  *
@@ -53,11 +57,13 @@ const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';
 // The kiosk's GET APIs, which this worker keeps and replays offline, per person.
 const API_PREFIX = '/api/method/erpnext_enhancements.api.time_kiosk.';
-// app.js names the person its screen belongs to (BOOT.user, URI-encoded) on every
-// kiosk call in this header, and this query parameter carries that name in a kept
-// answer's cache key. The key is only ever a cache address; it is never fetched.
-const USER_HEADER = 'X-Kiosk-User';
-const USER_PARAM = '__kiosk_user';
+// The offline marker (workforce/kiosk_offline.py: an HMAC of the user, never the
+// email). app.js names it on every kiosk call in this header while the phone's
+// ee_kiosk_key cookie still holds it; the server echoes, in the same header, the
+// marker of the session that actually answered. This query parameter carries it in
+// a kept answer's cache key, which is only ever a cache address, never fetched.
+const KEY_HEADER = 'X-Kiosk-Key';
+const KEY_PARAM = '__kiosk_key';
 // Frappe's sign-out requests (read from v16.53.0): desk's Log out POSTs
 // /api/method/logout, and the /logout page (the website's Logout link) POSTs '/'
 // with the method in an X-Frappe-CMD header. web_logout is the same, POST only.
@@ -185,39 +191,59 @@ async function flushQueue() {
   flushing = true;
   try {
     const csrf = await getMeta('csrf_token');
-    let points = await getAllPoints();
     const batchSize = (await getMeta('max_batch_size')) || 50;
 
-    while (points.length) {
-      const batch = points.slice(0, batchSize);
-      const res = await fetch(BATCH_ENDPOINT, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Frappe-CSRF-Token': csrf || '',
-        },
-        body: JSON.stringify({ points: batch }),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+    // One run of batches per person the points were queued for, each sent with that
+    // person's marker as offline_key. The server refuses a batch for anybody but the
+    // session's user (every point rejected other_person, a transient reject), so one
+    // person's unsent positions are never filed as another's; they wait for their own
+    // person, or go when somebody else's kiosk takes the phone (dropPointsNotOf).
+    const byOwner = new Map();
+    for (const p of await getAllPoints()) {
+      const owner = p.owner || '';
+      if (!byOwner.has(owner)) byOwner.set(owner, []);
+      byOwner.get(owner).push(p);
+    }
 
-      const data = await res.json();
-      // Frappe wraps whitelisted return values under `message`. The endpoint
-      // reports which client_ids it accepted and which it rejected (with a reason).
-      const msg = (data && data.message) || {};
-      const accepted = msg.accepted || [];
-      // Only permanently-rejected points are dropped; transient rejects stay queued.
-      const dropped = (msg.rejected || [])
-        .filter((r) => PERMANENT_REJECTS.has(r.reason))
-        .map((r) => r.client_id);
+    for (const [owner, queued] of byOwner) {
+      let points = queued;
+      while (points.length) {
+        // The marker travels once, as offline_key, not inside every point.
+        const batch = points.slice(0, batchSize).map((p) => {
+          const sent = Object.assign({}, p);
+          delete sent.owner;
+          return sent;
+        });
+        const res = await fetch(BATCH_ENDPOINT, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Frappe-CSRF-Token': csrf || '',
+          },
+          body: JSON.stringify(owner ? { points: batch, offline_key: owner } : { points: batch }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
 
-      // Remove everything the server is done with (accepted + permanently dropped).
-      await deletePoints([...accepted, ...dropped]);
+        const data = await res.json();
+        // Frappe wraps whitelisted return values under `message`. The endpoint
+        // reports which client_ids it accepted and which it rejected (with a reason).
+        const msg = (data && data.message) || {};
+        const accepted = msg.accepted || [];
+        // Only permanently-rejected points are dropped; transient rejects stay queued.
+        const dropped = (msg.rejected || [])
+          .filter((r) => PERMANENT_REJECTS.has(r.reason))
+          .map((r) => r.client_id);
 
-      // Stop if the server made no progress (avoid infinite loop on stuck batch).
-      if (!accepted.length && !dropped.length) break;
-      points = points.slice(batch.length);
+        // Remove everything the server is done with (accepted + permanently dropped).
+        await deletePoints([...accepted, ...dropped]);
+
+        // Stop if the server made no progress (avoid infinite loop on stuck batch);
+        // the next person's points still get their turn.
+        if (!accepted.length && !dropped.length) break;
+        points = points.slice(batch.length);
+      }
     }
     return true;
   } catch (e) {
@@ -238,28 +264,42 @@ async function ensureSync() {
   }
 }
 
-// --- Kept API answers, one person at a time -------------------------------
+// --- What the kiosk keeps, one person at a time ----------------------------
 // Most kiosk GETs are about the person asking: get_my_day, get_my_history,
 // get_my_correction_requests, get_my_trail, the current status. They used to be
 // kept under their URL alone, so on a shared phone the next technician, offline,
-// was handed the last one's day, history, correction requests and Map trail.
-// Now an answer is kept under the person app.js names in USER_HEADER, an offline
-// replay looks only under the name the asking page sends, and the phone holds
-// one person's answers at a time:
+// was handed the last one's day, history, correction requests and Map trail, and
+// the kept /kiosk page (which carries its person's boot payload) outlived every
+// sign-out. Now:
+//   - an answer is kept under the marker the page names in KEY_HEADER, and only
+//     when the server's echo of the same header agrees (a stale window claiming
+//     one person while the session is another's keeps nothing); an offline replay
+//     looks only under the marker the asking page names;
 //   - keeping an answer for somebody new forgets everybody else's (keepAnswer);
-//   - a sign-out forgets everybody's, and the kept /kiosk page with them, which
-//     carries that person's boot payload (forgetEverybody).
-// All of it lives in CACHE, so a deploy's activate still drops it with the rest.
-// The worker cannot read cookies (not every browser lets one), so it never
-// decides who is signed in: the page says whose screen is asking.
+//   - a sign-out forgets every answer, the kept page and every queued point, then
+//     tells any open kiosk window (signOut); /kiosk answered with a redirect (the
+//     server says nobody is signed in) forgets the answers and the page; and a page
+//     that finds itself drawn for somebody the marker cookie no longer names asks
+//     for the same ('forget');
+//   - a queued location point carries its person's marker, is uploaded under that
+//     marker only (the server refuses another person's: other_person), and is
+//     deleted when somebody else's kiosk takes the phone ('config' / 'forget').
+// Answers and the page live in CACHE, so a deploy's activate still drops them.
+// The worker cannot read cookies (not every browser lets one), so it never decides
+// who is signed in: the page reads the marker cookie and says. Any script on the
+// site could send any KEY_HEADER; the echo check and the deletes are the control.
 
 // Whose answers are kept, as last seen. A hint only: the worker is stopped when it
 // is idle and this is lost, after which the next keep looks at every entry.
 let keptFor = null;
 
-function userKey(req, user) {
+// Bumped by every forget. A page or an answer whose fetch started before the bump
+// was asked for by somebody who has since gone, and is not kept when it lands.
+let epoch = 0;
+
+function keyedUrl(req, owner) {
   const url = new URL(req.url);
-  url.searchParams.set(USER_PARAM, user);
+  url.searchParams.set(KEY_PARAM, owner);
   return url.href;
 }
 
@@ -278,23 +318,62 @@ async function forgetAnswers(keep, withShell) {
     for (const req of await cache.keys()) {
       const url = new URL(req.url);
       if (!url.pathname.startsWith(API_PREFIX)) continue;
-      if (keep === null || url.searchParams.get(USER_PARAM) !== keep) await cache.delete(req);
+      if (keep === null || url.searchParams.get(KEY_PARAM) !== keep) await cache.delete(req);
     }
   }
 }
 
-async function keepAnswer(user, key, response) {
-  if (user !== keptFor) {
-    await forgetAnswers(user, false);
-    keptFor = user;
+async function keepAnswer(owner, key, response, at) {
+  if (at !== epoch) return;
+  if (owner !== keptFor) {
+    await forgetAnswers(owner, false);
+    keptFor = owner;
   }
   const cache = await caches.open(CACHE);
-  await cache.put(key, response);
+  if (at === epoch) await cache.put(key, response);
 }
 
-async function forgetEverybody() {
+async function keepPage(response, at) {
+  const cache = await caches.open(CACHE);
+  if (at === epoch) await cache.put('/kiosk', response);
+}
+
+// Every kept answer and the kept page; queued points are the caller's business.
+async function forgetKept() {
+  epoch += 1;
   keptFor = null;
   await forgetAnswers(null, true);
+}
+
+// Queued points tagged for anybody but `owner` ('' = everybody tagged). A point
+// queued before v1.750.1 carries no marker and is left to upload as before.
+async function dropPointsNotOf(owner) {
+  const points = await getAllPoints();
+  await deletePoints(points.filter((p) => p.owner && p.owner !== owner).map((p) => p.client_id));
+}
+
+async function tellKioskWindows() {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const w of windows) {
+    if (new URL(w.url).pathname === '/kiosk') w.postMessage({ type: 'signed-out' });
+  }
+}
+
+// A sign-out (desk, the /logout page, Settings → Sign out): forget before it leaves,
+// so an answer already in flight is not kept (epoch); let it through; forget again
+// once the server has answered, for anything fetched in between; delete every
+// queued point (raw positions do not outlive a sign-out); then tell open kiosk
+// windows, which reload into the sign-in page. All of that whether or not the
+// request reached the server: the person meant to leave.
+async function signOut(req) {
+  await forgetKept().catch(() => {});
+  try {
+    return await fetch(req);
+  } finally {
+    await forgetKept().catch(() => {});
+    await deletePoints((await getAllPoints()).map((p) => p.client_id)).catch(() => {});
+    await tellKioskWindows().catch(() => {});
+  }
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -326,23 +405,32 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  // Somebody is signing out, from desk or the /logout page (this worker is at root
-  // scope, so it sees both): forget what the kiosk kept for them before the next
-  // person picks the phone up. The request itself goes on untouched.
+  // Somebody is signing out, from desk, the /logout page or the kiosk's Settings
+  // (this worker is at root scope, so it sees all three): forget what the kiosk
+  // kept before the next person picks the phone up. The request is passed on, and
+  // its answer returned, unchanged (signOut).
   if (isSignOut(req, url)) {
-    event.waitUntil(forgetEverybody().catch(() => {}));
+    event.respondWith(signOut(req));
     return;
   }
   if (req.method !== 'GET') return;
   if (url.origin !== self.location.origin) return;
 
-  // App navigation: network-first, fall back to cached shell when offline.
+  // App navigation: network-first, fall back to cached shell when offline. Only a
+  // real page is kept (it used to keep whatever came back, a redirect included),
+  // and not one asked for before a forget. /kiosk redirects only a Guest
+  // (kiosk.py), so a redirect means nobody is signed in here any more: forget the
+  // answers and the page (queued points stay, for their person's next sign-in).
   if (req.mode === 'navigate' && url.pathname === '/kiosk') {
     event.respondWith((async () => {
+      const at = epoch;
       try {
         const fresh = await fetch(req);
-        const cache = await caches.open(CACHE);
-        cache.put('/kiosk', fresh.clone());
+        if (fresh.type === 'opaqueredirect' || fresh.redirected) {
+          event.waitUntil(forgetKept().catch(() => {}));
+        } else if (fresh.ok) {
+          event.waitUntil(keepPage(fresh.clone(), at).catch(() => {}));
+        }
         return fresh;
       } catch (e) {
         return (await caches.match('/kiosk')) ||
@@ -357,18 +445,20 @@ self.addEventListener('fetch', (event) => {
   // the Map trail): network-first, falling back to the last good response so the
   // idle screen and form links still render in a dead zone (equipment rooms).
   // POSTs (clock actions) are untouched — they need the server. Kept and replayed
-  // per person (see "Kept API answers" above): a call that names nobody is neither
-  // kept nor replayed, it just goes to the network.
+  // per person (see "What the kiosk keeps" above): a call that names nobody is
+  // neither kept nor replayed, it just goes to the network, and an answer the
+  // server labelled for anybody else is handed back but not kept.
   if (url.pathname.startsWith(API_PREFIX)) {
-    const user = req.headers.get(USER_HEADER);
-    if (!user) return;
-    const key = userKey(req, user);
+    const owner = req.headers.get(KEY_HEADER);
+    if (!owner) return;
+    const key = keyedUrl(req, owner);
     event.respondWith((async () => {
+      const at = epoch;
       try {
         const fresh = await fetch(req);
-        if (fresh && fresh.ok) {
+        if (fresh && fresh.ok && fresh.headers.get(KEY_HEADER) === owner) {
           // Cloned here, before the response is returned (see the shell below).
-          event.waitUntil(keepAnswer(user, key, fresh.clone()).catch(() => {}));
+          event.waitUntil(keepAnswer(owner, key, fresh.clone(), at).catch(() => {}));
         }
         return fresh;
       } catch (e) {
@@ -423,8 +513,12 @@ self.addEventListener('fetch', (event) => {
 
 // --- Messaging from the page ----------------------------------------------
 // The page (geo.js) drives the worker via postMessage({ type, data }):
-//   config  → persist csrf_token / max_batch_size for later uploads
-//   enqueue → store one point, then attempt an immediate flush
+//   config  → persist csrf_token / max_batch_size for later uploads; with owner (the
+//             page's offline marker), delete queued points tagged for anybody else
+//   forget  → (app.js showSignedOut) forget every kept answer and the kept page, and
+//             queued points tagged for anybody but data.owner (whom the cookie names)
+//   enqueue → store one point (tagged with its person's marker, geo.js), then
+//             attempt an immediate flush
 //   flush   → flush the queue on demand (e.g. on reconnect / app resume)
 //   stats   → reply { queued: <points still in IndexedDB> } on event.ports[0]
 //             (the page sends a MessageChannel port; KioskGeo.queuedCount)
@@ -442,6 +536,16 @@ self.addEventListener('message', (event) => {
     event.waitUntil((async () => {
       if (data.csrf_token) await setMeta('csrf_token', data.csrf_token);
       if (data.max_batch_size) await setMeta('max_batch_size', data.max_batch_size);
+      // The page's person now has the phone: anybody else's queued points can never
+      // be uploaded under this session, so they go rather than linger.
+      if (data.owner) await dropPointsNotOf(data.owner);
+    })());
+  } else if (type === 'forget') {
+    // A page drawn for somebody the marker cookie no longer names (app.js
+    // showSignedOut). data.owner is whom the cookie names now ('' for nobody).
+    event.waitUntil((async () => {
+      await forgetKept();
+      await dropPointsNotOf((data && data.owner) || '');
     })());
   } else if (type === 'enqueue') {
     event.waitUntil((async () => {

@@ -55,7 +55,14 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.workforce import client_time, costing, photo_gate, sites, tracking_health
+from erpnext_enhancements.workforce import (
+    client_time,
+    costing,
+    kiosk_offline,
+    photo_gate,
+    sites,
+    tracking_health,
+)
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
@@ -1881,7 +1888,7 @@ def _touch_interval_fixes(job_interval, count, latest):
 
 
 @frappe.whitelist()
-def log_geolocation_batch(points):
+def log_geolocation_batch(points, offline_key=None):
     """
     Bulk-ingest geolocation points captured by the kiosk PWA worker.
 
@@ -1901,6 +1908,14 @@ def log_geolocation_batch(points):
     job_interval is verified to belong to that employee. Returns the list of
     accepted client_ids so the worker can clear exactly those from IndexedDB.
 
+    ``offline_key`` is the kiosk offline marker the points were queued under
+    (workforce/kiosk_offline.py; kiosk-sw.js sends one batch per marker). A batch
+    queued for somebody other than the session's user is refused whole, every
+    point rejected ``other_person``, so a shared phone never files one person's
+    unsent positions as another's. The worker keeps such points until their own
+    person's kiosk takes them, or deletes them when somebody else's does. No key
+    (a point queued before v1.750.1) is accepted as before.
+
     A fix worse than ``min_accuracy_m`` is stored as ``Low Accuracy`` (and
     reported as accepted) when ``keep_low_accuracy_fixes`` is on — it still
     proves the phone was reporting — and rejected with ``low_accuracy`` when it
@@ -1915,6 +1930,16 @@ def log_geolocation_batch(points):
         points = json.loads(points)
     if not isinstance(points, list):
         frappe.throw(_("'points' must be a list."))
+
+    if not kiosk_offline.belongs_to_session(offline_key):
+        return {
+            "status": "other_person",
+            "accepted": [],
+            "rejected": [
+                {"client_id": p.get("client_id"), "reason": "other_person"}
+                for p in points if isinstance(p, dict)
+            ],
+        }
 
     max_batch = cint(settings.get("max_batch_size")) or 50
     min_accuracy = cint(settings.get("min_accuracy_m"))

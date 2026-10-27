@@ -2975,7 +2975,15 @@ override_whitelisted_methods = {
 # the serialised body instead, only on those paths and only when a field actually goes; every
 # other request leaves on a method + path check. It never raises (frappe would log it and send
 # the body unscrubbed). See fieldlevel_read.scrub_rest_write_response (v1.542.0).
-after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response"]
+#
+# Time Kiosk offline marker (v1.750.1): every api.time_kiosk GET answer is labelled X-Kiosk-Key
+# with the marker of the session that answered (empty for Guest), and kiosk-sw.js keeps an answer
+# offline only when that matches the key the page claimed. Every other request leaves on a method
+# + path check; it never raises. See workforce/kiosk_offline.stamp_response.
+after_request = [
+	"erpnext_enhancements.fieldlevel_read.scrub_rest_write_response",
+	"erpnext_enhancements.workforce.kiosk_offline.stamp_response",
+]
 
 # The overrides above match a method *name*, but frappe's whitelist check matches the function
 # *object*, so a module that imports one of the eleven wrapped functions exposes frappe's
@@ -3024,9 +3032,20 @@ auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_a
 # signs in on it. Neither ever raises (frappe runs them inside the login and the logout), and
 # on_login sends a cookie only to a browser holding somebody else's marker. See
 # travel_management/itinerary_offline.py.
-on_logout = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"]
+#
+# The Time Kiosk's marker (v1.750.1) is the same pattern for /kiosk: www/kiosk.py sets
+# `ee_kiosk_key`, a kept kiosk page whose boot key is not the cookie's refuses to draw and has
+# kiosk-sw.js delete what it keeps (answers, the page, queued points), and the same two hooks
+# remove it. on_login is what covers a session that expired followed by somebody else's sign-in by
+# ANY route, including the GET ones (login_via_google, which is how Sapphire signs in, and
+# login_via_key all reach post_login). See workforce/kiosk_offline.py.
+on_logout = [
+	"erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout",
+	"erpnext_enhancements.workforce.kiosk_offline.forget_on_logout",
+]
 on_login = [
 	"erpnext_enhancements.travel_management.itinerary_offline.forget_on_login",
+	"erpnext_enhancements.workforce.kiosk_offline.forget_on_login",
 	# portal login (v1.565.0): the second layer. A sign-in through login_via_key (an emailed
 	# link) is refused for any account that is not a Website User, whatever minted the key.
 	# Raising here happens before frappe makes the session, so no session is created.

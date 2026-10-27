@@ -35,6 +35,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
+| `kiosk_offline.py` | The Time Kiosk offline marker (v1.750.1): the `ee_kiosk_key` cookie that says whose kept kiosk a shared phone may show and replay offline, its `on_login`/`on_logout` hooks, the `X-Kiosk-Key` echo on kiosk answers, and the check that refuses another person's queued location points. See `../www/README.md` (`kiosk-sw.js`) |
 | `client_time.py` | A browser timestamp onto the site's clock — naive, site-local, offset converted not stripped (v1.526.1) |
 | `photo_routing.py` | Photo fan-out onto Project/Task + Drive hand-off (WP-3) |
 | `payroll_export.py` | Semi-monthly hours in the payroll provider's workbook format (WP-8) + the Internal Costing sheet |
