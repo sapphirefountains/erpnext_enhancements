@@ -1872,7 +1872,8 @@ jobs:
       # attachments, activity, assigned to, tags, follow, people and places, connections and Actions
       # menu for any guided DocType. The pure decisions and the directory's shared party rules under
       # node; form_kit.api.record_info against a frappe stub (its own, so its own step); and that the
-      # Desk form's buttons call the same shared code.
+      # Desk form's buttons call the same shared code. v1.746.0: People & places' Account / Supplier
+      # line, the Desk directory's column, by the one account_entries rule (run here) both draw.
       - name: Guided record tools (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_record_tools -v
       # v1.711.0, the guided page's head band and files section: a DocType's header status chip
@@ -2177,7 +2178,9 @@ jobs:
       # updates every row they match); every name the request carries is the same string in the
       # permission check and in the query (an integer passed has_permission on one party and then
       # matched every party starting with that number); and a row's "Linked To" names only parties
-      # the caller may select.
+      # the caller may select. v1.746.0 (AccountColumnTest): both directory tables' Account /
+      # Supplier column is built from those same visible links, and reads the titles in one query
+      # per doctype rather than one per row.
       - name: Contact, address and ship-to endpoint permissions (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_contact_endpoint_permissions -v
       # The same directory's client half, executed: get_all_party_sources in
@@ -2186,6 +2189,23 @@ jobs:
       # the (doctype, name) pair since v1.561.1, and its contacts silently left the directory.
       - name: Directory party sources keep same-named parties (bench-free, node)
         run: node scripts/test_party_sources.mjs
+      # v1.746.0 (TASK-2026-02942): the directory's contact and address tables each had a "Linked
+      # To" column listing every party a record is linked to, by ID, so a person on five jobs showed
+      # five Projects beside the company they work for. Both are now Account / Supplier: the
+      # Customers and Suppliers only, by display name, a Supplier tagged, "None" when there are
+      # neither, every name escaped, and on a Customer or Supplier form that party a quiet, unlinked
+      # "This account" / "This supplier". Runs the one shared cell renderer, with the real
+      # party_sources.js whose account_entries rule it draws (the guided page's People & places line
+      # draws the same rule, run in the guided record tools step), checks both tables use it and
+      # that a tab on an older bundle gets an empty cell rather than a TypeError. Also runs both
+      # tables' renders against a fake field (the #1367 reviews): two overlapping renders draw one
+      # table, the latest; a reply that lands after a move to another form, or another record of
+      # the same DocType, is dropped; and a current reply draws the cell and the Primary badges for
+      # the form that asked, never this.frm. The server half
+      # (which links, which titles, one title query per doctype) is AccountColumnTest in the
+      # endpoint-permissions step above.
+      - name: Directory tables show Account / Supplier, not every link (bench-free, node)
+        run: node scripts/test_directory_account_column.mjs
       # v1.575.0, from the 2026-10-06 link audit: the directory's Link Existing linked a contact to
       # the open form AND its Customer AND every Project Stakeholder, so a county health inspector
       # added to a Harwood project became a Harwood and a Layton Construction contact. New Contact /
