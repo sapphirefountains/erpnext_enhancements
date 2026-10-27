@@ -55,14 +55,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.workforce import (
-    client_time,
-    costing,
-    kiosk_offline,
-    photo_gate,
-    sites,
-    tracking_health,
-)
+from erpnext_enhancements.workforce import client_time, costing, photo_gate, sites, tracking_health
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
@@ -1930,6 +1923,10 @@ def log_geolocation_batch(points, offline_key=None):
         points = json.loads(points)
     if not isinstance(points, list):
         frappe.throw(_("'points' must be a list."))
+
+    # Imported here, not at the top: several bench-free suites import this module over a
+    # stub of the workforce package that lists only the modules it used to need.
+    from erpnext_enhancements.workforce import kiosk_offline
 
     if not kiosk_offline.belongs_to_session(offline_key):
         return {
