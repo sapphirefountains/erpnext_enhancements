@@ -3,7 +3,7 @@
  *
  * Targets: the Time Kiosk PWA front-end (mounts into #kiosk-root).
  * Loaded via: the web page www/kiosk.html — NOT through hooks.py — after ui.js,
- * geo.js and the view modules (myday.js, map.js, settings.js). The page injects
+ * geo.js and the view modules (myday.js, photos.js, map.js, settings.js). The page injects
  * a boot payload on `window.KIOSK_BOOT` (employee, settings, current status,
  * photo_gate, csrf_token), the CSRF token on `window.KIOSK_CSRF` and the deploy
  * token on `window.KIOSK_BUILD`; a service worker (/kiosk-sw.js) handles durable
@@ -15,8 +15,8 @@
  * clocked in AND active (status "Open").
  *
  * Layout: a state-coloured hero (idle / working / break / day complete), one
- * panel per bottom tab (Clock · My Day · Map · Settings) and a tab bar. The
- * Clock panel lives here; the other three are modules on window.KioskViews that
+ * panel per bottom tab (Clock · My Day · Photos · Map · Settings) and a tab bar. The
+ * Clock panel lives here; the other four are modules on window.KioskViews that
  * receive a small context object (api, state, pickers) from init(). A tab tap is
  * a browser-history entry, so Back walks the tabs (KioskUI.nav); the clock state
  * never is one.
@@ -143,12 +143,14 @@
   var TAB_ICONS = {
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     myday: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+    photos: '<rect x="3" y="5" width="18" height="15" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
     map: '<path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   };
   var TABS = [
     { id: 'clock', label: 'Clock' },
     { id: 'myday', label: 'My Day' },
+    { id: 'photos', label: 'Photos' },
     { id: 'map', label: 'Map' },
     { id: 'settings', label: 'Settings' },
   ];
@@ -254,6 +256,7 @@
       hero,
       clockPanel,
       h('section', { class: 'tk-panel', id: 'tk-panel-myday', role: 'tabpanel', hidden: true }),
+      h('section', { class: 'tk-panel', id: 'tk-panel-photos', role: 'tabpanel', hidden: true }),
       h('section', { class: 'tk-panel is-map', id: 'tk-panel-map', role: 'tabpanel', hidden: true }),
       h('section', { class: 'tk-panel', id: 'tk-panel-settings', role: 'tabpanel', hidden: true }),
     ]);
