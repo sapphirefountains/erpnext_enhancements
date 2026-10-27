@@ -2314,6 +2314,25 @@ body.ge-page-active .triton-fab {
 	min-height: var(--sf-touch-min);
 	color: var(--sf-link);
 }
+/* v1.746.0: a contact's or address's Account / Supplier line, the Desk directory's column. Muted
+   like the rest of the meta; the Customers and Suppliers are links, a tap's height tall. */
+.ge-tools-accounts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0 var(--sf-space-10);
+}
+.ge-tools-account {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+}
+.ge-tools-account a {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	color: var(--sf-link);
+}
 .ge-tools-badge {
 	padding: 0 var(--sf-space-5);
 	border: var(--sf-border-hairline) solid var(--sf-focus);
