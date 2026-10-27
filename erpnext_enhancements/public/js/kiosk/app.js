@@ -801,13 +801,15 @@
   }
 
   // `fileDoc` is the File's docname from upload_file, and `interval` the Job
-  // Interval it was uploaded to. Both go through unchanged: until v1.750.1 the
-  // photo registration below was handed `r.file_name`, the display name, which
-  // record_job_photo cannot look up, so every attached image stayed "Pending".
+  // Interval it was uploaded to, captured when the upload started. Both go
+  // through unchanged: until v1.750.1 the photo registration below was handed
+  // `r.file_name`, the display name, which record_job_photo cannot look up, so
+  // every attached image stayed "Pending". No project or task is sent: the
+  // server copies the file to its own interval's Project and Task, so a job
+  // switched during a slow upload cannot redirect the copies.
   function linkFile(fileDoc, interval) {
-    var ci = app.currentInterval || {};
     api(API + 'link_attachment', {
-      file_name: fileDoc, project: ci.project, task: ci.task || null,
+      file_name: fileDoc,
     }).then(function (r) {
       if (r && r.status === 'success') {
         app.attachments.push({ file_name: r.file_name, file_url: r.file_url });

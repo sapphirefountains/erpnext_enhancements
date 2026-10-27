@@ -16,35 +16,33 @@ v1.750.1 fixes all three for new uploads. This patch fixes what they already sto
    it. A ``Job Interval Photo.image`` that held the old URL is repointed too.
    On production on 2026-10-27 this was 6 files (5 PNG screenshots and 1 JPEG job photo) plus
    6 Project copies and 4 Task copies: 16 File rows.
-2. **A Pending photo row with no file is linked to the image it was registered for.** It gets
-   ``file_doc``, ``image`` and ``Uploaded``, the three values ``_attach_photo_file`` would have
-   written. The kiosk wrote the row less than a second after the upload, in the same chain of
-   calls. So the match is an image File on the same interval that is no row's ``file_doc`` yet
-   and was created at most ``LINK_WINDOW`` before the row's ``captured_on``. A row is linked
-   only when that pairing is one to one; anything ambiguous is left alone and reported. Then
-   the interval's ``photos_pending_upload`` is recomputed.
-   On production this was 3 rows on three intervals. Two more Pending rows, on a fourth
-   interval, are camera captures whose bytes never arrived. No file exists for them, so they
-   stay Pending, which is the truth.
+2. **A Pending photo row with no file is linked to the image it was registered for, and
+   routed.** That is ``workforce.kiosk_files.link_stuck_photo_rows``, which is safe to run again
+   after the deploy for rows a device's cached page goes on writing; its docstring has the
+   pairing rule and the command. On production this was 3 rows on three intervals. Two more
+   Pending rows, on a fourth interval, are camera captures whose bytes never arrived. No file
+   exists for them, so they stay Pending, which is the truth.
 
 **A name already taken in ``private/files``.** Frappe refuses the move with ``FileExistsError``
 when ``private/files`` already holds a file of that name. Production has both ``image.jpg`` and
 ``Image.jpg`` there, and iOS names every capture ``image.jpg``. In that case the file moves under
 a free name in the form frappe's own uploads use (``get_file_name``: the stem, the last six
-characters of the ``content_hash``, then the extension), and the File rows sharing its hash are
-repointed in SQL, as ``update_existing_file_docs`` would. The move is the last step, so if it
-fails there is nothing to undo.
+characters of the ``content_hash``, then the extension), free both on disk and among File rows,
+and the File rows sharing its hash are repointed in SQL, as ``update_existing_file_docs`` would,
+and dropped from the document cache. The move is the last step, so if it fails there is nothing
+to undo.
 
 **What it never changes.**
 
-- A stored file with the same contents under another URL. Frappe's sibling update would repoint
-  it, so a group whose rows do not all share one URL is skipped and reported. URLs are compared
-  byte for byte, because MariaDB's collation matches ``image.jpg`` to ``Image.jpg``.
+- A file whose bytes are used outside the kiosk (``kiosk_files.why_not_movable``). Frappe's upload
+  reuses an existing File's URL for identical bytes, so a public kiosk upload of a picture that is
+  also a website asset (the logo, an Item image) shares that asset's URL and hash, and saving the
+  kiosk row would move the asset off the public site. So a group is skipped and reported unless
+  every row sharing its hash or its URL is attached to a Job Interval, Project or Task, belongs to
+  the Job Interval File's owner and has the same URL. URLs are compared byte for byte, because
+  MariaDB's collation matches ``image.jpg`` to ``Image.jpg``.
 - A file with no ``content_hash``, or one missing from disk. Each is skipped and reported.
 - The attachment lines already in a document's timeline. They keep the old URL, as history.
-
-No routing job is enqueued either: the Project and Task copies exist already, and a deploy
-flushes the queue.
 
 **Savepoints and the disk.** Each file runs in its own savepoint. Rolling back to a savepoint
 undoes the database only. In 16.53.0 frappe runs its file-moving rollback watchers on a full
@@ -53,28 +51,25 @@ the patch moves them back itself. It also commits after every file. That makes e
 together with its rows, and it clears the rollback watcher that would otherwise try the move
 back a second time.
 
-The counts before and after are printed. The patch never raises, because a patch that raises
-aborts ``bench migrate``, which here is the deploy. It is safe to run twice: the second run
-finds no public File on a Job Interval and no row it can pair.
+The counts before and after are printed; "public Files" counts exactly the selection. The patch
+never raises, because a patch that raises aborts ``bench migrate``, which here is the deploy. It
+is safe to run twice: the second run finds no public File on a Job Interval and no row it can
+pair.
 """
 
 import os
 import shutil
-from collections import Counter
-from datetime import datetime, timedelta
 
 import frappe
 
+from erpnext_enhancements.workforce import kiosk_files
+
 LOG = "privatize_kiosk_attachment_files"
 SAVEPOINT = "privatize_kiosk_attachment_file"
-#: The kiosk's own test for an image (``countAttachedImageAsJobPhoto`` in ``public/js/kiosk/app.js``).
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".bmp")
-#: The longest a photo row can have been written after the upload it registers. The kiosk calls
-#: upload_file, then link_attachment, then record_job_photo; on production the gaps were all
-#: under a second.
-LINK_WINDOW = timedelta(minutes=2)
-#: ``photo_gate.UNSETTLED_STATES``; a blank status counts as Pending there too.
-UNSETTLED = ("", "Pending", "Failed")
+#: The selection, shared with ``_counts`` so the counts describe exactly what the patch acts on.
+PUBLIC_INTERVAL_FILES = """from `tabFile`
+	where attached_to_doctype = 'Job Interval' and is_private = 0 and ifnull(is_folder, 0) = 0
+		and file_url like %s"""
 
 
 def execute():
@@ -98,7 +93,7 @@ def privatize_kiosk_attachment_files():
 		if outcome:
 			made_private += 1
 			renamed += outcome == "renamed"
-	linked = _link_stuck_rows(problems)
+	linked = kiosk_files.link_stuck_photo_rows(problems)["linked"]
 	after = _counts()
 	print(
 		f"{LOG}: after: {_describe(after)}. Made {made_private} stored files private "
@@ -123,17 +118,8 @@ def privatize_kiosk_attachment_files():
 	}
 
 
-# ---------------------------------------------------------------------------
-# Rules (pure, so the tests can run them without a site)
-# ---------------------------------------------------------------------------
-
-
-def is_image(name):
-	return os.path.splitext(str(name or "").lower())[1] in IMAGE_EXTENSIONS
-
-
-def free_private_name(stored_name, content_hash, exists):
-	"""A name for ``stored_name`` that ``exists`` says is free in ``private/files``.
+def free_private_name(stored_name, content_hash, taken):
+	"""A name for ``stored_name`` that ``taken`` says is free in ``private/files``. Pure.
 
 	Frappe's own form first (``get_file_name``: stem, the last six characters of the hash, then
 	the extension, no separator), then numbered after it. ``None`` if twenty tries are all taken.
@@ -141,48 +127,9 @@ def free_private_name(stored_name, content_hash, exists):
 	stem, ext = os.path.splitext(stored_name)
 	suffix = (content_hash or "")[-6:]
 	for candidate in [f"{stem}{suffix}{ext}"] + [f"{stem}{suffix}-{n}{ext}" for n in range(1, 20)]:
-		if not exists(candidate):
+		if not taken(candidate):
 			return candidate
 	return None
-
-
-def match_rows_to_files(rows, files, window=LINK_WINDOW):
-	"""Pair stuck photo rows with the image Files they were registered for, one to one.
-
-	A File is a candidate for a row when it is an image and was created no later than the row's
-	``captured_on`` and no more than ``window`` before it. A pair is returned only when the row
-	has exactly one candidate and no other row claims that File. Returns ``[(row, file), ...]``
-	in row order.
-	"""
-	candidates = {}
-	for row in rows:
-		at = _dt(row.get("captured_on"))
-		hits = []
-		if at is not None:
-			for file in files:
-				made = _dt(file.get("creation"))
-				if made is None or not is_image(file.get("file_name") or file.get("file_url")):
-					continue
-				if timedelta(0) <= at - made <= window:
-					hits.append(file)
-		candidates[row["name"]] = hits
-	claims = Counter(file["name"] for hits in candidates.values() for file in hits)
-	return [
-		(row, candidates[row["name"]][0])
-		for row in rows
-		if len(candidates[row["name"]]) == 1 and claims[candidates[row["name"]][0]["name"]] == 1
-	]
-
-
-def _dt(value):
-	if isinstance(value, datetime):
-		return value
-	if not value:
-		return None
-	try:
-		return datetime.fromisoformat(str(value))
-	except ValueError:
-		return None
 
 
 # ---------------------------------------------------------------------------
@@ -191,18 +138,14 @@ def _dt(value):
 
 
 def _public_interval_files():
-	return frappe.db.sql_list(
-		"""select name from `tabFile`
-		where attached_to_doctype = 'Job Interval' and is_private = 0 and ifnull(is_folder, 0) = 0
-			and file_url like %s
-		order by creation, name""",
-		("/files/%",),
-	)
+	return frappe.db.sql_list(f"select name {PUBLIC_INTERVAL_FILES} order by creation, name", ("/files/%",))
 
 
 def _privatize(name, problems):
 	"""Make one stored file private. Returns ``"moved"``, ``"renamed"`` or ``None``."""
-	row = frappe.db.get_value("File", name, ["name", "file_url", "is_private", "content_hash"], as_dict=True)
+	row = frappe.db.get_value(
+		"File", name, ["name", "owner", "file_url", "is_private", "content_hash"], as_dict=True
+	)
 	if not row or int(row.is_private or 0):
 		# A File sharing its contents was saved first, and frappe repointed this one with it.
 		return None
@@ -216,11 +159,9 @@ def _privatize(name, problems):
 	if not os.path.exists(public_path):
 		problems.append(f"{name}: {old_url} is not on disk; left as it is.")
 		return None
-	strangers = _rows_sharing_contents_elsewhere(row.content_hash, old_url)
-	if strangers:
-		problems.append(
-			f"{name}: {len(strangers)} File rows hold the same contents under another URL; left public."
-		)
+	reason = kiosk_files.why_not_movable(row, kiosk_files.rows_sharing_bytes(name, row.content_hash, old_url))
+	if reason:
+		problems.append(f"{name}: {reason}; left public.")
 		return None
 
 	private_existed = os.path.exists(private_path)
@@ -248,16 +189,16 @@ def _privatize_under_free_name(row, public_path, problems):
 	"""The ``FileExistsError`` case: move under a free name and repoint the rows in SQL."""
 	old_url = row.file_url
 	try:
-		new_name = free_private_name(
-			old_url.split("/")[-1],
-			row.content_hash,
-			lambda candidate: os.path.exists(frappe.get_site_path("private", "files", candidate)),
-		)
+		new_name = free_private_name(old_url.split("/")[-1], row.content_hash, _private_name_taken)
 		if not new_name:
 			problems.append(f"{row.name}: no free name in private/files; left public.")
 			return None
 		new_url = f"/private/files/{new_name}"
 		frappe.db.savepoint(SAVEPOINT)
+		group = frappe.db.sql_list(
+			"select name from `tabFile` where content_hash = %s and binary file_url = binary %s",
+			(row.content_hash, old_url),
+		)
 		frappe.db.sql(
 			"""update `tabFile` set file_url = %s, is_private = 1
 			where content_hash = %s and binary file_url = binary %s""",
@@ -270,14 +211,23 @@ def _privatize_under_free_name(row, public_path, problems):
 		_rollback_file()
 		problems.append(f"{row.name}: could not move it under a new name: {type(exc).__name__}: {exc}")
 		return None
+	for name in group:
+		try:
+			frappe.clear_document_cache("File", name)
+		except Exception:
+			pass
 	return "renamed"
 
 
-def _rows_sharing_contents_elsewhere(content_hash, file_url):
-	return frappe.db.sql_list(
-		"""select name from `tabFile`
-		where content_hash = %s and (file_url is null or binary file_url != binary %s)""",
-		(content_hash, file_url),
+def _private_name_taken(candidate):
+	"""Taken on disk, or by a File row already pointing at that private URL."""
+	if os.path.exists(frappe.get_site_path("private", "files", candidate)):
+		return True
+	return bool(
+		frappe.db.sql_list(
+			"select name from `tabFile` where binary file_url = binary %s limit 1",
+			(f"/private/files/{candidate}",),
+		)
 	)
 
 
@@ -299,83 +249,12 @@ def _move_back(private_path, public_path, name, problems):
 
 
 # ---------------------------------------------------------------------------
-# Step 2: the photo rows
-# ---------------------------------------------------------------------------
-
-
-def _link_stuck_rows(problems):
-	if not frappe.db.table_exists("Job Interval Photo"):
-		return 0
-	rows = frappe.db.sql(
-		"""select name, parent, captured_on from `tabJob Interval Photo`
-		where parenttype = 'Job Interval' and upload_status = 'Pending' and ifnull(file_doc, '') = ''
-		order by parent, idx""",
-		as_dict=True,
-	)
-	linked = 0
-	for parent in sorted({row.parent for row in rows if row.parent}):
-		files = frappe.db.sql(
-			"""select f.name, f.file_name, f.file_url, f.is_private, f.creation from `tabFile` f
-			where f.attached_to_doctype = 'Job Interval' and f.attached_to_name = %s
-				and ifnull(f.is_folder, 0) = 0
-				and not exists (select 1 from `tabJob Interval Photo` p where p.file_doc = f.name)
-			order by f.creation, f.name""",
-			(parent,),
-			as_dict=True,
-		)
-		pairs = match_rows_to_files([row for row in rows if row.parent == parent], files)
-		if not pairs:
-			continue
-		done = 0
-		try:
-			frappe.db.savepoint(SAVEPOINT)
-			for row, file in pairs:
-				if not int(file.is_private or 0):
-					problems.append(f"{parent}: photo row {row.name} not linked; its file is still public.")
-					continue
-				frappe.db.set_value(
-					"Job Interval Photo",
-					row.name,
-					{"file_doc": file.name, "image": file.file_url, "upload_status": "Uploaded"},
-					update_modified=False,
-				)
-				done += 1
-			if done:
-				_refresh_pending_flag(parent)
-		except Exception as exc:
-			_rollback_file()
-			problems.append(f"{parent}: photo rows not linked: {type(exc).__name__}: {exc}")
-			done = 0
-		linked += done
-		_commit()
-	return linked
-
-
-def _refresh_pending_flag(parent):
-	"""Recompute ``photos_pending_upload`` the way ``photo_gate.has_unsettled_uploads`` does."""
-	if not frappe.db.has_column("Job Interval", "photos_pending_upload"):
-		return
-	unsettled = frappe.db.sql(
-		"""select count(*) from `tabJob Interval Photo`
-		where parent = %s and parenttype = 'Job Interval' and ifnull(upload_status, '') in %s""",
-		(parent, UNSETTLED),
-	)[0][0]
-	frappe.db.set_value(
-		"Job Interval", parent, "photos_pending_upload", 1 if unsettled else 0, update_modified=False
-	)
-	frappe.clear_document_cache("Job Interval", parent)
-
-
-# ---------------------------------------------------------------------------
 # Counts and transaction helpers
 # ---------------------------------------------------------------------------
 
 
 def _counts():
-	public_files = frappe.db.sql(
-		"""select count(*) from `tabFile`
-		where attached_to_doctype = 'Job Interval' and is_private = 0 and ifnull(is_folder, 0) = 0"""
-	)[0][0]
+	public_files = frappe.db.sql(f"select count(*) {PUBLIC_INTERVAL_FILES}", ("/files/%",))[0][0]
 	public_copies = frappe.db.sql(
 		"""select count(*) from `tabFile` f
 		where f.is_private = 0 and ifnull(f.is_folder, 0) = 0

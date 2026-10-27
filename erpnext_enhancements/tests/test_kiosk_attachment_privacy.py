@@ -5,26 +5,31 @@ What was wrong, confirmed on production on 2026-10-27:
 * ``uploadFile`` in ``public/js/kiosk/app.js`` uploaded with ``is_private '0'``, so every file
   landed under ``/files/``, downloadable without signing in.
 * ``api.time_kiosk.link_attachment`` copied each File onto the Project and Task with the same
-  ``is_private``, so the copies were public too.
+  ``is_private``, so the copies were public too. It also trusted the Project and Task the page
+  sent, and inserted the copies with ``ignore_permissions``.
 * ``linkFile`` handed ``countAttachedImageAsJobPhoto`` the display name (``r.file_name``) where
   ``record_job_photo`` wants the File's docname. ``_attach_photo_file`` could not find it, and the
   ``Job Interval Photo`` row stayed Pending.
 * ``record_job_photo(file_name=<any File docname>)`` attached that File to the caller's job,
-  made it private and fanned it out, whoever it belonged to.
+  made it private and fanned it out, whoever it belonged to. And a row of one's own can point at
+  anybody's public bytes (frappe reuses a URL for identical bytes, and ``upload_file`` takes a bare
+  ``file_url``), so making it private could take a website asset off the public site.
 
 Covered here:
 
-* the kiosk page: a private upload, and the docname and interval passed through;
-* the server, by running the real ``_assert_kiosk_file``, ``_attach_photo_file`` and
-  ``link_attachment`` source against a fake ``frappe``;
-* the one-shot ``patches/privatize_kiosk_attachment_files``: the pairing rule, the free-name
-  rule, and the whole run against an in-memory ``tabFile`` and a real temporary ``public/files``
-  and ``private/files``. The fake ``File.save`` does what frappe 16.53.0's
-  ``handle_is_private_changed`` does: it refuses a missing source or a taken target, moves the
-  bytes and repoints every row that shares the ``content_hash``.
+* the kiosk page: a private upload, the docname and the upload's interval passed through, and no
+  Project or Task sent;
+* the server, by running the real ``_assert_kiosk_file``, ``_make_kiosk_file_private``,
+  ``_attach_photo_file`` and ``link_attachment`` source against a fake ``frappe``;
+* ``workforce/kiosk_files``: the "may this move" rule, the pairing rule and the reusable relink
+  step, routing included;
+* the one-shot ``patches/privatize_kiosk_attachment_files`` against an in-memory ``tabFile`` and a
+  real temporary ``public/files`` and ``private/files``. The fake ``File.save`` does what frappe
+  16.53.0's ``handle_is_private_changed`` does: it refuses a missing source or a taken target,
+  moves the bytes and repoints every row that shares the ``content_hash``.
 
-A minimal ``frappe`` stub is installed in ``setUpModule`` and removed afterwards, so this suite
-has its own CI step.
+A minimal ``frappe`` stub (and a recording ``photo_routing``) is installed in ``setUpModule`` and
+removed afterwards, so this suite has its own CI step.
 
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_attachment_privacy -v
 """
@@ -53,6 +58,8 @@ APP_JS = APP / "public" / "js" / "kiosk" / "app.js"
 TIME_KIOSK = APP / "api" / "time_kiosk.py"
 PATCHES_TXT = APP / "patches.txt"
 PATCH_MODULE = "erpnext_enhancements.patches.privatize_kiosk_attachment_files"
+KIOSK_FILES_MODULE = "erpnext_enhancements.workforce.kiosk_files"
+ROUTING_MODULE = "erpnext_enhancements.workforce.photo_routing"
 
 USER = "tech@example.com"
 OTHER_USER = "someone.else@example.com"
@@ -61,6 +68,7 @@ OTHER_EMPLOYEE = "HR-EMP-90002"
 INTERVAL = "JOB-INT-90001"
 OTHER_INTERVAL = "JOB-INT-90002"
 PROJECT = "PRJ-90001"
+OTHER_PROJECT = "PRJ-90002"
 TASK = "TASK-2026-90001"
 
 STATE = {}
@@ -104,6 +112,21 @@ def _function(body, name):
 	return body[start:end]
 
 
+def _sharing(files, name, content_hash, url):
+	"""What ``kiosk_files.rows_sharing_bytes`` selects, over an in-memory table."""
+	return [
+		_Dict(
+			name=f["name"],
+			owner=f.get("owner"),
+			file_url=f.get("file_url"),
+			attached_to_doctype=f.get("attached_to_doctype"),
+		)
+		for f in files
+		if f["name"] != name
+		and ((content_hash and f.get("content_hash") == content_hash) or f.get("file_url") == url)
+	]
+
+
 # ---------------------------------------------------------------------------
 # The stub frappe: an in-memory site with a real files directory
 # ---------------------------------------------------------------------------
@@ -112,8 +135,8 @@ def _function(body, name):
 class _FakeDb:
 	"""``tabFile``, ``tabJob Interval Photo`` and ``tabJob Interval`` in memory.
 
-	It answers exactly the queries the patch sends, matched on their text. Savepoints snapshot
-	the tables. A commit is counted, and it clears the rollback watchers as frappe's does.
+	It answers exactly the queries the patch and ``kiosk_files`` send, matched on their text.
+	Savepoints snapshot the tables. A commit is counted.
 	"""
 
 	def __init__(self):
@@ -123,7 +146,6 @@ class _FakeDb:
 		self.writes = []
 		self.fail_set_value_for = set()
 
-	# -- frappe.db API used by the patch --
 	def savepoint(self, name):
 		self.snapshots[name] = copy.deepcopy(self.tables)
 
@@ -154,36 +176,39 @@ class _FakeDb:
 		self.tables[doctype][name].update(updates)
 		self.writes.append((doctype, name, dict(updates)))
 
+	def _public_interval(self, prefix):
+		return [
+			f
+			for f in self.tables["File"].values()
+			if f.get("attached_to_doctype") == "Job Interval"
+			and not f.get("is_private")
+			and not f.get("is_folder")
+			and (f.get("file_url") or "").startswith(prefix)
+		]
+
 	def sql_list(self, query, values=()):
 		q = " ".join(query.split())
 		files = self.tables["File"].values()
 		if q.startswith(
 			"select name from `tabFile` where attached_to_doctype = 'Job Interval' and is_private = 0"
 		):
-			prefix = values[0].rstrip("%")
-			rows = [
-				f
-				for f in files
-				if f.get("attached_to_doctype") == "Job Interval"
-				and not f.get("is_private")
-				and not f.get("is_folder")
-				and (f.get("file_url") or "").startswith(prefix)
-			]
+			rows = self._public_interval(values[0].rstrip("%"))
 			return [f["name"] for f in sorted(rows, key=lambda f: (f["creation"], f["name"]))]
-		if "where content_hash = %s and (file_url is null or binary file_url != binary %s)" in q:
+		if q == "select name from `tabFile` where content_hash = %s and binary file_url = binary %s":
 			content_hash, url = values
 			return [
-				f["name"]
-				for f in files
-				if f.get("content_hash") == content_hash
-				and (f.get("file_url") is None or f.get("file_url") != url)
+				f["name"] for f in files if f.get("content_hash") == content_hash and f.get("file_url") == url
 			]
+		if q == "select name from `tabFile` where binary file_url = binary %s limit 1":
+			return [f["name"] for f in files if f.get("file_url") == values[0]][:1]
 		raise AssertionError(f"unexpected sql_list: {q}")
 
 	def sql(self, query, values=(), as_dict=False):
 		q = " ".join(query.split())
 		files = self.tables["File"]
 		photos = self.tables["Job Interval Photo"]
+		if q.startswith("select name, owner, file_url, attached_to_doctype from `tabFile` where name != %s"):
+			return _sharing(files.values(), *values)
 		if q.startswith("update `tabFile` set file_url = %s, is_private = 1"):
 			new_url, content_hash, old_url = values
 			for f in files.values():
@@ -197,18 +222,17 @@ class _FakeDb:
 					row["image"] = new_url
 			return ()
 		if q.startswith("select name, parent, captured_on from `tabJob Interval Photo`"):
-			rows = [
+			return [
 				_Dict(name=r["name"], parent=r["parent"], captured_on=r.get("captured_on"))
 				for r in sorted(photos.values(), key=lambda r: (r["parent"], r.get("idx", 0)))
 				if r.get("parenttype") == "Job Interval"
 				and r.get("upload_status") == "Pending"
 				and not r.get("file_doc")
 			]
-			return rows
 		if q.startswith("select f.name, f.file_name, f.file_url, f.is_private, f.creation from `tabFile` f"):
 			(parent,) = values
 			used = {r.get("file_doc") for r in photos.values() if r.get("file_doc")}
-			rows = [
+			return [
 				_Dict({k: f.get(k) for k in ("name", "file_name", "file_url", "is_private", "creation")})
 				for f in sorted(files.values(), key=lambda f: (f["creation"], f["name"]))
 				if f.get("attached_to_doctype") == "Job Interval"
@@ -216,7 +240,6 @@ class _FakeDb:
 				and not f.get("is_folder")
 				and f["name"] not in used
 			]
-			return rows
 		if q.startswith("select count(*) from `tabJob Interval Photo` where parent = %s"):
 			parent, states = values
 			return [
@@ -231,17 +254,7 @@ class _FakeDb:
 		if q.startswith(
 			"select count(*) from `tabFile` where attached_to_doctype = 'Job Interval' and is_private = 0"
 		):
-			return [
-				[
-					sum(
-						1
-						for f in files.values()
-						if f.get("attached_to_doctype") == "Job Interval"
-						and not f.get("is_private")
-						and not f.get("is_folder")
-					)
-				]
-			]
+			return [[len(self._public_interval(values[0].rstrip("%")))]]
 		if q.startswith("select count(*) from `tabFile` f where f.is_private = 0"):
 			hashes = {
 				f["content_hash"]
@@ -323,7 +336,7 @@ def _get_doc(doctype, name=None):
 
 
 def _install_frappe_stub():
-	for name in ("frappe", "frappe.utils"):
+	for name in ("frappe", "frappe.utils", ROUTING_MODULE):
 		_SAVED_MODULES[name] = sys.modules.get(name)
 	frappe = types.ModuleType("frappe")
 	frappe.db = None
@@ -344,6 +357,13 @@ def _install_frappe_stub():
 	frappe.utils = utils
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
+
+	# route_job_photo is the real job's entry point; here it only records that it was called.
+	routing = types.ModuleType(ROUTING_MODULE)
+	routing.route_job_photo = lambda job_interval, file_name: STATE["routed"].append(
+		(job_interval, file_name)
+	)
+	sys.modules[ROUTING_MODULE] = routing
 	return frappe
 
 
@@ -353,7 +373,8 @@ FRAPPE = None
 def setUpModule():
 	global FRAPPE
 	FRAPPE = _install_frappe_stub()
-	sys.modules.pop(PATCH_MODULE, None)
+	for name in (PATCH_MODULE, KIOSK_FILES_MODULE):
+		sys.modules.pop(name, None)
 
 
 def tearDownModule():
@@ -362,13 +383,15 @@ def tearDownModule():
 			sys.modules.pop(name, None)
 		else:
 			sys.modules[name] = module
-	sys.modules.pop(PATCH_MODULE, None)
+	for name in (PATCH_MODULE, KIOSK_FILES_MODULE):
+		sys.modules.pop(name, None)
 
 
 def _reset(site):
 	db = _FakeDb()
 	FRAPPE.db = db
 	FRAPPE.session = _Dict(user=USER)
+	FRAPPE.get_doc = _get_doc
 	STATE.clear()
 	STATE.update(
 		db=db,
@@ -379,6 +402,7 @@ def _reset(site):
 		cache_cleared=[],
 		errors=[],
 		inserted=[],
+		routed=[],
 		employee=EMPLOYEE,
 	)
 	return db
@@ -386,6 +410,10 @@ def _reset(site):
 
 def _patch():
 	return importlib.import_module(PATCH_MODULE)
+
+
+def _kiosk_files():
+	return importlib.import_module(KIOSK_FILES_MODULE)
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +447,13 @@ class TestTheKioskPage(unittest.TestCase):
 		self.assertIn("countAttachedImageAsJobPhoto(fileDoc, r.file_name || r.file_url, interval)", fn)
 		self.assertNotRegex(fn, r"countAttachedImageAsJobPhoto\(\s*r\.file_name")
 
+	def test_link_file_sends_no_project_or_task(self):
+		"""The server takes them from the File's own interval; a job switched mid-upload cannot move them."""
+		fn = _function(self.js, "linkFile")
+		self.assertNotIn("project:", fn)
+		self.assertNotIn("task:", fn)
+		self.assertNotIn("app.currentInterval", fn)
+
 	def test_the_photo_row_names_the_file_by_docname_on_its_upload_interval(self):
 		fn = _function(self.js, "countAttachedImageAsJobPhoto")
 		self.assertIn("job_interval: interval,", fn)
@@ -439,7 +474,7 @@ class TestTheKioskPage(unittest.TestCase):
 # The server, run from the real source against the stub
 # ---------------------------------------------------------------------------
 
-SERVER_FUNCTIONS = ("link_attachment", "_attach_photo_file", "_assert_kiosk_file")
+SERVER_FUNCTIONS = ("link_attachment", "_attach_photo_file", "_assert_kiosk_file", "_make_kiosk_file_private")
 
 
 def _load_server_functions():
@@ -451,6 +486,7 @@ def _load_server_functions():
 		"frappe": FRAPPE,
 		"_": lambda s, *a, **k: s,
 		"cint": _cint,
+		"kiosk_files": _kiosk_files(),
 		"_session_employee": lambda: STATE.get("employee"),
 	}
 	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(TIME_KIOSK), "exec"), namespace)
@@ -464,6 +500,9 @@ class _ServerFile:
 		self.__dict__.update(fields)
 		self.saved = 0
 
+	def as_dict(self):
+		return _Dict({k: v for k, v in self.__dict__.items() if k != "saved"})
+
 	def save(self, ignore_permissions=False):
 		self.saved += 1
 		STATE["saves"].append(self.name)
@@ -475,12 +514,13 @@ class _ServerFile:
 
 
 class _ServerDb:
-	def __init__(self, intervals):
+	def __init__(self, intervals, files):
 		self.intervals = intervals
+		self.files = files
 		self.set_values = []
 
-	def get_value(self, doctype, name, field):
-		assert doctype == "Job Interval" and field == "employee"
+	def get_value(self, doctype, name, fields, as_dict=False):
+		assert doctype == "Job Interval" and fields == ["employee", "project", "task"] and as_dict
 		return self.intervals.get(name)
 
 	def exists(self, doctype, filters):
@@ -489,20 +529,32 @@ class _ServerDb:
 	def set_value(self, *args, **kwargs):
 		self.set_values.append(args)
 
+	def sql(self, query, values=(), as_dict=False):
+		q = " ".join(query.split())
+		assert q.startswith(
+			"select name, owner, file_url, attached_to_doctype from `tabFile` where name != %s"
+		), q
+		return _sharing([vars(f) for f in self.files.values()], *values)
+
 
 class _ServerCase(unittest.TestCase):
 	def setUp(self):
 		self.tmp = tempfile.mkdtemp()
 		_reset(self.tmp)
 		self.files = {}
-		self.server_db = _ServerDb({INTERVAL: EMPLOYEE, OTHER_INTERVAL: OTHER_EMPLOYEE})
+		self.server_db = _ServerDb(
+			{
+				INTERVAL: _Dict(employee=EMPLOYEE, project=PROJECT, task=TASK),
+				OTHER_INTERVAL: _Dict(employee=OTHER_EMPLOYEE, project=OTHER_PROJECT, task=None),
+			},
+			self.files,
+		)
 		FRAPPE.db = self.server_db
-		self._get_doc = FRAPPE.get_doc
 		FRAPPE.get_doc = self._fake_get_doc
 		self.ns = _load_server_functions()
 
 	def tearDown(self):
-		FRAPPE.get_doc = self._get_doc
+		FRAPPE.get_doc = _get_doc
 		shutil.rmtree(self.tmp, ignore_errors=True)
 
 	def _fake_get_doc(self, doctype, name=None):
@@ -512,7 +564,17 @@ class _ServerCase(unittest.TestCase):
 			raise _DoesNotExistError(name)
 		return self.files[name]
 
-	def add_file(self, name, owner=USER, doctype="Job Interval", parent=INTERVAL, private=0, file_name=None):
+	def add_file(
+		self,
+		name,
+		owner=USER,
+		doctype="Job Interval",
+		parent=INTERVAL,
+		private=0,
+		file_name=None,
+		url=None,
+		content_hash=None,
+	):
 		file_name = file_name or f"{name}.jpg"
 		self.files[name] = _ServerFile(
 			name=name,
@@ -521,11 +583,23 @@ class _ServerCase(unittest.TestCase):
 			attached_to_name=parent,
 			is_private=private,
 			file_name=file_name,
-			file_url=("/private/files/" if private else "/files/") + file_name,
+			file_url=url or (("/private/files/" if private else "/files/") + file_name),
+			content_hash=content_hash or f"hash-{name}",
 			folder="Home/Attachments",
 			creation="2026-10-27 09:00:00",
 		)
 		return self.files[name]
+
+	def website_asset_shared_by(self, kiosk_file):
+		"""The site's logo, whose bytes and URL frappe reused for the kiosk upload."""
+		return self.add_file(
+			"site-logo",
+			owner="Administrator",
+			doctype="Website Settings",
+			parent="Website Settings",
+			url=kiosk_file.file_url,
+			content_hash=kiosk_file.content_hash,
+		)
 
 
 class TestAssertKioskFile(_ServerCase):
@@ -553,6 +627,51 @@ class TestAssertKioskFile(_ServerCase):
 		with self.assertRaises(_PermissionError):
 			self.ns["_assert_kiosk_file"](self.add_file("f-1"), None)
 		self.ns["_assert_kiosk_file"](self.add_file("f-2", doctype=None, parent=None), None)
+
+
+class TestMakeKioskFilePrivate(_ServerCase):
+	def test_a_public_upload_nothing_else_uses_is_made_private(self):
+		file = self.add_file("f-1")
+		self.ns["_make_kiosk_file_private"](file)
+		self.assertEqual((file.is_private, file.saved), (1, 1))
+
+	def test_its_own_project_and_task_copies_do_not_block_it(self):
+		file = self.add_file("f-1")
+		self.add_file(
+			"f-1-prj", doctype="Project", parent=PROJECT, url=file.file_url, content_hash=file.content_hash
+		)
+		self.add_file(
+			"f-1-task", doctype="Task", parent=TASK, url=file.file_url, content_hash=file.content_hash
+		)
+		self.ns["_make_kiosk_file_private"](file)
+		self.assertEqual(file.saved, 1)
+
+	def test_a_row_pointing_at_a_website_asset_is_refused_and_nothing_moves(self):
+		"""M2: upload_file(file_url=/files/<logo>) on one's own interval, then the kiosk endpoint."""
+		file = self.add_file("f-1", url="/files/logo.png", content_hash="hash-logo")
+		self.website_asset_shared_by(file)
+		with self.assertRaises(_PermissionError):
+			self.ns["_make_kiosk_file_private"](file)
+		self.assertEqual((file.is_private, file.saved), (0, 0))
+
+	def test_the_same_bytes_under_another_owner_are_refused(self):
+		file = self.add_file("f-1")
+		self.add_file(
+			"their-copy",
+			owner=OTHER_USER,
+			doctype="Task",
+			parent=TASK,
+			url=file.file_url,
+			content_hash=file.content_hash,
+		)
+		with self.assertRaises(_PermissionError):
+			self.ns["_make_kiosk_file_private"](file)
+
+	def test_a_private_file_is_left_alone_without_a_lookup(self):
+		file = self.add_file("f-1", private=1)
+		self.server_db.sql = None  # any lookup would now fail
+		self.ns["_make_kiosk_file_private"](file)
+		self.assertEqual(file.saved, 0)
 
 
 class TestAttachPhotoFile(_ServerCase):
@@ -589,6 +708,15 @@ class TestAttachPhotoFile(_ServerCase):
 			self.ns["_attach_photo_file"](_Dict(captured_on=None), "f-1", self.interval())
 		self.assertEqual(file.saved, 0)
 
+	def test_a_row_of_ones_own_pointing_at_a_website_asset_is_refused(self):
+		file = self.add_file("f-1", url="/files/logo.png", content_hash="hash-logo")
+		self.website_asset_shared_by(file)
+		row = _Dict(captured_on=None)
+		with self.assertRaises(_PermissionError):
+			self.ns["_attach_photo_file"](row, "f-1", self.interval())
+		self.assertEqual((file.is_private, file.saved), (0, 0))
+		self.assertNotIn("file_doc", row)
+
 	def test_the_callers_own_unattached_upload_is_anchored_to_the_interval(self):
 		self.add_file("f-1", doctype=None, parent=None)
 		self.assertTrue(self.ns["_attach_photo_file"](_Dict(captured_on=None), "f-1", self.interval()))
@@ -599,7 +727,7 @@ class TestAttachPhotoFile(_ServerCase):
 class TestLinkAttachment(_ServerCase):
 	def test_copies_are_private_and_the_reply_names_the_file(self):
 		self.add_file("f-1", private=1)
-		reply = self.ns["link_attachment"]("f-1", PROJECT, TASK)
+		reply = self.ns["link_attachment"]("f-1")
 		self.assertEqual(reply["status"], "success")
 		self.assertEqual(reply["name"], "f-1")
 		self.assertEqual(
@@ -607,31 +735,50 @@ class TestLinkAttachment(_ServerCase):
 			[("Project", 1), ("Task", 1)],
 		)
 
+	def test_copies_go_to_the_files_own_interval_whatever_the_page_sends(self):
+		"""L1: a cached page still sends project and task; they are ignored."""
+		self.add_file("f-1", private=1)
+		self.ns["link_attachment"]("f-1", OTHER_PROJECT, "TASK-2026-99999")
+		self.assertEqual(
+			[(c["attached_to_doctype"], c["attached_to_name"]) for c in STATE["inserted"]],
+			[("Project", PROJECT), ("Task", TASK)],
+		)
+
 	def test_a_public_original_is_made_private_before_it_is_copied(self):
 		"""A page cached before v1.750.1 still uploads public."""
 		file = self.add_file("f-1", private=0)
-		self.ns["link_attachment"]("f-1", PROJECT, None)
+		self.ns["link_attachment"]("f-1")
 		self.assertEqual((file.is_private, file.saved), (1, 1))
 		self.assertEqual(STATE["inserted"][0]["file_url"], "/private/files/f-1.jpg")
 		self.assertEqual(STATE["inserted"][0]["is_private"], 1)
 
+	def test_a_row_pointing_at_a_website_asset_is_refused_and_not_copied(self):
+		file = self.add_file("f-1", url="/files/logo.png", content_hash="hash-logo")
+		self.website_asset_shared_by(file)
+		with self.assertRaises(_PermissionError):
+			self.ns["link_attachment"]("f-1")
+		self.assertEqual((file.is_private, file.saved, STATE["inserted"]), (0, 0, []))
+
 	def test_a_file_on_another_employees_interval_is_refused(self):
 		file = self.add_file("f-1", owner=OTHER_USER, parent=OTHER_INTERVAL)
 		with self.assertRaises(_PermissionError):
-			self.ns["link_attachment"]("f-1", PROJECT, TASK)
+			self.ns["link_attachment"]("f-1")
 		self.assertEqual((file.saved, STATE["inserted"]), (0, []))
 
-	def test_somebody_elses_unattached_file_is_refused(self):
-		file = self.add_file("f-1", owner=OTHER_USER, doctype=None, parent=None)
-		with self.assertRaises(_PermissionError):
-			self.ns["link_attachment"]("f-1", PROJECT, TASK)
-		self.assertEqual((file.saved, STATE["inserted"]), (0, []))
+	def test_a_file_not_on_an_interval_is_refused(self):
+		"""Without an interval there is no Project or Task to copy it to."""
+		for name, doctype, parent in (("f-1", None, None), ("f-2", "Project", PROJECT)):
+			with self.subTest(attached_to=doctype):
+				self.add_file(name, doctype=doctype, parent=parent)
+				with self.assertRaises(_PermissionError):
+					self.ns["link_attachment"](name)
+		self.assertEqual(STATE["inserted"], [])
 
 	def test_a_user_with_no_employee_is_refused(self):
 		self.add_file("f-1")
 		STATE["employee"] = None
 		with self.assertRaises(_PermissionError):
-			self.ns["link_attachment"]("f-1", PROJECT, TASK)
+			self.ns["link_attachment"]("f-1")
 
 	def test_the_privacy_save_is_outside_the_try(self):
 		"""A failure after frappe has moved the bytes must roll the request back, because that
@@ -643,12 +790,12 @@ class TestLinkAttachment(_ServerCase):
 		)
 		for node in ast.walk(fn):
 			if isinstance(node, ast.Try):
-				self.assertNotIn("original.save", ast.unparse(node))
-		self.assertIn("original.save(ignore_permissions=True)", ast.unparse(fn))
+				self.assertNotIn("_make_kiosk_file_private", ast.unparse(node))
+		self.assertIn("_make_kiosk_file_private(original)", ast.unparse(fn))
 
 
 # ---------------------------------------------------------------------------
-# The patch: pure rules
+# workforce/kiosk_files: pure rules
 # ---------------------------------------------------------------------------
 
 T0 = datetime(2026, 10, 27, 9, 0, 0)
@@ -671,9 +818,43 @@ def _f(name, created, file_name="photo.jpg", **extra):
 	return _Dict(name=name, creation=created, file_name=file_name, file_url=f"/files/{file_name}", **extra)
 
 
+class TestWhyNotMovable(unittest.TestCase):
+	def setUp(self):
+		self.why = _kiosk_files().why_not_movable
+		self.file = _Dict(name="f-1", owner=USER, file_url="/files/shot.png")
+
+	def other(self, **kwargs):
+		return _Dict(
+			{
+				"name": "f-2",
+				"owner": USER,
+				"file_url": "/files/shot.png",
+				"attached_to_doctype": "Project",
+				**kwargs,
+			}
+		)
+
+	def test_nothing_else_or_only_its_own_kiosk_rows(self):
+		self.assertIsNone(self.why(self.file, []))
+		rows = [self.other(attached_to_doctype=d) for d in ("Job Interval", "Project", "Task")]
+		self.assertIsNone(self.why(self.file, rows))
+
+	def test_a_same_url_website_row(self):
+		self.assertIn(
+			"outside the kiosk", self.why(self.file, [self.other(attached_to_doctype="Website Settings")])
+		)
+		self.assertIn("outside the kiosk", self.why(self.file, [self.other(attached_to_doctype=None)]))
+
+	def test_a_row_of_somebody_elses(self):
+		self.assertIn("somebody else", self.why(self.file, [self.other(owner=OTHER_USER)]))
+
+	def test_the_same_contents_under_another_url(self):
+		self.assertIn("another URL", self.why(self.file, [self.other(file_url="/files/Shot.png")]))
+
+
 class TestMatchRowsToFiles(unittest.TestCase):
 	def setUp(self):
-		self.match = _patch().match_rows_to_files
+		self.match = _kiosk_files().match_rows_to_files
 
 	def test_a_row_written_just_after_its_upload_pairs_with_it(self):
 		"""The production shape: upload, link_attachment, then the row, all within a second."""
@@ -691,10 +872,11 @@ class TestMatchRowsToFiles(unittest.TestCase):
 	def test_a_file_created_after_the_row_is_not_its_upload(self):
 		self.assertEqual(self.match([_row("r-1", captured=T0)], [_f("f-1", T0 + timedelta(seconds=1))]), [])
 
-	def test_a_file_older_than_the_window_is_not_its_upload(self):
-		row = _row("r-1", captured=T0 + timedelta(minutes=2, seconds=1))
-		self.assertEqual(self.match([row], [_f("f-1", T0)]), [])
-		self.assertEqual(len(self.match([row], [_f("f-1", T0 + timedelta(seconds=1))])), 1)
+	def test_the_window_is_ten_seconds(self):
+		self.assertEqual(self.match([_row("r-1", captured=T0 + timedelta(seconds=11))], [_f("f-1", T0)]), [])
+		self.assertEqual(
+			len(self.match([_row("r-1", captured=T0 + timedelta(seconds=10))], [_f("f-1", T0)])), 1
+		)
 
 	def test_a_document_is_not_a_photo(self):
 		row = _row("r-1", captured=T0 + timedelta(seconds=1))
@@ -714,15 +896,22 @@ class TestMatchRowsToFiles(unittest.TestCase):
 	def test_two_uploads_a_minute_apart_pair_one_to_one(self):
 		rows = [
 			_row("r-1", captured=T0 + timedelta(seconds=1)),
-			_row("r-2", captured=T0 + timedelta(minutes=3, seconds=1)),
+			_row("r-2", captured=T0 + timedelta(minutes=1, seconds=1)),
 		]
-		files = [_f("f-1", T0), _f("f-2", T0 + timedelta(minutes=3))]
+		files = [_f("f-1", T0), _f("f-2", T0 + timedelta(minutes=1))]
 		self.assertEqual(
 			[(r.name, f.name) for r, f in self.match(rows, files)], [("r-1", "f-1"), ("r-2", "f-2")]
 		)
 
 	def test_a_row_with_no_timestamp_pairs_with_nothing(self):
 		self.assertEqual(self.match([_row("r-1", captured=None)], [_f("f-1", T0)]), [])
+
+	def test_is_image(self):
+		is_image = _kiosk_files().is_image
+		self.assertTrue(is_image("IMG_0001.JPEG"))
+		self.assertTrue(is_image("/files/screen shot.png"))
+		self.assertFalse(is_image("quote.pdf"))
+		self.assertFalse(is_image(None))
 
 
 class TestFreePrivateName(unittest.TestCase):
@@ -739,16 +928,9 @@ class TestFreePrivateName(unittest.TestCase):
 	def test_none_when_every_try_is_taken(self):
 		self.assertIsNone(self.free("image.jpg", "0123456789abcdef", lambda n: True))
 
-	def test_is_image(self):
-		is_image = _patch().is_image
-		self.assertTrue(is_image("IMG_0001.JPEG"))
-		self.assertTrue(is_image("/files/screen shot.png"))
-		self.assertFalse(is_image("quote.pdf"))
-		self.assertFalse(is_image(None))
-
 
 # ---------------------------------------------------------------------------
-# The patch: a whole run against the in-memory site
+# The patch and the relink step: whole runs against the in-memory site
 # ---------------------------------------------------------------------------
 
 
@@ -758,7 +940,6 @@ class _PatchCase(unittest.TestCase):
 		for folder in ("public", "private"):
 			os.makedirs(os.path.join(self.site, folder, "files"))
 		self.db = _reset(self.site)
-		FRAPPE.get_doc = _get_doc
 
 	def tearDown(self):
 		shutil.rmtree(self.site, ignore_errors=True)
@@ -779,9 +960,11 @@ class _PatchCase(unittest.TestCase):
 		private=0,
 		created=T0,
 		file_name=None,
+		owner=USER,
 	):
 		self.db.tables["File"][name] = _Dict(
 			name=name,
+			owner=owner,
 			file_url=url,
 			file_name=file_name or url.split("/")[-1],
 			is_private=private,
@@ -846,6 +1029,47 @@ class TestThePatchMakesFilesPrivate(_PatchCase):
 		self.run_patch()
 		self.assertEqual(self.db.tables["Job Interval Photo"]["cam-row"]["image"], "/private/files/shot.png")
 
+	def test_a_same_url_website_row_keeps_the_group_public(self):
+		"""M1: frappe reused the logo's URL for a kiosk upload of the same bytes."""
+		self.add_files_upload()
+		self.file(
+			"site-logo",
+			"/files/shot.png",
+			doctype="Website Settings",
+			parent="Website Settings",
+			owner="Administrator",
+		)
+		result, _ = self.run_patch()
+		self.assertEqual(STATE["saves"], [])
+		self.assertEqual({f.is_private for f in self.db.tables["File"].values()}, {0})
+		self.assertTrue(self.on_disk("public", "shot.png"))
+		self.assertIn("outside the kiosk", result["problems"][0])
+		self.assertEqual(result["made_private"], 0)
+
+	def test_an_unattached_row_with_the_same_bytes_keeps_the_group_public(self):
+		self.add_files_upload()
+		self.file("someones-upload", "/files/shot.png", doctype=None, parent=None, owner=OTHER_USER)
+		result, _ = self.run_patch()
+		self.assertEqual(STATE["saves"], [])
+		self.assertIn("outside the kiosk", result["problems"][0])
+
+	def test_a_copy_owned_by_somebody_else_keeps_the_group_public(self):
+		self.add_files_upload()
+		self.db.tables["File"]["shot-task"]["owner"] = OTHER_USER
+		result, _ = self.run_patch()
+		self.assertEqual(STATE["saves"], [])
+		self.assertIn("somebody else", result["problems"][0])
+
+	def test_contents_shared_under_another_url_are_left_alone(self):
+		"""Frappe's sibling update would repoint that other file at this one."""
+		self.add_files_upload()
+		self.file("other-name", "/files/Shot.png", doctype="Task", parent=TASK)
+		result, _ = self.run_patch()
+		self.assertEqual(self.db.tables["File"]["shot-ji"]["is_private"], 0)
+		self.assertEqual(self.db.tables["File"]["other-name"]["file_url"], "/files/Shot.png")
+		self.assertTrue(self.on_disk("public", "shot.png"))
+		self.assertIn("under another URL", result["problems"][0])
+
 	def test_a_taken_name_moves_under_frappes_hash_suffix(self):
 		"""Production already has /private/files/image.jpg; iOS names every capture that."""
 		self.disk("public", "image.jpg", b"new photo")
@@ -866,6 +1090,26 @@ class TestThePatchMakesFilesPrivate(_PatchCase):
 		self.assertFalse(self.on_disk("public", "image.jpg"))
 		self.assertEqual((result["made_private"], result["renamed"]), (1, 1))
 		self.assertTrue(STATE["cleared_messages"])
+		self.assertIn(("File", "img-ji"), STATE["cache_cleared"])
+		self.assertIn(("File", "img-prj"), STATE["cache_cleared"])
+
+	def test_a_new_name_a_file_row_already_holds_is_not_used(self):
+		"""Free on disk is not enough: a row may already point at that private URL."""
+		self.disk("public", "image.jpg")
+		self.disk("private", "image.jpg")
+		self.file("img-ji", "/files/image.jpg", content_hash="hash-123456")
+		self.file(
+			"ghost",
+			"/private/files/image123456.jpg",
+			doctype="Project",
+			parent=OTHER_PROJECT,
+			content_hash="hash-999999",
+			private=1,
+			owner=OTHER_USER,
+		)
+		self.run_patch()
+		self.assertEqual(self.db.tables["File"]["img-ji"]["file_url"], "/private/files/image123456-1.jpg")
+		self.assertTrue(self.on_disk("private", "image123456-1.jpg"))
 
 	def test_a_failed_move_under_the_new_name_rolls_the_rows_back(self):
 		self.disk("public", "image.jpg")
@@ -905,16 +1149,6 @@ class TestThePatchMakesFilesPrivate(_PatchCase):
 		self.assertEqual(self.db.tables["File"]["one-ji"]["is_private"], 0)
 		self.assertEqual(result["made_private"], 1)
 
-	def test_contents_shared_under_another_url_are_left_alone(self):
-		"""Frappe's sibling update would repoint that other file at this one."""
-		self.add_files_upload()
-		self.file("website-image", "/files/Shot.png", doctype=None, parent=None)
-		result, _ = self.run_patch()
-		self.assertEqual(self.db.tables["File"]["shot-ji"]["is_private"], 0)
-		self.assertEqual(self.db.tables["File"]["website-image"]["file_url"], "/files/Shot.png")
-		self.assertTrue(self.on_disk("public", "shot.png"))
-		self.assertIn("under another URL", result["problems"][0])
-
 	def test_a_file_missing_from_disk_is_reported_not_saved(self):
 		self.file("gone-ji", "/files/gone.png")
 		result, _ = self.run_patch()
@@ -928,16 +1162,23 @@ class TestThePatchMakesFilesPrivate(_PatchCase):
 		self.assertEqual(STATE["saves"], [])
 		self.assertIn("no content_hash", result["problems"][0])
 
-	def test_files_on_other_documents_and_private_files_are_not_touched(self):
+	def test_files_on_other_documents_private_files_and_remote_urls_are_not_touched(self):
 		self.disk("public", "brochure.pdf")
 		self.file(
 			"brochure", "/files/brochure.pdf", doctype="Project", parent=PROJECT, content_hash="hash-999999"
 		)
 		self.file("cam-ji", "/private/files/cam.jpg", private=1, content_hash="hash-888888")
+		self.file("link-ji", "https://example.com/plan.pdf", content_hash=None)
 		result, _ = self.run_patch()
 		self.assertEqual(STATE["saves"], [])
 		self.assertEqual(self.db.tables["File"]["brochure"]["is_private"], 0)
 		self.assertEqual(result["made_private"], 0)
+
+	def test_the_public_count_is_exactly_the_selection(self):
+		"""L4: a remote URL on an interval is neither acted on nor counted."""
+		self.file("link-ji", "https://example.com/plan.pdf", content_hash=None)
+		result, _ = self.run_patch()
+		self.assertEqual(result["before"]["public_files"], 0)
 
 	def test_it_commits_after_every_file(self):
 		self.add_files_upload("one", content_hash="hash-111111", row=False)
@@ -947,7 +1188,7 @@ class TestThePatchMakesFilesPrivate(_PatchCase):
 
 
 class TestThePatchLinksStuckRows(_PatchCase):
-	def test_the_stuck_row_is_linked_to_its_now_private_file(self):
+	def test_the_stuck_row_is_linked_routed_and_the_flag_cleared(self):
 		self.add_files_upload()
 		result, _ = self.run_patch()
 		row = self.db.tables["Job Interval Photo"]["shot-row"]
@@ -956,6 +1197,7 @@ class TestThePatchLinksStuckRows(_PatchCase):
 		)
 		self.assertEqual(self.db.tables["Job Interval"][INTERVAL]["photos_pending_upload"], 0)
 		self.assertIn(("Job Interval", INTERVAL), STATE["cache_cleared"])
+		self.assertEqual(STATE["routed"], [(INTERVAL, "shot-ji")])
 		self.assertEqual(result["linked"], 1)
 
 	def test_a_camera_capture_whose_bytes_never_arrived_stays_pending(self):
@@ -966,7 +1208,7 @@ class TestThePatchLinksStuckRows(_PatchCase):
 			{r.upload_status for r in self.db.tables["Job Interval Photo"].values()}, {"Pending"}
 		)
 		self.assertEqual(self.db.tables["Job Interval"][OTHER_INTERVAL]["photos_pending_upload"], 1)
-		self.assertEqual(result["linked"], 0)
+		self.assertEqual((result["linked"], STATE["routed"]), (0, []))
 
 	def test_the_flag_stays_up_while_another_row_is_unsettled(self):
 		self.add_files_upload()
@@ -984,12 +1226,13 @@ class TestThePatchLinksStuckRows(_PatchCase):
 		self.run_patch()
 		self.assertIsNone(self.db.tables["Job Interval Photo"]["stuck"]["file_doc"])
 
-	def test_a_row_whose_file_stayed_public_is_not_linked(self):
+	def test_a_row_whose_file_stayed_public_is_not_linked_or_routed(self):
 		self.add_files_upload()
 		STATE["fail_after_move"].add("shot-ji")
 		result, _ = self.run_patch()
 		self.assertEqual(self.db.tables["Job Interval Photo"]["shot-row"]["upload_status"], "Pending")
 		self.assertTrue(any("still public" in p for p in result["problems"]))
+		self.assertEqual(STATE["routed"], [])
 
 	def test_a_failing_write_rolls_that_interval_back_and_the_rest_go_on(self):
 		self.add_files_upload("one", interval=INTERVAL, content_hash="hash-111111")
@@ -1001,16 +1244,56 @@ class TestThePatchLinksStuckRows(_PatchCase):
 		self.assertEqual(result["linked"], 1)
 
 
+class TestTheRelinkStepIsReusable(_PatchCase):
+	"""L2: a device's cached page goes on registering by display name for a session or more."""
+
+	def test_a_row_written_after_the_patch_is_linked_by_a_later_run(self):
+		self.add_files_upload()
+		self.run_patch()
+		# The cached page uploads, link_attachment makes it private, and the row is registered by name.
+		self.disk("private", "late.png")
+		self.file(
+			"late-ji",
+			"/private/files/late.png",
+			private=1,
+			content_hash="hash-555555",
+			created=T0 + timedelta(hours=20),
+		)
+		self.photo("late-row", captured=T0 + timedelta(hours=20, seconds=1), idx=2)
+		STATE["routed"].clear()
+		result = _kiosk_files().link_stuck_photo_rows()
+		self.assertEqual(result, {"linked": 1, "problems": []})
+		self.assertEqual(self.db.tables["Job Interval Photo"]["late-row"]["file_doc"], "late-ji")
+		self.assertEqual(STATE["routed"], [(INTERVAL, "late-ji")])
+
+	def test_a_second_run_links_nothing(self):
+		self.add_files_upload()
+		self.run_patch()
+		self.db.writes.clear()
+		STATE["routed"].clear()
+		self.assertEqual(_kiosk_files().link_stuck_photo_rows(), {"linked": 0, "problems": []})
+		self.assertEqual((self.db.writes, STATE["routed"]), ([], []))
+
+	def test_routing_can_be_turned_off(self):
+		self.disk("private", "a.png")
+		self.file("a-ji", "/private/files/a.png", private=1)
+		self.photo("a-row", captured=T0 + timedelta(seconds=1))
+		_kiosk_files().link_stuck_photo_rows(route=False)
+		self.assertEqual(STATE["routed"], [])
+		self.assertEqual(self.db.tables["Job Interval Photo"]["a-row"]["upload_status"], "Uploaded")
+
+
 class TestThePatchIsSafe(_PatchCase):
 	def test_a_second_run_writes_nothing(self):
 		self.add_files_upload()
 		self.run_patch()
 		tables = copy.deepcopy(self.db.tables)
 		STATE["saves"].clear()
+		STATE["routed"].clear()
 		self.db.writes.clear()
 		result, _ = self.run_patch()
 		self.assertEqual(self.db.tables, tables)
-		self.assertEqual((STATE["saves"], self.db.writes), ([], []))
+		self.assertEqual((STATE["saves"], self.db.writes, STATE["routed"]), ([], [], []))
 		self.assertEqual((result["made_private"], result["linked"], result["problems"]), (0, 0, []))
 
 	def test_execute_never_raises(self):
