@@ -256,6 +256,19 @@ class TestFilesToCopy(unittest.TestCase):
 		]
 		self.assertEqual([row["file_url"] for row in rules.files_to_copy([], sources)], [SPECS, ESTIMATE])
 
+	def test_two_sources_that_only_share_a_name_are_both_picked(self):
+		sources = [
+			{"file_url": "/private/files/Site plan.pdf", "file_name": "Site plan.pdf"},
+			{"file_url": "https://drive.example/site-plan", "file_name": "Site plan.pdf"},
+		]
+		self.assertEqual(len(rules.files_to_copy([], sources)), 2)
+		# Against what the record already holds, the name still counts.
+		self.assertEqual(rules.files_to_copy([sources[0]], sources), [])
+
+	def test_two_url_less_sources_with_one_name_are_picked_once(self):
+		sources = [{"file_url": "", "file_name": "notes.txt"}, {"file_url": None, "file_name": "notes.txt"}]
+		self.assertEqual(len(rules.files_to_copy([], sources)), 1)
+
 	def test_a_row_with_no_url_and_no_name_is_skipped(self):
 		self.assertEqual(rules.files_to_copy([], [{"file_url": "", "file_name": None}]), [])
 		self.assertEqual(rules.files_to_copy(None, None), [])

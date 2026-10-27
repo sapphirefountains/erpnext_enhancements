@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A Project made from an Opportunity gets one copy of each attachment, not two or four.** Found
   while verifying v1.749.0 on prod. Brian's PRJ-00777 (09:23 that morning) held 4 rows of "Design
   Specs - Waterfall Feature.pdf" and 2 of each of its other three files. Across production, 20
-  Projects held 71 extra File rows, the earliest from 2025-09-09.
+  Projects held 71 extra File rows. 67 came from this; the other 4, on three Projects, are one file
+  uploaded to the Project twice, which Frappe stores once and points both rows at.
   - **Two paths copy and neither looked at the other.** The Project `on_update` hook
     `project_enhancements.sync_attachments_from_opportunity` fires inside the creation job's
     `project.insert` and copied the Opportunity's files. A moment later, the job's own
@@ -24,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Both now ask one rule**, `utils/attachment_copies.files_to_copy` (pure, no frappe). It skips
     a file the Project already holds, by the same stored URL or the same name (the hook's
     long-standing rule). It takes one of each file even when the sources repeat it, because what
-    the Project holds grows as rows are picked. The job reads the Project's files after the hook
-    ran, so it adds only what the hook did not.
+    the Project holds grows as rows are picked. Among the sources only the URL counts, so two
+    different files that share a name both come over, as before. The job reads the Project's files
+    after the hook ran, so it adds only what the hook did not.
   - **A failed copy still stops the creation** at the attachments step, with the reason in the
     progress dialog, exactly as v1.749.0 reports it. Only *which* files are copied changed.
   - **The stored extras are removed** by the one-shot patch `dedupe_project_attachment_rows`. Nik
@@ -38,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       touched. The comparison is exact, character for character, in Python (`extra_copies`),
       because MariaDB's PAD SPACE, case-insensitive `group by` that finds the candidates would
       call `plan.pdf` and `PLAN.pdf ` the same file.
+    - The 4 rows uploaded twice go too, since each is the same stored file. Their kept row is then
+      the file's only row, so deleting it later from the sidebar removes the file, as for any
+      attachment held once. Every kept row copied from an Opportunity still shares its file with
+      the Opportunity's row.
     - The attachment lines already in a Project's timeline stay as history.
     - It runs one savepoint per Project, prints the counts before and after, cannot raise, and is
       safe twice. Expected on prod: 71 rows removed from 20 Projects.

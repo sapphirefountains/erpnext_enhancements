@@ -1505,7 +1505,8 @@ erpnext_enhancements.patches.show_todo_due_date
 erpnext_enhancements.patches.dedupe_contact_phone_rows
 # Project attachments (v1.749.1): creating a Project from an Opportunity copied each attachment twice (the Project
 # on_update hook sync_attachments_from_opportunity, then the creation job's own loop), four times for a file the
-# Opportunity held twice -- 71 extra File rows on 20 Projects by 2026-10-27. Keeps the oldest row per Project and
+# Opportunity held twice -- 67 of the 71 extra File rows on 20 Projects by 2026-10-27 (the other 4: one file
+# uploaded to a Project twice, the same stored file). Keeps the oldest row per Project and
 # file_url, deletes the rest with a plain DELETE (File.on_trash never runs, so no stored file is touched); folders
 # and URL-less rows untouched. Nik approved 2026-10-27. One savepoint per Project; prints counts. Cannot raise, safe twice.
 erpnext_enhancements.patches.dedupe_project_attachment_rows

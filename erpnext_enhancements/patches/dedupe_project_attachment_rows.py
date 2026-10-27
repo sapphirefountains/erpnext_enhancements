@@ -10,7 +10,12 @@ actual files".
 **What it changes.** For each Project with more than one File row pointing at the same stored file
 (same ``file_url``), the oldest row is kept (``creation``, then ``name``) and the others are deleted.
 Folders and rows with no URL are never touched, and two different files that only share a name both
-stay. On production on 2026-10-27: 71 extra rows across 20 Projects, the earliest from 2025-09-09.
+stay. On production on 2026-10-27: 71 extra rows across 20 Projects. 67 came from the double copy.
+The other 4, on three Projects, are one file uploaded to the Project twice, which Frappe stores once
+and points both rows at; they are the same stored file too, so they go as well. Their kept row is
+then the file's only row, so deleting it later from the sidebar removes the file, as it would for
+any attachment held once. Every kept row that came from an Opportunity still shares its file with
+the Opportunity's row.
 
 **What it never changes.** The stored file. The rows are deleted with ``frappe.db.delete``, a plain
 ``DELETE`` on ``tabFile``, so ``File.on_trash`` and its file removal never run. Every kept row, and

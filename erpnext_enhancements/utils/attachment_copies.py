@@ -11,7 +11,7 @@ Two paths copy an Opportunity's attachments onto a new Project, and both run on 
 Until v1.749.1 the job copied every file again without looking, and the hook compared names only
 against what the Project held before its loop began, so a file the Opportunity carries twice came
 over twice from each path: four rows of one PDF on PRJ-00777. On production on 2026-10-27, 20
-Projects held 71 extra rows, from 2025-09-09 on. Both paths now ask :func:`files_to_copy`, and
+Projects held 71 extra rows, 67 of them from this. Both paths now ask :func:`files_to_copy`, and
 ``patches/dedupe_project_attachment_rows`` removes the stored extras with :func:`extra_copies`.
 
 Every copy is a File row pointing at the same stored file (``file_url``); nothing here or in the
@@ -42,9 +42,11 @@ def file_keys(row):
 def files_to_copy(existing, sources):
 	"""The source rows still to copy, in source order.
 
-	None the record already holds (``existing``, its File rows), and one of each file even when the
-	sources repeat it, because the set of what the record holds grows as rows are picked. A source
-	row with neither a URL nor a name is skipped.
+	None the record already holds (``existing``, its File rows, matched by URL or name), and one of
+	each file even when the sources repeat it, because the set of what the record holds grows as rows
+	are picked. Among the sources only the URL decides: two source rows that share a name but point
+	at different stored files are both copied, as they were before v1.749.1. A source row with
+	neither a URL nor a name is skipped.
 	"""
 	held = set()
 	for row in existing or []:
@@ -54,7 +56,7 @@ def files_to_copy(existing, sources):
 		keys = file_keys(row)
 		if not keys or keys & held:
 			continue
-		held |= keys
+		held |= {key for key in keys if key[0] == "url"} or keys
 		picked.append(row)
 	return picked
 
