@@ -50,6 +50,7 @@ from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate
 
 from erpnext_enhancements.api import maintenance_planner as mp
+from erpnext_enhancements.api import planner_open
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 from erpnext_enhancements.utils.normalize import phone_display
@@ -170,6 +171,10 @@ def booking_entry(booking, stop=None):
 		"arrive": stop.get("arrive"),
 		"address": stop.get("address"),
 		"order": stop.get("order"),
+		# v1.753.0: a tap opens the booking's record. A projected visit's ref is its contract, and
+		# ``open`` (planner_open.mark_bookings) says whether this person may open it.
+		"projected": bool(booking.get("projected")),
+		"open": booking.get("open", True),
 	}
 
 
@@ -480,6 +485,7 @@ def get_person_schedule(resource=None, start=None, days=DEFAULT_DAYS, user=None)
 		)
 		return answer
 	data, entries = pp._people_days(first, last, [person["name"]], google=False)
+	planner_open.mark_bookings(planner_open.day_bookings(data.get("days")))  # what a tap may open
 	cells = (data.get("days") or {}).get(person["name"]) or {}
 	answer["days"] = [
 		day_view(entry, cells.get(entry.get("date"))) for entry in entries.get(person["name"]) or []
@@ -526,6 +532,7 @@ def get_day_overview(date, group=None):
 			answer["note"] = _("Nobody active is in the {0} group.").format(group)
 			return answer
 	data, entries = pp._people_days(day, day, names, google=False)
+	planner_open.mark_bookings(planner_open.day_bookings(data.get("days")))  # what a tap may open
 	people = []
 	for person in sorted(data.get("resources") or [], key=group_rank):
 		name = person.get("name")

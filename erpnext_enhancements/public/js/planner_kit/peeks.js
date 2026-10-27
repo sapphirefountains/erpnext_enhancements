@@ -31,6 +31,11 @@
  * A booking the page says it owns is marked `data-pk-drag="1"` with its kind, ref, key, date and
  * person; the page's own pointer-drag code reads those, so a drop goes through the page's normal save
  * path (reason prompt, Undo). The renderers are pure, for tests/test_planner_phase6a.py.
+ *
+ * A booking with a record behind it (`ctx.record_of`, records.js: a task, a visit, a trip) is also
+ * marked `data-pk-open="<doctype>" data-pk-open-name="<name>"`, and a tap on it opens that record (Nik,
+ * 2026-10-27). Both drawers hand the tap to `opts.on_open(record)` when the page passes one (a page
+ * ignores the click that ends a drag out of the drawer), else open it through `records.open`.
  */
 
 import { escape, hours, drive, day_label, add_days, contact_href, glow_keys, t } from "./escape.js";
@@ -93,13 +98,17 @@ function booking_html(booking, day, person, ctx) {
 	const chips = [];
 	if (booking.tentative) chips.push(`<span class="pk-chip pk-chip-plain">${escape(t("Pencil"))}</span>`);
 	if (booking.kind === "drive" && booking.estimated) chips.push(`<span class="pk-chip pk-chip-plain">${escape(t("estimate"))}</span>`);
-	const tip = [booking.label, meta, booking.address, grab ? t("Drag onto the calendar to move it") : ""]
+	const record = typeof ctx.record_of === "function" ? ctx.record_of(booking.kind, booking) : null;
+	const tip = [booking.label, meta, booking.address, grab ? t("Drag onto the calendar to move it") : "", record ? t("Click to open it") : ""]
 		.filter(Boolean)
 		.join("\n");
 	const projects = booking.project ? ` data-pk-projects="${escape(glow_keys([booking.project]))}"` : "";
+	const opens = record
+		? ` data-pk-open="${escape(record.doctype)}" data-pk-open-name="${escape(record.name)}" role="button" tabindex="0"`
+		: "";
 	return (
-		`<li class="pk-item pk-k-${kind}${grab ? " pk-grab" : ""}"${grab ? drag_attrs(booking, day, person) : ""}${projects}` +
-		` title="${escape(tip)}"><span class="pk-kind">${escape(t(KINDS[kind] || "Booking"))}</span>` +
+		`<li class="pk-item pk-k-${kind}${grab ? " pk-grab" : ""}${record ? " pk-open" : ""}"${grab ? drag_attrs(booking, day, person) : ""}` +
+		`${projects}${opens} title="${escape(tip)}"><span class="pk-kind">${escape(t(KINDS[kind] || "Booking"))}</span>` +
 		`<span class="pk-item-main"><span class="pk-item-label">${escape(booking.label)}</span>` +
 		`<span class="pk-item-meta">${escape(meta)}</span></span>${chips.join("")}</li>`
 	);
@@ -277,6 +286,17 @@ export function day_overview_html(data, ctx) {
 }
 
 export function create_peeks(env) {
+	const record_of = env.records ? env.records.record_of : null;
+
+	// A tap on a booking with a record (data-pk-open): the page's `on_open`, else the record itself.
+	function open_from(target, opts) {
+		const el = target.closest("[data-pk-open][data-pk-open-name]");
+		if (!el) return false;
+		const record = { doctype: el.getAttribute("data-pk-open"), name: el.getAttribute("data-pk-open-name") };
+		if (opts && typeof opts.on_open === "function") opts.on_open(record);
+		else if (env.records) env.records.open(record);
+		return true;
+	}
 	const doc = env.doc;
 
 	function arrows(prev_title, next_title, on_step) {
@@ -320,7 +340,7 @@ export function create_peeks(env) {
 			handle.set_title((data && data.label) || opts.label || t("Schedule"));
 			handle.set_subtitle(person_meta(data));
 			nav.label.textContent = `${day_label(state.start)} – ${day_label(add_days(state.start, days - 1))}`;
-			handle.set_body(person_week_html(data, { selected: state.selected, can_drag: opts.can_drag, data }));
+			handle.set_body(person_week_html(data, { selected: state.selected, can_drag: opts.can_drag, record_of, data }));
 		};
 		const load = () => {
 			const token = ++state.token;
@@ -381,6 +401,7 @@ export function create_peeks(env) {
 			on_click: (e) => {
 				const target = e.target;
 				if (!target || !target.closest) return;
+				if (open_from(target, opts)) return;
 				const route = target.closest("[data-pk-full-route]");
 				if (route) {
 					const data = state.data || {};
@@ -432,7 +453,7 @@ export function create_peeks(env) {
 					if (env.warn) env.warn(e);
 				}
 			}
-			handle.set_body(head + day_overview_html(data, { can_drag: opts.can_drag, person_key: opts.person_key, data }));
+			handle.set_body(head + day_overview_html(data, { can_drag: opts.can_drag, person_key: opts.person_key, record_of, data }));
 		};
 		const load = () => {
 			const token = ++state.token;
@@ -483,6 +504,7 @@ export function create_peeks(env) {
 				if (typeof opts.on_head_click === "function" && opts.on_head_click(e, state.date) === true) return;
 				const target = e.target;
 				const el = target && target.closest ? target.closest("[data-pk-person-open]") : null;
+				if (!el && target && target.closest && open_from(target, opts)) return;
 				if (!el || typeof opts.on_person !== "function") return;
 				const key = el.getAttribute("data-pk-person-open");
 				const found = ((state.data && state.data.people) || []).find(

@@ -16,12 +16,40 @@
  * that and changes only where it is drawn. The fields are made at once, in a hidden holder attached
  * to the page (as a Dialog's are, in its hidden modal), so a page may bind its buttons with
  * `$wrapper.find(...)` before `show()`; `show()` moves them into the drawer.
+ *
+ * `panel.unsaved()` says whether the open panel holds edits that are not saved, so a tap that opens a
+ * record (records.js) can ask before it throws them away. The panel remembers its values the first time
+ * the person touches it (a pointer or a key inside it, never a page's own set_value or a reply filling
+ * in a row), and has changes when they differ from that. A value the page sets through the panel after
+ * that (a late reply) moves the remembered value with it, so it is never counted as the person's edit;
+ * one written straight into `fields_dict` is not seen, and at worst asks once for nothing. Controls a page
+ * draws into the panel itself, outside the FieldGroup (the Maintenance Planner's crew checkboxes), count
+ * too once the page hands over what they say: `dialog.add_values(() => ...)`.
  */
+
+// JSON with every object's keys sorted, so two reads of the same values always compare equal.
+export function canonical(value) {
+	const sort = (v) => {
+		if (Array.isArray(v)) return v.map(sort);
+		if (v && typeof v === "object") {
+			return Object.keys(v)
+				.sort()
+				.reduce((out, key) => Object.assign(out, { [key]: sort(v[key]) }), {});
+		}
+		return v;
+	};
+	try {
+		return JSON.stringify(sort(value));
+	} catch (e) {
+		return "";
+	}
+}
 
 export function create_panel(env) {
 	const doc = env.doc;
 	const drawer = env.drawer;
 	let holder = null;
+	let current = null;
 
 	function staging() {
 		if (!holder) {
@@ -54,6 +82,57 @@ export function create_panel(env) {
 			this.field_group.make();
 			this.fields_dict = this.field_group.fields_dict;
 			this.fields_list = this.field_group.fields_list;
+			this.touched = null;
+			this.extras = [];
+			const touch = (e) => {
+				if (this.touched === null && e && e.isTrusted !== false) this.touched = this.values_key();
+			};
+			this.container.addEventListener("pointerdown", touch, true);
+			this.container.addEventListener("keydown", touch, true);
+		}
+
+		values() {
+			let base;
+			try {
+				base = this.get_values(true) || {};
+			} catch (e) {
+				base = {};
+			}
+			if (!this.extras.length) return base;
+			const extra = this.extras.map((fn) => {
+				try {
+					return fn();
+				} catch (e) {
+					return null;
+				}
+			});
+			return Object.assign({}, base, { __extra: extra });
+		}
+
+		// The page's own controls in the panel (see the header): what `fn()` returns is part of the values.
+		add_values(fn) {
+			if (typeof fn === "function") this.extras.push(fn);
+		}
+
+		values_key() {
+			return canonical(this.values());
+		}
+
+		// The page set these fields itself (a late reply): they are not the person's edits.
+		rebase(fieldnames) {
+			if (this.touched === null) return;
+			const base = JSON.parse(this.touched || "{}");
+			const now = this.values();
+			fieldnames.forEach((name) => {
+				if (name in now) base[name] = now[name];
+				else delete base[name];
+			});
+			this.touched = canonical(base);
+		}
+
+		// Edits since the person first touched the panel (see the header).
+		is_dirty() {
+			return this.is_open() && this.touched !== null && this.values_key() !== this.touched;
 		}
 
 		get_values(ignore_errors) {
@@ -65,11 +144,15 @@ export function create_panel(env) {
 		}
 
 		set_value(fieldname, value) {
-			return this.field_group.set_value(fieldname, value);
+			const done = this.field_group.set_value(fieldname, value);
+			Promise.resolve(done).then(() => this.rebase([fieldname]));
+			return done;
 		}
 
 		set_values(values) {
-			return this.field_group.set_values(values);
+			const done = this.field_group.set_values(values);
+			Promise.resolve(done).then(() => this.rebase(Object.keys(values || {})));
+			return done;
 		}
 
 		get_field(fieldname) {
@@ -117,6 +200,7 @@ export function create_panel(env) {
 				on_close: (how) => {
 					this.display = false;
 					this.handle = null;
+					if (current === this) current = null;
 					// The drawer has taken the fields out of the page. A page that reads them after
 					// hide() (a late reply filling in a row) still can: jQuery finds in a detached tree.
 					if (typeof this.onhide === "function") this.onhide(how);
@@ -124,6 +208,8 @@ export function create_panel(env) {
 				},
 			});
 			this.display = true;
+			this.touched = null;
+			current = this;
 			return this;
 		}
 
@@ -142,7 +228,9 @@ export function create_panel(env) {
 		}
 	}
 
-	return function panel(opts) {
+	const panel = function panel(opts) {
 		return new Panel(opts);
 	};
+	panel.unsaved = () => !!(current && current.is_dirty());
+	return panel;
 }

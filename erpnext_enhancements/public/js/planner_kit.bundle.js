@@ -35,6 +35,10 @@
  *                                       dialog; resolves r.message, rejects {status, message,
  *                                       exc_type, session_expired} (docs/app-design-system.md)
  *   state_html(kind, opts)              sf_kit's state panel markup (loading, empty, error, no-access)
+ *   records.record_of(kind, item) / open(record) / open_item(kind, item)
+ *                                       a tap opens the item's own record in the same tab (Nik,
+ *                                       2026-10-27), asking first when the side panel has unsaved
+ *                                       edits (planner_kit/records.js)
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -44,6 +48,7 @@ import { escape, safe_color, glow_key, glow_keys, t, hours, drive, day_label, ad
 import { create_guard } from "./planner_kit/history.js";
 import { create_drawer } from "./planner_kit/drawer.js";
 import { create_panel } from "./planner_kit/panel.js";
+import { create_records } from "./planner_kit/records.js";
 import { create_toast } from "./planner_kit/toast.js";
 import { create_menu } from "./planner_kit/menu.js";
 import { create_legend, legend_html } from "./planner_kit/legend.js";
@@ -142,6 +147,10 @@ function install() {
 	env.guard = create_guard(env).install();
 	env.drawer = create_drawer(env);
 	env.toast = create_toast(env);
+	const panel = create_panel(env);
+	// A tap opens the record (records.js); the quick looks (peeks.js) mark their bookings with it.
+	env.unsaved = panel.unsaved;
+	env.records = create_records(env);
 	const kit = {
 		version: VERSION,
 		escape,
@@ -153,7 +162,8 @@ function install() {
 		format: { hours, drive, day_label, add_days, t },
 		drawer: env.drawer,
 		guard: env.guard,
-		panel: create_panel(env),
+		panel,
+		records: env.records,
 		toast: env.toast,
 		menu: create_menu(env),
 		legend: create_legend(env),

@@ -470,7 +470,13 @@ class RentalPlanner {
 		data.fountains.forEach((f) => {
 			const $row = $('<div class="rp-row"></div>').appendTo($t);
 			const $label = $('<div class="rp-label"></div>').appendTo($row);
-			$label.append(document.createTextNode(f.asset_name || f.asset));
+			// The fountain's name opens its Asset, as a bar opens its booking (Nik, 2026-10-27: a tap on
+			// anything a planner draws opens its record). A real button, like the bars.
+			$('<button type="button" class="rp-asset"></button>')
+				.text(f.asset_name || f.asset)
+				.attr("title", __("Open {0}", [f.asset_name || f.asset]))
+				.on("click", () => frappe.set_route("Form", "Asset", f.asset))
+				.appendTo($label);
 			$("<small>").text(f.item_code || f.asset).appendTo($label);
 			const $track = track().appendTo($row);
 			today_line($track);

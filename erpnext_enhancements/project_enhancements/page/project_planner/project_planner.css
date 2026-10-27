@@ -1439,6 +1439,12 @@ body.pp-drag-active * {
 	text-overflow: ellipsis;
 }
 
+/* A person's name opens their employee record (a tap opens the record, 2026-10-27). */
+.pp-hm-name.pp-p6a-name:hover span:last-child,
+.pp-hm-name.pp-p6a-name:focus-visible span:last-child {
+	text-decoration: underline;
+}
+
 /* A week's cell shows its percentage; the tint repeats it. */
 .pp-hm-cell {
 	border-radius: var(--sf-radius-none);
@@ -3677,6 +3683,36 @@ body.p6b-resizing * {
 	text-overflow: ellipsis;
 	min-width: 0;
 	flex: 1 1 auto;
+}
+
+/* A phase's and a task's name open their Task (a tap opens the record, 2026-10-27). */
+.ppl-phase-name[data-ppr-task],
+.ppl-task-name[data-ppr-task] {
+	cursor: pointer;
+}
+
+.ppl-phase-name[data-ppr-task]:hover,
+.ppl-phase-name[data-ppr-task]:focus-visible,
+.ppl-task-name[data-ppr-task]:hover,
+.ppl-task-name[data-ppr-task]:focus-visible {
+	text-decoration: underline;
+}
+
+/* A hold on a name opens its menu (a tap opens the record, 2026-10-27): no text selection and no iOS
+   callout under the finger, as on a card and a person's chip. Touch screens only, so a mouse can still
+   select and copy a name. */
+@media (pointer: coarse) {
+	.ppl-task-name[data-ppr-task],
+	.ppl-phase-name[data-ppr-task],
+	.ppl-project-name,
+	.pp-p6a-proj,
+	.t1-tray-title,
+	.pp-hm-name.pp-p6a-name,
+	.pp-route-title {
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
+	}
 }
 
 /* A collapsed project's or phase's work: the days it covers, as plain runs. */

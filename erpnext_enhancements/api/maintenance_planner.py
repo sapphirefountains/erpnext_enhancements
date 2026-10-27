@@ -470,7 +470,9 @@ def _project_view(technicians, start, end, visit_overrides=None):
 	Both come from the one engine call that provides the bookings. ``visit_overrides`` (draft mode,
 	v1.601.0) puts the caller's drafted visits in place of the stored ones for that call.
 	"""
-	people = [dict(t, resource=None, group=None, color=None) for t in technicians or []]
+	people = [
+		dict(t, resource=None, group=None, color=None, employee=None, open_as=None) for t in technicians or []
+	]
 	users = [t["user"] for t in people if t.get("user")]
 	if not users:
 		return {"technicians": people, "bookings": {}}
@@ -483,8 +485,12 @@ def _project_view(technicians, start, end, visit_overrides=None):
 		resources = {r.get("name"): r for r in data.get("resources") or []}
 		for person in people:
 			resource = resources.get(user_to_resource.get(person.get("user"))) or {}
+			# The Employee is what a tap on a technician's name opens (v1.753.0).
 			person.update(
-				resource=resource.get("name"), group=resource.get("group"), color=resource.get("color")
+				resource=resource.get("name"),
+				group=resource.get("group"),
+				color=resource.get("color"),
+				employee=resource.get("employee"),
 			)
 		known = {p["user"] for p in people}
 		helpers = sorted(
@@ -504,9 +510,15 @@ def _project_view(technicians, start, end, visit_overrides=None):
 					"resource": resource.get("name"),
 					"group": resource.get("group"),
 					"color": resource.get("color"),
+					"employee": resource.get("employee"),
 					"helper": True,
 				}
 			)
+		# v1.753.0: what a tap on a name opens for this person, and which trips they may open.
+		from erpnext_enhancements.api import planner_open
+
+		planner_open.mark_people(people, resource_key="resource")
+		planner_open.mark_bookings(planner_open.day_bookings(data.get("days")))
 		out = {}
 		for person in people:
 			user = person["user"]
@@ -541,6 +553,8 @@ def _booking_cell(cell):
 				"slot": b.get("slot"),
 				# A pencil task is drawn as one (v1.601.0); the key is there only when it is.
 				**({"tentative": True} if b.get("tentative") else {}),
+				# A trip this person may not open says so (v1.753.0); the key is there only then.
+				**({"open": False} if b.get("open") is False else {}),
 			}
 			for b in cell.get("bookings") or []
 			if b.get("kind") in FOREIGN_BOOKING_KINDS

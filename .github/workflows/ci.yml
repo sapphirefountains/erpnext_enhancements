@@ -4031,6 +4031,15 @@ jobs:
       # node is on PATH in this job, so the harness cannot skip here.
       - name: Planner first-visit tour and the help for the new tabs (P12, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_tour -v
+      # A tap on a planner item opens its record (Nik, 2026-10-27): the Task, the Project, the visit, the
+      # person's Employee, in the same tab, through the kit's drawer so Back and Forward hold; Quick edit and
+      # the quick looks are on the hold / right-click menu; Tap to move is off by default. Runs
+      # scripts/test_planner_tap_opens.js against the real kit (records, panel, peeks) and the real Project and
+      # Maintenance Planner scripts: the map from item to record, the fallbacks (a drafted new task, no kit, no
+      # permission), unsaved side-panel edits asked about first. Reads files and runs node, so it is unittest;
+      # node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner taps open the record (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
