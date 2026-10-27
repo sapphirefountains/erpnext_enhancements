@@ -285,7 +285,7 @@ class TestTheLocationQueue(unittest.TestCase):
 		m, _jar = _module(user="sam@example.com")
 		self.assertTrue(m["belongs_to_session"](m["key_for"]("sam@example.com")))
 		self.assertFalse(m["belongs_to_session"](m["key_for"]("pat@example.com")))
-		self.assertTrue(m["belongs_to_session"](""), "a point queued before v1.751.1 carries none")
+		self.assertTrue(m["belongs_to_session"](""), "a point queued before v1.753.2 carries none")
 		self.assertTrue(m["belongs_to_session"](None))
 		self.assertFalse(m["belongs_to_session"]("not-a-key"))
 

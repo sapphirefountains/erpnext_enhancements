@@ -2,7 +2,7 @@
 /**
  * Browser Back / Forward on the Time Kiosk (`/kiosk`): its bottom tabs and its bottom sheets.
  *
- * Loads the REAL `ui.js`, `myday.js`, `settings.js` and `app.js` from `public/js/kiosk/` into a
+ * Loads the REAL `ui.js`, `myday.js`, `photos.js`, `settings.js` and `app.js` from `public/js/kiosk/` into a
  * vm context over a small fake DOM and a fake session history, then taps, types nothing, and
  * presses Back and Forward. The history behaves the way a browser's does where it matters: a
  * traversal (the Back button, Forward, `history.back()`) is an asynchronous task that fires
@@ -40,7 +40,7 @@ const path = require("path");
 const vm = require("vm");
 
 const KIOSK = path.join(__dirname, "..", "erpnext_enhancements", "public", "js", "kiosk");
-const SCRIPTS = ["ui.js", "myday.js", "settings.js", "app.js"];
+const SCRIPTS = ["ui.js", "myday.js", "photos.js", "settings.js", "app.js"];
 
 let failures = 0;
 let checks = 0;
@@ -461,6 +461,30 @@ function makeServer(env) {
 						},
 					],
 				};
+			case "get_my_photos":
+				return {
+					period: "7d",
+					groups: [
+						{
+							job_interval: "JI-0000",
+							day: "2026-09-24",
+							start_time: "2026-09-24 07:00:00",
+							end_time: "2026-09-24 07:30:00",
+							project: "PRJ-0001",
+							project_title: "Main Fountain",
+							photos: ["a", "b", "c"].map((n) => ({
+								name: "F-" + n,
+								url: "/private/files/" + n + ".jpg?fid=F-" + n,
+								thumb: "/api/method/erpnext_enhancements.api.kiosk_photos.photo_thumbnail?photo=F-" + n,
+								captured_on: "2026-09-24 07:10:00",
+								caption: "",
+							})),
+							waiting: 0,
+						},
+					],
+					next_start: 1,
+					has_more: false,
+				};
 			case "get_my_correction_requests":
 			case "get_my_visits_today":
 			case "get_tasks_for_project":
@@ -697,7 +721,7 @@ function byId(env, id) {
 }
 
 function visibleTab(env) {
-	for (const t of ["clock", "myday", "map", "settings"]) {
+	for (const t of ["clock", "myday", "photos", "map", "settings"]) {
 		const p = byId(env, "tk-panel-" + t);
 		if (p && !p.hidden) return t;
 	}
@@ -940,6 +964,34 @@ test("My Day: detail -> Edit times is one entry; Back closes the form and keeps 
 	await back(env);
 	check("the next Back is Clock", visibleTab(env), "clock");
 	invariants(env, "my day");
+});
+
+test("Photos: the viewer is one entry; stepping through photos pushes nothing; Back closes it", async () => {
+	const env = await boot();
+	await tapTab(env, "photos");
+	check("Photos is on screen", visibleTab(env), "photos");
+	check("it asked for its photos", env.calls.some((c) => c.method === "get_my_photos"), true);
+	const tiles = byId(env, "tk-panel-photos").querySelectorAll(".tk-photo");
+	check("one tile per photo", tiles.length, 3);
+	await tap(env, tiles[0]);
+	check("the viewer is open", depth(env), 1);
+	check("one marker over Photos", current(env), { tab: "photos", sheet: 1 });
+	const counter = () => topLayer(env).querySelector(".tk-viewer-count").textContent;
+	check("on the first photo", counter(), "1 / 3");
+	const pushes = env.history.kioskPushes();
+	await tapInSheet(env, "›");
+	await tapInSheet(env, "›");
+	check("stepped to the last photo", counter(), "3 / 3");
+	check("… and Next is spent", button(topLayer(env), "›").disabled, true);
+	check("still one sheet after stepping", depth(env), 1);
+	check("stepping pushed nothing", env.history.kioskPushes(), pushes);
+	check("and called back() never", env.history.backCalls, 0);
+	await back(env);
+	check("Back closed the viewer", depth(env), 0);
+	check("… on Photos, still", [visibleTab(env), current(env)], ["photos", { tab: "photos", sheet: 0 }]);
+	await back(env);
+	check("the next Back is Clock", visibleTab(env), "clock");
+	invariants(env, "photos");
 });
 
 test("stacked sheets: each Back closes exactly one", async () => {

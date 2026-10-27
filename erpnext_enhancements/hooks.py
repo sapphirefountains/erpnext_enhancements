@@ -2980,7 +2980,7 @@ override_whitelisted_methods = {
 # other request leaves on a method + path check. It never raises (frappe would log it and send
 # the body unscrubbed). See fieldlevel_read.scrub_rest_write_response (v1.542.0).
 #
-# Time Kiosk offline marker (v1.751.1): every api.time_kiosk GET answer is labelled X-Kiosk-Key
+# Time Kiosk offline marker (v1.753.2): every api.time_kiosk GET answer is labelled X-Kiosk-Key
 # with the marker of the session that answered (empty for Guest), and kiosk-sw.js keeps an answer
 # offline only when that matches the key the page claimed. Every other request leaves on a method
 # + path check; it never raises. See workforce/kiosk_offline.stamp_response.
@@ -3037,7 +3037,7 @@ auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_a
 # on_login sends a cookie only to a browser holding somebody else's marker. See
 # travel_management/itinerary_offline.py.
 #
-# The Time Kiosk's marker (v1.751.1) is the same pattern for /kiosk: www/kiosk.py sets
+# The Time Kiosk's marker (v1.753.2) is the same pattern for /kiosk: www/kiosk.py sets
 # `ee_kiosk_key`, a kept kiosk page whose boot key is not the cookie's refuses to draw and has
 # kiosk-sw.js delete what it keeps (answers, the page, queued points), and the same two hooks
 # remove it. on_login is what covers a session that expired followed by somebody else's sign-in by

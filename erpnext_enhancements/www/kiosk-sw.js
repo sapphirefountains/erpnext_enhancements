@@ -78,6 +78,7 @@ const PRECACHE = [
   '/assets/erpnext_enhancements/js/kiosk/ui.js',
   '/assets/erpnext_enhancements/js/kiosk/geo.js',
   '/assets/erpnext_enhancements/js/kiosk/myday.js',
+  '/assets/erpnext_enhancements/js/kiosk/photos.js',
   '/assets/erpnext_enhancements/js/kiosk/map.js',
   '/assets/erpnext_enhancements/js/kiosk/settings.js',
   '/assets/erpnext_enhancements/js/kiosk/app.js',
@@ -346,7 +347,7 @@ async function forgetKept() {
 }
 
 // Queued points tagged for anybody but `owner` ('' = everybody tagged). A point
-// queued before v1.751.1 carries no marker and is left to upload as before.
+// queued before v1.753.2 carries no marker and is left to upload as before.
 async function dropPointsNotOf(owner) {
   const points = await getAllPoints();
   await deletePoints(points.filter((p) => p.owner && p.owner !== owner).map((p) => p.client_id));

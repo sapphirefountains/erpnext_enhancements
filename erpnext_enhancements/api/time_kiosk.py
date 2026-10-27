@@ -1907,7 +1907,7 @@ def log_geolocation_batch(points, offline_key=None):
     point rejected ``other_person``, so a shared phone never files one person's
     unsent positions as another's. The worker keeps such points until their own
     person's kiosk takes them, or deletes them when somebody else's does. No key
-    (a point queued before v1.751.1) is accepted as before.
+    (a point queued before v1.753.2) is accepted as before.
 
     A fix worse than ``min_accuracy_m`` is stored as ``Low Accuracy`` (and
     reported as accepted) when ``keep_low_accuracy_fixes`` is on — it still

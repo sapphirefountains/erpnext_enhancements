@@ -1030,6 +1030,75 @@ body {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Photos tab (photos.js) — a grid of thumbnails per job, a full-screen viewer */
+/* ------------------------------------------------------------------------ */
+
+.tk-photo-filters { display: flex; flex-direction: column; gap: 12px; }
+/* The shared segmented control is 44px (the theme picker); these chips are tapped on
+   site, often with gloves, so they meet the file's 48px rule. */
+.tk-photo-filters .tk-seg button { min-height: 48px; }
+.tk-photo-list { display: flex; flex-direction: column; gap: 12px; }
+.tk-photo-day { margin: 8px 0 -4px; }
+.tk-photo-job { flex: 1; min-width: 0; }
+.tk-photo-job-title { margin: 0; font-size: 1rem; font-weight: 700; color: var(--tk-text); overflow-wrap: anywhere; }
+.tk-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+@media (min-width: 560px) {
+  .tk-photo-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* A tile is a button: 48px+ on every phone, and square whatever the photo's shape. */
+.tk-photo {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: var(--tk-radius-sm);
+  overflow: hidden;
+  background: var(--tk-surface-2);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tk-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.tk-photo-none {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  color: var(--tk-text-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+}
+.tk-photo-waiting { margin-top: 10px; }
+
+.tk-viewer { display: flex; flex-direction: column; gap: 12px; }
+/* A definite height, so the photo's max-height: 100% has something to resolve
+   against: a percentage of an auto-height parent collapses (see .tk-map above). */
+.tk-viewer-stage {
+  position: relative;
+  height: 62vh;
+  height: 62dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--tk-radius-sm);
+  background: var(--tk-surface-2);
+  overflow: hidden;
+  touch-action: pan-y pinch-zoom;
+}
+.tk-viewer-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.tk-viewer-stage.is-loading img { opacity: 0.35; }
+.tk-viewer-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tk-viewer-count { color: var(--tk-text-2); font-weight: 700; font-variant-numeric: tabular-nums; }
+.tk-viewer-caption { font-weight: 600; }
+
+/* ------------------------------------------------------------------------ */
 /* Motion + width                                                           */
 /* ------------------------------------------------------------------------ */
 
