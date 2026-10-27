@@ -57,6 +57,7 @@ const PRECACHE = [
   '/assets/erpnext_enhancements/js/kiosk/ui.js',
   '/assets/erpnext_enhancements/js/kiosk/geo.js',
   '/assets/erpnext_enhancements/js/kiosk/myday.js',
+  '/assets/erpnext_enhancements/js/kiosk/photos.js',
   '/assets/erpnext_enhancements/js/kiosk/map.js',
   '/assets/erpnext_enhancements/js/kiosk/settings.js',
   '/assets/erpnext_enhancements/js/kiosk/app.js',

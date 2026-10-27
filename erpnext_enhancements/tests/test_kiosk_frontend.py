@@ -95,7 +95,7 @@ class TestTheInputsExist(unittest.TestCase):
 
     def test_the_scripts_are_there(self):
         names = {p.name for p in js_files()}
-        for required in ("ui.js", "geo.js", "app.js", "myday.js", "map.js", "settings.js"):
+        for required in ("ui.js", "geo.js", "app.js", "myday.js", "photos.js", "map.js", "settings.js"):
             self.assertIn(required, names)
 
     def test_the_api_is_parseable_and_whitelists_something(self):
@@ -228,7 +228,7 @@ class TestTheShellKeepsItsContract(unittest.TestCase):
 
     def test_load_order(self):
         html = self.html()
-        order = [html.index(f"/js/kiosk/{n}") for n in ("ui.js", "geo.js", "myday.js", "map.js", "settings.js", "app.js")]
+        order = [html.index(f"/js/kiosk/{n}") for n in ("ui.js", "geo.js", "myday.js", "photos.js", "map.js", "settings.js", "app.js")]
         self.assertEqual(order, sorted(order), "ui.js first, app.js last — app.js mounts the view modules")
 
     def test_the_worker_answers_stats(self):
