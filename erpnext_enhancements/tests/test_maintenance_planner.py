@@ -208,7 +208,7 @@ def _reset():
 	frappe.local.message_log = []
 	frappe.get_doc = lambda doctype, name: frappe.docs[(doctype, name)]
 	frappe.has_permission = lambda *a, **k: True
-	# v1.752.0 (api/planner_open): which records the caller may open. Everything, unless a test names
+	# v1.753.0 (api/planner_open): which records the caller may open. Everything, unless a test names
 	# what User Permissions and row rules leave them for a doctype (frappe.readable).
 	frappe.readable = {}
 	frappe.get_list = _get_list
@@ -1241,7 +1241,7 @@ class TestTechnicianView(unittest.TestCase):
 		self.assertEqual(people["austin@example.com"]["group"], "PM")
 		self.assertEqual(people["austin@example.com"]["color"], "#2563eb")
 		self.assertNotIn("helper", people["austin@example.com"])
-		# The Employee is what a tap on a name opens (v1.752.0); a resource without one says None.
+		# The Employee is what a tap on a name opens (v1.753.0); a resource without one says None.
 		self.assertIsNone(people["austin@example.com"]["employee"])
 		self.assertEqual(
 			people["korben@example.com"],

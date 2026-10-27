@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""What a tap on a planner item may open, for the person asking (v1.752.0).
+"""What a tap on a planner item may open, for the person asking (v1.753.0).
 
 A tap on anything a planner draws opens its record (Nik, 2026-10-27; ``planner_kit/records.js``). The
 browser's ``frappe.model.can_read`` only knows which *doctypes* a user may read (``boot.user.can_read``);

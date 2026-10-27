@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.752.0] - 2026-10-27
+## [1.753.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
 

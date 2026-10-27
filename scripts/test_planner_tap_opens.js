@@ -20,7 +20,7 @@
  *      project's name each open their record; a drafted new task, no kit, or no permission does what a
  *      tap did before; the menu starts with Quick edit and Open task; a project's name has a menu of its
  *      own; Tap to move is off unless chosen; a press on a resize grip is never a tap.
- *      **Permissions are per record**, as production has them (v1.752.0 review): a person opens only
+ *      **Permissions are per record**, as production has them (v1.753.0 review): a person opens only
  *      what the server marked (`open_as`; most planner users may open no Employee but their own), a trip
  *      only when `open` is not false. Capacity's and the route's names know who they are; a name's
  *      initials, the route's title and Capacity's rows have the person's menu on every screen; a
@@ -373,7 +373,7 @@ test("The quick looks: a booking with a record opens it", () => {
 	check("without record_of (an older page): nothing changes", [before.includes("data-pk-open"), before.includes("pk-open")], [false, false]);
 	const day = kit.day_overview_html({ people: [{ resource: "RES-1", label: "Kyle", capacity: 8, booked: 4, bookings: [bookings[0]] }] }, { record_of: d.records.record_of });
 	check("everyone's day too", day.includes('data-pk-open="Task" data-pk-open-name="TASK-1"'), true);
-	// As api/planner_views sends them since v1.752.0: `projected` a flag, `open` the caller's answer.
+	// As api/planner_views sends them since v1.753.0: `projected` a flag, `open` the caller's answer.
 	const sent = kit.person_week_html(
 		week([
 			{ kind: "visit", ref: "CON-7", label: "Projected visit", hours: 2, projected: true, open: true },

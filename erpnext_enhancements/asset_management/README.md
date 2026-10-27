@@ -200,7 +200,7 @@ else setup, else the event) as `?start=`, and shows only to those whose roles op
     `--sf-*` tokens, so the board follows the Desk's light or dark theme. The script writes no
     stylesheet and no color; the legend's swatches carry the bars' own classes.
     `tests/test_s3_page_css.py` (`TestRentalPlanner`) holds it there.
-  - Clicking a bar opens its record, and since v1.752.0 clicking a fountain's name opens its Asset
+  - Clicking a bar opens its record, and since v1.753.0 clicking a fountain's name opens its Asset
     (a button, `.rp-asset`; Nik, 2026-10-27: a tap on anything a planner draws opens its record).
     Clicking an empty day on a fountain starts a new rental with that fountain and date filled in.
   - Pool rows show units out per day against what can be booked, shaded as they fill.

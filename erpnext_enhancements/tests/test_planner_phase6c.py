@@ -717,7 +717,7 @@ class TestPages(unittest.TestCase):
 			self.assertNotIn("setTimeout(() => this.p6c_arm", block)
 			# Taken before the quick looks and the card's own click see it.
 			self.assertIn('document.addEventListener("click", (e) => this.p6c_tap_click(e), true);', block)
-			# Off unless this device turned it on: a tap opens the record since v1.752.0 (Nik,
+			# Off unless this device turned it on: a tap opens the record since v1.753.0 (Nik,
 			# 2026-10-27), so a touch screen no longer starts in Tap to move.
 			self.assertNotIn('matchMedia("(pointer: coarse)")', block)
 			self.assertIn('"") === "1";', _obj_method(block, "p6c_tap_default"))
@@ -752,7 +752,7 @@ class TestPages(unittest.TestCase):
 			self.assertIn('target.kind !== "card"', items)
 		self.assertIn('__("Highlight this project")', self.pp_block)
 		self.assertIn('__("Highlight this site")', self.mp_block)
-		# A project's name opens the Project since v1.752.0, so its highlight is on the project's menu
+		# A project's name opens the Project since v1.753.0, so its highlight is on the project's menu
 		# (and the card's), never a click on the name.
 		self.assertNotIn("p6c_body_click", self.pp_block)
 		self.assertIn('if (target.kind === "project" && target.project) {', _obj_method(self.pp_block, "p6c_menu_items"))

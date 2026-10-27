@@ -8024,7 +8024,7 @@ const PP6C_METHODS = {
 		// card's own click see it.
 		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
 		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
-		// A project's name on a card used to highlight it here; since v1.752.0 a tap opens the Project and
+		// A project's name on a card used to highlight it here; since v1.753.0 a tap opens the Project and
 		// Highlight is on the project's menu (p6c_menu_items).
 		this.$body.on("change click", () => this.p6c_state_soon());
 		this.p6c_sync_controls();

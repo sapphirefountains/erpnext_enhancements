@@ -16,7 +16,7 @@ What this pins, and what would fail quietly otherwise:
   every kind: a drafted new task is no Task yet, a projected visit is its contract however the page
   carries it, and a record this person cannot open is none, so the page keeps its old answer instead of
   sending them to "Not permitted".
-* **Who may open what is decided per record, on the server** (``api/planner_open.py``, the v1.752.0
+* **Who may open what is decided per record, on the server** (``api/planner_open.py``, the v1.753.0
   review). ``frappe.model.can_read`` sees only doctypes; on production 14 of the 17 planner users hold an
   Employee User Permission for their own record alone, so every other Employee, and every Planner Resource
   naming one, is refused them, and a Travel Trip or a Maintenance Record can be refused by its own row
@@ -329,7 +329,7 @@ class TestThePages(unittest.TestCase):
 
 	def test_hold_targets_select_nothing_on_a_touch_screen_only(self):
 		# A finger's hold opens the menu, so nothing is selected under it; a mouse can still select and
-		# copy a name (the v1.752.0 re-review), so the rules sit in a coarse-pointer block.
+		# copy a name (the v1.753.0 re-review), so the rules sit in a coarse-pointer block.
 		css = _read(PP_JS.with_suffix(".css"))
 		start = css.index("@media (pointer: coarse) {\n\t.ppl-task-name[data-ppr-task],\n\t.ppl-phase-name[data-ppr-task],")
 		rule = css[start : css.index("\n}\n", start)]

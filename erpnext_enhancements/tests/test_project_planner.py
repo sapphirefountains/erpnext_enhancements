@@ -172,7 +172,7 @@ def _reset():
 	}
 	frappe.log_error = lambda *a, **k: frappe.errors.append((a, k))
 	frappe.get_all = _get_all
-	# v1.752.0 (api/planner_open): what this user may open, per record. Everything, unless a test says
+	# v1.753.0 (api/planner_open): what this user may open, per record. Everything, unless a test says
 	# which names of a doctype User Permissions and row rules leave them (frappe.readable).
 	frappe.readable = {}
 	frappe.get_list = _get_list
@@ -1629,7 +1629,7 @@ class TestGetPlanner(unittest.TestCase):
 				("visit", "SMR-1", "2026-10-12", "RES-1"),
 			],
 		)
-		# v1.752.0: what a tap opens for this caller (api/planner_open): Austin's Employee, the visit.
+		# v1.753.0: what a tap opens for this caller (api/planner_open): Austin's Employee, the visit.
 		self.assertEqual([(r["name"], r["open_as"]) for r in data["resources"]], [("RES-1", "Employee")])
 		self.assertEqual({f["ref"]: (f.get("open"), f.get("projected")) for f in data["foreign"]}["SMR-1"], (True, False))
 		# P3: with the schedule columns present, each project says whether its schedule is published
@@ -2090,7 +2090,7 @@ class TestGetRoute(unittest.TestCase):
 				"map_ids", "use_routes_api", "travel", "off",
 			},
 		)
-		# v1.752.0: a tap on the title opens the person's Employee; each stop says whether it may open.
+		# v1.753.0: a tap on the title opens the person's Employee; each stop says whether it may open.
 		self.assertEqual((got["employee"], got["open_as"]), ("EMP-1", "Employee"))
 		self.assertEqual([(s["ref"], s["open"], s["projected"]) for s in got["stops"]], [("SMR-1", True, False), ("T-X", True, False), ("T-O", True, False)])
 		# Shown in miles (Nik, 2026-10-09); measured in km underneath, so both travel together.
