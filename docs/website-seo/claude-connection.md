@@ -61,14 +61,21 @@ exact version: **0.5.4**, the current release on 2026-10-27, published 2026-10-2
 download whatever is newest each time Claude Code starts, and run it with the password in its
 environment.
 
-In **PowerShell 7**, read the password into a variable first, so that it never appears in your
-command history:
+In PowerShell, read the password into a variable first, so that it never appears in your command
+history. This works in both Windows PowerShell 5.1 and PowerShell 7:
 
 ```powershell
-$pw = Read-Host -Prompt "seo-agent application password" -MaskInput
+$secure = Read-Host -Prompt "seo-agent application password" -AsSecureString
+$pw = [System.Net.NetworkCredential]::new('', $secure).Password
+if (-not $pw) { throw "No password entered; nothing was saved." }
 claude mcp add sapphire-wordpress --scope user -e WP_API_URL=https://www.sapphirefountains.com/wp-json/mcp/mcp-adapter-default-server -e WP_API_USERNAME=seo-agent -e "WP_API_PASSWORD=$pw" -- cmd /c npx -y "@automattic/mcp-wordpress-remote@0.5.4"
-Remove-Variable pw
+Remove-Variable pw, secure
 ```
+
+- **Not `Read-Host -MaskInput`.** It exists only in PowerShell 7.1 and later. In Windows
+  PowerShell 5.1 it errors, `$pw` stays empty, and the server is saved with a blank password that
+  then fails with 401.
+- **The `if` line stops that from happening.**
 
 What the parts mean:
 

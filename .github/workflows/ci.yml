@@ -3455,8 +3455,9 @@ jobs:
       # MCP server, annotated read-only), every callback's result against its own output schema
       # (core fails the call on a mismatch, so a schema typo breaks the ability on every request),
       # password-protected pages withheld from callers who can't edit them, and a token-level
-      # guard: no write but the one read-cache transient, no $wpdb call but a prepared SELECT, no
-      # dynamic calls, no rendering of blocks, shortcodes or Bricks elements. Uses the runner's
+      # guard: no write but the one read-cache transient (called or named as a callback), no
+      # ->query/insert/update/delete/replace on any object, no SQL read but a prepared SELECT, no
+      # dynamic calls, no rendering call of the plugin's own. Uses the runner's
       # preinstalled PHP; the suite stubs WordPress itself (scripts/fixtures/sf_seo_fake_wordpress.php).
       - name: WordPress SEO abilities mu-plugin (php)
         run: |

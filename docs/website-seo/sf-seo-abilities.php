@@ -251,16 +251,17 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 		}
 
 		/**
-		 * Whether Slim SEO outputs a stored canonical at all. It prints the tag only
-		 * for an absolute URL that passes FILTER_VALIDATE_URL (CanonicalUrl::output()),
-		 * so a relative or malformed one produces no canonical tag.
+		 * Whether Slim SEO outputs a stored canonical at all. CanonicalUrl::output()
+		 * prints the tag only when the value passes FILTER_VALIDATE_URL, so a
+		 * relative or malformed one produces no canonical tag. The same test, no
+		 * stricter: an ftp:// value passes it and is printed.
 		 *
 		 * @param string $canonical The rendered stored canonical.
 		 * @return bool
 		 */
 		public static function canonical_is_output( $canonical ) {
 			$canonical = trim( (string) $canonical );
-			return '' !== $canonical && false !== filter_var( $canonical, FILTER_VALIDATE_URL ) && 1 === preg_match( '#^https?://#i', $canonical );
+			return '' !== $canonical && false !== filter_var( $canonical, FILTER_VALIDATE_URL );
 		}
 
 		/**
@@ -339,19 +340,26 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 				$flags[] = 'duplicate_title';
 			}
 
-			if ( '' === self::clean_text( $stored_desc ) ) {
-				$flags[] = 'description_missing';
-			}
-			$desc_length = self::length( null !== $desc ? $desc : $stored_desc );
-			if ( 0 === $desc_length ) {
-				// Only a known-empty output is "not output"; an unknown one is just missing.
-				if ( null !== $desc ) {
-					$flags[] = 'description_not_output';
+			if ( ! empty( $record['protected'] ) ) {
+				// Behind a password a visitor gets no description, whatever is stored.
+				// Judging the stored one would tell a caller who may not read it
+				// whether one exists, and how long it is, so only the output counts.
+				$flags[] = 'description_not_output';
+			} else {
+				if ( '' === self::clean_text( $stored_desc ) ) {
+					$flags[] = 'description_missing';
 				}
-			} elseif ( $desc_length > self::DESCRIPTION_MAX ) {
-				$flags[] = 'description_too_long';
-			} elseif ( $desc_length < self::DESCRIPTION_MIN ) {
-				$flags[] = 'description_too_short';
+				$desc_length = self::length( null !== $desc ? $desc : $stored_desc );
+				if ( 0 === $desc_length ) {
+					// Only a known-empty output is "not output"; an unknown one is just missing.
+					if ( null !== $desc ) {
+						$flags[] = 'description_not_output';
+					}
+				} elseif ( $desc_length > self::DESCRIPTION_MAX ) {
+					$flags[] = 'description_too_long';
+				} elseif ( $desc_length < self::DESCRIPTION_MIN ) {
+					$flags[] = 'description_too_short';
+				}
 			}
 			if ( $duplicate_description ) {
 				$flags[] = 'duplicate_description';
@@ -1015,8 +1023,14 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 		$stored_desc      = sf_seo_stored( $stored, 'description' );
 		$stored_canonical = sf_seo_stored( $stored, 'canonical' );
 
+		$protected   = '' !== (string) $post->post_password;
 		$title       = sf_seo_render_with( $slim['title'], $post->ID );
-		$description = sf_seo_render_with( $slim['description'], $post->ID );
+		// A visitor without the password gets no description. Slim SEO's renderer
+		// asks post_password_required(), which is false for a request carrying the
+		// page's wp-postpass_ cookie, and whatever it returned would be cached for
+		// every caller. So a protected page's description is what visitors get:
+		// nothing, never rendered.
+		$description = $protected ? '' : sf_seo_render_with( $slim['description'], $post->ID );
 
 		if ( '' !== $stored_title ) {
 			$title_source = 'post';
@@ -1028,7 +1042,7 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 			$title_source = 'slim_seo_default';
 		}
 
-		if ( '' !== (string) $post->post_password ) {
+		if ( $protected ) {
 			$desc_source = 'password_protected';
 		} elseif ( '' !== $stored_desc ) {
 			$desc_source = 'post';
@@ -1051,13 +1065,15 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 		} else {
 			$noindex_source = null;
 		}
-		$noindex = null !== $noindex_source;
+		$noindex      = null !== $noindex_source;
+		$slim_noindex = $post_noindex || $settings['noindex'];
 
-		// What Slim SEO puts in the canonical tag: nothing on a noindexed page
-		// (Robots::modify_robots() removes it), nothing for a stored value that
-		// is not an absolute URL, else the stored value or the permalink.
+		// What Slim SEO puts in the canonical tag: nothing on a page Slim SEO
+		// itself noindexes (Robots::modify_robots() removes the tag; WooCommerce's
+		// noindex does not), nothing for a stored value that fails
+		// FILTER_VALIDATE_URL, else the stored value or the permalink.
 		$canonical = '' === $stored_canonical ? '' : sf_seo_render_variables( $stored_canonical, $post->ID );
-		if ( $noindex ) {
+		if ( $slim_noindex ) {
 			$canonical_effective = null;
 		} elseif ( '' === $canonical ) {
 			$canonical_effective = $url;
@@ -1071,7 +1087,7 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 			'url'                      => $url,
 			'post_title'               => SF_SEO_Rules::clean_text( $post->post_title ),
 			'modified'                 => str_replace( ' ', 'T', (string) $post->post_modified_gmt ) . 'Z',
-			'protected'                => '' !== (string) $post->post_password,
+			'protected'                => $protected,
 			'withheld'                 => false,
 			'title'                    => array(
 				'stored'    => $stored_title,
@@ -1090,7 +1106,7 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 			'canonical'                => array(
 				'stored'           => $stored_canonical,
 				'effective'        => $canonical_effective,
-				'points_elsewhere' => ! $noindex && SF_SEO_Rules::canonical_elsewhere( $canonical, $url ),
+				'points_elsewhere' => ! $slim_noindex && SF_SEO_Rules::canonical_elsewhere( $canonical, $url ),
 			),
 			'flags'                    => array(),
 			'duplicate_title_of'       => array(),
@@ -1578,17 +1594,21 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 	/**
 	 * A page's headings, from the content Slim SEO itself reads.
 	 *
-	 * Nothing new is executed to get them. Slim SEO's
-	 * `MetaTags\Data::get_post_content()` is the call behind every automatic
-	 * description, so the audit already runs it for each page:
-	 *  - For a Bricks page, Slim SEO's Bricks integration renders only the page's
-	 *    own elements, skipping code and form elements, the media, query,
-	 *    WordPress and extras categories, query loops, components, popups and
-	 *    anything with a script. Shortcodes inside dynamic data are not run.
-	 *  - For any other page it is the saved post content, unrendered: no blocks,
-	 *    no shortcodes. Static blocks such as headings keep their markup there.
+	 * This calls Slim SEO's `MetaTags\Data::get_post_content()`, the same
+	 * filtered path Slim SEO takes for its automatic descriptions. It runs what
+	 * Slim SEO already runs there, and nothing of its own:
+	 *  - For a Bricks page, Slim SEO's Bricks integration renders the page's own
+	 *    elements, skipping code and form elements, the media, query, WordPress
+	 *    and extras categories, query loops, components, popups and anything
+	 *    with a script. Shortcodes that reach Slim SEO's normalizer
+	 *    (Helper::normalize()) run, except those on its skip list, such as forms.
+	 *  - For any other page it is the saved post content. This function does not
+	 *    render it; static blocks such as headings keep their markup there.
 	 *  - WooCommerce's cart, checkout and account pages come back empty.
-	 * Without Slim SEO, the saved post content is read as it is.
+	 * Page detail calls this even for a page with a description of its own,
+	 * where Slim SEO's description path would not have read the content, so on
+	 * such a page it is a render that would not otherwise have happened. Without
+	 * Slim SEO, the saved post content is read as it is.
 	 *
 	 * What this cannot see is said in `note`. live_check reads the page as served.
 	 *
@@ -1633,7 +1653,7 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 		}
 
 		if ( $is_bricks && 'slim_seo' === $source ) {
-			$note = 'From the page\'s own Bricks elements, as Slim SEO renders them for descriptions. Not included: headings that Bricks templates add around the page (header, footer, a single post or product template), and elements Slim SEO skips (query loops, components, popups, forms, code, scripted elements). live_check reads the page as served.';
+			$note = 'From the page\'s own Bricks elements, rendered the way Slim SEO renders them for automatic descriptions (the same skipped elements, the same shortcodes). Not included: headings that Bricks templates add around the page (header, footer, a single post or product template), and elements Slim SEO skips (query loops, components, popups, forms, code, scripted elements). live_check reads the page as served.';
 		} elseif ( 'product' === $post->post_type ) {
 			$note = 'From the product description only. The product page\'s own headings (its name, tabs) come from its template. live_check reads the page as served.';
 		} else {
@@ -1912,7 +1932,7 @@ if ( ! class_exists( 'SF_SEO_Rules', false ) ) {
 							'type'        => 'string',
 							'description' => 'Canonical saved in Slim SEO; empty means the page\'s own URL.',
 						),
-						'effective'        => sf_seo_schema_nullable_string( 'The canonical tag the page outputs. Null when there is none: the page is noindexed, or the stored value is not an absolute URL.' ),
+						'effective'        => sf_seo_schema_nullable_string( 'The canonical tag the page outputs. Null when there is none: Slim SEO itself noindexes the page (WooCommerce\'s noindex leaves the tag in place), or the stored value fails FILTER_VALIDATE_URL.' ),
 						'points_elsewhere' => array( 'type' => 'boolean' ),
 					),
 				),

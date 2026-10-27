@@ -22,9 +22,12 @@
  *    nearest check to one. Denied callers and password-protected pages
  *    included;
  *  - the read-only promise, on tokens so a comment cannot fool it: no write
- *    function but the one read-cache transient, no $wpdb call but a prepared
- *    SELECT, no dynamic calls, and nothing that renders blocks, shortcodes or
- *    Bricks elements.
+ *    function but the one read-cache transient (called, or named in a string
+ *    as a callback), no ->query/insert/update/delete/replace on any object, no
+ *    SQL read but a prepared SELECT, no dynamic calls, and no rendering call of
+ *    the plugin's own (do_blocks, do_shortcode, hooks, Bricks render_data).
+ *    What Slim SEO runs inside the calls the plugin makes to it is out of
+ *    reach here; the README says what that is.
  */
 
 define( 'ABSPATH', __DIR__ . '/' );
@@ -197,14 +200,17 @@ $type_of = function ( $token ) {
 	return is_array( $token ) ? $token[0] : $token;
 };
 
-$called     = array(); // function name => token index
-$methods    = array();
-$dynamic    = array();
-$wpdb_calls = array();
+$called   = array(); // function name => token index
+$methods  = array(); // [ method name, token index ], on any object
+$dynamic  = array();
+$literals = array(); // every single-quoted or plain string literal, unquoted, lower case
 foreach ( $significant as $i => $token ) {
 	$next = $significant[ $i + 1 ] ?? null;
 	$prev = $significant[ $i - 1 ] ?? null;
 
+	if ( T_CONSTANT_ENCAPSED_STRING === $type_of( $token ) ) {
+		$literals[] = strtolower( ltrim( substr( $token[1], 1, -1 ), '\\' ) );
+	}
 	// $fn( ... ) or $object->$method( ... ): a call nobody can read off the page.
 	if ( T_VARIABLE === $type_of( $token ) && '(' === $next ) {
 		$dynamic[] = $token[1];
@@ -214,15 +220,13 @@ foreach ( $significant as $i => $token ) {
 	}
 	$name = strtolower( ltrim( $token[1], '\\' ) );
 	if ( in_array( $type_of( $prev ), $arrow, true ) ) {
-		$methods[] = $name;
-		$object    = $significant[ $i - 2 ] ?? null;
-		if ( T_VARIABLE === $type_of( $object ) && '$wpdb' === $object[1] ) {
-			$wpdb_calls[] = array( $name, $i );
-		}
+		// Whatever the object: $wpdb, $GLOBALS['wpdb'], or a copy of it in $db.
+		$methods[] = array( $name, $i );
 	} elseif ( ! in_array( $type_of( $prev ), array( T_FUNCTION, T_NEW ), true ) ) {
 		$called[ $i ] = substr( $name, (int) strrpos( '\\' . $name, '\\' ) );
 	}
 }
+$method_names = array_column( $methods, 0 );
 
 $forbidden = array(
 	// Writes.
@@ -247,21 +251,25 @@ $forbidden = array(
 );
 check_same( array(), array_values( array_unique( array_intersect( $called, $forbidden ) ) ), 'the plugin calls no write, dynamic-dispatch or rendering function' );
 check_same( array(), $dynamic, 'the plugin makes no variable function or method calls' );
-check_same( array(), array_values( array_intersect( $methods, array( 'render_data' ) ) ), 'the plugin never renders Bricks elements itself' );
+
+// A function name in a string is a call waiting to happen: array_map( 'update_option', … ),
+// add_action( 'init', 'wp_update_post' ). The cache write is one call site, never a callback.
+check_same( array(), array_values( array_unique( array_intersect( $literals, array_merge( $forbidden, array( 'set_transient' ) ) ) ) ), 'no forbidden function is named in a string (a callback is a call)' );
+
+// The database's write methods, on any object. Checking only $wpdb by name would let
+// $GLOBALS['wpdb']->query() or `$db = $wpdb; $db->query()` through.
+check_same( array(), array_values( array_unique( array_intersect( $method_names, array( 'query', 'insert', 'update', 'delete', 'replace', 'render_data' ) ) ) ), 'no ->query/insert/update/delete/replace on any object, and no Bricks render_data' );
 
 $transient_calls = array_keys( $called, 'set_transient', true );
 check_same( 1, count( $transient_calls ), 'the read cache is the one write, made in one place' );
 check_same( 'SF_SEO_CACHE_KEY', $significant[ $transient_calls[0] + 2 ][1] ?? null, 'and it writes only the cache key' );
 
-// Every $wpdb call is a SELECT, prepared: get_* take a $wpdb->prepare() whose
-// SQL starts with SELECT. get_row() and get_var() run whatever they are given.
-$wpdb_problems = array();
-$prepared      = 0;
-foreach ( $wpdb_calls as list( $method, $i ) ) {
-	if ( ! in_array( $method, array( 'prepare', 'get_row', 'get_var', 'get_results', 'get_col' ), true ) ) {
-		$wpdb_problems[] = "\$wpdb->$method() is not a read";
-		continue;
-	}
+// Every SQL read is a prepared SELECT, on any object: get_row/get_var/get_results/get_col
+// run whatever they are given, so each must take a ->prepare() call, and every ->prepare()
+// must start its SQL with SELECT.
+$sql_problems = array();
+$prepared     = 0;
+foreach ( $methods as list( $method, $i ) ) {
 	if ( 'prepare' === $method ) {
 		$first = $significant[ $i + 2 ] ?? null;
 		if ( '"' === $first ) {
@@ -269,18 +277,18 @@ foreach ( $wpdb_calls as list( $method, $i ) ) {
 		}
 		$sql = is_array( $first ) ? ltrim( $first[1], "'\"" ) : '';
 		if ( ! preg_match( '/^\s*SELECT\b/i', $sql ) ) {
-			$wpdb_problems[] = '$wpdb->prepare() SQL does not start with SELECT: ' . substr( $sql, 0, 40 );
+			$sql_problems[] = '->prepare() SQL does not start with SELECT: ' . substr( $sql, 0, 40 );
 		}
 		++$prepared;
-		continue;
-	}
-	$arg = array_slice( $significant, $i + 2, 3 );
-	if ( ! ( T_VARIABLE === $type_of( $arg[0] ?? null ) && '$wpdb' === $arg[0][1] && 'prepare' === strtolower( $arg[2][1] ?? '' ) ) ) {
-		$wpdb_problems[] = "\$wpdb->$method() is not given a \$wpdb->prepare() query";
+	} elseif ( in_array( $method, array( 'get_row', 'get_var', 'get_results', 'get_col' ), true ) ) {
+		$arg = array_slice( $significant, $i + 2, 3 );
+		if ( ! ( T_VARIABLE === $type_of( $arg[0] ?? null ) && in_array( $type_of( $arg[1] ?? null ), $arrow, true ) && 'prepare' === strtolower( $arg[2][1] ?? '' ) ) ) {
+			$sql_problems[] = "->$method() is not given a ->prepare() query";
+		}
 	}
 }
-check_same( array(), $wpdb_problems, 'every $wpdb call is a prepared SELECT' );
-check( $prepared >= 2, 'the $wpdb check saw the fingerprint queries (it is not checking nothing)' );
+check_same( array(), $sql_problems, 'every SQL read is a prepared SELECT' );
+check( $prepared >= 2, 'the SQL check saw the fingerprint queries (it is not checking nothing)' );
 check( false === stripos( $code, '__return_true' ), 'no permission is __return_true' );
 check(
 	array() === array_filter(
@@ -358,6 +366,16 @@ check_same(
 /* --- Noindex, canonical, order ------------------------------------------- */
 
 check_same( array( 'noindex' ), flags_for( array( 'noindex' => true ) ), 'a noindexed published page is flagged' );
+
+// A password-protected page is judged on what a visitor gets, so its flags say nothing
+// about the description stored behind the password: present, absent, short or long.
+foreach ( array( '', 'Short.', str_repeat( 'd', 100 ), str_repeat( 'd', 200 ) ) as $hidden ) {
+	check_same(
+		array( 'description_not_output' ),
+		flags_for( array( 'protected' => true, 'description' => array( 'stored' => $hidden, 'effective' => '' ) ) ),
+		'password page: the same flags whatever is stored (' . strlen( $hidden ) . ' characters)'
+	);
+}
 check_same( array( 'canonical_elsewhere' ), flags_for( array( 'canonical' => array( 'points_elsewhere' => true ) ) ), 'a canonical elsewhere is flagged' );
 
 $all = flags_for(
@@ -385,7 +403,7 @@ $canonical_cases = array(
 foreach ( $canonical_cases as $case ) {
 	check_same( $case[2], SF_SEO_Rules::canonical_elsewhere( $case[0], $case[1] ), 'canonical: ' . $case[3] );
 }
-check_same( array( true, false, false ), array( SF_SEO_Rules::canonical_is_output( 'https://x.com/a/' ), SF_SEO_Rules::canonical_is_output( '/a/' ), SF_SEO_Rules::canonical_is_output( 'ftp://x.com/a' ) ), 'Slim SEO outputs only an absolute http(s) canonical' );
+check_same( array( true, false, true ), array( SF_SEO_Rules::canonical_is_output( 'https://x.com/a/' ), SF_SEO_Rules::canonical_is_output( '/a/' ), SF_SEO_Rules::canonical_is_output( 'ftp://x.com/a' ) ), 'a canonical is output exactly when it passes FILTER_VALIDATE_URL, as in Slim SEO (ftp:// passes)' );
 
 check_same( true, SF_SEO_Rules::same_site_host( 'sapphirefountains.com', 'www.sapphirefountains.com' ), 'the apex host is this site' );
 check_same( true, SF_SEO_Rules::same_site_host( 'WWW.SapphireFountains.com', 'www.sapphirefountains.com' ), 'host case does not matter' );
@@ -711,6 +729,26 @@ $GLOBALS['sf_fake']['deny'] = array();
 check_same( SF_FAKE_PRIVATE_DESCRIPTION, $GLOBALS['sf_fake']['transients'][ SF_SEO_CACHE_KEY ]['items'][14]['description']['stored'] ?? null, 'the cache is shared: withholding happens on the way out, never in the cache' );
 check_same( SF_FAKE_PRIVATE_DESCRIPTION, by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] )[14]['description']['stored'], 'so the next caller who can edit it still sees it' );
 
+// A request carrying the page's wp-postpass_ cookie makes Slim SEO render the real
+// description. Whoever rebuilds the cache, it must never be cached as "effective".
+$hidden_render                                   = 'The real description from behind the password, as a cookie-carrying request renders it.';
+$GLOBALS['sf_fake']['effective_description'][14] = $hidden_render;
+$GLOBALS['sf_fake']['deny']                      = array( 'edit_post' );
+$rebuilt                                         = run_ability( 'sapphire-seo/audit-content', array( 'refresh' => true ) );
+$leak_check                                      = by_id( $rebuilt['items'] )[14];
+check_same( array( '', 0 ), array( $leak_check['description']['effective'], $leak_check['description']['length'] ), 'password page: effective description is what visitors get (nothing), even if Slim SEO would render more' );
+check( false === strpos( json_encode( $rebuilt ), 'from behind the password' ), 'password page: the rendered text appears nowhere in the response' );
+
+// And a caller who cannot edit it sees exactly the same record whether or not a
+// description is stored behind the password.
+$with_stored = $leak_check;
+unset( $GLOBALS['sf_fake']['meta'][14]['slim_seo'] );
+++$GLOBALS['sf_fake']['content_version'];
+$without_stored = by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] )[14];
+check_same( $with_stored, $without_stored, 'password page: a Contributor cannot tell whether a description is stored' );
+$GLOBALS['sf_fake']['deny'] = array();
+sf_fake_reset();
+
 $open = run_ability( 'sapphire-seo/page-detail', array( 'id' => 14 ) )['item'];
 check_same( array( array( 'level' => 2, 'text' => 'Pricing tiers' ) ), $open['headings']['items'], 'password page: its editor gets its headings' );
 check_same( array( 24 ), array_column( $open['images']['missing_alt'], 'id' ), 'password page: and its images' );
@@ -720,6 +758,7 @@ $GLOBALS['sf_fake']['wc_pages'] = array( 'cart' => 11 );
 $woo                            = by_id( run_ability( 'sapphire-seo/audit-content', array() )['items'] );
 check_same( array( true, 'woocommerce' ), array( $woo[11]['noindex'], $woo[11]['noindex_source'] ), 'WooCommerce\'s cart page is reported noindexed, by WooCommerce' );
 check( ! in_array( 'duplicate_description', $woo[13]['flags'], true ), 'and no longer counts as a duplicate of the product' );
+check_same( 'https://www.example.com/fountain-design/', $woo[11]['canonical']['effective'], 'WooCommerce\'s noindex leaves the canonical in place (only Slim SEO\'s own noindex removes it)' );
 $GLOBALS['sf_fake']['wc_pages'] = array();
 
 // One page.

@@ -42,7 +42,7 @@ Contributor fails every Slim SEO write check:
 - `edit_post` on someone else's published post needs `edit_others_posts` and
   `edit_published_posts`;
 - pages need `edit_pages`, and products need WooCommerce's product capabilities;
-- `edit_term` needs `manage_categories`, or `manage_product_terms` for product categories.
+- `edit_term` needs `manage_categories`, or `edit_product_terms` for product categories.
 
 Slim SEO's own read abilities make the same check, so a Contributor can't use those either. Ours
 cover what they would show.
@@ -120,7 +120,7 @@ on the **effective** text.
 | `description_too_long` | Effective description over **160** characters. |
 | `duplicate_description` | Another published, indexable item outputs the same description. Password-protected pages are never compared. |
 | `noindex` | Published, but noindexed: by its own Slim SEO setting, its post type's, or WooCommerce. WooCommerce deliberately noindexes its cart, checkout and account pages. `noindex_source` says which. |
-| `canonical_elsewhere` | The canonical tag it **outputs** points to a different URL. Scheme and a trailing slash are ignored. Slim SEO outputs no canonical on a noindexed page, or for a stored value that isn't an absolute URL, so those never count. `canonical.effective` is then `null`. |
+| `canonical_elsewhere` | The canonical tag it **outputs** points to a different URL. Scheme and a trailing slash are ignored. Slim SEO outputs no canonical on a page it noindexes itself, or for a stored value that fails `FILTER_VALIDATE_URL` (a relative path does), so those never count, and `canonical.effective` is then `null`. WooCommerce's noindex leaves the canonical in place. |
 
 Two rules are worth knowing:
 
@@ -142,6 +142,13 @@ only someone who can **edit** it gets:
 Anyone else gets `withheld: true` and nothing from behind the password. That includes `seo-agent`,
 as a Contributor. `live_check` never fetches such a page at all.
 
+Such a page is also judged only on what a visitor gets:
+
+- Its effective description is always empty, with length 0. Slim SEO would render the real one for
+  a request carrying the page's `wp-postpass_` cookie, and that must never reach the shared cache.
+- Its only description flag is `description_not_output`. So nothing in its record shows whether a
+  description is stored, or how long it is.
+
 ### Images, schema and headings (page detail)
 
 - **Images missing alt text.** These sources are checked:
@@ -161,18 +168,23 @@ as a Contributor. `live_check` never fetches such a page at all.
   logo and for a page with images. The **Slim SEO Schema add-on is not predictable.** It picks
   pages by location rules, and those can be custom PHP ("Code" rules) that run during a real page
   load. So `outputs_here` is always `null` rather than a guess. `live_check` answers it.
-- **Headings.** They come from the content Slim SEO itself reads for automatic descriptions
-  (`SlimSEO\MetaTags\Data::get_post_content()`), so the audit executes nothing that wasn't already
-  running:
+- **Headings.** They come from Slim SEO's own content reader,
+  `SlimSEO\MetaTags\Data::get_post_content()`. That is the same filtered path Slim SEO uses for its
+  automatic descriptions, so it runs what Slim SEO already runs there, and nothing of this plugin's
+  own:
   - For a Bricks page, that is Slim SEO's render of the page's own elements. It skips code and
     form elements, the media, query, WordPress and extras categories, query loops, components,
-    popups and anything with a script, and runs no shortcodes from dynamic data.
-  - For any other page, it is the saved post content, unrendered: no blocks, no shortcodes.
+    popups and anything with a script.
+  - Shortcodes that reach Slim SEO's normalizer do run, except those on its skip list (forms and
+    the like), exactly as they do for every automatic description.
+  - For any other page, it is the saved post content, which this plugin doesn't render.
+  - **Page detail calls it even for a page with a description of its own.** Slim SEO's own
+    description path wouldn't read that page's content, so for such a page this is a render that
+    wouldn't otherwise happen.
 
   What this misses: headings added by Bricks templates, by elements Slim SEO skips, and by dynamic
-  blocks or shortcodes. `note` says so in every response. If Slim SEO's reader isn't available, a
-  Bricks page reports `available: false` and points to `live_check`. It is never rendered by this
-  plugin.
+  blocks. `note` says so in every response. If Slim SEO's reader isn't available, a Bricks page
+  reports `available: false` and points to `live_check`. This plugin never renders Bricks itself.
 - **`live_check: true`** fetches the page as a visitor gets it and reads:
   - the served `<title>`, meta description, canonical and robots;
   - its headings, templates included;
@@ -227,9 +239,13 @@ other write call in the file.
    ```
 
    - Create `mu-plugins` if it doesn't exist. Nothing else is needed: no activation, no settings.
-   - **A second copy is harmless but confusing.** An upload saved as `sf-seo-abilities (1).php`
-     loads and is skipped. WordPress loads must-use plugins in alphabetical order, and the first
-     copy wins. Delete the extra.
+   - **A second copy doesn't break the site, but the wrong one may run.** WordPress loads
+     must-use plugins in sorted order, and the first copy wins. The other is skipped.
+     `sf-seo-abilities (1).php` sorts *before* `sf-seo-abilities.php`, because a space sorts before
+     a dot. So the "(1)" copy is the one that runs. Delete the extra at once.
+   - **Only 1.1.0 and later carry that protection.** An older copy beside a newer one can still
+     stop every request with a fatal error. Upload only 1.1.0 or later, and delete any older copy
+     before uploading.
 3. **Not Code Snippets.** A snippet can be edited or switched off in wp-admin and drift from this
    repo, which is the source of truth. A must-use plugin has no Deactivate button.
 4. **Make `seo-agent` a Contributor**, if it isn't one already. See
@@ -339,14 +355,21 @@ action**, scoped to the two API paths:
     node;
   - every callback's result against its own output schema, for an allowed caller and for denied
     ones. Core fails a call whose output doesn't match, so this matters most;
-  - password-protected pages withheld from a caller who can't edit them;
+  - password-protected pages: withheld from a caller who can't edit them, with no trace of what
+    is stored behind the password, even when Slim SEO would render the real description;
   - the live-check error paths.
 
   A token-level guard on the plugin source also fails the build on any of these:
-  - any write function (namespaced or not) other than the one cache transient;
-  - any `$wpdb` call that isn't a prepared `SELECT`;
-  - `call_user_func` and variable calls;
-  - anything that renders blocks, shortcodes or Bricks elements.
+  - any write function, namespaced or not, other than the one cache transient;
+  - the same functions named in a string, as a callback for `array_map()` or `add_action()`;
+  - `->query()`, `->insert()`, `->update()`, `->delete()` or `->replace()` on any object;
+  - any SQL read on any object that isn't a `->prepare()` whose SQL starts with `SELECT`;
+  - `call_user_func`, and variable function and method calls;
+  - any call of the plugin's own to `do_blocks`, `do_shortcode`, `apply_filters`, `do_action` or
+    Bricks' `render_data`.
+
+  The guard can't see into Slim SEO. The Slim SEO calls the plugin makes (its title and description
+  renderers and its content reader) run whatever Slim SEO runs, as described above.
 - **Not run against a real WordPress.** A local wp-env site with Slim SEO, WooCommerce and the MCP
   Adapter was planned, but the building session's permission check refused to download and run
   WordPress and those plugins. Bricks is commercial and couldn't be installed anyway. **So the first
