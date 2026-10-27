@@ -10,7 +10,7 @@ hold is skipped without a word, so a typo in an entry would just be missing from
 And a layer written whole replaces the rail, so writing over one a person arranged would throw
 their arrangement away (Nik, 2026-10-23: "Keep their own").
 
-Since v1.750.0 the field technicians' profile also decides their Desk home grid
+Since v1.751.0 the field technicians' profile also decides their Desk home grid
 (``trim_home_grid``), and the rail and the grid must list the same eight things. Pinned here too,
 along with the two desk pages that carry the rail to the kiosk and Stock Scan.
 
@@ -744,7 +744,7 @@ class UserSaveTest(unittest.TestCase):
 		self.assertEqual(STATE["errors"], [])
 
 
-# --- the field technicians' home grid (v1.750.0) ----------------------------------------------
+# --- the field technicians' home grid (v1.751.0) ----------------------------------------------
 
 # Nik, 2026-10-27, in his order, then the three he added: the rail's entry and the home grid's tile.
 NIKS_FIELD_TECH_DESK = [

@@ -2089,7 +2089,7 @@ scheduler_events = {
 # And it cuts frappe.boot.desktop_icons, the Desk home grid, down to the field technicians' eight
 # (Maintenance, Morning Briefing, CRM, Projects, Time Kiosk, Travel, Training, Stock Scan, the same
 # as their Dock rail) for anyone whose dock profile is Field Tech. Hides tiles only; System and
-# Workspace Managers keep the whole grid (v1.750.0, setup/dock_profiles.trim_home_grid).
+# Workspace Managers keep the whole grid (v1.751.0, setup/dock_profiles.trim_home_grid).
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------

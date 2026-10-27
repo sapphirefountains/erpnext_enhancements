@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.750.0] - 2026-10-27
+## [1.751.0] - 2026-10-27
 
 ### Added
 - **Field technicians see eight things on the Desk home grid, and the same eight on their Dock
@@ -55,6 +55,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rail and the grid. It covers who is trimmed and who is not, that a refused tile is never
     added, that frappe's list is copied rather than changed, the two redirect pages, and the boot
     wiring.
+
+## [1.750.0] - 2026-10-27
+
+ERPNext Task TASK-2026-02986 (PRJ-00580, Marketing Tools).
+
+### Added
+- **Phase 1 of AI-assisted SEO for www.sapphirefountains.com: a read-only WordPress mu-plugin of
+  Sapphire SEO abilities, with its install guide and a Claude connection guide**
+  (`docs/website-seo/`). Nik agreed a three-phase plan on 2026-10-27: (1) an AI audits the site
+  over MCP, (2) it proposes changes that a Marketing Manager approves in wp-admin, (3) a Search
+  Console tool in ERPNext's MCP. He chose to keep Slim SEO over Yoast, to avoid migrating titles,
+  descriptions, schema and redirects. Nothing here runs in ERPNext. Like `docs/website-capture/`,
+  the repo is the source of truth for a file that is uploaded to WP Engine.
+  - **Three abilities**, registered with core's Abilities API (`wp_abilities_api_init`, core
+    since 6.9) and listed on the MCP Adapter's default server (`meta.mcp.public`):
+    - `sapphire-seo/site-summary`: every flag counted, overall and per post type, with examples.
+    - `sapphire-seo/audit-content`: published pages, posts and products. Filters by post type,
+      by "flagged only" or by one flag. Paged, hard-capped at **25** per page: a row is about
+      1.2 KB, and 100 rows overran Claude Code's default 25,000-token cap on one MCP result.
+    - `sapphire-seo/page-detail`: one item by id or URL. Both the apex and the `www` host are
+      accepted. Adds images missing alt text, schema, headings and an opt-in live fetch.
+
+    Each needs `edit_posts`, is annotated read-only, and has input and output schemas.
+  - **Each item reports the title and description twice.** "Stored" is Slim SEO's post meta
+    `slim_seo`. "Effective" is what the page outputs, computed by Slim SEO's own
+    `MetaTags\Title` and `Description` renderers rather than a copy of their fallback rules. So
+    the audit agrees with the page, Bricks-generated automatic descriptions included.
+  - **The flags.**
+    - Title: missing; under 30 characters (the minimum is ours); over 60 (Slim SEO's editor warns
+      above 60).
+    - Description: missing; not output at all; under 50 or over 160 (Slim SEO's recommendation).
+    - Duplicate title or description, counted among indexable items only. A password-protected
+      page's description is never compared.
+    - Noindex on a published item: Slim SEO's setting, its post type's, or WooCommerce's own
+      noindexed cart, checkout and account pages.
+    - A canonical tag that points elsewhere. Only a canonical Slim SEO actually outputs counts.
+      It outputs none on a page it noindexes itself, or for a value that fails
+      `FILTER_VALIDATE_URL`, and the record then says `effective: null`. WooCommerce's noindex
+      leaves the tag in place.
+  - **"Discourage search engines" is reported at site level, not as a flag on every page.** WP
+    Engine staging normally has it on, and every response then carries a note saying so.
+  - **Password-protected pages give away nothing from behind the password.** `read_post` is true
+    for such a page, so only a caller who can edit it gets its stored description, headings and
+    images. Anyone else gets `withheld: true`. The cached audit is shared, so this is applied on
+    the way out, per caller. `live_check` never fetches such a page.
+    - **Judged on what a visitor gets.** The effective description is always empty and never
+      rendered. Slim SEO's renderer would return the real one for a request carrying the page's
+      `wp-postpass_` cookie, and whoever rebuilt the cache would then serve it to everyone.
+    - **No description flag but `description_not_output`.** So neither the flags nor the length
+      reveal whether a description is stored, or how long it is.
+  - **Headings come from Slim SEO's own content reader,
+    `SlimSEO\MetaTags\Data::get_post_content()`.** That is the same filtered path Slim SEO takes for
+    its automatic descriptions, so it runs what Slim SEO already runs there, and nothing of the
+    plugin's own.
+    - For a Bricks page, that is Slim SEO's filtered render. It skips code and form elements, the
+      media, query, WordPress and extras categories, query loops, components, popups and scripted
+      elements. Shortcodes that reach Slim SEO's normalizer still run, except those on its skip
+      list.
+    - For any other page, it is the saved content, which the plugin doesn't render.
+    - Page detail calls it even for a page with a description of its own, where Slim SEO's
+      description path wouldn't have read the content.
+
+    An earlier draft rendered the whole Bricks tree itself and ran `do_blocks()`. As the AI's user,
+    that could have run Code-element PHP, form render callbacks that count views, and query loops.
+    Without Slim SEO, a Bricks page reports no headings and points to `live_check` rather than
+    rendering anything.
+  - **Some answers can't be derived, and the plugin says so rather than guessing.**
+    - **The Slim SEO Schema add-on's per-page output:** its location rules can be custom PHP that
+      runs during a real page load. `outputs_here` is always null.
+    - **Headings from Bricks templates** (header, footer, single-post template).
+
+    For both, `live_check` fetches the page's own permalink, never a caller-supplied URL, and may
+    be answered from WP Engine's page cache. It reads the served title, description, canonical,
+    robots, headings and JSON-LD types, and reports a Cloudflare challenge as one.
+  - **A second copy of the file can't take the site down.** Everything is declared inside one
+    `if ( ! class_exists( 'SF_SEO_Rules', false ) )`. Without it, a duplicate upload such as
+    `sf-seo-abilities (1).php` would be a fatal "cannot redeclare" on every request, and recovery
+    mode can't pause a must-use plugin.
+    - The copy whose name sorts first is the one that runs. `sf-seo-abilities (1).php` sorts before
+      `sf-seo-abilities.php`, because a space sorts before a dot.
+    - Only 1.1.0 and later have the guard. The README says to delete any older copy.
+  - **The plugin writes nothing except a five-minute read cache,** one transient. Its key is a
+    fingerprint of everything the audit depends on. That includes the post meta Slim SEO's own
+    update abilities change without touching `post_modified`, so the cache can't serve a stale
+    audit after an edit.
+  - **Known limits, listed in the README:** the audit is built in one request with no time budget;
+    any caller can force `refresh`; robots filters other plugins add aren't seen.
+- **CI: `WordPress SEO abilities mu-plugin (php)`.** It runs `php -l` on the plugin, then
+  `scripts/test_sf_seo_abilities.php`, 378 checks.
+  - **The callbacks.** Most checks run the three callbacks against a stubbed WordPress and Slim SEO
+    (`scripts/fixtures/sf_seo_fake_wordpress.php`), and check each result against the ability's
+    own output schema. Core validates the output after every call and fails the call on a mismatch,
+    so a schema typo would break the ability on every request, and there is no WordPress in CI to
+    notice.
+  - **What else it covers:**
+    - each flag at its boundaries;
+    - denied callers (no `edit_posts`, no `read_post`, no `edit_post` on a password page);
+    - for a password page, no trace of the stored description, even when Slim SEO would render
+      it;
+    - the live check's Cloudflare, timeout and password paths;
+    - loading the file twice;
+    - a file that starts with `<?php` and no byte-order mark.
+- **A token-level guard on the plugin source** reads tokens, so the file's own docblocks can't trip
+  it. It fails the build on any of these:
+  - any write function other than the one cache transient, including a namespaced or
+    `\`-qualified call (PHP 8 reads those as one name token);
+  - the same functions named in a string, as a callback for `array_map()` or `add_action()`;
+  - `->query()`, `->insert()`, `->update()`, `->delete()` or `->replace()` on any object, so
+    neither `$GLOBALS['wpdb']` nor a copy in `$db` gets past it;
+  - any `get_row`, `get_var`, `get_results` or `get_col` on any object that isn't given a
+    `->prepare()` whose SQL starts with `SELECT`;
+  - `call_user_func`, or a variable function or method call;
+  - any call of the plugin's own to `do_blocks`, `do_shortcode`, `apply_filters`, `do_action` or
+    Bricks' `render_data`;
+  - `__return_true` as a permission.
+
+  Each of these was checked by breaking a copy of the plugin and seeing the suite fail. The guard
+  can't see into Slim SEO: the calls the plugin makes there run what Slim SEO runs.
+- **Not run against a real WordPress.** Standing up wp-env with Slim SEO, WooCommerce and the MCP
+  Adapter was refused by the session's permission check, because it downloads and runs that code.
+  Bricks is commercial and couldn't be installed anyway. The first real run is on WP Engine
+  staging, and the README lists what to check there.
+
+### Security
+- **As an Editor, the AI's `seo-agent` user can change production SEO settings over MCP, with no
+  approval step, so the guides now make it a Contributor.** Found while building the above. Slim SEO
+  4.11 registers its own abilities and lists them on the MCP server, including
+  `slim-seo/update-post-meta-tags` and `update-term-meta-tags`.
+  - **Their checks** are `edit_post` and `edit_term`. An Editor passes both. A Contributor fails
+    both on every published page, product and category: those need `edit_others_*`,
+    `edit_published_*`, `edit_pages`, `manage_categories` or WooCommerce's capabilities
+    (`edit_product_terms` for product categories).
+  - **How it was verified:** on 2026-10-27, from the live server's ability list, and in Slim SEO
+    4.11.4's `src/MetaTags/Abilities/Post.php` and `Term.php`.
+  - **Our abilities need only `edit_posts` and `read`,** both of which a Contributor has.
+  - **The guides now say Contributor, not Editor.** They add the one-step role change for the
+    existing user, and note that the application password works for the whole REST API, which is
+    why the role matters more than the MCP exposure.
+  - **The proxy is pinned.** The connection guide pins `@automattic/mcp-wordpress-remote` at
+    0.5.4 instead of `@latest`, which would run whatever is newest at every start with the
+    password in its environment.
+  - **The password stays out of shell history.** The guide reads it with
+    `Read-Host -AsSecureString`, which works in Windows PowerShell 5.1 as well as 7, and refuses an
+    empty one. `-MaskInput` would fail in 5.1 and save a blank password. Its `curl` examples
+    prompt for the password.
+  - **Still open, Nik's call:** hiding Slim SEO's `update-*` abilities from MCP altogether, through
+    core's `wp_register_ability_args` filter, as a second line for anyone who connects an AI as a
+    real Editor.
 
 ## [1.749.1] - 2026-10-27
 

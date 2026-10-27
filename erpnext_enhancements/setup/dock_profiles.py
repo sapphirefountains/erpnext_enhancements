@@ -34,7 +34,7 @@ Nothing here can hide a module from anyone: the rail only stops offering it. Sea
 Manage Dock still reach everything, and the reach gate frappe applies on every boot (module
 visibility, workspace roles) is untouched.
 
-The home grid follows the same profile (v1.750.0). A profile in ``HOME_GRIDS`` also decides the
+The home grid follows the same profile (v1.751.0). A profile in ``HOME_GRIDS`` also decides the
 tiles on the person's Desk home grid: ``trim_home_grid`` (``extend_bootinfo``, via
 ``boot.boot_session``) keeps only those, in that order. Only Field Tech has one. Like the rail, it
 offers rather than grants: it keeps tiles frappe already allowed the person and drops the rest, and
@@ -81,7 +81,7 @@ MORNING_BRIEFING = ("Workspace", "Morning Briefing")
 # Two web apps outside the desk, as URL rows to the desk pages that send the browser on to them. A
 # dock row opens through frappe.set_route, which reads any path as a desk route, so a row naming
 # /kiosk would open /desk/kiosk and find nothing. Both pages leave with location.replace, so Back
-# returns to the page the rail was clicked on (v1.750.0).
+# returns to the page the rail was clicked on (v1.751.0).
 TIME_KIOSK = ("URL", "/desk/time-kiosk")
 STOCK_SCAN = ("URL", "/desk/stock-scan")
 
