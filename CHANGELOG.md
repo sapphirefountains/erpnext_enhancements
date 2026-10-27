@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.746.1] - 2026-10-27
+
+### Changed
+- **Project: the Department field is hidden on the Details tab.** Nik, 2026-10-27: "On the Project
+  DocType hide the Department field on the Details tab." The new Property Setter
+  `Project-department-hidden` is in `fixtures/property_setter.json`. Display only:
+  - **No data changes.** The 79 Projects that have a Department keep it, and List view filters and
+    reports that read `Project.department` still work.
+  - **Nothing in this app reads it.** No hook, report, KPI or planner uses a Project's Department,
+    so hiding it changes no behaviour.
+  - **Undo** by removing the record and adding a one-shot patch that deletes it
+    (`fixtures/README.md`). Fixture sync only creates and updates.
 ## [1.746.0] - 2026-10-27
 
 ### Changed
