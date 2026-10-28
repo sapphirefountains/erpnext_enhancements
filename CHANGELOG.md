@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.754.0] - 2026-10-28
+
+ERPNext Task on PRJ-00580, under Inventory Mapping (TASK-2026-00873).
+
+### Added
+- **"Turn on Maintain Stock" on the Item form, for an Item that ERPNext's form refuses to switch**
+  (`public/js/item_maintain_stock.js`, `api/maintain_stock.py`,
+  `inventory_enhancements/maintain_stock.py`, `inventory_enhancements/maintain_stock_rules.py`).
+  - **The lock.** ERPNext's `Item.cant_change` refuses to change `is_stock_item` once any submitted
+    line uses the item. The form says "Linked with submitted documents". On production a site
+    Property Setter defaults the box to off, so items start non-stock, and almost every Purchase
+    Receipt so far received them that way. On 2026-10-27 about 490 enabled non-stock items were
+    locked. Items first bought per job keep becoming items we stock, and until now the only way to
+    switch one was a bench console over IAP SSH.
+  - **The action.** Actions > *Turn on Maintain Stock*, on a saved non-stock Item, for a Stock
+    Manager or an Item Manager. It shows the result of each safety check first. Only when every
+    one passes does its confirm switch the flag. Ticking the box and pressing Save on a locked Item
+    now opens the same dialog instead of ERPNext's refusal; after the switch, the save finishes.
+    When ERPNext would not refuse, or the check can't be reached, Save is untouched.
+  - **The switch** (`turn_on`, POST only). It locks the Item row, then runs every check again,
+    because the dialog only knew what was true when it opened. It then writes the flag with
+    `frappe.db.set_value`, which never loads the document, so `cant_change` never runs: that is the
+    bypass. It adds a Comment on the Item saying who switched it, when, and that it was through this
+    action. It clears the Item's document cache, since `get_cached_value` readers such as
+    `get_stock_items` would otherwise see the old flag. `set_value` moves `modified`, so a form left
+    open from before refuses its next save rather than writing the box back off.
+  - **What comes next.** The item has no valuation after the switch. The action ends by saying to
+    put the first stock in with a Stock Reconciliation that gives a rate. Production's Company has
+    no `stock_adjustment_account`, so ERPNext won't fill in the Difference Account; the message
+    names the company's one leaf Stock Adjustment account to pick by hand. *Open a Stock
+    Reconciliation* opens one with the company, that account and a row for the item already
+    filled in, plus its default warehouse when it has one.
+  - **Who.** Stock Manager or Item Manager, either one (`maintain_stock_rules.SWITCH_ROLES`, for Nik
+    to confirm). On 2026-10-28 that was 16 enabled users. Service accounts are refused whatever they
+    hold (`triton@` holds both roles for its sync work; `Administrator` is the account the
+    2026-08-02 compromise came through). The endpoints check this; the form only hides its button.
+
+### Why bypassing the lock is safe under these checks
+ERPNext's lock list is a list of places where a non-stock line goes wrong once the item keeps
+stock. The checks refuse every one of them but the receipts, and the receipts get a guard instead.
+The list was confirmed against `Item._get_linked_submitted_documents` at **erpnext v16.52.1**, the
+version production ran on 2026-10-28 (`tabInstalled Application`), not the develop checkout. It
+has three doctypes the first brief didn't name: POS Invoice, Work Order and BOM.
+- **Refused when any submitted one uses the item:** Delivery Note, Sales Invoice, POS Invoice,
+  Purchase Invoice, Stock Entry, Stock Reconciliation, Work Order and BOM. Each was posted while the
+  item kept no stock, so canceling or returning one afterward would move stock that never moved.
+  Also refused on any live Stock Ledger Entry.
+- **Refused while an order line is open:** Purchase Order, Material Request and Sales Order. ERPNext
+  counts ordered, requested and reserved quantities only for stock items, so an open line would
+  leave the Bin wrong. "Open" is ERPNext's own rule from `erpnext/stock/stock_balance.py`, the rule
+  a Bin is recomputed from: a PO line with `qty > received_qty` on an order that isn't Closed or
+  Delivered and isn't drop-ship; an MR line with `stock_qty > ordered_qty` on a request that isn't
+  Stopped; an SO line with something left to deliver on an order that isn't Closed. On Hold counts
+  as open here, though the Bin skips it, because a held order resumes. **This is the one place the
+  checks are looser than `cant_change`, on purpose:** that refuses any submitted order line, and
+  nearly every item has a fully received Purchase Order behind it. A finished line counts for
+  nothing in a Bin, so it refuses nothing here.
+- **Refused for a Product Bundle, a fixed asset item and a variant.** ERPNext requires the first two
+  to stay non-stock. A variant takes Maintain Stock from its template, and the default Item Variant
+  Settings copy it, so the template's next save would set it back. Production had no variants,
+  bundles, BOMs, Work Orders or POS Invoices on 2026-10-28; those checks cost nothing.
+- **The list itself fails closed.** The checks read ERPNext's lock list from the installed
+  method's source at run time (`ast`, both `linked_doctypes` lists). When ERPNext names a doctype
+  the checks don't know, or its source can't be read, the action refuses and says so. Production's
+  ERPNext version moves whenever `app-upstream-prod` runs, and an action that bypasses a lock must
+  stop working when the lock grows, not keep going.
+
+### Added: guards on a switched item's old receipts
+After the switch, the item's earlier Purchase Receipt lines are a stock item's lines with no stock
+ledger entry. Three things must not happen to them, and the app now refuses all three in plain
+words (`maintain_stock.refuse_unstocked_receipt_cancel`, `refuse_unstocked_receipt_return`,
+`refuse_billing_unstocked_receipts`).
+- **Cancel** (`Purchase Receipt` → `before_cancel`). ERPNext rebuilds a cancel's ledger entries from
+  the items that keep stock *now* (`BuyingController.update_stock_ledger`) and negates them
+  (`stock_ledger.make_sl_entries`). So a cancel would take out stock the line never put in, and
+  canceling an old return would put stock back.
+- **Return** (`Purchase Receipt` → `validate`, when `is_return`). A return against such a line takes
+  out stock the line never added, and credits Stock Received But Not Billed, which it never debited.
+- **Bill** (`Purchase Invoice` → `validate`; Purchase Invoice had no doc_events before this).
+  `PurchaseInvoice.set_expense_account` books a stock item's bill line to Stock Received But Not
+  Billed when *any* line of its receipt credited that account, or when the line names no receipt
+  at all. So whether an old receipt bills cleanly depends on what else was on it, which nobody can
+  judge at the bill. A bill line is refused when its receipt line wrote no ledger entry, or, for a
+  line billed from the order, when any receipt line of that order line wrote none. A bill before
+  any receipt is ERPNext's ordinary flow and passes. Production has no submitted Purchase Invoices
+  yet (bills are entered in QuickBooks), so nothing existing is affected.
+
+**The test is the stock ledger, not the date of the switch.** A stock item's receipt line with no
+ledger entry was received while it kept no stock, however it was switched. So the guards also
+cover the item switched in a bench console on 2026-10-27, before this action existed. They read
+only standard ERPNext fields. Unlike `item_naming_guard` they also run outside a web request,
+because a bulk cancel is a background job. They stand aside during install, migrate, patch and test
+runs, since doc_events fire in ERPNext's own test bootstrap, and for a document whose
+`flags.ignore_maintain_stock_guard` is set, which is accounting's way through in a console.
+
+### Tests
+- `tests/test_maintain_stock.py`, its own CI step, 63 unittest cases. It covers every check alone
+  and together, and ERPNext's list read from source, including a grown list and an unreadable one.
+  The check queries run for real on SQLite (`tests/sqlite_sql_helper.py`): an open line by
+  ERPNext's rule, a document counted once however many lines it has, and drafts and canceled
+  documents ignored. It checks the switch locks the row before reading and writes nothing on a
+  refusal or a second click; the role gate and service accounts; GET for the check and POST for
+  the switch; all three guards and their flags; and the wiring, down to the form script's roles
+  and endpoints matching the server's.
+
 ## [1.753.1] - 2026-10-27
 
 ERPNext Task TASK-2026-02992 (PRJ-00580, Misc Tasks).
