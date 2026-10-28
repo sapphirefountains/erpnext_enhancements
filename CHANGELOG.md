@@ -24,8 +24,10 @@ ERPNext Task on PRJ-00580, under Inventory Mapping (TASK-2026-00873).
   - **The action.** Actions > *Turn on Maintain Stock*, on a saved non-stock Item. It shows the
     result of each safety check first. Only when every one passes does its confirm switch the flag.
     Ticking the box and pressing Save on a locked Item now opens the same dialog instead of
-    ERPNext's refusal; after the switch, the save finishes and the next steps show either way. When
-    ERPNext would not refuse, or the check can't be reached within four seconds, Save is untouched.
+    ERPNext's refusal; after the switch, the save finishes and the next steps open once its request
+    settles (or at once, if the form's own validation stopped it), in a dialog of their own so none
+    of the save's messages land in them. When ERPNext would not refuse, or the check can't be
+    reached within four seconds, Save is untouched.
   - **The switch** (`turn_on`, POST only). It reads the Item row `for update`, and takes the item's
     own flags from that locking read rather than the request's earlier snapshot. Then it runs every
     check again, because the dialog only knew what was true when it opened. It then writes the flag
@@ -80,6 +82,13 @@ has three doctypes the first brief didn't name: POS Invoice, Work Order and BOM.
   `update_stock_ledger`) and are reserved on an open Sales Order (`get_reserved_qty`). So a submitted
   Delivery Note, Sales or POS Invoice carrying it in a bundle refuses, and so does an open Sales
   Order whose bundle line still has something to deliver.
+- **Refused when a submitted return Purchase Receipt carries the item.** ERPNext posts a return's
+  lines to the GL whatever their valuation rate (`PurchaseReceipt.make_item_gl_entries`), and an
+  ordinary accounting repost of the return (a backdated entry on another item on it, or a plain
+  Transaction repost) rebuilds that GL from today's flag. The old return would then book Stock
+  Received But Not Billed against expense for a line that posted nothing, and no guard sees an
+  ordinary repost. An ordinary receipt is let through and guarded; a return refuses the switch.
+  Production had no submitted return receipts on 2026-10-28.
 - **Refused for a Product Bundle, a fixed asset item, a variant and a template.** ERPNext requires
   the first two to stay non-stock. A variant takes Maintain Stock from its template, and the default
   Item Variant Settings copy it, so the template's next save would set it back. A template's switch
@@ -137,13 +146,13 @@ runs, since doc_events fire in ERPNext's own test bootstrap, and for a document 
 ERPNext or another app, would not be guarded.
 
 ### Tests
-- **`tests/test_maintain_stock.py`**: its own CI step, 81 unittest cases.
+- **`tests/test_maintain_stock.py`**: its own CI step, 82 unittest cases.
   - **Checks:** every check alone and together, and ERPNext's list read from source, including a
     grown list and an unreadable one.
   - **The check queries run for real on SQLite** (`tests/sqlite_sql_helper.py`): an open line by
     ERPNext's rule, a document counted once however many lines it has, drafts and canceled
     documents ignored, the item inside a bundle on a submitted document or an open Sales Order,
-    and a template.
+    a submitted return receipt, and a template.
   - **The switch:** the first read is the locking one and the checks judge that row; nothing is
     written on a refusal or a second click.
   - **The gates:** a token, an API key or a non-browser session refused; write permission on the
@@ -160,7 +169,8 @@ ERPNext or another app, would not be guarded.
   - unreadable documents counted rather than named;
   - the confirm and the prefilled reconciliation;
   - Save stopped only when ERPNext would refuse;
-  - the next steps shown even when the resumed save never settles;
+  - the next steps shown only once the resumed save's request settles, never before it is sent,
+    and at once when validation stopped the save, so they never hang;
   - Save going on when the quiet check runs past its time limit.
 
 ## [1.753.2] - 2026-10-27

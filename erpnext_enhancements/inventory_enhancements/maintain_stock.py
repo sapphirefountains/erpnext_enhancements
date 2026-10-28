@@ -226,6 +226,17 @@ def gather_facts(item_code, item=None):
 		"submitted": {child: _submitted(child, item_code) for child in rules.SUBMITTED_DOCTYPES},
 		"open": {child: _open(child, item_code) for child in rules.OPEN_DOCTYPES},
 		"receipts": _submitted("Purchase Receipt Item", item_code),
+		# A submitted return refuses (maintain_stock_rules explains: an ordinary repost re-books it).
+		"receipt_returns": _group(
+			"select count(distinct c.parent) from `tabPurchase Receipt Item` c "
+			"join `tabPurchase Receipt` p on p.name = c.parent "
+			"where c.item_code = %(item)s and c.docstatus = 1 and p.is_return = 1",
+			"select 'Purchase Receipt', c.parent from `tabPurchase Receipt Item` c "
+			"join `tabPurchase Receipt` p on p.name = c.parent "
+			"where c.item_code = %(item)s and c.docstatus = 1 and p.is_return = 1 "
+			"group by c.parent order by max(p.creation) desc",
+			values,
+		),
 		"lock_list": erpnext_lock_list(),
 	}
 

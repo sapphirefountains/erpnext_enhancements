@@ -187,23 +187,27 @@
 		frappe.new_doc("Stock Reconciliation", opts);
 	}
 
+	// A dialog of its own, not frappe.msgprint: msgprint reuses an open frappe.msg_dialog, so a message
+	// from the save (a validation error, a timestamp conflict) would be appended into this box and
+	// retitled, or this box into theirs, and "Open a Stock Reconciliation" would sit under a failed save.
 	function show_next_steps(out) {
 		const can_reconcile = frappe.model.can_create("Stock Reconciliation");
-		const dialog = frappe.msgprint({
+		const options = {
 			title: __("Maintain Stock is on"),
-			indicator: "green",
-			message: esc(out.next_steps),
-			primary_action: can_reconcile
-				? {
-						label: __("Open a Stock Reconciliation"),
-						action: () => {
-							const shown = dialog || frappe.msg_dialog;
-							if (shown) shown.hide();
-							open_reconciliation(out);
-						},
-				  }
-				: undefined,
-		});
+			fields: [{ fieldtype: "HTML", fieldname: "steps" }],
+			primary_action_label: can_reconcile ? __("Open a Stock Reconciliation") : __("Close"),
+			primary_action() {
+				dialog.hide();
+				if (can_reconcile) open_reconciliation(out);
+			},
+		};
+		if (can_reconcile) {
+			options.secondary_action_label = __("Close");
+			options.secondary_action = () => dialog.hide();
+		}
+		const dialog = new frappe.ui.Dialog(options);
+		dialog.fields_dict.steps.$wrapper.html(`<p>${esc(out.next_steps)}</p>`);
+		dialog.show();
 	}
 
 	function after_switch(frm, out, resume_save) {
@@ -214,13 +218,17 @@
 			frm.doc.is_stock_item = 1;
 			frm.doc.modified = out.modified;
 			frm.refresh_field("is_stock_item");
-			// The next steps never wait on the save: a save the form's own validation stops never
-			// settles its promise, and the switch has happened either way.
-			show_next_steps(out);
 			if (resume_save) {
+				// The next steps come after the save, so its messages are not mixed into them, but never
+				// wait on its promise: a save the form's own validation stops never settles it.
+				// frappe.after_ajax fires once the save's request settles, or at once when none is in
+				// flight. frm.save() validates through a promise chain before it sends anything, so ask
+				// one macrotask later, when the request (if the save got that far) is in flight.
 				frm.save();
+				setTimeout(() => frappe.after_ajax(() => show_next_steps(out)), 0);
 				return;
 			}
+			show_next_steps(out);
 			frappe.show_alert({
 				message: __("Your other changes to this item aren't saved yet."),
 				indicator: "orange",

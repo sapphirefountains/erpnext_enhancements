@@ -6,7 +6,8 @@
 // unreadable ones counted, Close and no switch when one fails); the confirm (switch, reload, next
 // steps escaped, a prefilled Stock Reconciliation reusing the blank row); and Save after ticking
 // the box: stopped and the dialog opened ONLY when ERPNext's form would refuse, the person's save
-// resumed after the switch with the next steps shown even if that save never settles, and
+// resumed after the switch with the next steps (a dialog of their own, never frappe.msgprint)
+// shown once the save's request settles, or at once when validation stopped it first, and
 // untouched when not locked, unanswered, offline or slower than the quiet check's time limit.
 import fs from "node:fs";
 import path from "node:path";
@@ -28,6 +29,22 @@ let checkAnswer = null;
 let turnOnAnswer = null;
 let fetchAnswer = null;
 const timers = [];
+const dialogs = [];
+// frappe.request's in-flight count and its after_ajax queue.
+const ajax = { count: 0, waiting: [] };
+function finishAjax() {
+	ajax.count = 0;
+	ajax.waiting.splice(0).forEach((fn) => fn());
+}
+function runZeroTimers() {
+	for (const t of timers) {
+		if (t.ms === 0 && !t.cleared && !t.ran) {
+			t.ran = true;
+			t.fn();
+		}
+	}
+}
+const nextSteps = () => dialogs.find((d) => d.opts.title === "Maintain Stock is on");
 
 function makeFrappe() {
 	const frappe = {
@@ -42,10 +59,13 @@ function makeFrappe() {
 			Dialog: class {
 				constructor(opts) {
 					this.opts = opts;
-					const html = { content: "", html(v) { this.content = v; } };
-					this.fields_dict = { checks: { $wrapper: html } };
+					this.fields_dict = {};
+					for (const f of opts.fields || []) {
+						this.fields_dict[f.fieldname] = { $wrapper: { content: "", html(v) { this.content = v; } } };
+					}
 					this.hidden = false;
 					lastDialog = this;
+					dialogs.push(this);
 				}
 				show() { log.push("dialog.show"); }
 				hide() { this.hidden = true; log.push("dialog.hide"); }
@@ -59,6 +79,10 @@ function makeFrappe() {
 		},
 		msgprint(opts) { lastMsg = opts; log.push("msgprint"); return { hide: () => log.push("msg.hide") }; },
 		show_alert(o) { log.push(["alert", o.message]); },
+		after_ajax(fn) {
+			if (ajax.count) ajax.waiting.push(fn);
+			else fn();
+		},
 		model: {
 			can_create: () => true,
 			set_value: (dt, dn, values) => log.push(["model.set_value", dt, dn, values]),
@@ -178,10 +202,14 @@ lastDialog.opts.primary_action();
 await tick(); await tick(); await tick();
 assert.ok(log.some((l) => Array.isArray(l) && l[1] === "turn_on"));
 assert.ok(log.includes("reload_doc"));
-assert.ok(log.includes("msgprint"));
-assert.ok(lastMsg.message.includes("&lt;b&gt;"), "next steps escaped");
+assert.ok(!log.includes("msgprint"), "never frappe.msgprint: it would share frappe.msg_dialog");
+const steps = nextSteps();
+assert.ok(steps, "next steps shown");
+assert.ok(steps.fields_dict.steps.$wrapper.content.includes("&lt;b&gt;"), "next steps escaped");
+assert.equal(steps.opts.primary_action_label, "Open a Stock Reconciliation");
 assert.equal(frm.__sf_saved_stock, 1);
-lastMsg.primary_action.action();
+steps.opts.primary_action();
+assert.ok(steps.hidden);
 const nd = log.find((l) => Array.isArray(l) && l[0] === "new_doc");
 assert.deepEqual(JSON.parse(JSON.stringify(nd[2])), { purpose: "Stock Reconciliation", company: "Test Co", expense_account: "5119 - Stock Adjustment - TC" });
 // The new form loads: the hook fills the blank first row.
@@ -230,20 +258,51 @@ frappe.validated = true;
 await handlers.validate(frm);
 assert.equal(frappe.validated, false);
 assert.ok(log.some((l) => Array.isArray(l) && l[0] === "fetch" && l[1].includes("maintain_stock.check?item_code=TST-PUMP-100")));
+const switchDialog = lastDialog;
 const dirtyFrm = frm;
 dirtyFrm.is_dirty = () => true;
-// The resumed save is stopped by the form's own validation: its promise never settles.
+// The resumed save validates on a promise chain, then sends its request, which stays in flight.
+// Its promise never settles (as when the server refuses and nothing resolves it).
+dirtyFrm.save = () => {
+	log.push("frm.save");
+	Promise.resolve().then(() => { ajax.count = 1; });
+	return new Promise(() => {});
+};
+log.length = 0;
+dialogs.length = 0;
+switchDialog.opts.primary_action();
+await tick(); await tick(); await tick();
+assert.equal(dirtyFrm.doc.modified, "2026-10-28 10:00:01");
+assert.ok(log.includes("frm.save"));
+assert.equal(nextSteps(), undefined, "not before the save has even sent its request");
+runZeroTimers();
+assert.equal(nextSteps(), undefined, "not while the save's request is in flight");
+finishAjax();
+assert.ok(nextSteps(), "next steps once the save's request settles");
+assert.ok(!log.includes("msgprint"));
+assert.ok(!log.includes("reload_doc"));
+
+// The same, when the form's own validation stops the save before any request: shown at once.
+dialogs.length = 0;
 dirtyFrm.save = () => {
 	log.push("frm.save");
 	return new Promise(() => {});
 };
-log.length = 0;
-lastDialog.opts.primary_action();
-await tick(); await tick(); await tick();
-assert.equal(dirtyFrm.doc.modified, "2026-10-28 10:00:01");
-assert.ok(log.includes("frm.save"));
-assert.ok(log.includes("msgprint"), "next steps shown without waiting for the save");
-assert.ok(!log.includes("reload_doc"));
+{
+	checkAnswer = passing;
+	fetchAnswer = passing;
+	dirtyFrm.__sf_saved_stock = 0;
+	dirtyFrm.doc.is_stock_item = 1;
+	frappe.validated = true;
+	await handlers.validate(dirtyFrm);
+	const again = lastDialog;
+	dialogs.length = 0;
+	again.opts.primary_action();
+	await tick(); await tick(); await tick();
+	assert.equal(nextSteps(), undefined, "asked one macrotask later");
+	runZeroTimers();
+	assert.ok(nextSteps(), "no request in flight: shown at once, never hangs");
+}
 
 // 5. Save path, not locked / check fails / no role / box already on: save untouched.
 for (const [answer, why] of [[Object.assign({}, passing, { locked_by: false }), "not locked"], [null, "no answer"], ["throw", "offline"]]) {

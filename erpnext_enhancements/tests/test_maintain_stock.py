@@ -172,6 +172,7 @@ SCHEMA = (
 	"item_code text, docstatus int, purchase_order_item text, creation text)",
 	"create table `tabPacked Item` (name text, parent text, parenttype text, item_code text, docstatus int, "
 	"parent_detail_docname text, creation text)",
+	"create table `tabPurchase Receipt` (name text, docstatus int, is_return int default 0, creation text)",
 	*(
 		f"create table `tab{child}` (name text, parent text, parenttype text, item_code text, "
 		"docstatus int, creation text)"
@@ -393,6 +394,7 @@ def reset_db():
 	)
 	# A receipt line that came in non-stock, against a fully received order: the common case.
 	_insert("Purchase Order", name="PO-TEST-1", docstatus=1, status="To Bill", creation="2026-09-01")
+	_insert("Purchase Receipt", name="PR-TEST-1", docstatus=1, is_return=0, creation="2026-09-05")
 	_insert(
 		"Purchase Order Item",
 		name="poi-1",
@@ -450,6 +452,7 @@ def passing_facts(**overrides):
 		"variant_of": "",
 		"has_variants": 0,
 		"packed": {},
+		"receipt_returns": {"count": 0, "examples": []},
 		"stock_ledger": {"count": 0, "examples": []},
 		"bundles": {"count": 0, "examples": []},
 		"submitted": {d: {"count": 0, "examples": []} for d in rules.SUBMITTED_DOCTYPES},
@@ -521,6 +524,7 @@ class ChecksTest(unittest.TestCase):
 				"not_bundle",
 				"not_bundle_component",
 				"no_stock_documents",
+				"no_receipt_returns",
 				"no_open_orders",
 				"known_lock",
 			],
@@ -537,6 +541,7 @@ class ChecksTest(unittest.TestCase):
 			"no_ledger": {"stock_ledger": one},
 			"not_bundle": {"bundles": one},
 			"no_stock_documents": {"submitted": {"Sales Invoice Item": one}},
+			"no_receipt_returns": {"receipt_returns": one},
 			"no_open_orders": {"open": {"Purchase Order Item": one}},
 		}
 		for key, overrides in cases.items():
@@ -890,6 +895,32 @@ class QueriesTest(unittest.TestCase):
 			)
 		group = self.facts()["open"]["Sales Order Item"]
 		self.assertEqual(sorted(e["name"] for e in group["examples"]), ["SO-T-HOLD", "SO-T-OPEN"])
+
+	def test_a_submitted_return_receipt_refuses(self):
+		# An ordinary receipt is the point and passes; a return's GL would be re-booked by any repost.
+		self.assertTrue(by_key(ms.run_checks(ITEM)["checks"])["no_receipt_returns"]["ok"])
+		for name, docstatus in (("PR-T-RET", 1), ("PR-T-RET-DRAFT", 0), ("PR-T-RET-CANCELED", 2)):
+			_insert("Purchase Receipt", name=name, docstatus=docstatus, is_return=1, creation="2026-10-01")
+			_insert(
+				"Purchase Receipt Item",
+				name=f"{name}-1",
+				parent=name,
+				parenttype="Purchase Receipt",
+				idx=1,
+				item_code=ITEM,
+				docstatus=docstatus,
+				purchase_order_item=None,
+				creation="2026-10-01",
+			)
+		facts = self.facts()
+		self.assertEqual(
+			facts["receipt_returns"],
+			{"count": 1, "examples": [{"doctype": "Purchase Receipt", "name": "PR-T-RET"}]},
+		)
+		check = by_key(ms.run_checks(ITEM)["checks"])["no_receipt_returns"]
+		self.assertFalse(check["ok"])
+		self.assertIn("1 Purchase Receipt returns it", check["detail"])
+		self.assertIn("ordinary repost", check["detail"])
 
 	def test_a_template_refuses(self):
 		CONN.execute("update `tabItem` set has_variants = 1 where name = ?", (ITEM,))

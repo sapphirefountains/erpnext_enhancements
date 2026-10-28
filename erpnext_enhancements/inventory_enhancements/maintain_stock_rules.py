@@ -37,6 +37,14 @@ them except one: the receipts.
   Sales Order (``get_reserved_qty``). So a submitted Delivery Note, Sales or POS Invoice carrying
   it inside a bundle refuses, and so does an open Sales Order (the Sales Order rule below, applied
   to the bundle's line). Production had no bundles on 2026-10-28.
+* A submitted **return** Purchase Receipt refuses, though an ordinary receipt does not. ERPNext
+  posts a return's lines to the GL whatever their valuation rate
+  (``PurchaseReceipt.make_item_gl_entries``: ``flt(d.valuation_rate) or self.is_return``), and an
+  ordinary accounting repost of the return (a backdated entry on another item on it, or a plain
+  Transaction repost) rebuilds that GL from today's flag. So after the switch the old return
+  would book Stock Received But Not Billed against expense for a line that originally posted
+  nothing, and no guard here sees an ordinary repost. Refusing the switch closes that whole class;
+  production had no submitted return receipts on 2026-10-28.
 * **Purchase Receipt lines are the point.** They stay as they were: non-stock lines with no
   stock ledger entry, and ``maintain_stock``'s guards refuse everything in ERPNext v16.52.1 that
   would treat them as stock lines after the switch: a cancel or a return, which would take out
@@ -257,6 +265,7 @@ def evaluate(facts):
 	ledger = facts.get("stock_ledger") or {}
 	bundles = facts.get("bundles") or {}
 	packed = {d: g for d, g in (facts.get("packed") or {}).items() if g and g.get("count")}
+	returns = facts.get("receipt_returns") or {}
 	lock_list = facts.get("lock_list")
 	unknown = unknown_lock_doctypes(lock_list)
 
@@ -341,6 +350,20 @@ def evaluate(facts):
 				"canceling or returning one after the switch would move stock that never moved."
 			),
 			_examples(submitted),
+		),
+		_check(
+			"no_receipt_returns",
+			"No submitted Purchase Receipt returns",
+			not returns.get("count"),
+			""
+			if not returns.get("count")
+			else (
+				f"{count_phrase(returns['count'], 'Purchase Receipt Item')} "
+				f"{'returns' if returns['count'] == 1 else 'return'} it. ERPNext posts a return's lines to "
+				"the accounts whatever their rate, and an ordinary repost rebuilds those accounts from "
+				"today's Maintain Stock setting, so the switch would make a return book what it never booked."
+			),
+			returns.get("examples"),
 		),
 		_check(
 			"no_open_orders",
