@@ -21,8 +21,10 @@
  *                   Share → Add to Home Screen steps on iOS, otherwise the
  *                   browser-menu hint.
  *   App             Refresh app (SW update check + reload — the old standalone
- *                   nav bar's refresh button moved here), version (KIOSK_BUILD),
- *                   who is signed in, and the location consent text.
+ *                   nav bar's refresh button moved here), Sign out (app.js
+ *                   signOut: asks, posts /api/method/logout, goes to the sign-in
+ *                   page; the worker deletes what the kiosk kept), version
+ *                   (KIOSK_BUILD), who is signed in, and the location consent text.
  */
 (function () {
   'use strict';
@@ -105,6 +107,9 @@
         kv('Signed in as', boot.user || '—'),
       ]),
       h('button', { type: 'button', class: 'tk-btn tk-btn-outline', style: { marginTop: '12px' }, text: 'Refresh app', on: { click: function () { UI.toast('Refreshing…', null, 1500); ctx.refreshApp(); } } }),
+      // The installed app has no address bar: without this there is no way to hand the phone
+      // to the next person. app.js asks first, then signs out and goes to the sign-in page.
+      h('button', { type: 'button', class: 'tk-btn tk-btn-danger-ghost', style: { marginTop: '8px' }, text: 'Sign out', on: { click: function () { ctx.signOut(); } } }),
       h('p', { class: 'tk-note', style: { marginTop: '12px' }, text: 'Your location is recorded only while you are clocked in and active. It stops when you take a break or clock out.' }),
     ]));
   }

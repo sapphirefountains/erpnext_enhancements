@@ -66,11 +66,12 @@ leaves no unlinked Files behind).
   memory. The limits and what each one cost before it existed are with the
   ``MAX_*`` constants below.
 - **Not under ``api.time_kiosk.``** on purpose. ``www/kiosk-sw.js`` answers every
-  GET under that prefix network-first and keeps the last response for offline,
-  keyed by URL rather than by person. A shared phone that goes offline would
-  then show the previous person's photo list to the next, and every thumbnail's
-  bytes would pile up in the worker's cache. Outside the prefix the worker
-  leaves both alone. Thumbnails are cached by the browser instead, ``private``
+  GET under that prefix network-first and keeps the last response for offline.
+  When this module was written it kept them by URL alone, so a shared phone that
+  went offline would have shown the previous person's photo list to the next;
+  since v1.753.2 it keeps them per person (``workforce/kiosk_offline.py``), but
+  every thumbnail's bytes would still pile up in the worker's cache. Outside the
+  prefix the worker leaves both alone. Thumbnails are cached by the browser instead, ``private``
   and ``Vary: Cookie``, under a URL that changes when the file's content does.
 """
 

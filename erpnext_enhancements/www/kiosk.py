@@ -14,6 +14,7 @@ geolocation upload endpoint live in ``erpnext_enhancements.api.time_kiosk``.
 import frappe
 
 from erpnext_enhancements.api.time_kiosk import get_kiosk_bootstrap
+from erpnext_enhancements.workforce.kiosk_offline import set_marker
 
 # Shared per-deploy cache-bust token (extracted to utils/deploy.py in v1.13.0;
 # re-exported here because kiosk docs/tooling historically reference it from
@@ -38,7 +39,9 @@ def get_context(context):
 	* ``boot_json`` -- the JSON-serialized bootstrap payload (employee, current
 	  interval, kiosk settings, CSRF token) injected into the template as
 	  ``window.KIOSK_BOOT`` for the front-end to consume on load. It also
-	  contains ``maps`` (API key and Map IDs).
+	  contains ``maps`` (API key and Map IDs) and ``offline_key``, the offline
+	  marker this render set as the ``ee_kiosk_key`` cookie
+	  (:mod:`erpnext_enhancements.workforce.kiosk_offline`).
 	* ``csrf_token`` -- the same CSRF token, injected as ``window.KIOSK_CSRF`` and
 	  forwarded to the service worker so it can authenticate batch uploads.
 	* ``capture_history`` -- False when Time Kiosk Settings' "Turn Off Browser
@@ -57,6 +60,10 @@ def get_context(context):
 
 	boot = get_kiosk_bootstrap()
 	boot["maps"] = _maps_config()
+	# The offline marker (workforce/kiosk_offline.py): sets the ee_kiosk_key cookie for this
+	# person and puts the same key in the boot. app.js draws a kept copy of this page only while
+	# the cookie still holds it, and names it on every call so kiosk-sw.js keeps answers per person.
+	boot["offline_key"] = set_marker(frappe.session.user)
 
 	context.no_cache = 1
 	context.boot_json = frappe.as_json(boot)

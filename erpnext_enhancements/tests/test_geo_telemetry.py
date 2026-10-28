@@ -185,6 +185,22 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertEqual(result["accepted"], [])
 		self.assertEqual(result["rejected"][0]["reason"], "invalid_coords")
 
+	def test_batch_refuses_another_persons_points(self):
+		"""Points queued on a shared phone under somebody else's offline marker are refused whole
+		(other_person) and filed nowhere; the session's own marker, or none, is accepted."""
+		from erpnext_enhancements.workforce import kiosk_offline
+
+		frappe.set_user(self.user)
+		point = {"client_id": "o1", "latitude": 37.2, "longitude": -122.2, "log_status": "Success"}
+		result = time_kiosk.log_geolocation_batch([point], offline_key=kiosk_offline.key_for("someone.else@example.com"))
+		self.assertEqual(result["status"], "other_person")
+		self.assertEqual(result["accepted"], [])
+		self.assertEqual(result["rejected"], [{"client_id": "o1", "reason": "other_person"}])
+		self.assertEqual(frappe.get_all("Time Kiosk Log", filters={"employee": self.linked_emp}), [])
+
+		result = time_kiosk.log_geolocation_batch([point], offline_key=kiosk_offline.key_for(self.user))
+		self.assertEqual(result["accepted"], ["o1"])
+
 	def test_batch_foreign_interval_not_tied(self):
 		"""A point referencing another employee's interval is accepted but left untied."""
 		# An interval owned by a *different* employee must not be attached.

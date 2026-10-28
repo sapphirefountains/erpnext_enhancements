@@ -35,6 +35,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
+| `kiosk_offline.py` | The Time Kiosk offline marker (v1.753.2): the `ee_kiosk_key` cookie that says whose kept kiosk a shared phone may show and replay offline, its `on_login`/`on_logout` hooks, the `X-Kiosk-Key` echo on kiosk answers, and the check that refuses another person's queued location points. See `../www/README.md` (`kiosk-sw.js`) |
 | `client_time.py` | A browser timestamp onto the site's clock — naive, site-local, offset converted not stripped (v1.526.1) |
 | `photo_routing.py` | Photo fan-out onto Project/Task + Drive hand-off (WP-3) |
 | `kiosk_files.py` | The kiosk's uploaded files (v1.753.1): `why_not_movable`, the rule both kiosk privacy flips and the cleanup patch apply (making a File private moves every row sharing its bytes, so it may only happen when every such row is the uploader's own Job Interval / Project / Task row at the same URL; never a website asset frappe reused the URL of), and `link_stuck_photo_rows`, which links the Pending photo rows a cached kiosk page registers by display name and routes them. Safe to re-run: `bench --site <site> execute erpnext_enhancements.workforce.kiosk_files.link_stuck_photo_rows` |

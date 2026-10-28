@@ -581,12 +581,28 @@ async function boot(opts) {
 	env.history = makeHistory(env, opts.entries);
 	const document = makeDom(env);
 	env.document = document;
+	// The kiosk offline marker (app.js phoneKey): the ee_kiosk_key cookie, when a test sets one.
+	document.cookie = opts.cookie || "";
 	const answer = makeServer(env);
+	env.swMessages = [];
 
 	const storage = new Map();
 	const win = {
 		document,
-		navigator: { userAgent: "Mozilla/5.0 (Linux; Android 14) Chrome/130", onLine: true, maxTouchPoints: 5 },
+		navigator: Object.assign(
+			{ userAgent: "Mozilla/5.0 (Linux; Android 14) Chrome/130", onLine: true, maxTouchPoints: 5 },
+			// A controlling worker that only records what the page tells it (opts.sw).
+			opts.sw
+				? {
+						serviceWorker: {
+							controller: { postMessage: (m) => env.swMessages.push(m) },
+							ready: new Promise(() => {}),
+							register: () => new Promise(() => {}),
+							addEventListener() {},
+						},
+				  }
+				: {}
+		),
 		localStorage: {
 			getItem: (k) => (storage.has(k) ? storage.get(k) : null),
 			setItem: (k, v) => storage.set(k, String(v)),
@@ -613,11 +629,12 @@ async function boot(opts) {
 			settings: {},
 			status: null,
 			photo_gate: opts.photoGate || {},
+			offline_key: opts.offlineKey || "",
 		},
 		KIOSK_CSRF: "csrf",
 		KIOSK_BUILD: "test",
 		KioskGeo: {
-			configure: () => ({ onStatus() {} }),
+			configure: () => ({ setOwner() { return this; }, onStatus() {} }),
 			warmup() {},
 			lastFix: () => null,
 			start() {},
@@ -641,7 +658,7 @@ async function boot(opts) {
 			const m = /\.(\w+)(?:\?|$)/.exec(String(url));
 			const method = m ? m[1] : "";
 			const args = init && init.body ? JSON.parse(init.body) : {};
-			env.calls.push({ method, args });
+			env.calls.push({ method, args, key: (init && init.headers && init.headers["X-Kiosk-Key"]) || "" });
 			const body = { message: answer(method, args) };
 			const res = { ok: true, status: 200, json: () => Promise.resolve(body) };
 			const latency = opts.latency || 0;
@@ -787,6 +804,32 @@ test("boot stamps the entry it loaded into and pushes nothing", async () => {
 	await back(env);
 	check("Back from the first entry leaves the page", env.history.left, true);
 	invariants(env, "boot");
+});
+
+test("a kept page whose offline marker the phone no longer holds draws nothing of its person", async () => {
+	// Pat's kiosk, served from the worker's cache after Pat's session ended and somebody else
+	// signed in (on_login removed Pat's ee_kiosk_key cookie, or replaced it with theirs).
+	for (const cookie of ["", "ee_kiosk_key=" + "b".repeat(64)]) {
+		const env = await boot({ offlineKey: "a".repeat(64), cookie, sw: true });
+		const owner = cookie ? "b".repeat(64) : "";
+		check(`cookie ${cookie ? "of somebody else" : "gone"}: nothing is fetched`, env.calls.map((c) => c.method), []);
+		check("… the clock and the tabs are not drawn", [byId(env, "tk-panel-clock"), byId(env, "tk-panel-myday")], [null, null]);
+		check("… the screen says Signed out", byId(env, "tk-hero").textContent.startsWith("Signed out"), true);
+		check("… and the worker is told to forget, naming whom the cookie names now", env.swMessages, [{ type: "forget", data: { owner } }]);
+		check("… and nothing is pushed", env.history.pushed.length, 0);
+	}
+	const env = await boot({ offlineKey: "a".repeat(64), cookie: "theme=dark; ee_kiosk_key=" + "a".repeat(64), sw: true });
+	check("the cookie still holds the page's key: the kiosk draws as usual", visibleTab(env), "clock");
+	check("… and every call names that key", [...new Set(env.calls.map((c) => c.key))], ["a".repeat(64)]);
+	check("… and nobody is forgotten", env.swMessages.filter((m) => m.type === "forget"), []);
+	// Somebody else signs in in another tab while this one stays open: its calls name nobody now.
+	env.document.cookie = "ee_kiosk_key=" + "b".repeat(64);
+	const before = env.calls.length;
+	await tapTab(env, "myday");
+	const later = env.calls.slice(before);
+	check("after the cookie changes under an open page, its calls name nobody", [later.length > 0, [...new Set(later.map((c) => c.key))]], [true, [""]]);
+	const none = await boot();
+	check("a page drawn with no marker (it could not be made) refuses nothing and names nobody", [visibleTab(none), [...new Set(none.calls.map((c) => c.key))]], ["clock", [""]]);
 });
 
 test("a tab tap is an entry: Back walks the tabs, Forward restores them", async () => {
