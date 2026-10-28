@@ -17,6 +17,7 @@ VM only when somebody cuts it over. These tests are what checks them in between:
 Run: python -m unittest erpnext_enhancements.tests.test_production_web_tier -v
 """
 
+import http.client
 import json
 import multiprocessing
 import os
@@ -24,6 +25,7 @@ import re
 import runpy
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -365,6 +367,8 @@ class InstallerTests(unittest.TestCase):
 		result = self.run_installer("--check")
 		self.assertNotEqual(result.returncode, 0)
 		self.assertIn("MISSING  node", result.stdout)
+		# The nginx lines still print: a blocker must not hide them.
+		self.assertIn("nginx", result.stdout.split("MISSING  node", 1)[1])
 
 	def test_install_refuses_unless_the_old_unit_is_plainly_stopped(self):
 		# "activating" is Restart='s wait: honcho comes back seconds later.
@@ -518,8 +522,226 @@ class InstallerTests(unittest.TestCase):
 
 	@unittest.skipUnless(shutil.which("shellcheck"), "shellcheck is not installed")
 	def test_shellcheck(self):
-		result = subprocess.run(["shellcheck", str(INSTALLER)], capture_output=True, text=True)
-		self.assertEqual(result.returncode, 0, result.stdout)
+		for script in (INSTALLER, CONFIGS / "nginx_webserver_guard.sh"):
+			result = subprocess.run(["shellcheck", str(script)], capture_output=True, text=True)
+			self.assertEqual(result.returncode, 0, f"{script.name}: {result.stdout}")
+
+
+def _nginx_binary():
+	return shutil.which("nginx") or next((p for p in ("/usr/sbin/nginx",) if os.path.exists(p)), None)
+
+
+def _free_port():
+	with socket.socket() as s:
+		s.bind(("127.0.0.1", 0))
+		return s.getsockname()[1]
+
+
+# bench's generated server block, cut down to what the guard touches (bench v5.31.1
+# templates/nginx.conf). PORT, UPSTREAM and ROOT are filled in per test.
+BENCH_BLOCK = """upstream frappe-bench-frappe {
+	server 127.0.0.1:UPSTREAM fail_timeout=0;
+}
+
+server {
+	listen 127.0.0.1:PORT;
+	server_name
+		erp.sapphirefountains.com
+		;
+
+	root ROOT;
+
+	location /assets {
+		try_files $uri =404;
+	}
+
+	location / {
+		try_files /erp.sapphirefountains.com/public/$uri @webserver;
+	}
+
+	location @webserver {
+		proxy_http_version 1.1;
+		proxy_set_header X-Forwarded-For $remote_addr;
+		proxy_set_header Host $host;
+		proxy_read_timeout 120;
+		proxy_redirect off;
+
+		proxy_pass  http://frappe-bench-frappe;
+	}
+}
+"""
+
+# What the first version of Step 0 inserted (v1.753.3's runbook before review).
+EARLIER_GUARD = (
+	"        if ($arg___debugger__) { return 404; }\n"
+	'        if ($host ~* "^(localhost|127\\.0\\.0\\.1)$|\\.localhost$") { return 444; }\n'
+)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and _nginx_binary(), "needs Linux and an nginx binary")
+class NginxGuardTests(unittest.TestCase):
+	"""nginx_webserver_guard.sh run against a real nginx (the CI runner ships one).
+
+	The frappe block is reached through a symlink, as bench links it, and a stray copy of it
+	that nginx does not load sits beside the config; the guard must edit only the loaded file.
+	nginx serves on a free loopback port with nothing behind the upstream, so a request the
+	guard lets through comes back 502, a refused parameter 404, and a refused Host as a closed
+	connection (444).
+	"""
+
+	def setUp(self):
+		self.root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.root)
+		self.prefix = self.root / "nginx"
+		(self.prefix / "conf.d").mkdir(parents=True)
+		self.port = _free_port()
+		self.original = (
+			BENCH_BLOCK.replace("UPSTREAM", str(_free_port()))
+			.replace("PORT", str(self.port))
+			.replace("ROOT", str(self.root / "sites"))
+		)
+		self.real = self.root / "bench" / "config" / "nginx.conf"
+		self.real.parent.mkdir(parents=True)
+		self.real.write_text(self.original)
+		self.link = self.prefix / "conf.d" / "frappe-bench.conf"
+		self.link.symlink_to(self.real)
+		self.stray = self.prefix / "frappe-bench.conf.old"  # not matched by the include
+		self.stray.write_text(self.original)
+		(self.prefix / "nginx.conf").write_text(
+			f"pid {self.prefix}/nginx.pid;\nerror_log {self.prefix}/error.log;\nevents {{}}\n"
+			f"http {{\n\taccess_log off;\n\tinclude {self.prefix}/conf.d/*.conf;\n}}\n"
+		)
+		self.state = self.root / "state"
+		self.nginx = [
+			_nginx_binary(),
+			"-p",
+			f"{self.prefix}/",
+			"-c",
+			f"{self.prefix}/nginx.conf",
+			"-e",
+			f"{self.prefix}/error.log",
+		]
+
+	def guard(self, *args, nginx=None):
+		env = {
+			"PATH": f"{Path(sys.executable).parent}:/usr/sbin:/usr/bin:/bin",
+			"NGINX": nginx or " ".join(self.nginx),
+			"NGINX_RELOAD": "true",
+			"STATE_DIR": str(self.state),
+			"REQUIRE_ROOT": "0",
+		}
+		return subprocess.run(
+			["bash", str(CONFIGS / "nginx_webserver_guard.sh"), *args],
+			env=env,
+			capture_output=True,
+			text=True,
+			timeout=60,
+		)
+
+	def serve(self):
+		subprocess.run(self.nginx, check=True, capture_output=True, timeout=30)
+		self.addCleanup(subprocess.run, [*self.nginx, "-s", "stop"], capture_output=True, timeout=30)
+
+	def status(self, host, path="/api/method/ping"):
+		conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+		try:
+			conn.request("GET", path, headers={"Host": host})
+			return conn.getresponse().status
+		except (http.client.RemoteDisconnected, ConnectionResetError):
+			return None  # 444: nginx closed the connection without a response
+		finally:
+			conn.close()
+
+	def test_refuses_local_hosts_and_the_parameter_and_passes_the_rest(self):
+		result = self.guard()
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.serve()
+		self.assertEqual(self.status("erp.sapphirefountains.com"), 502)
+		self.assertEqual(self.status("erp.sapphirefountains.com", "/api/method/ping?__debugger__=yes"), 404)
+		for host in (
+			"localhost",
+			"LOCALHOST",
+			"x.localhost",
+			"127.0.0.1",
+			"127.0.0.1:8000",
+			"0.0.0.0",
+			"0.0.0.0:8000",
+		):
+			self.assertIsNone(self.status(host), host)
+		# The load balancer's health check sends the VM's address as Host.
+		self.assertEqual(self.status("10.150.0.2"), 502)
+
+	def test_only_the_loaded_file_changes_and_the_link_stays_a_link(self):
+		self.assertEqual(self.guard().returncode, 0)
+		self.assertTrue(self.link.is_symlink())
+		self.assertEqual(self.stray.read_text(), self.original)
+		self.assertEqual(self.real.read_text().count("erpnext_enhancements: debugger guard"), 1)
+		self.assertEqual((self.state / "frappe-nginx.pre-guard").read_text(), self.original)
+		self.assertEqual(
+			(self.state / "frappe-nginx.guard-file").read_text().strip(), str(self.real.resolve())
+		)
+
+	def test_a_second_run_changes_nothing(self):
+		self.assertEqual(self.guard().returncode, 0)
+		once = self.real.read_text()
+		self.assertEqual(self.guard().returncode, 0)
+		self.assertEqual(self.real.read_text(), once)
+		self.assertEqual((self.state / "frappe-nginx.pre-guard").read_text(), self.original)
+
+	def test_an_earlier_guard_is_replaced(self):
+		self.real.write_text(
+			self.original.replace("\tlocation @webserver {\n", "\tlocation @webserver {\n" + EARLIER_GUARD)
+		)
+		self.assertIn("an earlier version", self.guard("--check").stdout)
+		self.assertEqual(self.guard().returncode, 0)
+		text = self.real.read_text()
+		self.assertEqual(text.count("arg___debugger__"), 1)
+		self.assertEqual(text.count("return 444;"), 1)
+		self.assertNotIn("127\\.0\\.0\\.1)$|", text)
+		self.assertIn("guard:   current", self.guard("--check").stdout)
+
+	def test_undo_restores_the_first_backup(self):
+		self.assertEqual(self.guard().returncode, 0)
+		self.assertEqual(self.guard().returncode, 0)
+		result = self.guard("--undo")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(self.real.read_text(), self.original)
+		self.assertTrue(self.link.is_symlink())
+		self.assertEqual(list(self.state.iterdir()), [])
+		self.assertNotEqual(self.guard("--undo").returncode, 0)
+
+	def test_check_changes_nothing(self):
+		result = self.guard("--check")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn(f"file:    {self.real.resolve()}", result.stdout)
+		self.assertIn("guard:   none", result.stdout)
+		self.assertEqual(self.real.read_text(), self.original)
+		self.assertFalse(self.state.exists())
+
+	def test_two_loaded_blocks_are_refused(self):
+		(self.prefix / "conf.d" / "other.conf").write_text(
+			f"server {{\n\tlisten 127.0.0.1:{_free_port()};\n\tserver_name other;\n"
+			"\tlocation / {\n\t\ttry_files $uri @webserver;\n\t}\n"
+			"\tlocation @webserver {\n\t\treturn 200;\n\t}\n}\n"
+		)
+		result = self.guard()
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("more than one", result.stderr)
+		self.assertEqual(self.real.read_text(), self.original)
+
+	def test_a_result_that_fails_nginx_t_is_put_back(self):
+		# An nginx that fails -t whenever the guard is in the file.
+		wrapper = self.root / "nginx-wrapper"
+		wrapper.write_text(
+			"#!/bin/sh\n"
+			f'if [ "$1" = -t ] && grep -q "debugger guard" {self.real}; then exit 1; fi\n'
+			f'exec {" ".join(self.nginx)} "$@"\n'
+		)
+		wrapper.chmod(0o755)
+		result = self.guard(nginx=str(wrapper))
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("back as it was", result.stderr)
+		self.assertEqual(self.real.read_text(), self.original)
 
 
 class StartupScriptTests(unittest.TestCase):
@@ -672,6 +894,11 @@ class DeployTests(unittest.TestCase):
 		self.assertIn("install_bench_units.sh --check", text)
 		self.assertIn("install_bench_units.sh --rollback", text)
 		self.assertIn("--tunnel-through-iap", text)
+		# Step 0 runs the tested script, not a hand-typed edit.
+		self.assertIn("nginx_webserver_guard.sh --check", text)
+		self.assertIn("nginx_webserver_guard.sh --undo", text)
+		self.assertNotIn("sed -i", text)
+		self.assertTrue((CONFIGS / "nginx_webserver_guard.sh").is_file())
 
 
 if __name__ == "__main__":

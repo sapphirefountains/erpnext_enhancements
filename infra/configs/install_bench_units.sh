@@ -298,7 +298,10 @@ fi
 case "${1:-}" in
 	--check)
 		report
-		preflight && nginx_check
+		status=0
+		preflight || status=1
+		nginx_check # reported even when preflight found a blocker
+		exit "$status"
 		;;
 	"")
 		install_units

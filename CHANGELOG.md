@@ -14,7 +14,7 @@ PR, and TASK-2026-02995, assigned to Nik, for the VM steps.
 
 **Nothing changes on a VM when this merges.** It ships files and a runbook,
 `infra/docs/production-web-tier.md`, which has two parts:
-1. **An interim nginx guard for prod, today.**
+1. **An interim nginx guard for prod**, to apply as soon as this merges.
 2. **The cutover.** Beta first, then prod the same day. A VM moves to gunicorn only when someone
    runs it there.
 
@@ -45,12 +45,16 @@ the cutovers can land in any order.
     bench's generated one and already serves `/assets` and existing `/files` itself.
     gunicorn takes the same `127.0.0.1:8000` upstream, behind the same realip chain. gunicorn
     binds 127.0.0.1, where `bench serve` bound 0.0.0.0.
-- **An interim guard until prod is cut over** (runbook, Step 0). Two `if` lines in the frappe
-  block's `location @webserver`: one refuses the debugger's query parameter (404), the other
-  refuses Hosts the debugger treats as local (444).
-  - **How it was checked.** The exact commands were run with a real nginx against a rendering
-    of bench's template reached through a symlink. The check covered pass-through, both
-    refusals, an IP-address Host passing, idempotence and rollback.
+- **An interim guard until prod is cut over** (runbook, Step 0;
+  `infra/configs/nginx_webserver_guard.sh`, with `--check` and `--undo`). It adds lines to the
+  frappe block's `location @webserver`: requests for a Host the debugger would treat as local
+  are refused (444), and requests carrying the debugger's query parameter are refused (404) as
+  defense in depth.
+  - **How it edits.** It edits the one file `nginx -T` shows holding the block, resolving a
+    symlink so the link stays a link. It records the path and backs the file up once in
+    `/root`, replaces guard lines an earlier run left, and puts the file back if `nginx -t`
+    fails. Running it again is safe.
+  - **How it is tested.** CI runs it against a real nginx.
   - **Why not a `default_server` catch-all.** It would also answer the load balancer's health
     check with 444. The check sends the VM's IP as Host because
     `erpnext-standalone-health-check` sets none, so the check would fail and the load balancer
@@ -121,7 +125,11 @@ the cutovers can land in any order.
   - **`install_bench_units.sh`,** run against a scratch directory with stub `systemctl` and
     `node`, for every refusal above, plus the backup, the `.wants` built from
     `background_workers`, the refresh hints and `--rollback`;
-  - **shellcheck** on the installer.
+  - **`nginx_webserver_guard.sh`** against a real nginx (the CI runner ships one), with bench's
+    block behind a symlink: local Hosts and the parameter refused, other traffic and an
+    IP-address Host passed, a stray unloaded copy untouched, an earlier guard replaced, a second
+    run a no-op, two loaded blocks refused, a failing `nginx -t` put back, and `--undo`;
+  - **shellcheck** on both scripts.
 - `test_client_ip` now pins the realip install before the nginx reload, instead of before the
   `bench setup production` call that is gone.
 

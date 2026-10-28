@@ -1,8 +1,8 @@
 # Production web tier: gunicorn instead of the Werkzeug development server
 
 Shipped in the repo in v1.753.3. **Nothing changes on a VM until somebody runs the steps below
-on it.** First comes the interim nginx guard on prod (Step 0), then the cutover: beta first,
-then prod. ERPNext tracks the repo work and the VM steps as two Tasks under *Platform Hygiene &
+on it.** First comes the interim nginx guard on prod (Step 0, as soon as this PR is merged),
+then the cutover: beta first, then prod. ERPNext tracks the repo work and the VM steps as two Tasks under *Platform Hygiene &
 CI* (TASK-2026-01566) on PRJ-00580.
 
 ## What was wrong
@@ -84,7 +84,7 @@ never starts or stops anything. It refuses to install while any of these is true
 
 ## What does not change
 
-- **nginx, after Step 0.** Prod's server block is bench's generated one, and it already serves
+- **nginx, apart from Step 0's guard.** Prod's server block is bench's generated one, and it already serves
   `/assets` and existing `/files` from disk. Checked from outside on 2026-10-28:
   - `/assets/...` comes back with nginx's ETag format and `cache-control: max-age=31536000`;
   - a missing asset gets nginx's own 404;
@@ -164,17 +164,18 @@ never starts or stops anything. It refuses to install while any of these is true
 - **`bench setup nginx`.** It regenerates `config/nginx.conf`. If prod's frappe block is that
   file, it drops the Step 0 guard.
 
-## Step 0, prod, today: the interim nginx guard
+## Step 0, prod, as soon as this PR is merged: the interim nginx guard
 
-Until prod is cut over, add two lines to the frappe block's `location @webserver`. They keep the
-development server's debugger out of reach. The first refuses any request carrying the
-debugger's parameter. The second refuses requests whose Host the debugger would treat as local.
-It does this only inside `@webserver`, so nothing else nginx serves is affected:
+Until prod is cut over, [`infra/configs/nginx_webserver_guard.sh`](../configs/nginx_webserver_guard.sh)
+adds lines to the frappe block's `location @webserver`, the one place nginx hands a request to
+the bench:
 
-```nginx
-        if ($arg___debugger__) { return 404; }
-        if ($host ~* "^(localhost|127\.0\.0\.1)$|\.localhost$") { return 444; }
-```
+- **The control that matters:** requests for a Host the debugger would treat as local are
+  refused (444).
+- **Defense in depth:** requests carrying the debugger's query parameter are refused (404).
+
+Merging the PR changes nothing else on a VM, so Step 0 needs only the merge and the deploy that
+follows it.
 
 **Why not a `default_server` catch-all that returns 444 for unknown Hosts:**
 
@@ -182,37 +183,34 @@ It does this only inside `@webserver`, so nothing else nginx serves is affected:
   the Host (`erpnext-standalone-health-check` in `infra/compute.tf` has no `host`).
 - A catch-all would answer that check with 444. The check would fail, and the load balancer
   would take prod out of service.
-- The second line above refuses the same dangerous Hosts without touching the check.
+- The Host guard inside `@webserver` refuses the same dangerous Hosts without touching the
+  check.
 
-The commands below were run against a rendering of bench's nginx template with a real nginx,
-reaching the block through a symlink as bench links it. The results:
+**What the script does:**
 
-- a plain request passed through;
-- the debugger parameter got 404;
-- `localhost`, `x.localhost` and `127.0.0.1:8000` as Host got 444;
-- an IP-address Host passed;
-- a second run added nothing;
-- the rollback restored the file.
+- It edits the one file `nginx -T` shows holding the block, so a copy nginx does not load is
+  never touched. It resolves a symlink, so the link stays a link.
+- It records that path, and backs the file up once, in `/root`, outside every directory nginx
+  loads.
+- It replaces any guard lines an earlier run left.
+- It puts the file back if `nginx -t` fails with the guard in.
+
+Running it again is safe. `tests/test_production_web_tier.py` runs it against a real nginx,
+reaching bench's block through a symlink.
 
 Run as yourself on the prod VM (step 1 below shows how to connect):
 
 ```bash
-FILE=$(readlink -f "$(sudo grep -Rl 'location @webserver' /etc/nginx/conf.d /etc/nginx/sites-enabled | head -n 1)")
-echo "$FILE"
-sudo cp -p "$FILE" /root/frappe-nginx.pre-guard
-sudo grep -q 'arg___debugger__' "$FILE" || sudo sed -i '/location @webserver {/a\        if ($arg___debugger__) { return 404; }\n        if ($host ~* "^(localhost|127\\.0\\.0\\.1)$|\\.localhost$") { return 444; }' "$FILE"
-sudo sed -n '/location @webserver {/,/}/p' "$FILE" | head -n 4
-sudo nginx -t && sudo systemctl reload nginx
+grep webserver_host /home/frappe/frappe-bench/sites/common_site_config.json
+sudo bash /home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/nginx_webserver_guard.sh --check
+sudo bash /home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/nginx_webserver_guard.sh
 ```
 
-- **The `echo`** prints the one file that holds the frappe block. `readlink -f` resolves a
-  symlink, so `sed` edits the real file and the link stays a link.
-- **The backup** goes to `/root`, outside every directory nginx loads, so it is never read as
-  config.
-- **The `grep -q`** makes a second run a no-op.
-- **The `sed -n`** shows the block's first lines: `location @webserver {`, then the two new
-  `if` lines.
-- **If `nginx -t` fails,** nothing was reloaded. Restore the backup (below).
+- **The `grep`** should print nothing. If it prints a value, stop and send it to Claude:
+  socketio may use it when it checks a user's session.
+- **`--check`** names the file and shows `guard: none`.
+- **The run** ends with `guarded <file> and reloaded nginx` and the block's first lines:
+  `location @webserver {`, the guard's comment, then its two `if` lines.
 
 Check from your PC:
 
@@ -221,13 +219,20 @@ curl -s -o /dev/null -w '%{http_code}\n' https://erp.sapphirefountains.com/api/m
 curl -s -o /dev/null -w '%{http_code}\n' "https://erp.sapphirefountains.com/api/method/ping?__debugger__=yes"
 ```
 
-Expect `200`, then `404`. Then confirm the site still loads in the browser. The load balancer
-keeps sending traffic only while its health check passes, so a working site is that check.
+Expect `200`, then `404`.
 
-To undo:
+In the browser:
+
+- [ ] **The site loads.** The load balancer keeps sending traffic only while its health check
+  passes.
+- [ ] **Realtime still works.** In DevTools → Console, `frappe.realtime.socket.connected`
+  prints `true`.
+- [ ] **Your ERPNext Task's own check passes.**
+
+To undo, which restores the file as it was before the first run:
 
 ```bash
-sudo cp -p /root/frappe-nginx.pre-guard "$FILE" && sudo nginx -t && sudo systemctl reload nginx
+sudo bash /home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/nginx_webserver_guard.sh --undo
 ```
 
 The guard can stay after the cutover. Under gunicorn there is no debugger, so it never fires.
