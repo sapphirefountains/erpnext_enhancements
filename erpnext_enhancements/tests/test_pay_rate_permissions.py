@@ -234,7 +234,7 @@ class TestStandardFieldSetters(unittest.TestCase):
     def test_no_custom_docperm_restates_these_doctypes(self):
         """One Custom DocPerm row for a doctype replaces all of its standard DocPerms."""
         parents = {r["parent"] for r in _json(FIXTURES / "custom_docperm.json")}
-        self.assertLessEqual(parents, {"Material Request", "Purchase Order"})
+        self.assertLessEqual(parents, {"Material Request", "Purchase Order", "Voice Call Settings"})
         for doctype in {d for d, _f in self.FIELDS}:
             self.assertNotIn(doctype, parents)
 

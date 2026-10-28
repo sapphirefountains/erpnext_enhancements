@@ -5,9 +5,11 @@ as ``Administrator`` with a working password and planted a cryptominer dropper
 and two sandbox-escape scripts. Nothing alerted; the break was found two days
 later only because the failed payload was crashing every User save.
 
-``Administrator`` is the one account ERPNext's own two-factor authentication can
-never protect — ``frappe.twofactor.two_factor_is_enabled_for_`` returns ``False``
-for it unconditionally — so it is also the one account most worth watching. Once
+``Administrator`` was written up here as the one account ERPNext's own two-factor
+authentication can never protect, because ``frappe.twofactor.two_factor_is_enabled_for_``
+returned ``False`` for it unconditionally. frappe 16.53.0 no longer special-cases it
+and judges it by its roles like anyone else, but it is still the shared, all-roles
+account, so it is still the one account most worth watching. Once
 it is reduced to break-glass use, a login is either a planned emergency or an
 intrusion, and both are worth an email.
 
@@ -31,11 +33,21 @@ travel through the mail server. Falls back to enabled System Managers when unset
 
 Delivery is enqueued after commit and every failure is swallowed and logged — an
 alert that cannot be sent must never be able to block a login.
+
+**Two-factor coverage (v1.755.0, daily).** Staff sign in with Google, and every
+other route in is closed or behind 2FA. But 2FA in frappe is per role: an account
+holding no role with "Two Factor Authentication" ticked is asked for no second
+factor anywhere, and a new staff account starts that way. :func:`check_two_factor_coverage`
+emails the same recipients every day while an enabled System User is in that
+state, while 2FA is off site-wide, or while its restricted-IP bypass is on. It
+asks frappe's own ``two_factor_is_enabled_for_`` per user instead of copying its
+rule, so the answer follows the installed framework. Quiet when there is nothing
+to report.
 """
 
 import frappe
 
-from frappe.utils import get_url
+from frappe.utils import cint, get_url
 
 from erpnext_enhancements import email_style
 
@@ -205,3 +217,79 @@ def notify_administrator_login(doc, method=None):
 		)
 	except Exception:
 		frappe.log_error(title="Administrator login alert failed")
+
+
+# ---------------------------------------------------------------- two-factor coverage
+
+
+def two_factor_gaps():
+	"""``(site_wide, users)``: what lets a staff account sign in with no second factor.
+
+	``site_wide`` holds a sentence per System Settings switch that turns 2FA off; ``users`` the
+	enabled System Users frappe would not ask for one. The per-user answer is frappe's own
+	``two_factor_is_enabled_for_`` (any role with ``two_factor_auth``), not a copy of its rule.
+	"""
+	from frappe.twofactor import two_factor_is_enabled_for_
+
+	site_wide = []
+	if not cint(frappe.get_system_settings("enable_two_factor_auth")):
+		site_wide.append("Two-factor authentication is off for the whole site.")
+	if cint(frappe.get_system_settings("bypass_2fa_for_retricted_ip_users")):
+		site_wide.append(
+			"Two-factor authentication is skipped for users signing in from their restricted IP addresses."
+		)
+	users = frappe.get_all(
+		"User", filters={"enabled": 1, "user_type": "System User"}, pluck="name", order_by="name asc"
+	)
+	return site_wide, [user for user in users if not two_factor_is_enabled_for_(user)]
+
+
+def format_two_factor_alert(site_wide, users, site_url):
+	"""Build ``(subject, html_body)`` for the daily coverage alert. Pure — no frappe calls."""
+	count = len(users)
+	if count:
+		noun = "account" if count == 1 else "accounts"
+		subject = f"[Sapphire Security] {count} staff {noun} can sign in without two-factor"
+	else:
+		subject = "[Sapphire Security] Two-factor authentication is not enforced"
+
+	body = [email_style.rich("Staff sign-in is meant to need a second factor. Today it does not, for:")]
+	if site_wide:
+		body.append(email_style.bullets([f"{line} (System Settings)" for line in site_wide]))
+	if users:
+		body.append(email_style.kv([("Account", user) for user in users]))
+	body.append(email_style.kv([("Site", site_url or "unknown")]))
+	steps = []
+	if site_wide:
+		steps.append("Set the System Settings above back so that two-factor authentication applies.")
+	if users:
+		steps.append(
+			"Give each account above a role that has Two Factor Authentication ticked, or disable the "
+			"account if nobody uses it."
+		)
+	steps.append("This email repeats every day until nothing is left to report.")
+	body.append(email_style.callout(" ".join(steps), "warning"))
+	return subject, email_style.wrap("".join(body), title=subject, eyebrow="Security")
+
+
+def check_two_factor_coverage():
+	"""Daily: email while 2FA is off site-wide or an enabled System User holds no 2FA role.
+
+	Quiet when nothing is wrong. Never raises: a scheduler job that raises is retried by nobody, and
+	logging is the useful outcome either way.
+	"""
+	try:
+		site_wide, users = two_factor_gaps()
+		if not site_wide and not users:
+			return
+		recipients = _recipients()
+		if not recipients:
+			frappe.log_error(
+				title="Two-factor coverage alert has no recipients",
+				message="Set `admin_alert_recipients` in site_config.json, or grant System Manager to a user with an email address.",
+			)
+			return
+		subject, message = format_two_factor_alert(site_wide, users, get_url())
+		frappe.sendmail(recipients=recipients, subject=subject, message=message)
+	except Exception:
+		frappe.log_error(title="Two-factor coverage check failed")

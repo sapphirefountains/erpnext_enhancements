@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.755.0] - 2026-10-28
+
+ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566). Three controls to have in
+place before erp.sapphirefountains.com becomes the customers' account (the website commerce plan,
+#1380). Checked against the framework at prod's versions, frappe 16.53.0 and erpnext 16.52.1, and
+against prod read-only. #1381, #1378 and #1380 hold 1.753.4 to 1.754.1, so this takes 1.755.0;
+renumber at merge if the order changes.
+
+**What the deploy does.** Fixture sync adds five Custom DocPerm rows for Voice Call Settings.
+`after_migrate` unpublishes three web forms, so `/tasks`, `/issues` and `/address` stop being
+pages. The sign-in guard covers two more routes from the first request after the restart. The
+two-factor check first runs at the next daily tick; on prod today it has nothing to report.
+
+### Security
+- **ERPNext's stock web forms `tasks`, `issues` and `addresses` are unpublished, and stay that way**
+  (`setup/stock_web_forms.py`, `after_migrate`).
+  - **Why.** ERPNext ships all three published to any signed-in account. The customer portal's own
+    pages replace them. No Website User has ever created a Task, Issue or Address on prod, so
+    nothing in use goes.
+  - **Why `after_migrate` and not a patch.** A standard web form is re-imported from its app's
+    JSON whenever that JSON's `modified` is newer than the row (`frappe/modules/import_file.py`).
+    Web Form is not in that module's `ignore_values`, so the re-import brings `published` back.
+    ERPNext restamped `addresses.json` on 2025-10-27, so this is not hypothetical. A patch runs
+    once. `after_migrate` runs after the model sync on every migrate, this deploy's included, so a
+    re-import is undone in the same migrate that made it.
+  - **Why no route guard as well.** Unpublishing is frappe's own off switch.
+    `WebForm.raise_if_unpublished` refuses the page and every web form endpoint for an unpublished
+    form, and the router lists only published ones (`get_published_web_forms`, cached for an hour
+    in redis, which this clears after a write).
+  - **How it writes.** `published` is written only on a form that is published, so a second
+    migrate writes nothing. It uses `update_modified=False`, so the row keeps ERPNext's stamp and
+    a later ERPNext change to the form still imports, and is unpublished again, rather than being
+    skipped as older than the row. It never publishes anything, and it logs instead of raising.
+  - **Left alone:** `edit-profile`, `request-data` and `request-to-delete-data`. `edit-profile`
+    writes only name, phone, image, language and time zone, on the signed-in user's own record.
+  - **To bring one back,** take it out of `STOCK_WEB_FORMS`.
+- **Least privilege on Voice Call Settings** (`fixtures/custom_docperm.json`; the `fixtures`
+  filter now exports this doctype's rows too).
+  - **The rows.** Five Custom DocPerm rows, staff only: Desk User in place of All, with no delete
+    and no share. System Manager keeps full access. A Custom DocPerm set replaces a doctype's
+    standard rows, so these five are its whole permission set on this site.
+  - **Why this set.** It is exactly what ERPNext's own change to this doctype ends with
+    (frappe/erpnext#60777, backported to version-16-hotfix as #61927 on 2026-10-26, in no release
+    yet). That change's patch, `scope_voice_call_settings_to_desk_users`, finds a Desk User rule
+    already granting what it would add and no All rule to remove, so it changes nothing here
+    when it arrives with an upgrade.
+  - **The per-user part comes with that release.** Its other half, a per-user `has_permission`
+    hook that limits each person to their own settings, ships with that release, and nothing here
+    duplicates it.
+  - **On prod** there are no Voice Call Settings records, so nobody loses anything in use.
+  - **Taking these rows out later** needs a patch that deletes them as well as removing them from
+    the JSON (`fixtures/README.md`: deletion is two steps).
+- **Staff stay Google-only on every sign-in by emailed key**
+  (`portal_login.refuse_staff_email_link_login`, `on_login`).
+  - **What it covers now.** Since v1.565.0 the guard refused a staff sign-in through an email link
+    (`login_via_key`). It now also refuses one through frappe 16.53.0's two other routes that sign
+    an account in with a key sent by email: a password reset (`update_password` with a key) and
+    a User Invitation (`accept_invitation`).
+  - **How it matches.** By the method's name at the end of the path, as before, so aliased paths
+    and the legacy `?cmd=` route match too (`portal_login.emailed_key_route`).
+  - **What it leaves alone.** A signed-in person changing their own password (old password, no
+    key) is already that person, and Website Users pass as before.
+  - Raising in `on_login` happens before frappe makes the session, so no session is created.
+- **A daily check that two-factor authentication still covers every staff account**
+  (`security_alerts.check_two_factor_coverage`, `scheduler_events.daily`).
+  - **Why.** frappe asks for a second factor per role, and a new staff account starts with no
+    roles. This is the second layer behind the guard above, for any route it does not name.
+  - **When it emails.** While 2FA is off site-wide, while the restricted-IP bypass is on, or while
+    an enabled System User holds no role with Two Factor Authentication ticked. It goes to the
+    same recipients as the Administrator login alert: `admin_alert_recipients` in site_config,
+    else the enabled System Managers.
+  - **How it decides.** Per user it asks frappe's own `two_factor_is_enabled_for_` rather than
+    copying its rule, so the answer follows the installed framework.
+  - **Otherwise** it is quiet when there is nothing to report, repeats daily until there is not,
+    and logs instead of raising.
+  - **On prod today:** 2FA is on, the bypass is off, and all 20 enabled System Users hold a 2FA
+    role.
+- **A stale claim corrected** in `security_alerts.py`'s docstring: frappe 16.53.0's
+  `two_factor_is_enabled_for_` no longer returns `False` for Administrator unconditionally. It
+  judges the account by its roles like any other.
+
+### Tests
+- **`tests/test_portal_hardening.py` (new, own CI step).**
+  - It executes the web form enforcement against a frappe stub: exactly the three forms, with
+    `modified` left alone; nothing written on a second run; a re-import undone on the next; never a
+    publish; and the other standard forms untouched.
+  - It pins the Voice Call Settings rows whole.
+- **`test_rental_portal.py`** covers the guard's new routes: refused for staff, passed for a
+  customer and for your own password change.
+- **`test_security_alerts.py`** covers the two-factor check: what it reports, a healthy site,
+  no recipients, a failure, escaping, and its daily schedule.
+- **`test_pay_rate_permissions.py`'s allowlist** of doctypes with a Custom DocPerm fixture now
+  includes Voice Call Settings. Its real assertion, that no pay-rate doctype has one, is
+  unchanged.
+
 ## [1.753.3] - 2026-10-28
 
 ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566): TASK-2026-02994 for this

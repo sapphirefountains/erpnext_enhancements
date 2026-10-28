@@ -145,6 +145,62 @@ class TestEmailLinkGuard(unittest.TestCase):
 		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.www.login.login_via_key")
 		portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="planner@example.com"))
 
+	def test_a_staff_password_reset_sign_in_is_refused(self):
+		"""frappe's update_password signs the account in at the end of a reset (v1.755.0)."""
+		manager = types.SimpleNamespace(user="staff@sapphirefountains.com")
+		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.core.doctype.user.user.update_password")
+		frappe_stub.local.form_dict = {"key": "emailed", "new_password": "x"}
+		with self.assertRaises(AuthError):
+			portal_login.refuse_staff_email_link_login(manager)
+		frappe_stub.local.request = types.SimpleNamespace(path="/")
+		frappe_stub.local.form_dict = {"cmd": "frappe.core.doctype.user.user.update_password", "key": "emailed"}
+		with self.assertRaises(AuthError):
+			portal_login.refuse_staff_email_link_login(manager)
+
+	def test_a_staff_invitation_sign_in_is_refused(self):
+		manager = types.SimpleNamespace(user="staff@sapphirefountains.com")
+		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.core.api.user_invitation.accept_invitation")
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		with self.assertRaises(AuthError):
+			portal_login.refuse_staff_email_link_login(manager)
+
+	def test_changing_your_own_password_is_untouched(self):
+		"""update_password with the old password and no key: the person is already signed in as themselves."""
+		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.core.doctype.user.user.update_password")
+		frappe_stub.local.form_dict = {"old_password": "y", "new_password": "x"}
+		self.assertEqual(portal_login.emailed_key_route(), "")
+		portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="staff@sapphirefountains.com"))
+
+	def test_a_customer_reset_or_invitation_sign_in_passes(self):
+		customer = types.SimpleNamespace(user="planner@example.com")
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		for path in (
+			"/api/method/frappe.core.doctype.user.user.update_password",
+			"/api/method/frappe.core.api.user_invitation.accept_invitation",
+		):
+			frappe_stub.local.request = types.SimpleNamespace(path=path)
+			portal_login.refuse_staff_email_link_login(customer)
+
+	def test_a_disabled_customer_reset_sign_in_is_refused(self):
+		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.core.doctype.user.user.update_password")
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		with self.assertRaises(AuthError):
+			portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="gone@example.com"))
+
+	def test_each_emailed_key_route_is_named(self):
+		cases = {
+			"/api/method/frappe.www.login.login_via_key": portal_login.KEY_LOGIN,
+			"/api/method/frappe.core.api.user_invitation.accept_invitation": portal_login.INVITATION,
+			"/api/v2/method/frappe.core.doctype.user.user.update_password": portal_login.PASSWORD_RESET,
+			"/api/method/frappe.integrations.oauth2_logins.login_via_google": "",
+			"/api/method/login": "",
+		}
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		for path, route in cases.items():
+			with self.subTest(path=path):
+				frappe_stub.local.request = types.SimpleNamespace(path=path)
+				self.assertEqual(portal_login.emailed_key_route(), route)
+
 	def test_other_sign_ins_are_untouched(self):
 		"""Google, API keys and impersonation go through on_login too; only the email link is this guard's."""
 		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.integrations.oauth2_logins.login_via_google")

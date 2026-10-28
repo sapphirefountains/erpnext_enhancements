@@ -1951,6 +1951,12 @@ scheduler_events = {
 		# So each day this finds the addresses of open dated tasks and firm rental bookings that
 		# still lack coordinates, and geocodes a bounded batch (40). Never raises; idempotent.
 		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
+		# security (v1.755.0): email the admin alert recipients while two-factor authentication is
+		# off site-wide or an enabled System User holds no role that requires it -- frappe asks for
+		# a second factor per role, and a new staff account starts with none. The backstop for the
+		# on_login guard on emailed-key sign-ins. Quiet when there is nothing to report; repeats
+		# daily until there is not; never raises. See security_alerts.check_two_factor_coverage.
+		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -2622,6 +2628,13 @@ after_migrate = [
 	# silent when there is nothing to do, and it installs only the v1.724.0 body, so a later
 	# template release is left to its own patch. One read per migrate; never raises.
 	"erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line.retry_after_migrate",
+	# portal hardening (v1.755.0): keep ERPNext's stock web forms tasks, issues and addresses
+	# unpublished; this app's portal pages replace them. Here rather than in patches.txt because
+	# ERPNext re-imports a standard web form, published, whenever its JSON's `modified` moves, and
+	# that happens during model sync, before this runs. An unpublished form is refused by frappe
+	# itself, page and API alike. Writes only a form that is published; never raises
+	# (setup/stock_web_forms.py).
+	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -2827,9 +2840,12 @@ fixtures = [
 	# (team lead raises the MR, PM converts to the PO). Custom DocPerm fully overrides
 	# a doctype's standard perms, so these rows ARE the complete effective perm set for
 	# both doctypes — the parent-in filter captures exactly those two doctypes' rows.
+	# Voice Call Settings (v1.755.0): least privilege, and staff only (Desk User, not All). These
+	# five rows are the set ERPNext's own change to this doctype ends with (backported to
+	# version-16-hotfix, not yet in a release), so its patch finds nothing to change here.
 	{
 		"dt": "Custom DocPerm",
-		"filters": [["parent", "in", ["Material Request", "Purchase Order"]]],
+		"filters": [["parent", "in", ["Material Request", "Purchase Order", "Voice Call Settings"]]],
 	},
 	# WI-010: version-control the security architecture — the 18 hand-built Role
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
@@ -3054,6 +3070,8 @@ on_login = [
 	# portal login (v1.565.0): the second layer. A sign-in through login_via_key (an emailed
 	# link) is refused for any account that is not a Website User, whatever minted the key.
 	# Raising here happens before frappe makes the session, so no session is created.
+	# Since v1.755.0 also frappe's other sign-ins by emailed key: a password reset
+	# (update_password with a key) and a User Invitation (accept_invitation).
 	"erpnext_enhancements.portal_login.refuse_staff_email_link_login",
 ]
 
