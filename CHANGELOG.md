@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.753.3] - 2026-10-28
 
-ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566). One Task for this PR, and
-one assigned to Nik for the VM steps.
+ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566): TASK-2026-02994 for this
+PR, and TASK-2026-02995, assigned to Nik, for the VM steps.
 
 **Nothing changes on a VM when this merges.** It ships files and a runbook,
 `infra/docs/production-web-tier.md`, which has two parts:
