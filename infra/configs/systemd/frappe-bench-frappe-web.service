@@ -1,0 +1,43 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# The web tier: gunicorn on frappe.app:application, replacing the development Procfile's
+# `web: bench serve --port 8000`. That line ran frappe.app.serve(), Werkzeug's development
+# server, which is not meant to face the internet. See infra/docs/production-web-tier.md.
+#
+# The worker count, timeout and port come from common_site_config.json, read by
+# config/gunicorn.conf.py with bench's own defaults (infra/configs/gunicorn.conf.py), so
+# `bench set-config -g gunicorn_workers N` and a restart change them without touching this
+# file. It binds 127.0.0.1 only: nginx is the one thing that should reach it, and the load
+# balancer's health check goes to nginx on :80. `bench serve` listened on 0.0.0.0.
+#
+# The worker count is ALSO put on the command line, asked of the same config file (run as
+# a script it prints it), because frappe reads it from there: frappe.concurrency_limiter
+# (16.53.0) sizes the pool of every @frappe.concurrent_limit() function -- frappe's own
+# download_pdf among them -- as half of `-w/--workers` x `--threads` parsed from sys.argv.
+# With the count only in the config file it would find 1, and let one PDF render at a
+# time for the whole site. `$$` is systemd's escape for the `$` sh needs.
+#
+# KillMode=mixed sends SIGTERM to the gunicorn master alone, which stops taking requests
+# and gives each worker graceful_timeout (30 s) to finish; whatever is left at
+# TimeoutStopSec is killed. graceful_timeout must stay below TimeoutStopSec, the same rule
+# bench's supervisor template states (graceful-timeout 30, stopwaitsecs 40).
+
+[Unit]
+Description=Frappe Bench web (gunicorn, frappe.app:application)
+PartOf=frappe-bench.service
+After=network.target mariadb.service frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+Wants=frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench/sites
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/sh -c 'exec /home/frappe/frappe-bench/env/bin/gunicorn --workers "$$(/home/frappe/frappe-bench/env/bin/python /home/frappe/frappe-bench/config/gunicorn.conf.py)" --config /home/frappe/frappe-bench/config/gunicorn.conf.py frappe.app:application'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=40
+
+[Install]
+WantedBy=frappe-bench.service

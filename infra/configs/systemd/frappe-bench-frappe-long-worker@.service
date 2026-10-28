@@ -1,0 +1,23 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# An RQ worker for the long queue, which also takes default and short work when long is
+# empty. Instances @1..@N as for frappe-bench-frappe-short-worker@.service, whose header
+# explains the layout, the log files and what a stop does to a running job.
+
+[Unit]
+Description=Frappe Bench worker %i (queues long, default, short)
+PartOf=frappe-bench.service
+After=network.target mariadb.service frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+Wants=frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/sh -c 'exec bench worker --queue long,default,short >>logs/worker.log 2>>logs/worker.error.log'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service

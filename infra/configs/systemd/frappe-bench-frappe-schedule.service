@@ -1,0 +1,22 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# The scheduler: `bench schedule`, the development Procfile's own line. It only enqueues;
+# the workers run the jobs. One per bench, never one per worker.
+
+[Unit]
+Description=Frappe Bench scheduler (bench schedule)
+PartOf=frappe-bench.service
+After=network.target mariadb.service frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+Wants=frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env bench schedule
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service

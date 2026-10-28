@@ -1,3 +1,8 @@
+# `bench update` restarts nothing on these VMs: there is no supervisorctl, and
+# restart_systemd_on_update is not set. Leave it unset -- bench's systemd restart stops
+# whatever frappe-bench.target Requires, and these VMs have no such target. The
+# `systemctl restart frappe-bench` below does the restart, on a VM cut over to gunicorn
+# and on one still on the development Procfile alike. See infra/cloudbuild-deploy.yaml.
 steps:
   - name: 'google/cloud-sdk:latest'
     id: 'Update Upstream Apps'
