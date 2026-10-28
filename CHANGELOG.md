@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.754.1] - 2026-10-28
+
+ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).
+
+### Added
+- **A plan for selling on www.sapphirefountains.com, for Nik to decide from**
+  (`docs/website-commerce/plan.md`). Docs only: nothing is built, and no executable behavior
+  changes. Nik asked for better SEO, our products on Google (including Google's "Universal Cart"),
+  and a website checkout whose orders reach ERPNext as real sales records with stock tracked. All
+  research was read-only: the live site's public pages and catalog API, Google's and vendors'
+  documentation, and read-only queries on production ERPNext.
+  - **Universal Cart is real but not open to us.** Google launched it in the US on 2026-10-15 as a
+    shopper's cart in AI Mode and Gemini. Merchants take part only through the Universal Commerce
+    Protocol, which is early access with merchants chosen by Google. It has no WooCommerce support,
+    and it excludes custom goods, rentals and special shipping. Recommendation: look again in
+    mid-2027.
+  - **Merchant Center free listings need a store that sells.** Google requires a working cart and
+    checkout. Today WooCommerce holds 24 products as a catalog: 4 are priced, there is a "Contact us"
+    button in place of "Add to cart", and three SKUs don't match ERPNext's item codes. Services,
+    rentals and quote-priced fountains can't be listed at all.
+  - **Recommended checkout:** WooCommerce on the website, with ERPNext owning price and stock.
+    - A paid order becomes a durable `Web Order` row inside the webhook request, then a Customer, a
+      submitted Sales Order and a Payment Entry.
+    - A poll and a re-drive sweep make the order survive a deploy's Redis flush.
+    - WooCommerce's Stripe gateway charges on our own Stripe account. A `Stripe Payment` row per
+      order lets the existing `finalize_payment`, payout entry and `invoice_payment_block` cover it.
+  - **Build the sync ourselves rather than install WooCommerce Fusion.** It is the only v16
+    connector, and its source on 2026-10-28 showed three problems: its webhook doesn't check
+    signatures, its default mode loses orders when queued jobs are flushed, and its stock push can
+    oversell. ERPNext core removed its own WooCommerce connector in v15 (frappe/erpnext#37015).
+  - **ERPNext's catalog is not ready to sell.** No Item has a photo, weight, GTIN or brand. Most
+    Items are non-stock (PR #1378 adds the switch), stock reservation is off, and there are no
+    Sales Orders or Delivery Notes yet. Chemicals stay off the store at launch because of hazmat
+    shipping rules.
+  - **The SEO audit has 17 findings, 6 of them High.** The contact page is set to noindex. Project
+    pages can't be crawled and are duplicated. The live sitemap comes from a second plugin and lists
+    junk. There is no local-business markup. A 404 is linked from the site. Most fixes are settings;
+    the page-by-page copy fits the agreed Marketing approval path, and none uses Slim SEO's own
+    write abilities.
+  - **Also in the plan:** phases with effort, what Nik sets up himself (Merchant Center, the
+    Business Profile, the Stripe gateway, the policies, the CPA note), and 14 decisions.
+
 ## [1.753.2] - 2026-10-27
 
 ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).
