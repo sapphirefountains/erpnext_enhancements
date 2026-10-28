@@ -170,14 +170,18 @@ class UnitTests(unittest.TestCase):
 			self.assertTrue(exec_start.startswith("/bin/sh -c 'exec bench worker"), exec_start)
 
 	def test_processes_that_need_redis_start_after_it(self):
+		# Every frappe process talks to both. socketio included: at 16.53.0 it subscribes
+		# through get_redis_subscriber(), whose default is redis_queue.
 		for name in (
 			"frappe-bench-frappe-web.service",
 			"frappe-bench-frappe-schedule.service",
 			"frappe-bench-node-socketio.service",
 			*TEMPLATES,
 		):
-			after = " ".join(self.units[name]["Unit"]["After"])
-			self.assertIn("frappe-bench-redis-cache.service", after, name)
+			unit = self.units[name]["Unit"]
+			for redis in ("frappe-bench-redis-cache.service", "frappe-bench-redis-queue.service"):
+				self.assertIn(redis, " ".join(unit["After"]), name)
+				self.assertIn(redis, " ".join(unit["Wants"]), name)
 
 
 class GunicornConfTests(unittest.TestCase):
@@ -299,15 +303,19 @@ class InstallerTests(unittest.TestCase):
 		(self.systemd / UMBRELLA).write_text(self.OLD_UNIT)
 		self.bin.mkdir()
 		self._exe(self.bench / "env" / "bin" / "gunicorn", "exit 0")
-		for name in ("bench", "node", "redis-server"):
+		for name in ("bench", "redis-server"):
 			self._exe(self.bin / name, "exit 0")
-		# The stub systemctl logs each call. is-active answers from STUB_ACTIVE; list-units
-		# prints STUB_RUNNING.
+		self._exe(self.bin / "node", '[ "$1" = --version ] && echo "${STUB_NODE_VERSION:-v24.21.0}"\nexit 0')
+		(self.bench / "apps" / "frappe" / "package.json").write_text(
+			json.dumps({"engines": {"node": ">=24"}})
+		)
+		# The stub systemctl logs each call. is-active reports STUB_STATE (exit 0 only for
+		# "active", printing nothing under --quiet); list-units prints STUB_RUNNING.
 		self._exe(
 			self.bin / "systemctl",
 			f'echo "$*" >> {self.log}\n'
 			'case "$1" in\n'
-			'  is-active) [ "${STUB_ACTIVE:-0}" = 1 ] && { echo active; exit 0; }; echo inactive; exit 3 ;;\n'
+			'  is-active) s=${STUB_STATE:-inactive}; [ "$2" = --quiet ] || echo "$s"; [ "$s" = active ]; exit $? ;;\n'
 			'  list-units) printf "%s" "${STUB_RUNNING:-}" ;;\n'
 			"esac\n",
 		)
@@ -320,7 +328,7 @@ class InstallerTests(unittest.TestCase):
 	def set_workers(self, n):
 		(self.bench / "sites" / "common_site_config.json").write_text(json.dumps({"background_workers": n}))
 
-	def run_installer(self, *args, active=False, running=""):
+	def run_installer(self, *args, state="inactive", running="", node="v24.21.0"):
 		env = {
 			# No /usr/sbin: keeps a runner's own nginx out of the check.
 			"PATH": f"{self.bin}:/usr/bin:/bin",
@@ -330,8 +338,9 @@ class InstallerTests(unittest.TestCase):
 			"SYSTEMCTL": str(self.bin / "systemctl"),
 			"UNIT_PATH": str(self.bin),
 			"REQUIRE_ROOT": "0",
-			"STUB_ACTIVE": "1" if active else "0",
+			"STUB_STATE": state,
 			"STUB_RUNNING": running,
+			"STUB_NODE_VERSION": node,
 		}
 		return subprocess.run(
 			["bash", str(INSTALLER), *args], env=env, capture_output=True, text=True, timeout=60
@@ -357,13 +366,69 @@ class InstallerTests(unittest.TestCase):
 		self.assertNotEqual(result.returncode, 0)
 		self.assertIn("MISSING  node", result.stdout)
 
-	def test_install_refuses_while_the_old_unit_runs(self):
-		result = self.run_installer(active=True)
+	def test_install_refuses_unless_the_old_unit_is_plainly_stopped(self):
+		# "activating" is Restart='s wait: honcho comes back seconds later.
+		for state in ("active", "activating", "reloading", "deactivating"):
+			result = self.run_installer(state=state)
+			self.assertNotEqual(result.returncode, 0, state)
+			self.assertIn("Stop it first", result.stderr)
+			self.assertEqual((self.systemd / UMBRELLA).read_text(), self.OLD_UNIT)
+			self.assertEqual(sorted(p.name for p in self.systemd.iterdir()), [UMBRELLA])
+			self.assertFalse(self.backup.exists())
+
+	def test_install_after_a_failed_old_unit(self):
+		self.assertEqual(self.run_installer(state="failed").returncode, 0)
+		self.assertIn(MARKER, (self.systemd / UMBRELLA).read_text())
+
+	def test_an_env_file_blocks_and_only_its_names_are_shown(self):
+		(self.bench / ".env").write_text("export FOO_TOKEN=s3cr3t-value\nBAR=1\n# comment\n")
+		result = self.run_installer()
 		self.assertNotEqual(result.returncode, 0)
-		self.assertIn("Stop it first", result.stderr)
+		self.assertIn("BLOCKER", result.stdout)
+		self.assertIn("FOO_TOKEN BAR", result.stdout)
+		self.assertNotIn("s3cr3t-value", result.stdout + result.stderr)
 		self.assertEqual((self.systemd / UMBRELLA).read_text(), self.OLD_UNIT)
-		self.assertEqual(sorted(p.name for p in self.systemd.iterdir()), [UMBRELLA])
-		self.assertFalse(self.backup.exists())
+
+	def test_procfile_environment_prefixes_block(self):
+		(self.bench / "Procfile").write_text(
+			"redis_cache: redis-server config/redis_cache.conf\n"
+			"web: bench serve --port 8000\n"
+			"worker: NO_PROXY=* LANG=C.UTF-8 bench worker 1>> logs/worker.log 2>> logs/worker.error.log\n"
+		)
+		result = self.run_installer("--check")
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("the Procfile's worker line sets NO_PROXY LANG", result.stdout)
+		self.assertNotIn("web line sets", result.stdout)
+
+	def test_a_plain_procfile_passes(self):
+		(self.bench / "Procfile").write_text(
+			"web: bench serve --port 8000\nworker:  bench worker 1>> logs/worker.log 2>> logs/worker.error.log\n"
+		)
+		result = self.run_installer("--check")
+		self.assertEqual(result.returncode, 0, result.stdout)
+
+	def test_drop_ins_block(self):
+		dropins = self.systemd / "frappe-bench.service.d"
+		dropins.mkdir()
+		(dropins / "override.conf").write_text("[Service]\nEnvironment=FOO=1\n")
+		result = self.run_installer()
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("override.conf", result.stdout)
+		self.assertEqual((self.systemd / UMBRELLA).read_text(), self.OLD_UNIT)
+
+	def test_old_node_blocks(self):
+		result = self.run_installer("--check", node="v22.11.0")
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("frappe needs node >= 24", result.stdout)
+
+	def test_a_different_node_than_the_procfiles_is_flagged(self):
+		(self.bench / "Procfile").write_text("socketio: /opt/node24/bin/node apps/frappe/socketio.js\n")
+		result = self.run_installer("--check")
+		self.assertEqual(result.returncode, 0, result.stdout)
+		self.assertIn(
+			f"WARNING  the Procfile runs socketio with /opt/node24/bin/node; the unit would run {self.bin}/node",
+			result.stdout,
+		)
 
 	def test_install_refuses_with_a_binary_missing(self):
 		(self.bin / "redis-server").unlink()
@@ -405,7 +470,7 @@ class InstallerTests(unittest.TestCase):
 	def test_refresh_rebuilds_wants_and_keeps_the_first_backup(self):
 		self.assertEqual(self.run_installer().returncode, 0)
 		self.set_workers(1)
-		result = self.run_installer(active=True)  # the umbrella is ours now, so running is fine
+		result = self.run_installer(state="active")  # the umbrella is ours now, so running is fine
 		self.assertEqual(result.returncode, 0, result.stderr)
 		self.assertEqual(self.backup.read_text(), self.OLD_UNIT)
 		workers = [w for w in self.wants() if "worker@" in w]
@@ -413,7 +478,21 @@ class InstallerTests(unittest.TestCase):
 			workers,
 			["frappe-bench-frappe-long-worker@1.service", "frappe-bench-frappe-short-worker@1.service"],
 		)
-		self.assertIn("sudo systemctl restart frappe-bench", result.stdout)
+		# A restart would keep @2 running through PartOf, so the hint is stop, then start.
+		self.assertIn("sudo systemctl stop frappe-bench && sudo systemctl start frappe-bench", result.stdout)
+		self.assertIn("frappe-bench-frappe-short-worker@2.service", result.stdout)
+
+	def test_refresh_with_the_same_workers_says_restart(self):
+		self.assertEqual(self.run_installer().returncode, 0)
+		result = self.run_installer(state="active")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn("next:    sudo systemctl restart frappe-bench", result.stdout)
+
+	def test_refresh_ignores_the_procfile_and_env(self):
+		# After the cutover nothing reads them, so they must not block a boot-time refresh.
+		self.assertEqual(self.run_installer().returncode, 0)
+		(self.bench / ".env").write_text("FOO=1\n")
+		self.assertEqual(self.run_installer(state="active").returncode, 0)
 
 	def test_rollback_refuses_while_anything_runs(self):
 		self.assertEqual(self.run_installer().returncode, 0)
@@ -470,9 +549,110 @@ class StartupScriptTests(unittest.TestCase):
 		branch = branch[: branch.index('elif [ -f "$UNITS_INSTALLER" ]')]
 		self.assertNotIn("UNITS_INSTALLER", branch)
 
-	def test_nginx_is_generated_only_without_a_frappe_block(self):
-		guard = self.script.index("if ! grep -rqsE '127\\.0\\.0\\.1:8000|@webserver'")
-		self.assertLess(guard, self.script.index("bench setup nginx --yes"))
+	def test_nginx_guard_asks_nginx_not_grep(self):
+		# `grep -r` skips the symlinks the frappe block lives behind, so it reports no block
+		# on a VM that has one, and a second block is generated: duplicate upstreams, and
+		# nginx will not start on the next boot. nginx -T dumps what is actually loaded.
+		self.assertIn("nginx -T 2>/dev/null | grep -qE '127\\.0\\.0\\.1:8000|@webserver'", self.code)
+		self.assertNotRegex(self.code, r"grep -r\w* .*/etc/nginx")
+		self.assertLess(self.code.index("nginx -T 2>/dev/null"), self.code.index("bench setup nginx --yes"))
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash"), "runs a shell block")
+class StartupNginxBlockTests(unittest.TestCase):
+	"""The startup script's nginx section, run for real against a scratch /etc/nginx.
+
+	The section is cut out of startup_script.sh (the whole file is a Terraform template and
+	mounts disks), its absolute paths moved under a scratch root, and nginx, sudo and
+	systemctl replaced by stubs. The stub nginx dumps NGINX_DUMP for -T, and fails -t when
+	NGINX_T_FAIL is set or, with NGINX_T_FAIL_IF_LINK, once the generated link exists.
+	"""
+
+	def setUp(self):
+		self.root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, self.root)
+		self.bin = self.root / "bin"
+		self.bin.mkdir()
+		self.log = self.root / "calls.log"
+		self.etc = self.root / "etc" / "nginx"
+		for d in ("conf.d", "sites-enabled"):
+			(self.etc / d).mkdir(parents=True)
+		(self.etc / "sites-enabled" / "default").write_text("server { listen 80 default_server; }\n")
+		self.bench = self.root / "home" / "frappe" / "frappe-bench"
+		(self.bench / "config").mkdir(parents=True)
+		self.link = self.etc / "conf.d" / "frappe-bench.conf"
+		self.dump = self.root / "dump.conf"
+		self.dump.write_text("server { listen 80; }\n")
+
+		script = STARTUP_SCRIPT.read_text(encoding="utf-8")
+		start = script.index("NGINX_FRAPPE_LINK=")
+		end = script.index('echo "[$(date)] Startup script completed"')
+		block = (
+			script[start:end]
+			.replace("/etc/nginx", str(self.etc))
+			.replace("/home/frappe", str(self.root / "home" / "frappe"))
+		)
+		self.block = self.root / "block.sh"
+		self.block.write_text(block)
+
+		self._exe(
+			"nginx",
+			f'echo "nginx $*" >> {self.log}\n'
+			'if [ "$1" = -T ]; then cat "$NGINX_DUMP"; exit 0; fi\n'
+			'[ -n "${NGINX_T_FAIL:-}" ] && exit 1\n'
+			f'[ -n "${{NGINX_T_FAIL_IF_LINK:-}}" ] && [ -L {self.link} ] && exit 1\n'
+			"exit 0",
+		)
+		self._exe(
+			"sudo",
+			f'echo "sudo $*" >> {self.log}\necho "server {{ location @webserver {{ }} }}" > {self.bench}/config/nginx.conf',
+		)
+		self._exe("systemctl", f'echo "systemctl $*" >> {self.log}')
+
+	def _exe(self, name, body):
+		path = self.bin / name
+		path.write_text(f"#!/bin/sh\n{body}\n")
+		path.chmod(0o755)
+
+	def run_block(self, **env):
+		full = {"PATH": f"{self.bin}:/usr/bin:/bin", "NGINX_DUMP": str(self.dump), **env}
+		result = subprocess.run(
+			["bash", str(self.block)], env=full, capture_output=True, text=True, timeout=60
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		return self.log.read_text() if self.log.exists() else ""
+
+	def test_a_loaded_frappe_block_behind_a_symlink_is_left_alone(self):
+		real = self.root / "sites-available-frappe-bench"
+		real.write_text("upstream frappe-bench-frappe { server 127.0.0.1:8000 fail_timeout=0; }\n")
+		(self.etc / "sites-enabled" / "frappe-bench").symlink_to(real)
+		self.dump.write_text(real.read_text())  # what nginx -T reports: it follows the link
+		calls = self.run_block()
+		self.assertNotIn("sudo", calls)
+		self.assertFalse(self.link.is_symlink())
+		self.assertTrue((self.etc / "sites-enabled" / "default").exists())
+		self.assertIn("systemctl reload nginx", calls)
+
+	def test_no_frappe_block_generates_one(self):
+		calls = self.run_block()
+		self.assertIn("bench setup nginx --yes", calls)
+		self.assertEqual(os.readlink(self.link), f"{self.bench}/config/nginx.conf")
+		self.assertFalse((self.etc / "sites-enabled" / "default").exists())
+
+	def test_a_generated_block_that_fails_is_unlinked(self):
+		calls = self.run_block(NGINX_T_FAIL_IF_LINK="1")
+		self.assertIn("bench setup nginx --yes", calls)
+		self.assertFalse(self.link.is_symlink())
+		self.assertTrue((self.etc / "sites-enabled" / "default").exists())
+		# With the bad block gone the config passes again, so the reload still picks up
+		# the realip file; what matters is that nginx never loads the failing block.
+		self.assertIn("systemctl reload nginx", calls)
+
+	def test_a_broken_nginx_is_not_touched(self):
+		calls = self.run_block(NGINX_T_FAIL="1")
+		self.assertNotIn("sudo", calls)
+		self.assertFalse(self.link.is_symlink())
+		self.assertNotIn("systemctl reload nginx", calls)
 
 
 class DeployTests(unittest.TestCase):

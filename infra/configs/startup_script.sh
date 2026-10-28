@@ -105,6 +105,8 @@ elif [ -f /etc/systemd/system/frappe-bench.service ]; then
 elif [ -f "$UNITS_INSTALLER" ]; then
   echo "[$(date)] frappe-bench.service not found — installing the production units"
   bash "$UNITS_INSTALLER" || echo "[$(date)] WARNING: could not install the production bench units"
+elif [ -d /home/frappe/frappe-bench ]; then
+  echo "[$(date)] WARNING: a bench but no frappe-bench.service and no erpnext_enhancements checkout ($UNITS_INSTALLER); no bench processes were set up"
 fi
 if [ -f /etc/systemd/system/frappe-bench.service ]; then
   echo "[$(date)] Enabling and starting frappe-bench service"
@@ -145,17 +147,36 @@ fi
 # ── nginx server block for the bench ─────────────────────
 # bench's generated block serves /assets and /files from disk and proxies the rest to
 # 127.0.0.1:8000. gunicorn serves neither path (`bench serve` did), so without it the
-# Desk loads with no CSS or JS. It is generated only on a VM that has no frappe block
-# yet: an existing one is never regenerated, so whatever was added to it by hand stays.
+# Desk loads with no CSS or JS. It is generated only on a VM whose LOADED nginx config
+# has no frappe block: an existing one is never regenerated, so whatever was added to it
+# by hand stays. The test asks nginx itself (`nginx -T`), not grep: bench links its block
+# in (conf.d/frappe-bench.conf -> config/nginx.conf, as below; the test VM's notes show
+# sites-enabled/frappe-bench), and `grep -r` does not follow a symlink it meets while
+# recursing. It would miss the block, generate a second one, and leave nginx unable to
+# start on the next boot with every upstream defined twice. A generated block that fails
+# `nginx -t` is unlinked again, like the realip file above.
 # This replaces `bench setup production frappe --yes`, which, whenever it got past its
 # prerequisites, also installed supervisor and had it start a second copy of every bench
 # process beside the systemd units.
+NGINX_FRAPPE_LINK=/etc/nginx/conf.d/frappe-bench.conf
 if [ -d /home/frappe/frappe-bench ] && command -v nginx &>/dev/null; then
-  if ! grep -rqsE '127\.0\.0\.1:8000|@webserver' /etc/nginx/conf.d /etc/nginx/sites-enabled; then
-    echo "[$(date)] No frappe server block in nginx — generating one"
-    sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup nginx --yes' \
-      && ln -sfn /home/frappe/frappe-bench/config/nginx.conf /etc/nginx/conf.d/frappe-bench.conf \
-      && rm -f /etc/nginx/sites-enabled/default
+  if ! nginx -t; then
+    echo "[$(date)] WARNING: nginx -t fails before any change here; leaving the frappe block alone"
+  elif ! nginx -T 2>/dev/null | grep -qE '127\.0\.0\.1:8000|@webserver'; then
+    if [ -e "$NGINX_FRAPPE_LINK" ] || [ -L "$NGINX_FRAPPE_LINK" ]; then
+      echo "[$(date)] WARNING: no frappe block is loaded, but $NGINX_FRAPPE_LINK exists; not touching it"
+    elif sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup nginx --yes' \
+      && ln -s /home/frappe/frappe-bench/config/nginx.conf "$NGINX_FRAPPE_LINK"; then
+      if nginx -t; then
+        echo "[$(date)] Generated the frappe server block at $NGINX_FRAPPE_LINK"
+        rm -f /etc/nginx/sites-enabled/default
+      else
+        echo "[$(date)] WARNING: the generated frappe block failed nginx -t; removing it"
+        rm -f "$NGINX_FRAPPE_LINK"
+      fi
+    else
+      echo "[$(date)] WARNING: could not generate the frappe server block"
+    fi
   fi
   if nginx -t; then
     systemctl reload nginx 2>/dev/null || true

@@ -91,7 +91,92 @@ preflight() {
 			missing=1
 		fi
 	done
+	node_check || missing=1
+	dropin_check || missing=1
+	# What honcho handed the old process tree and the units would not. Irrelevant once the
+	# umbrella is ours: nothing reads the Procfile or .env after the cutover.
+	is_ours || environment_check || missing=1
 	return "$missing"
+}
+
+# frappe states the node it needs in its package.json (">=24" at 16.53.0); the socketio
+# unit runs whichever node the units' PATH finds first, which need not be the one the
+# Procfile named.
+node_check() {
+	local found version major need procnode
+	# shellcheck disable=SC2016
+	found=$(env PATH="$UNIT_PATH" /bin/sh -c 'command -v node') || return 0 # reported above
+	version=$(env PATH="$UNIT_PATH" node --version 2>/dev/null || true)
+	need=$(python3 - "$BENCH_DIR/apps/frappe/package.json" <<'PY'
+import json, re, sys
+try:
+	with open(sys.argv[1], encoding="utf-8") as f:
+		spec = json.load(f).get("engines", {}).get("node", "")
+except (OSError, ValueError):
+	spec = ""
+m = re.search(r"\d+", spec)
+print(m.group(0) if m else "")
+PY
+)
+	major=${version#v}
+	major=${major%%.*}
+	if [ -n "$need" ] && ! { [[ $major =~ ^[0-9]+$ ]] && [ "$major" -ge "$need" ]; }; then
+		say "BLOCKER  node ${version:-(no version)} at $found; frappe needs node >= $need (apps/frappe/package.json)"
+		return 1
+	fi
+	say "ok       node $version (frappe needs >= ${need:-?})"
+	if [ -f "$BENCH_DIR/Procfile" ]; then
+		procnode=$(sed -n 's/^socketio:[[:space:]]*\(\/[^[:space:]]*node\)[[:space:]].*/\1/p' "$BENCH_DIR/Procfile" | head -n 1)
+		if [ -n "$procnode" ] && [ "$procnode" != "$found" ]; then
+			say "WARNING  the Procfile runs socketio with $procnode; the unit would run $found ($version)"
+		fi
+	fi
+	return 0
+}
+
+# A drop-in on frappe-bench.service would now apply to the umbrella, which runs nothing:
+# an ExecStart= in one would start a second process tree beside the units and hang the
+# oneshot, and an Environment= would stop reaching the processes it was written for.
+dropin_check() {
+	local d="$SYSTEMD_DIR/frappe-bench.service.d" f names=""
+	for f in "$d"/*; do
+		[ -e "$f" ] && names="$names ${f##*/}"
+	done
+	if [ -n "$names" ]; then
+		say "BLOCKER  $d has drop-ins:$names. Move what they set onto the units that need it."
+		return 1
+	fi
+	return 0
+}
+
+# honcho loads the bench's .env into every process it starts, and a Procfile line can set
+# variables in front of its command. The units carry only PATH. Names are printed, never
+# values.
+environment_check() {
+	local bad=0 names line proc word words
+	if [ -f "$BENCH_DIR/.env" ]; then
+		names=$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$BENCH_DIR/.env" | tr '\n' ' ')
+		say "BLOCKER  $BENCH_DIR/.env sets: ${names:-(nothing parseable)}. honcho gave it to every"
+		say "         process; the units would not. Carry what is needed over, then move the file away."
+		bad=1
+	fi
+	if [ -f "$BENCH_DIR/Procfile" ]; then
+		while IFS= read -r line; do
+			proc=${line%%:*}
+			names=""
+			# read -a splits without globbing: a value like NO_PROXY=* must stay a word.
+			read -ra words <<<"${line#*:}"
+			for word in "${words[@]}"; do
+				[[ $word =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] || break
+				names="$names ${BASH_REMATCH[1]}"
+			done
+			if [ -n "$names" ]; then
+				say "BLOCKER  the Procfile's $proc line sets$names for its command; its unit would not."
+				bad=1
+			fi
+		done < <(grep -E '^[A-Za-z0-9_]+:' "$BENCH_DIR/Procfile")
+	fi
+	return "$bad"
 }
 
 nginx_check() {
@@ -126,13 +211,17 @@ report() {
 }
 
 install_units() {
-	local unit n i
-	preflight || die "fix the MISSING items above first; nothing was changed"
+	local unit n i state f old_workers="" dropped=""
+	preflight || die "fix the MISSING and BLOCKER items above first; nothing was changed"
 	nginx_check
 	if [ -f "$UMBRELLA" ] && ! is_ours; then
-		if $SYSTEMCTL is-active --quiet frappe-bench.service; then
-			die "the old frappe-bench.service is running. Stop it first (sudo systemctl stop frappe-bench), then run this again; nothing was changed"
-		fi
+		# Only a unit that is plainly not running. "activating" covers Restart='s wait, after
+		# which honcho would be back under a definition this script has just replaced.
+		state=$($SYSTEMCTL is-active frappe-bench.service 2>/dev/null || true)
+		case "$state" in
+			inactive | failed | unknown) ;;
+			*) die "the old frappe-bench.service is '$state'. Stop it first (sudo systemctl stop frappe-bench), then run this again; nothing was changed" ;;
+		esac
 		if [ -e "$BACKUP" ]; then
 			say "kept     the existing backup $BACKUP"
 		else
@@ -148,6 +237,9 @@ install_units() {
 	# The umbrella's .wants is exactly the set below, rebuilt every run, so a lower
 	# background_workers drops the extra worker instances. These are the links
 	# `systemctl enable` makes from each unit's WantedBy=frappe-bench.service.
+	for f in "$WANTS"/*worker@*.service; do
+		[ -L "$f" ] && old_workers="$old_workers ${f##*/}"
+	done
 	rm -rf "$WANTS"
 	mkdir -p "$WANTS"
 	for unit in $CHILDREN; do
@@ -160,9 +252,19 @@ install_units() {
 	done
 	$SYSTEMCTL daemon-reload
 	$SYSTEMCTL enable frappe-bench.service
+	for f in $old_workers; do
+		[ -L "$WANTS/$f" ] || dropped="$dropped $f"
+	done
 	say "installed the production units; $n short + $n long RQ workers"
 	if $SYSTEMCTL is-active --quiet frappe-bench.service; then
-		say "next:    sudo systemctl restart frappe-bench   (the running units still have the old definitions)"
+		if [ -n "$dropped" ]; then
+			# A restart would restart these too: PartOf= reaches a running instance whether
+			# or not anything still wants it.
+			say "next:    sudo systemctl stop frappe-bench && sudo systemctl start frappe-bench"
+			say "         (not restart: it would keep$dropped running)"
+		else
+			say "next:    sudo systemctl restart frappe-bench   (the running units still have the old definitions)"
+		fi
 	else
 		say "next:    sudo systemctl start frappe-bench"
 	fi

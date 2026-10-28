@@ -1,10 +1,8 @@
 # erpnext_enhancements: production process units -- see frappe-bench.service.
 #
 # The web tier: gunicorn on frappe.app:application, replacing the development Procfile's
-# `web: bench serve --port 8000`. That line ran frappe.app.serve(), which is Werkzeug's
-# run_simple() with use_debugger, use_evalex and the reloader on, wrapped in
-# application_with_statics(). On 2026-10-28 a request for a missing /files/ URL came back
-# as a 500 Werkzeug Debugger page with a traceback, from the open internet.
+# `web: bench serve --port 8000`. That line ran frappe.app.serve(), Werkzeug's development
+# server, which is not meant to face the internet. See infra/docs/production-web-tier.md.
 #
 # The worker count, timeout and port come from common_site_config.json, read by
 # config/gunicorn.conf.py with bench's own defaults (infra/configs/gunicorn.conf.py), so
