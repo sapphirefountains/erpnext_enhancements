@@ -29,10 +29,19 @@ The same goes for what each worker deletes when it activates: only its own older
 caches, never another worker's (see ``TestActivateDeletesOnlyItsOwnCaches``; the
 itinerary's offline copy is the other worker it used to wipe).
 
+The one exception is whose answers the kiosk worker replays offline
+(``TestKeptAnswersArePerPerson``, v1.753.2). It kept every kiosk GET under its URL
+alone, so on a shared phone the next technician, offline, saw the last one's My
+Day, history, correction requests and Map trail. That is behaviour, not scope, so
+``scripts/test_kiosk_sw_cache.js`` runs the real worker in node over a stand-in
+Cache Storage and network, and ``TestKeptAnswersHarness`` runs that script.
+
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker
 """
 
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -40,6 +49,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 KIOSK_WORKER = APP / "www/kiosk-sw.js"
 WALL_WORKER = APP / "www/wall-sw.js"
+KIOSK_APP = APP / "public/js/kiosk/app.js"
+SW_CACHE_HARNESS = REPO_ROOT / "scripts" / "test_kiosk_sw_cache.js"
 
 # Back-compat alias: the kiosk classes below were written against a single WORKER.
 # wall-sw.js is a trimmed clone of the kiosk worker, registered at the SAME root
@@ -295,6 +306,210 @@ class TestBothWorkersCloneBeforeConsuming(unittest.TestCase):
                 f"{worker.name} should clone synchronously into `copy` before the "
                 f"response is returned to respondWith",
             )
+
+
+def _api_branch():
+    """The fetch handler's kiosk-API branch: from its guard to the shell's."""
+    handler = _fetch_handler()
+    start = handler.index("url.pathname.startsWith(API_PREFIX)")
+    return handler[start : handler.index("PRECACHE_PATHS.has", start)]
+
+
+def _navigation_branch():
+    """The fetch handler's /kiosk navigation branch: from its guard to the API's."""
+    handler = _fetch_handler()
+    start = handler.index("url.pathname === '/kiosk'")
+    return handler[start : handler.index("url.pathname.startsWith(API_PREFIX)", start)]
+
+
+def _function(signature):
+    """A top-level function of the worker, comments stripped: from `signature` to its closing brace."""
+    code = _code()
+    body = code[code.index(signature) :]
+    return body[: body.index("\n}")]
+
+
+class TestKeptAnswersArePerPerson(unittest.TestCase):
+    """The seams the node harness cannot see: what the page sends and decides, and
+    the shape of the worker's branches. The behaviour itself is
+    TestKeptAnswersHarness's, and the page's refusal also runs in the real app.js
+    in scripts/test_kiosk_history.js.
+
+    Every kiosk GET (get_my_day, get_my_history, get_my_correction_requests,
+    get_my_trail, the current status) used to be kept under its URL alone and
+    replayed offline to whoever asked, so on a shared phone the next technician
+    saw the last one's. The page now names the offline marker
+    (workforce/kiosk_offline.py) of whose screen is asking, while the phone's
+    ee_kiosk_key cookie still holds it, and the worker files and finds answers
+    under that marker only, when the server's echo agrees.
+    """
+
+    def test_the_page_lines_the_harness_models(self):
+        """scripts/test_kiosk_sw_cache.js models the page with exactly these lines
+        (its openKiosk / askingKey). If they change, change the model with them."""
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        for line in (
+            "var OFFLINE_KEY = BOOT.offline_key || '';",
+            r"var m = /(?:^|;\s*)ee_kiosk_key=([^;]*)/.exec(document.cookie || '');",
+            "function askingKey() { return OFFLINE_KEY && phoneKey() === OFFLINE_KEY ? OFFLINE_KEY : ''; }",
+            "if (OFFLINE_KEY && phoneKey() !== OFFLINE_KEY) { showSignedOut(root); return; }",
+            "navigator.serviceWorker.controller.postMessage({ type: 'forget', data: { owner: phoneKey() } });",
+            "data: { csrf_token: CSRF, max_batch_size: SETTINGS.max_batch_size || 50, owner: askingKey() },",
+        ):
+            self.assertIn(line, app)
+
+    def test_the_refusal_comes_before_anything_is_drawn_or_fetched(self):
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        init = app[app.index("  function init() {") :]
+        self.assertLess(init.index("showSignedOut(root); return;"), init.index("buildShell(root);"))
+
+    def test_every_kiosk_call_names_the_marker_not_the_email(self):
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        self.assertIn("if (key) headers['X-Kiosk-Key'] = key;", app)
+        self.assertNotIn("X-Kiosk-User", app)
+        self.assertNotIn("X-Kiosk-User", _code())
+
+    def test_the_worker_reads_that_header(self):
+        self.assertIn("const KEY_HEADER = 'X-Kiosk-Key';", _code())
+        self.assertIn("const owner = req.headers.get(KEY_HEADER);", _api_branch())
+
+    def test_a_call_that_names_nobody_goes_to_the_network(self):
+        branch = _api_branch()
+        self.assertLess(branch.index("if (!owner) return;"), branch.index("respondWith"))
+
+    def test_answers_are_never_kept_or_found_by_url_alone(self):
+        branch = _api_branch()
+        for by_url in ("put(req", "caches.match(req)", "cache.match(req)"):
+            self.assertNotIn(by_url, branch, f"{by_url} files or finds an answer under its URL alone")
+        self.assertIn("caches.match(key)", branch)
+        self.assertIn("keepAnswer(owner, key, fresh.clone(), at)", branch)
+
+    def test_an_answer_is_kept_only_when_the_server_echo_agrees(self):
+        self.assertIn("fresh.headers.get(KEY_HEADER) === owner", _api_branch())
+
+    def test_nothing_asked_for_before_a_forget_is_kept(self):
+        code = _code()
+        self.assertIn("epoch += 1;", code[code.index("async function forgetKept") :][:200])
+        self.assertIn("const at = epoch;", _api_branch())
+        nav = _navigation_branch()
+        self.assertIn("const at = epoch;", nav)
+        self.assertIn("keepPage(fresh.clone(), at)", nav)
+
+    def test_only_a_real_page_is_kept_and_a_redirect_forgets(self):
+        nav = _navigation_branch()
+        self.assertIn("fresh.type === 'opaqueredirect' || fresh.redirected", nav)
+        self.assertIn("} else if (fresh.ok) {", nav)
+        self.assertNotIn("cache.put('/kiosk', fresh.clone())", nav)
+
+    def test_a_sign_out_is_seen_before_the_get_only_guard(self):
+        """Sign-outs are POSTs; checked after `req.method !== 'GET'` they never are."""
+        handler = _fetch_handler()
+        self.assertLess(handler.index("if (isSignOut(req, url))"), handler.index("req.method !== 'GET'"))
+        self.assertIn("event.respondWith(signOut(req));", handler)
+
+    def test_a_sign_out_uploads_first_and_forgets_only_when_accepted(self):
+        """Queued points go up while the session that owns them still exists (bounded,
+        so a weak signal cannot hold the sign-out up). A failed sign-out (no signal, a
+        server error) leaves the session alive, so it forgets nothing. Forgetting is
+        best effort: a cache error must not replace the server's answer."""
+        body = _function("async function signOut(req)")
+        self.assertLess(body.index("flushQueue()"), body.index("await fetch(req)"))
+        self.assertIn("setTimeout(resolve, FLUSH_BEFORE_SIGN_OUT_MS)", body)
+        guarded = body[body.index("if (res.ok) {") :]
+        # Queued points are never deleted by a sign-out: they were offered for upload first, and
+        # any left wait for their own person (Nik, 2026-10-27).
+        self.assertNotIn("deletePoints(", body)
+        for step in (
+            "await forgetKept().catch(() => {});",
+            "await setMeta('owner', '').catch(() => {});",
+            "await tellKioskWindows().catch(() => {});",
+        ):
+            self.assertIn(step, guarded)
+            self.assertEqual(body.count(step), 1, f"{step} happens outside the res.ok guard")
+        self.assertNotIn("finally", body)
+        self.assertTrue(body.rstrip().endswith("return res;"))
+
+    def test_kept_answers_live_in_the_deploy_cache(self):
+        """So a deploy's activate drops them with the rest of the old cache."""
+        self.assertIn("await caches.open(CACHE);", _function("async function keepAnswer"))
+
+    def test_queued_points_carry_their_person(self):
+        geo = (APP / "public/js/kiosk/geo.js").read_text(encoding="utf-8")
+        self.assertIn("owner: state.owner,", geo)
+        self.assertIn("setOwner: function (key) { state.owner = key || ''; return this; },", geo)
+        self.assertIn(
+            "window.KioskGeo.configure(SETTINGS).setOwner(OFFLINE_KEY)", KIOSK_APP.read_text(encoding="utf-8")
+        )
+        code = _code()
+        self.assertIn("JSON.stringify(owner ? { points: batch, offline_key: owner } : { points: batch })", code)
+        # Nik, 2026-10-27: another person's points are kept until they sign in again, then sent.
+        # The worker uploads only the points of whoever's kiosk has the phone, and nothing deletes
+        # anybody's points for belonging to somebody else.
+        self.assertIn("if ('owner' in data) await setMeta('owner', data.owner || '');", code)
+        self.assertIn("if (data.owner && !(await flushQueue())) await ensureSync();", code)
+        flush = _function("async function flushQueue")
+        self.assertIn("const byOwner = new Map([['', await pointsOf('')]]);", flush)
+        self.assertIn("if (current) byOwner.set(current, await pointsOf(current));", flush)
+        # Bounded reads: one person's points through the owner index, never the whole store,
+        # so points left by somebody who never comes back cannot slow every new point down.
+        self.assertNotIn("getAllPoints", flush)
+        self.assertIn("const DB_VERSION = 3;", code)
+        self.assertIn("queue.createIndex(OWNER_INDEX, 'owner');", code)
+        self.assertIn(".index(OWNER_INDEX).getAll(owner)", _function("async function pointsOf"))
+        self.assertIn(".index(OWNER_INDEX).count(owner)", _function("async function countOf"))
+        # The count is the asking person's own (geo.js sends its owner with the request).
+        self.assertIn("queued = (await countOf('')) + (owner ? await countOf(owner) : 0);", code)
+        geo = (APP / "public/js/kiosk/geo.js").read_text(encoding="utf-8")
+        self.assertIn("target.postMessage({ type: 'stats', data: { owner: state.owner } }, [ch.port2]);", geo)
+        # A full disk is a transaction abort at commit, not a failed put request.
+        put_once = _function("async function putPointOnce(point)")
+        self.assertIn("t.oncomplete = () => res();", put_once)
+        self.assertIn("t.onabort = () => rej(t.error", put_once)
+        self.assertNotIn("r.onsuccess", put_once)
+        self.assertNotIn("dropPointsNotOf", code)
+        # The one drop: a phone out of storage, oldest first.
+        put = _function("async function putPoint(point)")
+        self.assertIn("e.name !== 'QuotaExceededError'", put)
+        self.assertIn("String(a.timestamp).localeCompare(String(b.timestamp))", put)
+
+    def test_settings_has_a_sign_out(self):
+        """The installed app has no address bar: without it there is no way to hand
+        the phone over. It posts /api/method/logout (which the worker sees) and then
+        reloads, because the kiosk never writes the URL (test_kiosk_frontend)."""
+        settings = (APP / "public/js/kiosk/settings.js").read_text(encoding="utf-8")
+        self.assertIn("text: 'Sign out', on: { click: function () { ctx.signOut(); } }", settings)
+        app = KIOSK_APP.read_text(encoding="utf-8")
+        body = app[app.index("  function signOut() {") :]
+        body = body[: body.index("\n  }\n")]
+        self.assertIn("return UI.ask({ title: 'Sign out?'", body)
+        self.assertIn("return api('logout', {}).then(function () {\n        window.location.reload();", body)
+        # It says how much has not uploaded yet, from the worker's queue and the photo queue.
+        self.assertIn("window.KioskGeo.queuedCount", body)
+        self.assertIn("photoQueue().length", body)
+        self.assertIn("signOut: signOut,", app)
+
+    def test_the_worker_has_no_jinja(self):
+        """Frappe serves www/*.js through TemplatePage, so a double brace or a Jinja
+        tag anywhere in the file, comments included, rewrites the worker. (A closer
+        on its own is plain text to Jinja; only an opener starts anything.)"""
+        raw = KIOSK_WORKER.read_text(encoding="utf-8")
+        for tag in ("{{", "{%", "{#"):
+            self.assertNotIn(tag, raw)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestKeptAnswersHarness(unittest.TestCase):
+    """Runs scripts/test_kiosk_sw_cache.js: the real worker over a stand-in phone and
+    server, two technicians on one phone, every sign-in route (Google's GET
+    included), expiry, sign-outs, races, the location queue and a deploy."""
+
+    def test_the_harness_passes(self):
+        result = subprocess.run(
+            [shutil.which("node"), str(SW_CACHE_HARNESS)], capture_output=True, text=True, timeout=120
+        )
+        output = (result.stdout + result.stderr)[-4000:]
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("checks passed", result.stdout, output)
 
 
 if __name__ == "__main__":

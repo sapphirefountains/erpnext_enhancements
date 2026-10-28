@@ -14,8 +14,9 @@
  * Data: get_my_photos and photo_thumbnail in api/kiosk_photos.py, which derive
  * the employee from the session. Read that module's docstring for where a kiosk
  * photo is stored and why these endpoints are NOT under api.time_kiosk (the
- * service worker caches that prefix per URL rather than per person). So the tab
- * needs a connection, like the Map, and says so.
+ * service worker keeps that prefix's answers for offline, per person, and keeps
+ * no photo list or thumbnail at all). So the tab needs a connection, like the
+ * Map, and says so.
  *
  * A thumbnail is the server's small JPEG, cached by the browser; tapping it opens
  * the full photo in a full-screen sheet through Frappe's permission-checked file

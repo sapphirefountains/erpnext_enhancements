@@ -314,13 +314,18 @@ class TestLoginAndLogoutHooks(unittest.TestCase):
     The two here (Plan a Trip PR 4, v1.549.0) delete the /itinerary offline marker, the cookie
     that decides whose itinerary a phone may show with no signal. Without `on_logout` a signed-out
     phone keeps showing the last person's trip offline; without `on_login` so does one whose
-    session merely expired, to whoever signs in next.
+    session merely expired, to whoever signs in next. The Time Kiosk's pair (v1.753.2) does the
+    same for the kiosk's kept page, answers and queued points.
     """
 
-    TARGETS = {
-        "on_logout": "erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout",
-        "on_login": "erpnext_enhancements.travel_management.itinerary_offline.forget_on_login",
-    }
+    # The Time Kiosk's marker (v1.753.2, workforce/kiosk_offline.py) is the same pattern, so the
+    # same two rules bind its hooks.
+    TARGETS = (
+        ("on_logout", "erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"),
+        ("on_login", "erpnext_enhancements.travel_management.itinerary_offline.forget_on_login"),
+        ("on_logout", "erpnext_enhancements.workforce.kiosk_offline.forget_on_logout"),
+        ("on_login", "erpnext_enhancements.workforce.kiosk_offline.forget_on_login"),
+    )
 
     def _function(self, dotted):
         module, name = dotted.rsplit(".", 1)
@@ -332,8 +337,8 @@ class TestLoginAndLogoutHooks(unittest.TestCase):
 
     def test_the_offline_marker_is_deleted_on_login_and_logout(self):
         hooks = top_level_assignments()
-        for hook, target in self.TARGETS.items():
-            with self.subTest(hook=hook):
+        for hook, target in self.TARGETS:
+            with self.subTest(hook=hook, target=target):
                 self.assertIn(hook, hooks, f"hooks.py has no {hook}")
                 value = ast.literal_eval(hooks[hook])
                 self.assertIn(target, value if isinstance(value, list) else [value])
@@ -342,8 +347,8 @@ class TestLoginAndLogoutHooks(unittest.TestCase):
         """`frappe.call` passes only the keywords a function names, so `login_manager` must be one
         of them for on_login to see who is signing in; and the whole body sits in a try whose
         handler catches Exception."""
-        for hook, target in self.TARGETS.items():
-            with self.subTest(hook=hook):
+        for hook, target in self.TARGETS:
+            with self.subTest(hook=hook, target=target):
                 fn = self._function(target)
                 self.assertIn("login_manager", [a.arg for a in fn.args.args])
                 body = [
