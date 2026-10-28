@@ -3090,8 +3090,21 @@ jobs:
       # cache-first with ignoreSearch, which froze JavaScript across the site for
       # any browser that had ever opened /kiosk -- found with a training player
       # four releases stale that no ?v= could reach.
+      # Also whose answers it replays offline (v1.753.2): every kiosk GET was kept under
+      # its URL alone, so on a shared phone the next technician, offline, saw the last
+      # one's My Day, history, correction requests and Map trail, and the kept /kiosk page
+      # outlived every sign-out. Now an offline marker cookie (workforce/kiosk_offline.py,
+      # removed by every sign-out and by anybody else's sign-in, Google's GET included)
+      # decides whose kept kiosk may draw; answers are kept per marker when the server's
+      # echo agrees; a sign-out forgets answers, page and queued points; and queued points
+      # upload under their own person only. The node step runs the real worker over a
+      # stand-in phone and server; the marker module has its own bench-free suite.
       - name: Kiosk service worker scope (must not answer for the app's assets)
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker -v
+      - name: Kiosk service worker offline answers per person (executed, not grepped)
+        run: node scripts/test_kiosk_sw_cache.js
+      - name: Kiosk offline marker (cookie, login/logout hooks, echo, location-queue check)
+        run: python -m unittest erpnext_enhancements.tests.test_kiosk_offline -v
       # The traveler itinerary's offline worker (Plan a Trip PR 4), which keeps a person's
       # itinerary page and files on their phone. Static reads, like the kiosk's: its scope is
       # /itinerary and never "/" (a second root worker replaces the kiosk's, geolocation

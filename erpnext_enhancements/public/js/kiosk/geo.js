@@ -76,6 +76,7 @@
     statusCb: null,
     status: 'off',
     permission: 'unknown', // granted | denied | prompt | unknown
+    owner: '',           // the offline marker of the person this page is for (setOwner)
   };
 
   function setStatus(s) {
@@ -150,6 +151,10 @@
       log_status: navigator.onLine ? 'Success' : 'Offline Sync',
       fix_source: source || 'Watch',
       device_agent: navigator.userAgent,
+      // Whose point this is: kiosk-sw.js uploads each person's points under their own key
+      // only, and keeps them while somebody else's kiosk has the phone, until their own person
+      // comes back. Not sent to the server as part of the point.
+      owner: state.owner,
     };
   }
 
@@ -256,6 +261,10 @@
       if (settings) state.settings = Object.assign({}, DEFAULTS, settings);
       return this;
     },
+
+    // The offline marker of the person this page is for (app.js, BOOT.offline_key). Every
+    // queued point carries it (buildPoint).
+    setOwner: function (key) { state.owner = key || ''; return this; },
 
     onStatus: function (cb) { state.statusCb = cb; return this; },
 
@@ -416,7 +425,9 @@
             clearTimeout(timer);
             if (!settled) { settled = true; resolve(ev.data && typeof ev.data.queued === 'number' ? ev.data.queued : null); }
           };
-          target.postMessage({ type: 'stats' }, [ch.port2]);
+          // Only this person's points are theirs to count (the worker keeps the previous
+          // person's for them, untouched).
+          target.postMessage({ type: 'stats', data: { owner: state.owner } }, [ch.port2]);
         }).catch(function () { clearTimeout(timer); if (!settled) { settled = true; resolve(null); } });
       });
     },

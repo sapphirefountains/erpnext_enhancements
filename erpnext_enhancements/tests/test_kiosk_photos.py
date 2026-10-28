@@ -18,7 +18,8 @@ repo is public. What each class guards, in the terms it would fail in:
   pixel cap on everything but JPEG. Upright (EXIF applied) and small. Needs Pillow; CI
   installs it.
 - **The front end**: every name ``photos.js`` dials is a GET-only whitelisted def here, and
-  the module stays outside the prefix ``kiosk-sw.js`` caches per URL rather than per person.
+  the module stays outside the prefix whose answers ``kiosk-sw.js`` keeps for offline, so the
+  worker never keeps a photo list or a thumbnail at all.
 
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_photos
 """
@@ -739,10 +740,14 @@ class TestTheFrontEndContract(unittest.TestCase):
         self.assertTrue(kp.THUMBNAIL_METHOD.endswith("/erpnext_enhancements.api.kiosk_photos.photo_thumbnail"))
 
     def test_the_service_worker_does_not_answer_for_these_endpoints(self):
-        """kiosk-sw.js keeps the last response of every GET under api.time_kiosk. for offline,
-        keyed by URL. A photo list there would be shown to the next person on a shared phone."""
+        """kiosk-sw.js keeps the last response of every GET under api.time_kiosk. for offline.
+        Since v1.753.2 it keeps them per person (the offline marker, workforce/kiosk_offline.py),
+        but these endpoints stay outside that prefix anyway: the worker keeps no photo list and no
+        thumbnail's bytes, and the browser caches thumbnails privately instead. The prefix is read
+        both as a literal startsWith('...') and as the worker's `const API_PREFIX = '...'`."""
         worker = _strip_js_comments(WORKER.read_text(encoding="utf-8"))
         prefixes = re.findall(r"startsWith\('(/api/method/[^']+)'\)", worker)
+        prefixes += re.findall(r"const API_PREFIX = '(/api/method/[^']+)';", worker)
         self.assertEqual(prefixes, ["/api/method/erpnext_enhancements.api.time_kiosk."])
         for prefix in prefixes:
             self.assertFalse(kp.THUMBNAIL_METHOD.startswith(prefix))
