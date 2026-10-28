@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # Mutable state the frappe stub reads at call time.
-STATE = {"conf": {}, "cache": {}, "flags": {}, "settings": {}, "covered": set()}
+STATE = {"conf": {}, "cache": {}, "flags": {}, "settings": {}, "singles": {}, "covered": set()}
 security_alerts = None
 
 
@@ -68,6 +68,9 @@ def _install_frappe_stub():
     # The two-factor coverage check reads System Settings and asks frappe's own
     # per-user rule; both answer from STATE so each test sets the site it needs.
     frappe.get_system_settings = lambda key: STATE["settings"].get(key)
+    frappe.db = types.SimpleNamespace(
+        get_single_value=lambda doctype, field: STATE["singles"].get((doctype, field))
+    )
     twofactor = types.ModuleType("frappe.twofactor")
     twofactor.two_factor_is_enabled_for_ = lambda user: user in STATE["covered"]
     frappe.twofactor = twofactor
@@ -227,8 +230,14 @@ class TestTwoFactorCoverage(unittest.TestCase):
         STATE["conf"]["admin_alert_recipients"] = "security@example.net"
         STATE["settings"].clear()
         STATE["settings"].update(
-            {"enable_two_factor_auth": "1", "bypass_2fa_for_retricted_ip_users": "0"}
+            {
+                "enable_two_factor_auth": "1",
+                "bypass_2fa_for_retricted_ip_users": "0",
+                "disable_user_pass_login": "1",
+            }
         )
+        STATE["singles"].clear()
+        STATE["singles"][("LDAP Settings", "enabled")] = "0"
         STATE["covered"].clear()
         STATE["covered"].update(self.USERS)
 
@@ -245,6 +254,7 @@ class TestTwoFactorCoverage(unittest.TestCase):
             setattr(self.frappe, name, value)
         STATE["conf"].clear()
         STATE["settings"].clear()
+        STATE["singles"].clear()
         STATE["covered"].clear()
 
     def test_a_healthy_site_sends_nothing(self):
@@ -273,7 +283,7 @@ class TestTwoFactorCoverage(unittest.TestCase):
         self.assertEqual(len(site_wide), 1)
         security_alerts.check_two_factor_coverage()
         self.assertEqual(len(self.sent), 1)
-        self.assertIn("not enforced", self.sent[0]["subject"])
+        self.assertIn("need attention", self.sent[0]["subject"])
         self.assertIn("off for the whole site", self.sent[0]["message"])
 
     def test_the_restricted_ip_bypass_is_reported(self):
@@ -281,6 +291,36 @@ class TestTwoFactorCoverage(unittest.TestCase):
         site_wide, _users = security_alerts.two_factor_gaps()
         self.assertEqual(len(site_wide), 1)
         self.assertIn("restricted IP", site_wide[0])
+
+    def test_password_sign_in_switched_on_is_reported(self):
+        """Staff are Google-only; the password form is where 2FA is all that stands behind a password."""
+        STATE["settings"]["disable_user_pass_login"] = "0"
+        site_wide, users = security_alerts.two_factor_gaps()
+        self.assertEqual(users, [])
+        self.assertEqual(len(site_wide), 1)
+        self.assertIn("username and password is on", site_wide[0])
+
+    def test_ldap_sign_in_switched_on_is_reported(self):
+        """LDAP sign-in ignores disable_user_pass_login, so it is a password route even when that is set."""
+        STATE["singles"][("LDAP Settings", "enabled")] = 1
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 1)
+        self.assertIn("LDAP sign-in is on", site_wide[0])
+
+    def test_each_finding_names_its_settings_page(self):
+        STATE["settings"].update(
+            {
+                "enable_two_factor_auth": "0",
+                "bypass_2fa_for_retricted_ip_users": "1",
+                "disable_user_pass_login": "0",
+            }
+        )
+        STATE["singles"][("LDAP Settings", "enabled")] = "1"
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 4)
+        for line in site_wide:
+            with self.subTest(line=line):
+                self.assertRegex(line, r"\((System|LDAP) Settings\)\.$")
 
     def test_no_recipients_is_logged_not_dropped(self):
         STATE["conf"].clear()

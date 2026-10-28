@@ -15,89 +15,151 @@ place before erp.sapphirefountains.com becomes the customers' account (the websi
 against prod read-only. #1378 shipped 1.754.0, and #1380, #1382 and #1381 hold 1.754.1 and
 1.754.2, so this takes 1.755.0; renumber at merge if the order changes.
 
-**What the deploy does.** Fixture sync adds five Custom DocPerm rows for Voice Call Settings.
-`after_migrate` unpublishes three web forms, so `/tasks`, `/issues` and `/address` stop being
-pages. The sign-in guard covers two more routes from the first request after the restart. The
-two-factor check first runs at the next daily tick; on prod today it has nothing to report.
+**What the deploy does.**
+- Fixture sync adds five Custom DocPerm rows for Voice Call Settings.
+- `after_migrate` unpublishes three web forms, so `/tasks`, `/issues` and `/address` stop being
+  pages, and it disables the Issues and Addresses rows of the customer portal menu. Each change is
+  printed in the migrate output.
+- The sign-in guard covers two more routes from the first request after the restart.
+- The two-factor check first runs at the next daily tick. On prod today it has nothing to report.
 
 ### Security
 - **ERPNext's stock web forms `tasks`, `issues` and `addresses` are unpublished, and stay that way**
-  (`setup/stock_web_forms.py`, `after_migrate`).
+  (`setup/stock_web_forms.py`, in `after_migrate` and `after_install`).
   - **Why.** ERPNext ships all three published to any signed-in account. The customer portal's own
     pages replace them. No Website User has ever created a Task, Issue or Address on prod, so
     nothing in use goes.
   - **Why `after_migrate` and not a patch.** A standard web form is re-imported from its app's
     JSON whenever that JSON's `modified` is newer than the row (`frappe/modules/import_file.py`).
     Web Form is not in that module's `ignore_values`, so the re-import brings `published` back.
-    ERPNext restamped `addresses.json` on 2025-10-27, so this is not hypothetical. A patch runs
-    once. `after_migrate` runs after the model sync on every migrate, this deploy's included, so a
-    re-import is undone in the same migrate that made it.
+    ERPNext restamped `addresses.json` on 2025-10-27, so this is not hypothetical.
+    - A patch runs once. `after_migrate` runs after the model sync on every migrate, this deploy's
+      included, so a re-import is undone in the same migrate that made it.
+    - It is in `after_install` as well, because `bench install-app` runs no `after_migrate`. Without
+      it, a fresh site would serve the forms until its first migrate.
   - **Why no route guard as well.** Unpublishing is frappe's own off switch.
     `WebForm.raise_if_unpublished` refuses the page and every web form endpoint for an unpublished
-    form, and the router lists only published ones (`get_published_web_forms`, cached for an hour
-    in redis, which this clears after a write).
-  - **How it writes.** `published` is written only on a form that is published, so a second
-    migrate writes nothing. It uses `update_modified=False`, so the row keeps ERPNext's stamp and
-    a later ERPNext change to the form still imports, and is unpublished again, rather than being
-    skipped as older than the row. It never publishes anything, and it logs instead of raising.
+    form, and the router lists only published ones (`get_published_web_forms`, cached in redis for
+    an hour).
+  - **The portal menu goes with them.** ERPNext's standard portal menu links two of the forms for
+    the Customer role: Issues (`/issues`) and Addresses. Addresses is `/addresses`, which ERPNext's
+    Website Route Redirect sends on to `address/list`.
+    - Once the forms are unpublished, both would be dead links next to My Rentals, Pay Invoices and
+      Maintenance Records, so the hook disables those two Portal Settings rows too.
+    - `PortalSettings.sync_menu` only adds routes that are missing. It never re-enables a row.
+    - The redirect is left in place, because nothing links to it any more and it leads only to a
+      page that no longer exists.
+  - **How it writes.**
+    - It writes only what is still on, so a second migrate writes and prints nothing.
+    - Forms keep ERPNext's `modified` (`update_modified=False`). A later ERPNext change to a form
+      therefore still imports, and is unpublished again, rather than being skipped as older than the
+      row.
+    - After a write it clears frappe's website cache (routing and the per-user portal menu) and the
+      cached Portal Settings.
+    - It never publishes or enables anything, and it logs instead of raising.
+  - **Every change it makes is printed** in the migrate output. So when someone re-publishes a form
+    from the Desk and the next migrate turns it off again, the revert shows.
   - **Left alone:** `edit-profile`, `request-data` and `request-to-delete-data`. `edit-profile`
     writes only name, phone, image, language and time zone, on the signed-in user's own record.
-  - **To bring one back,** take it out of `STOCK_WEB_FORMS`.
+    Address is still creatable through REST, because frappe gives All owner-scoped create, read and
+    write. That suits customers keeping their own addresses.
+  - **To bring one back,** take it out of `STOCK_WEB_FORMS`, and its route out of
+    `STOCK_MENU_ROUTES`.
 - **Least privilege on Voice Call Settings** (`fixtures/custom_docperm.json`; the `fixtures`
   filter now exports this doctype's rows too).
   - **The rows.** Five Custom DocPerm rows, staff only: Desk User in place of All, with no delete
-    and no share. System Manager keeps full access. A Custom DocPerm set replaces a doctype's
-    standard rows, so these five are its whole permission set on this site.
+    and no share. System Manager keeps everything except share, as upstream does. A Custom DocPerm
+    set replaces a doctype's standard rows, so these five are its whole permission set on this
+    site.
   - **Why this set.** It is exactly what ERPNext's own change to this doctype ends with
     (frappe/erpnext#60777, backported to version-16-hotfix as #61927 on 2026-10-26, in no release
     yet). That change's patch, `scope_voice_call_settings_to_desk_users`, finds a Desk User rule
-    already granting what it would add and no All rule to remove, so it changes nothing here
-    when it arrives with an upgrade.
-  - **The per-user part comes with that release.** Its other half, a per-user `has_permission`
-    hook that limits each person to their own settings, ships with that release, and nothing here
-    duplicates it.
+    already granting what it would add, and no All rule to remove. So it changes nothing here when
+    it arrives with an upgrade.
+  - **The per-user part comes with that release.** Its other half is a per-user `has_permission`
+    hook that limits each person to their own settings. It ships with that release, and nothing
+    here duplicates it.
   - **On prod** there are no Voice Call Settings records, so nobody loses anything in use.
-  - **Taking these rows out later** needs a patch that deletes them as well as removing them from
-    the JSON (`fixtures/README.md`: deletion is two steps).
+  - **These rows become redundant** once that change is in the ERPNext release prod runs. Taking
+    them out is two steps: a patch that deletes them, then removing them and the filter entry from
+    the repo. The JSON alone leaves them on the site (`fixtures/README.md`, "Custom DocPerm").
 - **Staff stay Google-only on every sign-in by emailed key**
   (`portal_login.refuse_staff_email_link_login`, `on_login`).
-  - **What it covers now.** Since v1.565.0 the guard refused a staff sign-in through an email link
-    (`login_via_key`). It now also refuses one through frappe 16.53.0's two other routes that sign
-    an account in with a key sent by email: a password reset (`update_password` with a key) and
-    a User Invitation (`accept_invitation`).
-  - **How it matches.** By the method's name at the end of the path, as before, so aliased paths
-    and the legacy `?cmd=` route match too (`portal_login.emailed_key_route`).
+  - **What it covers now.** Since v1.565.0 the guard has refused a staff sign-in through an email
+    link (`login_via_key`). It now also refuses staff on frappe 16.53.0's two other routes that sign
+    an account in with a key sent by email: a password reset (`update_password` with a key) and a
+    User Invitation (`accept_invitation`). The refusal now reads "Staff accounts sign in with
+    Google." for all three.
+  - **How it matches** (`portal_login.emailed_key_route`). By the method's name as a whole segment
+    of the path or `cmd`, after the start, a `.` or a `/`, and before the end or a `/`.
+    - So aliased paths, the v2 form (`/api/v2/method/User/update_password`) and the legacy `?cmd=`
+      route still match.
+    - A longer name no longer does. The old substring test would have let `login_via_key` match
+      `login_via_keycloak`, refusing every staff Keycloak sign-in if one were ever set up.
   - **What it leaves alone.** A signed-in person changing their own password (old password, no
     key) is already that person, and Website Users pass as before.
-  - Raising in `on_login` happens before frappe makes the session, so no session is created.
-- **A daily check that two-factor authentication still covers every staff account**
+  - **What a refusal leaves behind.** Raising in `on_login` happens before frappe makes the
+    session, so no session is created. It does not undo what the route did before signing in:
+    - `accept_invitation` has already accepted the invitation, created or updated the account, and
+      committed;
+    - `login_via_key` has already used up its key;
+    - so a refused staff member is left with a spent link and frappe's plain 401 answer, and then
+      signs in with Google.
+  - **This guard is the only control on these routes.** frappe never asks for 2FA on an email link
+    or an invitation, so the check below is no substitute for any branch of it.
+- **A daily check on staff sign-in: two-factor coverage, and no password routes**
   (`security_alerts.check_two_factor_coverage`, `scheduler_events.daily`).
-  - **Why.** frappe asks for a second factor per role, and a new staff account starts with no
-    roles. This is the second layer behind the guard above, for any route it does not name.
-  - **When it emails.** While 2FA is off site-wide, while the restricted-IP bypass is on, or while
-    an enabled System User holds no role with Two Factor Authentication ticked. It goes to the
-    same recipients as the Administrator login alert: `admin_alert_recipients` in site_config,
-    else the enabled System Managers.
+  - **What it watches.** frappe asks for a second factor in three places only: the password form
+    (`LoginManager.login`, off here through `disable_user_pass_login`), LDAP sign-in (which
+    ignores that switch), and a password reset by emailed key. 2FA there is per role, and a new
+    staff account starts with no roles.
+  - **When it emails.** Any of these:
+    - an enabled System User holds no role with Two Factor Authentication ticked;
+    - 2FA is off site-wide;
+    - the restricted-IP bypass is on;
+    - password sign-in is on;
+    - LDAP sign-in is on.
+
+    Each finding names its settings page. Staff are Google-only, and password and LDAP sign-in are
+    the routes where 2FA is all that stands behind a password.
+  - **Who gets it.** The same recipients as the Administrator login alert: `admin_alert_recipients`
+    in site_config, else the enabled System Managers.
   - **How it decides.** Per user it asks frappe's own `two_factor_is_enabled_for_` rather than
     copying its rule, so the answer follows the installed framework.
   - **Otherwise** it is quiet when there is nothing to report, repeats daily until there is not,
     and logs instead of raising.
-  - **On prod today:** 2FA is on, the bypass is off, and all 20 enabled System Users hold a 2FA
-    role.
+  - **On prod today:**
+    - 2FA is on, the bypass is off, password sign-in is off and LDAP is off;
+    - all 20 enabled System Users hold a 2FA role.
 - **A stale claim corrected** in `security_alerts.py`'s docstring: frappe 16.53.0's
   `two_factor_is_enabled_for_` no longer returns `False` for Administrator unconditionally. It
   judges the account by its roles like any other.
 
 ### Tests
 - **`tests/test_portal_hardening.py` (new, own CI step).**
-  - It executes the web form enforcement against a frappe stub: exactly the three forms, with
-    `modified` left alone; nothing written on a second run; a re-import undone on the next; never a
-    publish; and the other standard forms untouched.
+  - It runs the web form enforcement against a frappe stub, and checks that:
+    - it changes exactly the three forms and the two menu rows, with `modified` left alone;
+    - the other forms and menu rows are untouched;
+    - nothing is written or printed on a second run, and a re-import or re-enable is undone and
+      printed on the next;
+    - nothing is ever published or enabled;
+    - it is registered in `after_migrate` and `after_install`, and not as a patch.
   - It pins the Voice Call Settings rows whole.
-- **`test_rental_portal.py`** covers the guard's new routes: refused for staff, passed for a
-  customer and for your own password change.
-- **`test_security_alerts.py`** covers the two-factor check: what it reports, a healthy site,
-  no recipients, a failure, escaping, and its daily schedule.
+- **`test_rental_portal.py`** covers the guard's new routes:
+  - refused for staff, and passed for a customer and for your own password change;
+  - the bounded match: `login_via_keycloak` and other longer names pass, while the v1 extra-segment
+    form, the v2 form and a bare `cmd` still match;
+  - the new refusal text.
+
+  The docstring of `test_other_sign_ins_are_untouched` no longer says that API keys go through
+  `on_login`. They don't: `validate_auth` sets the user without a sign-in.
+- **`test_security_alerts.py`** covers the daily check:
+  - each finding, including password and LDAP sign-in, with its settings page named;
+  - a healthy site;
+  - no recipients;
+  - a failure;
+  - escaping;
+  - its daily schedule.
 - **`test_pay_rate_permissions.py`'s allowlist** of doctypes with a Custom DocPerm fixture now
   includes Voice Call Settings. Its real assertion, that no pay-rate doctype has one, is
   unchanged.

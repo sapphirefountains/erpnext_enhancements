@@ -1993,11 +1993,12 @@ scheduler_events = {
 		# So each day this finds the addresses of open dated tasks and firm rental bookings that
 		# still lack coordinates, and geocodes a bounded batch (40). Never raises; idempotent.
 		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
-		# security (v1.755.0): email the admin alert recipients while two-factor authentication is
-		# off site-wide or an enabled System User holds no role that requires it -- frappe asks for
-		# a second factor per role, and a new staff account starts with none. The backstop for the
-		# on_login guard on emailed-key sign-ins. Quiet when there is nothing to report; repeats
-		# daily until there is not; never raises. See security_alerts.check_two_factor_coverage.
+		# security (v1.755.0): email the admin alert recipients while an enabled System User holds no
+		# role that asks for two-factor (frappe asks per role, and a new staff account starts with
+		# none), while 2FA is off or bypassed site-wide, or while password or LDAP sign-in is on. It
+		# watches the routes where frappe does ask for 2FA; it is NOT a backstop for the on_login
+		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
+		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
 	],
 	"daily_long": [
@@ -2411,6 +2412,10 @@ after_install = [
 	# on a fresh site, and without the fields the page keeps the door shut and says "being set
 	# up" for ever. create_custom_fields(update=True): idempotent, and the patch never raises.
 	"erpnext_enhancements.patches.add_store_run_receipt_fields.execute",
+	# portal hardening (v1.755.0): the same callable as the after_migrate entry below, so a fresh
+	# site does not serve ERPNext's stock web forms tasks, issues and addresses (or their portal
+	# menu rows) until its first migrate. ERPNext installs first, so the forms exist. Never raises.
+	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
 ]
 
 # Run at the END of `bench install-app`, after fixtures have synced.
@@ -2674,8 +2679,9 @@ after_migrate = [
 	# unpublished; this app's portal pages replace them. Here rather than in patches.txt because
 	# ERPNext re-imports a standard web form, published, whenever its JSON's `modified` moves, and
 	# that happens during model sync, before this runs. An unpublished form is refused by frappe
-	# itself, page and API alike. Writes only a form that is published; never raises
-	# (setup/stock_web_forms.py).
+	# itself, page and API alike. Also disables the Issues and Addresses portal menu rows, which
+	# would otherwise be dead links. Writes only what is still on, prints each flip to the migrate
+	# output, never raises (setup/stock_web_forms.py). In after_install too.
 	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
 ]
 

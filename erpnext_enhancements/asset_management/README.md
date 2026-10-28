@@ -319,12 +319,15 @@ applies on existing sites; read it with `get_cached_doc`).
      frappe's other sign-ins by emailed key: a password reset (`update_password` with a key) and a
      User Invitation (`accept_invitation`). Changing your own password while signed in is untouched.
 
-  Staff stay Google-only. Since v1.755.0 a daily check
-  (`security_alerts.check_two_factor_coverage`) emails the admin alert recipients while
-  two-factor authentication is off site-wide or an enabled System User holds no role that
-  requires it.
+  Staff stay Google-only. That guard is the only control on these routes: frappe asks for no
+  second factor on an email link or an invitation. Separately, since v1.755.0 a daily check
+  (`security_alerts.check_two_factor_coverage`) watches the routes where frappe does ask
+  (password form, LDAP, a reset). It emails the admin alert recipients while an enabled System
+  User holds no 2FA role, while 2FA is off or bypassed site-wide, or while password or LDAP
+  sign-in is on.
 - **ERPNext's stock web forms** `tasks`, `issues` and `addresses` are kept unpublished after every
-  migrate (`setup/stock_web_forms.py`, v1.755.0). The portal's own pages replace them.
+  migrate and on install, and the Issues and Addresses portal menu rows are disabled with them
+  (`setup/stock_web_forms.py`, v1.755.0). The portal's own pages replace them.
 - **`/rent-a-fountain`** (`www/rent_a_fountain.py`, `rental_requests.py`) is off until
   `Rental Settings.public_request_form` is ticked.
   - The public form becomes an Events **Lead**, with rental dates and ZIP, through the same triage as

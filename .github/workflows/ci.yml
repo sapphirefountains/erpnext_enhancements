@@ -2132,9 +2132,10 @@ jobs:
       - name: Procurement Tracker print (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_procurement_print -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
-      # share a process with the other bench-free suites. Since v1.755.0 also the daily
-      # two-factor coverage check: it reports a staff account with no 2FA role and 2FA off
-      # site-wide, stays quiet on a healthy site, escapes account names, and never raises.
+      # share a process with the other bench-free suites. Since v1.755.0 also the daily staff
+      # sign-in check: it reports a staff account with no 2FA role, 2FA off or bypassed, and
+      # password or LDAP sign-in switched on, stays quiet on a healthy site, escapes account
+      # names, and never raises.
       - name: Administrator login alerts + two-factor coverage (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
       # Client-IP derivation guard (TASK-2026-01478). GCLB -> nginx -> bench only yields a
@@ -3621,13 +3622,15 @@ jobs:
       # that turns the setting on is pinned to ship with the guard's hooks. Also: a portal user
       # can write site-prep fields and nothing else, and the public request form exposes no
       # availability. Since v1.755.0 the guard also covers frappe's other emailed-key sign-ins
-      # (a password reset, a User Invitation), and leaves a signed-in person's own password
+      # (a password reset, a User Invitation), matches a route only as a whole segment (so
+      # login_via_keycloak is not login_via_key), and leaves a signed-in person's own password
       # change alone.
       - name: Rental customer portal + email-link guard (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_portal -v
       # Portal hardening (v1.755.0). ERPNext's stock web forms tasks, issues and addresses stay
-      # unpublished after every migrate (an ERPNext upgrade re-imports them published), with
-      # `modified` left alone and the other standard forms untouched; EXECUTED against a frappe
+      # unpublished after every migrate and on install (an ERPNext upgrade re-imports them
+      # published), their Issues/Addresses portal menu rows stay disabled, every flip is printed,
+      # `modified` is left alone and the other forms and menu rows are untouched; EXECUTED against a frappe
       # stub (own step: it installs and removes the stub). Voice Call Settings' Custom DocPerm
       # rows are pinned whole, since they replace the doctype's standard permissions.
       - name: Portal hardening (bench-free)

@@ -201,8 +201,49 @@ class TestEmailLinkGuard(unittest.TestCase):
 				frappe_stub.local.request = types.SimpleNamespace(path=path)
 				self.assertEqual(portal_login.emailed_key_route(), route)
 
+	def test_a_longer_method_name_is_not_an_emailed_key_route(self):
+		"""A substring test would refuse every staff Keycloak sign-in (login_via_keycloak)."""
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		for path in (
+			"/api/method/frappe.integrations.oauth2_logins.login_via_keycloak",
+			"/api/method/x.update_password_policy",
+			"/api/method/x.my_accept_invitation",
+		):
+			with self.subTest(path=path):
+				frappe_stub.local.request = types.SimpleNamespace(path=path)
+				self.assertEqual(portal_login.emailed_key_route(), "")
+				portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="staff@sapphirefountains.com"))
+		frappe_stub.local.request = types.SimpleNamespace(path="/")
+		frappe_stub.local.form_dict = {"cmd": "frappe.integrations.oauth2_logins.login_via_keycloak"}
+		self.assertEqual(portal_login.emailed_key_route(), "")
+
+	def test_every_spelling_of_a_route_still_matches(self):
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		cases = {
+			"/api/method/frappe.core.doctype.user.user.update_password/extra": portal_login.PASSWORD_RESET,
+			"/api/v2/method/User/update_password": portal_login.PASSWORD_RESET,
+			"/api/method/login_via_key": portal_login.KEY_LOGIN,
+			"/api/v2/method/frappe.core.api.user_invitation.accept_invitation": portal_login.INVITATION,
+		}
+		for path, route in cases.items():
+			with self.subTest(path=path):
+				frappe_stub.local.request = types.SimpleNamespace(path=path)
+				self.assertEqual(portal_login.emailed_key_route(), route)
+		frappe_stub.local.request = types.SimpleNamespace(path="/")
+		frappe_stub.local.form_dict = {"cmd": "login_via_key"}
+		self.assertEqual(portal_login.emailed_key_route(), portal_login.KEY_LOGIN)
+
+	def test_the_refusal_names_google_only(self):
+		"""The same words for a link, a reset and an invitation: staff sign in with Google."""
+		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.core.api.user_invitation.accept_invitation")
+		frappe_stub.local.form_dict = {"key": "emailed"}
+		with self.assertRaises(AuthError) as caught:
+			portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="staff@sapphirefountains.com"))
+		self.assertEqual(str(caught.exception), "Staff accounts sign in with Google.")
+
 	def test_other_sign_ins_are_untouched(self):
-		"""Google, API keys and impersonation go through on_login too; only the email link is this guard's."""
+		"""Google and impersonation go through on_login too (an API key never does: validate_auth sets the
+		user without a sign-in). Only the emailed-key routes are this guard's."""
 		frappe_stub.local.request = types.SimpleNamespace(path="/api/method/frappe.integrations.oauth2_logins.login_via_google")
 		portal_login.refuse_staff_email_link_login(types.SimpleNamespace(user="staff@sapphirefountains.com"))
 		frappe_stub.local.request = None
