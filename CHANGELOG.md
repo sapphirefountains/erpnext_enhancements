@@ -46,8 +46,26 @@ ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).
     junk. There is no local-business markup. A 404 is linked from the site. Most fixes are settings;
     the page-by-page copy fits the agreed Marketing approval path, and none uses Slim SEO's own
     write abilities.
+  - **The customer's account lives in ERPNext, not the website** (section 6, added at Nik's request
+    the same day).
+    - The shopper checks out as a guest, and the order creates a portal account on
+      `erp.sapphirefountains.com`: a Website User with the Customer role only, signing in by email
+      link.
+    - Order status, shipments with tracking, invoices, history and support go in this app's own
+      portal pages, beside `/pay` and `/rentals`.
+    - ERPNext's stock portal pages are switched off and their routes guarded. Read in source at
+      erpnext v16.52.1, they scope by `Customer.portal_users`, show customers more than they
+      should, have a Pay button outside the shared payment guard, and show no tracking.
+    - History is shown only from a cut-off Accounts has reconciled, because 162 QuickBooks-era
+      invoices still show as overdue.
+    - Prod's portal home is `/desk`, which refuses customers. So an email-link sign-in very likely
+      lands on "not permitted" today; the plan proposes fixing that now.
+    - Re-weighing the options against this requirement keeps WooCommerce guest checkout. An
+      ERPNext checkout would keep customer data in fewer places, but Google flags a checkout on
+      another domain from the product pages, and it goes down with every deploy.
   - **Also in the plan:** phases with effort, what Nik sets up himself (Merchant Center, the
-    Business Profile, the Stripe gateway, the policies, the CPA note), and 14 decisions.
+    Business Profile, the Stripe gateway, the policies, the CPA note, Cloudflare rate limits, the
+    gunicorn cutover first), and 21 decisions.
 
 ## [1.753.2] - 2026-10-27
 
