@@ -35,6 +35,7 @@ another suite's.
 Run: python -m unittest erpnext_enhancements.tests.test_travel_views -v
 """
 
+import importlib
 import inspect
 import json
 import math
@@ -1826,6 +1827,78 @@ class TestTheClosingWarning(unittest.TestCase):
 		self.assertIn("Only a Travel Coordinator can change a closed trip", self.printed[0][0])
 		# A warning, never a refusal.
 		self.assertNotIn("frappe.throw", inspect.getsource(self.controller.TravelTrip._warn_unclaimed_on_close))
+
+
+class TestTheUnclaimedReportWithoutHrms(unittest.TestCase):
+	"""The Unclaimed Travel Expenses report. On production HRMS is absent, so nothing is ever on an
+	Expense Claim, and until v1.754.1 every row read "No claim" beside an empty Link to Expense
+	Claim, a doctype the site does not have. There the two claim columns go and the amount is
+	called *To Reimburse*, as the expense nudge calls it. With HRMS it is what it always was."""
+
+	MODULE = "erpnext_enhancements.travel_management.report.unclaimed_travel_expenses.unclaimed_travel_expenses"
+
+	def setUp(self):
+		_reset_site()
+		self.addCleanup(_reset_site)
+		utils = sys.modules["frappe.utils"]
+		# The stub has no date_diff, and the report imports it by name.
+		patcher = mock.patch.object(
+			utils, "date_diff", lambda a, b: (utils.getdate(a) - utils.getdate(b)).days, create=True
+		)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		sys.modules.pop(self.MODULE, None)
+		self.addCleanup(sys.modules.pop, self.MODULE, None)
+		self.report = importlib.import_module(self.MODULE)
+		self.hrms = False
+		patcher = mock.patch.object(self.report, "expense_claims_available", lambda: self.hrms)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		# The stub's get_all ignores filters, so these are the rows the real filters would return:
+		# Ann paid for her flight, drove 43 miles and has per diem, on a trip that has ended.
+		SITE.get_all = {
+			"Travel Trip": [{"name": "TRIP-1", "status": "Closed", "end_date": "2026-09-20"}],
+			"Trip Flight": [{"parent": "TRIP-1", "paid_by_traveler": "EMP-A", "cost": 300}],
+			"Trip Mileage": [{"parent": "TRIP-1", "traveler": "EMP-A", "amount": 31.18}],
+			"Trip Traveler": [
+				{
+					"parent": "TRIP-1",
+					"employee": "EMP-A",
+					"employee_name": "Ann",
+					"per_diem_eligible": 1,
+					"per_diem_claimed": 0,
+					"per_diem_amount": 150,
+				}
+			],
+		}
+
+	def run_report(self):
+		columns, data = self.report.execute({})
+		return {c["fieldname"]: c for c in columns}, data
+
+	def test_on_production_there_is_no_claim_to_show(self):
+		columns, data = self.run_report()
+		self.assertEqual(
+			list(columns),
+			["trip", "status", "end_date", "days_since_end", "employee", "employee_name", "unclaimed"],
+		)
+		self.assertEqual(columns["unclaimed"]["label"], "To Reimburse")
+		self.assertFalse([c for c in columns.values() if c.get("options") == "Expense Claim"])
+		self.assertEqual(len(data), 1)
+		row = data[0]
+		self.assertEqual((row["employee_name"], row["days_since_end"]), ("Ann", 6))
+		self.assertAlmostEqual(row["unclaimed"], 481.18)
+		self.assertNotIn("expense_claim", row)
+		self.assertNotIn("claim_status", row)
+		self.assertNotIn("No claim", json.dumps(data, default=str))
+
+	def test_with_hrms_it_shows_the_claim_as_it_always_did(self):
+		self.hrms = True
+		columns, data = self.run_report()
+		self.assertEqual(list(columns)[-2:], ["expense_claim", "claim_status"])
+		self.assertEqual(columns["expense_claim"]["options"], "Expense Claim")
+		self.assertEqual(columns["unclaimed"]["label"], "Unclaimed Amount")
+		self.assertEqual((data[0]["expense_claim"], data[0]["claim_status"]), (None, "No claim"))
 
 
 class TestGetTripItinerary(MoneyAssertions):
