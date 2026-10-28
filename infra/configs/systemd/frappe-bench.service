@@ -1,0 +1,33 @@
+# erpnext_enhancements: production process units
+#
+# The bench's one handle. It runs nothing itself: every process of the bench is a
+# unit of its own below, each PartOf= this one and enabled into its .wants, so
+#
+#     sudo systemctl restart frappe-bench    (the deploy, the upstream update, a person)
+#     sudo systemctl stop frappe-bench
+#     sudo systemctl start frappe-bench
+#
+# act on all of them. That is why the name did not change: the Cloud Build deploy, the
+# deploy user's sudoers line and every runbook say `systemctl restart frappe-bench`, and
+# they keep working on a VM that has been cut over and on one that has not.
+#
+# Before this, frappe-bench.service ran `honcho start` on the bench's development
+# Procfile, whose web line is `bench serve` -- the Werkzeug development server, with its
+# debugger and reloader on. See infra/docs/production-web-tier.md.
+#
+# Installed by infra/configs/install_bench_units.sh. The repo copy is the source of
+# truth; edit it there and re-run the installer, never the copy in /etc. The comment on
+# the first line is how the installer and startup_script.sh recognise this unit.
+
+[Unit]
+Description=Frappe Bench (gunicorn, socketio, workers, scheduler, redis)
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target

@@ -2144,6 +2144,16 @@ jobs:
       # duration of each test and take it out again.
       - name: Client-IP derivation guard (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_client_ip -v
+      # The bench's production process units (v1.753.3): gunicorn instead of `bench serve`,
+      # the Werkzeug development server prod had been serving the internet with. Nothing in
+      # infra/configs runs in CI, and a VM only exercises it at a cutover, so this pins the
+      # units (every process PartOf frappe-bench.service, the name the deploy restarts),
+      # gunicorn.conf.py against bench's defaults, the web unit's command line run for real
+      # (frappe's concurrency limiter reads --workers from it), and install_bench_units.sh
+      # run against a scratch directory with a stub systemctl, plus shellcheck. Standard
+      # library only; its own step because it shells out.
+      - name: Production web tier units (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_production_web_tier -v
       # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
       # else inline; frappe's own develop branch widened that list to fourteen. The seven in
       # the gap (.xhtml .svgz .shtml .mhtml .xsl .xslt .swf) are served from OUR origin with a

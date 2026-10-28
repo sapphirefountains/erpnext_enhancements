@@ -1,0 +1,31 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# The realtime server (socketio_port in common_site_config, :9000), unchanged from the
+# development Procfile. It is node running frappe's own socketio.js from the bench
+# directory, rather than `bench socketio`: that bench subcommand only exists in bench
+# releases from June 2026 on, and prod's bench was installed with pip outside the
+# startup script, at a version nobody has recorded. The installer checks that `node`
+# resolves on the PATH below, and is as new as apps/frappe/package.json requires, before it
+# switches anything.
+#
+# It subscribes through the QUEUE Redis: realtime/index.js calls get_redis_subscriber(),
+# whose default kind is "redis_queue" (node_utils.js, 16.53.0). The cache Redis is listed
+# too because older frappe used redis_socketio, which bench keeps equal to redis_cache.
+
+[Unit]
+Description=Frappe Bench socketio (node apps/frappe/socketio.js)
+PartOf=frappe-bench.service
+After=network.target frappe-bench-redis-queue.service frappe-bench-redis-cache.service frappe-bench-frappe-web.service
+Wants=frappe-bench-redis-queue.service frappe-bench-redis-cache.service
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env node apps/frappe/socketio.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service
