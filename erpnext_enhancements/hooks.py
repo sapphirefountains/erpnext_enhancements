@@ -1106,6 +1106,24 @@ doc_events = {
 	"Purchase Invoice": {
 		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
 	},
+	# v1.754.0 -- and the third half: anything that rebuilds such a receipt's ledger from today's
+	# Maintain Stock flag. A Landed Cost Voucher cancels and re-posts its receipts' stock ledger and
+	# GL on submit AND on cancel (update_landed_cost; get_pr_items picks the line up once the item
+	# keeps stock), a Repost Item Valuation with recreate_stock_ledgers does it for one receipt, and a
+	# Repost Accounting Ledger remakes its GL. Each would give the old line backdated stock and a
+	# ledger entry, after which every guard above lets it through. None of these doctypes had a
+	# doc_events block before. validate runs after the controller's own (which resets
+	# recreate_stock_ledgers on a non-Transaction repost); before_cancel runs before on_cancel.
+	"Landed Cost Voucher": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+	},
+	"Repost Item Valuation": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+	},
+	"Repost Accounting Ledger": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+	},
 	# Lead attribution. Lead had no doc_events block at all before v1.241.0.
 	# Both handlers are inert unless the attribution Custom Fields exist on the
 	# bench (they check frappe.db.has_column), which is what keeps them safe

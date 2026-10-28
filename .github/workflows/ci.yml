@@ -3761,11 +3761,14 @@ jobs:
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery
       # note/invoice/stock entry/reconciliation/work order/BOM, an open PO/MR/SO line by ERPNext's own
-      # Bin rule, a bundle, an asset, a variant), if ERPNext's lock list can grow without the action
-      # refusing, if the switch writes anything before the row lock and the re-check or anything at all
-      # on a refusal, if a service account or a role-less user gets through, or if a switched item's
-      # old non-stock receipt can be canceled, returned or billed. The check queries run for real on
-      # SQLite (tests/sqlite_sql_helper.py). Own frappe stub, so its own step; unittest classes.
+      # Bin rule, a bundle or the item inside one, an asset, a variant, a template), if ERPNext's lock
+      # list can grow without the action refusing, if the switch writes anything before the row lock
+      # and the re-check or anything at all on a refusal, if a token, a service account, a role-less
+      # user or one who can't write the Item gets through, or if a switched item's old non-stock
+      # receipt can be canceled, returned, billed, landed-costed or reposted (a Landed Cost Voucher or
+      # a repost rebuilds it from today's flag). The check queries run for real on SQLite
+      # (tests/sqlite_sql_helper.py), and the form script under node. Own frappe stub, so its own
+      # step; unittest classes.
       - name: Turn on Maintain Stock (checks, switch, endpoints, receipt guards; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the

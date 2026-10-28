@@ -14,9 +14,12 @@ Five parts:
 * **The switch** (``maintain_stock.turn_on``): the Item row locked before anything is read, a
   failed check refusing with nothing written, and a pass writing the flag, the Comment and the
   cache clear, and naming the Stock Adjustment account.
-* **The endpoints** (``api/maintain_stock.py``): the role gate, service accounts refused whatever
-  they hold, a missing or blank item, GET for the check and POST only for the switch.
-* **The guards** on the old receipts (cancel, return, bill), and the wiring: hooks.py points at
+* **The endpoints** (``api/maintain_stock.py``): a person at a screen only (no Authorization
+  header, a real session id), the role gate, service accounts refused whatever they hold, write
+  permission on the Item, documents named only where the caller may read them, a missing or blank
+  item, GET for the check and POST only for the switch.
+* **The guards** on the old receipts (cancel, return, bill, and the Landed Cost Voucher and the two
+  reposts that would rebuild them), and the wiring: hooks.py points at
   functions that exist, and the form script's roles and endpoints match the server's. The form
   script itself runs under node in ``scripts/test_item_maintain_stock.mjs``.
 
@@ -136,6 +139,11 @@ class Doc:
 	def add_comment(self, comment_type, text):
 		STATE["comments"].append((self.doctype, self.name, comment_type, text))
 
+	def check_permission(self, ptype="read"):
+		STATE["calls"].append(("check_permission", self.doctype, self.name, ptype))
+		if self.doctype == "Item" and ptype == "write" and not STATE["item_write"]:
+			raise FRAPPE.PermissionError(f"No permission to {ptype} {self.doctype}")
+
 	def _get_linked_submitted_documents(self, changed_fields):
 		STATE["calls"].append(("erpnext_linked", self.name, tuple(changed_fields)))
 		return STATE["linked"]
@@ -143,7 +151,7 @@ class Doc:
 
 SCHEMA = (
 	"create table `tabItem` (name text primary key, item_name text, is_stock_item int default 0, "
-	"is_fixed_asset int default 0, variant_of text, modified text)",
+	"is_fixed_asset int default 0, variant_of text, has_variants int default 0, modified text)",
 	"create table `tabCompany` (name text primary key, stock_adjustment_account text)",
 	"create table `tabAccount` (name text primary key, company text, is_group int default 0, "
 	"disabled int default 0, account_type text)",
@@ -160,8 +168,10 @@ SCHEMA = (
 	"docstatus int, stock_qty real, ordered_qty real, creation text)",
 	"create table `tabSales Order Item` (name text, parent text, parenttype text, item_code text, "
 	"docstatus int, qty real, delivered_qty real, delivered_by_supplier int, creation text)",
-	"create table `tabPurchase Receipt Item` (name text, parent text, parenttype text, item_code text, "
-	"docstatus int, purchase_order_item text, creation text)",
+	"create table `tabPurchase Receipt Item` (name text, parent text, parenttype text, idx int, "
+	"item_code text, docstatus int, purchase_order_item text, creation text)",
+	"create table `tabPacked Item` (name text, parent text, parenttype text, item_code text, docstatus int, "
+	"parent_detail_docname text, creation text)",
 	*(
 		f"create table `tab{child}` (name text, parent text, parenttype text, item_code text, "
 		"docstatus int, creation text)"
@@ -220,7 +230,14 @@ def build_frappe():
 	frappe._ = lambda text, *a, **k: text
 	frappe._dict = _dict
 	frappe.flags = _dict()
-	frappe.session = _dict(user="buyer@example.com")
+	frappe.session = _dict(user="buyer@example.com", sid="a1b2c3d4e5")
+	frappe.local = types.SimpleNamespace(request=types.SimpleNamespace(headers={}))
+
+	def has_permission(doctype=None, ptype="read", doc=None, **kwargs):
+		STATE["calls"].append(("has_permission", doctype, ptype, doc))
+		return (doctype, doc) not in STATE["unreadable"] and doctype not in STATE["unreadable"]
+
+	frappe.has_permission = has_permission
 
 	def throw(msg, exc=None, title=None, **kwargs):
 		STATE["thrown"].append({"message": msg, "title": title})
@@ -339,11 +356,14 @@ def reset_state(**overrides):
 		"linked": {"doctype": "Purchase Receipt", "docname": "PR-TEST-1"},
 		"item_defaults": {},
 		"full_name": "Test Buyer",
+		"item_write": True,
+		"unreadable": set(),
 		"tick": 0,
 	}
 	STATE.update(overrides)
 	FRAPPE.flags = _dict()
-	FRAPPE.session = _dict(user="buyer@example.com")
+	FRAPPE.session = _dict(user="buyer@example.com", sid="a1b2c3d4e5")
+	FRAPPE.local.request = types.SimpleNamespace(headers={})
 
 
 def reset_db():
@@ -390,6 +410,7 @@ def reset_db():
 		name="pri-1",
 		parent="PR-TEST-1",
 		parenttype="Purchase Receipt",
+		idx=1,
 		item_code=ITEM,
 		docstatus=1,
 		purchase_order_item="poi-1",
@@ -427,6 +448,8 @@ def passing_facts(**overrides):
 		"is_stock_item": 0,
 		"is_fixed_asset": 0,
 		"variant_of": "",
+		"has_variants": 0,
+		"packed": {},
 		"stock_ledger": {"count": 0, "examples": []},
 		"bundles": {"count": 0, "examples": []},
 		"submitted": {d: {"count": 0, "examples": []} for d in rules.SUBMITTED_DOCTYPES},
@@ -493,8 +516,10 @@ class ChecksTest(unittest.TestCase):
 				"still_off",
 				"not_asset",
 				"not_variant",
+				"not_template",
 				"no_ledger",
 				"not_bundle",
+				"not_bundle_component",
 				"no_stock_documents",
 				"no_open_orders",
 				"known_lock",
@@ -507,6 +532,8 @@ class ChecksTest(unittest.TestCase):
 			"still_off": {"is_stock_item": 1},
 			"not_asset": {"is_fixed_asset": 1},
 			"not_variant": {"variant_of": "TST-TEMPLATE"},
+			"not_template": {"has_variants": 1},
+			"not_bundle_component": {"packed": {"Delivery Note": one}},
 			"no_ledger": {"stock_ledger": one},
 			"not_bundle": {"bundles": one},
 			"no_stock_documents": {"submitted": {"Sales Invoice Item": one}},
@@ -644,6 +671,45 @@ class GuardRulesTest(unittest.TestCase):
 		by_order = {"mixed-order": ["stocked", "unstocked-2"], "clean-order": ["stocked"]}
 		bad = rules.billing_offenders(rows, {ITEM}, by_order, {"stocked"})
 		self.assertEqual([r["idx"] for r in bad], [1, 3])
+
+
+class RowJudgementTest(unittest.TestCase):
+	def test_billed_lines_precedence(self):
+		by_order = {"po-1": ["a", "b"]}
+		by_receipt = {("PR-1", ITEM): ["c"], ("PR-1", OTHER): ["d"]}
+		self.assertEqual(
+			rules.billed_lines({"pr_detail": "x", "po_detail": "po-1"}, by_order, by_receipt), ["x"]
+		)
+		self.assertEqual(
+			rules.billed_lines(
+				{"item_code": ITEM, "purchase_receipt": "PR-1", "po_detail": "po-1"}, by_order, by_receipt
+			),
+			["c", "a", "b"],
+		)
+		self.assertEqual(
+			rules.billed_lines({"item_code": ITEM, "po_detail": "po-none"}, by_order, by_receipt), []
+		)
+
+	def test_touches_unstocked(self):
+		rows = [
+			{"idx": 1, "item_code": ITEM, "lines": ["a"]},
+			{"idx": 2, "item_code": ITEM, "lines": ["a", "b"]},
+			{"idx": 3, "item_code": ITEM, "lines": []},
+			{"idx": 4, "item_code": OTHER, "lines": ["b"]},
+		]
+		self.assertEqual([r["idx"] for r in rules.touches_unstocked(rows, {ITEM}, {"a"})], [2])
+
+	def test_rebuild_refusal_words(self):
+		lines = {"PR-1": [{"idx": 2, "item_code": ITEM}], "PR-2": [{"idx": 1, "item_code": OTHER}]}
+		text = rules.rebuild_refusal("Landed Cost Voucher", lines, canceling=True)
+		self.assertTrue(
+			text.startswith("This Landed Cost Voucher can't be canceled. Purchase Receipt PR-1: row 2")
+		)
+		self.assertIn("Purchase Receipt PR-2: row 1 (TST-TEE-200)", text)
+		self.assertIn("backdated", text)
+		self.assertTrue(
+			rules.rebuild_refusal("Repost Item Valuation", lines).startswith("This repost can't include it.")
+		)
 
 
 # ---------------------------------------------------------------------------
@@ -825,6 +891,78 @@ class QueriesTest(unittest.TestCase):
 		group = self.facts()["open"]["Sales Order Item"]
 		self.assertEqual(sorted(e["name"] for e in group["examples"]), ["SO-T-HOLD", "SO-T-OPEN"])
 
+	def test_a_template_refuses(self):
+		CONN.execute("update `tabItem` set has_variants = 1 where name = ?", (ITEM,))
+		check = by_key(ms.run_checks(ITEM)["checks"])["not_template"]
+		self.assertFalse(check["ok"])
+		self.assertIn("Switch the variants themselves", check["detail"])
+
+	def test_bundle_component_on_submitted_documents(self):
+		for name, parent, parenttype, docstatus in (
+			("pk-1", "DN-T-1", "Delivery Note", 1),
+			("pk-2", "SI-T-1", "Sales Invoice", 1),
+			("pk-3", "SI-T-2", "Sales Invoice", 0),
+			("pk-4", "POS-T-1", "POS Invoice", 2),
+		):
+			_insert(
+				"Packed Item",
+				name=name,
+				parent=parent,
+				parenttype=parenttype,
+				item_code=ITEM,
+				docstatus=docstatus,
+				parent_detail_docname="x",
+				creation="2026-09-10",
+			)
+		packed = self.facts()["packed"]
+		self.assertEqual(packed["Delivery Note"]["count"], 1)
+		self.assertEqual(
+			packed["Sales Invoice"],
+			{"count": 1, "examples": [{"doctype": "Sales Invoice", "name": "SI-T-1"}]},
+		)
+		self.assertEqual(packed["POS Invoice"]["count"], 0)
+		check = by_key(ms.run_checks(ITEM)["checks"])["not_bundle_component"]
+		self.assertFalse(check["ok"])
+		self.assertIn("inside a Product Bundle on 1 Delivery Note and 1 Sales Invoice", check["detail"])
+
+	def test_bundle_component_on_open_sales_orders(self):
+		for so, status, qty, delivered in (
+			("SO-T-OPEN", "To Deliver and Bill", 2, 0),
+			("SO-T-CLOSED", "Closed", 2, 0),
+			("SO-T-DONE", "Completed", 2, 2),
+		):
+			_insert("Sales Order", name=so, docstatus=1, status=status, creation="2026-09-20")
+			_insert(
+				"Sales Order Item",
+				name=f"{so}-1",
+				parent=so,
+				parenttype="Sales Order",
+				item_code="TST-BUNDLE",
+				docstatus=1,
+				qty=qty,
+				delivered_qty=delivered,
+				delivered_by_supplier=0,
+				creation="2026-09-20",
+			)
+			_insert(
+				"Packed Item",
+				name=f"{so}-p",
+				parent=so,
+				parenttype="Sales Order",
+				item_code=ITEM,
+				docstatus=1,
+				parent_detail_docname=f"{so}-1",
+				creation="2026-09-20",
+			)
+		facts = self.facts()
+		self.assertEqual(
+			facts["packed"]["Sales Order"],
+			{"count": 1, "examples": [{"doctype": "Sales Order", "name": "SO-T-OPEN"}]},
+		)
+		# The open line is the bundle's, not this item's: only the bundle check sees it.
+		self.assertEqual(facts["open"]["Sales Order Item"]["count"], 0)
+		self.assertFalse(by_key(ms.run_checks(ITEM)["checks"])["not_bundle_component"]["ok"])
+
 	def test_another_items_documents_are_not_this_ones(self):
 		_insert(
 			"Sales Invoice Item",
@@ -880,8 +1018,34 @@ class TurnOnTest(unittest.TestCase):
 
 	def test_locks_the_row_before_reading_anything(self):
 		ms.turn_on(ITEM)
-		first_read = next(i for i, c in enumerate(STATE["calls"]) if c[0] in ("sql", "get_all", "get_value"))
-		self.assertEqual(STATE["calls"][first_read], ("get_value", "Item", ITEM, "name", True))
+		reads = [c for c in STATE["calls"] if c[0] in ("sql", "get_all", "get_value", "has_permission")]
+		first = reads[0]
+		self.assertEqual(first[:3], ("get_value", "Item", ITEM))
+		self.assertTrue(first[4], "the first read is the locking one")
+		for field in ("is_stock_item", "is_fixed_asset", "variant_of", "has_variants"):
+			self.assertIn(field, first[3])
+		# The checks judge that row: the Item is not read again before the write.
+		write = STATE["calls"].index(("set_value", "Item", ITEM, "is_stock_item", 1))
+		item_reads = [c for c in STATE["calls"][:write] if c[0] == "get_value" and c[1] == "Item"]
+		self.assertEqual(item_reads, [first])
+
+	def test_the_locked_row_is_what_the_checks_judge(self):
+		plain = FRAPPE.db.get_value
+
+		def under_lock(doctype, name, fieldname="name", as_dict=False, for_update=False, **kwargs):
+			row = plain(doctype, name, fieldname, as_dict=as_dict, for_update=for_update, **kwargs)
+			if for_update and doctype == "Item":
+				row["is_stock_item"] = 1  # somebody switched it while this request waited for the lock
+			return row
+
+		FRAPPE.db.get_value = under_lock
+		try:
+			with self.assertRaises(FRAPPE.ValidationError) as caught:
+				ms.turn_on(ITEM)
+		finally:
+			FRAPPE.db.get_value = plain
+		self.assertIn("already on", str(caught.exception))
+		self.assertEqual(STATE["comments"], [])
 
 	def test_a_failed_check_refuses_and_writes_nothing(self):
 		_insert(
@@ -976,6 +1140,58 @@ class EndpointTest(unittest.TestCase):
 			with self.subTest(blank=blank):
 				with self.assertRaises(FRAPPE.ValidationError):
 					api.check(blank)
+
+	def test_a_token_or_api_key_is_refused(self):
+		FRAPPE.local.request = types.SimpleNamespace(headers={"Authorization": "token abc:def"})
+		for endpoint in (api.check, api.turn_on):
+			with self.subTest(endpoint.__name__):
+				with self.assertRaises(FRAPPE.PermissionError) as caught:
+					endpoint(ITEM)
+				self.assertIn("signed in as yourself", str(caught.exception))
+		self.assertEqual(
+			CONN.execute("select is_stock_item from `tabItem` where name = ?", (ITEM,)).fetchone()[0], 0
+		)
+
+	def test_no_browser_login_is_refused(self):
+		# Frappe gives a token login, a background job and the console sid == user.
+		FRAPPE.session.sid = FRAPPE.session.user
+		with self.assertRaises(FRAPPE.PermissionError):
+			api.turn_on(ITEM)
+		reset_state()
+		FRAPPE.local.request = None
+		with self.assertRaises(FRAPPE.PermissionError):
+			api.check(ITEM)
+
+	def test_write_permission_on_the_item_is_needed(self):
+		reset_state(item_write=False)
+		for endpoint in (api.check, api.turn_on):
+			with self.subTest(endpoint.__name__):
+				with self.assertRaises(FRAPPE.PermissionError):
+					endpoint(ITEM)
+		self.assertIn(("check_permission", "Item", ITEM, "write"), STATE["calls"])
+		self.assertFalse([c for c in STATE["calls"] if c[0] in ("sql", "set_value")])
+
+	def test_documents_are_named_only_where_readable(self):
+		for name, parent in (("sii-1", "SI-T-1"), ("sii-2", "SI-T-2")):
+			_insert(
+				"Sales Invoice Item",
+				name=name,
+				parent=parent,
+				parenttype="Sales Invoice",
+				item_code=ITEM,
+				docstatus=1,
+				creation="2026-09-10",
+			)
+		reset_state(unreadable={("Sales Invoice", "SI-T-1"), ("Purchase Receipt", "PR-TEST-1")})
+		result = api.check(ITEM)
+		check = by_key(result["checks"])["no_stock_documents"]
+		self.assertIn("2 Sales Invoices use it", check["detail"])
+		self.assertEqual([e["name"] for e in check["examples"]], ["SI-T-2"])
+		self.assertEqual(check["hidden_examples"], 1)
+		self.assertEqual(result["receipts"]["count"], 1)
+		self.assertEqual(result["receipts"]["examples"], [])
+		self.assertEqual(result["receipts"]["hidden_examples"], 1)
+		self.assertEqual(result["locked_by"], {"doctype": None, "name": None})
 
 	def test_refusal_reaches_the_caller(self):
 		_insert(
@@ -1158,6 +1374,130 @@ class GuardsTest(unittest.TestCase):
 		)
 
 
+class RebuildGuardsTest(unittest.TestCase):
+	def setUp(self):
+		reset_state()
+		reset_db()
+
+	def _lcv(self, receipts, docstatus=0):
+		return Doc(
+			"Landed Cost Voucher",
+			"LCV-T-1",
+			{
+				"docstatus": docstatus,
+				"purchase_receipts": [
+					{"receipt_document_type": t, "receipt_document": r} for t, r in receipts
+				],
+			},
+		)
+
+	def _repost(self, **overrides):
+		data = {
+			"based_on": "Transaction",
+			"voucher_type": "Purchase Receipt",
+			"voucher_no": "PR-TEST-1",
+			"recreate_stock_ledgers": 1,
+		}
+		data.update(overrides)
+		return Doc("Repost Item Valuation", "RIV-T-1", data)
+
+	def test_landed_cost_refused_on_save_and_on_cancel(self):
+		make_stock()
+		for docstatus, words in ((0, "can't include it"), (1, "can't include it"), (2, "can't be canceled")):
+			with self.subTest(docstatus=docstatus):
+				with self.assertRaises(FRAPPE.ValidationError) as caught:
+					ms.refuse_rebuilding_unstocked_receipts(
+						self._lcv([("Purchase Receipt", "PR-TEST-1")], docstatus)
+					)
+				self.assertIn(
+					f"This Landed Cost Voucher {words}. Purchase Receipt PR-TEST-1: row 1 (TST-PUMP-100)",
+					str(caught.exception),
+				)
+
+	def test_landed_cost_passes_otherwise(self):
+		lcv = self._lcv([("Purchase Receipt", "PR-TEST-1"), ("Stock Entry", "SE-T-1")])
+		ms.refuse_rebuilding_unstocked_receipts(lcv)  # the item keeps no stock yet
+		make_stock()
+		_insert(
+			"Stock Ledger Entry",
+			name="sle-1",
+			item_code=ITEM,
+			voucher_type="Purchase Receipt",
+			voucher_no="PR-TEST-1",
+			voucher_detail_no="pri-1",
+			is_cancelled=0,
+			creation="2026-09-05",
+		)
+		ms.refuse_rebuilding_unstocked_receipts(lcv)  # the line wrote stock
+
+	def test_recreating_a_receipts_stock_ledger_refused(self):
+		make_stock()
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			ms.refuse_rebuilding_unstocked_receipts(self._repost())
+		self.assertIn("This repost can't include it. Purchase Receipt PR-TEST-1", str(caught.exception))
+		for overrides in (
+			{"recreate_stock_ledgers": 0},
+			{"based_on": "Item and Warehouse"},
+			{"voucher_type": "Stock Entry", "voucher_no": "SE-T-1"},
+		):
+			with self.subTest(**overrides):
+				ms.refuse_rebuilding_unstocked_receipts(self._repost(**overrides))
+
+	def test_reposting_a_receipts_accounting_ledger_refused(self):
+		make_stock()
+		doc = Doc(
+			"Repost Accounting Ledger",
+			"RAL-T-1",
+			{
+				"vouchers": [
+					{"voucher_type": "Sales Invoice", "voucher_no": "SI-T-1"},
+					{"voucher_type": "Purchase Receipt", "voucher_no": "PR-TEST-1"},
+				]
+			},
+		)
+		with self.assertRaises(FRAPPE.ValidationError):
+			ms.refuse_rebuilding_unstocked_receipts(doc)
+		doc.flags[ms.IGNORE_FLAG] = True
+		ms.refuse_rebuilding_unstocked_receipts(doc)
+
+	def test_a_hand_built_return_is_judged_by_its_receipt(self):
+		make_stock()
+		doc = receipt("PR-TEST-RET", items=[{"idx": 1, "name": "ret-1", "item_code": ITEM}], is_return=1)
+		doc._data["return_against"] = "PR-TEST-1"
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			ms.refuse_unstocked_receipt_return(doc)
+		self.assertIn("Row 1 (TST-PUMP-100) returns goods", str(caught.exception))
+		_insert(
+			"Stock Ledger Entry",
+			name="sle-1",
+			item_code=ITEM,
+			voucher_type="Purchase Receipt",
+			voucher_no="PR-TEST-1",
+			voucher_detail_no="pri-1",
+			is_cancelled=0,
+			creation="2026-09-05",
+		)
+		ms.refuse_unstocked_receipt_return(doc)
+
+	def test_billing_by_the_receipt_header_alone_refused(self):
+		make_stock()
+		doc = Doc(
+			"Purchase Invoice",
+			"PI-TEST-1",
+			{"items": [{"idx": 1, "item_code": ITEM, "purchase_receipt": "PR-TEST-1"}]},
+		)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			ms.refuse_billing_unstocked_receipts(doc)
+		self.assertIn("can't bill row 1 (TST-PUMP-100)", str(caught.exception))
+		other = Doc(
+			"Purchase Invoice",
+			"PI-TEST-2",
+			{"items": [{"idx": 1, "item_code": OTHER, "purchase_receipt": "PR-TEST-1"}]},
+		)
+		make_stock(OTHER)
+		ms.refuse_billing_unstocked_receipts(other)  # the receipt has no line of that item
+
+
 # ---------------------------------------------------------------------------
 # The wiring
 # ---------------------------------------------------------------------------
@@ -1185,6 +1525,10 @@ class WiringTest(unittest.TestCase):
 			("Purchase Receipt", "before_cancel"): "refuse_unstocked_receipt_cancel",
 			("Purchase Receipt", "validate"): "refuse_unstocked_receipt_return",
 			("Purchase Invoice", "validate"): "refuse_billing_unstocked_receipts",
+			("Landed Cost Voucher", "validate"): "refuse_rebuilding_unstocked_receipts",
+			("Landed Cost Voucher", "before_cancel"): "refuse_rebuilding_unstocked_receipts",
+			("Repost Item Valuation", "validate"): "refuse_rebuilding_unstocked_receipts",
+			("Repost Accounting Ledger", "validate"): "refuse_rebuilding_unstocked_receipts",
 		}
 		for (doctype, event), function in expected.items():
 			with self.subTest(doctype=doctype, event=event):
@@ -1197,8 +1541,8 @@ class WiringTest(unittest.TestCase):
 				self.assertTrue(callable(getattr(ms, function)))
 		# A second key for either doctype would silently replace the first.
 		keys = [k.value for k in events.keys if isinstance(k, ast.Constant)]
-		self.assertEqual(keys.count("Purchase Receipt"), 1)
-		self.assertEqual(keys.count("Purchase Invoice"), 1)
+		for doctype in {d for d, _ in expected}:
+			self.assertEqual(keys.count(doctype), 1, doctype)
 
 	def test_form_script_is_loaded_on_item(self):
 		value = ast.literal_eval(_key(_hooks_dict("doctype_js"), "Item"))
@@ -1209,6 +1553,8 @@ class WiringTest(unittest.TestCase):
 		source = FORM_JS.read_text(encoding="utf-8")
 		roles = re.search(r"const SWITCH_ROLES = \[([^\]]*)\]", source).group(1)
 		self.assertEqual(tuple(re.findall(r'"([^"]+)"', roles)), rules.SWITCH_ROLES)
+		people = re.search(r"const NOT_A_PERSON = \[([^\]]*)\]", source).group(1)
+		self.assertEqual(frozenset(re.findall(r'"([^"]+)"', people)), rules.NOT_A_PERSON)
 		for constant, function in (("CHECK", "check"), ("TURN_ON", "turn_on")):
 			path = re.search(rf'const {constant} = "([^"]+)"', source).group(1)
 			self.assertEqual(path, f"erpnext_enhancements.api.maintain_stock.{function}")

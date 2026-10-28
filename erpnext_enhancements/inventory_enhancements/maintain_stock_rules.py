@@ -27,13 +27,26 @@ them except one: the receipts.
 * A Product Bundle must stay non-stock (``ProductBundle.validate_main_item``). So must a fixed
   asset item (``Item.validate_fixed_asset``).
 * A variant takes Maintain Stock from its template. The default Item Variant Settings copy every
-  field but a short exclusion list, so the template's next save would set it back. Production
-  had no variants on 2026-10-28; the check costs nothing.
+  field but a short exclusion list, so the template's next save would set it back. A template is
+  refused too: ``set_value`` skips ``update_variants``, so its variants would stay non-stock, and
+  the template's next save would push the flag onto each of them and hit each one's own
+  ``cant_change``. Production had no variants on 2026-10-28; the checks cost nothing.
+* The item as a **component** of a Product Bundle is not in ERPNext's list at all, but its rows
+  (``tabPacked Item``) move stock by today's flag (``SellingController.get_item_list`` expands a
+  bundle into them, ``update_stock_ledger`` keeps the stock ones) and are reserved on an open
+  Sales Order (``get_reserved_qty``). So a submitted Delivery Note, Sales or POS Invoice carrying
+  it inside a bundle refuses, and so does an open Sales Order (the Sales Order rule below, applied
+  to the bundle's line). Production had no bundles on 2026-10-28.
 * **Purchase Receipt lines are the point.** They stay as they were: non-stock lines with no
-  stock ledger entry. Two things must then never happen to them, and ``maintain_stock``'s
-  guards refuse both: a cancel or a return, which would take out stock the line never put in,
-  and a bill in ERPNext, which would debit Stock Received But Not Billed for a receipt that never
-  credited it.
+  stock ledger entry, and ``maintain_stock``'s guards refuse everything in ERPNext v16.52.1 that
+  would treat them as stock lines after the switch: a cancel or a return, which would take out
+  stock the line never put in; a bill, which would debit Stock Received But Not Billed for a
+  receipt that never credited it; and anything that rebuilds the receipt's ledger from today's
+  flag (a Landed Cost Voucher, a Repost Item Valuation that recreates stock ledgers, a Repost
+  Accounting Ledger), which would give the line backdated stock and, with it, a ledger entry that
+  makes every other guard let it through. Another path that rebuilds a receipt's ledger, in a
+  later ERPNext or another app, would not be guarded: the receipts are as safe as that list is
+  complete, which is the reason the lock list below is re-read at run time.
 
 **The list itself is checked against the installed ERPNext.** The doctypes come from the
 ``linked_doctypes`` lists in ``Item._get_linked_submitted_documents``. ERPNext's prod version
@@ -126,8 +139,15 @@ OPEN_RULES = {
 	},
 }
 
+#: The documents whose submitted Packed Item rows (the item inside a bundle) refuse.
+PACKED_SUBMITTED_PARENTS = ("Delivery Note", "Sales Invoice", "POS Invoice")
+
 #: A document type as a person reads it: (one, several).
 DOCUMENT_NAMES = {
+	"Delivery Note": ("Delivery Note", "Delivery Notes"),
+	"Sales Invoice": ("Sales Invoice", "Sales Invoices"),
+	"POS Invoice": ("POS Invoice", "POS Invoices"),
+	"Sales Order": ("Sales Order", "Sales Orders"),
 	"Purchase Receipt Item": ("Purchase Receipt", "Purchase Receipts"),
 	"Delivery Note Item": ("Delivery Note", "Delivery Notes"),
 	"Sales Invoice Item": ("Sales Invoice", "Sales Invoices"),
@@ -236,6 +256,7 @@ def evaluate(facts):
 	open_lines = {d: g for d, g in open_lines.items() if g and g.get("count")}
 	ledger = facts.get("stock_ledger") or {}
 	bundles = facts.get("bundles") or {}
+	packed = {d: g for d, g in (facts.get("packed") or {}).items() if g and g.get("count")}
 	lock_list = facts.get("lock_list")
 	unknown = unknown_lock_doctypes(lock_list)
 
@@ -266,6 +287,18 @@ def evaluate(facts):
 			),
 		),
 		_check(
+			"not_template",
+			"It isn't a template with variants",
+			not facts.get("has_variants"),
+			""
+			if not facts.get("has_variants")
+			else (
+				"It is a template. Switching it here wouldn't reach its variants, and the template's next "
+				"save would try to copy Maintain Stock onto each one, which ERPNext refuses for any "
+				"variant already in use. Switch the variants themselves."
+			),
+		),
+		_check(
 			"no_ledger",
 			"Nothing in the stock ledger",
 			not ledger.get("count"),
@@ -282,6 +315,19 @@ def evaluate(facts):
 			if not bundles.get("count")
 			else "It is a Product Bundle, and ERPNext requires a bundle to stay non-stock.",
 			bundles.get("examples"),
+		),
+		_check(
+			"not_bundle_component",
+			"It isn't inside a Product Bundle on a submitted or open document",
+			not packed,
+			""
+			if not packed
+			else (
+				f"It is inside a Product Bundle on {_phrases(packed)}. ERPNext moves a bundle's parts by "
+				"today's Maintain Stock setting, so canceling, returning or delivering "
+				f"{_verb(packed, 'that', 'those')} would move stock that never moved."
+			),
+			_examples(packed),
 		),
 		_check(
 			"no_stock_documents",
@@ -351,7 +397,8 @@ def switch_comment(full_name, when, receipt_count):
 	if receipt_count:
 		text += (
 			f" {count_phrase(receipt_count, 'Purchase Receipt Item')} received it while it kept no "
-			"stock. They stay as they are: this app refuses canceling, returning or billing them in ERPNext."
+			"stock. They stay as they are: this app refuses canceling, returning, billing or re-costing "
+			"them in ERPNext."
 		)
 	return text
 
@@ -370,8 +417,9 @@ def next_steps(item_code, account, account_is_company_default):
 	elif not account:
 		text += " Pick the Stock Adjustment account as its Difference Account."
 	text += (
-		" Don't cancel, return or bill its earlier receipts in ERPNext: they put nothing into stock, "
-		"and this app refuses all three."
+		" Don't cancel, return, bill or re-cost its earlier receipts in ERPNext (a Landed Cost "
+		"Voucher or a repost would rebuild them): they put nothing into stock, and this app refuses "
+		"all of these."
 	)
 	return text
 
@@ -431,35 +479,78 @@ def cancel_refusal(receipt, lines, is_return=False):
 def return_refusal(lines):
 	"""Why a return against such a receipt can't be submitted."""
 	return (
-		f"This return can't be submitted. {_first_upper(_rows(lines))} returns a receipt line that "
-		"came in while the item kept no stock, so that line put nothing into stock or into Stock "
-		"Received But Not Billed. Maintain Stock has since been turned on, and returning it now would "
-		"take out what it never put in. Ask accounting how to record this return."
+		f"This return can't be submitted. {_first_upper(_rows(lines))} returns goods that came in "
+		"while the item kept no stock, so their receipt line put nothing into stock or into Stock "
+		"Received But Not Billed. Maintain Stock has since been turned on, and returning them now "
+		"would take out what was never put in. Ask accounting how to record this return."
 	)
 
 
-def billing_offenders(rows, stock_items, receipt_lines_by_order, lines_with_stock):
-	"""The bill lines that bill goods a non-stock receipt line brought in.
+def rebuild_refusal(doctype, unstocked, canceling=False):
+	"""Why a document that would rebuild an old receipt's ledger is refused.
 
-	``rows`` carry ``item_code``, ``pr_detail`` (the receipt line billed) and ``po_detail`` (the
-	order line). A row billed from the receipt bills that one line. A row billed from the order
-	bills every receipt line of that order line (``receipt_lines_by_order``); one of them without a
-	ledger entry is enough to refuse, since the bill cannot say which goods it pays for. A row whose
-	order line has no receipt yet is ERPNext's ordinary bill-before-receipt, and passes.
+	``unstocked`` is ``{receipt: [lines]}``.
+	"""
+	what = {
+		"Landed Cost Voucher": "This Landed Cost Voucher",
+		"Repost Item Valuation": "This repost",
+		"Repost Accounting Ledger": "This repost",
+	}.get(doctype, "This document")
+	verb = "can't be canceled" if canceling else "can't include it"
+	receipts = "; ".join(
+		f"Purchase Receipt {receipt}: {_rows(lines)}" for receipt, lines in unstocked.items()
+	)
+	return (
+		f"{what} {verb}. {receipts} came in while the item kept no stock. It would rebuild that "
+		"receipt's stock ledger and accounts from today's Maintain Stock setting, which would put "
+		"the quantity into stock, backdated, and credit Stock Received But Not Billed. Ask accounting "
+		"how to correct the receipt another way."
+	)
+
+
+def touches_unstocked(rows, stock_items, lines_with_stock):
+	"""The rows of a stock item that reach a receipt line with no stock ledger entry.
+
+	Each row carries ``item_code`` and ``lines``, the receipt lines it bills or returns. One line
+	without a ledger entry is enough to refuse: the row can't say which of the goods it means.
 	"""
 	stock_items = set(stock_items or ())
 	lines_with_stock = set(lines_with_stock or ())
-	offenders = []
-	for row in rows or ():
-		if row.get("item_code") not in stock_items:
-			continue
-		if row.get("pr_detail"):
-			billed = [row["pr_detail"]]
-		else:
-			billed = (receipt_lines_by_order or {}).get(row.get("po_detail")) or []
-		if any(name not in lines_with_stock for name in billed):
-			offenders.append(row)
-	return offenders
+	return [
+		row
+		for row in rows or ()
+		if row.get("item_code") in stock_items
+		and any(name not in lines_with_stock for name in row.get("lines") or ())
+	]
+
+
+def billed_lines(row, receipt_lines_by_order=None, receipt_lines_by_receipt=None):
+	"""The receipt lines one bill row pays for.
+
+	Its receipt line (``pr_detail``) when it names one. Otherwise every line of its receipt for its
+	item (``purchase_receipt``: ``set_expense_account`` decides on that field alone) and every
+	receipt line of its order line (``po_detail``). A row whose order line has no receipt yet is
+	ERPNext's ordinary bill-before-receipt, and reaches nothing.
+	"""
+	if row.get("pr_detail"):
+		return [row["pr_detail"]]
+	lines = []
+	if row.get("purchase_receipt"):
+		lines += (receipt_lines_by_receipt or {}).get((row["purchase_receipt"], row.get("item_code"))) or []
+	if row.get("po_detail"):
+		lines += (receipt_lines_by_order or {}).get(row["po_detail"]) or []
+	return lines
+
+
+def billing_offenders(
+	rows, stock_items, receipt_lines_by_order, lines_with_stock, receipt_lines_by_receipt=None
+):
+	"""The bill rows that bill goods a non-stock receipt line brought in (:func:`billed_lines`)."""
+	judged = [
+		dict(row, lines=billed_lines(row, receipt_lines_by_order, receipt_lines_by_receipt))
+		for row in rows or ()
+	]
+	return touches_unstocked(judged, stock_items, lines_with_stock)
 
 
 def bill_refusal(lines):

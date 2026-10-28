@@ -13,8 +13,9 @@
 //     dialog opens instead; after the switch, the save the person asked for finishes. When ERPNext
 //     would not refuse, or the check can't be reached, the save goes on untouched.
 //
-// SWITCH_ROLES copies maintain_stock_rules.SWITCH_ROLES, and tests/test_maintain_stock.py fails the
-// build when they differ. It only decides whether to show the button: the server is the gate.
+// SWITCH_ROLES and NOT_A_PERSON copy maintain_stock_rules.SWITCH_ROLES and NOT_A_PERSON, and
+// tests/test_maintain_stock.py fails the build when they differ. With the Item's write permission
+// they only decide whether to show the button: the server is the gate, and checks all three.
 
 (() => {
 	// doctype_js can load a file more than once; registered twice, the button would appear twice.
@@ -22,13 +23,24 @@
 	window.__sf_maintain_stock_registered = true;
 
 	const SWITCH_ROLES = ["Stock Manager", "Item Manager"];
+	const NOT_A_PERSON = [
+		"Administrator",
+		"Guest",
+		"triton@sapphirefountains.com",
+		"mdm@sapphirefountains.com",
+	];
 	const CHECK = "erpnext_enhancements.api.maintain_stock.check";
 	const TURN_ON = "erpnext_enhancements.api.maintain_stock.turn_on";
+	// How long Save waits for the quiet check before going ahead without it.
+	const QUIET_CHECK_MS = 4000;
 
 	const esc = (value) => frappe.utils.escape_html(value == null ? "" : String(value));
 
-	function may_switch() {
-		return frappe.user.has_role(SWITCH_ROLES);
+	function may_switch(frm) {
+		const user = frappe.session && frappe.session.user;
+		if (!user || NOT_A_PERSON.includes(user)) return false;
+		if (!frappe.user.has_role(SWITCH_ROLES)) return false;
+		return !frm || typeof frm.has_perm !== "function" || !!frm.has_perm("write");
 	}
 
 	// Settles on frappe.call's own promise: v16 never calls `error` on a timeout or a deadlock, so a
@@ -63,17 +75,35 @@
 		});
 	}
 
-	// The Save path asks without a word to anyone: a check that fails or times out must leave the
-	// save exactly as it was, so no popup of frappe.call's may appear (a plain GET, no freeze).
+	// The Save path asks without a word to anyone: a check that fails, or takes longer than
+	// QUIET_CHECK_MS, must leave the save exactly as it was, so no popup of frappe.call's may appear
+	// (a plain GET, no freeze) and nothing may hold the save forever.
 	function quiet_check(item_code) {
 		const url = `/api/method/${CHECK}?item_code=${encodeURIComponent(item_code)}`;
-		return fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+		const controller = typeof AbortController === "function" ? new AbortController() : null;
+		let timer = null;
+		const asked = fetch(url, {
+			headers: { Accept: "application/json" },
+			credentials: "same-origin",
+			signal: controller ? controller.signal : undefined,
+		})
 			.then((response) => (response.ok ? response.json() : null))
 			.then((body) => (body && body.message) || null)
 			.catch(() => null);
+		const gave_up = new Promise((resolve) => {
+			timer = setTimeout(() => {
+				if (controller) controller.abort();
+				resolve(null);
+			}, QUIET_CHECK_MS);
+		});
+		return Promise.race([asked, gave_up]).then((answer) => {
+			clearTimeout(timer);
+			return answer;
+		});
 	}
 
 	function doc_link(example) {
+		if (!example || !example.doctype || !example.name) return esc(__("a document you can't open"));
 		const url = frappe.utils.get_form_link(example.doctype, example.name);
 		return `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(example.doctype)} ${esc(example.name)}</a>`;
 	}
@@ -94,7 +124,11 @@
 		);
 		parts.push('<div class="sf-maintain-stock-checks">');
 		(res.checks || []).forEach((check) => {
-			const examples = (check.examples || []).map(doc_link).join(", ");
+			const names = (check.examples || []).map(doc_link);
+			if (check.hidden_examples) {
+				names.push(esc(__("{0} you can't open", [check.hidden_examples])));
+			}
+			const examples = names.join(", ");
 			parts.push(
 				`<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border-color)">` +
 					`<span class="indicator-pill ${check.ok ? "green" : "red"}" style="flex:none">${esc(
@@ -113,7 +147,7 @@
 				parts.push(
 					`<p style="margin-top:12px">${esc(
 						__(
-							"Its {0} earlier receipt(s) stay as they are, as non-stock. This app refuses canceling, returning or billing them in ERPNext.",
+							"Its {0} earlier receipt(s) stay as they are, as non-stock. This app refuses canceling, returning, billing or re-costing them in ERPNext.",
 							[receipts]
 						)
 					)}</p>`
@@ -180,11 +214,13 @@
 			frm.doc.is_stock_item = 1;
 			frm.doc.modified = out.modified;
 			frm.refresh_field("is_stock_item");
+			// The next steps never wait on the save: a save the form's own validation stops never
+			// settles its promise, and the switch has happened either way.
+			show_next_steps(out);
 			if (resume_save) {
-				Promise.resolve(frm.save()).then(() => show_next_steps(out));
+				frm.save();
 				return;
 			}
-			show_next_steps(out);
 			frappe.show_alert({
 				message: __("Your other changes to this item aren't saved yet."),
 				indicator: "orange",
@@ -241,13 +277,13 @@
 			// What the database holds, so Save can tell a box ticked just now from one already on.
 			frm.__sf_saved_stock = frm.is_new() ? null : cint(frm.doc.is_stock_item);
 			if (frm.is_new() || cint(frm.doc.is_stock_item) || cint(frm.doc.is_fixed_asset)) return;
-			if (!may_switch()) return;
+			if (!may_switch(frm)) return;
 			frm.add_custom_button(__("Turn on Maintain Stock"), () => start(frm), __("Actions"));
 		},
 
 		validate(frm) {
 			if (frm.is_new() || !cint(frm.doc.is_stock_item) || frm.__sf_saved_stock !== 0) return;
-			if (!may_switch()) return;
+			if (!may_switch(frm)) return;
 			return quiet_check(frm.doc.name).then((res) => {
 				// Not locked (or not known): ERPNext's own save can make this change, so let it.
 				if (!res || !res.locked_by) return;

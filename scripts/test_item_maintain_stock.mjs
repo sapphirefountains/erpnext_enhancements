@@ -1,11 +1,13 @@
 // "Turn on Maintain Stock" on the Item form (v1.754.0): public/js/item_maintain_stock.js run against a
 // stubbed Desk. Run by tests/test_maintain_stock.py (node on PATH), or directly:
 //   node scripts/test_item_maintain_stock.mjs
-// What it pins: the button (once, for the roles, never on a stock item or an asset); the dialog
-// (checks escaped, links to the documents, Close and no switch when one fails); the confirm (switch,
-// reload, next steps escaped, a prefilled Stock Reconciliation reusing the blank row); and Save
-// after ticking the box: stopped and the dialog opened ONLY when ERPNext's form would refuse, the
-// person's save finished after the switch, and untouched when not locked, unanswered or offline.
+// What it pins: the button (once, for the roles, never for a service account, without write
+// permission, on a stock item or an asset); the dialog (checks escaped, links to the documents,
+// unreadable ones counted, Close and no switch when one fails); the confirm (switch, reload, next
+// steps escaped, a prefilled Stock Reconciliation reusing the blank row); and Save after ticking
+// the box: stopped and the dialog opened ONLY when ERPNext's form would refuse, the person's save
+// resumed after the switch with the next steps shown even if that save never settles, and
+// untouched when not locked, unanswered, offline or slower than the quiet check's time limit.
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -25,9 +27,11 @@ let roles = ["Stock Manager"];
 let checkAnswer = null;
 let turnOnAnswer = null;
 let fetchAnswer = null;
+const timers = [];
 
 function makeFrappe() {
 	const frappe = {
+		session: { user: "buyer@example.com" },
 		user: { has_role: (r) => (Array.isArray(r) ? r : [r]).some((x) => roles.includes(x)) },
 		utils: {
 			escape_html: (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
@@ -72,11 +76,25 @@ const ctx = {
 	frappe,
 	__: (s, args) => (args ? s.replace(/\{(\d+)\}/g, (_, i) => args[i]) : s),
 	cint: (v) => parseInt(v || 0, 10) || 0,
-	fetch: async (url) => {
+	fetch: (url, opts) => {
 		log.push(["fetch", url]);
-		if (fetchAnswer === "throw") throw new Error("offline");
-		return { ok: true, json: async () => ({ message: fetchAnswer }) };
+		if (fetchAnswer === "throw") return Promise.reject(new Error("offline"));
+		if (fetchAnswer === "hang") {
+			// Never answers; only an abort ends it.
+			return new Promise((_, reject) => {
+				if (opts && opts.signal) opts.signal.addEventListener("abort", () => reject(new Error("aborted")));
+			});
+		}
+		return Promise.resolve({ ok: true, json: async () => ({ message: fetchAnswer }) });
 	},
+	setTimeout: (fn, ms) => {
+		timers.push({ fn, ms, cleared: false });
+		return timers.length;
+	},
+	clearTimeout: (id) => {
+		if (timers[id - 1]) timers[id - 1].cleared = true;
+	},
+	AbortController,
 	Promise,
 	console,
 	encodeURIComponent,
@@ -92,6 +110,7 @@ function makeFrm(doc, dirty = false) {
 		doc: Object.assign({ name: "TST-PUMP-100", is_stock_item: 0, is_fixed_asset: 0 }, doc),
 		is_new: () => false,
 		is_dirty() { return dirty; },
+		has_perm: () => true,
 		buttons: [],
 		add_custom_button(label, fn, group) { this.buttons.push({ label, fn, group }); },
 		refresh_field: (f) => log.push(["refresh_field", f]),
@@ -130,6 +149,20 @@ for (const d of [{ is_stock_item: 1 }, { is_fixed_asset: 1 }]) {
 	handlers.refresh(f);
 	assert.equal(f.buttons.length, 0);
 }
+// A service account, whatever it holds, and a person who can't write the Item see no button.
+roles = ["Stock Manager", "Item Manager"];
+for (const user of ["Administrator", "triton@sapphirefountains.com"]) {
+	frappe.session.user = user;
+	const f = makeFrm({});
+	handlers.refresh(f);
+	assert.equal(f.buttons.length, 0, user);
+}
+frappe.session.user = "buyer@example.com";
+const readOnly = makeFrm({});
+readOnly.has_perm = (ptype) => ptype !== "write";
+handlers.refresh(readOnly);
+assert.equal(readOnly.buttons.length, 0, "no write permission");
+roles = ["Item Manager"];
 
 // 2. Button path: check (GET) -> dialog -> confirm -> turn_on -> reload -> next steps -> reconciliation.
 checkAnswer = passing;
@@ -160,6 +193,20 @@ frappe.route_hooks.after_load(reco);
 const sv = log.find((l) => Array.isArray(l) && l[0] === "model.set_value");
 assert.deepEqual(JSON.parse(JSON.stringify(sv.slice(1))), ["Stock Reconciliation Item", "row-1", { item_code: "TST-PUMP-100", warehouse: "Bin - TC" }]);
 
+// 2b. Documents the person can't open are counted, and an unreadable "locked by" stays unnamed.
+checkAnswer = Object.assign({}, passing, {
+	locked_by: { doctype: null, name: null },
+	checks: [{ key: "x", label: "L", ok: true, detail: "", examples: [{ doctype: "Sales Invoice", name: "SI-T-2" }], hidden_examples: 2 }],
+});
+frm = makeFrm({});
+handlers.refresh(frm);
+frm.buttons[0].fn();
+await tick(); await tick();
+assert.ok(lastDialog.fields_dict.checks.$wrapper.content.includes("2 you can&#39;t open") ||
+	lastDialog.fields_dict.checks.$wrapper.content.includes("2 you can't open"));
+assert.ok(lastDialog.fields_dict.checks.$wrapper.content.includes("a document you can"));
+assert.ok(lastDialog.fields_dict.checks.$wrapper.content.includes('href="/desk/sales-invoice/SI-T-2"'));
+
 // 3. Failing checks: dialog says Close, confirm does not call turn_on.
 checkAnswer = Object.assign({}, passing, { can_switch: false, checks: [{ key: "x", label: "L", ok: false, detail: "D <i>", examples: [] }] });
 log.length = 0;
@@ -185,10 +232,17 @@ assert.equal(frappe.validated, false);
 assert.ok(log.some((l) => Array.isArray(l) && l[0] === "fetch" && l[1].includes("maintain_stock.check?item_code=TST-PUMP-100")));
 const dirtyFrm = frm;
 dirtyFrm.is_dirty = () => true;
+// The resumed save is stopped by the form's own validation: its promise never settles.
+dirtyFrm.save = () => {
+	log.push("frm.save");
+	return new Promise(() => {});
+};
+log.length = 0;
 lastDialog.opts.primary_action();
 await tick(); await tick(); await tick();
 assert.equal(dirtyFrm.doc.modified, "2026-10-28 10:00:01");
 assert.ok(log.includes("frm.save"));
+assert.ok(log.includes("msgprint"), "next steps shown without waiting for the save");
 assert.ok(!log.includes("reload_doc"));
 
 // 5. Save path, not locked / check fails / no role / box already on: save untouched.
@@ -201,6 +255,23 @@ for (const [answer, why] of [[Object.assign({}, passing, { locked_by: false }), 
 	await handlers.validate(frm);
 	assert.equal(frappe.validated, true, why);
 }
+// A check that never answers: the save goes on once the time limit passes.
+frm = makeFrm({});
+handlers.refresh(frm);
+frm.doc.is_stock_item = 1;
+fetchAnswer = "hang";
+frappe.validated = true;
+timers.length = 0;
+let settled = false;
+const pending = Promise.resolve(handlers.validate(frm)).then(() => { settled = true; });
+await tick();
+assert.equal(settled, false, "waits for the check at first");
+const limit = timers.find((t) => !t.cleared);
+assert.ok(limit && limit.ms > 0 && limit.ms <= 5000, "a time limit of a few seconds");
+limit.fn();
+await pending;
+assert.equal(frappe.validated, true, "timed out: save untouched");
+
 frm = makeFrm({ is_stock_item: 1 });
 handlers.refresh(frm);
 log.length = 0;
