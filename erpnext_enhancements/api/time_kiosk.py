@@ -1189,17 +1189,41 @@ def get_nearby_visit(lat=None, lng=None):
 
 
 @frappe.whitelist()
-def link_attachment(file_name, project, task=None):
+def link_attachment(file_name, project=None, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
     the same attachment is also visible on the linked Project and Task.
-    """
-    try:
-        original = frappe.get_doc("File", file_name)
 
-        targets = [("Project", project)]
-        if task:
-            targets.append(("Task", task))
+    ``file_name`` is the File's docname, and the File must be attached to one of
+    the caller's own intervals. The copies go to THAT interval's Project and
+    Task (v1.753.1); ``project`` and ``task`` are ignored. They were trusted
+    until then, and the copies are inserted with ``ignore_permissions``, so a
+    caller could hang a file on any Project or Task. A page cached before that
+    release still sends them.
+
+    Every copy is private (v1.753.1). The kiosk uploaded these public until then:
+    photographs of customers' property at an unauthenticated ``/files/`` URL. An
+    original that still arrives public, from a page cached before that release,
+    is made private first (``_make_kiosk_file_private``).
+    """
+    original = frappe.get_doc("File", file_name)
+    employee = _session_employee()
+    interval = None
+    if original.attached_to_doctype == "Job Interval" and original.attached_to_name:
+        interval = frappe.db.get_value(
+            "Job Interval", original.attached_to_name, ["employee", "project", "task"], as_dict=True
+        )
+    if not employee or not interval or interval.employee != employee:
+        frappe.throw(_("You can only add files to your own jobs."), frappe.PermissionError)
+
+    # Outside the try on purpose: if this save fails after Frappe has moved the
+    # file, the request must roll back, because that rollback is what moves it back.
+    _make_kiosk_file_private(original)
+
+    try:
+        targets = [("Project", interval.project)]
+        if interval.task:
+            targets.append(("Task", interval.task))
 
         for doctype, docname in targets:
             if not docname:
@@ -1217,12 +1241,13 @@ def link_attachment(file_name, project, task=None):
                     "attached_to_doctype": doctype,
                     "attached_to_name": docname,
                     "folder": original.folder,
-                    "is_private": original.is_private
+                    "is_private": 1
                 })
                 linked.insert(ignore_permissions=True)
 
         return {
             "status": "success",
+            "name": original.name,
             "file_name": original.file_name,
             "file_url": original.file_url
         }
@@ -1407,9 +1432,9 @@ def _attach_photo_file(row, file_name, interval):
         # rather than recording a photo that does not exist.
         return False
 
-    if not cint(file_doc.is_private):
-        file_doc.is_private = 1
-        file_doc.save(ignore_permissions=True)
+    # Before anything is written: the privacy flip below moves the file on disk.
+    _assert_kiosk_file(file_doc, interval.name)
+    _make_kiosk_file_private(file_doc)
 
     row.file_doc = file_doc.name
     row.image = file_doc.file_url
@@ -1425,6 +1450,65 @@ def _attach_photo_file(row, file_name, interval):
         }, update_modified=False)
 
     return True
+
+
+def _assert_kiosk_file(file_doc, interval_name):
+    """Refuse a File the caller did not upload to this job (v1.753.1).
+
+    Allowed: a File attached to the interval itself, which is where both kiosk
+    upload paths put it, or one the caller uploaded that is attached to nothing
+    yet. The caller must already be known to own ``interval_name``.
+
+    Until v1.753.1 any File docname was accepted. ``record_job_photo`` would make
+    it private (moving the bytes, and repointing every File that shares its
+    ``content_hash``), anchor it to the caller's interval if it was unattached,
+    and fan it out to the Project, all for a file that was never theirs.
+
+    Not enough on its own: a row of the caller's own can point at somebody
+    else's public bytes (``upload_file`` takes a bare ``file_url``). The privacy
+    flip checks that separately, in ``_make_kiosk_file_private``.
+    """
+    if interval_name and file_doc.attached_to_doctype == "Job Interval" \
+            and file_doc.attached_to_name == interval_name:
+        return
+    if not file_doc.attached_to_doctype and file_doc.owner == frappe.session.user:
+        return
+    frappe.throw(_("You can only use files you uploaded to this job."), frappe.PermissionError)
+
+
+def _make_kiosk_file_private(file_doc):
+    """Make a kiosk File private, unless its bytes are in use elsewhere (v1.753.1).
+
+    Frappe moves the bytes into ``private/files`` and repoints every File that
+    shares the ``content_hash``. A public kiosk row can share a website asset's
+    bytes and URL: frappe's upload reuses an existing URL for identical bytes,
+    and ``upload_file`` takes a bare ``file_url`` (16.53.0 guards only private
+    URLs). Moving it would take the asset off the public site. So the flip
+    happens only when every other row with those bytes is one of the
+    uploader's own kiosk rows (``kiosk_files.why_not_movable``); otherwise the
+    call is refused and nothing moves.
+
+    Public Files are not refused outright: a page cached before v1.753.1 still
+    uploads public, and refusing would leave its upload public and uncopied.
+    """
+    if cint(file_doc.is_private):
+        return
+    # Imported here, not at the top: suites that load this module stub the
+    # workforce package with only the modules imported above.
+    from erpnext_enhancements.workforce import kiosk_files
+
+    reason = kiosk_files.why_not_movable(
+        file_doc.as_dict(),
+        kiosk_files.rows_sharing_bytes(file_doc.name, file_doc.content_hash, file_doc.file_url),
+    )
+    if reason:
+        frappe.throw(
+            _("This file is also used elsewhere on the site, so the kiosk cannot take it. "
+              "Upload it again from the kiosk."),
+            frappe.PermissionError,
+        )
+    file_doc.is_private = 1
+    file_doc.save(ignore_permissions=True)
 
 
 # ---------------------------------------------------------------------------

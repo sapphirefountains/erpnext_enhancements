@@ -803,16 +803,22 @@
     });
   }
 
-  function linkFile(fileName) {
-    var ci = app.currentInterval || {};
+  // `fileDoc` is the File's docname from upload_file, and `interval` the Job
+  // Interval it was uploaded to, captured when the upload started. Both go
+  // through unchanged: until v1.753.1 the photo registration below was handed
+  // `r.file_name`, the display name, which record_job_photo cannot look up, so
+  // every attached image stayed "Pending". No project or task is sent: the
+  // server copies the file to its own interval's Project and Task, so a job
+  // switched during a slow upload cannot redirect the copies.
+  function linkFile(fileDoc, interval) {
     api(API + 'link_attachment', {
-      file_name: fileName, project: ci.project, task: ci.task || null,
+      file_name: fileDoc,
     }).then(function (r) {
       if (r && r.status === 'success') {
         app.attachments.push({ file_name: r.file_name, file_url: r.file_url });
         renderAttachments();
         toast('Attachment added.', 'green');
-        countAttachedImageAsJobPhoto(r.file_name, r.file_url);
+        countAttachedImageAsJobPhoto(fileDoc, r.file_name || r.file_url, interval);
       }
     }).catch(function (e) { toast(humanError(e), 'red'); });
   }
@@ -828,16 +834,22 @@
   // evidence that the job was photographed. The registration is best-effort —
   // the gate that actually blocks a clock-out is server-side in
   // workforce/photo_gate.py, so a failure here costs the chip, not the rule.
-  function countAttachedImageAsJobPhoto(fileName, fileUrl) {
+  //
+  // It registers against the interval the file was UPLOADED to, not whichever
+  // job is current when the reply lands: the server only accepts a File attached
+  // to the interval it is registered on.
+  function countAttachedImageAsJobPhoto(fileDoc, displayName, interval) {
     var ci = app.currentInterval || {};
-    if (!ci.name) return;
-    if (!/\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(String(fileName || fileUrl || ''))) return;
+    if (!ci.name || !fileDoc) return;
+    interval = interval || ci.name;
+    if (!/\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(String(displayName || ''))) return;
 
     api(API + 'record_job_photo', {
-      job_interval: ci.name,
+      job_interval: interval,
       client_uid: mintCaptureId(),
-      file_name: fileName,
+      file_name: fileDoc,
     }).then(function () {
+      if (interval !== (app.currentInterval || {}).name) return;
       app.photoCount = (app.photoCount || 0) + 1;
       renderPhotoChip();
     }).catch(function () {
@@ -847,11 +859,15 @@
 
   function uploadFile(file) {
     var ci = app.currentInterval || {};
+    var interval = ci.name;
     var fd = new FormData();
     fd.append('file', file, file.name);
-    fd.append('is_private', '0');
+    // Private, like the camera path below (v1.753.1): these are photographs and
+    // documents from customers' property, and a public /files/ URL is
+    // unauthenticated and effectively permanent.
+    fd.append('is_private', '1');
     fd.append('doctype', 'Job Interval');
-    fd.append('docname', ci.name);
+    fd.append('docname', interval);
     fd.append('folder', 'Home/Attachments');
     toast('Uploading…', null, 2000);
     fetch('/api/method/upload_file', {
@@ -861,7 +877,7 @@
       body: fd,
     }).then(function (r) { return r.json(); })
       .then(function (data) {
-        if (data && data.message && data.message.name) linkFile(data.message.name);
+        if (data && data.message && data.message.name) linkFile(data.message.name, interval);
         else toast('Upload failed.', 'red');
       })
       .catch(function () { toast('Upload failed.', 'red'); });

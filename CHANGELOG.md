@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.753.1] - 2026-10-27
+
+ERPNext Task TASK-2026-02992 (PRJ-00580, Misc Tasks).
+
+**This release carries a patch that writes production data on deploy: it moves 6 stored files
+and updates 16 File rows and 3 photo rows, and tags 3 Files. Nik approves the merge explicitly.**
+
+### Security
+- **The Time Kiosk's "Add files" button uploads privately, and the files it already stored
+  publicly are made private** (`public/js/kiosk/app.js`, `api/time_kiosk.py`,
+  `workforce/kiosk_files.py`, `patches/privatize_kiosk_attachment_files.py`). Found while scoping
+  the kiosk Photos tab (#1374); Nik decided on 2026-10-27 that it ships on its own. An independent
+  review confirmed each point on production (frappe 16.53.0).
+  - **Public uploads.** `uploadFile` sent `is_private '0'`, so every file landed under
+    `/files/`, where anybody holding the URL could download it without signing in. These are
+    photographs of customers' property. The camera path beside it had always uploaded
+    privately; now both do.
+  - **Public copies.** `link_attachment` copied each File onto the job's Project and Task with
+    the original's `is_private`, so the copies were public too. Every copy is now private.
+  - **A privacy flip could take a website asset offline.** Making a File private moves the bytes
+    into `private/files` and repoints every File sharing its `content_hash`
+    (`File.handle_is_private_changed`, `update_existing_file_docs`). Frappe's `save_file` reuses an
+    existing File's URL for identical bytes, and `handler.upload_file` takes a bare `file_url`
+    (16.53.0's `validate_private_file_access` guards only private URLs). So a kiosk row can
+    share the bytes of the site logo or an Item image, and making it private would 404 that
+    asset to the public while Website Settings, the Item and any HTML still point at `/files/`.
+    Any employee could do it on purpose: point a row on their own interval at a public asset,
+    then call `record_job_photo` or `link_attachment`. Both endpoints now go through
+    `_make_kiosk_file_private`, which refuses (`PermissionError`, nothing moves) unless
+    `kiosk_files.why_not_movable` finds every other row sharing the bytes or the URL to be the
+    uploader's own Job Interval, Project or Task row at the same URL. Public Files are not refused
+    outright, because a page cached before this release still uploads public, and refusing would
+    leave its upload public and uncopied.
+  - **Any File could be claimed.** `record_job_photo(file_name=…)` accepted any File docname,
+    anchored it to the caller's interval if it was unattached, and routed it to the Project.
+    `_assert_kiosk_file` now accepts only a File attached to the caller's own interval, or the
+    caller's own upload that is attached to nothing yet, and it runs before anything is written.
+  - **Copies could go anywhere.** `link_attachment` trusted the `project` and `task` the page
+    sent and inserted the copies with `ignore_permissions`. It now takes both from the File's own
+    Job Interval, which must be the caller's, and ignores what the page sends. The page reads the
+    job when the upload starts, so a job switched during a slow upload cannot redirect the copies.
+
+### Fixed
+- **An image added with "Add files" now counts as a job photo, and is no longer stuck at
+  Pending.** `linkFile` handed `countAttachedImageAsJobPhoto` the display name (`r.file_name`).
+  `record_job_photo` wants the File's docname, so `_attach_photo_file` found nothing and the
+  `Job Interval Photo` row stayed `Pending` for good. The upload's `data.message.name` now goes
+  through unchanged, with the interval it was uploaded to. The registration targets that
+  interval rather than whichever job is current when the reply lands, and the chip moves only
+  when the two match.
+- **Rows a cached page goes on writing can be linked later.** A device keeps its cached `app.js`
+  for at least one session after a deploy (`kiosk-sw.js` serves it cache-first), and that page
+  still registers by display name. The linking step is `kiosk_files.link_stuck_photo_rows`,
+  which the patch calls and which is safe to run again:
+  `bench --site <site> execute erpnext_enhancements.workforce.kiosk_files.link_stuck_photo_rows`.
+
+### Changed
+- **One-time patch `privatize_kiosk_attachment_files` (post_model_sync).** On production on
+  2026-10-27 it found 6 public image Files on Job Intervals (5 PNG screenshots and 1 JPEG job
+  photo), with 6 Project and 4 Task copies: 16 File rows. It also found 3 photo rows stuck at
+  Pending, each on a different interval.
+  - **Files.** Each stored file gets one `File.save` with `is_private = 1`. In frappe 16.53.0,
+    `handle_is_private_changed` moves the bytes to `private/files`, and
+    `update_existing_file_docs` repoints every row that shares the `content_hash`, which is how
+    the copies go private with it. A `Job Interval Photo.image` holding the old URL is
+    repointed too.
+  - **Skipped and reported:** a group with any row that `why_not_movable` rejects: attached to
+    anything but a Job Interval, Project or Task; owned by anybody but the Job Interval File's
+    owner; or at another URL (compared with `BINARY`, since MariaDB's collation matches
+    `image.jpg` to `Image.jpg`). Also a file with no hash, and a file missing from disk.
+  - **A taken name.** When `private/files` already holds the name (production has `image.jpg`
+    and `Image.jpg` there), frappe raises `FileExistsError`. The patch then moves the file
+    under frappe's own suffixed form (stem, last six characters of the hash, extension), free
+    both on disk and among File rows, repoints the rows in SQL and drops them from the document
+    cache. The move is the last step.
+  - **Stuck rows.** `link_stuck_photo_rows` links each Pending row with no file to the image File
+    on its interval that is no row's `file_doc` yet and was created at most 10 seconds before
+    the row's `captured_on` (on production the gaps were 0.5 to 0.9 seconds), only when the
+    pairing is one to one. It sets `file_doc`, `image` and `Uploaded`, recomputes the
+    interval's `photos_pending_upload`, and routes the photo by calling
+    `photo_routing.route_job_photo` directly. That function is synchronous and idempotent and
+    never raises, and a deploy flushes the job queue, so nothing is enqueued. On production
+    routing adds tags only: the Project and Task copies already exist, and the one Project with
+    a customer has a Drive folder, so no Customer copy is made. The two other Pending rows are
+    camera captures whose bytes never arrived. They have no file and stay Pending.
+  - **Savepoints and the disk.** One savepoint per file or interval, and a commit after each.
+    In 16.53.0 a savepoint rollback undoes the database only, and frappe runs its file-moving
+    rollback watchers on a full rollback alone. So when a save fails after the move, the patch
+    moves the bytes back itself. The commit also clears the stale watcher.
+  - **Not done.** The attachment lines already in the timelines keep the old `/files/` URL, as
+    frappe leaves them on any privacy change.
+  - Prints its counts before and after; "public Files" counts exactly the selection. Never
+    raises; safe to run twice.
+
+### Tests
+- `tests/test_kiosk_attachment_privacy.py` (80 tests, bench-free, own CI step) covers:
+  - the page contract;
+  - `_assert_kiosk_file`, `_make_kiosk_file_private`, `_attach_photo_file` and
+    `link_attachment`, run from the real source against a stub, including a row of one's own
+    pointing at the site logo;
+  - `kiosk_files`: the movability rule, the pairing rule and the reusable relink step;
+  - the patch, against an in-memory `tabFile` and a real temporary files tree, including a
+    same-URL website row. A fake `File.save` there does what 16.53.0's
+    `handle_is_private_changed` does.
+- `test_kiosk_photo_gate_chip` follows the new guard.
 ## [1.753.0] - 2026-10-27
 
 ERPNext Task TASK-2026-02991 (PRJ-00580, Planner UX).
