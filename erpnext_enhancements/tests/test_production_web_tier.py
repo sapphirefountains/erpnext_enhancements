@@ -29,8 +29,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS = REPO_ROOT / "infra" / "configs"
@@ -520,11 +522,47 @@ class InstallerTests(unittest.TestCase):
 		self.assertNotEqual(result.returncode, 0)
 		self.assertIn("nothing to put back", result.stderr)
 
-	@unittest.skipUnless(shutil.which("shellcheck"), "shellcheck is not installed")
 	def test_shellcheck(self):
+		_tool_or_skip(self, shutil.which("shellcheck"), "shellcheck")
 		for script in (INSTALLER, CONFIGS / "nginx_webserver_guard.sh"):
 			result = subprocess.run(["shellcheck", str(script)], capture_output=True, text=True)
 			self.assertEqual(result.returncode, 0, f"{script.name}: {result.stdout}")
+
+
+#: Set by the CI step. A missing tool then FAILS the tests that need it instead of skipping
+#: them: a skip prints one letter in a long log, and these are the only tests that run the
+#: guard and the shell scripts against the real thing.
+REQUIRE_TOOLS = os.environ.get("REQUIRE_WEB_TIER_TOOLS") == "1"
+
+
+def _tool_or_skip(testcase, available, what):
+	if available:
+		return
+	if REQUIRE_TOOLS:
+		testcase.fail(f"{what} is required here (REQUIRE_WEB_TIER_TOOLS=1) but is not available")
+	raise unittest.SkipTest(f"{what} is not available")
+
+
+class RequiredToolTests(unittest.TestCase):
+	def test_a_missing_tool_fails_when_required(self):
+		with mock.patch(f"{__name__}.REQUIRE_TOOLS", True):
+			with self.assertRaises(AssertionError):
+				_tool_or_skip(self, None, "nginx")
+
+	def test_a_missing_tool_skips_otherwise(self):
+		with mock.patch(f"{__name__}.REQUIRE_TOOLS", False):
+			with self.assertRaises(unittest.SkipTest):
+				_tool_or_skip(self, None, "nginx")
+
+	def test_a_present_tool_runs(self):
+		with mock.patch(f"{__name__}.REQUIRE_TOOLS", True):
+			_tool_or_skip(self, "/usr/sbin/nginx", "nginx")
+
+	def test_ci_requires_the_tools(self):
+		ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+		step = ci[ci.index("name: Production web tier units (bench-free)") :]
+		step = step[: step.index("- name:", 1)] if "- name:" in step[1:] else step
+		self.assertIn('REQUIRE_WEB_TIER_TOOLS: "1"', step)
 
 
 def _nginx_binary():
@@ -578,7 +616,6 @@ EARLIER_GUARD = (
 )
 
 
-@unittest.skipUnless(sys.platform.startswith("linux") and _nginx_binary(), "needs Linux and an nginx binary")
 class NginxGuardTests(unittest.TestCase):
 	"""nginx_webserver_guard.sh run against a real nginx (the CI runner ships one).
 
@@ -590,6 +627,9 @@ class NginxGuardTests(unittest.TestCase):
 	"""
 
 	def setUp(self):
+		_tool_or_skip(
+			self, sys.platform.startswith("linux") and _nginx_binary(), "Linux with an nginx binary"
+		)
 		self.root = Path(tempfile.mkdtemp())
 		self.addCleanup(shutil.rmtree, self.root)
 		self.prefix = self.root / "nginx"
@@ -622,9 +662,10 @@ class NginxGuardTests(unittest.TestCase):
 			f"{self.prefix}/error.log",
 		]
 
-	def guard(self, *args, nginx=None):
+	def guard(self, *args, nginx=None, path_first=None):
+		path = f"{Path(sys.executable).parent}:/usr/sbin:/usr/bin:/bin"
 		env = {
-			"PATH": f"{Path(sys.executable).parent}:/usr/sbin:/usr/bin:/bin",
+			"PATH": f"{path_first}:{path}" if path_first else path,
 			"NGINX": nginx or " ".join(self.nginx),
 			"NGINX_RELOAD": "true",
 			"STATE_DIR": str(self.state),
@@ -640,7 +681,16 @@ class NginxGuardTests(unittest.TestCase):
 
 	def serve(self):
 		subprocess.run(self.nginx, check=True, capture_output=True, timeout=30)
-		self.addCleanup(subprocess.run, [*self.nginx, "-s", "stop"], capture_output=True, timeout=30)
+		self.addCleanup(self.stop_nginx)
+
+	def stop_nginx(self):
+		# `-s stop` only signals the master. Wait for it to exit (it deletes its pid file last),
+		# or the scratch directory's removal races nginx deleting files inside it.
+		pid_file = self.prefix / "nginx.pid"
+		subprocess.run([*self.nginx, "-s", "stop"], capture_output=True, timeout=30)
+		deadline = time.monotonic() + 10
+		while pid_file.exists() and time.monotonic() < deadline:
+			time.sleep(0.05)
 
 	def status(self, host, path="/api/method/ping"):
 		conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
@@ -742,6 +792,63 @@ class NginxGuardTests(unittest.TestCase):
 		self.assertNotEqual(result.returncode, 0)
 		self.assertIn("back as it was", result.stderr)
 		self.assertEqual(self.real.read_text(), self.original)
+		self.assertNoDebris()
+
+	def assertNoDebris(self):
+		left = sorted(p.name for p in self.state.iterdir()) if self.state.exists() else []
+		self.assertEqual([n for n in left if n.startswith("frappe-nginx.before.")], [], left)
+
+	def test_a_rewrite_that_fails_part_way_is_put_back(self):
+		# A python3 that, asked to run the rewrite, truncates the file and fails, as a write
+		# that hits a full disk does. Every other python3 call goes to the real one.
+		fake = self.root / "fakebin"
+		fake.mkdir()
+		(fake / "python3").write_text(
+			"#!/bin/sh\n"
+			'if [ "$1" = - ]; then\n'
+			"\tscript=$(cat)\n"
+			'\tcase "$script" in *"GUARD = ["*) : > "$2"; exit 1 ;; esac\n'
+			f'\tprintf "%s\\n" "$script" | {sys.executable} - "$2"\n'
+			"\texit $?\n"
+			"fi\n"
+			f'exec {sys.executable} "$@"\n'
+		)
+		(fake / "python3").chmod(0o755)
+		result = self.guard(path_first=fake)
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("rewriting it failed", result.stderr)
+		self.assertIn("back as it was", result.stderr)
+		self.assertEqual(self.real.read_text(), self.original)
+		self.assertNoDebris()
+
+	def test_a_file_that_is_not_utf8_is_refused_cleanly(self):
+		raw = self.original.encode() + b"# caf\xe9 (latin-1)\n"
+		self.real.write_bytes(raw)
+		result = self.guard()
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("is not UTF-8 text", result.stderr)
+		self.assertNotIn("Traceback", result.stderr)
+		self.assertEqual(self.real.read_bytes(), raw)
+		self.assertNoDebris()
+
+	def test_crlf_line_endings_are_kept(self):
+		raw = self.original.replace("\n", "\r\n").encode()
+		self.real.write_bytes(raw)
+		self.assertEqual(self.guard().returncode, 0)
+		data = self.real.read_bytes()
+		self.assertIn(b"erpnext_enhancements: debugger guard", data)
+		self.assertNotIn(b"\n", data.replace(b"\r\n", b""))  # no bare LF anywhere
+		self.assertEqual(self.guard().returncode, 0)
+		self.assertEqual(self.real.read_bytes(), data)  # a second run is still a no-op
+		self.assertEqual(self.guard("--undo").returncode, 0)
+		self.assertEqual(self.real.read_bytes(), raw)
+
+	def test_check_warns_when_the_block_does_not_forward_host(self):
+		self.assertNotIn("WARNING", self.guard("--check").stdout)
+		self.real.write_text(self.original.replace("\t\tproxy_set_header Host $host;\n", ""))
+		result = self.guard("--check")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn("has no 'proxy_set_header Host $host;'", result.stdout)
 
 
 class StartupScriptTests(unittest.TestCase):

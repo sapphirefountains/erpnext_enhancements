@@ -208,7 +208,10 @@ sudo bash /home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/ngin
 
 - **The `grep`** should print nothing. If it prints a value, stop and send it to Claude:
   socketio may use it when it checks a user's session.
-- **`--check`** names the file and shows `guard: none`.
+- **`--check`** names the file and shows `guard: none`. On a VM where the first, hand-typed
+  version of Step 0 went in, it shows `guard: an earlier version`; the run replaces it. A
+  `WARNING` that the block has no `proxy_set_header Host $host;` means stop and send Claude
+  the block.
 - **The run** ends with `guarded <file> and reloaded nginx` and the block's first lines:
   `location @webserver {`, the guard's comment, then its two `if` lines.
 
