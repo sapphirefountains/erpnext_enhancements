@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.754.1] - 2026-10-28
+## [1.754.2] - 2026-10-28
 
 ERPNext: TASK-2026-02994 (PRJ-00580, Platform Hygiene & CI). These are the four Low items from
 the final review of `nginx_webserver_guard.sh` (v1.753.3, Step 0 of
