@@ -1,0 +1,25 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# The queue Redis (redis_queue in common_site_config, :11000 on both VMs): every RQ job
+# waits here. The command is the development Procfile's own line, run from the bench
+# directory, so the config file still decides the port and where the data lives.
+#
+# The deploy still FLUSHDBs this instance before it restarts the bench, so queued jobs do
+# not survive a deploy. That is unchanged by these units.
+
+[Unit]
+Description=Frappe Bench redis queue (config/redis_queue.conf)
+PartOf=frappe-bench.service
+After=network.target
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env redis-server config/redis_queue.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service

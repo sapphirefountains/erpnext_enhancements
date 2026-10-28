@@ -1,0 +1,36 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# An RQ worker for the short and default queues. The installer enables instances @1..@N,
+# N being background_workers in common_site_config (1 when unset), the count bench's
+# production setup uses for each queue group.
+#
+# This is bench's supervisor layout for Frappe newer than 14.18 ("multi-queue
+# consumption"): N workers take short then default, N more take long then default then
+# short. The development Procfile had ONE `bench worker` for every queue, so a job that
+# ran for twenty minutes held up every job queued behind it, short ones included. Now two
+# jobs can run at the same time, which a single worker never allowed.
+#
+# Output goes to the same files the Procfile wrote, appended by the worker itself (through
+# sh, as the frappe user) so the files stay frappe's; systemd opening them would create
+# them as root on a fresh bench.
+#
+# A job still running when the unit stops is cut short, as it was under honcho: SIGTERM
+# goes to the whole control group, the job's work horse included.
+
+[Unit]
+Description=Frappe Bench worker %i (queues short, default)
+PartOf=frappe-bench.service
+After=network.target mariadb.service frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+Wants=frappe-bench-redis-cache.service frappe-bench-redis-queue.service
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/sh -c 'exec bench worker --queue short,default >>logs/worker.log 2>>logs/worker.error.log'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service

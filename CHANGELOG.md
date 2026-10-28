@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.753.3] - 2026-10-28
+
+ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566): TASK-2026-02994 for this
+PR, and TASK-2026-02995, assigned to Nik, for the VM steps.
+
+**Nothing changes on a VM when this merges.** It ships files and a runbook,
+`infra/docs/production-web-tier.md`, which has two parts:
+1. **An interim nginx guard for prod**, to apply as soon as this merges.
+2. **The cutover.** Beta first, then prod the same day. A VM moves to gunicorn only when someone
+   runs it there.
+
+The deploy's restart command is unchanged and works before and after a cutover, so this PR and
+the cutovers can land in any order.
+
+### Security
+- **Prod's web process is the Werkzeug development server; this is the replacement: gunicorn and
+  the rest of bench's production process list, as systemd units**
+  (`infra/configs/systemd/`, `infra/configs/gunicorn.conf.py`,
+  `infra/configs/install_bench_units.sh`).
+  - **How it got there.** `frappe-bench.service` ran `honcho start` on the bench's development
+    Procfile, whose web line is `bench serve`. In frappe 16.53.0 that is
+    `frappe.app.serve()`: Werkzeug's `run_simple()` with its debugger and reloader on. The unit
+    came from `startup_script.sh`, and `infra/assets/test-vm-setup.md` listed "gunicorn:8000"
+    while its own unit ran `bench start`.
+  - **The reloader.** It also restarted the web process mid-deploy, as soon as `git reset`
+    touched a `.py` file and before `bench migrate` ran.
+  - **The umbrella.** `frappe-bench.service` keeps its name and becomes a oneshot umbrella.
+    gunicorn, socketio, the scheduler, both Redis instances and the RQ workers are each a unit
+    `PartOf` it. `systemctl restart frappe-bench` (the deploy, the upstream update, the deploy
+    user's only sudo command) restarts all of them on a VM that has been cut over, and still
+    restarts honcho on one that has not.
+  - **The workers.** bench's multi-queue layout: `background_workers` instances each of
+    short (`short,default`) and long (`long,default,short`), where the Procfile had one worker
+    for every queue.
+  - **nginx needs no change for the cutover.** Checked from outside: prod's server block is
+    bench's generated one and already serves `/assets` and existing `/files` itself.
+    gunicorn takes the same `127.0.0.1:8000` upstream, behind the same realip chain. gunicorn
+    binds 127.0.0.1, where `bench serve` bound 0.0.0.0.
+- **An interim guard until prod is cut over** (runbook, Step 0;
+  `infra/configs/nginx_webserver_guard.sh`, with `--check` and `--undo`). It adds lines to the
+  frappe block's `location @webserver`: requests for a Host the debugger would treat as local
+  are refused (444), and requests carrying the debugger's query parameter are refused (404) as
+  defense in depth.
+  - **How it edits.** It edits the one file `nginx -T` shows holding the block, resolving a
+    symlink so the link stays a link. It records the path and backs the file up once in
+    `/root`, replaces guard lines an earlier run left, and puts the file back if `nginx -t`
+    fails. Running it again is safe.
+  - **How it is tested.** CI runs it against a real nginx.
+  - **Why not a `default_server` catch-all.** It would also answer the load balancer's health
+    check with 444. The check sends the VM's IP as Host because
+    `erpnext-standalone-health-check` sets none, so the check would fail and the load balancer
+    would take prod out of service.
+- **`--workers` goes on gunicorn's command line, not only in its config file.**
+  - **Why.** `frappe.concurrency_limiter` (16.53.0) sizes every `@frappe.concurrent_limit()`
+    pool, frappe's own `download_pdf` among them, as half of `-w/--workers` × `--threads` parsed
+    from `sys.argv`. With the count in the config file alone, frappe finds 1 and lets one PDF
+    render at a time for the whole site.
+  - **How.** The unit runs `gunicorn.conf.py` as a script to get the number, so `bench set-config
+    -g gunicorn_workers N` plus a restart still works. A test runs the unit's command line for
+    real to prove what gunicorn receives.
+- **`limit_request_line` is 8190**, gunicorn's maximum, not its default 4094. nginx accepts
+  8 KB and the development server accepted 64 KB, so 4094 would have turned long GET requests
+  that work today into 400s on the day of the cutover.
+
+### Changed
+- **`startup_script.sh` no longer creates the honcho unit or runs `bench setup production frappe
+  --yes`.** That command, whenever it got past its prerequisites, installed supervisor and had
+  it start a second copy of every process. On boot it now:
+  - refreshes the production units on a VM that has been cut over;
+  - leaves a VM still on the old unit alone (a cutover is a watched step, not a side effect of a
+    reboot);
+  - installs the production units on a VM that has none;
+  - logs a VM with a bench but no erpnext_enhancements checkout;
+  - reloads nginx, which before happened only if `bench setup production` got that far.
+
+  A VM runs this script only after `infra-*-apply`: the script is instance metadata.
+- **nginx's frappe block is generated only when `nginx -T` shows none loaded.** The guard
+  first written for this release used `grep -r`, which does not follow the symlinks the block
+  lives behind. It would have generated a second block, with every upstream defined twice, and
+  left nginx unable to start on the next boot. A generated block that fails `nginx -t` is
+  unlinked again. A config that already fails `nginx -t` is not touched, and the Debian default
+  site is removed only after a generation passes.
+- **The installer refuses until the old process tree's environment is accounted for:**
+  - a bench `.env` (honcho loaded it into every process; only variable names are printed);
+  - environment set in front of a Procfile command;
+  - a drop-in under `frappe-bench.service.d`, which would now apply to an umbrella that runs
+    nothing;
+  - a node older than `apps/frappe/package.json` requires (node 24 or later at 16.53.0).
+
+  It also warns when the Procfile ran socketio with a different node. It installs only over an
+  old unit that is inactive, failed or unknown; "activating" covers `Restart=`'s wait. After
+  `background_workers` drops, it says stop-then-start, since `PartOf=` restarts an orphaned
+  worker instance.
+- **socketio starts after, and wants, the queue Redis.** At 16.53.0 it subscribes through
+  `get_redis_subscriber()`, whose default is `redis_queue`.
+- **The runbook covers:**
+  - what behaves differently: requests killed at `http_timeout`; the Triton chat stream cut at
+    120 s under sync workers, with the options left to Nik; a fixed worker pool; per-process
+    state; two job workers;
+  - the beta-only `_dev_server` difference;
+  - what never to run on these VMs;
+  - the managed-instance-group health check on :8000;
+  - every code comment that assumed gunicorn, and whether each becomes true. Most do.
+    `www/pay-card.html` cites gthread workers, which this bench does not run; its safety
+    argument does not depend on that.
+
+### Tests
+- `tests/test_production_web_tier.py`, a new bench-free step in `ci.yml`, covers:
+  - **the units:** every process is `PartOf` the umbrella and none runs `bench serve`;
+  - **the deploy:** it restarts the umbrella by the name its sudoers line allows;
+  - **`gunicorn.conf.py`:** it reads bench's keys with bench's defaults;
+  - **the web unit's command line,** run for real;
+  - **the startup script's nginx section,** cut out and run against a scratch `/etc/nginx` with a
+    stub nginx: a symlinked block is left alone, a missing one is generated, a failing one is
+    unlinked, and a broken config is not touched;
+  - **`install_bench_units.sh`,** run against a scratch directory with stub `systemctl` and
+    `node`, for every refusal above, plus the backup, the `.wants` built from
+    `background_workers`, the refresh hints and `--rollback`;
+  - **`nginx_webserver_guard.sh`** against a real nginx (the CI runner ships one), with bench's
+    block behind a symlink: local Hosts and the parameter refused, other traffic and an
+    IP-address Host passed, a stray unloaded copy untouched, an earlier guard replaced, a second
+    run a no-op, two loaded blocks refused, a failing `nginx -t` put back, and `--undo`;
+  - **shellcheck** on both scripts.
+- `test_client_ip` now pins the realip install before the nginx reload, instead of before the
+  `bench setup production` call that is gone.
+
 ## [1.753.2] - 2026-10-27
 
 ERPNext Task TASK-2026-02993 (PRJ-00580, Misc Tasks).

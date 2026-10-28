@@ -1,3 +1,10 @@
+# `systemctl restart frappe-bench` at the end restarts every bench process on both kinds of
+# VM, so this file does not change when a VM is cut over to gunicorn:
+#   * cut over: frappe-bench.service is an umbrella, and gunicorn, socketio, the workers,
+#     the scheduler and both Redis instances are each PartOf it (infra/configs/systemd/);
+#   * not yet: it runs `honcho start` on the development Procfile (`bench serve`).
+# The deploy user's sudoers line allows exactly that command (deploy_user_sudo_command).
+# Runbook: infra/docs/production-web-tier.md.
 steps:
   - name: 'google/cloud-sdk:latest'
     id: 'Deploy'

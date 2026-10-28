@@ -165,13 +165,13 @@ class StartupScriptTests(unittest.TestCase):
 		self.assertIn("nginx -t", block)
 		self.assertIn("REALIP_DST.bak", block)
 
-	def test_installs_before_bench_regenerates_nginx(self):
-		# `bench setup production` reloads nginx; installing first means one reload
-		# picks up both, and a boot never serves a window without the file.
-		# The command itself, not the comment above the install block that names it.
-		self.assertLess(
-			self.script.index("REALIP_DST="), self.script.index("bench setup production frappe --yes")
-		)
+	def test_installs_before_nginx_is_reloaded(self):
+		# The nginx block after it reloads nginx (and on a fresh VM first generates the
+		# bench's server block); installing first means one reload picks up both. Until
+		# v1.753.3 `bench setup production` did the reload, and only when it got that far.
+		# The command itself, not a comment that names it.
+		self.assertLess(self.script.index("REALIP_DST="), self.script.index("systemctl reload nginx"))
+		self.assertLess(self.script.index("REALIP_DST="), self.script.index("bench setup nginx --yes"))
 
 	def test_only_known_template_variables(self):
 		# compute.tf renders this through templatefile(). Any other ${...} -- the

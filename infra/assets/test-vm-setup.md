@@ -125,6 +125,12 @@ PARTUUID=... /boot/efi vfat defaults,umask=077                            0 2
 
 ## 6. Services (systemd)
 
+> **Correction (2026-10-28):** "gunicorn:8000" below was never true of this snapshot. Its own
+> unit (§13) runs `bench start`, whose Procfile's web line is `bench serve` — the Werkzeug
+> development server. Prod ran the same way, under `honcho start`. The production units that
+> replace it, and the cutover runbook, are in
+> [`infra/docs/production-web-tier.md`](../docs/production-web-tier.md).
+
 | Service | Status | Description |
 |---|---|---|
 | `mariadb.service` | active | MariaDB database server |
