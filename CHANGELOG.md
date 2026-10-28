@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.753.3] - 2026-10-28
+
+ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566). One Task for this PR, and
+one assigned to Nik for the VM steps.
+
+**Nothing changes on a VM when this merges.** It ships files and a runbook; a VM moves to
+gunicorn only when someone runs the cutover in `infra/docs/production-web-tier.md` on it,
+beta first. The deploy's restart command is unchanged and works before and after a cutover,
+so this PR and the two cutovers can land in any order.
+
+### Security
+- **Prod serves the internet with the Werkzeug development server, and this is the
+  replacement: gunicorn and the rest of bench's production process list, as systemd units**
+  (`infra/configs/systemd/`, `infra/configs/gunicorn.conf.py`,
+  `infra/configs/install_bench_units.sh`, `infra/docs/production-web-tier.md`).
+  - **Found on 2026-10-28** while checking #1377. A request for a missing `/files/` URL
+    returned a 500 Werkzeug Debugger page with a traceback (`frappe/middlewares.py` →
+    werkzeug's `shared_data.py`). In frappe 16.53.0 that stack exists only under
+    `frappe.app.serve()`: `run_simple()` with `use_debugger`, `use_evalex` and the reloader on,
+    around `application_with_statics()`.
+  - **How it got there.** `frappe-bench.service` ran `honcho start` on the bench's development
+    Procfile, whose web line is `bench serve --port 8000`. The unit came from
+    `startup_script.sh`. `infra/assets/test-vm-setup.md` listed "gunicorn:8000" while its own unit
+    ran `bench start`.
+  - **The console.** It is off for normal requests (`EVALEX = false`: Werkzeug 3.0.3 and later
+    enable it only for a localhost Host header), so it sat behind that check and a PIN.
+  - **The reloader.** It restarted the web process mid-deploy, as soon as `git reset` touched a
+    `.py` file and before `bench migrate` ran.
+  - **The umbrella.** `frappe-bench.service` keeps its name and becomes a oneshot umbrella.
+    gunicorn, socketio, the scheduler, both Redis instances and the RQ workers are each a unit
+    `PartOf` it. `systemctl restart frappe-bench` (the deploy, the upstream update, the deploy
+    user's only sudo command) restarts all of them on a VM that has been cut over, and still
+    restarts honcho on one that has not.
+  - **The workers.** bench's multi-queue layout: `background_workers` instances each of
+    short (`short,default`) and long (`long,default,short`), where the Procfile had one worker
+    for every queue.
+  - **nginx is not touched.** Checked from outside: prod's server block is bench's generated
+    one and already serves `/assets` and existing `/files` itself (nginx ETags, the template's
+    SVG `content-disposition: attachment` rule). gunicorn takes the same `127.0.0.1:8000`
+    upstream, behind the same realip chain. gunicorn binds 127.0.0.1, where `bench serve`
+    bound 0.0.0.0.
+- **`--workers` goes on gunicorn's command line, not only in its config file.**
+  `frappe.concurrency_limiter` (16.53.0) sizes every `@frappe.concurrent_limit()` pool, frappe's
+  own `download_pdf` among them, as half of `-w/--workers` × `--threads` parsed from
+  `sys.argv`. With the count in the config file alone, frappe finds 1 and lets one PDF render
+  at a time for the whole site. The unit runs `gunicorn.conf.py` as a script to get the number,
+  so `bench set-config -g gunicorn_workers N` plus a restart still works. A test runs the unit's
+  command line for real to prove what gunicorn receives.
+- **`limit_request_line` is 8190**, gunicorn's maximum, not its default 4094. nginx accepts
+  8 KB and the development server accepted 64 KB, so 4094 would have turned long GET requests
+  that work today into 400s on the day of the cutover.
+
+### Changed
+- **`startup_script.sh` no longer creates the honcho unit or runs `bench setup production frappe
+  --yes`.** That command, whenever it got past its prerequisites, installed supervisor and had
+  it start a second copy of every process.
+  - **On boot it now:**
+    - refreshes the production units on a VM that has been cut over;
+    - leaves a VM still on the old unit alone (a cutover is a watched step, not a side effect
+      of a reboot);
+    - installs the production units on a VM that has none;
+    - generates nginx's frappe block only where none exists;
+    - reloads nginx, which before happened only if `bench setup production` got that far.
+  - **This needs `infra-*-apply`.** A VM runs the new script only after that runs: the script
+    is instance metadata. The runbook says how to tell which script a VM has.
+- **What a cut-over VM does differently, listed in the runbook:**
+  - a request is killed at `http_timeout` (120 s), where before nginx 504'd the client and the
+    request ran on;
+  - concurrency is a fixed pool of `gunicorn_workers` processes;
+  - module-level state exists once per worker;
+  - two jobs can run at the same time.
+- **The runbook audits every comment that assumed gunicorn** and says whether each becomes
+  true. Most do. `www/pay-card.html` cites gthread workers, which this bench does
+  not run; its safety argument does not depend on that.
+
+### Tests
+- `tests/test_production_web_tier.py`, a new bench-free step in `ci.yml`, covers:
+  - **the units:** every process is `PartOf` the umbrella and none runs `bench serve`;
+  - **the deploy:** it restarts the umbrella by the name its sudoers line allows;
+  - **`gunicorn.conf.py`:** it reads bench's keys with bench's defaults;
+  - **the web unit's command line,** run for real;
+  - **`install_bench_units.sh`,** run against a scratch directory with a stub `systemctl`:
+    - it refuses while the old unit runs;
+    - it backs the old unit up;
+    - it builds the `.wants` from `background_workers`;
+    - `--rollback` restores the old unit;
+  - **shellcheck** on the installer.
+- `test_client_ip` now pins the realip install before the nginx reload, instead of before the
+  `bench setup production` call that is gone.
+
 ## [1.753.1] - 2026-10-27
 
 ERPNext Task TASK-2026-02992 (PRJ-00580, Misc Tasks).

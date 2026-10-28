@@ -85,35 +85,31 @@ if command -v mysqld &>/dev/null; then
   systemctl start mariadb 2>/dev/null || true
 fi
 
-# ── Enable & start frappe-bench systemd service ───────────
+# ── Bench processes (systemd) ─────────────────────────────
+# frappe-bench.service is the bench's handle, and a deploy restarts it by that name. On a
+# VM cut over to the production units (infra/docs/production-web-tier.md) it is an
+# umbrella over gunicorn, socketio, the workers, the scheduler and both Redis instances,
+# and the units are refreshed from the app checkout on every boot, so the repo stays the
+# source of truth; a refreshed definition applies at the next restart. A VM still on the
+# old `honcho start` unit -- whose Procfile runs `bench serve`, the Werkzeug development
+# server -- is left on it: a cutover is a watched step, not something a reboot should do.
+# A VM with no unit at all gets the production units, never the development server.
+# (No brace-style shell variables here: this file is a Terraform templatefile.)
+UNITS_INSTALLER=/home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/install_bench_units.sh
+UNITS_MARKER="# erpnext_enhancements: production process units"
+if [ -f /etc/systemd/system/frappe-bench.service ] && grep -qF "$UNITS_MARKER" /etc/systemd/system/frappe-bench.service; then
+  echo "[$(date)] Refreshing the production bench units"
+  bash "$UNITS_INSTALLER" || echo "[$(date)] WARNING: refreshing the bench units failed; the installed ones stay"
+elif [ -f /etc/systemd/system/frappe-bench.service ]; then
+  echo "[$(date)] frappe-bench.service still runs the development Procfile; see infra/docs/production-web-tier.md"
+elif [ -f "$UNITS_INSTALLER" ]; then
+  echo "[$(date)] frappe-bench.service not found — installing the production units"
+  bash "$UNITS_INSTALLER" || echo "[$(date)] WARNING: could not install the production bench units"
+fi
 if [ -f /etc/systemd/system/frappe-bench.service ]; then
   echo "[$(date)] Enabling and starting frappe-bench service"
   systemctl enable frappe-bench 2>/dev/null || true
   systemctl start frappe-bench 2>/dev/null || true
-elif [ -d /home/frappe/frappe-bench ]; then
-  echo "[$(date)] frappe-bench.service not found — creating"
-  cat > /etc/systemd/system/frappe-bench.service << 'SERVICEEOF'
-[Unit]
-Description=Frappe Bench
-After=network.target mariadb.service
-Wants=mariadb.service
-
-[Service]
-Type=simple
-User=frappe
-Group=frappe
-WorkingDirectory=/home/frappe/frappe-bench
-Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/local/bin/honcho start
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SERVICEEOF
-  systemctl daemon-reload
-  systemctl enable frappe-bench
-  systemctl start frappe-bench
 fi
 
 # ── Ensure deploy user exists for CI/CD SSH access ──────
@@ -128,7 +124,8 @@ echo "${deploy_user} ALL=(ALL) NOPASSWD: ${deploy_user_sudo_command}" \
 # every boot from the app checkout, so the repo stays the source of truth and a
 # rebuilt VM gets it back. A candidate that fails `nginx -t` is rolled back
 # rather than left to stop nginx. It lives in conf.d, not in bench's own
-# nginx.conf, because `bench setup production` below regenerates that file.
+# nginx.conf, because `bench setup nginx` regenerates that file. The reload
+# below picks it up.
 # (No brace-style shell variables here: this file is a Terraform templatefile.)
 REALIP_SRC=/home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/nginx-realip.conf
 REALIP_DST=/etc/nginx/conf.d/00-realip.conf
@@ -145,9 +142,26 @@ if [ -f "$REALIP_SRC" ] && command -v nginx &>/dev/null; then
   fi
 fi
 
-# ── Setup nginx if bench exists ──────────────────────────
-if [ -d /home/frappe/frappe-bench ]; then
-  sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup production frappe --yes' || true
+# ── nginx server block for the bench ─────────────────────
+# bench's generated block serves /assets and /files from disk and proxies the rest to
+# 127.0.0.1:8000. gunicorn serves neither path (`bench serve` did), so without it the
+# Desk loads with no CSS or JS. It is generated only on a VM that has no frappe block
+# yet: an existing one is never regenerated, so whatever was added to it by hand stays.
+# This replaces `bench setup production frappe --yes`, which, whenever it got past its
+# prerequisites, also installed supervisor and had it start a second copy of every bench
+# process beside the systemd units.
+if [ -d /home/frappe/frappe-bench ] && command -v nginx &>/dev/null; then
+  if ! grep -rqsE '127\.0\.0\.1:8000|@webserver' /etc/nginx/conf.d /etc/nginx/sites-enabled; then
+    echo "[$(date)] No frappe server block in nginx — generating one"
+    sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup nginx --yes' \
+      && ln -sfn /home/frappe/frappe-bench/config/nginx.conf /etc/nginx/conf.d/frappe-bench.conf \
+      && rm -f /etc/nginx/sites-enabled/default
+  fi
+  if nginx -t; then
+    systemctl reload nginx 2>/dev/null || true
+  else
+    echo "[$(date)] WARNING: nginx -t failed; nginx was not reloaded"
+  fi
 fi
 
 echo "[$(date)] Startup script completed"

@@ -1,0 +1,23 @@
+# erpnext_enhancements: production process units -- see frappe-bench.service.
+#
+# The cache Redis (redis_cache in common_site_config, :13000 on both VMs). The command is
+# the development Procfile's own line, `redis-server config/redis_cache.conf` run from the
+# bench directory, so the port, data directory and ACL file are still decided by that
+# config file and nothing about Redis changes at the cutover.
+
+[Unit]
+Description=Frappe Bench redis cache (config/redis_cache.conf)
+PartOf=frappe-bench.service
+After=network.target
+
+[Service]
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+Environment=PATH=/home/frappe/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env redis-server config/redis_cache.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=frappe-bench.service
