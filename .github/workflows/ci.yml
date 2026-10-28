@@ -3127,6 +3127,15 @@ jobs:
       # working on a phone in a mechanical room.
       - name: Kiosk PWA theme + front-end contract
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend erpnext_enhancements.tests.test_kiosk_photo_gate_chip erpnext_enhancements.tests.test_kiosk_time_editing_ui -v
+      # Kiosk "Add files" privacy (v1.753.1): the page uploads privately and hands the File
+      # docname and its interval to record_job_photo; the kiosk endpoints run from the real
+      # source against a stub (a row pointing at a website asset is never made private; copies
+      # go to the File's own interval); workforce/kiosk_files (movability, pairing, relink and
+      # routing); and the one-shot patch privatize_kiosk_attachment_files against an in-memory
+      # tabFile and a real temp files tree (frappe 16.53.0's move-and-repoint on save, the
+      # FileExistsError rename, the bytes moved back after a savepoint rollback). Own stub.
+      - name: Kiosk Add files privacy (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_kiosk_attachment_privacy -v
       # The kiosk's Photos tab (v1.752.0). Whose photos: the employee comes from the session
       # only, and a thumbnail of somebody else's job -- or of a File on no job at all -- is
       # refused before the file is opened, so a technician can never page through a
