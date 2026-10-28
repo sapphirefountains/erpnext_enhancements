@@ -291,6 +291,10 @@ doctype_js = {
 		"public/js/water_engineering/pump_curve_chart.js",
 		# v1.726.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
 		"public/js/supplier_finder_buttons.js",
+		# v1.754.0 -- Actions > "Turn on Maintain Stock" for an Item ERPNext's form refuses to
+		# switch: shows each safety check, then a confirm calls api.maintain_stock.turn_on.
+		# Also steps in on Save when the box was ticked on such an Item, before ERPNext's refusal.
+		"public/js/item_maintain_stock.js",
 	],
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
 	# used by the design form's live dashboard; loaded before the auto-loaded form script.
@@ -1078,9 +1082,47 @@ doc_events = {
 	# reading per_received here returns the post-receipt figure: erpnext pushes it onto
 	# the order from that same method. Both handlers swallow-and-log; a stage update must
 	# never be the reason a Purchase Receipt cannot be submitted.
+	#
+	# v1.754.0 -- the receipts of an Item whose Maintain Stock was turned on after they came in
+	# (the Item form's "Turn on Maintain Stock" action, inventory_enhancements/maintain_stock.py).
+	# Such a line is now a stock item's line with no stock ledger entry, and ERPNext rebuilds a
+	# cancel's or a return's ledger entries from what keeps stock NOW, so either would take out
+	# stock the line never put in. Both are refused, in words. Unlike the stage handlers these
+	# DO raise: they are data-integrity guards, and they run in background jobs too (a bulk
+	# cancel is one). They stand aside during install/migrate/patch/test and for a document
+	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
+	# the ledger; validate catches a return at its first save, before it can be submitted.
 	"Purchase Receipt": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
 		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",
 		"on_cancel": "erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+	},
+	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
+	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
+	# line of its receipt credited that account, or when it names no receipt, so billing an old
+	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
+	# Purchase Invoice had no doc_events block before this one.
+	"Purchase Invoice": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+	},
+	# v1.754.0 -- and the third half: anything that rebuilds such a receipt's ledger from today's
+	# Maintain Stock flag. A Landed Cost Voucher cancels and re-posts its receipts' stock ledger and
+	# GL on submit AND on cancel (update_landed_cost; get_pr_items picks the line up once the item
+	# keeps stock), a Repost Item Valuation with recreate_stock_ledgers does it for one receipt, and a
+	# Repost Accounting Ledger remakes its GL. Each would give the old line backdated stock and a
+	# ledger entry, after which every guard above lets it through. None of these doctypes had a
+	# doc_events block before. validate runs after the controller's own (which resets
+	# recreate_stock_ledgers on a non-Transaction repost); before_cancel runs before on_cancel.
+	"Landed Cost Voucher": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+	},
+	"Repost Item Valuation": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
+	},
+	"Repost Accounting Ledger": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_rebuilding_unstocked_receipts",
 	},
 	# Lead attribution. Lead had no doc_events block at all before v1.241.0.
 	# Both handlers are inert unless the attribution Custom Fields exist on the
