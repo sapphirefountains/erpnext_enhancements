@@ -29,30 +29,47 @@ REQUIRE_ROOT=${REQUIRE_ROOT:-1}
 read -ra NGINX_CMD <<<"${NGINX:-nginx}"
 read -ra RELOAD_CMD <<<"${NGINX_RELOAD:-systemctl reload nginx}"
 
-# The copy of the file taken before this run's edit. Removed on any exit unless putting it
-# back failed, in which case it is the only good copy and is kept.
+# What an apply has done so far, for the exit trap, which runs on every exit: a die, an
+# error under `set -e`, or Ctrl-C / SIGTERM / SIGHUP (turned into exits below).
+#   FILE     the file being guarded, once known
+#   BEFORE   this run's copy of FILE, taken just before the rewrite
+#   PENDING  1 from the rewrite until `nginx -t` passes: FILE may be cut short or invalid,
+#            so the trap puts BEFORE back over it
+#   FIRST    1 when this run took the backup and wrote the record
+#   APPLIED  1 once `nginx -t` has passed with the guard in
+FILE=""
 BEFORE=""
+PENDING=0
+FIRST=0
+APPLIED=0
 KEEP_BEFORE=0
 cleanup() {
+	if [ "$PENDING" = 1 ] && [ -n "$BEFORE" ]; then
+		if cp -p "$BEFORE" "$FILE"; then
+			printf 'nginx_webserver_guard: %s is back as it was. Nothing was reloaded.\n' "$FILE" >&2
+		else
+			KEEP_BEFORE=1
+			printf 'nginx_webserver_guard: putting %s back failed: copy %s over it by hand\n' "$FILE" "$BEFORE" >&2
+		fi
+	fi
 	if [ -n "$BEFORE" ] && [ "$KEEP_BEFORE" = 0 ]; then
 		rm -f "$BEFORE"
 	fi
+	# A first run that did not get the guard in leaves no backup or record behind: a later
+	# run, after somebody fixed the file by hand, must back up the fixed file, not this one.
+	if [ "$FIRST" = 1 ] && [ "$APPLIED" = 0 ] && [ "$KEEP_BEFORE" = 0 ]; then
+		rm -f "$BACKUP" "$RECORD"
+	fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 say() { printf '%s\n' "$*"; }
 die() {
 	printf 'nginx_webserver_guard: %s\n' "$*" >&2
 	exit 1
-}
-
-# put_back FILE REASON: restore FILE from this run's copy, then stop.
-put_back() {
-	if cp -p "$BEFORE" "$1"; then
-		die "$2; $1 is back as it was. Nothing was reloaded."
-	fi
-	KEEP_BEFORE=1
-	die "$2, and putting $1 back failed: copy $BEFORE over it by hand"
 }
 
 # The one loaded file whose text holds `location @webserver {`, resolved past symlinks.
@@ -174,27 +191,32 @@ check() {
 }
 
 apply() {
-	local file
 	"${NGINX_CMD[@]}" -t >/dev/null 2>&1 || die "nginx -t fails before any change; fix that first. Nothing was changed."
-	file=$(loaded_file)
-	if [ -e "$RECORD" ] && [ "$(cat "$RECORD")" != "$file" ]; then
-		die "the guard was applied to $(cat "$RECORD"), but nginx now loads the block from $file. Run --undo first."
+	FILE=$(loaded_file)
+	if [ -e "$RECORD" ] && [ "$(cat "$RECORD")" != "$FILE" ]; then
+		die "the guard was applied to $(cat "$RECORD"), but nginx now loads the block from $FILE. Run --undo first."
 	fi
 	mkdir -p "$STATE_DIR"
 	if [ ! -e "$BACKUP" ]; then
-		cp -p "$file" "$BACKUP"
-		printf '%s\n' "$file" >"$RECORD"
-		say "saved   $file to $BACKUP"
+		FIRST=1
+		cp -p "$FILE" "$BACKUP"
+		printf '%s\n' "$FILE" >"$RECORD"
+		say "saved   $FILE to $BACKUP"
 	fi
 	BEFORE=$(mktemp "$STATE_DIR/frappe-nginx.before.XXXXXX")
-	cp -p "$file" "$BEFORE"
-	# The rewrite truncates the file before it writes, so a failure part-way (a full disk)
-	# must not leave it short: whatever goes wrong, the copy goes back.
-	edit "$file" || put_back "$file" "rewriting it failed"
-	"${NGINX_CMD[@]}" -t || put_back "$file" "nginx -t failed with the guard in"
-	"${RELOAD_CMD[@]}"
-	say "guarded $file and reloaded nginx:"
-	grep -n -A4 'location @webserver {' "$file"
+	cp -p "$FILE" "$BEFORE"
+	# The rewrite truncates the file before it writes, so a failure part-way (a full disk,
+	# an interrupt) must not leave it short: until nginx -t passes, any exit puts the copy back.
+	PENDING=1
+	edit "$FILE" || die "rewriting $FILE failed"
+	"${NGINX_CMD[@]}" -t || die "nginx -t failed with the guard in"
+	PENDING=0
+	APPLIED=1
+	if ! "${RELOAD_CMD[@]}"; then
+		die "$FILE is guarded and passes nginx -t, but reloading nginx failed, so the guard is not live yet. Reload it by hand (sudo systemctl reload nginx), then run --check."
+	fi
+	say "guarded $FILE and reloaded nginx:"
+	grep -n -A4 'location @webserver {' "$FILE"
 }
 
 undo() {

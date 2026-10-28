@@ -563,6 +563,11 @@ class RequiredToolTests(unittest.TestCase):
 		step = ci[ci.index("name: Production web tier units (bench-free)") :]
 		step = step[: step.index("- name:", 1)] if "- name:" in step[1:] else step
 		self.assertIn('REQUIRE_WEB_TIER_TOOLS: "1"', step)
+		# ...and install them first when a runner image lacks either.
+		self.assertIn("command -v shellcheck", step)
+		self.assertIn("[ ! -x /usr/sbin/nginx ]", step)
+		self.assertIn("apt-get install -y -qq shellcheck nginx", step)
+		self.assertLess(step.index("apt-get install"), step.index("python -m unittest"))
 
 
 def _nginx_binary():
@@ -662,12 +667,12 @@ class NginxGuardTests(unittest.TestCase):
 			f"{self.prefix}/error.log",
 		]
 
-	def guard(self, *args, nginx=None, path_first=None):
+	def guard(self, *args, nginx=None, path_first=None, reload="true"):
 		path = f"{Path(sys.executable).parent}:/usr/sbin:/usr/bin:/bin"
 		env = {
 			"PATH": f"{path_first}:{path}" if path_first else path,
 			"NGINX": nginx or " ".join(self.nginx),
-			"NGINX_RELOAD": "true",
+			"NGINX_RELOAD": reload,
 			"STATE_DIR": str(self.state),
 			"REQUIRE_ROOT": "0",
 		}
@@ -798,27 +803,62 @@ class NginxGuardTests(unittest.TestCase):
 		left = sorted(p.name for p in self.state.iterdir()) if self.state.exists() else []
 		self.assertEqual([n for n in left if n.startswith("frappe-nginx.before.")], [], left)
 
-	def test_a_rewrite_that_fails_part_way_is_put_back(self):
-		# A python3 that, asked to run the rewrite, truncates the file and fails, as a write
-		# that hits a full disk does. Every other python3 call goes to the real one.
+	def fake_python(self, rewrite):
+		"""A python3 that runs REWRITE (shell) in place of the guard's rewrite, with the file
+		as $2; every other python3 call goes to the real one."""
 		fake = self.root / "fakebin"
-		fake.mkdir()
+		fake.mkdir(exist_ok=True)
 		(fake / "python3").write_text(
 			"#!/bin/sh\n"
 			'if [ "$1" = - ]; then\n'
 			"\tscript=$(cat)\n"
-			'\tcase "$script" in *"GUARD = ["*) : > "$2"; exit 1 ;; esac\n'
+			f'\tcase "$script" in *"GUARD = ["*) {rewrite} ;; esac\n'
 			f'\tprintf "%s\\n" "$script" | {sys.executable} - "$2"\n'
 			"\texit $?\n"
 			"fi\n"
 			f'exec {sys.executable} "$@"\n'
 		)
 		(fake / "python3").chmod(0o755)
-		result = self.guard(path_first=fake)
+		return fake
+
+	def test_a_rewrite_that_fails_part_way_is_put_back(self):
+		# Truncate, then fail, as a write that hits a full disk does.
+		result = self.guard(path_first=self.fake_python(': > "$2"; exit 1'))
 		self.assertNotEqual(result.returncode, 0)
-		self.assertIn("rewriting it failed", result.stderr)
+		self.assertIn("rewriting", result.stderr)
 		self.assertIn("back as it was", result.stderr)
 		self.assertEqual(self.real.read_text(), self.original)
+		self.assertNoDebris()
+		# This was the first run: it leaves no backup or record to mislead a later one.
+		self.assertEqual(list(self.state.iterdir()), [])
+
+	def test_an_interrupt_mid_rewrite_is_put_back(self):
+		# Truncate, then the run is sent SIGTERM (the shell handles it once the rewrite exits).
+		result = self.guard(path_first=self.fake_python(': > "$2"; kill -TERM $PPID; exit 0'))
+		self.assertEqual(result.returncode, 143, result.stderr)
+		self.assertIn("back as it was", result.stderr)
+		self.assertEqual(self.real.read_text(), self.original)
+		self.assertNoDebris()
+		self.assertEqual(list(self.state.iterdir()), [])
+
+	def test_a_later_failed_run_keeps_the_first_backup(self):
+		self.assertEqual(self.guard().returncode, 0)
+		guarded = self.real.read_text()
+		result = self.guard(path_first=self.fake_python(': > "$2"; exit 1'))
+		self.assertNotEqual(result.returncode, 0)
+		self.assertEqual(self.real.read_text(), guarded)
+		self.assertEqual((self.state / "frappe-nginx.pre-guard").read_text(), self.original)
+		self.assertTrue((self.state / "frappe-nginx.guard-file").exists())
+		self.assertNoDebris()
+
+	def test_a_failed_reload_says_the_guard_is_not_live(self):
+		result = self.guard(reload="false")
+		self.assertNotEqual(result.returncode, 0)
+		self.assertIn("passes nginx -t, but reloading nginx failed", result.stderr)
+		self.assertIn("not live", result.stderr)
+		# The edit is valid and stays, with its backup, so --undo still works.
+		self.assertIn("erpnext_enhancements: debugger guard", self.real.read_text())
+		self.assertEqual((self.state / "frappe-nginx.pre-guard").read_text(), self.original)
 		self.assertNoDebris()
 
 	def test_a_file_that_is_not_utf8_is_refused_cleanly(self):

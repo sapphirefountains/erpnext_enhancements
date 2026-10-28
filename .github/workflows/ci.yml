@@ -2153,12 +2153,18 @@ jobs:
       # run against a scratch directory with a stub systemctl, plus shellcheck. Standard
       # library only; its own step because it shells out.
       # REQUIRE_WEB_TIER_TOOLS turns "nginx/shellcheck not installed" from a silent skip into a
-      # failure: the runner ships both (nginx 1.24, shellcheck 0.9), and the nginx guard's
-      # tests are the only ones that run it against a real nginx.
+      # failure: the nginx guard's tests are the only ones that run it against a real nginx.
+      # The runner image ships both today (nginx 1.24, shellcheck 0.9); if a later image drops
+      # either, it is installed first rather than failing every PR, and the gate still fails if
+      # that install did not produce them.
       - name: Production web tier units (bench-free)
         env:
           REQUIRE_WEB_TIER_TOOLS: "1"
-        run: python -m unittest erpnext_enhancements.tests.test_production_web_tier -v
+        run: |
+          if ! command -v shellcheck >/dev/null || [ ! -x /usr/sbin/nginx ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck nginx
+          fi
+          python -m unittest erpnext_enhancements.tests.test_production_web_tier -v
       # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
       # else inline; frappe's own develop branch widened that list to fourteen. The seven in
       # the gap (.xhtml .svgz .shtml .mhtml .xsl .xslt .swf) are served from OUR origin with a
