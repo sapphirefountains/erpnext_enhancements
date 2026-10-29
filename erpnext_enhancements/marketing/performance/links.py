@@ -49,9 +49,10 @@ def refresh_link(doc):
 	doc.utm_source = tracking.slug(doc.utm_source)
 	doc.utm_medium = tracking.slug(doc.utm_medium)
 	doc.utm_campaign = tracking.slug(doc.utm_campaign)
-	if url != doc.tagged_url or not doc.qr_svg:
-		doc.tagged_url = url
-		doc.qr_svg = qr_svg(url)
+	# Rebuilt on every save, never kept: the form draws qr_svg as markup, so a value sent through the
+	# API by anyone who may write the record must not survive to another person's browser.
+	doc.tagged_url = url
+	doc.qr_svg = qr_svg(url)
 
 
 def _require():

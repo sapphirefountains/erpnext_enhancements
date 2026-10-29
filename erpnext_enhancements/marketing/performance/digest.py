@@ -22,6 +22,8 @@ from erpnext_enhancements.marketing.performance import insights, rules
 GA4 = "GA4 Daily Metric"
 GSC = "Search Console Daily Metric"
 MOVERS = 3
+#: The digest is the same for everyone who gets it, so a briefing batch builds it once a day.
+_BUILT = {}
 
 
 def _sum(doctype, column, start, end, dimension="Total"):
@@ -129,7 +131,10 @@ def section_for(user, today=None):
 	if not rules.views_for(frappe.get_roles(user))["page"]:
 		return ""
 	try:
-		return insights.digest_markdown(gather(today))
+		if today not in _BUILT:
+			_BUILT.clear()
+			_BUILT[today] = insights.digest_markdown(gather(today))
+		return _BUILT[today]
 	except Exception as exc:
 		# The briefing is a daily habit; a digest failure must never cost the rest of it.
 		frappe.log_error(title="Marketing digest", message=f"{type(exc).__name__}: {exc}")

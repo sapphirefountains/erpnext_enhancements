@@ -136,4 +136,9 @@ def log_marketing_event(event_date, title, event_type="Other", link=None, notes=
 		frappe.throw(
 			_("Marketing events are for the marketing team and Sales Manager."), frappe.PermissionError
 		)
-	return create_event(event_date, title, event_type, link, notes, source="Manual")
+	# A call made with an API key or token is a program's (the SEO session's, say), not a person typing.
+	auth = (
+		(frappe.get_request_header("Authorization") or "") if getattr(frappe.local, "request", None) else ""
+	)
+	source = "Assistant" if auth.lower().startswith(("token ", "bearer ")) else "Manual"
+	return create_event(event_date, title, event_type, link, notes, source=source)

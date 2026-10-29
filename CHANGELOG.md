@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.757.0] - 2026-10-29
 
-ERPNext: the marketing-insights Task on PRJ-00580, under TASK-2026-00866 (AI-PA-2026-1326834, awaiting Nik's confirm). Nik's
+ERPNext: TASK-2026-03015 (PRJ-00580, under TASK-2026-00866). Nik's
 starred picks of 2026-10-29, as a second PR stacked on the Marketing Performance PR (1.756.0) and built
 on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, prod's versions.
 

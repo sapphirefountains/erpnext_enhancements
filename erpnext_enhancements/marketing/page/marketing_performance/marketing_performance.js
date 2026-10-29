@@ -126,6 +126,13 @@ const MKP = {
 		return Math.min(4, Math.max(1, Math.ceil((value / max) * 4)));
 	},
 
+	// An http(s) address, or "" for anything else (javascript:, data: ...): a user-entered link is never
+	// an href until it passes this.
+	http_link(value) {
+		const text = String(value || "").trim();
+		return /^https?:\/\//i.test(text) ? text : "";
+	},
+
 	// The x position (0..w) of a date on a run of dates; null when it is not on it.
 	x_of(dates, day, w) {
 		const i = (dates || []).indexOf(day);
@@ -977,7 +984,7 @@ class MarketingPerformancePage {
 		const events = (this.data.overview && this.data.overview.events) || [];
 		if (!events.length) return "";
 		return `<h4 class="mkp-h4">${this.esc(__("Events"))}</h4><ul class="mkp-list">${events
-			.map((e) => `<li>${this.esc(e.date)} · ${this.chip(e.type, "neutral")} ${e.link ? `<a href="${this.esc(e.link)}" target="_blank" rel="noopener">${this.esc(e.title)}</a>` : this.esc(e.title)}</li>`)
+			.map((e) => `<li>${this.esc(e.date)} · ${this.chip(e.type, "neutral")} ${MKP.http_link(e.link) ? `<a href="${this.esc(MKP.http_link(e.link))}" target="_blank" rel="noopener">${this.esc(e.title)}</a>` : this.esc(e.title)}</li>`)
 			.join("")}</ul>`;
 	}
 

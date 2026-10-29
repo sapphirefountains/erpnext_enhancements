@@ -4,14 +4,20 @@
 // Tracked Link (F5, v1.757.0): the tagged link, its QR code to print, and what came of it. The tagged
 // address and the SVG are built on the server on save (marketing/performance/links.py); this draws them.
 
+// The SVG as a data: URL for an <img>, which never runs script.
+function tracked_link_qr_src(svg) {
+	return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg || "");
+}
+
 frappe.ui.form.on("Tracked Link", {
 	refresh(frm) {
 		const wrapper = frm.fields_dict.qr_html && frm.fields_dict.qr_html.$wrapper;
 		if (wrapper) {
 			if (frm.doc.qr_svg && frm.doc.tagged_url) {
-				// The SVG is the server's own output (pyqrcode), never typed by a person.
+				// Drawn as an image, never as markup: an <img> runs no script, whatever the field holds. The
+				// server also rebuilds the SVG on every save (marketing/performance/links.py).
 				wrapper.html(
-					`<div class="tracked-link-qr" style="max-width:220px">${frm.doc.qr_svg}</div>
+					`<img class="tracked-link-qr" style="max-width:220px" alt="${frappe.utils.escape_html(__("QR code"))}" src="${tracked_link_qr_src(frm.doc.qr_svg)}">
 					<p class="text-muted small">${frappe.utils.escape_html(frm.doc.tagged_url)}</p>`
 				);
 			} else {
@@ -24,9 +30,9 @@ frappe.ui.form.on("Tracked Link", {
 			const win = window.open("", "_blank");
 			if (!win) return;
 			win.document.write(
-				`<html><head><title>${frappe.utils.escape_html(frm.doc.title || "")}</title></head><body style="text-align:center;font-family:sans-serif">${
+				`<html><head><title>${frappe.utils.escape_html(frm.doc.title || "")}</title></head><body style="text-align:center;font-family:sans-serif"><img style="width:320px" src="${tracked_link_qr_src(
 					frm.doc.qr_svg || ""
-				}<p>${frappe.utils.escape_html(frm.doc.title || "")}</p></body></html>`
+				)}"><p>${frappe.utils.escape_html(frm.doc.title || "")}</p></body></html>`
 			);
 			win.document.close();
 			win.focus();

@@ -74,6 +74,8 @@ def seed_service_line_rules() -> int:
 		frappe.get_doc(
 			{
 				"doctype": RULE,
+				# db_insert does not name a row, and the name is the primary key.
+				"name": frappe.generate_hash(length=10),
 				"parent": SETTINGS,
 				"parenttype": SETTINGS,
 				"parentfield": "service_line_rules",

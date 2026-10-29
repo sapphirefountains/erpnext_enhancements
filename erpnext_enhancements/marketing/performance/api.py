@@ -647,8 +647,8 @@ def _spend_total(start, end):
 	return total
 
 
-def _tile_values(start, end, views, calls):
-	p = _period(start, end, views, calls)
+def _tile_values(start, end, views, calls, p=None):
+	p = p or _period(start, end, views, calls)
 	inquiries = p["inquiries"]
 	values = {
 		"sessions": p["totals"]["sessions"],
@@ -691,12 +691,15 @@ def _targets(views, today, calls):
 
 
 def _series_for(p, days):
-	opp_per_day, calls_per_day = {}, {}
+	opp_per_day, calls_per_day, new_callers = {}, {}, {}
 	for opp in p["opportunities"]:
 		opp_per_day[opp["day"]] = opp_per_day.get(opp["day"], 0) + 1
 	for day, d in p["call_summary"]["per_day"].items():
 		calls_per_day[day] = d["incoming"]
+		new_callers[day] = d.get("first_time_unconverted", 0)
 	return {
+		# The Inquiries tile's own sum, day by day: Opportunities plus first-time callers who did not become one.
+		"inquiries": [opp_per_day.get(d, 0) + new_callers.get(d, 0) for d in days],
 		"sessions": [cint(p["ga"][d].sessions) if d in p["ga"] else None for d in days],
 		"organic_clicks": [cint(p["gsc"][d].clicks) if d in p["gsc"] else None for d in days],
 		"opportunities": [opp_per_day.get(d, 0) for d in days],
@@ -709,14 +712,14 @@ def _overview(start, end, days, views, current, calls, ghost, today):
 
 	prev_range = rules.previous_range(start, end)
 	year_range = insights.same_period_last_year(start, end)
-	now_values, _p = _tile_values(start, end, views, calls)
+	now_values, _p = _tile_values(start, end, views, calls, p=current)
 	prev_values, prev_period = _tile_values(*prev_range, views, calls)
 	year_values, year_period = _tile_values(*year_range, views, calls)
 	series = _series_for(current, days)
 	spark = {
 		"sessions": series["sessions"],
 		"search_clicks": series["organic_clicks"],
-		"inquiries": series["opportunities"],
+		"inquiries": series["inquiries"],
 		"calls": series["calls"],
 	}
 	tiles = [
@@ -868,8 +871,10 @@ def get_inquiries_tab(from_date=None, to_date=None):
 		"first_time": sum(1 for c in missed if c["state"] == "missed" and c.get("first_time")),
 		"waiting": sum(1 for c in missed if c["state"] == "waiting"),
 	}
-	# Who called is for System Manager and Sales Manager, and only through Call Log's own permission.
+	# Who called is for System Manager and Sales Manager, and only the calls Call Log's own permissions
+	# (User Permissions included) let them open: the same read as the Missed Calls report.
 	if views["call_details"] and frappe.has_permission("Call Log", "read"):
+		visible = {c["name"] for c in call_rows(start, end, respect_permissions=True)}
 		missed_out["rows"] = [
 			{
 				"name": c["name"],
@@ -879,8 +884,9 @@ def get_inquiries_tab(from_date=None, to_date=None):
 				"first_time": c["first_time"],
 				"state": c["state"],
 			}
-			for c in missed[:25]
-		]
+			for c in missed
+			if c["name"] in visible
+		][:25]
 	replies = data.first_replies([o["name"] for o in opps])
 	pairs = [(get_datetime(o["created"]), replies.get(o["name"])) for o in opps]
 	return {

@@ -357,7 +357,7 @@ class TestCalls(unittest.TestCase):
 		self.assertEqual(out["converted_calls"], 2)
 		# c2 and c5 are first-time and neither is credited with an Opportunity: two extra inquiries.
 		self.assertEqual(out["first_time_unconverted"], 2)
-		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0})
+		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0, "first_time_unconverted": 1})
 
 	def test_phone_key(self):
 		self.assertEqual(rules.phone_key("+1 (801) 555-0100"), "8015550100")
