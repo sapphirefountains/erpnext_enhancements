@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.755.4] - 2026-10-29
+
+ERPNext: TASK-2026-02999 (PRJ-00580). A follow-up to 1.755.2. Checked against frappe 16.53.0,
+prod's version, and against prod with signed-out requests only.
+
+**What the deploy does.** From the restart, a website path of the form `/<DocType>/<name>` reaches
+frappe's print view only when its first part is the DocType's exact name. Any other spelling ends
+on frappe's Not Found page (404). Nothing is written to the database.
+
+### Fixed
+- **A print-view path that spelled a DocType's name differently answered an error page; it now
+  returns 404.** frappe's print-view renderer (`PrintPage`) claims a two-part path when its first
+  part names a DocType, and it checks that with a database lookup that MariaDB's collation matches
+  in any letter case. The print view then loads the controller under the path's spelling,
+  frappe derives the class name from that spelling and cannot import it, and the request ended on
+  frappe's generic error page (a 500) instead of a 404, signed in or not. This predates 1.755.0
+  and is a frappe bug: the same check is unchanged on frappe's `version-16` and `develop` branches.
+  - **The fix** is a fifth runtime monkeypatch in `monkeypatches.py`
+    (`_patch_print_view_takes_the_exact_doctype_name`). It wraps `PrintPage.can_render` to also
+    require the exact DocType name, which is the upstream fix, carried here until frappe ships
+    it. A path it declines falls through to frappe's list renderer, which declines any two-part
+    path, and ends on frappe's own Not Found page.
+  - **Why a wrap and not a `page_renderer` hook.** frappe consults hooked renderers before its own
+    static, web form, document and template renderers, so a hook answering Not Found here would
+    have had to rebuild every one of them to be sure it was not hiding a real page. `PrintPage`
+    already runs after all four, so narrowing it cannot hide anything they serve.
+  - **It only narrows.** It asks frappe's original first, so exact-name print views are untouched,
+    and a future upstream fix makes it redundant rather than wrong. Its lookup repeats frappe's
+    own, cache flag included, so frappe's per-request value cache answers it. A failed lookup
+    keeps frappe's answer. Applied once per process, from `before_request` and `before_job` like
+    the other four.
+  - **Delete it** once frappe's `PrintPage` compares the name itself.
+
+### Tests
+- **`tests/test_print_view_doctype_name.py`**, bench-free, in its own CI step. It runs the patch
+  against a stub whose `PrintPage.can_render` is frappe 16.53.0's, line for line, and whose
+  database matches DocType names as MariaDB does. It checks:
+  - The premise: unpatched, any spelling is claimed.
+  - Exact names are still claimed, a record name with slashes included.
+  - Every other spelling is declined, and what frappe declined stays declined, with no extra lookup.
+  - The extra lookup is frappe's own query, a failed lookup keeps frappe's answer, and an upstream
+    fix makes the patch redundant.
+  - It wraps only once and is registered in `_PATCHES`.
+  - Mutation-checked: without the exact-name comparison, every other-spelling case and the
+    registration check fail; with the patch left out of `_PATCHES`, the registration check fails.
+
 ## [1.755.3] - 2026-10-29
 
 ERPNext Task on PRJ-00580, under Misc Tasks (TASK-2026-02157): the review of how employee

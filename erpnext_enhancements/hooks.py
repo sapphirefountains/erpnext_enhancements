@@ -3657,7 +3657,7 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently four:
+# monkeypatches.py for what/why — currently five:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
@@ -3673,7 +3673,14 @@ assistant_skills = [
 #      accepts (v1.727.1). FAC 3.0.0's string `count(name)` logged an Error Log
 #      row on every call. Inert unless FAC's module is byte-for-byte 3.0.0's, so
 #      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
-#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py.
+#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py;
+#   5. the website print view (`/<DocType>/<name>`) takes only the DocType's exact
+#      name (v1.755.4). frappe 16.53.0's PrintPage matched the name in any letter
+#      case, then could not load a controller for that spelling and answered its
+#      error page instead of a 404. It narrows PrintPage.can_render, which runs
+#      after the static, web form, document and template renderers, so it cannot
+#      hide their pages. The upstream fix, carried here; delete it once frappe
+#      ships it.
 # Also applied from before_request and before_job (monkeypatches.ensure_applied):
 # hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
