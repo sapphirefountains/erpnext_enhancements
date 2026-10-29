@@ -147,7 +147,7 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
   - Their four `marketing_*_enabled` toggles stay on ERPNext Enhancements Settings, unread.
     Dropping a field from a Single deletes nothing.
 
-### Nik's steps (TASK-2026-03013 has them as a ToDo)
+### Nik's steps (their own Task on PRJ-00580, assigned to Nik)
 1. Install the WordPress capture (`docs/website-capture/README.md`). None of the 108 Opportunities
    in the last 180 days carries a UTM, gclid, landing page or referrer.
 2. Apply for Google Business Profile API access

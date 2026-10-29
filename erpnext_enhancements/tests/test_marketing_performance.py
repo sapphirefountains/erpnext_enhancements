@@ -124,6 +124,10 @@ class TestJoin(unittest.TestCase):
 		self.assertIsNone(rows["/only-gsc"]["sessions"])
 		self.assertEqual(next(iter(rows)), "/fountains", "busiest first")
 
+	def test_not_set_is_not_a_page(self):
+		rows = rules.join_landing_pages([{"value": "(not set)", "sessions": 500, "key_events": 0}], [])
+		self.assertEqual(rows, [])
+
 	def test_flags(self):
 		self.assertEqual(rules.search_flags(2, 200, 3.0), [rules.FLAG_LOW_CTR])
 		self.assertEqual(rules.search_flags(3, 200, 3.0), [])  # 1.5% exactly is not low
@@ -316,6 +320,8 @@ class TestCalls(unittest.TestCase):
 		# OPP-1 is credited to the latest Beta call before it, c3 -- one conversion, not two.
 		self.assertEqual(out["converted"], {"c3": ["OPP-1"], "c4": ["OPP-2"]})
 		self.assertEqual(out["converted_calls"], 2)
+		# c2 and c5 are first-time and neither is credited with an Opportunity: two extra inquiries.
+		self.assertEqual(out["first_time_unconverted"], 2)
 		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0})
 
 	def test_phone_key(self):

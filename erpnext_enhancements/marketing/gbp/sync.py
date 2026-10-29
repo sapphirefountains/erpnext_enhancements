@@ -19,7 +19,7 @@ full each night and written onto that night's row: count, average and unreplied,
 import frappe
 from frappe.utils import cint, getdate, nowdate
 
-from erpnext_enhancements.marketing.core.client import Transport
+from erpnext_enhancements.marketing.core.client import MarketingAPIError, Transport
 from erpnext_enhancements.marketing.core.utils import field, get_credentials, get_settings, is_connected
 from erpnext_enhancements.marketing.gbp import constants as G
 from erpnext_enhancements.marketing.gbp import parse
@@ -122,17 +122,30 @@ def pull_listing(transport, listing, today):
 			f"{G.PERFORMANCE_BASE}/locations/{location_id}:fetchMultiDailyMetricsTimeSeries?"
 			+ parse.metrics_query(*window),
 		)
-		by_day = parse.parse_daily_metrics(body)
-		for day in rules.days_between(*window):
-			values = {column: by_day.get(day, {}).get(column, 0) for column in G.COLUMNS}
-			upsert(location_id, listing["title"], day, values)
-			written += 1
-	reviews = _pages(
-		transport,
-		f"{G.REVIEWS_BASE}/accounts/{listing['account_id']}/locations/{location_id}/reviews",
-		{"pageSize": G.REVIEWS_PAGE_SIZE},
-		"reviews",
-	)
+		# Only the days Google answered: a day it has not published yet is absent (a zero is a dated
+		# entry with no value, which the parser reads as 0), and writing 0 for it would store a
+		# drop that the restate window might never correct.
+		for day, columns in sorted(parse.parse_daily_metrics(body).items()):
+			if window[0] <= day <= window[1]:
+				upsert(location_id, listing["title"], day, {c: columns.get(c, 0) for c in G.COLUMNS})
+				written += 1
+	# The figures are kept whatever the reviews read does: Google serves reviews only for verified
+	# listings, and a refusal there must not roll back the night's metrics.
+	frappe.db.commit()
+	try:
+		reviews = _pages(
+			transport,
+			f"{G.REVIEWS_BASE}/accounts/{listing['account_id']}/locations/{location_id}/reviews",
+			{"pageSize": G.REVIEWS_PAGE_SIZE},
+			"reviews",
+		)
+	except MarketingAPIError as exc:
+		if exc.is_auth_failure:
+			raise
+		frappe.log_error(
+			title="Marketing Business Profile", message=f"Business Profile reviews for {location_id}: {exc}"
+		)
+		return written
 	upsert(location_id, listing["title"], today, parse.summarize_reviews(reviews))
 	frappe.db.commit()
 	return written
@@ -157,8 +170,6 @@ def nightly_business_profile_sync():
 def run_sync(http=None, today=None):
 	"""The background job. A dead token marks the connection *Auth Failed*; it never retries nightly."""
 	from frappe.utils import now_datetime
-
-	from erpnext_enhancements.marketing.core.client import MarketingAPIError
 
 	today = getdate(today or nowdate())
 	creds = get_credentials()

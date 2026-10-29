@@ -125,7 +125,8 @@ class TestTheMatcher(unittest.TestCase):
 class TestBlockStatusTokens(unittest.TestCase):
 	def test_the_scan_sees_the_blocks(self):
 		files = block_files()
-		self.assertGreaterEqual(len(files), 80, "fewer block files than the 41 blocks ship")
+		# 41 blocks (80+ files) until v1.756.0 moved the four Marketing widgets onto Marketing Performance.
+		self.assertGreaterEqual(len(files), 72, "fewer block files than the 37 blocks ship")
 
 	def test_no_block_writes_a_literal_status_colour(self):
 		for path in block_files():

@@ -462,13 +462,16 @@ def _require():
 	return views
 
 
-def _period(start, end, views):
-	"""The headline figures for one range: the trend, the KPIs, the funnel."""
+def _period(start, end, views, calls):
+	"""The headline figures for one range: the trend, the KPIs, the funnel.
+
+	``calls`` is every incoming call up to the latest range asked for, read once per request.
+	"""
 	totals, ga, gsc = _web_totals(start, end)
 	opportunities = _opportunities(start, end)
-	calls = _calls(end)
 	call_section, call_summary = _call_section(calls, opportunities, start, end, views)
-	inquiries = len(opportunities) + call_summary["first_time"]
+	# A first-time caller who became an Opportunity is one inquiry, not two.
+	inquiries = len(opportunities) + call_summary["first_time_unconverted"]
 	return {
 		"totals": totals,
 		"ga": ga,
@@ -496,12 +499,13 @@ def get_performance(from_date=None, to_date=None, compare=0):
 	today = getdate(nowdate())
 	start, end = rules.parse_range(from_date, to_date, today)
 	days = rules.days_between(start, end)
-	current = _period(start, end, views)
+	calls = _calls(end)
+	current = _period(start, end, views, calls)
 
 	previous = None
 	if cint(compare):
 		p_start, p_end = rules.previous_range(start, end)
-		p = _period(p_start, p_end, views)
+		p = _period(p_start, p_end, views, calls)
 		previous = {"from_date": str(p_start), "to_date": str(p_end), "kpis": p["kpis"]}
 
 	ga_cover, gsc_cover = _coverage(GA4), _coverage(GSC)

@@ -351,7 +351,8 @@ def join_landing_pages(ga_rows, gsc_rows):
 
 	for row in ga_rows or ():
 		path = normalize_page(row.get("value"))
-		if not path:
+		# "(not set)" is GA4's sessions with no landing page: not a page anyone can fix.
+		if not path or path == NOT_SET:
 			continue
 		p = page(path)
 		for key in ("sessions", "total_users", "engaged_sessions", "key_events"):
@@ -597,6 +598,11 @@ def summarize_calls(calls, opportunities, start, end, window_days=CALL_TO_OPPORT
 	return {
 		"incoming": len(in_range),
 		"first_time": sum(1 for c in in_range if c.get("name") in first_time),
+		# The funnel's extra inquiries: first-time callers whose call did not become an Opportunity
+		# (one that did is already counted as that Opportunity).
+		"first_time_unconverted": sum(
+			1 for c in in_range if c.get("name") in first_time and c.get("name") not in converted
+		),
 		"converted_calls": len(converted),
 		"opportunities": sorted({o for names in converted.values() for o in names}),
 		"per_day": per_day,

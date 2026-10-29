@@ -589,7 +589,7 @@ class MarketingPerformancePage {
 			)
 			.join("");
 		return `<ol class="mkp-funnel">${steps}</ol><p class="mkp-hint">${this.esc(
-			__("Inquiries are Opportunities created plus first-time callers. Won counts deals closed in the range, historical ones left out.")
+			__("Inquiries are Opportunities created plus first-time callers who did not become one. Won counts deals closed in the range, historical ones left out.")
 		)}</p>`;
 	}
 

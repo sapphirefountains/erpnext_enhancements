@@ -428,7 +428,21 @@ def backfill(days=BACKFILL_DAYS, enqueue=False, sources=None):
 			pluck="name",
 			limit=1,
 		)
-		logs.append(open_[0] if open_ else _log(source, "Backfill", start, end))
+		if open_:
+			# A longer history asked for while a run is open: widen its window and start it over from
+			# the new start. Re-reading months it already did is harmless, since each is replaced whole.
+			current = frappe.db.get_value(LOG_DOCTYPE, open_[0], "window_from")
+			if current and start < getdate(current):
+				frappe.db.set_value(
+					LOG_DOCTYPE,
+					open_[0],
+					{"window_from": start, "progress_through": None},
+					update_modified=False,
+				)
+				frappe.db.commit()
+			logs.append(open_[0])
+		else:
+			logs.append(_log(source, "Backfill", start, end))
 	if enqueue:
 		_enqueue_backfill()
 	else:

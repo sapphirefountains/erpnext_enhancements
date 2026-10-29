@@ -71,7 +71,7 @@ def known_connections():
 	from erpnext_enhancements.marketing.gbp import constants as G
 	from erpnext_enhancements.marketing.publish import constants as P
 
-	return C.PLATFORMS + (G.PLATFORM_GBP,) + P.PUBLISH_CONNECTIONS
+	return (*C.PLATFORMS, G.PLATFORM_GBP, *P.PUBLISH_CONNECTIONS)
 
 
 def is_google_refresh(platform):

@@ -357,7 +357,14 @@ def run_page_stats(http=None, today=None):
 		connection = P.CONNECTION_FOR[account.network]
 		try:
 			if connection not in transports:
-				transports[connection] = oauth.transport_for(connection, creds, http=http, settings=settings)
+				try:
+					transports[connection] = oauth.transport_for(
+						connection, creds, http=http, settings=settings
+					)
+				except Exception as exc:  # a dead token: every account on it fails with the same reason
+					transports[connection] = exc
+			if isinstance(transports[connection], Exception):
+				raise transports[connection]
 			last = frappe.db.sql(
 				f"select max(metric_date) from `tab{DOCTYPE}` where social_account = %s", (account.name,)
 			)[0][0]

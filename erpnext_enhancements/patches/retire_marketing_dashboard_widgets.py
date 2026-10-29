@@ -7,8 +7,9 @@ do on its own, each step guarded so one failure stops neither the rest nor the m
 1. **The three workspaces re-sync.** The Marketing Dashboard loses its four widget blocks and
    gains a Marketing Performance shortcut; the Marketing Hub and the Integration Hub point their
    GA4 Dashboard shortcuts and links at the new page. Each JSON's ``modified`` is bumped, which is
-   enough where the stored row is older, and ``force=True`` covers a row somebody edited more
-   recently (several people hold Workspace Manager).
+   enough where the stored row is older, and ``import_file_by_path(force=True)`` covers a row
+   somebody edited more recently (several people hold Workspace Manager). Not ``reload_doc``: its
+   first argument is a module, and the Marketing Hub declares none (``custom_pages_s4a_hub_links``).
 2. **The four block records go.** The block seeder upserts and never deletes, so "Marketing
    Funnel Cascade", "Marketing Channel Spend", "Marketing Unsourced Leads" and "Marketing Source
    Health" would otherwise sit in the block picker for ever, calling endpoints that no longer
@@ -35,10 +36,13 @@ RETIRED_BLOCKS = (
 
 
 def execute():
+	from frappe.modules.import_file import import_file_by_path
+
 	outcome = {"workspaces": [], "deleted": [], "kept": [], "failed": []}
-	for module, name in WORKSPACES:
+	for folder, name in WORKSPACES:
 		try:
-			frappe.reload_doc(module, "workspace", name, force=True)
+			path = frappe.get_app_path("erpnext_enhancements", folder, "workspace", name, f"{name}.json")
+			import_file_by_path(path, force=True, reset_permissions=False)
 			frappe.db.commit()
 			outcome["workspaces"].append(name)
 		except Exception:
