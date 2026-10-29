@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.755.3] - 2026-10-29
+
+ERPNext Task on PRJ-00580, under Misc Tasks (TASK-2026-02157): the review of how employee
+reimbursements work, which Nik asked for on 2026-10-28.
+
+### Fixed
+- **The Unclaimed Travel Expenses report no longer asks for an Expense Claim on a site that cannot
+  have one** (`travel_management/report/unclaimed_travel_expenses`). HRMS is not installed on
+  production and cannot be (`accounting_intake/actions/receipt_expense.py`), so nothing is ever on
+  a claim. Every row still showed "No claim" beside an empty Link to Expense Claim, a doctype
+  production doesn't have. A coordinator reading it was told a claim was missing when there was
+  never one to file. Without HRMS the two claim columns are now dropped. The amount is called
+  *To Reimburse*, the words the expense nudge already uses. That matches Nik's 2026-09-28 rule:
+  the traveler attaches receipts to the trip, and accounting reimburses from the trip. With HRMS
+  the report is unchanged. `tests/test_travel_views.py` covers both cases, and the new tests error
+  against the old report.
+
+### Docs
+- **Three places still described the HRMS path as what production does.**
+  - The opening paragraph of `travel_management/README.md` said a trip "rolls everything into
+    native Expense Claims, Employee Advances and Vehicle Logs". It now says that happens only with
+    HRMS, and that on production the traveler attaches receipts and accounting reimburses from
+    the trip.
+  - The same README's Money flow said production's mileage rate was 0. It has been $0.725 a mile
+    since 2026-09-27.
+  - `accounting_intake/README.md` said `receipt_expense.py` makes a draft Expense Claim. It makes
+    a draft Purchase Invoice to the employee's reimbursement Supplier (*Create Reimbursement
+    Bill*). Its "Everything posted is a draft" section no longer lists an Expense Claim as a
+    possible result on this site.
+- **The Money flow also records what the read-only review found on production on 2026-10-28.**
+  - Every per diem rate in Travel Settings is $0, so a trip computes no per diem until someone
+    fills those rates in.
+  - Accounting pays employee reimbursements in QuickBooks, with a bill to the person's own vendor
+    record and then a check.
+  - Neither a trip's receipts nor Document Intake had carried a reimbursement yet.
+
+  These are dated facts about production, not rules, and they will go stale. The mileage-rate
+  line they replace is exactly that kind of fact.
+
 ## [1.755.2] - 2026-10-29
 
 ERPNext: TASK-2026-02999 (PRJ-00580). A follow-up to 1.755.0. Checked against frappe 16.53.0 and
