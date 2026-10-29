@@ -56,6 +56,8 @@ ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).
     - ERPNext's stock portal pages are switched off and their routes guarded. Read in source at
       erpnext v16.52.1, they scope by `Customer.portal_users`, show customers more than they
       should, have a Pay button outside the shared payment guard, and show no tracking.
+    - The stock Issues, Tasks and Addresses web forms, the Voice Call Settings permissions and the
+      wider staff sign-in guard are marked as shipped in v1.755.0 (#1383), not as work still to do.
     - History is shown only from a cut-off Accounts has reconciled, because 162 QuickBooks-era
       invoices still show as overdue.
     - Prod's portal home is `/desk`, which refuses customers. So an email-link sign-in very likely

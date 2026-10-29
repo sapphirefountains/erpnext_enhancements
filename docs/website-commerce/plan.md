@@ -684,12 +684,15 @@ they show customers more than they should and give them more than they should:
 The specifics are in a note to Nik, not in this public repository.
 
 **Hiding a menu item does not close its page.** Portal Settings' menu only drives the sidebar.
-`/project`, `/timesheets`, `/material-requests`, `/issues` and the order pages still render for
-anyone who types the address. So "switch them off" means two things:
+`/project`, `/timesheets`, `/material-requests` and the order pages still render for anyone who
+types the address. So "switch them off" means two things:
 
 1. untick them in Portal Settings;
 2. a small route guard in this app that sends a Website User from those stock routes to the
-   matching page of ours, and disables the stock Issues, Tasks and Addresses web forms.
+   matching page of ours.
+
+The stock Issues, Tasks and Addresses web forms are already unpublished: shipped in v1.755.0
+(#1383).
 
 **Portal settings changes** (a patch, tested, then applied by the deploy):
 
@@ -697,7 +700,7 @@ anyone who types the address. So "switch them off" means two things:
 |---|---|---|---|
 | `default_portal_home` | `/desk` | `/my-orders` (or the Customer role's `home_page`) | **An email-link sign-in lands on the portal home** (frappe's `redirect_post_login` passes no target), unless an installed app offers Website Users an app screen. A Website User cannot open `/desk`. So customers who sign in today, rental customers included, very likely end on "not permitted". One test sign-in confirms it; the fix is worth making now, with or without a web store ([D21](#10-decisions-for-nik)). |
 | Stock Customer menu items | 9 enabled | All off; this app's nav bar is the menu | 6.5 above |
-| Stock web forms `issues`, `tasks`, `addresses` | Published | Unpublished | Replaced by this app's own "Ask about this order" form |
+| Stock web forms `issues`, `tasks`, `addresses` | Unpublished: shipped in v1.755.0 (#1383) | No change | Replaced by this app's own "Ask about this order" form |
 | `default_role` | Blank | Stays blank | 6.4 |
 | Branding | Website navbar | This app's portal nav (already shared by `/pay`, `/rentals`), plus the site logo linking back to `www.` | Already built for the existing pages |
 
@@ -808,7 +811,7 @@ separately in people's time where the work is not code. Phases 1 and 2 can run s
 | **1. SEO fixes** | The High items in [§4](#4-seo-audit-of-the-live-site) on staging then live: contact page indexable, project cards as real links and the duplicate posts redirected, one sitemap, LocalBusiness markup, the `/contact-us/` redirect. Business Profile checked | A WordPress administrator; AI drafts the copy | 1 to 2 days of admin time | Search Console shows the new sitemap read, and `/contact/` is indexable |
 | **2. Catalog ready in ERPNext** | Pilot Items switched to Maintain Stock (PR #1378's button); a `Website` selling Price List; weights, photos, brand (our own = Sapphire Fountains) and GTINs for resold parts; a "listed on website" flag and safety stock per Item; WooCommerce SKUs changed to ERPNext item codes; prices confirmed by a person | Item Manager in ERPNext; 1 PR for the custom fields and a "Web catalog" readiness report | 1 to 2 days build; the data work depends on the list | The readiness report shows every pilot Item complete |
 | **3. The sync** | A `web_store` module in this app: WooCommerce REST client on `requests` (no SDK, like Stripe and QuickBooks); settings Single with encrypted keys; ERPNext → WooCommerce price, stock and publish pushes; `Web Order` DocType; signed webhook; hourly poll; 15-minute re-drive sweep; Customer, Sales Order and `Stripe Payment` + `finalize_payment`; shipment and tracking back to WooCommerce; the `invoice_payment_block` extension. Bench-free tests in CI | Work sessions, draft PRs, reviewed and merged by the Sapphire Manager | About 4 PRs, 6 to 10 days | A test order on staging produces the full ERPNext trail, twice delivered, once recorded |
-| **3b. The customer portal** ([§6](#6-the-customers-account-lives-in-erpnext)) | `ensure_portal_user` at the first order; "Track your order" and "Your order has shipped" emails; `/my-orders` with order detail, shipments and tracking, invoices (paying stays on `/pay-card`), history from the cut-off, and "Ask about this order"; carrier and tracking on the Delivery Note; Portal Settings patch (menu off, home, stock web forms unpublished); a route guard for the stock portal routes; a sign-in page that a mail scanner cannot spend; the DocPerm audit for All, Guest and Customer. Ownership tests pinned bench-free | Work sessions, draft PRs | About 3 PRs, 5 to 8 days | A test customer signs in by email link, sees only their own order with tracking, cannot reach any stock portal route, and every ownership test passes |
+| **3b. The customer portal** ([§6](#6-the-customers-account-lives-in-erpnext)) | `ensure_portal_user` at the first order; "Track your order" and "Your order has shipped" emails; `/my-orders` with order detail, shipments and tracking, invoices (paying stays on `/pay-card`), history from the cut-off, and "Ask about this order"; carrier and tracking on the Delivery Note; Portal Settings patch (menu off, home); a route guard for the stock portal routes; a sign-in page that a mail scanner cannot spend; the DocPerm audit for All, Guest and Customer. Ownership tests pinned bench-free. Shipped in v1.755.0 (#1383): the three stock web forms unpublished; the Voice Call Settings permissions; the wider staff sign-in guard | Work sessions, draft PRs | About 3 PRs, 5 to 8 days | A test customer signs in by email link, sees only their own order with tracking, cannot reach any stock portal route, and every ownership test passes |
 | **4. Open the store** | **Gate:** the web tier runs under gunicorn (PR #1379), Cloudflare rate-limits the sign-in endpoints, and 3b is live. WooCommerce settings: guest checkout only (no accounts, `/my-account/` off), personal-data retention, the Stripe gateway on our account, WooCommerce Tax, shipping zones (weight table, local pickup), add-to-cart and a cart icon on the Bricks templates, WooCommerce's receipt kept and its completed and account emails off, the policy pages linked, a "My orders" link in the header; freight items set to "Request a quote" | WordPress administrator; Nik connects Stripe | 1 to 2 days | **One small live order** paid on a phone, tracked in the portal, shipped and recorded, verified from the records (Nik's Stripe rollout rule) |
 | **5. Google listings** | Merchant Center linked through Google for WooCommerce; shipping and return settings; Product markup fixed on product pages; Search Console merchant-listings report clean | Nik (accounts); WordPress administrator; AI checks the feed diagnostics | 1 to 3 days, then Google's review | Pilot products approved for free listings |
 | **6. Later** | Shopping ads (spend, Nik's call); Business Agent once 50 listings are approved; UCP when WooCommerce supports it; location landing pages; the Search Console tool in ERPNext's MCP (SEO phase 3) | — | — | — |
