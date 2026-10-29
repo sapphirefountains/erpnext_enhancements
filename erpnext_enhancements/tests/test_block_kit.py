@@ -36,7 +36,8 @@ HELPER = APP / "public" / "js" / "global_enhancements" / "workspace_block_return
 README = BLOCKS_DIR / "README.md"
 CI = APP.parent / ".github" / "workflows" / "ci.yml"
 
-#: The blocks on sf_kit: the 34 department dashboard widgets (v1.649.0), then the other six.
+#: The blocks on sf_kit: the department dashboard widgets (34 in v1.649.0; 30 since the four Marketing
+#: ones moved onto the Marketing Performance page in v1.756.0), then the other six.
 ON_KIT = (
 	"design_handoff_readiness",
 	"design_hydraulic_headroom",
@@ -56,10 +57,6 @@ ON_KIT = (
 	"hr_people_calendar",
 	"hr_time_capture",
 	"hr_training_compliance",
-	"marketing_channel_spend",
-	"marketing_funnel_cascade",
-	"marketing_source_health",
-	"marketing_unsourced_leads",
 	"operations_fleet_health",
 	"production_hours_variance",
 	"production_material_readiness",
@@ -235,7 +232,8 @@ class TestTheScanner(unittest.TestCase):
 class TestEveryBlockChooses(unittest.TestCase):
 	def test_every_seeded_block_is_on_the_kit_or_says_why_not(self):
 		seeded = seeded_prefixes()
-		self.assertGreaterEqual(len(seeded), 41)
+		# 43 until v1.756.0 retired the four Marketing widgets.
+		self.assertGreaterEqual(len(seeded), 39)
 		self.assertEqual(sorted(seeded - set(ON_KIT) - set(NOT_YET)), [], "in neither list")
 		self.assertEqual(sorted(set(ON_KIT) & set(NOT_YET)), [], "in both lists")
 		self.assertEqual(sorted((set(ON_KIT) | set(NOT_YET)) - seeded), [], "not a seeded block")

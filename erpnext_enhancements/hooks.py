@@ -1781,6 +1781,21 @@ scheduler_events = {
 		# publishing connections; the publish switches play no part. Enqueues on `long`.
 		# 03:50: after the 03:35 token upkeep. Dormant while Marketing Settings.enabled is 0.
 		"50 3 * * *": ["erpnext_enhancements.marketing.publish.metrics_sync.nightly_social_metrics"],
+		# marketing (v1.756.0): GA4 and Search Console stored by day for the Marketing
+		# Performance page -- site total, landing page, channel; total, page, query. Restates
+		# the last 7 days (Search Console publishes final figures 2-3 days late) plus any days
+		# missed, by replacing each day whole. Not gated by Marketing Settings: it reads the
+		# GA4 Settings the nightly snapshot already uses. Also re-queues a history backfill a
+		# deploy FLUSHDB dropped (its cursor is on its Marketing Sync Log row). One job on `long`.
+		"40 3 * * *": ["erpnext_enhancements.marketing.performance.web_sync.nightly_web_sync"],
+		# marketing (v1.756.0): Google Business Profile's daily calls, website clicks,
+		# directions and impressions, and its reviews. Dormant: master switch AND
+		# google_business_profile_enabled ship 0, and Google must approve API access first.
+		"45 3 * * *": ["erpnext_enhancements.marketing.gbp.sync.nightly_business_profile_sync"],
+		# marketing (v1.756.0): followers, reach and views per Social Account, through the
+		# publishing connections' read scopes. 03:55, after the 03:35 token upkeep. Dormant:
+		# master switch AND social_page_stats_enabled ship 0.
+		"55 3 * * *": ["erpnext_enhancements.marketing.publish.page_stats.nightly_social_page_stats"],
 		# travel_management (Plan a Trip PR 4): trip change alerts. A save of a Booked or In
 		# Progress trip records what changed for each person as a Pending Trip Change Alert
 		# (notifications.on_trip_update); this sends each one once its last change is 10

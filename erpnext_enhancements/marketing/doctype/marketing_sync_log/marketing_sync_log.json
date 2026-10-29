@@ -18,6 +18,7 @@
   "window_from",
   "column_break_window",
   "window_to",
+  "progress_through",
   "counts_section",
   "created_count",
   "updated_count",
@@ -34,7 +35,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Platform",
-   "options": "Google Ads\nMeta Ads\nLinkedIn Ads"
+   "options": "Google Ads\nMeta Ads\nLinkedIn Ads\nGoogle Analytics 4\nSearch Console\nGoogle Business Profile\nSocial Pages"
   },
   {
    "fieldname": "sync_type",
@@ -94,6 +95,13 @@
    "label": "To"
   },
   {
+   "description": "How far a backfill has got: every day up to this one is stored. A backfill cut off by a deploy is queued again from the day after (marketing/performance/web_sync.py).",
+   "fieldname": "progress_through",
+   "fieldtype": "Date",
+   "label": "Done Through",
+   "read_only": 1
+  },
+  {
    "fieldname": "counts_section",
    "fieldtype": "Section Break",
    "label": "Counters"
@@ -136,7 +144,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-13 12:00:00.000000",
+ "modified": "2026-10-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Sync Log",

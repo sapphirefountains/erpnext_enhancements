@@ -5,7 +5,8 @@
 
 Since v1.508.0 the Connect, callback, Disconnect and Test endpoints also serve the three
 publishing connections (``publish/oauth.py``), behind the same fences and the same redirect
-URI. ``sync_now`` stays ads-only.
+URI. Since v1.756.0 they serve Google Business Profile too (``gbp/``), whose tokens are Google's
+like the Ads ones. ``sync_now`` stays ads-only.
 
 Every endpoint is POST, except one: ``oauth_callback`` is **GET**, because that is how an
 OAuth provider sends the browser back and no provider can be told otherwise. It is the
@@ -53,7 +54,15 @@ def _require_platform(platform):
 
 
 def _is_publishing(name):
-	return name not in C.PLATFORMS
+	from erpnext_enhancements.marketing.publish import constants as P
+
+	return name in P.PUBLISH_CONNECTIONS
+
+
+def _is_business_profile(name):
+	from erpnext_enhancements.marketing.gbp import constants as G
+
+	return name == G.PLATFORM_GBP
 
 
 @frappe.whitelist(methods=["POST"])
@@ -189,6 +198,8 @@ def test_connection(platform):
 	creds = get_credentials()
 	if _is_publishing(platform):
 		return _test_publishing(creds, platform)
+	if _is_business_profile(platform):
+		return _test_business_profile(creds, platform)
 	try:
 		transport = open_transport(platform, get_settings(), creds)
 		accounts = module_for(platform).discover_accounts(transport)
@@ -223,6 +234,25 @@ def _test_publishing(creds, connection):
 		return {"ok": False, "message": str(exc)}
 	_record(creds, connection, status="Connected", message=" · ".join(lines))
 	return {"ok": True, "heading": _("Connected to:"), "accounts": lines}
+
+
+def _test_business_profile(creds, platform):
+	"""List the accounts and listings the stored Business Profile token reaches."""
+	from erpnext_enhancements.marketing.gbp import sync as gbp_sync
+
+	try:
+		listings = gbp_sync.discover(gbp_sync.open_transport(creds))
+	except MarketingAPIError as exc:
+		_record(
+			creds, platform, status="Auth Failed" if exc.is_auth_failure else "Connected", message=str(exc)
+		)
+		return {"ok": False, "message": str(exc)}
+	_record(creds, platform, status="Connected", message=_("{0} listing(s) readable").format(len(listings)))
+	return {
+		"ok": True,
+		"heading": _("Readable listings:"),
+		"accounts": [f"{row['title']} ({row['location_id']})" for row in listings],
+	}
 
 
 @frappe.whitelist(methods=["POST"])

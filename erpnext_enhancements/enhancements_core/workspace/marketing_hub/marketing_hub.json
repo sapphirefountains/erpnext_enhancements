@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"mh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"mh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":4}},{\"id\":\"mh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Campaign\",\"col\":4}},{\"id\":\"mh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Account\",\"col\":4}},{\"id\":\"mh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Spend\",\"col\":4}},{\"id\":\"mh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"GA4 Dashboard\",\"col\":4}},{\"id\":\"mh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Dashboard\",\"col\":4}},{\"id\":\"mh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"mh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Leads waiting on us\",\"col\":6}},{\"id\":\"mh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Enquiries off the website\",\"col\":6}},{\"id\":\"mh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"mh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Campaigns\",\"col\":4}},{\"id\":\"mh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Demand\",\"col\":4}},{\"id\":\"mh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"mh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Plumbing\",\"col\":4}}]",
+ "content": "[{\"id\":\"mh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"mh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":4}},{\"id\":\"mh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Campaign\",\"col\":4}},{\"id\":\"mh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Account\",\"col\":4}},{\"id\":\"mh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Spend\",\"col\":4}},{\"id\":\"mh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Performance\",\"col\":4}},{\"id\":\"mh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Dashboard\",\"col\":4}},{\"id\":\"mh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"mh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Leads waiting on us\",\"col\":6}},{\"id\":\"mh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Enquiries off the website\",\"col\":6}},{\"id\":\"mh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"mh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Campaigns\",\"col\":4}},{\"id\":\"mh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Demand\",\"col\":4}},{\"id\":\"mh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"mh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Plumbing\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -14,7 +14,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Campaigns",
-   "link_count": 6,
+   "link_count": 10,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -64,6 +64,46 @@
    "label": "Marketing Web Snapshot",
    "link_count": 0,
    "link_to": "Marketing Web Snapshot",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GA4 Daily Metric",
+   "link_count": 0,
+   "link_to": "GA4 Daily Metric",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Search Console Daily Metric",
+   "link_count": 0,
+   "link_to": "Search Console Daily Metric",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Business Profile Daily Metric",
+   "link_count": 0,
+   "link_to": "Business Profile Daily Metric",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Social Page Daily Metric",
+   "link_count": 0,
+   "link_to": "Social Page Daily Metric",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -130,9 +170,19 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 7,
+   "link_count": 8,
    "onboard": 0,
    "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Marketing Performance",
+   "link_count": 0,
+   "link_to": "marketing-performance",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -243,7 +293,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-13 18:00:00.000000",
+ "modified": "2026-10-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Marketing Hub",
@@ -301,8 +351,8 @@
    "type": "DocType"
   },
   {
-   "label": "GA4 Dashboard",
-   "link_to": "ga4-dashboard",
+   "label": "Marketing Performance",
+   "link_to": "marketing-performance",
    "type": "Page"
   },
   {

@@ -105,6 +105,79 @@ reconnect once a year.
 
 ---
 
+## Google Business Profile (v1.756.0)
+
+Read-only: the listing's daily **call clicks, website clicks, direction requests, Maps and Search
+impressions** (Performance API, `fetchMultiDailyMetricsTimeSeries`), and its **reviews** (the legacy My
+Business v4 `reviews` list: count, average and how many have no reply). It feeds the Marketing
+Performance page and nothing else. Checked against Google's references on 2026-10-29.
+
+**Needs first: Google's approval.** A Cloud project starts with a Business Profile API quota of **0**
+requests a minute; every call fails until Google approves it, and then the quota is 300.
+
+1. The profile must be **verified, active for 60+ days, and list the website**.
+2. In the Google Cloud project you will use, note the **project number**. Enable the *My Business Account
+   Management API*, *My Business Business Information API*, *Business Profile Performance API* and *Google My
+   Business API* (the last carries reviews).
+3. Apply at <https://support.google.com/business/contact/api_default>, choosing **Application for Basic API
+   Access**, with the project number, from an email that is an owner or manager on the profile.
+4. Wait for the approval email; the quota page then reads 300 per minute.
+
+**The scope.** `business.manage` is the only one Google offers (no read-only scope exists), and it can edit
+the listing and reply to reviews. As with Google Ads, read-only is enforced by the transport: the Business
+Profile allowlist (`marketing/gbp/constants.py`) holds **GETs only**, on its four hosts, and anything else is
+refused before it leaves ERPNext. Connect as a Google user whose role on the profile is the least that can
+read it.
+
+**Connecting, after approval:**
+
+1. Google Cloud → **APIs & Services → Credentials** → an OAuth client (Web application) with the redirect URI
+   above.
+2. **Marketing Connections → Google Business Profile:** client ID and client secret. **Save.**
+3. **Connect** → sign in as the profile's user → approve. **Test** lists every listing the token reaches.
+4. **Marketing Settings:** tick **Enabled** (the master switch) and **Google Business Profile**.
+
+It runs nightly at **03:45**: each listing's last 7 days are restated plus any days since (the first run
+reads 90), and tonight's review figures land on today's row. A dead token marks the connection *Auth
+Failed* and the job stops asking until somebody reconnects.
+
+## Social page stats (v1.756.0)
+
+Followers (tonight), and each day's **reach** and **views**, for every **Enabled** Social Account, read
+through its **publishing connection**: Facebook Page `followers_count` and Page insights
+`page_total_media_view_unique` / `page_media_view`; Instagram `followers_count` and `reach` / `views`
+(`metric_type=total_value`, a day at a time); LinkedIn `networkSizes` and time-bound share statistics;
+YouTube `channels` statistics and Analytics views by day. The scopes those connections already ask for
+cover every read (`read_insights`, `instagram_manage_insights`, `rw_organization_admin`,
+`yt-analytics.readonly`; v1.756.0 added the read-only `youtube.readonly`, which Google's Analytics reference
+now names). No spend-capable scope, and the only new allowlist entry is LinkedIn's `networkSizes` GET.
+
+Turn on: connect the publishing connection (above), tick **Enabled** on each Social Account, then
+**Marketing Settings → Enabled + Social Page Stats**. Runs nightly at **03:55**; LinkedIn's statistics end
+two days before the request and YouTube's lag 48–72 hours, so the newest two days fill in later.
+
+## GA4 and Search Console by day (v1.756.0)
+
+Not a connector: these read the **GA4 Settings** service account the nightly snapshot has used since June,
+and are not gated by Marketing Settings. Every night at **03:40** each source's last 7 days are replaced
+whole (Search Console publishes final figures two or three days late) plus any days missed, into **GA4 Daily
+Metric** (site total, landing page, channel) and **Search Console Daily Metric** (property total, page,
+query).
+
+**The history backfill.** Marketing Performance → menu → *Backfill GA4 and Search Console history*
+(System Manager), or from the bench:
+
+```
+bench --site erp.sapphirefountains.com execute erpnext_enhancements.marketing.performance.web_sync.backfill --kwargs "{'days': 480}"
+```
+
+It walks a month at a time, oldest first, writing a **Backfill** row per source in Marketing Sync Log whose
+*Done Through* moves after each month. A deploy flushes the queue; the next 03:40 run sees a Backfill row
+still *Running* with nothing written for 90 minutes and queues it again from *Done Through*. Running it
+twice is harmless: each month is replaced, not added to.
+
+---
+
 ## Turning it on
 
 1. Connect each platform as above; **Test** should list your accounts.

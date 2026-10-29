@@ -1,8 +1,11 @@
 """Marketing analytics endpoints (Google Analytics 4 + Google Search Console).
 
-Whitelisted API that powers the GA4 Dashboard Desk page
-(``enhancements_core/page/ga4_dashboard/ga4_dashboard.js``), which calls
-``get_ga4_data`` and ``get_gsc_data``.
+Since v1.756.0 nothing calls Google from a page load: the GA4 Dashboard page redirects to
+Marketing Performance, which reads the daily rows ``marketing/performance/web_sync.py`` stores.
+``get_ga4_data`` and ``get_gsc_data`` remain for the nightly 30-day snapshot
+(``kpi_dashboards/snapshots.snapshot_marketing_web``), and their credential and Search Console
+helpers (``_ga4_client``, ``_gsc_service``, ``_gsc_execute``, ``_gsc_query_first_site``) are what
+the daily pull uses.
 
 External services:
         - Google Analytics 4 Data API (``BetaAnalyticsDataClient``).
@@ -47,6 +50,34 @@ from erpnext_enhancements.utils.error_throttle import log_error_throttled
 from erpnext_enhancements.utils.search_console import rolling_sums, site_candidates, window_for
 
 
+def _ga4_client(ga4_settings):
+	"""``(client, property_id, error)`` for the configured GA4 property.
+
+	Shared by ``get_ga4_data`` (the nightly snapshot) and the daily pull in
+	``marketing/performance/web_sync.py``.
+	"""
+	if not ga4_settings.ga4_property_id:
+		return None, None, "GA4 Property ID is missing in GA4 Settings."
+
+	if not ga4_settings.credentials_json:
+		return None, None, "Credentials JSON file is missing in GA4 Settings."
+
+	credentials_url = ga4_settings.credentials_json
+	if not credentials_url.startswith('/private/files/'):
+		return None, None, "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."
+
+	# Extract filename correctly
+	credentials_file = credentials_url.split('/')[-1]
+	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
+
+	if not os.path.exists(credentials_path):
+		return None, None, f"Credentials file not found at: {credentials_path}"
+
+	# Use service account credentials explicitly to avoid modifying os.environ
+	credentials = service_account.Credentials.from_service_account_file(credentials_path)
+	return BetaAnalyticsDataClient(credentials=credentials), ga4_settings.ga4_property_id, None
+
+
 @frappe.whitelist()
 def get_ga4_data():
 	"""
@@ -63,29 +94,10 @@ def get_ga4_data():
 	"""
 	ga4_settings = frappe.get_doc("GA4 Settings")
 
-	if not ga4_settings.ga4_property_id:
-		return {"error": "GA4 Property ID is missing in GA4 Settings."}
-
-	if not ga4_settings.credentials_json:
-		return {"error": "Credentials JSON file is missing in GA4 Settings."}
-
-	credentials_url = ga4_settings.credentials_json
-	if not credentials_url.startswith('/private/files/'):
-		return {"error": "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."}
-
-	# Extract filename correctly
-	credentials_file = credentials_url.split('/')[-1]
-	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
-
-	if not os.path.exists(credentials_path):
-		return {"error": f"Credentials file not found at: {credentials_path}"}
-
 	try:
-		# Use service account credentials explicitly to avoid modifying os.environ
-		credentials = service_account.Credentials.from_service_account_file(credentials_path)
-		client = BetaAnalyticsDataClient(credentials=credentials)
-
-		property_id = ga4_settings.ga4_property_id
+		client, property_id, error = _ga4_client(ga4_settings)
+		if error:
+			return {"error": error}
 		date_range = DateRange(start_date="30daysAgo", end_date="today")
 
 		def fetch_traffic():
@@ -107,10 +119,12 @@ def get_ga4_data():
 			return client.run_report(req)
 
 		def fetch_conversions():
+			# keyEvents: Google renamed conversions to key events in 2024 and the old metric name
+			# is deprecated in the Data API (v1.756.0).
 			req = RunReportRequest(
 				property=f"properties/{property_id}",
 				dimensions=[Dimension(name="eventName")],
-				metrics=[Metric(name="conversions")],
+				metrics=[Metric(name="keyEvents")],
 				date_ranges=[date_range],
 			)
 			return client.run_report(req)
@@ -196,7 +210,7 @@ def get_ga4_data():
 		conv_conversions = []
 		for row in res_conv.rows:
 			conv_labels.append(row.dimension_values[0].value)
-			conv_conversions.append(int(row.metric_values[0].value))
+			conv_conversions.append(int(float(row.metric_values[0].value or 0)))
 
 		# Process 4. Top Pages
 		top_pages = []

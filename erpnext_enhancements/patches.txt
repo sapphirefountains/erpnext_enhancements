@@ -1520,3 +1520,14 @@ erpnext_enhancements.patches.dedupe_project_attachment_rows
 # (2026-10-27): 6 files, 16 File rows, 3 rows linked and tagged. One savepoint per file, commits after each, moves the
 # bytes back itself after a savepoint rollback; prints counts. Cannot raise, safe twice.
 erpnext_enhancements.patches.privatize_kiosk_attachment_files
+# Marketing Performance (v1.756.0, Nik 2026-10-29): re-sync the Marketing Dashboard (its four widget blocks gone, a
+# Marketing Performance shortcut in their place), the Marketing Hub and the Integration Hub (their GA4 Dashboard
+# shortcuts and links now open the new page), then delete the four retired Custom HTML Block records the seeder no longer
+# writes -- never forced, so one a private workspace still links to is kept and logged. Prints what it did; cannot raise,
+# safe twice.
+erpnext_enhancements.patches.retire_marketing_dashboard_widgets
+# Marketing Performance (v1.756.0): the three new Marketing Settings fields (google_business_profile_enabled 0,
+# social_page_stats_enabled 0, branded_terms "sapphire") get their defaults on the existing row, only where tabSingles has
+# no row for them. The same function runs on after_migrate; this line is the one a site whose Patch Log already holds the
+# 2026-08 backfill still runs. Safe twice.
+erpnext_enhancements.patches.backfill_marketing_performance_settings

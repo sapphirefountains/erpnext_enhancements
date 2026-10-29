@@ -1,0 +1,173 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:GBP-{location_id}-{metric_date}",
+ "creation": "2026-10-29 12:00:00.000000",
+ "description": "One Google Business Profile listing on one day. Named from (listing, date), so re-reading a day updates the same row.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "location_id",
+  "metric_date",
+  "column_break_key",
+  "location_title",
+  "actions_section",
+  "call_clicks",
+  "website_clicks",
+  "column_break_actions",
+  "direction_requests",
+  "impressions_section",
+  "maps_impressions",
+  "column_break_impressions",
+  "search_impressions",
+  "reviews_section",
+  "review_count",
+  "average_rating",
+  "column_break_reviews",
+  "unreplied_reviews"
+ ],
+ "fields": [
+  {
+   "fieldname": "location_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Listing ID",
+   "reqd": 1,
+   "set_only_once": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1,
+   "description": "The listing's date as Google reports it.",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "location_title",
+   "fieldtype": "Data",
+   "label": "Listing",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actions_section",
+   "fieldtype": "Section Break",
+   "label": "Actions"
+  },
+  {
+   "fieldname": "call_clicks",
+   "fieldtype": "Int",
+   "label": "Call Clicks",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "website_clicks",
+   "fieldtype": "Int",
+   "label": "Website Clicks",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_actions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "direction_requests",
+   "fieldtype": "Int",
+   "label": "Direction Requests",
+   "read_only": 1
+  },
+  {
+   "fieldname": "impressions_section",
+   "fieldtype": "Section Break",
+   "label": "Impressions"
+  },
+  {
+   "fieldname": "maps_impressions",
+   "fieldtype": "Int",
+   "label": "Maps Impressions",
+   "read_only": 1,
+   "description": "Desktop and mobile."
+  },
+  {
+   "fieldname": "column_break_impressions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "search_impressions",
+   "fieldtype": "Int",
+   "label": "Search Impressions",
+   "read_only": 1,
+   "description": "Desktop and mobile."
+  },
+  {
+   "fieldname": "reviews_section",
+   "fieldtype": "Section Break",
+   "label": "Reviews"
+  },
+  {
+   "fieldname": "review_count",
+   "fieldtype": "Int",
+   "label": "Reviews",
+   "read_only": 1,
+   "description": "As of the night this row was pulled; blank on rows from before."
+  },
+  {
+   "fieldname": "average_rating",
+   "fieldtype": "Float",
+   "label": "Average Rating",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_reviews",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "unreplied_reviews",
+   "fieldtype": "Int",
+   "label": "Unreplied Reviews",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Business Profile Daily Metric",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}

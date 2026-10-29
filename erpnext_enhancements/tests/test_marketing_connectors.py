@@ -1383,8 +1383,8 @@ class WiringTests(unittest.TestCase):
 		self.assertEqual([p["role"] for p in doc["permissions"]], ["System Manager"])
 		tokens = [f for f in doc["fields"] if f["fieldname"].endswith(("_access_token", "_refresh_token"))]
 		# 4 for the ad platforms (v1.503.0) + 4 for publishing (v1.508.0): Meta's Page token,
-		# LinkedIn's pair, YouTube's refresh token.
-		self.assertEqual(len(tokens), 8)
+		# LinkedIn's pair, YouTube's refresh token; + Google Business Profile's refresh token (v1.756.0).
+		self.assertEqual(len(tokens), 9)
 		for f in tokens:
 			self.assertEqual((f["fieldtype"], f.get("hidden")), ("Password", 1), f["fieldname"])
 		for f in doc["fields"]:

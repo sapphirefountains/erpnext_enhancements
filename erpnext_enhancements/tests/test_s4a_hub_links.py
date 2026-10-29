@@ -38,6 +38,12 @@ HUB_LINKS_JS = APP / "custom_html_blocks" / "dashboard_hub_links.js"
 TASK_DASHBOARD = APP / "api" / "task_dashboard.py"
 BOARD_API = APP / "api" / "maintenance_board.py"
 BUMPED_ON_OR_AFTER = "2026-10-14 12:00:00"
+
+#: Workspaces S4a did not edit that a later release bumped, with the patch that re-imports them
+#: and the stamp it set: (patch module, modified on or after).
+LATER_RESYNCS = {
+	"Marketing Hub": ("retire_marketing_dashboard_widgets", "2026-10-29 12:00:00"),
+}
 HUB_LINKS = "Dashboard Hub Links"
 
 #: hub -> the dashboards it must link. The dashboards' block leads back along the same pairs.
@@ -249,9 +255,10 @@ def roles_of(doc):
 
 class TestPagesAdmitTheRolesTheirHubsGateOn(unittest.TestCase):
 	def test_ga4_admits_the_marketing_roles(self):
+		# The hub's GA4 Dashboard shortcut opens Marketing Performance since v1.756.0.
 		hub = workspace("Marketing Hub")
-		self.assertIn("ga4-dashboard", [s.get("link_to") for s in hub["shortcuts"]])
-		roles = roles_of(page("ga4-dashboard"))
+		self.assertIn("marketing-performance", [s.get("link_to") for s in hub["shortcuts"]])
+		roles = roles_of(page("marketing-performance"))
 		self.assertIn("Marketing Team", roles)
 		self.assertIn("Marketing Manager", roles)
 
@@ -390,6 +397,13 @@ class TestThePatch(unittest.TestCase):
 		listed = {name for _folder, name in literal(PATCH, "WORKSPACES")}
 		for name in [*HUB_DASHBOARDS, *DASHBOARDS, "Morning Briefing", "Workforce"]:
 			doc = workspace(name)
+			later = LATER_RESYNCS.get(name)
+			if later and doc["modified"][:19] >= later[1]:
+				# Bumped again by a later release, whose own patch re-imports it.
+				with self.subTest(workspace=name, patch=later[0]):
+					source = (APP / "patches" / f"{later[0]}.py").read_text(encoding="utf-8")
+					self.assertIn(f'"{name.lower().replace(" ", "_")}"', source)
+				continue
 			if doc["modified"][:19] >= BUMPED_ON_OR_AFTER:
 				with self.subTest(workspace=name):
 					self.assertIn(name.lower().replace(" ", "_"), listed)

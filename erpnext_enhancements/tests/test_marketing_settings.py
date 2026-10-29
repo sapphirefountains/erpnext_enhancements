@@ -38,6 +38,9 @@ IDENTITY_FIELDS = {
 	"ad_account": ("platform", "external_id"),
 	"ad_campaign": ("ad_account", "external_id"),
 	"ad_daily_metric": ("campaign", "metric_date"),
+	# v1.756.0, the Marketing Performance page's named-by-key daily rows.
+	"business_profile_daily_metric": ("location_id", "metric_date"),
+	"social_page_daily_metric": ("social_account", "metric_date"),
 }
 
 #: Substrings that have no business in a doctype a non-System-Manager can read.

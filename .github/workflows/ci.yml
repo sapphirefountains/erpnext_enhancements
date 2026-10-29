@@ -672,8 +672,13 @@ jobs:
       # date, YouTube's trailing days restated, the cursor moves only on a clean pull, a 401
       # stops that network only; parsers on recorded shapes with 2026's metric names; every read
       # a GET on the allowlist; posts joined to leads and revenue on their tags.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
+      # test_marketing_performance (v1.756.0), stub-free: the Marketing Performance page. GA4 and
+      # Search Console joined on a normalized path, the flags at their thresholds, branded queries,
+      # the nightly restate window, calls (first-time by number, an Opportunity credited to one call),
+      # who sees money and who sees callers, Business Profile's GET-only allowlist and parsers, the
+      # social page-stats parsers, and the page's range-in-the-address logic under node.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers + performance page
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher erpnext_enhancements.tests.test_marketing_performance -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's

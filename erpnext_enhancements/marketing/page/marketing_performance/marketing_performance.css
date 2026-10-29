@@ -1,0 +1,321 @@
+/* Marketing Performance (v1.756.0). A Desk Page's stylesheet is appended to <head> once and stays for the
+   whole Desk session, so every selector here starts with .mkp-. Colors are the app tokens with the Desk's
+   own as fallback, so the page follows light and dark with the rest of the Desk. */
+
+.mkp-app {
+	padding: var(--sf-space-20, 16px) 0 var(--sf-space-40, 32px);
+	color: var(--sf-text, var(--text-color));
+}
+
+.mkp-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.mkp-presets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5, 4px);
+}
+
+.mkp-preset,
+.mkp-btn {
+	min-height: var(--sf-touch-min, 36px);
+	padding: 0 var(--sf-space-15, 12px);
+	border: 1px solid var(--sf-border-control, var(--border-color));
+	border-radius: var(--sf-radius-pill, 999px);
+	background: var(--sf-surface, var(--card-bg));
+	color: var(--sf-text, var(--text-color));
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.mkp-btn {
+	border-radius: var(--sf-radius-control, 6px);
+}
+
+.mkp-preset-on {
+	border-color: var(--sf-primary, var(--primary));
+	background: var(--sf-primary, var(--primary));
+	color: var(--sf-on-primary);
+}
+
+.mkp-preset:focus-visible,
+.mkp-btn:focus-visible,
+.mkp-input:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+}
+
+.mkp-field {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	font-size: var(--sf-text-sm, 0.875rem);
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.mkp-input {
+	min-height: var(--sf-touch-min, 36px);
+	padding: 0 var(--sf-space-10, 8px);
+	border: 1px solid var(--sf-field-border, var(--border-color));
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-field-bg, var(--control-bg));
+	color: var(--sf-field-text, var(--text-color));
+}
+
+.mkp-check {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5, 4px);
+	min-height: var(--sf-touch-min, 36px);
+	margin: 0;
+}
+
+.mkp-range-note {
+	margin-bottom: var(--sf-space-15, 12px);
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-body {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+	gap: var(--sf-space-15, 12px);
+}
+
+.mkp-kpis,
+.mkp-wide {
+	grid-column: 1 / -1;
+}
+
+.mkp-kpis {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: var(--sf-space-10, 8px);
+}
+
+.mkp-kpi,
+.mkp-split,
+.mkp-card {
+	padding: var(--sf-space-15, 12px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--sf-radius-control, 8px);
+	background: var(--sf-surface, var(--card-bg));
+	min-width: 0;
+}
+
+.mkp-kpi,
+.mkp-split {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.mkp-kpi-label {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-kpi-value {
+	font-size: var(--sf-text-lg, 1.5rem);
+	font-weight: var(--sf-weight-bold, 700);
+	color: var(--sf-text-strong, var(--heading-color));
+}
+
+.mkp-was,
+.mkp-hint,
+.mkp-empty {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-hint {
+	margin: var(--sf-space-10, 8px) 0 0;
+}
+
+.mkp-empty {
+	margin: 0;
+}
+
+.mkp-h {
+	margin: 0 0 var(--sf-space-10, 8px);
+	font-size: var(--sf-text-md, 1rem);
+	font-weight: var(--sf-weight-bold, 700);
+}
+
+.mkp-h4 {
+	margin: var(--sf-space-10, 8px) 0 var(--sf-space-5, 4px);
+	font-size: var(--sf-text-sm, 0.875rem);
+	font-weight: var(--sf-weight-bold, 700);
+}
+
+.mkp-table-wrap {
+	overflow-x: auto;
+}
+
+.mkp-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-table th,
+.mkp-table td {
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+	text-align: left;
+	vertical-align: top;
+}
+
+.mkp-table th {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.mkp-table .mkp-num {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.mkp-table code {
+	word-break: break-all;
+}
+
+.mkp-splits {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	gap: var(--sf-space-10, 8px);
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.mkp-flags {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+	gap: var(--sf-space-15, 12px);
+}
+
+.mkp-list {
+	margin: 0;
+	padding-left: 1.1em;
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-list code {
+	word-break: break-all;
+}
+
+.mkp-trend-row {
+	display: grid;
+	grid-template-columns: minmax(120px, 180px) 1fr;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	padding: var(--sf-space-5, 4px) 0;
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.mkp-trend-label {
+	display: flex;
+	flex-direction: column;
+	font-size: var(--sf-text-sm, 0.875rem);
+}
+
+.mkp-spark {
+	width: 100%;
+	height: 48px;
+	overflow: visible;
+}
+
+.mkp-line {
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+	stroke-linejoin: round;
+}
+
+circle.mkp-line {
+	stroke-width: 0;
+}
+
+.mkp-line-design {
+	stroke: var(--sf-pillar-design-deep);
+	fill: var(--sf-pillar-design-deep);
+}
+
+.mkp-line-service {
+	stroke: var(--sf-pillar-service-deep);
+	fill: var(--sf-pillar-service-deep);
+}
+
+.mkp-line-build {
+	stroke: var(--sf-text-strong, var(--heading-color));
+	fill: var(--sf-text-strong, var(--heading-color));
+}
+
+.mkp-line-rent {
+	stroke: var(--sf-pillar-rent-deep);
+	fill: var(--sf-pillar-rent-deep);
+}
+
+polyline.mkp-line {
+	fill: none;
+}
+
+.mkp-axis {
+	display: flex;
+	justify-content: space-between;
+	margin-left: calc(min(180px, 30%) + var(--sf-space-10, 8px));
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-xs, 0.75rem);
+}
+
+.mkp-bar {
+	display: inline-block;
+	width: 60px;
+	height: 8px;
+	margin-right: 6px;
+	border-radius: var(--sf-radius-pill);
+	background: linear-gradient(
+		to right,
+		var(--sf-primary, var(--primary)) var(--mkp-share, 0%),
+		var(--sf-border-hairline, var(--border-color)) var(--mkp-share, 0%)
+	);
+	vertical-align: middle;
+}
+
+.mkp-funnel {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: var(--sf-space-10, 8px);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.mkp-step {
+	display: flex;
+	flex-direction: column;
+	padding: var(--sf-space-10, 8px);
+	border-left: 3px solid var(--sf-primary, var(--primary));
+	background: var(--sf-bg, var(--subtle-fg));
+	border-radius: var(--sf-radius-control, 6px);
+}
+
+@media (max-width: 767px) {
+	.mkp-trend-row {
+		grid-template-columns: 1fr;
+	}
+
+	.mkp-axis {
+		margin-left: 0;
+	}
+
+	.mkp-funnel {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}

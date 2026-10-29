@@ -1,0 +1,118 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:SPDM-{social_account}-{metric_date}",
+ "creation": "2026-10-29 12:00:00.000000",
+ "description": "One social account's page-level figures on one day: followers as of that night, and the day's reach and views. Named from (account, date), so a restated day updates the same row. A figure a network does not report is blank, never 0.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "social_account",
+  "metric_date",
+  "column_break_key",
+  "network",
+  "metrics_section",
+  "followers",
+  "column_break_metrics",
+  "reach",
+  "views"
+ ],
+ "fields": [
+  {
+   "fieldname": "social_account",
+   "fieldtype": "Link",
+   "options": "Social Account",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Social Account",
+   "reqd": 1,
+   "set_only_once": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1,
+   "description": "The network's own reporting date.",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "network",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Network",
+   "read_only": 1
+  },
+  {
+   "fieldname": "metrics_section",
+   "fieldtype": "Section Break",
+   "label": "Metrics"
+  },
+  {
+   "fieldname": "followers",
+   "fieldtype": "Int",
+   "label": "Followers",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Followers (subscribers on YouTube) on the night of the pull; blank on days it was not read."
+  },
+  {
+   "fieldname": "column_break_metrics",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reach",
+   "fieldtype": "Int",
+   "label": "Reach",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Unique accounts reached that day. Facebook page_total_media_view_unique, Instagram reach, LinkedIn unique impressions; YouTube reports none."
+  },
+  {
+   "fieldname": "views",
+   "fieldtype": "Int",
+   "label": "Views",
+   "read_only": 1,
+   "description": "Facebook page_media_view, Instagram views, LinkedIn impressions, YouTube views."
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Page Daily Metric",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,131 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-29 12:00:00.000000",
+ "description": "One day of Search Console: the property's total, one page, or one query. Written only by the nightly pull and the backfill, which replace each day they read in full; Search Console publishes final figures two or three days late, so the last week is re-read every night.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "metric_date",
+  "dimension",
+  "column_break_key",
+  "dimension_value",
+  "page_path",
+  "property",
+  "metrics_section",
+  "clicks",
+  "impressions",
+  "column_break_metrics",
+  "position"
+ ],
+ "fields": [
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1,
+   "description": "Search Console's date (Pacific time, as Google reports it)."
+  },
+  {
+   "fieldname": "dimension",
+   "fieldtype": "Select",
+   "options": "Total\nPage\nQuery",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dimension",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dimension_value",
+   "fieldtype": "Small Text",
+   "label": "Value",
+   "read_only": 1,
+   "description": "The page URL or the query as Search Console reported it. Blank for the total."
+  },
+  {
+   "fieldname": "page_path",
+   "fieldtype": "Small Text",
+   "label": "Normalized Path",
+   "read_only": 1,
+   "description": "The join key with GA4 landing pages (rules.normalize_page). Pages only."
+  },
+  {
+   "fieldname": "property",
+   "fieldtype": "Data",
+   "label": "Property",
+   "read_only": 1,
+   "description": "The property form Search Console accepted (sc-domain: or a URL prefix)."
+  },
+  {
+   "fieldname": "metrics_section",
+   "fieldtype": "Section Break",
+   "label": "Metrics"
+  },
+  {
+   "fieldname": "clicks",
+   "fieldtype": "Int",
+   "label": "Clicks",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "impressions",
+   "fieldtype": "Int",
+   "label": "Impressions",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_metrics",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "position",
+   "fieldtype": "Float",
+   "label": "Average Position",
+   "read_only": 1,
+   "description": "Search Console's average position for the row. Averages across rows are weighted by impressions."
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Search Console Daily Metric",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}
