@@ -46,6 +46,10 @@ ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).
     junk. There is no local-business markup. A 404 is linked from the site. Most fixes are settings;
     the page-by-page copy fits the agreed Marketing approval path, and none uses Slim SEO's own
     write abilities.
+    - On 2026-10-29 the read-only Sapphire SEO abilities, newly active on the site, confirmed the
+      contact page and policy-page findings. They also corrected one fix: WooCommerce's real cart and
+      checkout are `/cart-2/` and `/checkout-2/`. So the old `/cart/` and `/checkout/` are the pages
+      to delete, and the plan no longer tells anyone to delete the pages checkout runs on.
   - **The customer's account lives in ERPNext, not the website** (section 6, added at Nik's request
     the same day).
     - The shopper checks out as a guest, and the order creates a portal account on

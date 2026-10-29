@@ -101,8 +101,9 @@ Code Snippets. Audited read-only on 2026-10-28 with about 145 GET requests; the 
   fountains, are priced at $0 and show "Read more".
 - **Nobody can actually buy.** The product page shows the price and a **Contact us** button. The
   only add-to-cart links are in the "Related products" strip. No cart icon, and no menu link to
-  cart or checkout. `/cart/`, `/checkout/` and `/my-account/` exist, plus stray `/cart-2/` and
-  `/checkout-2/` copies.
+  cart or checkout. WooCommerce's own cart and checkout pages are `/cart-2/` and `/checkout-2/`,
+  beside `/my-account/`. The older `/cart/` and `/checkout/` pages are leftovers WooCommerce no
+  longer uses (checked 2026-10-29, [§4](#4-seo-audit-of-the-live-site)).
 - **Stock is not tracked**: every product reports "in stock".
 - **The SKUs do not match ERPNext.** Three of the four priced products carry auto-incremented
   SKUs (`PDT-0016`, `PDT-0016-1`, `PDT-0016-1-1`) where ERPNext's codes are `PDT-0050`, `PDT-0202`
@@ -328,6 +329,13 @@ every run** (the keyless shared quota was exhausted, HTTP 429), so there are no 
 figures; and the web search tool used is not Google, so the ranking notes are only a hint. Search
 Console is the ground truth for both, and phase 3 of the SEO plan brings it into ERPNext's MCP.
 
+**Checked from inside WordPress on 2026-10-29**, through the read-only Sapphire SEO abilities
+(v1.1.0, [`docs/website-seo/`](../website-seo/README.md)):
+- **Confirmed.** `/contact/` is noindexed by its own Slim SEO setting, has no canonical, and its
+  description is "Contacts". The three policy pages are noindexed. There are 24 products.
+- **Corrected.** WooCommerce's cart and checkout are the `/cart-2/` and `/checkout-2/` pages, not
+  `/cart/` and `/checkout/`. So finding #3 now deletes the other two.
+
 ### What the site does well
 
 - Titles are mostly well formed, under 60 characters, with the brand.
@@ -350,7 +358,7 @@ site directly.
 |---|---|---|---|---|
 | 1 | High | **`/contact/` is `noindex`**, has no canonical, and its description is the single word "Contacts". It is the main lead page. | Remove noindex, write a real description, output a canonical. | Page SEO |
 | 2 | High | **Project pages cannot be crawled and exist up to three times.** The `/projects/` grid opens each project in a Bricks popup, so no link points at any of the 18 `/projects/*` pages. About 12 projects are also duplicated as `/<slug>/` and `/<slug>-2/` posts, all indexable, with identical titles. | Make project cards real links. 301 the duplicate posts to the `/projects/` version (Slim SEO Redirection) and drop them. | Template + Setting |
-| 3 | High | **Junk in the sitemap and index:** `/cart/`, `/checkout/`, `/test/`, `/cart-2/`, `/checkout-2/`, `/product-category/uncategorized/`, and 13 Bricks templates (`/template/header/` serves a full copy of the homepage). | Delete the test and `-2` pages; noindex cart and checkout; keep Bricks templates out of the sitemap and out of public view. | Setting + Page SEO |
+| 3 | High | **Junk in the sitemap and index:** `/test/`; the old `/cart/` and `/checkout/` pages, which WooCommerce no longer uses and which are indexable; WooCommerce's real cart and checkout, `/cart-2/` and `/checkout-2/`, which WooCommerce noindexes but the sitemap still lists (#4); `/product-category/uncategorized/`; and 13 Bricks templates (`/template/header/` serves a full copy of the homepage). | Delete `/test/` and the old `/cart/` and `/checkout/`. **Keep `/cart-2/` and `/checkout-2/`:** WooCommerce's settings point to them, so deleting them breaks checkout. Once the old pages are gone, their slugs can be renamed to `/cart/` and `/checkout/`. Keep Bricks templates out of the sitemap and out of public view. | Setting + Page SEO |
 | 4 | High | **The live sitemap is not Slim SEO's.** "Google XML Sitemaps" serves `/sitemap.xml` and also empties WordPress's own `/wp-sitemap.xml`. It lists noindexed pages, which is why #3 happens. | Use one generator. Slim SEO's own sitemap leaves noindexed pages out by itself. Disable the other plugin and resubmit in Search Console. | Setting |
 | 5 | High | **No local-business data in structured data.** The only Organization markup is a hand-coded block with a phone number and no address; Slim SEO's own Organization uses the favicon as the logo. | One `HomeAndConstructionBusiness` (a LocalBusiness type) via the Slim SEO Schema add-on: address, geo, hours, `areaServed`, all social profiles, the real logo. Remove the hand-coded duplicate. | Setting |
 | 6 | High | **`/contact-us/` is a 404 linked from `/projects/` and two blog posts.** | 301 it to `/contact/` and fix the links. | Setting + Page |
@@ -973,4 +981,5 @@ shows none. Trade press is marked as such and was used only where Google's pages
 
 **Our own systems** (read-only, 2026-10-28): the live site's public pages, sitemap and the
 WooCommerce Store API's public catalog endpoints; production ERPNext through the read-only
-database tool; this repo's `stripe_payments/` README and source.
+database tool; this repo's `stripe_payments/` README and source. On 2026-10-29, the Sapphire SEO
+abilities over the site's MCP endpoint, as the Contributor `seo-agent`.
