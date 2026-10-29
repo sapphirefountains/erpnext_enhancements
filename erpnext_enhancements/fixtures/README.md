@@ -48,6 +48,22 @@ canonical procedure is the MCP export (ask Claude; this README is the spec):
 If you must use `bench export-fixtures` instead, reformat afterwards to this spec to
 avoid a noisy diff.
 
+## Custom DocPerm: whole permission sets, three doctypes
+
+A Custom DocPerm row for a doctype makes frappe ignore that doctype's standard DocPerms
+entirely, so `custom_docperm.json` holds the **complete** permission set of each doctype it
+names, and the `fixtures` filter names exactly those doctypes:
+
+- **Material Request** and **Purchase Order** (WI-012): the MR/PO permission split.
+- **Voice Call Settings** (v1.755.0): least privilege, staff only. The five rows are exactly
+  what ERPNext's own change to this doctype ends with (frappe/erpnext#61927, on
+  version-16-hotfix and not yet released at the time). **Once that change is in the ERPNext
+  release prod runs, these rows are redundant.** Taking them out is two steps like any
+  deletion here: a patch that deletes the five Custom DocPerm rows (`vcs0deskus`,
+  `vcs0sysmgr`, `vcs1sysmgr`, `vcs2deskus`, `vcs2sysmgr`), and removing them and the
+  filter entry from this repo. Removing them from the JSON alone leaves them on the site.
+  `tests/test_portal_hardening.py` pins them until then.
+
 ## Exclusions — records that look manual but are owned elsewhere
 
 These have `is_system_generated = 0` on the site but were created by other installed

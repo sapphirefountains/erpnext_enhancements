@@ -20,6 +20,15 @@ Administrator login was abused in August. Staff stay Google-only. Two layers:
 2. :func:`refuse_staff_email_link_login` (``on_login``) refuses a sign-in through
    ``login_via_key`` for any account that is not a Website User, whatever minted the key.
 
+**An email link is not the only emailed key (v1.755.0).** In frappe 16.53.0 two more routes sign an
+account in with a key sent by email: a password reset (``update_password`` with ``key``) and a User
+Invitation (``accept_invitation``). Staff stay Google-only there too, so the guard refuses a staff
+sign-in through either. A signed-in person changing their own password (``update_password`` with
+``old_password`` and no key) is already that person and is left alone. This guard is the only
+control on these routes: frappe never asks for 2FA on an email link or an invitation, so
+``security_alerts.check_two_factor_coverage`` (which watches the routes that do ask) is no
+substitute for any branch here.
+
 **The override is sealed** (:func:`seal_original`, ``before_request``). An override matches the
 dotted NAME; frappe's whitelist matches the function OBJECT. ``frappe.www.login`` holds a
 reference to the ``frappe`` package, so ``frappe.www.login.frappe.www.login.send_login_link`` is a
@@ -28,12 +37,18 @@ whitelist closes every alias at once; the canonical name keeps working because i
 wrapper here. The same mechanism as ``fieldlevel_read.seal_wrapped_originals``.
 """
 
+import re
+
 import frappe
 from frappe import _
 from frappe.utils import validate_email_address
 
 ORIGINAL = "frappe.www.login.send_login_link"
 KEY_LOGIN = "login_via_key"
+# frappe 16.53.0's other sign-ins by emailed key: frappe.core.doctype.user.user.update_password (a
+# reset, when it carries ``key``) and frappe.core.api.user_invitation.accept_invitation.
+PASSWORD_RESET = "update_password"
+INVITATION = "accept_invitation"
 WEBSITE_USER = "Website User"
 CUSTOMER_ROLE = "Customer"
 
@@ -65,21 +80,52 @@ def send_login_link(email: str):
 	return original(email)
 
 
-def refuse_staff_email_link_login(login_manager=None):
-	"""``on_login``: an email-link sign-in (``login_via_key``) is for Website Users only."""
+def _names(route, text):
+	"""True when ``route`` is a whole segment of ``text`` (after start, ``.`` or ``/``; before end or ``/``).
+
+	Not a substring test: ``login_via_key`` must not match ``login_via_keycloak``, which would refuse
+	every staff sign-in through a Keycloak social login if one were ever set up.
+	"""
+	return re.search(rf"(^|[./]){re.escape(route)}($|/)", text) is not None
+
+
+def emailed_key_route():
+	"""The emailed-key sign-in route this request is on, or "" for any other way in.
+
+	Matched by the method's name as a whole segment of the path or ``cmd``, so an aliased path
+	(``frappe.www.login.frappe.www.login.login_via_key``), the v2 form
+	(``/api/v2/method/User/update_password``) and the legacy ``?cmd=`` route match too. A reset counts
+	only when it carries a key.
+	"""
 	request = getattr(frappe.local, "request", None)
 	if request is None:
-		return
+		return ""
 	path = getattr(request, "path", "") or ""
-	cmd = str((frappe.local.form_dict or {}).get("cmd") or "")
-	if KEY_LOGIN not in path and not cmd.endswith(KEY_LOGIN):
+	form = frappe.local.form_dict or {}
+	cmd = str(form.get("cmd") or "")
+	for route in (KEY_LOGIN, INVITATION, PASSWORD_RESET):
+		if not _names(route, path) and not _names(route, cmd):
+			continue
+		if route == PASSWORD_RESET and not form.get("key"):
+			return ""
+		return route
+	return ""
+
+
+def refuse_staff_email_link_login(login_manager=None):
+	"""``on_login``: a sign-in by emailed key (link, password reset, invitation) is for Website Users only.
+
+	Raised before frappe makes the session, so no session is created. It does not undo what the
+	route did before signing in: ``accept_invitation`` has already accepted the invitation, created or
+	updated the account and committed, and ``login_via_key`` has already used up its key, so a refused staff
+	member is left with a spent link and frappe's plain 401 answer. A reset raises inside its request,
+	which frappe rolls back. Staff then sign in with Google, which is what the message says.
+	"""
+	if not emailed_key_route():
 		return
 	user = getattr(login_manager, "user", None) or frappe.session.user
 	if not is_portal_account(user):
-		frappe.throw(
-			_("Staff accounts sign in with Google, not with an email link."),
-			frappe.AuthenticationError,
-		)
+		frappe.throw(_("Staff accounts sign in with Google."), frappe.AuthenticationError)
 
 
 def seal_original():
