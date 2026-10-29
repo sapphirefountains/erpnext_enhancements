@@ -315,9 +315,19 @@ applies on existing sites; read it with `get_cached_doc`).
      **sealed** in `before_request`, because `frappe.www.login.frappe.www.login.send_login_link` is
      a second dotted name for frappe's original;
   2. an `on_login` guard that refuses a sign-in through `login_via_key` for any other account.
-     That covers aliased paths and the legacy `?cmd=` route.
+     That covers aliased paths and the legacy `?cmd=` route. Since v1.755.0 it also covers
+     frappe's other sign-ins by emailed key: a password reset (`update_password` with a key) and a
+     User Invitation (`accept_invitation`). Changing your own password while signed in is untouched.
 
-  Staff stay Google-only.
+  Staff stay Google-only. That guard is the only control on these routes: frappe asks for no
+  second factor on an email link or an invitation. Separately, since v1.755.0 a daily check
+  (`security_alerts.check_two_factor_coverage`) watches the routes where frappe does ask
+  (password form, LDAP, a reset). It emails the admin alert recipients while an enabled System
+  User holds no 2FA role, while 2FA is off or bypassed site-wide, or while password or LDAP
+  sign-in is on.
+- **ERPNext's stock web forms** `tasks`, `issues` and `addresses` are kept unpublished after every
+  migrate and on install, and the Issues and Addresses portal menu rows are disabled with them
+  (`setup/stock_web_forms.py`, v1.755.0). The portal's own pages replace them.
 - **`/rent-a-fountain`** (`www/rent_a_fountain.py`, `rental_requests.py`) is off until
   `Rental Settings.public_request_form` is ticked.
   - The public form becomes an Events **Lead**, with rental dates and ZIP, through the same triage as
