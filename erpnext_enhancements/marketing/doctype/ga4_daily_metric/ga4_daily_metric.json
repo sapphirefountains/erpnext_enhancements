@@ -37,7 +37,7 @@
   {
    "fieldname": "dimension",
    "fieldtype": "Select",
-   "options": "Total\nLanding Page\nChannel\nLanding Page Source\nDevice\nCity",
+   "options": "Total\nLanding Page\nChannel\nLanding Page Source\nDevice\nCity\nCampaign",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Dimension",
@@ -54,7 +54,7 @@
    "fieldtype": "Small Text",
    "label": "Value",
    "read_only": 1,
-   "description": "The landing page as GA4 reported it (also for Landing Page Source), the channel, the device category, or the city. Blank for the site total."
+   "description": "The landing page as GA4 reported it (also for Landing Page Source), the channel, the device category, or the city. Blank for the site total. For Campaign rows, the session's campaign name (utm_campaign)."
   },
   {
    "fieldname": "page_path",
@@ -68,7 +68,7 @@
    "fieldtype": "Data",
    "label": "Source / Medium",
    "read_only": 1,
-   "description": "GA4's sessionSourceMedium, e.g. google / organic. Landing Page Source rows only."
+   "description": "GA4's sessionSourceMedium (Landing Page Source rows) or sessionSource / sessionMedium (Campaign rows), e.g. google / organic."
   },
   {
    "fieldname": "region",
@@ -124,7 +124,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-29 18:00:00.000000",
+ "modified": "2026-10-29 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "GA4 Daily Metric",

@@ -7,6 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.757.0] - 2026-10-29
+
+ERPNext: the marketing-insights Task on PRJ-00580, under TASK-2026-00866 (AI-PA-2026-1326834, awaiting Nik's confirm). Nik's
+starred picks of 2026-10-29, as a second PR stacked on the Marketing Performance PR (1.756.0) and built
+on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, prod's versions.
+
+**What the deploy does.**
+- **Migrate** creates:
+  - five doctypes: Marketing Event, Tracked Link, Key Page Check, Marketing Alert, and the child table
+    Marketing Service Line Rule;
+  - six Script Reports;
+  - new fields on Marketing Settings, and GA4's Campaign dimension.
+- **Two patches run:**
+  - `backfill_marketing_insights_settings` gives the existing Marketing Settings row its new defaults,
+    only where it has none. It also seeds the service-line rules, but only if that table is empty.
+  - `marketing_insights_hub_links` re-imports the Marketing Hub.
+- **Two cron entries** are added:
+  - **04:05** fills event markers from published social posts and new Campaigns. Prod has none of
+    either yet.
+  - **06:15** runs the alerts. **These run from day one:** `alerts_paused` ships unticked, and the
+    recipients are Marketing Manager by default. Of the four alerts, only a missed first-time call and
+    a drop in sessions can fire on today's data.
+- **The morning briefing** gains a Monday marketing section for people who may open the page.
+- Nothing is connected, and nothing is written to the website.
+
+### Added
+- **Six reports**, all Script Reports over stored rows and open to the page's roles. Revenue columns
+  appear only for System Manager, Sales Manager and Marketing Manager.
+  - **Inquiry Sources (R1):** Opportunities by `custom_lead_source` and month.
+    - Columns: count, won, win rate, won value, and median days to close
+      (`custom_date_closed_won − creation`).
+    - Historical deals are left out the way the funnel always has, and "Unknown (pre-Aug 2026)" counts
+      as Unsourced.
+  - **Search Queries (R2):** each query against the previous period and the same weeks last year.
+    - It flags new and lost queries, and branded ones from the editable list.
+  - **Near Page One (R3):** queries or pages at positions 8–20 above a settable minimum of
+    impressions.
+    - Ranked by clicks to gain: impressions × the expected CTR at position 3, minus clicks now.
+  - **Fading Pages (R4):** pages whose clicks fell by a settable share (default 30%) against the
+    previous period or last year.
+    - A minimum baseline (default 20 clicks) keeps small pages from flapping.
+  - **Service Line Funnel (R5):** traffic, inquiries and won work per line.
+    - The lines are Design-Build, Service & Maintenance, Rentals, Splash Pads and Parts & Products.
+    - Lines come from an ordered, editable mapping: URL prefix, URL word, query word, value stream, or
+      Opportunity title word.
+    - **Inquiries use the field that already carries the line:** `Opportunity.custom_value_stream`,
+      the Value Stream Table MultiSelect Sapphire fills in (Build, Design, Service, Events, Products).
+      A job that spans streams counts in each of its lines, as Sapphire's jobs routinely do. No new
+      field was invented.
+    - Anything no rule matches gets its own Unmatched row.
+  - **Missed Calls (R6):** incoming calls nobody answered and nobody called back within a settable
+    window (default 4 hours).
+    - First-time callers are flagged and listed first.
+    - **Call Log's own permissions apply and are never widened.** The rows are read through
+      `frappe.get_list`.
+- **Tabs on Marketing Performance:** `/desk/marketing-performance`, `/search` and `/inquiries`. Each tab
+  is a route of its own, and the range travels with it.
+  - **Overview (D1):** tiles for sessions, search clicks, inquiries, calls, won value and cost per
+    inquiry.
+    - Each tile has a sparkline and its change against the previous period and against last year.
+    - A tile shows progress against a monthly target only where a Marketing KPI Target exists.
+      There are none on prod, so none shows.
+  - **Search (D2):** the search trend with last year's ghost line, R2, R3 and R4 inline, and the CTR
+    scatter.
+  - **Inquiries and calls (D4):**
+    - inquiries by source over time, and calls by weekday × hour;
+    - missed calls (who called only for System Manager and Sales Manager);
+    - the median time to a first sent email. It is cheap, so it is included; calls and texts don't
+      count.
+- **Graphs:**
+  - **G1 trend:** a faint ghost line for the previous period or last year (a toggle, kept in the
+    address), plus the event markers.
+  - **G2 funnel bars:** sessions → key events → inquiries → quotes (Quotations made) → won, with the
+    share kept at each step.
+  - **G3 click-rate scatter:** CTR against position per page, drawn over an expected-CTR curve.
+    - **The curve uses the site's own data where it can.** At each position it takes the median CTR of
+      pages with 20+ impressions, where at least three pages share that position. Elsewhere it uses a
+      conservative published curve.
+    - The curve never rises with position, and the page says how many positions are the site's own.
+    - Dots under half their expected CTR are highlighted and listed: they need better titles.
+  - **G4 channel mix:** sessions by channel as stacked areas over time.
+- **F1 event markers:** the Marketing Event doctype, holding date, title, type and link.
+  - It can be entered by hand by Marketing Team and Marketing Manager.
+  - It is filled nightly from Social Publish Job successes and new Campaigns.
+    - ERPNext's Campaign carries no dates, so a campaign's creation day is used.
+    - A unique `auto_key` means the fill never adds a row twice.
+  - Agents log their own edits through `log_marketing_event`: a POST endpoint, and an assistant tool
+    of the same name. The tool is gated, Low risk.
+  - No prod rows were written. The hand-back lists the SEO session's three edits of 2026-10-29 for Nik
+    to add.
+- **F2 Monday digest:** a marketing section in the morning briefing, on Mondays only, for recipients
+  who may open the page.
+  - It compares last week against the week before and the same week last year, for sessions, search
+    clicks, inquiries and calls.
+  - It also lists the biggest movers, missed calls and new reviews.
+  - It is deterministic markdown appended after the narrative. It renders through `email_style` and
+    the shared shell like the rest of the briefing.
+- **F3 alerts**, sent as one email a night. Each threshold is settable on Marketing Settings, and each
+  alert is throttled by its own Marketing Alert row (database, not Redis, because deploys flush Redis).
+  - **A sharp week-over-week drop:** sessions or search clicks fall 30%+ from a baseline of 50+. It is
+    checked Mondays and keyed by week, so one drop is one email.
+  - **A key page out of Google:**
+    - Search Console URL Inspection runs on an editable short list (default: the homepage), one call
+      a page a night, well inside 2,000 a day.
+    - Each result is kept as a Key Page Check row.
+    - It alerts when a page indexed last time is not indexed now, or on a first check that is not
+      indexed.
+  - **A Google review at 2 stars or below**, the night it first appears.
+  - **A missed first-time call:** the R6 rule applied to a number never seen before.
+  - **None of this is dormant by accident.** The switch is `alerts_paused` (default 0) rather than an
+    "enabled" box: every Check on Marketing Settings ships 0, and a test holds that. Every figure has a
+    default, backfilled to the existing row by patch (CLAUDE.md's Single-defaults trap). The positive
+    figures also heal in `validate` like the sync dials.
+- **F5 tracked links and QR codes:** the Tracked Link doctype holds a destination, `utm_source`,
+  `utm_medium`, `utm_campaign` and an optional Campaign.
+  - It builds the tagged URL by `publish/tracking.py`'s rules:
+    - only Sapphire's own domain;
+    - existing `utm_*` replaced;
+    - **never `utm_id`**, which marks paid traffic;
+    - values slugged.
+  - It makes a printable SVG QR code with `pyqrcode`, which frappe already ships.
+  - Results are read from GA4's new Campaign rows and, once the WordPress capture is installed, from
+    inquiries carrying the tags.
+  - **No guest or public endpoint:** the QR code holds the tagged sapphirefountains.com address itself.
+- **GA4 by campaign** (`sessionCampaignName` × source × medium) joins the daily pull. It is what tracked
+  links read back.
+
+### Changed
+- `get_performance` takes a `ghost` argument and returns the Overview's tiles, targets, ghost series,
+  events, funnel bars and channel mix.
+- New endpoints: `get_search_tab`, `get_inquiries_tab`, `links.get_link_results`,
+  `events.log_marketing_event`.
+- The Marketing Hub links the six reports, Marketing Event, Tracked Link and Business Profile Review.
+- Marketing Team's DocPerms now include Marketing Event and Tracked Link (read, write, create). Both
+  are in the Marketing module and hold no financials. Marketing Manager also reads Key Page Check and
+  Marketing Alert.
+
 ## [1.756.0] - 2026-10-29
 
 ERPNext: TASK-2026-03013 (PRJ-00580). Nik, 2026-10-29: Google Analytics 4 and Search Console merged

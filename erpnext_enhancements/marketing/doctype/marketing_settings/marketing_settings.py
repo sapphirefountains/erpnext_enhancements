@@ -58,6 +58,16 @@ POSITIVE_DIALS = {
 	"request_timeout_seconds": 30,
 	"sync_batch_size": 500,
 	"raw_payload_retention_days": 90,
+	# The insight and alert figures (v1.757.0). A zero would make every page fade or every week
+	# alarm, so each heals to its default like the sync dials.
+	"near_page_one_min_impressions": 50,
+	"fading_drop_percent": 30,
+	"fading_min_baseline_clicks": 20,
+	"missed_call_callback_hours": 4,
+	"alert_throttle_hours": 24,
+	"traffic_drop_percent": 30,
+	"traffic_drop_min_baseline": 50,
+	"low_review_stars": 2,
 }
 
 

@@ -814,7 +814,7 @@ class TestKeepingTheHistory(unittest.TestCase):
 		for folder, options in (
 			(
 				"ga4_daily_metric",
-				{"Total", "Landing Page", "Channel", "Landing Page Source", "Device", "City"},
+				{"Total", "Landing Page", "Channel", "Landing Page Source", "Device", "City", "Campaign"},
 			),
 			("search_console_daily_metric", {"Total", "Page", "Query", "Page Query"}),
 		):
@@ -856,6 +856,13 @@ const out = {
 	single: M.line_segments([3], 100, 10),
 	pct: [M.fmt_pct(0.1234), M.fmt_pct(null)],
 	sum: [M.sum([1, null, 2]), M.sum([null, null])],
+	ghost: [M.state_from({ ghost: "last_year" }).ghost, M.state_from({ ghost: "junk" }).ghost, M.query_for({ ghost: "previous" })],
+	tabs: [M.tab_from_route(["marketing-performance"]), M.tab_from_route(["marketing-performance", "search"]), M.tab_from_route(["marketing-performance", "junk"])],
+	routes: [M.route_for("overview"), M.route_for("inquiries")],
+	options: M.options_for({ from: "2026-10-01", to: null, compare: true, ghost: "previous" }),
+	stack: M.stack([[1, 2], [3, 4], [0, 1]]),
+	heat: [M.heat_level(0, 10), M.heat_level(1, 10), M.heat_level(10, 10), M.heat_level(6, 10)],
+	x: [M.x_of(["a", "b", "c"], "c", 100), M.x_of(["a", "b"], "z", 100)],
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -876,10 +883,10 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(
 			out["states"],
 			[
-				{"from": None, "to": None, "compare": False},
-				{"from": "2026-10-01", "to": "2026-10-28", "compare": True},
-				{"from": "2026-10-01", "to": "2026-10-28", "compare": False},
-				{"from": None, "to": None, "compare": False},
+				{"from": None, "to": None, "compare": False, "ghost": ""},
+				{"from": "2026-10-01", "to": "2026-10-28", "compare": True, "ghost": ""},
+				{"from": "2026-10-01", "to": "2026-10-28", "compare": False, "ghost": ""},
+				{"from": None, "to": None, "compare": False, "ghost": ""},
 			],
 		)
 		self.assertEqual(out["queries"], ["", "?from=2026-10-01&to=2026-10-28&compare=1", "?compare=1"])
@@ -894,6 +901,13 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(out["single"]["segments"], [["50.0,0.0"]])
 		self.assertEqual(out["pct"], ["12.3%", "–"])
 		self.assertEqual(out["sum"], [3, None])
+		self.assertEqual(out["ghost"], ["last_year", "", "?ghost=previous"])
+		self.assertEqual(out["tabs"], ["overview", "search", "overview"])
+		self.assertEqual(out["routes"], [["marketing-performance"], ["marketing-performance", "inquiries"]])
+		self.assertEqual(out["options"], {"from": "2026-10-01", "compare": 1, "ghost": "previous"})
+		self.assertEqual(out["stack"], [[1, 2], [4, 6], [4, 7]])
+		self.assertEqual(out["heat"], [0, 1, 4, 3])
+		self.assertEqual(out["x"], [100, None])
 
 
 class TestPageHistory(unittest.TestCase):
@@ -918,6 +932,11 @@ class TestPageHistory(unittest.TestCase):
 		self.assertNotIn("replaceState", self.code)
 		self.assertNotIn("set_route", self.method("route_changed"))
 		self.assertNotIn("pushState", self.method("route_changed"))
+
+	def test_a_tab_is_a_route(self):
+		body = self.method("go_tab")
+		self.assertIn("frappe.set_route(MKP.route_for(tab), MKP.options_for(this.state))", body)
+		self.assertNotIn("pushState", body)
 
 	def test_route_options_are_consumed(self):
 		body = self.method("take_route_options")

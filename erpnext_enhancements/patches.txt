@@ -1531,3 +1531,10 @@ erpnext_enhancements.patches.retire_marketing_dashboard_widgets
 # no row for them. The same function runs on after_migrate; this line is the one a site whose Patch Log already holds the
 # 2026-08 backfill still runs. Safe twice.
 erpnext_enhancements.patches.backfill_marketing_performance_settings
+# Marketing insights (v1.757.0): the new Marketing Settings thresholds, alert roles and key pages get their defaults
+# on the existing row (only where tabSingles has no row: the alerts must not be dormant by accident), and the
+# service-line rules are seeded when that table is empty. Safe twice.
+erpnext_enhancements.patches.backfill_marketing_insights_settings
+# Marketing insights (v1.757.0): re-import the Marketing Hub (the six marketing reports; Marketing Event, Tracked Link
+# and Business Profile Review). Logs a failure, never raises, safe twice.
+erpnext_enhancements.patches.marketing_insights_hub_links

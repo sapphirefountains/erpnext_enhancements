@@ -234,12 +234,17 @@ class RoleTests(unittest.TestCase):
 		"Social Post Metric",
 		"Social Publish Job",
 	}
-	EDITABLE = {"Social Post", "Marketing Media Asset"}
+	#: v1.757.0: the marketing records the team keeps by hand -- markers on the trend and tracked links.
+	#: In the Marketing module, no financials, and editable like a post.
+	INSIGHTS = {"Marketing Event", "Tracked Link"}
+	#: ... and what Marketing Manager reads on top: the key-page checks and the alert log.
+	MANAGER_READS = {"Key Page Check", "Marketing Alert"}
+	EDITABLE = {"Social Post", "Marketing Media Asset", *INSIGHTS}
 	ALLOWED_KEYS = {"role", "read", "write", "create", "delete", "report"}
 
 	def test_marketing_team_reaches_the_publishing_surface_and_nothing_else(self):
 		grants = granted(W.TEAM_ROLE)
-		self.assertEqual(set(grants), self.PUBLISHING)
+		self.assertEqual(set(grants), self.PUBLISHING | self.INSIGHTS)
 		doctypes = all_doctypes()
 		for name, perms in grants.items():
 			self.assertEqual(doctypes[name]["module"], "Marketing", name)
@@ -252,7 +257,7 @@ class RoleTests(unittest.TestCase):
 	def test_marketing_manager_adds_only_the_same_surface(self):
 		grants = granted(W.APPROVER_ROLE)
 		# KPI Snapshot (read, report) predates publishing: the Marketing dashboard's department gate.
-		self.assertEqual(set(grants), self.PUBLISHING | {"KPI Snapshot"})
+		self.assertEqual(set(grants), self.PUBLISHING | {"KPI Snapshot"} | self.INSIGHTS | self.MANAGER_READS)
 		self.assertEqual(
 			{k for k, v in grants["KPI Snapshot"][0].items() if v and k != "role"}, {"read", "report"}
 		)

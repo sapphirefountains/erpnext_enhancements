@@ -14,7 +14,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Campaigns",
-   "link_count": 10,
+   "link_count": 13,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -111,6 +111,36 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Marketing Event",
+   "link_count": 0,
+   "link_to": "Marketing Event",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tracked Link",
+   "link_count": 0,
+   "link_to": "Tracked Link",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Business Profile Review",
+   "link_count": 0,
+   "link_to": "Business Profile Review",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Campaign",
    "link_count": 0,
    "link_to": "Campaign",
@@ -170,7 +200,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 8,
+   "link_count": 14,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -181,6 +211,66 @@
    "link_count": 0,
    "link_to": "marketing-performance",
    "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Inquiry Sources",
+   "link_count": 0,
+   "link_to": "Inquiry Sources",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Search Queries",
+   "link_count": 0,
+   "link_to": "Search Queries",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Near Page One",
+   "link_count": 0,
+   "link_to": "Near Page One",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Fading Pages",
+   "link_count": 0,
+   "link_to": "Fading Pages",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Service Line Funnel",
+   "link_count": 0,
+   "link_to": "Service Line Funnel",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Missed Calls",
+   "link_count": 0,
+   "link_to": "Missed Calls",
+   "link_type": "Report",
    "onboard": 0,
    "type": "Link"
   },
@@ -293,7 +383,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Marketing Hub",
