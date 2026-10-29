@@ -1993,6 +1993,13 @@ scheduler_events = {
 		# So each day this finds the addresses of open dated tasks and firm rental bookings that
 		# still lack coordinates, and geocodes a bounded batch (40). Never raises; idempotent.
 		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
+		# security (v1.755.0): email the admin alert recipients while an enabled System User holds no
+		# role that asks for two-factor (frappe asks per role, and a new staff account starts with
+		# none), while 2FA is off or bypassed site-wide, or while password or LDAP sign-in is on. It
+		# watches the routes where frappe does ask for 2FA; it is NOT a backstop for the on_login
+		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
+		# there is not; never raises. See security_alerts.check_two_factor_coverage.
+		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -2405,6 +2412,10 @@ after_install = [
 	# on a fresh site, and without the fields the page keeps the door shut and says "being set
 	# up" for ever. create_custom_fields(update=True): idempotent, and the patch never raises.
 	"erpnext_enhancements.patches.add_store_run_receipt_fields.execute",
+	# portal hardening (v1.755.0): the same callable as the after_migrate entry below, so a fresh
+	# site does not serve ERPNext's stock web forms tasks, issues and addresses (or their portal
+	# menu rows) until its first migrate. ERPNext installs first, so the forms exist. Never raises.
+	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
 ]
 
 # Run at the END of `bench install-app`, after fixtures have synced.
@@ -2664,6 +2675,14 @@ after_migrate = [
 	# silent when there is nothing to do, and it installs only the v1.724.0 body, so a later
 	# template release is left to its own patch. One read per migrate; never raises.
 	"erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line.retry_after_migrate",
+	# portal hardening (v1.755.0): keep ERPNext's stock web forms tasks, issues and addresses
+	# unpublished; this app's portal pages replace them. Here rather than in patches.txt because
+	# ERPNext re-imports a standard web form, published, whenever its JSON's `modified` moves, and
+	# that happens during model sync, before this runs. An unpublished form is refused by frappe
+	# itself, page and API alike. Also disables the Issues and Addresses portal menu rows, which
+	# would otherwise be dead links. Writes only what is still on, prints each flip to the migrate
+	# output, never raises (setup/stock_web_forms.py). In after_install too.
+	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -2869,9 +2888,12 @@ fixtures = [
 	# (team lead raises the MR, PM converts to the PO). Custom DocPerm fully overrides
 	# a doctype's standard perms, so these rows ARE the complete effective perm set for
 	# both doctypes — the parent-in filter captures exactly those two doctypes' rows.
+	# Voice Call Settings (v1.755.0): least privilege, and staff only (Desk User, not All). These
+	# five rows are the set ERPNext's own change to this doctype ends with (backported to
+	# version-16-hotfix, not yet in a release), so its patch finds nothing to change here.
 	{
 		"dt": "Custom DocPerm",
-		"filters": [["parent", "in", ["Material Request", "Purchase Order"]]],
+		"filters": [["parent", "in", ["Material Request", "Purchase Order", "Voice Call Settings"]]],
 	},
 	# WI-010: version-control the security architecture — the 18 hand-built Role
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
@@ -3096,6 +3118,8 @@ on_login = [
 	# portal login (v1.565.0): the second layer. A sign-in through login_via_key (an emailed
 	# link) is refused for any account that is not a Website User, whatever minted the key.
 	# Raising here happens before frappe makes the session, so no session is created.
+	# Since v1.755.0 also frappe's other sign-ins by emailed key: a password reset
+	# (update_password with a key) and a User Invitation (accept_invitation).
 	"erpnext_enhancements.portal_login.refuse_staff_email_link_login",
 ]
 

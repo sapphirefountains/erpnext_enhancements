@@ -1831,7 +1831,7 @@ class TestTheClosingWarning(unittest.TestCase):
 
 class TestTheUnclaimedReportWithoutHrms(unittest.TestCase):
 	"""The Unclaimed Travel Expenses report. On production HRMS is absent, so nothing is ever on an
-	Expense Claim, and until v1.754.3 every row read "No claim" beside an empty Link to Expense
+	Expense Claim, and until v1.755.1 every row read "No claim" beside an empty Link to Expense
 	Claim, a doctype the site does not have. There the two claim columns go and the amount is
 	called *To Reimburse*, as the expense nudge calls it. With HRMS it is what it always was."""
 

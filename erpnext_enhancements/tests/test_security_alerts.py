@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # Mutable state the frappe stub reads at call time.
-STATE = {"conf": {}, "cache": {}, "flags": {}}
+STATE = {"conf": {}, "cache": {}, "flags": {}, "settings": {}, "singles": {}, "covered": set()}
 security_alerts = None
 
 
@@ -62,10 +62,22 @@ def _install_frappe_stub():
     utils.escape_html = lambda s: (
         str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
+    utils.cint = lambda v: int(v or 0)
     frappe.utils = utils
+
+    # The two-factor coverage check reads System Settings and asks frappe's own
+    # per-user rule; both answer from STATE so each test sets the site it needs.
+    frappe.get_system_settings = lambda key: STATE["settings"].get(key)
+    frappe.db = types.SimpleNamespace(
+        get_single_value=lambda doctype, field: STATE["singles"].get((doctype, field))
+    )
+    twofactor = types.ModuleType("frappe.twofactor")
+    twofactor.two_factor_is_enabled_for_ = lambda user: user in STATE["covered"]
+    frappe.twofactor = twofactor
 
     sys.modules["frappe"] = frappe
     sys.modules["frappe.utils"] = utils
+    sys.modules["frappe.twofactor"] = twofactor
 
 
 def setUpModule():
@@ -193,6 +205,156 @@ class TestHookIsNonFatal(unittest.TestCase):
         finally:
             security_alerts._should_send_now = original
             frappe.flags.in_migrate = False
+
+
+class TestTwoFactorCoverage(unittest.TestCase):
+    """The daily backstop for staff sign-in (v1.755.0).
+
+    frappe asks for a second factor per role, so a staff account holding no
+    2FA role signs in without one by every route that reaches 2FA at all. The
+    check must report that account, report 2FA switched off site-wide, stay
+    quiet on a healthy site, and never raise from the scheduler.
+    """
+
+    USERS = ["admin@example.com", "new.hire@example.com", "tech@example.com"]
+
+    def setUp(self):
+        import frappe
+
+        self.frappe = frappe
+        self.saved = {
+            name: getattr(frappe, name) for name in ("get_all", "sendmail", "log_error")
+        }
+        self.sent, self.logged, self.queries = [], [], []
+        STATE["conf"].clear()
+        STATE["conf"]["admin_alert_recipients"] = "security@example.net"
+        STATE["settings"].clear()
+        STATE["settings"].update(
+            {
+                "enable_two_factor_auth": "1",
+                "bypass_2fa_for_retricted_ip_users": "0",
+                "disable_user_pass_login": "1",
+            }
+        )
+        STATE["singles"].clear()
+        STATE["singles"][("LDAP Settings", "enabled")] = "0"
+        STATE["covered"].clear()
+        STATE["covered"].update(self.USERS)
+
+        def get_all(doctype, filters=None, pluck=None, order_by=None, **_kw):
+            self.queries.append((doctype, filters))
+            return list(self.USERS) if doctype == "User" else []
+
+        frappe.get_all = get_all
+        frappe.sendmail = lambda **kwargs: self.sent.append(kwargs)
+        frappe.log_error = lambda *args, **kwargs: self.logged.append(kwargs.get("title"))
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(self.frappe, name, value)
+        STATE["conf"].clear()
+        STATE["settings"].clear()
+        STATE["singles"].clear()
+        STATE["covered"].clear()
+
+    def test_a_healthy_site_sends_nothing(self):
+        security_alerts.check_two_factor_coverage()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.logged, [])
+
+    def test_only_enabled_system_users_are_asked_about(self):
+        security_alerts.two_factor_gaps()
+        self.assertIn(("User", {"enabled": 1, "user_type": "System User"}), self.queries)
+
+    def test_a_staff_account_with_no_two_factor_role_is_reported(self):
+        STATE["covered"].discard("new.hire@example.com")
+        site_wide, users = security_alerts.two_factor_gaps()
+        self.assertEqual((site_wide, users), ([], ["new.hire@example.com"]))
+        security_alerts.check_two_factor_coverage()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0]["recipients"], ["security@example.net"])
+        self.assertIn("1 staff account can sign in without two-factor", self.sent[0]["subject"])
+        self.assertIn("new.hire@example.com", self.sent[0]["message"])
+        self.assertNotIn("tech@example.com", self.sent[0]["message"])
+
+    def test_two_factor_off_site_wide_is_reported(self):
+        STATE["settings"]["enable_two_factor_auth"] = "0"
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 1)
+        security_alerts.check_two_factor_coverage()
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("need attention", self.sent[0]["subject"])
+        self.assertIn("off for the whole site", self.sent[0]["message"])
+
+    def test_the_restricted_ip_bypass_is_reported(self):
+        STATE["settings"]["bypass_2fa_for_retricted_ip_users"] = 1
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 1)
+        self.assertIn("restricted IP", site_wide[0])
+
+    def test_password_sign_in_switched_on_is_reported(self):
+        """Staff are Google-only; the password form is where 2FA is all that stands behind a password."""
+        STATE["settings"]["disable_user_pass_login"] = "0"
+        site_wide, users = security_alerts.two_factor_gaps()
+        self.assertEqual(users, [])
+        self.assertEqual(len(site_wide), 1)
+        self.assertIn("username and password is on", site_wide[0])
+
+    def test_ldap_sign_in_switched_on_is_reported(self):
+        """LDAP sign-in ignores disable_user_pass_login, so it is a password route even when that is set."""
+        STATE["singles"][("LDAP Settings", "enabled")] = 1
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 1)
+        self.assertIn("LDAP sign-in is on", site_wide[0])
+
+    def test_each_finding_names_its_settings_page(self):
+        STATE["settings"].update(
+            {
+                "enable_two_factor_auth": "0",
+                "bypass_2fa_for_retricted_ip_users": "1",
+                "disable_user_pass_login": "0",
+            }
+        )
+        STATE["singles"][("LDAP Settings", "enabled")] = "1"
+        site_wide, _users = security_alerts.two_factor_gaps()
+        self.assertEqual(len(site_wide), 4)
+        for line in site_wide:
+            with self.subTest(line=line):
+                self.assertRegex(line, r"\((System|LDAP) Settings\)\.$")
+
+    def test_no_recipients_is_logged_not_dropped(self):
+        STATE["conf"].clear()
+        STATE["covered"].clear()
+        security_alerts.check_two_factor_coverage()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.logged, ["Two-factor coverage alert has no recipients"])
+
+    def test_a_failure_is_logged_and_never_raised(self):
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("database gone")
+
+        self.frappe.get_all = explode
+        security_alerts.check_two_factor_coverage()
+        self.assertEqual(self.logged, ["Two-factor coverage check failed"])
+
+    def test_account_names_are_escaped_in_the_email(self):
+        _subject, body = security_alerts.format_two_factor_alert(
+            [], ["<b>x</b>@example.com"], "https://erp.example.com"
+        )
+        self.assertNotIn("<b>x</b>", body)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", body)
+
+    def test_it_is_scheduled_daily(self):
+        import ast
+
+        tree = ast.parse((REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8"))
+        events = next(
+            ast.literal_eval(node.value)
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and getattr(node.targets[0], "id", None) == "scheduler_events"
+        )
+        self.assertIn("erpnext_enhancements.security_alerts.check_two_factor_coverage", events["daily"])
 
 
 if __name__ == "__main__":
