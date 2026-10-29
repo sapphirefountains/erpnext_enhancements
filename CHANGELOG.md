@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.754.2] - 2026-10-28
+
+ERPNext: TASK-2026-02994 (PRJ-00580, Platform Hygiene & CI). These are the four Low items from
+the final review of `nginx_webserver_guard.sh` (v1.753.3, Step 0 of
+`infra/docs/production-web-tier.md`), plus two small ones. Nothing changes on a VM until the
+script runs there; for a VM it has already run on, running it again is safe.
+
+### Fixed
+- **A rewrite that failed part-way could leave nginx's frappe block truncated.**
+  - **The cause.** The rewrite opens the file for writing, which empties it first. A write that
+    then failed (a full disk) exited under `set -e` before anything put the file back, and left
+    a short `config/nginx.conf` for nginx's next start.
+  - **The fix.** Any failure of the rewrite now puts the file back from this run's copy, as a
+    failed `nginx -t` already did. If putting it back fails too, that copy is kept and its path
+    printed.
+- **A failed run no longer leaves debris or a traceback.** This run's copy in `/root` is
+  removed by an exit trap on every path. A file that isn't UTF-8 is refused with one line and
+  left as it was. Read and write errors are one-line messages. The `nginx -T` output is read as
+  bytes, so a config file in another encoding doesn't stop the search.
+- **An interrupted run is put back too.** Ctrl-C, SIGTERM or SIGHUP now become ordinary
+  exits, so the exit trap runs. From the rewrite until `nginx -t` passes, the trap puts this
+  run's copy back over the file. A kill during the rewrite used to delete that copy and leave
+  the file however far the write had got.
+- **A first run that fails leaves no backup or record.** Otherwise a later run, after
+  somebody fixed the file by hand, would keep the stale backup, and its `--undo` would
+  restore the file as it was before the fix. A later run that fails keeps the first run's
+  backup, as before.
+- **A failed reload says so.** If `nginx -t` passes but the reload fails, the script stops
+  with its own message: the file is guarded and valid but not live yet, and gives the reload
+  command to run by hand. The backup stays, so `--undo` still works.
+- **Line endings are kept.** Python's universal newlines turned a CRLF file into LF. The file
+  is now read and written with `newline=""`, and the inserted lines take the file's own ending.
+
+### Changed
+- **`--check` warns when the `@webserver` block has no `proxy_set_header Host $host;`**, which
+  the guard's Host check relies on (bench's template sets it).
+- **The runbook's Step 0** says that `--check` shows "an earlier version" on a VM where the
+  first, hand-typed guard went in, and that the run replaces it.
+
+### Tests
+- **The CI step installs nginx and shellcheck when the runner image lacks them**, then keeps
+  the fail-if-missing gate. A future image without them then costs one install, not a red
+  unit-test job on every PR.
+- **The nginx and shellcheck tests can no longer skip silently in CI.** The CI step sets
+  `REQUIRE_WEB_TIER_TOOLS=1`, so a missing tool fails those tests instead of skipping them;
+  the runner ships nginx 1.24 and shellcheck 0.9. Elsewhere they still skip.
+  `RequiredToolTests` pins the gate and checks that the CI step sets it.
+- **Against a real nginx:**
+  - a rewrite that truncates the file and fails is put back, with no debris, and a failed
+    first run leaves no backup or record;
+  - a rewrite interrupted by SIGTERM is put back (exit 143);
+  - a later failed run keeps the first backup;
+  - a failed reload reports that the guard is not live and keeps the valid edit;
+  - a latin-1 file is refused without a traceback and left byte-for-byte;
+  - a CRLF file stays CRLF through apply, a second run and `--undo`;
+  - `--check` warns on a block without the Host header and not on bench's own.
+- **A cleanup race is fixed.** `nginx -s stop` only signals the master, and the scratch
+  directory's removal could race nginx deleting its pid file. The cleanup now waits for the
+  master to exit. Five runs in a row in the CI's required mode passed: 91 tests, none skipped.
+
 ## [1.754.0] - 2026-10-28
 
 ERPNext Task on PRJ-00580, under Inventory Mapping (TASK-2026-00873).
