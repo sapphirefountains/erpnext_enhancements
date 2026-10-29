@@ -336,7 +336,7 @@ class TestUnpublishedStockWebFormRoutes(unittest.TestCase):
 		frappe_stub.get_all = frappe_stub.real_get_all
 
 	def test_the_route_and_every_path_under_it_answer_not_found(self):
-		"""The paths each form owned while published (route, list, new, a record, its edit) and deeper."""
+		"""The paths each form's router owned (route, list, new, a record, its edit), and deeper ones too."""
 		for path in (
 			"address",
 			"address/list",

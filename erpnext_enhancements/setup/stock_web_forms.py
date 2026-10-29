@@ -23,14 +23,18 @@ anyway. The redirect is left in place: with the menu row off nothing links to it
 Not Found page below.
 
 **Their routes answer Not Found (v1.755.2).** Unpublished, a form drops out of the router, and a
-path under its route falls through to frappe's later renderers. ``tasks`` and ``issues`` reach the
-Not Found page that way. ``address``, the Addresses form's route, does not: in frappe 16.53.0 the
-print-view renderer (``PrintPage``) takes any two-part path whose first part names a DocType in any
-letter case, then cannot load a controller for the lower-case name, so ``/address/list``,
-``/address/new`` and the rest answered frappe's generic error page, signed in or not.
-:class:`UnpublishedStockWebFormPage` is a ``page_renderer`` hook, frappe's own extension point, which
-it consults before its built-in renderers. It answers frappe's Not Found page for an unpublished
-form's route and everything under it, i.e. the paths the form owned while it was published. It reads
+path under its route falls through to frappe's later renderers. Paths under ``tasks`` and
+``issues`` reach the Not Found page that way. Paths under ``address``, the Addresses form's route,
+do not. In frappe 16.53.0 the print-view renderer (``PrintPage``) takes any two-part path whose first
+part names a DocType in any letter case, then cannot load a controller for the lower-case name. So
+``/address/list``, ``/address/new`` and the rest answered frappe's generic error page, signed in or
+not. :class:`UnpublishedStockWebFormPage` is a ``page_renderer`` hook, frappe's own extension point,
+which frappe consults before its built-in renderers. It answers frappe's Not Found page for an
+unpublished form's route and every path under it. That covers the paths the form's router owned
+while it was published (the route, ``/list``, ``/new``, ``/<name>`` and ``/<name>/edit``) and deeper
+paths, which the form never owned. Bare ``/tasks`` never reaches it: ERPNext's own
+``website_route_rules`` entry rewrites ``/tasks`` to the Task list before any renderer runs, and
+that path already answers Not Found. It reads
 the published state from frappe's ``get_published_web_forms``, the list the web form renderer itself
 uses, so a published form is still frappe's to serve, and the two never disagree. It reads the routes
 from the Web Form rows rather than a copy, cached until frappe next clears its website cache
