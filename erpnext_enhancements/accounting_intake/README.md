@@ -28,8 +28,9 @@ channel ──> intake.ingest_document ──> Document Intake (review queue)
 ## Everything posted is a draft
 
 Every posting handler creates a **docstatus 0** record — never submitted. The accountant has
-approved the *proposal*; the resulting Purchase Invoice, Expense Claim or Payment Entry still
-goes through the normal ERPNext review and submit flow.
+approved the *proposal*; the resulting Purchase Invoice or Payment Entry still goes through
+the normal ERPNext review and submit flow. An Expense Claim is possible only on a site with
+hrms, which this one does not have.
 
 This is the module's central safety property. A handler that submits its output collapses two
 independent approvals into one and puts AI-extracted figures straight into the ledger.
@@ -45,7 +46,7 @@ independent approvals into one and puts AI-extracted figures straight into the l
 | `review.py` | The whitelisted review actions and the two-gate approval (below) |
 | `actions/base.py` | `post_document` — the enqueued dispatcher that routes an Approved document to its per-type handler |
 | `actions/vendor_bill.py` | → draft Purchase Invoice. With a matched PO carrying stock items, creates a draft Purchase Receipt first (3-way match); otherwise invoices against the PO, or builds standalone. Also serves company-card receipts |
-| `actions/receipt_expense.py` | → draft Expense Claim (employee reimbursement). Company-card receipts go to `vendor_bill` instead |
+| `actions/receipt_expense.py` | → *Create Reimbursement Bill*: a draft Purchase Invoice to the employee's own reimbursement Supplier (`Employee.custom_reimbursement_supplier`), with the merchant kept in the remarks. The reviewer must set **Paid By** before approving. The hrms *Create Expense Claim* handler is still here, but this site has no hrms, so it refuses and extraction never proposes it. Company-card receipts go to `vendor_bill` instead |
 | `actions/customer_remittance.py` | → draft Payment Entry (Receive), allocated against the reviewer-selected Sales Invoice, or on-account. Field recipe mirrors `quickbooks_online/core/mapping.py::_map_payment_entry` |
 | `filing.py` | Attaches the source document to the created record, and — when enabled — pushes a copy to the party's Google Drive folder |
 | `setup.py` | `after_migrate` — adds `custom_drive_folder_id` to Supplier, mirroring the existing Customer/Project/Opportunity fields |
