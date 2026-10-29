@@ -2175,6 +2175,15 @@ website_route_rules = [
 	{"from_route": "/review/<path:review_path>", "to_route": "review"},
 ]
 
+# Not Found under the routes of ERPNext's stock web forms that after_migrate keeps unpublished
+# (v1.755.2). Once unpublished, a path under the Addresses form's route `address` fell through to
+# frappe's print-view renderer and answered an error page instead of a 404. frappe asks every
+# page_renderer before its own renderers and builds one per website request, so it is cheap, steps
+# aside for a published form, and never raises. website_clear_cache drops its cached routes
+# whenever frappe clears its website cache. The why is in setup/stock_web_forms.py.
+page_renderer = ["erpnext_enhancements.setup.stock_web_forms.UnpublishedStockWebFormPage"]
+website_clear_cache = ["erpnext_enhancements.setup.stock_web_forms.clear_route_cache"]
+
 # Jinja methods available to Print Formats / web templates. The print sandbox
 # cannot parse the Water Feature Design pipe segments' fittings/components JSON
 # rows, so the aggregation (DOC-0121 Fitting Schedule) and the typed design
