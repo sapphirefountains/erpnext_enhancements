@@ -155,7 +155,7 @@ def _patch_fac_list_documents_count():
 
 
 def _patch_print_view_takes_the_exact_doctype_name():
-	"""The website print view (``/<DocType>/<name>``) takes only the DocType's exact name (v1.755.3).
+	"""The website print view (``/<DocType>/<name>``) takes only the DocType's exact name (v1.755.4).
 
 	frappe 16.53.0's ``PrintPage.can_render`` claims a two-part path when
 	``frappe.db.exists("DocType", first_part, True)`` finds a row, and MariaDB's collation finds it

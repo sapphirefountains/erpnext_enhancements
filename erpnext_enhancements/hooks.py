@@ -3675,7 +3675,7 @@ assistant_skills = [
 #      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
 #      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py;
 #   5. the website print view (`/<DocType>/<name>`) takes only the DocType's exact
-#      name (v1.755.3). frappe 16.53.0's PrintPage matched the name in any letter
+#      name (v1.755.4). frappe 16.53.0's PrintPage matched the name in any letter
 #      case, then could not load a controller for that spelling and answered its
 #      error page instead of a 404. It narrows PrintPage.can_render, which runs
 #      after the static, web form, document and template renderers, so it cannot

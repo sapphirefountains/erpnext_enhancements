@@ -1,4 +1,4 @@
-"""The website print view takes only a DocType's exact name (v1.755.3), bench-free.
+"""The website print view takes only a DocType's exact name (v1.755.4), bench-free.
 
 ``monkeypatches._patch_print_view_takes_the_exact_doctype_name`` is EXECUTED against a small
 ``frappe`` stub installed in ``setUpModule`` and removed in ``tearDownModule`` (own CI step, so it
