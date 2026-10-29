@@ -154,11 +154,51 @@ def _patch_fac_list_documents_count():
     fac_list_documents_count.apply()
 
 
+def _patch_print_view_takes_the_exact_doctype_name():
+	"""The website print view (``/<DocType>/<name>``) takes only the DocType's exact name (v1.755.3).
+
+	frappe 16.53.0's ``PrintPage.can_render`` claims a two-part path when
+	``frappe.db.exists("DocType", first_part, True)`` finds a row, and MariaDB's collation finds it
+	in any letter case. ``printview`` then loads the controller under the spelling from the path,
+	``import_controller`` derives the class name from that spelling and raises ``ImportError``, and
+	the request ends on frappe's generic error page, a 500, signed in or not. No other spelling can
+	ever render, because the class name, the module path and the table name all come from it.
+
+	Requiring the exact name is the upstream fix, carried here until frappe ships it. A path this
+	declines falls through to ``ListPage``, which declines any two-part path (a DocType name cannot
+	contain a slash), and ends on frappe's own Not Found page. ``PrintPage`` comes after the static,
+	web form, document and template renderers, so narrowing it cannot hide a page any of them would
+	serve, which a ``page_renderer`` hook (consulted before all of them) could. It only narrows the
+	original: exact-name print views are untouched, an upstream fix makes it redundant rather than
+	wrong, and the lookup is the same cached query frappe has just made. Delete it once frappe's
+	``PrintPage`` compares the name itself.
+	"""
+	from frappe.website.page_renderers.print_page import PrintPage
+
+	original = PrintPage.can_render
+	if getattr(original, "_ee_exact_doctype_name", False):
+		return  # already applied in this process
+
+	@functools.wraps(original)
+	def can_render(self):
+		if not original(self):
+			return False
+		doctype = self.path.split("/", 1)[0]
+		try:
+			return frappe.db.exists("DocType", doctype, True) == doctype
+		except Exception:
+			return True  # frappe's own answer; never fail a page over this check
+
+	can_render._ee_exact_doctype_name = True
+	PrintPage.can_render = can_render
+
+
 _PATCHES = (
     _patch_get_modules_from_app_none_safe,
     _patch_private_files_are_never_served_inline,
     _patch_templates_cannot_read_kb_drafts,
     _patch_fac_list_documents_count,
+    _patch_print_view_takes_the_exact_doctype_name,
 )
 
 

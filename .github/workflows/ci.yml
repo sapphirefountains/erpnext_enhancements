@@ -2181,6 +2181,14 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule.
       - name: Private files are never served inline (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_private_file_serving -v
+      # frappe 16.53.0's print-view renderer claims /<DocType>/<name> for a DocType name in any
+      # letter case, then cannot load a controller for that spelling, so the page is frappe's
+      # error page instead of a 404. monkeypatches.py requires the exact name (the upstream fix,
+      # carried until frappe ships it).
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Print view takes the exact DocType name (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_print_view_doctype_name -v
       # Guards the "routes the truck to the wrong address, confidently" class of
       # bug: the supplier pick-up address fallback order, our own yard never
       # becoming a stop, and the PO -> Project union that either link alone drops.
