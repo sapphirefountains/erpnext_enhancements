@@ -12,6 +12,11 @@ Run: python -m unittest erpnext_enhancements.tests.test_portal_hardening -v
   must run after every migrate (not once, as a patch would), on install too, and must leave
   ``modified`` alone. Each flip is printed. It never touches the other standard forms or menu rows,
   and never raises.
+* :class:`TestUnpublishedStockWebFormRoutes` — while those forms stay unpublished, their routes and
+  every path under them answer frappe's Not Found page (v1.755.2) instead of falling through to a
+  renderer that answers an error page. A published form, a different route, frappe's own exact-case
+  print view and a failure are all left to frappe. Routes come from the rows, cached until frappe
+  clears its website cache.
 * :class:`TestVoiceCallSettingsPermissions` — the Custom DocPerm rows are the complete permission
   set for the doctype (they replace its standard rows), so they are pinned whole: staff only, no
   delete or share for staff, nothing at all for All or Guest.
@@ -33,8 +38,25 @@ if str(REPO) not in sys.path:
 	sys.path.insert(0, str(REPO))
 
 _SAVED = {}
-STUBBED = ("frappe", "frappe.website", "frappe.website.utils")
+STUBBED = (
+	"frappe",
+	"frappe.website",
+	"frappe.website.utils",
+	"frappe.website.doctype",
+	"frappe.website.doctype.web_form",
+	"frappe.website.doctype.web_form.web_form",
+	"frappe.website.page_renderers",
+	"frappe.website.page_renderers.not_found_page",
+)
 MODULE = "erpnext_enhancements.setup.stock_web_forms"
+# The routes ERPNext's web form JSON gives each form (the Addresses form's route is singular).
+ROUTES = {
+	"tasks": "tasks",
+	"issues": "issues",
+	"addresses": "address",
+	"edit-profile": "update-profile",
+	"request-data": "request-data",
+}
 STOCK_MENU = {
 	"/project": 1,
 	"/orders": 1,
@@ -55,8 +77,20 @@ def _install_stub():
 	frappe.errors = []
 	frappe.cache_clears = []
 	frappe.doc_cache_clears = []
+	frappe.routes = dict(ROUTES)
+	frappe.route_reads = 0
+	frappe.not_found = []
 
 	def get_all(doctype, filters=None, pluck=None, fields=None, **_kw):
+		if doctype == "Web Form" and fields:
+			assert set(fields) == {"name", "route"} and "published" not in filters
+			frappe.route_reads += 1
+			names = filters["name"][1]
+			return [
+				types.SimpleNamespace(name=name, route=route)
+				for name, route in frappe.routes.items()
+				if name in names
+			]
 		if doctype == "Web Form":
 			assert pluck == "name"
 			names = filters["name"][1]
@@ -84,10 +118,60 @@ def _install_stub():
 	frappe.get_traceback = lambda: "traceback"
 	frappe.clear_document_cache = lambda doctype, name=None: frappe.doc_cache_clears.append((doctype, name))
 
+	class Cache:
+		"""frappe.cache's get_value(key, generator) / delete_value(key), in a dict."""
+
+		def __init__(self):
+			self.store = {}
+
+		def get_value(self, key, generator=None):
+			if self.store.get(key) is None and generator:
+				self.store[key] = generator()
+			return self.store.get(key)
+
+		def delete_value(self, key):
+			self.store.pop(key, None)
+
+	frappe.cache = Cache()
+
 	website = types.ModuleType("frappe.website")
 	utils = types.ModuleType("frappe.website.utils")
 	utils.clear_cache = lambda path=None: frappe.cache_clears.append(path)
-	for name, module in (("frappe", frappe), ("frappe.website", website), ("frappe.website.utils", utils)):
+
+	web_form = types.ModuleType("frappe.website.doctype.web_form.web_form")
+
+	def get_published_web_forms():
+		# frappe 16.53.0: get_all("Web Form", ["name", "route", "modified"], {"published": 1}).
+		return [
+			types.SimpleNamespace(name=name, route=frappe.routes.get(name))
+			for name, on in frappe.forms.items()
+			if on
+		]
+
+	web_form.get_published_web_forms = get_published_web_forms
+
+	not_found_page = types.ModuleType("frappe.website.page_renderers.not_found_page")
+
+	class NotFoundPage:
+		def __init__(self, path, http_status_code=None):
+			self.args = (path, http_status_code)
+
+		def render(self):
+			frappe.not_found.append(self.args)
+			return f"404 for {self.args[0]}"
+
+	not_found_page.NotFoundPage = NotFoundPage
+
+	for name, module in (
+		("frappe", frappe),
+		("frappe.website", website),
+		("frappe.website.utils", utils),
+		("frappe.website.doctype", types.ModuleType("frappe.website.doctype")),
+		("frappe.website.doctype.web_form", types.ModuleType("frappe.website.doctype.web_form")),
+		("frappe.website.doctype.web_form.web_form", web_form),
+		("frappe.website.page_renderers", types.ModuleType("frappe.website.page_renderers")),
+		("frappe.website.page_renderers.not_found_page", not_found_page),
+	):
 		sys.modules[name] = module
 	return frappe
 
@@ -235,6 +319,118 @@ class TestStockWebForms(unittest.TestCase):
 		self.assertIn(dotted, _hook("after_install"))
 		patches = (APP / "patches.txt").read_text(encoding="utf-8")
 		self.assertNotIn("stock_web_forms", patches)
+
+
+def _claims(path):
+	"""Build the renderer the way frappe's PathResolver does, (endpoint, http_status_code), and ask it."""
+	return stock_web_forms.UnpublishedStockWebFormPage(path, 200).can_render()
+
+
+class TestUnpublishedStockWebFormRoutes(unittest.TestCase):
+	def setUp(self):
+		frappe_stub.forms = {"tasks": 0, "issues": 0, "addresses": 0, "edit-profile": 1, "request-data": 1}
+		frappe_stub.routes = dict(ROUTES)
+		frappe_stub.route_reads = 0
+		frappe_stub.not_found = []
+		frappe_stub.cache = type(frappe_stub.cache)()
+		frappe_stub.get_all = frappe_stub.real_get_all
+
+	def test_the_route_and_every_path_under_it_answer_not_found(self):
+		"""The paths each form's router owned (route, list, new, a record, its edit), and deeper ones too."""
+		for path in (
+			"address",
+			"address/list",
+			"address/new",
+			"address/ADDR-0001",
+			"address/ADDR-0001/edit",
+			"address/a/b/c",
+			"tasks/list",
+			"tasks/new",
+			"issues",
+			"issues/ISS-0001",
+		):
+			with self.subTest(path=path):
+				self.assertTrue(_claims(path))
+
+	def test_slashes_around_the_path_do_not_matter(self):
+		for path in ("/address/list", "address/list/", "/address/new/", " /address "):
+			with self.subTest(path=path):
+				self.assertTrue(_claims(path))
+
+	def test_other_paths_are_left_to_frappe(self):
+		"""`addresses` keeps ERPNext's redirect; `Address/<name>` is frappe's exact-case print view."""
+		for path in (
+			"",
+			"addresses",
+			"addresses/ADDR-0001",
+			"addressbook",
+			"address-book/list",
+			"Address/ADDR-0001",
+			"ADDRESS/list",
+			"task/list",
+			"issue/new",
+			"orders/SO-0001",
+			"me",
+			"login",
+			"update-profile",
+			"request-data/new",
+		):
+			with self.subTest(path=path):
+				self.assertFalse(_claims(path))
+
+	def test_a_published_form_is_left_to_frappes_web_form_renderer(self):
+		"""Hooked renderers run first: claiming a published form's route would hide the form."""
+		frappe_stub.forms["addresses"] = 1
+		self.assertFalse(_claims("address/list"))
+		self.assertFalse(_claims("address"))
+		self.assertTrue(_claims("tasks/list"))
+
+	def test_it_renders_frappes_not_found_page_for_the_path(self):
+		"""Built as the resolver's own fallback is, NotFoundPage(endpoint): no 200 handed on to it."""
+		page = stock_web_forms.UnpublishedStockWebFormPage("address/list", 200)
+		self.assertTrue(page.can_render())
+		self.assertEqual(page.render(), "404 for address/list")
+		self.assertEqual(frappe_stub.not_found, [("address/list", None)])
+
+	def test_routes_come_from_the_rows_and_are_read_once(self):
+		for _ in range(5):
+			_claims("address/list")
+			_claims("orders/SO-0001")
+		self.assertEqual(frappe_stub.route_reads, 1)
+
+	def test_a_website_cache_clear_rereads_a_changed_route(self):
+		self.assertTrue(_claims("address/list"))
+		frappe_stub.routes["addresses"] = "my-addresses"
+		self.assertTrue(_claims("address/list"))  # still cached
+		stock_web_forms.clear_route_cache("address")
+		self.assertFalse(_claims("address/list"))
+		self.assertTrue(_claims("my-addresses/new"))
+		self.assertEqual(frappe_stub.route_reads, 2)
+
+	def test_a_form_without_a_route_or_row_claims_nothing(self):
+		frappe_stub.routes = {"tasks": "", "issues": None}
+		for path in ("tasks", "issues/new", "address/list", "x"):
+			with self.subTest(path=path):
+				self.assertFalse(_claims(path))
+
+	def test_a_failure_leaves_the_request_to_frappe(self):
+		"""It runs before every website page, so raising would take the whole site down."""
+
+		def explode(*_args, **_kw):
+			raise RuntimeError("database gone")
+
+		frappe_stub.get_all = explode
+		self.assertFalse(_claims("address/list"))
+
+	def test_it_is_registered_as_a_page_renderer_and_a_website_cache_hook(self):
+		self.assertIn(
+			"erpnext_enhancements.setup.stock_web_forms.UnpublishedStockWebFormPage", _hook("page_renderer")
+		)
+		self.assertIn(
+			"erpnext_enhancements.setup.stock_web_forms.clear_route_cache", _hook("website_clear_cache")
+		)
+		renderer = stock_web_forms.UnpublishedStockWebFormPage
+		self.assertTrue(hasattr(renderer, "can_render") and hasattr(renderer, "render"))
 
 
 # Each row's grants, as ERPNext's own version-16-hotfix change to the doctype ends with them.
