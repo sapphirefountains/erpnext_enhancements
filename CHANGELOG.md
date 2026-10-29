@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.755.2] - 2026-10-29
+
+ERPNext: TASK-2026-02999 (PRJ-00580). A follow-up to 1.755.0. Two drafts already hold 1.755.1, so
+this takes 1.755.2; renumber at merge if the order changes. Checked against frappe 16.53.0 and
+erpnext 16.52.1, prod's versions, and against prod with signed-out requests only.
+
+**What the deploy does.** From the restart, the routes of the three stock web forms that 1.755.0
+unpublished answer frappe's Not Found page (404), and so does every path under them. Nothing is
+written to the database.
+
+### Fixed
+- **Paths under the Addresses form's route answered an error page instead of Not Found.**
+  `/address/list`, `/address/new` and every other path under `/address` returned frappe's generic
+  "error building this page" (500) once 1.755.0 unpublished the form, for every visitor, signed in or
+  not. `/addresses` redirects there, so it ended at the same error.
+  - **Cause.** An unpublished form drops out of frappe's router, and a path under its route falls
+    through to frappe's later renderers. `tasks` and `issues` reach the Not Found page that way.
+    `address` instead reaches the print-view renderer (`PrintPage`). That renderer takes any two-part
+    path whose first part names a DocType in any letter case. It then cannot load a controller for
+    the lower-case name, and frappe answers its generic error page. The form used to own those paths,
+    which is why they were never seen before.
+  - **The fix** is `setup/stock_web_forms.UnpublishedStockWebFormPage`, registered as a
+    `page_renderer`, frappe's own extension point. frappe consults it before its built-in renderers.
+    It answers frappe's own `NotFoundPage` for an unpublished stock form's route and everything under
+    it: exactly the paths the form owned while it was published.
+  - **It steps aside for a published form.** It reads the published state from frappe's
+    `get_published_web_forms`, the same list frappe's web form renderer reads, so the two never
+    disagree.
+  - **It reads the routes from the Web Form rows** rather than copying them. They stay cached until
+    frappe next clears its website cache; a `website_clear_cache` hook (`clear_route_cache`) drops
+    them then.
+  - **It never raises.** frappe builds every hooked renderer for every website request, so a
+    failure leaves the request to frappe's own renderers.
+  - **Why this and not a database change.** Nothing is stored that an ERPNext re-import or upgrade
+    could overwrite. A re-import that publishes a form only makes the renderer step aside until
+    `after_migrate` unpublishes the form again, in the same migrate.
+  - **`/addresses` keeps ERPNext's redirect to `address/list`** and so ends at the same 404.
+    Deleting the redirect would not give a cleaner answer: ERPNext's own `website_route_rules` entry
+    for `/addresses` would take the path over and serve the stock portal's Address list.
+
+### Tests
+- **`tests/test_portal_hardening.py`** gains `TestUnpublishedStockWebFormRoutes`, run against the
+  suite's frappe stub in its existing CI step. It checks:
+  - Claimed: each form's route, its list, new, record and edit paths, and deeper ones, with or
+    without surrounding slashes.
+  - Left to frappe: `addresses`, look-alike routes, frappe's exact-case print view `Address/<name>`,
+    other portal routes, and a published form's paths.
+  - The renderer is built as frappe's resolver builds it, and it renders frappe's `NotFoundPage`
+    the way the resolver's own fallback does.
+  - Routes are read once and read again after a website cache clear. A form without a route or row
+    claims nothing, and a failure claims nothing.
+  - Both hooks are registered.
+
 ## [1.755.0] - 2026-10-28
 
 ERPNext: PRJ-00580, under Platform Hygiene & CI (TASK-2026-01566). Three controls to have in

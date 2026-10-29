@@ -3642,7 +3642,9 @@ jobs:
       # unpublished after every migrate and on install (an ERPNext upgrade re-imports them
       # published), their Issues/Addresses portal menu rows stay disabled, every flip is printed,
       # `modified` is left alone and the other forms and menu rows are untouched; EXECUTED against a frappe
-      # stub (own step: it installs and removes the stub). Voice Call Settings' Custom DocPerm
+      # stub (own step: it installs and removes the stub). While unpublished, the forms' routes and
+      # every path under them answer frappe's Not Found page through a page_renderer hook (v1.755.2),
+      # which steps aside for a published form and never raises. Voice Call Settings' Custom DocPerm
       # rows are pinned whole, since they replace the doctype's standard permissions.
       - name: Portal hardening (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_portal_hardening -v
