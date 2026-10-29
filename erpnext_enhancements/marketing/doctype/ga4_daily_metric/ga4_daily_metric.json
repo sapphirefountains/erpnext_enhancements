@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-10-29 12:00:00.000000",
- "description": "One day of Google Analytics 4: the site's total, one landing page, or one channel. Written only by the nightly pull and the backfill (marketing/performance/web_sync.py), which replace each day they read in full.",
+ "description": "One day of Google Analytics 4: the site's total, one landing page, one channel, one landing page from one source / medium, one device category, or one city. Kept forever. Written only by the nightly pull and the backfill (marketing/performance/web_sync.py), which replace each day they read in full.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -12,6 +12,9 @@
   "column_break_key",
   "dimension_value",
   "page_path",
+  "source_medium",
+  "region",
+  "country",
   "metrics_section",
   "sessions",
   "total_users",
@@ -34,7 +37,7 @@
   {
    "fieldname": "dimension",
    "fieldtype": "Select",
-   "options": "Total\nLanding Page\nChannel",
+   "options": "Total\nLanding Page\nChannel\nLanding Page Source\nDevice\nCity",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Dimension",
@@ -51,14 +54,35 @@
    "fieldtype": "Small Text",
    "label": "Value",
    "read_only": 1,
-   "description": "The landing page as GA4 reported it, or the channel. Blank for the site total."
+   "description": "The landing page as GA4 reported it (also for Landing Page Source), the channel, the device category, or the city. Blank for the site total."
   },
   {
    "fieldname": "page_path",
    "fieldtype": "Small Text",
    "label": "Normalized Path",
    "read_only": 1,
-   "description": "The join key with Search Console: lower case, no host, query string or trailing slash (rules.normalize_page). Landing pages only."
+   "description": "The join key with Search Console: lower case, no host, query string or trailing slash (rules.normalize_page). Landing Page and Landing Page Source rows."
+  },
+  {
+   "fieldname": "source_medium",
+   "fieldtype": "Data",
+   "label": "Source / Medium",
+   "read_only": 1,
+   "description": "GA4's sessionSourceMedium, e.g. google / organic. Landing Page Source rows only."
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "read_only": 1,
+   "description": "City rows only."
+  },
+  {
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country",
+   "read_only": 1,
+   "description": "City rows only."
   },
   {
    "fieldname": "metrics_section",
@@ -100,7 +124,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "GA4 Daily Metric",

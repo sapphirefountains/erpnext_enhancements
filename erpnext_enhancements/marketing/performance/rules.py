@@ -69,8 +69,9 @@ def views_for(roles):
 # ---------------------------------------------------------------- dates
 
 DEFAULT_RANGE_DAYS = 28
-#: Search Console keeps 16 months; a range longer than that has nothing more to show.
-MAX_RANGE_DAYS = 550
+#: The page reads stored history, which is kept forever (Nik, 2026-10-29: "let's make sure we are
+#: keeping a history"), so a range may reach back years. Ten is far more than any source holds today.
+MAX_RANGE_DAYS = 3660
 
 
 def as_date(value):
@@ -133,6 +134,28 @@ def chunks(start, end, size):
 	return out
 
 
+def history_window(earliest, today, lag_days=1):
+	"""``(start, end)`` of a source's full backfill: from the oldest day its API serves to the newest
+	settled day, or None when there is nothing (an ``earliest`` after the end)."""
+	end = today - datetime.timedelta(days=lag_days)
+	if earliest is None or earliest > end:
+		return None
+	return earliest, end
+
+
+def months_back(today, months):
+	"""The same day ``months`` calendar months before ``today``, clamped to the month's last day."""
+	month = today.month - 1 - months
+	year = today.year + month // 12
+	month = month % 12 + 1
+	for day in (today.day, 30, 29, 28):
+		try:
+			return datetime.date(year, month, day)
+		except ValueError:
+			continue
+	return datetime.date(year, month, 28)
+
+
 def nightly_window(last_stored, today, restate_days, initial_days, max_catchup_days, lag_days=1):
 	"""``(start, end)`` the nightly pull restates, inclusive, or None when there is nothing to pull.
 
@@ -167,17 +190,21 @@ def value_key(value):
 	return hashlib.sha1(str(value or "").encode("utf-8")).hexdigest()[:16]
 
 
-def record_name(prefix, metric_date, code, value=None):
+def record_name(prefix, metric_date, code, value=None, *more):
 	"""The deterministic name of one stored day: ``GA4-2026-10-01-L-<key>``, ``GSC-2026-10-01-T``.
 
 	A Search Console query can be 300 characters and a path longer, so the value is hashed rather
 	than embedded. The same day, dimension and value always give the same name, which is what makes
 	restating a day an overwrite instead of a second copy.
+
+	The finer grains (a page and a query, a landing page and a source) pass every part: the key is
+	the hash of all of them, so two rows differing in any part never share a name.
 	"""
 	day = metric_date.isoformat() if isinstance(metric_date, datetime.date) else str(metric_date)[:10]
-	if value is None:
+	if value is None and not more:
 		return f"{prefix}-{day}-{code}"
-	return f"{prefix}-{day}-{code}-{value_key(value)}"
+	key = value if not more else "\x1f".join(str(v or "") for v in (value, *more))
+	return f"{prefix}-{day}-{code}-{value_key(key)}"
 
 
 # ---------------------------------------------------------------- URLs
@@ -233,10 +260,11 @@ def _num(value):
 def parse_ga4_rows(rows):
 	"""GA4 ``runReport`` rows, already flattened to ``(dimension values, metric values)``.
 
-	Dimensions are ``date`` (``YYYYMMDD``) then one optional dimension; metrics are sessions,
-	totalUsers, engagedSessions and keyEvents in that order. Returns
-	``[{metric_date, value, sessions, total_users, engaged_sessions, key_events}]``; a row whose
-	date does not parse is dropped.
+	Dimensions are ``date`` (``YYYYMMDD``) then any others; metrics are sessions, totalUsers,
+	engagedSessions and keyEvents in that order. Returns
+	``[{metric_date, value, extra, sessions, total_users, engaged_sessions, key_events}]``: ``value``
+	is the second dimension, ``extra`` the rest in order (a landing page's source / medium; a city's
+	region and country). A row whose date does not parse is dropped.
 	"""
 	out = []
 	for dims, metrics in rows or ():
@@ -252,6 +280,7 @@ def parse_ga4_rows(rows):
 			{
 				"metric_date": day,
 				"value": str(dims[1]) if len(dims) > 1 else None,
+				"extra": [str(d) for d in dims[2:]],
 				"sessions": int(_num(metrics[0])),
 				"total_users": int(_num(metrics[1])),
 				"engaged_sessions": int(_num(metrics[2])),
@@ -264,8 +293,9 @@ def parse_ga4_rows(rows):
 def parse_gsc_rows(rows):
 	"""Search Console ``searchanalytics.query`` rows with ``date`` as the first dimension.
 
-	Returns ``[{metric_date, value, clicks, impressions, position}]``; ``value`` is the second key
-	(page or query) or None for a date-only query.
+	Returns ``[{metric_date, value, extra, clicks, impressions, position}]``; ``value`` is the second
+	key (page or query) or None for a date-only query, and ``extra`` the keys after it (the query,
+	for a page x query row).
 	"""
 	out = []
 	for row in rows or ():
@@ -277,6 +307,7 @@ def parse_gsc_rows(rows):
 			{
 				"metric_date": day,
 				"value": keys[1] if len(keys) > 1 else None,
+				"extra": list(keys[2:]),
 				"clicks": int(round(_num(row.get("clicks")))),
 				"impressions": int(round(_num(row.get("impressions")))),
 				"position": _num(row.get("position")),

@@ -156,25 +156,47 @@ Turn on: connect the publishing connection (above), tick **Enabled** on each Soc
 **Marketing Settings → Enabled + Social Page Stats**. Runs nightly at **03:55**; LinkedIn's statistics end
 two days before the request and YouTube's lag 48–72 hours, so the newest two days fill in later.
 
-## GA4 and Search Console by day (v1.756.0)
+## GA4 and Search Console by day, and every source's history (v1.756.0)
 
-Not a connector: these read the **GA4 Settings** service account the nightly snapshot has used since June,
-and are not gated by Marketing Settings. Every night at **03:40** each source's last 7 days are replaced
-whole (Search Console publishes final figures two or three days late) plus any days missed, into **GA4 Daily
-Metric** (site total, landing page, channel) and **Search Console Daily Metric** (property total, page,
-query).
+Nik, 2026-10-29: keep a history of everything. **No metric table is ever pruned**: GA4 Daily Metric,
+Search Console Daily Metric, Business Profile Daily Metric and Review, Social Page Daily Metric, Social Post
+Metric, Ad Daily Metric and Ad Click are kept forever (only Marketing Raw Payload keeps its retention prune).
+Past each API's window these rows are the only copy.
 
-**The history backfill.** Marketing Performance → menu → *Backfill GA4 and Search Console history*
-(System Manager), or from the bench:
+GA4 and Search Console are not a connector: they read the **GA4 Settings** service account the nightly
+snapshot has used since June, and are not gated by Marketing Settings. Every night at **03:40** each one's
+last 7 days are replaced (Search Console publishes final figures two or three days late) plus any days
+missed, at these grains:
+
+- **GA4 Daily Metric:** site total, landing page, channel, landing page × session source / medium, device,
+  city (with region and country).
+- **Search Console Daily Metric:** property total, page, query, page × query.
+
+**The history backfill.** Each source is read back as far as its API serves, **once, by itself**: the
+first 03:40 run after it is ready (GA4 and Search Console the first night after deploy; Business Profile and
+the social pages the night after they are connected and switched on, or straight after Connect if already
+switched on). An ad platform's first sync reads its whole history the same way. To run one again:
+Marketing Performance → menu → *Backfill marketing history* (System Manager), or from the bench:
 
 ```
-bench --site erp.sapphirefountains.com execute erpnext_enhancements.marketing.performance.web_sync.backfill --kwargs "{'days': 480}"
+bench --site erp.sapphirefountains.com execute erpnext_enhancements.marketing.performance.web_sync.backfill
 ```
 
-It walks a month at a time, oldest first, writing a **Backfill** row per source in Marketing Sync Log whose
-*Done Through* moves after each month. A deploy flushes the queue; the next 03:40 run sees a Backfill row
-still *Running* with nothing written for 90 minutes and queues it again from *Done Through*. Running it
-twice is harmless: each month is replaced, not added to.
+| Source | Reads back to | Snapshot-only, from connect day |
+|---|---|---|
+| Search Console | 16 months | — |
+| GA4 | the property's first day of data | — |
+| Google Business Profile | 18 months (documented for the old v4 API; v1 names no limit, a refused window is skipped) | rating, review count, each review |
+| Facebook | 2 years (reach, views) | followers |
+| Instagram | 90 days (reach, views) | followers |
+| LinkedIn | 12 months (reach, views, follower gains) | followers |
+| YouTube | the channel's creation (views, net subscribers) | subscriber total |
+| Google Ads, Meta | 37 months of daily figures | — |
+| LinkedIn Ads | 6 months of daily figures | — |
+
+Each Backfill row in Marketing Sync Log carries *Done Through*, moved after each window. A deploy flushes the
+queue; the next 03:40 run sees a Backfill row still *Queued* or *Running* with nothing written for 90 minutes
+and queues it again from *Done Through*. Running it twice is harmless: every write replaces or upserts.
 
 ---
 

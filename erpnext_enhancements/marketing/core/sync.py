@@ -248,12 +248,20 @@ def run_platform(platform, *, http=None, today=None):
 			getdate(account.sync_cursor) if account.sync_cursor else None,
 			today,
 			settings.get("restate_days") or 7,
-			settings.get("initial_backfill_days") or 90,
+			# The dial can ask for more; never less than the platform keeps (v1.756.0).
+			max(int(settings.get("initial_backfill_days") or 90), C.HISTORY_DAYS[platform]),
 		)
 		if not window:
 			continue
 		try:
-			sync_account(platform, module, transport, account, window, today, counters)
+			for chunk in _chunks(*window):
+				sync_account(platform, module, transport, account, chunk, today, counters)
+				# This chunk is complete: the cursor may move to its end, and a run cut off after it
+				# resumes from the next chunk instead of re-reading years.
+				frappe.db.set_value(
+					"Ad Account", account.name, "sync_cursor", chunk[1], update_modified=False
+				)
+				frappe.db.commit()
 		except MarketingAPIError as exc:
 			frappe.db.rollback()
 			counters["failed"] += 1
@@ -284,6 +292,19 @@ def run_platform(platform, *, http=None, today=None):
 		frappe.db.commit()
 
 	return _finish(log, counters, errors, failed=bool(errors))
+
+
+def _chunks(date_from, date_to, size=C.SYNC_CHUNK_DAYS):
+	"""``window`` in pieces of at most ``size`` days, oldest first."""
+	import datetime
+
+	out = []
+	day = date_from
+	while day <= date_to:
+		last = min(day + datetime.timedelta(days=size - 1), date_to)
+		out.append((day, last))
+		day = last + datetime.timedelta(days=1)
+	return out
 
 
 def _mark_connection(creds, platform, exc):
@@ -318,7 +339,12 @@ def _finish(log, counters, errors, failed):
 
 
 def prune(today=None):
-	"""Drop raw payloads past retention, and clicks past retention that no Lead carries."""
+	"""Drop raw payloads past retention. Nothing else: the metrics and clicks are the kept history.
+
+	Until v1.756.0 this also deleted Ad Click rows older than 180 days that no Lead carried. Google
+	serves click_view for 90 days only, so a pruned click could never come back; Nik, 2026-10-29:
+	keep a history of every source. Raw payloads are copies of answers already stored, and stay pruned.
+	"""
 	from frappe.utils import add_days, getdate, now_datetime
 
 	from erpnext_enhancements.marketing.core.utils import get_settings
@@ -329,11 +355,4 @@ def prune(today=None):
 	frappe.db.sql(
 		"delete from `tabMarketing Raw Payload` where creation < %s", (add_days(today, -int(retention)),)
 	)
-	if frappe.db.has_column("Lead", "custom_gclid"):
-		frappe.db.sql(
-			"""delete from `tabAd Click`
-			where click_date < %s
-			  and name not in (select custom_gclid from `tabLead` where coalesce(custom_gclid, '') != '')""",
-			(add_days(today, -C.CLICK_RETENTION_DAYS),),
-		)
 	frappe.db.commit()

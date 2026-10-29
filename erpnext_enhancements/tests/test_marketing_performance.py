@@ -236,7 +236,9 @@ class TestWindowsAndNames(unittest.TestCase):
 			rules.parse_range("2026-10-10", "2026-10-01", self.TODAY), (D(2026, 10, 1), D(2026, 10, 10))
 		)
 		self.assertEqual(rules.parse_range("junk", "2026-11-30", self.TODAY)[1], self.TODAY)
-		start, end = rules.parse_range("2020-01-01", "2026-10-28", self.TODAY)
+		# The history is kept, so years are a valid range; only past the cap is the start moved.
+		self.assertEqual(rules.parse_range("2020-01-01", "2026-10-28", self.TODAY)[0], D(2020, 1, 1))
+		start, end = rules.parse_range("2000-01-01", "2026-10-28", self.TODAY)
 		self.assertEqual((end - start).days + 1, rules.MAX_RANGE_DAYS)
 		self.assertEqual(
 			rules.previous_range(D(2026, 10, 1), D(2026, 10, 28)), (D(2026, 9, 3), D(2026, 9, 30))
@@ -254,6 +256,21 @@ class TestWindowsAndNames(unittest.TestCase):
 		self.assertLessEqual(len(a), 40)
 		self.assertNotEqual(a, rules.record_name("GSC", D(2026, 10, 1), "Q", "fountain repair"))
 		self.assertEqual(rules.record_name("GA4", D(2026, 10, 1), "T"), "GA4-2026-10-01-T")
+		# The finer grains: every part is in the key, and a part moved between fields is a new row.
+		pq = rules.record_name("GSC", D(2026, 10, 1), "X", "https://x/a", "fountain repair")
+		self.assertNotEqual(pq, rules.record_name("GSC", D(2026, 10, 1), "X", "https://x/a", "pond"))
+		self.assertNotEqual(pq, rules.record_name("GSC", D(2026, 10, 1), "X", "https://x/afountain repair"))
+		self.assertEqual(pq, rules.record_name("GSC", D(2026, 10, 1), "X", "https://x/a", "fountain repair"))
+
+	def test_history_windows(self):
+		self.assertEqual(rules.months_back(D(2026, 10, 29), 16), D(2025, 6, 29))
+		self.assertEqual(rules.months_back(D(2026, 3, 31), 1), D(2026, 2, 28))
+		self.assertEqual(rules.months_back(D(2026, 1, 15), 18), D(2024, 7, 15))
+		self.assertEqual(
+			rules.history_window(D(2025, 6, 29), D(2026, 10, 29)), (D(2025, 6, 29), D(2026, 10, 28))
+		)
+		self.assertIsNone(rules.history_window(None, D(2026, 10, 29)))
+		self.assertIsNone(rules.history_window(D(2026, 10, 29), D(2026, 10, 29)))
 
 
 class TestApiRows(unittest.TestCase):
@@ -267,6 +284,7 @@ class TestApiRows(unittest.TestCase):
 			{
 				"metric_date": D(2026, 10, 1),
 				"value": "/a",
+				"extra": [],
 				"sessions": 12,
 				"total_users": 10,
 				"engaged_sessions": 8,
@@ -274,6 +292,10 @@ class TestApiRows(unittest.TestCase):
 			},
 		)
 		self.assertEqual((rows[1]["value"], rows[1]["sessions"], rows[1]["key_events"]), (None, 3, 0.0))
+		city = rules.parse_ga4_rows([(["20261001", "Provo", "Utah", "United States"], ["4", "4", "2", "0"])])[
+			0
+		]
+		self.assertEqual((city["value"], city["extra"]), ("Provo", ["Utah", "United States"]))
 
 	def test_gsc(self):
 		rows = rules.parse_gsc_rows(
@@ -284,8 +306,21 @@ class TestApiRows(unittest.TestCase):
 		)
 		self.assertEqual(
 			rows,
-			[{"metric_date": D(2026, 10, 1), "value": "q", "clicks": 2, "impressions": 40, "position": 7.5}],
+			[
+				{
+					"metric_date": D(2026, 10, 1),
+					"value": "q",
+					"extra": [],
+					"clicks": 2,
+					"impressions": 40,
+					"position": 7.5,
+				}
+			],
 		)
+		pq = rules.parse_gsc_rows([{"keys": ["2026-10-01", "https://x/a", "fountain repair"], "clicks": 1}])[
+			0
+		]
+		self.assertEqual((pq["value"], pq["extra"]), ("https://x/a", ["fountain repair"]))
 
 
 class TestCalls(unittest.TestCase):
@@ -605,7 +640,7 @@ class TestSocialPageStats(unittest.TestCase):
 			{D(2026, 10, 26): {"reach": 3, "views": None}, D(2026, 10, 27): {"reach": None, "views": None}},
 			today,
 		)
-		self.assertEqual(out, {D(2026, 10, 26): {"reach": 3}, today: {"followers": 500}})
+		self.assertEqual(out, {D(2026, 10, 26): {"reach": 3}, today: {"followers": 500, "followers_read": 1}})
 		self.assertEqual(social.rows_for(None, {}, today), {})
 
 	def test_the_one_new_read_is_a_get(self):
@@ -626,6 +661,166 @@ class TestSocialPageStats(unittest.TestCase):
 		self.assertEqual(fields[social.ENABLED_FLAG]["default"], "0")
 		self.assertEqual(fields[G.ENABLED_FLAG]["default"], "0")
 		self.assertEqual(fields["branded_terms"]["default"], "sapphire")
+
+
+class TestKeepingTheHistory(unittest.TestCase):
+	"""Nik, 2026-10-29: "let's make sure we are keeping a history". Every metric table is kept forever,
+	each source is read back as far as its API allows, and what a source will not give back later is
+	snapshotted nightly."""
+
+	CODE_ROOTS = (MARKETING, APP / "kpi_dashboards", APP / "patches")
+	METRIC_TABLES = (
+		"GA4 Daily Metric",
+		"Search Console Daily Metric",
+		"Business Profile Daily Metric",
+		"Business Profile Review",
+		"Social Page Daily Metric",
+		"Ad Daily Metric",
+		"Ad Click",
+		"Social Post Metric",
+	)
+
+	def test_only_the_web_restate_deletes_metric_rows(self):
+		"""The one delete on a metric table is web_sync's replace of a day it has just re-read."""
+		hits = []
+		for root in self.CODE_ROOTS:
+			for path in root.rglob("*.py"):
+				text = path.read_text(encoding="utf-8")
+				for table in self.METRIC_TABLES:
+					for pattern in (
+						f"delete from `tab{table}`",
+						f'delete_doc("{table}"',
+						f'db.delete("{table}"',
+					):
+						if pattern in text:
+							hits.append(f"{path.relative_to(APP)}: {pattern}")
+		self.assertEqual(hits, [])
+		web_sync = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		self.assertIn("where dimension = %s and metric_date in (", web_sync, "only the days the answer holds")
+
+	def test_prune_touches_raw_payloads_only(self):
+		source = (MARKETING / "core" / "sync.py").read_text(encoding="utf-8")
+		body = source[source.index("def prune") :]
+		self.assertEqual(body.count("delete from"), 1)
+		self.assertIn("delete from `tabMarketing Raw Payload`", body)
+
+	def test_ad_platforms_read_their_whole_history_in_chunks(self):
+		from erpnext_enhancements.marketing.core import constants as C
+		from erpnext_enhancements.marketing.core.sync import _chunks
+
+		self.assertEqual(set(C.HISTORY_DAYS), set(C.PLATFORMS))
+		# 37 months of daily data at Google Ads and Meta (about 1,126 days); LinkedIn's daily six months.
+		self.assertLess(C.HISTORY_DAYS[C.PLATFORM_GOOGLE], 1126)
+		self.assertGreater(C.HISTORY_DAYS[C.PLATFORM_GOOGLE], 1000)
+		self.assertEqual(C.HISTORY_DAYS[C.PLATFORM_LINKEDIN], 180)
+		pieces = _chunks(D(2023, 9, 1), D(2026, 10, 28))
+		self.assertEqual(pieces[0][0], D(2023, 9, 1))
+		self.assertEqual(pieces[-1][1], D(2026, 10, 28))
+		self.assertTrue(all((b - a).days < C.SYNC_CHUNK_DAYS for a, b in pieces))
+		self.assertTrue(
+			all(pieces[i][1] + dt.timedelta(days=1) == pieces[i + 1][0] for i in range(len(pieces) - 1))
+		)
+		source = (MARKETING / "core" / "sync.py").read_text(encoding="utf-8")
+		loop = source[source.index("for chunk in _chunks(*window):") :][:600]
+		self.assertIn('"sync_cursor", chunk[1]', loop, "the cursor moves after each chunk")
+
+	def test_the_first_backfill_runs_once_by_itself(self):
+		source = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		body = source[source.index("def ensure_backfills") : source.index("def start_backfill")]
+		self.assertIn('{"platform": source, "sync_type": "Backfill"}', body, "never had one, in any status")
+		nightly = source[source.index("def nightly_web_sync") : source.index("def run_nightly")]
+		self.assertIn("ensure_backfills()", nightly)
+		self.assertIn("resume_stalled_backfill()", nightly)
+		api = (MARKETING / "core" / "api.py").read_text(encoding="utf-8")
+		self.assertIn("_start_history(platform)", api, "a first connect starts the history")
+
+	def test_social_history_starts(self):
+		today = D(2026, 10, 29)
+		self.assertEqual(social.history_start(P.NETWORK_FACEBOOK, today), D(2024, 10, 29))
+		self.assertEqual(social.history_start(P.NETWORK_INSTAGRAM, today), D(2026, 7, 31))
+		self.assertEqual(social.history_start(P.NETWORK_LINKEDIN, today), D(2025, 10, 29))
+		self.assertEqual(social.history_start(P.NETWORK_YOUTUBE, today, D(2014, 3, 2)), D(2014, 3, 2))
+		self.assertIsNone(social.history_start(P.NETWORK_YOUTUBE, today))
+
+	def test_follower_gains(self):
+		start = social._ms(D(2026, 10, 1))
+		body = {
+			"elements": [
+				{
+					"timeRange": {"start": start},
+					"followerGains": {"organicFollowerGain": 3, "paidFollowerGain": 1},
+				},
+				{"timeRange": {"start": start + 86400000}, "followerGains": {}},
+			]
+		}
+		self.assertEqual(social.parse_linkedin_follower_gains(body), {D(2026, 10, 1): 4, D(2026, 10, 2): 0})
+		report = {
+			"columnHeaders": [
+				{"name": "day"},
+				{"name": "views"},
+				{"name": "subscribersGained"},
+				{"name": "subscribersLost"},
+			],
+			"rows": [["2026-10-01", 15, 5, 2]],
+		}
+		self.assertEqual(
+			social.parse_youtube_views(report), {D(2026, 10, 1): {"views": 15, "follower_gain": 3}}
+		)
+
+	def test_reviews_are_rows(self):
+		pages = [
+			{
+				"reviews": [
+					{
+						"reviewId": "AbC-123",
+						"starRating": "TWO",
+						"reviewer": {"displayName": "A Reviewer"},
+						"comment": "Late.",
+						"createTime": "2026-10-01T12:34:56.789Z",
+						"updateTime": "2026-10-02T00:00:00Z",
+						"reviewReply": {"comment": "Sorry!", "updateTime": "2026-10-03T08:00:00Z"},
+					},
+					{"name": "accounts/9/locations/1/reviews/XyZ", "starRating": "STAR_RATING_UNSPECIFIED"},
+				]
+			}
+		]
+		first, second = gbp.parse_reviews(pages)
+		self.assertEqual(first["review_id"], "AbC-123")
+		self.assertEqual(first["star_rating"], 2)
+		self.assertEqual(first["create_time"], dt.datetime(2026, 10, 1, 12, 34, 56))
+		self.assertEqual(
+			(first["reply_comment"], first["reply_time"]), ("Sorry!", dt.datetime(2026, 10, 3, 8, 0))
+		)
+		self.assertEqual(
+			(second["review_id"], second["star_rating"], second["create_time"]), ("XyZ", None, None)
+		)
+
+	def test_a_review_that_vanishes_is_marked_not_deleted(self):
+		source = (MARKETING / "gbp" / "sync.py").read_text(encoding="utf-8")
+		body = source[source.index("def snapshot_reviews") : source.index("def pull_listing")]
+		self.assertIn("if complete:", body, "only a complete read may say a review is gone")
+		self.assertIn('"removed_on", today', body)
+		self.assertNotIn("delete", body)
+
+	def test_finest_grains_are_stored(self):
+		source = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		for grain in (
+			'"Page Query": ("X", ("page", "query"))',
+			'"Landing Page Source": ("S", ("landingPage", "sessionSourceMedium"))',
+			'"Device": ("D", ("deviceCategory",))',
+			'"City": ("G", ("city", "region", "country"))',
+		):
+			self.assertIn(grain, source)
+		for folder, options in (
+			(
+				"ga4_daily_metric",
+				{"Total", "Landing Page", "Channel", "Landing Page Source", "Device", "City"},
+			),
+			("search_console_daily_metric", {"Total", "Page", "Query", "Page Query"}),
+		):
+			doc = json.loads((MARKETING / "doctype" / folder / f"{folder}.json").read_text(encoding="utf-8"))
+			dimension = next(f for f in doc["fields"] if f["fieldname"] == "dimension")
+			self.assertEqual(set(dimension["options"].split("\n")), options)
 
 
 NODE_CHECK = r"""

@@ -779,13 +779,15 @@ class TaskShimTests(unittest.TestCase):
 		self.assertEqual(method, "erpnext_enhancements.marketing.core.tasks.run_sync")
 		self.assertEqual((kw["queue"], kw["job_id"], kw["deduplicate"]), ("long", C.SYNC_JOB_ID, True))
 
-	def test_prune_keeps_clicks_a_lead_carries(self):
+	def test_prune_deletes_raw_payloads_and_nothing_else(self):
+		# v1.756.0 (Nik, 2026-10-29: keep a history): Ad Click is the only copy past Google's 90 days.
 		reset()
 		from erpnext_enhancements.marketing.core import sync
 
 		sync.prune(today=D(2026, 9, 22))
-		click_sql = next(call[0] for call in DB.sql_calls if "Ad Click" in call[0])
-		self.assertIn("not in (select custom_gclid from `tabLead`", click_sql)
+		deletes = [call[0] for call in DB.sql_calls if "delete" in call[0].lower()]
+		self.assertEqual(len(deletes), 1)
+		self.assertIn("tabMarketing Raw Payload", deletes[0])
 
 
 # ---------------------------------------------------------------- 6. OAuth

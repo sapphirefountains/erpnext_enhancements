@@ -120,7 +120,35 @@ def oauth_callback(state=None, code=None, error=None, error_description=None, **
 	_record(creds, platform, status="Connected", message=summary, connected=True)
 	if _is_publishing(platform):
 		_sync_social_accounts(platform, creds)
+	_start_history(platform)
 	return _redirect()
+
+
+def _start_history(platform):
+	"""A first connect starts that source's history now, if it is switched on (v1.756.0).
+
+	Business Profile and the social pages get their once-only backfill (``web_sync.ensure_backfills``:
+	a source with a Backfill log already is left alone). An ad platform whose switch is on is synced at
+	once, ignoring the nightly throttle: its first sync reads the platform's whole history
+	(``constants.HISTORY_DAYS``). A source still switched off starts the first night it is on. Never
+	undoes the connect.
+	"""
+	try:
+		from erpnext_enhancements.marketing.core.tasks import enqueue_sync
+		from erpnext_enhancements.marketing.core.utils import platform_enabled
+		from erpnext_enhancements.marketing.performance import web_sync
+
+		if platform in C.PLATFORMS:
+			if platform_enabled(platform):
+				enqueue_sync([platform])
+		else:
+			web_sync.ensure_backfills()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(
+			title="Marketing history backfill",
+			message=f"Could not start the history for {platform} after connecting\n{frappe.get_traceback()}",
+		)
 
 
 def _sync_social_accounts(connection, creds):

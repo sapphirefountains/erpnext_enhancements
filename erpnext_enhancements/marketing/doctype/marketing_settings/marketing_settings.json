@@ -163,7 +163,7 @@
   },
   {
    "default": "90",
-   "description": "How far back to reach on an account's first sync, when it has no cursor yet.",
+   "description": "How far back an ad account's first sync reads. Since v1.756.0 never less than the platform keeps daily figures for (37 months at Google Ads and Meta, six months at LinkedIn; core/constants.HISTORY_DAYS), so this only matters set higher.",
    "fieldname": "initial_backfill_days",
    "fieldtype": "Int",
    "label": "Initial Backfill Days"

@@ -227,13 +227,15 @@ PUBLISH_ALLOWLIST = tuple(
 		# Page's and an Instagram account's followers go through the GET on an ID above, their
 		# daily reach and views through the insights path above; LinkedIn's share statistics and
 		# YouTube's channel read and Analytics report are already here. The one new read is
-		# LinkedIn's follower total, which no statistics call returns any more.
+		# LinkedIn's follower total, which no statistics call returns any more, and its daily gains.
 		(
 			CONNECTION_LINKEDIN,
 			"GET",
 			LINKEDIN_HOST,
 			r"^/rest/networkSizes/urn%3Ali%3Aorganization%3A\d+$",
 		),
+		# And its daily follower gains (v1.756.0, for the kept history): 12 months back, by day.
+		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationalEntityFollowerStatistics$"),
 	)
 )
 

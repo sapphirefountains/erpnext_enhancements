@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The nightly Business Profile pull: listings, their daily figures, their reviews (v1.756.0).
+"""The nightly Business Profile pull, its history backfill, and the review snapshot (v1.756.0).
 
 Gates, in the order ``core/tasks.py`` set for the ad connectors:
 
@@ -12,12 +12,18 @@ Gates, in the order ``core/tasks.py`` set for the ad connectors:
    window is computed from what is stored, so the next run restates the same days.
 
 Each listing's window is ``RESTATE_DAYS`` back from its newest stored day plus every day since
-(``performance.rules.nightly_window``); the first run reads ``INITIAL_DAYS``. Reviews are read in
-full each night and written onto that night's row: count, average and unreplied, as of the pull.
+(``performance.rules.nightly_window``). History before that -- the Performance API's
+``HISTORY_MONTHS`` -- is the shared backfill's job (``performance/web_sync.py``), which calls
+``history_pull`` a window at a time once the profile is connected and switched on.
+
+**Reviews are a nightly snapshot, kept for ever.** Google returns only the reviews that exist now,
+so each one is its own Business Profile Review row (first seen, last seen, the reply), and one that
+a complete read no longer returns is marked *Gone From Google*, never deleted. Tonight's count,
+average and unreplied land on today's daily row too.
 """
 
 import frappe
-from frappe.utils import cint, getdate, nowdate
+from frappe.utils import cint, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.marketing.core.client import MarketingAPIError, Transport
 from erpnext_enhancements.marketing.core.utils import field, get_credentials, get_settings, is_connected
@@ -26,13 +32,24 @@ from erpnext_enhancements.marketing.gbp import parse
 from erpnext_enhancements.marketing.performance import rules
 
 DOCTYPE = "Business Profile Daily Metric"
+REVIEW_DOCTYPE = "Business Profile Review"
 LOG_DOCTYPE = "Marketing Sync Log"
 MAX_CATCHUP_DAYS = 180
+HISTORY_MONTHS = G.HISTORY_MONTHS
+HISTORY_CHUNK_DAYS = G.MAX_RANGE_DAYS
 
 
 def enabled(settings=None):
 	settings = settings or get_settings()
 	return bool(cint(settings.get("enabled"))) and bool(cint(settings.get(G.ENABLED_FLAG)))
+
+
+def ready():
+	"""Switched on and connected: the gate for the nightly pull and the backfill alike."""
+	try:
+		return bool(frappe.db.exists("DocType", DOCTYPE)) and enabled() and is_connected(G.PLATFORM_GBP)
+	except Exception:
+		return False
 
 
 def open_transport(creds=None, http=None):
@@ -51,7 +68,11 @@ def open_transport(creds=None, http=None):
 
 
 def _pages(transport, url, params, key, limit=G.REVIEWS_MAX_PAGES):
-	"""Every page of a list call, following ``nextPageToken``."""
+	"""Every page of a list call, following ``nextPageToken``: ``(bodies, complete)``.
+
+	``complete`` is False when the page cap stopped the loop with more to read: nothing may be
+	concluded from what such a read left out.
+	"""
 	bodies = []
 	params = dict(params)
 	for _page in range(limit):
@@ -59,22 +80,24 @@ def _pages(transport, url, params, key, limit=G.REVIEWS_MAX_PAGES):
 		bodies.append(body)
 		token = body.get("nextPageToken")
 		if not token or not body.get(key):
-			break
+			return bodies, True
 		params["pageToken"] = token
-	return bodies
+	return bodies, False
 
 
 def discover(transport):
 	"""Every listing the token reaches: ``[{account_id, location_id, title}]``."""
 	out = []
-	for body in _pages(transport, f"{G.ACCOUNTS_BASE}/accounts", {"pageSize": 20}, "accounts"):
+	accounts, _complete = _pages(transport, f"{G.ACCOUNTS_BASE}/accounts", {"pageSize": 20}, "accounts")
+	for body in accounts:
 		for account in parse.parse_accounts(body):
-			for page in _pages(
+			locations, _complete = _pages(
 				transport,
 				f"{G.INFORMATION_BASE}/accounts/{account['account_id']}/locations",
 				{"readMask": G.LOCATIONS_READ_MASK, "pageSize": 100},
 				"locations",
-			):
+			)
+			for page in locations:
 				for loc in parse.parse_locations(page):
 					out.append({"account_id": account["account_id"], **loc})
 	return out
@@ -82,7 +105,8 @@ def discover(transport):
 
 def _last_stored(location_id):
 	value = frappe.db.sql(
-		f"select max(metric_date) from `tab{DOCTYPE}` where location_id = %s", (location_id,)
+		f"select max(metric_date) from `tab{DOCTYPE}` where location_id = %s and metrics_read = 1",
+		(location_id,),
 	)[0][0]
 	return getdate(value) if value else None
 
@@ -109,53 +133,122 @@ def upsert(location_id, title, day, values):
 	return name
 
 
-def pull_listing(transport, listing, today):
-	"""One listing: its daily figures for the restate window, then its reviews onto today's row."""
-	location_id = listing["location_id"]
-	window = rules.nightly_window(
-		_last_stored(location_id), today, G.RESTATE_DAYS, G.INITIAL_DAYS, MAX_CATCHUP_DAYS
-	)
+def pull_metrics(transport, listing, start, end):
+	"""One listing's daily figures for ``start..end``: only the days Google answered. Returns rows written.
+
+	A day Google has not published yet is absent (a zero is a dated entry with no value, which the
+	parser reads as 0), and writing 0 for it would store a drop that the restate window might never
+	correct.
+	"""
 	written = 0
-	if window:
+	for chunk_start, chunk_end in rules.chunks(start, end, G.MAX_RANGE_DAYS):
 		body = transport.request(
 			"GET",
-			f"{G.PERFORMANCE_BASE}/locations/{location_id}:fetchMultiDailyMetricsTimeSeries?"
-			+ parse.metrics_query(*window),
+			f"{G.PERFORMANCE_BASE}/locations/{listing['location_id']}:fetchMultiDailyMetricsTimeSeries?"
+			+ parse.metrics_query(chunk_start, chunk_end),
 		)
-		# Only the days Google answered: a day it has not published yet is absent (a zero is a dated
-		# entry with no value, which the parser reads as 0), and writing 0 for it would store a
-		# drop that the restate window might never correct.
 		for day, columns in sorted(parse.parse_daily_metrics(body).items()):
-			if window[0] <= day <= window[1]:
-				upsert(location_id, listing["title"], day, {c: columns.get(c, 0) for c in G.COLUMNS})
+			if chunk_start <= day <= chunk_end:
+				values = {c: columns.get(c, 0) for c in G.COLUMNS}
+				upsert(listing["location_id"], listing["title"], day, {**values, "metrics_read": 1})
 				written += 1
+	return written
+
+
+def snapshot_reviews(transport, listing, today):
+	"""Tonight's reviews: one row each, the removed ones marked, the summary on today's row."""
+	location_id = listing["location_id"]
+	pages, complete = _pages(
+		transport,
+		f"{G.REVIEWS_BASE}/accounts/{listing['account_id']}/locations/{location_id}/reviews",
+		{"pageSize": G.REVIEWS_PAGE_SIZE},
+		"reviews",
+	)
+	seen = set()
+	for review in parse.parse_reviews(pages):
+		key = rules.value_key(review["review_id"])
+		seen.add(key)
+		name = f"GBPR-{location_id}-{key}"
+		values = {**review, "location_title": listing["title"], "last_seen": today, "removed_on": None}
+		if frappe.db.exists(REVIEW_DOCTYPE, name):
+			frappe.db.set_value(REVIEW_DOCTYPE, name, values)
+		else:
+			frappe.get_doc(
+				{
+					"doctype": REVIEW_DOCTYPE,
+					"location_id": location_id,
+					"review_key": key,
+					"first_seen": today,
+					**values,
+				}
+			).insert(ignore_permissions=True)
+	if complete:
+		for name, key in frappe.db.sql(
+			f"""select name, review_key from `tab{REVIEW_DOCTYPE}`
+			where location_id = %s and removed_on is null""",
+			(location_id,),
+		):
+			if key not in seen:
+				frappe.db.set_value(REVIEW_DOCTYPE, name, "removed_on", today)
+	upsert(location_id, listing["title"], today, {**parse.summarize_reviews(pages), "reviews_read": 1})
+
+
+def pull_listing(transport, listing, today):
+	"""One listing tonight: its restate window, then its reviews. Returns daily rows written."""
+	window = rules.nightly_window(
+		_last_stored(listing["location_id"]), today, G.RESTATE_DAYS, G.INITIAL_DAYS, MAX_CATCHUP_DAYS
+	)
+	written = pull_metrics(transport, listing, *window) if window else 0
 	# The figures are kept whatever the reviews read does: Google serves reviews only for verified
 	# listings, and a refusal there must not roll back the night's metrics.
 	frappe.db.commit()
 	try:
-		reviews = _pages(
-			transport,
-			f"{G.REVIEWS_BASE}/accounts/{listing['account_id']}/locations/{location_id}/reviews",
-			{"pageSize": G.REVIEWS_PAGE_SIZE},
-			"reviews",
-		)
+		snapshot_reviews(transport, listing, today)
 	except MarketingAPIError as exc:
+		frappe.db.rollback()
 		if exc.is_auth_failure:
 			raise
 		frappe.log_error(
-			title="Marketing Business Profile", message=f"Business Profile reviews for {location_id}: {exc}"
+			title="Marketing Business Profile",
+			message=f"Business Profile reviews for {listing['location_id']}: {exc}",
 		)
 		return written
-	upsert(location_id, listing["title"], today, parse.summarize_reviews(reviews))
 	frappe.db.commit()
 	return written
 
 
+# ---------------------------------------------------------------- history (web_sync's backfill)
+
+
+def history_earliest(today):
+	"""The oldest day the Performance API serves: ``HISTORY_MONTHS`` back."""
+	return rules.months_back(today, HISTORY_MONTHS)
+
+
+def history_pull(start, end, _on_chunk=None):
+	"""Every listing's daily figures for ``start..end``. Raises on failure, so the backfill's cursor stays."""
+	transport = open_transport()
+	written = 0
+	for listing in discover(transport):
+		try:
+			written += pull_metrics(transport, listing, start, end)
+		except MarketingAPIError as exc:
+			# A 400 for a window: older than Google keeps (the v1 limit is undocumented). Skipped so
+			# the backfill moves on to the days Google does serve; anything else stops it.
+			frappe.db.rollback()
+			if exc.status != 400:
+				raise
+			continue
+		frappe.db.commit()
+	return written
+
+
+# ---------------------------------------------------------------- the nightly job
+
+
 def nightly_business_profile_sync():
 	"""Cron entry (hooks.py, 03:45). See the module docstring for the gates."""
-	if not frappe.db.exists("DocType", DOCTYPE) or not enabled():
-		return None
-	if not is_connected(G.PLATFORM_GBP):
+	if not ready():
 		return None
 	frappe.enqueue(
 		"erpnext_enhancements.marketing.gbp.sync.run_sync",
@@ -169,8 +262,6 @@ def nightly_business_profile_sync():
 
 def run_sync(http=None, today=None):
 	"""The background job. A dead token marks the connection *Auth Failed*; it never retries nightly."""
-	from frappe.utils import now_datetime
-
 	today = getdate(today or nowdate())
 	creds = get_credentials()
 	log = frappe.get_doc(
@@ -187,8 +278,7 @@ def run_sync(http=None, today=None):
 	errors = []
 	try:
 		transport = open_transport(creds, http=http)
-		listings = discover(transport)
-		for listing in listings:
+		for listing in discover(transport):
 			try:
 				written += pull_listing(transport, listing, today)
 			except MarketingAPIError as exc:

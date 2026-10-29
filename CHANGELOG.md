@@ -15,9 +15,9 @@ beside them, on **one new page that replaces the old ones**. Checked against fra
 erpnext 16.52.1, prod's versions, and against prod's data read-only.
 
 **What the deploy does.**
-- **Migrate** creates four doctypes (GA4 Daily Metric, Search Console Daily Metric, Business Profile
-  Daily Metric, Social Page Daily Metric) and the Marketing Performance page. It adds fields to
-  Marketing Settings, Marketing Connections and Marketing Sync Log.
+- **Migrate** creates five doctypes (GA4 Daily Metric, Search Console Daily Metric, Business Profile
+  Daily Metric, Business Profile Review, Social Page Daily Metric) and the Marketing Performance page.
+  It adds fields to Marketing Settings, Marketing Connections and Marketing Sync Log.
 - **Two patches run:**
   - `retire_marketing_dashboard_widgets` re-imports three workspaces (Marketing Dashboard, Marketing
     Hub, Integration Hub). It then deletes the four Marketing widget Custom HTML Blocks, never with
@@ -25,10 +25,11 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
   - `backfill_marketing_performance_settings` writes the three new Marketing Settings defaults, only
     where the row has none.
 - **Three cron entries** are added: 03:40, 03:45 and 03:55.
-  - Only the **03:40** one does anything on prod: it starts storing GA4 and Search Console by day,
-    the last 30 days on its first night.
+  - Only the **03:40** one does anything on prod. On its first night it stores the last 30 days of
+    GA4 and Search Console, and **queues their full-history backfill by itself**: Search Console's 16
+    months and GA4 back to the property's first day, a month at a time on `long`.
   - The other two are dormant, because Marketing Settings is off.
-- **No history is pulled** until a System Manager runs the backfill.
+- **The daily prune no longer deletes Ad Click rows.** Only Marketing Raw Payload is still pruned.
 - **No platform is connected**, and no switch is turned on.
 
 ### Added
@@ -52,26 +53,66 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
   - **Inbound calls**, **unsourced inquiries**, **ad spend and ROAS**, **Google Business Profile**,
     **social pages** and **source health**.
   - **Every read is from stored rows.** Nothing calls Google when the page loads.
-- **GA4 and Search Console stored by day** (`marketing/performance/web_sync.py`).
-  - GA4 by date for the site total, each landing page and each channel: sessions, users, engaged
-    sessions and key events.
-  - Search Console by date for the property total, each page and each query: clicks, impressions
-    and average position, paginated with `startRow`.
-  - **Each night replaces the last 7 days whole**, plus any days missed. Search Console publishes
-    final figures two or three days late, so a night's newest days are incomplete until later
-    nights restate them.
-  - **Replace, not upsert.** A page or query that drops out of a restated day must leave it too, and
-    an upsert never removes anything.
+- **GA4 and Search Console stored by day, kept forever** (`marketing/performance/web_sync.py`). Nik,
+  2026-10-29: "let's make sure we are keeping a history". Past each API's window, these rows are the
+  only copy, so they are stored at the finest grain a later report could want.
+  - **GA4, by date:** site total, landing page, channel, landing page × session source / medium,
+    device, and city (with region and country). Each row has sessions, users, engaged sessions and
+    key events.
+  - **Search Console, by date:** property total, page, query, and page × query (which searches land
+    on which page). Each row has clicks, impressions and average position, paginated with
+    `startRow`.
+  - **Row counts at prod's traffic:** about 600 sessions, 5,300 impressions and 6 channels a month.
+    That comes to roughly 45 GA4 rows and 155 Search Console rows a day, about 16,000 and 57,000 a
+    year (estimated).
+  - **Each night replaces the last 7 days, plus any days missed.** Search Console publishes final
+    figures two or three days late, so a night's newest days are incomplete until later nights
+    restate them.
+  - **A day is replaced only when the answer holds it.** A page or query that drops out of a
+    restated day leaves it too. A day the answer does not hold keeps what is stored, because past
+    Search Console's 16 months "nothing" means Google no longer has it.
   - Not gated by Marketing Settings. It reads the same GA4 Settings the nightly snapshot has used
     since June.
-- **A history backfill**: Search Console's 16 months, and the same span of GA4.
-  - Started from the page's menu (System Manager) or with `bench execute ...web_sync.backfill`.
+- **Every source's history, backfilled once by itself** (`web_sync`'s engine), as far back as each
+  API allows. The limits were checked on vendor docs on 2026-10-29:
+  - Search Console: 16 months.
+  - GA4: back to the property's first day of data.
+  - Google Business Profile: 18 months. Google documents that only for the old v4 API, so a refused
+    window is skipped rather than failing.
+  - Social pages:
+    - Facebook: 2 years.
+    - Instagram: 90 days. Meta's own pages disagree on this, and this is the shorter figure.
+    - LinkedIn: 12 months.
+    - YouTube: the channel's creation.
+  - It runs **the first night a source is ready** (configured, or connected and switched on) and
+    has never been backfilled. For a source that is already switched on, it runs straight after
+    Connect.
+  - It also runs again from the page's menu (System Manager) or with
+    `bench execute ...web_sync.backfill`.
   - **Deliberately not a migrate patch.** A patch that calls Google would make the deploy depend on
     Google, and on this repo a raising patch stops `bench migrate`.
   - Its cursor (*Done Through*, new on Marketing Sync Log) is stored in the database, not Redis. The
     deploy FLUSHDBs both Redis instances.
-  - The next 03:40 run re-queues a backfill that is still *Running* but has written nothing for 90
-    minutes.
+  - The next 03:40 run re-queues a backfill that is still *Queued* or *Running* but has written
+    nothing for 90 minutes.
+- **Ad platforms read their whole daily history on the first sync, in 90-day pieces.**
+  - Google Ads cut daily reporting to 37 months on 2026-06-01. Meta refuses a start "beyond 37
+    months". LinkedIn describes a "6-month daily retention period", so its daily reads stop at six
+    months.
+  - The account's cursor moves after each piece, so a three-year read that a deploy cuts off resumes
+    where it stopped instead of starting over.
+  - The `initial_backfill_days` dial can only lengthen this.
+- **Snapshots of what a source will not give back later**, taken nightly from the day a source is
+  connected:
+  - follower totals: only today's figure exists anywhere, and Instagram's insights go back 90 days;
+  - the Business Profile rating and review count;
+  - **each review as its own row** (the new doctype Business Profile Review: stars, comment, reply,
+    first and last seen). A review that a complete read no longer returns is marked *Gone From
+    Google*, never deleted, because Google does not give a deleted review back.
+  - LinkedIn follower gains and YouTube subscribers gained minus lost are kept per day as *Net New
+    Followers*.
+- **Read flags on the daily rows** (`metrics_read`, `reviews_read`, `followers_read`). An Int column
+  is never blank in the database, so without them a day nobody read would look like a real 0.
 - **Inbound calls from `Call Log`:**
   - incoming calls per day;
   - first-time callers, by the last ten digits of the number;
@@ -125,6 +166,8 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
 - **The YouTube Publishing connection also requests `youtube.readonly`.** Google's Analytics
   reference now names it for `reports.query`. The scope is read-only, and nothing is connected yet,
   so nobody has to reconnect.
+- **Empty sources read "not set up yet", not as faults.** Nik, 2026-10-29: "We haven't built out our
+  marketing efforts yet."
 - **Marketing Connections gains a Google Business Profile section.** Marketing Sync Log's platform
   options gain Google Analytics 4, Search Console, Google Business Profile and Social Pages.
 
@@ -140,6 +183,10 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
   Metric. The marketing roles' DocPerms stay limited to the publishing surface.
 
 ### Removed
+- **The daily prune of Ad Click rows** older than 180 days that no Lead carried. Google serves
+  `click_view` for 90 days only, so a pruned click could never come back. Every metric table is kept
+  forever now. Only Marketing Raw Payload, which holds copies of answers already stored, keeps its
+  retention prune.
 - The four Marketing widget blocks (`custom_html_blocks/marketing_*`), their feeds in
   `api/marketing_dashboard.py`, and their place in the block seeder.
   - The seeder never deletes, so `retire_marketing_dashboard_widgets` deletes the four records, after
@@ -152,8 +199,7 @@ erpnext 16.52.1, prod's versions, and against prod's data read-only.
    in the last 180 days carries a UTM, gclid, landing page or referrer.
 2. Apply for Google Business Profile API access
    (`docs/marketing-connectors-runbook.md#google-business-profile-v17560`).
-3. Connect each platform and turn on its switch.
-4. Run the backfill once from the page's menu.
+3. Connect each platform and turn on its switch. Each source's history then comes back by itself.
 
 ## [1.755.4] - 2026-10-29
 

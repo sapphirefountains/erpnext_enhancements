@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "format:SPDM-{social_account}-{metric_date}",
  "creation": "2026-10-29 12:00:00.000000",
- "description": "One social account's page-level figures on one day: followers as of that night, and the day's reach and views. Named from (account, date), so a restated day updates the same row. A figure a network does not report is blank, never 0.",
+ "description": "One social account's page-level figures on one day: followers (where Followers Read), net new followers, reach and views. Kept forever. Named from (account, date), so a restated day updates the same row.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -11,8 +11,10 @@
   "metric_date",
   "column_break_key",
   "network",
+  "followers_read",
   "metrics_section",
   "followers",
+  "follower_gain",
   "column_break_metrics",
   "reach",
   "views"
@@ -53,6 +55,14 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "fieldname": "followers_read",
+   "fieldtype": "Check",
+   "label": "Followers Read",
+   "read_only": 1,
+   "description": "Followers below is that day's real figure. An Int column is never blank in the database, so without this a day nobody read would look like zero followers."
+  },
+  {
    "fieldname": "metrics_section",
    "fieldtype": "Section Break",
    "label": "Metrics"
@@ -63,7 +73,14 @@
    "label": "Followers",
    "read_only": 1,
    "in_list_view": 1,
-   "description": "Followers (subscribers on YouTube) on the night of the pull; blank on days it was not read."
+   "description": "Followers (subscribers on YouTube) at the end of that day: nightly from the day it is connected, and for past days where the network keeps them (Facebook's page_follows, two years). Blank otherwise."
+  },
+  {
+   "fieldname": "follower_gain",
+   "fieldtype": "Int",
+   "label": "Net New Followers",
+   "read_only": 1,
+   "description": "That day's follows minus unfollows where the network reports it: LinkedIn follower gains, YouTube subscribers gained minus lost. Blank where it does not."
   },
   {
    "fieldname": "column_break_metrics",
@@ -75,7 +92,7 @@
    "label": "Reach",
    "read_only": 1,
    "in_list_view": 1,
-   "description": "Unique accounts reached that day. Facebook page_total_media_view_unique, Instagram reach, LinkedIn unique impressions; YouTube reports none."
+   "description": "Unique accounts reached that day. Facebook page_total_media_view_unique, Instagram reach, LinkedIn unique impressions. YouTube reports none, so its rows read 0 here and the page shows a dash."
   },
   {
    "fieldname": "views",
@@ -88,7 +105,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Page Daily Metric",

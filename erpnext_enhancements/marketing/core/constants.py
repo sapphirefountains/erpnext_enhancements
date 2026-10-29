@@ -173,8 +173,15 @@ SECRET_QUERY_KEYS = frozenset(
 #: Google keeps click_view for 90 days. Beyond that a gclid can never be resolved.
 CLICK_VIEW_LOOKBACK_DAYS = 90
 
-#: Ad Click rows older than this are pruned unless a Lead carries the gclid.
-CLICK_RETENTION_DAYS = 180
+#: How far back the first sync of an account reads: as far as each platform serves daily figures
+#: (checked 2026-10-29). Nik, 2026-10-29: keep a history of everything. Google Ads cut granular
+#: (daily) reporting to 37 months on 2026-06-01; Meta's insights refuse a start "beyond 37 months";
+#: LinkedIn keeps ad analytics ten years but describes a "6-month daily retention period" on the same
+#: page, so daily reads stop at six months there. 37 months is about 1,126 days; 1,120 stays inside it.
+HISTORY_DAYS = {PLATFORM_GOOGLE: 1120, PLATFORM_META: 1120, PLATFORM_LINKEDIN: 180}
+#: A sync reads at most this many days per call, and moves the account's cursor after each, so a
+#: three-year first read that a deploy cuts off resumes where it stopped.
+SYNC_CHUNK_DAYS = 90
 
 #: Nightly self-throttle: a second trigger inside this many hours is a no-op.
 SYNC_MIN_INTERVAL_HOURS = 20

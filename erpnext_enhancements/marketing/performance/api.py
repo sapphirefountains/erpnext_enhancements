@@ -320,7 +320,7 @@ def _business_profile(start, end):
 		listing = {"location_id": r.location_id, "title": r.title, **{c: cint(r[c]) for c in cols}}
 		latest = frappe.db.sql(
 			f"""select review_count, average_rating, unreplied_reviews, metric_date from `tab{GBP}`
-			where location_id = %s and review_count is not null order by metric_date desc limit 1""",
+			where location_id = %s and reviews_read = 1 order by metric_date desc limit 1""",
 			(r.location_id,),
 			as_dict=True,
 		)
@@ -348,7 +348,7 @@ def _social(start, end):
 		return out
 	for r in frappe.db.sql(
 		f"""select m.social_account, max(m.network) as network, max(a.account_name) as account_name,
-			sum(m.reach) as reach, sum(m.views) as views
+			sum(m.reach) as reach, sum(m.views) as views, sum(m.follower_gain) as follower_gain
 		from `tab{SOCIAL}` m left join `tabSocial Account` a on a.name = m.social_account
 		where m.metric_date between %s and %s group by m.social_account""",
 		(start, end),
@@ -356,7 +356,7 @@ def _social(start, end):
 	):
 		followers = frappe.db.sql(
 			f"""select followers, metric_date from `tab{SOCIAL}` where social_account = %s
-			and followers is not null and metric_date <= %s order by metric_date desc limit 1""",
+			and followers_read = 1 and metric_date <= %s order by metric_date desc limit 1""",
 			(r.social_account, end),
 			as_dict=True,
 		)
@@ -365,7 +365,9 @@ def _social(start, end):
 				"account": r.social_account,
 				"name": r.account_name or r.social_account,
 				"network": r.network,
-				"reach": cint(r.reach) if r.reach is not None else None,
+				# YouTube reports no reach; its rows hold the column's 0, which is not a figure.
+				"reach": cint(r.reach) if r.reach is not None and r.network != "YouTube" else None,
+				"follower_gain": cint(r.follower_gain) if r.network in ("LinkedIn", "YouTube") else None,
 				"views": cint(r.views) if r.views is not None else None,
 				"followers": cint(followers[0].followers) if followers else None,
 			}
@@ -410,21 +412,23 @@ def _health(today, ga_cover, gsc_cover, gbp, social, spend):
 			"state": "ok" if gbp["connected"] and gbp["enabled"] else "off",
 			"detail": _("Connected")
 			if gbp["connected"]
-			else _("Not connected: Google must approve API access first"),
+			else _("Not set up yet: Google approves API access first"),
 		}
 	)
 	sources.append(
 		{
 			"name": _("Ad platforms"),
 			"state": "ok" if spend.get("connected") else "off",
-			"detail": ", ".join(spend.get("connected") or []) or _("None connected"),
+			"detail": ", ".join(spend.get("connected") or []) or _("Not set up yet"),
 		}
 	)
 	sources.append(
 		{
 			"name": _("Social pages"),
 			"state": "ok" if social["enabled"] and social["accounts"] else "off",
-			"detail": _("{0} account(s)").format(len(social["accounts"])) if social["accounts"] else _("Off"),
+			"detail": _("{0} account(s)").format(len(social["accounts"]))
+			if social["accounts"]
+			else _("Not set up yet"),
 		}
 	)
 	last_runs = []

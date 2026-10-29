@@ -53,6 +53,12 @@ RESTATE_DAYS = 7
 INITIAL_DAYS = 30
 MAX_CATCHUP_DAYS = 90
 FACEBOOK_METRICS = ("page_total_media_view_unique", "page_media_view")
+FACEBOOK_MAX_SPAN_DAYS = 90
+#: How far back each network's page insights go (checked 2026-10-29; see ``history_start``).
+HISTORY_DAYS = {P.NETWORK_FACEBOOK: 730, P.NETWORK_INSTAGRAM: 90, P.NETWORK_LINKEDIN: 365}
+#: LinkedIn's statistics end two days before the request.
+LINKEDIN_LAG_DAYS = 2
+HISTORY_CHUNK_DAYS = 31
 INSTAGRAM_METRICS = ("reach", "views")
 
 
@@ -136,6 +142,20 @@ def parse_linkedin_share_days(body):
 	return out
 
 
+def parse_linkedin_follower_gains(body):
+	"""``{date: net new followers}`` from time-bound follower statistics by DAY (organic + paid)."""
+	out = {}
+	for element in (body or {}).get("elements") or []:
+		start = (element.get("timeRange") or {}).get("start")
+		try:
+			day = datetime.datetime.fromtimestamp(int(start) / 1000, tz=datetime.timezone.utc).date()
+		except (TypeError, ValueError, OverflowError):
+			continue
+		gains = element.get("followerGains") or {}
+		out[day] = (_int(gains.get("organicFollowerGain")) or 0) + (_int(gains.get("paidFollowerGain")) or 0)
+	return out
+
+
 def parse_youtube_subscribers(body):
 	items = (body or {}).get("items") or []
 	stats = (items[0] or {}).get("statistics") if items else None
@@ -145,18 +165,26 @@ def parse_youtube_subscribers(body):
 
 
 def parse_youtube_views(body):
-	"""``{date: {views}}`` from an Analytics report by day. No rows means no data, not zeros."""
+	"""``{date: {views, follower_gain}}`` from an Analytics report by day. No rows means no data, not zeros.
+
+	``follower_gain`` is subscribersGained minus subscribersLost, where the report carries both.
+	"""
 	headers = [h.get("name") for h in (body or {}).get("columnHeaders") or []]
 	if "day" not in headers or "views" not in headers:
 		return {}
-	at_day, at_views = headers.index("day"), headers.index("views")
+	at = {name: i for i, name in enumerate(headers)}
 	out = {}
 	for row in (body or {}).get("rows") or []:
 		try:
-			day = datetime.date.fromisoformat(str(row[at_day]))
+			day = datetime.date.fromisoformat(str(row[at["day"]]))
 		except (ValueError, IndexError):
 			continue
-		out[day] = {"views": _int(row[at_views])}
+		values = {"views": _int(row[at["views"]])}
+		if "subscribersGained" in at and "subscribersLost" in at:
+			values["follower_gain"] = (_int(row[at["subscribersGained"]]) or 0) - (
+				_int(row[at["subscribersLost"]]) or 0
+			)
+		out[day] = values
 	return out
 
 
@@ -174,29 +202,40 @@ def linkedin_share_query(org_id, start, end):
 
 
 # ---------------------------------------------------------------- reads (take a transport)
+#
+# Each returns ``(followers, days)``: tonight's follower total (None when ``followers`` is False, as
+# for a backfill window), and ``{date: {reach, views, follower_gain}}`` for ``start..end``.
 
 
-def fetch_facebook(transport, page_id, start, end):
-	followers = parse_followers(
-		transport.request("GET", f"{GRAPH}/{page_id}", params={"fields": "followers_count"})
-	)
-	insights = transport.request(
-		"GET",
-		f"{GRAPH}/{page_id}/insights",
-		params={
-			"metric": ",".join(FACEBOOK_METRICS),
-			"period": "day",
-			"since": start.isoformat(),
-			"until": (end + datetime.timedelta(days=1)).isoformat(),
-		},
-	)
-	return followers, parse_facebook_insights(insights)
+def fetch_facebook(transport, page_id, start, end, followers=True):
+	total = None
+	if followers:
+		total = parse_followers(
+			transport.request("GET", f"{GRAPH}/{page_id}", params={"fields": "followers_count"})
+		)
+	days = {}
+	# "Only 90 days of insights can be viewed at one time."
+	for chunk_start, chunk_end in _chunks(start, end, FACEBOOK_MAX_SPAN_DAYS):
+		insights = transport.request(
+			"GET",
+			f"{GRAPH}/{page_id}/insights",
+			params={
+				"metric": ",".join(FACEBOOK_METRICS),
+				"period": "day",
+				"since": chunk_start.isoformat(),
+				"until": (chunk_end + datetime.timedelta(days=1)).isoformat(),
+			},
+		)
+		days.update(parse_facebook_insights(insights))
+	return total, days
 
 
-def fetch_instagram(transport, ig_user_id, start, end):
-	followers = parse_followers(
-		transport.request("GET", f"{GRAPH}/{ig_user_id}", params={"fields": "followers_count"})
-	)
+def fetch_instagram(transport, ig_user_id, start, end, followers=True):
+	total = None
+	if followers:
+		total = parse_followers(
+			transport.request("GET", f"{GRAPH}/{ig_user_id}", params={"fields": "followers_count"})
+		)
 	days = {}
 	day = start
 	while day <= end:
@@ -214,29 +253,42 @@ def fetch_instagram(transport, ig_user_id, start, end):
 		values = parse_total_values(body)
 		days[day] = {"reach": values.get("reach"), "views": values.get("views")}
 		day += datetime.timedelta(days=1)
-	return followers, days
+	return total, days
 
 
-def fetch_linkedin(transport, org_id, start, end):
+def fetch_linkedin(transport, org_id, start, end, followers=True):
 	urn = quote(f"urn:li:organization:{org_id}", safe="")
-	followers = parse_linkedin_network_size(
-		transport.request(
-			"GET", f"{LINKEDIN_REST}/networkSizes/{urn}", params={"edgeType": "COMPANY_FOLLOWED_BY_MEMBER"}
+	total = None
+	if followers:
+		total = parse_linkedin_network_size(
+			transport.request(
+				"GET",
+				f"{LINKEDIN_REST}/networkSizes/{urn}",
+				params={"edgeType": "COMPANY_FOLLOWED_BY_MEMBER"},
+			)
 		)
-	)
 	shares = transport.request(
 		"GET",
 		f"{LINKEDIN_REST}/organizationalEntityShareStatistics?{linkedin_share_query(org_id, start, end)}",
 	)
-	return followers, parse_linkedin_share_days(shares)
-
-
-def fetch_youtube(transport, _channel_id, start, end):
-	followers = parse_youtube_subscribers(
-		transport.request(
-			"GET", f"{P.YOUTUBE_API_BASE}/channels", params={"part": "statistics", "mine": "true"}
-		)
+	gains = transport.request(
+		"GET",
+		f"{LINKEDIN_REST}/organizationalEntityFollowerStatistics?{linkedin_share_query(org_id, start, end)}",
 	)
+	days = parse_linkedin_share_days(shares)
+	for day, gain in parse_linkedin_follower_gains(gains).items():
+		days.setdefault(day, {})["follower_gain"] = gain
+	return total, days
+
+
+def fetch_youtube(transport, _channel_id, start, end, followers=True):
+	total = None
+	if followers:
+		total = parse_youtube_subscribers(
+			transport.request(
+				"GET", f"{P.YOUTUBE_API_BASE}/channels", params={"part": "statistics", "mine": "true"}
+			)
+		)
 	report = transport.request(
 		"GET",
 		YOUTUBE_ANALYTICS,
@@ -244,12 +296,25 @@ def fetch_youtube(transport, _channel_id, start, end):
 			"ids": "channel==MINE",
 			"startDate": start.isoformat(),
 			"endDate": end.isoformat(),
-			"metrics": "views",
+			"metrics": "views,subscribersGained,subscribersLost",
 			"dimensions": "day",
 			"sort": "day",
 		},
 	)
-	return followers, parse_youtube_views(report)
+	return total, parse_youtube_views(report)
+
+
+def youtube_created(transport):
+	"""The channel's creation day (``snippet.publishedAt``): where its Analytics history starts."""
+	body = transport.request(
+		"GET", f"{P.YOUTUBE_API_BASE}/channels", params={"part": "snippet", "mine": "true"}
+	)
+	items = (body or {}).get("items") or []
+	published = ((items[0] or {}).get("snippet") or {}).get("publishedAt") if items else None
+	try:
+		return datetime.date.fromisoformat(str(published)[:10]) if published else None
+	except ValueError:
+		return None
 
 
 FETCHERS = {
@@ -260,12 +325,35 @@ FETCHERS = {
 }
 
 
+def _chunks(start, end, size):
+	out = []
+	day = start
+	while day <= end:
+		last = min(day + datetime.timedelta(days=size - 1), end)
+		out.append((day, last))
+		day = last + datetime.timedelta(days=1)
+	return out
+
+
 def rows_for(followers, days, today):
-	"""``{date: values}`` to write: each day's reach and views, and tonight's followers on today."""
+	"""``{date: values}`` to write: each day's figures, and tonight's followers (marked read) on today."""
 	out = {day: {k: v for k, v in values.items() if v is not None} for day, values in days.items()}
 	if followers is not None:
-		out.setdefault(today, {})["followers"] = followers
+		out.setdefault(today, {}).update(followers=followers, followers_read=1)
 	return {day: values for day, values in out.items() if values}
+
+
+def history_start(network, today, created=None):
+	"""The oldest day ``network``'s page insights serve today, or None when it keeps no history.
+
+	Facebook two years; Instagram 90 days (Meta's overview: "User Metrics data is stored for up to 90
+	days"; the reference names no limit, so the shorter figure is used); LinkedIn the rolling 12
+	months; YouTube from the channel's creation (``created``).
+	"""
+	if network == P.NETWORK_YOUTUBE:
+		return created
+	days = HISTORY_DAYS.get(network)
+	return today - datetime.timedelta(days=days) if days else None
 
 
 # ---------------------------------------------------------------- the nightly sync
@@ -403,3 +491,86 @@ def run_page_stats(http=None, today=None):
 	)
 	frappe.db.commit()
 	return {"written": written, "failed": len(errors)}
+
+
+# ---------------------------------------------------------------- history (web_sync's backfill)
+
+#: Channel creation days already read in this process, so a backfill window does not re-ask.
+_CREATED = {}
+
+
+def ready():
+	"""Switched on with an account to read: the gate for the nightly pull and the backfill alike."""
+	import frappe
+
+	from erpnext_enhancements.marketing.core.utils import get_credentials, get_settings
+
+	try:
+		return (
+			bool(frappe.db.exists("DocType", DOCTYPE))
+			and enabled(get_settings())
+			and bool(due_accounts(get_credentials()))
+		)
+	except Exception:
+		return False
+
+
+def _transports():
+	from erpnext_enhancements.marketing.core.utils import get_credentials, get_settings
+	from erpnext_enhancements.marketing.publish import oauth
+
+	settings, creds, cache = get_settings(), get_credentials(), {}
+
+	def transport(network):
+		connection = P.CONNECTION_FOR[network]
+		if connection not in cache:
+			cache[connection] = oauth.transport_for(connection, creds, settings=settings)
+		return cache[connection]
+
+	return creds, transport
+
+
+def _account_start(account, today, transport):
+	created = None
+	if account.network == P.NETWORK_YOUTUBE:
+		if account.name not in _CREATED:
+			_CREATED[account.name] = youtube_created(transport(account.network))
+		created = _CREATED[account.name]
+	return history_start(account.network, today, created)
+
+
+def history_earliest(today):
+	"""The oldest day any due account's network serves: the backfill's window start."""
+	creds, transport = _transports()
+	starts = [s for s in (_account_start(a, today, transport) for a in due_accounts(creds)) if s]
+	return min(starts) if starts else None
+
+
+def history_pull(start, end, _on_chunk=None):
+	"""Every due account's daily figures for ``start..end``, clamped to what its network still serves.
+
+	Followers are not read here: only tonight's total exists, and the nightly pull takes it. Raises on
+	a failure so the backfill's cursor stays where it was.
+	"""
+	import frappe
+	from frappe.utils import getdate, nowdate
+
+	today = getdate(nowdate())
+	creds, transport = _transports()
+	written = 0
+	for account in due_accounts(creds):
+		earliest = _account_start(account, today, transport)
+		last = end
+		if account.network == P.NETWORK_LINKEDIN:
+			last = min(end, today - datetime.timedelta(days=LINKEDIN_LAG_DAYS))
+		first = max(start, earliest) if earliest else None
+		if first is None or first > last:
+			continue
+		_total, days = FETCHERS[account.network](
+			transport(account.network), account.external_id, first, last, followers=False
+		)
+		for day, values in rows_for(None, days, today).items():
+			_upsert(account.name, account.network, day, values)
+			written += 1
+		frappe.db.commit()
+	return written

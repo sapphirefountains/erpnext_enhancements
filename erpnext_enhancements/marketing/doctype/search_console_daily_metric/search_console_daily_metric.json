@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-10-29 12:00:00.000000",
- "description": "One day of Search Console: the property's total, one page, or one query. Written only by the nightly pull and the backfill, which replace each day they read in full; Search Console publishes final figures two or three days late, so the last week is re-read every night.",
+ "description": "One day of Search Console: the property's total, one page, one query, or one query on one page. Kept forever: past Search Console's 16 months these rows are the only copy. Written only by the nightly pull and the backfill, which replace each day they read in full; Search Console publishes final figures two or three days late, so the last week is re-read every night.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -12,6 +12,7 @@
   "column_break_key",
   "dimension_value",
   "page_path",
+  "query",
   "property",
   "metrics_section",
   "clicks",
@@ -34,7 +35,7 @@
   {
    "fieldname": "dimension",
    "fieldtype": "Select",
-   "options": "Total\nPage\nQuery",
+   "options": "Total\nPage\nQuery\nPage Query",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Dimension",
@@ -51,14 +52,21 @@
    "fieldtype": "Small Text",
    "label": "Value",
    "read_only": 1,
-   "description": "The page URL or the query as Search Console reported it. Blank for the total."
+   "description": "The page URL (Page and Page Query rows) or the query (Query rows), as Search Console reported it. Blank for the total."
   },
   {
    "fieldname": "page_path",
    "fieldtype": "Small Text",
    "label": "Normalized Path",
    "read_only": 1,
-   "description": "The join key with GA4 landing pages (rules.normalize_page). Pages only."
+   "description": "The join key with GA4 landing pages (rules.normalize_page). Page and Page Query rows."
+  },
+  {
+   "fieldname": "query",
+   "fieldtype": "Small Text",
+   "label": "Query",
+   "read_only": 1,
+   "description": "The search that landed on the page. Page Query rows only: which searches bring people to which page."
   },
   {
    "fieldname": "property",
@@ -101,7 +109,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Search Console Daily Metric",

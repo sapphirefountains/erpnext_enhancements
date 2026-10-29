@@ -224,7 +224,7 @@ class MarketingPerformancePage {
 		});
 		page.set_secondary_action(__("Refresh"), () => this.load(), "refresh");
 		if ((frappe.user_roles || []).includes("System Manager")) {
-			page.add_menu_item(__("Backfill GA4 and Search Console history"), () => this.backfill());
+			page.add_menu_item(__("Backfill marketing history"), () => this.backfill());
 		}
 		this.bind();
 	}
@@ -352,7 +352,7 @@ class MarketingPerformancePage {
 	backfill() {
 		frappe.confirm(
 			__(
-				"Read Search Console's 16 months and the same span of GA4 into the daily tables? It runs in the background, a month at a time, and is safe to run again."
+				"Read every ready source back as far as its API allows (Search Console 16 months, GA4 to its first day, Business Profile and the social pages as far as each serves)? It runs in the background, a month at a time, and is safe to run again."
 			),
 			async () => {
 				await this.ready;
@@ -617,9 +617,15 @@ class MarketingPerformancePage {
 
 	unsourced_html() {
 		const u = this.data.unsourced || {};
-		const head = `<p>${this.esc(
-			__("{0} of {1} Opportunities created in this range have no source, or the recorded Unknown (pre-Aug 2026).", [MKP.fmt_int(u.count), MKP.fmt_int(u.total)])
-		)}</p>`;
+		const head =
+			`<p>${this.esc(
+				__("{0} of {1} Opportunities created in this range have no source, or the recorded Unknown (pre-Aug 2026).", [MKP.fmt_int(u.count), MKP.fmt_int(u.total)])
+			)}</p>` +
+			(u.total && u.count === u.total
+				? `<p class="mkp-hint">${this.esc(
+						__("Website attribution is not set up yet: once the WordPress form capture is installed, new inquiries arrive with their source.")
+				  )}</p>`
+				: "");
 		if (!u.rows) return head;
 		const rows = u.rows.map((r) => [
 			`<a href="/desk/opportunity/${encodeURIComponent(r.name)}">${this.esc(r.title || r.name)}</a>`,
@@ -637,10 +643,10 @@ class MarketingPerformancePage {
 		if (!s.platforms || !s.platforms.length) {
 			out += this.empty(
 				!s.enabled
-					? __("No ad platform is connected: Marketing Settings is switched off, and Google Ads, Meta and LinkedIn each need connecting on Marketing Connections. Spend appears here the night after.")
+					? __("Not set up yet. Ad spend appears here once Google Ads, Meta or LinkedIn is connected on Marketing Connections and switched on in Marketing Settings; its first night brings back as much history as the platform keeps.")
 					: s.connected && s.connected.length
 					? __("Connected ({0}), but no spend is stored for this range.", [s.connected.join(", ")])
-					: __("Marketing Settings is on, but no ad platform is connected yet (Marketing Connections).")
+					: __("Not set up yet: Marketing Settings is on, and no ad platform is connected (Marketing Connections).")
 			);
 		} else {
 			out += this.table(
@@ -685,7 +691,7 @@ class MarketingPerformancePage {
 			return this.empty(
 				g.connected
 					? __("Connected, but nothing is stored for this range yet.")
-					: __("Not connected. Google has to approve the project's Business Profile API access first; then connect it on Marketing Connections and turn it on in Marketing Settings.")
+					: __("Not set up yet. Google approves Business Profile API access first; then it is connected on Marketing Connections and switched on in Marketing Settings, and the first night brings back about 18 months.")
 			);
 		}
 		return this.table(
@@ -720,19 +726,33 @@ class MarketingPerformancePage {
 			return this.empty(
 				s.enabled
 					? __("On, but nothing is stored yet: each account needs its publishing connection connected and Enabled ticked.")
-					: __("Off. Turn on Social Page Stats in Marketing Settings once Facebook, Instagram, LinkedIn or YouTube is connected.")
+					: __("Not set up yet. Social page stats start once Facebook, Instagram, LinkedIn or YouTube is connected and Social Page Stats is switched on in Marketing Settings; the first night brings back what each network keeps.")
 			);
 		}
 		return this.table(
-			[{ label: __("Account") }, { label: __("Network") }, { label: __("Followers"), num: true }, { label: __("Reach"), num: true }, { label: __("Views"), num: true }],
-			s.accounts.map((a) => [this.esc(a.name), this.esc(a.network), this.esc(MKP.fmt_int(a.followers)), this.esc(MKP.fmt_int(a.reach)), this.esc(MKP.fmt_int(a.views))])
+			[
+				{ label: __("Account") },
+				{ label: __("Network") },
+				{ label: __("Followers"), num: true },
+				{ label: __("Net new"), num: true },
+				{ label: __("Reach"), num: true },
+				{ label: __("Views"), num: true },
+			],
+			s.accounts.map((a) => [
+				this.esc(a.name),
+				this.esc(a.network),
+				this.esc(MKP.fmt_int(a.followers)),
+				this.esc(MKP.fmt_int(a.follower_gain)),
+				this.esc(MKP.fmt_int(a.reach)),
+				this.esc(MKP.fmt_int(a.views)),
+			])
 		);
 	}
 
 	health_html() {
 		const h = this.data.health || {};
 		const tone = { ok: "good", stale: "warn", empty: "warn", off: "neutral" };
-		const label = { ok: __("Landing"), stale: __("Stale"), empty: __("Empty"), off: __("Off") };
+		const label = { ok: __("Landing"), stale: __("Stale"), empty: __("Empty"), off: __("Not set up yet") };
 		const rows = (h.sources || []).map((s) => [this.esc(s.name), this.chip(label[s.state] || s.state, tone[s.state]), this.esc(s.detail)]);
 		let out = this.table([{ label: __("Source") }, { label: __("State") }, { label: __("Detail") }], rows);
 		if (h.snapshot) {

@@ -76,6 +76,14 @@ DAILY_METRICS = {
 }
 COLUMNS = ("call_clicks", "website_clicks", "direction_requests", "maps_impressions", "search_impressions")
 
+#: How far back the history backfill asks for. Google documents 18 months only for the retired v4
+#: insights ("The maximum range is 18 months from the request date"); the v1 Performance API names no
+#: limit, so 18 months is the request and a refusal of the oldest windows is skipped, not fatal
+#: (``sync.history_pull``). Checked 2026-10-29.
+HISTORY_MONTHS = 18
+#: One Performance API call's span. v1 documents no maximum; a month keeps every answer small.
+MAX_RANGE_DAYS = 31
+
 #: The listing's figures settle over a few days, like the ad platforms'.
 RESTATE_DAYS = 7
 #: The first pull reaches this far back. The Performance API serves about 18 months.

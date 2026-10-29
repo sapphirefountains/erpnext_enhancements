@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "format:GBP-{location_id}-{metric_date}",
  "creation": "2026-10-29 12:00:00.000000",
- "description": "One Google Business Profile listing on one day. Named from (listing, date), so re-reading a day updates the same row.",
+ "description": "One Google Business Profile listing on one day: its daily figures (where Daily Figures Read) and that night's review snapshot (where Reviews Read). Kept forever. Named from (listing, date), so re-reading a day updates the same row.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -11,6 +11,8 @@
   "metric_date",
   "column_break_key",
   "location_title",
+  "metrics_read",
+  "reviews_read",
   "actions_section",
   "call_clicks",
   "website_clicks",
@@ -58,6 +60,22 @@
    "fieldtype": "Data",
    "label": "Listing",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "metrics_read",
+   "fieldtype": "Check",
+   "label": "Daily Figures Read",
+   "read_only": 1,
+   "description": "Google answered this day's calls, clicks and impressions. An Int column is never blank in the database, so this is what tells a day Google reported as 0 from a day nobody read."
+  },
+  {
+   "default": "0",
+   "fieldname": "reviews_read",
+   "fieldtype": "Check",
+   "label": "Reviews Read",
+   "read_only": 1,
+   "description": "The review count, average and unreplied below are that night's snapshot."
   },
   {
    "fieldname": "actions_section",
@@ -121,7 +139,7 @@
    "fieldtype": "Int",
    "label": "Reviews",
    "read_only": 1,
-   "description": "As of the night this row was pulled; blank on rows from before."
+   "description": "That night's snapshot, where Reviews Read is ticked."
   },
   {
    "fieldname": "average_rating",

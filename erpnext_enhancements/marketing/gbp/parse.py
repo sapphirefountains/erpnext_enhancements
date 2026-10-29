@@ -129,3 +129,45 @@ def summarize_reviews(pages):
 	if average is None and stars:
 		average = sum(stars) / len(stars)
 	return {"review_count": total, "average_rating": average, "unreplied_reviews": unreplied}
+
+
+def _utc(value):
+	"""A naive UTC ``datetime`` from Google's RFC 3339 time (``2026-10-01T12:34:56.123456Z``); None if blank."""
+	text = str(value or "").strip()
+	if not text:
+		return None
+	try:
+		moment = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+	except ValueError:
+		return None
+	if moment.tzinfo is not None:
+		moment = moment.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+	return moment.replace(microsecond=0)
+
+
+def parse_reviews(pages):
+	"""Every review on every page of ``reviews.list``, as the columns of Business Profile Review.
+
+	``review_id`` is Google's ``reviewId`` (the last part of ``name`` when it is missing). Stars are
+	Google's words turned into 1-5, None when unspecified.
+	"""
+	out = []
+	for body in pages or ():
+		for review in (body or {}).get("reviews") or []:
+			review_id = review.get("reviewId") or resource_id(review.get("name"))
+			if not review_id:
+				continue
+			reply = review.get("reviewReply") or {}
+			out.append(
+				{
+					"review_id": review_id,
+					"star_rating": STAR_VALUES.get(review.get("starRating")),
+					"reviewer_name": ((review.get("reviewer") or {}).get("displayName") or "")[:140],
+					"comment": review.get("comment") or "",
+					"create_time": _utc(review.get("createTime")),
+					"update_time": _utc(review.get("updateTime")),
+					"reply_comment": reply.get("comment") or "",
+					"reply_time": _utc(reply.get("updateTime")),
+				}
+			)
+	return out
