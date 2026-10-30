@@ -255,13 +255,13 @@ def _spend_section(start, end, views):
 	if not views["financial"]:
 		return out
 	if _exists("Marketing Spend"):
-		rows = frappe.db.sql(
-			"""select channel, sum(amount) as amount from `tabMarketing Spend`
-			where month between %s and %s group by channel order by amount desc""",
-			(start.replace(day=1), end),
-			as_dict=True,
-		)
-		out["offline"] = [{"channel": r.channel, "amount": flt(r.amount)} for r in rows]
+		by_channel = {}
+		for channel, amount in _offline_spend(start, end):
+			by_channel[channel] = by_channel.get(channel, 0.0) + amount
+		out["offline"] = [
+			{"channel": channel, "amount": amount}
+			for channel, amount in sorted(by_channel.items(), key=lambda pair: pair[1], reverse=True)
+		]
 	if out["platforms"]:
 		out["roas"] = _roas(start, end)
 	return out
@@ -638,13 +638,24 @@ def _spend_total(start, end):
 			)[0][0]
 		)
 	if _exists("Marketing Spend"):
-		total += flt(
-			frappe.db.sql(
-				"select sum(amount) from `tabMarketing Spend` where month between %s and %s",
-				(start.replace(day=1), end),
-			)[0][0]
-		)
+		total += sum(amount for _channel, amount in _offline_spend(start, end))
 	return total
+
+
+def _offline_spend(start, end):
+	"""``[(channel, amount)]`` of Marketing Spend over ``start..end``, each month's amount prorated by the
+	days of it the range covers (``insights.prorated``). A whole month counted in any range touching it
+	would count it twice in two adjacent ranges, and a week would carry the month."""
+	from erpnext_enhancements.marketing.performance import insights
+
+	return [
+		(r.channel, insights.prorated(flt(r.amount), getdate(r.month), start, end))
+		for r in frappe.db.sql(
+			"""select channel, month, amount from `tabMarketing Spend` where month between %s and %s""",
+			(start.replace(day=1), end),
+			as_dict=True,
+		)
+	]
 
 
 def _tile_values(start, end, views, calls, p=None):

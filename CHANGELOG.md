@@ -30,6 +30,9 @@ on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, pro
     recipients are Marketing Manager by default. Of the four alerts, only a missed first-time call and
     a drop in sessions can fire on today's data.
 - **The morning briefing** gains a Monday marketing section for people who may open the page.
+- **Marketing Manager and Marketing Team gain read and report on the four daily metric doctypes**
+  (GA4, Search Console, Business Profile, Social Page). That is their own data, and the reports are
+  gated on it.
 - Nothing is connected, and nothing is written to the website.
 
 ### Added
@@ -133,6 +136,43 @@ on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, pro
   - **No guest or public endpoint:** the QR code holds the tagged sapphirefountains.com address itself.
 - **GA4 by campaign** (`sessionCampaignName` × source × medium) joins the daily pull. It is what tracked
   links read back.
+
+### Fixed before merge (independent review of the draft)
+- **A missed call or a review alerts once, ever.**
+  - Those checks read two days back so a missed night is caught up. With only the 24-hour throttle, the
+    same call could go out three times and the same review twice.
+  - Per-record keys (`call:`, `review:`) are now sent only if never sent (`insights.alert_due`).
+  - State alerts (a weekly drop, a page out of Google) keep the time throttle.
+- **A listing's first review snapshot no longer alerts on its whole history.**
+  - "New" is judged by Google's own `createTime`, written in the last two days, never by this app's
+    first sight of the review.
+  - The Monday digest's "New reviews" uses the same rule.
+- **The reports now open for the marketing roles.** Frappe checks report permission on a report's
+  `ref_doctype` before `execute` runs.
+  - The three Search Console reports keep Search Console Daily Metric, which the marketing roles can
+    now read and report on.
+  - Inquiry Sources, Service Line Funnel and Missed Calls now use GA4 Daily Metric. Their real sources
+    stay as they were: Opportunity amounts are still only for the financial roles, and Missed Calls
+    still filters per Call Log record.
+  - The marketing roles are **not** given report rights on Opportunity or Call Log. That would open
+    every amount and every call in Report View.
+  - A test checks that each report's roles have report permission on its `ref_doctype`.
+- **One thin position no longer zeroes the expected-CTR curve.** A site bucket is floored at a quarter
+  of the published figure. Three unclicked pages at position 6 had dragged every lower position to 0,
+  so Near Page One ranked nothing.
+- **The Monday digest no longer shows a weekly fall in search clicks.**
+  - Search Console's weekend is not in on Monday, so all three weeks now end three days earlier.
+  - A week counts only when every day of it is stored. The weekly-drop alert uses the same rule.
+- **The ghost line shares its line's scale.** Each line was drawn to its own maximum, so a fall from
+  20 to 10 drew as one flat line.
+- **Smaller fixes:**
+  - Key-page checks skip quietly when Search Console isn't set up, instead of logging an error every
+    night.
+  - Review text and page paths are markdown-escaped in alert and digest emails.
+  - Missed Calls decides callbacks on every call before filtering to the calls the viewer may open.
+  - `low_review_stars` = 0 turns the review alert off, and no longer heals back to 2.
+  - The digest's inquiries leave historical deals out.
+  - Marketing Spend is prorated by days, so adjacent ranges never count a month twice.
 
 ### Changed
 - `get_performance` takes a `ghost` argument and returns the Overview's tiles, targets, ghost series,

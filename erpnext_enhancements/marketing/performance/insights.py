@@ -158,6 +158,10 @@ CURVE_MAX_POSITION = 20
 #: A bucket is built from the site's own pages only when it has this many with enough impressions.
 CURVE_MIN_PAGES = 3
 CURVE_MIN_IMPRESSIONS = 20
+#: A site bucket is floored at this share of the fallback figure for its position. Three pages with no
+#: clicks at position 6 would otherwise put 0 there, and the non-increasing pass below would carry that
+#: 0 down to position 20: Near Page One would rank nothing and the scatter flag nothing.
+CURVE_SITE_FLOOR_SHARE = 0.25
 
 
 def ctr_curve(rows, min_pages=CURVE_MIN_PAGES, min_impressions=CURVE_MIN_IMPRESSIONS):
@@ -166,7 +170,8 @@ def ctr_curve(rows, min_pages=CURVE_MIN_PAGES, min_impressions=CURVE_MIN_IMPRESS
 	Per rounded position, the median CTR of the site's pages (or queries) with at least
 	``min_impressions``, where at least ``min_pages`` of them fall in that bucket; otherwise the
 	fallback figure. The curve is then made non-increasing (a lower position never expects more
-	clicks than a higher one), because a median of three pages can wobble.
+	clicks than a higher one), because a median of three pages can wobble. A site bucket is never
+	below ``CURVE_SITE_FLOOR_SHARE`` of the fallback, so one thin bucket cannot zero the positions after it.
 	"""
 	buckets = {}
 	for row in rows or ():
@@ -179,7 +184,8 @@ def ctr_curve(rows, min_pages=CURVE_MIN_PAGES, min_impressions=CURVE_MIN_IMPRESS
 	for p in range(1, CURVE_MAX_POSITION + 1):
 		values = buckets.get(p) or []
 		if len(values) >= min_pages:
-			points[p], source[p] = statistics.median(values), "site"
+			floor = FALLBACK_CTR.get(p, FALLBACK_TAIL_CTR) * CURVE_SITE_FLOOR_SHARE
+			points[p], source[p] = max(statistics.median(values), floor), "site"
 		else:
 			points[p], source[p] = FALLBACK_CTR.get(p, FALLBACK_TAIL_CTR), "fallback"
 	for p in range(2, CURVE_MAX_POSITION + 1):
@@ -462,6 +468,59 @@ def throttle_due(last_sent, now, hours):
 	return last_sent is None or now - last_sent >= datetime.timedelta(hours=float(hours or 0))
 
 
+#: Alert keys that name one record (a call, a review): about something that happened once, so sent once,
+#: ever. The checks read a few days back so a missed night is caught up, which would otherwise send the
+#: same call or review again each night inside that window.
+ONCE_ONLY_PREFIXES = ("call:", "review:")
+
+
+def alert_due(key, last_sent, now, hours):
+	"""Whether the alert ``key`` may go now: a per-record key only if never sent, any other (a state:
+	a weekly drop, a page out of Google) once its throttle window has passed."""
+	if str(key).startswith(ONCE_ONLY_PREFIXES):
+		return last_sent is None
+	return throttle_due(last_sent, now, hours)
+
+
+def new_since(reviews, since):
+	"""The reviews Google says were written at or after ``since`` (a naive UTC datetime).
+
+	Judged by the review's own ``create_time``, never by when this app first saw it: the first night
+	Business Profile answers, every review the listing ever had is new *to us*, and none of them is news.
+	"""
+	return [r for r in reviews or () if r.get("create_time") and r["create_time"] >= since]
+
+
+_MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+!|<>~])")
+
+
+def md_escape(text, limit=None):
+	"""Untrusted text made safe to drop into markdown: one line, every markdown character escaped.
+
+	A Google review or a page path is somebody else's text. Unescaped, ``[text](https://...)`` in a review
+	becomes a live link in the email, and a newline or a ``|`` breaks the list or the table around it.
+	"""
+	value = " ".join(str(text or "").split())
+	if limit:
+		value = value[:limit]
+	return _MD_SPECIAL.sub(r"\\\1", value)
+
+
+def prorated(amount, month, start, end):
+	"""The share of a month's ``amount`` that falls inside ``start..end``, by days.
+
+	Marketing Spend is entered per month. Counting a whole month in any range that touches it would count
+	it twice in two adjacent ranges, and a one-week range would carry four weeks of spend.
+	"""
+	first = month.replace(day=1)
+	nxt = (first.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+	last = nxt - datetime.timedelta(days=1)
+	lo, hi = max(first, start), min(last, end)
+	if hi < lo:
+		return 0.0
+	return float(amount or 0) * ((hi - lo).days + 1) / ((last - first).days + 1)
+
+
 # ---------------------------------------------------------------- F2 the Monday digest
 
 
@@ -498,14 +557,20 @@ def digest_markdown(data):
 		lines.append(f"| {label} | {_fmt(this)}{_delta(this, last)} | {_fmt(last)} | {_fmt(year)} |")
 	if data.get("movers"):
 		lines.append("")
-		lines.append("**Biggest movers:** " + "; ".join(f"{label} {text}" for label, text in data["movers"]))
+		lines.append(
+			"**Biggest movers:** "
+			+ "; ".join(f"{md_escape(label)} {md_escape(text)}" for label, text in data["movers"])
+		)
 	missed = data.get("missed_calls") or []
 	lines.append("")
-	lines.append(f"**Missed calls:** {len(missed)}" + (" — " + "; ".join(missed[:5]) if missed else ""))
+	lines.append(
+		f"**Missed calls:** {len(missed)}"
+		+ (" — " + "; ".join(md_escape(m) for m in missed[:5]) if missed else "")
+	)
 	reviews = data.get("new_reviews") or []
 	if reviews:
 		lines.append("")
-		lines.append("**New reviews:** " + "; ".join(reviews[:5]))
+		lines.append("**New reviews:** " + "; ".join(md_escape(r, 120) for r in reviews[:5]))
 	if data.get("link"):
 		lines.append("")
 		lines.append(f"[Open Marketing Performance]({data['link']})")

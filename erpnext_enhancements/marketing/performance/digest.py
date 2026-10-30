@@ -22,19 +22,23 @@ from erpnext_enhancements.marketing.performance import insights, rules
 GA4 = "GA4 Daily Metric"
 GSC = "Search Console Daily Metric"
 MOVERS = 3
+#: Search Console's newest final day is two or three days back (``alerts.GSC_LAG_DAYS``).
+GSC_LAG_DAYS = 3
 #: The digest is the same for everyone who gets it, so a briefing batch builds it once a day.
 _BUILT = {}
 
 
 def _sum(doctype, column, start, end, dimension="Total"):
+	"""The sum over ``start..end``, or None unless every day of it is stored: a week missing its last
+	days would read as a fall against a whole one."""
 	if not frappe.db.exists("DocType", doctype):
 		return None
 	value, days = frappe.db.sql(
-		f"""select sum({column}), count(*) from `tab{doctype}`
+		f"""select sum({column}), count(distinct metric_date) from `tab{doctype}`
 		where dimension = %s and metric_date between %s and %s""",
 		(dimension, start, end),
 	)[0]
-	return int(value or 0) if days else None
+	return int(value or 0) if days and days >= (end - start).days + 1 else None
 
 
 def _count(doctype, start, end, filters=None):
@@ -70,10 +74,16 @@ def gather(today):
 	def three(fn):
 		return fn(start, end), fn(*before), fn(*year)
 
+	lag = datetime.timedelta(days=GSC_LAG_DAYS)
+	from erpnext_enhancements.crm_enhancements.historical import exclude_filters
+
 	metrics = [
 		("Sessions", *three(lambda a, b: _sum(GA4, "sessions", a, b))),
-		("Search clicks", *three(lambda a, b: _sum(GSC, "clicks", a, b))),
-		("Inquiries (Opportunities)", *three(lambda a, b: _count("Opportunity", a, b))),
+		# Search Console's weekend is not in by Monday: the same seven days, three days earlier, for all
+		# three weeks, so the comparison is a whole week against a whole week.
+		("Search clicks (7 days to 3 days back)", *three(lambda a, b: _sum(GSC, "clicks", a - lag, b - lag))),
+		# Historical deals left out, as the funnel and Inquiry Sources leave them out.
+		("Inquiries (Opportunities)", *three(lambda a, b: _count("Opportunity", a, b, exclude_filters()))),
 		("Inbound calls", *three(lambda a, b: _count("Call Log", a, b, [["type", "=", "Incoming"]]))),
 	]
 	now_pages, prev_pages = _pages(start, end), _pages(*before)
@@ -104,11 +114,20 @@ def gather(today):
 		]
 	reviews = []
 	if frappe.db.exists("DocType", "Business Profile Review"):
+		# Written last week by Google's own create time, not first seen by us: the first snapshot sees a
+		# listing's whole history at once, and none of that is last week's news.
 		reviews = [
 			f"{r.star_rating}★ {(r.comment or '')[:80]}".strip()
 			for r in frappe.get_all(
 				"Business Profile Review",
-				filters={"first_seen": ["between", [start, end]]},
+				filters=[
+					["create_time", ">=", datetime.datetime.combine(start, datetime.time.min)],
+					[
+						"create_time",
+						"<",
+						datetime.datetime.combine(end + datetime.timedelta(days=1), datetime.time.min),
+					],
+				],
 				fields=["star_rating", "comment"],
 				order_by="create_time desc",
 			)

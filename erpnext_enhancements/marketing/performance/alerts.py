@@ -65,14 +65,19 @@ def recipients(settings):
 
 
 def _total(doctype, column, start, end):
+	"""The sum over ``start..end``, or None unless every day of it is stored.
+
+	A week with its last days not in yet (Search Console's lag, a missed night) would read as a fall
+	against a full one, so a partial week is no figure at all.
+	"""
 	if not frappe.db.exists("DocType", doctype):
 		return None
 	value, days = frappe.db.sql(
-		f"""select sum({column}), count(*) from `tab{doctype}`
+		f"""select sum({column}), count(distinct metric_date) from `tab{doctype}`
 		where dimension = 'Total' and metric_date between %s and %s""",
 		(start, end),
 	)[0]
-	return float(value or 0) if days else None
+	return float(value or 0) if days and days >= (end - start).days + 1 else None
 
 
 def drop_checks(today, settings):
@@ -111,12 +116,13 @@ def _inspect(urls, today):
 	from erpnext_enhancements.api.analytics import _gsc_execute, _gsc_service
 
 	settings = frappe.get_doc("GA4 Settings")
+	site = frappe.db.get_value(GSC, {"property": ["is", "set"]}, "property", order_by="metric_date desc")
+	if not settings.get("gsc_property_url") or not settings.get("credentials_json") or not site:
+		# Not set up yet (or no property has answered): nothing to inspect, and nothing to log every night.
+		return None
 	service, credentials, error = _gsc_service(settings)
 	if error:
-		raise RuntimeError(error)
-	site = frappe.db.get_value(GSC, {"property": ["is", "set"]}, "property", order_by="metric_date desc")
-	if not site:
-		raise RuntimeError("No Search Console property has answered yet; the daily pull sets it.")
+		return None
 	verdicts = {}
 	for url in urls:
 		key = rules.value_key(url)
@@ -164,31 +170,46 @@ def index_checks(today, settings):
 		if last:
 			previous[url] = last
 	current = _inspect(urls, today)
+	if current is None:
+		return []
 	return [
 		(
 			f"index:{rules.value_key(hit['url'])}:{hit['verdict']}",
-			_("Google no longer indexes {0} (URL Inspection: {1}).").format(hit["url"], hit["verdict"]),
+			_("Google no longer indexes {0} (URL Inspection: {1}).").format(
+				insights.md_escape(hit["url"]), insights.md_escape(hit["verdict"])
+			),
 		)
 		for hit in insights.index_alerts(previous, current)
 	]
 
 
 def review_checks(today, settings):
-	if not frappe.db.exists("DocType", REVIEW):
+	"""Low reviews written in the last two days (Google's ``create_time``, UTC).
+
+	Not "first seen" by this app: the first night Business Profile answers, every review the listing
+	ever had is first seen, and alerting on them would mail its whole history. ``low_review_stars`` 0
+	turns this alert off.
+	"""
+	stars = cint(settings.get("low_review_stars"))
+	if stars <= 0 or not frappe.db.exists("DocType", REVIEW):
 		return []
+	since = datetime.datetime.utcnow().replace(microsecond=0) - datetime.timedelta(days=2)
 	rows = frappe.get_all(
 		REVIEW,
-		filters={"first_seen": [">=", add_days(today, -1)]},
-		fields=["name", "star_rating", "location_title", "comment"],
+		filters={"first_seen": [">=", add_days(today, -2)], "create_time": [">=", since]},
+		fields=["name", "star_rating", "location_title", "comment", "create_time"],
 	)
+	fresh = insights.new_since([dict(r) for r in rows], since)
 	return [
 		(
 			f"review:{r['name']}",
 			_("A {0}-star Google review on {1}: {2}").format(
-				r["star_rating"], r.get("location_title") or _("the listing"), (r.get("comment") or "")[:200]
+				r["star_rating"],
+				insights.md_escape(r.get("location_title") or _("the listing")),
+				insights.md_escape(r.get("comment"), 200),
 			),
 		)
-		for r in insights.low_reviews([dict(r) for r in rows], cint(settings.get("low_review_stars")))
+		for r in insights.low_reviews(fresh, stars)
 	]
 
 
@@ -209,7 +230,7 @@ def call_checks(today, settings):
 
 def _due(key, now, hours):
 	last = frappe.db.get_value(ALERT_DOCTYPE, key, "last_sent_at")
-	return insights.throttle_due(get_datetime(last) if last else None, now, hours)
+	return insights.alert_due(key, get_datetime(last) if last else None, now, hours)
 
 
 def _record(key, kind, text, now):
@@ -265,7 +286,8 @@ def run_alerts(today=None):
 	body += f"\n\n[Open Marketing Performance]({get_url('/desk/marketing-performance')})"
 	frappe.sendmail(
 		recipients=to,
-		subject=_("Marketing alert: {0}").format(due[0][2][:80])
+		# The kind, never the text: the text may hold a reviewer's words.
+		subject=_("Marketing alert: {0}").format(_(due[0][1]))
 		if len(due) == 1
 		else _("Marketing alerts: {0}").format(len(due)),
 		message=email_style.wrap(email_style.markdown(body), title=_("Marketing alerts"), eyebrow=str(today)),

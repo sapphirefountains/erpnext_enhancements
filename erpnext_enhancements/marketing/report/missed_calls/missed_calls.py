@@ -8,9 +8,15 @@ outgoing call to the same number followed within the callback window (default Ma
 *Missed Calls: Callback Window*, 4 hours). First-time callers -- a number never seen before -- are
 flagged and listed first. One still inside its window reads *waiting*.
 
-**Call Log's own permissions apply and are never widened**: the rows are read through
-``frappe.get_list`` (``calls.call_rows(respect_permissions=True)``), so a person sees only the calls
-they may already open, numbers included.
+Whether a call was called back is decided on **every** call, so a callback the viewer cannot see
+still counts; then **Call Log's own permissions apply and are never widened**: only the calls
+``frappe.get_list`` lets the viewer open are shown (``calls.call_rows(respect_permissions=True)``), so a
+person sees only the calls they may already open, numbers included.
+
+Its ``ref_doctype`` is GA4 Daily Metric, not Call Log: Frappe checks report permission on the
+``ref_doctype`` before ``execute`` runs, and giving the marketing roles report rights on Call Log would open
+every call in Report View. The marketing roles read and report on their own daily figures; the checks inside
+``execute`` decide the rest.
 """
 
 import frappe
@@ -29,7 +35,12 @@ def execute(filters=None):
 
 	start, end = rules.parse_range(filters.get("from_date"), filters.get("to_date"), getdate(nowdate()))
 	hours = cint(filters.get("callback_hours")) or cint(get_settings().get("missed_call_callback_hours")) or 4
-	rows = insights.missed_calls(call_rows(start, end, respect_permissions=True), now_datetime(), hours)
+	visible = {c["name"] for c in call_rows(start, end, respect_permissions=True)}
+	rows = [
+		row
+		for row in insights.missed_calls(call_rows(start, end), now_datetime(), hours)
+		if row["name"] in visible
+	]
 	for row in rows:
 		row["first_time"] = 1 if row.get("first_time") else 0
 	columns = [

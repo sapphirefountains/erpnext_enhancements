@@ -263,7 +263,7 @@
   },
   {
    "default": "2",
-   "description": "Alert on a new Google review at this many stars or fewer.",
+   "description": "Alert on a new Google review at this many stars or fewer. 0 turns this alert off.",
    "fieldname": "low_review_stars",
    "fieldtype": "Int",
    "label": "Low Review (stars)"

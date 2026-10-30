@@ -67,8 +67,8 @@ POSITIVE_DIALS = {
 	"alert_throttle_hours": 24,
 	"traffic_drop_percent": 30,
 	"traffic_drop_min_baseline": 50,
-	"low_review_stars": 2,
 }
+# low_review_stars is not a dial: 0 turns the low-review alert off, so it must not heal back to 2.
 
 
 class MarketingSettings(Document):

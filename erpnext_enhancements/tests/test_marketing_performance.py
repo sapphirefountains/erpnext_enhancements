@@ -395,9 +395,9 @@ class TestRoles(unittest.TestCase):
 		self.assertIn('frappe.has_permission("Opportunity", "read")', source)
 
 	def test_daily_doctypes_are_read_through_the_page_and_written_by_nobody(self):
-		"""The page reads them for every page role. Only System Manager and Sales Manager get the lists
-		themselves, like Ad Daily Metric: the marketing roles' DocPerms are the publishing surface
-		(tests/test_marketing_approval.py) and nothing else."""
+		"""Every page role reads them, in the Desk too (v1.757.0): they are marketing's own figures, and the
+		marketing reports are gated on them (a report's ``ref_doctype`` needs report permission before
+		``execute`` runs). Nobody writes them but the pulls."""
 		for folder in (
 			"ga4_daily_metric",
 			"search_console_daily_metric",
@@ -406,10 +406,8 @@ class TestRoles(unittest.TestCase):
 		):
 			doc = json.loads((MARKETING / "doctype" / folder / f"{folder}.json").read_text(encoding="utf-8"))
 			with self.subTest(doctype=doc["name"]):
-				self.assertEqual(
-					{p["role"] for p in doc["permissions"] if p.get("read")},
-					{"System Manager", "Sales Manager"},
-				)
+				self.assertEqual({p["role"] for p in doc["permissions"] if p.get("read")}, set(rules.PAGE_ROLES))
+				self.assertEqual({p["role"] for p in doc["permissions"] if p.get("report")}, set(rules.PAGE_ROLES))
 				self.assertFalse(any(p.get("write") or p.get("create") for p in doc["permissions"]))
 				self.assertEqual(doc["module"], "Marketing")
 
@@ -863,6 +861,9 @@ const out = {
 	stack: M.stack([[1, 2], [3, 4], [0, 1]]),
 	heat: [M.heat_level(0, 10), M.heat_level(1, 10), M.heat_level(10, 10), M.heat_level(6, 10)],
 	x: [M.x_of(["a", "b", "c"], "c", 100), M.x_of(["a", "b"], "z", 100)],
+	shared: [M.shared_max([10, 10], [20, null]), M.shared_max([null], [])],
+	scaled: M.line_segments([10, 10], 100, 10, 20).segments,
+	links: [M.http_link("https://x.example/a"), M.http_link("javascript:alert(1)"), M.http_link(" HTTP://x ")],
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -908,6 +909,10 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(out["stack"], [[1, 2], [4, 6], [4, 7]])
 		self.assertEqual(out["heat"], [0, 1, 4, 3])
 		self.assertEqual(out["x"], [100, None])
+		self.assertEqual(out["shared"], [20, 1])
+		# [10, 10] drawn to the ghost's scale of 20 sits halfway down, so a fall from 20 shows.
+		self.assertEqual(out["scaled"], [["0.0,5.0", "100.0,5.0"]])
+		self.assertEqual(out["links"], ["https://x.example/a", "", "HTTP://x"])
 
 
 class TestPageHistory(unittest.TestCase):

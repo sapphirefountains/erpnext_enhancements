@@ -16,6 +16,11 @@ ordered rules on Marketing Settings (*Service Line Rules*), first match wins:
 
 Anything no rule matches is its own row, Unmatched, so nothing disappears. Won value is financial and
 shown only to System Manager, Sales Manager and Marketing Manager.
+
+Its ``ref_doctype`` is GA4 Daily Metric, not Opportunity: Frappe checks report permission on the
+``ref_doctype`` before ``execute`` runs, and giving the marketing roles report rights on Opportunity would open
+every Opportunity's amount in Report View. The marketing roles read and report on their own daily figures; the checks inside
+``execute`` decide the rest.
 """
 
 import frappe

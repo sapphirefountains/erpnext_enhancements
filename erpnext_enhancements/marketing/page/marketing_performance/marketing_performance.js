@@ -197,10 +197,12 @@ const MKP = {
 	},
 
 	// SVG points for one series on a w x h box: null days break the line into segments.
-	line_segments(values, w, h) {
+	// `scale_max`, when given, is the top of the box: a line and its ghost share one, or a drop between them
+	// would draw flat.
+	line_segments(values, w, h, scale_max) {
 		const n = values.length;
 		const nums = values.filter((v) => v !== null && v !== undefined).map(Number);
-		const max = nums.length ? Math.max(...nums, 1) : 1;
+		const max = scale_max || (nums.length ? Math.max(...nums, 1) : 1);
 		const segments = [];
 		let current = [];
 		values.forEach((v, i) => {
@@ -215,6 +217,12 @@ const MKP = {
 		});
 		if (current.length) segments.push(current);
 		return { segments, max };
+	},
+
+	// The one scale a line and its ghost line are both drawn to.
+	shared_max(...series) {
+		const nums = [].concat(...series.map((s) => s || [])).filter((v) => v !== null && v !== undefined).map(Number);
+		return nums.length ? Math.max(...nums, 1) : 1;
 	},
 
 	sum(values) {
@@ -568,7 +576,10 @@ class MarketingPerformancePage {
 		const rows = series
 			.map(([key, label, tone]) => {
 				const values = (t.series && t.series[key]) || [];
-				const { segments, max } = MKP.line_segments(values, w, h);
+				const ghost_values = (this.data.overview && this.data.overview.ghost && this.data.overview.ghost[key]) || null;
+				const scale = ghost_values ? MKP.shared_max(values, ghost_values) : null;
+				const { segments } = MKP.line_segments(values, w, h, scale);
+				const max = MKP.shared_max(values);
 				const total = MKP.sum(values);
 				const lines = segments
 					.map((points) =>
@@ -577,8 +588,7 @@ class MarketingPerformancePage {
 							: `<polyline points="${points.join(" ")}" class="mkp-line mkp-line-${tone}" fill="none"></polyline>`
 					)
 					.join("");
-				const ghost_values = (this.data.overview && this.data.overview.ghost && this.data.overview.ghost[key]) || null;
-				const ghost_line = ghost_values ? this.ghost_svg(ghost_values, values, w, h) : "";
+				const ghost_line = ghost_values ? this.ghost_svg(ghost_values, scale, w, h) : "";
 				const summary = __("{0}: {1} in total, at most {2} a day", [label, MKP.fmt_int(total), MKP.fmt_int(max)]);
 				return `<div class="mkp-trend-row">
 					<div class="mkp-trend-label"><span>${this.esc(label)}</span><strong>${this.esc(MKP.fmt_int(total))}</strong></div>
@@ -958,10 +968,9 @@ class MarketingPerformancePage {
 		)}">${lines}</svg>`;
 	}
 
-	// G1: the faint line of the previous period or last year, scaled with the line it sits under.
-	ghost_svg(ghost, values, w, h) {
-		const nums = values.concat(ghost).filter((v) => v !== null && v !== undefined).map(Number);
-		const max = nums.length ? Math.max(...nums, 1) : 1;
+	// G1: the faint line of the previous period or last year, drawn to `max`, the scale it shares with the
+	// line it sits under (MKP.shared_max), so a fall from the ghost to now reads as one.
+	ghost_svg(ghost, max, w, h) {
 		const n = ghost.length;
 		const points = ghost
 			.map((v, i) => (v === null || v === undefined ? null : `${(n > 1 ? (i / (n - 1)) * w : w / 2).toFixed(1)},${(h - (Number(v) / max) * h).toFixed(1)}`))
@@ -1040,10 +1049,11 @@ class MarketingPerformancePage {
 		const w = 640;
 		const h = 60;
 		const row = (label, values, tone, ghost) => {
-			const { segments } = MKP.line_segments(values, w, h);
+			const scale = ghost ? MKP.shared_max(values, ghost) : null;
+			const { segments } = MKP.line_segments(values, w, h, scale);
 			const lines = segments.map((points) => `<polyline points="${points.join(" ")}" class="mkp-line mkp-line-${tone}" fill="none"></polyline>`).join("");
 			return `<div class="mkp-trend-row"><div class="mkp-trend-label"><span>${this.esc(label)}</span><strong>${this.esc(MKP.fmt_int(MKP.sum(values)))}</strong></div>
-				<svg class="mkp-spark" viewBox="0 -2 ${w} ${h + 4}" preserveAspectRatio="none" role="img" aria-label="${this.esc(label)}">${ghost ? this.ghost_svg(ghost, values, w, h) : ""}${this.search_markers(t.dates, w, h)}${lines}</svg></div>`;
+				<svg class="mkp-spark" viewBox="0 -2 ${w} ${h + 4}" preserveAspectRatio="none" role="img" aria-label="${this.esc(label)}">${ghost ? this.ghost_svg(ghost, scale, w, h) : ""}${this.search_markers(t.dates, w, h)}${lines}</svg></div>`;
 		};
 		return `<div class="mkp-trend">${row(__("Search clicks"), t.clicks, "service", t.clicks_last_year)}${row(__("Impressions"), t.impressions, "design")}</div><p class="mkp-hint">${this.esc(
 			__("The faint line is the same days last year, once the history reaches back that far.")

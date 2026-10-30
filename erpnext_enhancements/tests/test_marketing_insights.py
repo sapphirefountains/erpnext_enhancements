@@ -41,8 +41,20 @@ UNKNOWN = "Unknown (pre-Aug 2026)"
 class TestInquirySources(unittest.TestCase):
 	def test_by_source_and_month(self):
 		opps = [
-			{"created": "2026-09-02", "source": "Website", "status": "Closed Won", "won_on": "2026-09-12", "amount": 1000},
-			{"created": "2026-09-05", "source": "Website", "status": "Closed Won", "won_on": "2026-09-25", "amount": 500},
+			{
+				"created": "2026-09-02",
+				"source": "Website",
+				"status": "Closed Won",
+				"won_on": "2026-09-12",
+				"amount": 1000,
+			},
+			{
+				"created": "2026-09-05",
+				"source": "Website",
+				"status": "Closed Won",
+				"won_on": "2026-09-25",
+				"amount": 500,
+			},
 			{"created": "2026-09-09", "source": "Website", "status": "Lost"},
 			{"created": "2026-09-10", "source": UNKNOWN, "status": "Open"},
 			{"created": "2026-09-11", "source": "", "status": "Closed Won", "won_on": None, "amount": 70},
@@ -54,7 +66,9 @@ class TestInquirySources(unittest.TestCase):
 		self.assertAlmostEqual(web["win_rate"], 2 / 3)
 		self.assertEqual(web["median_days_to_close"], 15)  # 10 and 20 days
 		unsourced = rows[("Unsourced", "2026-09")]
-		self.assertEqual((unsourced["count"], unsourced["won"], unsourced["median_days_to_close"]), (2, 1, None))
+		self.assertEqual(
+			(unsourced["count"], unsourced["won"], unsourced["median_days_to_close"]), (2, 1, None)
+		)
 		self.assertEqual(I.inquiry_sources(opps, UNKNOWN)[0]["month"], "2026-10", "newest month first")
 
 
@@ -102,6 +116,20 @@ class TestCurve(unittest.TestCase):
 		pages = [{"position": 5, "clicks": 50, "impressions": 100}] * 3
 		curve = I.ctr_curve(pages)
 		self.assertLessEqual(curve["points"][5], curve["points"][4])
+
+	def test_one_thin_bucket_cannot_zero_the_curve(self):
+		# Three pages at position 6 with no clicks: the site's bucket is floored, not 0, and every position
+		# after it keeps a figure Near Page One can rank by.
+		pages = [{"position": 6, "clicks": 0, "impressions": 100}] * 3
+		curve = I.ctr_curve(pages)
+		self.assertEqual(curve["source"][6], "site")
+		self.assertAlmostEqual(curve["points"][6], I.FALLBACK_CTR[6] * I.CURVE_SITE_FLOOR_SHARE)
+		self.assertGreater(curve["points"][20], 0)
+		self.assertTrue(
+			I.near_page_one([{"value": "q", "position": 10, "clicks": 0, "impressions": 500}], curve, 50)[0][
+				"clicks_to_gain"
+			]
+		)
 
 	def test_interpolation_and_below(self):
 		curve = I.ctr_curve([])
@@ -155,7 +183,9 @@ class TestServiceLines(unittest.TestCase):
 
 	def test_match_types(self):
 		m = self.MAPPING
-		self.assertEqual(I.service_line_of("page", "https://www.sapphirefountains.com/Rentals/fountain/", m), "Rentals")
+		self.assertEqual(
+			I.service_line_of("page", "https://www.sapphirefountains.com/Rentals/fountain/", m), "Rentals"
+		)
 		self.assertEqual(I.service_line_of("page", "/fountain-repair", m), "Service & Maintenance")
 		self.assertIsNone(I.service_line_of("page", "/about", m))
 		self.assertEqual(I.service_line_of("query", "Pond PUMP replacement", m), "Parts & Products")
@@ -167,9 +197,17 @@ class TestServiceLines(unittest.TestCase):
 		rows = {
 			r["line"]: r
 			for r in I.service_line_funnel(
-				[{"value": "/rentals/a", "sessions": 30, "clicks": 4}, {"value": "/about", "sessions": 10, "clicks": 1}],
 				[
-					{"title": "Plaza", "value_streams": ["Design", "Service"], "status": "Closed Won", "amount": 100},
+					{"value": "/rentals/a", "sessions": 30, "clicks": 4},
+					{"value": "/about", "sessions": 10, "clicks": 1},
+				],
+				[
+					{
+						"title": "Plaza",
+						"value_streams": ["Design", "Service"],
+						"status": "Closed Won",
+						"amount": 100,
+					},
 					{"title": "City splash pad", "value_streams": [], "status": "Open"},
 					{"title": "Unknown", "value_streams": ["Events"], "status": "Open"},
 				],
@@ -192,7 +230,8 @@ class TestServiceLines(unittest.TestCase):
 		seed = next(
 			ast.literal_eval(node.value)
 			for node in tree.body
-			if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "SEED_RULES" for t in node.targets)
+			if isinstance(node, ast.Assign)
+			and any(getattr(t, "id", "") == "SEED_RULES" for t in node.targets)
 		)
 		self.assertGreater(len(seed), 10)
 		for match_type, value, line in seed:
@@ -205,7 +244,14 @@ class TestMissedCalls(unittest.TestCase):
 	NOW = dt.datetime(2026, 10, 29, 12, 0)
 
 	def call(self, name, at, type_, status, number, first=False):
-		return {"name": name, "at": at, "type": type_, "status": status, "number": number, "first_time": first}
+		return {
+			"name": name,
+			"at": at,
+			"type": type_,
+			"status": status,
+			"number": number,
+			"first_time": first,
+		}
 
 	def test_rule(self):
 		t = dt.datetime
@@ -220,7 +266,9 @@ class TestMissedCalls(unittest.TestCase):
 		]
 		rows = I.missed_calls(calls, self.NOW, 4)
 		self.assertEqual([r["name"] for r in rows], ["c", "d", "b"], "first-time first, then newest")
-		self.assertEqual({r["name"]: r["state"] for r in rows}, {"c": "missed", "d": "waiting", "b": "missed"})
+		self.assertEqual(
+			{r["name"]: r["state"] for r in rows}, {"c": "missed", "d": "waiting", "b": "missed"}
+		)
 
 
 class TestSmallRules(unittest.TestCase):
@@ -238,15 +286,57 @@ class TestSmallRules(unittest.TestCase):
 		self.assertIsNone(I.drop_alert(None, 100, 0.3, 50))
 
 	def test_index(self):
-		hits = I.index_alerts({"/a": "PASS", "/b": "NEUTRAL"}, {"/a": "NEUTRAL", "/b": "NEUTRAL", "/c": "FAIL", "/d": "PASS"})
+		hits = I.index_alerts(
+			{"/a": "PASS", "/b": "NEUTRAL"}, {"/a": "NEUTRAL", "/b": "NEUTRAL", "/c": "FAIL", "/d": "PASS"}
+		)
 		self.assertEqual(sorted(h["url"] for h in hits), ["/a", "/c"])
 
 	def test_reviews_and_throttle(self):
-		self.assertEqual(len(I.low_reviews([{"star_rating": 2}, {"star_rating": 3}, {"star_rating": None}], 2)), 1)
+		self.assertEqual(
+			len(I.low_reviews([{"star_rating": 2}, {"star_rating": 3}, {"star_rating": None}], 2)), 1
+		)
 		now = dt.datetime(2026, 10, 29, 6, 15)
 		self.assertTrue(I.throttle_due(None, now, 24))
 		self.assertFalse(I.throttle_due(now - dt.timedelta(hours=23), now, 24))
 		self.assertTrue(I.throttle_due(now - dt.timedelta(hours=24), now, 24))
+
+	def test_a_record_alert_goes_once_ever(self):
+		now = dt.datetime(2026, 10, 30, 6, 16)
+		sent = now - dt.timedelta(hours=25)
+		self.assertTrue(I.alert_due("call:CA1", None, now, 24))
+		self.assertFalse(I.alert_due("call:CA1", sent, now, 24), "a missed call is reported once")
+		self.assertFalse(I.alert_due("review:GBPR-1-x", sent, now, 24))
+		self.assertTrue(
+			I.alert_due("drop:sessions:2026-W44", sent, now, 24), "a state alert keeps its throttle"
+		)
+		self.assertFalse(I.alert_due("index:abc:FAIL", now - dt.timedelta(hours=3), now, 24))
+
+	def test_new_reviews_by_googles_own_time(self):
+		since = dt.datetime(2026, 10, 28, 6, 0)
+		rows = [
+			{"name": "old", "create_time": dt.datetime(2024, 3, 1)},  # first seen tonight, written in 2024
+			{"name": "new", "create_time": dt.datetime(2026, 10, 29, 9, 0)},
+			{"name": "none", "create_time": None},
+		]
+		self.assertEqual([r["name"] for r in I.new_since(rows, since)], ["new"])
+
+	def test_markdown_escape(self):
+		text = I.md_escape("Great [job](https://x.example) | 5*\nline two", 200)
+		self.assertNotIn("](", text.replace("\\]", ""))
+		self.assertIn("\\[job\\]\\(https://x.example\\)", text)
+		self.assertIn("\\|", text)
+		self.assertNotIn("\n", text)
+		self.assertEqual(len(I.md_escape("x" * 300, 120)), 120)
+
+	def test_prorated_spend(self):
+		self.assertAlmostEqual(I.prorated(3100, D(2026, 10, 1), D(2026, 10, 1), D(2026, 10, 31)), 3100)
+		self.assertAlmostEqual(I.prorated(3100, D(2026, 10, 1), D(2026, 10, 25), D(2026, 10, 31)), 700)
+		self.assertAlmostEqual(I.prorated(2800, D(2026, 2, 1), D(2026, 1, 15), D(2026, 2, 7)), 700)
+		self.assertEqual(I.prorated(1000, D(2026, 9, 1), D(2026, 10, 1), D(2026, 10, 7)), 0.0)
+		halves = I.prorated(3000, D(2026, 9, 1), D(2026, 9, 1), D(2026, 9, 15)) + I.prorated(
+			3000, D(2026, 9, 1), D(2026, 9, 16), D(2026, 9, 30)
+		)
+		self.assertAlmostEqual(halves, 3000, msg="adjacent ranges never count a month twice")
 
 	def test_weeks(self):
 		self.assertEqual(I.last_week(D(2026, 11, 2)), (D(2026, 10, 26), D(2026, 11, 1)))  # a Monday
@@ -265,7 +355,9 @@ class TestSmallRules(unittest.TestCase):
 		self.assertEqual(m[0][9], 2)
 		self.assertEqual(sum(map(sum, m)), 2)
 		t = dt.datetime(2026, 10, 1, 9)
-		self.assertEqual(I.median_hours([(t, t + dt.timedelta(hours=2)), (t, t + dt.timedelta(hours=4)), (t, None)]), 3)
+		self.assertEqual(
+			I.median_hours([(t, t + dt.timedelta(hours=2)), (t, t + dt.timedelta(hours=4)), (t, None)]), 3
+		)
 		self.assertIsNone(I.median_hours([(t, None)]))
 
 
@@ -286,30 +378,94 @@ class TestDigest(unittest.TestCase):
 		self.assertIn("| Inbound calls | 4 | 0 | 3 |", text, "no change against a zero")
 		self.assertIn("**Missed calls:** 1", text)
 		self.assertNotIn("New reviews", text)
+		hostile = I.digest_markdown(
+			{
+				"week": (D(2026, 10, 26), D(2026, 11, 1)),
+				"metrics": [],
+				"movers": [("/a|b", "+1 sessions")],
+				"missed_calls": [],
+				"new_reviews": ["1★ see [here](https://evil.example)\nnext"],
+			}
+		)
+		self.assertNotIn("](https://evil", hostile)
+		self.assertIn("/a\\|b", hostile)
 		self.assertIn("[Open Marketing Performance](https://erp.example/desk/marketing-performance)", text)
 
 
 class TestTrackedLinks(unittest.TestCase):
 	def test_builder(self):
-		url = I.tracked_url("https://www.sapphirefountains.com/rentals/?utm_id=9&utm_source=x&ref=a#top", "Fall Flyer", "QR", "Parade of Homes 2026")
+		url = I.tracked_url(
+			"https://www.sapphirefountains.com/rentals/?utm_id=9&utm_source=x&ref=a#top",
+			"Fall Flyer",
+			"QR",
+			"Parade of Homes 2026",
+		)
 		self.assertEqual(
 			url,
 			"https://www.sapphirefountains.com/rentals/?ref=a&utm_source=fall-flyer&utm_medium=qr&utm_campaign=parade-of-homes-2026#top",
 		)
 		self.assertNotIn("utm_id", url)
-		self.assertEqual(I.tracked_url("https://sapphirefountains.com", "truck", "qr", "fleet"), "https://sapphirefountains.com/?utm_source=truck&utm_medium=qr&utm_campaign=fleet")
+		self.assertEqual(
+			I.tracked_url("https://sapphirefountains.com", "truck", "qr", "fleet"),
+			"https://sapphirefountains.com/?utm_source=truck&utm_medium=qr&utm_campaign=fleet",
+		)
 
 	def test_refusals(self):
-		for destination in ("https://example.com/", "ftp://sapphirefountains.com/", "sapphirefountains.com.evil.com/", ""):
+		for destination in (
+			"https://example.com/",
+			"ftp://sapphirefountains.com/",
+			"sapphirefountains.com.evil.com/",
+			"",
+		):
 			with self.subTest(destination=destination), self.assertRaises(ValueError):
 				I.tracked_url(destination, "a", "b", "c")
 		with self.assertRaises(ValueError):
 			I.tracked_url("https://www.sapphirefountains.com/", "", "qr", "c")
 
 
+class TestEachReportOpensForItsAudience(unittest.TestCase):
+	"""Frappe checks ``has_permission(ref_doctype, "report")`` before a Script Report's ``execute`` runs, so a
+	role a report lists but its ``ref_doctype`` refuses gets an error, not the report. And the marketing
+	roles must never be given report access to Opportunity or Call Log to make one work: that would open
+	amounts and every call in Report View."""
+
+	REPORTS = (
+		"inquiry_sources",
+		"search_queries",
+		"near_page_one",
+		"fading_pages",
+		"service_line_funnel",
+		"missed_calls",
+	)
+	NEVER = {"Opportunity", "Call Log", "Lead", "Customer", "Quotation"}
+
+	def doctype(self, name):
+		for path in APP.rglob("doctype/*/*.json"):
+			if path.parent.name == path.stem:
+				doc = json.loads(path.read_text(encoding="utf-8"))
+				if doc.get("name") == name and doc.get("doctype") == "DocType":
+					return doc
+		raise AssertionError(f"no DocType {name} in this app")
+
+	def test_every_listed_role_has_report_permission_on_ref_doctype(self):
+		for folder in self.REPORTS:
+			report = json.loads(
+				(MARKETING / "report" / folder / f"{folder}.json").read_text(encoding="utf-8")
+			)
+			with self.subTest(report=report["name"]):
+				self.assertNotIn(report["ref_doctype"], self.NEVER)
+				perms = self.doctype(report["ref_doctype"])["permissions"]
+				allowed = {p["role"] for p in perms if p.get("read") and p.get("report")}
+				self.assertLessEqual({r["role"] for r in report["roles"]}, allowed)
+
+
 class TestNoAlertShipsDormant(unittest.TestCase):
 	def test_settings_defaults(self):
-		doc = json.loads((MARKETING / "doctype" / "marketing_settings" / "marketing_settings.json").read_text(encoding="utf-8"))
+		doc = json.loads(
+			(MARKETING / "doctype" / "marketing_settings" / "marketing_settings.json").read_text(
+				encoding="utf-8"
+			)
+		)
 		fields = {f["fieldname"]: f for f in doc["fields"]}
 		self.assertEqual(fields["alerts_paused"]["default"], "0", "alerts run from day one")
 		self.assertEqual(fields["alert_roles"]["default"], "Marketing Manager")

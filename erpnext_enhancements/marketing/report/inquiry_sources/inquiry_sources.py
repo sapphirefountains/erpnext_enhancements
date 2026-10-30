@@ -9,6 +9,11 @@ Count, won, win rate, won value and the median days from inquiry to won
 gap, not a channel. The source is ``custom_lead_source``, never ``source`` (the frozen pre-2023
 column). Won value is financial, so it is shown only to System Manager, Sales Manager and Marketing
 Manager. The rules are ``performance.insights.inquiry_sources``; this file only fetches.
+
+Its ``ref_doctype`` is GA4 Daily Metric, not Opportunity: Frappe checks report permission on the
+``ref_doctype`` before ``execute`` runs, and giving the marketing roles report rights on Opportunity would open
+every Opportunity's amount in Report View. The marketing roles read and report on their own daily figures; the checks inside
+``execute`` decide the rest.
 """
 
 import frappe
