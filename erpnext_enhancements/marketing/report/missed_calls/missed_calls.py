@@ -11,7 +11,10 @@ flagged and listed first. One still inside its window reads *waiting*.
 Whether a call was called back is decided on **every** call, so a callback the viewer cannot see
 still counts; then **Call Log's own permissions apply and are never widened**: only the calls
 ``frappe.get_list`` lets the viewer open are shown (``calls.call_rows(respect_permissions=True)``), so a
-person sees only the calls they may already open, numbers included.
+person sees only the calls they may already open. **Who called** -- the Caller and Number columns and
+their values -- is further limited to the call-detail roles (``rules.CALL_DETAIL_ROLES``, System
+Manager and Sales Manager), as on the page: Employee reads Call Log, and most of the marketing roles'
+users hold Employee (``insights.missed_calls_table``).
 
 Its ``ref_doctype`` is GA4 Daily Metric, not Call Log: Frappe checks report permission on the
 ``ref_doctype`` before ``execute`` runs, and giving the marketing roles report rights on Call Log would open
@@ -43,6 +46,7 @@ def execute(filters=None):
 	]
 	for row in rows:
 		row["first_time"] = 1 if row.get("first_time") else 0
+	fields, rows = insights.missed_calls_table(rows, rules.views_for(frappe.get_roles())["call_details"])
 	columns = [
 		{"label": _("When"), "fieldname": "at", "fieldtype": "Datetime", "width": 160},
 		{"label": _("First Time"), "fieldname": "first_time", "fieldtype": "Check", "width": 90},
@@ -58,4 +62,4 @@ def execute(filters=None):
 			"width": 200,
 		},
 	]
-	return columns, rows
+	return [c for c in columns if c["fieldname"] in fields], rows

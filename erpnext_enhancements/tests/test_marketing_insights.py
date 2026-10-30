@@ -459,6 +459,58 @@ class TestEachReportOpensForItsAudience(unittest.TestCase):
 				self.assertLessEqual({r["role"] for r in report["roles"]}, allowed)
 
 
+class TestMissedCallsShowWhoCalledOnlyToCallDetailRoles(unittest.TestCase):
+	"""Re-review of #1387: R6 checked only Call Log read, which Employee holds, so a Marketing Team user
+	holding Employee saw who called. The page and #1386 limit that to System Manager and Sales Manager."""
+
+	ROWS = [
+		{
+			"name": "CL-1",
+			"at": dt.datetime(2026, 10, 27, 9, 12),
+			"type": "Incoming",
+			"status": "No Answer",
+			"caller": "Some Customer",
+			"number": "+18015550100",
+			"first_time": 1,
+			"state": "missed",
+		}
+	]
+
+	def test_marketing_roles_get_neither_the_columns_nor_the_values(self):
+		from erpnext_enhancements.marketing.performance import rules
+
+		for roles in (["Marketing Team", "Employee"], ["Marketing Manager", "Employee"]):
+			with self.subTest(roles=roles):
+				fields, rows = I.missed_calls_table(self.ROWS, rules.views_for(roles)["call_details"])
+				self.assertNotIn("caller", fields)
+				self.assertNotIn("number", fields)
+				self.assertEqual(set(rows[0]), set(fields), "nothing beyond the columns shown")
+				self.assertNotIn("Some Customer", json.dumps(rows, default=str))
+				self.assertNotIn("5550100", json.dumps(rows, default=str))
+				self.assertEqual(rows[0]["name"], "CL-1", "the Call Log link stays")
+
+	def test_call_detail_roles_see_who_called(self):
+		from erpnext_enhancements.marketing.performance import rules
+
+		for roles in (["Sales Manager"], ["System Manager"]):
+			with self.subTest(roles=roles):
+				fields, rows = I.missed_calls_table(self.ROWS, rules.views_for(roles)["call_details"])
+				self.assertEqual(list(fields), list(I.MISSED_CALL_COLUMNS))
+				self.assertEqual((rows[0]["caller"], rows[0]["number"]), ("Some Customer", "+18015550100"))
+
+	def test_the_report_uses_it(self):
+		source = (MARKETING / "report" / "missed_calls" / "missed_calls.py").read_text(encoding="utf-8")
+		self.assertIn(
+			'insights.missed_calls_table(rows, rules.views_for(frappe.get_roles())["call_details"])', source
+		)
+		self.assertIn('if c["fieldname"] in fields', source)
+		report = json.loads(
+			(MARKETING / "report" / "missed_calls" / "missed_calls.json").read_text(encoding="utf-8")
+		)
+		columns = {c.get("fieldname") for c in report.get("columns") or ()}
+		self.assertFalse(columns & {"caller", "number"}, "no static column brings them back")
+
+
 class TestNoAlertShipsDormant(unittest.TestCase):
 	def test_settings_defaults(self):
 		doc = json.loads(

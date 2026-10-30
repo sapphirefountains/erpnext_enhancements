@@ -387,6 +387,23 @@ def missed_calls(calls, now, callback_hours=DEFAULT_CALLBACK_HOURS):
 	return out
 
 
+#: The Missed Calls report's columns, in order. ``caller`` and ``number`` say who called, and are left out
+#: -- columns and values both -- for anyone without call-detail rights (``rules.CALL_DETAIL_ROLES``).
+MISSED_CALL_COLUMNS = ("at", "first_time", "state", "caller", "number", "status", "name")
+WHO_CALLED = ("caller", "number")
+
+
+def missed_calls_table(rows, call_details):
+	"""``(fieldnames, rows)`` the Missed Calls report shows a viewer.
+
+	``call_details`` is ``rules.views_for(roles)["call_details"]``. Without it the caller and the number
+	are dropped from the columns **and** from every row, not just hidden: a Script Report hands its rows
+	to the browser whole, and Call Log read alone (which Employee holds) is not leave to see who called.
+	"""
+	fields = [f for f in MISSED_CALL_COLUMNS if call_details or f not in WHO_CALLED]
+	return fields, [{f: row.get(f) for f in fields} for row in rows or ()]
+
+
 def weekday_hour_matrix(calls):
 	"""``matrix[weekday][hour]`` incoming calls (Monday 0), for the Inquiries tab's heat map."""
 	matrix = [[0] * 24 for _ in range(7)]

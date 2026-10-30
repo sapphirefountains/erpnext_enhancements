@@ -190,6 +190,10 @@ def review_checks(today, settings):
 	Not "first seen" by this app: the first night Business Profile answers, every review the listing
 	ever had is first seen, and alerting on them would mail its whole history. ``low_review_stars`` 0
 	turns this alert off.
+
+	The cost of that rule, accepted: a review Google surfaces more than two days after it was written
+	(held for moderation, or a night the pull failed for longer) is never alerted. It is still stored as
+	a Business Profile Review row and counted in the listing's rating.
 	"""
 	stars = cint(settings.get("low_review_stars"))
 	if stars <= 0 or not frappe.db.exists("DocType", REVIEW):

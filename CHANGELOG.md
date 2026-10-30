@@ -138,6 +138,12 @@ on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, pro
   links read back.
 
 ### Fixed before merge (independent review of the draft)
+- **Missed Calls (R6) shows who called only to System Manager and Sales Manager.** With its
+  `ref_doctype` on GA4 Daily Metric the marketing roles open it, and its only check was Call Log
+  read, which Employee holds, as do most of the marketing roles' users. The Caller and Number columns
+  and their values are now left out for anyone without call-detail rights (`rules.CALL_DETAIL_ROLES`,
+  the page's rule), via `insights.missed_calls_table`. The Call Log link stays, and Call Log's own
+  permissions still decide which calls are listed.
 - **Restacked on 1.756.1.** Its review fixes carry through here: the low-review alert's two-day
   window is measured from the site's clock, since review times are now stored in site time, not UTC;
   the source health error text is System Manager only on this page too; and a Tracked Link's
