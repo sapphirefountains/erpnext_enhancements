@@ -114,7 +114,13 @@ def _web_totals(start, end):
 
 
 def _opportunities(start, end):
-	"""Opportunities created in the range: day, Customer, Contact, source."""
+	"""Opportunities created in the range: day, Customer, Contact, source.
+
+	Historical deals (imported closed work, ``crm_enhancements.historical``) are left out, as every other
+	Opportunity count in this app leaves them out: an import dated into the range is not an inquiry.
+	"""
+	from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
 	source = "o.custom_lead_source" if _has_column("Opportunity", "custom_lead_source") else "null"
 	title = (
 		"coalesce(nullif(o.custom_opportunity_name, ''), o.title, o.name)"
@@ -125,7 +131,7 @@ def _opportunities(start, end):
 		f"""select o.name, o.creation, o.opportunity_from, o.party_name, o.contact_person, o.status,
 			{source} as lead_source, {title} as title
 		from `tabOpportunity` o
-		where o.creation >= %s and o.creation < %s
+		where o.creation >= %s and o.creation < %s and {exclude_sql("o")}
 		order by o.creation desc""",
 		(start, _end_exclusive(end)),
 		as_dict=True,
@@ -365,6 +371,8 @@ def _social(start, end):
 				"account": r.social_account,
 				"name": r.account_name or r.social_account,
 				"network": r.network,
+				# The sum of each day's reach, labelled so on the page: one person reached on two days counts
+				# twice, and no network serves a de-duplicated reach for an arbitrary range.
 				# YouTube reports no reach; its rows hold the column's 0, which is not a figure.
 				"reach": cint(r.reach) if r.reach is not None and r.network != "YouTube" else None,
 				"follower_gain": cint(r.follower_gain) if r.network in ("LinkedIn", "YouTube") else None,
@@ -378,7 +386,13 @@ def _social(start, end):
 # ---------------------------------------------------------------- health
 
 
-def _health(today, ga_cover, gsc_cover, gbp, social, spend):
+#: What everyone but a System Manager sees in place of a failed pull's error. The error text is a
+#: connector's own message: it names the service account, the property and the API's refusal, which
+#: is for the person who can fix it, not for every reader of the page.
+FAILED_PULL_TEXT = "Failed. A System Manager can see why on the Marketing Sync Log."
+
+
+def _health(today, ga_cover, gsc_cover, gbp, social, spend, operator=False):
 	def web(name, cover):
 		if cover is None:
 			return {"name": name, "state": "empty", "detail": _("Nothing stored yet. Run the backfill.")}
@@ -404,7 +418,9 @@ def _health(today, ga_cover, gsc_cover, gbp, social, spend):
 				"date": str(rows[0].snapshot_date),
 				"ga4_ok": bool(rows[0].ga4_ok),
 				"gsc_ok": bool(rows[0].gsc_ok),
-				"error": (rows[0].pull_error or "").strip(),
+				"error": (rows[0].pull_error or "").strip()
+				if operator
+				else (_(FAILED_PULL_TEXT) if (rows[0].pull_error or "").strip() else ""),
 			}
 	sources.append(
 		{
@@ -434,7 +450,7 @@ def _health(today, ga_cover, gsc_cover, gbp, social, spend):
 	last_runs = []
 	if _exists("Marketing Sync Log"):
 		last_runs = frappe.db.sql(
-			"""select platform, sync_type, status, started_at, finished_at, window_from, window_to,
+			"""select platform, sync_type, scope, status, started_at, finished_at, window_from, window_to,
 				progress_through, created_count, error_message
 			from `tabMarketing Sync Log`
 			where platform in ('Google Analytics 4', 'Search Console', 'Google Business Profile', 'Social Pages')
@@ -447,7 +463,9 @@ def _health(today, ga_cover, gsc_cover, gbp, social, spend):
 		"runs": [
 			{
 				**{k: (str(v) if v is not None else None) for k, v in r.items() if k != "error_message"},
-				"error": (r.error_message or "")[:300],
+				"error": (r.error_message or "")[:300]
+				if operator
+				else (_(FAILED_PULL_TEXT) if r.error_message else ""),
 			}
 			for r in last_runs
 		],
@@ -598,6 +616,6 @@ def get_performance(from_date=None, to_date=None, compare=0):
 		"spend": spend,
 		"business_profile": gbp,
 		"social": social,
-		"health": _health(today, ga_cover, gsc_cover, gbp, social, spend),
+		"health": _health(today, ga_cover, gsc_cover, gbp, social, spend, operator=views["operator"]),
 		"generated_at": str(get_datetime()),
 	}

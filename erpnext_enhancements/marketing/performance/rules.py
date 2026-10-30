@@ -143,6 +143,54 @@ def history_window(earliest, today, lag_days=1):
 	return earliest, end
 
 
+#: A failed backfill waits this long before the nightly run resumes it, doubled with each retry ...
+BACKFILL_BACKOFF_HOURS = 6
+#: ... and never longer than a week, so one that keeps failing is still tried weekly, not abandoned.
+BACKFILL_BACKOFF_CAP_HOURS = 7 * 24
+
+
+def backfill_start(window_from, progress_through):
+	"""Where a backfill (re)starts: the day after its cursor, or its first day when it has none."""
+	if progress_through:
+		return progress_through + datetime.timedelta(days=1)
+	return window_from
+
+
+def backfill_backoff(retries):
+	"""How long a failed backfill waits before its ``retries + 1``-th automatic resume."""
+	hours = BACKFILL_BACKOFF_HOURS * 2 ** max(int(retries or 0), 0)
+	return datetime.timedelta(hours=min(hours, BACKFILL_BACKOFF_CAP_HOURS))
+
+
+def backfill_plan(logs, now, manual=False):
+	"""What to do about one source's (or one account's, one listing's) backfill: ``(action, log)``.
+
+	``logs`` are its Backfill logs, newest first, as dicts with ``name``, ``status``, ``retry_count``
+	and ``finished_at`` / ``started_at`` / ``creation``. ``action`` is one of:
+
+	* ``"open"``: one is Queued or Running; leave it (``log`` is its name).
+	* ``"resume"``: the newest **failed**, from its cursor -- by hand at once, automatically once
+	  ``backfill_backoff(retry_count)`` has passed since it stopped. Never from the beginning: the
+	  windows before its cursor are stored.
+	* ``"create"``: never backfilled; or asked for by hand after one completed.
+	* ``"skip"``: completed (only *Completed* counts as done), or failed and still backing off.
+	"""
+	for log in logs:
+		if log.get("status") in ("Queued", "Running"):
+			return "open", log.get("name")
+	if not logs:
+		return "create", None
+	newest = logs[0]
+	if newest.get("status") == "Completed":
+		return ("create", None) if manual else ("skip", None)
+	if manual:
+		return "resume", newest.get("name")
+	stopped = newest.get("finished_at") or newest.get("started_at") or newest.get("creation")
+	if stopped is None or now >= stopped + backfill_backoff(newest.get("retry_count")):
+		return "resume", newest.get("name")
+	return "skip", None
+
+
 def months_back(today, months):
 	"""The same day ``months`` calendar months before ``today``, clamped to the month's last day."""
 	month = today.month - 1 - months
@@ -580,18 +628,24 @@ def phone_key(number):
 	return digits[-10:] if len(digits) >= 7 else ""
 
 
+def _call_order(call):
+	return (call["day"], str(call.get("at") or ""), call.get("name") or "")
+
+
 def summarize_calls(calls, opportunities, start, end, window_days=CALL_TO_OPPORTUNITY_DAYS):
 	"""Incoming calls per day, first-time callers, and how many became an Opportunity.
 
 	``calls``: every incoming call up to ``end`` (earlier ones too, so "first time" can look back):
-	``{name, day, number, customers, contacts}``. ``opportunities``: ``{name, day, customer,
+	``{name, day, at, number, customers, contacts}``, ``at`` its creation time: calls are ordered by
+	it, so two calls from one number on one day are first and repeat in the order they came in, not
+	in the order of their names (v1.756.1). ``opportunities``: ``{name, day, customer,
 	contact}`` created from ``start`` on. A call is **first-time** when no earlier call came from its
 	number; a call with no number is never first-time, because nothing can say it is. A call
 	**became an Opportunity** when an Opportunity for one of its Customers or Contacts was created
 	that day or in the ``window_days`` after it. Each Opportunity is credited to one call at most,
 	the latest before it, so a customer who called three times about one job is one conversion.
 	"""
-	calls = sorted(calls or (), key=lambda c: (c["day"], c.get("name") or ""))
+	calls = sorted(calls or (), key=_call_order)
 	seen = set()
 	first_time = set()
 	for call in calls:
@@ -611,9 +665,7 @@ def summarize_calls(calls, opportunities, start, end, window_days=CALL_TO_OPPORT
 			matches = (opp.get("customer") and opp["customer"] in (call.get("customers") or ())) or (
 				opp.get("contact") and opp["contact"] in (call.get("contacts") or ())
 			)
-			if matches and (
-				best is None or (call["day"], call.get("name") or "") > (best["day"], best.get("name") or "")
-			):
+			if matches and (best is None or _call_order(call) > _call_order(best)):
 				best = call
 		if best is not None:
 			converted.setdefault(best.get("name"), []).append(opp.get("name"))

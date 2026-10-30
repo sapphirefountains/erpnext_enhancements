@@ -519,6 +519,42 @@ class TransientRetryTests(unittest.TestCase):
 		self.assertTrue(caught.exception.__suppress_context__, "raised from None")
 		self.assertIn("TimeoutError: The read operation timed out", str(caught.exception))
 
+	def test_a_busy_answer_is_retried_only_when_asked(self):
+		# v1.756.1: the daily pull and the backfill pass busy=True; the snapshot fails fast as before.
+		class BusyThenFine:
+			def __init__(self, failures):
+				self.failures = list(failures)
+				self.calls = 0
+
+			def execute(self, http=None):
+				self.calls += 1
+				if self.failures:
+					raise self.failures.pop(0)
+				return {"rows": []}
+
+		request = BusyThenFine([HttpError(429), HttpError(503)])
+		self.assertEqual(analytics._gsc_execute(request, CREDS, "page", busy=True), {"rows": []})
+		self.assertEqual(request.calls, 3)
+		self.assertEqual(self.sleeps, [analytics.GSC_BUSY_BACKOFF_SECONDS, analytics.GSC_BUSY_BACKOFF_SECONDS * 2])
+
+		self.sleeps.clear()
+		request = BusyThenFine([HttpError(503)])
+		with self.assertRaises(HttpError):
+			analytics._gsc_execute(request, CREDS, "page")
+		self.assertEqual((request.calls, self.sleeps), (1, []))
+
+		for status in (400, 403, 404):
+			with self.subTest(status=status):
+				request = BusyThenFine([HttpError(status)])
+				with self.assertRaises(HttpError):
+					analytics._gsc_execute(request, CREDS, "page", busy=True)
+				self.assertEqual(request.calls, 1, "a refusal is the same answer next time")
+
+		request = BusyThenFine([HttpError(503)] * analytics.GSC_ATTEMPTS)
+		with self.assertRaises(analytics.GscUnavailable) as caught:
+			analytics._gsc_execute(request, CREDS, "page", busy=True)
+		self.assertIn("after 3 attempts", str(caught.exception))
+
 
 # ---------------------------------------------------------------- the credentials
 

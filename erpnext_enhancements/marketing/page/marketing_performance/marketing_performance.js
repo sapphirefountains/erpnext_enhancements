@@ -735,7 +735,8 @@ class MarketingPerformancePage {
 				{ label: __("Network") },
 				{ label: __("Followers"), num: true },
 				{ label: __("Net new"), num: true },
-				{ label: __("Reach"), num: true },
+				// Each day's reach added up: a person reached on two days counts twice.
+				{ label: __("Daily reach, summed"), num: true },
 				{ label: __("Views"), num: true },
 			],
 			s.accounts.map((a) => [
@@ -765,7 +766,7 @@ class MarketingPerformancePage {
 				this.table(
 					[{ label: __("Source") }, { label: __("Kind") }, { label: __("Status") }, { label: __("Window") }, { label: __("Rows"), num: true }, { label: __("Error") }],
 					h.runs.map((r) => [
-						this.esc(r.platform),
+						this.esc(r.platform + (r.scope ? " · " + r.scope : "")),
 						this.esc(r.sync_type),
 						this.chip(r.status, r.status === "Completed" ? "good" : r.status === "Failed" ? "danger" : "neutral"),
 						this.esc([r.window_from, r.window_to].filter(Boolean).join(" → ") + (r.progress_through ? " (" + __("done through {0}", [r.progress_through]) + ")" : "")),
