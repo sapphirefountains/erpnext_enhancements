@@ -483,7 +483,7 @@ def alert_due(key, last_sent, now, hours):
 
 
 def new_since(reviews, since):
-	"""The reviews Google says were written at or after ``since`` (a naive UTC datetime).
+	"""The reviews Google says were written at or after ``since`` (naive, in site time like ``create_time``).
 
 	Judged by the review's own ``create_time``, never by when this app first saw it: the first night
 	Business Profile answers, every review the listing ever had is new *to us*, and none of them is news.

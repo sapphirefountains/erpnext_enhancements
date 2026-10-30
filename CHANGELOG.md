@@ -138,6 +138,10 @@ on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, pro
   links read back.
 
 ### Fixed before merge (independent review of the draft)
+- **Restacked on 1.756.1.** Its review fixes carry through here: the low-review alert's two-day
+  window is measured from the site's clock, since review times are now stored in site time, not UTC;
+  the source health error text is System Manager only on this page too; and a Tracked Link's
+  inquiries leave historical Opportunities out, like every other Opportunity count.
 - **A missed call or a review alerts once, ever.**
   - Those checks read two days back so a missed night is caught up. With only the 24-hour throttle, the
     same call could go out three times and the same review twice.
@@ -183,6 +187,53 @@ on the history it keeps. Checked against frappe 16.53.0 and erpnext 16.52.1, pro
 - Marketing Team's DocPerms now include Marketing Event and Tracked Link (read, write, create). Both
   are in the Marketing module and hold no financials. Marketing Manager also reads Key Page Check and
   Marketing Alert.
+
+## [1.756.1] - 2026-10-29
+
+ERPNext: TASK-2026-03013 (PRJ-00580). Fixes from an independent review of the 1.756.0 draft, before
+either merged. They ship together, so prod never runs 1.756.0 on its own.
+
+**What the deploy adds to 1.756.0's.** Migrate adds a **Scope** field to Marketing Sync Log. No
+patch: no Backfill log exists anywhere until 1.756.0 deploys. `api.analytics.get_ga4_data` and
+`get_gsc_data` stop being whitelisted, so `/api/method` refuses them; nothing in a browser has
+called them since 1.756.0, and the nightly snapshot calls them in-process.
+
+### Fixed
+- **A failed history backfill now resumes from where it stopped.** In 1.756.0 a backfill counted as
+  done once *any* Backfill log existed, so one that failed in its third window never ran again by
+  itself, and starting it by hand opened a new log from the first day. Only a *Completed* log
+  counts as done now (`rules.backfill_plan`):
+  - **Automatically:** the nightly run resumes the newest *Failed* log from its cursor
+    (`progress_through`) once a backoff has passed. The backoff is 6 hours, doubling with each
+    automatic retry (`retry_count`), and never more than a week, so one that keeps failing is
+    still tried weekly.
+  - **By hand:** the page's *Backfill marketing history* and `web_sync.backfill` resume a failed
+    log at once. A completed one is run again in full, which is what asking for it by hand means.
+  - The windows before the cursor are never read again (`rules.backfill_start`).
+- **A second Business Profile listing or social account gets its own history.** The backfill was
+  keyed per source, so an account connected after the first one's backfill got only the nightly
+  window. Each listing (by location ID) and each Social Account now has a backfill of its own,
+  told apart by the log's new **Scope**. GA4 and Search Console have one history each and no scope.
+- **Search Console retries a busy answer in the daily pull and the backfill.** A 429 or a 5xx
+  failed the whole run. `_gsc_execute(..., busy=True)` now retries those three times, waiting 15
+  and then 30 seconds; a refusal (400, 403, 404) is still not retried, since it is the same answer
+  the next time. The nightly 30-day snapshot keeps failing fast, as its tests pin.
+- **Source health shows a pull's error text to System Managers only.** Others see that it failed,
+  and that a System Manager can see why on the Marketing Sync Log. The text is a connector's own
+  message and names the service account and the property.
+- **Historical Opportunities are left out of the page's Opportunity count**, the funnel and the
+  call conversions, with `crm_enhancements.historical.exclude_sql`, as the Closed Won count
+  already was and as every other Opportunity count in the app is.
+- **Business Profile review times are stored in the site's time zone, not UTC.** A Frappe Datetime
+  is naive and read as site time, so a review written in the evening, Mountain time, was dated the
+  next day.
+- **Two calls from one number on one day are ordered by when they came in**, not by name. By name,
+  a call named `…-10` sorted before `…-9`, so the call back could count as the first-time call.
+- **The social table's reach column is labelled "Daily reach, summed".** It adds up each day's
+  reach, so someone reached on two days counts twice. No network serves a de-duplicated reach for
+  an arbitrary range.
+- A comment in `setup/custom_html_blocks.py` named a patch that does not exist; the accessibility
+  test declared `PERFORMANCE` twice.
 
 ## [1.756.0] - 2026-10-29
 

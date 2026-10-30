@@ -359,6 +359,24 @@ class TestCalls(unittest.TestCase):
 		self.assertEqual(out["first_time_unconverted"], 2)
 		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0, "first_time_unconverted": 1})
 
+	def test_one_day_is_ordered_by_the_time_of_the_call(self):
+		# "CL-9" came in first and "CL-10" called back: by name, CL-10 < CL-9 and the repeat call would
+		# be the first-time one, and the later call would lose the credit.
+		calls = [
+			dict(
+				self.call("CL-10", D(2026, 10, 2), "+18015550111", customers=["Delta"]),
+				at="2026-10-02 15:00:00",
+			),
+			dict(
+				self.call("CL-9", D(2026, 10, 2), "+18015550111", customers=["Delta"]),
+				at="2026-10-02 09:00:00",
+			),
+		]
+		opps = [{"name": "OPP-9", "day": D(2026, 10, 2), "customer": "Delta", "contact": None}]
+		out = rules.summarize_calls(calls, opps, D(2026, 10, 1), D(2026, 10, 31))
+		self.assertEqual(out["first_time_names"], {"CL-9"})
+		self.assertEqual(out["converted"], {"CL-10": ["OPP-9"]}, "the latest call before it")
+
 	def test_phone_key(self):
 		self.assertEqual(rules.phone_key("+1 (801) 555-0100"), "8015550100")
 		self.assertEqual(rules.phone_key("8015550100"), "8015550100")
@@ -724,8 +742,12 @@ class TestKeepingTheHistory(unittest.TestCase):
 
 	def test_the_first_backfill_runs_once_by_itself(self):
 		source = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		logs = source[source.index("def _backfill_logs") : source.index("def _plan")]
+		self.assertIn('{"platform": source, "sync_type": "Backfill"}', logs, "every one, in any status")
+		self.assertIn('filters["scope"]', logs, "per account or listing, not per source")
 		body = source[source.index("def ensure_backfills") : source.index("def start_backfill")]
-		self.assertIn('{"platform": source, "sync_type": "Backfill"}', body, "never had one, in any status")
+		self.assertIn('for scope in spec["scopes"]()', body)
+		self.assertIn("manual=False", body)
 		nightly = source[source.index("def nightly_web_sync") : source.index("def run_nightly")]
 		self.assertIn("ensure_backfills()", nightly)
 		self.assertIn("resume_stalled_backfill()", nightly)
@@ -792,6 +814,12 @@ class TestKeepingTheHistory(unittest.TestCase):
 		self.assertEqual(
 			(second["review_id"], second["star_rating"], second["create_time"]), ("XyZ", None, None)
 		)
+		# In the site's zone when the sync passes one: 02:00 UTC is the evening before in Utah.
+		from zoneinfo import ZoneInfo
+
+		late = [{"reviews": [{"reviewId": "L", "createTime": "2026-10-02T02:00:00Z"}]}]
+		(row,) = gbp.parse_reviews(late, tz=ZoneInfo("America/Denver"))
+		self.assertEqual(row["create_time"], dt.datetime(2026, 10, 1, 20, 0))
 
 	def test_a_review_that_vanishes_is_marked_not_deleted(self):
 		source = (MARKETING / "gbp" / "sync.py").read_text(encoding="utf-8")
@@ -870,6 +898,113 @@ process.stdout.write(JSON.stringify(out));
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestBackfillResumes(unittest.TestCase):
+	"""v1.756.1, from the independent review of the draft: a failed backfill used to count as done, so
+	it never resumed by itself, and a retry by hand began again at the first day. Only *Completed* is
+	done now; a failed run resumes from its cursor, by itself after a backoff and at once by hand."""
+
+	NOW = dt.datetime(2026, 10, 30, 3, 40)
+
+	def log(self, status, hours_ago=1, retries=0, name="LOG-2"):
+		at = self.NOW - dt.timedelta(hours=hours_ago)
+		return {
+			"name": name,
+			"status": status,
+			"finished_at": at,
+			"started_at": at,
+			"creation": at,
+			"retry_count": retries,
+		}
+
+	def test_never_backfilled_starts_one(self):
+		self.assertEqual(rules.backfill_plan([], self.NOW), ("create", None))
+		self.assertEqual(rules.backfill_plan([], self.NOW, manual=True), ("create", None))
+
+	def test_a_completed_one_is_done_unless_asked_for(self):
+		done = [self.log("Completed", hours_ago=24 * 90)]
+		self.assertEqual(rules.backfill_plan(done, self.NOW), ("skip", None))
+		self.assertEqual(rules.backfill_plan(done, self.NOW, manual=True), ("create", None))
+
+	def test_a_failed_one_resumes_by_itself_after_its_backoff(self):
+		self.assertEqual(rules.backfill_plan([self.log("Failed", hours_ago=2)], self.NOW), ("skip", None))
+		self.assertEqual(
+			rules.backfill_plan([self.log("Failed", hours_ago=7)], self.NOW), ("resume", "LOG-2")
+		)
+		# The wait doubles with each automatic retry ...
+		self.assertEqual(rules.backfill_plan([self.log("Failed", 30, retries=3)], self.NOW), ("skip", None))
+		self.assertEqual(
+			rules.backfill_plan([self.log("Failed", 49, retries=3)], self.NOW), ("resume", "LOG-2")
+		)
+		# ... and stops at a week, so one that keeps failing is still tried weekly.
+		self.assertEqual(rules.backfill_backoff(20), dt.timedelta(days=7))
+		self.assertEqual(rules.backfill_plan([self.log("Failed", 24 * 7, retries=20)], self.NOW)[0], "resume")
+
+	def test_by_hand_a_failed_one_resumes_at_once(self):
+		self.assertEqual(
+			rules.backfill_plan([self.log("Failed", hours_ago=0)], self.NOW, manual=True), ("resume", "LOG-2")
+		)
+
+	def test_only_the_newest_counts(self):
+		# A hand re-run of a completed backfill that then failed is resumed, not treated as done.
+		logs = [self.log("Failed", hours_ago=8), self.log("Completed", hours_ago=24 * 30, name="LOG-1")]
+		self.assertEqual(rules.backfill_plan(logs, self.NOW), ("resume", "LOG-2"))
+
+	def test_an_open_one_is_left_to_run(self):
+		for status in ("Queued", "Running"):
+			logs = [self.log(status, name="LOG-3"), self.log("Failed", name="LOG-2")]
+			self.assertEqual(rules.backfill_plan(logs, self.NOW), ("open", "LOG-3"))
+			self.assertEqual(rules.backfill_plan(logs, self.NOW, manual=True), ("open", "LOG-3"))
+
+	def test_failed_then_resumed_reads_on_from_the_cursor(self):
+		window = (D(2025, 6, 1), D(2026, 10, 28))
+		pieces = rules.chunks(*window, 31)
+		# The run stored three windows and failed on the fourth: its cursor is the third one's end.
+		cursor = pieces[2][1]
+		start = rules.backfill_start(window[0], cursor)
+		self.assertEqual(start, pieces[3][0], "the failed window is read again, nothing before it")
+		resumed = rules.chunks(start, window[1], 31)
+		self.assertEqual(pieces[:3] + resumed, rules.chunks(*window, 31))
+		self.assertEqual(rules.backfill_start(window[0], None), window[0])
+
+	def test_a_resume_keeps_the_cursor(self):
+		source = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		plan = source[source.index("def _plan") : source.index("def ensure_backfills")]
+		resume = plan[plan.index('if action == "resume":') : plan.index('if action == "create":')]
+		self.assertIn('"status": "Queued"', resume)
+		self.assertNotIn("progress_through", resume, "a resume never moves the cursor back")
+		self.assertNotIn("window_from", resume)
+		run = source[source.index("def run_backfill") : source.index("def resume_stalled_backfill")]
+		self.assertIn("rules.backfill_start(", run)
+		self.assertIn('spec["pull"](chunk_start, chunk_end, log.scope or "")', run, "per account or listing")
+		manual = source[source.index("def backfill(") : source.index("def _enqueue_backfill")]
+		self.assertIn("manual=True", manual)
+
+	def test_each_account_and_listing_has_its_own_history(self):
+		for path in (MARKETING / "gbp" / "sync.py", MARKETING / "publish" / "page_stats.py"):
+			source = path.read_text(encoding="utf-8")
+			self.assertIn("def history_scopes():", source, path.name)
+			self.assertRegex(source, r"def history_earliest\(today, _?scope=None\):", path.name)
+			self.assertIn("def history_pull(start, end, scope=None):", source, path.name)
+		log = json.loads(
+			(MARKETING / "doctype" / "marketing_sync_log" / "marketing_sync_log.json").read_text(
+				encoding="utf-8"
+			)
+		)
+		self.assertIn("scope", {f["fieldname"] for f in log["fields"]})
+
+	def test_search_console_retries_a_busy_answer_in_the_pull(self):
+		analytics = (APP / "api" / "analytics.py").read_text(encoding="utf-8")
+		self.assertIn("GSC_BUSY = frozenset({429, 500, 502, 503, 504})", analytics)
+		reader = (MARKETING / "performance" / "web_sync.py").read_text(encoding="utf-8")
+		reader = reader[
+			reader.index("def gsc_reader") : reader.index(
+				"# ---------------------------------------------------------------- storage"
+			)
+		]
+		self.assertIn("request_body, busy=True", reader, "the first-site query")
+		self.assertIn("dimension.lower(),\n\t\t\t\t\tbusy=True", reader, "every page after it")
+
+
 class TestPageLogicUnderNode(unittest.TestCase):
 	def test_the_page_logic(self):
 		result = subprocess.run(

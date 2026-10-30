@@ -35,7 +35,6 @@ CONSOLE = APP / "device_management/page/device_console/device_console.js"
 INSPECTION = APP / "quality/page/inspection_wizard/inspection_wizard.js"
 GA4 = APP / "integration_hub/page/ga4_dashboard/ga4_dashboard.js"
 PERFORMANCE = APP / "marketing/page/marketing_performance/marketing_performance.js"
-PERFORMANCE = APP / "marketing/page/marketing_performance/marketing_performance.js"
 BLOCKS = APP / "custom_html_blocks"
 
 

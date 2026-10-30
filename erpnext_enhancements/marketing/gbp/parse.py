@@ -131,8 +131,13 @@ def summarize_reviews(pages):
 	return {"review_count": total, "average_rating": average, "unreplied_reviews": unreplied}
 
 
-def _utc(value):
-	"""A naive UTC ``datetime`` from Google's RFC 3339 time (``2026-10-01T12:34:56.123456Z``); None if blank."""
+def _moment(value, tz=None):
+	"""A naive ``datetime`` in ``tz`` (UTC without one) from Google's RFC 3339 time
+	(``2026-10-01T12:34:56.123456Z``); None if blank.
+
+	The sync passes the site's time zone, since a Frappe Datetime is naive and read as site time:
+	stored as UTC, a review written at 8 p.m. Mountain lands on the next day (v1.756.1).
+	"""
 	text = str(value or "").strip()
 	if not text:
 		return None
@@ -141,12 +146,14 @@ def _utc(value):
 	except ValueError:
 		return None
 	if moment.tzinfo is not None:
-		moment = moment.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+		moment = moment.astimezone(tz or datetime.timezone.utc).replace(tzinfo=None)
 	return moment.replace(microsecond=0)
 
 
-def parse_reviews(pages):
+def parse_reviews(pages, tz=None):
 	"""Every review on every page of ``reviews.list``, as the columns of Business Profile Review.
+
+	Times are naive, in ``tz`` (a ``tzinfo``; the site's time zone from the sync, UTC without one).
 
 	``review_id`` is Google's ``reviewId`` (the last part of ``name`` when it is missing). Stars are
 	Google's words turned into 1-5, None when unspecified.
@@ -164,10 +171,10 @@ def parse_reviews(pages):
 					"star_rating": STAR_VALUES.get(review.get("starRating")),
 					"reviewer_name": ((review.get("reviewer") or {}).get("displayName") or "")[:140],
 					"comment": review.get("comment") or "",
-					"create_time": _utc(review.get("createTime")),
-					"update_time": _utc(review.get("updateTime")),
+					"create_time": _moment(review.get("createTime"), tz),
+					"update_time": _moment(review.get("updateTime"), tz),
 					"reply_comment": reply.get("comment") or "",
-					"reply_time": _utc(reply.get("updateTime")),
+					"reply_time": _moment(reply.get("updateTime"), tz),
 				}
 			)
 	return out

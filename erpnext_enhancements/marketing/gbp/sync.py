@@ -22,8 +22,10 @@ a complete read no longer returns is marked *Gone From Google*, never deleted. T
 average and unreplied land on today's daily row too.
 """
 
+from zoneinfo import ZoneInfo
+
 import frappe
-from frappe.utils import cint, getdate, now_datetime, nowdate
+from frappe.utils import cint, get_system_timezone, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.marketing.core.client import MarketingAPIError, Transport
 from erpnext_enhancements.marketing.core.utils import field, get_credentials, get_settings, is_connected
@@ -165,7 +167,7 @@ def snapshot_reviews(transport, listing, today):
 		"reviews",
 	)
 	seen = set()
-	for review in parse.parse_reviews(pages):
+	for review in parse.parse_reviews(pages, tz=ZoneInfo(get_system_timezone())):
 		key = rules.value_key(review["review_id"])
 		seen.add(key)
 		name = f"GBPR-{location_id}-{key}"
@@ -220,16 +222,27 @@ def pull_listing(transport, listing, today):
 # ---------------------------------------------------------------- history (web_sync's backfill)
 
 
-def history_earliest(today):
-	"""The oldest day the Performance API serves: ``HISTORY_MONTHS`` back."""
+def history_scopes():
+	"""Each listing the token reaches, by ID: each has a backfill of its own, so one added later gets
+	its 18 months too, not just the nightly window."""
+	return [listing["location_id"] for listing in discover(open_transport())]
+
+
+def history_earliest(today, _scope=None):
+	"""The oldest day the Performance API serves: ``HISTORY_MONTHS`` back, the same for every listing."""
 	return rules.months_back(today, HISTORY_MONTHS)
 
 
-def history_pull(start, end, _on_chunk=None):
-	"""Every listing's daily figures for ``start..end``. Raises on failure, so the backfill's cursor stays."""
+def history_pull(start, end, scope=None):
+	"""One listing's daily figures for ``start..end`` (every listing's without a ``scope``).
+
+	Raises on failure, so the backfill's cursor stays. A listing no longer reachable writes nothing.
+	"""
 	transport = open_transport()
 	written = 0
 	for listing in discover(transport):
+		if scope and listing["location_id"] != scope:
+			continue
 		try:
 			written += pull_metrics(transport, listing, start, end)
 		except MarketingAPIError as exc:

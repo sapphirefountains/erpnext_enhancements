@@ -71,14 +71,14 @@
    "label": "Written",
    "read_only": 1,
    "in_list_view": 1,
-   "description": "Google's createTime, in UTC."
+   "description": "Google's createTime, in the site's time zone."
   },
   {
    "fieldname": "update_time",
    "fieldtype": "Datetime",
    "label": "Edited",
    "read_only": 1,
-   "description": "Google's updateTime, in UTC."
+   "description": "Google's updateTime, in the site's time zone."
   },
   {
    "fieldname": "review_section",
@@ -154,7 +154,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-29 18:00:00.000000",
+ "modified": "2026-10-29 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Business Profile Review",

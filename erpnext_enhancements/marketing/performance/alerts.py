@@ -184,7 +184,8 @@ def index_checks(today, settings):
 
 
 def review_checks(today, settings):
-	"""Low reviews written in the last two days (Google's ``create_time``, UTC).
+	"""Low reviews written in the last two days (Google's ``create_time``, stored in site time since
+	v1.756.1, so the window is measured from the site's clock too).
 
 	Not "first seen" by this app: the first night Business Profile answers, every review the listing
 	ever had is first seen, and alerting on them would mail its whole history. ``low_review_stars`` 0
@@ -193,7 +194,7 @@ def review_checks(today, settings):
 	stars = cint(settings.get("low_review_stars"))
 	if stars <= 0 or not frappe.db.exists("DocType", REVIEW):
 		return []
-	since = datetime.datetime.utcnow().replace(microsecond=0) - datetime.timedelta(days=2)
+	since = now_datetime().replace(microsecond=0) - datetime.timedelta(days=2)
 	rows = frappe.get_all(
 		REVIEW,
 		filters={"first_seen": [">=", add_days(today, -2)], "create_time": [">=", since]},

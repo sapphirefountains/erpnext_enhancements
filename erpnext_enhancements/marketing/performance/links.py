@@ -85,6 +85,8 @@ def get_link_results(name, from_date=None, to_date=None):
 			ga = {k: cint(row[0].get(k)) for k in ga}
 	inquiries = 0
 	if frappe.db.has_column("Opportunity", "custom_utm_campaign"):
+		from erpnext_enhancements.crm_enhancements.historical import exclude_filters
+
 		# creation is a datetime: "between" two dates would drop the last day after midnight.
 		inquiries = frappe.db.count(
 			"Opportunity",
@@ -93,6 +95,7 @@ def get_link_results(name, from_date=None, to_date=None):
 				["custom_utm_source", "=", doc.utm_source],
 				["creation", ">=", start],
 				["creation", "<", add_days(end, 1)],
+				*exclude_filters(),
 			],
 		)
 	return {"from_date": str(start), "to_date": str(end), **ga, "inquiries": inquiries}

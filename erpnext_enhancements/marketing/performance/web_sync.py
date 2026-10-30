@@ -38,7 +38,10 @@ erpnext_enhancements.marketing.performance.web_sync.backfill``). It is **not a m
 patch that calls Google would make the deploy depend on Google. Its cursor is on its Marketing Sync
 Log row (``progress_through``), not in Redis, so a deploy that flushes the queue mid-run loses
 nothing: the next nightly run finds the row still *Running* with nothing written for
-``STALLED_AFTER_MINUTES`` and queues it again from where it stopped. Every source's writes are
+``STALLED_AFTER_MINUTES`` and queues it again from where it stopped. A run that **failed** resumes
+from that cursor too (v1.756.1): the next night once a backoff has passed, or at once when asked by
+hand. Only a *Completed* run counts as done, and Business Profile and the social pages keep one
+backfill per listing and per account (the log's ``scope``), so one connected later gets its history. Every source's writes are
 replaces or upserts, so running any window twice is harmless.
 
 GA4 and Search Console are not gated by Marketing Settings: the GA4 Settings they read are the ones
@@ -167,7 +170,12 @@ def ga4_first_day(today, reader=None):
 
 
 def gsc_reader(settings=None):
-	"""``read(dimension, start, end) -> rows`` for Search Console, and the property form it used."""
+	"""``read(dimension, start, end) -> rows`` for Search Console, and the property form it used.
+
+	Every query retries Google's 429 and 5xx answers as well as network failures (``busy=True``): a
+	backfill reads about 16 windows of four dimensions, page by page, and one busy answer used to
+	fail the lot. One that outlasts the retries still fails the run, which resumes from its cursor.
+	"""
 	from erpnext_enhancements.api.analytics import (
 		_gsc_account,
 		_gsc_execute,
@@ -200,7 +208,7 @@ def gsc_reader(settings=None):
 			request_body = body(dimension, start, end, start_row)
 			if state["site"] is None:
 				site, response, refusals = _gsc_query_first_site(
-					service, credentials, settings.gsc_property_url, request_body
+					service, credentials, settings.gsc_property_url, request_body, busy=True
 				)
 				if not site:
 					raise SourceUnavailable(
@@ -212,6 +220,7 @@ def gsc_reader(settings=None):
 					service.searchanalytics().query(siteUrl=state["site"], body=request_body),
 					credentials,
 					dimension.lower(),
+					busy=True,
 				)
 			page = (response or {}).get("rows") or []
 			rows.extend(page)
@@ -373,11 +382,15 @@ def configured(settings=None):
 
 
 def _sources():
-	"""``{source: (ready(), earliest(today), pull(start, end, on_chunk), chunk_days)}``.
+	"""``{source: {ready, scopes, earliest, pull, chunk}}``.
 
-	``ready`` is the source's own gate: configured for the web sources; master switch, the source's
-	switch and a connection for Business Profile and the social pages. ``earliest`` is the oldest day
-	its API serves today.
+	* ``ready()``: the source's own gate -- configured for the web sources; master switch, the source's
+	  switch and a connection for Business Profile and the social pages.
+	* ``scopes()``: what has a history of its own -- ``[""]`` for a web source (one property); each
+	  listing's ID for Business Profile; each enabled Social Account's name for the social pages. A
+	  listing or an account connected later gets its own backfill, not just the nightly window.
+	* ``earliest(today, scope)``: the oldest day its API serves for that scope today.
+	* ``pull(start, end, scope)``: reads and stores that window; raises on failure, so the cursor stays.
 	"""
 	from erpnext_enhancements.marketing.gbp import sync as gbp_sync
 	from erpnext_enhancements.marketing.publish import page_stats
@@ -389,42 +402,47 @@ def _sources():
 			return False
 
 	return {
-		SOURCE_GA4: (
-			lambda: web_ready(SOURCE_GA4),
-			lambda today: ga4_first_day(today),
-			lambda start, end, on_chunk: pull(SOURCE_GA4, start, end, on_chunk=on_chunk),
-			CHUNK_DAYS,
-		),
-		SOURCE_GSC: (
-			lambda: web_ready(SOURCE_GSC),
-			lambda today: rules.months_back(today, GSC_HISTORY_MONTHS),
-			lambda start, end, on_chunk: pull(SOURCE_GSC, start, end, on_chunk=on_chunk),
-			CHUNK_DAYS,
-		),
-		SOURCE_GBP: (
-			gbp_sync.ready,
-			gbp_sync.history_earliest,
-			gbp_sync.history_pull,
-			gbp_sync.HISTORY_CHUNK_DAYS,
-		),
-		SOURCE_SOCIAL: (
-			page_stats.ready,
-			page_stats.history_earliest,
-			page_stats.history_pull,
-			page_stats.HISTORY_CHUNK_DAYS,
-		),
+		SOURCE_GA4: {
+			"ready": lambda: web_ready(SOURCE_GA4),
+			"scopes": lambda: [""],
+			"earliest": lambda today, _scope: ga4_first_day(today),
+			"pull": lambda start, end, _scope: pull(SOURCE_GA4, start, end),
+			"chunk": CHUNK_DAYS,
+		},
+		SOURCE_GSC: {
+			"ready": lambda: web_ready(SOURCE_GSC),
+			"scopes": lambda: [""],
+			"earliest": lambda today, _scope: rules.months_back(today, GSC_HISTORY_MONTHS),
+			"pull": lambda start, end, _scope: pull(SOURCE_GSC, start, end),
+			"chunk": CHUNK_DAYS,
+		},
+		SOURCE_GBP: {
+			"ready": gbp_sync.ready,
+			"scopes": gbp_sync.history_scopes,
+			"earliest": gbp_sync.history_earliest,
+			"pull": gbp_sync.history_pull,
+			"chunk": gbp_sync.HISTORY_CHUNK_DAYS,
+		},
+		SOURCE_SOCIAL: {
+			"ready": page_stats.ready,
+			"scopes": page_stats.history_scopes,
+			"earliest": page_stats.history_earliest,
+			"pull": page_stats.history_pull,
+			"chunk": page_stats.HISTORY_CHUNK_DAYS,
+		},
 	}
 
 
 # ---------------------------------------------------------------- the log
 
 
-def _log(source, sync_type, start, end, status="Running"):
+def _log(source, sync_type, start, end, status="Running", scope=None):
 	doc = frappe.get_doc(
 		{
 			"doctype": LOG_DOCTYPE,
 			"platform": source,
 			"sync_type": sync_type,
+			"scope": scope or None,
 			"status": status,
 			"started_at": now_datetime(),
 			"window_from": start,
@@ -460,7 +478,7 @@ def _error_text(exc):
 
 
 def nightly_web_sync():
-	"""Cron entry (hooks.py, 03:40). Starts any first backfill, resumes a dropped one, queues the pull."""
+	"""Cron entry (hooks.py, 03:40). Starts or resumes the backfills, resumes a dropped one, queues the pull."""
 	if not frappe.db.exists("DocType", GA4_DOCTYPE) or not frappe.db.exists("DocType", "GA4 Settings"):
 		return None
 	ensure_backfills()
@@ -503,57 +521,66 @@ def run_nightly(today=None):
 # ---------------------------------------------------------------- the backfill
 
 
-def _open_backfill(source):
-	rows = frappe.get_all(
+def _backfill_logs(source, scope):
+	"""Every Backfill log of ``source`` and ``scope``, newest first, as ``rules.backfill_plan`` reads them."""
+	filters = {"platform": source, "sync_type": "Backfill"}
+	filters["scope"] = scope if scope else ["is", "not set"]
+	logs = []
+	for r in frappe.get_all(
 		LOG_DOCTYPE,
-		filters={"platform": source, "sync_type": "Backfill", "status": ["in", ["Queued", "Running"]]},
-		pluck="name",
-		limit=1,
-	)
-	return rows[0] if rows else None
+		filters=filters,
+		fields=["name", "status", "finished_at", "started_at", "retry_count", "creation"],
+		order_by="creation desc",
+	):
+		row = dict(r)
+		for key in ("finished_at", "started_at", "creation"):
+			row[key] = get_datetime(row[key]) if row.get(key) else None
+		logs.append(row)
+	return logs
 
 
-def _queue_backfill(source, today):
-	"""Open (or widen) a Backfill log for ``source`` over its full history window. Returns its name or None."""
-	ready, earliest, _pull, _chunk = _sources()[source]
-	window = rules.history_window(earliest(today), today)
-	if not window:
-		return None
-	start, end = window
-	name = _open_backfill(source)
-	if not name:
-		return _log(source, "Backfill", start, end, status="Queued")
-	# A longer history asked for while a run is open: widen its window and start it over from the new
-	# start. Re-reading what it already did is harmless, since every write replaces or upserts.
-	current = frappe.db.get_value(LOG_DOCTYPE, name, ["window_from", "window_to"], as_dict=True)
-	if current and (not current.window_from or start < getdate(current.window_from)):
+def _plan(source, scope, today, manual):
+	"""Open, resume or leave one (source, scope)'s backfill. Returns the log name it left queued, or None."""
+	spec = _sources()[source]
+	action, name = rules.backfill_plan(_backfill_logs(source, scope), now_datetime(), manual=manual)
+	if action == "open":
+		# Running already. By hand it is reported; the nightly run leaves it to resume_stalled_backfill.
+		return name if manual else None
+	if action == "resume":
+		retries = cint(frappe.db.get_value(LOG_DOCTYPE, name, "retry_count"))
 		frappe.db.set_value(
 			LOG_DOCTYPE,
 			name,
-			{"window_from": start, "window_to": end, "progress_through": None},
+			{"status": "Queued", "retry_count": retries + (0 if manual else 1)},
 			update_modified=False,
 		)
 		frappe.db.commit()
-	return name
+		return name
+	if action == "create":
+		window = rules.history_window(spec["earliest"](today, scope), today)
+		if window:
+			return _log(source, "Backfill", *window, status="Queued", scope=scope)
+	return None
 
 
 def ensure_backfills(today=None):
-	"""The once-only automatic backfill: every ready source that has never had one gets one, and is queued.
+	"""The automatic backfill, nightly and right after a connection is made.
 
-	"Never" means no Backfill log at all, in any status. A source that becomes ready later -- Business
-	Profile approved and connected, a social page switched on -- gets its history the first night after.
-	Called nightly and right after a connection is made.
+	For every ready source and each of its scopes (an account, a listing): a scope that has never had a
+	backfill gets one; one whose last backfill **failed** is resumed from its cursor once its backoff has
+	passed (``rules.backfill_plan``: 6 hours, doubling with each retry, at most a week); one with a
+	*Completed* backfill is done. A listing or account connected later is a scope of its own, so it gets
+	its whole history too.
 	"""
 	today = getdate(today or nowdate())
 	queued = []
-	for source, (ready, _earliest, _pull, _chunk) in _sources().items():
+	for source, spec in _sources().items():
 		try:
-			if not ready():
+			if not spec["ready"]():
 				continue
-			if frappe.db.exists(LOG_DOCTYPE, {"platform": source, "sync_type": "Backfill"}):
-				continue
-			if _queue_backfill(source, today):
-				queued.append(source)
+			for scope in spec["scopes"]():
+				if _plan(source, scope, today, manual=False):
+					queued.append((source, scope))
 		except Exception as exc:
 			frappe.db.rollback()
 			frappe.log_error(title="Marketing history backfill", message=f"{source}: {_error_text(exc)}")
@@ -574,10 +601,11 @@ def start_backfill(source=None):
 
 
 def backfill(sources=None, enqueue=False, today=None):
-	"""A Backfill log per source over its whole history, then run them (here, or on ``long``).
+	"""Start the backfill by hand, for every scope of each source (here, or on ``long``).
 
-	``bench execute`` runs it in the foreground; the button queues it. Either way the logs carry the
-	cursor, so a run that is cut off is picked up by ``resume_stalled_backfill``.
+	A failed run **resumes from its cursor**, never from the beginning; an open one is left to run; a
+	completed one is run again in full, since that is what asking for it by hand means. ``bench execute``
+	runs it in the foreground; the button queues it.
 	"""
 	today = getdate(today or nowdate())
 	registry = _sources()
@@ -585,11 +613,12 @@ def backfill(sources=None, enqueue=False, today=None):
 	for source in sources or SOURCES:
 		if source not in registry:
 			frappe.throw(_("Unknown source {0}").format(source))
-		if not registry[source][0]():
+		if not registry[source]["ready"]():
 			continue
-		name = _queue_backfill(source, today)
-		if name:
-			logs.append(name)
+		for scope in registry[source]["scopes"]():
+			name = _plan(source, scope, today, manual=True)
+			if name:
+				logs.append(name)
 	if logs:
 		if enqueue:
 			_enqueue_backfill()
@@ -609,7 +638,7 @@ def _enqueue_backfill():
 
 
 def run_backfill():
-	"""Every open Backfill log, from its cursor to its end. Each source commits after each window."""
+	"""Every open Backfill log, from its cursor to its end. Each commits after each window."""
 	registry = _sources()
 	results = {}
 	for log in frappe.get_all(
@@ -619,13 +648,13 @@ def run_backfill():
 			"status": ["in", ["Queued", "Running"]],
 			"platform": ["in", SOURCES],
 		},
-		fields=["name", "platform", "window_from", "window_to", "progress_through", "created_count"],
+		fields=["name", "platform", "scope", "window_from", "window_to", "progress_through", "created_count"],
 		order_by="creation asc",
 	):
-		_ready, _earliest, source_pull, chunk_days = registry[log.platform]
-		start = getdate(log.window_from)
-		if log.progress_through:
-			start = getdate(add_to_date(getdate(log.progress_through), days=1))
+		spec = registry[log.platform]
+		start = rules.backfill_start(
+			getdate(log.window_from), getdate(log.progress_through) if log.progress_through else None
+		)
 		end = getdate(log.window_to)
 		before = cint(log.created_count)
 		frappe.db.set_value(
@@ -647,17 +676,18 @@ def run_backfill():
 			frappe.db.commit()
 
 		written = 0
+		key = f"{log.platform}:{log.scope}" if log.scope else log.platform
 		try:
-			for chunk_start, chunk_end in rules.chunks(start, end, chunk_days):
-				written += source_pull(chunk_start, chunk_end, None) or 0
+			for chunk_start, chunk_end in rules.chunks(start, end, spec["chunk"]):
+				written += spec["pull"](chunk_start, chunk_end, log.scope or "") or 0
 				moved(chunk_end, written)
 		except Exception as exc:
 			frappe.db.rollback()
 			_finish(log.name, "Failed", before + written, _error_text(exc))
-			results[log.platform] = "failed"
+			results[key] = "failed"
 			continue
 		_finish(log.name, "Completed", before + written)
-		results[log.platform] = before + written
+		results[key] = before + written
 	return results
 
 

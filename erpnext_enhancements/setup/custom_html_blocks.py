@@ -103,7 +103,7 @@ BLOCKS = [
 	("Service Chemistry Alerts", "service_chemistry_alerts"),
 	("Service Labor Capture", "service_labor_capture"),
 	# The four Marketing widgets were here until v1.756.0, when the Marketing Performance page
-	# took their place. The seeder never deletes, so patches/retire_marketing_dashboard_blocks
+	# took their place. The seeder never deletes, so patches/retire_marketing_dashboard_widgets
 	# removes the records once the Marketing Dashboard no longer points at them.
 	("HR Training Compliance", "hr_training_compliance"),
 	("HR Time Capture", "hr_time_capture"),

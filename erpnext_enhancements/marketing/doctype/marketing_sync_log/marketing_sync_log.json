@@ -12,6 +12,7 @@
   "status",
   "column_break_head",
   "ad_account",
+  "scope",
   "started_at",
   "finished_at",
   "window_section",
@@ -63,6 +64,14 @@
    "fieldtype": "Link",
    "label": "Ad Account",
    "options": "Ad Account"
+  },
+  {
+   "description": "What this backfill covers within its platform: a Business Profile listing's ID, or a Social Account. Empty for a source with one history (GA4, Search Console).",
+   "fieldname": "scope",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Scope",
+   "read_only": 1
   },
   {
    "fieldname": "started_at",
@@ -144,7 +153,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Sync Log",

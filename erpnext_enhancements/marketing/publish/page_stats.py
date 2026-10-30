@@ -539,15 +539,29 @@ def _account_start(account, today, transport):
 	return history_start(account.network, today, created)
 
 
-def history_earliest(today):
-	"""The oldest day any due account's network serves: the backfill's window start."""
+def history_scopes():
+	"""Each due Social Account, by name: each has a backfill of its own, so an account connected later
+	gets as much history as its network serves, not just the nightly window."""
+	from erpnext_enhancements.marketing.core.utils import get_credentials
+
+	return [account.name for account in due_accounts(get_credentials())]
+
+
+def _due(creds, scope):
+	return [a for a in due_accounts(creds) if not scope or a.name == scope]
+
+
+def history_earliest(today, scope=None):
+	"""The oldest day the account's network serves (the oldest of any due account's, without a
+	``scope``): the backfill's window start."""
 	creds, transport = _transports()
-	starts = [s for s in (_account_start(a, today, transport) for a in due_accounts(creds)) if s]
+	starts = [s for s in (_account_start(a, today, transport) for a in _due(creds, scope)) if s]
 	return min(starts) if starts else None
 
 
-def history_pull(start, end, _on_chunk=None):
-	"""Every due account's daily figures for ``start..end``, clamped to what its network still serves.
+def history_pull(start, end, scope=None):
+	"""One account's daily figures for ``start..end`` (every due account's without a ``scope``),
+	clamped to what its network still serves.
 
 	Followers are not read here: only tonight's total exists, and the nightly pull takes it. Raises on
 	a failure so the backfill's cursor stays where it was.
@@ -558,7 +572,7 @@ def history_pull(start, end, _on_chunk=None):
 	today = getdate(nowdate())
 	creds, transport = _transports()
 	written = 0
-	for account in due_accounts(creds):
+	for account in _due(creds, scope):
 		earliest = _account_start(account, today, transport)
 		last = end
 		if account.network == P.NETWORK_LINKEDIN:
