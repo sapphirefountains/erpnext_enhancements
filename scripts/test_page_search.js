@@ -123,7 +123,7 @@ const ALL_PAGES = {
 	'location-timeline': { title: 'Location Timeline' },
 	learn: { title: 'Training' },
 	'water-engineering-wizard': { title: 'Water Engineering Wizard' },
-	'ga4-dashboard': { title: 'GA4 Dashboard' },
+	'marketing-performance': { title: 'Marketing Performance' },
 	'device-console': { title: 'Device Console' },
 	'fleet-maintenance-schedule': { title: 'Fleet Maintenance Schedule' },
 	// A Frappe page, never offered by this section.

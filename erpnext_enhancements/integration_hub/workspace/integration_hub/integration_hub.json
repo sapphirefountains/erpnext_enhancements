@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"int_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"int_sc_health\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Integrations Health\",\"col\":4}},{\"id\":\"int_sc_ga4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"GA4 Dashboard\",\"col\":4}},{\"id\":\"int_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"int_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Analytics &amp; Connected Services</b></span>\",\"col\":12}},{\"id\":\"int_card_analytics\",\"type\":\"card\",\"data\":{\"card_name\":\"Analytics\",\"col\":4}},{\"id\":\"int_card_services\",\"type\":\"card\",\"data\":{\"card_name\":\"Connected Services\",\"col\":4}}]",
+ "content": "[{\"id\":\"int_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"int_sc_health\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Integrations Health\",\"col\":4}},{\"id\":\"int_sc_ga4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Performance\",\"col\":4}},{\"id\":\"int_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"int_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Analytics &amp; Connected Services</b></span>\",\"col\":12}},{\"id\":\"int_card_analytics\",\"type\":\"card\",\"data\":{\"card_name\":\"Analytics\",\"col\":4}},{\"id\":\"int_card_services\",\"type\":\"card\",\"data\":{\"card_name\":\"Connected Services\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -23,12 +23,12 @@
    "dependencies": "",
    "hidden": 0,
    "is_query_report": 0,
-   "label": "GA4 Dashboard",
+   "label": "Marketing Performance",
    "link_count": 0,
    "link_type": "Page",
    "onboard": 0,
    "type": "Link",
-   "link_to": "ga4-dashboard"
+   "link_to": "marketing-performance"
   },
   {
    "dependencies": "",
@@ -94,7 +94,7 @@
    "link_to": "Triton Settings"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-10-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Integration Hub",
  "name": "Integration Hub",
@@ -111,8 +111,8 @@
    "type": "Page"
   },
   {
-   "label": "GA4 Dashboard",
-   "link_to": "ga4-dashboard",
+   "label": "Marketing Performance",
+   "link_to": "marketing-performance",
    "type": "Page"
   }
  ],

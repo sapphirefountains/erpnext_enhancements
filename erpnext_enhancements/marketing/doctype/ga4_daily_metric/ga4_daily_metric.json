@@ -1,0 +1,154 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-29 12:00:00.000000",
+ "description": "One day of Google Analytics 4: the site's total, one landing page, one channel, one landing page from one source / medium, one device category, or one city. Kept forever. Written only by the nightly pull and the backfill (marketing/performance/web_sync.py), which replace each day they read in full.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "metric_date",
+  "dimension",
+  "column_break_key",
+  "dimension_value",
+  "page_path",
+  "source_medium",
+  "region",
+  "country",
+  "metrics_section",
+  "sessions",
+  "total_users",
+  "column_break_metrics",
+  "engaged_sessions",
+  "key_events"
+ ],
+ "fields": [
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1,
+   "description": "The GA4 property's own reporting date."
+  },
+  {
+   "fieldname": "dimension",
+   "fieldtype": "Select",
+   "options": "Total\nLanding Page\nChannel\nLanding Page Source\nDevice\nCity",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dimension",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dimension_value",
+   "fieldtype": "Small Text",
+   "label": "Value",
+   "read_only": 1,
+   "description": "The landing page as GA4 reported it (also for Landing Page Source), the channel, the device category, or the city. Blank for the site total."
+  },
+  {
+   "fieldname": "page_path",
+   "fieldtype": "Small Text",
+   "label": "Normalized Path",
+   "read_only": 1,
+   "description": "The join key with Search Console: lower case, no host, query string or trailing slash (rules.normalize_page). Landing Page and Landing Page Source rows."
+  },
+  {
+   "fieldname": "source_medium",
+   "fieldtype": "Data",
+   "label": "Source / Medium",
+   "read_only": 1,
+   "description": "GA4's sessionSourceMedium, e.g. google / organic. Landing Page Source rows only."
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "read_only": 1,
+   "description": "City rows only."
+  },
+  {
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country",
+   "read_only": 1,
+   "description": "City rows only."
+  },
+  {
+   "fieldname": "metrics_section",
+   "fieldtype": "Section Break",
+   "label": "Metrics"
+  },
+  {
+   "fieldname": "sessions",
+   "fieldtype": "Int",
+   "label": "Sessions",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "total_users",
+   "fieldtype": "Int",
+   "label": "Users",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_metrics",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "engaged_sessions",
+   "fieldtype": "Int",
+   "label": "Engaged Sessions",
+   "read_only": 1
+  },
+  {
+   "fieldname": "key_events",
+   "fieldtype": "Float",
+   "label": "Key Events",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "GA4's key events (formerly conversions)."
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "GA4 Daily Metric",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}

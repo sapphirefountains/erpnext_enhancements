@@ -277,7 +277,7 @@ keep the `operations_*` fieldnames: renaming a field on a Single drops the store
 | Design | Design WIP · Awaiting Sign-Off · Hand-Off Readiness · Hydraulic Headroom | [`api/design_dashboard.py`](../api/design_dashboard.py) |
 | Production | Build WIP & Aging · Milestone Slippage · Material Readiness · Hours vs Budget | [`api/production_dashboard.py`](../api/production_dashboard.py) |
 | Service | Today's Visits · Chemistry Alerts · Labor Capture Gaps | [`api/service_dashboard.py`](../api/service_dashboard.py) |
-| Marketing | Funnel Cascade · Channel Spend & CPL · Unsourced Leads · Source Health | [`api/marketing_dashboard.py`](../api/marketing_dashboard.py) |
+| Marketing | none since v1.756.0: the four widgets (funnel, spend, unsourced, source health) moved onto the Marketing Performance page | [`marketing/performance/api.py`](../marketing/performance/api.py) |
 | HR | Training Compliance · Time Capture · Headcount Movement · People Calendar | [`api/hr_dashboard.py`](../api/hr_dashboard.py) |
 | Executive | Company Scorecard · Cash & Receivables · Bookings & Backlog · Risk Queue | [`api/executive_dashboard.py`](../api/executive_dashboard.py) |
 

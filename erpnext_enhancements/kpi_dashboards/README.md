@@ -65,6 +65,8 @@ python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v
 One per department, plus the module workspace: `executive_dashboard`, `finance_dashboard`,
 `sales_dashboard`, `marketing_dashboard`, `operations_dashboard`, `production_dashboard`,
 `service_dashboard`, `design_dashboard`, `product_dashboard`, `hr_dashboard`, `kpi_dashboards`.
+Marketing is the exception since v1.756.0: its four widgets moved onto the **Marketing Performance**
+page (`marketing/performance/`), and the Marketing Dashboard keeps the KPI Cockpit and a shortcut to it.
 
 Each carries the KPI Cockpit plus that department's **operational widgets** — live worklists
 that sit above the snapshot numbers and say what to do about them. They are Custom HTML

@@ -316,7 +316,7 @@ def _check_ga4(key, label, route):
 	prop = bool(_single("GA4 Settings", "ga4_property_id"))
 	creds = bool(_single("GA4 Settings", "credentials_json"))
 	gsc = bool(_single("GA4 Settings", "gsc_property_url"))
-	links = [{"label": "Settings", "route": route}, {"label": "Dashboard", "route": "/desk/ga4-dashboard"}]
+	links = [{"label": "Settings", "route": route}, {"label": "Marketing Performance", "route": "/desk/marketing-performance"}]
 	if not prop and not creds:
 		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
 			notes=["Add the GA4 property ID and service-account credentials to power the marketing dashboard."])

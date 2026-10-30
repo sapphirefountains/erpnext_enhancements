@@ -19,6 +19,11 @@
   "column_break_publishing",
   "linkedin_publishing_enabled",
   "youtube_publishing_enabled",
+  "performance_section",
+  "google_business_profile_enabled",
+  "social_page_stats_enabled",
+  "column_break_performance",
+  "branded_terms",
   "sync_section",
   "restate_days",
   "initial_backfill_days",
@@ -114,6 +119,37 @@
    "label": "YouTube"
   },
   {
+   "description": "The Marketing Performance page's other sources (v1.756.0). Each pulls nightly only while the master switch above is on as well, and only once its connection is made.",
+   "fieldname": "performance_section",
+   "fieldtype": "Section Break",
+   "label": "Marketing Performance"
+  },
+  {
+   "default": "0",
+   "description": "Read the Google Business Profile listing's daily calls, website clicks, direction requests and impressions, and its reviews. Google must approve API access first; connect it on Marketing Connections.",
+   "fieldname": "google_business_profile_enabled",
+   "fieldtype": "Check",
+   "label": "Google Business Profile"
+  },
+  {
+   "default": "0",
+   "description": "Read followers, reach and views for each enabled Social Account, through its publishing connection. Read-only; publishing stays behind its own switches.",
+   "fieldname": "social_page_stats_enabled",
+   "fieldtype": "Check",
+   "label": "Social Page Stats"
+  },
+  {
+   "fieldname": "column_break_performance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "sapphire",
+   "description": "One per line. A Search Console query containing any of these (case and spaces ignored) counts as branded on the Marketing Performance page.",
+   "fieldname": "branded_terms",
+   "fieldtype": "Small Text",
+   "label": "Branded Search Terms"
+  },
+  {
    "fieldname": "sync_section",
    "fieldtype": "Section Break",
    "label": "Sync Behavior"
@@ -127,7 +163,7 @@
   },
   {
    "default": "90",
-   "description": "How far back to reach on an account's first sync, when it has no cursor yet.",
+   "description": "How far back an ad account's first sync reads. Since v1.756.0 never less than the platform keeps daily figures for (37 months at Google Ads and Meta, six months at LinkedIn; core/constants.HISTORY_DAYS), so this only matters set higher.",
    "fieldname": "initial_backfill_days",
    "fieldtype": "Int",
    "label": "Initial Backfill Days"
@@ -190,7 +226,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-22 12:00:00.000000",
+ "modified": "2026-10-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Settings",

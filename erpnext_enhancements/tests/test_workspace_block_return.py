@@ -110,8 +110,9 @@ class TestEveryDataBlockReloads(unittest.TestCase):
 	def test_the_scanner_sees_blocks_both_ways(self):
 		"""A regex that matched nothing would pass every test below vacuously."""
 		prefixes = [prefix for _name, prefix in seeded_blocks()]
-		self.assertGreaterEqual(len(prefixes), 40)
-		self.assertGreaterEqual(sum(fetches(prefix) for prefix in prefixes), 39)
+		# 43 blocks until v1.756.0 moved the four Marketing widgets onto the Marketing Performance page.
+		self.assertGreaterEqual(len(prefixes), 39)
+		self.assertGreaterEqual(sum(fetches(prefix) for prefix in prefixes), 35)
 		self.assertTrue(fetches("task_dashboard"), 'frappe.call("...") written as a string')
 		self.assertTrue(fetches("finance_weather"))
 		self.assertFalse(fetches("desk_shortcuts"))
@@ -169,7 +170,7 @@ class TestEveryDataBlockReloads(unittest.TestCase):
 					self.assertIsNotNone(match, f"{fn} is not a function declared in {prefix}.js")
 					params = [p.strip() for p in match.group(1).split(",") if p.strip()]
 					self.assertTrue(not params or params[0] in ROOT_PARAMS, f"{fn}({', '.join(params)})")
-		self.assertGreaterEqual(seen, 35)
+		self.assertGreaterEqual(seen, 33)  # 37 before v1.756.0 retired the four Marketing widgets
 
 	def test_the_two_that_must_never_force_register_a_plain_read(self):
 		for prefix in ("kpi_cockpit", "morning_briefing"):

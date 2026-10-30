@@ -48,6 +48,9 @@ COCKPIT_FIRST = {
 	"Sales Dashboard",
 }
 
+#: The Marketing Performance page's endpoint, which serves what the Marketing widgets did.
+MARKETING_FEED = APP / "marketing" / "performance" / "api.py"
+
 # department -> the api module whose feeds serve that department's widgets.
 FEED_MODULES = {
 	"Sales": "sales_dashboard",
@@ -55,7 +58,6 @@ FEED_MODULES = {
 	"Design": "design_dashboard",
 	"Production": "production_dashboard",
 	"Service": "service_dashboard",
-	"Marketing": "marketing_dashboard",
 	"HR": "hr_dashboard",
 	"Executive": "executive_dashboard",
 }
@@ -216,6 +218,9 @@ class DashboardWidgetWiring(unittest.TestCase):
 class MarketingAttributionColumn(unittest.TestCase):
 	"""The Marketing feeds must never read the orphaned ``source`` column.
 
+	Since v1.756.0 those feeds are the Marketing Performance page's
+	(``marketing/performance/api.py``), which took over the four Marketing widgets.
+
 	erpnext v15 renamed ``Lead.source`` to ``utm_source``; frappe never drops
 	columns, so a query against ``source`` still runs and returns a plausible
 	number measured against frozen pre-2023 data. That mistake silently broke four
@@ -256,22 +261,22 @@ class MarketingAttributionColumn(unittest.TestCase):
 		]
 
 	def test_no_feed_reads_the_dead_source_column(self):
-		blob = "\n".join(self._code_strings(APP / "api" / "marketing_dashboard.py"))
+		blob = "\n".join(self._code_strings(MARKETING_FEED))
 		for pattern in self.DEAD_COLUMN_PATTERNS:
 			with self.subTest(pattern=pattern):
 				self.assertIsNone(
 					re.search(pattern, blob),
-					f"marketing_dashboard.py reads the orphaned `source` column ({pattern})",
+					f"marketing/performance/api.py reads the orphaned `source` column ({pattern})",
 				)
 
 	def test_attribution_reads_custom_lead_source(self):
 		"""The positive half: the column helper names the field the app populates."""
-		text = (APP / "api" / "marketing_dashboard.py").read_text(encoding="utf-8")
-		self.assertIn('"custom_lead_source" if frappe.db.has_column("Lead", "custom_lead_source")', text)
+		text = MARKETING_FEED.read_text(encoding="utf-8")
+		self.assertIn('"o.custom_lead_source" if _has_column("Opportunity", "custom_lead_source")', text)
 
 	def test_unsourced_bucket_is_treated_as_unsourced(self):
 		"""The 'Unknown (pre-Aug 2026)' bucket is a recorded gap, not a channel."""
-		source = (APP / "api" / "marketing_dashboard.py").read_text(encoding="utf-8")
+		source = MARKETING_FEED.read_text(encoding="utf-8")
 		self.assertIn("UNKNOWN_LEAD_SOURCE", source)
 		self.assertIn("from erpnext_enhancements.crm_enhancements.attribution import", source)
 

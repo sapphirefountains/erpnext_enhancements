@@ -86,7 +86,8 @@ CI = REPO / ".github" / "workflows" / "ci.yml"
 
 PAGES = {
 	"drive_link_manager": APP / "google_drive" / "page" / "drive_link_manager",
-	"ga4_dashboard": APP / "integration_hub" / "page" / "ga4_dashboard",
+	# v1.756.0: the GA4 Dashboard became a redirect with no stylesheet; its successor is on the tokens.
+	"marketing_performance": APP / "marketing" / "page" / "marketing_performance",
 	"inspection_wizard": APP / "quality" / "page" / "inspection_wizard",
 	"training_insights": APP / "training" / "page" / "training_insights",
 	"training_glossary_review": APP / "training" / "page" / "training_glossary_review",
@@ -112,7 +113,7 @@ PAGES = {
 # session, so an unprefixed selector leaks onto every page visited after it.
 NAMESPACES = {
 	"drive_link_manager": re.compile(r"\.(?:dlm-[\w-]+|drive-link-manager\b)"),
-	"ga4_dashboard": re.compile(r"\.(?:ga4-|gsc-)[\w-]+"),
+	"marketing_performance": re.compile(r"\.mkp-[\w-]+"),
 	"inspection_wizard": re.compile(r"\.qw-[\w-]+"),
 	"training_insights": re.compile(r"\.ti-[\w-]+"),
 	"training_glossary_review": re.compile(r"\.gr-page\b"),
@@ -137,7 +138,7 @@ NAMESPACES = {
 # `pulse` animate with whichever loaded last.
 KEYFRAME_PREFIXES = {
 	"drive_link_manager": ("dlm-",),
-	"ga4_dashboard": ("ga4-", "gsc-"),
+	"marketing_performance": ("mkp-",),
 	"inspection_wizard": ("qw-",),
 	"training_insights": ("ti-",),
 	"training_glossary_review": ("gr-",),

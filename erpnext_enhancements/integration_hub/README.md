@@ -11,7 +11,7 @@ module is the desk pages, the settings doctype, and the workspace.
 | Path | Purpose |
 |---|---|
 | `page/integrations_health/` | Health snapshot of every external integration |
-| `page/ga4_dashboard/` | Google Analytics 4 + Search Console dashboard |
+| `page/ga4_dashboard/` | Retired in v1.756.0: redirects to Marketing Performance (`marketing/page/marketing_performance/`) |
 | `doctype/ga4_settings/` | Single — GA4 / Search Console configuration |
 
 ## Integrations Health

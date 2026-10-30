@@ -71,6 +71,43 @@ until the switches are on and a network's platform approval has cleared.
 | `doctype/social_publish_job/` (+ `social_publish_attempt/`) | The outbox row. `external_post_id` is **unique**; indexes on (state, available_at) and (state, lease_expires_at) for the sweep; form buttons to resolve an Unconfirmed job. Its **Attempt Log** keeps every attempt and every person's answer |
 | `doctype/social_post_metric/` | A published post on one account: its **lifetime** engagement as of a date, named from (job, date) so a restated day upserts. Filled nightly since v1.516.0; a post's figures are its newest row |
 | `doctype/marketing_media_asset/` | A photo or video: where it lives, the Project it shows, and **usage rights**. Only *Cleared for social* can be queued; new assets start as *Needs client approval* |
+| `performance/rules.py` | **Pure:** the Marketing Performance page's rules (v1.756.0). Who sees what, the date range, `normalize_page` (the GA4 ↔ Search Console join key), the landing-page join and its three flags, branded queries, channels, the funnel, the trend's gaps, the nightly restate window, and inbound calls (first-time callers, which call an Opportunity came from) |
+| `performance/web_sync.py` | GA4 and Search Console **stored by day, kept forever**, at the finest grain (GA4: total, landing page, channel, landing page × source / medium, device, city; Search Console: total, page, query, page × query). The 03:40 pull restates 7 days, replacing only the days the answer holds. And **the history engine for every source**: each one is backfilled as far back as its API allows, once by itself when it is first ready, and again from the page's menu or `bench execute`; the cursor lives on its Marketing Sync Log row so a deploy flush only delays it |
+| `performance/api.py` | `get_performance` (POST): every section of the page for a range, from stored rows only. Money only for System Manager / Sales Manager / Marketing Manager; who called only for System Manager / Sales Manager |
+| `page/marketing_performance/` | The **Marketing Performance** Desk page (`/desk/marketing-performance?from=&to=&compare=1`). Replaces the GA4 Dashboard (now a redirect) and the Marketing Dashboard's four widgets |
+| `gbp/` | **Google Business Profile**, read-only (v1.756.0): `constants.py` (hosts, the GET-only allowlist, the `business.manage` scope, confined here), `parse.py` (**pure** parsers), `sync.py` (03:45). Off and unconnected until Google approves API access |
+| `publish/page_stats.py` | Followers, reach and views per Social Account through the **publishing connections'** read scopes (v1.756.0), 03:55. Pure parsers at the top |
+| `doctype/ga4_daily_metric/`, `doctype/search_console_daily_metric/` | One day × (total \| landing page \| channel) of GA4, and × (total \| page \| query) of Search Console. Hash-named rows replaced by day; the deterministic name is `rules.record_name` |
+| `doctype/business_profile_daily_metric/`, `doctype/social_page_daily_metric/` | One listing-day and one account-day, named from their keys (`GBP-{location_id}-{date}`, `SPDM-{social_account}-{date}`), so a restated day updates the same row. `metrics_read` / `reviews_read` / `followers_read` say which figures a row really holds: an Int column is never blank in the database |
+| `doctype/business_profile_review/` | One Google review per row, snapshotted nightly (stars, comment, reply, first and last seen). One that a complete read no longer returns is marked *Gone From Google*, never deleted: Google does not give a deleted review back |
+
+## The Marketing Performance page (v1.756.0)
+
+Nik, 2026-10-29: Google Analytics 4 and Search Console merged into one marketing view, with inbound calls,
+Google Business Profile, ad spend and social page stats beside them, on one page that replaces the GA4
+Dashboard and the Marketing Dashboard widgets.
+
+- **Nothing calls Google on a page load.** The page reads the daily tables; `web_sync.py` fills them at
+  03:40 and the backfill fills the history. `api/analytics.get_ga4_data` / `get_gsc_data` stay only for the
+  nightly 30-day `Marketing Web Snapshot`, which the KPI dashboards still read.
+- **Inquiries are Opportunities**, sourced from `custom_lead_source`, plus first-time callers. Sapphire works
+  in Opportunities (12 Leads against 108 Opportunities in the 180 days to 2026-10-29).
+- **Calls** come from ERPNext's `Call Log` (Triton writes it): incoming per day by `creation`, because Triton
+  writes `start_time` in UTC; first-time callers by the last ten digits of `from`; and a call *became an
+  Opportunity* when one for its Customer or Contact (its Dynamic Links) was created within 30 days after it.
+- **Roles** (`rules.views_for`): the page and its counts for the three marketing roles plus Sales Manager;
+  money for System Manager, Sales Manager and Marketing Manager (never Marketing Team, the Social Post
+  Performance precedent); the callers themselves for System Manager and Sales Manager. The new daily
+  doctypes carry DocPerms for System Manager and Sales Manager only, like Ad Daily Metric: the marketing
+  roles' DocPerms stay the publishing surface (`tests/test_marketing_approval.py`).
+- **Ad spend and ROAS** read Ad Daily Metric and the Ad Spend ROAS report, so they stay empty, and say "not
+  set up yet", until a platform is connected. Nik, 2026-10-29: "We haven't built out our marketing efforts
+  yet", so every empty source reads as not set up, never as broken.
+- **History is kept forever** (Nik, 2026-10-29: "let's make sure we are keeping a history"). No metric table
+  is pruned; only Marketing Raw Payload keeps its retention. Each source is backfilled once, by itself, as
+  far back as its API allows, and whatever a source cannot give back later (follower totals, the rating,
+  each review) is snapshotted nightly from the day it is connected. The table of how far back each goes is
+  in [the runbook](../../docs/marketing-connectors-runbook.md).
 
 ## Publishing (Phase 2)
 
@@ -211,7 +248,10 @@ before, by letting a background job re-raise with frame locals intact.
 | `scheduler_events.cron` `"35 3 * * *"` | `publish.tasks.maintain_publishing_tokens` | Daily upkeep of the publishing tokens, one rule per connection (v1.508.0) |
 | `scheduler_events.cron` `"2-59/5 * * * *"` | `publish.sweeper.sweep_publish_jobs` | The outbox sweep, the timer for scheduled posts (v1.509.0). Returns at once while the module is off |
 | `scheduler_events.cron` `"50 3 * * *"` | `publish.metrics_sync.nightly_social_metrics` | The engagement pull-back (v1.516.0): master switch, *Connected* only, something to read, then one job on `long` |
-| `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
+| `scheduler_events.cron` `"40 3 * * *"` | `performance.web_sync.nightly_web_sync` | GA4 + Search Console by day (v1.756.0); not gated by Marketing Settings; resumes a dropped backfill |
+| `scheduler_events.cron` `"45 3 * * *"` | `gbp.sync.nightly_business_profile_sync` | Google Business Profile (v1.756.0): master switch AND `google_business_profile_enabled` |
+| `scheduler_events.cron` `"55 3 * * *"` | `publish.page_stats.nightly_social_page_stats` | Social page stats (v1.756.0): master switch AND `social_page_stats_enabled` |
+| `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention, and nothing else: every metric table and Ad Click is kept forever (v1.756.0) |
 
 Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable
 by Sales Manager, and the rule above ("no secret on anything beyond System Manager") holds for

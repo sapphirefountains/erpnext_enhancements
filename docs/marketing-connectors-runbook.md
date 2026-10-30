@@ -105,6 +105,101 @@ reconnect once a year.
 
 ---
 
+## Google Business Profile (v1.756.0)
+
+Read-only: the listing's daily **call clicks, website clicks, direction requests, Maps and Search
+impressions** (Performance API, `fetchMultiDailyMetricsTimeSeries`), and its **reviews** (the legacy My
+Business v4 `reviews` list: count, average and how many have no reply). It feeds the Marketing
+Performance page and nothing else. Checked against Google's references on 2026-10-29.
+
+**Needs first: Google's approval.** A Cloud project starts with a Business Profile API quota of **0**
+requests a minute; every call fails until Google approves it, and then the quota is 300.
+
+1. The profile must be **verified, active for 60+ days, and list the website**.
+2. In the Google Cloud project you will use, note the **project number**. Enable the *My Business Account
+   Management API*, *My Business Business Information API*, *Business Profile Performance API* and *Google My
+   Business API* (the last carries reviews).
+3. Apply at <https://support.google.com/business/contact/api_default>, choosing **Application for Basic API
+   Access**, with the project number, from an email that is an owner or manager on the profile.
+4. Wait for the approval email; the quota page then reads 300 per minute.
+
+**The scope.** `business.manage` is the only one Google offers (no read-only scope exists), and it can edit
+the listing and reply to reviews. As with Google Ads, read-only is enforced by the transport: the Business
+Profile allowlist (`marketing/gbp/constants.py`) holds **GETs only**, on its four hosts, and anything else is
+refused before it leaves ERPNext. Connect as a Google user whose role on the profile is the least that can
+read it.
+
+**Connecting, after approval:**
+
+1. Google Cloud → **APIs & Services → Credentials** → an OAuth client (Web application) with the redirect URI
+   above.
+2. **Marketing Connections → Google Business Profile:** client ID and client secret. **Save.**
+3. **Connect** → sign in as the profile's user → approve. **Test** lists every listing the token reaches.
+4. **Marketing Settings:** tick **Enabled** (the master switch) and **Google Business Profile**.
+
+It runs nightly at **03:45**: each listing's last 7 days are restated plus any days since (the first run
+reads 90), and tonight's review figures land on today's row. A dead token marks the connection *Auth
+Failed* and the job stops asking until somebody reconnects.
+
+## Social page stats (v1.756.0)
+
+Followers (tonight), and each day's **reach** and **views**, for every **Enabled** Social Account, read
+through its **publishing connection**: Facebook Page `followers_count` and Page insights
+`page_total_media_view_unique` / `page_media_view`; Instagram `followers_count` and `reach` / `views`
+(`metric_type=total_value`, a day at a time); LinkedIn `networkSizes` and time-bound share statistics;
+YouTube `channels` statistics and Analytics views by day. The scopes those connections already ask for
+cover every read (`read_insights`, `instagram_manage_insights`, `rw_organization_admin`,
+`yt-analytics.readonly`; v1.756.0 added the read-only `youtube.readonly`, which Google's Analytics reference
+now names). No spend-capable scope, and the only new allowlist entry is LinkedIn's `networkSizes` GET.
+
+Turn on: connect the publishing connection (above), tick **Enabled** on each Social Account, then
+**Marketing Settings → Enabled + Social Page Stats**. Runs nightly at **03:55**; LinkedIn's statistics end
+two days before the request and YouTube's lag 48–72 hours, so the newest two days fill in later.
+
+## GA4 and Search Console by day, and every source's history (v1.756.0)
+
+Nik, 2026-10-29: keep a history of everything. **No metric table is ever pruned**: GA4 Daily Metric,
+Search Console Daily Metric, Business Profile Daily Metric and Review, Social Page Daily Metric, Social Post
+Metric, Ad Daily Metric and Ad Click are kept forever (only Marketing Raw Payload keeps its retention prune).
+Past each API's window these rows are the only copy.
+
+GA4 and Search Console are not a connector: they read the **GA4 Settings** service account the nightly
+snapshot has used since June, and are not gated by Marketing Settings. Every night at **03:40** each one's
+last 7 days are replaced (Search Console publishes final figures two or three days late) plus any days
+missed, at these grains:
+
+- **GA4 Daily Metric:** site total, landing page, channel, landing page × session source / medium, device,
+  city (with region and country).
+- **Search Console Daily Metric:** property total, page, query, page × query.
+
+**The history backfill.** Each source is read back as far as its API serves, **once, by itself**: the
+first 03:40 run after it is ready (GA4 and Search Console the first night after deploy; Business Profile and
+the social pages the night after they are connected and switched on, or straight after Connect if already
+switched on). An ad platform's first sync reads its whole history the same way. To run one again:
+Marketing Performance → menu → *Backfill marketing history* (System Manager), or from the bench:
+
+```
+bench --site erp.sapphirefountains.com execute erpnext_enhancements.marketing.performance.web_sync.backfill
+```
+
+| Source | Reads back to | Snapshot-only, from connect day |
+|---|---|---|
+| Search Console | 16 months | — |
+| GA4 | the property's first day of data | — |
+| Google Business Profile | 18 months (documented for the old v4 API; v1 names no limit, a refused window is skipped) | rating, review count, each review |
+| Facebook | 2 years (reach, views) | followers |
+| Instagram | 90 days (reach, views) | followers |
+| LinkedIn | 12 months (reach, views, follower gains) | followers |
+| YouTube | the channel's creation (views, net subscribers) | subscriber total |
+| Google Ads, Meta | 37 months of daily figures | — |
+| LinkedIn Ads | 6 months of daily figures | — |
+
+Each Backfill row in Marketing Sync Log carries *Done Through*, moved after each window. A deploy flushes the
+queue; the next 03:40 run sees a Backfill row still *Queued* or *Running* with nothing written for 90 minutes
+and queues it again from *Done Through*. Running it twice is harmless: every write replaces or upserts.
+
+---
+
 ## Turning it on
 
 1. Connect each platform as above; **Test** should list your accounts.

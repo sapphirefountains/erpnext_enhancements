@@ -51,7 +51,17 @@ class ReadOnlyViolation(MarketingAPIError):
 
 
 def allowed(platform, method, url):
-	"""True if ``method url`` is on the read-only allowlist for ``platform``."""
+	"""True if ``method url`` is on the read-only allowlist for ``platform``.
+
+	Google Business Profile spans four hosts with no shared prefix, so it keeps its own GET-only
+	list (``gbp/constants.ALLOWLIST``) and is checked there.
+	"""
+	from erpnext_enhancements.marketing.gbp import constants as G
+
+	if platform == G.PLATFORM_GBP:
+		from erpnext_enhancements.marketing.gbp.parse import allowed as gbp_allowed
+
+		return gbp_allowed(method, url)
 	parts = urlsplit(url)
 	if parts.scheme != "https" or parts.hostname != C.DATA_HOSTS.get(platform):
 		return False

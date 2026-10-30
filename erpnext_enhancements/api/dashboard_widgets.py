@@ -71,12 +71,10 @@ WIDGETS = {
 		"material_readiness": "production_material_readiness_enabled",
 		"hours_variance": "production_hours_variance_enabled",
 	},
-	"Marketing": {
-		"funnel_cascade": "marketing_funnel_cascade_enabled",
-		"channel_spend": "marketing_channel_spend_enabled",
-		"unsourced_leads": "marketing_unsourced_leads_enabled",
-		"source_health": "marketing_source_health_enabled",
-	},
+	# Marketing's four widgets moved onto the Marketing Performance page in v1.756.0
+	# (marketing/performance/), which gates on roles rather than toggles. Their four
+	# marketing_*_enabled Checks stay on the Single, unread: dropping a field from a Single
+	# deletes nothing and buys nothing.
 	"HR": {
 		"training_compliance": "hr_training_compliance_enabled",
 		"timesheet_completeness": "hr_timesheet_completeness_enabled",

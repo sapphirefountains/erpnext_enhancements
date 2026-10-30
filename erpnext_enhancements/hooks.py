@@ -1781,6 +1781,24 @@ scheduler_events = {
 		# publishing connections; the publish switches play no part. Enqueues on `long`.
 		# 03:50: after the 03:35 token upkeep. Dormant while Marketing Settings.enabled is 0.
 		"50 3 * * *": ["erpnext_enhancements.marketing.publish.metrics_sync.nightly_social_metrics"],
+		# marketing (v1.756.0): GA4 and Search Console stored by day, kept forever, for the
+		# Marketing Performance page -- GA4 by total, landing page, channel, landing page x
+		# source/medium, device, city; Search Console by total, page, query, page x query.
+		# Restates the last 7 days (Search Console publishes final figures 2-3 days late) plus
+		# any days missed, replacing each day the answer holds. Not gated by Marketing Settings:
+		# it reads the GA4 Settings the nightly snapshot already uses. First, every source that
+		# is ready and has never been backfilled gets its full history queued (GA4 and Search
+		# Console the first night after deploy), and a backfill a deploy FLUSHDB dropped is
+		# re-queued from its cursor (on its Marketing Sync Log row). Jobs on `long`.
+		"40 3 * * *": ["erpnext_enhancements.marketing.performance.web_sync.nightly_web_sync"],
+		# marketing (v1.756.0): Google Business Profile's daily calls, website clicks,
+		# directions and impressions, and its reviews. Dormant: master switch AND
+		# google_business_profile_enabled ship 0, and Google must approve API access first.
+		"45 3 * * *": ["erpnext_enhancements.marketing.gbp.sync.nightly_business_profile_sync"],
+		# marketing (v1.756.0): followers, reach and views per Social Account, through the
+		# publishing connections' read scopes. 03:55, after the 03:35 token upkeep. Dormant:
+		# master switch AND social_page_stats_enabled ship 0.
+		"55 3 * * *": ["erpnext_enhancements.marketing.publish.page_stats.nightly_social_page_stats"],
 		# travel_management (Plan a Trip PR 4): trip change alerts. A save of a Booked or In
 		# Progress trip records what changed for each person as a Pending Trip Change Alert
 		# (notifications.on_trip_update); this sends each one once its last change is 10
@@ -1949,9 +1967,10 @@ scheduler_events = {
 		# a rebuilt VM undoes it silently -- and every IP-keyed rate limit, the web-lead
 		# ingress's included, quietly becomes one global bucket. Read-only, ungated.
 		"erpnext_enhancements.utils.client_ip.check_client_ip_derivation",
-		# marketing: prune Marketing Raw Payload past raw_payload_retention_days, and Ad
-		# Click rows past 180 days that no Lead carries (Google keeps click_view 90 days, so
-		# a click nobody matched in that time never will). No-op while the module is off.
+		# marketing: prune Marketing Raw Payload past raw_payload_retention_days, and nothing
+		# else. Until v1.756.0 it also deleted Ad Click rows past 180 days that no Lead carried;
+		# every metric table is kept forever now (Nik, 2026-10-29: "let's make sure we are
+		# keeping a history"). No-op while the module is off.
 		"erpnext_enhancements.marketing.core.tasks.daily_prune",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",

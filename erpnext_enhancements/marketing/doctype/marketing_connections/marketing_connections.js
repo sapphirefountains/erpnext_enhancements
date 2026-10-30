@@ -1,7 +1,8 @@
 // Copyright (c) 2026, Sapphire Fountains and contributors
 // For license information, please see license.txt
 
-// Connect / Test / Disconnect per ad platform and per publishing connection, plus Sync now
+// Connect / Test / Disconnect per ad platform, Google Business Profile (v1.756.0) and per publishing
+// connection, plus Sync now
 // (ads only). Every call is a POST to erpnext_enhancements.marketing.api.*; the only GET in
 // the flow is the platform sending the browser back to oauth_callback, which redirects here.
 
@@ -9,6 +10,7 @@ const MARKETING_PLATFORMS = [
 	{ name: "Google Ads", prefix: "google_ads" },
 	{ name: "Meta Ads", prefix: "meta" },
 	{ name: "LinkedIn Ads", prefix: "linkedin" },
+	{ name: "Google Business Profile", prefix: "google_business" },
 	{ name: "Meta Publishing", prefix: "meta_publishing" },
 	{ name: "LinkedIn Publishing", prefix: "linkedin_publishing" },
 	{ name: "YouTube Publishing", prefix: "youtube_publishing" },

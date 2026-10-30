@@ -855,7 +855,8 @@ PY_CALL_SITES = {
 	"crm_enhancements/page/sales_pipeline/sales_pipeline.py": "HISTORICAL_FIELD",
 	"crm_enhancements/handoff.py": "is_historical",
 	"process_steps.py": "exclude_filter_dict",
-	"api/marketing_dashboard.py": "exclude_filter_dict",
+	# The Marketing widgets' feeds became the Marketing Performance page's in v1.756.0.
+	"marketing/performance/api.py": "exclude_sql",
 	"kpi_dashboards/report/value_stream_performance/value_stream_performance.py": "exclude_sql",
 	"api/briefing.py": "exclude_filter_dict",
 }

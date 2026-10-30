@@ -7,6 +7,247 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.756.1] - 2026-10-29
+
+ERPNext: TASK-2026-03013 (PRJ-00580). Fixes from an independent review of the 1.756.0 draft, before
+either merged. They ship together, so prod never runs 1.756.0 on its own.
+
+**What the deploy adds to 1.756.0's.** Migrate adds a **Scope** field to Marketing Sync Log. No
+patch: no Backfill log exists anywhere until 1.756.0 deploys. `api.analytics.get_ga4_data` and
+`get_gsc_data` stop being whitelisted, so `/api/method` refuses them; nothing in a browser has
+called them since 1.756.0, and the nightly snapshot calls them in-process.
+
+### Fixed
+- **A failed history backfill now resumes from where it stopped.** In 1.756.0 a backfill counted as
+  done once *any* Backfill log existed, so one that failed in its third window never ran again by
+  itself, and starting it by hand opened a new log from the first day. Only a *Completed* log
+  counts as done now (`rules.backfill_plan`):
+  - **Automatically:** the nightly run resumes the newest *Failed* log from its cursor
+    (`progress_through`) once a backoff has passed. The backoff is 6 hours, doubling with each
+    automatic retry (`retry_count`), and never more than a week, so one that keeps failing is
+    still tried weekly.
+  - **By hand:** the page's *Backfill marketing history* and `web_sync.backfill` resume a failed
+    log at once. A completed one is run again in full, which is what asking for it by hand means.
+  - The windows before the cursor are never read again (`rules.backfill_start`).
+- **A second Business Profile listing or social account gets its own history.** The backfill was
+  keyed per source, so an account connected after the first one's backfill got only the nightly
+  window. Each listing (by location ID) and each Social Account now has a backfill of its own,
+  told apart by the log's new **Scope**. GA4 and Search Console have one history each and no scope.
+- **Search Console retries a busy answer in the daily pull and the backfill.** A 429 or a 5xx
+  failed the whole run. `_gsc_execute(..., busy=True)` now retries those three times, waiting 15
+  and then 30 seconds; a refusal (400, 403, 404) is still not retried, since it is the same answer
+  the next time. The nightly 30-day snapshot keeps failing fast, as its tests pin.
+- **Source health shows a pull's error text to System Managers only.** Others see that it failed,
+  and that a System Manager can see why on the Marketing Sync Log. The text is a connector's own
+  message and names the service account and the property.
+- **Historical Opportunities are left out of the page's Opportunity count**, the funnel and the
+  call conversions, with `crm_enhancements.historical.exclude_sql`, as the Closed Won count
+  already was and as every other Opportunity count in the app is.
+- **Business Profile review times are stored in the site's time zone, not UTC.** A Frappe Datetime
+  is naive and read as site time, so a review written in the evening, Mountain time, was dated the
+  next day.
+- **Two calls from one number on one day are ordered by when they came in**, not by name. By name,
+  a call named `…-10` sorted before `…-9`, so the call back could count as the first-time call.
+- **The social table's reach column is labelled "Daily reach, summed".** It adds up each day's
+  reach, so someone reached on two days counts twice. No network serves a de-duplicated reach for
+  an arbitrary range.
+- A comment in `setup/custom_html_blocks.py` named a patch that does not exist; the accessibility
+  test declared `PERFORMANCE` twice.
+
+## [1.756.0] - 2026-10-29
+
+ERPNext: TASK-2026-03013 (PRJ-00580). Nik, 2026-10-29: Google Analytics 4 and Search Console merged
+into one marketing view, with inbound calls, Google Business Profile, ad spend and social page stats
+beside them, on **one new page that replaces the old ones**. Checked against frappe 16.53.0 and
+erpnext 16.52.1, prod's versions, and against prod's data read-only.
+
+**What the deploy does.**
+- **Migrate** creates five doctypes (GA4 Daily Metric, Search Console Daily Metric, Business Profile
+  Daily Metric, Business Profile Review, Social Page Daily Metric) and the Marketing Performance page.
+  It adds fields to Marketing Settings, Marketing Connections and Marketing Sync Log.
+- **Two patches run:**
+  - `retire_marketing_dashboard_widgets` re-imports three workspaces (Marketing Dashboard, Marketing
+    Hub, Integration Hub). It then deletes the four Marketing widget Custom HTML Blocks, never with
+    `force`.
+  - `backfill_marketing_performance_settings` writes the three new Marketing Settings defaults, only
+    where the row has none.
+- **Three cron entries** are added: 03:40, 03:45 and 03:55.
+  - Only the **03:40** one does anything on prod. On its first night it stores the last 30 days of
+    GA4 and Search Console, and **queues their full-history backfill by itself**: Search Console's 16
+    months and GA4 back to the property's first day, a month at a time on `long`.
+  - The other two are dormant, because Marketing Settings is off.
+- **The daily prune no longer deletes Ad Click rows.** Only Marketing Raw Payload is still pruned.
+- **No platform is connected**, and no switch is turned on.
+
+### Added
+- **Marketing Performance** (`/desk/marketing-performance`), a Desk page on sf_kit and the `--sf-*`
+  tokens. It opens for System Manager, Sales Manager, Marketing Manager and Marketing Team.
+  - **One date range with a compare-to-previous switch.** The range is in the address
+    (`?from=&to=&compare=1`). Each change is its own history entry, so Back and Forward step through
+    ranges.
+  - **Trend:** sessions, organic clicks, Opportunities created and inbound calls on one time axis.
+    Each line has its own scale, and a gap shows a day with no data rather than a zero.
+  - **Landing pages:** GA4 and Search Console joined on a normalized path, ignoring host, scheme,
+    trailing slash, query string and case.
+  - **Fix first** lists three flags:
+    - pages seen but not clicked (200+ impressions, CTR under 1.5%);
+    - striking distance (average position 8–20), for pages and for queries;
+    - traffic with no key events (30+ sessions, none).
+  - **Queries** split into branded and unbranded. The branded terms are on Marketing Settings and
+    default to `sapphire`.
+  - **Channels:** sessions through to key events for each channel.
+  - **Funnel:** sessions → inquiries → Opportunities → won.
+  - **Inbound calls**, **unsourced inquiries**, **ad spend and ROAS**, **Google Business Profile**,
+    **social pages** and **source health**.
+  - **Every read is from stored rows.** Nothing calls Google when the page loads.
+- **GA4 and Search Console stored by day, kept forever** (`marketing/performance/web_sync.py`). Nik,
+  2026-10-29: "let's make sure we are keeping a history". Past each API's window, these rows are the
+  only copy, so they are stored at the finest grain a later report could want.
+  - **GA4, by date:** site total, landing page, channel, landing page × session source / medium,
+    device, and city (with region and country). Each row has sessions, users, engaged sessions and
+    key events.
+  - **Search Console, by date:** property total, page, query, and page × query (which searches land
+    on which page). Each row has clicks, impressions and average position, paginated with
+    `startRow`.
+  - **Row counts at prod's traffic:** about 600 sessions, 5,300 impressions and 6 channels a month.
+    That comes to roughly 45 GA4 rows and 155 Search Console rows a day, about 16,000 and 57,000 a
+    year (estimated).
+  - **Each night replaces the last 7 days, plus any days missed.** Search Console publishes final
+    figures two or three days late, so a night's newest days are incomplete until later nights
+    restate them.
+  - **A day is replaced only when the answer holds it.** A page or query that drops out of a
+    restated day leaves it too. A day the answer does not hold keeps what is stored, because past
+    Search Console's 16 months "nothing" means Google no longer has it.
+  - Not gated by Marketing Settings. It reads the same GA4 Settings the nightly snapshot has used
+    since June.
+- **Every source's history, backfilled once by itself** (`web_sync`'s engine), as far back as each
+  API allows. The limits were checked on vendor docs on 2026-10-29:
+  - Search Console: 16 months.
+  - GA4: back to the property's first day of data.
+  - Google Business Profile: 18 months. Google documents that only for the old v4 API, so a refused
+    window is skipped rather than failing.
+  - Social pages:
+    - Facebook: 2 years.
+    - Instagram: 90 days. Meta's own pages disagree on this, and this is the shorter figure.
+    - LinkedIn: 12 months.
+    - YouTube: the channel's creation.
+  - It runs **the first night a source is ready** (configured, or connected and switched on) and
+    has never been backfilled. For a source that is already switched on, it runs straight after
+    Connect.
+  - It also runs again from the page's menu (System Manager) or with
+    `bench execute ...web_sync.backfill`.
+  - **Deliberately not a migrate patch.** A patch that calls Google would make the deploy depend on
+    Google, and on this repo a raising patch stops `bench migrate`.
+  - Its cursor (*Done Through*, new on Marketing Sync Log) is stored in the database, not Redis. The
+    deploy FLUSHDBs both Redis instances.
+  - The next 03:40 run re-queues a backfill that is still *Queued* or *Running* but has written
+    nothing for 90 minutes.
+- **Ad platforms read their whole daily history on the first sync, in 90-day pieces.**
+  - Google Ads cut daily reporting to 37 months on 2026-06-01. Meta refuses a start "beyond 37
+    months". LinkedIn describes a "6-month daily retention period", so its daily reads stop at six
+    months.
+  - The account's cursor moves after each piece, so a three-year read that a deploy cuts off resumes
+    where it stopped instead of starting over.
+  - The `initial_backfill_days` dial can only lengthen this.
+- **Snapshots of what a source will not give back later**, taken nightly from the day a source is
+  connected:
+  - follower totals: only today's figure exists anywhere, and Instagram's insights go back 90 days;
+  - the Business Profile rating and review count;
+  - **each review as its own row** (the new doctype Business Profile Review: stars, comment, reply,
+    first and last seen). A review that a complete read no longer returns is marked *Gone From
+    Google*, never deleted, because Google does not give a deleted review back.
+  - LinkedIn follower gains and YouTube subscribers gained minus lost are kept per day as *Net New
+    Followers*.
+- **Read flags on the daily rows** (`metrics_read`, `reviews_read`, `followers_read`). An Int column
+  is never blank in the database, so without them a day nobody read would look like a real 0.
+- **Inbound calls from `Call Log`:**
+  - incoming calls per day;
+  - first-time callers, by the last ten digits of the number;
+  - calls that became an Opportunity: one created for the call's Customer or Contact within 30 days
+    after it. Each Opportunity is credited to one call, the latest before it.
+  - **Days come from `creation`, not `start_time`.** Triton writes `start_time` in UTC, six or seven
+    hours off the site's clock, so an evening call would land on the next day.
+- **Google Business Profile, a read-only connector** (`marketing/gbp/`, the `core/` conventions).
+  - It reads the Performance API's daily call clicks, website clicks, direction requests and Maps and
+    Search impressions, desktop and mobile summed.
+  - It reads the legacy v4 reviews list: count, average and unreplied.
+  - **It ships off and unconnected**, behind the master switch and `google_business_profile_enabled`.
+    Google holds the API quota at 0 until it approves the project.
+  - **`business.manage` is the only scope Google offers.** It can edit the listing and reply to
+    reviews. Read-only is therefore enforced the way it is for Google Ads: by a GET-only allowlist on
+    four hosts, checked by `core/client.py` before any request leaves. The scope string is confined
+    to `gbp/constants.py`, and a test enforces this.
+  - API names, parameters and the access gate were checked against Google's references on
+    2026-10-29. Google's own example writes the metrics range as camelCase `dailyRange` with
+    snake_case `start_date`.
+- **Social page stats** (`marketing/publish/page_stats.py`): followers, plus each day's reach and
+  views, for Facebook, Instagram, LinkedIn and YouTube.
+  - **Read through the existing publishing connections.** Their scopes already include the insight
+    reads, so this needs no new connection and no spend-capable scope.
+  - Uses 2026's metric names:
+    - Facebook: `page_total_media_view_unique` and `page_media_view`. The old impression metrics
+      were deprecated on 2025-11-15.
+    - Instagram: `reach` and `views` with `metric_type=total_value`, read one day at a time.
+    - LinkedIn: `networkSizes` for followers, since follower statistics no longer return a total.
+      The docs' own sample spells the share statistics field `uniqueImpressionsCounts`, so both
+      spellings are read.
+    - YouTube: `channels` statistics and Analytics views by day.
+  - Dormant, behind the master switch and `social_page_stats_enabled`.
+
+### Changed
+- **The GA4 Dashboard redirects to Marketing Performance.** Route History showed nobody had opened
+  it in 120 days. The Page record stays, so old links land.
+- **The Marketing Dashboard's four widgets moved onto the page**: funnel, channel spend, unsourced
+  leads and source health. The dashboard keeps its hub links and KPI Cockpit and gains a Marketing
+  Performance shortcut.
+- **The funnel and the fix list now count Opportunities, not Leads.** Sapphire works in
+  Opportunities: 12 Leads against 108 Opportunities in the 180 days to 2026-10-29. Sources come from
+  `custom_lead_source`, never `source`, and "Unknown (pre-Aug 2026)" still counts as unsourced.
+- **The Marketing Hub and the Integration Hub link Marketing Performance.** The Hub's Reports card
+  links the page, and its Campaigns card links the new daily doctypes.
+- **Page search** offers "ga4", "analytics", "search console" and "seo" for the new page. The
+  Integrations Health GA4 tile links to it.
+- **`get_ga4_data` asks for `keyEvents`, not `conversions`.** Google renamed conversions to key
+  events, and the old metric name is deprecated in the Data API. Its value is now parsed through
+  `float`, so a "3.0" cannot fail the nightly snapshot.
+- **The YouTube Publishing connection also requests `youtube.readonly`.** Google's Analytics
+  reference now names it for `reports.query`. The scope is read-only, and nothing is connected yet,
+  so nobody has to reconnect.
+- **Empty sources read "not set up yet", not as faults.** Nik, 2026-10-29: "We haven't built out our
+  marketing efforts yet."
+- **Marketing Connections gains a Google Business Profile section.** Marketing Sync Log's platform
+  options gain Google Analytics 4, Search Console, Google Business Profile and Social Pages.
+
+### Who sees what
+- **Money** (ad spend, offline spend, cost per lead, contract value, ROAS) is shown only to System
+  Manager, Sales Manager and Marketing Manager, never Marketing Team. This follows the Social Post
+  Performance report.
+- **Who called** (the caller and the number) is shown only to System Manager and Sales Manager.
+  Everyone else sees counts.
+- **The unsourced fix list's rows** are shown only to people who can read Opportunity.
+- **The server leaves these out** of what it sends; the page does not merely hide them.
+- **The new doctypes give Desk list access to System Manager and Sales Manager only**, like Ad Daily
+  Metric. The marketing roles' DocPerms stay limited to the publishing surface.
+
+### Removed
+- **The daily prune of Ad Click rows** older than 180 days that no Lead carried. Google serves
+  `click_view` for 90 days only, so a pruned click could never come back. Every metric table is kept
+  forever now. Only Marketing Raw Payload, which holds copies of answers already stored, keeps its
+  retention prune.
+- The four Marketing widget blocks (`custom_html_blocks/marketing_*`), their feeds in
+  `api/marketing_dashboard.py`, and their place in the block seeder.
+  - The seeder never deletes, so `retire_marketing_dashboard_widgets` deletes the four records, after
+    the workspace that pointed at them has been re-imported.
+  - Their four `marketing_*_enabled` toggles stay on ERPNext Enhancements Settings, unread.
+    Dropping a field from a Single deletes nothing.
+
+### Nik's steps (their own Task on PRJ-00580, assigned to Nik)
+1. Install the WordPress capture (`docs/website-capture/README.md`). None of the 108 Opportunities
+   in the last 180 days carries a UTM, gclid, landing page or referrer.
+2. Apply for Google Business Profile API access
+   (`docs/marketing-connectors-runbook.md#google-business-profile-v17560`).
+3. Connect each platform and turn on its switch. Each source's history then comes back by itself.
+
 ## [1.755.4] - 2026-10-29
 
 ERPNext: TASK-2026-02999 (PRJ-00580). A follow-up to 1.755.2. Checked against frappe 16.53.0,
