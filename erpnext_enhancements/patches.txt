@@ -1538,3 +1538,9 @@ erpnext_enhancements.patches.backfill_marketing_insights_settings
 # Marketing insights (v1.757.0): re-import the Marketing Hub (the six marketing reports; Marketing Event, Tracked Link
 # and Business Profile Review). Logs a failure, never raises, safe twice.
 erpnext_enhancements.patches.marketing_insights_hub_links
+# Design projects (v1.758.0, Nik 2026-10-30): create the Project Template "Design Project (PRO-0206)" (type Design) of four
+# template Tasks, PRO-0206's stages in order, each waiting on the one before: Predesign (PD) days 0-13, Schematic Design
+# (SD) 14-34, Design Development (DD) 35-62, Construction Documents (CD) 63-83, no hours. Insert-only by name, one
+# savepoint. Then, only once the new template exists, tick Disabled on the old "Design Project Template" (a field write;
+# its tasks and its 16 projects are untouched). Cannot raise.
+erpnext_enhancements.patches.seed_design_project_template
