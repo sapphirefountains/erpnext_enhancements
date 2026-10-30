@@ -1799,6 +1799,16 @@ scheduler_events = {
 		# publishing connections' read scopes. 03:55, after the 03:35 token upkeep. Dormant:
 		# master switch AND social_page_stats_enabled ship 0.
 		"55 3 * * *": ["erpnext_enhancements.marketing.publish.page_stats.nightly_social_page_stats"],
+		# marketing (v1.757.0): event markers for the trend -- each published Social Publish Job and
+		# each new Campaign of the last 14 days becomes a Marketing Event, keyed by the record it came
+		# from so a second run adds nothing (a missed night is caught up). Cheap, in-process.
+		"5 4 * * *": ["erpnext_enhancements.marketing.performance.events.fill_events"],
+		# marketing (v1.757.0): the marketing alerts -- Monday's week-over-week drop in sessions or
+		# search clicks, a key page out of Google (URL Inspection), a 2-star-or-worse review, a
+		# missed first-time call -- one email to the alert roles, each alert throttled by its own
+		# Marketing Alert row. Runs from day one: alerts_paused ships 0 and every threshold is
+		# backfilled. 06:15, after the night's pulls and before the 06:30 briefing.
+		"15 6 * * *": ["erpnext_enhancements.marketing.performance.alerts.run_alerts"],
 		# travel_management (Plan a Trip PR 4): trip change alerts. A save of a Booked or In
 		# Progress trip records what changed for each person as a Pending Trip Change Alert
 		# (notifications.on_trip_update); this sends each one once its last change is 10
@@ -3593,6 +3603,10 @@ assistant_tools = [
 	# v1.29.0 — the first AI *write* tool. Mutating: gated by _gate.py
 	# (APP_MUTATING) so it proposes an AI Pending Action when write gating is on.
 	"erpnext_enhancements.assistant_tools.create_followup_task.CreateFollowupTask",
+	# v1.757.0 -- log a marker on the Marketing Performance trend (a site edit, a post, a campaign),
+	# so an agent such as the SEO session records its own changes. Mutating: gated (APP_MUTATING),
+	# Low risk (one create).
+	"erpnext_enhancements.assistant_tools.log_marketing_event.LogMarketingEvent",
 	# v1.545.0 — cancel a submitted document. FAC has submit_document and no cancel, and its
 	# update_document refuses any change to a submitted document, so an approved
 	# {"docstatus": 2} card could only fail. HIGH risk and never exempt, like submit

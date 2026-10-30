@@ -357,7 +357,7 @@ class TestCalls(unittest.TestCase):
 		self.assertEqual(out["converted_calls"], 2)
 		# c2 and c5 are first-time and neither is credited with an Opportunity: two extra inquiries.
 		self.assertEqual(out["first_time_unconverted"], 2)
-		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0})
+		self.assertEqual(out["per_day"][D(2026, 10, 3)], {"incoming": 1, "first_time": 1, "converted": 0, "first_time_unconverted": 1})
 
 	def test_one_day_is_ordered_by_the_time_of_the_call(self):
 		# "CL-9" came in first and "CL-10" called back: by name, CL-10 < CL-9 and the repeat call would
@@ -413,9 +413,9 @@ class TestRoles(unittest.TestCase):
 		self.assertIn('frappe.has_permission("Opportunity", "read")', source)
 
 	def test_daily_doctypes_are_read_through_the_page_and_written_by_nobody(self):
-		"""The page reads them for every page role. Only System Manager and Sales Manager get the lists
-		themselves, like Ad Daily Metric: the marketing roles' DocPerms are the publishing surface
-		(tests/test_marketing_approval.py) and nothing else."""
+		"""Every page role reads them, in the Desk too (v1.757.0): they are marketing's own figures, and the
+		marketing reports are gated on them (a report's ``ref_doctype`` needs report permission before
+		``execute`` runs). Nobody writes them but the pulls."""
 		for folder in (
 			"ga4_daily_metric",
 			"search_console_daily_metric",
@@ -424,10 +424,8 @@ class TestRoles(unittest.TestCase):
 		):
 			doc = json.loads((MARKETING / "doctype" / folder / f"{folder}.json").read_text(encoding="utf-8"))
 			with self.subTest(doctype=doc["name"]):
-				self.assertEqual(
-					{p["role"] for p in doc["permissions"] if p.get("read")},
-					{"System Manager", "Sales Manager"},
-				)
+				self.assertEqual({p["role"] for p in doc["permissions"] if p.get("read")}, set(rules.PAGE_ROLES))
+				self.assertEqual({p["role"] for p in doc["permissions"] if p.get("report")}, set(rules.PAGE_ROLES))
 				self.assertFalse(any(p.get("write") or p.get("create") for p in doc["permissions"]))
 				self.assertEqual(doc["module"], "Marketing")
 
@@ -842,7 +840,7 @@ class TestKeepingTheHistory(unittest.TestCase):
 		for folder, options in (
 			(
 				"ga4_daily_metric",
-				{"Total", "Landing Page", "Channel", "Landing Page Source", "Device", "City"},
+				{"Total", "Landing Page", "Channel", "Landing Page Source", "Device", "City", "Campaign"},
 			),
 			("search_console_daily_metric", {"Total", "Page", "Query", "Page Query"}),
 		):
@@ -884,6 +882,16 @@ const out = {
 	single: M.line_segments([3], 100, 10),
 	pct: [M.fmt_pct(0.1234), M.fmt_pct(null)],
 	sum: [M.sum([1, null, 2]), M.sum([null, null])],
+	ghost: [M.state_from({ ghost: "last_year" }).ghost, M.state_from({ ghost: "junk" }).ghost, M.query_for({ ghost: "previous" })],
+	tabs: [M.tab_from_route(["marketing-performance"]), M.tab_from_route(["marketing-performance", "search"]), M.tab_from_route(["marketing-performance", "junk"])],
+	routes: [M.route_for("overview"), M.route_for("inquiries")],
+	options: M.options_for({ from: "2026-10-01", to: null, compare: true, ghost: "previous" }),
+	stack: M.stack([[1, 2], [3, 4], [0, 1]]),
+	heat: [M.heat_level(0, 10), M.heat_level(1, 10), M.heat_level(10, 10), M.heat_level(6, 10)],
+	x: [M.x_of(["a", "b", "c"], "c", 100), M.x_of(["a", "b"], "z", 100)],
+	shared: [M.shared_max([10, 10], [20, null]), M.shared_max([null], [])],
+	scaled: M.line_segments([10, 10], 100, 10, 20).segments,
+	links: [M.http_link("https://x.example/a"), M.http_link("javascript:alert(1)"), M.http_link(" HTTP://x ")],
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -1011,10 +1019,10 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(
 			out["states"],
 			[
-				{"from": None, "to": None, "compare": False},
-				{"from": "2026-10-01", "to": "2026-10-28", "compare": True},
-				{"from": "2026-10-01", "to": "2026-10-28", "compare": False},
-				{"from": None, "to": None, "compare": False},
+				{"from": None, "to": None, "compare": False, "ghost": ""},
+				{"from": "2026-10-01", "to": "2026-10-28", "compare": True, "ghost": ""},
+				{"from": "2026-10-01", "to": "2026-10-28", "compare": False, "ghost": ""},
+				{"from": None, "to": None, "compare": False, "ghost": ""},
 			],
 		)
 		self.assertEqual(out["queries"], ["", "?from=2026-10-01&to=2026-10-28&compare=1", "?compare=1"])
@@ -1029,6 +1037,17 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(out["single"]["segments"], [["50.0,0.0"]])
 		self.assertEqual(out["pct"], ["12.3%", "–"])
 		self.assertEqual(out["sum"], [3, None])
+		self.assertEqual(out["ghost"], ["last_year", "", "?ghost=previous"])
+		self.assertEqual(out["tabs"], ["overview", "search", "overview"])
+		self.assertEqual(out["routes"], [["marketing-performance"], ["marketing-performance", "inquiries"]])
+		self.assertEqual(out["options"], {"from": "2026-10-01", "compare": 1, "ghost": "previous"})
+		self.assertEqual(out["stack"], [[1, 2], [4, 6], [4, 7]])
+		self.assertEqual(out["heat"], [0, 1, 4, 3])
+		self.assertEqual(out["x"], [100, None])
+		self.assertEqual(out["shared"], [20, 1])
+		# [10, 10] drawn to the ghost's scale of 20 sits halfway down, so a fall from 20 shows.
+		self.assertEqual(out["scaled"], [["0.0,5.0", "100.0,5.0"]])
+		self.assertEqual(out["links"], ["https://x.example/a", "", "HTTP://x"])
 
 
 class TestPageHistory(unittest.TestCase):
@@ -1053,6 +1072,11 @@ class TestPageHistory(unittest.TestCase):
 		self.assertNotIn("replaceState", self.code)
 		self.assertNotIn("set_route", self.method("route_changed"))
 		self.assertNotIn("pushState", self.method("route_changed"))
+
+	def test_a_tab_is_a_route(self):
+		body = self.method("go_tab")
+		self.assertIn("frappe.set_route(MKP.route_for(tab), MKP.options_for(this.state))", body)
+		self.assertNotIn("pushState", body)
 
 	def test_route_options_are_consumed(self):
 		body = self.method("take_route_options")

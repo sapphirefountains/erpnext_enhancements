@@ -24,6 +24,23 @@
   "social_page_stats_enabled",
   "column_break_performance",
   "branded_terms",
+  "insights_section",
+  "near_page_one_min_impressions",
+  "fading_drop_percent",
+  "fading_min_baseline_clicks",
+  "column_break_insights",
+  "missed_call_callback_hours",
+  "service_line_section",
+  "service_line_rules",
+  "alerts_section",
+  "alerts_paused",
+  "alert_roles",
+  "alert_throttle_hours",
+  "column_break_alerts",
+  "traffic_drop_percent",
+  "traffic_drop_min_baseline",
+  "low_review_stars",
+  "key_pages",
   "sync_section",
   "restate_days",
   "initial_backfill_days",
@@ -150,6 +167,115 @@
    "label": "Branded Search Terms"
   },
   {
+   "description": "The marketing reports, the Marketing Performance page's flags, and the alerts (v1.757.0). Every figure ships with a working default, so nothing here is off until someone sets it.",
+   "fieldname": "insights_section",
+   "fieldtype": "Section Break",
+   "label": "Insights"
+  },
+  {
+   "default": "50",
+   "description": "Near Page One (R3) lists a query or page only with at least this many impressions in the range.",
+   "fieldname": "near_page_one_min_impressions",
+   "fieldtype": "Int",
+   "label": "Near Page One: Minimum Impressions"
+  },
+  {
+   "default": "30",
+   "description": "Fading Pages (R4): a page counts as fading when its clicks fell by at least this percent.",
+   "fieldname": "fading_drop_percent",
+   "fieldtype": "Int",
+   "label": "Fading Pages: Drop (%)"
+  },
+  {
+   "default": "20",
+   "description": "Fading Pages (R4) ignores a page under this many clicks in the period it is compared with, so small pages do not flap.",
+   "fieldname": "fading_min_baseline_clicks",
+   "fieldtype": "Int",
+   "label": "Fading Pages: Minimum Baseline Clicks"
+  },
+  {
+   "fieldname": "column_break_insights",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "4",
+   "description": "Missed Calls (R6): an unanswered incoming call counts as missed when nobody called the number back within this many hours.",
+   "fieldname": "missed_call_callback_hours",
+   "fieldtype": "Int",
+   "label": "Missed Calls: Callback Window (hours)"
+  },
+  {
+   "description": "Service Line Funnel (R5): rules tried in order, the first match wins. Seeded with Sapphire's value streams and likely page and query words; edit to fit the site.",
+   "fieldname": "service_line_section",
+   "fieldtype": "Section Break",
+   "label": "Service Lines"
+  },
+  {
+   "fieldname": "service_line_rules",
+   "fieldtype": "Table",
+   "label": "Service Line Rules",
+   "options": "Marketing Service Line Rule"
+  },
+  {
+   "description": "Sent to every enabled user holding one of the alert roles, nightly at 06:15 and never more than once per throttle window for the same thing.",
+   "fieldname": "alerts_section",
+   "fieldtype": "Section Break",
+   "label": "Alerts"
+  },
+  {
+   "default": "0",
+   "description": "Ships unticked, so the alerts run from day one: a sharp drop, a key page out of Google, a bad review or a missed first-time call should reach somebody. Tick to stop them all.",
+   "fieldname": "alerts_paused",
+   "fieldtype": "Check",
+   "label": "Pause Marketing Alerts"
+  },
+  {
+   "default": "Marketing Manager",
+   "description": "One role per line. Service accounts and Administrator are never sent to.",
+   "fieldname": "alert_roles",
+   "fieldtype": "Small Text",
+   "label": "Alert Roles"
+  },
+  {
+   "default": "24",
+   "description": "The same alert goes again only after this many hours.",
+   "fieldname": "alert_throttle_hours",
+   "fieldtype": "Int",
+   "label": "Throttle (hours)"
+  },
+  {
+   "fieldname": "column_break_alerts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Alert when last week's sessions or search clicks fell this percent or more against the week before.",
+   "fieldname": "traffic_drop_percent",
+   "fieldtype": "Int",
+   "label": "Weekly Drop (%)"
+  },
+  {
+   "default": "50",
+   "description": "Only from a week before of at least this many sessions (or search clicks), so a quiet week cannot alarm.",
+   "fieldname": "traffic_drop_min_baseline",
+   "fieldtype": "Int",
+   "label": "Weekly Drop: Minimum Baseline"
+  },
+  {
+   "default": "2",
+   "description": "Alert on a new Google review at this many stars or fewer. 0 turns this alert off.",
+   "fieldname": "low_review_stars",
+   "fieldtype": "Int",
+   "label": "Low Review (stars)"
+  },
+  {
+   "default": "https://www.sapphirefountains.com/",
+   "description": "One full address per line. Checked nightly with Search Console's URL Inspection (2,000 a day allowed; keep this short), and an alert goes when Google stops indexing one.",
+   "fieldname": "key_pages",
+   "fieldtype": "Small Text",
+   "label": "Key Pages"
+  },
+  {
    "fieldname": "sync_section",
    "fieldtype": "Section Break",
    "label": "Sync Behavior"
@@ -226,7 +352,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-29 12:00:00.000000",
+ "modified": "2026-10-29 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Settings",

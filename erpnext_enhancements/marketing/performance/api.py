@@ -24,7 +24,7 @@ import datetime
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, get_datetime, getdate, nowdate
+from frappe.utils import cint, flt, get_datetime, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.marketing.performance import rules
 
@@ -261,13 +261,13 @@ def _spend_section(start, end, views):
 	if not views["financial"]:
 		return out
 	if _exists("Marketing Spend"):
-		rows = frappe.db.sql(
-			"""select channel, sum(amount) as amount from `tabMarketing Spend`
-			where month between %s and %s group by channel order by amount desc""",
-			(start.replace(day=1), end),
-			as_dict=True,
-		)
-		out["offline"] = [{"channel": r.channel, "amount": flt(r.amount)} for r in rows]
+		by_channel = {}
+		for channel, amount in _offline_spend(start, end):
+			by_channel[channel] = by_channel.get(channel, 0.0) + amount
+		out["offline"] = [
+			{"channel": channel, "amount": amount}
+			for channel, amount in sorted(by_channel.items(), key=lambda pair: pair[1], reverse=True)
+		]
 	if out["platforms"]:
 		out["roas"] = _roas(start, end)
 	return out
@@ -515,8 +515,11 @@ def _period(start, end, views, calls):
 
 
 @frappe.whitelist(methods=["POST"])
-def get_performance(from_date=None, to_date=None, compare=0):
-	"""Every section of the page for ``from_date``..``to_date`` (default: the last 28 days)."""
+def get_performance(from_date=None, to_date=None, compare=0, ghost=None):
+	"""The Overview tab for ``from_date``..``to_date`` (default: the last 28 days).
+
+	``ghost`` ("previous" or "last_year", v1.757.0) adds a faint line of that period to the trend.
+	"""
 	views = _require()
 	today = getdate(nowdate())
 	start, end = rules.parse_range(from_date, to_date, today)
@@ -617,5 +620,316 @@ def get_performance(from_date=None, to_date=None, compare=0):
 		"business_profile": gbp,
 		"social": social,
 		"health": _health(today, ga_cover, gsc_cover, gbp, social, spend, operator=views["operator"]),
+		"overview": _overview(start, end, days, views, current, calls, ghost, today),
 		"generated_at": str(get_datetime()),
+	}
+
+
+# ---------------------------------------------------------------- v1.757.0: the tabs
+
+#: The Overview tiles' keys, which are also the ``kpi_key`` a Marketing KPI Target uses.
+TILE_KEYS = ("sessions", "search_clicks", "inquiries", "calls", "won_value", "cost_per_inquiry")
+FINANCIAL_TILES = frozenset({"won_value", "cost_per_inquiry"})
+CHANNEL_MIX_TOP = 6
+
+
+def _won_value(start, end):
+	from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
+	won_col = "custom_date_closed_won" if _has_column("Opportunity", "custom_date_closed_won") else "modified"
+	return flt(
+		frappe.db.sql(
+			f"""select sum(o.opportunity_amount) from `tabOpportunity` o
+			where o.status = 'Closed Won' and o.{won_col} >= %s and o.{won_col} < %s and {exclude_sql("o")}""",
+			(start, _end_exclusive(end)),
+		)[0][0]
+	)
+
+
+def _spend_total(start, end):
+	total = 0.0
+	if _exists("Ad Daily Metric"):
+		total += flt(
+			frappe.db.sql(
+				"select sum(spend) from `tabAd Daily Metric` where metric_date between %s and %s",
+				(start, end),
+			)[0][0]
+		)
+	if _exists("Marketing Spend"):
+		total += sum(amount for _channel, amount in _offline_spend(start, end))
+	return total
+
+
+def _offline_spend(start, end):
+	"""``[(channel, amount)]`` of Marketing Spend over ``start..end``, each month's amount prorated by the
+	days of it the range covers (``insights.prorated``). A whole month counted in any range touching it
+	would count it twice in two adjacent ranges, and a week would carry the month."""
+	from erpnext_enhancements.marketing.performance import insights
+
+	return [
+		(r.channel, insights.prorated(flt(r.amount), getdate(r.month), start, end))
+		for r in frappe.db.sql(
+			"""select channel, month, amount from `tabMarketing Spend` where month between %s and %s""",
+			(start.replace(day=1), end),
+			as_dict=True,
+		)
+	]
+
+
+def _tile_values(start, end, views, calls, p=None):
+	p = p or _period(start, end, views, calls)
+	inquiries = p["inquiries"]
+	values = {
+		"sessions": p["totals"]["sessions"],
+		"search_clicks": p["totals"]["organic_clicks"],
+		"inquiries": inquiries,
+		"calls": p["calls"]["incoming"],
+	}
+	if views["financial"]:
+		spend = _spend_total(start, end)
+		values["won_value"] = _won_value(start, end)
+		values["cost_per_inquiry"] = (spend / inquiries) if (spend and inquiries) else None
+	return values, p
+
+
+def _targets(views, today, calls):
+	"""Month-to-date progress for each tile a Monthly Marketing KPI Target exists for; none otherwise."""
+	if not _exists("KPI Target"):
+		return {}
+	targets = {
+		r.kpi_key: r
+		for r in frappe.get_all(
+			"KPI Target",
+			filters={"department": "Marketing", "kpi_key": ["in", list(TILE_KEYS)], "period": "Monthly"},
+			fields=["kpi_key", "target_value", "direction"],
+			ignore_permissions=True,
+		)
+		if views["financial"] or r.kpi_key not in FINANCIAL_TILES
+	}
+	if not targets:
+		return {}
+	values, _p = _tile_values(today.replace(day=1), today, views, calls)
+	return {
+		key: {
+			"value": values.get(key),
+			"target": flt(t.target_value),
+			"direction": t.direction or "Higher is better",
+		}
+		for key, t in targets.items()
+	}
+
+
+def _series_for(p, days):
+	opp_per_day, calls_per_day, new_callers = {}, {}, {}
+	for opp in p["opportunities"]:
+		opp_per_day[opp["day"]] = opp_per_day.get(opp["day"], 0) + 1
+	for day, d in p["call_summary"]["per_day"].items():
+		calls_per_day[day] = d["incoming"]
+		new_callers[day] = d.get("first_time_unconverted", 0)
+	return {
+		# The Inquiries tile's own sum, day by day: Opportunities plus first-time callers who did not become one.
+		"inquiries": [opp_per_day.get(d, 0) + new_callers.get(d, 0) for d in days],
+		"sessions": [cint(p["ga"][d].sessions) if d in p["ga"] else None for d in days],
+		"organic_clicks": [cint(p["gsc"][d].clicks) if d in p["gsc"] else None for d in days],
+		"opportunities": [opp_per_day.get(d, 0) for d in days],
+		"calls": [calls_per_day.get(d, 0) for d in days],
+	}
+
+
+def _overview(start, end, days, views, current, calls, ghost, today):
+	from erpnext_enhancements.marketing.performance import data, events, insights
+
+	prev_range = rules.previous_range(start, end)
+	year_range = insights.same_period_last_year(start, end)
+	now_values, _p = _tile_values(start, end, views, calls, p=current)
+	prev_values, prev_period = _tile_values(*prev_range, views, calls)
+	year_values, year_period = _tile_values(*year_range, views, calls)
+	series = _series_for(current, days)
+	spark = {
+		"sessions": series["sessions"],
+		"search_clicks": series["organic_clicks"],
+		"inquiries": series["inquiries"],
+		"calls": series["calls"],
+	}
+	tiles = [
+		{
+			"key": key,
+			"value": now_values.get(key),
+			"previous": prev_values.get(key),
+			"last_year": year_values.get(key),
+			"spark": spark.get(key),
+		}
+		for key in TILE_KEYS
+		if key in now_values
+	]
+	ghost_series = None
+	if ghost in ("previous", "last_year"):
+		g_start, g_end = prev_range if ghost == "previous" else year_range
+		g_days = rules.days_between(g_start, g_end)
+		ghost_series = {
+			"kind": ghost,
+			"from_date": str(g_start),
+			"to_date": str(g_end),
+			**_series_for(prev_period if ghost == "previous" else year_period, g_days),
+		}
+	mix = data.channel_days(start, end)
+	totals = sorted(((sum(v.values()), ch) for ch, v in mix.items()), reverse=True)
+	keep = [ch for _t, ch in totals[:CHANNEL_MIX_TOP]]
+	channel_mix = {ch: [mix[ch].get(d, 0) for d in days] for ch in keep}
+	other = [sum(mix[ch].get(d, 0) for ch in mix if ch not in keep) for d in days]
+	if any(other):
+		channel_mix["Other"] = other
+	key_events = current["totals"]["key_events"]
+	funnel = insights.funnel_bars(
+		[
+			(_("Sessions"), current["totals"]["sessions"]),
+			(_("Key events"), int(key_events) if key_events is not None else None),
+			(_("Inquiries"), current["inquiries"]),
+			(_("Quotes"), data.quotations(start, end)),
+			(_("Won"), current["kpis"]["won"]),
+		]
+	)
+	return {
+		"tiles": tiles,
+		"targets": _targets(views, today, calls),
+		"ghost": ghost_series,
+		"events": events.events_between(start, end),
+		"funnel_bars": funnel,
+		"channel_mix": channel_mix,
+		"previous_range": [str(d) for d in prev_range],
+		"last_year_range": [str(d) for d in year_range],
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def get_search_tab(from_date=None, to_date=None):
+	"""The Search tab: the trend with last year's ghost, R2, R3 and R4 inline, and the CTR scatter (G3)."""
+	from erpnext_enhancements.marketing.core.utils import get_settings
+	from erpnext_enhancements.marketing.performance import data, events, insights
+
+	_require()
+	today = getdate(nowdate())
+	start, end = rules.parse_range(from_date, to_date, today)
+	days = rules.days_between(start, end)
+	prev = rules.previous_range(start, end)
+	year = insights.same_period_last_year(start, end)
+	year_days = rules.days_between(*year)
+	settings = get_settings()
+	terms = rules.branded_terms(settings.get("branded_terms"))
+	clicks = data.daily(GSC, "clicks", start, end)
+	impressions = data.daily(GSC, "impressions", start, end)
+	clicks_ly = data.daily(GSC, "clicks", *year)
+	pages = data.search_rows("Page", start, end, key="page_path")
+	curve = insights.ctr_curve(pages)
+	queries_now = data.search_rows("Query", start, end)
+	queries = insights.compare_queries(
+		queries_now, data.search_rows("Query", *prev), data.search_rows("Query", *year), terms
+	)
+	minimum = cint(settings.get("near_page_one_min_impressions")) or 50
+	page_clicks = {r["value"]: r["clicks"] or 0 for r in pages if r["value"]}
+	prev_clicks = {
+		r["value"]: r["clicks"] or 0 for r in data.search_rows("Page", *prev, key="page_path") if r["value"]
+	}
+	fading = insights.fading(
+		page_clicks,
+		prev_clicks,
+		(cint(settings.get("fading_drop_percent")) or 30) / 100.0,
+		cint(settings.get("fading_min_baseline_clicks")) or 20,
+	)[:15]
+	scatter = [
+		{
+			"page": r["value"],
+			"position": r["position"],
+			"ctr": (r["clicks"] or 0) / r["impressions"],
+			"impressions": int(r["impressions"]),
+			"expected": insights.expected_ctr(curve, r["position"]),
+		}
+		for r in pages
+		if r["value"] and r["position"] and (r["impressions"] or 0) >= insights.CURVE_MIN_IMPRESSIONS
+	]
+	below = sorted(insights.below_curve(pages, curve), key=lambda r: r["impressions"], reverse=True)
+	return {
+		"from_date": str(start),
+		"to_date": str(end),
+		"trend": {
+			"dates": [d.isoformat() for d in days],
+			"clicks": [clicks.get(d) for d in days],
+			"impressions": [impressions.get(d) for d in days],
+			"clicks_last_year": [clicks_ly.get(d) for d in year_days],
+		},
+		"events": events.events_between(start, end),
+		"queries": queries[:50],
+		"new_queries": [q for q in queries if q["status"] == "new"][:15],
+		"lost_queries": [q for q in queries if q["status"] == "lost"][:15],
+		"near_page_one": insights.near_page_one(queries_now, curve, minimum)[:15],
+		"near_page_one_pages": insights.near_page_one(pages, curve, minimum)[:15],
+		"fading": fading,
+		"scatter": scatter,
+		"curve": {"points": curve["points"], "site_buckets": curve["site_buckets"]},
+		"below_curve": below[:15],
+		"branded_terms": list(terms),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def get_inquiries_tab(from_date=None, to_date=None):
+	"""The Inquiries and calls tab: inquiries by source by week, calls by weekday and hour, missed calls
+	(R6), and the median time to a first written reply."""
+	from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
+	from erpnext_enhancements.marketing.core.utils import get_settings
+	from erpnext_enhancements.marketing.performance import data, insights
+	from erpnext_enhancements.marketing.performance.calls import call_rows
+
+	views = _require()
+	today = getdate(nowdate())
+	start, end = rules.parse_range(from_date, to_date, today)
+	opps = data.opportunities(start, end)
+	by_week = {}
+	for opp in opps:
+		day = getdate(opp["created"])
+		week = (day - datetime.timedelta(days=day.weekday())).isoformat()
+		label = insights.source_label(opp.get("source"), UNKNOWN_LEAD_SOURCE)
+		by_week.setdefault(label, {}).setdefault(week, 0)
+		by_week[label][week] += 1
+	weeks = sorted({w for v in by_week.values() for w in v})
+	calls = call_rows(start, end)
+	hours = cint(get_settings().get("missed_call_callback_hours")) or insights.DEFAULT_CALLBACK_HOURS
+	missed = insights.missed_calls(calls, now_datetime(), hours)
+	missed_out = {
+		"count": sum(1 for c in missed if c["state"] == "missed"),
+		"first_time": sum(1 for c in missed if c["state"] == "missed" and c.get("first_time")),
+		"waiting": sum(1 for c in missed if c["state"] == "waiting"),
+	}
+	# Who called is for System Manager and Sales Manager, and only the calls Call Log's own permissions
+	# (User Permissions included) let them open: the same read as the Missed Calls report.
+	if views["call_details"] and frappe.has_permission("Call Log", "read"):
+		visible = {c["name"] for c in call_rows(start, end, respect_permissions=True)}
+		missed_out["rows"] = [
+			{
+				"name": c["name"],
+				"at": str(c["at"]),
+				"caller": c["caller"],
+				"number": c["number"],
+				"first_time": c["first_time"],
+				"state": c["state"],
+			}
+			for c in missed
+			if c["name"] in visible
+		][:25]
+	replies = data.first_replies([o["name"] for o in opps])
+	pairs = [(get_datetime(o["created"]), replies.get(o["name"])) for o in opps]
+	return {
+		"from_date": str(start),
+		"to_date": str(end),
+		"by_source": {
+			"weeks": weeks,
+			"series": {k: [v.get(w, 0) for w in weeks] for k, v in by_week.items()},
+		},
+		"heatmap": insights.weekday_hour_matrix(calls),
+		"missed": missed_out,
+		"reply": {
+			"median_hours": insights.median_hours(pairs),
+			"replied": sum(1 for o in opps if replies.get(o["name"])),
+			"total": len(opps),
+		},
 	}

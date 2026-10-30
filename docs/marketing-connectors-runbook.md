@@ -198,6 +198,22 @@ Each Backfill row in Marketing Sync Log carries *Done Through*, moved after each
 queue; the next 03:40 run sees a Backfill row still *Queued* or *Running* with nothing written for 90 minutes
 and queues it again from *Done Through*. Running it twice is harmless: every write replaces or upserts.
 
+## Marketing alerts (v1.757.0)
+
+Nightly at **06:15**, one email to every enabled user holding an **Alert Role** (Marketing Settings;
+Marketing Manager by default), never Administrator, Guest or the service account. They run from day one;
+tick **Pause Marketing Alerts** to stop them all.
+
+| Alert | When | Setting |
+|---|---|---|
+| Weekly drop | Mondays: last week's sessions or search clicks fell this much against the week before, from a week of at least the baseline | Weekly Drop (%) 30, Minimum Baseline 50 |
+| Key page out of Google | URL Inspection on each address in **Key Pages** (one a line; 2,000 calls a day allowed), a page indexed last time and not now | Key Pages (the homepage) |
+| Low review | A new Google review at this many stars or fewer | Low Review (stars) 2 |
+| Missed first-time call | An unanswered call from a new number nobody called back in the window | Missed Calls: Callback Window 4 h |
+
+Each alert is sent once per **Throttle** window (24 h) and logged in **Marketing Alert**; each URL
+Inspection result is kept in **Key Page Check**.
+
 ---
 
 ## Turning it on

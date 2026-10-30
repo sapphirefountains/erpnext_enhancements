@@ -75,6 +75,9 @@ GA4_DIMENSIONS = {
 	"Landing Page Source": ("S", ("landingPage", "sessionSourceMedium")),
 	"Device": ("D", ("deviceCategory",)),
 	"City": ("G", ("city", "region", "country")),
+	# v1.757.0: the campaign a session's tags named (utm_campaign / utm_source / utm_medium), which is
+	# how a Tracked Link's results are read back.
+	"Campaign": ("K", ("sessionCampaignName", "sessionSource", "sessionMedium")),
 }
 GSC_DIMENSIONS = {
 	"Total": ("T", ()),
@@ -284,7 +287,13 @@ def ga4_values(dimension, rows, now):
 				"page_path": rules.normalize_page(value)
 				if dimension in ("Landing Page", "Landing Page Source")
 				else None,
-				"source_medium": extra[0] if dimension == "Landing Page Source" else None,
+				"source_medium": (
+					extra[0]
+					if dimension == "Landing Page Source"
+					else f"{extra[0]} / {extra[1]}"
+					if dimension == "Campaign"
+					else None
+				),
 				"region": extra[0] if dimension == "City" else None,
 				"country": extra[1] if dimension == "City" else None,
 				"sessions": row["sessions"],

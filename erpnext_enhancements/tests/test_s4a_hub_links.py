@@ -42,7 +42,7 @@ BUMPED_ON_OR_AFTER = "2026-10-14 12:00:00"
 #: Workspaces S4a did not edit that a later release bumped, with the patch that re-imports them
 #: and the stamp it set: (patch module, modified on or after).
 LATER_RESYNCS = {
-	"Marketing Hub": ("retire_marketing_dashboard_widgets", "2026-10-29 12:00:00"),
+	"Marketing Hub": ("marketing_insights_hub_links", "2026-10-29 20:00:00"),
 }
 HUB_LINKS = "Dashboard Hub Links"
 

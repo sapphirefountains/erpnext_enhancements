@@ -672,12 +672,16 @@ def summarize_calls(calls, opportunities, start, end, window_days=CALL_TO_OPPORT
 
 	per_day = {}
 	for call in in_range:
-		d = per_day.setdefault(call["day"], {"incoming": 0, "first_time": 0, "converted": 0})
+		d = per_day.setdefault(
+			call["day"], {"incoming": 0, "first_time": 0, "converted": 0, "first_time_unconverted": 0}
+		)
 		d["incoming"] += 1
 		if call.get("name") in first_time:
 			d["first_time"] += 1
 		if call.get("name") in converted:
 			d["converted"] += 1
+		if call.get("name") in first_time and call.get("name") not in converted:
+			d["first_time_unconverted"] += 1
 	return {
 		"incoming": len(in_range),
 		"first_time": sum(1 for c in in_range if c.get("name") in first_time),

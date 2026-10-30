@@ -677,8 +677,11 @@ jobs:
       # the nightly restate window, calls (first-time by number, an Opportunity credited to one call),
       # who sees money and who sees callers, Business Profile's GET-only allowlist and parsers, the
       # social page-stats parsers, and the page's range-in-the-address logic under node.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers + performance page
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher erpnext_enhancements.tests.test_marketing_performance -v
+      # test_marketing_insights (v1.757.0), stub-free: the reports', graphs', alerts' and digest's rules -- inquiry
+      # sources, query changes, the expected-CTR curve, near page one, fading pages, the service-line mapping, missed
+      # calls, funnel bars, the alert rules (none ships dormant), the Monday digest and the tracked-link builder.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers + performance page + insights
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher erpnext_enhancements.tests.test_marketing_performance erpnext_enhancements.tests.test_marketing_insights -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's

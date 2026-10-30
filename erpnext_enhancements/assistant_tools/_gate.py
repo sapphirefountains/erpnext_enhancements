@@ -171,6 +171,8 @@ EXPLICIT_READONLY = {
 # never depends on the fail-closed fallback to confirm them.
 APP_MUTATING = {
     "create_followup_task",
+    # v1.757.0 -- one Marketing Event (a marker on the marketing trend). Low, like the follow-up task.
+    "log_marketing_event",
     "workforce_clock_in",
     "workforce_clock_out",
     # mdm_integration remote device actions — all gated (lock/wipe/locate the
@@ -247,6 +249,7 @@ LOW_RISK = {
     "create_dashboard",
     "create_dashboard_chart",
     "create_followup_task",
+    "log_marketing_event",
     "save_water_design",
     "author_training_course",
     # a private File the requester owns; nothing existing changes and deleting it undoes it
@@ -893,6 +896,10 @@ def summarize_tool_call(tool_name, arguments):
     if tool_name == "generate_document":
         label = (args.get("title") or args.get("filename") or "").strip()
         return f"Generate a PDF document {label}".strip()
+    if tool_name == "log_marketing_event":
+        text = (args.get("title") or "").strip()
+        snippet = (text[:60] + "…") if len(text) > 60 else text
+        return f"Log marketing event “{snippet}” on {args.get('event_date') or '?'}".strip()
     if tool_name == "create_followup_task":
         text = (args.get("description") or "").strip()
         snippet = (text[:60] + "…") if len(text) > 60 else text
