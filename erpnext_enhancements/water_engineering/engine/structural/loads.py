@@ -230,6 +230,7 @@ def seismic_design_values(ss=None, s1=None, site_class: str = "D", sds=None, sd1
 def hydrodynamic_wall_load(
     water_depth_ft: float, length_ft: float, sds: float, sd1: float, wall_in: float = 8.0,
     wall_height_ft: float | None = None, buried: bool = True, importance: float = 1.0, rules: dict | None = None,
+    shape: str = "rectangular",
 ) -> CalcResult:
     """Earthquake load per foot of the wall facing the shaking, ACI 350.3's
     simplified method for a rectangular basin. ``length_ft`` is the inside
@@ -238,7 +239,9 @@ def hydrodynamic_wall_load(
     Impulsive water moves with the walls, convective water sloshes; each gives
     a force at its height, the wall's own mass adds an impulsive force, and
     the base moment is √((Mi + Mw)² + Mc²). Compared with the static moment of
-    water to the same depth."""
+    water to the same depth. ``shape="circular"`` takes ``length_ft`` as the
+    diameter and uses ACI 350.3's circular coefficients; the wall line load is
+    the peak of the cos θ distribution, 2P/(πD)."""
     rules = merged_rules(rules)
     hl, l_ft = float(water_depth_ft), float(length_ft)
     hw = float(wall_height_ft if wall_height_ft is not None else hl)
@@ -249,20 +252,27 @@ def hydrodynamic_wall_load(
     g = 32.2
     gw = float(rules["water_pcf"])
     r = l_ft / hl
+    circular = str(shape).lower() == "circular"
+    kc = 3.68 if circular else 3.16
     wi = math.tanh(0.866 * r) / (0.866 * r)
-    wc = 0.264 * r * math.tanh(3.16 / r)
+    wc = (0.230 if circular else 0.264) * r * math.tanh(kc / r)
     hi = (0.5 - 0.09375 * r) * hl if r < 1.333 else 0.375 * hl
-    x = 3.16 / r
+    x = kc / r
     hc = (1 - (math.cosh(x) - 1) / (x * math.sinh(x))) * hl
-    lam = math.sqrt(3.16 * g * math.tanh(x))
+    lam = math.sqrt(kc * g * math.tanh(x))
     tc = 2 * math.pi * math.sqrt(l_ft) / lam
     ts = sd1 / sds if sds else 0.0
     ci = float(sds)
     cc = min(1.5 * sd1 / tc, 1.5 * sds) if tc <= 1.6 / max(ts, 1e-9) else 2.4 * sds / tc ** 2
     ri, rc = (3.0 if buried else 2.0), 1.0
-    wl_per_ft = gw * hl * l_ft  # liquid weight per foot of wall width
-    pi = ci * importance * wi * wl_per_ft / (2 * ri)
-    pc = cc * importance * wc * wl_per_ft / (2 * rc)
+    if circular:  # total liquid weight spread as cos θ round the wall: peak 2W/(πD) per foot
+        wl_per_ft = gw * hl * math.pi * l_ft ** 2 / 4.0 * 2.0 / (math.pi * l_ft)
+        pi = ci * importance * wi * wl_per_ft / ri
+        pc = cc * importance * wc * wl_per_ft / rc
+    else:
+        wl_per_ft = gw * hl * l_ft  # liquid weight per foot of wall width
+        pi = ci * importance * wi * wl_per_ft / (2 * ri)
+        pc = cc * importance * wc * wl_per_ft / (2 * rc)
     eps = min(0.0151 * r * r - 0.1908 * r + 1.021, 1.0)
     ww = float(rules["concrete_pcf"]) * float(wall_in) / 12.0 * hw
     pw = ci * importance * eps * ww / ri
@@ -272,7 +282,7 @@ def hydrodynamic_wall_load(
     m_static = gw * hl ** 3 / 6.0
     return CalcResult(
         calc=calc,
-        value={"length_ft": l_ft, "water_depth_ft": hl, "wi_ratio": wi, "wc_ratio": wc, "hi_ft": hi, "hc_ft": hc,
+        value={"shape": "circular" if circular else "rectangular", "length_ft": l_ft, "water_depth_ft": hl, "wi_ratio": wi, "wc_ratio": wc, "hi_ft": hi, "hc_ft": hc,
                "tc_s": tc, "ci": ci, "cc": cc, "ri": ri, "rc": rc, "pi_lb_per_ft": pi, "pc_lb_per_ft": pc,
                "pw_lb_per_ft": pw, "base_shear_lb_per_ft": vb, "base_moment_lb_ft_per_ft": mb,
                "static_moment_lb_ft_per_ft": m_static, "ratio_to_static": mb / m_static if m_static else None},
@@ -304,6 +314,10 @@ def wind_panel_load(
     h = float(height_ft)
     s = h - float(clearance_ft or 0)
     b = float(width_ft)
+    if h <= 0 or s <= 0 or b <= 0:
+        return CalcResult(calc="structural_wind_panel", value=None, citations=[CIT_ASCE7_WIND],
+                          warnings=[DISCLAIMER, "Panel height must exceed its clearance, and both dimensions be > 0."],
+                          status="incomplete")
     alpha, zg = EXPOSURE.get(str(exposure).upper(), EXPOSURE["C"])
     kz = 2.01 * (max(h, 15.0) / zg) ** (2.0 / alpha)
     ke = math.exp(-0.0000362 * float(elevation_ft or 0))

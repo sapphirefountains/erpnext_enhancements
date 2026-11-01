@@ -72,22 +72,27 @@ def cantilever_wall(
     gc, gw, gs = float(rules["concrete_pcf"]), float(rules["water_pcf"]), float(rules["soil_pcf"])
     efp = float(rules["active_efp_pcf"])
     ka = efp / gs
-    ht = h + tf
+    bottom = float(footing_bottom_in if footing_bottom_in is not None else footing_in)
+    bury = max(bottom / 12.0 - tf, 0.0)  # stem below grade down to the footing's top
+    stem_len = h + bury
+    ht = stem_len + tf  # retained height to the footing bottom
     is_water = str(retained).lower() == "water"
     hw = min(float(water_depth_ft if water_depth_ft is not None else h), h) if is_water else 0.0
 
     horiz, vert = [], []  # (name, force lb/ft, arm ft about the toe)
     if is_water:
-        horiz.append(("water", gw * hw * hw / 2.0, tf + hw / 3.0))
+        horiz.append(("water", gw * hw * hw / 2.0, tf + bury + hw / 3.0))
         vert.append(("water over heel", gw * hw * heel, toe + t + heel / 2.0))
+        if bury:
+            vert.append(("soil over heel", gs * bury * heel, toe + t + heel / 2.0))
     else:
         horiz.append(("soil", efp * ht * ht / 2.0, ht / 3.0))
-        vert.append(("soil over heel", gs * h * heel, toe + t + heel / 2.0))
+        vert.append(("soil over heel", gs * stem_len * heel, toe + t + heel / 2.0))
         if surcharge_psf:
             horiz.append(("surcharge", ka * float(surcharge_psf) * ht, ht / 2.0))
-    vert += [("stem", gc * t * h, toe + t / 2.0), ("footing", gc * b * tf, b / 2.0)]
+    vert += [("stem", gc * t * stem_len, toe + t / 2.0), ("footing", gc * b * tf, b / 2.0)]
 
-    def stability(horiz_rows, fs_need):
+    def stability(horiz_rows, fs_need, is_seismic=False):
         sum_h = sum(f for _, f, _ in horiz_rows)
         sum_v = sum(f for _, f, _ in vert)
         mo = sum(f * a for _, f, a in horiz_rows)
@@ -103,7 +108,7 @@ def cantilever_wall(
         else:
             q = float("inf")
         ok = ((fs_ot is None or fs_ot + 1e-9 >= fs_need) and (fs_sl is None or fs_sl + 1e-9 >= fs_need)
-              and q <= soil["bearing_psf"] * (1.333 if fs_need < 1.5 else 1.0) + 1e-9)
+              and q <= soil["bearing_psf"] * (1.333 if is_seismic else 1.0) + 1e-9)
         return {"sum_h_lb": sum_h, "sum_v_lb": sum_v, "mo_lb_ft": mo, "mr_lb_ft": mr, "fs_overturning": fs_ot,
                 "fs_sliding": fs_sl, "eccentricity_ft": e, "bearing_psf": q, "required_fs": fs_need, "ok": ok}
 
@@ -117,18 +122,17 @@ def cantilever_wall(
     citations = [CIT_IBC_1807, CIT_IBC_1806, CIT_IBC_1610 if not is_water else CIT_IBC_1807]
     if sds:
         kh = float(sds) / 2.5
-        extra = (("seismic water", 7.0 / 12.0 * kh * gw * hw * hw, tf + 0.4 * hw) if is_water else
+        extra = (("seismic water", 7.0 / 12.0 * kh * gw * hw * hw, tf + bury + 0.4 * hw) if is_water else
                  ("seismic soil", 0.375 * kh * gs * ht * ht, 0.6 * ht))
-        seismic = stability([*horiz, extra], float(rules["wall_fs_seismic"]))
+        seismic = stability([*horiz, extra], float(rules["wall_fs_seismic"]), is_seismic=True)
         seismic["kh"] = kh
         steps.append(f"seismic (kh = {kh:.3f}): + {extra[1]:.1f} lb/ft; FS overturning "
                      f"{seismic['fs_overturning'] or 0:.2f}, sliding {seismic['fs_sliding'] or 0:.2f}, "
                      f"q = {seismic['bearing_psf']:.0f} psf (allowable × 1.33)")
         citations.append(CIT_WESTERGAARD if is_water else CIT_SEED_WHITMAN)
-    bottom = float(footing_bottom_in if footing_bottom_in is not None else footing_in)
     frost = frost_check(bottom, frost_depth_in, rules)
     det = detail_for_wall(float(stem_in), rules)
-    stem = wall_bending_check(hw if is_water else h, float(stem_in), det["bar"], det["spacing_in"], det["mats"],
+    stem = wall_bending_check(hw if is_water else stem_len, float(stem_in), det["bar"], det["spacing_in"], det["mats"],
                               rules, unit_weight_pcf=None if is_water else efp, case="water" if is_water else "soil")
     ok = static["ok"] and (seismic is None or seismic["ok"]) and frost.status == "ok" and stem.status == "ok"
     warnings = [DISCLAIMER]
@@ -140,11 +144,12 @@ def cantilever_wall(
         warnings.append(frost.warnings[-1])
     if stem.status != "ok":
         warnings.append("Stem needs more steel than its DOC-0119 detail.")
-    concrete_cuft = t * h + b * tf
+    concrete_cuft = t * stem_len + b * tf
     return CalcResult(
         calc=calc,
         value={"retained": "water" if is_water else "soil", "stem_height_ft": h, "stem_in": float(stem_in),
                "footing_width_ft": b, "toe_ft": toe, "heel_ft": heel, "footing_in": float(footing_in),
+               "stem_below_grade_ft": bury,
                "static": static, "seismic": seismic, "frost": frost.value, "stem_check": stem.value,
                "stem_detail": det, "concrete_cuft_per_ft": concrete_cuft, "soil": soil, "ok": ok},
         unit="",
@@ -191,13 +196,18 @@ def size_wall_footing(
     rows = math.ceil((h - c) / (det["spacing_in"] / 12.0)) + 1
     foot_bars = 12.0 / float(rules["slab_spacing_in"])  # transverse footing bars per foot of wall
     foot_long = math.ceil((width - 2 * c) / (float(rules["slab_spacing_in"]) / 12.0)) + 1
-    lb_per_ft = (per_ft * vert_len + rows * det["mats"] * 1.0) * bar_v["lb_per_ft"] + \
-        (foot_bars * (width - 2 * c) + foot_long * 1.0) * rebar(rules["slab_bar"])["lb_per_ft"]
+    bar_f = rebar(rules["slab_bar"])
+    by_bar: dict[str, float] = {}
+    by_bar[bar_v["label"]] = (per_ft * vert_len + rows * det["mats"] * 1.0) * bar_v["lb_per_ft"]
+    by_bar[bar_f["label"]] = by_bar.get(bar_f["label"], 0.0) + \
+        (foot_bars * (width - 2 * c) + foot_long * 1.0) * bar_f["lb_per_ft"]
+    lb_per_ft = sum(by_bar.values())
     excavation_cuft = (width + 2 * float(rules["work_space_ft"])) * bottom / 12.0
     concrete = float(stem_in) / 12.0 * (h + bottom / 12.0 - float(footing_in) / 12.0) + width * float(footing_in) / 12.0
     return CalcResult(
         calc="structural_wall_footing",
         value={**v, "footing_bottom_in": bottom, "concrete_cuft_per_ft": concrete, "rebar_lb_per_ft": lb_per_ft,
+               "rebar_lb_per_ft_by_bar": by_bar,
                "excavation_cuft_per_ft": excavation_cuft, "tried": tried},
         unit="ft",
         inputs=result.inputs,

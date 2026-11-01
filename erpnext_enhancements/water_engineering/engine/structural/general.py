@@ -50,7 +50,7 @@ from .loads import (
 )
 from .rigging import rig_plan
 from .steel import _section, select_column, water_wall_frame
-from .supports import equipment_pad, mooring, penetration_detail, seismic_bracing, thrust_block
+from .supports import equipment_pad, mooring, nominal_size, penetration_detail, seismic_bracing, thrust_block
 from .vaults import grating, lid_slab, trench_drain
 from .walls import size_wall_footing
 
@@ -105,6 +105,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         bom.append((key, desc, lb, "Pound", key.replace(".", "_"), {}))
         totals["steel_lb"] += lb
 
+    wall_rebar: dict[str, float] = {}
     frost = _num(site.get("frost_depth_in"), float(rules["frost_depth_in"]))
     soil_class = site.get("soil_class")
     bearing = _num(site.get("soil_bearing_psf"))
@@ -129,13 +130,17 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         g, d = b["geometry"], b["detail"]
         label = b["label"] or b["basin_id"]
         if b["kind"] == "basin" and sds is not None:
-            lengths = (sorted({g["inside_length_ft"], g["inside_width_ft"]}) if g["shape"] == "rectangular"
-                       else [math.sqrt(g["inside_area_sqft"])])
+            if g["shape"] == "rectangular":
+                lengths, hshape = sorted({g["inside_length_ft"], g["inside_width_ft"]}), "rectangular"
+            else:  # a freeform as the circle of the same area
+                lengths, hshape = [math.sqrt(4 * g["inside_area_sqft"] / math.pi)], "circular"
             buried = (g.get("wall_below_grade_ft") or 0) > 0
             phi_mn = _wall_phi_mn(d["wall_in"], d["wall_bar"], d["wall_spacing_in"], d["wall_mats"], rules)
             for length in lengths:
                 hd = hydrodynamic_wall_load(g["wall_height_ft"], length, sds, sd1, d["wall_in"], g["wall_height_ft"],
-                                            buried, rules=rules)
+                                            buried, rules=rules, shape=hshape)
+                if g["shape"] == "freeform":
+                    hd.warnings.append("Freeform basin taken as the circle of the same area.")
                 record("hydrodynamic", {"id": f"{b['basin_id']}:{length:g}", "label": label}, hd)
                 v = hd.value
                 mu = float(rules["durability_factor"]) * (1.2 * v["static_moment_lb_ft_per_ft"] +
@@ -227,6 +232,8 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         length = _num(row.get("length_ft"), 0.0)
         totals["site_concrete_cuft"] += res.value["concrete_cuft_per_ft"] * length
         totals["site_rebar_lb"] += res.value["rebar_lb_per_ft"] * length
+        for label_, lb_ft in res.value["rebar_lb_per_ft_by_bar"].items():
+            wall_rebar[label_] = wall_rebar.get(label_, 0.0) + lb_ft * length
         if res.status != "ok":
             check("STRUCT_WALL_STABILITY", WARNING, "basin", row.get("label") or row.get("id"),
                   "Freestanding wall fails a stability check", "; ".join(res.warnings[1:]) or res.steps[-1],
@@ -238,6 +245,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         h, wd = _num(row.get("height_ft"), 0.0), _num(row.get("width_ft"), 0.0)
         wind = wind_panel_load(h, wd, _num(row.get("clearance_ft"), 0.0), wind_v, exposure,
                                _num(row.get("solid_ratio"), 1.0), _num(site.get("elevation_ft"), 0.0), rules)
+        if wind.status == "incomplete":
+            record("frames", row, wind)
+            check("STRUCT_FRAME_INPUT", INFO, "features", row.get("label") or row.get("id"), "Frame inputs incomplete",
+                  wind.warnings[-1], "Enter the frame's height, width and clearance.", wind.citations[0])
+            continue
         frame = water_wall_frame(h, wd, wind.value["pressure_psf"], _num(row.get("header_plf"), 0.0),
                                  _num(row.get("post_spacing_ft")), row.get("material") or "A500C", rules)
         frame.steps.insert(0, wind.steps[-1])
@@ -308,7 +320,8 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         res = pedestal_check(_num(row.get("length_ft"), 0.0), _num(row.get("width_ft"), 0.0),
                              _num(row.get("height_ft"), 0.0), _num(row.get("unit_weight_pcf"), 150.0),
                              _num(row.get("top_load_lb"), 0.0), _num(row.get("top_cg_ft")), _num(row.get("wind_lb"), 0.0),
-                             _num(row.get("wind_height_ft")), sds, row.get("on") or "slab", soil_class, bearing, rules)
+                             _num(row.get("wind_height_ft")), sds, row.get("on") or "slab", soil_class, bearing,
+                             row.get("material") or "concrete", rules)
         record("pedestals", row, res)
         totals["site_concrete_cuft"] += res.value["concrete_cuft"]
         if res.status != "ok":
@@ -328,13 +341,30 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_ANCHORS", WARNING, "pump", row.get("label") or row.get("id"), "Equipment anchors overstressed",
                   res.warnings[-1], "Larger or deeper anchors.", res.citations[1])
 
+    def bad_size(group, row, err):
+        check("STRUCT_PIPE_SIZE", INFO, "piping", row.get("label") or row.get("id"), "Pipe size not set",
+              f"{group}: {err}", "Enter a nominal pipe size such as 3 or 1-1/2.", "")
+
     for row in struct.get("thrust_blocks") or []:
+        try:
+            nominal_size(row.get("size") or 2)
+        except ValueError as err:
+            bad_size("thrust block", row, err)
+            continue
         res = thrust_block(row.get("size") or 2, _num(row.get("pressure_psi"), 0.0), str(row.get("fitting") or "90"),
                            _num(row.get("soil_bearing_psf")), rules)
         record("thrust_blocks", row, res)
         totals["site_concrete_cuft"] += (res.value or {}).get("concrete_cuft", 0.0) * int(_num(row.get("count"), 1))
+        if res.status == "incomplete":
+            check("STRUCT_THRUST_INPUT", INFO, "piping", row.get("label") or row.get("id"), "Thrust block not computed",
+                  res.warnings[-1], "Use a bend angle, tee or dead end, or size it by hand.", "")
 
     for row in struct.get("bracing") or []:
+        try:
+            nominal_size(row.get("size") or 2)
+        except ValueError as err:
+            bad_size("bracing", row, err)
+            continue
         res = seismic_bracing(row.get("size") or 2, _num(row.get("run_ft"), 0.0), sdc or "D", 1.0,
                               row.get("material") or "pvc", rules)
         record("bracing", row, res)
@@ -372,11 +402,9 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             float(rules["order_increment_yd3"])
         bom.append(("structural.concrete_site", "Concrete for walls, pads, pedestals, thrust and mooring blocks "
                     "(order, incl. waste)", yd3, "Cubic Yard", "ready_mix_concrete_4500_air", {}))
-    if totals["site_rebar_lb"]:
-        bar_label = rebar(rules["general_bar"])["label"]
+    for bar_label, lb in wall_rebar.items():
         bom.append((f"structural.rebar.{bar_label}.lb", f"Rebar {bar_label} Grade 60 (ASTM A615), purchase weight",
-                    totals["site_rebar_lb"] * (1 + float(rules["waste_factor"])), "Pound",
-                    f"rebar_{bar_label.lstrip('#')}_grade60", {}))
+                    lb * (1 + float(rules["waste_factor"])), "Pound", f"rebar_{bar_label.lstrip('#')}_grade60", {}))
     if totals["equipment_anchors"]:
         bom.append(("structural.anchors", "Anchor bolts, stainless, equipment pads", totals["equipment_anchors"], "Nos",
                     "anchor_bolt_ss_wedge", {}))

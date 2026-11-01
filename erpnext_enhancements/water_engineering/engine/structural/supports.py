@@ -81,7 +81,11 @@ def equipment_pad(
     t_total = max((fp * float(cg_height_in) - resist * s / 2.0) / s, 0.0)
     tu = t_total / max(n / 2, 1)
     vu = fp / n
-    ase = ANCHOR_ASE_IN2.get(float(anchor_dia_in), 0.142)
+    dia = float(anchor_dia_in)
+    listed = [d for d in sorted(ANCHOR_ASE_IN2) if d <= dia + 1e-9] or [min(ANCHOR_ASE_IN2)]
+    ase = ANCHOR_ASE_IN2[listed[-1]]
+    size_note = None if abs(listed[-1] - dia) < 1e-9 else \
+        f"No {dia:g} in anchor in the table: checked as {listed[-1]:g} in (conservative)."
     futa = ANCHOR_FUTA_PSI.get(anchor_grade, 58000.0)
     hef = min(float(embed_in), pad_t - 2.0) if pad_t > 2.0 else float(embed_in)
     cast = str(anchor_type).lower().startswith("cast")
@@ -96,6 +100,8 @@ def equipment_pad(
     ok = tu <= phi_n + 1e-9 and vu <= phi_v + 1e-9 and inter <= 1.2 + 1e-9
     warnings = [DISCLAIMER, "Set pumps on vibration isolation (pads or springs) and connect with flexible "
                 "couplings so the pad does not carry pipe loads."]
+    if size_note:
+        warnings.append(size_note)
     if hef < float(embed_in):
         warnings.append(f"Embedment limited to {hef:g} in by the {pad_t:g} in pad: anchor through into the slab.")
     if not ok:
@@ -133,7 +139,11 @@ def thrust_block(nominal: float, pressure_psi: float, fitting: str = "90", soil_
     if key in ("tee", "dead_end", "cap", "valve", "plug"):
         factor, label = 1.0, key
     else:
-        ang = FITTING_ANGLE.get(key, float(key) if key.replace(".", "", 1).isdigit() else 90.0)
+        ang = FITTING_ANGLE.get(key, float(key) if key.replace(".", "", 1).isdigit() else None)
+        if ang is None:
+            return CalcResult(calc="structural_thrust_block", value=None, citations=[CIT_THRUST],
+                              warnings=[DISCLAIMER, f"Fitting {fitting!r} is not a bend, tee or dead end: compute "
+                                        "its thrust by hand (a reducer is P·(A1 − A2))."], status="incomplete")
         factor, label = 2 * math.sin(math.radians(ang) / 2), f"{ang:g}° bend"
     thrust = float(pressure_psi) * area * factor
     bearing = float(soil_bearing_psf if soil_bearing_psf not in (None, "") else rules["thrust_soil_bearing_psf"])

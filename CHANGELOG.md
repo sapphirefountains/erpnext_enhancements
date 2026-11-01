@@ -50,7 +50,7 @@ only, never imports frappe): no migration, fixture, patch or hook. Nothing runs 
     blocks, trench drains, an access hatch, and site concrete.
 - README §6: the new modules, the model's `structure` block for phase C, what the takeoff adds for
   phase E, and the new house rules.
-- Tests: four more pytest suites under the same CI step, 82 tests in all, each with hand goldens.
+- Tests: four more pytest suites under the same CI step, 86 tests in all, each with hand goldens.
   The HSS table is pinned to AISC's published values, and the rigging port to golden vectors from the
   DRC JavaScript.
 

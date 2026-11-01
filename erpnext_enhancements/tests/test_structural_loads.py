@@ -120,3 +120,18 @@ def test_wind_porous_and_elevated_and_altitude():
     assert wind_panel_load(10, 8, 4, 115).value["cf"] == 2.0  # clear of the ground: upper bound
     # Salt Lake City at 4,300 ft: Ke = e^(-0.0000362 × 4300) = 0.8558
     assert wind_panel_load(10, 8, 0, 115, elevation_ft=4300).value["ke"] == approx(math.exp(-0.0000362 * 4300))
+
+
+def test_hydrodynamic_circular_by_hand():
+    # 12 ft diameter, 2 ft of water: ACI 350.3 circular coefficients, peak wall load 2W/(πD) per foot
+    r = hydrodynamic_wall_load(2.0, 12.0, 1.0, 0.6, 8.0, 2.0, buried=True, shape="circular").value
+    ratio = 6.0
+    wi = math.tanh(0.866 * ratio) / (0.866 * ratio)
+    wc = 0.230 * ratio * math.tanh(3.68 / ratio)
+    w_peak = 62.4 * 2.0 * math.pi * 144 / 4 * 2 / (math.pi * 12)
+    assert r["shape"] == "circular" and r["wc_ratio"] == approx(wc)
+    assert r["pi_lb_per_ft"] == approx(1.0 * wi * w_peak / 3.0)
+
+
+def test_wind_clearance_at_height_is_incomplete():
+    assert wind_panel_load(10, 8, 10).status == "incomplete"

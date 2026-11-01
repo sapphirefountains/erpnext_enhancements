@@ -183,3 +183,12 @@ def test_takeoff_runs_the_whole_structure():
             assert row["result"]["citations"], row
             assert "not a stamped structural design" in " ".join(row["result"]["warnings"])
     assert bar(4)["lb_per_ft"] == 0.668
+
+
+def test_odd_inputs_are_reported_not_guessed():
+    pad = equipment_pad(30, 20, 400, 14, 1.0, anchor_dia_in=0.4375)
+    assert any("checked as 0.375 in" in w for w in pad.warnings)
+    assert thrust_block(4, 150, "reducer").status == "incomplete"
+    t = structural_takeoff({"structure": {"thrust_blocks": [{"id": "x", "size": "unsized", "pressure_psi": 100}],
+                                          "bracing": [{"id": "y", "size": "tbd", "run_ft": 40}]}})
+    assert [c["code"] for c in t["checks"]].count("STRUCT_PIPE_SIZE") == 2

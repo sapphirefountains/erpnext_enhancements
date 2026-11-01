@@ -150,7 +150,7 @@ def veneer_attachment(
 def pedestal_check(
     length_ft: float, width_ft: float, height_ft: float, unit_weight_pcf: float = 150.0, top_load_lb: float = 0.0,
     top_cg_ft: float | None = None, wind_lb: float = 0.0, wind_height_ft: float | None = None, sds: float | None = None,
-    on: str = "slab", soil_class=None, bearing_psf=None, rules: dict | None = None,
+    on: str = "slab", soil_class=None, bearing_psf=None, material: str = "concrete", rules: dict | None = None,
 ) -> CalcResult:
     """A solid pedestal or plinth (and whatever stands on it) as a rigid
     block: overturning about the narrow side, sliding, and bearing. The
@@ -178,7 +178,7 @@ def pedestal_check(
     fs_sl = mu * w_resist / lateral if lateral > 0 else None
     e = mo / w if w else 0.0
     area = lng * wid
-    q = w / area * (1 + 6 * e / b) if e <= b / 6 else (2 * w / (3 * lng * (b / 2 - e)) if e < b / 2 else float("inf"))
+    q = w / area * (1 + 6 * e / b) if e <= b / 6 else (2 * w / (3 * max(lng, wid) * (b / 2 - e)) if e < b / 2 else float("inf"))
     allow = None if str(on).lower() == "slab" else soil_properties(soil_class, bearing_psf).value["bearing_psf"]
     need = float(rules["wall_fs"])
     ok = (fs_ot is None or fs_ot + 1e-9 >= need) and (fs_sl is None or fs_sl + 1e-9 >= need) and \
@@ -187,7 +187,7 @@ def pedestal_check(
         calc="structural_pedestal",
         value={"weight_lb": w, "lateral_lb": lateral, "governs": "seismic" if use_seis else "wind",
                "fs_overturning": fs_ot, "fs_sliding": fs_sl, "bearing_psf": q, "allowable_psf": allow,
-               "concrete_cuft": lng * wid * h if unit_weight_pcf == 150.0 else 0.0, "ok": ok},
+               "concrete_cuft": lng * wid * h if str(material).lower() == "concrete" else 0.0, "ok": ok},
         unit="",
         inputs={"size": make_input(f"{lng:g} × {wid:g} × {h:g}", "ft", "user"),
                 "top_load": make_input(w_top, "lb", "user"), "sds": make_input(sds, "g", "prior_calc")},

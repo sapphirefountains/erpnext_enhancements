@@ -205,3 +205,10 @@ def test_floor_rating_and_show_basin():
     r = show_basin_floor(10, 4, 1 / 3)
     assert r.value["psf"] == approx(62.4 / 3 + 5.12)
     assert r.value["rating"] == "office"
+
+
+def test_pedestal_bearing_does_not_depend_on_input_order():
+    a = pedestal_check(2, 4, 3, 150, 800, 4.5, 400, 5, None, "slab").value["bearing_psf"]
+    b = pedestal_check(4, 2, 3, 150, 800, 4.5, 400, 5, None, "slab").value["bearing_psf"]
+    assert a == approx(b)
+    assert pedestal_check(2, 2, 3, 168, material="granite").value["concrete_cuft"] == 0.0
