@@ -1,0 +1,74 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "head_ft",
+  "psi",
+  "flow_gpm",
+  "display_height_ft",
+  "display_diameter_ft",
+  "throw_ft",
+  "depth_over_nozzle_in"
+ ],
+ "fields": [
+  {
+   "fieldname": "head_ft",
+   "fieldtype": "Float",
+   "label": "Head (ft)",
+   "in_list_view": 1,
+   "description": "Pressure at the nozzle inlet in feet of water. Filled from PSI when left blank."
+  },
+  {
+   "fieldname": "psi",
+   "fieldtype": "Float",
+   "label": "Pressure (PSI)",
+   "in_list_view": 1,
+   "description": "Filled from head when left blank."
+  },
+  {
+   "fieldname": "flow_gpm",
+   "fieldtype": "Float",
+   "label": "Flow (GPM)",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "display_height_ft",
+   "fieldtype": "Float",
+   "label": "Display Height (ft)",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "display_diameter_ft",
+   "fieldtype": "Float",
+   "label": "Display Diameter (ft)",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "throw_ft",
+   "fieldtype": "Float",
+   "label": "Throw (ft)",
+   "description": "Horizontal reach of an angled jet."
+  },
+  {
+   "fieldname": "depth_over_nozzle_in",
+   "fieldtype": "Float",
+   "label": "Water Over Nozzle (in)",
+   "description": "Water depth above the nozzle for this row. Level-sensitive types (foam, geyser) list one set of rows per depth."
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Nozzle Performance Point",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

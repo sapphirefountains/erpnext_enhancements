@@ -117,6 +117,320 @@ head. Without it, the page says it could not open and offers **Open the demo**.
   - that the README names every key the fixture sends.
 - CI runs both, each as its own step. `SHIPPED_DOCKS` in `test_dock_profiles.py` gains the new Dock stamp.
 
+## [1.760.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase A. The plan is
+`docs/fountain-designer/PLAN.md` (PR #1389), and the porting spec is section 3 of the engine audit
+beside it. **Nothing user-facing changes, and the deploy does nothing.** The new package is not
+imported by `run_spine`, any DocType, any endpoint or any assistant tool; phase E wires it in. The
+deploy has no migrate work, no patches and no fixtures.
+
+### Added
+- **`water_engineering/engine/hydraulics/`: the solver the workbook engine never had.** It is a
+  stdlib-only Python port of the Digital Rain Curtain's `src/hydro` JavaScript (`common.js`, `flow.js`,
+  and the demand contract from `manifold.js`), held to it by golden vectors. Modules:
+  - `water.py`: water properties from temperature (Thiesen density, Vogel viscosity, Antoine vapor
+    pressure, IAPWS surface tension), the Churchill friction factor and Korteweg wave speed.
+  - `catalog.py`: materials, sizes and the resolved pipe spec.
+  - `fittings.py`: Darby 3-K fittings, Crane L/D, and the clog factor.
+  - `segment.py`: Darcy-Weisbach loss per run, with equipment curves.
+  - `pump.py`: head, efficiency and NPSHr curves, BEP, run-out, shaft power and the affinity laws.
+  - `terminals.py`: the demand curves.
+  - `operating_point.py`: where the pump meets the system, with bypass, PRV and VFD (15% floor), and
+    the cannot-lift and dead-head checks.
+
+  Each calculation has an `*_si` kernel, which is the port, plus a US-unit envelope that returns the
+  usual `CalcResult`. `hydraulics/README.md` maps every module to its JS source and golden file.
+- **Why Darcy governs** (Nikolas, 2026-11-01).
+  - `engine/pump.select_pump` only checks `head(design flow) >= TDH`. It cannot say what flow a pump
+    actually delivers, what the pump draws, its NPSH margin, or whether an oversized pump runs out past
+    the VGB suction-cover rating. That last gap is a safety blind spot. The operating point answers all
+    four.
+  - The DOC-0049 Hazen-Williams form is an empirical fit for water near 60 F in turbulent flow and
+    larger pipe. It has no temperature term, so a 104 F spa loop gets the same friction as a 50 F
+    fountain. Its fixed K per fitting fits roughly 3/4"-1" pipe: the workbook's 90° elbow is K 0.81,
+    while Darby gives about 0.5 in 4".
+  - Darcy-Weisbach with the Churchill factor and 3-K fittings is right across laminar, transition and
+    turbulent flow, and at any temperature.
+- **Where the workbook figure stays.** `tdh.py`, `pipe.hazen_williams_loss` and every DOC-0049 golden
+  are untouched; they remain the workbook reproduction. `segment.segment_loss` returns the audit cards
+  in `tdh.segment_loss_results`' shape: Darcy friction, 3-K fittings, equipment, and a fourth card that
+  is the workbook's own Hazen-Williams + fixed-K figure for the same run. When the two differ by more
+  than 10%, that card is marked `Diverges` for `issues.py` to raise in phase E.
+  - **Expect it to fire on most PVC runs.** With DOC-0049's C = 130, Hazen-Williams is 15-35% above
+    smooth-pipe Darcy. Examples:
+    - 100 ft of 2" at 50 GPM: 5.21 ft workbook vs 3.94 ft Darcy.
+    - 4" at 250 GPM with ten elbows: 8.98 ft vs 6.06 ft.
+  - The workbook is conservative, so this is not an error. It is a decision for phase E: raise the
+    issue per segment or once per system.
+- **Terminals.**
+  - `OrificeDemand` is DRC's `demandModel` and matches it at 1e-12. It is built from a Nozzle Profile's
+    Cd and orifice, or from a rated GPM at a rated head. Its flow equals `feature.nozzle_flow` at any
+    water temperature.
+  - `OpenDischargeDemand` is new: a weir trough or spillway fed until it overflows. It is a constant
+    static lift with infinite conductance. Its design flow comes from `feature.weir_flow` or the GPM/ft
+    rule. The operating point solves it on flow, because a pressure bisection cannot resolve a terminal
+    that takes any flow at one pressure.
+  - `FixedFlowDemand` reports when the pump cannot hold its minimum pressure.
+  - `ParallelDemand` sums the members at one node. With N orifices it equals one lumped orifice to
+    1e-12, which is the case phase B's network solver must reproduce.
+- **NPSHa at the site's elevation.** DRC fixes the atmosphere at sea level (`PATM = 101325`) and has
+  no elevation anywhere, so it overstates NPSHa by about 4.9 ft at Salt Lake City. That is about three
+  times its own margin (audit E5). The envelope passes the barometric figure from
+  `safety._atm_head_ft` and the vapor pressure from `safety._vapor_pressure_psia`. `npsh_available`
+  and the operating point therefore agree, and the steps show DRC's sea-level figure beside it.
+- **Golden-vector infrastructure.**
+  - `tools/golden/drc/gen_<module>.mjs` follows aquafect's `drc.mjs` pattern. Each generator imports
+    the DRC checkout read-only, runs a scenario list and writes
+    `erpnext_enhancements/tests/golden/drc/<module>.json`, recording the DRC commit (`737fa80f`) and
+    Node version (v24.22.1).
+  - Each file stays under 200 KB, because this repository is public; aquafect's equivalents are
+    0.7-2.6 MB each.
+  - `tests/drc_golden.py` provides `close` (relative to the larger magnitude, NaN = NaN, exact ±inf),
+    `close_f32`, and the NaN/Infinity string decoding.
+  - `hydraulics/_js.py` reproduces the JS number semantics the match depends on: NaN-propagating
+    max/min, `x || d`, `toFixed` ties, and pow overflow. The bisections use DRC's exact caps and
+    tolerances.
+  - Closed-form math matches at 1e-12 and bisections at 1e-9.
+  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 108 tests) run in their own `ci.yml` step.
+    CI needs no Node.
+
+### Changed
+- **`FT_PER_PSI` is now 2.308966**, DOC-0049 F-Formulas!F173. It was 2.31, with a comment saying the
+  workbooks had no figure; they do (audit E12). This moves workbook outputs in the fourth significant
+  figure (for example, sea-level NPSHa 20.11 → 20.09 ft and the Joukowsky surge 104.86 → 104.91 psi).
+  Two goldens moved and were refreshed: `test_conversions`, and `test_npsh_lift_golden`
+  (20.11 → 20.09 ft, now asserted to 2 places). The `2.31` written into the formula strings and
+  comments of `safety.water_hammer`, `feature.jet_trajectory`, `pipeline.py`,
+  `water_feature_design.py` and `constants.py` now reads 2.308966; the arithmetic always used the
+  constant. The Darcy solver converts with ρ(T)·g instead and does not use the constant.
+- **Pipe bores: DOC-0049 governs** (decision D2). `hydraulics/catalog.py` takes OD, wall and ID from
+  DOC-0049 "1, 2, 3 - Pipe Specs" (Sch 40 2" = 2.067") for Sch 40 and Sch 80 PVC, Type K copper and
+  galvanized steel Sch 40. DRC's OD-minus-wall figures (2.066") are not used.
+  - The generators patch the same rows into DRC's in-memory catalog. So `segment.json`,
+    `operating_point.json` and the DOC-0049 rows of `catalog.json` are regenerated with the DOC-0049
+    ID, and differ from DRC's own tests by the 0-0.3% the bores differ by.
+  - A test fails if the generator's table and `data/pipe_specs.py` ever drift.
+  - The DOC-0049 velocity limits and PSI ratings stay the authority. They are left unset where
+    DOC-0049 has none: steel ratings, PEX, hose.
+
+### Hardened in review (before merge)
+The independent review of PR #1391 found no blocker. Its six follow-ups and two nits are applied
+here, so phase B builds on the hardened interfaces. `hydraulics/README.md` lists each interface
+change.
+- **A pipe with no catalog size and no bore is never silent.** 1/2" PVC is the usual nozzle feed and
+  is not in DOC-0049. Without an `id_in` it solves on DRC's 25 mm default, which is roughly 1" pipe.
+  `PipeSpec.defaulted` now flags it, and every card resting on it carries status `Default Bore`.
+- **The kernel has no default atmosphere.** A hand-built `System` used to get sea level silently,
+  the audit-E5 error, when phase B calls `operating_point_si` directly. Now `atm_pa` is required.
+- **A PRV or VFD set below an open terminal's overflow is flagged.** It shuts the weir off, and the
+  result used to read as a quiet Q = 0. It is now status `Control Below Overflow`, with the remedy.
+- **Degenerate inputs give JavaScript's results instead of raising:**
+  - `Segment(branches=0)` reads as one branch;
+  - a zero-conductance orifice needs infinite pressure;
+  - a quadratic pump with no run-away flow gives zero head.
+
+### Not done here (phase B and E)
+- Manifold terminals, the junction-balancing network solver, surge, basin checks and autosize are
+  phase B. Wiring the solver into `run_spine`, the DocTypes and `issues.py` is phase E.
+- Every pump on prod has 0 curve points, so until phase D's catalog lands, the operating point runs on
+  the two-point quadratic (shut-off head and maximum flow) or on hand-entered curves.
+
+## [1.759.0] - 2026-11-01
+
+ERPNext: TASK-2026-03018 (PRJ-00580), Fountain Designer rebuild, phase C. The plan is
+`docs/fountain-designer/PLAN.md` (PR #1389). This release adds the feature-family rules, the
+kits, the Sapphire house rules and the schema-2 design model. **Nothing calls them yet:**
+`run_spine`, `issues.py` and the Water Feature Design controller are untouched. Phase E wires
+them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and merges first.
+
+**What the deploy does.**
+- **Migrate** adds a House Rules tab of fields to Water Engineering Settings (a Single).
+- **One patch runs.** `backfill_water_house_rules` writes each declared default that has no
+  `tabSingles` row. It never writes over a stored value. Any error is logged to the Error Log
+  instead of raised, so it cannot abort the migrate, and it is safe to run twice.
+- No cron entries, no fixtures, no permission changes. Nothing user-facing changes until the
+  designer page (phase F) and the wiring (phase E) land.
+
+### Added
+- **`engine/families/`: one rule module per feature family.** Ten families, each with
+  `inputs()`, `flow()`, `checks()` and `terminal()`: `weir`, `jets`, `foam`, `laminar`,
+  `interactive`, `cascade`, `pondless`, `curtain`, `mist` and `aerator`. Three system modules
+  (`lighting`, `winterization`, `heat`) read the whole model.
+  - Every rule cites its source URL, taken from the industry report, section 1.
+  - `families/README.md` lists each module's inputs, rules, sources and checks.
+- **Jets size from nozzle performance tables.** The table maps display height to flow and
+  head, interpolated linearly between the cut sheet's points.
+  - A height outside the table is a blocker. The engine never extrapolates.
+  - Phase D's Nozzle Profile reads as stored: its `performance` rows, `discharge_coefficient`
+    and `nozzle_type` values.
+  - The old `height = k × head` survives only as a flagged fallback. Its k values are the
+    sourced ones: 0.82 for a smooth bore and 0.39 for decorative nozzles (Atlantic's column
+    nozzle makes 12 ft at 31 ft of head). The engine's 0.90 is not used.
+- **A 2-D drag trajectory for jets and laminar arcs.** It models a point mass with quadratic
+  drag and wind, solved with RK4, using air density at the site's elevation.
+  - It is calibrated so its still-air apex matches the table height. It then gives the range,
+    the landing point and the drift in wind for the splash-setback checks.
+  - Tests check it against the vacuum parabola and the closed-form vertical rise with drag.
+- **Interactive features follow Utah R392-302-41 as a pass/fail list.** The rule covers
+  30-minute turnover, 4 inlets, a 3-minute tank, 20 ft/s nozzle velocity, ½ in openings, the
+  deck, slope and treatment items, potable foggers and 5 fc of night lighting.
+  - The feature pump is sized to the worst sequence step, not to the sum of all features.
+  - An item the designer has not answered shows as info, never as a pass.
+- **`engine/model.py`: the schema-2 design model** (PLAN.md section 3.3). It provides
+  dataclasses with a lossless JSON round trip: keys the engine does not know are kept and
+  written back.
+  - `validate()` returns typed problems: unknown family, missing basin or node, unknown
+    segment endpoint, a terminal no pipe reaches, an empty `custom` section, duplicate ids.
+  - `migrate()` reads both schema-1 shapes: `_engine_inputs` and the `save_water_design`
+    payload. Old fields with no new home are kept under `legacy`.
+  - A filled-in old row sizes as the old engine sized it. One exception: a weir row with no
+    head (0 GPM in the old engine) now takes its head from the default look.
+  - The old discharge rows feed the first feature. Every other feature gets an unsized branch
+    of its own off the pump, the same as `apply_kit` builds.
+- **`engine/kits.py`: twelve kits**, at least one per family. Four have names: "Hotel lobby
+  sheet wall 8 ft", "Plaza interactive 12 jets", "Pond aerator 1 acre", and "Event rental
+  curtain", which links to the Digital Rain Curtain app.
+  - `apply_kit()` builds the features, basins, setup policy and a network skeleton. The pipe
+    sizes are left blank for the piping step to fill.
+  - `match_kit()` returns "custom" once any value the kit sets has changed, or once a value
+    it leaves alone is set to something other than its default.
+- **Sapphire house rules (`engine/rules.py`) and their Water Engineering Settings fields.**
+  These are the rules with no public source:
+  - foam-jet submergence band and autofill deadband;
+  - freeboard multiplier (1.3) and liner overlap;
+  - lighting watts per foot of jet and weir, and the default fixture size;
+  - the two wind-control setpoints;
+  - the aerator split ratio;
+  - spray loss per family;
+  - labor per family, per sq ft of basin and per light fixture.
+
+  Each is cited "Sapphire standard, 2026-11-01 (placeholder until the designers set it)".
+  Setting `house_rules_set_on` changes the citation to that date. The utility rates are on the
+  same tab: SLC FY26 water at $3.53/ccf, and Rocky Mountain Power's proposed 2026 rate of
+  $0.1049/kWh.
+- **Five bench-free pytest suites in their own CI step:** `test_families_weir`,
+  `test_families_jets`, `test_families_others`, `test_water_model` and
+  `test_water_house_rules`. Their expected values are the report's sourced figures, for
+  example a ¼ in head on a 1 ft weir ≈ 4.5 gpm and Utah's tank = 3 minutes of flow.
+
+### Why some choices look the way they do
+- **Labor hours ship as 0, which means "not set".** It does not mean free. A budget built
+  on a made-up labor figure is worse than one that says the figure is missing.
+  `rules.is_unset()` reports which rules are still unset.
+- **Any other rule saved as 0 or below uses its default** (spray loss aside, where 0 means
+  none). Frappe stores a cleared Float as 0, and a 0 fixture size or aspect ratio divides by
+  zero.
+- **The backfill writes every missing default, not only the new ones.** Writing a single
+  field of a Single that was never saved makes `load_from_db` read `tabSingles`. Every field
+  without a row then loads blank, so `contractor_name` would lose its default. This is the
+  second Singles gotcha in `CLAUDE.md`.
+- **Round tiered-fountain rims keep the DOC-0049 B rule**, not the waterfall look bands. The
+  Aquascape and Pond Trade bands are written for naturalistic spillways; applied to a 48 in
+  bowl they ask for about 500 gpm.
+  - A rim defaults to DOC-0049's operating figure, 0.5 gpm per foot, which is the old
+    engine's default.
+  - The 4-6 gpm/ft band it says to engineer the plumbing for is reported as
+    `rim_plumbing_gpm`.
+  - Average (4) and heavy (6) are a heavier sheet on request. That mapping of the looks is
+    Sapphire's own and waits on the designers' call.
+- **The heat module uses the I-P form of the Carrier equation**, with V in fpm. The
+  rain-curtain app's `(0.089 + 0.0782 V)` is the SI form (kPa, m², m/s); mixed with inHg and
+  square feet it understates evaporation about 1,000-fold. `treatment.heating_load`
+  (DOC-0049) is unchanged and is reported beside the new result.
+
+## [1.758.0] - 2026-11-01
+
+ERPNext: phase D of the Fountain Designer rebuild (PRJ-00580, group task TASK-2026-03018). Nikolas decided on
+2026-11-01 that the designer's catalog comes from digitized public manufacturer data, cited per row and approved by
+him before it is seeded, plus the designers' own entries, anchored on the ERPNext Item so BOM, prices and purchasing
+keep working. This release is the schema, the loader and the editor. **It seeds nothing**: no catalog row reaches a
+site until someone runs the loader, and the loader only loads rows listed in `approved.json`.
+
+**What the deploy does.**
+- **Migrate** creates two doctypes, **Pump Curve** and its sibling child **Nozzle Performance Point**, and adds columns
+  to **Pump Curve Point** (`efficiency_pct`, `npshr_ft`, `power_bhp`) and **Nozzle Profile** (`item`,
+  `connection_size`, `level_sensitive`, `min_depth_in`, `max_depth_in`, `recommended_beam_deg`, `source_url`,
+  `source_document`, `verified_by`, `verified_on`, and the `performance` table).
+- **Two patches**, both logging instead of raising and both safe twice:
+  - `remap_nozzle_profile_types` moves Nozzle Profile rows off the retired `nozzle_type` names (prod's five profiles:
+    Smooth Bore → Orifice Jet, Aerating → Foam / Aerating, Spray → Spray Ring, Cascade → Cascade / Fan; Geyser stays).
+    A Select value missing from the options makes the row unsaveable, so the rename ships with its data move.
+  - `migrate_item_pump_curves` copies each Item's legacy `custom_pump_curve` table into a Pump Curve record. The Item
+    rows stay. Prod had no curve points on 2026-11-01, so this is expected to do nothing there.
+- **after_migrate** adds the Item catalog fields (listing, light, filter, aerator, Spec Source) and appends Pump,
+  Nozzle, Light, Aerator, Valve, Controller and Fitting kit to `custom_equipment_class`.
+
+### Added
+- **Pump Curve**: one record per pump Item and impeller / speed, with `source` (Datasheet / Digitized / Rep-supplied /
+  Generic estimate) and full provenance, including the catalog row's `catalog_id`, `read_method` (table, vector-path,
+  visual-raster) and `error_band_pct`; Nozzle Profile carries the same three plus `source_page`. Its controller refuses points whose flow is not strictly rising, or whose head
+  rises again after the curve has peaked by more than 1 % of the peak (a typo; the operating-point solver would find two
+  duty points). It accepts a *drooping* curve, head climbing from shutoff to a peak first, with a warning: published pool
+  curves do that (Pentair EQ500 reads 77.0 ft at 0 GPM and 77.5 ft at 50 GPM), and 42 of the research catalog's 169
+  pumps would otherwise be refused. A rise after the peak within 1 % is digitizing noise and warns too. It also warns on
+  a missing shutoff point or a gap. A gap is a jump wider than a quarter of the flow span *and* more than twice the table's smallest step, so an
+  evenly spaced four-point table is not reported as gappy.
+- **Nozzle Profile** extended for the designer's families, with a **Nozzle Performance Point** table (head or PSI, flow,
+  display height and diameter, throw, water over the nozzle). The controller fills head from PSI or the reverse using
+  the engine's `FT_PER_PSI`, sorts by depth then head, and warns when flow falls as head rises.
+- **Item catalog fields**: `custom_spec_source_url`, `custom_spec_revision`, `custom_spec_verified_by`,
+  `custom_spec_verified_on`, `custom_generic_estimate`, `custom_catalog_id`, `custom_spec_confidence`,
+  `custom_spec_method`, `custom_spec_error_band_pct`, `custom_ul_listing`, the light fields (`custom_lumens`,
+  `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`), `custom_filter_design_rate_gpm_sqft`,
+  `custom_filter_backwash_gpm`, and the aerator pattern, depth and cord fields. Light, Aerator, Valve and Controller now
+  show the shared electrical fields. All registered in `scripts/layout/code_owned_fields.json` and placed in the Item
+  layout.
+- **`water_engineering/catalog_seed.py`**, the approved-seed loader: `load_catalog(catalog_dir=None, dry_run=True)` for
+  `bench execute`, and `seed_catalog` (System Manager, POST, dry run by default). Reads
+  `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and `approved.json`; creates or updates Items, Pump Curves
+  and Nozzle Profiles keyed on manufacturer + model (or the approval's `item_code`), writing provenance on every record.
+  On an existing Item it writes specs and provenance only and never overwrites the name, group, description or brand.
+  Each row is checked before anything is written and runs in its own savepoint; a second run reports every row
+  unchanged; a blank optional point value matches the 0 a child Float column stores, and the Item is matched on the
+  same normalized manufacturer + model key the approvals use. The Item's rated flow and head come from the
+  best-ranked curve. A pump attached to an Item outside item group Pumps is loaded but warned about, because the pump
+  selectors read only that group. It bypasses the Item naming guard with `flags.ignore_naming_guard`, as the other in-request callers whose
+  user cannot choose the code do.
+  - Built against the research catalog in `docs/fountain-designer/catalog/` (169 pumps, 176 nozzle and aerator rows, 35
+    lights), which every row of plans and loads in a bench-free run, and a second run changes nothing. Its shapes:
+    `source` as a list of `{url, title, page, accessed}`, `phase` and `listing` as lists, FLA keyed by `"230 1-ph"` with
+    ranges kept as text, VS speeds and impeller trims as `extra_curves`, trims printed as `3-3/4"`.
+  - Keyed on each row's `id`: the loader stamps it on the Item, Pump Curve and Nozzle Profile and finds them by it
+    first, so a corrected model name updates the same records. `confidence`, `method`, `error_band_pct` and the `source`
+    block (first source as URL, document and page; any further sources listed in the notes) go into the provenance
+    fields of every record. Nikolas's `approved.json` (2026-11-01, every row id) is the gate; a row added later stays
+    unseeded until its id is appended.
+  - Approvals name a row by `"Manufacturer|Model"` or by its `id`. Where several rows share a manufacturer + model (nine
+    in the research data, e.g. WhisperFlo 1 HP as a 1-phase -INT and a 3-phase part number), each is told apart by its
+    first part number and must be approved by `id`; approving the shared name alone is refused as ambiguous.
+  - Floating aerators filed as nozzles with no pressure (19 Kasco and Otterbine rows) load as Aerator Items with the
+    aerator fields and no Nozzle Profile.
+  - Notes on a Pump Curve or Nozzle Profile are written once and then left to whoever edits them.
+- **`water_engineering/catalog_reader.py`**: `pump_curve_sets`, `nozzle_profiles` and `light_specs`, the plain-dict read
+  interface for the design engine's `derive()`. An unpublished efficiency, NPSHr or power (and a nozzle row's spread or
+  throw) reads as None, not the 0 a NOT NULL DEFAULT 0 child column stores: 162 of the 169 research pumps publish none
+  of the three, and `npshr_ft: 0` would pass every NPSH check. Efficiency at zero flow stays 0, which is true at shutoff.
+- `seed_catalog` passes `dry_run` to `load_catalog` as sent. Running it through `cint` first turned `frappe.call`'s
+  `"true"` (and "yes", "on") into 0, so asking for a dry run by name wrote every approved row. Now only "0", "false",
+  "no", "off", 0 or False write.
+- **Catalog editor**: the Item form's Pump Specifications section (now shown for item group Pumps *or* equipment class
+  Pump) has a Pump Curves panel listing the Item's curves, best first, charted together, with New Pump Curve. A Pump
+  Curve charts head vs flow live; a Nozzle Profile charts display height and flow vs head. A Generic-estimate banner
+  shows on all three when flagged. The charts are inline SVG on proportional axes, because frappe.Chart's line chart
+  spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
+  New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
+  user who cannot read them).
+- `tests/test_water_catalog.py` (70 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+  rows.
+
+### Changed
+- `api/water_design.pump_curves` reads each Item's best Pump Curve record first (full speed, sourced, largest impeller)
+  and falls back to the Item's legacy table; its return shape is unchanged. `nozzle_profile_params` also returns
+  `nozzle_type`, `level_sensitive`, `is_generic_estimate` and the performance `points`.
+- The Item's `custom_pump_curve` table is relabeled "Pump Curve (legacy table)" and shows only while it still has rows.
+- The generic starter Nozzle Profiles seed under the new type names.
+
 ## [1.757.1] - 2026-11-01
 
 ### Added

@@ -1538,6 +1538,18 @@ erpnext_enhancements.patches.backfill_marketing_insights_settings
 # Marketing insights (v1.757.0): re-import the Marketing Hub (the six marketing reports; Marketing Event, Tracked Link
 # and Business Profile Review). Logs a failure, never raises, safe twice.
 erpnext_enhancements.patches.marketing_insights_hub_links
+# Fountain Designer catalog (v1.758.0): move Nozzle Profile rows off the retired nozzle_type names (Smooth Bore,
+# Aerating, Spray, Cascade, Foam, Jet) onto the new ones, so no profile is left unsaveable. db.set_value, no modified
+# bump; logs, never raises, safe twice.
+erpnext_enhancements.patches.remap_nozzle_profile_types
+# Fountain Designer catalog (v1.758.0): copy each Item's legacy custom_pump_curve table into a Pump Curve record. The
+# Item rows stay (readers fall back to them); an Item that already has a Pump Curve is skipped. Logs, never raises,
+# safe twice.
+erpnext_enhancements.patches.migrate_item_pump_curves
+# Fountain Designer phase C (v1.759.0): the Sapphire house rules and utility rates on Water Engineering Settings get
+# their defaults on the existing row, only where tabSingles has no row for them (a rule set to 0 stays 0). Writes
+# every missing default, so a never-saved Single does not lose contractor_name. Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_water_house_rules
 # Fountain Designer page (v1.761.0, phase F): re-import the Water Engineering workspace (the Fountain Designer
 # shortcut and its Tools link). Logs a failure, never raises, safe twice.
 erpnext_enhancements.patches.fountain_designer_workspace_link
