@@ -149,24 +149,28 @@ def merge_sections(*lists) -> list[dict]:
 
 
 def labor_rows(model: dict, rules: dict | None) -> tuple[list[dict], list[dict]]:
-    """Labor assemblies: ``labor_hours_per_family`` (``{family: hours per feature}``) and
-    ``labor_hours_per_sf_basin``, from the house rules. Returns (lines, checks)."""
+    """Labor assemblies from the house rules, in ``engine/rules.py``'s keys: ``labor_hours_<family>``
+    (hours per feature), ``labor_hours_per_sqft_basin`` and ``labor_hours_per_light_fixture``. A 0 is
+    "not set" there, so it adds no line. Returns (lines, checks)."""
     rules = rules or {}
-    per_family = rules.get("labor_hours_per_family") or {}
-    per_sf = rules.get("labor_hours_per_sf_basin")
     out, checks = [], []
     for f in model.get("features") or []:
         fam = f.get("family") or ""
-        hrs = per_family.get(fam)
-        if hrs is None:
+        hrs = float(rules.get(f"labor_hours_{fam}") or 0)
+        if hrs <= 0:
             continue
         out.append(line("Labor", f"labor|family|{fam}", f"Install {fam} feature ({f.get('label') or f.get('id')})",
-                        float(hrs) * int(f.get("count") or 1), "hr", {"kind": "labor", "family": fam}))
-    if per_sf:
+                        hrs * int(f.get("count") or 1), "hr", {"kind": "labor", "family": fam}))
+    per_sf = float(rules.get("labor_hours_per_sqft_basin") or 0)
+    if per_sf > 0:
         area = sum(plan_area_sf(b) for b in model.get("basins") or [])
         if area:
-            out.append(line("Labor", "labor|basin", f"Build basins ({area:.0f} sq ft)", float(per_sf) * area, "hr", {"kind": "labor", "basin_sf": area}))
-    if not per_family and not per_sf:
+            out.append(line("Labor", "labor|basin", f"Build basins ({area:.0f} sq ft)", per_sf * area, "hr", {"kind": "labor", "basin_sf": area}))
+    per_light = float(rules.get("labor_hours_per_light_fixture") or 0)
+    fixtures = sum(int(x.get("qty") or x.get("count") or 1) for x in (model.get("lighting") or {}).get("fixtures") or [])
+    if per_light > 0 and fixtures:
+        out.append(line("Labor", "labor|lights", f"Install {fixtures} light fixture(s)", per_light * fixtures, "hr", {"kind": "labor"}))
+    if not out:
         checks.append(make_check("bom.no_labor_rules", INFO, "No labor rates in the house rules",
                                  "Set hours per family and per square foot of basin in Water Engineering Settings.", "outputs"))
     return out, checks

@@ -48,8 +48,8 @@ GAL_PER_CCF = 748.051948
 L_PER_GAL = 3.785411784
 
 RULE_DEFAULTS = {
-    "kwh_rate": 0.105,  # $/kWh, PLAN.md 3.3 site default (Rocky Mountain Power commercial)
-    "water_rate_per_ccf": 3.53,  # $/CCF, PLAN.md 3.3 site default
+    "kwh_rate": 0.1049,  # $/kWh, engine/rules.py utility default (Rocky Mountain Power commercial)
+    "water_rate_per_ccf": 3.53,  # $/CCF, engine/rules.py utility default (SLC commercial FY26)
     "chlorine_per_gal": 6.50,  # $/gal of 12.5% sodium hypochlorite
     "parts_pct_of_equipment": 0.03,  # a year's wear parts as a share of the equipment cost
     "parts_per_year": 250.0,  # used when no equipment cost is known
@@ -245,5 +245,5 @@ def om_per_year(plan: dict, pumps: list[dict], *, volume_gal: float, rules: dict
             f"chlorine {chem_gal:,.1f} gal -> ${chem_cost:,.2f} ; parts ${parts:,.2f}",
             f"total ${total:,.2f}/yr",
         ],
-        citations=[CIT_RULES, CIT_DRC_UPKEEP] + electric_cost(1, 1).citations,
+        citations=[CIT_RULES, CIT_DRC_UPKEEP, *electric_cost(1, 1).citations],
     )

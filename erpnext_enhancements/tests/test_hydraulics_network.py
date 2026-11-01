@@ -24,7 +24,13 @@ from erpnext_enhancements.water_engineering.engine.hydraulics.operating_point im
 from erpnext_enhancements.water_engineering.engine.hydraulics.pump import PumpCurve, pump_head_si
 from erpnext_enhancements.water_engineering.engine.hydraulics.segment import Segment, segment_loss_si
 from erpnext_enhancements.water_engineering.engine.hydraulics.terminals import build_demand
-from erpnext_enhancements.water_engineering.engine.hydraulics.units import M_PER_FT, G, f_to_c, gpm_to_m3s, m3s_to_gpm
+from erpnext_enhancements.water_engineering.engine.hydraulics.units import (
+    M_PER_FT,
+    G,
+    f_to_c,
+    gpm_to_m3s,
+    m3s_to_gpm,
+)
 from erpnext_enhancements.water_engineering.engine.hydraulics.water import water_si
 
 SOLVE = 1e-9
@@ -147,7 +153,7 @@ def test_two_identical_pumps_equal_one_doubled_pump():
     doubled feeding the legs as two parallel branches (Segment.branches = 2)."""
     res = solve_network(header([PUMP, PUMP], [LEG, LEG]), **SITE)
     assert res.converged
-    op = operating_point(doubled(PUMP), ORIFICES, supply=[dict(LEG, branches=2)] + SUPPLY, static_ft=8, suction_lift_ft=-1, **SITE).value
+    op = operating_point(doubled(PUMP), ORIFICES, supply=[dict(LEG, branches=2), *SUPPLY], static_ft=8, suction_lift_ft=-1, **SITE).value
     q1, q2 = res.pumps["p1"]["flow_gpm"], res.pumps["p2"]["flow_gpm"]
     assert rel(q1, q2) < 1e-12
     assert rel(q1 + q2, op["pump_flow_gpm"]) <= SOLVE

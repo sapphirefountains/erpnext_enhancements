@@ -8,8 +8,8 @@ boundary with the exact constants in :mod:`.units`.
 Two layers, one rule each:
 
 * ``*_si`` kernels are the port. SI in and out, plain floats and small dataclasses,
-  the JavaScript's arithmetic in the JavaScript's order. Solvers (the operating point
-  here, the network and manifold solvers in phase B) call these thousands of times.
+  the JavaScript's arithmetic in the JavaScript's order. Solvers (the operating point,
+  the manifold and the network solver) call these thousands of times.
 * Functions without the suffix are envelopes: US units in, a :class:`CalcResult`
   out with formula, steps, citations and warnings, like the rest of ``engine/``.
 
@@ -18,8 +18,24 @@ stays in ``engine/tdh.py`` and is shown beside it as the workbook cross-check
 (:func:`.segment.segment_loss`), per Nikolas's decision of 2026-11-01.
 """
 
+from .basin_checks import basin_checks, basin_checks_si, has_check_valve, plan_area_sf
 from .catalog import MATERIALS, PipeSpec, pipe_spec, pipe_spec_si, sizes_for
 from .fittings import FITTING_K_TO_3K, FITTINGS, fit_sum_k, fit_sum_k_si, fitting_k, fitting_k_si
+from .manifold import (
+    Manifold,
+    ManifoldDemand,
+    ManifoldSolution,
+    Takeoff,
+    curtain_manifold,
+    manifold_distribution,
+    manifold_from_us,
+    manifold_runs,
+    manifold_size_sweep,
+    manifold_solve_si,
+    manifold_volume_l,
+    size_sweep_si,
+)
+from .network import Network, NetworkResult, build_network, network_operating_point, solve_network, solve_network_si
 from .operating_point import (
     OpPoint,
     System,
@@ -63,6 +79,7 @@ from .segment import (
     supply_loss,
     supply_loss_si,
 )
+from .surge import accumulator_gas_l_si, std_gas_l, supply_wave_si, surge, surge_for_si
 from .terminals import (
     Demand,
     FixedFlowDemand,
@@ -85,6 +102,33 @@ from .water import (
 )
 
 __all__ = [
+    "Manifold",
+    "ManifoldDemand",
+    "ManifoldSolution",
+    "Network",
+    "NetworkResult",
+    "Takeoff",
+    "accumulator_gas_l_si",
+    "basin_checks",
+    "basin_checks_si",
+    "build_network",
+    "curtain_manifold",
+    "has_check_valve",
+    "manifold_distribution",
+    "manifold_from_us",
+    "manifold_runs",
+    "manifold_size_sweep",
+    "manifold_solve_si",
+    "manifold_volume_l",
+    "network_operating_point",
+    "plan_area_sf",
+    "size_sweep_si",
+    "solve_network",
+    "solve_network_si",
+    "std_gas_l",
+    "supply_wave_si",
+    "surge",
+    "surge_for_si",
     "FITTINGS",
     "FITTING_K_TO_3K",
     "MATERIALS",

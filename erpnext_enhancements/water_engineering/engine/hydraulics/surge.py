@@ -36,7 +36,7 @@ from . import _js
 from .manifold import Manifold
 from .segment import Segment
 from .units import CIT_DRC, M_PER_FT, PA_PER_PSI, PATM, f_to_c, gpm_to_m3s
-from .water import CIT_KORTEWEG, Water, wave_speed_si, water_si
+from .water import CIT_KORTEWEG, Water, water_si, wave_speed_si
 
 CIT_JOUKOWSKY = "Joukowsky (1898) dp = rho a dV; Michaud (1878) slow-closure reduction (2L/a)/tc (Wylie & Streeter ch. 1)"
 CIT_ACCUMULATOR = "Accumulator sized from the line's kinetic energy, isothermal gas (Thorley, Fluid Transients in Pipeline Systems, ch. 9)"

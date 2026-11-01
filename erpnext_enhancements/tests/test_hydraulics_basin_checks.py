@@ -8,7 +8,10 @@ import math
 
 from erpnext_enhancements.tests.drc_golden import REL, close, golden, seg_from_drc
 from erpnext_enhancements.water_engineering.engine.drainage import surge_basin_volume
-from erpnext_enhancements.water_engineering.engine.hydraulics.basin_checks import basin_checks, basin_checks_si
+from erpnext_enhancements.water_engineering.engine.hydraulics.basin_checks import (
+    basin_checks,
+    basin_checks_si,
+)
 from erpnext_enhancements.water_engineering.engine.hydraulics.water import water_si
 from erpnext_enhancements.water_engineering.engine.treatment import evaporation_rate
 

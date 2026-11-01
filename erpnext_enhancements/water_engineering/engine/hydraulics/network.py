@@ -70,7 +70,7 @@ The ``network`` dict (design model schema 2, PLAN.md 3.3; US units)
                    "nominal_size": "3\\"", "length_ft": 8, "fittings": [{"key": "elbow_90", "qty": 2}],
                    "components": [], "branches": 1}],
      "terminals": [{"id": "t1", "node": "t1", "kind": "orifice|open_discharge|fixed_flow|manifold|parallel",
-                    "params": {...}}]}                                   # node defaults to id
+                    "params": {...}}]}               # node: else the node of that id, else the node with its feature
 
 A segment ending at a pump feeds its inlet, one starting at a pump leaves its outlet, so pumps
 in series are two pumps joined by a segment. ``control_node`` defaults to the only terminal node
@@ -391,9 +391,12 @@ def build_network(
         links.append(_Link("segment", end(s["from"], "from"), end(s["to"], "to"), s.get("id") or f"{s['from']}->{s['to']}", seg=seg))
 
     terminals: dict = {}
+    by_feature = {n.get("feature"): nid for nid, n in model_nodes.items() if n.get("feature")}
     for t in network.get("terminals") or []:
         tid = t.get("id") or t.get("node")
         nid = t.get("node") or tid
+        if nid not in index and t.get("feature") in by_feature:
+            nid = by_feature[t["feature"]]  # the model's Terminal has no node field: match the node carrying its feature
         if nid not in index:
             raise ValueError(f"terminal {tid!r} sits on {nid!r}, which is not a node")
         i = index[nid]
@@ -875,6 +878,19 @@ def _report(net: Network, status: dict, npsh_margin_ft: float) -> NetworkResult:
             "branches": lk.seg.branches,
         }
 
+    # A pressure control set under an open terminal's overflow holds that node below it: the weir gets
+    # nothing (phase A's operating point flags the same state).
+    for pp in net.pumps:
+        if pp.control not in ("vfd", "prv") or pp.set_pa is None or pp.control_node is None:
+            continue
+        for tid, t in net.terminals.items():
+            if net.node_index.get(t["node"]) != pp.control_node:
+                continue
+            lifts = [m.p_fixed for m in _members(t["demand"]) if getattr(m, "p_fixed", None) is not None]
+            if lifts and pp.set_pa < min(lifts):
+                checks.append(make_check("control.below_overflow", BLOCKER, f"Pump {pp.id}: its {pp.control.upper()} holds {tid} under its overflow",
+                                         "The set pressure is below the open terminal's lift, so it gets no water: raise the set pressure, "
+                                         "or control at the pump discharge.", "control", ref=pp.id))
     pumps_out = {}
     pump_total = 0.0
     for pp in net.pumps:

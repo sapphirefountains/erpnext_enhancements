@@ -87,6 +87,7 @@ def basin_checks_si(
     rh_pct: float = 50.0,
     wind_ms: float = 0.0,
     hours_per_day: float = 8.0,
+    spray_fraction: float = SPRAY_FRACTION,
 ) -> dict:
     """``basinChecks`` (SI). ``in_flight``: ``(flow m^3/s, fall time s)`` per feature. ``q_all``: the
     circulation (m^3/s) through the suction, for submergence, turnover and spray loss."""
@@ -123,7 +124,7 @@ def basin_checks_si(
     pa = ((rh_pct if rh_pct is not None else 50) / 100) * water_si(air_c if air_c is not None else 22).pv / 1000
     evap_kg_s = (plan_area_m2 * _js.jmax(0.0, pw - pa) * (0.089 + 0.0782 * (wind_ms or 0))) / (w.latent / 1000)
     evap_lph = evap_kg_s * 3600
-    spray_lph = SPRAY_FRACTION * (q_all or 0) * 3.6e6
+    spray_lph = spray_fraction * (q_all or 0) * 3.6e6
     makeup_lpd = (evap_lph + spray_lph) * (hours_per_day if hours_per_day is not None else 8)
     return {
         "supply_vol_l": supply_vol, "suction_vol_l": suction_vol, "manifold_vol_l": manifold_vol_l, "in_flight_l": in_flight_l,
@@ -168,9 +169,11 @@ def basin_checks(
     wind_mph: float = 0.0,
     hours_per_day: float = 8.0,
     pool_area_sf: float | None = None,
+    spray_pct: float = SPRAY_FRACTION * 100,
 ) -> CalcResult:
     """The basin checks for a model-2 basin row (``depth_in`` is the water depth, ``freeboard_in`` the
-    rim above it). ``in_flight``: ``[{flow_gpm, fall_s}]`` per feature the basin catches."""
+    rim above it). ``in_flight``: ``[{flow_gpm, fall_s}]`` per feature the basin catches. ``spray_pct``:
+    the spray-loss share of flow (house rule ``spray_loss_pct_<family>``; DRC's 0.5% by default)."""
     w = water_si(f_to_c(float(water_temp_f)))
     area_sf = plan_area_sf(basin)
     sup = [s if isinstance(s, Segment) else Segment.from_us(s) for s in supply or []]
@@ -183,6 +186,7 @@ def basin_checks(
         in_flight=[(gpm_to_m3s(float(f.get("flow_gpm") or 0)), float(f.get("fall_s") or 0)) for f in in_flight or []],
         has_check=has_check, orifice_mm=float(orifice_in) * MM_PER_IN if orifice_in else None,
         air_c=f_to_c(float(air_temp_f)), rh_pct=float(rh_pct), wind_ms=float(wind_mph) * 0.44704, hours_per_day=float(hours_per_day),
+        spray_fraction=float(spray_pct) / 100,
     )
     gal = 1 / L_PER_GAL
     rise_in = r["level_rise_mm"] / MM_PER_IN

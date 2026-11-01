@@ -10,7 +10,12 @@ import math
 from erpnext_enhancements.tests.drc_golden import REL, close, close_all, golden
 from erpnext_enhancements.water_engineering.engine.chemistry import chlorinator_feed
 from erpnext_enhancements.water_engineering.engine.structure import beam_reactions, floor_load, pipe_hangers
-from erpnext_enhancements.water_engineering.engine.upkeep import maintenance_schedule, om_per_year, water_plan, water_plan_si
+from erpnext_enhancements.water_engineering.engine.upkeep import (
+    maintenance_schedule,
+    om_per_year,
+    water_plan,
+    water_plan_si,
+)
 from erpnext_enhancements.water_engineering.engine.workbook import electric_cost
 
 STRUCTURE = golden("structure")

@@ -7,7 +7,15 @@ Bench-free pytest suite: python -m pytest erpnext_enhancements/tests/test_hydrau
 
 import math
 
-from erpnext_enhancements.tests.drc_golden import REL, close, close_all, close_f32, golden, manifold_from_drc, num
+from erpnext_enhancements.tests.drc_golden import (
+    REL,
+    close,
+    close_all,
+    close_f32,
+    golden,
+    manifold_from_drc,
+    num,
+)
 from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import (
     Manifold,
     ManifoldDemand,
@@ -20,10 +28,13 @@ from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import (
     manifold_volume_l,
     size_sweep_si,
 )
-from erpnext_enhancements.water_engineering.engine.hydraulics.operating_point import System, operating_point_si
+from erpnext_enhancements.water_engineering.engine.hydraulics.operating_point import (
+    System,
+    operating_point_si,
+)
 from erpnext_enhancements.water_engineering.engine.hydraulics.pump import PumpCurve
 from erpnext_enhancements.water_engineering.engine.hydraulics.terminals import Demand, build_demand
-from erpnext_enhancements.water_engineering.engine.hydraulics.units import G, PA_PER_PSI, m3s_to_gpm
+from erpnext_enhancements.water_engineering.engine.hydraulics.units import PA_PER_PSI, PATM, G, m3s_to_gpm
 from erpnext_enhancements.water_engineering.engine.hydraulics.water import water_si
 
 GOLD = golden("manifold")
@@ -187,7 +198,7 @@ def test_manifold_terminal_on_the_operating_point():
               "rated_gpm": 2.0, "rated_head_ft": 15, "feed": "center"}
     d = build_demand({"kind": "manifold", "params": params}, w.rho)
     pump = PumpCurve(curve=[[0, 20], [100, 17], [200, 10], [260, 2]])
-    op = operating_point_si(System(pump=pump, w=w, static_m=1.0), d)
+    op = operating_point_si(System(pump=pump, w=w, static_m=1.0, atm_pa=PATM), d)
     split = d.solution(op.p_in)
     assert op.q > 0 and abs(split.Q - op.q) < 0.02 * op.q  # lumped vs exact at the operating pressure
     assert abs(m3s_to_gpm(op.q) / 12 - 2.0) < 1.5

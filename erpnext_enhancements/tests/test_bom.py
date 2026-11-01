@@ -6,7 +6,14 @@ Bench-free pytest suite: python -m pytest erpnext_enhancements/tests/test_bom.py
 
 import math
 
-from erpnext_enhancements.water_engineering.engine.bom import bom_rows, cut_list, fitting_counts, labor_rows, line, merge_sections
+from erpnext_enhancements.water_engineering.engine.bom import (
+    bom_rows,
+    cut_list,
+    fitting_counts,
+    labor_rows,
+    line,
+    merge_sections,
+)
 
 SEGS = [
     {"id": "s1", "material": "SCH40 PVC", "nominal_size": '3"', "length_ft": 8, "fittings": [{"key": "elbow_90", "qty": 2}, {"key": "foot_valve", "qty": 1}]},
@@ -53,7 +60,7 @@ def test_fitting_counts_group_by_type_size_material():
 
 
 def test_bom_rows():
-    v = bom_rows(model(), rules={"labor_hours_per_family": {"weir": 16, "jets": 10}, "labor_hours_per_sf_basin": 0.5}).value
+    v = bom_rows(model(), rules={"labor_hours_weir": 16, "labor_hours_jets": 10, "labor_hours_per_sqft_basin": 0.5}).value
     k = by_key(v["lines"])
     # 2": 45 + 2 x 12 = 69 ft, +10% = 75.9 -> 76 ft
     assert k['pipe|SCH40 PVC|2"']["qty"] == math.ceil(69 * 1.1) == 76

@@ -614,15 +614,18 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
                 in_flight.append({"flow_gpm": fl.get("flow_gpm") or q_total / max(1, len(features)), "fall_s": fall_s})
         orifices = [float((t.get("params") or {}).get("orifice_diameter_in")) for t in net_d.get("terminals") or []
                     if (t.get("params") or {}).get("orifice_diameter_in")]
+        sprays = [float(rr[f"spray_loss_pct_{f.get('family')}"]) for f in features
+                  if f.get("basin") in (bid, None) and rr.get(f"spray_loss_pct_{f.get('family')}") is not None]
+        spray_pct = max(sprays) if sprays else 0.5
         bc = basin_checks(b, flow_gpm=q_total, supply=supply, suction=suction, in_flight=in_flight, orifice_in=min(orifices) if orifices else None,
-                          water_temp_f=temp, air_temp_f=air, rh_pct=rh, wind_mph=wind, hours_per_day=hours)
+                          water_temp_f=temp, air_temp_f=air, rh_pct=rh, wind_mph=wind, hours_per_day=hours, spray_pct=spray_pct)
         if _is_auto(setup, "basin") and suction is not None:
             sid_in = pipe_spec_si(suction.get("material") or "SCH40 PVC", suction.get("nominal_size")).id_mm / MM_PER_IN
             pick = auto_basin(b, bc.value, suction_id_in=sid_in, rules=rr)
             b.update(pick)
             bc = basin_checks(b, flow_gpm=q_total, supply=supply, suction=suction, in_flight=in_flight,
                               orifice_in=min(orifices) if orifices else None, water_temp_f=temp, air_temp_f=air, rh_pct=rh, wind_mph=wind,
-                              hours_per_day=hours)
+                              hours_per_day=hours, spray_pct=spray_pct)
             bc.steps.append(f"auto: depth {pick['depth_in']:g} in, freeboard {pick['freeboard_in']:g} in")
         results.append(bc)
         checks.extend(bc.value["checks"])
