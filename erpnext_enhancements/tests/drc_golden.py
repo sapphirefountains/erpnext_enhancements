@@ -131,3 +131,19 @@ def check_fields(got: dict, want: dict, rel: float, what: str, exact=()) -> None
             assert got[k] == w, f"{what}.{k}: python {got[k]!r} vs js {w!r}"
         else:
             close(got[k], w, rel, f"{what}.{k}")
+
+
+def manifold_from_drc(P: dict):
+    """The rain-curtain manifold of a DRC project, from the fields the manifold, surge and basin
+    generators record (``valves, pitchMm, orificeMm, cv, v0, nozzleCc, ..., manMat, manNps, pipeIdMm``)."""
+    from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import (
+        curtain_manifold,
+        curtain_spec,
+    )
+
+    spec = curtain_spec(P["manMat"], P["manNps"], P["pipeIdMm"], P["manWallMm"])
+    return curtain_manifold(
+        spec=spec, valves=P["valves"], pitch_mm=P["pitchMm"], orifice_mm=P["orificeMm"], w_c=P["waterC"], cc=P["nozzleCc"],
+        cv=P["cv"], v0=P["v0"], valve_kv=P["valveKv"], tube_id_mm=P["tubeIdMm"], tube_len_m=P["tubeLenM"], tilt_mm=P["tiltMm"],
+        sag=P["sag"], hanger_m=P["hangerM"], nozzle_below_m=P["nozzleBelowM"], regain=P["regain"], feed=P["feed"],
+    )

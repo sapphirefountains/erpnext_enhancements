@@ -2529,6 +2529,21 @@ jobs:
           erpnext_enhancements/tests/test_hydraulics_pump.py
           erpnext_enhancements/tests/test_hydraulics_terminals.py
           erpnext_enhancements/tests/test_hydraulics_operating_point.py
+      # Fountain Designer phase B (v1.767.0): the manifold and network solvers, surge, basin checks
+      # (engine/hydraulics/), and autosize, BOM, upkeep and pipe supports (engine/). Plain pytest
+      # functions again, frappe-free with no stub, so one step; the ported parts read committed
+      # goldens (tests/golden/drc/{manifold,surge,basin_checks,autosize,upkeep,structure}.json) and
+      # the network solver is held to phase A's operating point at 1e-9.
+      - name: Water engineering network, autosize and BOM (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_hydraulics_manifold.py
+          erpnext_enhancements/tests/test_hydraulics_network.py
+          erpnext_enhancements/tests/test_hydraulics_surge.py
+          erpnext_enhancements/tests/test_hydraulics_basin_checks.py
+          erpnext_enhancements/tests/test_autosize.py
+          erpnext_enhancements/tests/test_bom.py
+          erpnext_enhancements/tests/test_structure_upkeep.py
       # Fountain Designer catalog (v1.758.0). PLAIN PYTEST FUNCTIONS with their own in-memory
       # frappe, so their own `python -m pytest` step (unittest would collect nothing). Guards the
       # approved-seed loader -- only approved rows, provenance on every record, a second run
