@@ -937,7 +937,9 @@ def _report(net: Network, status: dict, npsh_margin_ft: float) -> NetworkResult:
         margin_ft = (npsha - npshr) / M_PER_FT if math.isfinite(npsha) else math.nan
         if not pp.running:
             st = "Off"
-            checks.append(make_check("pump.off", WARNING, f"Pump {pp.id} is off", "Nothing it feeds gets water from it.", "pump", ref=pp.id))
+            checks.append(make_check("pump.off", INFO, f"Pump {pp.id} is off",
+                                     "Solved without it: a standby pump, or one switched off. A terminal that then gets no water is its own blocker.",
+                                     "pump", ref=pp.id))
         elif backflow:
             st = "Backflow"
             checks.append(make_check("pump.backflow", BLOCKER, f"Pump {pp.id} runs backwards ({m3s_to_gpm(-lk.q):.1f} GPM)",

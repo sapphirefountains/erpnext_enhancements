@@ -246,8 +246,9 @@ def _design_point(net, pump_ids: list, q_design: float) -> float | None:
 def _shutoff_and_surge(net, res, rr: dict, water_temp_f: float, switched: bool) -> list[dict]:
     """Pipe-pressure fails: the operating pressure, and shut-off head plus surge, against each segment's rating.
 
-    The shut-off head is the pump's at its own full speed, not the speed a VFD settled on: a drive that
-    fails (or is bypassed) runs it there, and the pipe has to hold that."""
+    A VFD pump is judged at its full-speed shut-off head, not the speed the drive settled on: a drive that
+    fails (or is bypassed) runs it there, and the pipe has to hold that. A fixed-speed pump (any
+    ``speed_pct``) is judged at the speed it runs."""
     fails = []
     w = net.w
     rg = w.rho * G
@@ -264,7 +265,7 @@ def _shutoff_and_surge(net, res, rr: dict, water_temp_f: float, switched: bool) 
     for pp in net.pumps:
         if not (pp.running and math.isfinite(net.nodes[pp.i_in].H)):
             continue
-        h_pp = pp.h0_full + net.nodes[pp.i_in].H
+        h_pp = (pp.h0_full if pp.control == "vfd" else pp.h0) + net.nodes[pp.i_in].H
         seen, stack = {pp.i_in}, [pp.i_out]
         while stack:
             node = stack.pop()
@@ -620,7 +621,10 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
     try:
         out = _derive(model, setup, catalogs, rules)
     except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
-        bad = make_check("network.invalid", BLOCKER, "The network cannot be solved yet", str(exc), "piping")
+        # A ValueError is the builders saying what is missing; anything else is named, so an engine fault
+        # cannot pass for a half-drawn model.
+        detail = str(exc) if isinstance(exc, ValueError) else f"{type(exc).__name__}: {exc!r} (report this: an engine fault, not the drawing)"
+        bad = make_check("network.invalid", BLOCKER, "The network cannot be solved yet", detail, "piping")
         out = {"model": copy.deepcopy(model), "results": [], "checks": [bad], "network": None, "ranking": []}
     return _finite(out)
 

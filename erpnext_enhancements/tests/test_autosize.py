@@ -247,6 +247,17 @@ def test_stale_control_node_is_reported():
     assert "deleted_terminal" in out["checks"][0]["remedy"]
 
 
+def test_an_engine_fault_is_named_not_passed_off_as_a_drawing_problem(monkeypatch):
+    import erpnext_enhancements.water_engineering.engine.autosize as A
+
+    def boom(*a, **k):
+        raise KeyError("flow_gpm")
+
+    monkeypatch.setattr(A, "_design_flows", boom)
+    out = derive(model(), catalogs=CATALOG)
+    assert out["checks"][0]["code"] == "network.invalid" and "KeyError" in out["checks"][0]["remedy"]
+
+
 def test_derive_guards_every_build():
     """Anything a later build would raise on (here a pump with no basin to draw from) is network.invalid."""
     m = model()
