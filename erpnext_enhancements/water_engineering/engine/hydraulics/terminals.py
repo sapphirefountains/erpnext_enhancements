@@ -254,7 +254,9 @@ def build_demand(terminal: dict, rho: float):
     if kind == "parallel":
         return ParallelDemand([build_demand(m, rho) for m in p.get("members") or terminal.get("members") or []], label)
     if kind == "manifold":
-        raise NotImplementedError("manifold terminals arrive with the phase B manifold solver")
+        from .manifold import manifold_demand_from_us  # imported here: manifold imports this module's siblings
+
+        return manifold_demand_from_us(p, rho, label)
     raise ValueError(f"unknown terminal kind {kind!r}")
 
 
