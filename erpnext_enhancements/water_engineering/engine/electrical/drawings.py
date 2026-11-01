@@ -13,7 +13,7 @@ from ._util import num
 def _wire_note(c: dict) -> str:
     if not c.get("conductor"):
         return ""
-    note = f"#{c['conductor']} + #{c.get('egc')}G"
+    note = f"#{c['conductor']}" + (f" + #{c['egc']}G" if c.get("egc") else "")
     if c.get("conduit"):
         note += f", {c['conduit']} {c.get('conduit_type') or ''}".rstrip()
     if c.get("drop_pct") is not None:
@@ -44,7 +44,7 @@ def oneline_state(
     }
     if feeder and num(feeder.get("length_ft")) > 0:
         state["feeder"] = {
-            "label": f"Feeder #{feeder.get('conductor')} + #{feeder.get('egc')}G, {feeder.get('conduit') or ''}".rstrip(", "),
+            "label": f"Feeder {_wire_note({**feeder, 'drop_pct': None})}",
             "sub": f"{num(feeder.get('length_ft')):g} ft, {num(feeder.get('drop_pct')):.1f}% VD",
         }
     for c in circuits or []:

@@ -486,7 +486,7 @@ def _run_calc(calc, inputs):
             hp=i.get("hp", 0),
             phase=i.get("phase", 1),
             voltage=i.get("voltage", 0),
-            is_motor=bool(i.get("is_motor", True)),
+            is_motor=str(i.get("is_motor", True)).strip().lower() not in ("0", "false", "no", ""),
             device=i.get("device") or "inverse_time_breaker",
         )
     elif calc == "total_connected_load":

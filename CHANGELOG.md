@@ -35,6 +35,9 @@ on 2026-11-01 that the 430.52 maxima govern.
 - **Non-motor loads.** New keyword arguments: `is_motor=False` gives a non-motor load's 210.20(A)
   breaker (125% continuous), and `device` picks the protective device.
 - **`constants.BREAKER_CONTINUOUS_FACTOR`.** Its comment and citation now say what the 1.25 is for.
+- **`constants.py` tables.** The motor FLC tables and the 240.6 list there were used only by the old
+  module and are removed. `engine/data/nec_tables.py` holds them now. The old 1-phase table's note
+  that 208 V uses the 230 V column was wrong.
 
 Three results move:
 

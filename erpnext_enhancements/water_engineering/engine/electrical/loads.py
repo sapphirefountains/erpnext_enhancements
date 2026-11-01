@@ -46,7 +46,7 @@ CIT_FLC_RULE = "NEC 430.6(A)(1) (size from the FLC tables, overloads from the na
 LOAD_KEYS = (
     "key", "label", "kind", "qty", "is_motor", "continuous", "voltage", "phase", "hp",
     "flc_a", "fla_a", "amps", "va", "watts", "control", "code_letter", "submersible",
-    "underwater", "run_ft", "duty_hours_day", "gfci", "source", "secondary_v", "notes",
+    "underwater", "run_ft", "duty_hours_day", "gfci", "source", "secondary_v", "notes", "motor_phase",
 )
 DEFAULT_SERVICE_V = 240
 DEFAULT_PANEL_FT = 60.0
@@ -117,6 +117,7 @@ def motor_load(
     run_ft: float = DEFAULT_PANEL_FT,
     duty_hours_day: float = DEFAULT_PUMP_HOURS_DAY,
     kind: str = "pump",
+    motor_phase: int | None = None,
 ) -> dict:
     """One motor row: FLC from the table when the HP is a table size, else the
     nameplate FLA, else an estimate from kW."""
@@ -140,7 +141,14 @@ def motor_load(
     else:
         amps, source = 0.0, "unknown"
         notes.append("No HP, FLA or kW given; this motor carries no load until one is entered.")
-    watts = h * HP_TO_KW * 1000.0 / DEFAULT_MOTOR_EFF if h > 0 else amps * num(voltage) * 0.85
+    # Running input power: from the given shaft kW when there is one (the motor is rounded up,
+    # the pump is not), else from the nameplate HP, else from the current at 0.85 pf.
+    if num(kw) > 0:
+        watts = num(kw) * 1000.0 / DEFAULT_MOTOR_EFF
+    elif h > 0:
+        watts = h * HP_TO_KW * 1000.0 / DEFAULT_MOTOR_EFF
+    else:
+        watts = amps * num(voltage) * 0.85
     return blank_load(
         key=key, label=label, kind=kind, qty=max(1, int(num(qty, 1))), is_motor=True,
         continuous=num(duty_hours_day, DEFAULT_PUMP_HOURS_DAY) >= 3, voltage=num(voltage), phase=ph,
@@ -148,6 +156,7 @@ def motor_load(
         watts=watts, control=(control or "none").lower(), code_letter=code_letter,
         submersible=bool(submersible), underwater=bool(submersible), run_ft=num(run_ft, DEFAULT_PANEL_FT),
         duty_hours_day=num(duty_hours_day, DEFAULT_PUMP_HOURS_DAY), source=source, notes=notes,
+        motor_phase=phase_of(motor_phase) if motor_phase else ph,
     )
 
 
@@ -220,7 +229,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
             voltage=num(pe.get("voltage"), service_v), phase=pe.get("phase") or service_ph,
             qty=pe.get("qty") or 1, control=control, code_letter=pe.get("code_letter"),
             submersible=bool(pe.get("submersible")), run_ft=num(pe.get("run_ft"), panel_ft),
-            duty_hours_day=num(pe.get("duty_hours_day"), pump_hours),
+            duty_hours_day=num(pe.get("duty_hours_day"), pump_hours), motor_phase=pe.get("motor_phase"),
         )
         loads.append(row)
 
@@ -253,14 +262,14 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         ))
     if lv_w > 0:
         lv_v = next(num(f.get("voltage"), DEFAULT_LV) for f in fixtures if _is_low_voltage(num(f.get("voltage"), DEFAULT_LV)))
-        # The panel sees the transformer: sized at 1.25 x fixture watts (transformers.py).
+        # The panel load is the fixture watts; the continuous-load 125% is applied once, by
+        # the branch and feeder rules. The transformer itself is sized at 1.25 x W (transformers.py).
         loads.append(simple_load(
             "lighting:lv", f"Low-voltage lighting ({lv_count} fixtures, {lv_w:g} W)", "lighting_transformer",
-            watts=lv_w, va=1.25 * lv_w, voltage=120, run_ft=panel_ft, duty_hours_day=light_hours,
+            watts=lv_w, va=lv_w, voltage=120, run_ft=panel_ft, duty_hours_day=light_hours,
             secondary_v=lv_v, underwater=True,
-            notes=["Primary load = 1.25 x fixture watts (the transformer rule)."],
         ))
-        steps.append(f"low-voltage lighting {lv_w:g} W at {lv_v:g} V -> {1.25 * lv_w:g} VA primary")
+        steps.append(f"low-voltage lighting {lv_w:g} W at {lv_v:g} V through its transformer")
 
     sol = elec.get("solenoid_valves") or {}
     n_valves = int(num(sol.get("qty")))

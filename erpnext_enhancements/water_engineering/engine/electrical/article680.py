@@ -32,7 +32,7 @@ from ..data.nec_tables import (
     VERIFY_EDITION,
 )
 from ..envelope import CalcResult, make_input
-from ._util import num
+from ._util import num, phase_of
 
 POOL_VENUES = ("pool", "spa", "wading", "therapy")
 # 680.21(A)(1) wiring methods for pool-associated motors (insulated Cu EGC >= 12 AWG).
@@ -48,13 +48,18 @@ def venue_part(venue: str | None) -> str:
 
 def volts_to_ground(voltage: float, phase: int = 1) -> float:
     """Voltage to ground of the supply: 277 V on a 480Y/277 system, 120 V on
-    120/240 and 208Y/120. (A 240 V delta high leg is 208 V to ground; not modeled.)"""
+    120/240 and 208Y/120. A three-phase 220-250 V supply is taken as a delta with a
+    208 V high leg (the worst case; a corner-grounded delta is 240 V)."""
     v = num(voltage)
     if v <= 0:
         return 0.0
     if v <= 150:
         return v
-    return 277.0 if v >= 440 else 120.0
+    if v >= 440:
+        return 277.0
+    if phase_of(phase) == 3 and 220 <= v <= 250:
+        return 208.0
+    return 120.0
 
 
 def _is_low_voltage(volts: float) -> bool:
@@ -126,7 +131,7 @@ def article680_checklist(
     (``disconnect_ft``, ``disconnect_in_sight``, ``nearest_receptacle_ft``,
     ``overhead_clearance_ft``, ``jbox_above_ground_in``, ``jbox_above_water_in``,
     ``jbox_from_wall_ft``, ``wiring_method``, ``bonding_designed``,
-    ``cord_ft``). ``value`` is the list of checks."""
+    ``bonding_in_bom``, ``cord_ft``). ``value`` is the list of checks."""
     loads = loads or []
     fixtures = fixtures or []
     site = site or {}
@@ -253,6 +258,11 @@ def article680_checklist(
     ))
 
     bonding = site.get("bonding_designed")
+    bonding_note = (
+        "A bonding allowance is in the BOM; confirm the bonding design."
+        if site.get("bonding_in_bom") and not bonding
+        else ""
+    )
     if part == "pool":
         checks.append(_check(
             "equipotential_bonding", pname, "680.26", "Equipotential bonding",
@@ -260,7 +270,7 @@ def article680_checklist(
             f"lighting, pump motors and fixed metal within 5 ft horizontally / 12 ft vertically with solid "
             f"copper {BONDING_MIN_AWG} AWG or larger; bond the water with 9 in^2 of conductive surface (680.26(C)).",
             "pass" if bonding else "verify",
-            "Bonding kit is in the BOM." if bonding is None else "",
+            bonding_note,
         ))
     else:
         checks.append(_check(
@@ -269,7 +279,7 @@ def article680_checklist(
             f"structure, to the branch-circuit EGC; solid copper {BONDING_MIN_AWG} AWG or larger. A fountain sharing "
             "water with a pool also needs 680.26 equipotential bonding.",
             "pass" if bonding else "verify",
-            "Bonding kit is in the BOM." if bonding is None else "",
+            bonding_note,
         ))
 
     dist = site.get("disconnect_ft")

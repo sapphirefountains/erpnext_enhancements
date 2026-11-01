@@ -33,6 +33,7 @@ def select_vfd(
     cable_ft: float = 0.0,
     submersible: bool = False,
     drives_on_bus: int = 1,
+    fla: float | None = None,
 ) -> CalcResult:
     """Drive for a three-phase motor of ``hp`` at ``voltage``. ``value`` is the
     drive HP rating; inputs carry the output current (motor FLC), an estimated
@@ -46,10 +47,16 @@ def select_vfd(
             "motor or a drive made for the single-phase pump."
         )
     motor_hp = standard_motor_hp(h, 3) or h
+    if motor_hp <= 0 and num(fla) > 0:
+        # No HP: the smallest Table 430.250 motor whose FLC covers the nameplate current.
+        motor_hp = next((k for k in sorted(FLC_3PH) if (motor_flc(k, 3, voltage) or 0) >= num(fla)), 0.0)
+        warnings.append(f"No motor HP given; drive sized for a {motor_hp:g} HP motor from {num(fla):g} A.")
+    if motor_hp <= 0:
+        warnings.append("No motor HP or current given; the drive cannot be sized.")
     flc = motor_flc(motor_hp, 3, voltage) or 0.0
     need_hp = motor_hp * (SINGLE_PHASE_INPUT_DERATE if pin == 1 else 1.0)
-    drive_hp = next((s for s in STD_VFD_HP if s >= need_hp - 1e-9), None)
-    if drive_hp is None:
+    drive_hp = next((s for s in STD_VFD_HP if s >= need_hp - 1e-9), None) if need_hp > 0 else None
+    if drive_hp is None and need_hp > 0:
         drive_hp = math.ceil(need_hp)
         warnings.append(f"{need_hp:g} HP is past the standard drive list; size from the maker's catalog.")
     if motor_hp not in FLC_3PH:

@@ -179,16 +179,18 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
             max_drop_pct=max(TOTAL_DROP_PCT - worst_branch, 1.0),
         )
         results["feeder_wire"] = fw.to_dict()
-        fc = conduit_fill(
-            [{"size": fw.value, "qty": feeder["current_carrying"] + (1 if service_v <= 250 else 0)},
-             {"size": fw.inputs["egc"]["value"], "qty": 1}],
-            conduit_type,
-        )
-        results["feeder_conduit"] = fc.to_dict()
-        feeder.update(conductor=fw.value, egc=fw.inputs["egc"]["value"], conduit=fc.value,
-                      drop_pct=fw.inputs["drop_pct"]["value"])
-        td = total_drop(feeder["drop_pct"] or 0.0, worst_branch)
-        results["total_drop"] = td.to_dict()
+        if fw.value:
+            egc = (fw.inputs.get("egc") or {}).get("value")
+            fc = conduit_fill(
+                [{"size": fw.value, "qty": feeder["current_carrying"] + (1 if service_v <= 250 else 0)},
+                 {"size": egc, "qty": 1 if egc else 0}],
+                conduit_type,
+            )
+            results["feeder_conduit"] = fc.to_dict()
+            feeder.update(conductor=fw.value, egc=egc, conduit=fc.value,
+                          drop_pct=(fw.inputs.get("drop_pct") or {}).get("value"))
+            td = total_drop(feeder["drop_pct"] or 0.0, worst_branch)
+            results["total_drop"] = td.to_dict()
     sc = service_check(fl.value or 0, fo.value or 0, elec.get("available_service_a"), service_v, service_ph)
     results["service_check"] = sc.to_dict()
 
@@ -198,7 +200,7 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
     bonding_ft = _basin_perimeter_ft(model.get("basins")) + (20.0 if circuits else 0.0)
     checklist = article680_checklist(
         loads, venue=venue, fixtures=fixtures,
-        site={"bonding_designed": True if bonding_ft > 0 else None, **(elec.get("site_checks") or {})},
+        site={"bonding_in_bom": bonding_ft > 0, **(elec.get("site_checks") or {})},
     )
     results["checklist"] = checklist.to_dict()
     bk = backup_plan(loads, battery_wh=num(elec.get("battery_wh")))

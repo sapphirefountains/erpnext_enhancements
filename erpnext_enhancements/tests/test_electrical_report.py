@@ -90,7 +90,8 @@ def test_build_loads_from_model():
     assert pump["is_motor"] and pump["amps"] == 28.0 and pump["source"] == "table"
     assert pump["continuous"]  # 6 h/day default is 3 h or more
     light = by_key["lighting:lv"]
-    assert light["va"] == pytest.approx(1.25 * 280) and light["secondary_v"] == 12
+    # The panel load is the fixture watts; 125% is applied once, by the branch and feeder rules.
+    assert light["va"] == pytest.approx(280) and light["secondary_v"] == 12
     assert by_key["valves"]["continuous"] is False
     assert any(d["device"] == "solenoid" for d in by_key["controls"]["control_devices"])  # autofill
 
@@ -99,6 +100,7 @@ def test_pump_from_kw_rounds_up_to_a_table_motor():
     loads = E.build_loads({}, pumps=[{"id": "p", "kw": 1.6, "voltage": 230, "phase": 1}]).value
     assert loads[0]["hp"] == 3.0  # 1.6 kW = 2.15 HP -> 3 HP motor
     assert loads[0]["amps"] == 17.0
+    assert loads[0]["watts"] == pytest.approx(1600 / 0.9)  # energy from the pump's kW, not the 3 HP motor
 
 
 def test_pump_with_nameplate_only_uses_it():
@@ -142,10 +144,16 @@ def test_feeder_ocpd_raised_when_rounding_goes_under_the_load():
     # load is 1.25 x 8 + 75 = 85 A -> 90 A stands. With a 64 A heater: ceiling 100 -> 100.
     loads = [{"is_motor": True, "amps": 8}, {"continuous": True, "amps": 60}]
     assert E.feeder_ocpd(loads).value == 90
-    # Motors alone: 2 x 28 A -> 70 + 28 = 98 -> 90 A, under the 63 A load? no: 1.25*28+28 = 63 A, 90 stands.
+    # Two 28 A motors: ceiling 70 + 28 = 98 -> 90 A, above the 63 A load, so 90 A stands.
     two = [{"is_motor": True, "amps": 28, "qty": 2}]
     r = E.feeder_ocpd(two)
     assert r.value == 90 and r.inputs["feeder_load_a"]["value"] == 63.0
+    assert r.inputs["raised_to_load"]["value"] is False
+    # A 1.7 A feed pump and a 100 A continuous heater: ceiling 15 + 125 = 140 -> 125 A, under the
+    # 127.1 A load -> raised to 150 A (430.63 is a minimum).
+    raised = E.feeder_ocpd([{"is_motor": True, "amps": 1.7}, {"continuous": True, "amps": 100}])
+    assert raised.value == 150
+    assert raised.inputs["raised_to_load"]["value"] is True
 
 
 def test_feeder_load_mixed_voltages_in_va():
@@ -214,6 +222,16 @@ def test_control_transformer_unchanged():
     assert E.control_transformer_va([{"device": "contactor", "qty": 3}]).value == 75
 
 
+def test_vfd_for_a_nameplate_only_pump_and_a_single_phase_motor():
+    loads = E.build_loads({"electrical": {"service_v": 230, "phase": 3}},
+                          pumps=[{"id": "n", "fla": 12, "control": "vfd"}]).value
+    c = E.branch_circuits(loads).value[0]
+    assert c["vfd_hp"] == 5  # smallest Table 430.250 motor covering 12 A at 230 V: 3 HP is 9.6 A, 5 HP 15.2 A
+    one = E.build_loads({}, pumps=[{"id": "s", "hp": 2, "voltage": 230, "phase": 1, "control": "vfd"}]).value
+    vfd = E.branch_circuits(one).value[0]["calcs"]["vfd"]
+    assert any("Single-phase motors" in w for w in vfd["warnings"])
+
+
 def test_select_vfd_single_phase_input_doubles():
     assert E.select_vfd(10, 208, 3).value == 10
     assert E.select_vfd(10, 230, 1).value == 20
@@ -257,6 +275,10 @@ def test_checklist_pool_lens_depth_and_disconnect():
     assert by["lens_depth"]["status"] == "fail"  # 12 in < 18 in
     assert by["maintenance_disconnect"]["status"] == "pass"
     assert "equipotential_bonding" in by
+    # A bonding allowance in the BOM is not a bonding design: still verify.
+    bom_only = E.article680_checklist([], venue="Spa", site={"bonding_in_bom": True})
+    eq = next(c for c in bom_only.value if c["key"] == "equipotential_bonding")
+    assert eq["status"] == "verify" and "allowance" in eq["detail"]
 
 
 def test_gfci_rules():
@@ -267,6 +289,8 @@ def test_gfci_rules():
     assert E.gfci_requirement(lv, "fountain")["required"] is False
     sub480 = {"is_motor": True, "voltage": 480, "phase": 3, "kind": "pump", "submersible": True}
     assert "SPGFCI" in E.gfci_requirement(sub480, "fountain")["note"]
+    delta240 = {"is_motor": True, "voltage": 240, "phase": 3, "kind": "pump"}
+    assert "SPGFCI" in E.gfci_requirement(delta240, "Spa")["note"]  # 208 V high leg to ground
 
 
 # --- electrical_report --------------------------------------------------------------------------
@@ -301,6 +325,13 @@ def test_report_bom_wire_includes_waste():
     assert wire["qty"] >= round(3 * 150 * 1.1)
     assert any(b["key"].startswith("breaker:70:2") for b in r["bom"])
     assert any(b["key"] == "bond:wire" for b in r["bom"])
+
+
+def test_report_survives_an_ambient_no_insulation_takes():
+    m = _model()
+    m["electrical"]["ambient_f"] = 200
+    r = E.electrical_report(m)
+    assert r["feeder"].get("conductor") is None
 
 
 def test_report_on_an_empty_model_does_not_raise():

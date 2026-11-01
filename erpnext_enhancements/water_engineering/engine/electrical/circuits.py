@@ -47,8 +47,11 @@ def branch_circuit(
     if motor:
         is_vfd = (load.get("control") or "") == "vfd"
         if is_vfd:
-            vfd = select_vfd(load.get("hp") or 0, v, ph, motor_phase=3, cable_ft=load.get("run_ft"),
-                             submersible=bool(load.get("submersible")))
+            # A drive takes the supply's phase in; the motor's phase is its own (a single-phase
+            # supply can feed a three-phase motor through the drive).
+            vfd = select_vfd(load.get("hp") or 0, v, ph, motor_phase=load.get("motor_phase") or ph,
+                             cable_ft=load.get("run_ft"), submersible=bool(load.get("submersible")),
+                             fla=load.get("fla_a") or amps)
             calcs["vfd"] = vfd.to_dict()
             # The drive's input current sets the conductors (430.122); FLC still seeds the 430.52 placeholder.
             cond_a = num(vfd.inputs["input_a_est"]["value"]) or amps
