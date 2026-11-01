@@ -199,9 +199,23 @@ The page also reads `pumps[].label` (a pump's display name) and `equipment[].aut
 
 ## After phase E
 
-When `api/designer.py` is on the site:
-- The error panel's second sentence ("Until the designer's server side is installed, the demo shows how it works.") and its **Open the demo** button (`app.js`, `failed()`) no longer fit. Phase H rewords the sentence and moves the demo to a link meant for training.
-- The Dock row on the Design profile then opens a working page. Until then it opens the error panel.
+`api/designer.py` is on the site from v1.768.0, and the page's default path calls it; `?demo=1` stays
+the labeled training demo.
+- **Where each part is drawn.** `water_engineering/derive.py` builds every derive reply. The charts
+  (v1.769.0) come from `engine/drawings.py`:
+  - `pump_duty_svg` draws the duty point;
+  - `page_svg` makes the print schematic and one-line safe for the page's allow-list.
+- **Tests.** `tests/test_designer_derive.py` holds a real reply to this contract, key for key, and runs
+  it through `model.merge_derived`, `verdict_html` and `chart.safe_svg` under node.
+- **Not editable on the page yet.** `boot().families[].inputs` leaves out the families' table inputs (a
+  cascade's `tiers`, an interactive feature's `play_features` and `sequence`), because `ui.js` has no
+  table field. The kits carry them in their models, and the derive reads them. A table editor is page
+  work for later.
+- **Phase H's two jobs.**
+  - The error panel's second sentence ("Until the designer's server side is installed, the demo shows
+    how it works.") and its **Open the demo** button (`app.js`, `failed()`) no longer fit. Phase H
+    rewords the sentence and moves the demo to a link meant for training.
+  - The Dock row on the Design profile now opens a working page.
 
 ## Demo mode
 
