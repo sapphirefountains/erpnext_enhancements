@@ -2472,6 +2472,22 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # Fountain Designer phase A (v1.758.0): the Darcy solver in engine/hydraulics/, ported from the
+      # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
+      # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of
+      # their own -- `python -m unittest` would collect nothing and report success. No Node needed:
+      # regenerating the JSON is a manual step with the DRC checkout (tools/golden/drc/). The suites
+      # import no frappe and install no stub, so one process runs all seven.
+      - name: Water engineering hydraulics (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_hydraulics_water.py
+          erpnext_enhancements/tests/test_hydraulics_catalog.py
+          erpnext_enhancements/tests/test_hydraulics_fittings.py
+          erpnext_enhancements/tests/test_hydraulics_segment.py
+          erpnext_enhancements/tests/test_hydraulics_pump.py
+          erpnext_enhancements/tests/test_hydraulics_terminals.py
+          erpnext_enhancements/tests/test_hydraulics_operating_point.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops

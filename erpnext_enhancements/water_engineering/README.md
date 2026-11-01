@@ -58,6 +58,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/fittings.py` | Minor-loss K-factors and component head-loss coefficients | DOC-0049 `H - TDH` |
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
+| `hydraulics/` | The governing solver (Fountain Designer rebuild, phase A): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, and the operating point where the pump meets the system (VFD, PRV, bypass, NPSHa at site elevation). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
 
 ### Where the workbook stops and engineering standard starts
 
@@ -117,6 +118,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_engine \
   erpnext_enhancements.tests.test_water_design_issues \
   erpnext_enhancements.tests.test_water_design_controller -v
+```
+
+The `hydraulics/` suites are pytest and run in their own CI step:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_hydraulics_*.py -q
 ```
 
 They are **golden tests**: each formula reproduces its sheet's own worked example. When you

@@ -67,9 +67,12 @@ WEIR_EDGE_BANDS = [
 CIT_WEIR_EDGE = "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
 
 # --- pressure <-> head ------------------------------------------------------
-# NOT present in either workbook. Pumps are specified in ft of TDH; psi is a
-# convenience output only. Standard fresh-water value flagged as such.
-FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
+# DOC-0049 F-Formulas!F173: 1 psi = 2.308966 ft of fresh water (62.37 lb/ft^3,
+# about 60 F). Was 2.31 with a note saying the workbooks had no figure; they do
+# (audit E12, 2026-11-01). Pumps are still specified in ft of TDH; psi is a
+# convenience output. The Darcy solver in hydraulics/ converts with rho(T) * g
+# instead, so its heads and pressures agree at any water temperature.
+FT_PER_PSI = 2.308966  # DOC-0049 F-Formulas F173
 
 # --- electrical (business rules; NOT formula-driven in the workbooks) -------
 BREAKER_CONTINUOUS_FACTOR = 1.25  # breaker >= 125% FLA (NEC 430.52) -- confirm w/ engineer
