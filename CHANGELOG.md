@@ -82,15 +82,18 @@ deploy has no migrate work, no patches and no fixtures.
     max/min, `x || d`, `toFixed` ties, and pow overflow. The bisections use DRC's exact caps and
     tolerances.
   - Closed-form math matches at 1e-12 and bisections at 1e-9.
-  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 103 tests) run in their own `ci.yml` step.
+  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 108 tests) run in their own `ci.yml` step.
     CI needs no Node.
 
 ### Changed
 - **`FT_PER_PSI` is now 2.308966**, DOC-0049 F-Formulas!F173. It was 2.31, with a comment saying the
   workbooks had no figure; they do (audit E12). This moves workbook outputs in the fourth significant
   figure (for example, sea-level NPSHa 20.11 → 20.09 ft and the Joukowsky surge 104.86 → 104.91 psi).
-  Only `test_conversions` asserted the old value. It and two comments were refreshed; no other golden
-  moved. The Darcy solver converts with ρ(T)·g instead and does not use the constant.
+  Two goldens moved and were refreshed: `test_conversions`, and `test_npsh_lift_golden`
+  (20.11 → 20.09 ft, now asserted to 2 places). The `2.31` written into the formula strings and
+  comments of `safety.water_hammer`, `feature.jet_trajectory`, `pipeline.py`,
+  `water_feature_design.py` and `constants.py` now reads 2.308966; the arithmetic always used the
+  constant. The Darcy solver converts with ρ(T)·g instead and does not use the constant.
 - **Pipe bores: DOC-0049 governs** (decision D2). `hydraulics/catalog.py` takes OD, wall and ID from
   DOC-0049 "1, 2, 3 - Pipe Specs" (Sch 40 2" = 2.067") for Sch 40 and Sch 80 PVC, Type K copper and
   galvanized steel Sch 40. DRC's OD-minus-wall figures (2.066") are not used.
@@ -100,6 +103,22 @@ deploy has no migrate work, no patches and no fixtures.
   - A test fails if the generator's table and `data/pipe_specs.py` ever drift.
   - The DOC-0049 velocity limits and PSI ratings stay the authority. They are left unset where
     DOC-0049 has none: steel ratings, PEX, hose.
+
+### Hardened in review (before merge)
+The independent review of PR #1391 found no blocker. Its six follow-ups and two nits are applied
+here, so phase B builds on the hardened interfaces. `hydraulics/README.md` lists each interface
+change.
+- **A pipe with no catalog size and no bore is never silent.** 1/2" PVC is the usual nozzle feed and
+  is not in DOC-0049. Without an `id_in` it solves on DRC's 25 mm default, which is roughly 1" pipe.
+  `PipeSpec.defaulted` now flags it, and every card resting on it carries status `Default Bore`.
+- **The kernel has no default atmosphere.** A hand-built `System` used to get sea level silently,
+  the audit-E5 error, when phase B calls `operating_point_si` directly. Now `atm_pa` is required.
+- **A PRV or VFD set below an open terminal's overflow is flagged.** It shuts the weir off, and the
+  result used to read as a quiet Q = 0. It is now status `Control Below Overflow`, with the remedy.
+- **Degenerate inputs give JavaScript's results instead of raising:**
+  - `Segment(branches=0)` reads as one branch;
+  - a zero-conductance orifice needs infinite pressure;
+  - a quadratic pump with no run-away flow gives zero head.
 
 ### Not done here (phase B and E)
 - Manifold terminals, the junction-balancing network solver, surge, basin checks and autosize are

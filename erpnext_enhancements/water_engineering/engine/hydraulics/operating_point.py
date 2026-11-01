@@ -34,10 +34,19 @@ Two things are new:
 ``PATM = 101325 Pa``, fixed at sea level, and has no elevation anywhere in its
 hydraulics. At Salt Lake City (about 4,300 ft) the atmosphere is about 4.9 ft of water
 lower, so DRC overstates NPSHa by about 1.5 m, three times its own 0.5 m margin (audit
-E5). The kernel takes ``atm_pa`` and ``pv_pa`` (DRC's values by default, which is what
-the goldens check); the envelope :func:`operating_point` passes the barometric figure
-from ``engine.safety._atm_head_ft(elevation_ft)`` and the vapor pressure from
-``engine.safety._vapor_pressure_psia``, so NPSH here and in ``npsh_available`` agree.
+E5). So the kernel has **no default atmosphere**: ``System.atm_pa`` must be given, and
+``operating_point_si`` / ``npsha_si`` raise without it. Pass ``site_atmosphere(elevation,
+temp)`` for a design (the envelope :func:`operating_point` and :func:`build_system` do:
+``engine.safety._atm_head_ft`` for the barometric figure, ``engine.safety._vapor_pressure_psia``
+for the vapor pressure, so NPSH here and in ``npsh_available`` agree), or ``units.PATM``
+explicitly to reproduce DRC, as the goldens do. ``pv_pa`` may stay None (the water's own
+Antoine vapor pressure).
+
+**A control set below an open terminal's overflow** shuts that terminal off: the PRV or VFD
+holds the inlet under the lift, so the weir gets nothing. That is what the controls do (and
+it matches DRC's arithmetic), but it is never what a designer meant, so
+``OpPoint.control_below_overflow`` flags it and the envelope reports it as its status. A VFD
+that holds a *flow* (the way a weir is really run) is not built yet.
 """
 
 from __future__ import annotations
@@ -88,6 +97,12 @@ STATUS_CAVITATION = "Cavitation Risk"
 STATUS_CANNOT_LIFT = "Cannot Lift"
 STATUS_DEAD_HEAD = "Dead Head"
 STATUS_STARVED = "Starved"
+STATUS_CONTROL_BELOW_OVERFLOW = "Control Below Overflow"
+
+_NO_ATM = (
+    "System.atm_pa is required: pass site_atmosphere(elevation_ft, water_temp_f)[0] for a design, "
+    "or units.PATM explicitly for sea level (DRC parity). A silent sea-level default is audit error E5."
+)
 
 
 @dataclass(frozen=True)
@@ -107,7 +122,7 @@ class System:
     control: str = "none"  # "none" | "prv" | "vfd"
     set_pa: float | None = None  # control set pressure at the terminal inlet
     bypass_d_m: float = 0.0
-    atm_pa: float = PATM
+    atm_pa: float | None = None  # required by the solvers: site_atmosphere(elevation)[0], or units.PATM for DRC parity
     pv_pa: float | None = None  # None -> the water's own (Antoine) vapor pressure
 
 
@@ -137,6 +152,7 @@ class OpPoint:
     dead_head: bool
     cannot_lift: bool
     starved: bool = False
+    control_below_overflow: bool = False  # a PRV / VFD set under an open terminal's overflow shut it off
     open_discharge: bool = False
     model: str = "system"
     extra: dict = field(default_factory=dict)
@@ -155,6 +171,8 @@ def bypass_flow_si(bypass_d_m: float, p_discharge: float, w: Water) -> float:
 def npsha_si(system: System, q_pump: float) -> float:
     """``npshaM``: NPSH available (m) at pump flow ``q_pump``, at the system's atmosphere."""
     w = system.w
+    if system.atm_pa is None:
+        raise ValueError(_NO_ATM)
     pv = w.pv if system.pv_pa is None else system.pv_pa
     rho = w.rho
     return (
@@ -166,6 +184,8 @@ def npsha_si(system: System, q_pump: float) -> float:
 
 def operating_point_si(system: System, demand, speed: float | None = None) -> OpPoint:
     """``operatingPoint`` (system model) plus open-discharge and starved fixed-flow terminals."""
+    if system.atm_pa is None:
+        raise ValueError(_NO_ATM)
     pump, w = system.pump, system.w
     rho = w.rho
     rg = rho * G
@@ -359,6 +379,9 @@ def operating_point_si(system: System, demand, speed: float | None = None) -> Op
         npsha=npsha, npshr=npshr, npsh_margin=npsha - npshr,
         dead_head=q_pump < DEAD_HEAD_FRACTION * bep_flow_si(pump, final_speed), cannot_lift=cannot_lift,
         starved=starved, open_discharge=opened,
+        control_below_overflow=(
+            acting in ("prv", "vfd") and p_fixed is not None and not r["cannotLift"] and set_pa < p_fixed
+        ),
     )
 
 
@@ -486,7 +509,15 @@ def operating_point(
         warnings.append("No pump curve (fewer than two head points): the operating point rests on the quadratic estimate.")
 
     margin_ft = op.npsh_margin / M_PER_FT
-    if op.cannot_lift:
+    if op.control_below_overflow:
+        status = STATUS_CONTROL_BELOW_OVERFLOW
+        lift_psi = getattr(demand, "p_fixed", 0) / PA_PER_PSI
+        warnings.append(
+            f"The {control.upper()} holds {op.set_pa / PA_PER_PSI:.2f} psi, under the {lift_psi:.2f} psi it takes to reach "
+            f"the overflow, so the open terminal gets nothing ({q_gpm:.1f} GPM in all). Raise the set pressure to at "
+            "least the lift, or run the pump without the control; a VFD that holds a flow is not available yet."
+        )
+    elif op.cannot_lift:
         status = STATUS_CANNOT_LIFT
         warnings.append(
             f"The pump's shut-off head ({pump_head_si(p, 0, op.speed) / M_PER_FT:.1f} ft) "

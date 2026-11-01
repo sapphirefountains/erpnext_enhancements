@@ -72,7 +72,9 @@ class OrificeDemand:
     def p_for(self, q: float) -> float:
         if q <= 0:
             return -self.pg
-        return _js.jpow(q / self.G, 2) - self.pg if self.any_open else math.inf
+        if not self.any_open or not self.G > 0:
+            return math.inf  # JS: (Q / 0) ** 2 is Infinity; a closed orifice passes nothing at any pressure
+        return _js.jpow(q / self.G, 2) - self.pg
 
     @classmethod
     def from_cd_area(cls, cd: float, area_m2: float, rho: float, count: int = 1, pg: float = 0.0, label: str = "") -> OrificeDemand:

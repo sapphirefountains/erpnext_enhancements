@@ -191,7 +191,7 @@ VAPOR_PRESSURE_PSIA = {
 }
 
 # --- water hammer / Joukowsky surge (NOT in the source docs) -----------------
-# dH = a * dV / g  (head);  dP_psi = dH / 2.31.  Pressure-wave speed `a` (ft/s)
+# dH = a * dV / g  (head);  dP_psi = dH / FT_PER_PSI (2.308966).  Pressure-wave speed `a` (ft/s)
 # is material/wall dependent; these are representative values, override-able.
 WAVE_SPEED_FPS = {"SCH40 PVC": 1300.0, "SCH80 PVC": 1400.0, "COPPER": 4270.0, "STEEL": 4500.0}
 WAVE_SPEED_DEFAULT_FPS = 1300.0  # PVC
