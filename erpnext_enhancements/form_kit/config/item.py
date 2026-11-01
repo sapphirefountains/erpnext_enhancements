@@ -69,6 +69,7 @@ CONFIG = {
 		"stock_levels_html": "The stock levels widget ERPNext's item.js draws for a saved stock item.",
 		"prices_html": "The Item Price list ERPNext's item.js draws on the Pricing tab.",
 		"custom_pump_curve_chart": "The pump curve chart water_engineering/pump_curve_chart.js draws from the curve points.",
+		"custom_pump_curves_html": "The Pump Curves panel water_engineering/pump_curve_chart.js draws from Pump Curve records.",
 		"custom_comments_field": "The Comments app (comments_auto.js) mounts here; the flow has none.",
 	},
 	# The code is the Item's name: on a saved Item it changes only by renaming the Item on its form,

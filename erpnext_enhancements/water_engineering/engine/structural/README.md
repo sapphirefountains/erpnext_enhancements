@@ -187,7 +187,7 @@ BOM keys: `structural.concrete`, `structural.admixture`, `structural.rebar.#4.lb
 
 Tests: `erpnext_enhancements/tests/test_structural_*.py` (bench-free pytest; own CI step).
 
-## 6. The structure in general (v1.759.0)
+## 6. The structure in general (v1.760.0)
 
 On 2026-11-01 Nikolas widened phase S from the basin shells to "the structure in general". DOC-0119
 says nothing about anything in this section beyond its materials notes (§1 D14–D18 and its Materials
