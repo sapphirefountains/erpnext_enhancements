@@ -150,6 +150,7 @@ class _Pump:
     prv_drop: float = 0.0  # m
     discharge: int = -1  # the node its discharge segments leave from (the PRV's outlet when it has one)
     h0: float = 0.0
+    h0_full: float = 0.0  # shut-off head at the pump's own (full) speed: what a failed drive runs it at
     q_max: float = 0.0
     k_r: float = 0.0
     item: str | None = None
@@ -161,6 +162,7 @@ class _Pump:
             return
         full = _js.jmax(self.curve.default_speed, 1e-3)
         h0_full = pump_head_si(self.curve, 0, full)
+        self.h0_full = h0_full
         qm_full = max_flow_si(self.curve, full)
         self.k_r = h0_full / (qm_full * qm_full) if qm_full > 0 and h0_full > 0 else 1e9
         s = self.speed if self.running else 0.0
@@ -405,6 +407,8 @@ def build_network(
         for m in _members(demand):
             atm = add(_Node(f"{tid}:atm", "atm", nodes[i].z, fixed=True, H=nodes[i].z, ref=tid))
             lk = _Link("terminal", i, atm, tid, demand=m, check=True, terminal=tid)
+            if not getattr(m, "any_open", True):
+                lk.status = CLOSED  # every takeoff shut (a valve pattern): p_for is infinite, so it can never open
             if isinstance(m, FixedFlowDemand):
                 lk.q_cap = m.q_fixed
                 lk.p_min = m.p_min
@@ -423,6 +427,8 @@ def build_network(
         if pp.control in ("vfd", "prv"):
             if cn:  # a pump id means its discharge: past the PRV when it has one
                 pp.control_node = index.get(cn, pump_by_id[cn].discharge if cn in pump_by_id else None)
+                if pp.control_node is None:
+                    raise ValueError(f"pump {pp.id!r}: control_node {cn!r} is not a node or a pump")
             elif len(term_nodes) == 1 and term_nodes[0] not in pinned_nodes:
                 pp.control_node = index[term_nodes[0]]
             else:
@@ -447,6 +453,9 @@ def _initial_flows(net: Network) -> None:
         elif lk.kind == "segment":
             lk.q = 0.5 * lk.seg.spec.area * lk.seg.branches
         elif lk.kind == "terminal":
+            if lk.status == CLOSED:
+                lk.q = 0.0
+                continue
             lk.q = 1e-4
             if lk.q_cap is not None:
                 lk.q = 0.5 * lk.q_cap
@@ -563,6 +572,8 @@ def _status_changes(net: Network, it: int) -> bool:
             elif lk.check and lk.q < 0:
                 new = CLOSED
         elif lk.status == CLOSED:
+            if lk.demand is not None and not getattr(lk.demand, "any_open", True):
+                continue  # a terminal with nothing open stays shut
             if not (math.isfinite(ha) and math.isfinite(hb)):
                 # One side is cut off from every fixed head, so there is nothing to compare: try the link
                 # open (a running pump, a terminal); it closes again next step if it cannot flow.
@@ -924,7 +935,10 @@ def _report(net: Network, status: dict, npsh_margin_ft: float) -> NetworkResult:
         runout = pp.running and q > pp.q_max * (1 + 1e-9) and pp.q_max > 0
         past_curve = pp.running and q > last_pt * (1 + 1e-9)
         margin_ft = (npsha - npshr) / M_PER_FT if math.isfinite(npsha) else math.nan
-        if backflow:
+        if not pp.running:
+            st = "Off"
+            checks.append(make_check("pump.off", WARNING, f"Pump {pp.id} is off", "Nothing it feeds gets water from it.", "pump", ref=pp.id))
+        elif backflow:
             st = "Backflow"
             checks.append(make_check("pump.backflow", BLOCKER, f"Pump {pp.id} runs backwards ({m3s_to_gpm(-lk.q):.1f} GPM)",
                                      "A stronger pump on the header overpowers it: add a check valve on its discharge, or match the pumps.",
@@ -986,7 +1000,7 @@ def _report(net: Network, status: dict, npsh_margin_ft: float) -> NetworkResult:
         i = net.node_index[t["node"]]
         nd = net.nodes[i]
         p = rg * (nd.H - nd.z) if math.isfinite(nd.H) else math.nan
-        state = "starved" if "starved" in states else ("closed" if all(s == CLOSED for s in states) else "open")
+        state = "starved" if "starved" in states else ("closed" if all(s == CLOSED for s in states) or q <= 1e-9 else "open")
         dq = t["design_q"]
         terms_out[tid] = {"node": t["node"], "kind": t["kind"], "flow_gpm": m3s_to_gpm(q),
                           "pressure_psi": p / PA_PER_PSI if math.isfinite(p) else None,

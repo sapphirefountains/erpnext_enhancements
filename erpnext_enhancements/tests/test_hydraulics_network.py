@@ -336,3 +336,35 @@ def test_envelope_and_build():
     assert net.terminals["t1"]["design_q"] == pytest.approx(gpm_to_m3s(30) + 0, rel=1e-12) or net.terminals["t1"]["design_q"] is None
     with pytest.raises(ValueError):
         build_network({"nodes": [{"id": "src", "kind": "basin"}], "pumps": [], "segments": [{"from": "src", "to": "nowhere"}]})
+
+
+def test_manifold_with_every_takeoff_closed_does_not_poison_the_network():
+    """A valve pattern that shuts every takeoff: that terminal stays closed, the rest still solves."""
+    shut = {"kind": "manifold", "params": {"material": "SCH40 PVC", "nominal_size": '1-1/2"', "rated_gpm": 3, "rated_head_ft": 20,
+                                            "takeoffs": [{"x_ft": 0.5 * (i + 1), "rated_gpm": 3, "rated_head_ft": 20, "open": False} for i in range(6)]}}
+    net = chain(ORIFICES)
+    net["nodes"].append({"id": "t2", "kind": "terminal", "elevation_ft": 8})
+    net["segments"].append(dict(SUPPLY[1], id="s3", **{"from": "n1", "to": "t2"}))
+    net["terminals"].append(dict(shut, id="t2"))
+    res = solve_network(net, **SITE)
+    assert res.converged
+    assert res.terminals["t2"]["state"] == "closed" and res.terminals["t2"]["flow_gpm"] == 0
+    assert res.terminals["t1"]["flow_gpm"] > 0 and math.isfinite(res.pumps["p1"]["head_ft"])
+
+
+def test_pump_that_is_off_is_reported():
+    net = chain(ORIFICES)
+    net["pumps"][0]["running"] = False
+    res = solve_network(net, **SITE)
+    assert res.pumps["p1"]["status"] == "Off"
+    assert res.terminals["t1"]["state"] == "closed"
+    codes = {c["code"] for c in res.checks}
+    assert {"pump.off", "terminal.no_flow"} <= codes
+    assert network_operating_point(net, **SITE).status == "Blocked"
+
+
+def test_control_node_naming_nothing_raises_a_clear_error():
+    net = chain(ORIFICES, control="vfd", set_psi=5)
+    net["pumps"][0]["control_node"] = "gone"
+    with pytest.raises(ValueError, match="control_node 'gone'"):
+        build_network(net)

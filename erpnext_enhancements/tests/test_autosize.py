@@ -209,3 +209,96 @@ def test_derive_keeps_the_model_json_with_a_pumpcurve_catalog():
     json.dumps(out["model"])  # no PumpCurve object leaked into the model
     rows = out["model"]["network"]["pumps"][0]["curve"]
     assert abs(rows[2]["head_ft"] - 36) < 1e-9 and rows[2]["efficiency_pct"] == 72
+
+
+# ---------------------------------------------------------------------------
+# PR #1398 review: derive never raises on a half-drawn model, and the output is strict JSON
+# ---------------------------------------------------------------------------
+
+
+def _strict(out):
+    import json
+
+    json.dumps(out, allow_nan=False)
+
+
+def test_basin_with_no_plan_area_is_a_blocker_not_a_crash():
+    m = model()
+    m["basins"][0].pop("length_in")
+    m["basins"][0].pop("width_in")
+    out = derive(m, catalogs=CATALOG)
+    assert any(c["code"] == "basin.no_area" and c["severity"] == "blocker" for c in out["checks"])
+    _strict(out)
+
+
+def test_terminal_linked_to_its_node_only_by_feature():
+    m = model()
+    m["network"]["terminals"][0]["id"] = "term_f1"  # the node is t1; the link is feature f1
+    out = derive(m, catalogs=CATALOG)
+    assert out["network"] is not None, out["checks"]
+    assert abs(out["network"]["terminals"]["term_f1"]["flow_gpm"] - 48) < 0.25
+
+
+def test_stale_control_node_is_reported():
+    m = model(control="custom")
+    m["network"]["pumps"][0].update(curve=pts(45, 120, 72), control="vfd", setpoint_psi=6, control_node="deleted_terminal")
+    out = derive(m, catalogs=CATALOG)
+    assert out["network"] is None and out["checks"][0]["code"] == "network.invalid"
+    assert "deleted_terminal" in out["checks"][0]["remedy"]
+
+
+def test_derive_guards_every_build():
+    """Anything a later build would raise on (here a pump with no basin to draw from) is network.invalid."""
+    m = model()
+    m["network"]["segments"] = [s for s in m["network"]["segments"] if s["id"] != "s1"]
+    m["network"]["nodes"] = [n for n in m["network"]["nodes"] if n["kind"] != "basin"]
+    out = derive(m, catalogs=CATALOG)
+    assert out["checks"][0]["code"] == "network.invalid" and out["network"] is None
+    _strict(out)
+
+
+def test_pump_on_its_source_basin_still_sizes_the_basin():
+    m = model()
+    m["network"]["segments"] = [s for s in m["network"]["segments"] if s["id"] != "s1"]
+    m["network"]["pumps"][0]["source"] = "src"
+    out = derive(m, catalogs=CATALOG)
+    b = out["model"]["basins"][0]
+    assert b["freeboard_in"] is not None and b["depth_in"] >= RULE_DEFAULTS["min_depth_in"]
+    assert not any(c["code"] == "basin.freeboard" for c in out["checks"])
+    assert any(c["code"] == "basin.no_intake" for c in out["checks"])
+
+
+def test_shutoff_only_catalog_pump_keeps_its_curve():
+    cat = {"pumps": [{"item": "GEN-1", "name": "generic 45 ft", "shutoff_head_ft": 45, "max_flow_gpm": 140, "hp": 0.8}]}
+    out = derive(model(), catalogs=cat)
+    curve = out["model"]["network"]["pumps"][0]["curve"]
+    assert curve == {"points": [], "shutoff_head_ft": 45, "max_flow_gpm": 140, "motor_eff_pct": None}
+    assert out["network"]["pumps"]["p1"]["status"] != "No Curve"
+
+
+def test_vgb_fail_text_for_a_cover_too_small_to_evaluate():
+    net = sized(model()["network"])
+    e = eval_pump(net, _catalog_curve(CATALOG["pumps"][2]), control="vfd", water_temp_f=70, elevation_ft=4300,
+                  vgb=[{"pump": "p1", "cover_length_in": 0.5, "cover_width_in": 0.5, "open_area_fraction": 0.2}])
+    vgb = [f["text"] for f in e["fails"] if f["code"] == "vgb"]
+    assert vgb and "None" not in vgb[0]
+
+
+def test_derive_output_is_strict_json_with_zero_flow():
+    m = model()
+    m["network"]["terminals"][0]["params"] = {"lift_ft": 0.2, "design_gpm": 0}
+    _strict(derive(m, catalogs=CATALOG))
+
+
+def test_derive_pins_bypass_and_surge_on_their_own():
+    m = model(bypass="custom")
+    m["network"]["terminals"] = [{"id": "t1", "kind": "orifice", "params": {"rated_gpm": 6, "rated_head_ft": 20, "count": 8, "switched": True}}]
+    m["network"]["pumps"][0]["bypass_in"] = 0.123
+    out = derive(m, catalogs=CATALOG)
+    assert out["model"]["network"]["pumps"][0]["bypass_in"] == 0.123
+    assert "auto_bypass" not in [r["calc"] for r in out["results"]]
+    m2 = model(surge="custom")
+    m2["surge"] = {"arrestors": [{"pump": "p1", "gas_l": 4, "precharge_psi": 20}]}
+    out2 = derive(m2, catalogs=CATALOG)
+    assert out2["model"]["surge"] == m2["surge"]
+    assert "auto_surge" not in [r["calc"] for r in out2["results"]]

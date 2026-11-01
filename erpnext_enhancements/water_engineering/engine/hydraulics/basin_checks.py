@@ -197,22 +197,26 @@ def basin_checks(
         "level_rise_in": rise_in, "freeboard_in": free_in, "freeboard_ok": r["freeboard_ok"],
         "submergence_required_in": r["submerge_req_m"] * 1000 / MM_PER_IN, "submergence_have_in": r["submerge_have_m"] * 1000 / MM_PER_IN,
         "submergence_ok": r["submerge_ok"], "froude": r["froude"], "strainer_opening_in": r["filter_um"] / 25400 if r["filter_um"] else None,
-        "strainer_mesh": r["mesh_no"], "turnover_min": r["turnover_min"],
+        "strainer_mesh": r["mesh_no"], "turnover_min": r["turnover_min"] if math.isfinite(r["turnover_min"]) else None,
         "evaporation_gph": r["evap_lph"] * gal, "spray_loss_gph": r["spray_lph"] * gal, "makeup_gpd": r["makeup_lpd"] * gal,
     }
     checks = []
     bid = basin.get("id") or ""
+    if area_sf <= 0:
+        checks.append(make_check("basin.no_area", BLOCKER, f"Basin {bid or '(unnamed)'} has no plan area yet",
+                                 "Give it a length and width (or a diameter, or area_sf) so the level rise and evaporation can be checked.",
+                                 "basin", ref=bid))
     if suc is not None and not r["submerge_ok"]:
         checks.append(make_check("basin.submergence", BLOCKER, f"Basin {bid}: the intake can vortex",
                                  f"HI 9.8 wants {value['submergence_required_in']:.1f} in of water over the intake, it has "
                                  f"{value['submergence_have_in']:.1f} in: deepen the basin, upsize the suction, or add an anti-vortex plate.",
                                  "basin", ref=bid, value={"required_in": value["submergence_required_in"], "have_in": value["submergence_have_in"]}))
-    if not r["freeboard_ok"]:
+    if area_sf > 0 and not r["freeboard_ok"]:
         checks.append(make_check("basin.freeboard", BLOCKER, f"Basin {bid} overflows when the pump stops",
                                  f"Drain-back and water in flight raise it {rise_in:.2f} in over {free_in:g} in of freeboard: "
                                  + ("add a check valve on the supply, " if not r["has_check"] else "") + "raise the rim or widen the basin.",
                                  "basin", ref=bid, value={"rise_in": rise_in, "freeboard_in": free_in}))
-    if r["turnover_min"] < 1:
+    if area_sf > 0 and r["turnover_min"] < 1:
         checks.append(make_check("basin.turnover", WARNING, f"Basin {bid} turns over in {r['turnover_min'] * 60:.0f} s",
                                  "So little water for this flow that the level swings with every start: enlarge the basin or add a reservoir.",
                                  "basin", ref=bid))
@@ -243,7 +247,8 @@ def basin_checks(
             f"drain-back {value['drainback_gal']:.1f} gal ({'held by a check valve' if r['has_check'] else 'no check valve'}) -> rise {rise_in:.2f} in vs freeboard {free_in:g} in",
             f"submergence: Fr {r['froude']:.2f} -> need {value['submergence_required_in']:.1f} in, have {value['submergence_have_in']:.1f} in",
             f"evaporation {value['evaporation_gph']:.2f} gph + spray {value['spray_loss_gph']:.2f} gph -> make-up {value['makeup_gpd']:.1f} gal/day",
-            f"cross-checks: DOC-0049 surge basin {cross_surge.value:.0f} gal ; ASHRAE evaporation {cross_evap.value} gal/day",
+            "cross-checks: DOC-0049 surge basin " + (f"{cross_surge.value:.0f} gal" if cross_surge.value is not None else "n/a (no plan area)")
+            + f" ; ASHRAE evaporation {cross_evap.value} gal/day",
         ],
         citations=[CIT_HI98, CIT_CARRIER, CIT_SPRAY, CIT_MESH, CIT_DRC],
         warnings=[c["title"] for c in checks if c["severity"] != INFO],

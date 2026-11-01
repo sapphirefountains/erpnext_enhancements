@@ -104,3 +104,21 @@ def test_unsized_segment_adds_neither_pipe_nor_fittings():
     assert [ln["key"] for ln in v["lines"] if ln["key"].startswith("pipe|")] == ['pipe|SCH40 PVC|1-1/2"']
     assert not [ln for ln in v["lines"] if ln["key"].startswith(("fitting|check", "fitting|elbow", "fitting|coupling"))]
     assert any(c["code"] == "bom.unsized_segment" for c in v["checks"])
+
+
+def test_manifold_with_takeoffs_gets_its_header_and_nozzles():
+    m = model()
+    takeoffs = [{"x_ft": 0.5 + i, "rated_gpm": 2, "rated_head_ft": 15, "label": f"T{i + 1}"} for i in range(10)]
+    m["network"]["terminals"] = [{"id": "t2", "kind": "manifold", "params": {"material": "SCH40 PVC", "nominal_size": '1-1/2"', "takeoffs": takeoffs}}]
+    k = by_key(bom_rows(m).value["lines"])
+    header_ft = 0.5 + 9.5 + 0.24 / 0.3048  # first + last takeoff, plus 12 cm each end
+    assert k['pipe|SCH40 PVC|1-1/2"']["qty"] == math.ceil(header_ft * 1.1)
+    assert k["nozzle|Nozzle 2 GPM @ 15 ft"]["qty"] == 10
+    assert not [ln for ln in bom_rows(m).value["lines"] if "?" in ln["description"]]
+
+
+def test_stick_couplings_count_their_joints_once():
+    one = {"network": {"segments": [{"id": "s", "material": "SCH40 PVC", "nominal_size": '2"', "length_ft": 100, "fittings": []}]}}
+    k = by_key(bom_rows(one, rules={"joints_per_quart": 1}).value["lines"])
+    assert k['fitting|coupling|2"|PVC Sch 40']["qty"] == 4  # 100 ft is five sticks
+    assert k["consumable|pvc_cement"]["qty"] == 8  # four couplings, two joints each

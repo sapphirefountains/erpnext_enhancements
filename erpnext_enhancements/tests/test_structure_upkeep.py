@@ -108,3 +108,11 @@ def test_om_per_year_by_hand():
     assert math.isclose(v["power"], ec, rel_tol=1e-12)
     assert math.isclose(v["power_crosscheck"], 1.36 * 10 * 365 * 0.12, rel_tol=1e-12)
     assert math.isclose(v["parts"], 600.0) and math.isclose(v["total"], v["water"] + v["power"] + v["chemicals"] + v["parts"])
+
+
+def test_water_plan_without_evaporation_is_strict_json():
+    import json
+
+    r = water_plan(500, evaporation_gph=0, spray_gph=1.0)
+    assert r.value["mineral_days"] is None and r.value["refresh_days"] == 30
+    json.dumps(r.to_dict(), allow_nan=False)

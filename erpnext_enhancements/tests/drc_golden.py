@@ -136,7 +136,10 @@ def check_fields(got: dict, want: dict, rel: float, what: str, exact=()) -> None
 def manifold_from_drc(P: dict):
     """The rain-curtain manifold of a DRC project, from the fields the manifold, surge and basin
     generators record (``valves, pitchMm, orificeMm, cv, v0, nozzleCc, ..., manMat, manNps, pipeIdMm``)."""
-    from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import curtain_manifold, curtain_spec
+    from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import (
+        curtain_manifold,
+        curtain_spec,
+    )
 
     spec = curtain_spec(P["manMat"], P["manNps"], P["pipeIdMm"], P["manWallMm"])
     return curtain_manifold(

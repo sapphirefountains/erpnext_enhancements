@@ -120,7 +120,8 @@ def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, h
                              "treatment", value={"days": r["refresh_days"], "by": r["refresh_by"]}))
     gal = 1 / L_PER_GAL
     value = {
-        "refresh_days": r["refresh_days"], "refresh_by": r["refresh_by"], "mineral_days": r["mineral_days"], "hygiene_days": r["hygiene_days"],
+        "refresh_days": r["refresh_days"], "refresh_by": r["refresh_by"],
+        "mineral_days": r["mineral_days"] if math.isfinite(r["mineral_days"]) else None, "hygiene_days": r["hygiene_days"],
         "warm": r["warm"], "makeup_gpd": r["makeup_lpd"] * gal, "evaporation_gpd": r["evap_lpd"] * gal, "spray_gpd": r["spray_lpd"] * gal,
         "residual_ppm": r["ppm"], "treatment": r["key"],
         "chlorinator_feed_gph": feed.value if feed else None,
@@ -130,7 +131,8 @@ def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, h
     }
     steps = [
         f"make-up {value['makeup_gpd']:.1f} gal/day (evaporation {value['evaporation_gpd']:.1f} + spray {value['spray_gpd']:.1f})",
-        f"minerals reach {r['max_cycles']:g}x in {r['mineral_days']:.0f} days ; hygiene every {r['hygiene_days']} days -> refresh every {r['refresh_days']} days",
+        (f"minerals reach {r['max_cycles']:g}x in {r['mineral_days']:.0f} days" if math.isfinite(r["mineral_days"])
+         else f"minerals never reach {r['max_cycles']:g}x") + f" ; hygiene every {r['hygiene_days']} days -> refresh every {r['refresh_days']} days",
     ]
     if feed:
         steps.append(f"governing chlorinator feed (IBC 3133B.1): {feed.value:.4f} gal/hr ; practical doses (DRC): fill "

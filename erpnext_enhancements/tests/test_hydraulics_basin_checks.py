@@ -91,3 +91,12 @@ def test_crosschecks_are_the_workbook_functions():
     assert 0.5 < ratio < 2.0
     # Spray loss is 0.5% of the flow.
     assert abs(r["spray_loss_gph"] - 0.005 * 60 * 60) < 1e-9
+
+
+def test_no_plan_area_and_no_flow_stay_strict_json():
+    import json
+
+    r = basin_checks({"id": "b0", "shape": "rectangular", "depth_in": 10}, flow_gpm=0)
+    assert r.value["turnover_min"] is None
+    assert [c["code"] for c in r.value["checks"]] == ["basin.no_area"]
+    json.dumps(r.to_dict(), allow_nan=False)

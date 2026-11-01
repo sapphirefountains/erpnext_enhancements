@@ -34,7 +34,7 @@ from .hydraulics._checks import INFO, make_check
 from .hydraulics.basin_checks import plan_area_sf
 from .hydraulics.catalog import pipe_spec_si
 from .hydraulics.fittings import FITTINGS, resolve_fitting
-from .hydraulics.manifold import OVERHANG_M
+from .hydraulics.manifold import OVERHANG_M, manifold_from_us
 from .hydraulics.units import M_PER_FT
 from .structure import pipe_hangers
 
@@ -209,13 +209,20 @@ def bom_rows(model: dict, *, rules: dict | None = None) -> CalcResult:
             spec = _spec(p)
             takeoffs = p.get("takeoffs")
             n = len(takeoffs) if takeoffs else int(p.get("count") or 0)
-            span_ft = float(p.get("length_ft") or (n * float(p.get("pitch_in") or 0) / 12))
+            try:  # the solver's own span (length_ft, else first + last takeoff), so the BOM and the hydraulics agree
+                span_ft = manifold_from_us(p, 998.2).span_m / M_PER_FT
+            except (ValueError, TypeError):
+                span_ft = float(p.get("length_ft") or (n * float(p.get("pitch_in") or 0) / 12))
             add_pipe(spec, span_ft + 2 * OVERHANG_M / M_PER_FT)
             lines.append(line("Piping", f"fitting|end_cap|{_size_label(spec)}|{spec.label}", f"End cap {_size_label(spec)} {spec.label}", 2, "ea",
                               {"kind": "fitting", "fitting": "end_cap", "nominal_size": spec.nominal, "material": spec.material}))
             lines.append(line("Piping", f"fitting|takeoff|{_size_label(spec)}", f"Takeoff on {_size_label(spec)} manifold", n, "ea",
                               {"kind": "fitting", "fitting": "takeoff", "nominal_size": spec.nominal}))
-            nozzles.append((t, n, p))
+            if takeoffs:  # each takeoff names its own nozzle
+                for i, tk in enumerate(takeoffs):
+                    nozzles.append(({"id": f"{t.get('id') or ''}:{tk.get('label') or i + 1}"}, 1, tk))
+            else:
+                nozzles.append((t, n, p))
         elif t.get("kind") == "orifice":
             nozzles.append((t, int(p.get("count") or t.get("count") or 1), p))
         elif t.get("kind") == "parallel":
@@ -245,8 +252,13 @@ def bom_rows(model: dict, *, rules: dict | None = None) -> CalcResult:
     for t, n, p in nozzles:
         tid = t.get("id") or ""
         product = p.get("item") or p.get("nozzle")
-        desc = product or ("Nozzle " + (f"{p['orifice_diameter_in']:g} in orifice" if p.get("orifice_diameter_in") else
-                                        f"{p.get('rated_gpm', '?')} GPM @ {p.get('rated_head_ft', '?')} ft"))
+        if p.get("orifice_diameter_in"):
+            spec_txt = f"{float(p['orifice_diameter_in']):g} in orifice"
+        elif p.get("rated_gpm") and p.get("rated_head_ft"):
+            spec_txt = f"{float(p['rated_gpm']):g} GPM @ {float(p['rated_head_ft']):g} ft"
+        else:
+            spec_txt = "(pick a model)"
+        desc = product or f"Nozzle {spec_txt}"
         lines.append(line("Nozzles", f"nozzle|{product or desc}", desc, n, "ea", {"kind": "nozzle", "item": product, "terminal": tid}))
 
     # Equipment: pumps and what their sections chose, components on segments, the model's equipment list
@@ -281,7 +293,7 @@ def bom_rows(model: dict, *, rules: dict | None = None) -> CalcResult:
 
     # Consumables: joints and hangers
     cuts = cut_list([s for s in segs if s.get("nominal_size") or s.get("id_in")])
-    joints += 2 * sum(c["couplings"] for c in cuts) + 2 * len(cuts)
+    # (stick couplings are already in fitting_counts, so the joints above count them once)
     plastic = any((pipe_spec_si(s.get("material") or "SCH40 PVC").material or "").endswith("PVC") for s in segs)
     copper = any("Copper" in (pipe_spec_si(s.get("material") or "").material or "") for s in segs)
     if joints and plastic:

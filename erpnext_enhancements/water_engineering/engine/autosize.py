@@ -244,7 +244,10 @@ def _design_point(net, pump_ids: list, q_design: float) -> float | None:
 
 
 def _shutoff_and_surge(net, res, rr: dict, water_temp_f: float, switched: bool) -> list[dict]:
-    """Pipe-pressure fails: the operating pressure, and shut-off head plus surge, against each segment's rating."""
+    """Pipe-pressure fails: the operating pressure, and shut-off head plus surge, against each segment's rating.
+
+    The shut-off head is the pump's at its own full speed, not the speed a VFD settled on: a drive that
+    fails (or is bypassed) runs it there, and the pipe has to hold that."""
     fails = []
     w = net.w
     rg = w.rho * G
@@ -261,7 +264,7 @@ def _shutoff_and_surge(net, res, rr: dict, water_temp_f: float, switched: bool) 
     for pp in net.pumps:
         if not (pp.running and math.isfinite(net.nodes[pp.i_in].H)):
             continue
-        h_pp = pp.h0 + net.nodes[pp.i_in].H
+        h_pp = pp.h0_full + net.nodes[pp.i_in].H
         seen, stack = {pp.i_in}, [pp.i_out]
         while stack:
             node = stack.pop()
@@ -399,7 +402,8 @@ def eval_pump(network: dict, curve, *, pump_ids: list | None = None, name: str =
         r = suction_outlet_vgb(q_gpm, float(cover["cover_length_in"]), float(cover["cover_width_in"]), float(cover["open_area_fraction"]),
                                int(cover.get("outlets") or 1))
         if r.status != "Okay":
-            fail("vgb", f"suction cover for {pid} at {q_gpm:.0f} GPM: {r.status}", pid or "")
+            why = r.status or ("cover too small to evaluate: " + "; ".join(r.warnings) if r.warnings else "cover too small to evaluate")
+            fail("vgb", f"suction cover for {pid} at {q_gpm:.0f} GPM: {why}", pid or "")
     switched = any((t["row"].get("params") or {}).get("switched") for t in net.terminals.values())
     fails.extend(_shutoff_and_surge(net, res, rr, water_temp_f, switched))
     power_kw = sum(res.pumps[pid].get("electrical_kw") or 0.0 for pid in ids if pid in res.pumps)
@@ -568,7 +572,8 @@ def _design_flows(network: dict, *, water_temp_f: float, provisional: str = '2"'
             checks.append(make_check("piping.no_design_flow", WARNING, f"Terminal {tid} has no design flow",
                                      "Its pipes are sized without it: give the feature a flow.", "piping", ref=tid))
             continue
-        terms.append({"id": tid, "node": t.get("node") or tid, "kind": "fixed_flow", "params": {"flow_gpm": m3s_to_gpm(dq), "min_psi": 0}})
+        terms.append({"id": tid, "node": probe.terminals[tid]["node"], "feature": t.get("feature"), "kind": "fixed_flow",
+                      "params": {"flow_gpm": m3s_to_gpm(dq), "min_psi": 0}})
     net["terminals"] = terms
     total = sum(t["params"]["flow_gpm"] for t in terms) or 1.0
     for p in net.get("pumps") or []:
@@ -590,21 +595,40 @@ def _design_flows(network: dict, *, water_temp_f: float, provisional: str = '2"'
     return flows, checks
 
 
+def _finite(x):
+    """The result tree with every non-finite float as None, so it is strict JSON (``allow_nan=False``)."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: _finite(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_finite(v) for v in x]
+    return x
+
+
 def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None, rules: dict | None = None) -> dict:
     """Run PLAN.md 2.2 steps 5-8 and return ``{model, results, checks, network, ranking}``.
 
     ``model``: design model schema 2 (PLAN.md 3.3). ``setup``: section -> ``auto`` | ``custom``
     (default ``model["setup"]``); only ``auto`` sections are written. ``catalogs``: ``{"pumps": [...]}``
     (see :func:`rank_pumps`). ``rules``: house rules over :data:`RULE_DEFAULTS`. ``results`` is a list
-    of ``CalcResult`` dicts in ladder order; ``checks`` every typed check (``hydraulics._checks``)."""
+    of ``CalcResult`` dicts in ladder order; ``checks`` every typed check (``hydraulics._checks``).
+
+    The page calls this on every edit, so a half-drawn model never raises: anything the network cannot
+    be built from comes back as one ``network.invalid`` blocker with the model untouched. The output
+    is strict JSON (an infinite figure is None)."""
+    try:
+        out = _derive(model, setup, catalogs, rules)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
+        bad = make_check("network.invalid", BLOCKER, "The network cannot be solved yet", str(exc), "piping")
+        out = {"model": copy.deepcopy(model), "results": [], "checks": [bad], "network": None, "ranking": []}
+    return _finite(out)
+
+
+def _derive(model: dict, setup: dict | None, catalogs: dict | None, rules: dict | None) -> dict:
     rr = _rules(rules)
     derived = copy.deepcopy(model)
     setup = setup if setup is not None else (derived.get("setup") or {})
-    try:
-        build_network(derived.get("network") or {}, water_temp_f=float((derived.get("site") or {}).get("water_temp_f") or 68.0))
-    except (ValueError, KeyError, TypeError) as exc:  # a half-drawn network: say what is wrong, derive nothing
-        bad = make_check("network.invalid", BLOCKER, "The network cannot be solved yet", str(exc), "piping")
-        return {"model": derived, "results": [], "checks": [bad], "network": None, "ranking": []}
     site = derived.get("site") or {}
     temp = float(site.get("water_temp_f") or 68.0)
     elev = float(site.get("elevation_ft") or 0.0)
@@ -677,8 +701,12 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
         spray_pct = max(sprays) if sprays else 0.5
         bc = basin_checks(b, flow_gpm=q_total, supply=supply, suction=suction, in_flight=in_flight, orifice_in=min(orifices) if orifices else None,
                           water_temp_f=temp, air_temp_f=air, rh_pct=rh, wind_mph=wind, hours_per_day=hours, spray_pct=spray_pct)
-        if _is_auto(setup, "basin") and suction is not None:
-            sid_in = pipe_spec_si(suction.get("material") or "SCH40 PVC", suction.get("nominal_size")).id_mm / MM_PER_IN
+        if _is_auto(setup, "basin"):
+            # With no suction segment (a pump drawing straight from the basin) there is no intake to submerge.
+            sid_in = pipe_spec_si(suction.get("material") or "SCH40 PVC", suction.get("nominal_size")).id_mm / MM_PER_IN if suction else 0.0
+            if suction is None:
+                checks.append(make_check("basin.no_intake", INFO, f"Basin {bid}: no suction segment, so intake submergence is not checked",
+                                         "A submersible or flooded pump: set its depth over the intake from the pump's manual.", "basin", ref=bid or ""))
             pick = auto_basin(b, bc.value, suction_id_in=sid_in, rules=rr)
             b.update(pick)
             bc = basin_checks(b, flow_gpm=q_total, supply=supply, suction=suction, in_flight=in_flight,
@@ -716,7 +744,11 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
             for p in net_d.get("pumps") or []:
                 p["item"] = best.get("item")
                 raw = best["row"].get("points") or best["row"].get("curve")
-                p["curve"] = _curve_rows(raw) if isinstance(raw, PumpCurve) else raw
+                if isinstance(raw, PumpCurve):
+                    raw = _curve_rows(raw)
+                if not raw:  # a generic estimate: only a shut-off head and a maximum flow on file
+                    raw = {"points": [], **{k: best["row"].get(k) for k in ("shutoff_head_ft", "max_flow_gpm", "motor_eff_pct")}}
+                p["curve"] = raw
                 for k in ("shutoff_head_ft", "max_flow_gpm", "motor_eff_pct"):
                     if best["row"].get(k) is not None:
                         p[k] = best["row"][k]
