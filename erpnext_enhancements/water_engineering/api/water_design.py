@@ -16,6 +16,7 @@ import json
 import frappe
 from frappe import _
 
+from erpnext_enhancements.water_engineering import catalog_reader
 from erpnext_enhancements.water_engineering import issues as design_issues
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
@@ -144,46 +145,58 @@ def _require(ptype):
 
 def nozzle_profile_params(profile_name):
     """Resolve a Nozzle Profile docname to the orifice/rated params the pure
-    engine's nozzle_flow needs. Empty dict if the profile is missing."""
-    if not profile_name or not frappe.db.exists("Nozzle Profile", profile_name):
+    engine's nozzle_flow needs, plus (v1.758.0) the profile's type, generic flag and
+    performance ``points`` ([{head_ft, psi, flow_gpm, display_height_ft,
+    display_diameter_ft, throw_ft, depth_over_nozzle_in}], see
+    ``catalog_reader.nozzle_profiles``). Empty dict if the profile is missing."""
+    if not profile_name:
         return {}
-    p = (
-        frappe.db.get_value(
-            "Nozzle Profile",
-            profile_name,
-            ["discharge_coefficient", "orifice_diameter_in", "orifice_area_in2", "rated_gpm", "rated_head_ft"],
-            as_dict=True,
-        )
-        or {}
-    )
+    p = catalog_reader.nozzle_profiles([profile_name]).get(profile_name)
+    if not p:
+        return {}
     return {
         "cd": p.get("discharge_coefficient"),
         "orifice_diameter_in": p.get("orifice_diameter_in"),
         "orifice_area_in2": p.get("orifice_area_in2"),
         "rated_gpm": p.get("rated_gpm"),
         "rated_head_ft": p.get("rated_head_ft"),
+        "nozzle_type": p.get("nozzle_type"),
+        "level_sensitive": p.get("level_sensitive"),
+        "is_generic_estimate": p.get("is_generic_estimate"),
+        "points": p.get("points") or [],
     }
 
 
 def pump_curves(item_codes):
     """{item_code: [{flow_gpm, head_ft}, ...]} performance-curve points for the
-    given pump Items. Empty if the Pump Curve Point table isn't migrated yet."""
-    codes = [c for c in (item_codes or []) if c]
-    if not codes:
-        return {}
-    try:
-        rows = frappe.get_all(
-            "Pump Curve Point",
-            filters={"parent": ["in", codes], "parenttype": "Item", "parentfield": "custom_pump_curve"},
-            fields=["parent", "flow_gpm", "head_ft"],
-            order_by="parent asc, idx asc",
-        )
-    except Exception:
-        return {}
+    given pump Items: each Item's best Pump Curve record (full speed, sourced,
+    largest impeller), else its legacy ``custom_pump_curve`` table. Items with no
+    curve are absent. ``catalog_reader.pump_curve_sets`` has every curve, with
+    efficiency, NPSHr and provenance."""
     out = {}
-    for r in rows:
-        out.setdefault(r["parent"], []).append({"flow_gpm": r["flow_gpm"], "head_ft": r["head_ft"]})
+    for item_code, curves in catalog_reader.pump_curve_sets(item_codes).items():
+        points = curves[0]["points"] if curves else []
+        if points:
+            out[item_code] = [{"flow_gpm": p["flow_gpm"], "head_ft": p["head_ft"]} for p in points]
     return out
+
+
+@frappe.whitelist()
+def item_pump_curves(item_code):
+    """The Item form's Pump Curves panel: this Item's curves, best first, with points.
+
+    Read-gated on Pump Curve; a user who cannot read Pump Curves gets an empty list and
+    ``can_read`` False rather than an error, so the Item form still opens for them.
+    """
+    if not item_code or not frappe.has_permission("Pump Curve", "read"):
+        return {"curves": [], "can_read": False, "can_create": False}
+    frappe.has_permission("Item", "read", doc=item_code, throw=True)
+    curves = catalog_reader.pump_curve_sets([item_code]).get(item_code, [])
+    return {
+        "curves": curves,
+        "can_read": True,
+        "can_create": bool(frappe.has_permission("Pump Curve", "create")),
+    }
 
 
 def _canvas_state(doc):
