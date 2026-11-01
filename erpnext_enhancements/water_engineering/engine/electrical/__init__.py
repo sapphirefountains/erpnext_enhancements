@@ -53,6 +53,18 @@ from .voltage_drop import (
 )
 
 CONTROL_PUMP_VOLTAGES = (120, 208, 230, 240, 480)  # Control Pump.voltage options
+# The rain curtain's coilPlan supply rule: sized for every valve open plus the controller's
+# logic, with 25% headroom, split over 1000 W units so each stays on an ordinary circuit.
+PSU_SIZES_W = [35, 50, 75, 100, 150, 200, 350, 500, 750, 1000]
+LOGIC_W = 3.0
+
+
+def valve_supply(valves_w: float, logic_w: float = LOGIC_W) -> dict:
+    """``{n, W}``: how many DC supplies of which standard size carry the valves
+    (``coilPlan`` in the Digital Rain Curtain's src/electrical.js)."""
+    need = 1.25 * (num(valves_w) + num(logic_w))
+    n = max(1, math.ceil(need / PSU_SIZES_W[-1]))
+    return {"n": n, "W": next((s for s in PSU_SIZES_W if s * n >= need - 1e-9), PSU_SIZES_W[-1])}
 
 
 def _basin_perimeter_ft(basins: list[dict] | None) -> float:
@@ -152,11 +164,9 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
             limit_pct=num(sol.get("drop_pct"), 5.0), group=8, kind="valve",
         )
         results["lv_valves"] = run.to_dict()
-        supply_w = 1.25 * run.value["total_w"]
+        psu = valve_supply(run.value["total_w"], logic_w=num(sol.get("logic_w"), LOGIC_W))
         low_voltage.append({**run.value, "tag": "valves", "label": "Solenoid valves",
-                            "voltage": num(sol.get("voltage"), 24),
-                            "supply_w": next((s for s in (35, 50, 75, 100, 150, 200, 350, 500, 750, 1000)
-                                              if s >= supply_w), math.ceil(supply_w))})
+                            "voltage": num(sol.get("voltage"), 24), "supply_w": psu["W"], "supply_n": psu["n"]})
     ctl_devices = next((ld.get("control_devices") for ld in loads if ld.get("kind") == "controls"), None) or []
     ctl = control_transformer_va(ctl_devices)
     results["control_transformer"] = ctl.to_dict()
@@ -173,9 +183,14 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
     feeder = {"load_a": fl.value, "ocpd_a": fo.value, "length_ft": feeder_ft, "conduit_type": conduit_type,
               "current_carrying": 3 if service_ph == 3 else 2}
     if fl.value and fo.value:
+        # A motor feeder's conductors carry the 430.24 load; its 430.62 device may be larger
+        # (430.62, 240.4(G)), so the protection check applies only to a feeder with no motors.
+        # The EGC still follows the installed device (250.122).
+        has_motor = any(ld.get("is_motor") for ld in loads)
         fw = wire_for_load(
             fl.value, voltage=service_v, phase=service_ph, length_ft=feeder_ft, continuous=False,
-            ocpd_a=fo.value, material=material, ambient_f=ambient_f, termination_c=termination_c,
+            ocpd_a=None if has_motor else fo.value, egc_ocpd_a=fo.value, material=material,
+            ambient_f=ambient_f, termination_c=termination_c,
             max_drop_pct=max(TOTAL_DROP_PCT - worst_branch, 1.0),
         )
         results["feeder_wire"] = fw.to_dict()
@@ -199,7 +214,7 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
 
     bonding_ft = _basin_perimeter_ft(model.get("basins")) + (20.0 if circuits else 0.0)
     checklist = article680_checklist(
-        loads, venue=venue, fixtures=fixtures,
+        loads, venue=venue, fixtures=fixtures, circuits=circuits,
         site={"bonding_in_bom": bonding_ft > 0, **(elec.get("site_checks") or {})},
     )
     results["checklist"] = checklist.to_dict()
@@ -297,6 +312,7 @@ __all__ = [
     "size_conductor",
     "total_connected_load",
     "total_drop",
+    "valve_supply",
     "voltage_drop",
     "wire_for_load",
 ]

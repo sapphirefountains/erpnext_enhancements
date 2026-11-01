@@ -64,7 +64,7 @@ def electrical_bom(
         if c.get("conduit") and run > 0:
             k = (c.get("conduit_type") or "PVC-40", c["conduit"])
             conduit[k] = conduit.get(k, 0.0) + run
-        bk = (int(num(c.get("breaker_a"))), int(num(c.get("poles"), 1)), bool(c.get("gfci")))
+        bk = (int(num(c.get("breaker_a"))), int(num(c.get("poles"), 1)), c.get("gfci_device") or ("GFCI breaker" if c.get("gfci") else ""))
         breakers[bk] = breakers.get(bk, 0) + 1
         if c.get("is_motor"):
             need = 1.15 * num(c.get("load_a"))
@@ -91,10 +91,14 @@ def electrical_bom(
     if main_breaker_a:
         lines.append(_line(f"main:{int(num(main_breaker_a))}", f"Main breaker {int(num(main_breaker_a))} A", 1, "ea",
                            f"main breaker {int(num(main_breaker_a))}A"))
-    for (amps, poles, gfci), n in sorted(breakers.items()):
-        kind = "GFCI circuit breaker" if gfci else "Circuit breaker"
-        lines.append(_line(f"breaker:{amps}:{poles}:{int(gfci)}", f"{kind} {poles}P {amps} A", n, "ea",
-                           f"{'GFCI ' if gfci else ''}breaker {poles}P {amps}A"))
+    for (amps, poles, gdev), n in sorted(breakers.items()):
+        if gdev == "SPGFCI / GFPE":
+            lines.append(_line(f"breaker:{amps}:{poles}:spgfci", f"Circuit breaker {poles}P {amps} A with SPGFCI / GFPE "
+                               "ground-fault protection", n, "ea", f"breaker {poles}P {amps}A ground fault"))
+            continue
+        kind = "GFCI circuit breaker" if gdev else "Circuit breaker"
+        lines.append(_line(f"breaker:{amps}:{poles}:{int(bool(gdev))}", f"{kind} {poles}P {amps} A", n, "ea",
+                           f"{'GFCI ' if gdev else ''}breaker {poles}P {amps}A"))
     for (size, poles), n in sorted(disconnects.items()):
         lines.append(_line(f"disconnect:{size}:{poles}", f"Disconnect switch {poles}P {size} A, NEMA 4X, HP-rated",
                            n, "ea", f"disconnect {size}A NEMA 4X"))
@@ -120,7 +124,8 @@ def electrical_bom(
             lines.append(_line(f"lvfuse:{tag}:{lv.get('fuse_a')}", f"Blade fuse {lv.get('fuse_a')} A ({tag})",
                                lv["branch_count"], "ea", f"ATO blade fuse {lv.get('fuse_a')}A"))
         if lv.get("supply_w"):
-            lines.append(_line(f"lvpsu:{tag}", f"DC power supply {lv['supply_w']} W ({tag})", 1, "ea",
+            lines.append(_line(f"lvpsu:{tag}", f"DC power supply {lv['supply_w']} W ({tag})",
+                               int(num(lv.get("supply_n"), 1)) or 1, "ea",
                                f"{lv.get('voltage', 24):g}V DC power supply {lv['supply_w']}W"))
     if junction_boxes:
         lines.append(_line("jbox", "Junction box, listed for pool/fountain luminaires (680.24 / 680.52)",

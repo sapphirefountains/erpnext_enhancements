@@ -436,8 +436,9 @@ class UnitsTests(unittest.TestCase):
     def test_conversions(self):
         self.assertAlmostEqual(units.cubic_inches_to_gallons(231), 0.999999, places=5)
         self.assertEqual(units.gallons_to_pounds(1), 8.34)
-        self.assertAlmostEqual(units.feet_to_psi(2.31), 1.0, places=6)
-        self.assertAlmostEqual(units.psi_to_feet(1.0), 2.31, places=6)
+        # DOC-0049 F-Formulas F173 (was 2.31 before v1.760.0)
+        self.assertAlmostEqual(units.feet_to_psi(2.308966), 1.0, places=6)
+        self.assertAlmostEqual(units.psi_to_feet(1.0), 2.308966, places=6)
 
 
 class EnvelopeShapeTests(unittest.TestCase):
@@ -513,9 +514,9 @@ class SafetyTests(unittest.TestCase):
 
     # --- NPSH available ---
     def test_npsh_lift_golden(self):
-        # sea level Ha=33.948, Hvp@70F=0.839; lift 10 + friction 3 -> 20.11 ft
+        # sea level Ha=14.696*2.308966=33.933, Hvp@70F=0.363*2.308966=0.838; lift 10 + friction 3 -> 20.09 ft
         r = npsh_available(-10, 3, water_temp_f=70)
-        self.assertAlmostEqual(r.value, 20.11, places=1)
+        self.assertAlmostEqual(r.value, 20.09, places=2)
 
     def test_npsh_status_bands(self):
         self.assertEqual(npsh_available(-10, 3, water_temp_f=70, npshr_ft=15).status, "Okay")
@@ -527,7 +528,7 @@ class SafetyTests(unittest.TestCase):
 
     # --- water hammer (Joukowsky) ---
     def test_water_hammer_instantaneous_golden(self):
-        # a=1300 ft/s, dV=6: surge = (1300*6/32.2)/2.31 = 104.86 psi
+        # a=1300 ft/s, dV=6: surge = (1300*6/32.2)/2.308966 = 104.91 psi
         r = water_hammer(6, 200, closure_time_s=0, material="SCH40 PVC")
         self.assertAlmostEqual(r.value, 104.9, delta=0.2)
 
@@ -692,7 +693,7 @@ class DrawingsTests(unittest.TestCase):
 
 class ElectricalTests(unittest.TestCase):
     # Motor branch breaker = the NEC 430.52 / Table 430.52(C)(1) maximum (inverse-time
-    # breaker 250% of FLC, next standard size up). Before v1.760.0 this was 125% of FLA,
+    # breaker 250% of FLC, next standard size up). Before v1.763.0 this was 125% of FLA,
     # which is the 430.22 conductor rule; that figure is now inputs["conductor_min_a"].
     def test_branch_breaker_from_fla(self):
         # 1 HP circ pump ~8 A FLA: 2.5*8 = 20 -> 20 A (was 15 A at 125%); conductors >= 10 A
@@ -739,7 +740,7 @@ class ElectricalTests(unittest.TestCase):
         # ceiling = 20 (largest 430.52 branch OCPD, 2.5*8) + 11.4 (other motors)
         # + 62.29 (non-motor: 1.25*45.83 continuous + 5) = 93.69 A -> 90 A (largest
         # standard <= ceiling; NOT 100), and 90 A >= the 83.69 A 430.24 load.
-        # Before v1.760.0: 15 + 11.4 + 50.83 = 77.23 -> 70 A, under the load it fed.
+        # Before v1.763.0: 15 + 11.4 + 50.83 = 77.23 -> 70 A, under the load it fed.
         self.assertEqual(service_main_breaker(self._FIKA_LOADS).value, 90)
 
     def test_control_transformer_va(self):

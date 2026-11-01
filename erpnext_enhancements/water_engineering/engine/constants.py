@@ -67,19 +67,22 @@ WEIR_EDGE_BANDS = [
 CIT_WEIR_EDGE = "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
 
 # --- pressure <-> head ------------------------------------------------------
-# NOT present in either workbook. Pumps are specified in ft of TDH; psi is a
-# convenience output only. Standard fresh-water value flagged as such.
-FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
+# DOC-0049 F-Formulas!F173: 1 psi = 2.308966 ft of fresh water (62.37 lb/ft^3,
+# about 60 F). Was 2.31 with a note saying the workbooks had no figure; they do
+# (audit E12, 2026-11-01). Pumps are still specified in ft of TDH; psi is a
+# convenience output. The Darcy solver in hydraulics/ converts with rho(T) * g
+# instead, so its heads and pressures agree at any water temperature.
+FT_PER_PSI = 2.308966  # DOC-0049 F-Formulas F173
 
 # --- electrical (business rules; NOT formula-driven in the workbooks) -------
 # 125% of FLA is the motor branch CONDUCTOR rule (NEC 430.22) and the continuous-
 # load rule for conductors and non-motor OCPD (210.19(A)(1), 210.20(A)). It is NOT
 # the motor breaker: that is the NEC 430.52 / Table 430.52(C)(1) maximum (250% of
-# FLC for an inverse-time breaker), in electrical/ocpd.py. Corrected v1.760.0.
+# FLC for an inverse-time breaker), in electrical/ocpd.py. Corrected v1.763.0.
 BREAKER_CONTINUOUS_FACTOR = 1.25  # conductors >= 125% FLA (NEC 430.22) / continuous loads (210.19, 210.20)
 
 # The NEC tables (240.6(A) standard ratings, Table 430.248 / 430.250 motor FLC
-# and the rest) live in data/nec_tables.py since v1.760.0.
+# and the rest) live in data/nec_tables.py since v1.763.0.
 FEEDER_MOTOR_FACTOR = 1.25  # NEC 430.24: 125% of the largest-rating motor FLC
 CIT_FEEDER = "NEC 430.24 (feeder ampacity) / 430.62 (feeder OCPD)"
 
@@ -154,7 +157,7 @@ VAPOR_PRESSURE_PSIA = {
 }
 
 # --- water hammer / Joukowsky surge (NOT in the source docs) -----------------
-# dH = a * dV / g  (head);  dP_psi = dH / 2.31.  Pressure-wave speed `a` (ft/s)
+# dH = a * dV / g  (head);  dP_psi = dH / FT_PER_PSI (2.308966).  Pressure-wave speed `a` (ft/s)
 # is material/wall dependent; these are representative values, override-able.
 WAVE_SPEED_FPS = {"SCH40 PVC": 1300.0, "SCH80 PVC": 1400.0, "COPPER": 4270.0, "STEEL": 4500.0}
 WAVE_SPEED_DEFAULT_FPS = 1300.0  # PVC

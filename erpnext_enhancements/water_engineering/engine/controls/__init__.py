@@ -12,7 +12,7 @@ The interlock checklist + I/O list live on the Control Panel Design DocType; the
 control-transformer VA rule is a business rule (not in the source docs) and is a
 manual field, not derived here.
 
-Since v1.761.0 (phase L, PR 2) this is a package: the module above is kept here
+Since v1.764.0 (phase L, PR 2) this is a package: the module above is kept here
 whole, so ``calc_lighting``, ``calc_solenoid_relays``, ``lighting_sizing`` and the
 seeded interlock / I/O lists import from the same path. Beside it:
 ``topology.py`` (starter, soft starter, VFD, VFD with bypass, and the

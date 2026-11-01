@@ -32,9 +32,10 @@ from ..data.nec_tables import (
     VERIFY_EDITION,
 )
 from ..envelope import CalcResult, make_input
-from ._util import num, phase_of
+from ._util import is_low_voltage, num, phase_of
 
 POOL_VENUES = ("pool", "spa", "wading", "therapy")
+POOL_CORD_MIN_FT = 3  # 680.21(A)(3): a pool pump motor cord is 3 ft to 10 ft
 # 680.21(A)(1) wiring methods for pool-associated motors (insulated Cu EGC >= 12 AWG).
 POOL_WIRING_METHODS = ("RMC", "IMC", "PVC", "RTRC", "LFNC", "MC")
 CIT_680 = "NEC Article 680"
@@ -62,10 +63,6 @@ def volts_to_ground(voltage: float, phase: int = 1) -> float:
     return 120.0
 
 
-def _is_low_voltage(volts: float) -> bool:
-    return 0 < num(volts) <= LOW_VOLTAGE_CONTACT_LIMIT["dc_continuous"]
-
-
 def gfci_requirement(load: dict, venue: str = "fountain") -> dict:
     """Whether Article 680 requires GFCI on this load's circuit:
     ``{required: True|False|None, article, note}`` (None = depends on site facts)."""
@@ -91,7 +88,7 @@ def gfci_requirement(load: dict, venue: str = "fountain") -> dict:
         }
     if kind == "valve_supply":
         return {"required": False, "article": "", "note": "Class 2 low-voltage supply."}
-    if (load.get("submersible") or load.get("underwater")) and not _is_low_voltage(v):
+    if (load.get("submersible") or load.get("underwater")) and not is_low_voltage(v):
         art = "680.23(A)(3)" if (part == "pool" and kind == "light") else ("680.21(C)" if part == "pool" else "680.51(A)")
         return {"required": True, "article": art, "note": "Submersible / underwater equipment over the "
                 "low-voltage contact limit." + spg}
@@ -124,8 +121,11 @@ def article680_checklist(
     venue: str = "fountain",
     fixtures: list[dict] | None = None,
     site: dict | None = None,
+    circuits: list[dict] | None = None,
 ) -> CalcResult:
-    """The Article 680 checklist for a design. ``fixtures`` are the model's
+    """The Article 680 checklist for a design. With ``circuits`` (from
+    ``circuits.branch_circuits``) the GFCI check reports the device each circuit
+    actually gets, after the 60 A ceiling of GFCI breakers. ``fixtures`` are the model's
     ``lighting.fixtures`` (``voltage``, ``lens_depth_in``, ``listed_above_water``,
     ``listed_shallow``, ``cord_ft``); ``site`` takes the measured facts
     (``disconnect_ft``, ``disconnect_in_sight``, ``nearest_receptacle_ft``,
@@ -143,12 +143,22 @@ def article680_checklist(
     # GFCI on every load that needs it (the design puts it in; this lists which).
     gfci_loads = []
     open_loads = []
-    for ld in loads:
-        g = gfci_requirement(ld, venue)
-        if g["required"]:
-            gfci_loads.append(f"{ld.get('label')} ({g['article']})")
-        elif g["required"] is None:
-            open_loads.append(f"{ld.get('label')} ({g['article']})")
+    if circuits is not None:
+        for c in circuits:
+            g = gfci_requirement({**c, "label": c.get("description")}, venue)
+            if c.get("gfci_device") == "SPGFCI / GFPE" or (g["required"] and not c.get("gfci")):
+                open_loads.append(f"{c.get('description')} ({c.get('gfci_basis')}: over 60 A)")
+            elif c.get("gfci"):
+                gfci_loads.append(f"{c.get('description')} ({c.get('gfci_basis')}, {c.get('breaker_a')} A GFCI)")
+            elif g["required"] is None and g["article"]:
+                open_loads.append(f"{c.get('description')} ({g['article']})")
+    else:
+        for ld in loads:
+            g = gfci_requirement(ld, venue)
+            if g["required"]:
+                gfci_loads.append(f"{ld.get('label')} ({g['article']})")
+            elif g["required"] is None:
+                open_loads.append(f"{ld.get('label')} ({g['article']})")
     checks.append(_check(
         "gfci_equipment", pname, "680.51(A) / 680.59" if part == "fountain" else "680.21(C) / 680.23(A)(3)",
         "GFCI on luminaires, submersible and pump circuits",
@@ -224,8 +234,10 @@ def article680_checklist(
         "Flexible cord limits",
         f"Exposed flexible cord in a fountain {FOUNTAIN_CORD_MAX_FT} ft or less, extra-hard usage, cord-and-plug "
         "equipment GFCI-protected (680.56); a pool pump cord 3 ft to 10 ft with a copper EGC.",
-        ("fail" if max(cords) > FOUNTAIN_CORD_MAX_FT else "pass") if cords else "verify",
-        f"longest cord {max(cords):g} ft" if cords else "Cord lengths not entered.",
+        (("fail" if max(cords) > FOUNTAIN_CORD_MAX_FT or (part == "pool" and min(cords) < POOL_CORD_MIN_FT)
+          else "pass") if cords else "verify"),
+        (f"cords {min(cords):g} to {max(cords):g} ft" if part == "pool" else f"longest cord {max(cords):g} ft")
+        if cords else "Cord lengths not entered.",
     ))
 
     checks.append(_check(

@@ -44,13 +44,13 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `feature.py` | Feature flow: weirs/slots (Francis), nozzle arrays, orifice nozzles from the Nozzle Profile catalog | DOC-0049 `I - Weir` |
 | `pipe.py` | Velocity, velocity-status banding, Hazen-Williams friction loss, and a size-walker that picks the smallest pipe within limits | DOC-0049 `A - Pipe Size` |
 | `tdh.py` | Total Dynamic Head: minor (fitting) loss, component loss, per-segment sum | DOC-0049 `H - TDH` |
-| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.760.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
-| `electrical/` | The electrical design (phase L, v1.760.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
+| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.763.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
+| `electrical/` | The electrical design (phase L, v1.763.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
 | `safety.py` | VGB / ANSI-APSP-16 suction-outlet anti-entrapment, NPSH cavitation check, Joukowsky water hammer | DOC-0049 `P - Suction Outlets`; HI standards |
 | `drainage.py` | Gravity drainage (Manning's) and surge-basin sizing (Phase 3) | DOC-0049 `10 - Gravity`, `G - Gravity`, `B - Surge Basin` |
 | `chemistry.py` | Chlorinator feed and chemical rate advisory (Phase 2) | DOC-0049 `C - Chemicals`, DOC-0119 |
 | `treatment.py` | LSI, ASHRAE evaporation, make-up water, heating load, chemical dose, UV dose, filtration area | DOC-0049 `O` sheet + standards |
-| `controls/` | Control-panel sizing: lighting relays, currents (Phase 4, the package's `__init__.py`), and since v1.761.0 the control design: per-pump topology (starter, soft starter, VFD, VFD with manual bypass and its interlock logic), drive frames with altitude and ambient derates, Splash Wizard selection with the I/O list, relays and 24 V DC supply, panel design (control transformer, enclosure, heat, SCCR, disconnect), panel BOM, Control Panel Design rows, Theory of Operation, power schematic and control ladder. `controls_report(model)` runs it. See [`engine/controls/README.md`](engine/controls/README.md) | DOC-0126, DOC-0028, DOC-0062, NEMA ICS 2, NEC 430, UL 508A SB |
+| `controls/` | Control-panel sizing: lighting relays, currents (Phase 4, the package's `__init__.py`), and since v1.764.0 the control design: per-pump topology (starter, soft starter, VFD, VFD with manual bypass and its interlock logic), drive frames with altitude and ambient derates, Splash Wizard selection with the I/O list, relays and 24 V DC supply, panel design (control transformer, enclosure, heat, SCCR, disconnect), panel BOM, Control Panel Design rows, Theory of Operation, power schematic and control ladder. `controls_report(model)` runs it. See [`engine/controls/README.md`](engine/controls/README.md) | DOC-0126, DOC-0028, DOC-0062, NEMA ICS 2, NEC 430, UL 508A SB |
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
 | `families/` | Fountain Designer (schema 2): one rule module per feature family (weir, jets, foam, laminar, interactive, cascade, pondless, curtain, mist, aerator) plus the lighting, winterization and heat system modules. See [`engine/families/README.md`](engine/families/README.md) | industry report section 1, per-rule URLs |
@@ -64,6 +64,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
 | `data/nec_tables.py` | NEC tables as data: 310.16 ampacity, 310.15 corrections, 250.122, Chapter 9 Tables 1/4/5/8, 240.6(A), 430.248/430.250 FLC, 430.52(C)(1), 430.7(B), 450.3(B), Article 680 distances | NFPA 70 2023 (2020 numbering noted) |
+| `hydraulics/` | The governing solver (Fountain Designer rebuild, phase A): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, and the operating point where the pump meets the system (VFD, PRV, bypass, NPSHa at site elevation). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
 
 ### Where the workbook stops and engineering standard starts
 
@@ -160,6 +161,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_engine \
   erpnext_enhancements.tests.test_water_design_issues \
   erpnext_enhancements.tests.test_water_design_controller -v
+```
+
+The `hydraulics/` suites are pytest and run in their own CI step:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_hydraulics_*.py -q
 ```
 
 The catalog suite is plain pytest with its own in-memory frappe, so it runs on its own:
