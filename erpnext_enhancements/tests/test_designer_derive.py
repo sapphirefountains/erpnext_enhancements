@@ -300,3 +300,68 @@ def test_bom_merges_every_phase_and_prices_the_pump():
     assert pump["catalog_source"] == "datasheet"
     keys = [line["line_key"] for line in out["bom"]]
     assert "lvpsu:valves" not in keys or not any(k.startswith("psu:") for k in keys)  # L's duplicate supply dropped
+
+
+# ------------------------------------------------- an auto section follows its inputs
+
+
+def test_auto_piping_follows_the_pump_room_on_every_derive():
+    model = kits.apply_kit("weir-spillway-outdoor-4ft")
+    model["pump_room"] = {"location": "room", "distance_ft": 20}
+    first = run(model)
+    again = copy.deepcopy(first["model"])  # the page merges the derived model and edits on top of it
+    again["pump_room"]["distance_ft"] = 150
+    again["features"][0]["inputs"]["length_ft"] = 16  # four times the flow
+    second = run(again)
+    s1 = {s["id"]: s for s in first["model"]["network"]["segments"]}
+    s2 = {s["id"]: s for s in second["model"]["network"]["segments"]}
+    assert s2["s2"]["length_ft"] > s1["s2"]["length_ft"]
+    assert s2["s2"]["nominal_size"] != s1["s2"]["nominal_size"]  # resized, not pinned by the first derive
+    assert second["rollups"]["design_flow_gpm"] > 3 * first["rollups"]["design_flow_gpm"]
+
+
+def test_a_feature_added_later_is_connected_and_a_removed_one_dropped():
+    first = run(kits.apply_kit("lobby-sheet-wall-8ft"))
+    model = copy.deepcopy(first["model"])
+    model["features"].append({"id": "f2", "family": "weir", "type": "Spillway", "label": "Second wall",
+                              "inputs": {"style": "spillway", "length_ft": 4, "fall_ft": 3}, "effect": {"look": "average"},
+                              "count": 1, "basin": "b1"})
+    second = run(model)
+    net = second["model"]["network"]
+    term = next(t for t in net["terminals"] if t["feature"] == "f2")
+    assert any(s["to"] == term["id"] and s["line"] == "discharge" for s in net["segments"])
+    assert second["rollups"]["design_flow_gpm"] > first["rollups"]["design_flow_gpm"]
+    model = copy.deepcopy(second["model"])
+    model["features"] = [f for f in model["features"] if f["id"] != "f2"]
+    third = run(model)
+    assert not [t for t in third["model"]["network"]["terminals"] if t["feature"] == "f2"]
+    assert not [s for s in third["model"]["network"]["segments"] if s["to"] == term["id"]]
+
+
+def test_the_regulated_flag_follows_the_venue():
+    model = kits.apply_kit("lobby-sheet-wall-8ft")
+    model["site"]["venue_type"] = "Commercial Spa"
+    spa = run(model)
+    assert spa["model"]["site"]["regulated"] is True
+    back = copy.deepcopy(spa["model"])
+    back["site"]["venue_type"] = "Decorative Fountain"
+    assert run(back)["model"]["site"]["regulated"] is False
+
+
+def test_the_pump_hp_follows_a_repick():
+    first = run(kits.apply_kit("weir-spillway-outdoor-4ft"))
+    model = copy.deepcopy(first["model"])
+    model["features"][0]["inputs"]["length_ft"] = 20
+    second = run(model)
+    p1, p2 = first["model"]["network"]["pumps"][0], second["model"]["network"]["pumps"][0]
+    assert p1["item"] != p2["item"]
+    hp = {r["item"]: r["hp"] for r in CATALOG["pumps"]}
+    assert (p1["hp"], p2["hp"]) == (hp[p1["item"]], hp[p2["item"]])
+
+
+def test_the_hazen_williams_crosscheck_runs():
+    out = run(kits.apply_kit("lobby-sheet-wall-8ft"))
+    hw = out["results"]["hazen_williams_crosscheck"]
+    assert hw["inputs"]["darcy_ft"]["value"] > 0 and hw["inputs"]["hazen_williams_ft"]["value"] > 0
+    if hw["status"] == "Diverges":
+        assert next(i for i in out["issues"] if i["code"] == "HW_CROSSCHECK")["severity"] == "info"

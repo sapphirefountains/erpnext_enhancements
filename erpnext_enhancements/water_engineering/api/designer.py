@@ -206,7 +206,8 @@ def load_catalogs():
         for c in sets or []:
             if len(c.get("points") or []) >= 2 or (c.get("shutoff_head_ft") and c.get("max_flow_gpm")):
                 rows.append(_catalog_row(items.get(code) or {"name": code}, c))
-    out = {"pumps": rows}
+    # The pumps' rates are cached with them: the derive may pick any of them, on every edit.
+    out = {"pumps": rows, "rates": item_rates({r["item"] for r in rows})}
     frappe.cache().set_value(CATALOG_CACHE_KEY, out, expires_in_sec=CATALOG_CACHE_S)
     return out
 
@@ -236,16 +237,18 @@ def site_lookup(site):
 
 def load_prices(model, catalogs=None):
     """``{items: {item: {rate}}, hints: {}}`` for the Items a derive can name: every catalog pump
-    (the derive may pick any of them), the model's pumps and its equipment. The rate is the Item's
-    valuation rate, else its price on the default selling price list (PLAN.md 3.4)."""
-    codes = {r.get("item") for r in (catalogs or {}).get("pumps") or []}
+    (their rates come cached with the catalog), the model's pumps and its equipment. The rate is the
+    Item's valuation rate, else its price on the default selling price list (PLAN.md 3.4)."""
+    rates = dict((catalogs or {}).get("rates") or {})
+    codes = set()
     for p in (model.get("network") or {}).get("pumps") or []:
         if p.get("item"):
             codes.add(p["item"])
     for e in model.get("equipment") or []:
         if e.get("item"):
             codes.add(e["item"])
-    return {"items": item_rates(codes), "hints": {}}
+    rates.update(item_rates(codes - set(rates)))
+    return {"items": rates, "hints": {}}
 
 
 def item_rates(codes):
@@ -597,6 +600,28 @@ def _push_rows(doc):
     return items, texts
 
 
+def _uoms(rows):
+    """``{item: stock_uom}`` for the push rows: an item row gets its stock UOM and a conversion
+    factor of 1 here, as the Desk's item trigger would, rather than relying on the server filling
+    the mandatory UOM columns."""
+    codes = sorted({r["item_code"] for r in rows if r.get("item_code")})
+    if not codes:
+        return {}
+    try:
+        return {r["name"]: r.get("stock_uom") for r in frappe.get_all("Item", filters={"name": ["in", codes]},
+                                                                      fields=["name", "stock_uom"])}
+    except Exception:
+        return {}
+
+
+def _item_row(row, uoms, **extra):
+    out = {"item_code": row["item_code"], "qty": row["qty"], "description": row["description"], **extra}
+    uom = uoms.get(row["item_code"])
+    if uom:
+        out.update(uom=uom, stock_uom=uom, conversion_factor=1)
+    return out
+
+
 def _company():
     return frappe.defaults.get_user_default("Company") or frappe.db.get_single_value("Global Defaults", "default_company")
 
@@ -641,11 +666,10 @@ def push_quotation(name, quotation=None):
         qtn.company = _company()
         if qtn.meta.has_field("project") and doc.get("project"):
             qtn.project = doc.project
-    pushed = 0
-    for row in items + [t for t in texts if t["item_code"]]:
-        qtn.append("items", {"item_code": row["item_code"], "qty": row["qty"], "rate": row["rate"],
-                             "description": row["description"]})
-        pushed += 1
+    rows = items + [t for t in texts if t["item_code"]]
+    uoms = _uoms(rows)
+    for row in rows:
+        qtn.append("items", _item_row(row, uoms, rate=row["rate"]))
     loose = [t for t in texts if not t["item_code"]]
     if loose:
         listing = "".join(f"<li>{frappe.utils.escape_html(t['description'])} ({t['qty']:g} {frappe.utils.escape_html(t['uom_note'] or '')})</li>"
@@ -674,9 +698,9 @@ def push_material_request(name):
     mr.material_request_type = "Purchase"
     mr.company = _company()
     mr.schedule_date = schedule
+    uoms = _uoms(rows)
     for row in rows:
-        mr.append("items", {"item_code": row["item_code"], "qty": row["qty"], "schedule_date": schedule,
-                            "description": row["description"], "project": doc.get("project") or None})
+        mr.append("items", _item_row(row, uoms, schedule_date=schedule, project=doc.get("project") or None))
     mr.save()
     return {"doctype": "Material Request", "name": mr.name, "url": f"/desk/{_slug('Material Request')}/{mr.name}",
             "lines": len(items), "text_lines": len(texts)}

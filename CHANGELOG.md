@@ -100,6 +100,15 @@ automation ladder runs on every save, and the Fountain Designer page gets its se
       from, so derive gives it a source node and a suction segment.
     - A pump whose `curve` names a catalog curve (the page's fixture does) gets that curve's points.
       A name the catalog does not have becomes a warning.
+  - **An `auto` section follows its inputs on every derive.** The page merges each derived model back
+    and saves it, so a value an earlier derive wrote must never pin the next one:
+    - An `auto` piping section is laid afresh each time: the lengths, material, fittings and pump
+      elevation come from the Pump room step, and the sizes are cleared so phase B sizes for today's
+      flows. Phase B sizes only a segment with no size.
+    - Its terminals follow the features: one added later is connected, one removed is dropped, and
+      each takes its family's kind and lift again.
+    - The pump's HP is the catalog figure of the pump picked now, not one stored by an earlier pick.
+    - `site.regulated` is worked out from the venue each time, never read back.
   - **It never raises.** Every stage runs guarded. A stage that fails becomes one
     `ENGINE_STAGE_FAILED` blocker naming it (the API logs the trace), and the later stages still run.
     A `custom` section is never written. Every float in the reply is finite or None.

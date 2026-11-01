@@ -335,3 +335,13 @@ def test_push_material_request_sends_items_only(api):
     assert (out["doctype"], out["lines"], out["text_lines"]) == ("Material Request", 1, 1)
     assert [(i["item_code"], i["project"]) for i in mr["items"]] == [("PUMP-A", "PROJ-1")]
     assert mr["material_request_type"] == "Purchase"
+
+
+def test_pushed_rows_carry_the_stock_uom(api):
+    _design_with_bom(api, customer="ACME")
+    api._frappe.get_all = lambda doctype, **k: [Row(name="PUMP-A", stock_uom="Nos")] if doctype == "Item" else []
+    api.push_quotation("WFD-4")
+    row = FakeDoc.saved[-1]["items"][0]
+    assert (row["uom"], row["stock_uom"], row["conversion_factor"]) == ("Nos", "Nos", 1)
+    api.push_material_request("WFD-4")
+    assert FakeDoc.saved[-1]["items"][0]["uom"] == "Nos"

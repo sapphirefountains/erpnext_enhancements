@@ -181,13 +181,13 @@ class _Run:
 
 
 def regulated_site(site: dict) -> bool:
-    """Regulated by the venue (pool, spa) or, in Utah, any interactive water feature (R392-302)."""
+    """Regulated by the venue (pool, spa) or, in Utah, any interactive water feature (R392-302).
+    Worked out from the venue every time, never read back from ``site.regulated``: the derive writes
+    that field, so reading it would keep a design regulated after its venue changed."""
     venue = str(site.get("venue_type") or "")
     if is_regulated(venue):
         return True
-    if "interactive" in venue.lower() and str(site.get("jurisdiction") or "UT").upper() == "UT":
-        return True
-    return bool(site.get("regulated"))
+    return "interactive" in venue.lower() and str(site.get("jurisdiction") or "UT").upper() == "UT"
 
 
 def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[dict, dict]:
@@ -338,14 +338,71 @@ def _add_routes(m: dict) -> bool:
     return True
 
 
+def _next_id(taken: set, prefix: str) -> str:
+    n = 1
+    while f"{prefix}{n}" in taken:
+        n += 1
+    return f"{prefix}{n}"
+
+
+def _sync_terminals(m: dict) -> bool:
+    """An ``auto`` piping section follows the features: a pumped feature added since the last derive
+    gets a terminal node and a discharge run from the first pump, a removed one loses its terminal,
+    node and runs, and every terminal takes its family's kind and lift afresh (the fall height may
+    have changed). A ``custom`` network is never touched."""
+    net = m.get("network") or {}
+    pumps = [p.get("id") for p in net.get("pumps") or [] if p.get("id")]
+    if not pumps:
+        return False
+    features = {f.get("id"): f for f in m.get("features") or [] if isinstance(f, dict) and f.get("id")}
+    pumped = [fid for fid, f in features.items() if _pumped(f)]
+    nodes = net.setdefault("nodes", [])
+    terms = net.setdefault("terminals", [])
+    segs = net.setdefault("segments", [])
+    changed = False
+    gone = {t.get("node") or t.get("id") for t in terms if t.get("feature") and t.get("feature") not in pumped}
+    if gone:
+        terms[:] = [t for t in terms if (t.get("node") or t.get("id")) not in gone]
+        nodes[:] = [n for n in nodes if not (n.get("kind") == "terminal" and n.get("id") in gone)]
+        segs[:] = [s for s in segs if s.get("to") not in gone and s.get("from") not in gone]
+        changed = True
+    by_feature = {t.get("feature"): t for t in terms if t.get("feature")}
+    node_ids = {n.get("id") for n in nodes}
+    for fid in pumped:
+        f = features[fid]
+        family_term = f.get("_terminal") or {}
+        lift = _num((family_term.get("params") or {}).get("lift_ft"))
+        term = by_feature.get(fid)
+        if term is None:
+            node_id = f.get("node") if f.get("node") and f.get("node") not in node_ids else _next_id(node_ids, "t")
+            node_ids.add(node_id)
+            f["node"] = node_id
+            nodes.append({"id": node_id, "kind": "terminal", "feature": fid, "elevation_ft": lift or 0.0})
+            terms.append({"id": node_id, "kind": family_term.get("kind") or "open_discharge", "feature": fid, "params": {}})
+            segs.append({"id": _next_id({s.get("id") for s in segs}, "s"), "from": pumps[0], "to": node_id,
+                         "line": "discharge", "material": "SCH40 PVC", "nominal_size": None, "length_ft": 0.0,
+                         "fittings": [], "components": []})
+            changed = True
+            continue
+        if family_term.get("kind"):
+            term["kind"] = family_term["kind"]
+        node = next((n for n in nodes if n.get("id") == (term.get("node") or term.get("id"))), None)
+        if node is not None and lift is not None:
+            node["elevation_ft"] = lift
+    return changed
+
+
 def build_network(m: dict) -> bool:
-    """Lay the kit skeleton (basin -> pump -> each pumped feature) into an empty network, or the
-    routes into an ``auto`` network that has none. Returns True when it built anything. A network
-    with nodes and segments is the person's (or a kit's) and stays."""
+    """Lay the kit skeleton (basin -> pump -> each pumped feature) into an empty network; in an
+    ``auto`` piping section, keep an existing network in step with the features and lay routes it
+    lacks. Returns True when it changed anything. A ``custom`` network is the person's and stays."""
     net = m.get("network") or {}
     if net.get("nodes"):
+        if (m.get("setup") or {}).get("piping", "auto") != "auto":
+            return False
         built = _add_routes(m)
-        if (m.get("setup") or {}).get("piping", "auto") == "auto" and not m.get("basins"):
+        built = _sync_terminals(m) or built
+        if not m.get("basins"):
             built = _add_source(net) or built
         return built
     if not any(_pumped(f) for f in m.get("features") or []):
@@ -382,9 +439,12 @@ def _add_source(net: dict) -> bool:
 
 
 def apply_route_template(m: dict) -> dict | None:
-    """Fill the length, material and fittings of each unrouted segment from the Pump room step:
-    suction from the basin to the pump, discharge the pump-to-feature distance plus the rise. Only
-    for an ``auto`` piping section, and only a segment with no length yet. Returns the CalcResult."""
+    """Lay every segment of an ``auto`` piping section from the Pump room step: suction from the
+    basin to the pump, discharge the pump-to-feature distance plus the rise, the step's material,
+    the template's fittings, and no size, so phase B sizes it for today's flows. In an ``auto``
+    section the engine owns every one of these, so they are laid afresh on each derive: values an
+    earlier derive wrote never pin it (phase B sizes only a segment with no size). Returns the
+    CalcResult, or None for a ``custom`` section."""
     if (m.get("setup") or {}).get("piping", "auto") != "auto":
         return None
     room = m.get("pump_room") or {}
@@ -399,13 +459,10 @@ def apply_route_template(m: dict) -> dict | None:
     if pump_elev is None:
         pump_elev = PUMP_ELEVATION_FT.get(location, 0.0)
     for pid in pumps:
-        node = nodes.get(pid)
-        if node is not None and _num(node.get("elevation_ft")) is None:
-            node["elevation_ft"] = pump_elev
+        if nodes.get(pid) is not None:
+            nodes[pid]["elevation_ft"] = pump_elev
     steps = []
     for s in net.get("segments") or []:
-        if _num(s.get("length_ft")):
-            continue
         line = s.get("line") or ("suction" if s.get("to") in pumps else "discharge")
         if line == "suction":
             length = distance if location == "room" and distance else SUCTION_FT.get(location, 10.0)
@@ -415,8 +472,9 @@ def apply_route_template(m: dict) -> dict | None:
         s["length_ft"] = round(length, 1)
         if material:
             s["material"] = material
-        if not s.get("fittings"):
-            s["fittings"] = copy.deepcopy(ROUTE_FITTINGS["suction" if line == "suction" else "discharge"])
+        s["fittings"] = copy.deepcopy(ROUTE_FITTINGS["suction" if line == "suction" else "discharge"])
+        s["nominal_size"] = None
+        s.pop("id_in", None)
         steps.append(f"{s.get('id')}: {line} {s['length_ft']:g} ft, {s.get('material')}")
     if not steps:
         return None
@@ -435,23 +493,25 @@ def apply_route_template(m: dict) -> dict | None:
 # --------------------------------------------------------------------------------------
 
 
-def hw_crosscheck(network_result: dict | None, c: float = DEFAULT_HW_C) -> dict | None:
+def hw_crosscheck(network_result: dict | None, segments: list | None = None, c: float = DEFAULT_HW_C) -> dict | None:
     """The DOC-0049 Hazen-Williams friction beside the governing Darcy figure, over every solved
     segment's pipe friction. Phase A found C=130 runs 15-35% above Darcy on PVC, so the spread is
-    an advisory, not a warning a designer must sign off on every design."""
+    an advisory, not a warning a designer must sign off on every design. The solve reports no
+    lengths, so they come from the model's ``segments``."""
     if not network_result:
         return None
     from .engine.pipe import hazen_williams_loss
 
+    lengths = {s.get("id"): _num(s.get("length_ft")) for s in segments or [] if isinstance(s, dict)}
     darcy = hw = 0.0
     steps = []
     for sid, s in (network_result.get("segments") or {}).items():
+        branches = max(int(_num(s.get("branches")) or 1), 1)
         q, d, f = _num(s.get("flow_gpm")), _num(s.get("id_in")), _num(s.get("friction_factor"))
-        v, length = _num(s.get("velocity_fps")), _num(s.get("length_ft"))
-        if not (q and d and f and v):
+        v, length = _num(s.get("velocity_fps")), lengths.get(sid)
+        if not (q and d and f and v and length):
             continue
-        if length is None:
-            continue
+        q = q / branches
         major = f * (length / (d / 12.0)) * v * v / (2 * 32.174)
         h = _num(_as_dict(hazen_williams_loss(q, length, d, c)).get("value")) or 0.0
         darcy += major
@@ -589,18 +649,30 @@ def pond_area(m: dict) -> None:
 
 
 def _pumps_for_power(m: dict, network_result: dict | None, ranking: list) -> list[dict]:
-    """Pump power for phases L's reports: the catalog HP of the pick and the operating kW."""
+    """Pump power for phase L's reports: the catalog HP of the pump picked now, else the operating
+    kW. The catalog figure comes first: an ``hp`` an earlier derive stored belongs to whichever pump
+    was picked then, and phase B changes the item and curve on a re-pick but not the HP."""
     by_item = {r.get("item"): r for r in ranking or [] if r.get("item")}
     ops = (network_result or {}).get("pumps") or {}
+    auto = (m.get("setup") or {}).get("pump", "auto") == "auto"
     out = []
     for p in (m.get("network") or {}).get("pumps") or []:
         op = ops.get(p.get("id")) or {}
-        hp = _num(p.get("hp")) or _num((by_item.get(p.get("item")) or {}).get("hp"))
+        if not auto:  # the person's pump: their HP or kW stands; the operating kW only fills a blank
+            if not (_num(p.get("hp")) or _num(p.get("kw") or p.get("fla"))) and _num(op.get("electrical_kw")):
+                p["kw"] = round(_num(op["electrical_kw"]), 3)
+            out.append(p)
+            continue
+        picked = by_item.get(p.get("item"))
+        hp = _num(picked.get("hp")) if picked else _num(p.get("hp"))
         kw = _num(op.get("electrical_kw"))
+        p.pop("kw", None)
         if hp:
             p["hp"] = hp
-        elif kw and not _num(p.get("kw")):
-            p["kw"] = round(kw, 3)
+        else:
+            p.pop("hp", None)
+            if kw:
+                p["kw"] = round(kw, 3)
         out.append(p)
     return out
 
@@ -837,7 +909,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
                 family_lines.append(ln)
         f["_terminal"] = out.get("terminal")
     design_gpm = sum((_num((fl.get("data") or {}).get("gpm")) or _num(fl.get("value")) or 0.0)
-                     * 1 for fl in flows.values()) or None
+                     for fl in flows.values()) or None
 
     # 3 regulated minimums
     if regulated and total_gal:
@@ -889,7 +961,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         for p in (m.get("network") or {}).get("pumps") or []:
             if p.get("item") and sources.get(p["item"]):
                 p["catalog_source"] = sources[p["item"]]
-    hw = run.stage("hazen-williams", lambda: hw_crosscheck(network_result))
+    hw = run.stage("hazen-williams", lambda: hw_crosscheck(network_result, (m.get("network") or {}).get("segments")))
     if hw:
         run.result(hw)
         if hw.get("status") == "Diverges":
