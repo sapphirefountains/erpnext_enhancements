@@ -125,6 +125,31 @@ change.
   phase B. Wiring the solver into `run_spine`, the DocTypes and `issues.py` is phase E.
 - Every pump on prod has 0 curve points, so until phase D's catalog lands, the operating point runs on
   the two-point quadratic (shut-off head and maximum flow) or on hand-entered curves.
+## [1.757.1] - 2026-11-01
+
+### Added
+
+- **Fountain Designer rebuild: the research and the plan** (`docs/fountain-designer/`). Nikolas
+  asked on 2026-11-01 for the Fountain Designer to do most of the work, with a simpler flow and
+  many more calculators, rebuilt from the ground up where needed. Two research reports and the plan
+  land here so the coding sessions share one source:
+  - `research-engine-audit.md` compares `water_engineering/engine/` with the Digital Rain Curtain
+    hydraulics and its aquafect port. Headline: the engine has no pump operating point, so its
+    velocity, pipe-pressure and VGB checks run at the design flow rather than the flow an oversized
+    pump delivers. The rain curtain code has the missing half (Darcy-Weisbach, pump curve meets
+    system curve, manifold balancing, auto-size then verdict) but invented pump curves and a
+    sea-level atmosphere that overstates NPSH margin in Salt Lake.
+  - `research-industry-calculators.md` surveys what the trade calculates per feature family, the
+    automation ladder, public catalog data (hand-entered yes, scraped no) and a prioritized backlog.
+    The engine's 0.90 x head jet-height constant is optimistic; real decorative nozzles need
+    2.5 to 3 x height.
+  - `PLAN.md` records the decisions (two modes, a new guided page over the kept engine, all venues,
+    Python in ERPNext canonical, physics governs with DOC-0049 as a cross-check, multi-pump headers in
+    version one), the design model, the API contract, the page, and ten phases, each its own draft
+    PR: the eight of the first cut plus electrical (NEC loads, conductors, voltage drop, OCPD,
+    feeders, the Article 680 checklist) and structural (basin slab and walls, rebar schedule,
+    concrete, gravel and waterproofing quantities), which Nikolas added the same day. Nothing
+    executable changes in this release.
 
 ## [1.757.0] - 2026-10-29
 
