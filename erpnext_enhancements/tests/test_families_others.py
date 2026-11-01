@@ -371,3 +371,25 @@ def test_run_feature_and_catalog_are_json_ready():
     assert out["terminal"]["kind"] == "open_discharge"
     assert run_feature({"id": "z", "family": "nope"})["checks"][0]["code"] == "UNKNOWN_FAMILY"
     json.dumps(catalog())
+
+
+def test_heat_without_an_air_temperature_is_incomplete_not_zero_degrees():
+    m = {"site": {"water_temp_f": 80},
+         "basins": [{"shape": "rectangular", "length_in": 120, "width_in": 120, "depth_in": 18}]}
+    res = heat.calc(m)
+    assert res.value is None and not res.data["complete"] and res.warnings
+
+
+def test_heat_volume_matches_the_basin_step():
+    from erpnext_enhancements.water_engineering.engine.basin import basin_volume
+
+    m = {"site": {"water_temp_f": 80, "air_temp_f": 50},
+         "basins": [{"shape": "rectangular", "length_in": 120, "width_in": 96, "depth_in": 18}]}
+    assert heat.calc(m).data["volume_gal"] == pytest.approx(basin_volume("Rectangular", 120, 96, 18).value)
+
+
+def test_cascade_look_options_follow_the_stream_fallback():
+    res = cascade.flow(casc([{"label": "unsized"}], "average", stream_width_ft=2))
+    assert res.value == pytest.approx(2 * 2400 / 60)
+    avg = next(o for o in res.options if o.key == "average")
+    assert avg.value == pytest.approx(res.value)

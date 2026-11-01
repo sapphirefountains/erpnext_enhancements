@@ -191,9 +191,12 @@ def flow(feature: Any, site: dict[str, Any] | None = None, rules: dict[str, Any]
         steps.append(f"liner {data['liner_ft'][0]:g} x {data['liner_ft'][1]:g} ft (L + 2D + {overlap:g} ft)")
         citations.append(R.citation("liner_overlap_ft", rules))
 
+    def tier_at(t: dict[str, Any], lk: str) -> float:
+        row = {"spill_width_in": t["width_in"]} if not t["rim"] else {"diameter_in": t["width_in"] / math.pi}
+        return tier_flow(row, lk)["gpm"]
+
     options = [
-        CalcOption(key=lk, label=f"{lk.title()} look", value=round(max(tier_flow(dict(t_in or {}, look=lk), lk)["gpm"]
-                   for t_in in (v.get("tiers") or [{"spill_width_in": stream_w * 12.0}])) * n, 1),
+        CalcOption(key=lk, label=f"{lk.title()} look", value=round(max(tier_at(t, lk) for t in tiers) * n, 1),
                    recommended=(lk == look))
         for lk in LOOK_GPH_PER_FT
     ]

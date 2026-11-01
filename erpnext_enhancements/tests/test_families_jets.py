@@ -229,3 +229,17 @@ def test_laminar_landing_checks():
     assert c["LAMINAR_GENERIC"] == WARNING
     assert codes(laminar.checks(lam(4, filtered=False)))["LAMINAR_NO_FILTER"] == WARNING
     assert codes(laminar.checks(lam(9)))["LAMINAR_OUTSIDE_TABLE"] == BLOCKER
+
+
+def test_a_blank_height_with_a_table_is_unentered_not_outside_the_table():
+    c = codes(jets.checks(jet(None, ATLANTIC)))
+    assert "JET_OUTSIDE_TABLE" not in c
+    assert c["JET_INCOMPLETE"] == INFO
+
+
+def test_a_known_flow_per_nozzle_sizes_the_array_without_a_head():
+    # The old engine's nozzle_array_flow: 5 nozzles at 8 gpm = 40, no head needed.
+    res = jets.flow({"id": "j", "inputs": {"gpm_each": 8}, "count": 5})
+    assert res.value == pytest.approx(40.0)
+    assert res.data["source"] == "rated_flow" and res.warnings
+    assert codes(jets.checks({"id": "j", "inputs": {"gpm_each": 8}, "count": 5}))["JET_INCOMPLETE"] == INFO

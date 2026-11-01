@@ -286,3 +286,27 @@ def test_unpumped_kits_build_no_network():
     for key in ("pond-aerator-1-acre", "mist-patio-20", "event-rental-curtain"):
         m = kits.apply_kit(key)
         assert m["network"]["nodes"] == [] and m["features"][0]["node"] is None
+
+
+def test_ai_arrays_with_no_head_keep_their_flow():
+    payload = {"basins": [{"shape": "Rectangular", "length_in": 120, "width_in": 60, "height_in": 18}],
+               "features": [{"feature_type": "Nozzle Array", "nozzle_count": 5, "gpm_each": 8}]}
+    m = model.migrate(payload)
+    assert run_feature(m["features"][0], m["site"])["flow"]["value"] == pytest.approx(40.0)
+
+
+def test_an_orifice_nozzles_profile_is_never_overwritten_by_its_row():
+    row = {"feature_type": "Orifice Nozzle", "nozzle_count": 1, "gpm_each": 8, "supply_head_ft": 20,
+           "nozzle_profile": "NP-2", "rated_gpm": 12, "rated_head_ft": 25}
+    m = model.migrate({"basins": [{"shape": "Rectangular", "length_in": 60, "width_in": 60}], "features": [row]})
+    f = m["features"][0]
+    assert f["product"]["profile"] == {"rated_gpm": 12, "rated_head_ft": 25}
+    assert "gpm_each" not in f["inputs"]
+    assert run_feature(f, m["site"])["flow"]["value"] == pytest.approx(12 * (20 / 25) ** 0.5)
+
+
+def test_pipe_rows_with_nowhere_to_go_are_kept():
+    m = model.migrate({"pipe_segments": [{"segment_label": "S", "line_type": "Suction", "pipe_length_ft": 5}],
+                       "features": [{"feature_type": "Weir", "weir_length_ft": 2, "head_in": 0.25}]})
+    assert m["network"]["segments"] == []
+    assert m["legacy"]["unplaced_segments"][0]["segment_label"] == "S"

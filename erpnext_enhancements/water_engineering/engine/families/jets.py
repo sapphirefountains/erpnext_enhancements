@@ -109,6 +109,8 @@ def inputs() -> list[dict[str, Any]]:
         spec("angle_deg", "Launch angle", "number", "deg", 90.0, False, "90 is vertical."),
         spec("supply_head_ft", "Head at the nozzle", "number", "ft", None, False,
              "Pin a head instead of a height to read the height off the table."),
+        spec("gpm_each", "Flow per nozzle", "number", "gpm", None, False,
+             "When the flow is known but no table is: sizes the flow; the head still needs a height."),
         spec("orifice_diameter_in", "Orifice diameter", "number", "in", None, False,
              "From the cut sheet; sets the drag drop size and the exit velocity."),
         spec("edge_distance_ft", "Distance to the nearest basin edge", "number", "ft", None, False,
@@ -312,6 +314,17 @@ def fallback_k(nozzle_type: str) -> tuple[float, str]:
 # --------------------------------------------------------------------------------------
 
 
+def _with_rated_flow(out: dict[str, Any], v: dict[str, Any]) -> dict[str, Any]:
+    """A point with no head yet still carries an entered flow per nozzle, so a design that
+    knows only "5 nozzles at 8 gpm" (the old engine's ``nozzle_array_flow``) keeps its flow."""
+    if num(v.get("gpm_each")):
+        out["gpm_each"] = num(v.get("gpm_each"))
+        out["source"] = "rated_flow"
+    out["exit_velocity_fps"] = 0.0
+    out["psi"] = 0.0
+    return out
+
+
 def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_type: str = "smooth") -> dict[str, Any]:
     """Per-nozzle operating point for a jet feature: height, head, flow, exit velocity, and
     where the numbers came from (``source``: ``table`` | ``estimate`` | ``none``). Shared
@@ -330,6 +343,9 @@ def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_ty
     }
 
     usable = [p for p in pts if p["display_height_ft"] > 0 and p["head_ft"] > 0]
+    if usable and height <= 0 and pinned_head <= 0:
+        out["notes"].append("no height or head given")
+        return _with_rated_flow(out, v)
     if usable:
         if height <= 0 and pinned_head > 0:
             row = interpolate(usable, "head_ft", pinned_head)
@@ -357,7 +373,7 @@ def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_ty
         head = pinned_head if pinned_head > 0 else (height / k if height > 0 else 0.0)
         if head <= 0:
             out["notes"].append("no height or head given")
-            return out
+            return _with_rated_flow(out, v)
         out.update(height_ft=height, head_ft=head, source="estimate", k=k)
         out["citations"].append(k_cit)
         out["notes"].append(f"estimate: height = {k:g} x head -> {head:.2f} ft of head for {height:g} ft")
@@ -371,6 +387,9 @@ def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_ty
             out["gpm_each"] = nozzle_flow(head, cd=FALLBACK_CD, orifice_diameter_in=orifice).value
             out["citations"].append(CIT_ORIFICE_CD)
             out["notes"].append(f"flow from the orifice equation with Cd {FALLBACK_CD:g} (placeholder)")
+    if not out["gpm_each"] and num(v.get("gpm_each")):
+        out["gpm_each"] = num(v.get("gpm_each"))
+        out["notes"].append(f"flow {out['gpm_each']:g} gpm per nozzle as entered")
 
     head = out["head_ft"]
     gpm = out["gpm_each"] or 0.0
@@ -393,6 +412,13 @@ def flow(feature: Any, site: dict[str, Any] | None = None, rules: dict[str, Any]
     warnings: list[str] = []
     data: dict[str, Any] = {"point": pt, "count": n, "complete": False}
 
+    if pt["source"] == "rated_flow":
+        total = pt["gpm_each"] * n
+        warnings.append("Flow per nozzle as entered; enter the display height (or a head) for the head and the checks.")
+        steps.append(f"Q = {pt['gpm_each']:g} gpm x {n} = {total:.1f} GPM (head unknown)")
+        data.update(gpm=total, gpm_each=pt["gpm_each"], head_ft=None, source="rated_flow")
+        return FamilyResult(calc="jets_family_flow", value=total, unit="GPM", steps=steps,
+                            formula="Q = gpm_each x count", warnings=warnings, data=data)
     if pt["source"] == "none" or not pt["head_ft"]:
         warnings.append("Enter a display height and pick a nozzle (or a head) to size this jet.")
         return FamilyResult(calc="jets_family_flow", unit="GPM", steps=steps, citations=citations,

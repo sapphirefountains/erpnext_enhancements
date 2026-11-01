@@ -503,10 +503,10 @@ def _legacy_feature(i: int, row: dict[str, Any], basin_id: str | None) -> dict[s
             product = {"item": None, "generic": False, "nozzle_profile": row["nozzle_profile"], "profile": profile}
         elif profile:
             product = {"item": None, "generic": True, "profile": profile}
-        if _f(row.get("gpm_each")) and family != "interactive":
-            product.setdefault("profile", {})["rated_gpm"] = _f(row.get("gpm_each"))
-            if _f(row.get("supply_head_ft")):
-                product["profile"]["rated_head_ft"] = _f(row.get("supply_head_ft"))
+        if _f(row.get("gpm_each")) and family != "interactive" and ftype != "Orifice Nozzle":
+            # The old engine sized arrays as count x gpm_each (nozzle_array_flow) and orifice
+            # nozzles from the profile alone; keep each basis rather than overwrite the profile.
+            inputs["gpm_each"] = _f(row.get("gpm_each"))
     legacy = {k: v for k, v in row.items() if k not in ("tiers",)}
     return {
         "id": f"f{i + 1}", "family": family, "type": ftype, "label": label,
@@ -608,10 +608,15 @@ def migrate(old: dict[str, Any] | str) -> dict[str, Any]:
             segments.append(seg)
             here = to
 
+    unplaced = []
     if first_basin and suction:
         chain(suction, "src", "p1", "suction")
+    else:
+        unplaced += suction
     if features and discharge:
         chain(discharge, "p1", "t1", "discharge")
+    else:
+        unplaced += discharge
 
     terminals = []
     from .families import FAMILIES
@@ -643,6 +648,9 @@ def migrate(old: dict[str, Any] | str) -> dict[str, Any]:
                 "pipe_material", "governing_code"}
     legacy = {k: v for k, v in old.items() if k not in consumed}
     legacy.update({k: v for k, v in g.items() if k not in consumed})
+    if unplaced:
+        # No basin to draw from (or no feature to feed): nowhere to put them in the network.
+        legacy["unplaced_segments"] = unplaced
 
     model = {
         "schema": SCHEMA, "mode": "full", "kit": None, "site": site,

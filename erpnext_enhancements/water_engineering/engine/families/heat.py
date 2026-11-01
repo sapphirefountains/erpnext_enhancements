@@ -21,6 +21,7 @@ import math
 from typing import Any
 
 from ..constants import HEAT_COVER_FACTOR, HEAT_DEPTH_FACTOR, HEAT_WIND_FACTOR, LB_PER_GAL_PRECISE
+from ..basin import basin_volume
 from ..envelope import make_input
 from ..treatment import heating_load
 from .base import GAL_PER_CUBIC_FOOT, INFO, WARNING, Check, FamilyResult, basin_plan, num
@@ -103,7 +104,17 @@ def _basins(model: dict[str, Any]) -> tuple[float, float]:
     for b in model.get("basins") or []:
         plan = basin_plan(b)
         area += plan["area_sqft"]
-        volume += num(b.get("volume_gal_override")) or plan["area_sqft"] * plan["depth_ft"] * GAL_PER_CUBIC_FOOT
+        shape = str(b.get("shape") or "rectangular").lower()
+        if num(b.get("volume_gal_override")):
+            volume += num(b.get("volume_gal_override"))
+        elif shape.startswith(("rect", "cyl", "round", "circ")):
+            volume += basin_volume(
+                "Rectangular" if shape.startswith("rect") else "Cylindrical",
+                length_in=num(b.get("length_in")), width_in=num(b.get("width_in")),
+                height_in=num(b.get("depth_in")), diameter_in=num(b.get("diameter_in")),
+            ).value or 0.0
+        else:  # "other": a surface area and a depth
+            volume += plan["area_sqft"] * plan["depth_ft"] * GAL_PER_CUBIC_FOOT
     return area, volume
 
 
@@ -111,7 +122,9 @@ def calc(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: di
     site = model.get("site") or {}
     h = (model.get("treatment") or {}).get("heat") or {}
     tw = num(h.get("target_water_temp_f")) or num(site.get("water_temp_f"))
-    ta = num(h.get("design_air_temp_f"), num(site.get("air_temp_f")))
+    ta_raw = h.get("design_air_temp_f")
+    if ta_raw in (None, ""):
+        ta_raw = site.get("air_temp_f")
     rh = num(h.get("rh_pct"), PLACEHOLDER_RH)
     wind = num(h.get("wind_mph"), PLACEHOLDER_WIND)
     warnings = [
@@ -121,9 +134,11 @@ def calc(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: di
     ]
     cover = str(h.get("cover") or "none").lower()
     area, volume = _basins(model)
-    if area <= 0 or not tw:
+    if area <= 0 or not tw or ta_raw in (None, ""):
         return FamilyResult(calc="surface_heat_loss", unit="Btu/h",
-                            warnings=["Enter the basin size and the water temperature to hold."], data={"complete": False})
+                            warnings=["Enter the basin size, the water temperature to hold and the design air temperature."],
+                            data={"complete": False})
+    ta = num(ta_raw)
     loss = surface_heat_loss(area, tw, ta, rh, wind, cover)
     dt = tw - ta
     doc = doc0049_btu_hr(volume, dt, cover, wind > 0) if volume > 0 else None

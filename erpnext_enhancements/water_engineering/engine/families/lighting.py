@@ -19,6 +19,7 @@ from typing import Any
 
 from .. import rules as R
 from ..envelope import make_input
+from . import jets
 from .base import (
     BLOCKER,
     INFO,
@@ -99,20 +100,30 @@ def effects(model: dict[str, Any], derived: dict[str, Any] | None = None) -> lis
         fam = f.get("family")
         if fam not in JET_FAMILIES + SHEET_FAMILIES or fam not in FAMILIES:
             continue
-        d = flows.get(f.get("id")) or FAMILIES[fam].flow(f, site).data
+        d = flows.get(f.get("id"))
+        if fam in JET_FAMILIES:
+            # Only the height is needed: read it without the flow's trajectory work.
+            if d:
+                height = num(d.get("height_ft"))
+            elif fam == "laminar":
+                height = num((f.get("inputs") or {}).get("arc_height_ft"))
+            else:
+                height = num(jets.nozzle_point(f, site).get("height_ft"))
+            if height > 0:
+                out.append({"feature": f.get("id"), "kind": "jet", "height_ft": height,
+                            "count": int((d or {}).get("count") or f.get("count") or 1)})
+            continue
+        d = d or FAMILIES[fam].flow(f, site).data
         if not d.get("complete"):
             continue
         count = int(d.get("count") or f.get("count") or 1)
-        if fam in JET_FAMILIES:
-            out.append({"feature": f.get("id"), "kind": "jet", "height_ft": num(d.get("height_ft")), "count": count})
+        if fam == "cascade":
+            length = max((t["width_in"] for t in d.get("tiers") or []), default=0.0) / 12.0
+        elif fam == "curtain":
+            length = num((f.get("inputs") or {}).get("width_ft"))
         else:
-            if fam == "cascade":
-                length = max((t["width_in"] for t in d.get("tiers") or []), default=0.0) / 12.0
-            elif fam == "curtain":
-                length = num((f.get("inputs") or {}).get("width_ft"))
-            else:
-                length = num(d.get("length_ft")) * count
-            out.append({"feature": f.get("id"), "kind": "sheet", "length_ft": length, "count": 1})
+            length = num(d.get("length_ft")) * count
+        out.append({"feature": f.get("id"), "kind": "sheet", "length_ft": length, "count": 1})
     return out
 
 
