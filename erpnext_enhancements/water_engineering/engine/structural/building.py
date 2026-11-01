@@ -58,7 +58,7 @@ def deck_beam(span_ft: float, tributary_ft: float, dead_psf: float, live_psf: fl
     rn = mu / (0.9 * b * d * d)
     inner = 1 - 2 * rn / (0.85 * fc)
     ok = inner >= 0
-    as_req = 0.85 * fc / fy * (1 - math.sqrt(inner)) * b * d if ok else float("inf")
+    as_req = 0.85 * fc / fy * (1 - math.sqrt(inner)) * b * d if ok else None
     as_min = max(3 * math.sqrt(fc) / fy, 200 / fy) * b * d
     n = max(2, math.ceil(max(as_req, as_min) / bar5["area_in2"] - 1e-9)) if ok else None
     return CalcResult(
@@ -68,7 +68,8 @@ def deck_beam(span_ft: float, tributary_ft: float, dead_psf: float, live_psf: fl
         unit="in",
         inputs={"span": make_input(span, "ft", "user"), "tributary": make_input(tributary_ft, "ft", "user")},
         formula="h ≥ L/16; Mu = (1.2D + 1.6L)·L²/8; As from the stress block",
-        steps=[f"{b:g} × {h:g} in beam, d = {d:.2f} in; Mu = {mu:.0f} lb·in; As = {as_req:.3f} in² → {n} #5"],
+        steps=[f"{b:g} × {h:g} in beam, d = {d:.2f} in; Mu = {mu:.0f} lb·in; "
+               + (f"As = {as_req:.3f} in² → {n} #5" if ok else "too shallow for the moment")],
         citations=[CIT_ACI_BEAM],
         warnings=[DISCLAIMER] + ([] if ok else ["Section too small for the moment: deepen the beam."]),
         status="ok" if ok else "bad",

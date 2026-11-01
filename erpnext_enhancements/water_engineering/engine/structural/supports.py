@@ -95,13 +95,26 @@ def equipment_pad(
     phi_ncb = phi_c * nb * (0.75 if sds_v >= 0.167 else 1.0)
     phi_nsa = 0.75 * ase * futa
     phi_n = min(phi_ncb, phi_nsa)
-    phi_v = 0.65 * 0.6 * ase * futa
+    phi_vsa = 0.65 * 0.6 * ase * futa
+    # concrete breakout in shear toward the nearest pad edge (anchors 2 in inside the equipment footprint,
+    # so ca1 = pad extension + 2 in), single anchor; and pryout, kcp = 1 below 2.5 in embedment, else 2
+    ca1 = ext + 2.0
+    le = min(hef, 8 * dia)
+    vb = 7 * (le / dia) ** 0.2 * math.sqrt(dia) * math.sqrt(fc) * ca1 ** 1.5
+    phi_vcb = 0.70 * vb
+    phi_vcp = 0.70 * (1.0 if hef < 2.5 else 2.0) * nb
+    phi_v = min(phi_vsa, phi_vcb, phi_vcp)
     inter = tu / phi_n + vu / phi_v if phi_n and phi_v else 0.0
     ok = tu <= phi_n + 1e-9 and vu <= phi_v + 1e-9 and inter <= 1.2 + 1e-9
     warnings = [DISCLAIMER, "Set pumps on vibration isolation (pads or springs) and connect with flexible "
                 "couplings so the pad does not carry pipe loads."]
     if size_note:
         warnings.append(size_note)
+    if not sds_v:
+        warnings.append("No SDS for the site: no seismic force applied, so the anchors are not checked for "
+                        "uplift or shear. Enter Ss/S1.")
+    warnings.append("Pull-out of the anchor head (cast-in) or bond (adhesive) is not checked: confirm with the "
+                    "anchor maker's data.")
     if hef < float(embed_in):
         warnings.append(f"Embedment limited to {hef:g} in by the {pad_t:g} in pad: anchor through into the slab.")
     if not ok:
@@ -110,17 +123,19 @@ def equipment_pad(
         calc="structural_equipment_pad",
         value={"pad_length_in": pl, "pad_width_in": pw, "pad_thickness_in": pad_t, "concrete_cuft": concrete,
                "fp_lb": fp, "tension_per_anchor_lb": tu, "shear_per_anchor_lb": vu, "phi_nn_lb": phi_n,
-               "phi_vn_lb": phi_v, "interaction": inter, "anchors": n, "hef_in": hef, "ok": ok},
+               "phi_vn_lb": phi_v, "phi_vsa_lb": phi_vsa, "phi_vcb_lb": phi_vcb, "phi_vcp_lb": phi_vcp,
+               "seismic_checked": bool(sds_v), "interaction": inter, "anchors": n, "hef_in": hef, "ok": ok},
         unit="lb",
         inputs={"weight": make_input(w, "lb", "user"), "sds": make_input(sds, "g", "prior_calc"),
                 "anchor": make_input(f"{anchor_dia_in:g} in {anchor_grade} {anchor_type}", "", "user")},
         formula="Fp = 0.4·ap·SDS·W/(Rp/Ip); T = (Fp·hcg − (0.9 − 0.2SDS)W·s/2)/s per row; Tu/φNn + Vu/φVn ≤ 1.2",
         steps=[f"pad {pl:g} × {pw:g} × {pad_t:g} in = {concrete:.3f} ft³",
                f"Fp = {fp:.0f} lb; T per anchor {tu:.0f} lb, V per anchor {vu:.0f} lb",
-               f"φNsa {phi_nsa:.0f}, φNcb {phi_ncb:.0f} (hef {hef:g} in), φVsa {phi_v:.0f}; interaction {inter:.2f}"],
+               f"φNsa {phi_nsa:.0f}, φNcb {phi_ncb:.0f} (hef {hef:g} in); φVsa {phi_vsa:.0f}, φVcb {phi_vcb:.0f} "
+               f"(ca1 {ca1:g} in), φVcp {phi_vcp:.0f}; interaction {inter:.2f}"],
         citations=[CIT_ASCE7_13, CIT_ACI17, CIT_PAD],
         warnings=warnings,
-        status="ok" if ok else "bad",
+        status=("ok" if sds_v else "warn") if ok else "bad",
     )
 
 
@@ -229,7 +244,8 @@ def mooring(above_water_sqft: float, submerged_sqft: float, wind_mph: float | No
     h = f_wind + f_current
     vert = h * math.tan(math.radians(float(line_angle_deg)))
     mu, fs = float(rules["mooring_friction"]), float(rules["mooring_fs"])
-    w_sub = fs * (h / mu + vert) if mu > 0 else float("inf")
+    mu = mu if mu > 0 else 0.5  # a zero friction rule would need an infinite anchor
+    w_sub = fs * (h / mu + vert)
     gc, gw = float(rules["concrete_pcf"]), float(rules["water_pcf"])
     w_dry = w_sub * gc / (gc - gw)
     cuft = w_dry / gc

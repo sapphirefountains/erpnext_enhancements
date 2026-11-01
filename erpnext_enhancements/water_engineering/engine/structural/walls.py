@@ -98,7 +98,7 @@ def cantilever_wall(
         mo = sum(f * a for _, f, a in horiz_rows)
         mr = sum(f * a for _, f, a in vert)
         fs_ot = mr / mo if mo > 0 else None
-        resist = soil["friction"] * sum_v + soil["cohesion_psf"] * b
+        resist = soil["friction"] * sum_v + min(soil["cohesion_psf"] * b, 0.5 * sum_v)  # IBC 1806.3.2 cap
         fs_sl = resist / sum_h if sum_h > 0 else None
         e = b / 2.0 - (mr - mo) / sum_v
         if abs(e) <= b / 6.0:
@@ -106,8 +106,8 @@ def cantilever_wall(
         elif b / 2.0 - abs(e) > 0:
             q = 2 * sum_v / (3 * (b / 2.0 - abs(e)))
         else:
-            q = float("inf")
-        ok = ((fs_ot is None or fs_ot + 1e-9 >= fs_need) and (fs_sl is None or fs_sl + 1e-9 >= fs_need)
+            q = None  # the resultant falls outside the footing: it tips
+        ok = q is not None and ((fs_ot is None or fs_ot + 1e-9 >= fs_need) and (fs_sl is None or fs_sl + 1e-9 >= fs_need)
               and q <= soil["bearing_psf"] * (1.333 if is_seismic else 1.0) + 1e-9)
         return {"sum_h_lb": sum_h, "sum_v_lb": sum_v, "mo_lb_ft": mo, "mr_lb_ft": mr, "fs_overturning": fs_ot,
                 "fs_sliding": fs_sl, "eccentricity_ft": e, "bearing_psf": q, "required_fs": fs_need, "ok": ok}
@@ -116,7 +116,7 @@ def cantilever_wall(
     steps = [f"{n}: H = {f:.1f} lb/ft at {a:.3f} ft" for n, f, a in horiz]
     steps += [f"{n}: V = {f:.1f} lb/ft at {a:.3f} ft" for n, f, a in vert]
     steps.append(f"static: FS overturning {static['fs_overturning'] or 0:.2f}, sliding {static['fs_sliding'] or 0:.2f}, "
-                 f"e = {static['eccentricity_ft']:.3f} ft, q = {static['bearing_psf']:.0f} psf "
+                 f"e = {static['eccentricity_ft']:.3f} ft, q = {static['bearing_psf'] or 0:.0f} psf "
                  f"(allowable {soil['bearing_psf']:g})")
     seismic = None
     citations = [CIT_IBC_1807, CIT_IBC_1806, CIT_IBC_1610 if not is_water else CIT_IBC_1807]
@@ -128,7 +128,7 @@ def cantilever_wall(
         seismic["kh"] = kh
         steps.append(f"seismic (kh = {kh:.3f}): + {extra[1]:.1f} lb/ft; FS overturning "
                      f"{seismic['fs_overturning'] or 0:.2f}, sliding {seismic['fs_sliding'] or 0:.2f}, "
-                     f"q = {seismic['bearing_psf']:.0f} psf (allowable × 1.33)")
+                     f"q = {seismic['bearing_psf'] or 0:.0f} psf (allowable × 1.33)")
         citations.append(CIT_WESTERGAARD if is_water else CIT_SEED_WHITMAN)
     frost = frost_check(bottom, frost_depth_in, rules)
     det = detail_for_wall(float(stem_in), rules)
@@ -187,6 +187,9 @@ def size_wall_footing(
         if result.status == "ok":
             break
         width += 0.5
+    if result is None or result.value is None:
+        return CalcResult(calc="structural_wall_footing", value=None, citations=[CIT_IBC_1807],
+                          warnings=[DISCLAIMER, "Wall height and stem thickness must be > 0."], status="incomplete")
     v = result.value
     c = float(rules["cover_in"]) / 12.0
     det = v["stem_detail"]

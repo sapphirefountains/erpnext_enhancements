@@ -94,12 +94,12 @@ def test_column_by_hand():
     s = hss_section(4, 4, 0.25)
     r = column_check("HSS4x4x1/4", 12, 2000, 20.0)
     v = r.value
-    kl_r = 2.1 * 144 / s["rx"]
+    kl_r = 2.1 * 144 / min(s["rx"], s["ry"])
     fe = math.pi ** 2 * 29e6 / kl_r ** 2
     fcr = 0.658 ** (50000 / fe) * 50000 if kl_r <= 4.71 * math.sqrt(29e6 / 50000) else 0.877 * fe
     phi_pn = 0.9 * fcr * s["A"]
     pu = 1.6 * (2000 + s["wt"] * 12)
-    mu = 1.6 * 20 * 144 / 2
+    mu = 1.0 * 20 * 144 / 2  # wind is strength-level: factor 1.0
     phi_mn = 0.9 * 50000 * s["Zx"] / 12
     ratio = pu / phi_pn
     inter = ratio + 8 / 9 * mu / phi_mn if ratio >= 0.2 else ratio / 2 + mu / phi_mn
@@ -125,8 +125,8 @@ def test_weir_lip_sag_by_hand():
     w = 0.0361 * 1.0 * wl + 501 / 1728 * (a1 + a2)
     r = weir_lip_sag(48, t, hf, wl, 1.0)
     assert r.value["I_in4"] == approx(i)
-    assert r.value["sag_in"] == approx(2.5 / 384 * w * 48 ** 4 / (28e6 * i))
-    assert r.value["max_support_spacing_in"] == approx((0.0625 * 28e6 * i / (2.5 / 384 * w)) ** 0.25)
+    assert r.value["sag_in"] == approx(2.65 / 384 * w * 48 ** 4 / (28e6 * i))  # end span of three
+    assert r.value["max_support_spacing_in"] == approx((0.0625 * 28e6 * i / (2.65 / 384 * w)) ** 0.25)
     assert r.status == "ok"
     # 20% past the reported support spacing sags 1.2⁴ ≈ 2.07 × the tolerance
     longer = weir_lip_sag(r.value["max_support_spacing_in"] * 1.2, t, hf, wl, 1.0)
@@ -151,6 +151,11 @@ def test_pedestal_by_hand():
     w = 150 * 12 + 800
     assert v["weight_lb"] == approx(w)
     assert v["fs_overturning"] == approx(0.9 * w * 1.0 / (100 * 5))
+    # under seismic the resisting weight is (0.9 − 0.2·SDS)·W, as ASCE 7 combines it
+    q = pedestal_check(2, 2, 3, 150, 800, 4.5, 0, 5, 1.0, "slab").value
+    fp = min(max(0.4 * 1.0 * w / 1.5, 0.3 * w), 1.6 * w)
+    m_seis = fp * (150 * 12 * 1.5 + 800 * 4.5) / w
+    assert q["fs_overturning"] == approx((0.9 - 0.2) * w * 1.0 / m_seis)
     assert v["fs_sliding"] == approx(0.6 * 0.9 * w / 100)
     assert v["bearing_psf"] == approx(w / 4 * (1 + 6 * (500 / w) / 2))
 
@@ -212,3 +217,28 @@ def test_pedestal_bearing_does_not_depend_on_input_order():
     b = pedestal_check(4, 2, 3, 150, 800, 4.5, 400, 5, None, "slab").value["bearing_psf"]
     assert a == approx(b)
     assert pedestal_check(2, 2, 3, 168, material="granite").value["concrete_cuft"] == 0.0
+
+
+def test_rectangular_column_buckles_about_its_weak_axis():
+    s = hss_section(2, 4, 0.25)  # HSS4x2: ry well under rx
+    assert s["ry"] < s["rx"]
+    assert column_check(s, 10, 1000).value["kl_r"] == approx(2.1 * 120 / s["ry"])
+
+
+def test_half_filled_rows_report_instead_of_crashing():
+    from erpnext_enhancements.water_engineering.engine.structural import structural_takeoff
+
+    t = structural_takeoff({"structure": {"walls": [{"id": "w"}], "columns": [{"id": "c"}], "frames": [{"id": "f"}],
+                                          "pads": [{"id": "p", "length_in": 20}],
+                                          "rigging": {"hung_lb_per_ft": 4, "hung_length_ft": 8, "hanger_spans": 2,
+                                                      "hanger_span_ft": 0}}})
+    codes = [c["code"] for c in t["checks"]]
+    assert codes.count("STRUCT_ROW_INCOMPLETE") == 5
+    assert "structure" in t and not t["structure"].get("walls")
+    assert rig_plan(4, 8, 2, 0).status == "incomplete"
+    assert column_check("HSS4x4x1/4", 0, 100).status == "incomplete"
+    assert member_check("HSS4x4x1/4", 0, 100).status == "incomplete"
+
+
+def test_picks_round_like_javascript():
+    assert len(rig_plan(4.0, 8.0, 3, 2.6, 0.4, 8.0, "flown", picks=2.5).value["picks"]) == 3

@@ -101,6 +101,9 @@ def test_equipment_pad_by_hand():
     assert v["shear_per_anchor_lb"] == approx(fp / 4)
     nb = 24 * math.sqrt(4500) * 4.0 ** 1.5
     assert v["phi_nn_lb"] == approx(min(0.70 * nb * 0.75, 0.75 * 0.142 * 75000))
+    vb = 7 * (4.0 / 0.5) ** 0.2 * math.sqrt(0.5) * math.sqrt(4500) * 8.0 ** 1.5  # ca1 = 6 + 2 in, le = hef = 4
+    assert v["phi_vcb_lb"] == approx(0.70 * vb) and v["phi_vcp_lb"] == approx(0.70 * 2.0 * nb)
+    assert v["phi_vn_lb"] == approx(min(0.65 * 0.6 * 0.142 * 75000, 0.70 * vb, 0.70 * 2.0 * nb))
     assert v["pad_length_in"] == 42 and v["concrete_cuft"] == approx(42 * 32 * 6 / 1728)
     assert r.status == "ok"
 
@@ -192,3 +195,24 @@ def test_odd_inputs_are_reported_not_guessed():
     t = structural_takeoff({"structure": {"thrust_blocks": [{"id": "x", "size": "unsized", "pressure_psi": 100}],
                                           "bracing": [{"id": "y", "size": "tbd", "run_ft": 40}]}})
     assert [c["code"] for c in t["checks"]].count("STRUCT_PIPE_SIZE") == 2
+
+
+def test_pad_without_seismic_says_so():
+    r = equipment_pad(30, 20, 400, 14, None)
+    assert r.status == "warn" and any("not checked for uplift" in w for w in r.warnings)
+
+
+def test_pads_add_to_the_anchors_they_do_not_cover():
+    # two anchored units (a pump and a filter) and one listed pad: 1 × 4 generic + the pad's own 4
+    model = {"network": {"pumps": [{"id": "p1"}]}, "equipment": [{"slot": "filter", "qty": 1}],
+             "structure": {"pads": [{"id": "pd", "length_in": 30, "width_in": 20, "weight_lb": 400}]}}
+    t = structural_takeoff(model)
+    assert {line["key"]: line for line in t["bom"]}["structural.anchors"]["qty"] == 8
+    assert t["totals"]["anchors"] == 8
+
+
+def test_moorings_of_different_weights_stay_on_their_own_lines():
+    t = structural_takeoff({"structure": {"moorings": [{"id": "a", "above_water_sqft": 6, "submerged_sqft": 4},
+                                                       {"id": "b", "above_water_sqft": 30, "submerged_sqft": 20}]}})
+    keys = [line["key"] for line in t["bom"] if line["key"].startswith("structural.mooring_blocks")]
+    assert len(keys) == 2

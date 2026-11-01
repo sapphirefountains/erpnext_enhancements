@@ -93,3 +93,9 @@ def test_size_footing_finds_the_narrowest_passing_width():
     assert narrower.status == "bad"
     assert r.value["concrete_cuft_per_ft"] == approx(8 / 12 * (4.0 + 30 / 12 - 1.0) + width * 1.0)
     assert r.value["rebar_lb_per_ft"] > 0
+
+
+def test_clay_cohesion_capped_at_half_the_dead_load():
+    # class 5: 130 psf × B; IBC 1806.3.2 caps it at half the dead load
+    r = cantilever_wall(3.0, 8, 6.0, 2.0, 12, "water", 2.5, soil_class=5, footing_bottom_in=12).value["static"]
+    assert r["fs_sliding"] == approx(min(130 * 6.0, 0.5 * r["sum_v_lb"]) / r["sum_h_lb"])

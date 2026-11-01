@@ -270,6 +270,7 @@ Basins gain `floor_use` (`roof`, `office`, `lobby` and the rest of `building.FLO
 | Section | Severity | Codes |
 |---|---|---|
 | project | info | `STRUCT_SEISMIC_INPUTS` |
+| the row's section | info | `STRUCT_ROW_INCOMPLETE` (a `structure` row with a required number missing or not > 0; the row is skipped, never crashes the takeoff), `STRUCT_PIPE_SIZE`, `STRUCT_THRUST_INPUT`, `STRUCT_FRAME_INPUT` |
 | basin | warning | `STRUCT_SEISMIC_WALL`, `STRUCT_LID`, `STRUCT_FLOOR_USE`, `STRUCT_WALL_STABILITY`, `STRUCT_BEAM`, `STRUCT_GRATING` |
 | basin | info | `STRUCT_SLOSH` |
 | features | warning | `STRUCT_WEIR_SAG`, `STRUCT_FRAME`, `STRUCT_COLUMN`, `STRUCT_VENEER`, `STRUCT_PEDESTAL` |
@@ -280,7 +281,7 @@ Basins gain `floor_use` (`roof`, `office`, `lobby` and the rest of `building.FLO
 - By the pound: `structural.steel` and `structural.steel.<304ss|316ss>`.
 - By the square foot: `structural.grating.<class>`.
 - By the piece: `structural.trench_drain.<class>`, `structural.veneer_anchors`, `structural.hatch`,
-  `structural.seismic_braces`, `structural.mooring_blocks`.
+  `structural.seismic_braces`, `structural.mooring_blocks.<dry lb, 50 lb steps>`.
 - By the cubic yard: `structural.concrete_site`, which covers walls, pads, pedestals, thrust and
   mooring blocks, and concrete beams.
 
@@ -299,13 +300,14 @@ Basins gain `floor_use` (`roof`, `office`, `lobby` and the rest of `building.FLO
 | `soil_pcf` | 120 pcf |
 | `active_efp_pcf` | 45 pcf |
 | `wall_fs` / `wall_fs_seismic` | 1.5 / 1.1 |
-| `steel_load_factor` | 1.6 |
+| `steel_load_factor` | 1.6 on gravity, live and fluid loads |
+| `wind_load_factor` / `wind_service_factor` | 1.0 (ASCE 7-16 wind is strength level) / 0.6 for drift |
 | Deflection limits | L/360 for beams, L/180 for cantilevers, H/180 for post drift |
 | `frame_post_spacing_ft` | 8 ft |
-| Weir lip section | 3/16 in plate, 2 in flange, 3 in lip, supports at 48 in |
+| Weir lip section | 3/16 in plate, 2 in flange, 3 in lip, 1 in of water on it, supports at 48 in |
 | `veneer_anchor_fs` | 4 |
 | Trench grate pieces | 1 m long |
-| Equipment pads | 6 in past the equipment, 6 in thick |
+| Equipment pads | 6 in past the equipment, 6 in thick; listed pads add to the house-rule anchors of the equipment they don't cover |
 | Thrust blocks | 1,000 psf soil bearing, FS 1.5 |
 | Pipe bracing | 40 ft lateral, 80 ft longitudinal (half that for plastic pipe) |
 | Moorings | 90 mph wind, μ 0.5, FS 1.5 |

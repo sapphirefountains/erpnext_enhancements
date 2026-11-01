@@ -29,7 +29,8 @@ from .defaults import DISCLAIMER, merged_rules
 from .loads import soil_properties
 from .steel import MATERIALS
 
-CIT_BEAM = "Beam deflection: δ = c·w·L⁴/(E·I), c = 5/384 simple, 1/384 fixed-fixed, 1/8 cantilever"
+CIT_BEAM = ("Beam deflection: δ = c·w·L⁴/(E·I), c = 5/384 simple, 2.65/384 continuous (end span of three), "
+            "1/384 fixed-fixed, 1/8 cantilever")
 CIT_TOLERANCE = "Weir edge tolerance (feature input tolerance_in, 1/16 in by default)"
 CIT_TMS_ADHERED = "TMS 402-16 §13.3 (adhered veneer: units ≤ 2-5/8 in thick, ≤ 15 psf)"
 CIT_TMS_ANCHORED = ("TMS 402-16 §12.2.2.5 (anchored veneer: one anchor per 2.67 ft², ≤ 32 in horizontal, "
@@ -43,7 +44,7 @@ DENSITY_PCF = {
     "sandstone": 145.0, "porcelain": 150.0, "ceramic": 125.0, "cast_stone": 140.0, "glass": 156.0,
     "solid_surface": 106.0,
 }
-_DEFL_COEF = {"simple": 5.0 / 384.0, "fixed": 1.0 / 384.0, "continuous": 2.5 / 384.0, "cantilever": 1.0 / 8.0}
+_DEFL_COEF = {"simple": 5.0 / 384.0, "fixed": 1.0 / 384.0, "continuous": 2.65 / 384.0, "cantilever": 1.0 / 8.0}
 _MOMENT_COEF = {"simple": 1 / 8.0, "fixed": 1 / 12.0, "continuous": 1 / 10.0, "cantilever": 1 / 2.0}
 
 
@@ -72,7 +73,7 @@ def weir_lip_sag(
     sag = k * w * span ** 4 / (e * inertia)
     stress = _MOMENT_COEF[key] * w * span ** 2 * c_far / inertia
     allow = 0.6 * mat["fy_ksi"] * 1000.0
-    max_span = (float(tolerance_in) * e * inertia / (k * w)) ** 0.25 if w > 0 else float("inf")
+    max_span = (float(tolerance_in) * e * inertia / (k * w)) ** 0.25 if w > 0 else None
     ok = sag <= float(tolerance_in) + 1e-12 and stress <= allow
     return CalcResult(
         calc="structural_weir_lip_sag",
@@ -86,7 +87,8 @@ def weir_lip_sag(
         formula="δ = c·w·L⁴/(E·I); L_max = (tol·E·I/(c·w))^¼",
         steps=[f"I = {inertia:.5f} in⁴ (L section, centroid {yc:.3f} in up); w = {w:.5f} lb/in",
                f"sag = {k:.5f} × {w:.5f} × {span:g}⁴ / ({e:g} × {inertia:.5f}) = {sag:.5f} in vs {tolerance_in:g} in",
-               f"supports at most {max_span:.1f} in apart for the tolerance; stress {stress:.0f} psi"],
+               ("no load: any support spacing holds the tolerance" if max_span is None else
+                f"supports at most {max_span:.1f} in apart for the tolerance") + f"; stress {stress:.0f} psi"],
         citations=[CIT_BEAM, CIT_TOLERANCE],
         warnings=[DISCLAIMER] + ([] if ok else [f"Lip sags {sag:.4f} in over {span:g} in, more than the "
                                                f"{tolerance_in:g} in tolerance: supports at {max_span:.0f} in or a "
@@ -171,17 +173,17 @@ def pedestal_check(
     use_seis = m_seis > m_wind
     lateral, mo = (seismic, m_seis) if use_seis else (float(wind_lb), m_wind)
     b = min(lng, wid)
-    w_resist = w * (1 - 0.2 * float(sds or 0)) if use_seis else 0.9 * w  # ASCE 7 0.9D − 0.2SDS·D / 0.9D
+    w_resist = w * (0.9 - 0.2 * float(sds or 0)) if use_seis else 0.9 * w  # ASCE 7: (0.9 − 0.2SDS)D / 0.9D
     mr = w_resist * b / 2.0
     fs_ot = mr / mo if mo > 0 else None
     mu = 0.6 if str(on).lower() == "slab" else soil_properties(soil_class, bearing_psf).value["friction"]
     fs_sl = mu * w_resist / lateral if lateral > 0 else None
     e = mo / w if w else 0.0
     area = lng * wid
-    q = w / area * (1 + 6 * e / b) if e <= b / 6 else (2 * w / (3 * max(lng, wid) * (b / 2 - e)) if e < b / 2 else float("inf"))
+    q = w / area * (1 + 6 * e / b) if e <= b / 6 else (2 * w / (3 * max(lng, wid) * (b / 2 - e)) if e < b / 2 else None)
     allow = None if str(on).lower() == "slab" else soil_properties(soil_class, bearing_psf).value["bearing_psf"]
     need = float(rules["wall_fs"])
-    ok = (fs_ot is None or fs_ot + 1e-9 >= need) and (fs_sl is None or fs_sl + 1e-9 >= need) and \
+    ok = q is not None and (fs_ot is None or fs_ot + 1e-9 >= need) and (fs_sl is None or fs_sl + 1e-9 >= need) and \
         (allow is None or q <= allow * (1.333 if use_seis else 1.0))
     return CalcResult(
         calc="structural_pedestal",
@@ -195,7 +197,8 @@ def pedestal_check(
         steps=[f"W = {w_block:.0f} block + {w_top:.0f} top = {w:.0f} lb; lateral {lateral:.0f} lb "
                f"({'seismic' if use_seis else 'wind'}), M = {mo:.0f} lb·ft",
                f"FS overturning {fs_ot if fs_ot is None else round(fs_ot, 2)}, sliding "
-               f"{fs_sl if fs_sl is None else round(fs_sl, 2)}; q = {q:.0f} psf"],
+               f"{fs_sl if fs_sl is None else round(fs_sl, 2)}; " + ("it tips: the resultant leaves the base" if q is None
+                                                                else f"q = {q:.0f} psf")],
         citations=[CIT_ASCE7_FP, "IBC 2021 §1807.2.3 (FS 1.5 against overturning and sliding)",
                    "ACI 318-19 Table 22.9.4.2 (μ = 0.6 concrete on hardened concrete)"],
         warnings=[DISCLAIMER] + ([] if ok else ["Pedestal tips, slides or overloads the ground: widen the base or "

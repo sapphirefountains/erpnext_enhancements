@@ -44,17 +44,17 @@ MATERIALS = {
     "316SS": {"label": "Type 316 stainless, annealed", "fy_ksi": 30.0, "e_ksi": 28000.0, "pcf": 501.0},
 }
 
-# AISC Manual Table 1-1 (strong axis): A in², d in, Ix in⁴, Sx in³, Zx in³, ry in
+# AISC Manual Table 1-1: ry in, A in², d in, Ix in⁴, Sx in³, Zx in³ (strong axis), tw in
 W_SHAPES = {
-    "W8x10": {"wt": 10.0, "A": 2.96, "d": 7.89, "Ix": 30.8, "Sx": 7.81, "Zx": 8.87, "tw": 0.170},
-    "W8x18": {"wt": 18.0, "A": 5.26, "d": 8.14, "Ix": 61.9, "Sx": 15.2, "Zx": 17.0, "tw": 0.230},
-    "W10x12": {"wt": 12.0, "A": 3.54, "d": 9.87, "Ix": 53.8, "Sx": 10.9, "Zx": 12.6, "tw": 0.190},
-    "W10x22": {"wt": 22.0, "A": 6.49, "d": 10.2, "Ix": 118.0, "Sx": 23.2, "Zx": 26.0, "tw": 0.240},
-    "W12x14": {"wt": 14.0, "A": 4.16, "d": 11.9, "Ix": 88.6, "Sx": 14.9, "Zx": 17.4, "tw": 0.200},
-    "W12x26": {"wt": 26.0, "A": 7.65, "d": 12.2, "Ix": 204.0, "Sx": 33.4, "Zx": 37.2, "tw": 0.230},
-    "W14x22": {"wt": 22.0, "A": 6.49, "d": 13.7, "Ix": 199.0, "Sx": 29.0, "Zx": 33.2, "tw": 0.230},
-    "W16x26": {"wt": 26.0, "A": 7.68, "d": 15.7, "Ix": 301.0, "Sx": 38.4, "Zx": 44.2, "tw": 0.250},
-    "W18x35": {"wt": 35.0, "A": 10.3, "d": 17.7, "Ix": 510.0, "Sx": 57.6, "Zx": 66.5, "tw": 0.300},
+    "W8x10": {"ry": 0.841, "wt": 10.0, "A": 2.96, "d": 7.89, "Ix": 30.8, "Sx": 7.81, "Zx": 8.87, "tw": 0.170},
+    "W8x18": {"ry": 1.23, "wt": 18.0, "A": 5.26, "d": 8.14, "Ix": 61.9, "Sx": 15.2, "Zx": 17.0, "tw": 0.230},
+    "W10x12": {"ry": 0.785, "wt": 12.0, "A": 3.54, "d": 9.87, "Ix": 53.8, "Sx": 10.9, "Zx": 12.6, "tw": 0.190},
+    "W10x22": {"ry": 1.33, "wt": 22.0, "A": 6.49, "d": 10.2, "Ix": 118.0, "Sx": 23.2, "Zx": 26.0, "tw": 0.240},
+    "W12x14": {"ry": 0.753, "wt": 14.0, "A": 4.16, "d": 11.9, "Ix": 88.6, "Sx": 14.9, "Zx": 17.4, "tw": 0.200},
+    "W12x26": {"ry": 1.51, "wt": 26.0, "A": 7.65, "d": 12.2, "Ix": 204.0, "Sx": 33.4, "Zx": 37.2, "tw": 0.230},
+    "W14x22": {"ry": 1.04, "wt": 22.0, "A": 6.49, "d": 13.7, "Ix": 199.0, "Sx": 29.0, "Zx": 33.2, "tw": 0.230},
+    "W16x26": {"ry": 1.12, "wt": 26.0, "A": 7.68, "d": 15.7, "Ix": 301.0, "Sx": 38.4, "Zx": 44.2, "tw": 0.250},
+    "W18x35": {"ry": 1.22, "wt": 35.0, "A": 10.3, "d": 17.7, "Ix": 510.0, "Sx": 57.6, "Zx": 66.5, "tw": 0.300},
 }
 
 # Square and rectangular tube sizes stocked by Utah service centers (outside B × H × nominal wall)
@@ -107,6 +107,7 @@ def hss_section(b_in: float, h_in: float, t_nominal_in: float) -> dict:
     t = 0.93 * float(t_nominal_in)
     a_o, i_o, z_o = _rounded_rect(b_in, h_in, 2 * t)
     a_i, i_i, z_i = _rounded_rect(b_in - 2 * t, h_in - 2 * t, t)
+    iy = _rounded_rect(h_in, b_in, 2 * t)[1] - _rounded_rect(h_in - 2 * t, b_in - 2 * t, t)[1]
     tn = float(t_nominal_in)
     a_nom = _rounded_rect(b_in, h_in, 2 * tn)[0] - _rounded_rect(b_in - 2 * tn, h_in - 2 * tn, tn)[0]
     area = a_o - a_i
@@ -114,7 +115,7 @@ def hss_section(b_in: float, h_in: float, t_nominal_in: float) -> dict:
     return {
         "name": f"HSS{_fraction(h_in)}x{_fraction(b_in)}x{_fraction(tn)}", "kind": "HSS", "b": b_in, "h": h_in,
         "t_nom": tn, "t_des": t, "A": area, "Ix": ix, "Sx": ix / (h_in / 2.0), "Zx": z_o - z_i,
-        "rx": math.sqrt(ix / area), "wt": a_nom * 490.0 / 144.0, "b_t": (b_in - 3 * t) / t,
+        "rx": math.sqrt(ix / area), "Iy": iy, "ry": math.sqrt(iy / area), "wt": a_nom * 490.0 / 144.0, "b_t": (b_in - 3 * t) / t,
         "h_t": (h_in - 3 * t) / t, "Aw": 2 * (h_in - 3 * t) * t,
     }
 
@@ -149,7 +150,10 @@ def member_check(
     mat = MATERIALS.get(material, MATERIALS["A500C"])
     fy, e = mat["fy_ksi"] * 1000.0, mat["e_ksi"] * 1000.0
     lf = float(load_factor if load_factor is not None else rules["steel_load_factor"])
-    span = float(span_ft)
+    span = float(span_ft or 0)
+    if span <= 0:
+        return CalcResult(calc="structural_member_check", value={"section": sec["name"], "weight_plf": sec["wt"],
+                          "ok": False}, warnings=[DISCLAIMER, "Span must be > 0."], status="incomplete")
     w = float(w_plf) + sec["wt"] * mat["pcf"] / 490.0
     p = float(p_lb)
     cant = str(support).lower() == "cantilever"
@@ -221,24 +225,36 @@ def column_check(section, height_ft: float, axial_lb: float, lateral_plf: float 
                  k_factor: float = 2.1, material: str = "A500C", rules: dict | None = None) -> CalcResult:
     """A post or tower fixed at its base and free at the top (K = 2.1):
     factored axial load against §E3, plus the base moment from a lateral
-    line load and a lateral point load at the top, by the §H1 interaction."""
+    line load and a lateral point load at the top, by the §H1 interaction.
+
+    ``lateral_plf`` and ``top_lb`` are strength-level wind as ASCE 7-16 gives
+    it, so they take ``wind_load_factor`` (1.0), not the 1.6 on gravity load;
+    drift is checked at ``wind_service_factor`` × W (0.6, the ASD level).
+    Buckling uses the weaker axis's radius of gyration."""
     rules = merged_rules(rules)
     sec = _section(section)
     mat = MATERIALS.get(material, MATERIALS["A500C"])
     fy, e = mat["fy_ksi"] * 1000.0, mat["e_ksi"] * 1000.0
     lf = float(rules["steel_load_factor"])
-    h = float(height_ft)
-    kl_r = k_factor * h * 12.0 / sec["rx"]
+    h = float(height_ft or 0)
+    if h <= 0:
+        return CalcResult(calc="structural_column_check", value={"section": sec["name"], "ok": False},
+                          warnings=[DISCLAIMER, "Column height must be > 0."], status="incomplete")
+    r_min = min(sec["rx"], sec.get("ry") or sec["rx"])
+    kl_r = k_factor * h * 12.0 / r_min
     fe = math.pi ** 2 * e / kl_r ** 2
     fcr = (0.658 ** (fy / fe)) * fy if kl_r <= 4.71 * math.sqrt(e / fy) else 0.877 * fe
     phi_pn = 0.9 * fcr * sec["A"]
     pu = lf * (float(axial_lb) + sec["wt"] * h)
-    mu = lf * (float(lateral_plf) * h * h / 2.0 + float(top_lb) * h)
+    # lateral loads are strength-level wind (ASCE 7-16 gives W at that level): factor 1.0, drift at 0.6W
+    wf, wserv = float(rules["wind_load_factor"]), float(rules["wind_service_factor"])
+    mu = wf * (float(lateral_plf) * h * h / 2.0 + float(top_lb) * h)
     compact = sec["kind"] == "HSS" and sec["b_t"] <= 1.12 * math.sqrt(e / fy)
     phi_mn = 0.9 * fy * (sec["Zx"] if compact else sec["Sx"]) / 12.0
     ratio = pu / phi_pn
     inter = ratio + 8.0 / 9.0 * mu / phi_mn if ratio >= 0.2 else ratio / 2.0 + mu / phi_mn
-    drift = (float(lateral_plf) / 12.0) * (h * 12) ** 4 / (8 * e * sec["Ix"]) + float(top_lb) * (h * 12) ** 3 / (3 * e * sec["Ix"])
+    drift = wserv * ((float(lateral_plf) / 12.0) * (h * 12) ** 4 / (8 * e * sec["Ix"])
+                     + float(top_lb) * (h * 12) ** 3 / (3 * e * sec["Ix"]))
     drift_limit = h * 12.0 / float(rules["post_drift_div"])
     ok = inter <= 1.0 + 1e-9 and kl_r <= 200 and drift <= drift_limit + 1e-12
     return CalcResult(
@@ -250,7 +266,7 @@ def column_check(section, height_ft: float, axial_lb: float, lateral_plf: float 
         inputs={"height": make_input(h, "ft", "user"), "axial": make_input(axial_lb, "lb", "prior_calc"),
                 "k": make_input(k_factor, "", "default")},
         formula="Fcr = 0.658^(Fy/Fe)·Fy (or 0.877Fe); Pr/Pc + 8/9·Mr/Mc ≤ 1 (Pr/Pc ≥ 0.2)",
-        steps=[f"KL/r = {k_factor:g} × {h * 12:.1f} / {sec['rx']:.3f} = {kl_r:.1f}; Fe = {fe:.0f} psi, Fcr = {fcr:.0f} psi",
+        steps=[f"KL/r = {k_factor:g} × {h * 12:.1f} / {r_min:.3f} = {kl_r:.1f}; Fe = {fe:.0f} psi, Fcr = {fcr:.0f} psi",
                f"φPn = {phi_pn:.0f} lb vs Pu {pu:.0f}; φMn = {phi_mn:.0f} lb·ft vs Mu {mu:.0f}",
                f"interaction = {inter:.3f}; drift {drift:.3f} in vs H/{rules['post_drift_div']:g} = {drift_limit:.3f} in"],
         citations=[CIT_AISC_E, CIT_AISC_F, "AISC Design Guide 3 (serviceability: lateral drift)"],

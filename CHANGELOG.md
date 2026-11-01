@@ -54,6 +54,32 @@ only, never imports frappe): no migration, fixture, patch or hook. Nothing runs 
   The HSS table is pinned to AISC's published values, and the rigging port to golden vectors from the
   DRC JavaScript.
 
+### Fixed (independent review, before merge)
+- A half-filled `structure` row no longer takes down the takeoff. A wall or column with no height,
+  or rigging with a 0 ft hanger span, used to raise. Each group now has its required numbers; a row
+  without them becomes an INFO `STRUCT_ROW_INCOMPLETE` check and is skipped. The calcs themselves
+  return `incomplete` instead of dividing by zero.
+- Wind is no longer factored twice. ASCE 7-16 gives wind at strength level, so posts and towers now
+  take 1.0W, not 1.6W, and drift is checked at 0.6W. Frames and their steel order were about 60%
+  heavy.
+- Columns buckle about the weaker axis. HSS now carry `Iy`/`ry`, and the W table carries `ry`.
+- Pedestals resist seismic overturning with (0.9 − 0.2·SDS)·W, as ASCE 7 combines it, not
+  (1 − 0.2·SDS)·W.
+- Equipment pads:
+  - The anchor count adds to the house-rule count for equipment the pads don't cover, instead of
+    replacing it.
+  - Anchors are checked for concrete breakout and pryout in shear.
+  - A pad with no SDS says its anchors were not checked for seismic, and pull-out is flagged for the
+    maker's data.
+- Clay cohesion in sliding is capped at half the dead load (IBC 1806.3.2).
+- A continuous weir lip uses the end span of three (2.65/384). The automatic lip check carries 1 in
+  of water, so it can fire.
+- Moorings of different weights get their own BOM lines. Rigging picks round like the JavaScript
+  (2.5 → 3).
+- No `inf` reaches a result. Where a footing or plinth would tip, or no beam size works, the result
+  says so.
+
+
 ## [1.765.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on

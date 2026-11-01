@@ -20,6 +20,8 @@ Planning numbers: a qualified rigger and the venue approve the rigging plan.
 
 from __future__ import annotations
 
+import math
+
 from ..envelope import CalcResult, make_input
 from .defaults import DISCLAIMER
 
@@ -125,6 +127,10 @@ def rig_plan(
     mount = mount if mount in ("towers", "ceiling", "flown") else "towers"
     tr = TRUSSES.get(truss, TRUSSES["box12"])
     dyn = max(1.0, float(dyn))
+    if not (float(hanger_span_ft or 0) > 0 and int(hanger_spans or 0) >= 1):
+        return CalcResult(calc="structural_rig_plan", value=None, citations=[CIT_DRC],
+                          warnings=[DISCLAIMER, "Hanger spacing must be > 0 with at least one span."],
+                          status="incomplete")
     w = float(hung_lb_per_ft)
     hung_lb = w * float(hung_length_ft)
     width = float(curtain_width_ft if curtain_width_ft is not None else hung_length_ft)
@@ -151,7 +157,7 @@ def rig_plan(
             towers.append({"side": side, "lb": lb, "psf": lb / PLATE["side_ft"] ** 2})
         steps.append(f"towers {tower_h:.2f} ft: {towers[0]['lb']:.1f} / {towers[1]['lb']:.1f} lb on 24 in plates")
     elif mount == "flown":
-        k = max(2, round(picks))
+        k = max(2, math.floor(float(picks) + 0.5))  # Math.round, not Python's round-half-even
         sp = span / (k - 1)
         pick_rows = [{"x_ft": i * sp, "lb": lb} for i, lb in enumerate(_reactions(k - 1, sp, header["lb_ft"], 0.0))]
         pick_rows[-1]["lb"] += riser_lb / 2.0  # hose or pipe dangling from the truss end

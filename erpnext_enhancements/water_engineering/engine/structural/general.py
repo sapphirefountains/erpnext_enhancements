@@ -56,6 +56,17 @@ from .walls import size_wall_footing
 
 BLOCKER, WARNING, INFO = "blocker", "warning", "info"
 
+# the numbers each structure row must have (> 0) before it is computed
+REQUIRED = {
+    "walls": ("stem_height_ft",), "frames": ("height_ft", "width_ft"), "columns": ("height_ft",),
+    "beams": ("span_ft", "tributary_ft"), "gratings": ("span_in",), "trench_drains": ("length_ft",),
+    "veneer": ("area_sqft", "thickness_in"), "pedestals": ("length_ft", "width_ft", "height_ft"),
+    "pads": ("length_in", "width_in", "weight_lb"), "thrust_blocks": ("pressure_psi",), "bracing": ("run_ft",),
+    "moorings": ("above_water_sqft",), "rigging": ("hung_lb_per_ft", "hung_length_ft", "hanger_span_ft"),
+}
+GROUP_SECTION = {"walls": "basin", "beams": "basin", "gratings": "basin", "trench_drains": "basin", "pads": "pump",
+                 "thrust_blocks": "piping", "bracing": "piping"}
+
 
 def _num(value, default=None):
     try:
@@ -106,6 +117,19 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         totals["steel_lb"] += lb
 
     wall_rebar: dict[str, float] = {}
+    def complete(group):
+        """Rows of ``group`` with every required number > 0; the rest become an INFO check
+        (a half-filled form row must never take the whole takeoff down)."""
+        for i, row in enumerate(struct.get(group) or [], start=1):
+            row = row or {}
+            missing = [k for k in REQUIRED[group] if not (_num(row.get(k), 0.0) > 0)]
+            if missing:
+                check("STRUCT_ROW_INCOMPLETE", INFO, GROUP_SECTION.get(group, "features"),
+                      f"{group} {row.get('label') or row.get('id') or i}", f"{group.replace('_', ' ').title()} row not computed",
+                      "missing or not > 0: " + ", ".join(missing), "Fill in the row or remove it.", "")
+                continue
+            yield row
+
     frost = _num(site.get("frost_depth_in"), float(rules["frost_depth_in"]))
     soil_class = site.get("soil_class")
     bearing = _num(site.get("soil_bearing_psf"))
@@ -207,11 +231,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             _num(row.get("thickness_in"), float(rules["weir_lip_thickness_in"])),
             _num(row.get("flange_in"), float(rules["weir_lip_flange_in"])),
             _num(row.get("lip_width_in"), float(rules["weir_lip_width_in"])),
-            _num(row.get("water_depth_in"), 0.0), row.get("material") or "304SS", row.get("support") or "continuous",
+            _num(row.get("water_depth_in"), float(rules["weir_lip_water_in"])), row.get("material") or "304SS", row.get("support") or "continuous",
             _num(row.get("tolerance_in"), _num(inputs.get("tolerance_in"), 0.0625)), rules)
         if row.get("auto"):
             res.warnings.append("Lip section assumed from the house rules (3/16 in 304 stainless, 2 in flange, "
-                                "supports at 48 in): enter the real lip to refine.")
+                                "1 in of water on it, supports at 48 in): enter the real lip to refine.")
         record("weir_lips", row, res)
         if res.status != "ok":
             check("STRUCT_WEIR_SAG", WARNING, "features", row.get("label") or row.get("id"),
@@ -219,7 +243,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
                   f"Support the lip at {res.value['max_support_spacing_in']:.0f} in or stiffen the flange.",
                   res.citations[0])
 
-    for row in struct.get("walls") or []:
+    for row in complete("walls"):
         sur = row.get("surcharge")
         sur_psf = _num(sur)
         if sur_psf is None and sur:
@@ -241,7 +265,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
 
     wind_v = _num(site.get("wind_speed_mph"), float(rules["wind_speed_mph"]))
     exposure = site.get("wind_exposure") or rules["wind_exposure"]
-    for row in struct.get("frames") or []:
+    for row in complete("frames"):
         h, wd = _num(row.get("height_ft"), 0.0), _num(row.get("width_ft"), 0.0)
         wind = wind_panel_load(h, wd, _num(row.get("clearance_ft"), 0.0), wind_v, exposure,
                                _num(row.get("solid_ratio"), 1.0), _num(site.get("elevation_ft"), 0.0), rules)
@@ -260,7 +284,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_FRAME", WARNING, "features", row.get("label") or row.get("id"), "Feature frame fails",
                   frame.warnings[-1], "Shorten bays or have the frame engineered.", frame.citations[0])
 
-    for row in struct.get("columns") or []:
+    for row in complete("columns"):
         res = select_column(_num(row.get("height_ft"), 0.0), _num(row.get("axial_lb"), 0.0),
                             _num(row.get("lateral_plf"), 0.0), _num(row.get("top_lb"), 0.0),
                             row.get("material") or "A500C", rules)
@@ -270,7 +294,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_COLUMN", WARNING, "features", row.get("label") or row.get("id"), "Tower or column fails",
                   res.warnings[-1], "Engineer the tower.", res.citations[0])
 
-    for row in struct.get("beams") or []:
+    for row in complete("beams"):
         res = deck_beam(_num(row.get("span_ft"), 0.0), _num(row.get("tributary_ft"), 0.0),
                         _num(row.get("dead_psf"), 15.0), _num(row.get("live_psf"), 100.0),
                         row.get("material") or "steel", row.get("shape") or "W", rules)
@@ -283,7 +307,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_BEAM", WARNING, "basin", row.get("label") or row.get("id"), "Deck beam fails",
                   res.warnings[-1], "Deeper section or a shorter span.", res.citations[0])
 
-    for row in struct.get("gratings") or []:
+    for row in complete("gratings"):
         res = grating(_num(row.get("span_in"), 0.0), row.get("load_class") or "pedestrian",
                       _num(row.get("area_sqft"), 0.0), rules)
         record("gratings", row, res)
@@ -296,7 +320,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_GRATING", WARNING, "basin", row.get("label") or row.get("id"), "No grating spans this",
                   res.warnings[-1], "Add a support beam.", res.citations[0])
 
-    for row in struct.get("trench_drains") or []:
+    for row in complete("trench_drains"):
         res = trench_drain(_num(row.get("length_ft"), 0.0), row.get("load_class") or "pedestrian", rules=rules)
         record("trench_drains", row, res)
         totals["trench_drain_pieces"] += res.value["pieces"]
@@ -304,7 +328,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
                     f"Trench drain channel + grate, EN 1433 {res.value['en1433_class']}", res.value["pieces"], "Nos",
                     "trench_drain", {}))
 
-    for row in struct.get("veneer") or []:
+    for row in complete("veneer"):
         res = veneer_attachment(_num(row.get("area_sqft"), 0.0), _num(row.get("thickness_in"), 1.25),
                                 row.get("material") or "granite", row.get("method") or "anchored", sdc or "D",
                                 _num(row.get("anchor_capacity_lb")), rules)
@@ -316,7 +340,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_VENEER", WARNING, "features", row.get("label") or row.get("id"), "Veneer too heavy to adhere",
                   res.warnings[1], "Anchor it mechanically.", res.citations[0])
 
-    for row in struct.get("pedestals") or []:
+    for row in complete("pedestals"):
         res = pedestal_check(_num(row.get("length_ft"), 0.0), _num(row.get("width_ft"), 0.0),
                              _num(row.get("height_ft"), 0.0), _num(row.get("unit_weight_pcf"), 150.0),
                              _num(row.get("top_load_lb"), 0.0), _num(row.get("top_cg_ft")), _num(row.get("wind_lb"), 0.0),
@@ -328,7 +352,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_PEDESTAL", WARNING, "features", row.get("label") or row.get("id"), "Pedestal unstable",
                   res.warnings[-1], "Widen the base or anchor it.", res.citations[0])
 
-    for row in struct.get("pads") or []:
+    for row in complete("pads"):
         res = equipment_pad(_num(row.get("length_in"), 24.0), _num(row.get("width_in"), 24.0),
                             _num(row.get("weight_lb"), 0.0), _num(row.get("cg_height_in"), 12.0), sds,
                             int(_num(row.get("n_anchors"), 4)), _num(row.get("anchor_dia_in"), 0.5),
@@ -345,7 +369,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         check("STRUCT_PIPE_SIZE", INFO, "piping", row.get("label") or row.get("id"), "Pipe size not set",
               f"{group}: {err}", "Enter a nominal pipe size such as 3 or 1-1/2.", "")
 
-    for row in struct.get("thrust_blocks") or []:
+    for row in complete("thrust_blocks"):
         try:
             nominal_size(row.get("size") or 2)
         except ValueError as err:
@@ -359,7 +383,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             check("STRUCT_THRUST_INPUT", INFO, "piping", row.get("label") or row.get("id"), "Thrust block not computed",
                   res.warnings[-1], "Use a bend angle, tee or dead end, or size it by hand.", "")
 
-    for row in struct.get("bracing") or []:
+    for row in complete("bracing"):
         try:
             nominal_size(row.get("size") or 2)
         except ValueError as err:
@@ -372,7 +396,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         totals["braces"] += n
         bom.append(("structural.seismic_braces", "Seismic pipe brace kits", n, "Nos", "seismic_brace", {}))
 
-    for row in struct.get("moorings") or []:
+    for row in complete("moorings"):
         res = mooring(_num(row.get("above_water_sqft"), 0.0), _num(row.get("submerged_sqft"), 0.0),
                       _num(site.get("mooring_wind_mph")), _num(row.get("current_fps"), 0.5),
                       int(_num(row.get("n_anchors"), 3)), _num(row.get("line_angle_deg"), 45.0), rules)
@@ -380,10 +404,15 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         n = res.value["anchors"]
         totals["mooring_blocks"] += n
         totals["site_concrete_cuft"] += res.value["anchor_cuft"] * n
-        bom.append(("structural.mooring_blocks", f"Concrete mooring block, {res.value['anchor_dry_lb']:.0f} lb dry",
+        dry = math.ceil(res.value["anchor_dry_lb"] / 50.0 - 1e-9) * 50  # one line per block size (50 lb steps)
+        bom.append((f"structural.mooring_blocks.{dry}", f"Concrete mooring block, {dry} lb dry",
                     n, "Nos", "mooring_block", {}))
 
     rig = struct.get("rigging")
+    if rig:
+        struct = dict(struct, _rig=[rig])
+        REQUIRED["_rig"] = REQUIRED["rigging"]
+        rig = next(complete("_rig"), None)
     if rig:
         res = rig_plan(_num(rig.get("hung_lb_per_ft"), 0.0), _num(rig.get("hung_length_ft"), 0.0),
                        int(_num(rig.get("hanger_spans"), 1)), _num(rig.get("hanger_span_ft"), 1.0),
