@@ -50,7 +50,10 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   and Nozzle Profiles keyed on manufacturer + model (or the approval's `item_code`), writing provenance on every record.
   On an existing Item it writes specs and provenance only and never overwrites the name, group, description or brand.
   Each row is checked before anything is written and runs in its own savepoint; a second run reports every row
-  unchanged. It bypasses the Item naming guard with `flags.ignore_naming_guard`, as the other in-request callers whose
+  unchanged; a blank optional point value matches the 0 a child Float column stores, and the Item is matched on the
+  same normalized manufacturer + model key the approvals use. The Item's rated flow and head come from the
+  best-ranked curve. A pump attached to an Item outside item group Pumps is loaded but warned about, because the pump
+  selectors read only that group. It bypasses the Item naming guard with `flags.ignore_naming_guard`, as the other in-request callers whose
   user cannot choose the code do.
 - **`water_engineering/catalog_reader.py`**: `pump_curve_sets`, `nozzle_profiles` and `light_specs`, the plain-dict read
   interface for the design engine's `derive()`.
@@ -61,7 +64,7 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
   New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
   user who cannot read them).
-- `tests/test_water_catalog.py` (36 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+- `tests/test_water_catalog.py` (47 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
   rows.
 
 ### Changed

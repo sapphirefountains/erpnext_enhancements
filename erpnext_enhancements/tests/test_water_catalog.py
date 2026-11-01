@@ -129,6 +129,9 @@ class FakeDB:
     def commit(self):
         self.commits += 1
 
+    def get_value(self, doctype, name, field):
+        return self.fake.store.get(doctype, {}).get(name, {}).get(field)
+
     def set_value(self, doctype, name, field, value, update_modified=True):
         self.fake.store[doctype][name][field] = value
 
@@ -699,3 +702,57 @@ def test_a_curve_the_new_rules_refuse_is_still_migrated_and_flagged(fake):
     patch.execute()
     curve = next(iter(fake.store["Pump Curve"].values()))
     assert "failed the curve checks" in curve["notes"]
+
+
+def test_blank_optional_point_values_match_a_stored_zero(fake):
+    """Child Float columns are NOT NULL DEFAULT 0: a blank NPSHr reads back 0 and is no change."""
+    _seed()
+    for curve in fake.store["Pump Curve"].values():
+        for point in curve["points"]:
+            for key in ("efficiency_pct", "npshr_ft", "power_bhp"):
+                if point.get(key) is None:
+                    point[key] = 0.0
+    saves = len(fake.saves)
+    summary = _seed()
+    assert summary["pumps"]["updated"] == [] and len(fake.saves) == saves
+
+
+def test_item_lookup_ignores_spacing_like_the_approvals(fake, tmp_path):
+    for path in FIXTURES.glob("*.json"):
+        (tmp_path / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    data = json.loads((tmp_path / "lights.json").read_text(encoding="utf-8"))
+    data["lights"][0]["model"] = " fixture-l12 "
+    (tmp_path / "lights.json").write_text(json.dumps(data), encoding="utf-8")
+    catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    lights = [n for n, r in fake.store["Item"].items() if r.get("custom_equipment_class") == "Light"]
+    assert lights == ["LIGHT-FIXTURECO-FIXTURE-L12"]
+
+
+def test_a_pump_outside_the_pumps_group_is_flagged(fake):
+    fake.store["Item"]["500999"]["item_group"] = "Finished Fountains"
+    summary = _seed()
+    assert any("500999" in w and "Pumps" in w for w in summary["pumps"]["warnings"])
+    assert not any("P100" in w and "item group" in w for w in summary["pumps"]["warnings"])
+
+
+def test_item_ratings_come_from_the_best_curve(fake, tmp_path):
+    for path in FIXTURES.glob("*.json"):
+        (tmp_path / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    data = json.loads((tmp_path / "pumps.json").read_text(encoding="utf-8"))
+    data["pumps"][1]["curves"].reverse()  # the 50 % curve first
+    (tmp_path / "pumps.json").write_text(json.dumps(data), encoding="utf-8")
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P200VS"]
+    assert item["custom_rated_gpm"] == 100 and item["custom_rated_tdh_ft"] == 80
+
+
+@pytest.mark.parametrize("value, dry", [("false", False), ("0", False), ("no", False), ("1", True), ("true", True), (0, False), (True, True)])
+def test_dry_run_parsing(fake, value, dry):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    assert catalog_seed.load_catalog(catalog_dir=FIXTURES, dry_run=value)["dry_run"] is dry

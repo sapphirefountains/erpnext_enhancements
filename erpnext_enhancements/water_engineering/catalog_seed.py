@@ -59,6 +59,7 @@ from pathlib import Path
 import frappe
 from frappe import _
 
+from erpnext_enhancements.water_engineering import catalog_reader
 from erpnext_enhancements.water_engineering.doctype.nozzle_profile.nozzle_profile import (
 	check_performance_points,
 )
@@ -351,7 +352,8 @@ def plan_pump(row, approval, meta):
 		)
 		warnings += [f"{label}: {w}" for w in curve_warnings]
 
-	main = curves[0]
+	# The Item's ratings describe the curve the designs use: full speed, sourced, largest impeller.
+	main = min(curves, key=catalog_reader.curve_rank)
 	max_flow = _num(row.get("max_flow_gpm")) or main["max_flow_gpm"]
 	shutoff = _num(row.get("shutoff_head_ft")) or main["shutoff_head_ft"] or main["points"][0]["head_ft"]
 	phase = str(int(_num(row.get("phase")))) if _num(row.get("phase")) in (1.0, 3.0) else None
@@ -529,11 +531,20 @@ def _apply_fields(doc, values, fill_only=False):
 
 
 def _rows_differ(current_rows, desired_rows, fields):
+	"""True when a child table no longer holds ``desired_rows``.
+
+	A value the data leaves blank matches a stored 0: child Float columns are NOT NULL DEFAULT
+	0, so a point saved without NPSHr reads back 0, and treating that as a change would rewrite
+	every such table on every run.
+	"""
 	if len(current_rows) != len(desired_rows):
 		return True
 	for cur, want in zip(current_rows, desired_rows, strict=True):
 		for f in fields:
-			if not _same(cur.get(f), want.get(f)):
+			if want.get(f) is None:
+				if cur.get(f) not in (None, "", 0):
+					return True
+			elif not _same(cur.get(f), want.get(f)):
 				return True
 	return False
 
@@ -570,14 +581,17 @@ def find_item(item_plan):
 	code = item_plan["item_code"]
 	if item_plan["match_existing_code"]:
 		return code if frappe.db.exists("Item", code) else None
-	matches = frappe.get_all(
+	# Compared on catalog_key, the same normalization the approvals use, so a re-digitized
+	# row whose model gained a space still finds its Item instead of creating a second one.
+	want = catalog_key(item_plan["manufacturer"], item_plan["model"])
+	for row in frappe.get_all(
 		"Item",
-		filters={"brand": item_plan["manufacturer"], "custom_model_no": item_plan["model"]},
-		pluck="name",
+		filters={"brand": item_plan["manufacturer"]},
+		fields=["name", "brand", "custom_model_no"],
 		order_by="creation asc",
-	)
-	if matches:
-		return matches[0]
+	):
+		if catalog_key(row.get("brand"), row.get("custom_model_no")) == want:
+			return row["name"]
 	return code if frappe.db.exists("Item", code) else None
 
 
@@ -725,7 +739,10 @@ def load_catalog(catalog_dir=None, dry_run=True):
 	``created``/``updated`` hold ``{key, item_code, changes}``, the others keys (or
 	``{key, error}``). A missing data file is an empty kind, not an error.
 	"""
-	dry_run = bool(int(dry_run)) if isinstance(dry_run, (str, int)) else bool(dry_run)
+	if isinstance(dry_run, str):
+		# Only an explicit no writes: "0", "false", "no", "off". Anything else stays a dry run.
+		dry_run = dry_run.strip().casefold() not in ("0", "false", "no", "off")
+	dry_run = bool(dry_run)
 	folder = Path(catalog_dir) if catalog_dir else CATALOG_DIR
 	meta, approvals = read_approvals(_read_json(folder / APPROVAL_FILE))
 	verified_by = _user_or_none(meta["approved_by"])
@@ -762,6 +779,18 @@ def load_catalog(catalog_dir=None, dry_run=True):
 					for curve in plan["curves"]:
 						changes += apply_curve(
 							item_code, curve, verified_by, dry_run, item_exists=not created
+						)
+					# The pump selectors read item_group "Pumps" only, so a curve on an Item
+					# elsewhere would never reach a design.
+					group = (
+						plan["item"]["fill"]["item_group"]
+						if created
+						else frappe.db.get_value("Item", item_code, "item_group")
+					)
+					if group != GROUPS["pumps"][0]:
+						out["warnings"].append(
+							f"{key}: Item {item_code} is in item group {group!r}; the pump selector reads only "
+							f"{GROUPS['pumps'][0]!r}, so designs will not pick it"
 						)
 				elif kind == "nozzles":
 					changes += apply_profile(item_code, plan, verified_by, dry_run)
