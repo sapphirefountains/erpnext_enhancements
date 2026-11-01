@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.761.0] - 2026-11-01
+## [1.762.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03023. This is
 phase B, stacked on phase A. **Nothing user-facing changes, and the deploy does nothing.** Nothing
