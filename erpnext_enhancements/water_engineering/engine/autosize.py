@@ -638,8 +638,8 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
             if not (s.get("nominal_size") or s.get("id_in")):
                 checks.append(make_check("piping.unsized", BLOCKER, f"Segment {s.get('id')} has no size",
                                          "Piping is custom: pick its size, or set piping to auto.", "piping", ref=s.get("id") or ""))
-        net_d["segments"] = proposed  # solve with the proposal, but report that the model is unsized
-        seg_rows = proposed
+        seg_rows = proposed  # solve with the proposal; the model keeps the designer's (unsized) rows
+    net_solve = dict(net_d, segments=seg_rows)  # shares the pumps list, so pump picks land in the model
 
     # ---- step 7: operating point and pump
     ranking = []
@@ -648,7 +648,7 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
     if _is_auto(setup, "pump") and pump_ids:
         catalog = (catalogs or {}).get("pumps") or []
         klass = next((p.get("generic_class") for p in net_d.get("pumps") or [] if p.get("generic_class")), None)
-        ranking = rank_pumps(net_d, catalog, pump_ids=pump_ids, generic_class=klass, water_temp_f=temp, elevation_ft=elev, rules=rr, vgb=vgb,
+        ranking = rank_pumps(net_solve, catalog, pump_ids=pump_ids, generic_class=klass, water_temp_f=temp, elevation_ft=elev, rules=rr, vgb=vgb,
                              controls=["auto"] if _is_auto(setup, "control") else None)
         if ranking:
             best = ranking[0]
@@ -683,7 +683,7 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
                                      "The pumps keep the curves on the model; add catalog pumps to let the engine pick.", "pump"))
 
     def solve() -> tuple:
-        net = build_network(net_d, water_temp_f=temp, elevation_ft=elev)
+        net = build_network(net_solve, water_temp_f=temp, elevation_ft=elev)
         st = solve_network_si(net)
         return net, _report(net, st, float(rr["npsh_margin_ft"]))
 
