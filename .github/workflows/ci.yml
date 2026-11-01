@@ -2483,6 +2483,17 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # The electrical package (engine/electrical/, phase L of the Fountain Designer,
+      # v1.763.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
+      # feeders, the Article 680 checklist and electrical_report, plus parity with the
+      # Digital Rain Curtain's electrical.js. Plain pytest functions, so its own pytest
+      # step -- `python -m unittest` would collect nothing from these files.
+      - name: Water engineering electrical (bench-free pytest suite)
+        run: >-
+          python -m pytest
+          erpnext_enhancements/tests/test_electrical_sizing.py
+          erpnext_enhancements/tests/test_electrical_report.py
+          erpnext_enhancements/tests/test_electrical_drc_parity.py -q
       # Fountain Designer phase A (v1.760.0): the Darcy solver in engine/hydraulics/, ported from the
       # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
       # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of

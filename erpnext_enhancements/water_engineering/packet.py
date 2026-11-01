@@ -151,7 +151,8 @@ def we_electrical_oneline(design):
         {
             "label": c.get("description"),
             "sub": f"{c.get('load_a')} A" if c.get("load_a") else "",
-            "breaker": c.get("breaker_a"),
+            # The 430.52 maximum, labeled as one: a smaller breaker that starts the pump is allowed.
+            "breaker": f"{c.get('breaker_a')} A max" if c.get("breaker_a") else None,
         }
         for c in sched.get("circuits") or []
     ]

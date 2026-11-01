@@ -44,7 +44,8 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `feature.py` | Feature flow: weirs/slots (Francis), nozzle arrays, orifice nozzles from the Nozzle Profile catalog | DOC-0049 `I - Weir` |
 | `pipe.py` | Velocity, velocity-status banding, Hazen-Williams friction loss, and a size-walker that picks the smallest pipe within limits | DOC-0049 `A - Pipe Size` |
 | `tdh.py` | Total Dynamic Head: minor (fitting) loss, component loss, per-segment sum | DOC-0049 `H - TDH` |
-| `pump.py` | Pump selection by catalog match, plus electrical/breaker sizing | DOC-0049 + engineering standard (see below) |
+| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.763.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
+| `electrical/` | The electrical design (phase L, v1.763.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
 | `safety.py` | VGB / ANSI-APSP-16 suction-outlet anti-entrapment, NPSH cavitation check, Joukowsky water hammer | DOC-0049 `P - Suction Outlets`; HI standards |
 | `drainage.py` | Gravity drainage (Manning's) and surge-basin sizing (Phase 3) | DOC-0049 `10 - Gravity`, `G - Gravity`, `B - Surge Basin` |
 | `chemistry.py` | Chlorinator feed and chemical rate advisory (Phase 2) | DOC-0049 `C - Chemicals`, DOC-0119 |
@@ -62,6 +63,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/fittings.py` | Minor-loss K-factors and component head-loss coefficients | DOC-0049 `H - TDH` |
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
+| `data/nec_tables.py` | NEC tables as data: 310.16 ampacity, 310.15 corrections, 250.122, Chapter 9 Tables 1/4/5/8, 240.6(A), 430.248/430.250 FLC, 430.52(C)(1), 430.7(B), 450.3(B), Article 680 distances | NFPA 70 2023 (2020 numbering noted) |
 | `hydraulics/` | The governing solver (Fountain Designer rebuild, phases A and B): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, the operating point (VFD, PRV, bypass, NPSHa at site elevation), the per-takeoff manifold solve, the **network solver** (several pumps on a header, ring mains), surge and arrestor sizing, and the basin checks (HI 9.8 submergence, drain-back, freeboard, evaporation and spray loss). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
 | `autosize.py` | Fountain Designer phase B: `pick_pipe` (DOC-0049 velocity limits + a 0.04 ft/ft friction-gradient cap), `eval_pump` / `rank_pumps` through the network solve with a fails list, `auto_bypass`, `auto_surge`, `auto_basin`, and `derive` (PLAN.md 2.2 steps 5-8, writing only `auto` sections) | DOC-0049 `SUPPORT`; DRC `presets.js`; HI 9.6.3 |
 | `bom.py` | The BOM: pipe by size with 10% waste in 20 ft sticks, grouped fittings, valves, nozzles, equipment, consumables, labor from the house rules; `cut_list`, `fitting_counts`, `merge_sections` for every phase's `{section, key, description, qty, uom, item_hint}` lines | DRC `checks.js` `bomRows`, `route.js` `cutList` |
@@ -178,6 +180,12 @@ The catalog suite is plain pytest with its own in-memory frappe, so it runs on i
 
 ```bash
 python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+```
+
+The electrical package's suites are plain pytest functions and run in their own CI step:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_electrical_sizing.py erpnext_enhancements/tests/test_electrical_report.py erpnext_enhancements/tests/test_electrical_drc_parity.py -q
 ```
 
 The Fountain Designer's families, model, kits and house rules are pytest suites with their
