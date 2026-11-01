@@ -31,9 +31,12 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
 
 ### Added
 - **Pump Curve**: one record per pump Item and impeller / speed, with `source` (Datasheet / Digitized / Rep-supplied /
-  Generic estimate) and full provenance. Its controller refuses points whose flow is not strictly rising or whose head
-  rises (the operating-point solver would find no duty point, or two), and only warns on a missing shutoff point or a
-  gap. A gap is a jump wider than a quarter of the flow span *and* more than twice the table's smallest step, so an
+  Generic estimate) and full provenance. Its controller refuses points whose flow is not strictly rising, or whose head
+  rises again after the curve has peaked by more than 1 % of the peak (a typo; the operating-point solver would find two
+  duty points). It accepts a *drooping* curve, head climbing from shutoff to a peak first, with a warning: published pool
+  curves do that (Pentair EQ500 reads 77.0 ft at 0 GPM and 77.5 ft at 50 GPM), and 42 of the research catalog's 169
+  pumps would otherwise be refused. A rise after the peak within 1 % is digitizing noise and warns too. It also warns on
+  a missing shutoff point or a gap. A gap is a jump wider than a quarter of the flow span *and* more than twice the table's smallest step, so an
   evenly spaced four-point table is not reported as gappy.
 - **Nozzle Profile** extended for the designer's families, with a **Nozzle Performance Point** table (head or PSI, flow,
   display height and diameter, throw, water over the nozzle). The controller fills head from PSI or the reverse using
@@ -55,6 +58,16 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   best-ranked curve. A pump attached to an Item outside item group Pumps is loaded but warned about, because the pump
   selectors read only that group. It bypasses the Item naming guard with `flags.ignore_naming_guard`, as the other in-request callers whose
   user cannot choose the code do.
+  - Built against the research catalog in `docs/fountain-designer/catalog/` (169 pumps, 176 nozzle and aerator rows, 35
+    lights), which every row of plans and loads in a bench-free run, and a second run changes nothing. Its shapes:
+    `source` as a list of `{url, title, page, accessed}`, `phase` and `listing` as lists, FLA keyed by `"230 1-ph"` with
+    ranges kept as text, VS speeds and impeller trims as `extra_curves`, trims printed as `3-3/4"`.
+  - Approvals name a row by `"Manufacturer|Model"` or by its `id`. Where several rows share a manufacturer + model (nine
+    in the research data, e.g. WhisperFlo 1 HP as a 1-phase -INT and a 3-phase part number), each is told apart by its
+    first part number and must be approved by `id`; approving the shared name alone is refused as ambiguous.
+  - Floating aerators filed as nozzles with no pressure (19 Kasco and Otterbine rows) load as Aerator Items with the
+    aerator fields and no Nozzle Profile.
+  - Notes on a Pump Curve or Nozzle Profile are written once and then left to whoever edits them.
 - **`water_engineering/catalog_reader.py`**: `pump_curve_sets`, `nozzle_profiles` and `light_specs`, the plain-dict read
   interface for the design engine's `derive()`.
 - **Catalog editor**: the Item form's Pump Specifications section (now shown for item group Pumps *or* equipment class
@@ -64,7 +77,7 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
   New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
   user who cannot read them).
-- `tests/test_water_catalog.py` (47 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+- `tests/test_water_catalog.py` (59 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
   rows.
 
 ### Changed

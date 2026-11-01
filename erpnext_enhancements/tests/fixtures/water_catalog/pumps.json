@@ -52,8 +52,9 @@
    "hp": 0.5,
    "curve": [
     {"flow_gpm": 0, "head_ft": 20},
-    {"flow_gpm": 10, "head_ft": 25},
-    {"flow_gpm": 20, "head_ft": 5}
+    {"flow_gpm": 10, "head_ft": 10},
+    {"flow_gpm": 20, "head_ft": 15},
+    {"flow_gpm": 30, "head_ft": 5}
    ],
    "source": {"url": "https://example.invalid/fixture-bad.pdf"},
    "confidence": "digitized"

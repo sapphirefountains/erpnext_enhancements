@@ -5,10 +5,14 @@
 
 The Fountain Designer solves the operating point by intersecting this curve with the
 system curve, so the points have to describe a function the solver can use: flow
-strictly rising, head never rising. A curve that breaks either rule is refused on save,
-because the solver would otherwise find no duty point, or two. A gap in the points
-(no shutoff point, a long jump between two flows) only warns: interpolation still
-works, it is just less certain there.
+strictly rising, and head falling once it has peaked. Head may climb from shutoff to a
+peak first, because published pool-pump curves often "droop" that way (Pentair's EQ500
+reads 77.0 ft at 0 GPM and 77.5 ft at 50 GPM) and refusing them would refuse the
+datasheet. That only warns, since a system whose static head sits inside the droop can
+meet the curve twice. Head rising again after it has fallen is refused: no published
+centrifugal curve does that, and it is a typo. A gap in the points (no shutoff point, a
+long jump between two flows) only warns: interpolation still works, it is just less
+certain there.
 
 :func:`check_points` holds every rule and needs nothing from Frappe but the translator, so the bench-free
 suite (``tests/test_water_catalog.py``) runs it directly.
@@ -24,6 +28,9 @@ from frappe.model.document import Document
 #: more than twice the table's smallest step) is reported as a gap. A typical datasheet table
 #: has 6-12 evenly spaced points.
 GAP_SHARE = 0.25
+#: Past the peak, a rise no larger than this share of the peak head is digitizing noise (a
+#: vector chart read to +/-0.5 ft on a 175 ft curve) and only warns.
+NOISE_SHARE = 0.01
 
 
 def _num(value):
@@ -64,17 +71,33 @@ def check_points(points):
 		if any(get(p, key) is not None and get(p, key) < 0 for p in ordered):
 			errors.append(_("{0} cannot be negative.").format(label))
 
-	for prev, cur in pairwise(ordered):
+	heads = [get(p, "head_ft") for p in ordered]
+	peak = heads.index(max(heads))
+	if peak > 0:
+		warnings.append(
+			_(
+				"Drooping curve: head rises from {0} ft at shutoff to {1} ft at {2} GPM before it falls. "
+				"A system whose static head is in that range can meet the curve twice."
+			).format(f"{heads[0]:g}", f"{heads[peak]:g}", f"{get(ordered[peak], 'flow_gpm'):g}")
+		)
+	for i, (prev, cur) in enumerate(pairwise(ordered)):
 		f0, f1 = get(prev, "flow_gpm"), get(cur, "flow_gpm")
 		h0, h1 = get(prev, "head_ft"), get(cur, "head_ft")
 		if f1 == f0:
 			errors.append(
 				_("Two points share the flow {0} GPM; each flow may appear once.").format(f"{f1:g}")
 			)
-		elif h1 > h0:
+		elif h1 > h0 and i >= peak and h1 - h0 <= NOISE_SHARE * heads[peak]:
+			warnings.append(
+				_(
+					"Head rises {0} ft between {1} and {2} GPM after the peak; within reading noise, check it."
+				).format(f"{h1 - h0:g}", f"{f0:g}", f"{f1:g}")
+			)
+		elif h1 > h0 and i >= peak:
 			errors.append(
 				_(
-					"Head rises from {0} ft to {1} ft between {2} and {3} GPM. Head must fall as flow rises."
+					"Head rises from {0} ft to {1} ft between {2} and {3} GPM, after the curve has peaked. "
+					"Past its peak, head must fall as flow rises."
 				).format(f"{h0:g}", f"{h1:g}", f"{f0:g}", f"{f1:g}")
 			)
 

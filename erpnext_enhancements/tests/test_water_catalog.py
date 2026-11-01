@@ -388,7 +388,7 @@ def test_pump_curve_points_sorted_and_accepted(fake):
 @pytest.mark.parametrize(
     "points, needle",
     [
-        ([{"flow_gpm": 0, "head_ft": 20}, {"flow_gpm": 10, "head_ft": 25}], "Head rises"),
+        ([{"flow_gpm": 0, "head_ft": 20}, {"flow_gpm": 10, "head_ft": 10}, {"flow_gpm": 20, "head_ft": 15}], "after the curve has peaked"),
         ([{"flow_gpm": 0, "head_ft": 20}, {"flow_gpm": 0, "head_ft": 18}], "share the flow"),
         ([{"flow_gpm": 0, "head_ft": 20}], "at least two"),
         ([{"flow_gpm": 0, "head_ft": 20}, {"flow_gpm": 10, "head_ft": None}], "both a flow and a head"),
@@ -401,6 +401,16 @@ def test_pump_curve_points_refused(fake, points, needle):
 
     _ordered, errors, _warnings = check_points(points)
     assert any(needle in e for e in errors), errors
+
+
+def test_a_drooping_curve_is_accepted_with_a_warning(fake):
+    """Pentair EQ500 as published: 77.0 ft at shutoff, 77.5 ft at 50 GPM, then falling."""
+    from erpnext_enhancements.water_engineering.doctype.pump_curve.pump_curve import check_points
+
+    points = [(0, 77.0), (50, 77.5), (100, 77.3), (150, 74.9), (200, 69.5), (250, 60.0)]
+    _ordered, errors, warnings = check_points([{"flow_gpm": f, "head_ft": h} for f, h in points])
+    assert errors == []
+    assert any("Drooping curve" in w and "77.5 ft at 50 GPM" in w for w in warnings)
 
 
 def test_pump_curve_gaps_only_warn(fake):
@@ -756,3 +766,131 @@ def test_dry_run_parsing(fake, value, dry):
     from erpnext_enhancements.water_engineering import catalog_seed
 
     assert catalog_seed.load_catalog(catalog_dir=FIXTURES, dry_run=value)["dry_run"] is dry
+
+
+# ----------------------------------------------------------------------------- the research data's shapes
+# docs/fountain-designer/catalog/README.md: source is a list of {url, title, page, accessed},
+# phase and listing are lists, impeller trims are printed text, VS speeds and trims come as
+# extra_curves, the same model can be several part numbers, and floating aerators are filed as
+# nozzles with no pressure. Rows below are INVENTED in that shape.
+
+
+def _write(tmp_path, pumps=(), nozzles=(), lights=(), approved=None):
+    (tmp_path / "pumps.json").write_text(json.dumps(list(pumps)), encoding="utf-8")
+    (tmp_path / "nozzles.json").write_text(json.dumps(list(nozzles)), encoding="utf-8")
+    (tmp_path / "lights.json").write_text(json.dumps(list(lights)), encoding="utf-8")
+    base = {"approved_by": "fixture.approver@example.invalid", "approved_on": "2026-11-01"}
+    (tmp_path / "approved.json").write_text(json.dumps({**base, **(approved or {})}), encoding="utf-8")
+
+
+def _twin(part, phase, **extra):
+    return {
+        "id": f"fixtureco-twin-{part.lower()}",
+        "manufacturer": "Fixtureco",
+        "series": "Twin",
+        "model": "FIXTURE-TWIN",
+        "part_no": [f"{part} ({phase}-ph)"],
+        "hp": 1,
+        "voltage": [230],
+        "phase": [phase],
+        "fla_amps": {f"230 {phase}-ph": "4.0-4.4", "208 3-ph": 5.1},
+        "rpm": 3450,
+        "curve": [{"flow_gpm": 0, "head_ft": 50}, {"flow_gpm": 40, "head_ft": 40}, {"flow_gpm": 80, "head_ft": 20}],
+        "listing": ["NSF/ANSI 50", "UL 1081"],
+        "source": [{"url": "https://example.invalid/twin.pdf", "title": "FIXTURE twin brochure", "page": 3,
+                    "accessed": "2026-11-01", "what": "curve"}],
+        "confidence": "digitized",
+        "method": "vector",
+        "error_band_pct": 2,
+        "notes": "Invented row.",
+        **extra,
+    }
+
+
+def test_shared_model_names_split_by_part_number_and_approve_by_id(fake, tmp_path):
+    _write(
+        tmp_path,
+        pumps=[_twin("FX-T1", 1), _twin("FX-T3", 3)],
+        approved={"pumps": ["fixtureco-twin-fx-t1", "Fixtureco|FIXTURE-TWIN"]},
+    )
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    assert [e["key"] for e in summary["pumps"]["created"]] == ["fixtureco|fixture-twin fx-t1"]
+    assert "approve this row by its id" in summary["pumps"]["errors"][0]["error"]
+    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-TWIN-FX-T1"]
+    assert item["custom_model_no"] == "FIXTURE-TWIN FX-T1" and item["custom_pump_phase"] == "1"
+    assert item["custom_pump_fla_amps"] == 5.1  # the first value that is a number; "4.0-4.4" is a range
+    assert item["custom_ul_listing"] == "NSF/ANSI 50; UL 1081"
+    assert item["custom_spec_revision"] == "FIXTURE twin brochure (accessed 2026-11-01), p. 3"
+    assert "4.0-4.4 A @ 230 1-ph" in item["description"]
+    curve = next(iter(fake.store["Pump Curve"].values()))
+    assert "Read by vector, about +/-2 %." in curve["notes"] and "Invented row." in curve["notes"]
+
+
+def test_vs_speeds_and_printed_impeller_trims_become_separate_curves(fake, tmp_path):
+    vs = _twin("FX-VS", 1, variable_speed=True, rpm=None, curve_speed_rpm=3450, extra_curves=[
+        {"speed_rpm": 1725, "curve": [{"flow_gpm": 0, "head_ft": 12.5}, {"flow_gpm": 40, "head_ft": 5}]},
+    ])
+    trims = _twin("FX-TR", 3, impeller_dia_in='4"', extra_curves=[
+        {"speed_rpm": 3450, "impeller_dia_in": '3-1/2"', "curve": [{"flow_gpm": 0, "head_ft": 38}, {"flow_gpm": 60, "head_ft": 15}]},
+        {"speed_rpm": 3450, "impeller_dia_in": '3-1/2"', "curve": [{"flow_gpm": 0, "head_ft": 37}, {"flow_gpm": 60, "head_ft": 14}]},
+    ])
+    trims["model"] = "FIXTURE-TRIM"
+    vs["model"] = "FIXTURE-VS"
+    _write(tmp_path, pumps=[vs, trims], approved={"pumps": [vs["id"], trims["id"]]})
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    by_item = {}
+    for c in fake.store["Pump Curve"].values():
+        by_item.setdefault(c["item"], {})[c["curve_label"]] = c
+    vs_curves = by_item["PUMP-FIXTURECO-FIXTURE-VS"]
+    assert set(vs_curves) == {"3450 rpm", "1725 rpm"} and vs_curves["1725 rpm"]["speed_pct"] == 50
+    assert set(by_item["PUMP-FIXTURECO-FIXTURE-TRIM"]) == {"4 in impeller", "3.5 in impeller", "3.5 in impeller (2)"}
+    assert catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)["pumps"]["updated"] == []
+
+
+@pytest.mark.parametrize(
+    "text, inches",
+    [(4, 4.0), ('4"', 4.0), ('3-3/4"', 3.75), ("3 3/4 in", 3.75), ('4-3/16"', 4.1875), ("4.25", 4.25), ("trim A", None)],
+)
+def test_printed_inches(fake, text, inches):
+    from erpnext_enhancements.water_engineering.catalog_seed import _inches
+
+    assert _inches(text) == inches
+
+
+def test_a_floating_aerator_filed_as_a_nozzle_becomes_an_aerator_item(fake, tmp_path):
+    aerator = {
+        "id": "fixtureco-aerator-1hp",
+        "manufacturer": "Fixtureco",
+        "model": "FIXTURE-AER 1 HP",
+        "part_no": None,
+        "type": "other",
+        "min_submergence_in": 30,
+        "rows": [{"pressure_psi": None, "head_ft": None, "flow_gpm": 400, "height_ft": 5, "spread_ft": 12, "pattern": "Fan"}],
+        "listing": ["ETL"],
+        "source": [{"url": "https://example.invalid/aer.pdf", "title": "FIXTURE aerator sheet"}],
+        "confidence": "table",
+        "notes": "115/1/15 A (invented).",
+    }
+    _write(tmp_path, nozzles=[aerator], approved={"nozzles": [aerator["id"]]})
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    assert summary["nozzles"]["errors"] == []
+    item = fake.store["Item"]["AERATOR-FIXTURECO-FIXTURE-AER-1-HP"]
+    assert item["item_group"] == "Aerators" and item["custom_equipment_class"] == "Aerator"
+    assert item["custom_aerator_pattern_height_ft"] == 5 and item["custom_aerator_pattern_diameter_ft"] == 12
+    assert item["custom_aerator_min_depth_ft"] == 2.5
+    assert "400 GPM" in item["description"] and "115/1/15 A" in item["description"]
+    assert "Nozzle Profile" not in fake.store
+
+
+def test_a_wiggle_within_reading_noise_after_the_peak_only_warns(fake):
+    from erpnext_enhancements.water_engineering.doctype.pump_curve.pump_curve import check_points
+
+    points = [(0, 176.1), (20, 175.3), (40, 175.7), (80, 170.0), (120, 150.0)]
+    _ordered, errors, warnings = check_points([{"flow_gpm": f, "head_ft": h} for f, h in points])
+    assert errors == [] and any("within reading noise" in w for w in warnings)

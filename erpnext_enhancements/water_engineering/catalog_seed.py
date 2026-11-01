@@ -13,13 +13,15 @@ repo, in ``docs/fountain-designer/catalog/``:
 	{
 	  "approved_by": "nikolas.bradshaw@sapphirefountains.com",
 	  "approved_on": "2026-11-05",
-	  "pumps":   ["Atlantic|TT1500", {"key": "Atlantic|A-21", "item_code": "500141"}],
+	  "pumps":   ["pentair-eq-eq500", "Atlantic|TT1500", {"key": "Atlantic|A-21", "item_code": "500141"}],
 	  "nozzles": ["OASE|Geyser 35-10 E"],
 	  "lights":  []
 	}
 
-  A plain string approves the row as it is. An object may also map the row onto an Item that
-  already exists (``item_code``) or choose the new Item's ``item_name`` / ``item_code``.
+  A plain string approves the row as it is: ``"Manufacturer|Model"``, or the row's ``id`` (no
+  ``|``). An object (``key`` or ``id``) may also map the row onto an Item that already exists
+  (``item_code``) or choose the new Item's ``item_name`` / ``item_code``. Rows that share a
+  manufacturer + model are told apart by part number and must be approved by ``id``.
 
 Run it from a shell, dry run first (nothing written; the summary says what would change)::
 
@@ -76,6 +78,7 @@ GROUPS = {
 	"pumps": ("Pumps", "All Item Groups"),
 	"nozzles": ("Nozzles", "Aquatic Equipment"),
 	"lights": ("Lights", "Aquatic Equipment"),
+	"aerators": ("Aerators", "Aquatic Equipment"),
 }
 #: ``confidence`` in the data -> Pump Curve ``source``.
 CONFIDENCE_SOURCE = {
@@ -108,8 +111,24 @@ NOZZLE_TYPE_WORDS = [
 	("smooth", "Orifice Jet"),
 	("comet", "Orifice Jet"),
 ]
+#: The research data's own ``type`` vocabulary, matched before the word search.
+NOZZLE_TYPES_EXACT = {
+	"orifice jet": "Orifice Jet",
+	"foam/aerating": "Foam / Aerating",
+	"laminar": "Laminar",
+	"cascade/fan": "Cascade / Fan",
+	"geyser": "Geyser",
+	"bubbler": "Bubbler",
+	"spray ring": "Spray Ring",
+	"water screen": "Water Screen",
+	"sheet fall": "Sheet Fall",
+	"other": "Other",
+}
 #: Types whose display moves with the water depth over the nozzle.
 LEVEL_SENSITIVE_TYPES = {"Foam / Aerating", "Geyser"}
+#: A printed length in inches: an optional whole part, then a fraction or a decimal, then an
+#: optional unit (``4"``, ``3-3/4"``, ``3 3/4 in``, ``4.25``).
+INCHES = r'\s*(?:(\d+(?:\.\d+)?)[\s-]+)?(?:(\d+)/(\d+)|(\d+(?:\.\d+)?))\s*(?:"|in\.?|inch(?:es)?)?\s*'
 LIGHT_CONTROL = {"switched": "Switched", "dmx": "DMX", "proprietary": "Proprietary"}
 
 
@@ -149,21 +168,58 @@ def rows_of(data, kind):
 
 
 def read_approvals(data):
-	"""``(meta, {kind: {key: overrides}})`` from ``approved.json``'s parsed content."""
+	"""``(meta, {kind: {"keys": {key: overrides}, "ids": {id: overrides}}})`` from ``approved.json``.
+
+	An entry is a ``"Manufacturer|Model"`` string, a row ``id`` string (no ``|``), or an object
+	with ``key`` or ``id`` plus overrides (``item_code``, ``item_name``).
+	"""
 	data = data or {}
 	meta = {"approved_by": data.get("approved_by") or "", "approved_on": data.get("approved_on") or ""}
 	out = {}
 	for kind in FILES:
-		entries = {}
+		keys, ids = {}, {}
 		for entry in data.get(kind) or []:
-			if isinstance(entry, str):
+			overrides = {}
+			if isinstance(entry, dict):
+				overrides = {k: v for k, v in entry.items() if k not in ("key", "id")}
+				ref = entry.get("key") or ("" if not entry.get("id") else None)
+				if ref is None:
+					ids[str(entry["id"]).strip()] = overrides
+					continue
+				entry = ref
+			if not isinstance(entry, str) or not entry.strip():
+				continue
+			if "|" in entry:
 				manufacturer, _sep, model = entry.partition("|")
-				entries[catalog_key(manufacturer, model)] = {}
-			elif isinstance(entry, dict) and entry.get("key"):
-				manufacturer, _sep, model = str(entry["key"]).partition("|")
-				entries[catalog_key(manufacturer, model)] = {k: v for k, v in entry.items() if k != "key"}
-		out[kind] = entries
+				keys[catalog_key(manufacturer, model)] = overrides
+			else:
+				ids[entry.strip()] = overrides
+		out[kind] = {"keys": keys, "ids": ids}
 	return meta, out
+
+
+def resolve_rows(rows):
+	"""``[(key, base_key, row)]``: each row with its identity key.
+
+	The key is manufacturer + model, except where several rows of a file share it (the same
+	model sold as separate part numbers, e.g. a 1-phase and a 3-phase SKU): then each such row
+	is told apart by its first part number, which becomes part of its model, so the rows reach
+	separate Items instead of overwriting one another on every run.
+	"""
+	counts = {}
+	for row in rows:
+		base = catalog_key(row.get("manufacturer"), row.get("model"))
+		counts[base] = counts.get(base, 0) + 1
+	out = []
+	for row in rows:
+		base = catalog_key(row.get("manufacturer"), row.get("model"))
+		if counts[base] > 1:
+			parts = row.get("part_no")
+			part = (parts[0] if isinstance(parts, list) and parts else parts) or row.get("id") or ""
+			part = str(part).split(" (")[0].strip()
+			row = {**row, "model": f"{str(row.get('model') or '').strip()} {part}".strip()}
+		out.append((catalog_key(row.get("manufacturer"), row.get("model")), base, row))
+	return out
 
 
 # ----------------------------------------------------------------------------- planning
@@ -209,12 +265,26 @@ def _fmt(value):
 	return f"{number:g}" if number is not None else str(value)
 
 
+def _text(value):
+	"""A list (``listing``, ``part_no``) joined with "; ", a scalar as text, blank as None."""
+	if isinstance(value, (list, tuple)):
+		value = "; ".join(str(v).strip() for v in value if v not in (None, ""))
+	value = str(value).strip() if value not in (None, "") else ""
+	return value or None
+
+
 def provenance(row, meta):
-	"""``{url, document, page, generic}`` from a row's ``source`` and ``confidence``."""
+	"""``{url, document, page, generic}`` from a row's ``source`` and ``confidence``.
+
+	``source`` is a list of ``{url, title, page, accessed}`` in the research data (the first
+	entry is the one the numbers were read from), or a single such object, or a bare URL.
+	"""
 	source = row.get("source") or {}
+	if isinstance(source, list):
+		source = next((s for s in source if isinstance(s, dict)), {})
 	if isinstance(source, str):
 		source = {"url": source}
-	document = str(source.get("document") or "").strip()
+	document = str(source.get("document") or source.get("title") or "").strip()
 	if source.get("accessed"):
 		document = f"{document} (accessed {source['accessed']})".strip()
 	confidence = str(row.get("confidence") or "").strip().casefold()
@@ -261,6 +331,20 @@ def _item_plan(kind, manufacturer, model, approval, name_word, specs, descriptio
 	}
 
 
+def _inches(value):
+	"""Inches from a number or printed text: ``4``, ``'4"'``, ``'3-3/4"'``, ``'3/4 in'``, ``'4.25'``."""
+	number = _num(value)
+	if number is not None or value in (None, ""):
+		return number
+	match = re.fullmatch(INCHES, str(value))
+	if not match:
+		return None
+	whole, num, den, plain = match.groups()
+	if plain is not None:
+		return float(plain) if whole is None else None  # "3 4.5" is not a measurement
+	return float(whole or 0) + float(num) / float(den)
+
+
 def _bhp(point):
 	"""Brake horsepower of a curve point: given directly, or converted from ``kw``."""
 	bhp = _num(_pick(point, "power_bhp", "bhp"))
@@ -277,16 +361,18 @@ def plan_pump(row, approval, meta):
 	voltages = [_fmt(v) for v in _as_list(_pick(row, "voltage", "voltages"))]
 	fla = _pick(row, "fla_amps", "fla")
 	if isinstance(fla, dict):
-		fla_map = {_fmt(k): _num(v) for k, v in fla.items()}
-		first_fla = fla_map.get(voltages[0]) if voltages else None
-		if first_fla is None and fla_map:
-			first_fla = next(iter(fla_map.values()))
+		# Keys are a voltage or "voltage phase" ("230 1-ph"); values as printed, so a range
+		# stays a string. The Item's single FLA is the first value that is a number.
+		fla_map = {str(k): v for k, v in fla.items() if v not in (None, "")}
+		first_fla = next((_num(v) for v in fla_map.values() if _num(v) is not None), None)
 	else:
 		first_fla = _num(fla)
 		fla_map = {voltages[0]: first_fla} if (voltages and first_fla is not None) else {}
 	rpm = _pick(row, "rpm")
 	variable = bool(row.get("variable_speed")) or str(rpm or "").strip().casefold().startswith("var")
-	rpm = None if variable else (int(_num(rpm)) if _num(rpm) else None)
+	rpm = int(_num(rpm)) if _num(rpm) else None
+	# A VS pump's main curve is drawn at curve_speed_rpm (its maximum speed).
+	curve_rpm_main = int(_num(row["curve_speed_rpm"])) if _num(row.get("curve_speed_rpm")) else rpm
 	source = CONFIDENCE_SOURCE.get(str(row.get("confidence") or "").strip().casefold(), "Digitized")
 	if prov["generic"]:
 		source = "Generic estimate"
@@ -294,11 +380,27 @@ def plan_pump(row, approval, meta):
 	curve_rows = row.get("curves") or [
 		{
 			"points": _pick(row, "curve", "curve_points", "points") or [],
-			"rpm": rpm,
-			"impeller_dia_in": _pick(row, "impeller_dia_in"),
+			"rpm": curve_rpm_main,
+			"impeller_dia_in": _inches(_pick(row, "impeller_dia_in")),
 		}
 	]
+	for extra in row.get("extra_curves") or []:
+		extra_rpm = _num(extra.get("speed_rpm"))
+		speed_pct = _num(extra.get("speed_pct"))
+		if speed_pct is None and extra_rpm and curve_rpm_main:
+			speed_pct = round(100.0 * extra_rpm / curve_rpm_main, 1)
+		curve_rows.append(
+			{
+				"points": extra.get("curve") or extra.get("points") or [],
+				"rpm": extra_rpm,
+				"speed_pct": speed_pct,
+				"impeller_dia_in": _inches(extra.get("impeller_dia_in")),
+				"label": extra.get("label"),
+			}
+		)
 	curves, warnings = [], []
+	if row.get("alt_curves"):
+		warnings.append("alt_curves (a second published curve that disagrees) not loaded")
 	for spec in curve_rows:
 		points = [
 			{
@@ -314,7 +416,7 @@ def plan_pump(row, approval, meta):
 		if errors:
 			raise CatalogRowError(" ".join(str(e) for e in dict.fromkeys(errors)))
 		curve_rpm = int(_num(spec["rpm"])) if _num(spec.get("rpm")) else (None if variable else rpm)
-		impeller = _num(spec.get("impeller_dia_in"))
+		impeller = _inches(spec.get("impeller_dia_in"))
 		speed = _num(spec.get("speed_pct")) or 100
 		label = spec.get("label") or spec.get("curve_label")
 		if not label:
@@ -326,9 +428,18 @@ def plan_pump(row, approval, meta):
 				label = f"{speed:g} % speed"
 			else:
 				label = "Full speed" if variable else "Published curve"
-		notes = [f"Seeded from docs/fountain-designer/catalog/pumps.json ({manufacturer} {model})."]
+		notes = [f"Seeded from docs/fountain-designer/catalog/pumps.json ({row.get('id') or model})."]
 		if variable:
 			notes.append("Variable-speed pump.")
+		if row.get("method"):
+			band = (
+				f", about +/-{_fmt(row['error_band_pct'])} %"
+				if row.get("error_band_pct") not in (None, "")
+				else ""
+			)
+			notes.append(f"Read by {row['method']}{band}.")
+		if row.get("notes"):
+			notes.append(str(row["notes"]))
 		if prov["approved_by"]:
 			notes.append(f"Approved by {prov['approved_by']} on {prov['approved_on']}.")
 		curves.append(
@@ -352,26 +463,49 @@ def plan_pump(row, approval, meta):
 		)
 		warnings += [f"{label}: {w}" for w in curve_warnings]
 
+	# The label is a curve's key on its Item, so two curves of one row must never share it.
+	seen = {}
+	for curve in curves:
+		label = curve["curve_label"]
+		seen[label] = seen.get(label, 0) + 1
+		if seen[label] > 1:
+			curve["curve_label"] = f"{label} ({seen[label]})"
+
 	# The Item's ratings describe the curve the designs use: full speed, sourced, largest impeller.
 	main = min(curves, key=catalog_reader.curve_rank)
 	max_flow = _num(row.get("max_flow_gpm")) or main["max_flow_gpm"]
 	shutoff = _num(row.get("shutoff_head_ft")) or main["shutoff_head_ft"] or main["points"][0]["head_ft"]
-	phase = str(int(_num(row.get("phase")))) if _num(row.get("phase")) in (1.0, 3.0) else None
+	# custom_pump_phase holds one phase; a row covering 1- and 3-phase variants leaves it blank
+	# and lists both in the description (or map each part number to its own Item in approved.json).
+	phases = [int(_num(p)) for p in _as_list(row.get("phase")) if _num(p) in (1.0, 3.0)]
+	phase = str(phases[0]) if len(set(phases)) == 1 else None
 	hp = _num(row.get("hp"))
 	connections = _as_list(_pick(row, "connection_sizes", "connections", "connection_size"))
+	if not connections:
+		ports = [
+			f"suction {_fmt(row['suction_in'])} in" if row.get("suction_in") else "",
+			f"discharge {_fmt(row['discharge_in'])} in" if row.get("discharge_in") else "",
+			str(row.get("connection_type") or ""),
+		]
+		connections = [p for p in ports if p]
 	parts = [f"{manufacturer} {row.get('series') or ''} {model} pump".replace("  ", " ")]
 	if hp:
 		parts.append(f"{hp:g} HP")
+	if _num(row.get("total_hp")):
+		parts.append(f"{_fmt(row['total_hp'])} THP")
 	if voltages:
 		parts.append(f"{'/'.join(voltages)} V")
-	if phase:
-		parts.append(f"{phase}-phase")
+	if phases:
+		parts.append("/".join(str(p) for p in dict.fromkeys(phases)) + "-phase")
 	if fla_map:
-		parts.append("FLA " + ", ".join(f"{a:g} A @ {v} V" for v, a in fla_map.items() if a is not None))
+		parts.append(
+			"FLA "
+			+ ", ".join(f"{_fmt(a)} A @ {v}{' V' if _num(v) is not None else ''}" for v, a in fla_map.items())
+		)
 	if connections:
 		parts.append(f"connections {', '.join(str(c) for c in connections)}")
-	if row.get("part_no"):
-		parts.append(f"part no. {row['part_no']}")
+	if _text(row.get("part_no")):
+		parts.append(f"part no. {_text(row['part_no'])}")
 	specs = {
 		"custom_equipment_class": "Pump",
 		"custom_model_no": model,
@@ -381,7 +515,7 @@ def plan_pump(row, approval, meta):
 		"custom_pump_phase": phase,
 		"custom_pump_voltage": "/".join(voltages) or None,
 		"custom_pump_fla_amps": first_fla,
-		"custom_ul_listing": _pick(row, "listing", "ul_listing"),
+		"custom_ul_listing": _text(_pick(row, "listing", "ul_listing")),
 	}
 	item = _item_plan("pumps", manufacturer, model, approval, "PUMP", specs, "; ".join(parts) + ".", prov)
 	return {"key": catalog_key(manufacturer, model), "item": item, "curves": curves, "warnings": warnings}
@@ -389,16 +523,59 @@ def plan_pump(row, approval, meta):
 
 def nozzle_type_for(text):
 	"""Map the data's free-text nozzle type onto a Nozzle Profile ``nozzle_type`` option."""
-	words = str(text or "").casefold()
+	words = " ".join(str(text or "").casefold().split())
+	if words in NOZZLE_TYPES_EXACT:
+		return NOZZLE_TYPES_EXACT[words]
 	for word, option in NOZZLE_TYPE_WORDS:
 		if word in words:
 			return option
 	return "Other"
 
 
-def plan_nozzle(row, approval, meta):
-	"""``{key, item, profile, warnings}`` for one ``nozzles.json`` row. Raises CatalogRowError."""
+def plan_aerator(row, approval, meta):
+	"""``{key, item, profile: None, warnings}`` for a floating aerator filed in ``nozzles.json``.
+
+	The research data records Otterbine and Kasco floating aerators as one "nozzle" per unit
+	and spray pattern, with a display height and spread but no pressure: they are bought as a
+	unit, not fed by the designer's pump. So they become Aerator Items with the aerator fields,
+	and no Nozzle Profile. HP and electrical data are printed in the row's notes only, which go
+	into the description for the designer to read.
+	"""
 	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	prov = provenance(row, meta)
+	first = (_pick(row, "rows", "points") or [{}])[0]
+	submergence = _num(row.get("min_submergence_in"))
+	flow = _num(first.get("flow_gpm"))
+	specs = {
+		"custom_equipment_class": "Aerator",
+		"custom_model_no": model,
+		"custom_aerator_pattern_height_ft": _num(first.get("height_ft")),
+		"custom_aerator_pattern_diameter_ft": _num(first.get("spread_ft")),
+		"custom_aerator_min_depth_ft": round(submergence / 12.0, 2) if submergence else None,
+		"custom_ul_listing": _text(row.get("listing")),
+	}
+	parts = [f"{manufacturer} {model} floating aerator"]
+	if first.get("pattern"):
+		parts.append(f"pattern {first['pattern']}")
+	if flow:
+		parts.append(f"{flow:g} GPM")
+	if _text(row.get("part_no")):
+		parts.append(f"part no. {_text(row['part_no'])}")
+	description = "; ".join(parts) + "." + (f" {row['notes']}" if row.get("notes") else "")
+	item = _item_plan("aerators", manufacturer, model, approval, "AERATOR", specs, description, prov)
+	return {"key": catalog_key(manufacturer, model), "item": item, "profile": None, "warnings": []}
+
+
+def plan_nozzle(row, approval, meta):
+	"""``{key, item, profile, warnings}`` for one ``nozzles.json`` row. Raises CatalogRowError.
+
+	A row none of whose performance rows has a pressure or head is a floating aerator and is
+	handed to :func:`plan_aerator`.
+	"""
+	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	table = _pick(row, "rows", "points", "performance") or []
+	if table and all(_pick(r, "pressure_psi", "psi", "head_ft") is None for r in table):
+		return plan_aerator(row, approval, meta)
 	prov = provenance(row, meta)
 	nozzle_type = nozzle_type_for(_pick(row, "type", "nozzle_type"))
 	points = []
@@ -427,6 +604,11 @@ def plan_nozzle(row, approval, meta):
 	if level_sensitive is None:
 		level_sensitive = nozzle_type in LEVEL_SENSITIVE_TYPES
 	inlet = _pick(row, "inlet_size", "connection_size")
+	notes = [f"Seeded from docs/fountain-designer/catalog/nozzles.json ({row.get('id') or model})."]
+	if row.get("water_level_below_top_in") not in (None, ""):
+		notes.append(f"Water level {_fmt(row['water_level_below_top_in'])} in below the nozzle top.")
+	if row.get("notes"):
+		notes.append(str(row["notes"]))
 	profile = {
 		"profile_name": f"{manufacturer} {model}",
 		"manufacturer": manufacturer,
@@ -435,7 +617,7 @@ def plan_nozzle(row, approval, meta):
 		"is_generic_estimate": 1 if prov["generic"] else 0,
 		"connection_size": str(inlet) if inlet is not None else None,
 		"level_sensitive": 1 if level_sensitive else 0,
-		"min_depth_in": _num(row.get("min_depth_in")),
+		"min_depth_in": _num(_pick(row, "min_depth_in", "min_submergence_in")),
 		"max_depth_in": _num(row.get("max_depth_in")),
 		"recommended_beam_deg": _num(row.get("recommended_beam_deg")),
 		"source_url": prov["url"] or None,
@@ -444,16 +626,25 @@ def plan_nozzle(row, approval, meta):
 		"verified_on": prov["approved_on"] or None,
 		"performance": ordered,
 	}
-	# The rated-GPM method's anchor, from the middle row: only where the profile has none, so
-	# a designer's own Cd / rated values are never replaced.
-	fill = {"rated_gpm": mid["flow_gpm"], "rated_head_ft": mid["head_ft"]}
+	# The rated-GPM method's anchor, from the middle row, and a published orifice / Cd: only
+	# where the profile has none, so a designer's own values are never replaced.
+	fill = {
+		"notes": " ".join(notes),
+		"rated_gpm": mid["flow_gpm"],
+		"rated_head_ft": mid["head_ft"],
+		"orifice_diameter_in": _num(row.get("orifice_in")),
+		"discharge_coefficient": _num(row.get("discharge_coefficient")),
+	}
 	specs = {
 		"custom_equipment_class": "Nozzle",
 		"custom_model_no": model,
-		"custom_ul_listing": _pick(row, "listing"),
+		"custom_ul_listing": _text(row.get("listing")),
 	}
 	description = (
-		f"{manufacturer} {model} nozzle ({nozzle_type})" + (f", {inlet} inlet" if inlet else "") + "."
+		f"{manufacturer} {model} nozzle ({nozzle_type})"
+		+ (f", {inlet} inlet" if inlet else "")
+		+ (f", part no. {_text(row['part_no'])}" if _text(row.get("part_no")) else "")
+		+ "."
 	)
 	item = _item_plan("nozzles", manufacturer, model, approval, "NOZZLE", specs, description, prov)
 	return {
@@ -483,12 +674,13 @@ def plan_light(row, approval, meta):
 		"custom_beam_deg": _num(_pick(row, "beam_deg", "beam")),
 		"custom_light_control": control,
 		"custom_max_depth_ft": _num(row.get("max_depth_ft")),
-		"custom_ip_rating": _pick(row, "ip_rating"),
-		"custom_ul_listing": _pick(row, "listing", "ul_listing"),
+		"custom_ip_rating": _text(row.get("ip_rating")),
+		"custom_ul_listing": _text(_pick(row, "listing", "ul_listing")),
 	}
-	description = f"{manufacturer} {model} underwater light, {watts:g} W" + (
-		f", {'/'.join(voltages)} V." if voltages else "."
-	)
+	volts = "/".join(voltages)
+	if volts and all(_num(v) is not None for v in voltages):
+		volts += " V"
+	description = f"{manufacturer} {model} underwater light, {watts:g} W" + (f", {volts}." if volts else ".")
 	item = _item_plan("lights", manufacturer, model, approval, "LIGHT", specs, description, prov)
 	return {"key": catalog_key(manufacturer, model), "item": item, "warnings": []}
 
@@ -553,8 +745,8 @@ def _user_or_none(user):
 	return user if user and frappe.db.exists("User", user) else None
 
 
-def _ensure_group(kind):
-	group, parent = GROUPS[kind]
+def _ensure_group(group):
+	parent = dict(GROUPS.values()).get(group, "All Item Groups")
 	if frappe.db.exists("Item Group", group):
 		return
 	if parent != "All Item Groups" and not frappe.db.exists("Item Group", parent):
@@ -602,7 +794,7 @@ def apply_item(kind, item_plan, verified_by, dry_run):
 	existing = find_item(item_plan)
 	if not existing:
 		if not dry_run:
-			_ensure_group(kind)
+			_ensure_group(item_plan["fill"]["item_group"])
 			_ensure_brand(item_plan["fill"].get("brand"))
 			doc = frappe.get_doc(
 				{
@@ -640,7 +832,7 @@ NOZZLE_POINT_FIELDS = (
 
 def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
 	"""Create or update one Pump Curve, keyed on Item + label. Returns the change lines."""
-	fields = {k: v for k, v in curve.items() if k != "points"}
+	fields = {k: v for k, v in curve.items() if k not in ("points", "notes")}
 	fields["verified_by"] = verified_by
 	name = None
 	if item_exists:
@@ -655,6 +847,7 @@ def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
 					"doctype": "Pump Curve",
 					"item": item_code,
 					**{k: v for k, v in fields.items() if v is not None},
+					"notes": curve.get("notes"),
 					"points": [{f: p.get(f) for f in CURVE_POINT_FIELDS} for p in curve["points"]],
 				}
 			)
@@ -662,7 +855,8 @@ def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
 			return [f"Pump Curve {doc.name} ({curve['curve_label']}) created"]
 		return [f"Pump Curve ({curve['curve_label']}) would be created"]
 	doc = frappe.get_doc("Pump Curve", name)
-	changed = _apply_fields(doc, fields)
+	# Notes are filled once and then belong to whoever edits the curve.
+	changed = _apply_fields(doc, fields) + _apply_fields(doc, {"notes": curve.get("notes")}, fill_only=True)
 	if _rows_differ(doc.get("points") or [], curve["points"], CURVE_POINT_FIELDS):
 		changed.append("points")
 		doc.set("points", [])
@@ -757,16 +951,30 @@ def load_catalog(catalog_dir=None, dry_run=True):
 
 	for kind, filename in FILES.items():
 		out = summary[kind] = _empty_summary()
-		approved = approvals.get(kind, {})
-		seen = set()
-		for row in rows_of(_read_json(folder / filename), kind):
-			key = catalog_key(row.get("manufacturer"), row.get("model"))
-			seen.add(key)
-			if key not in approved:
+		approved = approvals.get(kind) or {"keys": {}, "ids": {}}
+		by_key, by_id = approved["keys"], approved["ids"]
+		seen_keys, seen_ids = set(), set()
+		for key, base, row in resolve_rows(rows_of(_read_json(folder / filename), kind)):
+			row_id = str(row.get("id") or "").strip()
+			seen_keys.update((key, base))
+			seen_ids.add(row_id)
+			if row_id and row_id in by_id:
+				approval = by_id[row_id]
+			elif key in by_key:
+				approval = by_key[key]
+			elif base != key and base in by_key:
+				out["errors"].append(
+					{
+						"key": key,
+						"error": f"{base} names {row_id or 'several rows'} and others; approve this row by its id",
+					}
+				)
+				continue
+			else:
 				out["unapproved"].append(key)
 				continue
 			try:
-				plan = PLANNERS[kind](row, approved[key], meta)
+				plan = PLANNERS[kind](row, approval, meta)
 			except CatalogRowError as exc:
 				out["errors"].append({"key": key, "error": str(exc)})
 				continue
@@ -792,7 +1000,7 @@ def load_catalog(catalog_dir=None, dry_run=True):
 							f"{key}: Item {item_code} is in item group {group!r}; the pump selector reads only "
 							f"{GROUPS['pumps'][0]!r}, so designs will not pick it"
 						)
-				elif kind == "nozzles":
+				elif kind == "nozzles" and plan.get("profile"):
 					changes += apply_profile(item_code, plan, verified_by, dry_run)
 			except Exception as exc:
 				if not dry_run:
@@ -806,7 +1014,7 @@ def load_catalog(catalog_dir=None, dry_run=True):
 				out["updated"].append(entry)
 			else:
 				out["unchanged"].append(key)
-		out["approved_not_found"] = sorted(set(approved) - seen)
+		out["approved_not_found"] = sorted(set(by_key) - seen_keys) + sorted(set(by_id) - seen_ids)
 
 	if not dry_run:
 		frappe.db.commit()

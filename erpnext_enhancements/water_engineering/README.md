@@ -107,7 +107,7 @@ Child tables and catalogs:
 | `Water Design Issue Ack` | Designer acknowledgement of a typed issue |
 | `Nozzle Profile` | Nozzle catalog: `nozzle_type` (Orifice Jet, Foam / Aerating, Laminar, Cascade / Fan, Geyser, Bubbler, Spray Ring, Water Screen, Sheet Fall, Other), `item`, `connection_size`, `level_sensitive`, min/max water over the nozzle, `recommended_beam_deg`, the Cd and rated-GPM methods, provenance (`source_url`, `source_document`, `verified_by`, `verified_on`), `is_generic_estimate`, and the `performance` table. The controller fills head from PSI (or the reverse), sorts the rows, and warns when flow falls as head rises |
 | `Nozzle Performance Point` | Child of Nozzle Profile: `head_ft`, `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`, `depth_over_nozzle_in` |
-| `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises, and warns on a missing shutoff point or a gap |
+| `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises again after its peak (beyond 1 % reading noise); a drooping curve (head climbing from shutoff to a peak) and a missing shutoff point or a gap only warn |
 | `Pump Curve Point` | Curve points: `flow_gpm`, `head_ft`, `efficiency_pct`, `npshr_ft`, `power_bhp`. Child of Pump Curve, and of Item as the legacy `custom_pump_curve` table the readers fall back to |
 
 **Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
@@ -123,8 +123,11 @@ layout spec (`tests/test_layout_field_order_coverage.py`).
 ### Seeding the catalog
 
 The data and the approval list live in `docs/fountain-designer/catalog/`. `approved.json` names the
-rows Nikolas approved by `"Manufacturer|Model"` (case and spacing ignored); an entry may be an object
-with `item_code` to attach the row to an Item that already exists, or `item_name` to name the new one.
+rows Nikolas approved by `"Manufacturer|Model"` (case and spacing ignored) or by the row's `id`; an entry
+may be an object (`key` or `id`) with `item_code` to attach the row to an Item that already exists, or
+`item_name` to name the new one. Rows sharing a manufacturer + model (several part numbers of one model)
+are told apart by their first part number and must be approved by `id`. Floating aerators in
+`nozzles.json` (no pressure in their rows) load as Aerator Items, without a Nozzle Profile.
 Dry run first, then write:
 
 ```bash
