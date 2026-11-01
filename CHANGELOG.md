@@ -125,6 +125,7 @@ change.
   phase B. Wiring the solver into `run_spine`, the DocTypes and `issues.py` is phase E.
 - Every pump on prod has 0 curve points, so until phase D's catalog lands, the operating point runs on
   the two-point quadratic (shut-off head and maximum flow) or on hand-entered curves.
+
 ## [1.757.1] - 2026-11-01
 
 ### Added
