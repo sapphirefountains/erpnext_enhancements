@@ -158,6 +158,124 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
 - The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
 
 
+## [1.764.0] - 2026-11-01
+
+ERPNext: TASK-2026-03030 (under TASK-2026-03018), phase L, PR 2. It is stacked on 1.763.0, the
+electrical package. Nikolas, 2026-11-01: the electrical phase must also help design the controller
+and the pump control scheme, with a VFD with bypass included.
+
+### Added: `engine/controls/` package
+
+`engine/controls.py` became `engine/controls/__init__.py` with its content kept whole. So
+`calc_lighting`, `calc_solenoid_relays`, `lighting_sizing` and the seeded interlock and I/O lists
+import as before.
+
+New modules:
+
+- **`topology.py`: how each pump is started and run.**
+  - **Schemes:** across-the-line starter (NEMA ICS 2 size or IEC AC-3 frame, plus an overload relay
+    of class 10 or 20, set to the nameplate FLA, tripping at no more than 125% under 430.32(A)(1)),
+    soft starter, VFD, or VFD with manual bypass.
+  - **The bypass:** line, output and bypass contactors, the K2/K3 interlock, Hand-Off-Auto, a
+    VFD/Bypass selector, an overload in the bypass path, and optional automatic transfer on a drive
+    fault.
+  - **`recommend_topology`** picks a scheme from size and duty (wind stages, show modulation,
+    circulation, generator power) and gives its reasons.
+  - **`bypass_truth_table`** checks all 192 states: K2 and K3 never close together, and nothing runs
+    on E-stop or OFF.
+- **`vfd.py`: the drive frame.**
+  - **Derates:** altitude above 3,300 ft (every Wasatch Front job), ambient above 40 °C, and
+    single-phase input. All three are typical drive-maker figures and are labeled as such.
+  - **Ambient:** the drive is derated at the enclosure's interior design temperature, 104 °F at most,
+    which the heat check holds. It is not derated at the sun-loaded outdoor air.
+  - **Also:** input fuses per the listing (430.130), heat loss, reactors and filters by lead length,
+    a carrier-frequency and inverter-duty-motor note, and the bypass contactor size.
+- **`controller.py`: the controller.**
+  - **The Splash Wizard part** is picked by valve count: Basic, PLUS or MAX, 6 or 9 valves, plus
+    expansions (DOC-0028 500624-500631, WP-40 500615/500616).
+  - **Industrial (PLC)** is recommended when the design needs something DOC-0062's SDP001 does not
+    list, such as a drive speed reference, DMX, 4-20 mA inputs or automatic bypass transfer.
+  - **The I/O list** is generated from the design. Per pump: run, fault and speed. Also level and
+    fill, wind (two stages), E-stop, flow proof, the chemical controller's status contact, one
+    output per valve, lighting relays or DMX universes, and push button. Temperature and ORP/pH
+    4-20 mA readbacks are added only when `control.analog_monitoring` is set.
+  - **Automatic transfer to bypass** is allowed only on circulation and filtration pumps. A feature
+    pump at full speed across the line would overspray.
+  - **Also:** relay and SSR counts (DOC-0126), the 24 V DC supply, and the seeded interlocks plus
+    each pump's bypass interlocks.
+- **`panel.py`: the panel.**
+  - Control transformer VA from the coils, pilot lights, controller and DC supply
+    (`control_transformer_va` is kept).
+  - Enclosure size from component footprints, plus 30% for wire duct and 20% spare, using the
+    Polycase YH-161407 backplane 500656 where it fits.
+  - NEMA type: 3R outdoors, 4X near chemicals, 12 indoors.
+  - A heat check that calls for a fan in CFM, or an air conditioner in BTU/h.
+  - SCCR per UL 508A Supplement SB: the weakest component governs, checked against the available
+    fault current.
+  - Main disconnect (430.110), Type 2 SPD, terminal counts, and internal wire sizes and colors.
+- **`outputs.py`.**
+  - A panel BOM in the electrical shape plus `part_no`.
+  - Control Panel Design parent fields and child rows, using exactly the fieldnames of Control Pump,
+    Light, Fuse, Interlock and IO Point.
+  - A draft Theory of Operation.
+- **`drawings.py`** builds the states for two new SVGs in `engine/drawings.py`:
+  - **`power_schematic_svg`:** service, disconnect, SPD, a column per pump with its breaker and
+    starter, or the K1-VFD-K2 path beside K3 and its overload, and the transformers.
+  - **`control_ladder_svg`:** an MCR behind the E-stop, then per pump the HOA, level and overload
+    permissives, the run coil or K2/K3, and the run and fault lights; also wind stages, autofill and
+    lighting.
+
+`controls_report(model)` runs the chain for phase E's `derive()`.
+
+### Changed after independent review
+
+- **The ladder now performs the fault transfer it draws.**
+  - A drive fault opens the K2 rung, and the K3 rung pulls in through K2's normally closed contact.
+  - K1 now has its own rung.
+  - K2 holds through a time-delay-off after the run command drops, so it opens with the drive stopped.
+- **One wind-control predicate.** `control.wind_control` now adds the anemometer, the wind-stage
+  rungs and the anemometer's 24 V DC load, just as the `features[]` flag does.
+- **Drive speed by preset, not analog, for wind.** A drive's speed is set by preset speeds over a
+  digital output (DOC-0123's windy speed), so wind control keeps the Splash Wizard. An analog 0-10 V
+  reference, and the Industrial recommendation that comes with it, is used only for show modulation
+  or a setpoint.
+- **Cooling for a sealed panel.**
+  - A sealed NEMA 4 or 4X panel gets an air-to-air heat exchanger or an air conditioner, never a fan.
+  - Cooling that is designed in reports `warn`, not `bad`.
+  - `control.shaded` drops the sun allowance, so a default outdoor panel no longer makes every
+    design `bad`.
+- **Part numbers come only from sources.**
+  - The `erpnext_item` codes (PDT-000x) are dropped: they are not in the source audit.
+  - The Saginaw enclosure guesses are dropped.
+  - The only enclosure part attached is the Polycase YH-161407 backplane, with a note to confirm its
+    NEMA rating.
+- **SCCR covers more of the power circuit.** It now includes the main disconnect and the branch
+  breakers, and `control.component_ka` takes marked ratings.
+- **BOM.**
+  - Contactors are grouped by rating.
+  - Each bypass gets a mechanical interlock kit for K2 and K3.
+- **Control transformer.** It no longer counts the DC-powered relays and the controller twice.
+- **A NEMA rating past the table** falls back to an IEC frame, with a warning.
+- **Lighting relays** use `lighting_sizing`.
+- **Transformer box on the power schematic** is now wide enough for its label.
+- **`controls_report`'s return shape** is documented in its docstring and the README.
+
+### Tests
+
+`test_controls_design.py`, 53 pytest cases. It runs in the existing electrical pytest step, renamed
+"electrical and controls". Its hand goldens:
+
+- **A 5 HP, 230 V, single-phase pump:**
+  - NEMA size 1P, or size 2 where 1P isn't made.
+  - A 32 A AC-3 contactor.
+  - A 23-32 A overload range.
+  - A VFD frame of 10 HP at sea level, 15 HP at 4,500 ft on single-phase input.
+- **The bypass truth table** and each of its interlock rules.
+- **A control transformer** of 64 VA, which rounds up to 75 VA.
+- **An enclosure heat check** that natural convection can't carry, which calls for a 27 CFM fan; a sealed
+  4X panel gets a heat exchanger instead.
+- **The Control Panel Design rows,** checked against the child tables' JSON fieldnames.
+
 ## [1.763.0] - 2026-11-01
 
 ERPNext: TASK-2026-03018 "Fountain Designer rebuild" (PRJ-00580), phase L. Nikolas, 2026-11-01:
