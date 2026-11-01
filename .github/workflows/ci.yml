@@ -2472,7 +2472,7 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
-      # Fountain Designer phase S (v1.759.0): basin concrete, rebar, gravel and earthwork
+      # Fountain Designer phase S (v1.760.0): basin concrete, rebar, gravel and earthwork
       # quantities with hand goldens (Nikolas's 10 x 6 ft x 18 in basin) and the hydrostatic,
       # uplift and bearing checks. Plain pytest functions, so its own pytest step: `python -m
       # unittest` would collect nothing from it. Pure engine, no frappe stub.
@@ -2490,6 +2490,18 @@ jobs:
       # Pump Curve records over the Item's legacy table.
       - name: Water engineering catalog (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+      # Fountain Designer phase C (v1.759.0): the feature-family rules, the schema-2 design model,
+      # the kits and the Sapphire house rules. Plain pytest functions, so their own pytest step:
+      # `python -m unittest` would collect none of them. test_water_house_rules puts its frappe
+      # stub in sys.modules only for the length of each test (monkeypatch), so it shares the step.
+      - name: Fountain Designer families, model and house rules (bench-free pytest suite)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_families_weir.py
+          erpnext_enhancements/tests/test_families_jets.py
+          erpnext_enhancements/tests/test_families_others.py
+          erpnext_enhancements/tests/test_water_model.py
+          erpnext_enhancements/tests/test_water_house_rules.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops
