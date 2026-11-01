@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.760.0] - 2026-11-01
+## [1.765.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on
 2026-11-01 how much rebar and concrete a basin of a given size needs. This adds the engine package
@@ -64,6 +64,24 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
 
   `test_structural_geometry.py` checks shape round trips (a freeform circle equals the cylinder)
   and the sizing checks by hand. Both are pytest suites with their own CI step.
+
+### Fixed (independent review, before merge)
+- A stepped floor now carries the concrete under its raised zones. Before, the shallow half of the
+  floor floated 12 in above the deep slab with nothing under it, about 17% of the concrete missing.
+  House rule `step_ledge`: `concrete` to the step height (the default), or `gravel` for a slab on
+  compacted gravel with riser walls.
+- A wall too thin for any bar area returned `inf`, which JSON cannot store. Phase E would have failed
+  to save exactly the basins that need an engineer. It now returns `None` with `flexure_ok = False`.
+- Gravel is billed in pounds (short tons × 2,000), because ERPNext has no `Ton` unit.
+- Negative or blank optional inputs are ignored and named in the warnings. These are freeboard,
+  corner count, riser length, soil bearing, floor capacity, slab, wall and lid sizes, and step rows;
+  before, they produced negative volumes and phantom bars.
+- An incomplete basin says which input is missing.
+- A dry vault's exterior membrane gets its own BOM line.
+- Two basins with the same label no longer share a check key.
+- The shell and the thickness pick use one rim-above-grade rule.
+- The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
+
 
 ## [1.759.0] - 2026-11-01
 

@@ -38,7 +38,8 @@ CIT_ACI318_COVER = "ACI 318-19 Table 20.5.1.3.1 (specified cover; 3 in for concr
 CIT_ACI318_TWO_LAYERS = "ACI 318-19 §11.7.2.3 (walls thicker than 10 in need two layers of reinforcement)"
 CIT_ACI318_FLEXURE = "ACI 318-19 §22.2 (rectangular stress block), φ = 0.90 per Table 21.2.2"
 CIT_ACI318_SHEAR = "ACI 318-19 §22.5.5.1 (Vc = 2 λ √f'c b d), φ = 0.75"
-CIT_ACI318_LOADS = "ACI 318-19 Table 5.3.1 (factored load combinations; 1.6 used for lateral fluid and soil)"
+CIT_ACI318_LOADS = ("ACI 318-19 Table 5.3.1 (factored load combinations: H 1.6, F 1.4; 1.6 applied to the fluid "
+                    "too, a conservative simplification)")
 CIT_ACI318_EXPOSURE = "ACI 318-19 Table 19.3.2.1 and Table 19.3.3.1 (exposure class F2: w/cm and air content)"
 CIT_ACI350_ST = "ACI 350-06 §7.12.2.1 (shrinkage and temperature reinforcement ratio by joint spacing; max 12 in o.c.)"
 CIT_ACI350_SD = "ACI 350-01 §9.2.6 (environmental durability coefficient 1.3 for flexure)"
@@ -111,6 +112,7 @@ DEFAULT_RULES: dict = {
     "anchored_slots": ["pump", "filter", "heater", "uv", "chlorinator", "control_panel"],
     "coat_wall_tops": False,
     "vault_hatch_in": 36.0,
+    "step_ledge": "concrete",  # or "gravel": a slab on compacted gravel under a raised floor
     "shoring": False,
     # unit costs: Sapphire's cost register has none yet (2026-11-01)
     "concrete_cost_per_yd3": None,

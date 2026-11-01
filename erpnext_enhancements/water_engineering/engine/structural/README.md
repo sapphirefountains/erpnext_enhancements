@@ -81,6 +81,7 @@ Each is a key in `DEFAULT_RULES`, editable through the `rules` dict (phase C's S
 | Corner bars | one L per row per corner, legs one lap each | ACI 350 / CRSI detailing practice |
 | Movement joint spacing | 30 ft | ACI 224.3R and ACI 350's joint bands |
 | Freeboard (for water volume) | 2 in | house rule (phase C owns the freeboard rule) |
+| Raised floor of a stepped basin (`step_ledge`) | `concrete` to the step height on the deep slab; `gravel` gives a slab on compacted gravel plus riser walls | house rule |
 | Concrete waste, order increment, truck | 10%, 0.25 yd³, 10 yd³ | house rule; ASTM C94 trucks |
 | Gravel density and waste | 1.4 ton/yd³, 10% | house rule |
 | Excavation working room, swell, slopes | 2 ft each side, 25% swell, vertical under 5 ft, 1.5H:1V deeper (or shored) | OSHA Subpart P; house rule |
@@ -165,13 +166,17 @@ Check codes: `STRUCT_UPLIFT` (blocker below FS 1.0, warning below 1.3), `STRUCT_
 `STRUCT_EXCAVATION_DEPTH`, `STRUCT_INCOMPLETE` (info). Keys follow `issues.py`: `CODE|label`.
 
 BOM keys: `structural.concrete`, `structural.admixture`, `structural.rebar.#4.lb`,
-`structural.rebar.#4.bars20` (`priced: false`), `structural.gravel`, `structural.excavation`,
+`structural.rebar.#4.bars20` (`priced: false`), `structural.gravel` (in pounds: short tons × 2,000), `structural.excavation`,
 `structural.backfill`, `structural.haul`, `structural.formwork`, `structural.waterstop`,
-`structural.sealant`, `structural.coating`, `structural.curing`, `structural.chairs`,
+`structural.sealant`, `structural.coating` (water side), `structural.coating.exterior` (a dry vault's
+outside faces), `structural.curing`, `structural.chairs`,
 `structural.spacers`, `structural.tie_wire`, `structural.link_seal.<size>`, `structural.anchors`.
 
 ## 5. Method notes
 
+* **Units of measure.** BOM lines use `Cubic Yard`, `Pound`, `Nos`, `Foot` and `Square Foot`. ERPNext
+  has no `Ton`, so gravel is billed in pounds. On prod (checked 2026-11-01) only `Square Foot` is
+  enabled; phase B / E must enable the others (or map them) before pushing lines to a Quotation.
 * **Geometry.** Inside dimensions plus wall thickness `t`: footprint = inside grown by `t`; wall
   volume = (footprint − inside) × height; slab = footprint × slab thickness. Freeform outlines grow
   by Steiner's formula, so a freeform with a circle's area and perimeter equals the cylinder.

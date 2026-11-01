@@ -2472,7 +2472,7 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
-      # Fountain Designer phase S (v1.760.0): basin concrete, rebar, gravel and earthwork
+      # Fountain Designer phase S (v1.765.0): basin concrete, rebar, gravel and earthwork
       # quantities with hand goldens (Nikolas's 10 x 6 ft x 18 in basin) and the hydrostatic,
       # uplift and bearing checks. Plain pytest functions, so its own pytest step: `python -m
       # unittest` would collect nothing from it. Pure engine, no frappe stub.

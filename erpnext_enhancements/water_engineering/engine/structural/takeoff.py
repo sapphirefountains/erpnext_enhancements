@@ -77,8 +77,10 @@ def _checks(spec, det, shell, res, rules) -> list[dict]:
             out.append(_check(
                 f"STRUCT_WALL_{'WATER' if key == 'wall_water' else 'SOIL'}", WARNING, spec,
                 f"Wall needs more steel than the standard detail ({what})",
-                f"{v['height_ft']:.1f} ft wall: needs {v['as_required_in2_per_ft']:.3f} in²/ft, detail gives "
-                f"{v['as_provided_in2_per_ft']:.3f}; shear {'ok' if v['shear_ok'] else 'fails'}.",
+                f"{v['height_ft']:.1f} ft wall: needs "
+                + ("more than any bar area can give (section too thin)" if v["as_required_in2_per_ft"] is None
+                   else f"{v['as_required_in2_per_ft']:.3f} in²/ft")
+                + f", detail gives {v['as_provided_in2_per_ft']:.3f}; shear {'ok' if v['shear_ok'] else 'fails'}.",
                 "Use a thicker wall from the DOC-0119 table or have the wall designed.", r.citations[1]))
     for key, element in (("cover_wall", "wall"), ("cover_slab", "slab")):
         r = res[key]
@@ -237,8 +239,10 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
                 sticks["purchase_lb"], "Pound", f"rebar_{size['bar'].lstrip('#')}_grade60")
             add(f"structural.rebar.{size['bar']}.bars{stock}", f"Rebar {size['bar']}, {stock} ft bars (count)",
                 sticks["count"], "Nos", f"rebar_{size['bar'].lstrip('#')}_{stock}ft", priced=False)
-        add("structural.gravel", f"Gravel base, 1 in minus, {rules['gravel_in']:g} in deep", g["tons"],
-            "Ton", "gravel_1in_minus")
+        # ERPNext has no "Ton" UOM: gravel goes out in pounds (2,000 lb per short ton)
+        add("structural.gravel", f"Gravel base, 1 in minus, {rules['gravel_in']:g} in deep (short tons × 2,000)",
+            g["tons"] * 2000.0,
+            "Pound", "gravel_1in_minus")
         add("structural.excavation", "Excavation (bank)", ex["yd3"], "Cubic Yard", "excavation")
         add("structural.backfill", "Backfill, compacted", ex["backfill_yd3"], "Cubic Yard", "backfill")
         add("structural.haul", "Haul-off (loose)", ex["haul_yd3"], "Cubic Yard", "haul_off")
@@ -247,7 +251,8 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
             "Foot", "waterstop_hydrophilic")
         add("structural.sealant", "Joint sealant, polyurethane (Dymonic 100)", q["sealant_ft"], "Foot",
             "joint_sealant_dymonic_100")
-        add("structural.coating", "Waterproofing membrane " + res["coating"].value["coating_where"],
+        coat_key = "structural.coating.exterior" if spec["kind"] == "vault" else "structural.coating"
+        add(coat_key, "Waterproofing membrane, " + res["coating"].value["coating_where"],
             q["coating_sqft"], "Square Foot", "waterproofing_membrane")
         add("structural.curing", "Curing compound (exposed faces)", q["curing_sqft"], "Square Foot",
             "curing_compound")
@@ -278,6 +283,12 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
     for line in bom.values():
         line["qty"] = _r(line["qty"], 2) if line["uom"] not in ("Nos",) else int(math.ceil(line["qty"] - 1e-9))
         lines.append(line)
+    seen: dict[str, int] = {}
+    for c in checks:  # two basins with the same label must not share an acknowledgement key
+        n = seen.get(c["key"], 0) + 1
+        seen[c["key"]] = n
+        if n > 1:
+            c["key"] = f"{c['key']} ({n})"
     sev = {BLOCKER: 0, WARNING: 1, INFO: 2}
     checks.sort(key=lambda c: sev[c["severity"]])
     return {

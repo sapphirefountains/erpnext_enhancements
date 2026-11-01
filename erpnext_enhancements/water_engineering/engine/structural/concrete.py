@@ -107,7 +107,7 @@ def gravel_base(shell, rules: dict | None = None) -> CalcResult:
         return CalcResult(calc="structural_gravel_base", value={"cuft": 0.0, "yd3": 0.0, "tons": 0.0},
                           unit="ton", steps=["basin on a structure: no gravel base"],
                           citations=[CIT_DOC0119_GRAVEL], warnings=[DISCLAIMER])
-    cuft = s["footprint_sqft"] * depth_in / 12.0
+    cuft = s["footprint_sqft"] * depth_in / 12.0 + float(s.get("ledge_fill_cuft") or 0.0)
     yd3 = cuft / 27.0
     tons = yd3 * float(rules["gravel_tons_per_yd3"]) * (1 + float(rules["gravel_waste"]))
     return CalcResult(
@@ -116,7 +116,7 @@ def gravel_base(shell, rules: dict | None = None) -> CalcResult:
         unit="ton",
         inputs={"depth": make_input(depth_in, "in", "standard", CIT_DOC0119_GRAVEL),
                 "density": make_input(rules["gravel_tons_per_yd3"], "ton/yd³", "default")},
-        formula="yd³ = footprint × depth / 27; tons = yd³ × density × (1 + waste)",
+        formula="yd³ = (footprint × depth + any stepped-floor fill) / 27; tons = yd³ × density × (1 + waste)",
         steps=[f"{s['footprint_sqft']:.4f} ft² × {depth_in / 12:.4f} ft = {cuft:.4f} ft³ = {yd3:.4f} yd³",
                f"tons = {yd3:.4f} × {rules['gravel_tons_per_yd3']:g} × {1 + rules['gravel_waste']:g} = {tons:.4f}"],
         citations=[CIT_DOC0119_GRAVEL, "Sapphire house rule: 1.4 ton/yd³ compacted crushed gravel, 10% waste"],

@@ -288,6 +288,14 @@ def rebar_schedule(shell, detail, rules: dict | None = None) -> CalcResult:
                            r["length_ft"], _split(r["length_ft"], stock, slab_lap)))
         ties += 2 * n_pin
 
+    if s.get("ledge_slab_sqft"):
+        sp = d["slab_spacing_in"] / 12.0
+        side = math.sqrt(s["ledge_slab_sqft"])
+        n = _ceil(side / sp) + 1
+        marks.append(_mark("LS", "risers", "raised-floor slab bars, each way (averaged)", d["slab_bar"], "straight",
+                           d["slab_spacing_in"], 2 * n, side, _split(side, stock, slab_lap)))
+        ties += n * n
+
     if s.get("kind") == "vault" and s.get("lid_in"):
         m, t = _grid("lid", "L", s, d["slab_bar"], d["slab_spacing_in"], 1, cover_ft, stock, slab_lap, warnings)
         marks += m
