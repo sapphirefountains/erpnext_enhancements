@@ -1553,3 +1553,8 @@ erpnext_enhancements.patches.backfill_water_house_rules
 # Fountain Designer page (v1.761.0, phase F): re-import the Water Engineering workspace (the Fountain Designer
 # shortcut and its Tools link). Logs a failure, never raises, safe twice.
 erpnext_enhancements.patches.fountain_designer_workspace_link
+# Fountain Designer phase E (v1.768.0): Water Feature Design no longer declares its nine child tables; convert each
+# design's stored child rows (read straight from their tables) into a schema-2 model_json with engine.model.migrate,
+# and map the v1 statuses (Inputs Gathered -> Draft, Calculated -> Derived). db.set_value only, no modified bump;
+# deletes nothing, a design it cannot convert gets a line in its notes. Logs, never raises, safe twice.
+erpnext_enhancements.patches.convert_water_feature_designs_to_model

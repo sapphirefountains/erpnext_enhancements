@@ -7,6 +7,163 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.768.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03026. This is
+phase E, part 1: **the Water Feature Design record is rebuilt around the design model, the whole
+automation ladder runs on every save, and the Fountain Designer page gets its server side.** Part 2
+(the duty-point chart and the page-safe drawings) is stacked on this.
+
+### Changed
+- **Water Feature Design storage (PLAN.md 3.2).** The DocType keeps its name, so the AI tools, the
+  packet, the Design hub and the workspace keep their routes. What changed:
+  - **The design is one JSON document, `model_json`** (schema 2, PLAN.md 3.3), the source of truth.
+    `results_json` holds the last derive (every CalcResult, the per-row values, the charts, the
+    outputs, the electrical, structural and controls detail phase G prints);
+    `design_issues_json` and `readiness_json` keep their v1 names and hold the model-2 issues.
+  - **New fields:** `opportunity`, `mode` (Quick / Full), `kit`, `family`, `operating_flow_gpm`,
+    `operating_head_ft`, `pump_kw`, `budget_total`, `om_cost_per_year`, `notes`, and the BOM table
+    `bom`. `venue_type` became a Data field the model fills (it was a Select of six venues).
+  - **The TDH rollup stays in its v1 column, `computed_tdh_ft`**, because the Design dashboard and the
+    packet read it; the API calls it `tdh_ft`.
+  - **`status` is Draft / Derived / Reviewed / Issued.** A save moves Draft to Derived once the engine
+    could size the design; Reviewed and Issued keep their gates. The Design dashboard and the WIP
+    snapshot count Derived as work in progress (and still the two old values, for a record no save
+    has touched since).
+  - **The nine schema-1 child-table fields are gone from the parent** (basins, venue fixtures,
+    features, tiers, pipe segments, pumps, electrical loads, equipment, calc results), with the scalar
+    inputs that fed them (turnovers, pipe material, Hazen-Williams C, static lift, the chemistry,
+    drainage, surge and regulated-venue inputs and results). **Nothing is deleted:** removing a field
+    from the JSON leaves its column and its child rows in the database, and the nine child DocTypes
+    stay until phase H removes them with a `delete_doc` patch (`fixtures/README.md`'s two steps).
+  - **New child DocType: Water Feature Design Line** (`section`, `item`, `description`, `qty`, `uom`,
+    `rate`, `amount`, `source` Auto / Manual, `catalog_source`, and a hidden `line_key`). Every save
+    rewrites the Auto lines from the engine and keeps the Manual ones.
+  - **The Desk form is thin:** Design Health chips, the verdict as the headline, the rollups, the BOM
+    grid, the acknowledgements, the packet buttons, and **Open in Designer**. The quick-start
+    templates, the live preview and the loss dialogs went with the child tables they edited, and
+    `api/water_design.preview_design` (their only caller) with them.
+- **The existing design is converted, not dropped.** `patches/convert_water_feature_designs_to_model`
+  reads each design's child rows straight from their tables (the parent no longer loads them),
+  rebuilds the old engine input and runs `engine.model.migrate` into `model_json`, maps the old
+  statuses (Inputs Gathered to Draft, Calculated to Derived), and writes a line in `notes`. It uses
+  `db.set_value` without touching `modified`, deletes nothing, and never raises: a design it cannot
+  convert gets "Not converted to the Fountain Designer model" in its notes, and the controller then
+  reports it as one blocker instead of deriving it. Nikolas said the one record (WFD-2026-209315)
+  may be dropped; it is converted anyway, because the conversion costs nothing and loses nothing.
+- **The old wizard keeps working until phase H.** `get_design_state` reads the new record (model
+  counts, the model-2 issues, the fitting schedule from the model's segments, the canvas from the
+  model and the last derive). `_save_design`, which the `save_water_design` AI tool calls, turns the
+  tool's schema-1 payload into a model with `engine.model.migrate` and maps the old status names.
+  The print formats' `we_fitting_schedule` reads the model when a design has no pipe rows.
+
+### Added
+- **`water_engineering/derive.py`: `derive_model(model, catalogs, rules)`** runs PLAN.md 2.2 in order
+  and returns the reply the page draws, key for key as `public/js/fountain_designer/README.md`
+  documents it: the derived model, every CalcResult, the per-row values, the rollups, the issues,
+  readiness, the verdict, the priced BOM, the charts and the outputs.
+  - **The ladder.**
+    - Site: blank fields from the geocoded address, then Utah defaults (elevation 4,300 ft, frost
+      depth 30 in), then the house-rule utility rates.
+    - Basins: `basin.basin_volume`.
+    - Features: `engine.families`.
+    - Regulated minimums: `aquatic.minimum_flow_rate` for pools and spas. Utah interactive features
+      count as regulated (R392-302).
+    - The route template from the Pump room step: suction 10 ft from a vault, 2 ft for a
+      submersible, the distance from a pump room; discharge the distance plus the rise; default
+      fittings and the step's material. It fills only an `auto` piping section, and only segments
+      with no length yet.
+    - Phase B's `autosize.derive`: basin and surge, pipe sizes, the network solve and the pump,
+      control, bypass and surge.
+    - Treatment: `filtration_area` and `upkeep.water_plan`.
+    - Lighting fixtures from the house rules.
+    - Phase L's `electrical_report` and `controls_report`.
+    - Phase S's `structural_takeoff`.
+    - Winterization.
+    - The BOM: `bom.merge_sections` over the hydraulic, family, electrical, controls and structural
+      lines, priced from Item valuation or the default selling price list. Phase L's duplicate
+      24 V supply line is dropped when controls has its own.
+    - O&M per year: `upkeep.om_per_year`.
+  - **Where the phases' shapes did not meet, derive joins them.** Each of these was a blocker or a
+    crash on a real kit before it was fixed:
+    - A family writes a terminal's `design_flow_gpm`; phase B reads `design_gpm`.
+    - The jets and interactive families give each manifold takeoff a design `flow_gpm` and `head_ft`;
+      phase B needs `k`, `cd` with an orifice size, or `rated_gpm` with `rated_head_ft`. An
+      interactive ground jet has no head yet, so it is rated at 15 ft until its nozzle is picked
+      (`TAKEOFF_HEAD_FT`, a Sapphire placeholder for the designers to confirm).
+    - A foam or single jet's orifice terminal takes its rating the same way.
+    - Phase L and S write a text `item_hint` (and a `part_no`), and `bom.merge_sections` keeps only a
+      dict, so it raised on every design with lights. The hints are folded into one dict first.
+    - Phase C calls a freeform basin's plan area `surface_area_sqft`; phase B's basin checks read
+      `area_sf`. An aerator's pond acres fill a pond with no area.
+    - A pondless feature has no basin, and phase B's network refuses a pump with nothing to draw
+      from, so derive gives it a source node and a suction segment.
+    - A pump whose `curve` names a catalog curve (the page's fixture does) gets that curve's points.
+      A name the catalog does not have becomes a warning.
+  - **It never raises.** Every stage runs guarded. A stage that fails becomes one
+    `ENGINE_STAGE_FAILED` blocker naming it (the API logs the trace), and the later stages still run.
+    A `custom` section is never written. Every float in the reply is finite or None.
+  - **The Hazen-Williams cross-check (PLAN.md 1.8).** The DOC-0049 figure is computed beside the
+    governing Darcy friction over every solved segment. Phase A found C=130 reads 15-35% above Darcy
+    on PVC, so a warning would need a signature on nearly every design: a spread over 10% is an
+    advisory. If Nikolas wants it to warn, it is one severity in `derive.py`.
+- **`issues.py`, the schema-2 producers.** Every typed check from every phase becomes a
+  `DesignIssue`: model validation, the families and system modules, phase B's network, basin, surge
+  and BOM checks, phase S's structural checks, phase L's NEC 680 checklist failures and notes (one
+  advisory per report), and the derive's own. The v1 dict is kept and gains `step`, `path`, one-click
+  `remedies` (deepen a basin past its surge; add UV to an interactive feature) and `acknowledged`
+  (from `model.acks`). Also new:
+  - `model_readiness`: per section `ok`, `warn`, `blocked`, `missing` or `n_a`, with
+    `calc_ready` and `issue_ready`.
+  - `model_verdict`: good, warn or bad, with `package_ready`.
+  - A generic-estimate pump reaching a submittal is an advisory in quick mode and a warning to sign
+    off in full mode.
+- **`api/designer.py`, the page's endpoints:** `boot`, `derive`, `get_design`, `save_design`,
+  `push_quotation`, `push_material_request`, `catalog_search`, `acknowledge_issue`, `run_calc`.
+  - `boot` serves the engine's kits (with the headline inputs quick mode shows), families,
+    sections and presets, select options, catalog classes and the house rules.
+  - `boot`, `get_design` and `catalog_search` answer GET; every write is POST-only.
+  - Saves and pushes go through `doc.save()`.
+  - The loaders behind derive: the house rules from Water Engineering Settings; the pump catalog from
+    phase D's `catalog_reader`, cached ten minutes because the page derives on every edit; Item
+    prices; and the address through `workforce.sites.geocode_text`, cached a month per address. The
+    app has no elevation lookup, so elevation is the jurisdiction default.
+  - A push sends a line with an Item as an item line. A line without one goes as the new
+    **Text-line Item** on Water Engineering Settings, with its own description; with none set, it is
+    listed in the Quotation's terms and left off a Material Request. ERPNext refuses an item row
+    without an Item. The field has no default, so the Singles backfill rule does not apply.
+- **The controller** runs the derive in `validate` and writes the derived model, the rollups, the BOM,
+  the issues and readiness. It rebuilds `model.acks` from the acknowledgement rows (the record wins).
+  `before_submit` requires no blockers, every warning signed off and `issue_ready`, and `on_submit`
+  sets Issued. `completion_percent` is the share of applicable readiness sections done.
+
+### Tests
+- `tests/test_designer_derive.py` (pytest, own CI step with the next suite) runs the real engine end
+  to end, with a stubbed pump catalog and price list, on:
+  - phase F's three demo designs and all twelve kits;
+  - the page's contract, key for key;
+  - strict JSON;
+  - `custom` piping left alone, and the route template;
+  - junk models;
+  - a failing stage;
+  - issue keys that survive a re-derive, and a sign-off;
+  - a named curve, the site lookups, and the merged BOM;
+  - a real reply through the page's own `merge_derived` and verdict panel under node.
+- `tests/test_designer_api.py` checks, with its own frappe stub:
+  - `boot()` against F's boot fixture, every kit valid with its headline paths present;
+  - GET and POST;
+  - `derive`, `get_design`, `save_design`, `acknowledge_issue`;
+  - both pushes.
+- `tests/test_water_design_controller.py` is rewritten for the new controller, in its old unittest
+  step. The doctype-module, controller-name and Singles suites stay green.
+
+### Not verified without a bench
+- `bench migrate`: the new columns, Water Feature Design Line, the Select-to-Data change on
+  `venue_type`, and the conversion patch on MariaDB.
+- A real save through Desk, the page, the Quotation and Material Request pushes against ERPNext's own
+  validation, and the thin form's chips and buttons.
+- No real catalog curve has gone through the derive yet. The tests use synthetic curves.
+
 ## [1.767.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03023. This is

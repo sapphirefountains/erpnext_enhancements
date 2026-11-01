@@ -1,17 +1,23 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for the Water Feature Design doctype.
+"""Controller for the Water Feature Design doctype (schema 2, the Fountain Designer).
 
-A Water Feature Design is the submittable document that accumulates a fountain's
-Phase-1 hydraulic design: basin geometry, water features, piping segments, and
-the resulting pump + electrical selection. The single frappe<->engine bridge is
-``recompute()``: it converts the child rows to a plain-dict input, runs the pure
-``water_engineering.engine`` spine, and writes the headline rollups, the
-per-row computed columns, and a ``calc_results`` audit trail back onto the doc.
+The design lives in one JSON document, ``model_json`` (``docs/fountain-designer/PLAN.md`` 3.3).
+On every save ``validate`` runs the whole automation ladder over it
+(``water_engineering.derive.derive_model``, through ``api/designer.run_derive``, which adds the
+house rules, the pump catalog, Item prices and the geocoded site) and writes back:
 
-The same engine backs the desk wizard (``api/water_design.py``) and the FAC MCP
-tools, so chat, desk, and form all produce byte-identical math.
+* the derived model (``auto`` sections filled, ``custom`` ones untouched) into ``model_json``;
+* the results, per-row values, charts and outputs into ``results_json``;
+* the typed issues and readiness into ``design_issues_json`` / ``readiness_json``;
+* the rollups (flows, heads, pump, power, basin water, budget, O&M, counts) into their columns;
+* the BOM into ``bom``: every ``Auto`` line rewritten, every ``Manual`` line kept.
+
+The page (``api/designer.save_design``), the AI tools and a Desk save all go through here, so a
+design reads the same wherever it was last saved. The nine schema-1 child tables left this
+doctype in v1.768.0; ``patches/convert_water_feature_designs_to_model.py`` turned the stored rows
+into ``model_json`` and deleted nothing (the child DocTypes go in phase H).
 """
 
 import json
@@ -22,32 +28,46 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt
 
 from erpnext_enhancements.water_engineering import issues as design_issues
-from erpnext_enhancements.water_engineering.api.water_design import nozzle_profile_params, pump_curves
-from erpnext_enhancements.water_engineering.engine import (
-	basin_volume,
-	chemistry_targets,
-	chlorinator_feed,
-	component_loss,
-	feature_flow_category,
-	filtration_area,
-	fitting_minor_loss,
-	hazen_williams_loss,
-	main_drain_flow,
-	manning_drain_flow,
-	nozzle_array_flow,
-	nozzle_flow,
-	pipe_pressure_check,
-	pipe_velocity,
-	run_spine,
-	suction_outlet_vgb,
-	surge_basin_volume,
-	tiered_fountain_flow,
-	velocity_status,
-	weir_flow,
+from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+# results_json keeps every derive key beyond the ones stored in their own fields.
+RESULT_KEYS = (
+	"results",
+	"values",
+	"rollups",
+	"charts",
+	"outputs",
+	"verdict",
+	"electrical",
+	"structural",
+	"controls",
 )
-from erpnext_enhancements.water_engineering.engine.constants import FT_PER_PSI
-from erpnext_enhancements.water_engineering.engine.data.pipe_specs import get_pipe_spec
-from erpnext_enhancements.water_engineering.engine.units import gallons_to_pounds
+
+# Rollup key (the API's) -> field. TDH keeps its v1 column, computed_tdh_ft, which the dashboard
+# and the packet read.
+ROLLUP_FIELDS = {
+	"design_flow_gpm": "design_flow_gpm",
+	"operating_flow_gpm": "operating_flow_gpm",
+	"tdh_ft": "computed_tdh_ft",
+	"operating_head_ft": "operating_head_ft",
+	"pump_kw": "pump_kw",
+	"total_basin_gallons": "total_basin_gallons",
+	"budget_total": "budget_total",
+	"om_cost_per_year": "om_cost_per_year",
+}
+LINE_FIELDS = (
+	"section",
+	"item",
+	"description",
+	"qty",
+	"uom",
+	"rate",
+	"amount",
+	"source",
+	"catalog_source",
+	"line_key",
+)
 
 
 class WaterFeatureDesign(Document):
@@ -58,652 +78,307 @@ class WaterFeatureDesign(Document):
 		self._enforce_status_gates()
 
 	def before_submit(self):
-		if not self.get("basins") and not self.get("features"):
-			frappe.throw(
-				_("Add at least one basin or feature before submitting the design."),
-				title=_("Nothing to Calculate"),
-			)
 		issues = self._live_issues()
 		blockers = [i for i in issues if i.get("severity") == "blocker"]
 		if blockers:
 			frappe.throw(
-				_("Resolve these blocking issues before submitting:")
-				+ "<br>"
-				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in blockers),
+				_("Resolve these blocking issues before issuing the design:") + "<br>" + _bullets(blockers),
 				title=_("Blocking Issues"),
 			)
-		unacked = design_issues.unacknowledged_warnings(self, issues)
+		unacked = design_issues.open_warnings(issues)
 		if unacked:
 			frappe.throw(
-				_("Acknowledge each open warning in Design Health (or resolve it) before submitting:")
+				_("Sign off each open warning (or resolve it) before issuing the design:")
 				+ "<br>"
-				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in unacked),
-				title=_("Unacknowledged Warnings"),
+				+ _bullets(unacked),
+				title=_("Open Warnings"),
 			)
-		# Advisories / still-needed inputs stay non-blocking — say so and proceed.
-		if (self.next_inputs_needed or "").strip():
-			frappe.msgprint(
-				_("Submitting with open items: {0}").format(
-					self.next_inputs_needed.replace("\n", "; ")
-				),
-				title=_("Design Not Fully Resolved"),
-				indicator="orange",
+		if not cint(self.issue_ready):
+			frappe.throw(
+				_("The design package is not complete enough to issue:") + "<br>" + _missing_bullets(self),
+				title=_("Package Not Ready"),
 			)
+
+	def on_submit(self):
+		self.db_set("status", "Issued")
 
 	# --------------------------------------------------------------- gating
 	def _live_issues(self):
-		"""The issues recompute just produced (parsed once, cached per validate)."""
 		if getattr(self, "_issues_cache", None) is None:
-			try:
-				self._issues_cache = json.loads(self.design_issues_json or "[]")
-			except ValueError:
-				self._issues_cache = []
+			self._issues_cache = _json_list(self.get("design_issues_json"))
 		return self._issues_cache
 
 	def _drop_stale_acks(self):
-		"""A stale acknowledgement must never grandfather a new problem: keep only
-		acks whose issue key still matches a live issue."""
+		"""A stale acknowledgement must never grandfather a new problem: keep only the acks whose
+		issue key still matches a live issue (the record's rows and ``model.acks`` both)."""
 		live = {i.get("key") for i in self._live_issues()}
-		kept = [a for a in (self.get("issue_acks") or []) if a.issue_key in live]
-		if len(kept) != len(self.get("issue_acks") or []):
+		rows = self.get("issue_acks") or []
+		kept = [a for a in rows if a.issue_key in live]
+		if len(kept) != len(rows):
 			self.set("issue_acks", kept)
 
 	def _enforce_status_gates(self):
-		"""Reviewed/Issued are earned states: no blockers may exist, and Issued
-		additionally requires the package readiness gate + every warning
-		acknowledged. (Submission re-checks in before_submit.)
-
-		The gate fires only on the status TRANSITION — a doc already sitting in
-		Reviewed/Issued (e.g. saved before these gates existed, or one that
-		gained a finding from external state) must stay saveable, and the
-		acknowledge endpoint's own save must not trip the gate it remedies.
-		before_submit re-checks everything regardless of transition."""
+		"""Reviewed and Issued are earned: no blockers, and Issued also needs the package gate. The
+		gate fires on the status change only, so a design already Reviewed stays saveable and the
+		sign-off endpoint's own save never trips the gate it remedies."""
 		if self.status not in ("Reviewed", "Issued"):
 			return
 		before = self.get_doc_before_save()
 		if before and (before.status or "") == (self.status or ""):
 			return
-		issues = self._live_issues()
-		blockers = [i for i in issues if i.get("severity") == "blocker"]
+		blockers = [i for i in self._live_issues() if i.get("severity") == "blocker"]
 		if blockers:
 			frappe.throw(
 				_("Cannot set status {0} with blocking issues open:").format(_(self.status))
 				+ "<br>"
-				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in blockers),
+				+ _bullets(blockers),
 				title=_("Blocking Issues"),
 			)
-		if self.status == "Issued":
-			unacked = design_issues.unacknowledged_warnings(self, issues)
-			if unacked:
-				frappe.throw(
-					_("Acknowledge each open warning in Design Health before issuing:")
-					+ "<br>"
-					+ "<br>".join(
-						f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in unacked
-					),
-					title=_("Unacknowledged Warnings"),
-				)
-			if not self.issue_ready:
-				missing = []
-				try:
-					readiness = json.loads(self.readiness_json or "{}")
-				except ValueError:
-					readiness = {}
-				for section in readiness.get("sections") or []:
-					for m in section.get("missing") or []:
-						missing.append(m.get("label") or "")
-				frappe.throw(
-					_("The design package is not complete enough to issue:")
-					+ "<br>"
-					+ "<br>".join(f"• {frappe.utils.escape_html(m)}" for m in missing if m),
-					title=_("Package Not Ready"),
-				)
+		if self.status == "Issued" and not cint(self.issue_ready):
+			frappe.throw(
+				_("The design package is not complete enough to issue:") + "<br>" + _missing_bullets(self),
+				title=_("Package Not Ready"),
+			)
 
 	# ---------------------------------------------------------------- bridge
 	def recompute(self):
-		"""Run the pure engine over the current child rows and write results back.
-
-		Never raises out of validate on a calc error — a bad row records a
-		warning instead of blocking the save (the audit trail and
-		``next_inputs_needed`` surface the problem)."""
+		"""Run the ladder over ``model_json`` and write everything back. Never raises out of
+		validate on an engine fault: the derive turns a failed stage into a blocker, and anything
+		that escapes it becomes one CALC_ERROR blocker with the trace in the Error Log."""
 		self._issues_cache = None
-		try:
-			out = run_spine(_engine_inputs(self))
-		except Exception:
-			frappe.log_error(frappe.get_traceback(), "Water Feature Design recompute")
-			self.next_inputs_needed = _("Calculation error — see Error Log.")
-			self._apply_issue_state(extra=[design_issues.calc_error_issue()])
+		model = stored_model(self.get("model_json"))
+		if model is None:
+			model = model_engine.new_model()
+		if model_engine.is_legacy(model):
+			write_issue_state(
+				self, [_unconverted_issue()], {"sections": [], "calc_ready": False, "issue_ready": False}
+			)
 			return
+		model["acks"] = acks_from_rows(self.get("issue_acks") or [], model.get("acks"))
+		try:
+			from erpnext_enhancements.water_engineering.api.designer import run_derive
 
-		self.total_basin_gallons = out.get("total_basin_gallons")
-		self.required_circulation_gpm = out.get("required_circulation_gpm")
-		self.design_flow_gpm = out.get("design_flow_gpm")
-		self.computed_tdh_ft = out.get("tdh_ft")
-		# Regulated-venue rollups (None for fountains -> the fields stay blank/hidden).
-		self.turnover_time_min = out.get("turnover_time_min")
-		self.minimum_flow_gpm = out.get("minimum_flow_gpm")
-		self.bather_load = out.get("bather_load")
-		self.skimmer_count = out.get("skimmer_count")
-		self.main_drain_status = out.get("main_drain_status") or ""
-		self.next_inputs_needed = "\n".join(out.get("next_inputs_needed") or [])
-
-		extra_issues = []
-		selected = out.get("selected_pump")
-		if selected and not frappe.db.exists("Item", selected):
-			# Don't drop a recommendation silently — say why it vanished.
-			self.next_inputs_needed = (
-				(self.next_inputs_needed + "\n") if self.next_inputs_needed else ""
-			) + _("Recommended pump {0} is not in the Item catalog.").format(selected)
-			self.selected_pump = None
-			extra_issues.append(design_issues._issue(
-				"PUMP_NOT_IN_CATALOG", design_issues.WARNING,
-				f"Recommended pump {selected} is not in the Item catalog",
-				"pump", scope=str(selected),
-				fix_hint="Create the pump Item (item_group 'Pumps') or pick a cataloged candidate.",
-				calc="select_pump",
-			))
-		else:
-			self.selected_pump = selected or None
-
-		self._write_audit_trail(out.get("results") or [])
-		self._compute_chemistry()
-		self._compute_drainage()
-		self._fill_basin_rows()
-		self._fill_fixture_rows()
-		self._fill_equipment_rows()
-		self._fill_feature_rows()
-		self._fill_segment_rows()
-		self._fill_segment_pressure()
-		self._mark_selected_pump_row()
-		self._apply_issue_state(extra=extra_issues)
-
-	def _apply_issue_state(self, extra=None):
-		"""Derive + persist the typed issues, readiness, and the denormalized
-		counters (list view / workspace cards / Triton read them without loading
-		the doc). ``has_warnings`` now means "any blocker or warning issue" —
-		deliberately wider than the old spine-warnings-only flag, so chemistry /
-		drainage findings finally flip it (the SOURCE_DATA_AUDIT 'CYA never
-		warns' gap)."""
-		issues = design_issues.build_issues(self, extra=extra)
-		readiness = design_issues.build_readiness(self, issues)
-		counts = design_issues.summarize(issues)
-		self.design_issues_json = json.dumps(issues)
-		self.readiness_json = json.dumps(readiness)
-		self.blocker_count = counts["blocker_count"]
-		self.warning_count = counts["warning_count"]
-		self.issue_summary = counts["summary"]
-		self.issue_ready = 1 if readiness.get("issue_ready") else 0
-		self.has_warnings = 1 if (counts["blocker_count"] or counts["warning_count"]) else 0
-		self._issues_cache = issues
-
-	def _fill_segment_pressure(self):
-		"""Per-segment pressure-rating status (DOC-0049 Pipe Specs): the pump puts
-		~TDH ft (= TDH/2.308966 psi) on the discharge side; every discharge run's pipe
-		must be rated for it. Surfaced as row fields so the grid (not just the
-		audit trail) shows an under-rated pipe."""
-		tdh = flt(self.computed_tdh_ft)
-		system_psi = tdh / FT_PER_PSI if tdh > 0 else 0
-		default_material = self.pipe_material or "SCH40 PVC"
-		for row in self.get("pipe_segments") or []:
-			is_discharge = (row.line_type or "Discharge").lower().startswith("dis")
-			if not (system_psi and is_discharge and row.nominal_size):
-				row.pressure_status = ""
-				row.pressure_margin_psi = 0
-				continue
-			chk = pipe_pressure_check(row.material or default_material, row.nominal_size, system_psi)
-			row.pressure_status = chk.status or ""
-			row.pressure_margin_psi = flt(chk.value)
-
-	def _compute_chemistry(self):
-		"""Phase-2 water treatment sized off the system (basin) volume; appends
-		its envelopes to the audit trail written by _write_audit_trail. The
-		planned CYA / free-chlorine levels thread through so the DOC-0119
-		CYA-coupled chlorine floor can actually warn."""
-		volume = flt(self.total_basin_gallons)
-		feed = chlorinator_feed(volume, flt(self.chem_chlorine_pct) or 10)
-		targets = chemistry_targets(
-			self.chem_water_type or "Outdoor",
-			flt(self.chem_cya_ppm) or None,
-			flt(self.chem_free_cl_ppm) or None,
-		)
-		self.chlorinator_feed_gph = feed.value or 0
-		self.chemistry_targets_summary = "; ".join(targets.steps)
-		for r in (feed, targets):
-			self.append("calc_results", _calc_row(r))
-
-	def _write_audit_trail(self, results):
-		self.set("calc_results", [])
-		for r in results:
-			self.append("calc_results", _calc_row(r))
-
-	def _compute_drainage(self):
-		"""Phase-3 gravity drain capacity + surge-basin volume (both optional)."""
-		envelopes = []
-		if self.drain_nominal_size:
-			r = manning_drain_flow(self.drain_nominal_size, flt(self.drain_slope_in_per_ft) or 0.25)
-			self.drain_capacity_gpm = r.value or 0
-			envelopes.append(r)
-		else:
-			self.drain_capacity_gpm = 0
-		if flt(self.surge_basin_area_sf) > 0:
-			r = surge_basin_volume(flt(self.surge_pool_area_sf), flt(self.surge_basin_area_sf))
-			self.surge_basin_gallons = r.value or 0
-			envelopes.append(r)
-		else:
-			self.surge_basin_gallons = 0
-		for r in envelopes:
-			self.append("calc_results", _calc_row(r))
-
-	def _fill_basin_rows(self):
-		for row in self.get("basins") or []:
-			# A regulated shell (e.g. an octagon spa) may carry a published volume
-			# the rect/cyl geometry can't derive — honor the override when given.
-			override = flt(getattr(row, "volume_gal_override", 0))
-			if override > 0:
-				row.volume_gal = override
-				row.weight_lb = gallons_to_pounds(override)
-				continue
-			r = basin_volume(
-				row.shape or "Rectangular",
-				length_in=flt(row.length_in),
-				width_in=flt(row.width_in),
-				height_in=flt(row.height_in),
-				diameter_in=flt(row.diameter_in),
+			out = run_derive(model)
+		except Exception:
+			frappe.log_error(title="Water Feature Design derive", message=frappe.get_traceback())
+			write_issue_state(
+				self,
+				[design_issues.calc_error_issue()],
+				{"sections": [], "calc_ready": False, "issue_ready": False},
 			)
-			row.volume_gal = r.value or 0
-			row.weight_lb = gallons_to_pounds(r.value) if r.value else 0
-
-	def _fill_fixture_rows(self):
-		"""Per-fixture computed flow + status for the equipment schedule: skimmer
-		80%-rated flow, main-drain open-area flow + the VGB anti-entrapment status,
-		and therapy-jet total flow. Regulated venues only; empty for fountains."""
-		design = flt(self.design_flow_gpm)
-		for row in self.get("venue_fixtures") or []:
-			ftype = (row.fixture_type or "").strip().lower()
-			row.status = ""
-			if ftype == "skimmer":
-				row.computed_flow_gpm = flt(row.rated_gpm) * 0.80
-				row.status = "operate at 80% rated"
-			elif ftype == "therapy jet":
-				row.computed_flow_gpm = flt(row.rated_gpm) * (cint(row.qty) or 1)
-			elif "drain" in ftype:
-				open_area = flt(getattr(row, "open_area_in2", 0))
-				row.computed_flow_gpm = main_drain_flow(open_area).value if open_area > 0 else 0
-				cl = flt(getattr(row, "cover_length_in", 0))
-				cw = flt(getattr(row, "cover_width_in", 0))
-				oaf = flt(getattr(row, "open_area_fraction", 0))
-				if cl > 0 and cw > 0 and oaf > 0 and design > 0:
-					vgb = suction_outlet_vgb(design, cl, cw, oaf, outlets=cint(row.qty) or 2)
-					row.status = vgb.status or ""
-			else:
-				row.computed_flow_gpm = flt(row.rated_gpm)
-
-	def _fill_equipment_rows(self):
-		"""Resolve each catalog equipment row's specs into the schedule columns
-		(rating + electrical) and run the adequacy cross-checks (filter area/flow
-		vs the design flow). Best-effort — a missing item or unmigrated custom
-		field just leaves the computed columns blank."""
-		design_gpm = flt(self.design_flow_gpm)
-		for row in self.get("design_equipment") or []:
-			if not row.equipment_item:
-				continue
-			specs = _equipment_specs(row.equipment_item)
-			cls = specs.get("custom_equipment_class") or getattr(row, "equipment_class", "") or ""
-			row.equipment_class = cls
-			row.model_no = specs.get("custom_model_no")
-			row.rating = _equipment_rating(cls, specs)
-			row.electrical = _equipment_electrical(specs)
-			row.note = _equipment_note(cls, specs, design_gpm)
-
-	def _fill_feature_rows(self):
-		tier_rows = [{"diameter_in": flt(t.diameter_in)} for t in self.get("tiers") or []]
-		tier_gpm = (flt(self.tiers[0].spill_gpm_per_ft) or 0.5) if self.get("tiers") else 0.5
-		for row in self.get("features") or []:
-			category = feature_flow_category(row.feature_type or "Weir")
-			if category == "tiered":
-				r = tiered_fountain_flow(tier_rows, tier_gpm)
-			elif category == "weir":
-				r = weir_flow(flt(row.weir_length_ft), flt(row.head_in), cint(row.end_contractions) or 2)
-			elif category == "array":
-				r = nozzle_array_flow(cint(row.nozzle_count), flt(row.gpm_each))
-			else:
-				params = nozzle_profile_params(row.nozzle_profile) if row.nozzle_profile else {}
-				r = nozzle_flow(
-					flt(row.supply_head_ft),
-					cd=params.get("cd"),
-					orifice_area_in2=params.get("orifice_area_in2"),
-					orifice_diameter_in=params.get("orifice_diameter_in"),
-					rated_gpm=params.get("rated_gpm"),
-					rated_head_ft=params.get("rated_head_ft"),
-					nozzle_profile=row.nozzle_profile or "",
-				)
-			row.flow_gpm = r.value or 0
-
-	def _fill_segment_rows(self):
-		default_material = self.pipe_material or "SCH40 PVC"
-		hw_c = cint(self.hazen_williams_c) or 130
-		for row in self.get("pipe_segments") or []:
-			material = row.material or default_material
-			spec = get_pipe_spec(material, row.nominal_size)
-			if not spec:
-				row.velocity_fps = 0
-				row.velocity_status = ""
-				row.head_loss_ft = 0
-				continue
-			id_in = spec["id_in"]
-			# A blank segment flow carries the full system (design) flow — keeps the
-			# per-row velocity/head-loss honest instead of showing 0.
-			flow = flt(row.flow_gpm) or flt(self.design_flow_gpm)
-			velocity = pipe_velocity(flow, id_in).value
-			row.velocity_fps = velocity
-			row.velocity_status = velocity_status(
-				velocity, row.line_type or "Discharge",
-				spec["max_suction_fps"], spec["max_discharge_fps"], spec["legal_fps"],
-			)
-			major = hazen_williams_loss(flow, flt(row.pipe_length_ft), id_in, hw_c).value
-			minor = fitting_minor_loss(velocity, _loads(row.fittings_json)).value
-			comp = component_loss(flow, _loads(row.components_json)).value
-			row.head_loss_ft = major + minor + comp
-
-	def _mark_selected_pump_row(self):
-		for row in self.get("pumps") or []:
-			row.is_selected = 1 if (self.selected_pump and row.pump_item == self.selected_pump) else 0
+			return
+		write_derive(self, out)
 
 
 # ------------------------------------------------------------- pure helpers
-# (no frappe dependency beyond the doc shape -> unit-testable with a stub doc)
+# (no frappe beyond the doc's get / set / append, so the tests run them on a fake doc)
+
+
+def _json_list(text):
+	if isinstance(text, list):
+		return text
+	try:
+		data = json.loads(text or "[]")
+	except (TypeError, ValueError):
+		return []
+	return data if isinstance(data, list) else []
+
+
+def _json_dict(text):
+	if isinstance(text, dict):
+		return text
+	try:
+		data = json.loads(text or "{}")
+	except (TypeError, ValueError):
+		return {}
+	return data if isinstance(data, dict) else {}
+
+
+def stored_model(raw):
+	"""``model_json`` as a dict (the JSON field reads back as text or a dict), or None."""
+	data = _json_dict(raw) if raw else None
+	return data or None
+
+
+def _bullets(issues):
+	return "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in issues)
+
+
+def _missing_bullets(doc):
+	readiness = _json_dict(doc.get("readiness_json"))
+	missing = [m for s in readiness.get("sections") or [] for m in s.get("missing") or []]
+	return "<br>".join(f"• {frappe.utils.escape_html(str(m))}" for m in missing if m)
+
+
+def _unconverted_issue():
+	return design_issues._issue(
+		"MODEL_NOT_CONVERTED",
+		design_issues.BLOCKER,
+		"This design was made before the Fountain Designer and has not been converted",
+		"features",
+		detail="Its model is in the old shape; see the notes on the record.",
+		fix_hint="Start the design again in the Fountain Designer.",
+	)
+
+
+def acks_from_rows(rows, model_acks=None):
+	"""``model.acks`` rebuilt from the record's Water Design Issue Ack rows (the record is the
+	source of truth; a row deleted in the grid un-acknowledges the warning)."""
+	by_key = {a.get("issue_key"): a for a in model_acks or [] if isinstance(a, dict)}
+	out = []
+	for row in rows:
+		key = getattr(row, "issue_key", None)
+		if not key:
+			continue
+		prior = by_key.get(key) or {}
+		out.append(
+			{
+				"issue_key": key,
+				"note": getattr(row, "note", None) or prior.get("note") or "",
+				"by": getattr(row, "acknowledged_by", None) or prior.get("by") or "",
+				"on": str(getattr(row, "acknowledged_on", None) or prior.get("on") or ""),
+			}
+		)
+	return out
+
+
+def write_issue_state(doc, issues, readiness):
+	counts = design_issues.summarize(issues)
+	doc.design_issues_json = json.dumps(issues)
+	doc.readiness_json = json.dumps(readiness)
+	doc.blocker_count = counts["blocker_count"]
+	doc.warning_count = counts["warning_count"]
+	doc.issue_summary = counts["summary"]
+	doc.issue_ready = 1 if readiness.get("issue_ready") else 0
+	doc.has_warnings = 1 if (counts["blocker_count"] or counts["warning_count"]) else 0
+	doc.next_inputs_needed = "\n".join(
+		str(m) for s in readiness.get("sections") or [] for m in s.get("missing") or [] if m
+	)
+	doc._issues_cache = issues
+
+
+def write_bom(doc, lines):
+	"""Rewrite the ``Auto`` lines from the derive; keep every ``Manual`` line, after them."""
+	manual = [r for r in doc.get("bom") or [] if (getattr(r, "source", None) or "Manual") == "Manual"]
+	kept = [{f: getattr(r, f, None) for f in LINE_FIELDS} for r in manual]
+	doc.set("bom", [])
+	for line in lines or []:
+		doc.append("bom", {f: line.get(f) for f in LINE_FIELDS} | {"source": "Auto"})
+	for row in kept:
+		row["amount"] = flt(row.get("qty")) * flt(row.get("rate"))
+		doc.append("bom", row | {"source": "Manual"})
+
+
+def write_derive(doc, out):
+	"""Everything one derive produced, onto the record."""
+	model = out.get("model") or {}
+	rollups = out.get("rollups") or {}
+	doc.model_json = json.dumps(model)
+	doc.results_json = json.dumps({k: out.get(k) for k in RESULT_KEYS})
+	for key, field in ROLLUP_FIELDS.items():
+		doc.set(field, rollups.get(key) or 0)
+	doc.selected_pump = rollups.get("selected_pump") or None
+	features = model.get("features") or []
+	site = model.get("site") or {}
+	doc.family = (features[0].get("family") if features else None) or ""
+	doc.venue_type = site.get("venue_type") or ""
+	doc.governing_code = site.get("governing_code") or ""
+	doc.kit = kits_engine.match_kit(model) if model.get("kit") else ""
+	doc.mode = "Full" if str(model.get("mode") or "").lower() == "full" else "Quick"
+	write_bom(doc, out.get("bom") or [])
+	doc.budget_total = round(
+		sum(
+			flt(getattr(r, "amount", None) if not isinstance(r, dict) else r.get("amount"))
+			for r in doc.get("bom") or []
+		),
+		2,
+	)
+	readiness = out.get("readiness") or {}
+	write_issue_state(doc, out.get("issues") or [], readiness)
+	if (doc.get("status") or "Draft") in ("Draft", "Derived"):
+		doc.status = "Derived" if readiness.get("calc_ready") else "Draft"
+
+
+def compute_completion_percent(doc):
+	"""0-100 from the readiness the last derive wrote: the share of applicable sections done."""
+	return design_issues.completion_from_readiness(_json_dict(doc.get("readiness_json")))
+
+
+# --------------------------------------------- schema 1 (the conversion patch)
 
 
 def _loads(text):
 	"""Parse a JSON list field; return [] on empty/garbage."""
-	if not text:
-		return []
-	try:
-		data = json.loads(text)
-		return data if isinstance(data, list) else []
-	except (ValueError, TypeError):
-		return []
+	return _json_list(text)
 
 
-_EQUIP_SPEC_FIELDS = [
-	"custom_equipment_class", "custom_model_no", "custom_filter_area_sqft",
-	"custom_filter_max_flow_gpm", "custom_filter_media", "custom_heater_fuel",
-	"custom_heater_kw", "custom_heater_btu_hr", "custom_elec_voltage",
-	"custom_elec_phase", "custom_elec_fla_amps", "custom_elec_watts",
-	"custom_vgb_open_area_sqin", "custom_vgb_rated", "custom_skimmer_max_flow_gpm",
-	"custom_jet_flow_gpm", "custom_jet_pressure_psi", "custom_meter_range",
-]
+def legacy_inputs(doc, rows):
+	"""The schema-1 engine input (``model.migrate``'s first shape) from a record's parent fields
+	and its child rows, ``rows = {table: [row dicts]}``, as read straight from the child tables:
+	the parent no longer declares them, so the conversion patch reads them with ``get_all``."""
 
+	def val(key, default=None):
+		v = doc.get(key) if hasattr(doc, "get") else getattr(doc, key, None)
+		return default if v in (None, "") else v
 
-def _equipment_specs(item_code):
-	"""Item spec fields for an equipment row; {} if the item or the catalog
-	custom fields aren't there yet (they land with the equipment-catalog migrate)."""
-	try:
-		return frappe.db.get_value("Item", item_code, _EQUIP_SPEC_FIELDS, as_dict=True) or {}
-	except Exception:
-		return {}
-
-
-def _equipment_rating(cls, specs):
-	"""One-line rating summary for the schedule, by equipment class."""
-	if cls == "Filter":
-		bits = []
-		if specs.get("custom_filter_area_sqft"):
-			bits.append(f"{flt(specs['custom_filter_area_sqft']):g} SF")
-		if specs.get("custom_filter_max_flow_gpm"):
-			bits.append(f"{flt(specs['custom_filter_max_flow_gpm']):g} GPM")
-		if specs.get("custom_filter_media"):
-			bits.append(specs["custom_filter_media"])
-		return " · ".join(bits)
-	if cls == "Heater":
-		if specs.get("custom_heater_kw"):
-			return f"{flt(specs['custom_heater_kw']):g} kW"
-		if specs.get("custom_heater_btu_hr"):
-			return f"{flt(specs['custom_heater_btu_hr']):g} BTU/hr"
-	if cls == "Suction Outlet (VGB)":
-		oa = specs.get("custom_vgb_open_area_sqin")
-		if oa:
-			return f"{flt(oa):g} sq in open{' · VGB' if specs.get('custom_vgb_rated') else ''}"
-		return "VGB" if specs.get("custom_vgb_rated") else ""
-	if cls == "Skimmer" and specs.get("custom_skimmer_max_flow_gpm"):
-		return f"{flt(specs['custom_skimmer_max_flow_gpm']):g} GPM max"
-	if cls == "Therapy Jet" and specs.get("custom_jet_flow_gpm"):
-		return f"{flt(specs['custom_jet_flow_gpm']):g} GPM @ {flt(specs.get('custom_jet_pressure_psi') or 0):g} PSI"
-	if cls == "Gauge / Meter" and specs.get("custom_meter_range"):
-		return specs["custom_meter_range"]
-	return ""
-
-
-def _equipment_electrical(specs):
-	"""One-line electrical summary (voltage / phase / FLA or watts)."""
-	v = specs.get("custom_elec_voltage")
-	if not v:
-		return ""
-	bits = [f"{v}V"]
-	if specs.get("custom_elec_phase"):
-		bits.append(f"{specs['custom_elec_phase']}ph")
-	if specs.get("custom_elec_fla_amps"):
-		bits.append(f"{flt(specs['custom_elec_fla_amps']):g}A")
-	elif specs.get("custom_elec_watts"):
-		bits.append(f"{flt(specs['custom_elec_watts']):g}W")
-	return " ".join(bits)
-
-
-def _equipment_note(cls, specs, design_gpm):
-	"""Cross-check note: a filter's max flow + area vs the design flow."""
-	if cls == "Filter" and design_gpm:
-		maxf = flt(specs.get("custom_filter_max_flow_gpm"))
-		if maxf and design_gpm > maxf:
-			return f"design flow {design_gpm:.0f} > filter max {maxf:.0f} GPM"
-		area = flt(specs.get("custom_filter_area_sqft"))
-		media = (specs.get("custom_filter_media") or "cartridge").lower()
-		try:
-			req = filtration_area(design_gpm, media).value
-		except Exception:
-			req = None
-		if req and area and area < req:
-			return f"filter area {area:.0f} < required {req:.0f} SF"
-		return "OK"
-	return ""
-
-
-def _fmt(value):
-	"""Render a calc value for the audit Data column."""
-	if value is None:
-		return ""
-	if isinstance(value, float):
-		return f"{value:.4f}".rstrip("0").rstrip(".")
-	return str(value)
-
-
-def _calc_row(r):
-	"""One CalcResult (object or already-serialized dict) -> a Water Feature Calc
-	Result child row. Captures the headline value plus the FULL math — formula,
-	ordered steps, inputs with provenance, citations, warnings, and the status
-	band — so the two Print Formats (results summary + calculation audit) can
-	render the design's end values and the exact working behind them."""
-	d = r.to_dict() if hasattr(r, "to_dict") else r
-	inputs = d.get("inputs") or {}
-	# Tab-delimited "name\tvalue\tunit\tsource (ref)" per input — the Calculation
-	# Audit print format splits this to a table (the print Jinja sandbox can't
-	# parse the JSON), while inputs_json keeps the exact structured data.
-	inputs_text = "\n".join(
-		"\t".join(
-			[
-				str(name),
-				_fmt(meta.get("value")),
-				str(meta.get("unit") or ""),
-				str(meta.get("source") or "") + (f" — {meta.get('ref')}" if meta.get("ref") else ""),
-			]
-		)
-		for name, meta in inputs.items()
-	)
-	return {
-		"calc": d.get("calc"),
-		"value": _fmt(d.get("value")),
-		"unit": d.get("unit"),
-		"status": d.get("status") or "",
-		"formula": d.get("formula"),
-		"steps": "\n".join(d.get("steps") or []),
-		"inputs_text": inputs_text,
-		"inputs_json": json.dumps(inputs),
-		"citations": ", ".join(d.get("citations") or []),
-		"warnings": "\n".join(d.get("warnings") or []),
-	}
-
-
-def _feature_dict(f):
-	"""One feature row -> engine input dict, resolving the Nozzle Profile (Cd /
-	orifice / rated GPM) for orifice features so the engine can compute flow."""
-	row = {
-		"feature_type": f.feature_type or "Weir",
-		"weir_length_ft": flt(f.weir_length_ft),
-		"head_in": flt(f.head_in),
-		"contractions": cint(f.end_contractions) or 2,
-		"nozzle_count": cint(f.nozzle_count),
-		"gpm_each": flt(f.gpm_each),
-		"nozzle_profile": f.nozzle_profile or "",
-		"supply_head_ft": flt(f.supply_head_ft),
-	}
-	if f.nozzle_profile:
-		row.update(nozzle_profile_params(f.nozzle_profile))
-	return row
-
-
-def _engine_inputs(doc):
-	"""Build the pure-engine input dict from the doc's child rows."""
-	default_material = doc.pipe_material or "SCH40 PVC"
-	basins = [
-		{
-			"shape": b.shape or "Rectangular",
-			"length_in": flt(b.length_in),
-			"width_in": flt(b.width_in),
-			"height_in": flt(b.height_in),
-			"diameter_in": flt(b.diameter_in),
-			"surface_area_sf": flt(getattr(b, "surface_area_sf", 0)),
-			"volume_gal_override": flt(getattr(b, "volume_gal_override", 0)),
-		}
-		for b in doc.get("basins") or []
-	]
+	default_material = val("pipe_material", "SCH40 PVC")
 	tiers = [
 		{
-			"diameter_in": flt(t.diameter_in),
-			"rim_height_in": flt(t.rim_height_in),
-			"spill_gpm_per_ft": flt(t.spill_gpm_per_ft) or 0.5,
+			"diameter_in": flt(t.get("diameter_in")),
+			"rim_height_in": flt(t.get("rim_height_in")),
+			"spill_gpm_per_ft": flt(t.get("spill_gpm_per_ft")) or 0.5,
 		}
-		for t in doc.get("tiers") or []
+		for t in rows.get("tiers") or []
 	]
 	features = []
-	for f in doc.get("features") or []:
-		fd = _feature_dict(f)
-		if feature_flow_category(f.feature_type or "") == "tiered":
-			fd["tiers"] = tiers
-			fd["gpm_per_ft"] = tiers[0]["spill_gpm_per_ft"] if tiers else 0.5
-		features.append(fd)
-	segments = [
-		{
-			"label": s.segment_label,
-			"flow_gpm": flt(s.flow_gpm),
-			"nominal_size": s.nominal_size,
-			"material": s.material or default_material,
-			"length_ft": flt(s.pipe_length_ft),
-			"line_type": s.line_type or "Discharge",
-			"fittings": _loads(s.fittings_json),
-			"components": _loads(s.components_json),
+	for f in rows.get("features") or []:
+		row = {
+			"feature_type": f.get("feature_type") or "Weir",
+			"feature_label": f.get("feature_label"),
+			"weir_length_ft": flt(f.get("weir_length_ft")),
+			"head_in": flt(f.get("head_in")),
+			"contractions": cint(f.get("end_contractions")) or 2,
+			"nozzle_count": cint(f.get("nozzle_count")),
+			"gpm_each": flt(f.get("gpm_each")),
+			"nozzle_profile": f.get("nozzle_profile") or "",
+			"supply_head_ft": flt(f.get("supply_head_ft")),
 		}
-		for s in doc.get("pipe_segments") or []
-	]
-	# Explicit pump rows win; otherwise auto-source from the ERPNext Items catalog
-	# (item_group "Pumps") so a seeded catalog resolves the pump automatically.
-	candidates = [
-		{
-			"item_code": p.pump_item,
-			"part_number": p.part_number,
-			"description": p.pump_description,
-			"rated_gpm": flt(p.rated_gpm),
-			"rated_tdh_ft": flt(p.rated_tdh_ft),
-		}
-		for p in doc.get("pumps") or []
-	] or _catalog_pump_candidates()
-	# Regulated aquatic-venue inputs (ignored by the spine for fountains, whose
-	# venue_type is empty / Decorative Fountain -> is_regulated is False).
-	surface_area_sf = sum(flt(getattr(b, "surface_area_sf", 0)) for b in doc.get("basins") or [])
-	venue_fixtures = [
-		{
-			"fixture_type": fx.fixture_type,
-			"qty": cint(fx.qty) or 1,
-			"rated_gpm": flt(fx.rated_gpm),
-			"open_area_in2": flt(getattr(fx, "open_area_in2", 0)),
-			"cover_length_in": flt(getattr(fx, "cover_length_in", 0)),
-			"cover_width_in": flt(getattr(fx, "cover_width_in", 0)),
-			"open_area_fraction": flt(getattr(fx, "open_area_fraction", 0)),
-		}
-		for fx in doc.get("venue_fixtures") or []
-	]
+		if "tier" in (row["feature_type"] or "").lower() or "cascade" in (row["feature_type"] or "").lower():
+			row["tiers"] = tiers
+		features.append(row)
 	return {
-		"basins": basins,
+		"basins": [
+			{
+				"basin_label": b.get("basin_label"),
+				"shape": b.get("shape") or "Rectangular",
+				"length_in": flt(b.get("length_in")),
+				"width_in": flt(b.get("width_in")),
+				"height_in": flt(b.get("height_in")),
+				"diameter_in": flt(b.get("diameter_in")),
+				"surface_area_sf": flt(b.get("surface_area_sf")),
+				"volume_gal_override": flt(b.get("volume_gal_override")),
+			}
+			for b in rows.get("basins") or []
+		],
 		"features": features,
-		"pipe_segments": segments,
-		"static_lift_ft": flt(doc.static_lift_ft),
-		"turnovers_per_hr": flt(doc.turnover_per_hr) or 2,
-		"hazen_williams_c": cint(doc.hazen_williams_c) or 130,
-		"pump_candidates": candidates or None,
-		"venue_type": getattr(doc, "venue_type", "") or "",
-		"governing_code": getattr(doc, "governing_code", "") or "",
-		"surface_area_sf": surface_area_sf,
-		"max_turnover_min": flt(getattr(doc, "max_turnover_min", 0)),
-		"design_flow_published_gpm": flt(getattr(doc, "design_flow_published_gpm", 0)),
-		"bather_sf_per_person": flt(getattr(doc, "bather_sf_per_person", 0)),
-		"skimmer_sf_each": flt(getattr(doc, "skimmer_sf_each", 0)),
-		"skimmer_rated_gpm": flt(getattr(doc, "skimmer_rated_gpm", 0)),
-		"venue_fixtures": venue_fixtures,
+		"pipe_segments": [
+			{
+				"label": s.get("segment_label"),
+				"flow_gpm": flt(s.get("flow_gpm")),
+				"nominal_size": s.get("nominal_size"),
+				"material": s.get("material") or default_material,
+				"length_ft": flt(s.get("pipe_length_ft")),
+				"line_type": s.get("line_type") or "Discharge",
+				"fittings": _loads(s.get("fittings_json")),
+				"components": _loads(s.get("components_json")),
+			}
+			for s in rows.get("pipe_segments") or []
+		],
+		"pumps": [{"pump_item": p.get("pump_item")} for p in rows.get("pumps") or [] if p.get("pump_item")],
+		"static_lift_ft": flt(val("static_lift_ft", 0)),
+		"turnovers_per_hr": flt(val("turnover_per_hr", 0)) or 2,
+		"hazen_williams_c": cint(val("hazen_williams_c", 0)) or 130,
+		"pipe_material": default_material,
+		"venue_type": val("venue_type", "") or "",
+		"governing_code": val("governing_code", "") or "",
 	}
-
-
-def _catalog_pump_candidates():
-	"""Pump candidates from the Items catalog (item_group 'Pumps') with the
-	pump-spec custom fields. Empty if the fields/items aren't set up yet (the
-	get_all raises on an unknown column before migrate creates them)."""
-	try:
-		items = frappe.get_all(
-			"Item",
-			filters={"item_group": "Pumps", "disabled": 0},
-			fields=[
-				"item_code", "item_name", "custom_rated_gpm", "custom_rated_tdh_ft",
-				"custom_pump_hp", "custom_pump_phase", "custom_pump_voltage",
-			],
-		)
-	except Exception:
-		return []
-	candidates = [
-		{
-			"item_code": it.get("item_code"),
-			"description": it.get("item_name"),
-			"rated_gpm": it.get("custom_rated_gpm"),
-			"rated_tdh_ft": it.get("custom_rated_tdh_ft"),
-			"hp": it.get("custom_pump_hp"),
-			"phase": it.get("custom_pump_phase"),
-			"voltage": it.get("custom_pump_voltage"),
-		}
-		for it in items
-	]
-	curves = pump_curves([c["item_code"] for c in candidates])
-	for c in candidates:
-		if curves.get(c["item_code"]):
-			c["curve"] = curves[c["item_code"]]
-	return candidates
-
-
-def compute_completion_percent(doc):
-	"""Rough 0-100 of how fleshed-out the design is: basin, features, piping,
-	and a resolved pump are the four Phase-1 milestones."""
-	done = sum(
-		bool(x)
-		for x in (
-			doc.get("basins"),
-			doc.get("features"),
-			doc.get("pipe_segments"),
-			doc.selected_pump or doc.get("pumps"),
-		)
-	)
-	return round(done / 4 * 100, 1)
