@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.759.0] - 2026-11-01
+
+ERPNext: TASK-2026-03031 (PRJ-00580, under TASK-2026-03018 Fountain Designer rebuild). This is phase
+S part 2, stacked on 1.758.0. Nikolas widened phase S the same day, from the basin shells to "the
+structure in general".
+
+**What the deploy does.** Nothing at runtime, as with 1.758.0. This is pure engine code (stdlib
+only, never imports frappe): no migration, fixture, patch or hook. Nothing runs until phase E's
+`derive()` calls `structural_takeoff`.
+
+### Added
+- `engine/structural/` gains eight modules. DOC-0119 covers none of this beyond its materials notes,
+  so each module cites the public standard it uses:
+  - **Loads.** `loads.py`: IBC presumptive soil values, surcharge (250 psf plaza traffic, AASHTO
+    vehicle), the 30 in Salt Lake frost depth, ASCE 7 seismic design values from Ss/S1 and site class,
+    ACI 350.3 hydrodynamic loads on basin walls, and ASCE 7 wind on a water wall or screen.
+  - **Walls.** `walls.py`: freestanding cantilever walls (raised basin, weir and soil-retaining walls)
+    checked for overturning, sliding, bearing and frost, and their footings sized.
+  - **Vaults and drains.** `vaults.py`: vault lids for pedestrian, plaza or H-20 loads, and bar
+    grating and trench drains by load class.
+  - **Building.** `building.py`: beams and decks over collector tanks, and rooftop or lobby floor
+    loads, always flagged to the engineer of record.
+  - **Steel.** `steel.py`: HSS properties computed from the tube geometry (they match the AISC
+    Manual within rounding), plus member, column and water-wall frame checks.
+  - **Fabrications.** `fabrications.py`: weir-lip sag against the 1/16 in edge tolerance, veneer
+    anchors, and pedestals.
+  - **Rigging.** `rigging.py`: the Digital Rain Curtain's `beamReactions` and `rigPlan`, ported and
+    pinned to the JavaScript's own output.
+  - **Supports.** `supports.py`: equipment pads with ACI 318 Chapter 17 anchors, thrust blocks,
+    seismic bracing, sleeves, and moorings for floating fountains.
+- `general.py` runs all of this from the model. Even with no `structure` block, it checks:
+  - every basin's walls under earthquake sloshing, when the site gives Ss/S1;
+  - every weir feature's lip;
+  - every vault lid;
+  - every penetration's waterstop ring.
+
+  A `structure` block lists the walls, frames, pads and the rest. The takeoff now also returns:
+  - `structure`, `seismic` and `notes` keys;
+  - new totals and new check codes;
+  - new BOM lines: steel by the pound, grating by the square foot, veneer anchors, braces, mooring
+    blocks, trench drains, an access hatch, and site concrete.
+- README §6: the new modules, the model's `structure` block for phase C, what the takeoff adds for
+  phase E, and the new house rules.
+- Tests: four more pytest suites under the same CI step, 82 tests in all, each with hand goldens.
+  The HSS table is pinned to AISC's published values, and the rigging port to golden vectors from the
+  DRC JavaScript.
+
 ## [1.758.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on

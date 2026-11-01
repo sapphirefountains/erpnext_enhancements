@@ -111,6 +111,7 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         given = get("lid", None) or {}
         lid = {
             "type": str(given.get("type") or "concrete").lower(),
+            "load_class": given.get("load_class") or "pedestrian",
             "thickness_in": _num(given.get("thickness_in"), 0.0) or None,
             "hatch_length_in": _num(given.get("hatch_length_in"), rules["vault_hatch_in"]),
             "hatch_width_in": _num(given.get("hatch_width_in"), rules["vault_hatch_in"]),
@@ -142,6 +143,7 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         "groundwater_depth_ft": gw if gw is not None else _opt(site.get("groundwater_depth_ft")),
         "soil_bearing_psf": _opt(get("soil_bearing_psf", None)) or _opt(site.get("soil_bearing_psf")),
         "floor_capacity_psf": _opt(get("floor_capacity_psf", None)),
+        "floor_use": get("floor_use", None),
     }
 
 
