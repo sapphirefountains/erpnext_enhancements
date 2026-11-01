@@ -158,6 +158,10 @@ class ParallelDemand:
         self.pg = max((m.pg for m in opened), default=0.0)
         fixed = [m.p_fixed for m in self.members if getattr(m, "p_fixed", None) is not None]
         self.p_fixed = min(fixed) if fixed else None
+        # A fixed-flow member the pump cannot hold starves the node: operating_point then solves the flow
+        # it does deliver at the highest member minimum.
+        floors = [m.p_floor for m in self.members if getattr(m, "p_floor", None) is not None]
+        self.p_floor = max(floors) if floors else None
 
     def q(self, p: float) -> float:
         total = 0.0

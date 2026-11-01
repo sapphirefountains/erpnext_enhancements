@@ -208,8 +208,8 @@ def pipe_spec(material: str, nominal_size: str = "", id_in: float | None = None,
     spec = pipe_spec_si(
         material,
         nominal_size,
-        (id_in or 0) * MM_PER_IN if id_in else 0,
-        (wall_in or 0) * MM_PER_IN if wall_in else 0,
+        id_in * MM_PER_IN if id_in else 0,
+        wall_in * MM_PER_IN if wall_in else 0,
     )
     warnings = []
     if spec.nominal is None:

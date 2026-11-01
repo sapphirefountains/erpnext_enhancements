@@ -387,11 +387,23 @@ def system_curve_si(system: System, demand, n: int = 40, q_max: float | None = N
 # ---------------------------------------------------------------------------
 
 
+VAPOR_TABLE_F = (40.0, 120.0)  # the span of constants.VAPOR_PRESSURE_PSIA
+
+
 def site_atmosphere(elevation_ft: float, water_temp_f: float) -> tuple[float, float]:
-    """(atmospheric pressure, vapor pressure) in Pa from the workbook engine's own models
-    (``safety._atm_head_ft`` barometric lapse, ``safety._vapor_pressure_psia`` table)."""
+    """(atmospheric pressure, vapor pressure) in Pa from the workbook engine's own models:
+    ``safety._atm_head_ft`` (barometric lapse) and ``safety._vapor_pressure_psia`` (table).
+
+    The table spans 40-120 F and clamps outside it, which would understate the vapor pressure of
+    hotter water (2.89 psia at 140 F, not 1.69) and overstate NPSHa; outside its span the Antoine
+    figure from ``water_si`` is used instead."""
     atm_psia = _atm_head_ft(elevation_ft) / FT_PER_PSI
-    return atm_psia * PA_PER_PSI, _vapor_pressure_psia(water_temp_f) * PA_PER_PSI
+    t = float(water_temp_f)
+    if VAPOR_TABLE_F[0] <= t <= VAPOR_TABLE_F[1]:
+        pv = _vapor_pressure_psia(t) * PA_PER_PSI
+    else:
+        pv = water_si(f_to_c(t)).pv
+    return atm_psia * PA_PER_PSI, pv
 
 
 def build_system(
@@ -470,7 +482,7 @@ def operating_point(
     warnings: list[str] = []
     if control in ("prv", "vfd") and system.set_pa is None:
         warnings.append(f"Control {control} needs a set pressure; solved as uncontrolled.")
-    if len(p._curve) < 2:
+    if len(p.head_points) < 2:
         warnings.append("No pump curve (fewer than two head points): the operating point rests on the quadratic estimate.")
 
     margin_ft = op.npsh_margin / M_PER_FT
@@ -487,7 +499,7 @@ def operating_point(
     elif op.dead_head:
         status = STATUS_DEAD_HEAD
         warnings.append("Pump flow is under 10% of its best-efficiency flow: it will overheat. Add a bypass or resize.")
-    elif not p._npshr:
+    elif not p.npshr_points:
         status = STATUS_OK
         warnings.append("No NPSHr curve: NPSHa computed but not checked.")
     elif margin_ft >= npsh_margin_ft:
@@ -504,7 +516,7 @@ def operating_point(
         design_flow_gpm = m3s_to_gpm(q_design)
     safety_flow = max(q_gpm, float(design_flow_gpm or 0))
     if design_flow_gpm:
-        ratio = q_gpm / float(design_flow_gpm) if design_flow_gpm else 0
+        ratio = q_gpm / float(design_flow_gpm)
         if ratio < 0.95:
             warnings.append(f"The pump delivers {q_gpm:.1f} GPM, {1 - ratio:.0%} short of the {design_flow_gpm:g} GPM design flow.")
         elif ratio > 1.10:
@@ -588,7 +600,7 @@ def system_curve(terminal, *, pump=None, supply=None, static_ft=0.0, water_temp_
     demand = terminal if hasattr(terminal, "p_for") else build_demand(terminal, system.w.rho)
     q_max = gpm_to_m3s(float(max_flow_gpm)) if max_flow_gpm else None
     warnings = []
-    if q_max is None and not system.pump._curve and not system.pump.quad:
+    if q_max is None and not system.pump.head_points and not system.pump.quad:
         warnings.append("No pump and no maximum flow: give max_flow_gpm.")
         q_max = 0.0
     pts = system_curve_si(system, demand, n, q_max)

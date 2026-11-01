@@ -70,9 +70,11 @@ def interp(pts, x: float) -> float:
     return _interp_clean(clean(pts), x)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PumpCurve:
-    """A pump: head (m), efficiency (%) and NPSHr (m) against flow (L/min), motor efficiency and speed."""
+    """A pump: head (m), efficiency (%) and NPSHr (m) against flow (L/min), motor efficiency and speed.
+
+    Compared and hashed by identity (``eq=False``), so it can key a cache though it holds lists."""
 
     curve: list = field(default_factory=list)
     eff: list = field(default_factory=list)
@@ -86,6 +88,21 @@ class PumpCurve:
         object.__setattr__(self, "_curve", clean(self.curve))
         object.__setattr__(self, "_eff", clean(self.eff))
         object.__setattr__(self, "_npshr", clean(self.npshr))
+
+    @property
+    def head_points(self) -> list:
+        """The cleaned head curve [(L/min, m)], sorted by flow."""
+        return self._curve
+
+    @property
+    def eff_points(self) -> list:
+        """The cleaned efficiency curve [(L/min, %)]."""
+        return self._eff
+
+    @property
+    def npshr_points(self) -> list:
+        """The cleaned NPSHr curve [(L/min, m)]."""
+        return self._npshr
 
     @property
     def default_speed(self) -> float:
@@ -243,13 +260,13 @@ def _speed(speed_pct, pump: PumpCurve):
 
 def _curve_warnings(p: PumpCurve, flow_gpm: float, speed) -> list[str]:
     warnings = []
-    if len(p._curve) < 2:
+    if len(p.head_points) < 2:
         warnings.append(
             "No pump curve: the head comes from the two-point quadratic (shut-off head, maximum flow)."
             if p.quad
             else "No pump curve and no shut-off head / maximum flow: head is 0. Enter the curve points."
         )
-    elif m3s_to_gpm(p._curve[-1][0] / 60000 * _s(p, speed)) < flow_gpm:
+    elif m3s_to_gpm(p.head_points[-1][0] / 60000 * _s(p, speed)) < flow_gpm:
         warnings.append(f"{flow_gpm:g} GPM is past the last curve point; the head is extrapolated.")
     return warnings
 
@@ -258,7 +275,7 @@ def _inputs(p: PumpCurve, flow_gpm: float, speed) -> dict:
     return {
         "flow": make_input(float(flow_gpm), "GPM", "prior_calc"),
         "speed": make_input(round(_s(p, speed) * 100, 3), "%", "user"),
-        "curve_points": make_input(len(p._curve), "points", "lookup", p.name or "pump curve"),
+        "curve_points": make_input(len(p.head_points), "points", "lookup", p.name or "pump curve"),
     }
 
 
@@ -293,7 +310,7 @@ def pump_eff(pump, flow_gpm: float, speed_pct: float | None = None) -> CalcResul
         formula="eta(Q, s) = eta(Q/s), clamped 0-95%",
         steps=[f"eta = {e * 100:.1f}%"],
         citations=[CIT_PUMP_CURVE, CIT_AFFINITY, CIT_DRC],
-        warnings=[] if p._eff else ["No efficiency curve: 50% assumed."],
+        warnings=[] if p.eff_points else ["No efficiency curve: 50% assumed."],
     )
 
 
@@ -310,7 +327,7 @@ def npshr(pump, flow_gpm: float, speed_pct: float | None = None) -> CalcResult:
         formula="NPSHr(Q, s) = s^2 NPSHr(Q/s)",
         steps=[f"NPSHr = {h:.2f} ft"],
         citations=[CIT_PUMP_CURVE, CIT_AFFINITY, CIT_DRC],
-        warnings=[] if p._npshr else ["No NPSHr curve: NPSHr reads 0 and the cavitation check cannot gate."],
+        warnings=[] if p.npshr_points else ["No NPSHr curve: NPSHr reads 0 and the cavitation check cannot gate."],
     )
 
 
@@ -327,7 +344,7 @@ def bep_flow(pump, speed_pct: float | None = None) -> CalcResult:
         formula="Q_BEP = argmax eta(Q) * s",
         steps=[f"Q_BEP = {q:.1f} GPM"],
         citations=[CIT_PUMP_CURVE, CIT_AFFINITY, CIT_DRC],
-        warnings=[] if p._eff else ["No efficiency curve: BEP taken as half the curve's last flow."],
+        warnings=[] if p.eff_points else ["No efficiency curve: BEP taken as half the curve's last flow."],
     )
 
 

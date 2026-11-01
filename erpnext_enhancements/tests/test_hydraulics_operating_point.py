@@ -246,3 +246,23 @@ def test_curve_and_bypass_envelopes():
     b = bypass_flow(0.5, 20)
     # 0.61 * 1.2668e-4 m^2 * sqrt(2 * 137,895 Pa / 998.2) = 1.284e-3 m^3/s = 20.4 GPM
     assert 20.2 < b.value < 20.5 and b.citations
+
+
+def test_starved_fixed_flow_inside_a_parallel_node():
+    alone = operating_point_si(BASE, FixedFlowDemand(0.005, RG * 15))
+    inside = operating_point_si(BASE, ParallelDemand([FixedFlowDemand(0.005, RG * 15)]))
+    assert inside.starved and alone.starved
+    close(inside.q, alone.q, SOLVE, "Q")
+
+
+def test_hot_water_vapor_pressure_is_not_clamped():
+    """The workbook table stops at 120 F; above it the Antoine figure is used (140 F: 2.89 psia)."""
+    _, pv_120 = site_atmosphere(0, 120)
+    _, pv_140 = site_atmosphere(0, 140)
+    assert abs(pv_120 / 6894.757 - 1.692) < 1e-9
+    assert 2.8 < pv_140 / 6894.757 < 3.0
+
+
+def test_pump_and_system_are_hashable():
+    system = replace(BASE, supply=(Segment(spec=pipe_spec_si("SCH40 PVC", '2"'), length_m=3, fittings=(("elbow_90", 1),)),))
+    assert hash(QUAD) and hash(system) and {QUAD: 1}[QUAD] == 1

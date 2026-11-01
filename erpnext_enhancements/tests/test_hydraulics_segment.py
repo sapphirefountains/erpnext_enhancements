@@ -145,3 +145,30 @@ def test_supply_and_suction_envelopes():
     suc = suction_loss({**ROW, "branches": 2}, 50)
     one = suction_loss({**ROW, "branches": 1}, 50)
     assert abs(suc.value - one.value) < 1e-12  # suction is one run
+
+
+def test_lean_kernel_equals_the_parts():
+    seg = Segment(spec=pipe_spec_si("SCH40 PVC", '2"'), length_m=30, branches=2, k_extra=1.2,
+                  fittings=(("elbow_90", 3), ("strainer", 1)), components=(("CARTRIDGE FILTER 520 SF CCP CLEAN", 1),))
+    w = water_si(30)
+    for q in (0.0, 1e-4, 3e-3, 2e-2):
+        for clog in (0, 0.4):
+            assert segment_loss_si(seg, q, w, clog) == segment_parts_si(seg, q, w, clog).dp
+
+
+def test_unknown_size_warns_instead_of_hiding_the_default_bore():
+    row = {"label": "Typo", "material": "SCH40 PVC", "nominal_size": '1.5"', "length_ft": 50}
+    seg = Segment.from_us(row)
+    assert seg.spec.id_mm == 25.0 and seg.note
+    cards = segment_loss(row, 30)
+    assert any("default bore" in w for w in cards[0].warnings)
+    assert any("default bore" in w for w in supply_loss([row], 30).warnings)
+    assert not Segment.from_us({**row, "id_in": 1.61}).note and not Segment.from_us({**row, "nominal_size": '1-1/2"'}).note
+
+
+def test_crosscheck_leaves_k_extra_out_of_both_sides():
+    base = {"label": "Run", "material": "SCH40 PVC", "nominal_size": '2"', "length_ft": 100, "fittings": [{"type": "ELL 90", "qty": 2}]}
+    plain = segment_loss(base, 50)[-1]
+    extra = segment_loss({**base, "k_extra": 8}, 50)[-1]
+    assert extra.status == plain.status and extra.steps[-1] == plain.steps[-1]
+    assert any("K_extra" in w for w in extra.warnings)

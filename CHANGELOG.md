@@ -82,7 +82,7 @@ deploy has no migrate work, no patches and no fixtures.
     max/min, `x || d`, `toFixed` ties, and pow overflow. The bisections use DRC's exact caps and
     tolerances.
   - Closed-form math matches at 1e-12 and bisections at 1e-9.
-  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 97 tests) run in their own `ci.yml` step.
+  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 103 tests) run in their own `ci.yml` step.
     CI needs no Node.
 
 ### Changed

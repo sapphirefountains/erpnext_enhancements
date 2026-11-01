@@ -60,6 +60,7 @@ class Segment:
     components: tuple = ()  # (COMPONENT_CURVES name, qty)
     label: str = ""
     line: str = ""  # "suction" | "discharge" | ""
+    note: str = ""  # set by from_us when the row named no catalog size and no bore
 
     @classmethod
     def from_us(cls, row: dict) -> Segment:
@@ -75,6 +76,12 @@ class Segment:
             float(wall_in) * MM_PER_IN if wall_in else 0,
         )
         comps = tuple((c.get("key") or c.get("type"), float(c.get("qty", c.get("count", 1)) or 0)) for c in row.get("components") or [])
+        note = ""
+        if spec.nominal is None and not id_in:
+            note = (
+                f"{row.get('material') or 'SCH40 PVC'} {row.get('nominal_size') or '(no size)'} is not in the catalog "
+                "and the row gives no id_in: solved with a 25 mm (0.98 in) default bore. Pick a catalog size or enter the ID."
+            )
         return cls(
             spec=spec,
             length_m=float(row.get("length_ft") or 0) * M_PER_FT,
@@ -84,6 +91,7 @@ class Segment:
             components=comps,
             label=row.get("label") or row.get("segment_label") or "",
             line=row.get("line") or "",
+            note=note,
         )
 
 
@@ -104,6 +112,18 @@ class SegmentLoss:
     dp_components: float  # Pa
     dp: float  # Pa, total
     warnings: list = field(default_factory=list)
+
+
+def _components_pa(seg: Segment, q_branch: float, w: Water, clog: float) -> tuple[float, list]:
+    """Equipment-curve loss (Pa) at the branch flow, and the curves' warnings."""
+    dp, warnings = 0.0, []
+    gpm = m3s_to_gpm(abs(q_branch))
+    for name, qty in seg.components:
+        h_ft, warn = component_loss_ft(name, gpm, clog)
+        dp += qty * h_ft * M_PER_FT * w.rho * G
+        if warn:
+            warnings.append(warn)
+    return dp, warnings
 
 
 def segment_parts_si(seg: Segment, q: float, w: Water, clog: float = 0.0) -> SegmentLoss:
@@ -128,14 +148,9 @@ def segment_parts_si(seg: Segment, q: float, w: Water, clog: float = 0.0) -> Seg
     k_extra = _js.or_(seg.k_extra, 0.0)
     k = k_pipe + k_fit + k_extra
     dp = (k * rho * u * u) / 2
-    dp_comp, warnings = 0.0, []
-    if seg.components:
-        gpm = m3s_to_gpm(abs(qs))
-        for name, qty in seg.components:
-            h_ft, warn = component_loss_ft(name, gpm, clog)
-            dp_comp += qty * h_ft * M_PER_FT * rho * G
-            if warn:
-                warnings.append(warn)
+    dp_comp, warnings = _components_pa(seg, qs, w, clog) if seg.components else (0.0, [])
+    if seg.note:
+        warnings.append(seg.note)
     return SegmentLoss(
         q=q, q_branch=qs, u=u, re=re, f=f, k_pipe=k_pipe, k_fittings=k_fit, k_extra=k_extra,
         dp_friction=k_pipe * rho * u * u / 2, dp_fittings=(k_fit + k_extra) * rho * u * u / 2,
@@ -144,8 +159,27 @@ def segment_parts_si(seg: Segment, q: float, w: Water, clog: float = 0.0) -> Seg
 
 
 def segment_loss_si(seg: Segment, q: float, w: Water, clog: float = 0.0) -> float:
-    """``segmentLoss``: pressure loss (Pa) across one segment at flow ``q`` (m^3/s)."""
-    return segment_parts_si(seg, q, w, clog).dp
+    """``segmentLoss``: pressure loss (Pa) across one segment at flow ``q`` (m^3/s).
+
+    The solvers call this on every residual evaluation, so it keeps no parts and allocates
+    nothing; ``segment_parts_si`` is the same arithmetic with the breakdown."""
+    if not q or q != q:
+        return 0.0
+    qs = q / seg.branches if seg.branches != 1 else q
+    if not qs:
+        return 0.0
+    spec = seg.spec
+    d = spec.id_m
+    u = abs(qs) / spec.area
+    if not u or u != u:
+        return 0.0
+    re = (u * d) / w.nu
+    f = friction_factor_si(re, spec.eps_mm / spec.id_mm)
+    k = (f * _js.jmax(0.0, _js.or_(_js.num(seg.length_m), 0.0))) / d + fit_sum_k_si(seg.fittings, re, spec.id_mm, clog) + _js.or_(seg.k_extra, 0.0)
+    dp = (k * w.rho * u * u) / 2
+    if seg.components:
+        dp += _components_pa(seg, qs, w, clog)[0]
+    return dp
 
 
 def supply_loss_si(segments, q: float, w: Water, clog: float = 0.0) -> float:
@@ -249,6 +283,7 @@ def segment_loss(
                 f"h_f = {friction_ft:.4f} ft",
             ],
             citations=[CIT_DARCY, CIT_CHURCHILL, CIT_DRC],
+            warnings=[seg.note] if seg.note else [],
         )
     ]
     if seg.fittings or seg.k_extra:
@@ -278,7 +313,7 @@ def segment_loss(
                 formula="h_c = Σ qty * curve(type, Q_branch) ; filters / (1 - clog)^2",
                 steps=[f"at {branch_gpm:.2f} GPM: {comp_ft:.4f} ft" + (f" (clog {clog_pct:g}%)" if clog else "")],
                 citations=[CIT_COMPONENTS],
-                warnings=list(parts.warnings),
+                warnings=[x for x in parts.warnings if x != seg.note],
             )
         )
 
@@ -286,7 +321,8 @@ def segment_loss(
     wb_row, missing = _workbook_row(segment, seg, branch_gpm)
     wb_cards = workbook_segment_cards(wb_row, c=hw_c, constant=HW_CONSTANT)
     wb_pipe = sum(c.value for c in wb_cards if not c.calc.startswith("Component"))
-    darcy_pipe = _ft(parts.dp_friction + parts.dp_fittings, w)
+    # Like for like: the workbook has no K_extra, so it is left out of the Darcy side too.
+    darcy_pipe = _ft(parts.dp_friction + parts.k_fittings * w.rho * parts.u * parts.u / 2, w)
     status, rel = crosscheck_status(darcy_pipe, wb_pipe)
     warnings = []
     if status == STATUS_DIVERGES:
@@ -297,6 +333,8 @@ def segment_loss(
         )
     if missing:
         warnings.append(f"DOC-0049 has no fixed K for {missing}; the workbook figure leaves them out.")
+    if parts.k_extra:
+        warnings.append(f"K_extra {parts.k_extra:g} has no workbook counterpart; both sides of the comparison leave it out.")
     cards.append(
         CalcResult(
             calc=f"Workbook cross-check (Hazen-Williams) — {label}",
