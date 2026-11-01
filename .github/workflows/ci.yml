@@ -2473,11 +2473,11 @@ jobs:
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
       # The electrical package (engine/electrical/, phase L of the Fountain Designer,
-      # v1.759.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
+      # v1.760.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
       # feeders, the Article 680 checklist and electrical_report, plus parity with the
       # Digital Rain Curtain's electrical.js. Plain pytest functions, so its own pytest
       # step -- `python -m unittest` would collect nothing from these files. The controls
-      # package (engine/controls/, v1.760.0: starters, VFD with bypass, Splash Wizard,
+      # package (engine/controls/, v1.761.0: starters, VFD with bypass, Splash Wizard,
       # panel design) shares the step.
       - name: Water engineering electrical and controls (bench-free pytest suite)
         run: >-
@@ -2495,6 +2495,18 @@ jobs:
       # Pump Curve records over the Item's legacy table.
       - name: Water engineering catalog (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+      # Fountain Designer phase C (v1.759.0): the feature-family rules, the schema-2 design model,
+      # the kits and the Sapphire house rules. Plain pytest functions, so their own pytest step:
+      # `python -m unittest` would collect none of them. test_water_house_rules puts its frappe
+      # stub in sys.modules only for the length of each test (monkeypatch), so it shares the step.
+      - name: Fountain Designer families, model and house rules (bench-free pytest suite)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_families_weir.py
+          erpnext_enhancements/tests/test_families_jets.py
+          erpnext_enhancements/tests/test_families_others.py
+          erpnext_enhancements/tests/test_water_model.py
+          erpnext_enhancements/tests/test_water_house_rules.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops

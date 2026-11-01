@@ -75,11 +75,11 @@ FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
 # 125% of FLA is the motor branch CONDUCTOR rule (NEC 430.22) and the continuous-
 # load rule for conductors and non-motor OCPD (210.19(A)(1), 210.20(A)). It is NOT
 # the motor breaker: that is the NEC 430.52 / Table 430.52(C)(1) maximum (250% of
-# FLC for an inverse-time breaker), in electrical/ocpd.py. Corrected v1.759.0.
+# FLC for an inverse-time breaker), in electrical/ocpd.py. Corrected v1.760.0.
 BREAKER_CONTINUOUS_FACTOR = 1.25  # conductors >= 125% FLA (NEC 430.22) / continuous loads (210.19, 210.20)
 
 # The NEC tables (240.6(A) standard ratings, Table 430.248 / 430.250 motor FLC
-# and the rest) live in data/nec_tables.py since v1.759.0.
+# and the rest) live in data/nec_tables.py since v1.760.0.
 FEEDER_MOTOR_FACTOR = 1.25  # NEC 430.24: 125% of the largest-rating motor FLC
 CIT_FEEDER = "NEC 430.24 (feeder ampacity) / 430.62 (feeder OCPD)"
 

@@ -11,7 +11,7 @@ rounded-down value is under the 430.24 load, the feeder goes up to the next
 standard size at or above that load and the result says so.
 
 The largest branch device is the 430.52 rating from ``ocpd.motor_branch_ocpd``.
-Before v1.759.0 it was 125% of FLA (the 430.22 conductor figure), which seeded
+Before v1.760.0 it was 125% of FLA (the 430.22 conductor figure), which seeded
 430.62 too low.
 """
 
