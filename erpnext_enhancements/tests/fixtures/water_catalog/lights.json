@@ -1,0 +1,26 @@
+{
+ "_comment": "INVENTED TEST DATA for tests/test_water_catalog.py. Fixtureco and every FIXTURE- model are made up; none is a real product.",
+ "lights": [
+  {
+   "manufacturer": "Fixtureco",
+   "model": "FIXTURE-L12",
+   "watts": 12,
+   "voltage": 12,
+   "lumens": 900,
+   "beam_deg": 30,
+   "control": "DMX",
+   "max_depth_ft": 10,
+   "ip_rating": "IP68",
+   "listing": "UL 676",
+   "source": {"url": "https://example.invalid/fixture-l12.pdf", "document": "FIXTURE lighting guide"},
+   "confidence": "table"
+  },
+  {
+   "manufacturer": "Fixtureco",
+   "model": "FIXTURE-L0",
+   "voltage": 12,
+   "source": {"url": "https://example.invalid/fixture-l0.pdf"},
+   "confidence": "table"
+  }
+ ]
+}
