@@ -160,7 +160,9 @@ def test_bom_lines_shape_and_quantities(golden):
     assert bom["structural.rebar.#4.lb"]["qty"] == 240.48
     assert bom["structural.rebar.#4.bars20"]["qty"] == 18
     assert bom["structural.rebar.#4.bars20"]["priced"] is False
-    assert bom["structural.gravel"]["qty"] == 4.74
+    assert bom["structural.gravel"]["qty"] == 9480.82  # 4.7404 short tons × 2,000: ERPNext has no "Ton" UOM
+    assert bom["structural.gravel"]["uom"] == "Pound"
+    assert {line["uom"] for line in golden["bom"]} <= {"Cubic Yard", "Pound", "Nos", "Foot", "Square Foot"}
     assert bom["structural.waterstop"]["uom"] == "Foot"
     assert bom["structural.coating"]["qty"] == 108.0
     assert "structural.anchors" not in bom  # no equipment in this model
@@ -243,3 +245,29 @@ def test_empty_model():
     t = structural_takeoff({})
     assert t["basins"] == [] and t["bom"] == [] and t["totals"]["trucks"] == 0
     assert math.isclose(t["totals"]["concrete_net_yd3"], 0.0)
+
+
+def test_no_infinity_reaches_the_json():
+    import json
+
+    # a 6 in wall 12 ft tall: no bar area carries the moment
+    t = structural_takeoff({"basins": [{"id": "t", "label": "Tall", "shape": "rectangular", "length_in": 240,
+                                        "width_in": 240, "depth_in": 144, "wall_in": 6}]})
+    json.dumps(t, allow_nan=False)
+    wall = t["basins"][0]["results"]["wall_water"]["value"]
+    assert wall["as_required_in2_per_ft"] is None and wall["flexure_ok"] is False
+    detail = {c["code"]: c for c in t["checks"]}["STRUCT_WALL_WATER"]["detail"]
+    assert "section too thin" in detail and "inf" not in detail
+
+
+def test_vault_coating_has_its_own_line_and_keys_stay_unique():
+    twin = dict(GOLDEN, id="b2")
+    vault = {"id": "v", "label": "Vault", "kind": "vault", "shape": "rectangular", "length_in": 96, "width_in": 72,
+             "depth_in": 84}
+    t = structural_takeoff({"basins": [GOLDEN, twin, vault]})
+    bom = {line["key"]: line for line in t["bom"]}
+    assert "inside walls" in bom["structural.coating"]["description"]
+    assert "outside faces" in bom["structural.coating.exterior"]["description"]
+    keys = [c["key"] for c in t["checks"]]
+    assert len(keys) == len(set(keys))
+    assert {"STRUCT_ACI350_ST|Pool [b1]", "STRUCT_ACI350_ST|Pool [b2]"} <= set(keys)

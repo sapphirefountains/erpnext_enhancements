@@ -69,6 +69,20 @@ def _opt(value):
         return None
 
 
+def rim_above_grade_ft(spec: dict, h_ft: float, lid_in: float) -> float | None:
+    """Rim (top of wall) height above finished grade, in feet; ``None`` for a
+    basin standing on a structure. One rule for the shell and the sizing."""
+    if spec.get("placement") == "on_structure":
+        return None
+    if spec.get("rim_above_grade_in") is not None:
+        return float(spec["rim_above_grade_in"]) / 12.0
+    if spec.get("placement") == "raised":
+        return float(h_ft)
+    if spec.get("kind") == "vault":
+        return -float(lid_in or 0) / 12.0
+    return 0.0
+
+
 def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None) -> dict:
     """Flatten one model basin (plus site-level soil facts) into the keys the
     structural calcs read. Keys under ``basin["structure"]`` win over the same
@@ -96,12 +110,26 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
     if placement in ("on_slab", "on_roof", "rooftop", "elevated", "podium"):
         placement = "on_structure"
 
+    problems: list[str] = []
+
+    def positive(key, value, allow_zero=False, zero_is_blank=False):
+        """A number ≥ 0 (or > 0), or None with a note; a negative never reaches the math."""
+        num = _opt(value)
+        if num is None or (num == 0 and zero_is_blank):
+            return None
+        if num < 0 or (num == 0 and not allow_zero):
+            problems.append(f"{key} = {value!r} ignored (must be {'≥' if allow_zero else '>'} 0)")
+            return None
+        return num
+
     steps = []
-    for row in get("steps", None) or []:
-        depth = _num(row.get("depth_in"))
-        frac = _num(row.get("area_fraction"))
-        if depth > 0 and frac > 0:
+    for i, row in enumerate(get("steps", None) or [], start=1):
+        depth = _opt((row or {}).get("depth_in"))
+        frac = _opt((row or {}).get("area_fraction"))
+        if depth is not None and frac is not None and depth > 0 and frac > 0:
             steps.append({"depth_in": depth, "area_fraction": frac})
+        else:
+            problems.append(f"step {i} ignored: needs a depth_in and an area_fraction, both > 0 (got {row!r})")
     depth_in = _num(get("depth_in"))
     if steps:
         depth_in = max(depth_in, max(s["depth_in"] for s in steps))
@@ -109,16 +137,19 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
     lid = None
     if kind == "vault":
         given = get("lid", None) or {}
+        hatch_l = positive("lid.hatch_length_in", given.get("hatch_length_in"), allow_zero=True)
+        hatch_w = positive("lid.hatch_width_in", given.get("hatch_width_in"), allow_zero=True)
         lid = {
             "type": str(given.get("type") or "concrete").lower(),
             "load_class": given.get("load_class") or "pedestrian",
-            "thickness_in": _num(given.get("thickness_in"), 0.0) or None,
-            "hatch_length_in": _num(given.get("hatch_length_in"), rules["vault_hatch_in"]),
-            "hatch_width_in": _num(given.get("hatch_width_in"), rules["vault_hatch_in"]),
+            "thickness_in": positive("lid.thickness_in", given.get("thickness_in")),
+            "hatch_length_in": rules["vault_hatch_in"] if hatch_l is None else hatch_l,
+            "hatch_width_in": rules["vault_hatch_in"] if hatch_w is None else hatch_w,
         }
 
-    freeboard = _opt(get("freeboard_in", None))
-    gw = _opt(get("groundwater_depth_ft", None))
+    freeboard = positive("freeboard_in", get("freeboard_in", None), allow_zero=True)
+    gw = _opt(get("groundwater_depth_ft", None))  # negative = water above grade, allowed
+    corners = positive("corner_count", get("corner_count", None), allow_zero=True)
     return {
         "_spec": True,
         "id": basin.get("id") or "",
@@ -134,15 +165,17 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         "depth_in": depth_in,
         "freeboard_in": freeboard,
         "steps": steps,
-        "riser_length_ft": _num(get("riser_length_ft")) or None,
-        "corner_count": _opt(get("corner_count", None)),
+        "riser_length_ft": positive("riser_length_ft", get("riser_length_ft", None)),
+        "corner_count": None if corners is None else int(corners),
         "rim_above_grade_in": _opt(get("rim_above_grade_in", None)),
         "lid": lid,
-        "slab_in": _num(get("slab_in")) or None,
-        "wall_in": _num(get("wall_in")) or None,
+        "slab_in": positive("slab_in", get("slab_in", None), zero_is_blank=True),
+        "wall_in": positive("wall_in", get("wall_in", None), zero_is_blank=True),
         "groundwater_depth_ft": gw if gw is not None else _opt(site.get("groundwater_depth_ft")),
-        "soil_bearing_psf": _opt(get("soil_bearing_psf", None)) or _opt(site.get("soil_bearing_psf")),
-        "floor_capacity_psf": _opt(get("floor_capacity_psf", None)),
+        "soil_bearing_psf": positive("soil_bearing_psf", get("soil_bearing_psf", None))
+        or positive("site.soil_bearing_psf", site.get("soil_bearing_psf")),
+        "floor_capacity_psf": positive("floor_capacity_psf", get("floor_capacity_psf", None)),
+        "problems": problems,
         "floor_use": get("floor_use", None),
     }
 
@@ -215,20 +248,30 @@ def basin_shell(
     t = t_in / 12.0
     plan = _plan(spec, t) if t_in > 0 and s_in > 0 else None
     if plan is None or spec["depth_in"] <= 0:
+        need = {"rectangular": ("length_in", "width_in"), "cylindrical": ("diameter_in",),
+                "freeform": ("area_sqft", "perimeter_ft")}.get(spec.get("shape"), ())
+        missing = [k for k in need if not (spec.get(k) or 0) > 0]
+        if spec["depth_in"] <= 0:
+            missing.append("depth_in")
+        if t_in <= 0:
+            missing.append("wall_in")
+        if s_in <= 0:
+            missing.append("slab_in")
+        what = (f"unknown shape {spec.get('shape')!r} (rectangular, cylindrical or freeform)" if not need
+                else "missing or not > 0: " + ", ".join(missing))
         return CalcResult(
             calc=calc,
             inputs={"basin": make_input(spec.get("id"), "", "user")},
             formula="needs shape dimensions, depth_in > 0, slab and wall thickness > 0",
             citations=citations,
             warnings=[
-                f"Basin {spec.get('id') or '?'}: shape {spec.get('shape') or '?'} needs its plan "
-                "dimensions, a depth and slab and wall thicknesses.",
+                f"Basin {spec.get('id') or '?'}: {what}.",
                 DISCLAIMER,
             ],
             status="incomplete",
         )
 
-    warnings = [DISCLAIMER]
+    warnings = [DISCLAIMER] + [f"Input: {p}." for p in spec.get("problems") or []]
     steps_out = []
     h = spec["depth_in"] / 12.0
     slab = s_in / 12.0
@@ -264,16 +307,30 @@ def basin_shell(
         f"walls = {wall_plan:.4f} × {h:.4f} = {vol['walls']:.4f} ft³",
     ]
     risers = []
+    ledge_fill = ledge_slab_area = 0.0
     if len(spec["steps"]) > 1:
         depths = sorted({z["depth_in"] for z in spec["steps"]})
         riser_len = spec["riser_length_ft"] or plan["riser_length"]
         for lo, hi in pairwise(depths):
             risers.append({"length_ft": riser_len, "height_ft": (hi - lo) / 12.0})
-        vol["risers"] = sum(r["length_ft"] * r["height_ft"] * slab for r in risers)
-        warnings.append(
-            "Stepped floor: walls taken at the deepest step all round (conservative); "
-            f"{len(risers)} riser(s) of slab thickness × {riser_len:.2f} ft added."
-        )
+        # the raised (shallower) floor zones stand on the deep slab: a ledge per zone
+        frac_sum = sum(z["area_fraction"] for z in spec["steps"])
+        slab_level = spec["depth_in"]  # the slab sits at depth_in, which is never above the deepest step
+        ledges = [(plan["inside_area"] * z["area_fraction"] / frac_sum, (slab_level - z["depth_in"]) / 12.0)
+                  for z in spec["steps"] if z["depth_in"] < slab_level]
+        if str(rules["step_ledge"]).lower() == "gravel":
+            ledge_slab_area = sum(a for a, _ in ledges)
+            ledge_fill = sum(a * max(hgt - slab, 0.0) for a, hgt in ledges)
+            vol["ledge_slab"] = sum(a * min(hgt, slab) for a, hgt in ledges)
+            vol["risers"] = sum(r["length_ft"] * r["height_ft"] * slab for r in risers)
+            ledge_note = (f"raised floor = {ledge_slab_area:.2f} ft² slab on {ledge_fill:.2f} ft³ of compacted "
+                          f"gravel, plus {len(risers)} riser wall(s) × {riser_len:.2f} ft")
+        else:
+            vol["ledge"] = sum(a * hgt for a, hgt in ledges)
+            ledge_note = f"raised floor = concrete to the step height, {vol['ledge']:.2f} ft³"
+        steps_out.append(f"stepped floor: {ledge_note}")
+        warnings.append("Stepped floor: walls taken at the deepest step all round (conservative); " + ledge_note
+                        + " (house rule step_ledge).")
 
     lid_t_in = 0.0
     lid_area = hatch_area = 0.0
@@ -286,16 +343,7 @@ def basin_shell(
         warnings.append("Vault lid: quantities only; the lid's span and any traffic load are not checked.")
 
     # grade
-    if spec["placement"] == "on_structure":
-        rim_above = None
-    elif spec["rim_above_grade_in"] is not None:
-        rim_above = spec["rim_above_grade_in"] / 12.0
-    elif spec["placement"] == "raised":
-        rim_above = h
-    elif spec["kind"] == "vault":
-        rim_above = -lid_t_in / 12.0
-    else:
-        rim_above = 0.0
+    rim_above = rim_above_grade_ft(spec, h, lid_t_in)
     if rim_above is None:
         slab_bottom_depth = wall_below = 0.0
         wall_above = h
@@ -339,6 +387,8 @@ def basin_shell(
         "lid_area_sqft": lid_area,
         "hatch_area_sqft": hatch_area,
         "risers": risers,
+        "ledge_fill_cuft": ledge_fill,
+        "ledge_slab_sqft": ledge_slab_area,
         "steps": spec["steps"],
         "concrete_cuft": vol,
         "concrete_total_cuft": total,

@@ -77,14 +77,61 @@ def test_cylinder_by_hand():
     assert s["corner_count"] == 0
 
 
-def test_stepped_floor_water_and_risers():
+def test_stepped_floor_water_and_ledge():
     # 20 × 10 ft, half at 12 in, half at 36 in, 2 in freeboard:
-    # water = 100 × 10/12 + 100 × 34/12 = 366.67 ft³ ; walls at 36 in ; one riser 10 ft × 2 ft × 8 in
-    s = shell({"shape": "rectangular", "length_in": 240, "width_in": 120, "depth_in": 18,
-               "steps": [{"depth_in": 12, "area_fraction": 0.5}, {"depth_in": 36, "area_fraction": 0.5}]})
+    # water = 100 × 10/12 + 100 × 34/12 = 366.67 ft³ ; walls at 36 in ;
+    # the shallow half stands on the deep slab: concrete to the step height, 100 ft² × 2 ft = 200 ft³
+    basin = {"shape": "rectangular", "length_in": 240, "width_in": 120, "depth_in": 18,
+             "steps": [{"depth_in": 12, "area_fraction": 0.5}, {"depth_in": 36, "area_fraction": 0.5}]}
+    s = shell(basin)
     assert s["water_volume_cuft"] == approx(100 * 10 / 12 + 100 * 34 / 12)
     assert s["wall_height_ft"] == approx(3.0)
-    assert s["concrete_cuft"]["risers"] == approx(10 * 2 * 8 / 12)
+    assert s["concrete_cuft"]["ledge"] == approx(100 * 2.0)
+    assert "risers" not in s["concrete_cuft"]
+    # house rule step_ledge = "gravel": an 8 in slab on 100 × (2 − 8/12) ft³ of gravel, plus a riser wall
+    g = basin_shell(basin, 8, 8, {"step_ledge": "gravel"}).value
+    assert g["concrete_cuft"]["ledge_slab"] == approx(100 * 8 / 12)
+    assert g["ledge_fill_cuft"] == approx(100 * (2 - 8 / 12))
+    assert g["concrete_cuft"]["risers"] == approx(10 * 2 * 8 / 12)
+    # walls deeper than every step: each zone stands on a ledge down to the slab at 48 in
+    deep = shell(dict(basin, depth_in=48))
+    assert deep["concrete_cuft"]["ledge"] == approx(100 * 3.0 + 100 * 1.0)
+    # a 4 in step on an 8 in slab: the gravel option's raised slab is only 4 in thick
+    thin = basin_shell(dict(basin, steps=[{"depth_in": 32, "area_fraction": 0.5},
+                                         {"depth_in": 36, "area_fraction": 0.5}]), 8, 8, {"step_ledge": "gravel"})
+    assert thin.value["concrete_cuft"]["ledge_slab"] == approx(100 * 4 / 12)
+    assert thin.value["ledge_fill_cuft"] == 0.0
+
+
+def test_bad_inputs_are_named_not_used():
+    s = basin_shell({"shape": "rectangular", "length_in": 120, "width_in": 72, "depth_in": 18,
+                     "freeboard_in": -12, "corner_count": -3, "riser_length_ft": -5, "soil_bearing_psf": -5,
+                     "steps": [{"depth_in": "deep", "area_fraction": 0.5}, {"depth_in": 12, "area_fraction": 0.5}]},
+                    8, 8)
+    v = s.value
+    assert v["freeboard_in"] == 2.0 and v["corner_count"] == 4 and v["soil_bearing_psf"] is None
+    text = " ".join(s.warnings)
+    for name in ("freeboard_in", "corner_count", "riser_length_ft", "soil_bearing_psf", "step 1 ignored"):
+        assert name in text, name
+    lid = basin_spec({"kind": "vault", "shape": "rectangular", "lid": {"hatch_length_in": -40}})["lid"]
+    assert lid["hatch_length_in"] == 36.0
+
+
+def test_incomplete_names_what_is_missing():
+    r = basin_shell({"shape": "rectangular", "length_in": 0, "width_in": 72, "depth_in": 18}, 8, 8)
+    assert "length_in" in r.warnings[0] and "width_in" not in r.warnings[0]
+    r = basin_shell({"shape": "oval", "depth_in": 18}, 8, 8)
+    assert "unknown shape" in r.warnings[0]
+
+
+def test_freeform_rebar_stays_close_to_the_cylinder():
+    r = 6.0
+    cyl = structural_takeoff({"basins": [{"id": "c", "shape": "cylindrical", "diameter_in": 144, "depth_in": 24}]})
+    free = structural_takeoff({"basins": [{"id": "f", "shape": "freeform", "area_sqft": math.pi * r * r,
+                                           "perimeter_ft": 2 * math.pi * r, "depth_in": 24}]})
+    a = cyl["basins"][0]["quantities"]["rebar_lb"]
+    b = free["basins"][0]["quantities"]["rebar_lb"]
+    assert abs(a - b) / a < 0.10  # the freeform grid is averaged; it stays within 10% of the exact chords
 
 
 def test_grade_levels_by_placement():

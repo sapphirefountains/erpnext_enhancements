@@ -47,6 +47,7 @@ from .defaults import (
     DISCLAIMER,
     merged_rules,
 )
+from .geometry import rim_above_grade_ft
 
 PHI_FLEXURE = 0.90
 PHI_SHEAR = 0.75
@@ -160,12 +161,13 @@ def wall_bending_check(
         inner = 1.0 - 2.0 * rn / (0.85 * fc)
         if inner < 0:
             section_ok = False
-            as_req = float("inf")
+            as_req = None  # no bar area can carry it; JSON has no infinity
             warnings.append("Section too thin for the moment: no bar area can carry it.")
         else:
             rho = 0.85 * fc / fy * (1.0 - math.sqrt(inner))
             as_req = rho * b * d
-        steps.append(f"Rn = {rn:.2f} psi; As,req = {as_req:.4f} in²/ft")
+        steps.append(f"Rn = {rn:.2f} psi; As,req = " + ("none works (section too thin)" if as_req is None
+                                                           else f"{as_req:.4f} in²/ft"))
     as_prov = bar["area_in2"] * 12.0 / float(spacing_in)
     phi_vc = PHI_SHEAR * 2.0 * math.sqrt(fc) * b * d
     steps += [f"As,prov = {bar['area_in2']:g} × 12 / {spacing_in:g} = {as_prov:.4f} in²/ft (tension mat)",
@@ -173,7 +175,7 @@ def wall_bending_check(
               f"φVc = 0.75 × 2√{fc:g} × 12 × {d:.3f} = {phi_vc:.0f} lb/ft"]
     flex_ok = section_ok and as_prov + 1e-12 >= as_req
     shear_ok = vu <= phi_vc
-    if not flex_ok:
+    if not flex_ok and section_ok:
         warnings.append(f"Flexure: needs {as_req:.3f} in²/ft, the detail gives {as_prov:.3f}.")
     if not shear_ok:
         warnings.append(f"Shear: Vu {vu:.0f} lb/ft exceeds φVc {phi_vc:.0f} lb/ft.")
@@ -182,7 +184,7 @@ def wall_bending_check(
         value={"case": case, "top": "pinned" if pinned else "free", "height_ft": h, "groundwater_ft": hw, "unit_weight_pcf": g, "d_in": d, "mu_lb_in_per_ft": mu,
                "as_required_in2_per_ft": as_req, "as_provided_in2_per_ft": as_prov, "vu_lb_per_ft": vu,
                "phi_vc_lb_per_ft": phi_vc, "flexure_ok": flex_ok, "shear_ok": shear_ok,
-               "utilization": (as_req / as_prov) if as_prov else None},
+               "utilization": (as_req / as_prov) if as_prov and as_req is not None else None},
         unit="in²/ft",
         inputs={"height": make_input(h, "ft", "prior_calc"), "wall": make_input(wall_in, "in", "prior_calc"),
                 "bar": make_input(bar["label"], "", "standard", CIT_DOC0119_REBAR),
@@ -295,16 +297,8 @@ def select_thickness(basin_spec: dict, rules: dict | None = None) -> CalcResult:
         steps.append(f"wall height {h:.2f} ft ≥ {rules['aci350_tall_wall_ft']:g} ft: ACI 350 minimum "
                      f"{rules['aci350_tall_wall_min_in']:g} in (DOC-0119 is silent on height)")
     lid = spec.get("lid") or {}
-    if spec.get("placement") == "on_structure":
-        rim = None
-    elif spec.get("rim_above_grade_in") is not None:
-        rim = float(spec["rim_above_grade_in"]) / 12.0
-    elif spec.get("placement") == "raised":
-        rim = h
-    elif spec.get("kind") == "vault" and lid.get("type") == "concrete":
-        rim = -float(lid.get("thickness_in") or slab_in) / 12.0
-    else:
-        rim = 0.0
+    lid_in = (float(lid.get("thickness_in") or slab_in)) if lid.get("type") == "concrete" else 0.0
+    rim = rim_above_grade_ft(spec, h, lid_in)
     soil_h, gw_h = lateral_soil_heights(h, rim, spec.get("groundwater_depth_ft"))
     water_h = 0.0 if spec.get("kind") == "vault" else h
     top = "pinned" if (spec.get("lid") or {}).get("type") == "concrete" else "free"
