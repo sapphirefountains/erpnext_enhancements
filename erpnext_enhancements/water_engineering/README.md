@@ -64,6 +64,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
 | `data/rebar.py` | Rebar diameters, areas and weights (#3 to #8) and stock lengths | ASTM A615 Table 1 |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
+| `hydraulics/` | The governing solver (Fountain Designer rebuild, phase A): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, and the operating point where the pump meets the system (VFD, PRV, bypass, NPSHa at site elevation). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
 
 ### Where the workbook stops and engineering standard starts
 
@@ -90,6 +91,7 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 | `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
+| `page/fountain_designer/` | The guided Fountain Designer (v1.761.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract phase E's `api/designer.py` honors; until E lands it runs on `?demo=1` |
 | `workspace/water_engineering/` | Desk workspace |
 
 ## DocTypes
@@ -160,6 +162,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_engine \
   erpnext_enhancements.tests.test_water_design_issues \
   erpnext_enhancements.tests.test_water_design_controller -v
+```
+
+The `hydraulics/` suites are pytest and run in their own CI step:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_hydraulics_*.py -q
 ```
 
 The catalog suite is plain pytest with its own in-memory frappe, so it runs on its own:

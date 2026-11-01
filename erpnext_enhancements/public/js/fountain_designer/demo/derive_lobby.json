@@ -1,0 +1,600 @@
+{
+ "model": {
+  "schema": 2,
+  "mode": "quick",
+  "kit": "lobby-sheet-wall-8ft",
+  "site": {
+   "address": "",
+   "lat": 40.7608,
+   "lng": -111.891,
+   "elevation_ft": 4226,
+   "air_temp_f": 97,
+   "water_temp_f": 72,
+   "frost_depth_in": 30,
+   "hardness_ppm": 250,
+   "kwh_rate": 0.105,
+   "water_rate_per_ccf": 3.53,
+   "jurisdiction": "UT",
+   "venue_type": "Decorative Fountain",
+   "regulated": false
+  },
+  "setup": {
+   "basin": "auto",
+   "piping": "auto",
+   "pump": "auto",
+   "control": "auto",
+   "bypass": "auto",
+   "surge": "auto",
+   "treatment": "auto",
+   "lighting": "auto",
+   "electrical": "auto",
+   "winterization": "auto",
+   "features": "custom"
+  },
+  "presets": {},
+  "features": [
+   {
+    "id": "f1",
+    "family": "weir",
+    "type": "Waterwall (sheet)",
+    "label": "Lobby wall",
+    "inputs": {
+     "length_ft": 8,
+     "fall_ft": 10,
+     "lip": "square",
+     "tolerance_in": 0.0625
+    },
+    "effect": {
+     "look": "average"
+    },
+    "product": {
+     "item": null,
+     "generic": true
+    },
+    "count": 1,
+    "basin": "b1",
+    "node": "t1"
+   }
+  ],
+  "basins": [
+   {
+    "id": "b1",
+    "label": "Trough",
+    "shape": "rectangular",
+    "length_in": 120,
+    "width_in": 24,
+    "depth_in": 14,
+    "freeboard_in": null,
+    "volume_gal_override": null,
+    "elevation_ft": 0
+   }
+  ],
+  "pump_room": {
+   "location": "vault",
+   "distance_ft": 25,
+   "elevation_ft": 0,
+   "route_template": "weir-header",
+   "material": "SCH40 PVC"
+  },
+  "network": {
+   "nodes": [
+    {
+     "id": "src",
+     "kind": "basin",
+     "basin": "b1",
+     "elevation_ft": 0
+    },
+    {
+     "id": "p1",
+     "kind": "pump"
+    },
+    {
+     "id": "t1",
+     "kind": "terminal",
+     "feature": "f1",
+     "elevation_ft": 10
+    }
+   ],
+   "pumps": [
+    {
+     "item": null,
+     "curve": null,
+     "generic_class": "self-priming",
+     "label": "Self-priming 1.5 HP (generic)",
+     "id": "p1",
+     "speed_pct": 100,
+     "control": "none",
+     "setpoint_psi": null
+    }
+   ],
+   "segments": [
+    {
+     "id": "s1",
+     "from": "src",
+     "to": "p1",
+     "line": "suction",
+     "material": "SCH40 PVC",
+     "nominal_size": "3\"",
+     "length_ft": 8,
+     "fittings": [
+      {
+       "key": "elbow_90",
+       "qty": 2
+      },
+      {
+       "key": "ball_valve",
+       "qty": 1
+      }
+     ],
+     "components": []
+    },
+    {
+     "id": "s2",
+     "from": "p1",
+     "to": "t1",
+     "line": "discharge",
+     "material": "SCH40 PVC",
+     "nominal_size": "2\"",
+     "length_ft": 45,
+     "fittings": [
+      {
+       "key": "elbow_90",
+       "qty": 4
+      },
+      {
+       "key": "tee_branch",
+       "qty": 1
+      }
+     ],
+     "components": [
+      {
+       "key": "filter_ccp520"
+      }
+     ]
+    }
+   ],
+   "terminals": [
+    {
+     "id": "t1",
+     "kind": "open_discharge",
+     "feature": "f1",
+     "params": {}
+    }
+   ]
+  },
+  "equipment": [
+   {
+    "slot": "filter",
+    "item": "PNT-CCP520",
+    "qty": 1,
+    "auto": true
+   },
+   {
+    "slot": "autofill",
+    "item": null,
+    "qty": 1,
+    "auto": true
+   },
+   {
+    "slot": "light",
+    "item": "PNT-MCL-12",
+    "qty": 4,
+    "auto": true
+   }
+  ],
+  "treatment": {
+   "sanitizer": "chlorine",
+   "uv": false
+  },
+  "lighting": {
+   "fixtures": [],
+   "control": "switched"
+  },
+  "electrical": {
+   "service_v": 240,
+   "phase": 1,
+   "panel_distance_ft": 60
+  },
+  "winterization": {},
+  "acks": [],
+  "notes": ""
+ },
+ "results": {
+  "weir_flow": {
+   "value": 120,
+   "unit": "gpm",
+   "formula": "15 gpm/ft × 8 ft",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  },
+  "basin_volume": {
+   "value": 174.5,
+   "unit": "gal",
+   "formula": "120 × 24 × 14 in³ ÷ 231",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  },
+  "tdh": {
+   "value": 28.4,
+   "unit": "ft",
+   "formula": "static 10 + friction 8.5 + fittings 4.9 + filter 5.0",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  }
+ },
+ "values": {
+  "features": {
+   "f1": {
+    "flow_gpm": 120,
+    "head_ft": 0.21,
+    "note": "Average look: 15 gpm per foot over 8 ft"
+   }
+  },
+  "basins": {
+   "b1": {
+    "volume_gal": 174.5,
+    "weight_lb": 1455,
+    "surge_in": 1.9,
+    "freeboard_in": 2.4
+   }
+  },
+  "segments": {
+   "s1": {
+    "velocity_fps": 5.2,
+    "loss_ft": 0.6,
+    "size": "3\""
+   },
+   "s2": {
+    "velocity_fps": 5.6,
+    "loss_ft": 7.9,
+    "size": "2\""
+   }
+  },
+  "pumps": {
+   "p1": {
+    "flow_gpm": 132,
+    "head_ft": 28.4,
+    "kw": 0.95,
+    "npsh_margin_ft": 14.2,
+    "bep_pct": 92
+   }
+  }
+ },
+ "rollups": {
+  "design_flow_gpm": 120,
+  "operating_flow_gpm": 132,
+  "tdh_ft": 28.4,
+  "operating_head_ft": 27.6,
+  "selected_pump": null,
+  "selected_pump_label": "Self-priming 1.5 HP (generic)",
+  "pump_kw": 0.95,
+  "total_basin_gallons": 174.5,
+  "om_cost_per_year": 2150,
+  "blocker_count": 0,
+  "warning_count": 2,
+  "completion_percent": 78,
+  "issue_ready": false,
+  "budget_total": 36506.4
+ },
+ "issues": [
+  {
+   "key": "TROUGH_SURGE|b1",
+   "code": "TROUGH_SURGE",
+   "severity": "warning",
+   "title": "Trough surge is close to the freeboard",
+   "detail": "Drain-back from the 45 ft discharge run raises the trough 1.9 in at shut-down against 2.4 in of freeboard (house rule: 1.25 × surge).",
+   "section": "basin",
+   "path": "basins.0.depth_in",
+   "fix_hint": "Deepen the trough to 16 in, or add a check valve at the weir header.",
+   "citation": "Sapphire standard, 2026-11-01",
+   "remedies": [
+    {
+     "label": "Deepen the trough to 16 in",
+     "set": {
+      "basins.0.depth_in": 16
+     }
+    }
+   ]
+  },
+  {
+   "key": "HW_DW_SPREAD",
+   "code": "HW_DW_SPREAD",
+   "severity": "warning",
+   "title": "Workbook and physics disagree by 11% on friction",
+   "detail": "Darcy-Weisbach gives 7.9 ft on the discharge; the DOC-0049 Hazen-Williams figure is 7.1 ft.",
+   "section": "piping",
+   "path": "network.segments.1.nominal_size",
+   "fix_hint": "Usually fine at this size; review the fittings on the discharge.",
+   "citation": "DOC-0049",
+   "remedies": []
+  },
+  {
+   "key": "GENERIC_PUMP|p1",
+   "code": "GENERIC_PUMP",
+   "severity": "info",
+   "title": "The pump is a generic estimate",
+   "detail": "Pick a model from the catalog before the package goes out.",
+   "section": "pump",
+   "path": "network.pumps.0.item",
+   "fix_hint": "Pick a pump in the Pump room.",
+   "citation": "",
+   "remedies": []
+  }
+ ],
+ "readiness": {
+  "sections": [
+   {
+    "key": "site",
+    "label": "Site",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "features",
+    "label": "Features",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "basin",
+    "label": "Basins",
+    "status": "warn",
+    "missing": []
+   },
+   {
+    "key": "piping",
+    "label": "Piping",
+    "status": "warn",
+    "missing": []
+   },
+   {
+    "key": "pump",
+    "label": "Pump",
+    "status": "ok",
+    "missing": [
+     "Pick a pump model"
+    ]
+   },
+   {
+    "key": "treatment",
+    "label": "Treatment",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "electrical",
+    "label": "Electrical",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "deliverables",
+    "label": "Package",
+    "status": "missing",
+    "missing": [
+     "Acknowledge 2 open warnings"
+    ]
+   }
+  ],
+  "calc_ready": true,
+  "issue_ready": false
+ },
+ "verdict": {
+  "level": "warn",
+  "headline": "Works, with two warnings to sign off.",
+  "package_ready": false
+ },
+ "bom": [
+  {
+   "section": "Pump",
+   "item": null,
+   "description": "Self-priming pump, 1.5 HP, 230 V (generic estimate)",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 2150,
+   "amount": 2150,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Treatment",
+   "item": "PNT-CCP520",
+   "description": "Pentair Clean & Clear Plus 520 cartridge filter",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 1420,
+   "amount": 1420,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Piping",
+   "item": null,
+   "description": "2 in SCH40 PVC pipe, with 10% waste",
+   "qty": 50,
+   "uom": "Ft",
+   "rate": 4.8,
+   "amount": 240.0,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Piping",
+   "item": null,
+   "description": "3 in SCH40 PVC pipe, with 10% waste",
+   "qty": 9,
+   "uom": "Ft",
+   "rate": 8.6,
+   "amount": 77.4,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Fittings",
+   "item": null,
+   "description": "2 in SCH40 90° elbow",
+   "qty": 4,
+   "uom": "Nos",
+   "rate": 6.5,
+   "amount": 26.0,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Fittings",
+   "item": null,
+   "description": "3 in SCH40 90° elbow",
+   "qty": 2,
+   "uom": "Nos",
+   "rate": 14.0,
+   "amount": 28.0,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Fittings",
+   "item": null,
+   "description": "3 in true-union ball valve",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 185,
+   "amount": 185,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Feature",
+   "item": "SS-WEIR-8",
+   "description": "Stainless sheet weir, 8 ft, square lip",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 9800,
+   "amount": 9800,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Basin",
+   "item": null,
+   "description": "Stainless trough 10 ft × 24 in × 14 in",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 11200,
+   "amount": 11200,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Basin",
+   "item": null,
+   "description": "Autofill valve with float",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 340,
+   "amount": 340,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Lighting",
+   "item": "PNT-MCL-12",
+   "description": "Pentair MicroBrite 12 V white LED",
+   "qty": 4,
+   "uom": "Nos",
+   "rate": 265,
+   "amount": 1060,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Electrical",
+   "item": null,
+   "description": "Control panel, single pump, GFCI (NEC 680)",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 3900,
+   "amount": 3900,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Labor",
+   "item": null,
+   "description": "Installation, sheet wall (house labor assembly)",
+   "qty": 64,
+   "uom": "Hour",
+   "rate": 95,
+   "amount": 6080,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  }
+ ],
+ "charts": {
+  "duty_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 480 300\" role=\"img\" aria-label=\"Duty point: 132 gpm at 27.6 ft\"><title>Duty point: 132 gpm at 27.6 ft</title><rect class=\"fd-bep\" x=\"278.6\" y=\"28\" width=\"103\" height=\"228\" fill=\"currentColor\" fill-opacity=\"0.08\"/><line class=\"fd-grid\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"256\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><line class=\"fd-grid\" x1=\"52\" y1=\"210.4\" x2=\"464\" y2=\"210.4\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"210.4\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">12</text><line class=\"fd-grid\" x1=\"52\" y1=\"164.8\" x2=\"464\" y2=\"164.8\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"164.8\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">24</text><line class=\"fd-grid\" x1=\"52\" y1=\"119.2\" x2=\"464\" y2=\"119.2\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"119.2\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">36</text><line class=\"fd-grid\" x1=\"52\" y1=\"73.6\" x2=\"464\" y2=\"73.6\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"73.6\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">48</text><line class=\"fd-grid\" x1=\"52\" y1=\"28\" x2=\"464\" y2=\"28\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"28\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">60</text><text class=\"fd-label\" x=\"52\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><text class=\"fd-label\" x=\"134.4\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">40</text><text class=\"fd-label\" x=\"216.8\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">80</text><text class=\"fd-label\" x=\"299.2\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">120</text><text class=\"fd-label\" x=\"381.6\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">160</text><text class=\"fd-label\" x=\"464\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">200</text><line class=\"fd-axis\" x1=\"52\" y1=\"28\" x2=\"52\" y2=\"256\" stroke=\"currentColor\"/><line class=\"fd-axis\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\"/><text class=\"fd-label\" x=\"258.0\" y=\"292\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\">Flow (gpm)</text><text class=\"fd-label\" x=\"14\" y=\"142.0\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\" transform=\"rotate(-90 14 142.0)\">Head (ft)</text><polyline class=\"fd-curve-pump\" data-series=\"pump\" points=\"52,81.2 62.3,81.3 72.6,81.6 82.9,82.1 93.2,82.8 103.5,83.7 113.8,84.8 124.1,86.1 134.4,87.6 144.7,89.3 155,91.2 165.3,93.3 175.6,95.6 185.9,98.2 196.2,100.9 206.5,103.8 216.8,106.9 227.1,110.2 237.4,113.7 247.7,117.4 258,121.3 268.3,125.4 278.6,129.8 288.9,134.3 299.2,139 309.5,143.9 319.8,149 330.1,154.3 340.4,159.9 350.7,165.6 361,171.5 371.3,177.6 381.6,183.9 391.9,190.4 402.2,197.2 412.5,204.1 422.8,211.2 433.1,218.5 443.4,226.1 453.7,233.8 464,241.7\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"/><polyline class=\"fd-curve-system\" data-series=\"system\" points=\"52,217.2 62.3,217.1 72.6,216.9 82.9,216.4 93.2,215.7 103.5,214.9 113.8,213.8 124.1,212.6 134.4,211.2 144.7,209.6 155,207.8 165.3,205.8 175.6,203.6 185.9,201.2 196.2,198.6 206.5,195.9 216.8,193 227.1,189.8 237.4,186.5 247.7,183 258,179.3 268.3,175.4 278.6,171.3 288.9,167.1 299.2,162.6 309.5,157.9 319.8,153.1 330.1,148.1 340.4,142.9 350.7,137.5 361,131.9 371.3,126.1 381.6,120.1 391.9,113.9 402.2,107.6 412.5,101 422.8,94.3 433.1,87.4 443.4,80.2 453.7,72.9 464,65.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><circle class=\"fd-point\" data-point=\"duty\" cx=\"323.9\" cy=\"151.1\" r=\"6\" fill=\"currentColor\"/><text class=\"fd-label fd-point-label\" x=\"333.9\" y=\"141.1\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">132 gpm @ 27.6 ft</text><line class=\"fd-curve-pump\" x1=\"310\" y1=\"14\" x2=\"330\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2.5\"/><text class=\"fd-label\" x=\"334\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">Pump</text><line class=\"fd-curve-system\" x1=\"380\" y1=\"14\" x2=\"400\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text class=\"fd-label\" x=\"404\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">System</text></svg>",
+  "schematic_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 160\" role=\"img\" aria-label=\"Schematic: trough to vault pump to filter to weir\"><title>Schematic: trough to vault pump to filter to weir</title><rect class=\"fd-node\" x=\"20\" y=\"50\" width=\"100\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"70\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Trough</text><text class=\"fd-label\" x=\"70\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">175 gal</text><line class=\"fd-pipe\" x1=\"120\" y1=\"78\" x2=\"150\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"150\" y=\"50\" width=\"100\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"200\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Pump</text><text class=\"fd-label\" x=\"200\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">1.5 HP</text><line class=\"fd-pipe\" x1=\"250\" y1=\"78\" x2=\"280\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"280\" y=\"50\" width=\"100\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"330\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Filter</text><text class=\"fd-label\" x=\"330\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">CCP520</text><line class=\"fd-pipe\" x1=\"380\" y1=\"78\" x2=\"410\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"410\" y=\"50\" width=\"100\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"460\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Weir</text><text class=\"fd-label\" x=\"460\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">8 ft sheet</text></svg>",
+  "oneline_svg": null
+ },
+ "outputs": {
+  "schedules": [
+   {
+    "key": "equipment",
+    "label": "Equipment schedule",
+    "url": null
+   },
+   {
+    "key": "piping",
+    "label": "Piping schedule",
+    "url": null
+   },
+   {
+    "key": "fittings",
+    "label": "Fitting schedule",
+    "url": null
+   }
+  ],
+  "packet": {
+   "label": "Submittal packet",
+   "url": null
+  },
+  "om": {
+   "total_per_year": 2150,
+   "lines": [
+    {
+     "label": "Power (0.95 kW, 12 h a day)",
+     "amount": 437
+    },
+    {
+     "label": "Water (evaporation and spray loss)",
+     "amount": 218
+    },
+    {
+     "label": "Chemicals",
+     "amount": 360
+    },
+    {
+     "label": "Filter cartridges and parts",
+     "amount": 285
+    },
+    {
+     "label": "Service visits (quarterly)",
+     "amount": 850
+    }
+   ]
+  },
+  "winterization": {
+   "needed": false,
+   "steps": [
+    "Indoor feature: no winterization. Shut down and drain only for service."
+   ]
+  },
+  "startup": [
+   "Fill the trough to the autofill line.",
+   "Prime the pump and open the suction valve.",
+   "Level the weir lip to ±1/16 in before the first run.",
+   "Balance chlorine to 1–3 ppm."
+  ]
+ }
+}

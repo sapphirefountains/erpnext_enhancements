@@ -1,0 +1,1116 @@
+{
+ "schema": 2,
+ "units": "US",
+ "can": {
+  "read": true,
+  "write": true,
+  "create": true,
+  "push_quotation": true,
+  "push_material_request": true
+ },
+ "kits": [
+  {
+   "key": "lobby-sheet-wall-8ft",
+   "label": "Hotel lobby sheet wall, 8 ft",
+   "family": "weir",
+   "venue_type": "Decorative Fountain",
+   "desc": "An indoor sheet of water down a feature wall into a stainless trough. Pump in a vault below.",
+   "headline": [
+    {
+     "path": "features.0.inputs.length_ft",
+     "label": "Sheet width",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 40,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.inputs.fall_ft",
+     "label": "Height of the fall",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 30,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Look",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "light",
+       "label": "Light",
+       "desc": "A thin, glassy sheet. 10 gpm per foot."
+      },
+      {
+       "value": "average",
+       "label": "Average",
+       "desc": "The usual lobby sheet. 15 gpm per foot."
+      },
+      {
+       "value": "heavy",
+       "label": "Heavy",
+       "desc": "A full, loud sheet. 22 gpm per foot."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "lobby-sheet-wall-8ft",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Decorative Fountain",
+     "regulated": false
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "weir",
+      "type": "Waterwall (sheet)",
+      "label": "Lobby wall",
+      "inputs": {
+       "length_ft": 8,
+       "fall_ft": 10,
+       "lip": "square",
+       "tolerance_in": 0.0625
+      },
+      "effect": {
+       "look": "average"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Trough",
+      "shape": "rectangular",
+      "length_in": 120,
+      "width_in": 24,
+      "depth_in": 14,
+      "freeboard_in": null,
+      "volume_gal_override": null,
+      "elevation_ft": 0
+     }
+    ],
+    "pump_room": {
+     "location": "vault",
+     "distance_ft": 25,
+     "elevation_ft": 0,
+     "route_template": "weir-header",
+     "material": "SCH40 PVC"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "chlorine",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "switched"
+    },
+    "electrical": {
+     "service_v": 240,
+     "phase": 1,
+     "panel_distance_ft": 60
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  },
+  {
+   "key": "plaza-interactive-24jet",
+   "label": "Plaza interactive, 24 jets",
+   "family": "interactive",
+   "venue_type": "Interactive Water Feature",
+   "desc": "In-ground jets on a walkable plaza with a surge tank, filtration and UV. A regulated venue in Utah.",
+   "headline": [
+    {
+     "path": "features.0.inputs.jet_count",
+     "label": "Number of jets",
+     "kind": "int",
+     "unit": "",
+     "min": 4,
+     "max": 96,
+     "step": 1
+    },
+    {
+     "path": "features.0.inputs.jet_height_ft",
+     "label": "Jet height",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 20,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Show",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "chase",
+       "label": "Chase",
+       "desc": "Rows of jets in turn. Sized on the busiest step."
+      },
+      {
+       "value": "all_on",
+       "label": "All on",
+       "desc": "Every jet at once. The largest pump."
+      },
+      {
+       "value": "random",
+       "label": "Random",
+       "desc": "A third of the jets at a time."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "plaza-interactive-24jet",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Interactive Water Feature",
+     "regulated": true
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "interactive",
+      "type": "Splash pad (in-ground jets)",
+      "label": "Plaza jets",
+      "inputs": {
+       "jet_count": 24,
+       "jet_height_ft": 6,
+       "pad_area_sqft": 1600,
+       "tank_minutes": 3
+      },
+      "effect": {
+       "look": "chase"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Surge tank",
+      "shape": "rectangular",
+      "length_in": 96,
+      "width_in": 72,
+      "depth_in": 24,
+      "freeboard_in": null,
+      "volume_gal_override": null,
+      "elevation_ft": -6
+     }
+    ],
+    "pump_room": {
+     "location": "room",
+     "distance_ft": 60,
+     "elevation_ft": -6,
+     "route_template": "interactive-manifold",
+     "material": "SCH80 PVC"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "chlorine",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "dmx"
+    },
+    "electrical": {
+     "service_v": 208,
+     "phase": 3,
+     "panel_distance_ft": 90
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  },
+  {
+   "key": "pond-aerator-1ac",
+   "label": "Pond aerator, 1 acre",
+   "family": "aerator",
+   "venue_type": "Pond / Lake",
+   "desc": "A floating fountain aerator for a one-acre pond, with lights and a timer.",
+   "headline": [
+    {
+     "path": "features.0.inputs.pond_acres",
+     "label": "Pond size",
+     "kind": "number",
+     "unit": "acres",
+     "min": 0.1,
+     "max": 20,
+     "step": 0.1
+    },
+    {
+     "path": "features.0.inputs.pond_depth_ft",
+     "label": "Average depth",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 30,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Pattern",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "v_shape",
+       "label": "V-shape",
+       "desc": "A tall V. The most aeration per horsepower."
+      },
+      {
+       "value": "crown",
+       "label": "Crown",
+       "desc": "A broad crown of spray."
+      },
+      {
+       "value": "geyser",
+       "label": "Geyser",
+       "desc": "One tall column."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "pond-aerator-1ac",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Pond / Lake",
+     "regulated": false
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "aerator",
+      "type": "Floating fountain aerator",
+      "label": "Pond aerator",
+      "inputs": {
+       "pond_acres": 1,
+       "pond_depth_ft": 6,
+       "cable_ft": 300
+      },
+      "effect": {
+       "look": "crown"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Pond",
+      "shape": "irregular",
+      "length_in": null,
+      "width_in": null,
+      "depth_in": 72,
+      "freeboard_in": null,
+      "volume_gal_override": 1955000,
+      "elevation_ft": 0
+     }
+    ],
+    "pump_room": {
+     "location": "submersible",
+     "distance_ft": 300,
+     "elevation_ft": 0,
+     "route_template": "floating-unit",
+     "material": "None"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "none",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "timer"
+    },
+    "electrical": {
+     "service_v": 240,
+     "phase": 1,
+     "panel_distance_ft": 300
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  }
+ ],
+ "families": [
+  {
+   "key": "weir",
+   "label": "Weir / sheet",
+   "product_class": "weir",
+   "types": [
+    "Waterwall (sheet)",
+    "Spillway",
+    "Rain edge",
+    "Infinity edge"
+   ],
+   "inputs": [
+    {
+     "key": "length_ft",
+     "label": "Weir length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "fall_ft",
+     "label": "Height of the fall",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "lip",
+     "label": "Lip",
+     "kind": "select",
+     "options": [
+      "square",
+      "rounded",
+      "knife"
+     ],
+     "advanced": true
+    },
+    {
+     "key": "tolerance_in",
+     "label": "Edge tolerance",
+     "kind": "number",
+     "unit": "in",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "light",
+     "label": "Light"
+    },
+    {
+     "value": "average",
+     "label": "Average"
+    },
+    {
+     "value": "heavy",
+     "label": "Heavy"
+    }
+   ]
+  },
+  {
+   "key": "jets",
+   "label": "Display jets",
+   "product_class": "nozzle",
+   "types": [
+    "Aerated jet",
+    "Smooth bore",
+    "Foam jet",
+    "Cascade jet"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "jet_height_ft",
+     "label": "Jet height",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "submergence_in",
+     "label": "Submergence",
+     "kind": "number",
+     "unit": "in",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "steady",
+     "label": "Steady"
+    },
+    {
+     "value": "sequenced",
+     "label": "Sequenced"
+    }
+   ]
+  },
+  {
+   "key": "interactive",
+   "label": "Interactive / splash pad",
+   "product_class": "nozzle",
+   "types": [
+    "Splash pad (in-ground jets)",
+    "Play feature",
+    "Water table"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "jet_height_ft",
+     "label": "Jet height",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "pad_area_sqft",
+     "label": "Pad area",
+     "kind": "number",
+     "unit": "sq ft"
+    },
+    {
+     "key": "tank_minutes",
+     "label": "Tank holding time",
+     "kind": "number",
+     "unit": "min",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "chase",
+     "label": "Chase"
+    },
+    {
+     "value": "all_on",
+     "label": "All on"
+    },
+    {
+     "value": "random",
+     "label": "Random"
+    }
+   ]
+  },
+  {
+   "key": "cascade",
+   "label": "Cascade / tiers",
+   "product_class": "weir",
+   "types": [
+    "Tiered fountain",
+    "Stream cascade"
+   ],
+   "inputs": [
+    {
+     "key": "tier_count",
+     "label": "Tiers",
+     "kind": "int"
+    },
+    {
+     "key": "widest_lip_ft",
+     "label": "Widest lip",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "trickle",
+     "label": "Trickle"
+    },
+    {
+     "value": "average",
+     "label": "Average"
+    },
+    {
+     "value": "full",
+     "label": "Full"
+    }
+   ]
+  },
+  {
+   "key": "laminar",
+   "label": "Laminar",
+   "product_class": "nozzle",
+   "types": [
+    "Laminar jet"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "arc_ft",
+     "label": "Arc length",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "arc",
+     "label": "Arc"
+    }
+   ]
+  },
+  {
+   "key": "pondless",
+   "label": "Pondless",
+   "product_class": "pump",
+   "types": [
+    "Pondless waterfall"
+   ],
+   "inputs": [
+    {
+     "key": "stream_ft",
+     "label": "Stream length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "spill_ft",
+     "label": "Spillway width",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "average",
+     "label": "Average"
+    }
+   ]
+  },
+  {
+   "key": "curtain",
+   "label": "Rain curtain",
+   "product_class": "nozzle",
+   "types": [
+    "Passive rain curtain",
+    "Digital rain curtain"
+   ],
+   "inputs": [
+    {
+     "key": "length_ft",
+     "label": "Curtain length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "fall_ft",
+     "label": "Drop",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "strands",
+     "label": "Strands"
+    }
+   ]
+  },
+  {
+   "key": "mist",
+   "label": "Mist / fog",
+   "product_class": "nozzle",
+   "types": [
+    "Fog system"
+   ],
+   "inputs": [
+    {
+     "key": "nozzle_count",
+     "label": "Mist nozzles",
+     "kind": "int"
+    }
+   ],
+   "looks": [
+    {
+     "value": "low",
+     "label": "Low fog"
+    }
+   ]
+  },
+  {
+   "key": "aerator",
+   "label": "Aerator",
+   "product_class": "aerator",
+   "types": [
+    "Floating fountain aerator",
+    "Diffused aeration"
+   ],
+   "inputs": [
+    {
+     "key": "pond_acres",
+     "label": "Pond size",
+     "kind": "number",
+     "unit": "acres"
+    },
+    {
+     "key": "pond_depth_ft",
+     "label": "Average depth",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "cable_ft",
+     "label": "Power cable",
+     "kind": "number",
+     "unit": "ft",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "v_shape",
+     "label": "V-shape"
+    },
+    {
+     "value": "crown",
+     "label": "Crown"
+    },
+    {
+     "value": "geyser",
+     "label": "Geyser"
+    }
+   ]
+  }
+ ],
+ "sections": [
+  {
+   "key": "features",
+   "label": "Features",
+   "presets": []
+  },
+  {
+   "key": "basin",
+   "label": "Basins",
+   "presets": []
+  },
+  {
+   "key": "piping",
+   "label": "Piping",
+   "presets": [
+    {
+     "key": "sch40",
+     "label": "SCH40 PVC",
+     "desc": "Discharge to 6 ft/s, suction to 4 ft/s (DOC-0049).",
+     "values": {
+      "pump_room.material": "SCH40 PVC"
+     }
+    },
+    {
+     "key": "sch80",
+     "label": "SCH80 PVC",
+     "desc": "Heavier wall for buried or high-pressure runs.",
+     "values": {
+      "pump_room.material": "SCH80 PVC"
+     }
+    }
+   ]
+  },
+  {
+   "key": "pump",
+   "label": "Pump",
+   "presets": []
+  },
+  {
+   "key": "control",
+   "label": "Control",
+   "presets": [
+    {
+     "key": "across_line",
+     "label": "Across the line",
+     "desc": "On and off with the timer. No speed control.",
+     "values": {
+      "network.pumps.0.control": "none"
+     }
+    },
+    {
+     "key": "vfd",
+     "label": "Variable speed (VFD)",
+     "desc": "Trims the flow to the look and soft-starts the pump.",
+     "values": {
+      "network.pumps.0.control": "vfd"
+     }
+    }
+   ]
+  },
+  {
+   "key": "bypass",
+   "label": "Bypass",
+   "presets": []
+  },
+  {
+   "key": "surge",
+   "label": "Surge",
+   "presets": []
+  },
+  {
+   "key": "treatment",
+   "label": "Treatment",
+   "presets": [
+    {
+     "key": "chlorine_cartridge",
+     "label": "Chlorine and cartridge filter",
+     "desc": "Decorative features.",
+     "values": {
+      "treatment.sanitizer": "chlorine",
+      "treatment.uv": false
+     }
+    },
+    {
+     "key": "chlorine_uv",
+     "label": "Chlorine, UV and sand filter",
+     "desc": "Interactive features (R392-302-41).",
+     "values": {
+      "treatment.sanitizer": "chlorine",
+      "treatment.uv": true
+     }
+    }
+   ]
+  },
+  {
+   "key": "lighting",
+   "label": "Lighting",
+   "presets": [
+    {
+     "key": "white_switched",
+     "label": "White LED, switched",
+     "desc": "On with the pump.",
+     "values": {
+      "lighting.control": "switched"
+     }
+    },
+    {
+     "key": "rgbw_dmx",
+     "label": "RGBW LED on DMX",
+     "desc": "Color shows from a DMX controller.",
+     "values": {
+      "lighting.control": "dmx"
+     }
+    }
+   ]
+  },
+  {
+   "key": "electrical",
+   "label": "Electrical",
+   "presets": [
+    {
+     "key": "240_1",
+     "label": "240 V single phase",
+     "desc": "Most small features.",
+     "values": {
+      "electrical.service_v": 240,
+      "electrical.phase": 1
+     }
+    },
+    {
+     "key": "208_3",
+     "label": "208 V three phase",
+     "desc": "Commercial buildings.",
+     "values": {
+      "electrical.service_v": 208,
+      "electrical.phase": 3
+     }
+    },
+    {
+     "key": "480_3",
+     "label": "480 V three phase",
+     "desc": "Large pumps.",
+     "values": {
+      "electrical.service_v": 480,
+      "electrical.phase": 3
+     }
+    }
+   ]
+  },
+  {
+   "key": "winterization",
+   "label": "Winterization",
+   "presets": []
+  }
+ ],
+ "options": {
+  "venue_types": [
+   "Decorative Fountain",
+   "Interactive Water Feature",
+   "Pond / Lake",
+   "Spa",
+   "Pool",
+   "Rental"
+  ],
+  "jurisdictions": [
+   "UT",
+   "ID",
+   "NV",
+   "AZ",
+   "CO",
+   "WY"
+  ],
+  "basin_shapes": [
+   "rectangular",
+   "circular",
+   "irregular"
+  ],
+  "pump_locations": [
+   {
+    "value": "vault",
+    "label": "Vault"
+   },
+   {
+    "value": "room",
+    "label": "Pump room"
+   },
+   {
+    "value": "submersible",
+    "label": "Submersible"
+   }
+  ],
+  "materials": [
+   "SCH40 PVC",
+   "SCH80 PVC",
+   "Type K Copper",
+   "HDPE"
+  ],
+  "controls": [
+   {
+    "value": "none",
+    "label": "None"
+   },
+   {
+    "value": "vfd",
+    "label": "VFD"
+   },
+   {
+    "value": "prv",
+    "label": "PRV"
+   }
+  ],
+  "pump_classes": [
+   "end-suction",
+   "self-priming",
+   "submersible",
+   "vertical turbine"
+  ],
+  "sanitizers": [
+   "chlorine",
+   "bromine",
+   "ozone",
+   "none"
+  ],
+  "lighting_controls": [
+   "switched",
+   "timer",
+   "dmx"
+  ],
+  "service_voltages": [
+   120,
+   208,
+   240,
+   480
+  ],
+  "lines": [
+   "suction",
+   "discharge",
+   "return"
+  ]
+ },
+ "catalogs": {
+  "equipment_classes": [
+   {
+    "key": "pump",
+    "label": "Pumps"
+   },
+   {
+    "key": "nozzle",
+    "label": "Nozzles"
+   },
+   {
+    "key": "weir",
+    "label": "Weirs and sheet falls"
+   },
+   {
+    "key": "filter",
+    "label": "Filters"
+   },
+   {
+    "key": "uv",
+    "label": "UV"
+   },
+   {
+    "key": "light",
+    "label": "Lights"
+   },
+   {
+    "key": "aerator",
+    "label": "Aerators"
+   },
+   {
+    "key": "valve",
+    "label": "Valves"
+   },
+   {
+    "key": "chemical",
+    "label": "Chemical feed"
+   },
+   {
+    "key": "drive",
+    "label": "Drives"
+   }
+  ],
+  "slot_classes": {
+   "filter": "filter",
+   "uv": "uv",
+   "chlorinator": "chemical",
+   "light": "light",
+   "transformer": "light",
+   "bypass": "valve",
+   "surge_arrestor": "valve",
+   "autofill": "valve",
+   "prv": "valve",
+   "vfd": "drive"
+  }
+ },
+ "house_rules": [
+  {
+   "key": "freeboard_multiplier",
+   "label": "Freeboard over surge",
+   "value": 1.25,
+   "unit": "×",
+   "citation": "Sapphire standard, 2026-11-01"
+  },
+  {
+   "key": "liner_allowance_in",
+   "label": "Liner allowance",
+   "value": 2,
+   "unit": "in",
+   "citation": "Sapphire standard, 2026-11-01"
+  },
+  {
+   "key": "spray_loss_pct",
+   "label": "Spray loss",
+   "value": 1.5,
+   "unit": "% of flow per day",
+   "citation": "Sapphire standard, 2026-11-01"
+  }
+ ]
+}
