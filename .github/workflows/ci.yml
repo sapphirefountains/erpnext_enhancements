@@ -2472,7 +2472,7 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
-      # Fountain Designer phase A (v1.758.0): the Darcy solver in engine/hydraulics/, ported from the
+      # Fountain Designer phase A (v1.760.0): the Darcy solver in engine/hydraulics/, ported from the
       # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
       # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of
       # their own -- `python -m unittest` would collect nothing and report success. No Node needed:

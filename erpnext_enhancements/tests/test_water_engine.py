@@ -436,7 +436,7 @@ class UnitsTests(unittest.TestCase):
     def test_conversions(self):
         self.assertAlmostEqual(units.cubic_inches_to_gallons(231), 0.999999, places=5)
         self.assertEqual(units.gallons_to_pounds(1), 8.34)
-        # DOC-0049 F-Formulas F173 (was 2.31 before v1.758.0)
+        # DOC-0049 F-Formulas F173 (was 2.31 before v1.760.0)
         self.assertAlmostEqual(units.feet_to_psi(2.308966), 1.0, places=6)
         self.assertAlmostEqual(units.psi_to_feet(1.0), 2.308966, places=6)
 
