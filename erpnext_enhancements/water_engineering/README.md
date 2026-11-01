@@ -89,6 +89,7 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 | `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
+| `page/fountain_designer/` | The guided Fountain Designer (v1.761.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract phase E's `api/designer.py` honors; until E lands it runs on `?demo=1` |
 | `workspace/water_engineering/` | Desk workspace |
 
 ## DocTypes
