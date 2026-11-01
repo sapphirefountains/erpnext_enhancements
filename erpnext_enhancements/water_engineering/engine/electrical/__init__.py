@@ -59,10 +59,13 @@ PSU_SIZES_W = [35, 50, 75, 100, 150, 200, 350, 500, 750, 1000]
 LOGIC_W = 3.0
 
 
-def valve_supply(valves_w: float, logic_w: float = LOGIC_W) -> dict:
+def valve_supply(valves_w: float, logic_w: float = LOGIC_W, io_w: float = 0.0) -> dict:
     """``{n, W}``: how many DC supplies of which standard size carry the valves
-    (``coilPlan`` in the Digital Rain Curtain's src/electrical.js)."""
-    need = 1.25 * (num(valves_w) + num(logic_w))
+    (``coilPlan`` in the Digital Rain Curtain's src/electrical.js): every valve
+    open, plus the controller's logic (3 W) and its I/O load (``io_w``: relay
+    coils, powered sensors; the rain curtain's ``ioLoadW``), x 1.25. The controls
+    package sizes the panel's own 24 V DC supply with the full I/O list."""
+    need = 1.25 * (num(valves_w) + num(logic_w) + num(io_w))
     n = max(1, math.ceil(need / PSU_SIZES_W[-1]))
     return {"n": n, "W": next((s for s in PSU_SIZES_W if s * n >= need - 1e-9), PSU_SIZES_W[-1])}
 
@@ -164,7 +167,7 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
             limit_pct=num(sol.get("drop_pct"), 5.0), group=8, kind="valve",
         )
         results["lv_valves"] = run.to_dict()
-        psu = valve_supply(run.value["total_w"], logic_w=num(sol.get("logic_w"), LOGIC_W))
+        psu = valve_supply(run.value["total_w"], logic_w=num(sol.get("logic_w"), LOGIC_W), io_w=sol.get("io_w"))
         low_voltage.append({**run.value, "tag": "valves", "label": "Solenoid valves",
                             "voltage": num(sol.get("voltage"), 24), "supply_w": psu["W"], "supply_n": psu["n"]})
     ctl_devices = next((ld.get("control_devices") for ld in loads if ld.get("kind") == "controls"), None) or []

@@ -433,3 +433,35 @@ def test_pool_cord_window():
     assert next(c for c in r.value if c["key"] == "cord_length")["status"] == "fail"
     ok = E.article680_checklist([], venue="Spa", fixtures=[{"label": "x", "voltage": 12, "cord_ft": 6}])
     assert next(c for c in ok.value if c["key"] == "cord_length")["status"] == "pass"
+
+
+def test_60a_gfci_close_to_flc_warns_about_starting():
+    # 7.5 HP 230 V single-phase: FLC 40 A, 60 A is 150% of it: an across-the-line start will trip it
+    loads = E.build_loads({}, pumps=[{"id": "p", "hp": 7.5, "voltage": 230, "phase": 1}]).value
+    c = E.branch_circuits(loads).value[0]
+    assert c["breaker_a"] == 60 and c["gfci"] and "likely trip" in c["gfci_note"]
+    # 5 HP (FLC 28 A): 60 A is 214% of FLC, no start warning
+    five = E.branch_circuits(E.build_loads({}, pumps=[{"id": "p", "hp": 5, "voltage": 230}]).value).value[0]
+    assert "likely trip" not in five["gfci_note"]
+
+
+def test_vfd_gfci_circuit_warns_about_drive_leakage():
+    loads = E.build_loads({}, pumps=[{"id": "p", "hp": 5, "voltage": 230, "phase": 1, "control": "vfd"}]).value
+    c = E.branch_circuits(loads).value[0]
+    assert c["gfci"] and "input filter" in c["gfci_note"]
+    assert c["breaker_basis"].startswith("430.122")
+
+
+def test_valve_supply_adds_the_io_load():
+    from erpnext_enhancements.water_engineering.engine.electrical import valve_supply
+
+    # 1.25 x (200 + 3 + 80) = 353.75 W -> past 350 W -> 500 W
+    assert valve_supply(200, io_w=80) == {"n": 1, "W": 500}
+
+
+def test_printed_breaker_is_labeled_a_maximum():
+    we = REPO_ROOT / "erpnext_enhancements" / "water_engineering"
+    pf = (we / "setup_print_formats.py").read_text(encoding="utf-8")
+    assert "Max breaker (A)" in pf and ">Breaker (A)<" not in pf
+    assert "Branch breakers round UP" not in pf
+    assert 'A max" if c.get("breaker_a")' in (we / "packet.py").read_text(encoding="utf-8")

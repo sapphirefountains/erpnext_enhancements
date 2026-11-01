@@ -217,7 +217,11 @@ VFD boxes and several transformers. The packet's existing state still renders as
 - **GFCI over 60 A.** GFCI breakers stop at 60 A, and 680.21(C) and 680.59 cover pump circuits of
   60 A or less. So when GFCI governs and the 430.52 maximum is above 60 A:
   - A motor whose conductors fit 60 A gets a 60 A GFCI breaker. A smaller device than the maximum
-    is permitted.
+    is permitted. When 60 A is under 175% of FLC and the motor starts across the line, the result
+    warns that it will likely trip on start and suggests a soft starter, a drive, or an SPGFCI /
+    GFPE device.
+  - A drive circuit that needs GFCI is warned about its input filter's leakage, which trips an
+    ordinary Class A GFCI.
   - A pump circuit over 60 A is outside those sections.
   - Submersible equipment over 60 A is flagged for an SPGFCI or GFPE device.
   - The BOM no longer orders a "GFCI breaker 70 A", which does not exist. The Article 680 check
@@ -228,8 +232,9 @@ VFD boxes and several transformers. The packet's existing state still renders as
 - **Feeder breaker above the 430.62 limit.** When the feeder breaker has to go up to carry the
   load and that passes the 430.62 limit, the result now says so and suggests an adjustable-trip
   breaker.
-- **Valve DC supply.** It follows the rain curtain's `coilPlan`: logic watts are included, and the
-  load is split over 1000 W units.
+- **Valve DC supply.** It follows the rain curtain's `coilPlan`: it adds the logic watts and any I/O
+  load given (`solenoid_valves.io_w`), and splits the load over 1000 W units. The controls package
+  sizes the panel's own 24 V DC supply from its full I/O list.
 - **A blank voltage or distance that arrives as 0** now means "not entered" instead of dividing by
   zero.
 - **Pool pump cords** are checked against the 3 to 10 ft window.
