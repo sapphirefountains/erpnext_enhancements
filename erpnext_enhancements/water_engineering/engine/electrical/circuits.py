@@ -21,20 +21,37 @@ CIT_BRANCH = "NEC 430 Part II-IV (motor circuits) / 210.19-210.20 (other branch 
 # Class A GFCI breakers stop at 60 A, and 680.21(C) / 680.59 cover pump circuits of 60 A or less.
 GFCI_MAX_A = 60
 GFCI_60A_SCOPED = ("680.21(C)", "680.59")
+# Below about 175% of FLC (the dual-element fuse figure of Table 430.52(C)(1)) a breaker is
+# likely to trip on an across-the-line start, whose current is about 6 x FLC.
+START_HOLD_PCT = 175
+VFD_GFCI_NOTE = (
+    " A drive's input filter leaks enough current to trip an ordinary Class A GFCI: use a GFCI or SPGFCI the "
+    "drive maker lists as compatible, or the drive's own guidance on its EMC filter."
+)
 
 
-def _gfci_device(gfci: dict, max_a: int, motor: bool, amps: float) -> tuple[int, bool, str, str | None]:
+def _gfci_device(
+    gfci: dict, max_a: int, motor: bool, amps: float, soft_start: bool = False
+) -> tuple[int, bool, str, str | None]:
     """(breaker, gfci required, note, device) once the 60 A ceiling of GFCI
     breakers is applied. The 430.52 value is a maximum, so a motor whose
-    conductors fit 60 A takes a 60 A GFCI breaker; a pump circuit over 60 A falls
-    outside 680.21(C) / 680.59; submersible equipment over 60 A (680.51(A)) needs a
-    special-purpose GFCI or GFPE device."""
+    conductors fit 60 A takes a 60 A GFCI breaker, with a warning when 60 A is
+    under 175% of FLC and the motor starts across the line (``soft_start`` False);
+    a pump circuit over 60 A falls outside 680.21(C) / 680.59; submersible
+    equipment over 60 A (680.51(A)) needs a special-purpose GFCI or GFPE device."""
     note = gfci["note"]
     if not gfci["required"] or not max_a or max_a <= GFCI_MAX_A:
         return max_a, bool(gfci["required"]), note, ("GFCI breaker" if gfci["required"] else None)
     if motor and 1.25 * amps <= GFCI_MAX_A:
+        pct = 100.0 * GFCI_MAX_A / amps if amps else 0.0
         note += (f" The 430.52 maximum is {max_a} A; GFCI breakers stop at {GFCI_MAX_A} A, so a {GFCI_MAX_A} A GFCI "
-                 "breaker is chosen (430.52 allows a smaller device): confirm it holds the starting current.")
+                 "breaker is chosen (430.52 allows a smaller device).")
+        if not soft_start and pct < START_HOLD_PCT:
+            note += (f" {GFCI_MAX_A} A is only {pct:.0f}% of the {amps:g} A FLC and will likely trip on an "
+                     "across-the-line start: use a soft starter or a drive, or an SPGFCI / GFPE device at the "
+                     "430.52 rating.")
+        else:
+            note += " Confirm it holds the starting current."
         return GFCI_MAX_A, True, note, "GFCI breaker"
     if gfci["article"] in GFCI_60A_SCOPED:
         note += (f" The circuit is over {GFCI_MAX_A} A, outside {gfci['article']} (60 A or less): no GFCI required; "
@@ -82,9 +99,13 @@ def branch_circuit(
             # The drive's input current sets the conductors (430.122); FLC still seeds the 430.52 placeholder.
             cond_a = num(vfd.inputs["input_a_est"]["value"]) or amps
         oc = motor_branch_ocpd(amps, device=device, phase=ph, hp=load.get("hp") or 0, voltage=v)
-        breaker, gfci_req, gfci_note, gfci_dev = _gfci_device(gfci, oc.value, True, amps)
-        basis = "430.122 / drive maker" if is_vfd else (
-            "430.52 max" if breaker == oc.value else f"60 A GFCI (430.52 max {oc.value} A)")
+        soft = is_vfd or (load.get("control") or "") == "soft_starter"
+        breaker, gfci_req, gfci_note, gfci_dev = _gfci_device(gfci, oc.value, True, amps, soft_start=soft)
+        if is_vfd and gfci_req:
+            gfci_note += VFD_GFCI_NOTE
+        basis = "430.122 / drive maker" if is_vfd else "430.52 max"
+        if breaker != oc.value:
+            basis += f"; 60 A GFCI (430.52 max {oc.value} A)"
         control = "VFD" if is_vfd else "Motor Starter"
         wire = wire_for_load(
             cond_a, voltage=v, phase=ph, length_ft=load.get("run_ft"), is_motor=True, ocpd_a=breaker,
@@ -133,6 +154,7 @@ def branch_circuit(
         "run_ft": num(load.get("run_ft")),
         "drop_pct": wire.inputs.get("drop_pct", {}).get("value"),
         "gfci": gfci_req,
+        "gfci_rule": gfci["required"],  # what Article 680 asks before the 60 A ceiling: True / False / None
         "gfci_device": gfci_dev,
         "gfci_basis": gfci["article"],
         "gfci_note": gfci_note,

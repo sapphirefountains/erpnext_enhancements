@@ -144,14 +144,15 @@ def article680_checklist(
     gfci_loads = []
     open_loads = []
     if circuits is not None:
+        # Each circuit already carries the decision branch_circuit made (gfci_rule is the
+        # Article 680 requirement, gfci / gfci_device what the circuit gets after the 60 A ceiling).
         for c in circuits:
-            g = gfci_requirement({**c, "label": c.get("description")}, venue)
-            if c.get("gfci_device") == "SPGFCI / GFPE" or (g["required"] and not c.get("gfci")):
+            if c.get("gfci_device") == "SPGFCI / GFPE" or (c.get("gfci_rule") and not c.get("gfci")):
                 open_loads.append(f"{c.get('description')} ({c.get('gfci_basis')}: over 60 A)")
             elif c.get("gfci"):
                 gfci_loads.append(f"{c.get('description')} ({c.get('gfci_basis')}, {c.get('breaker_a')} A GFCI)")
-            elif g["required"] is None and g["article"]:
-                open_loads.append(f"{c.get('description')} ({g['article']})")
+            elif c.get("gfci_rule") is None and c.get("gfci_basis"):
+                open_loads.append(f"{c.get('description')} ({c.get('gfci_basis')})")
     else:
         for ld in loads:
             g = gfci_requirement(ld, venue)
