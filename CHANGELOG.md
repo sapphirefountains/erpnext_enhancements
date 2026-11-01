@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.766.0] - 2026-11-01
+## [1.768.0] - 2026-11-01
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,157 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.766.0] - 2026-11-01
+
+ERPNext: TASK-2026-03031 (PRJ-00580, under TASK-2026-03018 Fountain Designer rebuild). This is phase
+S part 2, stacked on 1.765.0. Nikolas widened phase S the same day, from the basin shells to "the
+structure in general".
+
+**What the deploy does.** Nothing at runtime, as with 1.765.0. This is pure engine code (stdlib
+only, never imports frappe): no migration, fixture, patch or hook. Nothing runs until phase E's
+`derive()` calls `structural_takeoff`.
+
+### Added
+- `engine/structural/` gains eight modules. DOC-0119 covers none of this beyond its materials notes,
+  so each module cites the public standard it uses:
+  - **Loads.** `loads.py`: IBC presumptive soil values, surcharge (250 psf plaza traffic, AASHTO
+    vehicle), the 30 in Salt Lake frost depth, ASCE 7 seismic design values from Ss/S1 and site class,
+    ACI 350.3 hydrodynamic loads on basin walls, and ASCE 7 wind on a water wall or screen.
+  - **Walls.** `walls.py`: freestanding cantilever walls (raised basin, weir and soil-retaining walls)
+    checked for overturning, sliding, bearing and frost, and their footings sized.
+  - **Vaults and drains.** `vaults.py`: vault lids for pedestrian, plaza or H-20 loads, and bar
+    grating and trench drains by load class.
+  - **Building.** `building.py`: beams and decks over collector tanks, and rooftop or lobby floor
+    loads, always flagged to the engineer of record.
+  - **Steel.** `steel.py`: HSS properties computed from the tube geometry (they match the AISC
+    Manual within rounding), plus member, column and water-wall frame checks.
+  - **Fabrications.** `fabrications.py`: weir-lip sag against the 1/16 in edge tolerance, veneer
+    anchors, and pedestals.
+  - **Rigging.** `rigging.py`: the Digital Rain Curtain's `beamReactions` and `rigPlan`, ported and
+    pinned to the JavaScript's own output.
+  - **Supports.** `supports.py`: equipment pads with ACI 318 Chapter 17 anchors, thrust blocks,
+    seismic bracing, sleeves, and moorings for floating fountains.
+- `general.py` runs all of this from the model. Even with no `structure` block, it checks:
+  - every basin's walls under earthquake sloshing, when the site gives Ss/S1;
+  - every weir feature's lip;
+  - every vault lid;
+  - every penetration's waterstop ring.
+
+  A `structure` block lists the walls, frames, pads and the rest. The takeoff now also returns:
+  - `structure`, `seismic` and `notes` keys;
+  - new totals and new check codes;
+  - new BOM lines: steel by the pound, grating by the square foot, veneer anchors, braces, mooring
+    blocks, trench drains, an access hatch, and site concrete.
+- README §6: the new modules, the model's `structure` block for phase C, what the takeoff adds for
+  phase E, and the new house rules.
+- Tests: four more pytest suites under the same CI step, 86 tests in all, each with hand goldens.
+  The HSS table is pinned to AISC's published values, and the rigging port to golden vectors from the
+  DRC JavaScript.
+
+### Fixed (independent review, before merge)
+- A half-filled `structure` row no longer takes down the takeoff. A wall or column with no height,
+  or rigging with a 0 ft hanger span, used to raise. Each group now has its required numbers; a row
+  without them becomes an INFO `STRUCT_ROW_INCOMPLETE` check and is skipped. The calcs themselves
+  return `incomplete` instead of dividing by zero.
+- Wind is no longer factored twice. ASCE 7-16 gives wind at strength level, so posts and towers now
+  take 1.0W, not 1.6W, and drift is checked at 0.6W. Frames and their steel order were about 60%
+  heavy.
+- Columns buckle about the weaker axis. HSS now carry `Iy`/`ry`, and the W table carries `ry`.
+- Pedestals resist seismic overturning with (0.9 − 0.2·SDS)·W, as ASCE 7 combines it, not
+  (1 − 0.2·SDS)·W.
+- Equipment pads:
+  - The anchor count adds to the house-rule count for equipment the pads don't cover, instead of
+    replacing it.
+  - Anchors are checked for concrete breakout and pryout in shear.
+  - A pad with no SDS says its anchors were not checked for seismic, and pull-out is flagged for the
+    maker's data.
+- Clay cohesion in sliding is capped at half the dead load (IBC 1806.3.2).
+- A continuous weir lip uses the end span of three (2.65/384). The automatic lip check carries 1 in
+  of water, so it can fire.
+- Moorings of different weights get their own BOM lines. Rigging picks round like the JavaScript
+  (2.5 → 3).
+- No `inf` reaches a result. Where a footing or plinth would tip, or no beam size works, the result
+  says so.
+
+
+## [1.765.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on
+2026-11-01 how much rebar and concrete a basin of a given size needs. This adds the engine package
+that answers it. Nothing is wired to a page, an endpoint or a DocType yet; phase E's `derive()` will
+call it.
+
+**What the deploy does.** Nothing at runtime. There are no migrations, fixtures, patches or hooks.
+The change is pure engine code (stdlib only, never imports frappe) and its tests.
+
+### Added
+- `water_engineering/engine/structural/`: the quantity takeoff for basins and equipment vaults.
+  - **Shapes.** Rectangular, cylindrical and freeform basins (freeform by area and perimeter),
+    stepped floors, walls in grade or raised, a basin on a slab or roof, and a vault with a lid.
+  - **Thickness.** Slab and wall thickness come from DOC-0119's standard details: 2 in cover, 8 in
+    floors, its wall table (8 in wall with #4 at 16 in, 10 in wall with #4 at 12 in), wall bars with
+    24 in legs into the floor mat, and #4 at 18 in for the slab. Where DOC-0119 is silent, ACI 318
+    and ACI 350 fill in: 12 in minimum for walls 10 ft and taller, and two mats over 10 in.
+  - **Checks.** All are engineering aids:
+    - the wall with water to the rim (62.4·h, triangular), and the empty wall with 60 pcf of
+      backfill (plus water pressure below a given water table), both checked for flexure and shear;
+    - cover;
+    - ACI 350 shrinkage steel;
+    - uplift of the empty shell against a water table, factor of safety 1.3;
+    - soil bearing;
+    - floor load for a basin on a slab or roof.
+  - **Rebar schedule.** Bar marks per element, corner bars, lapped bars (ACI Class B; 40 bar
+    diameters on request) and hooks. Cuts are packed into 20 ft and 40 ft stock bars, with chairs,
+    spacers and tie wire.
+  - **Quantities.** Concrete by element with 10% waste, ordered in quarter yards and 10 yd³ trucks,
+    plus mix notes (F2 freeze-thaw exposure, w/cm 0.45, 6% air, DOC-0119's crystalline admixture).
+    Also: the 12 in gravel base, excavation with working room and OSHA slopes, backfill and
+    haul-off, formwork, waterstop at cold joints, joint sealant, coating and curing areas, a
+    Link-Seal per pipe through the shell (from the design network), and equipment anchors.
+  - `structural_takeoff(model, rules)` returns one dict: per-basin quantities and CalcResults, the
+    rebar schedule, typed checks in `issues.py`'s `CODE|label` key shape, totals, and BOM lines in
+    the `{section, key, description, qty, uom, item_hint}` shape. A bar-count line has
+    `priced: false` so it is not priced twice beside its pound line.
+  - Every rule is a key in `defaults.DEFAULT_RULES` with its source in `RULE_SOURCES`, ready for
+    Water Engineering Settings. Unit costs stay `None`, because the cost register has none yet.
+- `engine/structural/README.md`: every structural rule DOC-0119 states, paraphrased, with its
+  section, and the rules it does not state, which Nikolas and the designers should set as house
+  rules. It also records where DOC-0119 contradicts itself or ACI:
+  - "4 to 6 in" stem walls appear beside an 8 in / 10 in wall table.
+  - A 4 in wall cannot hold 2 in cover around crossing #4 bars.
+  - #4 at 16–18 in is lighter than ACI 350's shrinkage minimum.
+- `engine/data/rebar.py`: ASTM A615 diameters, areas and weights for bars #3 to #8.
+- Tests: `test_structural_takeoff.py` has hand goldens for Nikolas's example basin (10 × 6 ft,
+  18 in deep, 6 in slab, 8 in walls):
+  - 2.823 yd³ net, ordered as 3.25 yd³ in one truck;
+  - 328.33 ft and 219.33 lb of #4, bought as 18 bars of 20 ft (240.48 lb);
+  - 4.74 t of gravel;
+  - 19.31 yd³ of excavation;
+  - uplift factor of safety 1.10 with the water table at grade.
+
+  `test_structural_geometry.py` checks shape round trips (a freeform circle equals the cylinder)
+  and the sizing checks by hand. Both are pytest suites with their own CI step.
+
+### Fixed (independent review, before merge)
+- A stepped floor now carries the concrete under its raised zones. Before, the shallow half of the
+  floor floated 12 in above the deep slab with nothing under it, about 17% of the concrete missing.
+  House rule `step_ledge`: `concrete` to the step height (the default), or `gravel` for a slab on
+  compacted gravel with riser walls.
+- A wall too thin for any bar area returned `inf`, which JSON cannot store. Phase E would have failed
+  to save exactly the basins that need an engineer. It now returns `None` with `flexure_ok = False`.
+- Gravel is billed in pounds (short tons × 2,000), because ERPNext has no `Ton` unit.
+- Negative or blank optional inputs are ignored and named in the warnings. These are freeboard,
+  corner count, riser length, soil bearing, floor capacity, slab, wall and lid sizes, and step rows;
+  before, they produced negative volumes and phantom bars.
+- An incomplete basin says which input is missing.
+- A dry vault's exterior membrane gets its own BOM line.
+- Two basins with the same label no longer share a check key. Each takes its basin id, which stays
+  stable when the basins are reordered.
+- Step risers take the membrane and the curing compound.
+- The shell and the thickness pick use one rim-above-grade rule.
+- The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
+
 
 ## [1.764.0] - 2026-11-01
 
