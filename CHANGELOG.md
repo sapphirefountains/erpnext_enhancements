@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.758.0] - 2026-10-30
+## [1.758.0] - 2026-11-01
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,32 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.757.1] - 2026-11-01
+
+### Added
+
+- **Fountain Designer rebuild: the research and the plan** (`docs/fountain-designer/`). Nikolas
+  asked on 2026-11-01 for the Fountain Designer to do most of the work, with a simpler flow and
+  many more calculators, rebuilt from the ground up where needed. Two research reports and the plan
+  land here so the coding sessions share one source:
+  - `research-engine-audit.md` compares `water_engineering/engine/` with the Digital Rain Curtain
+    hydraulics and its aquafect port. Headline: the engine has no pump operating point, so its
+    velocity, pipe-pressure and VGB checks run at the design flow rather than the flow an oversized
+    pump delivers. The rain curtain code has the missing half (Darcy-Weisbach, pump curve meets
+    system curve, manifold balancing, auto-size then verdict) but invented pump curves and a
+    sea-level atmosphere that overstates NPSH margin in Salt Lake.
+  - `research-industry-calculators.md` surveys what the trade calculates per feature family, the
+    automation ladder, public catalog data (hand-entered yes, scraped no) and a prioritized backlog.
+    The engine's 0.90 x head jet-height constant is optimistic; real decorative nozzles need
+    2.5 to 3 x height.
+  - `PLAN.md` records the decisions (two modes, a new guided page over the kept engine, all venues,
+    Python in ERPNext canonical, physics governs with DOC-0049 as a cross-check, multi-pump headers in
+    version one), the design model, the API contract, the page, and ten phases, each its own draft
+    PR: the eight of the first cut plus electrical (NEC loads, conductors, voltage drop, OCPD,
+    feeders, the Article 680 checklist) and structural (basin slab and walls, rebar schedule,
+    concrete, gravel and waterproofing quantities), which Nikolas added the same day. Nothing
+    executable changes in this release.
 
 ## [1.757.0] - 2026-10-29
 
