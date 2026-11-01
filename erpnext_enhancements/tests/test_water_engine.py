@@ -436,8 +436,9 @@ class UnitsTests(unittest.TestCase):
     def test_conversions(self):
         self.assertAlmostEqual(units.cubic_inches_to_gallons(231), 0.999999, places=5)
         self.assertEqual(units.gallons_to_pounds(1), 8.34)
-        self.assertAlmostEqual(units.feet_to_psi(2.31), 1.0, places=6)
-        self.assertAlmostEqual(units.psi_to_feet(1.0), 2.31, places=6)
+        # DOC-0049 F-Formulas F173 (was 2.31 before v1.760.0)
+        self.assertAlmostEqual(units.feet_to_psi(2.308966), 1.0, places=6)
+        self.assertAlmostEqual(units.psi_to_feet(1.0), 2.308966, places=6)
 
 
 class EnvelopeShapeTests(unittest.TestCase):
@@ -513,9 +514,9 @@ class SafetyTests(unittest.TestCase):
 
     # --- NPSH available ---
     def test_npsh_lift_golden(self):
-        # sea level Ha=33.948, Hvp@70F=0.839; lift 10 + friction 3 -> 20.11 ft
+        # sea level Ha=14.696*2.308966=33.933, Hvp@70F=0.363*2.308966=0.838; lift 10 + friction 3 -> 20.09 ft
         r = npsh_available(-10, 3, water_temp_f=70)
-        self.assertAlmostEqual(r.value, 20.11, places=1)
+        self.assertAlmostEqual(r.value, 20.09, places=2)
 
     def test_npsh_status_bands(self):
         self.assertEqual(npsh_available(-10, 3, water_temp_f=70, npshr_ft=15).status, "Okay")
@@ -527,7 +528,7 @@ class SafetyTests(unittest.TestCase):
 
     # --- water hammer (Joukowsky) ---
     def test_water_hammer_instantaneous_golden(self):
-        # a=1300 ft/s, dV=6: surge = (1300*6/32.2)/2.31 = 104.86 psi
+        # a=1300 ft/s, dV=6: surge = (1300*6/32.2)/2.308966 = 104.91 psi
         r = water_hammer(6, 200, closure_time_s=0, material="SCH40 PVC")
         self.assertAlmostEqual(r.value, 104.9, delta=0.2)
 

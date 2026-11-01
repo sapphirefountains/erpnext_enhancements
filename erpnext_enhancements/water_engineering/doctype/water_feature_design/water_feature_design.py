@@ -238,7 +238,7 @@ class WaterFeatureDesign(Document):
 
 	def _fill_segment_pressure(self):
 		"""Per-segment pressure-rating status (DOC-0049 Pipe Specs): the pump puts
-		~TDH ft (= TDH/2.31 psi) on the discharge side; every discharge run's pipe
+		~TDH ft (= TDH/2.308966 psi) on the discharge side; every discharge run's pipe
 		must be rated for it. Surfaced as row fields so the grid (not just the
 		audit trail) shows an under-rated pipe."""
 		tdh = flt(self.computed_tdh_ft)

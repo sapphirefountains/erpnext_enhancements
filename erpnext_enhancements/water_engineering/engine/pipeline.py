@@ -239,7 +239,7 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
         warnings += r.warnings
         tdh_ft = r.value
 
-        # Pressure-rating check: the pump puts ~TDH ft of head (= TDH/2.31 psi) on
+        # Pressure-rating check: the pump puts ~TDH ft of head (= TDH/2.308966 psi) on
         # the discharge side. The velocity check can't see this, so flag any
         # discharge run whose pipe isn't rated for the system pressure.
         if tdh_ft and tdh_ft > 0:
