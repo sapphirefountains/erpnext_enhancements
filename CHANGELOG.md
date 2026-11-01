@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.758.0] - 2026-11-01
+
+ERPNext: TASK-2026-03018 "Fountain Designer rebuild" (PRJ-00580), phase L. Nikolas, 2026-11-01:
+electrical calculations as a first-class deliverable (PLAN.md sections 1, 2.2 step 10, 3.1 and 4).
+
+### Fixed: the motor "breaker" was the conductor rule
+
+`pump.electrical_load` called **125% of FLA** the motor branch breaker and cited NEC 430.52. That
+number belongs to a different rule.
+
+- **125% is NEC 430.22, the conductor rule.** Motor branch conductors must carry 125% of the FLC.
+- **The breaker is set by 430.52(C)(1) and Table 430.52(C)(1).** The table gives a maximum as a
+  percent of FLC: 250% for an inverse-time breaker, 175% for a dual-element fuse, 300% for a
+  nontime-delay fuse and 800% for an instantaneous-trip breaker. Exception 1 permits the next
+  standard size up. Exception 2 allows more when the motor will not start.
+- **What it changes for a 5 HP, 230 V pump.** The old rule gave a 35 A breaker, which often trips
+  when the pump starts. The code allows up to 70 A, still on #8 conductors.
+
+The audit (research-engine-audit.md section 1.16, decision D6) flagged this, and Nikolas decided
+on 2026-11-01 that the 430.52 maxima govern.
+
+**What changed in the code.**
+
+- **`electrical_load`.** Same `CalcResult` shape, but `value` is now the 430.52 maximum. The 125%
+  figure moved to `inputs["conductor_min_a"]`.
+- **Non-motor loads.** New keyword arguments: `is_motor=False` gives a non-motor load's 210.20(A)
+  breaker (125% continuous), and `device` picks the protective device.
+- **`constants.BREAKER_CONTINUOUS_FACTOR`.** Its comment and citation now say what the 1.25 is for.
+
+Three results move:
+
+- **Branch breakers on pumps.**
+  - An 8 A motor: 15 A becomes 20 A.
+  - A 30 A motor: 40 A becomes 80 A.
+  - The Control Panel Design panel schedule and the AI `water_calc` tool show the new values.
+- **`service_main_breaker`.**
+  - **The seed.** The 430.62 rule starts from the largest motor's branch device. It now uses the
+    430.52 rating, not the 125% figure.
+  - **Continuous loads.** Non-motor continuous loads now count at 125% (430.63, 215.3).
+  - **A floor.** When rounding down would land under the feeder's own 430.24 load, the breaker goes
+    up to the next standard size instead.
+  - **The Fika example.** It moves from 70 A to 90 A. The old 70 A was smaller than the 83.69 A the
+    feeder carries.
+- **`motor_flc` at 208 V single-phase.** The 208 V column is now read from Table 430.248. The old
+  code mapped 208 V to the 230 V column, so a 1 HP motor read 8.0 A instead of 8.8 A.
+
+Five cases in `test_water_engine` were updated to the corrected values, with the reason beside each.
+The other electrical goldens there are unchanged: `total_connected_load` (83.69 A), the control
+transformer, and the remaining `motor_flc` cases.
+
+### Added: `engine/electrical/` package
+
+`engine/electrical.py` became a package. Its four functions keep their names and import paths.
+New modules, each mapped to its NEC articles in `engine/electrical/README.md`:
+
+| Module | What it does |
+|---|---|
+| `loads.py` | Builds the load list from the design model. |
+| `ocpd.py` | Breakers and fuses (430.52, 210.20). |
+| `conductors.py` | Conductor sizing: Table 310.16, the 310.15 temperature and conduit-fill corrections, 110.14(C) terminations, 240.4(D), and the 250.122 grounding conductor with proportional upsizing. |
+| `voltage_drop.py` | Voltage drop at 3% branch and 5% total. Also 12 V lighting and 24 V valve-coil runs. |
+| `conduit.py` | Conduit fill (Chapter 9 Tables 1, 4 and 5). |
+| `circuits.py` | One branch circuit per load. |
+| `feeders.py` | Feeder and service: 430.24 and 430.62/63, worked in VA so 120 V and 240 V loads add. Also the panel schedule and a check against the available service. |
+| `transformers.py` | Lighting transformer at 1.25 × fixture watts, 450.3(B) primary protection, and the control transformer. |
+| `article680.py` | The Article 680 checklist (Part V fountains, Part II pools). |
+| `vfd.py` | Drive selection. |
+| `backup.py` | Generator and battery, with Table 430.7(B) code letters. |
+| `energy.py` | Annual energy and cost. |
+| `bom.py` | BOM lines in phase B's merge shape. |
+| `drawings.py` | Builds the one-line state. |
+
+`electrical_report(model)` runs the whole chain for phase E's `derive()`.
+
+The NEC tables are data in `engine/data/nec_tables.py`: the 2023 edition, with the 2020 numbering
+noted where it moved. Every result tells the reader to verify the edition Utah has adopted.
+
+`engine/drawings.electrical_oneline_svg` now also draws a feeder, a panel label, conductor notes,
+VFD boxes and several transformers. The packet's existing state still renders as before.
+
+### Tests
+
+Three new bench-free pytest suites, together in one new `ci.yml` step:
+
+- **`test_electrical_sizing.py`.** Hand goldens from the NEC tables, built around the 5 HP pump
+  worked example and a 150 ft voltage-drop run.
+- **`test_electrical_report.py`.** The load list, feeder, checklist, BOM, drawing, the report's
+  shape, and an import guard: no `frappe`, no `hydraulics`.
+- **`test_electrical_drc_parity.py`.** Parity with the Digital Rain Curtain's `electrical.js`.
+  Seven `coilPlan` cases, plus `motorFLC`, `dropPct`, `breakerFor`, `wireForBreaker` and
+  `backupPlan`. The expected values come from running the DRC code under Node (commit 737fa80) and
+  are pinned as literals.
+
 ## [1.757.0] - 2026-10-29
 
 ERPNext: TASK-2026-03015 (PRJ-00580, under TASK-2026-00866). Nik's

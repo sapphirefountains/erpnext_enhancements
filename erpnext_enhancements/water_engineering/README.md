@@ -44,7 +44,8 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `feature.py` | Feature flow: weirs/slots (Francis), nozzle arrays, orifice nozzles from the Nozzle Profile catalog | DOC-0049 `I - Weir` |
 | `pipe.py` | Velocity, velocity-status banding, Hazen-Williams friction loss, and a size-walker that picks the smallest pipe within limits | DOC-0049 `A - Pipe Size` |
 | `tdh.py` | Total Dynamic Head: minor (fitting) loss, component loss, per-segment sum | DOC-0049 `H - TDH` |
-| `pump.py` | Pump selection by catalog match, plus electrical/breaker sizing | DOC-0049 + engineering standard (see below) |
+| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.758.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
+| `electrical/` | The electrical design (phase L, v1.758.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
 | `safety.py` | VGB / ANSI-APSP-16 suction-outlet anti-entrapment, NPSH cavitation check, Joukowsky water hammer | DOC-0049 `P - Suction Outlets`; HI standards |
 | `drainage.py` | Gravity drainage (Manning's) and surge-basin sizing (Phase 3) | DOC-0049 `10 - Gravity`, `G - Gravity`, `B - Surge Basin` |
 | `chemistry.py` | Chlorinator feed and chemical rate advisory (Phase 2) | DOC-0049 `C - Chemicals`, DOC-0119 |
@@ -58,6 +59,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/fittings.py` | Minor-loss K-factors and component head-loss coefficients | DOC-0049 `H - TDH` |
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
+| `data/nec_tables.py` | NEC tables as data: 310.16 ampacity, 310.15 corrections, 250.122, Chapter 9 Tables 1/4/5/8, 240.6(A), 430.248/430.250 FLC, 430.52(C)(1), 430.7(B), 450.3(B), Article 680 distances | NFPA 70 2023 (2020 numbering noted) |
 
 ### Where the workbook stops and engineering standard starts
 
@@ -117,6 +119,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_engine \
   erpnext_enhancements.tests.test_water_design_issues \
   erpnext_enhancements.tests.test_water_design_controller -v
+```
+
+The electrical package's suites are plain pytest functions and run in their own CI step:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_electrical_sizing.py   erpnext_enhancements/tests/test_electrical_report.py   erpnext_enhancements/tests/test_electrical_drc_parity.py -q
 ```
 
 They are **golden tests**: each formula reproduces its sheet's own worked example. When you

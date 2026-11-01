@@ -72,7 +72,11 @@ CIT_WEIR_EDGE = "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
 FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
 
 # --- electrical (business rules; NOT formula-driven in the workbooks) -------
-BREAKER_CONTINUOUS_FACTOR = 1.25  # breaker >= 125% FLA (NEC 430.52) -- confirm w/ engineer
+# 125% of FLA is the motor branch CONDUCTOR rule (NEC 430.22) and the continuous-
+# load rule for conductors and non-motor OCPD (210.19(A)(1), 210.20(A)). It is NOT
+# the motor breaker: that is the NEC 430.52 / Table 430.52(C)(1) maximum (250% of
+# FLC for an inverse-time breaker), in electrical/ocpd.py. Corrected v1.758.0.
+BREAKER_CONTINUOUS_FACTOR = 1.25  # conductors >= 125% FLA (NEC 430.22) / continuous loads (210.19, 210.20)
 
 # Standard OCPD (breaker/fuse) ampere ratings, NEC 240.6(A). Branch OCPD rounds
 # UP to the next size; a feeder OCPD (430.62) rounds DOWN to the largest size not
