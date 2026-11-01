@@ -255,3 +255,19 @@ def test_calibration_is_memoized():
     jets.calibrate_v0(9.5, 90, 0.4)
     jets.calibrate_v0(9.5, 90.0, 0.4, 0)
     assert jets._calibrate_v0.cache_info().hits == 1
+
+
+def test_a_phase_d_nozzle_profile_reads_directly():
+    # Nozzle Profile as phase D stores it: `performance` rows, `discharge_coefficient`, and the
+    # new nozzle_type values.
+    profile = {"nozzle_type": "Orifice Jet", "discharge_coefficient": 0.95, "orifice_diameter_in": 0.5,
+               "performance": [{"display_height_ft": 2, "head_ft": 6.5, "flow_gpm": 3.0},
+                               {"display_height_ft": 12, "head_ft": 31, "flow_gpm": 9.0}]}
+    pt = jets.nozzle_point({"id": "j", "inputs": {"height_ft": 7}, "product": {"profile": profile}})
+    assert pt["source"] == "table" and pt["head_ft"] == pytest.approx(18.75)
+    est = jets.nozzle_point({"id": "j", "inputs": {"height_ft": 7},
+                             "product": {"profile": dict(profile, performance=[])}})
+    assert est["k"] == 0.82  # Orifice Jet -> smooth bore
+    assert est["gpm_each"] == pytest.approx(jets.nozzle_flow(7 / 0.82, cd=0.95, orifice_diameter_in=0.5).value)
+    assert jets.fallback_k("Foam / Aerating")[0] == 0.39
+    assert jets.fallback_k("Spray Ring")[0] == 0.39 and "no public figure" in jets.fallback_k("Spray Ring")[1]

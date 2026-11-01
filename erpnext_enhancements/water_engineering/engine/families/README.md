@@ -31,7 +31,9 @@ count, basin, node}`. `base.values()` merges `effect` over `inputs` over the inp
 (`head_ft` or `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`,
 `depth_over_nozzle_in`), and `product["profile"]` holds the profile's own fields
 (`rated_gpm`, `rated_head_ft`, `cd`, `orifice_diameter_in`, `min_depth_in`, `max_depth_in`,
-`level_sensitive`, `nozzle_type`, `source_url`).
+`level_sensitive`, `nozzle_type`, `source_url`). A Nozzle Profile as phase D stores it reads
+directly: `performance` is accepted for `points`, `discharge_coefficient` for `cd`, and its
+`nozzle_type` values (Orifice Jet, Foam / Aerating, ...) pick the fallback k.
 
 `derived` is what the orchestrator already knows. Every family reads `derived["flow"]` (its
 own `flow().data`, computed when absent) and `derived["basin"]` (the schema-2 basin the

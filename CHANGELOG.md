@@ -33,6 +33,8 @@ them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and m
 - **Jets size from nozzle performance tables.** The table maps display height to flow and
   head, interpolated linearly between the cut sheet's points.
   - A height outside the table is a blocker. The engine never extrapolates.
+  - Phase D's Nozzle Profile reads as stored: its `performance` rows, `discharge_coefficient`
+    and `nozzle_type` values.
   - The old `height = k × head` survives only as a flagged fallback. Its k values are the
     sourced ones: 0.82 for a smooth bore and 0.39 for decorative nozzles (Atlantic's column
     nozzle makes 12 ft at 31 ft of head). The engine's 0.90 is not used.

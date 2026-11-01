@@ -147,7 +147,9 @@ def table_points(feature_or_product: Any) -> list[dict[str, float]]:
     if isinstance(product, dict) and ("inputs" in product or "family" in product):
         product = product_of(product)
     product = product or {}
-    raw = product.get("points") or (product.get("profile") or {}).get("points") or []
+    profile = product.get("profile") or {}
+    # Phase D's Nozzle Profile names its child table ``performance``; accept either name.
+    raw = product.get("points") or profile.get("points") or profile.get("performance") or []
     pts = []
     for p in raw:
         head = num(p.get("head_ft"))
@@ -317,9 +319,21 @@ def splash_setback_ft(height_ft: float, basin_kind: str = "ground") -> float:
     return SPLASH_RATIO.get((basin_kind or "ground").lower(), 1.0) * max(height_ft, 0.0)
 
 
+def profile_cd(profile: dict[str, Any]) -> float:
+    """The discharge coefficient: ``cd``, or phase D's ``discharge_coefficient`` field."""
+    return num(profile.get("cd")) or num(profile.get("discharge_coefficient"))
+
+
 def fallback_k(nozzle_type: str) -> tuple[float, str]:
+    """k for the flagged estimate. Reads this module's types and phase D's Nozzle Profile
+    ``nozzle_type`` values (Orifice Jet, Foam / Aerating, Laminar, Geyser, Bubbler, ...)."""
     t = (nozzle_type or "smooth").lower()
-    key = "smooth" if t == "smooth" else ("aerating" if t in ("aerating", "column", "foam") else "other")
+    if any(w in t for w in ("smooth", "orifice", "laminar")):
+        key = "smooth"
+    elif any(w in t for w in ("aerat", "foam", "column", "geyser", "bubbler")):
+        key = "aerating"
+    else:
+        key = "other"
     return FALLBACK_K[key], FALLBACK_K_CITATION[key]
 
 
@@ -392,7 +406,7 @@ def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_ty
         out["citations"].append(k_cit)
         out["notes"].append(f"estimate: height = {k:g} x head -> {head:.2f} ft of head for {height:g} ft")
         rated_gpm, rated_head = num(profile.get("rated_gpm")), num(profile.get("rated_head_ft"))
-        cd = num(profile.get("cd"))
+        cd = profile_cd(profile)
         if rated_gpm and rated_head:
             out["gpm_each"] = nozzle_flow(head, rated_gpm=rated_gpm, rated_head_ft=rated_head).value
         elif cd and orifice:
@@ -615,8 +629,8 @@ def jet_terminal(feature: Any, d: dict[str, Any]) -> dict[str, Any]:
     profile = product.get("profile") or {}
     curve = [(p["head_ft"], p["flow_gpm"]) for p in table_points(product) if p["head_ft"] > 0 and p["flow_gpm"] > 0]
     nozzle = {"flow_gpm": d.get("gpm_each"), "head_ft": d.get("head_ft"), "curve": sorted(curve)}
-    if num(profile.get("cd")) and pt.get("orifice_diameter_in"):
-        nozzle["cd"] = num(profile.get("cd"))
+    if profile_cd(profile) and pt.get("orifice_diameter_in"):
+        nozzle["cd"] = profile_cd(profile)
         nozzle["area_in2"] = math.pi / 4 * pt["orifice_diameter_in"] ** 2
     n = d.get("count") or count_of(feature)
     if n > 1:
