@@ -102,6 +102,10 @@
   "custom_spec_source_cb",
   "custom_spec_verified_by",
   "custom_spec_verified_on",
+  "custom_catalog_id",
+  "custom_spec_confidence",
+  "custom_spec_method",
+  "custom_spec_error_band_pct",
   {
    "section": "section_break_znra"
   },

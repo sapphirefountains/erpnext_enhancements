@@ -42,6 +42,9 @@ CURVE_FIELDS = [
     "source_page",
     "verified_by",
     "verified_on",
+    "read_method",
+    "error_band_pct",
+    "catalog_id",
 ]
 POINT_FIELDS = ["parent", "flow_gpm", "head_ft", "efficiency_pct", "npshr_ft", "power_bhp"]
 LEGACY_SOURCE = "Legacy item table"
@@ -67,8 +70,12 @@ NOZZLE_FIELDS = [
     "rated_head_ft",
     "source_url",
     "source_document",
+    "source_page",
     "verified_by",
     "verified_on",
+    "read_method",
+    "error_band_pct",
+    "catalog_id",
 ]
 #: The Nozzle Profile columns that predate v1.758.0, read when the new ones are not there yet.
 NOZZLE_LEGACY_FIELDS = [
@@ -114,6 +121,10 @@ LIGHT_FIELDS = {
     "custom_spec_revision": "source_document",
     "custom_spec_verified_by": "verified_by",
     "custom_spec_verified_on": "verified_on",
+    "custom_catalog_id": "catalog_id",
+    "custom_spec_confidence": "confidence",
+    "custom_spec_method": "read_method",
+    "custom_spec_error_band_pct": "error_band_pct",
 }
 _BOOL_KEYS = {"is_generic_estimate", "level_sensitive", "requires_gfci"}
 
@@ -155,7 +166,7 @@ def pump_curve_sets(item_codes):
 
     Each curve is ``{name, item, curve_label, source, impeller_dia_in, rpm, speed_pct,
     max_flow_gpm, shutoff_head_ft, source_url, source_document, source_page, verified_by,
-    verified_on, is_generic_estimate, points: [{flow_gpm, head_ft, efficiency_pct,
+    verified_on, read_method, error_band_pct, catalog_id, is_generic_estimate, points: [{flow_gpm, head_ft, efficiency_pct,
     npshr_ft, power_bhp}, ...]}`` with points in rising flow. A legacy-table curve has
     ``name`` None and ``source`` "Legacy item table". Items with no curve are absent.
     """

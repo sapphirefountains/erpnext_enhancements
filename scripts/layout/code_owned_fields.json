@@ -371,6 +371,30 @@
    "fieldtype": "Date",
    "hidden": 0,
    "reqd": 0
+  },
+  {
+   "fieldname": "custom_catalog_id",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_confidence",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_method",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_error_band_pct",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
   }
  ],
  "Purchase Invoice": [

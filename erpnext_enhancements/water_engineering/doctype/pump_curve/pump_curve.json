@@ -28,6 +28,9 @@
   "cb_provenance",
   "verified_by",
   "verified_on",
+  "read_method",
+  "error_band_pct",
+  "catalog_id",
   "sb_notes",
   "notes"
  ],
@@ -163,6 +166,25 @@
    "fieldname": "verified_on",
    "fieldtype": "Date",
    "label": "Verified On"
+  },
+  {
+   "fieldname": "read_method",
+   "fieldtype": "Data",
+   "label": "Reading Method",
+   "description": "How the numbers were read: table, vector-path, visual-raster."
+  },
+  {
+   "fieldname": "error_band_pct",
+   "fieldtype": "Float",
+   "label": "Error Band (%)",
+   "description": "Estimated reading error of the points."
+  },
+  {
+   "fieldname": "catalog_id",
+   "fieldtype": "Data",
+   "label": "Catalog Row ID",
+   "description": "The docs/fountain-designer/catalog row this record was seeded from.",
+   "read_only": 1
   },
   {
    "fieldname": "sb_notes",

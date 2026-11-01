@@ -31,7 +31,8 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
 
 ### Added
 - **Pump Curve**: one record per pump Item and impeller / speed, with `source` (Datasheet / Digitized / Rep-supplied /
-  Generic estimate) and full provenance. Its controller refuses points whose flow is not strictly rising, or whose head
+  Generic estimate) and full provenance, including the catalog row's `catalog_id`, `read_method` (table, vector-path,
+  visual-raster) and `error_band_pct`; Nozzle Profile carries the same three plus `source_page`. Its controller refuses points whose flow is not strictly rising, or whose head
   rises again after the curve has peaked by more than 1 % of the peak (a typo; the operating-point solver would find two
   duty points). It accepts a *drooping* curve, head climbing from shutoff to a peak first, with a warning: published pool
   curves do that (Pentair EQ500 reads 77.0 ft at 0 GPM and 77.5 ft at 50 GPM), and 42 of the research catalog's 169
@@ -42,7 +43,8 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   display height and diameter, throw, water over the nozzle). The controller fills head from PSI or the reverse using
   the engine's `FT_PER_PSI`, sorts by depth then head, and warns when flow falls as head rises.
 - **Item catalog fields**: `custom_spec_source_url`, `custom_spec_revision`, `custom_spec_verified_by`,
-  `custom_spec_verified_on`, `custom_generic_estimate`, `custom_ul_listing`, the light fields (`custom_lumens`,
+  `custom_spec_verified_on`, `custom_generic_estimate`, `custom_catalog_id`, `custom_spec_confidence`,
+  `custom_spec_method`, `custom_spec_error_band_pct`, `custom_ul_listing`, the light fields (`custom_lumens`,
   `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`), `custom_filter_design_rate_gpm_sqft`,
   `custom_filter_backwash_gpm`, and the aerator pattern, depth and cord fields. Light, Aerator, Valve and Controller now
   show the shared electrical fields. All registered in `scripts/layout/code_owned_fields.json` and placed in the Item
@@ -62,6 +64,11 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
     lights), which every row of plans and loads in a bench-free run, and a second run changes nothing. Its shapes:
     `source` as a list of `{url, title, page, accessed}`, `phase` and `listing` as lists, FLA keyed by `"230 1-ph"` with
     ranges kept as text, VS speeds and impeller trims as `extra_curves`, trims printed as `3-3/4"`.
+  - Keyed on each row's `id`: the loader stamps it on the Item, Pump Curve and Nozzle Profile and finds them by it
+    first, so a corrected model name updates the same records. `confidence`, `method`, `error_band_pct` and the `source`
+    block (first source as URL, document and page; any further sources listed in the notes) go into the provenance
+    fields of every record. Nikolas's `approved.json` (2026-11-01, every row id) is the gate; a row added later stays
+    unseeded until its id is appended.
   - Approvals name a row by `"Manufacturer|Model"` or by its `id`. Where several rows share a manufacturer + model (nine
     in the research data, e.g. WhisperFlo 1 HP as a 1-phase -INT and a 3-phase part number), each is told apart by its
     first part number and must be approved by `id`; approving the shared name alone is refused as ambiguous.
@@ -77,7 +84,7 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
   New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
   user who cannot read them).
-- `tests/test_water_catalog.py` (59 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+- `tests/test_water_catalog.py` (60 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
   rows.
 
 ### Changed

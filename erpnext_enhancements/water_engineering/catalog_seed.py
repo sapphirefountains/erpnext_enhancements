@@ -274,24 +274,36 @@ def _text(value):
 
 
 def provenance(row, meta):
-	"""``{url, document, page, generic}`` from a row's ``source`` and ``confidence``.
+	"""Where a row's numbers came from and how they were read, for every record it writes.
 
-	``source`` is a list of ``{url, title, page, accessed}`` in the research data (the first
-	entry is the one the numbers were read from), or a single such object, or a bare URL.
+	``{id, url, document, page, also, confidence, method, error_band_pct, generic, approved_by,
+	approved_on}``. ``source`` is a list of ``{url, title, page, accessed}`` in the research data
+	(the first entry is the one the numbers were read from; the rest are listed in ``also``), or
+	a single such object, or a bare URL.
 	"""
-	source = row.get("source") or {}
-	if isinstance(source, list):
-		source = next((s for s in source if isinstance(s, dict)), {})
+	sources = row.get("source") or {}
+	sources = [s for s in sources if isinstance(s, dict)] if isinstance(sources, list) else [sources]
+	source = sources[0] if sources else {}
 	if isinstance(source, str):
 		source = {"url": source}
+	also = [
+		" ".join(str(s.get(k) or "").strip() for k in ("title", "url")).strip()
+		for s in sources[1:]
+		if isinstance(s, dict)
+	]
 	document = str(source.get("document") or source.get("title") or "").strip()
 	if source.get("accessed"):
 		document = f"{document} (accessed {source['accessed']})".strip()
 	confidence = str(row.get("confidence") or "").strip().casefold()
 	return {
+		"id": str(row.get("id") or "").strip(),
 		"url": str(source.get("url") or "").strip(),
 		"document": document,
 		"page": str(source.get("page") or "").strip(),
+		"also": [a for a in also if a],
+		"confidence": confidence,
+		"method": str(row.get("method") or "").strip(),
+		"error_band_pct": _num(row.get("error_band_pct")),
 		"generic": confidence.startswith("generic"),
 		"approved_by": meta.get("approved_by") or "",
 		"approved_on": str(meta.get("approved_on") or "")[:10],
@@ -308,6 +320,10 @@ def _item_provenance(prov):
 		"custom_generic_estimate": 1 if prov["generic"] else 0,
 		"custom_spec_verified_by": prov["approved_by"] or None,
 		"custom_spec_verified_on": prov["approved_on"] or None,
+		"custom_catalog_id": prov["id"] or None,
+		"custom_spec_confidence": prov["confidence"] or None,
+		"custom_spec_method": prov["method"] or None,
+		"custom_spec_error_band_pct": prov["error_band_pct"],
 	}
 
 
@@ -317,6 +333,7 @@ def _item_plan(kind, manufacturer, model, approval, name_word, specs, descriptio
 	return {
 		"item_code": code,
 		"match_existing_code": bool(approval.get("item_code")),
+		"catalog_id": prov["id"],
 		"manufacturer": manufacturer,
 		"model": model,
 		"set": {**specs, **_item_provenance(prov)},
@@ -431,13 +448,8 @@ def plan_pump(row, approval, meta):
 		notes = [f"Seeded from docs/fountain-designer/catalog/pumps.json ({row.get('id') or model})."]
 		if variable:
 			notes.append("Variable-speed pump.")
-		if row.get("method"):
-			band = (
-				f", about +/-{_fmt(row['error_band_pct'])} %"
-				if row.get("error_band_pct") not in (None, "")
-				else ""
-			)
-			notes.append(f"Read by {row['method']}{band}.")
+		if prov["also"]:
+			notes.append("Also cited: " + "; ".join(prov["also"]) + ".")
 		if row.get("notes"):
 			notes.append(str(row["notes"]))
 		if prov["approved_by"]:
@@ -457,6 +469,9 @@ def plan_pump(row, approval, meta):
 				"source_page": prov["page"] or None,
 				"verified_by": prov["approved_by"] or None,
 				"verified_on": prov["approved_on"] or None,
+				"catalog_id": prov["id"] or None,
+				"read_method": prov["method"] or None,
+				"error_band_pct": prov["error_band_pct"],
 				"notes": " ".join(notes),
 				"points": ordered,
 			}
@@ -622,8 +637,12 @@ def plan_nozzle(row, approval, meta):
 		"recommended_beam_deg": _num(row.get("recommended_beam_deg")),
 		"source_url": prov["url"] or None,
 		"source_document": prov["document"] or None,
+		"source_page": prov["page"] or None,
 		"verified_by": prov["approved_by"] or None,
 		"verified_on": prov["approved_on"] or None,
+		"catalog_id": prov["id"] or None,
+		"read_method": prov["method"] or None,
+		"error_band_pct": prov["error_band_pct"],
 		"performance": ordered,
 	}
 	# The rated-GPM method's anchor, from the middle row, and a published orifice / Cd: only
@@ -769,10 +788,20 @@ def _ensure_brand(name):
 
 
 def find_item(item_plan):
-	"""The existing Item for a plan, or None: the approval's code, else brand + model number."""
+	"""The existing Item for a plan, or None: the approval's code, else the catalog row id the
+	loader stamped on it, else brand + model number, else the generated code."""
 	code = item_plan["item_code"]
 	if item_plan["match_existing_code"]:
 		return code if frappe.db.exists("Item", code) else None
+	if item_plan.get("catalog_id"):
+		seeded = frappe.get_all(
+			"Item",
+			filters={"custom_catalog_id": item_plan["catalog_id"]},
+			pluck="name",
+			order_by="creation asc",
+		)
+		if seeded:
+			return seeded[0]
 	# Compared on catalog_key, the same normalization the approvals use, so a re-digitized
 	# row whose model gained a space still finds its Item instead of creating a second one.
 	want = catalog_key(item_plan["manufacturer"], item_plan["model"])
@@ -868,6 +897,11 @@ def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
 
 
 def find_profile(profile):
+	"""The existing Nozzle Profile: by catalog row id, else manufacturer + model, else name."""
+	if profile.get("catalog_id"):
+		names = frappe.get_all("Nozzle Profile", filters={"catalog_id": profile["catalog_id"]}, pluck="name")
+		if names:
+			return names[0]
 	names = frappe.get_all(
 		"Nozzle Profile",
 		filters={"manufacturer": profile["manufacturer"], "model_no": profile["model_no"]},
@@ -956,6 +990,7 @@ def load_catalog(catalog_dir=None, dry_run=True):
 		seen_keys, seen_ids = set(), set()
 		for key, base, row in resolve_rows(rows_of(_read_json(folder / filename), kind)):
 			row_id = str(row.get("id") or "").strip()
+			label = row_id or key
 			seen_keys.update((key, base))
 			seen_ids.add(row_id)
 			if row_id and row_id in by_id:
@@ -965,20 +1000,20 @@ def load_catalog(catalog_dir=None, dry_run=True):
 			elif base != key and base in by_key:
 				out["errors"].append(
 					{
-						"key": key,
+						"key": label,
 						"error": f"{base} names {row_id or 'several rows'} and others; approve this row by its id",
 					}
 				)
 				continue
 			else:
-				out["unapproved"].append(key)
+				out["unapproved"].append(label)
 				continue
 			try:
 				plan = PLANNERS[kind](row, approval, meta)
 			except CatalogRowError as exc:
-				out["errors"].append({"key": key, "error": str(exc)})
+				out["errors"].append({"key": label, "error": str(exc)})
 				continue
-			out["warnings"] += [f"{key}: {w}" for w in plan["warnings"]]
+			out["warnings"] += [f"{label}: {w}" for w in plan["warnings"]]
 			try:
 				if not dry_run:
 					frappe.db.savepoint("catalog_seed_row")
@@ -997,7 +1032,7 @@ def load_catalog(catalog_dir=None, dry_run=True):
 					)
 					if group != GROUPS["pumps"][0]:
 						out["warnings"].append(
-							f"{key}: Item {item_code} is in item group {group!r}; the pump selector reads only "
+							f"{label}: Item {item_code} is in item group {group!r}; the pump selector reads only "
 							f"{GROUPS['pumps'][0]!r}, so designs will not pick it"
 						)
 				elif kind == "nozzles" and plan.get("profile"):
@@ -1005,15 +1040,15 @@ def load_catalog(catalog_dir=None, dry_run=True):
 			except Exception as exc:
 				if not dry_run:
 					frappe.db.rollback(save_point="catalog_seed_row")
-				out["errors"].append({"key": key, "error": str(exc) or exc.__class__.__name__})
+				out["errors"].append({"key": label, "error": str(exc) or exc.__class__.__name__})
 				continue
-			entry = {"key": key, "item_code": item_code, "changes": changes}
+			entry = {"key": label, "item_code": item_code, "changes": changes}
 			if created:
 				out["created"].append(entry)
 			elif changes:
 				out["updated"].append(entry)
 			else:
-				out["unchanged"].append(key)
+				out["unchanged"].append(label)
 		out["approved_not_found"] = sorted(set(by_key) - seen_keys) + sorted(set(by_id) - seen_ids)
 
 	if not dry_run:

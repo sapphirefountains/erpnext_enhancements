@@ -584,6 +584,33 @@ def create_catalog_item_fields():
 					"fieldtype": "Date",
 					"insert_after": "custom_spec_verified_by",
 				},
+				{
+					"fieldname": "custom_catalog_id",
+					"label": "Catalog Row ID",
+					"fieldtype": "Data",
+					"insert_after": "custom_spec_verified_on",
+					"description": "The id of the docs/fountain-designer/catalog row this Item was seeded from; the seed loader finds the Item by it.",
+				},
+				{
+					"fieldname": "custom_spec_confidence",
+					"label": "Spec Confidence",
+					"fieldtype": "Data",
+					"insert_after": "custom_catalog_id",
+					"description": "How the numbers were obtained: table (published table) or digitized (read off a chart).",
+				},
+				{
+					"fieldname": "custom_spec_method",
+					"label": "Spec Reading Method",
+					"fieldtype": "Data",
+					"insert_after": "custom_spec_confidence",
+					"description": "e.g. table, vector-path, visual-raster.",
+				},
+				{
+					"fieldname": "custom_spec_error_band_pct",
+					"label": "Spec Error Band (%)",
+					"fieldtype": "Float",
+					"insert_after": "custom_spec_method",
+				},
 			]
 		},
 		ignore_validate=True,

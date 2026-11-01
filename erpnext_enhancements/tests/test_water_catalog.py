@@ -816,7 +816,7 @@ def test_shared_model_names_split_by_part_number_and_approve_by_id(fake, tmp_pat
     from erpnext_enhancements.water_engineering import catalog_seed
 
     summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
-    assert [e["key"] for e in summary["pumps"]["created"]] == ["fixtureco|fixture-twin fx-t1"]
+    assert [e["key"] for e in summary["pumps"]["created"]] == ["fixtureco-twin-fx-t1"]
     assert "approve this row by its id" in summary["pumps"]["errors"][0]["error"]
     item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-TWIN-FX-T1"]
     assert item["custom_model_no"] == "FIXTURE-TWIN FX-T1" and item["custom_pump_phase"] == "1"
@@ -824,8 +824,32 @@ def test_shared_model_names_split_by_part_number_and_approve_by_id(fake, tmp_pat
     assert item["custom_ul_listing"] == "NSF/ANSI 50; UL 1081"
     assert item["custom_spec_revision"] == "FIXTURE twin brochure (accessed 2026-11-01), p. 3"
     assert "4.0-4.4 A @ 230 1-ph" in item["description"]
+    assert item["custom_catalog_id"] == "fixtureco-twin-fx-t1"
+    assert item["custom_spec_confidence"] == "digitized" and item["custom_spec_method"] == "vector"
+    assert item["custom_spec_error_band_pct"] == 2
     curve = next(iter(fake.store["Pump Curve"].values()))
-    assert "Read by vector, about +/-2 %." in curve["notes"] and "Invented row." in curve["notes"]
+    assert curve["catalog_id"] == "fixtureco-twin-fx-t1" and curve["read_method"] == "vector"
+    assert curve["error_band_pct"] == 2 and curve["source_page"] == "3"
+    assert "Invented row." in curve["notes"]
+
+
+def test_the_catalog_id_finds_the_item_after_its_model_is_renamed(fake, tmp_path):
+    """Keyed on the row id: a corrected model name updates the same Item, never a second one."""
+    row = _twin("FX-ID", 1, model="FIXTURE-SOLO")
+    row["source"].append({"url": "https://example.invalid/second.pdf", "title": "FIXTURE errata"})
+    _write(tmp_path, pumps=[row], approved={"pumps": [row["id"]]})
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    row["model"] = "FIXTURE-SOLO II"
+    _write(tmp_path, pumps=[row], approved={"pumps": [row["id"]]})
+    summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
+    pumps = [n for n, r in fake.store["Item"].items() if r.get("custom_catalog_id") == row["id"]]
+    assert pumps == ["PUMP-FIXTURECO-FIXTURE-SOLO"]
+    assert fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-SOLO"]["custom_model_no"] == "FIXTURE-SOLO II"
+    assert [e["key"] for e in summary["pumps"]["updated"]] == [row["id"]]
+    curve = next(c for c in fake.store["Pump Curve"].values() if c["item"] == "PUMP-FIXTURECO-FIXTURE-SOLO")
+    assert "Also cited: FIXTURE errata https://example.invalid/second.pdf." in curve["notes"]
 
 
 def test_vs_speeds_and_printed_impeller_trims_become_separate_curves(fake, tmp_path):
