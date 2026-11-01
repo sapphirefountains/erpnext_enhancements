@@ -133,7 +133,7 @@ The call is stateless, and the page calls it on every edit. `model_json` is the 
 
 `key` must stay stable across derives, so that an acknowledgement survives them (the issues.py rule).
 
-**Charts.** Draw the SVG in `currentColor`, with a `viewBox` and no fixed pixel size. The page's CSS colors these classes and leaves everything else as drawn: `fd-curve-pump`, `fd-curve-system`, `fd-point` and `fd-bep` (the BEP window, a filled rect). The page also passes the text through an allow-list (`chart.js`):
+**Charts.** Draw the SVG in `currentColor`, with a `viewBox` and no fixed pixel size. The page's CSS colors these classes and leaves everything else as drawn: `fd-curve-pump`, `fd-curve-system`, `fd-point` and `fd-bep` (the BEP window, a filled rect). The chart's text may carry `fd-label` and its grid lines `fd-grid`; the page's form rules of those names are written `.fd-label:not(text)` and `.fd-grid:not(line)` so they never reach into a chart (v1.769.0). A scoped override under `.fd-chart` cannot do it, because any CSS `font-size` or `font-weight` outranks the SVG attribute it would have to restore. The page also passes the text through an allow-list (`chart.js`):
 
 - Drawing elements only: no `<script>`, `<foreignObject>`, `<image>`, `<a>` or `<use>`.
 - No `on*` attribute and no `style`.

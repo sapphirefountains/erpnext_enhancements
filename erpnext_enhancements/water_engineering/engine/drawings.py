@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import math
 import re
+import zlib
 from typing import Any
 
 # Literal mid-tone palette (print has no theme; keep contrast high on white).
@@ -49,10 +50,15 @@ _ACCENT = "#2b6cb0"
 _MUTED = "#718096"
 
 
+# Characters XML 1.0 does not allow at all (escaping cannot carry them): one in a label makes the
+# whole drawing not well-formed, and the page's DOMParser then refuses it. They are dropped.
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
 def _esc(text: Any) -> str:
-    """Minimal XML text escaping for labels."""
+    """Minimal XML text escaping for labels, with the characters XML forbids dropped."""
     return (
-        str(text if text is not None else "")
+        _XML_ILLEGAL.sub("", str(text if text is not None else ""))
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
@@ -454,6 +460,9 @@ _PAGE_ATTRIBUTES = frozenset({
 
 # The duty chart's frame, in viewBox units: legend row, NPSH caption row, then the plot.
 _DUTY_W, _DUTY_H = 480, 300
+# Width of one label character in viewBox units, sized for the widest the page could set it (13 px
+# bold) so the legend and the duty label still clear their neighbors there.
+_CHAR_W = 7.6
 _PLOT_L, _PLOT_R, _PLOT_T, _PLOT_B = 52, 464, 40, 256
 
 
@@ -506,7 +515,7 @@ def _tick(value: float) -> str:
 
 def _label(value: Any, fallback: str, limit: int = 28) -> str:
     ok = isinstance(value, (str, int, float)) and not isinstance(value, bool)
-    text = (str(value).strip() if ok else "") or fallback
+    text = (_XML_ILLEGAL.sub("", str(value)).strip() if ok else "") or fallback
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
@@ -581,7 +590,9 @@ def _duty_state(state: Any) -> dict[str, Any]:
         "title": _label(state.get("title"), "Duty point", 60),
         "pumps": pumps,
         "system": system if len(system) >= 2 else [],
-        "duty": (dq, dh) if dq is not None and dh is not None and dq >= 0 and dh >= 0 else None,
+        # Zero flow is the solve finding no operating point (a starved or dead-headed pump), not a duty
+        # point: drawn, it would read as a valid one on the head axis.
+        "duty": (dq, dh) if dq is not None and dh is not None and dq > 0 and dh >= 0 else None,
         "bep": window,
         "design": design_q if design_q is not None and design_q > 0 else None,
         "npsh": (avail, req, margin),
@@ -652,7 +663,14 @@ def pump_duty_svg(state: dict[str, Any] | None = None) -> str:
             f'<rect class="fd-bep" x="{_c(x0)}" y="{_PLOT_T}" width="{_c(x1 - x0)}" '
             f'height="{_PLOT_B - _PLOT_T}" fill="currentColor" fill-opacity="0.08"/>'
         )
-        parts.append(_text((x0 + x1) / 2, _PLOT_T + 12, "BEP", 10, ' text-anchor="middle" fill-opacity="0.7"'))
+        # On the side of the window away from the design-flow line, which usually runs near its centre.
+        xd = sx(design_q) if design_q is not None else None
+        if xd is not None and x0 - 2 <= xd <= x1 + 2:
+            left = xd > (x0 + x1) / 2
+            parts.append(_text(x0 + 3 if left else x1 - 3, _PLOT_B - 6, "BEP", 10,
+                               ('' if left else ' text-anchor="end"') + ' fill-opacity="0.7"'))
+        else:
+            parts.append(_text((x0 + x1) / 2, _PLOT_B - 6, "BEP", 10, ' text-anchor="middle" fill-opacity="0.7"'))
     for i in range(round(y_max / y_step) + 1):
         y = _c(sy(i * y_step))
         parts.append(
@@ -685,9 +703,11 @@ def pump_duty_svg(state: dict[str, Any] | None = None) -> str:
             f'<line class="fd-design" x1="{_c(x)}" y1="{_PLOT_T}" x2="{_c(x)}" y2="{_PLOT_B}" '
             f'stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3" stroke-opacity="0.6"/>'
         )
-        near_right = x > _PLOT_R - 90
-        parts.append(_text(x - 4 if near_right else x + 4, _PLOT_B - 6, f"Design {_gpm(design_q)} gpm", 10,
-                           (' text-anchor="end"' if near_right else "") + ' fill-opacity="0.8"'))
+        # At the top of the plot, where the reduced-speed tails never reach, and on the side of the line
+        # away from the BEP window's label.
+        go_left = x > _PLOT_R - 90 or (bep is not None and sx((bep[0] + bep[1]) / 2) > x and x - 90 > _PLOT_L)
+        parts.append(_text(x - 4 if go_left else x + 4, _PLOT_T + 12, f"Design {_gpm(design_q)} gpm", 10,
+                           (' text-anchor="end"' if go_left else "") + ' fill-opacity="0.8"'))
     if system:
         parts.append(_polyline(pts(system), "fd-curve-system", "system", 2, "6 4"))
     for i, p in enumerate(pumps, start=1):
@@ -704,11 +724,17 @@ def pump_duty_svg(state: dict[str, Any] | None = None) -> str:
             f'<circle class="fd-point" data-point="duty" cx="{_c(cx)}" cy="{_c(cy)}" r="6" fill="currentColor"/>'
         )
         text = f"{_gpm(duty[0])} gpm @ {duty[1]:.1f} ft"
-        flip = cx + 10 + len(text) * 7 > _PLOT_R
-        ty = cy - 10 if cy - 10 > _PLOT_T + 12 else cy + 20
-        parts.append(_text(cx - 10 if flip else cx + 10, ty, text, 12,
-                           (' text-anchor="end"' if flip else "") + ' font-weight="700"',
+        # Level with the point: the falling pump curve and the rising system curve open apart on both
+        # sides of it, so a label set beside the point sits between them rather than across one. Left
+        # when it fits, else right.
+        width = len(text) * _CHAR_W
+        left = cx - 12 - width > _PLOT_L + 4
+        parts.append(_text(cx - 12 if left else cx + 12, cy, text, 12,
+                           (' text-anchor="end"' if left else "") + ' dominant-baseline="middle" font-weight="700"',
                            "fd-label fd-point-label"))
+    elif pumps or system:
+        parts.append(_text((_PLOT_L + _PLOT_R) / 2, (_PLOT_T + _PLOT_B) / 2, "No duty point yet", 13,
+                           ' text-anchor="middle" dominant-baseline="middle" fill-opacity="0.7"'))
 
     # -- legend (top row, right-aligned) and NPSH caption (second row) -------
     entries = [
@@ -718,16 +744,35 @@ def pump_duty_svg(state: dict[str, Any] | None = None) -> str:
         entries.append(("fd-curve-pump", 1.5, "2 3", "VFD speed"))
     if system:
         entries.append(("fd-curve-system", 2, "6 4", "System"))
-    widths = [24 + len(e[3]) * 6.2 + 14 for e in entries]
-    while sum(widths) - 14 > _PLOT_R - _PLOT_L and len(entries) > 1:
-        entries.pop(0)
-        widths.pop(0)
+    if len(pumps) > 3:
+        entries.insert(3, ("", 0, "", f"+{len(pumps) - 3} more"))
+
+    def width(e):
+        return (24 if e[0] else 0) + len(e[3]) * _CHAR_W + 14
+
+    while sum(width(e) for e in entries) - 14 > _PLOT_R - _PLOT_L:
+        drawn = [i for i, e in enumerate(entries) if e[0] == "fd-curve-pump" and not e[2]]
+        if len(drawn) <= 1:
+            break
+        # fold the last drawn pump into the "+N more" entry rather than drop it unannounced
+        entries.pop(drawn[-1])
+        more = next((i for i, e in enumerate(entries) if not e[0]), None)
+        hidden = len(pumps) - len([e for e in entries if e[0] == "fd-curve-pump" and not e[2]])
+        if more is None:
+            entries.insert(drawn[-1], ("", 0, "", f"+{hidden} more"))
+        else:
+            entries[more] = ("", 0, "", f"+{hidden} more")
+    widths = [width(e) for e in entries]
     x = max(_PLOT_L, _PLOT_R - sum(widths) + 14)
-    for (cls, width, dash, text), w in zip(entries, widths, strict=True):
+    for (cls, stroke_w, dash, text), w in zip(entries, widths, strict=True):
+        if not cls:  # the "+N more" entry: words only
+            parts.append(_text(x, 12, text, 11, ' dominant-baseline="middle" fill-opacity="0.8"'))
+            x += w
+            continue
         dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
         parts.append(
             f'<line class="{cls}" x1="{_c(x)}" y1="12" x2="{_c(x + 20)}" y2="12" stroke="currentColor" '
-            f'stroke-width="{width:g}"{dash_attr}/>'
+            f'stroke-width="{stroke_w:g}"{dash_attr}/>'
         )
         parts.append(_text(x + 24, 12, text, 11, ' dominant-baseline="middle"'))
         x += w
@@ -815,4 +860,11 @@ def page_svg(svg: str | None) -> str | None:
         body = "".join(f' {k}="{v}"' for k, v in _page_attrs(attrs, root))
         return f"<{name}{body}{'/' if close else ''}>"
 
-    return _TAG_RE.sub(rewrite, source)
+    out = _TAG_RE.sub(rewrite, source)
+    # Every print drawing defines <marker id="arrow">. On one page two of them would share the id, and
+    # url(#arrow) resolves to the first in the document (in a hidden tab, or in the other theme), so
+    # each drawing's ids get a suffix of its own: the same drawing twice gets the same, harmlessly.
+    suffix = f"{zlib.crc32(source.encode('utf-8')) & 0xFFFFFF:06x}"
+    for ident in sorted(set(re.findall(r'\bid="([^"]+)"', out)), key=len, reverse=True):
+        out = out.replace(f'id="{ident}"', f'id="{ident}-{suffix}"').replace(f"url(#{ident})", f"url(#{ident}-{suffix})")
+    return out

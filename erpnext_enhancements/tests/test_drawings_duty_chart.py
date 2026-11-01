@@ -397,3 +397,51 @@ def test_chart_js_safe_svg_accepts_them():
     lengths = json.loads(proc.stdout)
     assert all(n > 0 for n in lengths[:-1]), lengths
     assert lengths[-1] == 0  # the print drawing as it is: refused, which is why page_svg exists
+
+
+# --- the #1400 review (2026-11-01) ------------------------------------------------------------------
+
+
+def test_zero_flow_is_no_duty_point():
+    svg = D.pump_duty_svg(dict(REALISTIC, duty={"flow_gpm": 0, "head_ft": 20}))
+    passes(svg)
+    assert 'data-point="duty"' not in svg
+    assert "No duty point yet" in svg
+    assert "no duty point" in root_tag(svg)
+
+
+def test_characters_xml_forbids_are_dropped():
+    pumps = [dict(REALISTIC["pumps"][0], label="EQ\x00500\x0b <b>&\ufffe")]
+    svg = D.pump_duty_svg(dict(REALISTIC, title="Duty\x1f point", pumps=pumps))
+    passes(svg)
+    assert not re.search("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]", svg)
+    assert "EQ500" in svg and "&lt;b&gt;&amp;" in svg
+    assert "\x0c" not in D._esc("a\x0cb") and D._esc("a\x0cb") == "ab"
+
+
+def test_bep_and_design_labels_part_ways():
+    svg = D.pump_duty_svg(dict(REALISTIC, bep={"flow_lo_gpm": 80, "flow_hi_gpm": 120}, design={"flow_gpm": 100}))
+    bep = re.search(r'<text[^>]*x="([\d.]+)"[^>]*>BEP</text>', svg)
+    design = re.search(r'<text[^>]*x="([\d.]+)"[^>]*y="([\d.]+)"[^>]*>Design 100 gpm</text>', svg)
+    line = re.search(r'class="fd-design" x1="([\d.]+)"', svg)
+    assert bep and design and line
+    assert abs(float(bep.group(1)) - float(line.group(1))) > 2  # not centered on the design line
+    assert float(design.group(2)) < 60  # at the top, clear of the reduced-speed tails
+
+
+def test_more_pumps_than_fit_are_announced():
+    pumps = [dict(REALISTIC["pumps"][0], label=f"Pump number {i}") for i in range(5)]
+    svg = D.pump_duty_svg(dict(REALISTIC, pumps=pumps))
+    passes(svg)
+    assert re.search(r">\+\d more</text>", svg)
+
+
+def test_page_drawings_get_ids_of_their_own():
+    schematic = D.page_svg(D.circulation_schematic_svg({"nodes": ["Basin", "Pump", "Filter"]}))
+    oneline = D.page_svg(D.electrical_oneline_svg({}))
+    ids_a = set(re.findall(r'\bid="([^"]+)"', schematic))
+    ids_b = set(re.findall(r'\bid="([^"]+)"', oneline or ""))
+    assert ids_a and not ids_a & ids_b
+    for svg in (schematic, oneline):
+        for ref in re.findall(r"url\(#([^)]+)\)", svg or ""):
+            assert f'id="{ref}"' in svg  # every reference still resolves

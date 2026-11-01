@@ -43,6 +43,27 @@ charts from the server:** the pump duty point, the circulation schematic and the
   - **What it loses.** The ladder's green and red pilot lamps become a neutral tint on the page;
     their labels still say which is which.
 
+### Fixed (from the independent review of #1400)
+- **The page's form styles no longer restyle chart text.** The global `.fd-label` rule set every
+  label in the chart to the form label's bold 13 px. Any CSS `font-size` or `font-weight` outranks
+  the SVG attribute it would have to restore, so an override scoped to `.fd-chart` cannot fix it.
+  Instead the form rules are written `.fd-label:not(text)` and `.fd-grid:not(line)`, so they never
+  match inside a drawing. The page README's "Charts" paragraph says so.
+- **Zero flow is no duty point.** When the solve found no operating point (a starved or dead-headed
+  pump), the chart drew a dot on the head axis that read as a valid duty point. It now draws the
+  curves and says "No duty point yet".
+- **Labels no longer overlap:**
+  - "BEP" sits on the side of its window away from the design-flow line.
+  - "Design N gpm" moves to the top of the plot, clear of the reduced-speed tails.
+  - The duty label sits level with the point, where the pump and system curves open apart.
+  - Legend widths are sized for 13 px bold.
+  - Pumps that do not fit are folded into a "+N more" entry instead of being dropped silently.
+- **Characters XML forbids are dropped** in `_esc` and `_label`. One of them in a pump or title made
+  the whole SVG not well-formed, and the page refused it.
+- **`page_svg` gives each drawing's ids a suffix of its own.** Every print drawing defines
+  `<marker id="arrow">`, and with two on one page `url(#arrow)` resolved to the first, even in a
+  hidden tab or the other theme.
+
 ### Changed
 - `public/js/fountain_designer/README.md`, "After phase E", now says:
   - the page's default path calls the real API, and `?demo=1` stays the training demo;
