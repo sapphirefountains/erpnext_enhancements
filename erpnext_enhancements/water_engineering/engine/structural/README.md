@@ -191,3 +191,123 @@ outside faces), `structural.curing`, `structural.chairs`,
   weight / U. Soil friction and backfill over a toe are ignored (conservative).
 
 Tests: `erpnext_enhancements/tests/test_structural_*.py` (bench-free pytest; own CI step).
+
+## 6. The structure in general (v1.766.0)
+
+On 2026-11-01 Nikolas widened phase S from the basin shells to "the structure in general". DOC-0119
+says nothing about anything in this section beyond its materials notes (§1 D14–D18 and its Materials
+section), so each module names the public standard it uses.
+
+| File | Does | Standard |
+|---|---|---|
+| `loads.py` | `soil_properties` (IBC presumptive values; class 5 when the soil is unknown), `surcharge_load` (pedestrian 100 psf, plaza 250 psf; a vehicle as AASHTO's equivalent soil height), `frost_check` and `freeze_thaw_notes` (30 in, Salt Lake County), `seismic_design_values` (Fa, Fv, SDS, SD1 and SDC from Ss/S1 and the site class, with a step that says to look them up in the USGS / ASCE Hazard Tool), `hydrodynamic_wall_load` (ACI 350.3 rectangular basin: impulsive, convective and wall inertia), `wind_panel_load` (ASCE 7 Ch. 29 freestanding wall or sign, with porosity and the elevation factor) | IBC 1806.2, 1809.5; ASCE 7-16 Ch. 4, 11, 26, 29; ACI 350.3-06; AASHTO |
+| `walls.py` | `cantilever_wall` (raised basin, weir and soil-retaining walls on a footing: overturning, sliding, bearing, frost and stem flexure, plus a seismic case by Westergaard or Seed-Whitman), `size_wall_footing` (the narrowest footing that passes, at the frost depth, with concrete and rebar per foot) | IBC 1807.2.3, 1610.1 |
+| `vaults.py` | `lid_slab` (one-way lid for pedestrian, plaza or H-20 wheel loads), `grating` (bar grating by load class), `trench_drain` (EN 1433 class, piece count, ADA opening size) | ACI 318 Ch. 7, 22; AASHTO Std. Spec. §3.24; NAAMM MBG 531/532; EN 1433; ADA 302.3 |
+| `building.py` | `deck_beam` (steel W/HSS or concrete beam over a collector tank, L/360), `building_floor_load` (against the stated capacity, or the ASCE 7 live load for the floor's use; always flagged to the engineer of record) | AISC 360; ACI 318 Table 9.3.1.1; ASCE 7 Table 4.3-1 |
+| `steel.py` | `hss_section` (properties computed from the tube's geometry; they match the AISC Manual within rounding), `W_SHAPES`, `member_check` / `select_member` (flexure, shear, deflection), `column_check` / `select_column` (§E3 + §H1, drift), `water_wall_frame` (posts and header under wind and trough water) | AISC 360-16 Ch. B, E, F, G, H; AISC DG 27 for stainless |
+| `fabrications.py` | `weir_lip_sag` (lip or scupper sag against the 1/16 in edge tolerance, and the support spacing that keeps it there), `veneer_attachment` (adhered up to 15 psf; anchors by the TMS area rule, 75% of that area in SDC D), `pedestal_check` (plinths as rigid blocks under wind or the ASCE 7 component force) | TMS 402-16 Ch. 12–13; ASCE 7 §13.3; ASTM C1242 |
+| `rigging.py` | `beam_reactions` (the DRC three-moment solver, pinned to its JavaScript), `rig_plan` (towers, ceiling or flown truss; hoist sizing), `floor_rating`, `show_basin_floor` | DRC `src/rigging.js` (SHA 737fa80); ASCE 7 Table 4.3-1 |
+| `supports.py` | `equipment_pad` (pad size and anchors: the ASCE 7 Ch. 13 force, ACI 318 Ch. 17 steel and breakout), `thrust_block`, `seismic_bracing`, `penetration_detail`, `mooring` | ASCE 7 Ch. 13; ACI 318 Ch. 17; AWWA M23 / Uni-Bell; NFPA 13 / SMACNA |
+| `general.py` | `general_structure(model, basins, rules)`: runs all of the above from the model; `structural_takeoff` calls it | — |
+
+Phase B owns pipe hanger loads and span tables (`engine/structure.py`). `supports.py` does not
+duplicate them.
+
+### 6.1 The model's `structure` block (for phase C)
+
+Everything in the block is optional. Without it the takeoff still runs:
+- the hydrodynamic wall check for every basin, when the site gives `ss`/`s1` or `sds`/`sd1`;
+- a sag check of every weir feature's lip, at the house-rule section;
+- a lid design for every vault with a concrete lid (`lid.load_class`);
+- a waterstop ring at every penetration;
+- a floor check for any basin placed `on_structure` (`floor_use`).
+
+```jsonc
+"site": {"ss": 1.5, "s1": 0.55, "site_class": "D", "soil_class": 4, "soil_bearing_psf": null,
+         "frost_depth_in": 30, "wind_speed_mph": 115, "wind_exposure": "C", "elevation_ft": 4300},
+"structure": {
+  "walls":   [{"id", "label", "stem_height_ft", "stem_in", "retained": "water|soil", "water_depth_ft",
+               "length_ft", "surcharge": "pedestrian|plaza|vehicle|<psf>", "soil_class", "bearing_psf"}],
+  "frames":  [{"id", "label", "height_ft", "width_ft", "header_plf", "post_spacing_ft", "clearance_ft",
+               "solid_ratio", "material": "A500C|304SS|316SS"}],
+  "weir_lips": [{"id", "feature", "span_in", "thickness_in", "flange_in", "lip_width_in", "water_depth_in",
+                 "support": "simple|continuous|fixed|cantilever", "tolerance_in"}],
+  "veneer":  [{"id", "area_sqft", "thickness_in", "material", "method": "anchored|adhered", "anchor_capacity_lb"}],
+  "pedestals": [{"id", "length_ft", "width_ft", "height_ft", "top_load_lb", "top_cg_ft", "wind_lb",
+                 "wind_height_ft", "on": "slab|soil"}],
+  "columns": [{"id", "height_ft", "axial_lb", "lateral_plf", "top_lb", "material"}],
+  "beams":   [{"id", "span_ft", "tributary_ft", "dead_psf", "live_psf", "material": "steel|concrete", "shape": "W|HSS"}],
+  "gratings": [{"id", "span_in", "area_sqft", "load_class": "pedestrian|plaza|vehicle"}],
+  "trench_drains": [{"id", "length_ft", "load_class"}],
+  "pads":    [{"id", "length_in", "width_in", "weight_lb", "cg_height_in", "n_anchors", "anchor_dia_in", "embed_in"}],
+  "thrust_blocks": [{"id", "size", "pressure_psi", "fitting": "90|45|22.5|tee|dead_end", "count", "soil_bearing_psf"}],
+  "bracing": [{"id", "size", "run_ft", "material"}],
+  "moorings": [{"id", "above_water_sqft", "submerged_sqft", "current_fps", "n_anchors", "line_angle_deg"}],
+  "rigging": {"hung_lb_per_ft", "hung_length_ft", "hanger_spans", "hanger_span_ft", "overhang_ft",
+              "curtain_width_ft", "mount": "towers|ceiling|flown", "truss": "tri12|box12|box16",
+              "header_height_ft", "picks", "riser_lb", "feed": "end|both"}
+}
+```
+
+Basins gain `floor_use` (`roof`, `office`, `lobby` and the rest of `building.FLOOR_USE_PSF`) and
+`lid.load_class`.
+
+### 6.2 What the takeoff adds
+
+**New top-level keys.**
+- `structure`: `{group: [{id, label, result: CalcResult dict}]}`. The groups are `hydrodynamic`,
+  `lids`, `floors`, `weir_lips`, `walls`, `frames`, `columns`, `beams`, `gratings`, `trench_drains`,
+  `veneer`, `pedestals`, `pads`, `thrust_blocks`, `bracing`, `moorings` and `rigging`.
+- `seismic`: the `seismic_design_values` CalcResult.
+- `notes`: the freeze-thaw notes.
+
+**New `totals` keys.** `steel_lb`, `site_concrete_cuft`, `site_rebar_lb`, `grating_sqft`,
+`veneer_anchors`, `equipment_anchors`, `braces`, `mooring_blocks`, `trench_drain_pieces` and
+`waterstop_ring_ft`.
+
+**New check codes**, by `issues.py` section and severity:
+
+| Section | Severity | Codes |
+|---|---|---|
+| project | info | `STRUCT_SEISMIC_INPUTS` |
+| the row's section | info | `STRUCT_ROW_INCOMPLETE` (a `structure` row with a required number missing or not > 0; the row is skipped, never crashes the takeoff), `STRUCT_PIPE_SIZE`, `STRUCT_THRUST_INPUT`, `STRUCT_FRAME_INPUT` |
+| basin | warning | `STRUCT_SEISMIC_WALL`, `STRUCT_LID`, `STRUCT_FLOOR_USE`, `STRUCT_WALL_STABILITY`, `STRUCT_BEAM`, `STRUCT_GRATING` |
+| basin | info | `STRUCT_SLOSH` |
+| features | warning | `STRUCT_WEIR_SAG`, `STRUCT_FRAME`, `STRUCT_COLUMN`, `STRUCT_VENEER`, `STRUCT_PEDESTAL` |
+| features | blocker | `STRUCT_RIGGING` |
+| pump | warning | `STRUCT_ANCHORS` |
+
+**New BOM keys.**
+- By the pound: `structural.steel` and `structural.steel.<304ss|316ss>`.
+- By the square foot: `structural.grating.<class>`.
+- By the piece: `structural.trench_drain.<class>`, `structural.veneer_anchors`, `structural.hatch`,
+  `structural.seismic_braces`, `structural.mooring_blocks.<dry lb, 50 lb steps>`.
+- By the cubic yard: `structural.concrete_site`, which covers walls, pads, pedestals, thrust and
+  mooring blocks, and concrete beams.
+
+**Merged into existing lines.**
+- Wall rebar adds to `structural.rebar.#4.lb`.
+- Penetration rings add to `structural.waterstop`.
+- When pads are listed, their anchors replace the generic `structural.anchors` count.
+
+### 6.3 More house rules (DOC-0119 is silent on these)
+
+| Rule | Default |
+|---|---|
+| `frost_depth_in` | 30 in |
+| `wind_speed_mph` | 115 mph (read the address in the Hazard Tool) |
+| `wind_exposure` | C |
+| `soil_pcf` | 120 pcf |
+| `active_efp_pcf` | 45 pcf |
+| `wall_fs` / `wall_fs_seismic` | 1.5 / 1.1 |
+| `steel_load_factor` | 1.6 on gravity, live and fluid loads |
+| `wind_load_factor` / `wind_service_factor` | 1.0 (ASCE 7-16 wind is strength level) / 0.6 for drift |
+| Deflection limits | L/360 for beams, L/180 for cantilevers, H/180 for post drift |
+| `frame_post_spacing_ft` | 8 ft |
+| Weir lip section | 3/16 in plate, 2 in flange, 3 in lip, 1 in of water on it, supports at 48 in |
+| `veneer_anchor_fs` | 4 |
+| Trench grate pieces | 1 m long |
+| Equipment pads | 6 in past the equipment, 6 in thick; listed pads add to the house-rule anchors of the equipment they don't cover |
+| Thrust blocks | 1,000 psf soil bearing, FS 1.5 |
+| Pipe bracing | 40 ft lateral, 80 ft longitudinal (half that for plastic pipe) |
+| Moorings | 90 mph wind, μ 0.5, FS 1.5 |
