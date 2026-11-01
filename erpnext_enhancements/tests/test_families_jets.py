@@ -78,6 +78,11 @@ def test_no_table_falls_back_to_k_times_head_and_says_so():
     assert pt["source"] == "estimate"
     assert pt["head_ft"] == pytest.approx(12 / 0.82)
     assert jets.nozzle_point(jet(12, nozzle_type="aerating"))["head_ft"] == pytest.approx(12 / 0.39)
+    # Cluster and spray nozzles have no public figure: same stand-in, and the citation says so.
+    spray = jets.nozzle_point(jet(12, nozzle_type="spray"))
+    assert "no public figure" in spray["k_citation"]
+    assert "no public figure" in next(c for c in jets.checks(jet(12, nozzle_type="spray", orifice_diameter_in=0.5))
+                                  if c.code == "JET_HEIGHT_ESTIMATED").citation
     c = codes(jets.checks(jet(12, nozzle_type="smooth", orifice_diameter_in=0.5)))
     assert c["JET_HEIGHT_ESTIMATED"] == WARNING
     assert jets.flow(jet(12, nozzle_type="smooth")).warnings
@@ -243,3 +248,10 @@ def test_a_known_flow_per_nozzle_sizes_the_array_without_a_head():
     assert res.value == pytest.approx(40.0)
     assert res.data["source"] == "rated_flow" and res.warnings
     assert codes(jets.checks({"id": "j", "inputs": {"gpm_each": 8}, "count": 5}))["JET_INCOMPLETE"] == INFO
+
+
+def test_calibration_is_memoized():
+    jets._calibrate_v0.cache_clear()
+    jets.calibrate_v0(9.5, 90, 0.4)
+    jets.calibrate_v0(9.5, 90.0, 0.4, 0)
+    assert jets._calibrate_v0.cache_info().hits == 1

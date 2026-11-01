@@ -9,7 +9,8 @@ code: a preset value here is a starting point the designer edits, never an engin
   (every pipe size left ``None`` so the piping step sizes it), and the site, electrical,
   acknowledgements and notes are kept.
 * :func:`match_kit` says which kit a model still is, or ``"custom"`` once any value a kit
-  sets has been changed (the app's ``matchPreset``).
+  sets has been changed, or a value it leaves alone has been set to something other than
+  its default (the app's ``matchPreset``).
 """
 
 from __future__ import annotations
@@ -122,7 +123,7 @@ KITS: tuple[Kit, ...] = (
         features=(_f("cascade", "Tiered Fountain", "Tiers", {"tiers": [
             {"label": "top", "diameter_in": 24}, {"label": "middle", "diameter_in": 36},
             {"label": "bottom", "diameter_in": 48},
-        ]}, effect={"look": "average"}),),
+        ]}),),
         basins=(_b("Pool", "round", diameter_in=96, depth_in=18),),
         pump={"generic_class": "end-suction", "location": "vault"},
     ),
@@ -266,7 +267,18 @@ def _same(a: Any, b: Any) -> bool:
     return a == b
 
 
+def _no_additions(kit_values: dict[str, Any], model_values: dict[str, Any], defaults: dict[str, Any]) -> bool:
+    """True when every key the model has beyond the kit's is blank or at its input default."""
+    for key, value in model_values.items():
+        if key in kit_values or value in (None, "") or (key in defaults and _same(defaults[key], value)):
+            continue
+        return False
+    return True
+
+
 def _matches(k: Kit, m: dict[str, Any]) -> bool:
+    from .families import FAMILIES
+
     feats = m.get("features") or []
     if len(feats) != len(k.features):
         return False
@@ -277,11 +289,20 @@ def _matches(k: Kit, m: dict[str, Any]) -> bool:
             return False
         if not _same(kf["inputs"], mf.get("inputs") or {}) or not _same(kf.get("effect") or {}, mf.get("effect") or {}):
             return False
+        module = FAMILIES.get(kf["family"])
+        defaults = {r["name"]: r.get("default") for r in module.inputs()} if module else {}
+        kit_values = {**kf["inputs"], **(kf.get("effect") or {})}
+        if not _no_additions(kit_values, {**(mf.get("inputs") or {}), **(mf.get("effect") or {})}, defaults):
+            return False
     bas = m.get("basins") or []
     if len(bas) != len(k.basins):
         return False
+    basin_defaults = {"id": None, "label": None, "elevation_ft": 0.0, "shape": "rectangular"}
     for kb, mb in zip(k.basins, bas, strict=False):
         if not _same(kb, mb):
+            return False
+        extra = {key: v for key, v in mb.items() if key not in ("id", "label")}
+        if not _no_additions(kb, extra, basin_defaults):
             return False
     setup = m.get("setup") or {}
     want = kit_setup(k)

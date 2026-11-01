@@ -73,7 +73,7 @@ Lighting reads `derived["flows"]` (feature id to `flow().data`); heat reads
 - **Inputs:** display height, nozzle type, launch angle, head (optional pin), orifice diameter, distance to the nearest edge, basin (ground or raised), design wind, wind control, indoor, body contact, ring diameter, spacing.
 - **Rules:**
   - **Height from the nozzle's performance table** by linear interpolation (height → head, flow). Outside the table is a blocker, never an extrapolation. [OASE tables](https://cdn.shopify.com/s/files/1/2394/4493/files/Oase_Geyser_Nozzles_Specifications_Sheet_PDF.pdf)
-  - Flagged fallback only: height = k × head, k 0.82 for a smooth bore ([Scribd](https://www.scribd.com/document/462312854/elementry-pdf) [weak]) and 0.39 for every other type, from Atlantic's column nozzle, 12 ft at 31 ft of head ([Atlantic](https://practicalgardenponds.com/products/atlantic-water-gardens-vertical-nozzles)). The engine's old 0.90 is not used.
+  - Flagged fallback only: height = k × head, k 0.82 for a smooth bore ([Scribd](https://www.scribd.com/document/462312854/elementry-pdf) [weak]) and 0.39 for every other type, from Atlantic's column nozzle, 12 ft at 31 ft of head ([Atlantic](https://practicalgardenponds.com/products/atlantic-water-gardens-vertical-nozzles)). No public figure exists for cluster or spray nozzles; they use the same 0.39, and their citation says so. The engine's old 0.90 is not used. A known flow per nozzle (`gpm_each`) sizes an array before any head is known.
   - 2-D point-mass trajectory with quadratic drag and wind, RK4. Drop size 1.89 × jet diameter (Rayleigh, as the rain-curtain app), sphere Cd 0.47, ISA air density at the site elevation. Calibrated so the still-air apex equals the table height; it then gives range, landing point and wind drift.
   - Splash setback: 1:1 of the height for ground pools, 1:1.5 for raised tables. [Safe-Rain](https://saferain.com/en/blog/tips-of-fountain-design-part-2/), [Delta](https://www.deltafountains.com/?p=772), [Crystal](https://www.slideshare.net/slideshow/water-feature-types/5145948)
   - Manifold spread target ±2%. [Safe-Rain](https://saferain.com/en/blog/tips-of-fountain-design-part-2/); the rain-curtain app's `sizeSweep`
@@ -105,7 +105,7 @@ Lighting reads `derived["flows"]` (feature id to `flow().data`); heat reads
 - **Inputs:** tiers (spillway width or rim diameter, look, pool area above the lip, fall, optional rim gpm/ft), default look, stream length/width/depth, pond volume, koi, pond size (for the liner), top spillway elevation.
 - **Rules:**
   - Spillways: light 1,500 GPH/ft (= 125 GPH per inch), average 2,400 (200 GPH per inch for a 1 in sheet), heavy 3,000. [Aquascape](https://support.aquascapeinc.com/hc/en-us/articles/48506913796244-Waterfall-What-flow-rate-is-needed-for-a-waterfall), [Pond Trade](https://www.pondtrademag.com/?p=17369) [snippet]
-  - Round tiers keep the DOC-0049 B rim rule `feature.tiered_fountain_flow` uses: 0.5 / 4 / 6 gpm per foot of rim.
+  - Round tiers keep the DOC-0049 B rim rule `feature.tiered_fountain_flow` uses: 0.5 gpm per foot of rim by default (the operating figure, look `light`). The plumbing band, 4–6 gpm/ft, is reported as `data["rim_plumbing_gpm"]`. Average (4) and heavy (6) are a heavier sheet on request, a mapping that awaits the designers' call.
   - The tightest tier governs (series flow).
   - Drain-back at shutdown: the sheet over each lip plus the stream volume. [WaterShapes](https://watershapes.com/water-in-transit-pond-problem/)
   - Pond turnover every 2 h (koi: 1 h). [Aquascape](https://manualslib.fr/manual/724172/Aquascape-Aquaforce-1000-Gph.html?page=4) [snippet]
@@ -148,7 +148,9 @@ Lighting reads `derived["flows"]` (feature id to `flow().data`); heat reads
 ## House rules these modules read
 
 All in `engine/rules.py` and on Water Engineering Settings (House Rules tab). Labor hours ship
-as 0, meaning not set.
+as 0, meaning not set. Spray loss accepts 0 (no loss). Any other rule saved as 0, negative or
+junk falls back to its default (`rules.resolve` and `rules.rule`), so a cleared Settings
+field never divides by zero.
 
 | Key | Default | Read by |
 |---|---|---|

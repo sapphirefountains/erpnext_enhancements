@@ -13,9 +13,11 @@ measured at the spillway, not the frame rocks):
 * heavy: 3,000 (Aquascape's commercial figure)
 
 A **round tier** (a rim diameter, the old ``Tiered Fountain``) is a circular weir and keeps
-the DOC-0049 B edge rule the engine has always used (``feature.tiered_fountain_flow``): light
-0.5 gpm per foot of rim (the operating figure), average 4 and heavy 6 (the band it says to
-engineer the plumbing for). The waterfall bands are for naturalistic spillways and would put
+the DOC-0049 B edge rule the engine has always used (``feature.tiered_fountain_flow``): it
+operates at 0.5 gpm per foot of rim, which is the default (``light``), and the plumbing is
+engineered for 4-6 gpm/ft (``data["rim_plumbing_gpm"]``). Average (4) and heavy (6) are a
+designer's choice of a heavier sheet; that mapping of the looks onto DOC-0049's band is
+Sapphire's, pending the designers' call. The waterfall bands are for naturalistic spillways and would put
 500 gpm over a 4 ft bowl.
 
 ``derived`` keys read by :func:`checks`: ``flow``, ``basin`` (the lowest basin) and
@@ -63,6 +65,7 @@ CIT_RILL = "https://www.slideshare.net/slideshow/water-feature-types/5145948 (Cr
 
 LOOK_GPH_PER_FT = {"light": 1500.0, "average": 2400.0, "heavy": 3000.0}
 RIM_GPM_PER_FT = {"light": 0.5, "average": 4.0, "heavy": 6.0}
+RIM_ENGINEER_GPM_PER_FT = (4.0, 6.0)
 CIT_RIM = "DOC-0049 / B - Surge Basin (edge sheet: operate ~0.5 GPM/ft, engineer plumbing for 4-6 GPM/ft)"
 # Sheet depth over the lip for each look, read off Pond Trade's GPH-per-inch figures
 # (100 at 1/2 in, 200 at 1 in): light 125/in interpolates to 5/8 in, heavy 250/in extrapolates
@@ -90,7 +93,9 @@ def inputs() -> list[dict[str, Any]]:
         spec("tiers", "Tiers or spillways", "table", "", [], True,
              "Each spillway (width) or round tier (rim diameter); a round rim spills all the way round.",
              columns=TIER_COLUMNS),
-        spec("look", "Default look", "select", "", "average", False, "", list(LOOK_GPH_PER_FT)),
+        spec("look", "Default look", "select", "", None, False,
+             "Blank: average for spillways, light (0.5 gpm/ft, the old engine's figure) for round rims.",
+             list(LOOK_GPH_PER_FT)),
         spec("stream_length_ft", "Stream length", "number", "ft", None),
         spec("stream_width_ft", "Stream width", "number", "ft", None),
         spec("stream_depth_in", "Flowing depth in the stream", "number", "in", None),
@@ -103,13 +108,15 @@ def inputs() -> list[dict[str, Any]]:
     ]
 
 
-def tier_flow(tier: dict[str, Any], default_look: str = "average") -> dict[str, Any]:
-    """Flow one spillway or round tier needs for its look."""
-    look = str(tier.get("look") or default_look).lower()
-    if look not in LOOK_GPH_PER_FT:
-        look = "average"
+def tier_flow(tier: dict[str, Any], default_look: str | None = None) -> dict[str, Any]:
+    """Flow one spillway or round tier needs for its look. With no look anywhere, a spillway
+    takes ``average`` and a round rim ``light`` (0.5 gpm/ft: what the old engine and DOC-0049
+    B operate at; the 4-6 band is for sizing the plumbing, reported separately)."""
     width_in = num(tier.get("spill_width_in"))
     rim = width_in <= 0 and num(tier.get("diameter_in")) > 0
+    look = str(tier.get("look") or default_look or ("light" if rim else "average")).lower()
+    if look not in LOOK_GPH_PER_FT:
+        look = "light" if rim else "average"
     if rim:
         width_in = math.pi * num(tier.get("diameter_in"))
         per_ft = num(tier.get("gpm_per_ft")) or RIM_GPM_PER_FT[look]
@@ -136,7 +143,7 @@ def liner_size_ft(length_ft: float, width_ft: float, depth_ft: float, overlap_ft
 def flow(feature: Any, site: dict[str, Any] | None = None, rules: dict[str, Any] | None = None) -> FamilyResult:
     v = values(feature, inputs())
     n = count_of(feature)
-    look = str(v.get("look") or "average").lower()
+    look = str(v.get("look") or "").lower() or None
     tiers = [tier_flow(t or {}, look) for t in (v.get("tiers") or [])]
     tiers = [t for t in tiers if t["width_in"] > 0]
     stream_w = num(v.get("stream_width_ft"))
@@ -152,9 +159,17 @@ def flow(feature: Any, site: dict[str, Any] | None = None, rules: dict[str, Any]
          f"{t['gph']:.0f} GPH = {t['gpm']:.1f} gpm")
         for t in tiers
     ]
+    look = look or tiers[0]["look"]
     governing = max(tiers, key=lambda t: t["gpm"])
     total = governing["gpm"] * n
     steps.append(f"the tightest tier governs: {governing['label'] or 'tier'} = {governing['gpm']:.1f} gpm (x {n} = {total:.1f})")
+    rims = [t for t in tiers if t["rim"]]
+    plumbing = None
+    if rims:
+        big = max(t["width_in"] for t in rims) / 12.0
+        plumbing = (RIM_ENGINEER_GPM_PER_FT[0] * big * n, RIM_ENGINEER_GPM_PER_FT[1] * big * n)
+        steps.append(f"plumbing: DOC-0049 B engineers rims for {RIM_ENGINEER_GPM_PER_FT[0]:g}-"
+                     f"{RIM_ENGINEER_GPM_PER_FT[1]:g} gpm/ft = {plumbing[0]:.1f}-{plumbing[1]:.1f} gpm")
     citations = sorted({CIT_RIM if t["rim"] else LOOK_CITATION[t["look"]] for t in tiers})
 
     drain = 0.0
@@ -176,6 +191,7 @@ def flow(feature: Any, site: dict[str, Any] | None = None, rules: dict[str, Any]
         "tiers": tiers,
         "governing_tier": governing["label"],
         "drain_back_gal": drain,
+        "rim_plumbing_gpm": plumbing,
         "stream_gal": stream_gal,
         "complete": True,
     }

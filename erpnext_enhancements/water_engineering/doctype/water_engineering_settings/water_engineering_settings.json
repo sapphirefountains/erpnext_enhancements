@@ -126,7 +126,7 @@
   {
    "fieldname": "house_rules_intro",
    "fieldtype": "HTML",
-   "options": "<p>Design constants no public source gives. Each ships as a placeholder cited \"Sapphire standard, 2026-11-01 (placeholder until the designers set it)\". When the designers have agreed the values, set the date below: the Fountain Designer then cites \"Sapphire standard, &lt;that date&gt;\". Labor hours of 0 mean <b>not set</b>, never free.</p>"
+   "options": "<p>Design constants no public source gives. Each ships as a placeholder cited \"Sapphire standard, 2026-11-01 (placeholder until the designers set it)\". When the designers have agreed the values, set the date below: the Fountain Designer then cites \"Sapphire standard, &lt;that date&gt;\". Labor hours of 0 mean <b>not set</b>, never free. Any other rule left at 0 (spray loss aside) uses its default.</p>"
   },
   {
    "fieldname": "house_rules_set_on",

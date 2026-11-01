@@ -409,6 +409,13 @@ def validate(model: Model | dict[str, Any] | str) -> list[Problem]:
         if n.kind == "pump" and n.id not in pump_ids:
             out.append(Problem("unknown_pump", WARNING, p, f"Pump node {n.id} has no pump record with the same id."))
 
+    reached = {s.to for s in m.network.segments}
+    if m.network.segments:
+        for i, n in enumerate(m.network.nodes):
+            if n.kind == "terminal" and n.id not in reached:
+                out.append(Problem("unreachable_terminal", WARNING, f"network.nodes[{i}]",
+                                   f"Terminal {n.id} has no pipe reaching it."))
+
     for i, s in enumerate(m.network.segments):
         p = f"network.segments[{i}]"
         for end, value in (("from", s.from_), ("to", s.to)):
@@ -532,7 +539,10 @@ def migrate(old: dict[str, Any] | str) -> dict[str, Any]:
 
     Accepts ``water_feature_design._engine_inputs(doc)`` and the ``save_water_design`` AI
     payload (``global_inputs`` + row lists with ``segment_label`` / ``pipe_length_ft`` /
-    ``fittings_json``). A dict that is already schema 2 comes back normalised.
+    ``fittings_json``). A dict that is already schema 2 comes back normalized.
+
+    Sizing: a filled-in old row sizes as the old engine sized it. A weir row with no head
+    takes its head from the default look now (the old engine sized it at 0 GPM).
 
     Schema 1 has no topology, so the network is built the only way the old engine read it:
     every suction row in series from the first basin to one pump, every discharge row in
@@ -617,6 +627,14 @@ def migrate(old: dict[str, Any] | str) -> dict[str, Any]:
         chain(discharge, "p1", "t1", "discharge")
     else:
         unplaced += discharge
+    # Every other feature (and the first, when there were no discharge rows) gets a branch
+    # of its own off the pump, unsized, as kits._network builds them.
+    for i, f in enumerate(features):
+        if i == 0 and discharge:
+            continue
+        segments.append({"id": f"s{len(segments) + 1}", "from": "p1", "to": f["node"], "line": "discharge",
+                         "material": default_material, "nominal_size": None, "length_ft": 0.0,
+                         "fittings": [], "components": []})
 
     terminals = []
     from .families import FAMILIES

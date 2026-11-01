@@ -146,6 +146,15 @@ def test_the_tightest_tier_governs():
     assert res.value == pytest.approx(2 * 2400 / 60)
 
 
+def test_a_round_rim_defaults_to_the_old_engines_half_gpm_per_foot():
+    # DOC-0049 B: operate ~0.5 gpm/ft, engineer the plumbing for 4-6.
+    res = cascade.flow({"id": "c", "inputs": {"tiers": [{"diameter_in": 48}]}})
+    assert res.value == pytest.approx(tiered_fountain_flow([{"diameter_in": 48}], 0.5).value)
+    assert res.data["rim_plumbing_gpm"] == pytest.approx((4 * math.pi * 4, 6 * math.pi * 4))
+    # A spillway with no look still takes average.
+    assert cascade.flow({"id": "c", "inputs": {"tiers": [{"spill_width_in": 12}]}}).value == pytest.approx(40.0)
+
+
 def test_a_round_tier_keeps_the_doc0049_rim_rule():
     # The migrated Tiered Fountain: 36 in rim at 0.5 gpm/ft is what tiered_fountain_flow gives.
     old = tiered_fountain_flow([{"diameter_in": 36}], 0.5).value

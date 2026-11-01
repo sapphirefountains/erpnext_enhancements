@@ -106,6 +106,28 @@ def test_house_rules_cite_the_placeholder_until_a_date_is_set():
     assert "slc.gov" in R.citation("water_rate_per_ccf", {R.SET_ON_FIELD: "2026-12-01"})
 
 
+def test_a_rule_saved_as_zero_or_negative_falls_back_to_its_default():
+    # Frappe stores a cleared Float as 0; a 0 fixture size or aspect ratio would divide by zero.
+    out = R.resolve({"light_fixture_watts": 0, "aerator_max_aspect": "0", "wind_stop_mph": -5,
+                     "freeboard_multiplier": float("nan"), "labor_hours_weir": 0, "spray_loss_pct_jets": 0})
+    assert out["light_fixture_watts"] == R.DEFAULTS["light_fixture_watts"]
+    assert out["aerator_max_aspect"] == R.DEFAULTS["aerator_max_aspect"]
+    assert out["wind_stop_mph"] == R.DEFAULTS["wind_stop_mph"]
+    assert out["freeboard_multiplier"] == R.DEFAULTS["freeboard_multiplier"]
+    assert out["labor_hours_weir"] == 0.0  # 0 = not set, kept
+    assert out["spray_loss_pct_jets"] == 0.0  # 0 = no spray loss, kept
+    assert R.rule({"light_fixture_watts": 0}, "light_fixture_watts") == R.DEFAULTS["light_fixture_watts"]
+
+
+def test_zeroed_settings_never_crash_the_engine():
+    from erpnext_enhancements.water_engineering.engine.families import aerator, lighting
+
+    zeros = R.resolve({r.key: 0 for r in R.RULES})
+    m = {"site": {}, "features": [{"id": "w", "family": "weir", "inputs": {"length_ft": 8}}], "lighting": {}}
+    assert lighting.calc(m, rules=zeros).value > 0
+    aerator.flow({"id": "a", "inputs": {"length_ft": 1000, "width_ft": 100}}, rules=zeros)
+
+
 def test_labor_zero_means_not_set():
     assert R.is_unset(None, "labor_hours_weir")
     assert not R.is_unset({"labor_hours_weir": 12}, "labor_hours_weir")
@@ -157,6 +179,9 @@ def patch(monkeypatch):
     frappe_model.no_value_fields = (*NO_VALUE, "Table", "Table MultiSelect")
     frappe.model = frappe_model
     frappe.get_meta = lambda doctype: types.SimpleNamespace(fields=meta_fields)
+    frappe.logged = []
+    frappe.log_error = lambda title=None, message=None: frappe.logged.append(title)
+    frappe.get_traceback = lambda: "traceback"
     frappe.cleared = []
     frappe.clear_document_cache = lambda *a: frappe.cleared.append(a)
     monkeypatch.setitem(sys.modules, "frappe", frappe)
@@ -195,6 +220,19 @@ def test_backfill_is_safe_twice(patch):
     frappe.db.writes.clear()
     assert mod.backfill_water_house_rules() == 0
     assert frappe.db.writes == []
+
+
+def test_a_failing_backfill_logs_and_never_aborts_the_migrate(patch):
+    mod, frappe = patch
+    db = FakeDB({})
+
+    def broken(*a, **k):
+        raise RuntimeError("database went away")
+
+    db.sql = broken
+    frappe.db = db
+    mod.execute()  # must not raise: a raising patch aborts bench migrate, which is the deploy
+    assert frappe.logged == ["Water house rules backfill failed"]
 
 
 def test_backfill_does_nothing_without_the_doctype(patch):

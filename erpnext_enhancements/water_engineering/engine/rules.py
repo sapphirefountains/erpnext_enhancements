@@ -166,16 +166,33 @@ SET_ON_FIELD = "house_rules_set_on"
 
 # The labor rules where 0 means "not set" rather than a real zero.
 UNSET_ZERO_KEYS = frozenset(r.key for r in RULES if r.key.startswith("labor_hours_"))
+# Rules where 0 is a value the engine accepts: labor (0 = not set, see is_unset) and spray
+# loss (0 = none). Every other rule falls back to its default at 0 or below, because Frappe
+# stores a cleared Float as 0 and a 0 fixture size or aspect ratio divides by zero.
+ZERO_OK_KEYS = UNSET_ZERO_KEYS | frozenset(r.key for r in RULES if r.key.startswith("spray_loss_pct_"))
+
+
+def _coerce(key: str, value: Any) -> float | None:
+    """``value`` as the rule's float, or ``None`` when the default must apply: blank, junk,
+    NaN, negative, or 0 for a rule where 0 is meaningless."""
+    if value is None or value == "":
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f < 0 or (f == 0 and key not in ZERO_OK_KEYS):
+        return None
+    return f
 
 
 def resolve(settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """The rules dict the engine reads: :data:`DEFAULTS` with ``settings`` laid over it.
 
     ``settings`` is normally the Water Engineering Settings row as a dict. A key that is
-    missing, ``None`` or ``""`` keeps the default; anything else is coerced to float. A value
-    that will not coerce keeps the default rather than raising, because a bad Settings value
-    must never take the designer page down. Non-rule keys (``house_rules_set_on``) pass
-    through untouched.
+    missing, ``None``, ``""``, junk, negative, or 0 (outside :data:`ZERO_OK_KEYS`) keeps the
+    default; anything else is coerced to float. Nothing here raises, because a bad Settings
+    value must never take the designer page down. ``house_rules_set_on`` passes through.
     """
     out: dict[str, Any] = dict(DEFAULTS)
     out[SET_ON_FIELD] = None
@@ -183,23 +200,19 @@ def resolve(settings: dict[str, Any] | None = None) -> dict[str, Any]:
         if key == SET_ON_FIELD:
             out[key] = str(value) if value else None
             continue
-        if key not in RULES_BY_KEY or value is None or value == "":
+        if key not in RULES_BY_KEY:
             continue
-        try:
-            out[key] = float(value)
-        except (TypeError, ValueError):
-            continue
+        f = _coerce(key, value)
+        if f is not None:
+            out[key] = f
     return out
 
 
 def rule(rules: dict[str, Any] | None, key: str) -> float:
-    """One rule's value from a resolved (or partial, or absent) rules dict."""
-    if rules and rules.get(key) not in (None, ""):
-        try:
-            return float(rules[key])
-        except (TypeError, ValueError):
-            pass
-    return DEFAULTS[key]
+    """One rule's value from a resolved (or partial, or absent) rules dict, with the same
+    fallbacks as :func:`resolve` (so a raw Settings dict is safe here too)."""
+    f = _coerce(key, (rules or {}).get(key))
+    return DEFAULTS[key] if f is None else f
 
 
 def citation(key: str, rules: dict[str, Any] | None = None) -> str:

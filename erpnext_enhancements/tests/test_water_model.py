@@ -188,9 +188,11 @@ def test_migrate_engine_inputs():
     assert m["features"][0]["inputs"]["contractions"] == 0  # a real 0 survives
     assert m["basins"][0]["depth_in"] == 18
     segs = m["network"]["segments"]
-    assert [s["line"] for s in segs] == ["suction", "discharge", "discharge"]
+    assert [s["line"] for s in segs] == ["suction", "discharge", "discharge", "discharge", "discharge"]
     assert segs[0]["from"] == "src" and segs[0]["to"] == "p1"
     assert segs[1]["from"] == "p1" and segs[2]["to"] == "t1"  # discharge rows chained to the first feature
+    # Features 2 and 3 get unsized branches of their own off the pump, as kits build them.
+    assert [(s["from"], s["to"], s["nominal_size"]) for s in segs[3:]] == [("p1", "t2", None), ("p1", "t3", None)]
     assert segs[0]["fittings"] == [{"key": "90 Elbow", "qty": 2}]
     t1 = next(n for n in m["network"]["nodes"] if n["id"] == "t1")
     assert t1["elevation_ft"] == 6  # static lift
@@ -264,11 +266,17 @@ def test_a_changed_value_is_custom():
     assert kits.match_kit(m) == "custom"
 
 
-def test_a_value_the_kit_does_not_set_keeps_the_match():
+def test_a_value_the_kit_does_not_set_keeps_the_match_only_at_its_default():
     m = kits.apply_kit("lobby-sheet-wall-8ft")
-    m["features"][0]["inputs"]["catch_width_in"] = 24
+    m["features"][0]["inputs"]["contractions"] = 2  # the input's own default
+    m["features"][0]["inputs"]["head_in"] = None  # blank
     m["site"]["address"] = "1 Main St"
     assert kits.match_kit(m) == "lobby-sheet-wall-8ft"
+    m["features"][0]["inputs"]["head_in"] = 0.5  # a pinned head the kit never set
+    assert kits.match_kit(m) == "custom"
+    m = kits.apply_kit("lobby-sheet-wall-8ft")
+    m["basins"][0]["freeboard_in"] = 3  # a basin value the kit left blank
+    assert kits.match_kit(m) == "custom"
 
 
 def test_apply_kit_keeps_the_site_and_pins_nothing_it_should_size():
@@ -308,5 +316,24 @@ def test_an_orifice_nozzles_profile_is_never_overwritten_by_its_row():
 def test_pipe_rows_with_nowhere_to_go_are_kept():
     m = model.migrate({"pipe_segments": [{"segment_label": "S", "line_type": "Suction", "pipe_length_ft": 5}],
                        "features": [{"feature_type": "Weir", "weir_length_ft": 2, "head_in": 0.25}]})
-    assert m["network"]["segments"] == []
+    # The suction row has no basin to start from, so it is kept aside; the feature still gets
+    # an unsized branch off the pump.
+    assert [(s["from"], s["to"]) for s in m["network"]["segments"]] == [("p1", "t1")]
     assert m["legacy"]["unplaced_segments"][0]["segment_label"] == "S"
+
+
+def test_a_blank_head_legacy_weir_now_takes_the_default_look():
+    # The old engine sized a weir with no head at 0 GPM; schema 2 derives the head from the
+    # default (average) look instead, 10 gpm/ft on 4 ft. Documented in migrate's docstring.
+    m = model.migrate({"basins": [{"shape": "Rectangular", "length_in": 60, "width_in": 60}],
+                       "features": [{"feature_type": "Weir", "weir_length_ft": 4, "head_in": 0}]})
+    assert "head_in" not in m["features"][0]["inputs"]
+    assert run_feature(m["features"][0], m["site"])["flow"]["value"] == pytest.approx(40.0)
+
+
+def test_validate_flags_a_terminal_no_pipe_reaches():
+    d = copy.deepcopy(PLAN_EXAMPLE)
+    d["features"].append({"id": "f2", "family": "weir", "inputs": {"length_ft": 2}, "basin": "b1", "node": "t2"})
+    d["network"]["nodes"].append({"id": "t2", "kind": "terminal", "feature": "f2"})
+    assert "unreachable_terminal" in problems(d)
+    assert "unreachable_terminal" not in problems(model.migrate(ENGINE_INPUTS))

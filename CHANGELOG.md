@@ -18,8 +18,8 @@ them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and m
 **What the deploy does.**
 - **Migrate** adds a House Rules tab of fields to Water Engineering Settings (a Single).
 - **One patch runs.** `backfill_water_house_rules` writes each declared default that has no
-  `tabSingles` row. It never writes over a stored value, so a rule set to 0 stays 0. It cannot
-  raise, and it is safe to run twice.
+  `tabSingles` row. It never writes over a stored value. Any error is logged to the Error Log
+  instead of raised, so it cannot abort the migrate, and it is safe to run twice.
 - No cron entries, no fixtures, no permission changes. Nothing user-facing changes until the
   designer page (phase F) and the wiring (phase E) land.
 
@@ -50,16 +50,20 @@ them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and m
   dataclasses with a lossless JSON round trip: keys the engine does not know are kept and
   written back.
   - `validate()` returns typed problems: unknown family, missing basin or node, unknown
-    segment endpoint, an empty `custom` section, duplicate ids.
+    segment endpoint, a terminal no pipe reaches, an empty `custom` section, duplicate ids.
   - `migrate()` reads both schema-1 shapes: `_engine_inputs` and the `save_water_design`
-    payload. Old fields with no new home are kept under `legacy`. Migrated features size
-    exactly as the old engine sized them.
+    payload. Old fields with no new home are kept under `legacy`.
+  - A filled-in old row sizes as the old engine sized it. One exception: a weir row with no
+    head (0 GPM in the old engine) now takes its head from the default look.
+  - The old discharge rows feed the first feature. Every other feature gets an unsized branch
+    of its own off the pump, the same as `apply_kit` builds.
 - **`engine/kits.py`: twelve kits**, at least one per family. Four have names: "Hotel lobby
   sheet wall 8 ft", "Plaza interactive 12 jets", "Pond aerator 1 acre", and "Event rental
   curtain", which links to the Digital Rain Curtain app.
   - `apply_kit()` builds the features, basins, setup policy and a network skeleton. The pipe
     sizes are left blank for the piping step to fill.
-  - `match_kit()` returns "custom" once any value the kit sets has changed.
+  - `match_kit()` returns "custom" once any value the kit sets has changed, or once a value
+    it leaves alone is set to something other than its default.
 - **Sapphire house rules (`engine/rules.py`) and their Water Engineering Settings fields.**
   These are the rules with no public source:
   - foam-jet submergence band and autofill deadband;
@@ -83,17 +87,26 @@ them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and m
 - **Labor hours ship as 0, which means "not set".** It does not mean free. A budget built
   on a made-up labor figure is worse than one that says the figure is missing.
   `rules.is_unset()` reports which rules are still unset.
+- **Any other rule saved as 0 or below uses its default** (spray loss aside, where 0 means
+  none). Frappe stores a cleared Float as 0, and a 0 fixture size or aspect ratio divides by
+  zero.
 - **The backfill writes every missing default, not only the new ones.** Writing a single
   field of a Single that was never saved makes `load_from_db` read `tabSingles`. Every field
   without a row then loads blank, so `contractor_name` would lose its default. This is the
   second Singles gotcha in `CLAUDE.md`.
-- **Round tiered-fountain rims keep the DOC-0049 rule of 0.5 / 4 / 6 gpm per foot of rim.**
-  They do not use the waterfall look bands. The Aquascape and Pond Trade bands are written
-  for naturalistic spillways. Applied to a 48 in bowl they ask for about 500 gpm.
+- **Round tiered-fountain rims keep the DOC-0049 B rule**, not the waterfall look bands. The
+  Aquascape and Pond Trade bands are written for naturalistic spillways; applied to a 48 in
+  bowl they ask for about 500 gpm.
+  - A rim defaults to DOC-0049's operating figure, 0.5 gpm per foot, which is the old
+    engine's default.
+  - The 4-6 gpm/ft band it says to engineer the plumbing for is reported as
+    `rim_plumbing_gpm`.
+  - Average (4) and heavy (6) are a heavier sheet on request. That mapping of the looks is
+    Sapphire's own and waits on the designers' call.
 - **The heat module uses the I-P form of the Carrier equation**, with V in fpm. The
   rain-curtain app's `(0.089 + 0.0782 V)` is the SI form (kPa, m², m/s); mixed with inHg and
-  square feet it understates evaporation about 1,000-fold. `treatment.heating_load` (DOC-0049) is unchanged and is reported beside
-  the new result.
+  square feet it understates evaporation about 1,000-fold. `treatment.heating_load`
+  (DOC-0049) is unchanged and is reported beside the new result.
 
 ## [1.757.0] - 2026-10-29
 

@@ -15,7 +15,7 @@ says where it lands. The drag diameter is the Rayleigh drop size, 1.89 x the jet
 the same breakup model the rain-curtain app uses. This module is stdlib-only and does not
 import ``engine.hydraulics``.
 
-``derived`` keys read by :func:`checks`: ``flow``, ``basin`` (a jet centred in it gets half
+``derived`` keys read by :func:`checks`: ``flow``, ``basin`` (a jet centered in it gets half
 the shorter side as its edge distance when none is entered) and ``manifold_spread_pct`` (the
 network solver's pressure spread across an array, when it has run).
 """
@@ -23,6 +23,7 @@ network solver's pressure spread across an array, when it has run).
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Any
 
 from .. import rules as R
@@ -81,8 +82,12 @@ CIT_WIND = (
 CIT_ORIFICE_CD = "Smooth-bore nozzle Cd 0.96 (textbook); a placeholder until a Nozzle Profile is picked"
 
 # k = display height / supply head, used ONLY when no performance table exists.
-FALLBACK_K = {"smooth": 0.82, "aerating": 0.39}
-FALLBACK_K_CITATION = {"smooth": CIT_SMOOTH, "aerating": CIT_ATLANTIC}
+FALLBACK_K = {"smooth": 0.82, "aerating": 0.39, "other": 0.39}
+FALLBACK_K_CITATION = {
+    "smooth": CIT_SMOOTH,
+    "aerating": CIT_ATLANTIC,
+    "other": CIT_ATLANTIC + "; a column nozzle: no public figure exists for cluster or spray nozzles, so it stands in",
+}
 FALLBACK_CD = 0.96
 NOZZLE_TYPES = ("smooth", "aerating", "column", "cluster", "spray")
 
@@ -114,7 +119,7 @@ def inputs() -> list[dict[str, Any]]:
         spec("orifice_diameter_in", "Orifice diameter", "number", "in", None, False,
              "From the cut sheet; sets the drag drop size and the exit velocity."),
         spec("edge_distance_ft", "Distance to the nearest basin edge", "number", "ft", None, False,
-             "Blank: half the shorter side of the basin (a centred jet)."),
+             "Blank: half the shorter side of the basin (a centered jet)."),
         spec("basin_kind", "Basin", "select", "", "ground", False,
              "Raised tables need 1.5 x the height of setback.", list(SPLASH_RATIO)),
         spec("wind_mph", "Design wind", "number", "mph", None, False,
@@ -134,7 +139,7 @@ def inputs() -> list[dict[str, Any]]:
 
 
 def table_points(feature_or_product: Any) -> list[dict[str, float]]:
-    """The nozzle's performance points, normalised: ``head_ft`` (from ``psi`` when only that
+    """The nozzle's performance points, normalized: ``head_ft`` (from ``psi`` when only that
     is given), ``flow_gpm``, ``display_height_ft``, ``display_diameter_ft``, ``throw_ft``,
     ``depth_over_nozzle_in``. Read from ``product["points"]`` or
     ``product["profile"]["points"]`` (the shape phase D's Nozzle Performance Point rows take)."""
@@ -271,7 +276,15 @@ def trajectory(
 
 def calibrate_v0(height_ft: float, angle_deg: float = 90.0, drop_diameter_in: float | None = None,
                  elevation_ft: float = 0.0) -> float:
-    """Launch speed (ft/s) whose still-air apex is ``height_ft``, by bisection."""
+    """Launch speed (ft/s) whose still-air apex is ``height_ft``, by bisection. Memoized: it
+    depends only on its four arguments and costs ~45 RK4 flights, and flow() and checks()
+    both ask for it on every derive."""
+    return _calibrate_v0(float(height_ft), float(angle_deg),
+                         float(drop_diameter_in) if drop_diameter_in else None, float(elevation_ft))
+
+
+@lru_cache(maxsize=1024)
+def _calibrate_v0(height_ft: float, angle_deg: float, drop_diameter_in: float | None, elevation_ft: float) -> float:
     if height_ft <= 0:
         return 0.0
     s = max(math.sin(math.radians(angle_deg)), 1e-6)
@@ -305,7 +318,8 @@ def splash_setback_ft(height_ft: float, basin_kind: str = "ground") -> float:
 
 
 def fallback_k(nozzle_type: str) -> tuple[float, str]:
-    key = "smooth" if (nozzle_type or "smooth").lower() == "smooth" else "aerating"
+    t = (nozzle_type or "smooth").lower()
+    key = "smooth" if t == "smooth" else ("aerating" if t in ("aerating", "column", "foam") else "other")
     return FALLBACK_K[key], FALLBACK_K_CITATION[key]
 
 
@@ -374,7 +388,7 @@ def nozzle_point(feature: Any, site: dict[str, Any] | None = None, *, default_ty
         if head <= 0:
             out["notes"].append("no height or head given")
             return _with_rated_flow(out, v)
-        out.update(height_ft=height, head_ft=head, source="estimate", k=k)
+        out.update(height_ft=height, head_ft=head, source="estimate", k=k, k_citation=k_cit)
         out["citations"].append(k_cit)
         out["notes"].append(f"estimate: height = {k:g} x head -> {head:.2f} ft of head for {height:g} ft")
         rated_gpm, rated_head = num(profile.get("rated_gpm")), num(profile.get("rated_head_ft"))
@@ -527,7 +541,7 @@ def jet_checks(fid: str, v: dict[str, Any], d: dict[str, Any], derived: dict[str
             f"{prefix}_HEIGHT_ESTIMATED", WARNING, "Jet height assumed from a constant, not a nozzle table",
             detail=f"k = {pt.get('k'):g}: {d['height_ft']:g} ft needs ~{d['head_ft']:.1f} ft of head. Real nozzles vary 2-3x.",
             remedy="Pick a Nozzle Profile with performance points.",
-            citation=FALLBACK_K_CITATION["smooth" if pt.get("k") == FALLBACK_K["smooth"] else "aerating"], feature=fid,
+            citation=pt.get("k_citation") or CIT_SMOOTH, feature=fid,
         ))
     if d.get("gpm") is None:
         out.append(Check(

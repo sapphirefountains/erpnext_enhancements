@@ -26,7 +26,13 @@ SETTINGS_DOCTYPE = "Water Engineering Settings"
 
 
 def execute() -> None:
-	backfill_water_house_rules()
+	# A raising patch aborts bench migrate, which is the deploy (CLAUDE.md). The engine falls
+	# back to engine/rules.py defaults, so a failed backfill costs a Settings page of zeros,
+	# never the release: log it and carry on.
+	try:
+		backfill_water_house_rules()
+	except Exception:
+		frappe.log_error(title="Water house rules backfill failed", message=frappe.get_traceback())
 
 
 def backfill_water_house_rules() -> int:
