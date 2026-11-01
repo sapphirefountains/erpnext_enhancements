@@ -1550,3 +1550,6 @@ erpnext_enhancements.patches.migrate_item_pump_curves
 # their defaults on the existing row, only where tabSingles has no row for them (a rule set to 0 stays 0). Writes
 # every missing default, so a never-saved Single does not lose contractor_name. Cannot raise; safe twice.
 erpnext_enhancements.patches.backfill_water_house_rules
+# Fountain Designer page (v1.761.0, phase F): re-import the Water Engineering workspace (the Fountain Designer
+# shortcut and its Tools link). Logs a failure, never raises, safe twice.
+erpnext_enhancements.patches.fountain_designer_workspace_link
