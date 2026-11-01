@@ -7,7 +7,7 @@ rule, or VFD-vs-starter logic in the sheets. So:
 * :func:`select_pump` is a catalog lookup. Candidates come from the caller
   (ERPNext Items, ``item_group`` "Pumps"); the engine stays pure and never
   queries the DB.
-* :func:`electrical_load` sizes the pump's branch breaker. Since v1.759.0 it is
+* :func:`electrical_load` sizes the pump's branch breaker. Since v1.760.0 it is
   the NEC 430.52 / Table 430.52(C)(1) maximum (250% of FLC for an inverse-time
   breaker, next standard size up), computed by ``electrical.ocpd``; 125% of FLA,
   which this function used to call the breaker, is the 430.22 *conductor*
@@ -168,7 +168,7 @@ def electrical_load(
     ``electrical.ocpd.motor_branch_ocpd``. ``inputs['conductor_min_a']`` is the
     430.22 conductor figure, 125% of FLA. Non-motor: noncontinuous + 125% of the
     continuous load, next standard size (210.20(A)). Same ``CalcResult`` shape
-    as before v1.759.0; only the motor ``value`` changed (it was the 125% figure).
+    as before v1.760.0; only the motor ``value`` changed (it was the 125% figure).
     """
     fla_amps = float(fla_amps or 0)
     conductor_a = fla_amps * BREAKER_CONTINUOUS_FACTOR

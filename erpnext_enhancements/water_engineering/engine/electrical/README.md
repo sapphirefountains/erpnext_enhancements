@@ -1,6 +1,6 @@
 # `engine/electrical/` — electrical design
 
-Phase L of the Fountain Designer rebuild (PLAN.md section 4, v1.759.0). Nikolas, 2026-11-01:
+Phase L of the Fountain Designer rebuild (PLAN.md section 4, v1.760.0). Nikolas, 2026-11-01:
 electrical calculations as a first-class deliverable. This package replaced the single module
 `engine/electrical.py`; its four functions (`motor_flc`, `total_connected_load`,
 `service_main_breaker`, `control_transformer_va`) keep their names and import paths.
