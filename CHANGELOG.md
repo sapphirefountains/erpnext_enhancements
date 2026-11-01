@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.767.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03023. This is
+phase B, stacked on phase A. **Nothing user-facing changes, and the deploy does nothing.** Nothing
+imports the new code yet; phase E wires it into `derive` and the API. There are no DocTypes, patches
+or fixtures.
+
+### Added
+- **The network solver (`engine/hydraulics/network.py`)** carries out Nikolas's decision of
+  2026-11-01 that **multi-pump headers and ring mains are in version one** (PLAN.md section 1,
+  decision 7). The engine audit had deferred that ("a tree or loop network is deliberately not in
+  the first cut").
+  - **Method.** The global gradient algorithm of Todini and Pilati (the EPANET method) does Newton on
+    every link flow and every node head together. Segments, pumps, terminals, the bypass and a PRV
+    are links:
+    - segments use phase A's Darcy loss;
+    - pumps use phase A's curve and affinity laws, extended past run-out and into reverse flow so
+      that those states can be found and reported;
+    - terminals use phase A's `Demand` contract.
+  - **Checks.** Check valves, closed terminals, and starved fixed-flow terminals are statuses opened
+    and closed between Newton steps. VFD and PRV are outer bisections with DRC's caps.
+  - **Reports.** The solver reports a pump running out past its curve, backflow through a pump with
+    no check valve, and a dead-headed pump. It also gives per-segment flow, velocity and loss,
+    per-node head and pressure, and each pump's operating point and NPSH margin at the site's
+    elevation.
+  - **Held to phase A.** One pump feeding parallel terminals reproduces `operating_point` to 1e-9 in
+    13 cases: bypass, VFD, PRV, part speed, suction lift, open discharge, a starved fixed flow, and
+    a manifold.
+  - **Hand goldens:**
+    - two identical pumps on a header equal one pump with its flow axis doubled;
+    - two unequal pumps match an independent nested-bisection solve;
+    - a symmetric ring main equals its symmetric tree;
+    - every solution closes continuity at each node and head around each loop.
+- **`engine/hydraulics/manifold.py`** ports DRC `manifold.js`: the shooting solve with Illinois
+  regula falsi, Darcy friction between takeoffs, 0.9 velocity-head regain, sag and tilt, and end,
+  center or both-ends feed. It also ports `sizeSweep`, `manifoldRuns` and `manifoldVolumeL`.
+  - It matches DRC to 1e-12 with identical iteration counts. DRC's velocities are a `Float32Array`,
+    so they are compared through float32.
+  - It is generalized to a per-takeoff list `[{x, k, dz, open}]`. A hand-written uniform list
+    reproduces DRC.
+  - `ManifoldDemand` puts a manifold on phase A's `Demand` contract (DRC's lumped `demandModel`, or
+    an exact per-call solve). `build_demand` now accepts `kind: manifold`.
+- **`engine/hydraulics/surge.py`** ports DRC `transient.js` `surgeFor` (Joukowsky with the Michaud
+  reduction, Korteweg wave speed per pipe), `supplyWave`, `accumulatorGasL` and `stdGasL`.
+  `safety.water_hammer` is shown beside it as the cross-check.
+- **`engine/hydraulics/basin_checks.py`** ports DRC `checks.basinChecks`, without the curtain
+  geometry: HI 9.8 intake submergence, pipe and in-flight volumes, drain-back with and without a check
+  valve, level rise against freeboard, Carrier evaporation with wind, spray loss, and strainer mesh.
+  `drainage.surge_basin_volume` and `treatment.evaporation_rate` are shown beside it as the workbook
+  cross-checks.
+- **`engine/autosize.py`**:
+  - `pick_pipe`. The DOC-0049 velocity limits govern, plus DRC's 0.04 ft/ft friction-gradient cap.
+    The suction goes one size up from the trunk.
+  - `eval_pump` and `rank_pumps`. Every catalog curve goes through the network solve with a `fails`
+    list. A pump fails on any of these:
+    - head margin under 8% at the design flow;
+    - NPSH margin at the site's elevation;
+    - the HI 9.6.3 BEP window;
+    - run-out, backflow or a dead head;
+    - velocity or VGB at the operating flow;
+    - operating pressure, or shut-off plus surge, over a pipe's rating.
+
+    With `control: auto`, a failing pump is tried again with a PRV (under 1 hp) or a VFD, as DRC's
+    `rankPumps` does.
+  - `auto_bypass` (15% of BEP), `auto_surge` (stock arrestor sizes), and `auto_basin` (depth, and
+    freeboard at 1.3 × drain-back rise).
+  - `derive(model, setup, catalogs, rules)` runs PLAN.md 2.2 steps 5 to 8 in order. It writes only
+    `auto` sections and returns the derived model plus every `CalcResult`.
+  - **`derive` never raises.** The page calls it on every edit, and a half-drawn model is its normal
+    input. Anything the network cannot be built from comes back as one `network.invalid` blocker,
+    for example a segment to a node that is not drawn yet, or a `control_node` naming a deleted
+    terminal. A basin with no plan area is a `basin.no_area` blocker. The output is strict JSON: an
+    infinite figure, such as turnover at zero flow, is None. The independent review of PR #1398 found
+    four crash paths here, and all four are closed.
+- **`engine/bom.py`** is generalized from DRC `bomRows` and `cutList`. It resolves the open
+  "aggregated Fitting Schedule" item in `SOURCE_DATA_AUDIT.md` as an engine function:
+  - pipe by size and material, with 10% waste, in 20 ft sticks;
+  - fittings grouped by type and size, with valves in their own section;
+  - nozzles, equipment, and consumables;
+  - labor from `engine/rules.py`'s keys.
+
+  `merge_sections` folds the `{section, key, description, qty, uom, item_hint}` lines that every
+  phase emits into one list.
+- **`engine/upkeep.py`**:
+  - `water_plan` ports DRC `waterPlan` (cycles of concentration, drain-and-refill days, the
+    ASHRAE 188 Legionella band). `chemistry.chlorinator_feed` governs the chlorine figure.
+  - `maintenance_schedule`.
+  - `om_per_year` (water, power, chemicals, parts). `workbook.electric_cost` governs power, with the
+    network's kW as the cross-check.
+- **`engine/structure.py`**:
+  - `beam_reactions` ports DRC `rigging.js`, with its textbook coefficients.
+  - Pipe hanger loads from DOC-0049 `wet_lb_ft`, and the span check against `max_span_ft`. Those
+    columns had been unused (audit 1.18).
+  - A basin's load on a slab, against ASCE 7.
+- **Typed checks.** Every check is `{key, code, severity, title, remedy, section, ref, value}`
+  (`hydraulics/_checks.py`), in `issues.py`'s severity vocabulary, for phase E to map. There are no
+  `issues.py` producers.
+- **Goldens.** New generators `tools/golden/drc/gen_{manifold,surge,basin_checks,autosize,upkeep,structure}.mjs`.
+  The vectors are all under 200 KB, from DRC `737fa80f` on Node v24.22.1. A new CI pytest step
+  covers the seven new suites.
+
+### Notes
+- **Where phase B departs from DRC, and why.** Details are in `engine/hydraulics/README.md`.
+  - The network counts suction friction in the pump's head balance (DRC uses it only for NPSHa).
+  - The arrestor's gas uses the site's barometric pressure, not sea level.
+  - Basin checks take each feature's flow and fall time from the caller.
+  - DRC's unsourced splash heuristic (audit E11) is not ported.
+- **Zero-slope links are hard in a gradient solve.** An open discharge, a PRV and a zero-length pipe
+  have no `dh/dQ`.
+  - A fixed tiny floor on the slope made the head system ill-conditioned. The answers were right,
+    but the stop test never fired.
+  - The floor is now 1e-3 of the smallest real slope. Those links are left out of the convergence
+    test, and their flows are recovered from continuity.
+- **A pressure control cannot hold an open discharge.** An open discharge's pressure is pinned at
+  its overflow whatever the flow. So the control point defaults to the pump discharge when the only
+  terminal is a weir.
+  - A VFD that holds a *flow* is still not built (phase A's open point).
+  - A set pressure under an open terminal's overflow is a blocker, as phase A flags it.
+- **Unverified.** The pump catalog in the tests is synthetic. No real Pentair or Goulds curve has
+  been run through `rank_pumps` yet; that waits for phase D's approved seeds. The house-rule
+  defaults added here are marked "Sapphire standard" for the designers to confirm:
+  - 2 s pump run-down for surge when nothing on the line is switched;
+  - primer and cement coverage;
+  - a PRV under 1 hp and a VFD from 1 hp up;
+  - the 70–120% BEP window as a hard fail.
+
 ## [1.766.0] - 2026-11-01
 
 ERPNext: TASK-2026-03031 (PRJ-00580, under TASK-2026-03018 Fountain Designer rebuild). This is phase

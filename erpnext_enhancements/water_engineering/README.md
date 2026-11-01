@@ -66,7 +66,11 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `data/rebar.py` | Rebar diameters, areas and weights (#3 to #8) and stock lengths | ASTM A615 Table 1 |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
 | `data/nec_tables.py` | NEC tables as data: 310.16 ampacity, 310.15 corrections, 250.122, Chapter 9 Tables 1/4/5/8, 240.6(A), 430.248/430.250 FLC, 430.52(C)(1), 430.7(B), 450.3(B), Article 680 distances | NFPA 70 2023 (2020 numbering noted) |
-| `hydraulics/` | The governing solver (Fountain Designer rebuild, phase A): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, and the operating point where the pump meets the system (VFD, PRV, bypass, NPSHa at site elevation). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
+| `hydraulics/` | The governing solver (Fountain Designer rebuild, phases A and B): water properties, Darcy-Weisbach + Churchill friction, Darby 3-K fittings, pump curves with affinity laws, terminal demand curves, the operating point (VFD, PRV, bypass, NPSHa at site elevation), the per-takeoff manifold solve, the **network solver** (several pumps on a header, ring mains), surge and arrestor sizing, and the basin checks (HI 9.8 submergence, drain-back, freeboard, evaporation and spray loss). Darcy governs; the `tdh.py` Hazen-Williams figure is its workbook cross-check. Not yet wired into `run_spine`. See [`hydraulics/README.md`](engine/hydraulics/README.md) | Digital Rain Curtain `src/hydro` JS, golden vectors in `tests/golden/drc/` (1e-12 / 1e-9) |
+| `autosize.py` | Fountain Designer phase B: `pick_pipe` (DOC-0049 velocity limits + a 0.04 ft/ft friction-gradient cap), `eval_pump` / `rank_pumps` through the network solve with a fails list, `auto_bypass`, `auto_surge`, `auto_basin`, and `derive` (PLAN.md 2.2 steps 5-8, writing only `auto` sections) | DOC-0049 `SUPPORT`; DRC `presets.js`; HI 9.6.3 |
+| `bom.py` | The BOM: pipe by size with 10% waste in 20 ft sticks, grouped fittings, valves, nozzles, equipment, consumables, labor from the house rules; `cut_list`, `fitting_counts`, `merge_sections` for every phase's `{section, key, description, qty, uom, item_hint}` lines | DRC `checks.js` `bomRows`, `route.js` `cutList` |
+| `upkeep.py` | `water_plan` (cycles of concentration, drain-and-refill days, the Legionella band), `maintenance_schedule`, `om_per_year` (water, power, chemicals, parts) | DRC `upkeep.js`; ASHRAE 188; `chemistry.py` and `workbook.electric_cost` govern |
+| `structure.py` | `beam_reactions` (three-moment continuous beam), pipe hanger loads and the DOC-0049 span check, a basin's load on a slab. Everything else structural is `structural/` (phase S) | DRC `rigging.js`; DOC-0049 pipe specs; ASCE 7 |
 
 ### Where the workbook stops and engineering standard starts
 
@@ -166,10 +170,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_design_controller -v
 ```
 
-The `hydraulics/` suites are pytest and run in their own CI step:
+The `hydraulics/` suites and phase B's autosize, BOM, upkeep and structure suites are pytest and
+run in their own CI steps:
 
 ```bash
-python -m pytest erpnext_enhancements/tests/test_hydraulics_*.py -q
+python -m pytest erpnext_enhancements/tests/test_hydraulics_*.py erpnext_enhancements/tests/test_autosize.py \
+  erpnext_enhancements/tests/test_bom.py erpnext_enhancements/tests/test_structure_upkeep.py -q
 ```
 
 The catalog suite is plain pytest with its own in-memory frappe, so it runs on its own:
