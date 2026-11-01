@@ -126,7 +126,7 @@ def enclosure_size(
         for c in pc.get("components", []):
             d = c["device"].lower()
             if "contactor" in d:
-                big = num(str(c.get("rating", "")).split(" ")[0]) > 40
+                big = num(c.get("amps")) > 40
                 add("contactors", c["qty"] * FOOTPRINT_IN2["contactor_large" if big else "contactor_small"])
             elif d.startswith("overload"):
                 add("overloads", c["qty"] * FOOTPRINT_IN2["overload"])

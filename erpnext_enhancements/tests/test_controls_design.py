@@ -228,7 +228,9 @@ def test_dc_supply_hand_sum():
         {"point_name": "Solenoid valves", "io_type": "Output", "signal": "24VDC", "qty": 6,
          "control_mechanism": "Solid State Relay", "device": "valve"},
         {"point_name": "Water level low", "io_type": "Input", "signal": "Dry Contact NO", "qty": 1,
-         "device": "Float switch / level controller"},
+         "device": "Float switch / level controller", "powered": True},
+        {"point_name": "E-stop", "io_type": "Input", "signal": "Dry Contact NC", "qty": 1,
+         "device": "E-stop pushbutton"},  # an unpowered contact: draws nothing
     ]
     r = C.dc_supply(io, valve_w_each=10)
     # 6 x 10 W + 6 SSR x 0.3 + 1 sensor x 1 + controller 5 = 67.8 W ; x1.25 = 84.75 -> 120 W
@@ -373,3 +375,58 @@ def test_every_public_function_returns_a_calcresult():
         C.surge_protection(240, 1), C.panel_bom(pcs), C.control_panel_rows(pcs, []), C.theory_of_operation(pcs),
     ]:
         assert isinstance(r, CalcResult) and r.citations and r.formula, r.calc
+
+
+# --- review fixes ------------------------------------------------------------------------------------
+
+
+def test_drive_frame_uses_the_enclosure_interior_not_the_sun():
+    # 10 HP at 4,500 ft: 28 / 0.9636 = 29.06 A at a 104 F interior -> the 10 HP class (30.8 A), not 15 HP
+    r = C.controls_report(_model())
+    assert r["vfds"][0]["frame"] == 10
+
+
+def test_auto_transfer_only_on_circulation_pumps():
+    m = _model()
+    m["network"]["pumps"][0]["control"] = "vfd"  # the circulation pump on a drive -> VFD with bypass
+    r = C.controls_report(m)
+    il = {i["condition"]: i["action"] for p in r["pumps"] for i in p["interlocks"]}
+    assert il["M1 drive fault"] == "Transfer M1 to bypass"  # circulation
+    assert il["M2 drive fault"] == "Stop M2; alarm"  # feature pump: no automatic full-speed start
+
+
+def test_regulated_venue_keeps_the_splash_wizard_without_analog_monitoring():
+    m = _model(site={"regulated": True, "elevation_ft": 4500})
+    m["network"]["pumps"] = [{"id": "p1", "label": "Circ", "hp": 2, "voltage": 230, "phase": 3}]
+    m["features"] = []
+    m["control"] = {}
+    r = C.controls_report(m)
+    assert not any(p["signal"] == "4-20mA" for p in r["io_points"])
+    assert any(p["point_name"] == "Chemical controller status" for p in r["io_points"])
+    m["control"] = {"analog_monitoring": True}
+    assert C.controls_report(m)["controller"]["platform"] == "Industrial"
+
+
+def test_control_pump_row_carries_the_nameplate_fla():
+    m = _model()
+    m["network"]["pumps"][1]["fla"] = 26.5
+    r = C.controls_report(m)
+    row = next(p for p in r["control_panel"]["pumps"] if p["function"] == "Jet pump")
+    assert row["fla_amps"] == 26.5
+
+
+def test_nema_contactor_amps_drive_the_footprint():
+    pc = C.pump_control({"tag": "M1", "label": "Big", "hp": 30, "voltage": 230, "phase": 3}, "across_the_line",
+                        nema=True).value
+    m = next(c for c in pc["components"] if c["device"] == "Contactor")
+    assert m["rating"] == "NEMA size 3" and m["amps"] == 90
+    assert C.enclosure_size([pc]).inputs["breakdown_in2"]["value"]["contactors"] == 24.0
+
+
+def test_role_survives_a_multi_unit_pump_row():
+    m = _model()
+    m["network"]["pumps"] = [{"id": "c", "label": "Circ", "hp": 2, "voltage": 230, "phase": 3, "qty": 2,
+                              "role": "circulation", "control": "vfd"}]
+    r = C.controls_report(m)
+    assert [p["role"] for p in r["pumps"]] == ["circulation", "circulation"]
+    assert all(p["topology"] == "vfd_bypass" for p in r["pumps"])

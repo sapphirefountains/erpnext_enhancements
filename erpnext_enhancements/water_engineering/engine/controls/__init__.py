@@ -141,6 +141,8 @@ def calc_solenoid_relays(valve_qty: int) -> CalcResult:
 
 # --- phase L, PR 2: the controls package ------------------------------------------------
 # Imported after the definitions above: controller.interlocks reads the seeded lists from here.
+from ..data.motor_control import MAX_INTERNAL_F
+from ..electrical._util import num
 from .controller import dc_supply, interlocks, io_list, relay_counts, select_controller
 from .drawings import control_ladder, ladder_rungs, power_schematic, power_state
 from .outputs import control_panel_rows, panel_bom, theory_of_operation
@@ -156,6 +158,7 @@ from .panel import (
     terminals_and_wire,
 )
 from .topology import (
+    CRITICAL_ROLES,
     bypass_logic,
     bypass_truth_table,
     iec_contactor,
@@ -220,28 +223,34 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
         src = pump_rows.get(pid, {})
         pump = {**load, "tag": c["tag"], "label": c.get("description"), "role": src.get("role"),
                 "service_factor": src.get("service_factor")}
-        # Wind stages and show modulation drive the feature pumps, not circulation or filtration.
-        duty = {} if (src.get("role") or "").lower() in ("circulation", "filtration", "filter") else feature
+        # Wind stages and show modulation drive the feature pumps, not circulation or filtration;
+        # automatic transfer to bypass is for circulation and filtration only (a feature pump at
+        # full speed across the line oversprays).
+        critical = (src.get("role") or "").lower() in CRITICAL_ROLES
+        duty = {} if critical else feature
         r = pump_control(pump, src.get("topology") or topo_override.get(pid), feature=duty, site=site_ctx,
-                         nema=bool(ctl.get("nema_starters")), auto_transfer=ctl.get("auto_transfer"))
+                         nema=bool(ctl.get("nema_starters")),
+                         auto_transfer=bool(ctl.get("auto_transfer")) and critical)
         results[f"pump_control_{c['tag']}"] = r.to_dict()
         pump_controls.append(r.value)
 
     # 2. drive frames
-    elevation = num_or(site.get("elevation_ft"), 4500.0)
-    panel_ambient = num_or(ctl.get("panel_ambient_f"), num_or(site.get("air_temp_f"), 95.0))
+    elevation = num(site.get("elevation_ft"), 4500.0)
+    panel_ambient = num(ctl.get("panel_ambient_f"), num(site.get("air_temp_f"), 95.0))
     location = ctl.get("location") or "outdoor"
     outdoor = location.startswith("outdoor")
     vfd_frames, frames_by_tag = [], {}
     for pc in pump_controls:
         if pc["topology"] not in ("vfd", "vfd_bypass"):
             continue
-        load = next((ld for ld in loads if ld.get("label") == pc["label"] or ld.get("key")), {})
         circ = next((c for c in motor_circuits if c["tag"] == pc["tag"]), {})
+        # The drive sees the enclosure's interior, which the thermal check holds at or below
+        # 104 F (with a fan or air conditioner when needed), not the sun-loaded outdoor air.
+        drive_ambient = min(panel_ambient + (15 if outdoor else 0), MAX_INTERNAL_F)
         vf = vfd_frame(circ.get("hp") or 0, circ.get("voltage") or 230, circ.get("phase") or 3,
                        fla=pc.get("fla_a") if not circ.get("hp") else None, elevation_ft=elevation,
-                       ambient_f=panel_ambient + (15 if outdoor else 0), cable_ft=circ.get("run_ft") or 0,
-                       submersible=bool(load.get("submersible")), bypass=pc["topology"] == "vfd_bypass")
+                       ambient_f=drive_ambient, cable_ft=circ.get("run_ft") or 0,
+                       submersible=bool(pc.get("submersible")), bypass=pc["topology"] == "vfd_bypass")
         results[f"vfd_frame_{pc['tag']}"] = vf.to_dict()
         frames_by_tag[pc["tag"]] = vf.value
         vfd_frames.append({"tag": pc["tag"], "frame": vf.value, "voltage_class": vf.inputs["voltage_class"]["value"],
@@ -251,10 +260,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
                            "bypass_contactor_a": vf.inputs["bypass_contactor_a"]["value"]})
 
     # 3. controller, I/O, relays, 24 V DC
-    io_r = io_list(model, [{**pc, "role": (pump_rows.get((next((ld.get("key") for ld in loads
-                                                                  if ld.get("label") == pc["label"]), "") or "")
-                                                            .split(":", 1)[-1], {}) or {}).get("role")}
-                           for pc in pump_controls])
+    io_r = io_list(model, pump_controls)
     io_rows = io_r.value
     results["io_list"] = io_r.to_dict()
     sel = select_controller(io_rows, family=ctl.get("family"), pump_controls=pump_controls)
@@ -263,7 +269,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     results["relays"] = rel.to_dict()
     sol = elec_in.get("solenoid_valves") or {}
     # The door pilot lights are 120 V AC (on the control transformer), not on the 24 V DC supply.
-    psu = dc_supply(io_rows, valve_w_each=num_or(sol.get("watts_each"), 10.0), platform=sel.value["platform"])
+    psu = dc_supply(io_rows, valve_w_each=num(sol.get("watts_each"), 10.0), platform=sel.value["platform"])
     results["dc_supply"] = psu.to_dict()
     il = interlocks(application, pump_controls)
     results["interlocks"] = il.to_dict()
@@ -290,9 +296,9 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     thermal = enclosure_thermal(enc.inputs["dims_in"]["value"], heat.value, ambient_f=panel_ambient,
                                 outdoor_sun=outdoor, material=material)
     results["thermal"] = thermal.to_dict()
-    sccr_parts = [{"name": f"{c['tag']} {d['device']}", "kind": "motor_controller_0_50hp"
-                   if num_or(pc.get("flc_a"), 0) < 150 else "motor_controller_51_200hp"}
-                  for pc in pump_controls for c in [pc] for d in pc["components"]
+    sccr_parts = [{"name": f"{pc['tag']} {d['device']}",
+                   "kind": "motor_controller_0_50hp" if num(pc.get("hp")) <= 50 else "motor_controller_51_200hp"}
+                  for pc in pump_controls for d in pc["components"]
                   if "contactor" in d["device"].lower() or d["device"].startswith("Soft starter")]
     sccr_parts += [{"name": f"{pc['tag']} overload", "kind": "overload_relay"} for pc in pump_controls
                    if pc["topology"] in ("across_the_line", "vfd_bypass")]
@@ -302,7 +308,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     results["sccr"] = sc.to_dict()
     feeder = elec_r.get("feeder") or {}
     disc = main_disconnect([pc.get("flc_a") for pc in pump_controls],
-                           other_a=sum(num_or(c.get("load_a"), 0) for c in circuits if not c.get("is_motor")),
+                           other_a=sum(num(c.get("load_a"), 0) for c in circuits if not c.get("is_motor")),
                            feeder_ocpd_a=feeder.get("ocpd_a"))
     results["main_disconnect"] = disc.to_dict()
     spd = surge_protection(elec_r.get("inputs", {}).get("service_v") or 240, elec_r.get("inputs", {}).get("phase") or 1)
@@ -327,8 +333,8 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     toop = theory_of_operation(pump_controls, controller=sel.value, io_rows=io_rows, has_wind=has_wind,
                                application_type=application)
     results["theory_of_operation"] = toop.to_dict()
-    lv_light_w = sum(num_or(f.get("watts"), 0) * max(1, int(num_or(f.get("qty"), 1)))
-                     for f in (model.get("lighting") or {}).get("fixtures") or [] if 0 < num_or(f.get("voltage"), 12) <= 30)
+    lv_light_w = sum(num(f.get("watts"), 0) * max(1, int(num(f.get("qty"), 1)))
+                     for f in (model.get("lighting") or {}).get("fixtures") or [] if 0 < num(f.get("voltage"), 12) <= 30)
     parent = {
         "product_family": f"Splash Wizard {sel.value['family']}" if sel.value["platform"] == "Splash Wizard" else "",
         "nema_rating": etype.value,
@@ -342,7 +348,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
         "control_voltage_1_type": "VDC",
         "control_voltage_2": "120",
         "control_voltage_2_type": "VAC",
-        "solenoid_valve_qty": int(num_or(sol.get("qty"), 0)),
+        "solenoid_valve_qty": int(num(sol.get("qty"), 0)),
         "lighting_voltage": 12 if lv_light_w else None,
         "control_transformer_va": xf.value,
         "panel_includes_contactors_overload": 1 if any(pc["topology"] in ("across_the_line", "vfd_bypass")
@@ -401,9 +407,3 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
         "status": status,
         "results": results,
     }
-
-
-def num_or(value, default: float) -> float:
-    from ..electrical._util import num
-
-    return num(value, default)

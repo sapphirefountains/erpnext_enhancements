@@ -35,6 +35,8 @@ New modules:
 - **`vfd.py`: the drive frame.**
   - **Derates:** altitude above 3,300 ft (every Wasatch Front job), ambient above 40 °C, and
     single-phase input. All three are typical drive-maker figures and are labeled as such.
+  - **Ambient:** the drive is derated at the enclosure's interior design temperature, 104 °F at most,
+    which the heat check holds. It is not derated at the sun-loaded outdoor air.
   - **Also:** input fuses per the listing (430.130), heat loss, reactors and filters by lead length,
     a carrier-frequency and inverter-duty-motor note, and the bypass contactor size.
 - **`controller.py`: the controller.**
@@ -43,8 +45,11 @@ New modules:
   - **Industrial (PLC)** is recommended when the design needs something DOC-0062's SDP001 does not
     list, such as a drive speed reference, DMX, 4-20 mA inputs or automatic bypass transfer.
   - **The I/O list** is generated from the design. Per pump: run, fault and speed. Also level and
-    fill, wind (two stages), E-stop, flow proof, temperature, ORP/pH, one output per valve,
-    lighting relays or DMX universes, and push button.
+    fill, wind (two stages), E-stop, flow proof, the chemical controller's status contact, one
+    output per valve, lighting relays or DMX universes, and push button. Temperature and ORP/pH
+    4-20 mA readbacks are added only when `control.analog_monitoring` is set.
+  - **Automatic transfer to bypass** is allowed only on circulation and filtration pumps. A feature
+    pump at full speed across the line would overspray.
   - **Also:** relay and SSR counts (DOC-0126), the 24 V DC supply, and the seeded interlocks plus
     each pump's bypass interlocks.
 - **`panel.py`: the panel.**
@@ -73,7 +78,7 @@ New modules:
 
 ### Tests
 
-`test_controls_design.py`, 37 pytest cases. It runs in the existing electrical pytest step, renamed
+`test_controls_design.py`, 43 pytest cases. It runs in the existing electrical pytest step, renamed
 "electrical and controls". Its hand goldens:
 
 - **A 5 HP, 230 V, single-phase pump:**

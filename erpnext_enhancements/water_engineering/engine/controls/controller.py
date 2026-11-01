@@ -49,10 +49,14 @@ DMX_UNIVERSE = 512
 SPARE_IO = 0.20
 
 
-def _io(name, io_type, signal, device, description, qty=1, mechanism="", ref=""):
+def _io(name, io_type, signal, device, description, qty=1, mechanism="", ref="", powered=False):
+    """One Control IO Point row. ``powered`` marks a sensor that draws from the
+    24 V DC supply (a float or flow switch, not an E-stop contact); it is not a
+    DocType field and ``outputs.control_panel_rows`` drops it."""
     return {
         "point_name": name, "io_type": io_type, "signal": signal, "device": device,
         "description": description, "qty": int(qty), "control_mechanism": mechanism, "drawing_ref": ref,
+        "powered": bool(powered),
     }
 
 
@@ -91,11 +95,11 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
     n_level = max(1, len(basins)) if (basins or pcs) else 0
     if n_level:
         rows.append(_io("Water level low", "Input", "Dry Contact NO", "Float switch / level controller",
-                        "Low-water cutoff per basin", n_level))
+                        "Low-water cutoff per basin", n_level, powered=True))
     autofill = elec.get("autofill", bool(basins))
     if autofill:
         rows.append(_io("Water level fill", "Input", "Dry Contact NO", "Float switch / level controller",
-                        "Fill call per basin", max(1, len(basins))))
+                        "Fill call per basin", max(1, len(basins)), powered=True))
         rows.append(_io("Autofill valve", "Output", "24VDC", "Autofill solenoid", "Opens the fill valve", 1,
                         "Solid State Relay"))
     features = model.get("features") or []
@@ -108,14 +112,19 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
     circ = [pc for pc in pcs if (pc.get("role") or "") in ("circulation", "filtration")] or pcs[:1]
     if circ:
         rows.append(_io("Circulation flow proof", "Input", "Dry Contact NO", "Flow or pressure switch (IFM SI5004 class)",
-                        "Proves circulation before feeders, heater and features", 1))
+                        "Proves circulation before feeders, heater and features", 1, powered=True))
     regulated = bool(site.get("regulated"))
-    if treatment.get("heater_kw") or regulated:
-        rows.append(_io("Water temperature", "Input", "4-20mA", "Temperature transmitter", "Water temperature", 1))
+    # Analog readbacks only on request: the heater keeps its own thermostat and a standalone
+    # chemical controller (the Fika spa's) reports to the panel by a status contact.
+    analog = bool((model.get("control") or {}).get("analog_monitoring"))
+    if analog and (treatment.get("heater_kw") or regulated):
+        rows.append(_io("Water temperature", "Input", "4-20mA", "Temperature transmitter", "Water temperature", 1,
+                        powered=True))
     if treatment.get("chem_feed", regulated):
         rows.append(_io("Chemical controller status", "Input", "Dry Contact NO", "Chemical controller (ORP/pH)",
                         "Controller ok / fault", 1))
-        rows.append(_io("ORP / pH", "Input", "4-20mA", "Chemical controller analog out", "ORP and pH readback", 2))
+        if analog:
+            rows.append(_io("ORP / pH", "Input", "4-20mA", "Chemical controller analog out", "ORP and pH readback", 2))
     n_valves = int(num((elec.get("solenoid_valves") or {}).get("qty")))
     if n_valves:
         rows.append(_io("Solenoid valves", "Output", "24VDC", "Manifold solenoid valve", "One output per valve",
@@ -134,7 +143,7 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
                         "Switched lighting circuits", relays, "Solid State Relay"))
     if pcs:
         rows.append(_io("Push-button activation", "Input", "Dry Contact NO", "Illuminated pushbutton (IFM KT6301 class)",
-                        "Starts a show / run window", 1))
+                        "Starts a show / run window", 1, powered=True))
     ins = sum(r["qty"] for r in rows if r["io_type"] == "Input")
     outs = sum(r["qty"] for r in rows if r["io_type"] == "Output")
     analog = sum(r["qty"] for r in rows if r["signal"] in ("4-20mA", "0-10V"))
@@ -191,9 +200,8 @@ def dc_supply(
     ssr = sum(r["qty"] for r in rows if r.get("control_mechanism") == "Solid State Relay")
     relays = sum(r["qty"] for r in rows if r["io_type"] == "Output" and r.get("control_mechanism") in ("Motor Starter", "VFD")
                  and r.get("signal") == "24VDC")
-    sensors = sum(r["qty"] for r in rows if r["io_type"] == "Input" and r["signal"] in ("Dry Contact NO", "Dry Contact NC")
-                  and ("switch" in r["device"].lower() or "level" in r["device"].lower() or "pushbutton" in r["device"].lower()))
     loops = sum(r["qty"] for r in rows if r["signal"] == "4-20mA")
+    sensors = sum(r["qty"] for r in rows if r.get("powered") and r["signal"] != "4-20mA")
     anemo = sum(r["qty"] for r in rows if r["signal"] == "Reed Switch Pulse")
     parts = {
         "valve coils": valves * num(valve_w_each, 10.0),

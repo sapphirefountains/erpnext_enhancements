@@ -258,8 +258,8 @@ def bypass_truth_table() -> CalcResult:
 # --- components per topology ----------------------------------------------------------
 
 
-def _component(tag, device, rating="", qty=1, note=""):
-    return {"tag": tag, "device": device, "rating": rating, "qty": qty, "note": note}
+def _component(tag, device, rating="", qty=1, note="", amps=None):
+    return {"tag": tag, "device": device, "rating": rating, "qty": qty, "note": note, "amps": amps}
 
 
 def pump_control(
@@ -288,9 +288,11 @@ def pump_control(
     contactor = nema_size(hp, v, ph) if (nema and hp) else iec_contactor(flc)
     ol = overload_relay(fla, submersible=submersible, nema=nema, service_factor=num(pump.get("service_factor"), 1.15))
     c_rating = (f"NEMA size {contactor.value}" if nema and hp else f"{contactor.value} A AC-3")
+    # Contactor current, for footprints and SCCR: the NEMA size's continuous rating or the AC-3 frame.
+    c_amps = NEMA_CONTINUOUS_A.get(contactor.value) if nema and hp else contactor.value
     if topo == "across_the_line":
         comps += [
-            _component(f"{tag}-M", "Contactor", c_rating, 1, "across-the-line"),
+            _component(f"{tag}-M", "Contactor", c_rating, 1, "across-the-line", c_amps),
             _component(f"{tag}-OL", "Overload relay", f"{ol.value}, set {fla:g} A, Class {ol.inputs['trip_class']['value']}"),
         ]
     elif topo == "soft_starter":
@@ -304,11 +306,11 @@ def pump_control(
         if topo == "vfd_bypass":
             k = c_rating
             comps += [
-                _component(f"{tag}-K1", "Line contactor (drive input)", k, 1, "isolates the drive in bypass"),
+                _component(f"{tag}-K1", "Line contactor (drive input)", k, 1, "isolates the drive in bypass", c_amps),
                 _component(f"{tag}-K2", "Output contactor (drive output)", k, 1,
-                           "opens only with the drive stopped; interlocked with K3"),
+                           "opens only with the drive stopped; interlocked with K3", c_amps),
                 _component(f"{tag}-K3", "Bypass contactor (across the line)", k, 1,
-                           "full-voltage duty; mechanically and electrically interlocked with K2"),
+                           "full-voltage duty; mechanically and electrically interlocked with K2", c_amps),
                 _component(f"{tag}-OLB", "Overload relay (bypass path)",
                            f"{ol.value}, set {fla:g} A, Class {ol.inputs['trip_class']['value']}"),
                 _component(f"{tag}-SS1", "Selector switch VFD / OFF / BYPASS", "22 mm, 3-position"),
@@ -339,7 +341,11 @@ def pump_control(
         calc="pump_control",
         value={
             "tag": tag,
+            "key": pump.get("key"),
             "label": pump.get("label"),
+            "role": (pump.get("role") or "").lower() or None,
+            "hp": hp or None,
+            "submersible": submersible,
             "topology": topo,
             "topology_label": TOPOLOGIES[topo],
             "recommended": rec.value,

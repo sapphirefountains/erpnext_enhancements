@@ -159,7 +159,7 @@ def control_panel_rows(
             "qty": 1,
             "part_no": p.get("part_no") or "",
             "hp": num(p.get("hp")),
-            "fla_amps": round(num(p.get("fla_a") or p.get("load_a") or p.get("amps")), 2),
+            "fla_amps": round(num(pc.get("fla_a") or p.get("fla_a") or p.get("load_a") or p.get("amps")), 2),
             "control_method": "VFD" if drive else "Motor Starter",
             "voltage": _nearest(PUMP_VOLTAGES, p.get("voltage")),
             "voltage_type": "VAC",
