@@ -141,6 +141,7 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         hatch_w = positive("lid.hatch_width_in", given.get("hatch_width_in"), allow_zero=True)
         lid = {
             "type": str(given.get("type") or "concrete").lower(),
+            "load_class": given.get("load_class") or "pedestrian",
             "thickness_in": positive("lid.thickness_in", given.get("thickness_in")),
             "hatch_length_in": rules["vault_hatch_in"] if hatch_l is None else hatch_l,
             "hatch_width_in": rules["vault_hatch_in"] if hatch_w is None else hatch_w,
@@ -175,6 +176,7 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         or positive("site.soil_bearing_psf", site.get("soil_bearing_psf")),
         "floor_capacity_psf": positive("floor_capacity_psf", get("floor_capacity_psf", None)),
         "problems": problems,
+        "floor_use": get("floor_use", None),
     }
 
 

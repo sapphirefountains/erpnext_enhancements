@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.766.0] - 2026-11-01
+
+ERPNext: TASK-2026-03031 (PRJ-00580, under TASK-2026-03018 Fountain Designer rebuild). This is phase
+S part 2, stacked on 1.765.0. Nikolas widened phase S the same day, from the basin shells to "the
+structure in general".
+
+**What the deploy does.** Nothing at runtime, as with 1.765.0. This is pure engine code (stdlib
+only, never imports frappe): no migration, fixture, patch or hook. Nothing runs until phase E's
+`derive()` calls `structural_takeoff`.
+
+### Added
+- `engine/structural/` gains eight modules. DOC-0119 covers none of this beyond its materials notes,
+  so each module cites the public standard it uses:
+  - **Loads.** `loads.py`: IBC presumptive soil values, surcharge (250 psf plaza traffic, AASHTO
+    vehicle), the 30 in Salt Lake frost depth, ASCE 7 seismic design values from Ss/S1 and site class,
+    ACI 350.3 hydrodynamic loads on basin walls, and ASCE 7 wind on a water wall or screen.
+  - **Walls.** `walls.py`: freestanding cantilever walls (raised basin, weir and soil-retaining walls)
+    checked for overturning, sliding, bearing and frost, and their footings sized.
+  - **Vaults and drains.** `vaults.py`: vault lids for pedestrian, plaza or H-20 loads, and bar
+    grating and trench drains by load class.
+  - **Building.** `building.py`: beams and decks over collector tanks, and rooftop or lobby floor
+    loads, always flagged to the engineer of record.
+  - **Steel.** `steel.py`: HSS properties computed from the tube geometry (they match the AISC
+    Manual within rounding), plus member, column and water-wall frame checks.
+  - **Fabrications.** `fabrications.py`: weir-lip sag against the 1/16 in edge tolerance, veneer
+    anchors, and pedestals.
+  - **Rigging.** `rigging.py`: the Digital Rain Curtain's `beamReactions` and `rigPlan`, ported and
+    pinned to the JavaScript's own output.
+  - **Supports.** `supports.py`: equipment pads with ACI 318 Chapter 17 anchors, thrust blocks,
+    seismic bracing, sleeves, and moorings for floating fountains.
+- `general.py` runs all of this from the model. Even with no `structure` block, it checks:
+  - every basin's walls under earthquake sloshing, when the site gives Ss/S1;
+  - every weir feature's lip;
+  - every vault lid;
+  - every penetration's waterstop ring.
+
+  A `structure` block lists the walls, frames, pads and the rest. The takeoff now also returns:
+  - `structure`, `seismic` and `notes` keys;
+  - new totals and new check codes;
+  - new BOM lines: steel by the pound, grating by the square foot, veneer anchors, braces, mooring
+    blocks, trench drains, an access hatch, and site concrete.
+- README §6: the new modules, the model's `structure` block for phase C, what the takeoff adds for
+  phase E, and the new house rules.
+- Tests: four more pytest suites under the same CI step, 86 tests in all, each with hand goldens.
+  The HSS table is pinned to AISC's published values, and the rigging port to golden vectors from the
+  DRC JavaScript.
+
+### Fixed (independent review, before merge)
+- A half-filled `structure` row no longer takes down the takeoff. A wall or column with no height,
+  or rigging with a 0 ft hanger span, used to raise. Each group now has its required numbers; a row
+  without them becomes an INFO `STRUCT_ROW_INCOMPLETE` check and is skipped. The calcs themselves
+  return `incomplete` instead of dividing by zero.
+- Wind is no longer factored twice. ASCE 7-16 gives wind at strength level, so posts and towers now
+  take 1.0W, not 1.6W, and drift is checked at 0.6W. Frames and their steel order were about 60%
+  heavy.
+- Columns buckle about the weaker axis. HSS now carry `Iy`/`ry`, and the W table carries `ry`.
+- Pedestals resist seismic overturning with (0.9 − 0.2·SDS)·W, as ASCE 7 combines it, not
+  (1 − 0.2·SDS)·W.
+- Equipment pads:
+  - The anchor count adds to the house-rule count for equipment the pads don't cover, instead of
+    replacing it.
+  - Anchors are checked for concrete breakout and pryout in shear.
+  - A pad with no SDS says its anchors were not checked for seismic, and pull-out is flagged for the
+    maker's data.
+- Clay cohesion in sliding is capped at half the dead load (IBC 1806.3.2).
+- A continuous weir lip uses the end span of three (2.65/384). The automatic lip check carries 1 in
+  of water, so it can fire.
+- Moorings of different weights get their own BOM lines. Rigging picks round like the JavaScript
+  (2.5 → 3).
+- No `inf` reaches a result. Where a footing or plinth would tip, or no beam size works, the result
+  says so.
+
+
 ## [1.765.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on

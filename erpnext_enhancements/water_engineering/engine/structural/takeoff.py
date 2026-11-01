@@ -39,6 +39,7 @@ from .defaults import (
     DISCLAIMER,
     merged_rules,
 )
+from .general import general_structure
 from .geometry import basin_shell, basin_spec
 from .rebar import rebar_schedule
 from .sizing import (
@@ -113,7 +114,7 @@ def _checks(spec, det, shell, res, rules) -> list[dict]:
     if fl.status == "bad":
         out.append(_check("STRUCT_FLOOR_LOAD", BLOCKER, spec, "Floor cannot carry the basin", fl.warnings[-1],
                           "Have the building's engineer verify or strengthen the floor.", fl.citations[0]))
-    elif s["placement"] == "on_structure" and fl.value["capacity_psf"] is None:
+    elif s["placement"] == "on_structure" and fl.value["capacity_psf"] is None and not spec.get("floor_use"):
         out.append(_check("STRUCT_FLOOR_UNKNOWN", WARNING, spec, "Floor capacity unknown",
                           f"The basin puts {fl.value['pressure_psf']:.0f} psf on the floor it stands on.",
                           "Enter the floor's live-load capacity or ask the building's engineer.", fl.citations[0]))
@@ -266,14 +267,22 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
 
         basins_out.append({
             "basin_id": spec["id"], "label": spec["label"], "kind": spec["kind"], "complete": True,
+            "lid": spec["lid"], "floor_use": spec["floor_use"],
             "detail": d, "geometry": s, "quantities": q, "checks": basin_checks,
             "results": {k: v.to_dict() for k, v in res.items() if v is not None},
         })
 
+    general = general_structure(model, basins_out, rules)
+    checks += general["checks"]
+    for key, description, qty, uom, hint, extra in general["bom"]:
+        add(key, description, qty, uom, hint, **extra)
+    totals.update({k: (totals.get(k, 0) + v) for k, v in general["totals"].items()})
     anchors = anchor_bolts(model, rules)
-    add("structural.anchors", "Anchor bolts, stainless wedge, equipment", anchors.value["count"], "Nos",
-        "anchor_bolt_ss_wedge")
-    totals["anchors"] = anchors.value["count"]
+    # listed pads carry their own anchors; equipment beyond the pads keeps the house-rule count
+    pads = general["totals"]["pads"]  # computed pads only; a skipped half-filled row covers nothing
+    uncovered = max(anchors.value["pieces_of_equipment"] - pads, 0) * anchors.value["per_equipment"]
+    add("structural.anchors", "Anchor bolts, stainless wedge, equipment", uncovered, "Nos", "anchor_bolt_ss_wedge")
+    totals["anchors"] = uncovered + general["totals"]["equipment_anchors"]
     for key in ("penetrations", "chairs"):
         totals[key] = int(totals[key])
     totals["trucks"] = math.ceil(totals["concrete_order_yd3"] / float(rules["truck_yd3"]) - 1e-9) \
@@ -301,6 +310,9 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
         "bom": lines,
         "mix": mix.value,
         "anchors": anchors.to_dict(),
+        "structure": general["results"],
+        "seismic": general["seismic"],
+        "notes": general["notes"],
         "rules": rules,
         "warnings": [DISCLAIMER],
     }
