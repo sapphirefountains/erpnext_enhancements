@@ -1546,3 +1546,7 @@ erpnext_enhancements.patches.remap_nozzle_profile_types
 # Item rows stay (readers fall back to them); an Item that already has a Pump Curve is skipped. Logs, never raises,
 # safe twice.
 erpnext_enhancements.patches.migrate_item_pump_curves
+# Fountain Designer phase C (v1.759.0): the Sapphire house rules and utility rates on Water Engineering Settings get
+# their defaults on the existing row, only where tabSingles has no row for them (a rule set to 0 stays 0). Writes
+# every missing default, so a never-saved Single does not lose contractor_name. Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_water_house_rules

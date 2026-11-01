@@ -53,6 +53,10 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
 | `structural/` | Basin and vault structure (Fountain Designer phase S): slab and wall thickness from the standard details, rebar schedule, concrete, gravel, excavation, formwork, joints, waterproofing, penetrations, anchors, and hydrostatic, uplift, bearing and floor-load checks as engineering aids. `structural_takeoff(model, rules)` returns one dict with quantities, checks and BOM lines. Its [`README.md`](engine/structural/README.md) lists every DOC-0119 rule and the gaps filled from ACI 318/350 | DOC-0119 `Concrete Design`; ACI 318/350 where DOC-0119 is silent |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
+| `families/` | Fountain Designer (schema 2): one rule module per feature family (weir, jets, foam, laminar, interactive, cascade, pondless, curtain, mist, aerator) plus the lighting, winterization and heat system modules. See [`engine/families/README.md`](engine/families/README.md) | industry report section 1, per-rule URLs |
+| `model.py` | The schema-2 design model: dataclasses, lossless JSON round-trip, `validate`, and `migrate` from the old child-table shape | `docs/fountain-designer/PLAN.md` section 3.3 |
+| `kits.py` | Whole-design starting points (feature presets + a setup policy per section); `apply_kit`, `match_kit` | — (data) |
+| `rules.py` | The Sapphire house rules and utility rates as a plain dict (`DEFAULTS`, `resolve`); the same values are fields on Water Engineering Settings | "Sapphire standard" placeholders; SLC and RMP rates |
 | `constants.py` | Physical constants, read from the workbooks' formula cells with openpyxl rather than a textbook | the workbooks |
 | `units.py` | Unit conversions | — |
 | `data/pipe_specs.py` | Pipe ID + velocity-limit table | DOC-0049 `SUPPORT` → `PipeType` |
@@ -111,6 +115,7 @@ Child tables and catalogs:
 | `Nozzle Performance Point` | Child of Nozzle Profile: `head_ft`, `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`, `depth_over_nozzle_in` |
 | `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `read_method`, `error_band_pct`, `catalog_id`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises again after its peak (beyond 1 % reading noise); a drooping curve (head climbing from shutoff to a peak) and a missing shutoff point or a gap only warn |
 | `Pump Curve Point` | Curve points: `flow_gpm`, `head_ft`, `efficiency_pct`, `npshr_ft`, `power_bhp`. Child of Pump Curve, and of Item as the legacy `custom_pump_curve` table the readers fall back to |
+| `Water Engineering Settings` | Single: engineer of record, contractor, and (House Rules tab, v1.759.0) the Sapphire house rules and utility rates that `engine/rules.py` mirrors |
 
 **Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
 `custom_spec_revision`, `custom_spec_verified_by`, `custom_spec_verified_on`, `custom_generic_estimate`,
@@ -161,6 +166,15 @@ The catalog suite is plain pytest with its own in-memory frappe, so it runs on i
 
 ```bash
 python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+```
+
+The Fountain Designer's families, model, kits and house rules are pytest suites with their
+own CI step (`python -m unittest` collects none of them):
+
+```bash
+python -m pytest -q erpnext_enhancements/tests/test_families_weir.py \
+  erpnext_enhancements/tests/test_families_jets.py erpnext_enhancements/tests/test_families_others.py \
+  erpnext_enhancements/tests/test_water_model.py erpnext_enhancements/tests/test_water_house_rules.py
 ```
 
 The engine suites are **golden tests**: each formula reproduces its sheet's own worked example. When you
