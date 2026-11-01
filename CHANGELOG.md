@@ -49,13 +49,27 @@ automation ladder runs on every save, and the Fountain Designer page gets its se
   statuses (Inputs Gathered to Draft, Calculated to Derived), and writes a line in `notes`. It uses
   `db.set_value` without touching `modified`, deletes nothing, and never raises: a design it cannot
   convert gets "Not converted to the Fountain Designer model" in its notes, and the controller then
-  reports it as one blocker instead of deriving it. Nikolas said the one record (WFD-2026-209315)
+  reports it as one blocker instead of deriving it. A failure to read its child rows is logged and
+  leaves the design unconverted. It is never stamped "converted from 0 rows". Nikolas said the one record (WFD-2026-209315)
   may be dropped; it is converted anyway, because the conversion costs nothing and loses nothing.
 - **The old wizard keeps working until phase H.** `get_design_state` reads the new record (model
   counts, the model-2 issues, the fitting schedule from the model's segments, the canvas from the
-  model and the last derive). `_save_design`, which the `save_water_design` AI tool calls, turns the
-  tool's schema-1 payload into a model with `engine.model.migrate` and maps the old status names.
+  model and the last derive). `_save_design`, which the `save_water_design` AI tool calls, maps the
+  old status names and handles the tool's schema-1 payload in two ways:
+  - **A new design:** the payload becomes a model through `engine.model.migrate`.
+  - **An existing design:** only the tables and inputs the payload names change. Each part it
+    changes is pinned `custom` (`merge_legacy_payload`), so the next derive keeps it.
+  - **What has no place in the model is listed back, not dropped.** The tool now returns those
+    inputs as `ignored`, and its description says which inputs have no place. They are electrical
+    loads, `turnover_per_hr`, `hazen_williams_c` and `static_lift_ft`, plus pipe segments sent
+    without the features they are laid from.
   The print formats' `we_fitting_schedule` reads the model when a design has no pipe rows.
+- **The print formats and the submittal packet render empty tables until phase G.** They still read
+  the removed child tables (`calc_results`, `pumps`, `pipe_segments`, `basins`, fixtures, equipment).
+  Jinja reads a missing table as empty, so nothing crashes, but the Results, Calculation Audit,
+  Schedules and Packet outputs have no rows until phase G points them at `model_json` and
+  `results_json`. The derive writes `required_circulation_gpm` (the flow that circulates), so the
+  Design dashboard's Hydraulic Headroom widget keeps listing designs.
 
 ### Added
 - **`water_engineering/derive.py`: `derive_model(model, catalogs, rules)`** runs PLAN.md 2.2 in order
@@ -65,10 +79,15 @@ automation ladder runs on every save, and the Fountain Designer page gets its se
   - **The ladder.**
     - Site: blank fields from the geocoded address, then Utah defaults (elevation 4,300 ft, frost
       depth 30 in), then the house-rule utility rates.
-    - Basins: `basin.basin_volume`.
+    - Basins: `basin.basin_volume`, measured again after phase B deepens an `auto` basin, so the
+      rollups, the water plan, O&M and the per-row values all read the basin as it now stands. Before
+      this, every kit's volume and O&M changed on the second save.
     - Features: `engine.families`.
-    - Regulated minimums: `aquatic.minimum_flow_rate` for pools and spas. Utah interactive features
-      count as regulated (R392-302).
+    - Regulated minimums: `aquatic.minimum_flow_rate` for pools and spas, judged at the operating
+      flow (Nikolas: checks run at the flow that actually circulates). The design flow is used when
+      no network was solved. "Regulated" is an allow-list: a pool or spa venue, or a Utah
+      interactive feature (R392-302). `aquatic.is_regulated` is a deny-list of fountain venues, so a
+      pond, a lake or an event rental came out as a pool and got a spa's code-minimum blocker.
     - The route template from the Pump room step: suction 10 ft from a vault, 2 ft for a
       submersible, the distance from a pump room; discharge the distance plus the rise; default
       fittings and the step's material. It fills only an `auto` piping section, and only segments
@@ -81,8 +100,11 @@ automation ladder runs on every save, and the Fountain Designer page gets its se
     - Phase S's `structural_takeoff`.
     - Winterization.
     - The BOM: `bom.merge_sections` over the hydraulic, family, electrical, controls and structural
-      lines, priced from Item valuation or the default selling price list. Phase L's duplicate
-      24 V supply line is dropped when controls has its own.
+      lines. Each line is priced at the Item's rate on the default selling price list: the budget is for
+      a quote, and anyone who can read the design may see a selling price. The Item's valuation rate
+      (a cost) stands in only where an Item has no list price, and only for a user who may read Item
+      valuation; for anyone else that line stays unpriced. Phase L's duplicate 24 V supply line is
+      dropped when controls has its own.
     - O&M per year: `upkeep.om_per_year`.
   - **Where the phases' shapes did not meet, derive joins them.** Each of these was a blocker or a
     crash on a real kit before it was fixed:
@@ -134,13 +156,23 @@ automation ladder runs on every save, and the Fountain Designer page gets its se
   - `boot`, `get_design` and `catalog_search` answer GET; every write is POST-only.
   - Saves and pushes go through `doc.save()`.
   - The loaders behind derive: the house rules from Water Engineering Settings; the pump catalog from
-    phase D's `catalog_reader`, cached ten minutes because the page derives on every edit; Item
-    prices; and the address through `workforce.sites.geocode_text`, cached a month per address. The
-    app has no elevation lookup, so elevation is the jurisdiction default.
+    phase D's `catalog_reader`, cached ten minutes with the pumps' list prices because the page
+    derives on every edit; Item prices; and the address through `workforce.sites.geocode_text`.
+    - **Geocoding happens only on a save.** The page's per-keystroke derive never geocodes, so a
+      half-typed address costs nothing.
+    - **Cache.** A found point or a definite ZERO_RESULTS is cached a month per address. Any other
+      failure (a timeout, a rate limit, no key) is cached ten minutes, so the address is asked again
+      soon.
+    - **Elevation.** The app has no elevation lookup, so elevation is the jurisdiction default.
   - A push sends a line with an Item as an item line. A line without one goes as the new
     **Text-line Item** on Water Engineering Settings, with its own description; with none set, it is
     listed in the Quotation's terms and left off a Material Request. ERPNext refuses an item row
     without an Item. The field has no default, so the Singles backfill rule does not apply.
+  - **A pushed line keeps the unit it was designed in.** The engine's unit becomes the ERPNext UOM it
+    names (`ft` becomes Foot). That is either the Item's stock UOM, or one of the Item's UOM
+    conversions with its factor. When the Item has no conversion for it, the line goes in the stock
+    UOM at the designed quantity, the description says so, and the reply counts it as a
+    `unit_mismatches` entry. Before this, 11 ft of pipe became 11 sticks with no word about it.
 - **The controller** runs the derive in `validate` and writes the derived model, the rollups, the BOM,
   the issues and readiness. It rebuilds `model.acks` from the acknowledgement rows (the record wins).
   `before_submit` requires no blockers, every warning signed off and `issue_ready`, and `on_submit`

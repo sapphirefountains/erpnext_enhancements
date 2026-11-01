@@ -696,12 +696,82 @@ def _model_counts(doc):
 _RECORD_FIELDS = ("project", "customer", "serial_no", "design_title", "status")
 
 
+# Schema-1 design inputs that have a place in a schema-2 model: (section, key).
+_GLOBAL_INPUT_PATHS = {
+    "venue_type": ("site", "venue_type"),
+    "governing_code": ("site", "governing_code"),
+    "pipe_material": ("pump_room", "material"),
+}
+
+
+def merge_legacy_payload(existing, tables, global_inputs):
+    """A schema-1 payload laid onto an existing schema-2 model, table by table, as the old tool
+    promised ("each list REPLACES that table"): only the sections the payload names change, and
+    each one it changes is pinned ``custom`` so the next derive keeps it. Returns (model, ignored),
+    ``ignored`` naming every input there is no place for, so the caller can say so instead of
+    dropping it in silence."""
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    model = model_engine.from_dict(existing).to_dict()
+    setup = model.setdefault("setup", {})
+    ignored = []
+    legacy = {t: rows for t, rows in tables.items() if t in ("basins", "features", "tiers", "pipe_segments", "pumps")}
+    legacy["global_inputs"] = dict(global_inputs or {})
+    legacy.setdefault("basins", [])
+    if "pipe_segments" in tables and "features" not in tables and model.get("features"):
+        # The old shape has no topology: its segments are laid from the feature list, so a segment list
+        # alone cannot be placed against the features the Designer drew.
+        legacy.pop("pipe_segments")
+        ignored.append("pipe_segments (send features with them, or edit the piping in the Fountain Designer)")
+    migrated = model_engine.migrate(legacy)
+    if "basins" in tables:
+        model["basins"] = migrated["basins"]
+        setup["basin"] = "custom"
+    if "features" in tables:
+        model["features"] = migrated["features"]
+        setup["features"] = "custom"
+    elif "tiers" in tables:
+        ignored.append("tiers (send them with the features they belong to)")
+    # A feature caught by no basin the model has (new basins, or features sent without their basins,
+    # which migrate leaves unattached) lands in the first basin, as the old engine read it.
+    ids = [b.get("id") for b in model.get("basins") or []]
+    for f in model.get("features") or []:
+        if f.get("basin") not in ids:
+            f["basin"] = ids[0] if ids else None
+    if "pipe_segments" in legacy:
+        model["network"] = migrated["network"]
+        setup["piping"] = "custom"
+    if "pumps" in tables:
+        picks = [e for e in migrated.get("equipment") or [] if e.get("slot") == "pump"]
+        model["equipment"] = [e for e in model.get("equipment") or [] if e.get("slot") != "pump"] + picks
+        pumps = (model.get("network") or {}).get("pumps") or []
+        if picks and pumps:
+            # The curve goes with the Item: naming it lets the derive load that pump's own curve
+            # (derive.resolve_curves), rather than solve the new pump on the old pick's curve.
+            pumps[0]["item"] = picks[0]["item"]
+            pumps[0]["curve"] = picks[0]["item"]
+            for key in ("hp", "kw", "shutoff_head_ft", "max_flow_gpm", "motor_eff_pct", "catalog_source"):
+                pumps[0].pop(key, None)
+            setup["pump"] = "custom"
+    for table in ("electrical_loads", "venue_fixtures", "design_equipment"):
+        if table in tables:
+            ignored.append(f"{table} (the Fountain Designer derives these)")
+    for key, value in (global_inputs or {}).items():
+        path = _GLOBAL_INPUT_PATHS.get(key)
+        if path:
+            model.setdefault(path[0], {})[path[1]] = value
+        else:
+            ignored.append(key)
+    return model, ignored
+
+
 def _save_design(payload):
     """Load-or-create a Water Feature Design from a schema-1 payload (the old wizard and the
     ``save_water_design`` AI tool) and save it. Since v1.768.0 the design lives in ``model_json``:
-    the payload's row lists and design inputs go through ``engine.model.migrate`` into a schema-2
-    model, which replaces the stored one (its sign-offs kept); a payload with no rows changes only
-    the record's fields. Phase H moves the AI tool onto ``api/designer.py`` and a model-2 payload."""
+    a new design (or one never converted) is built from the payload with ``engine.model.migrate``;
+    an existing schema-2 design takes only the tables and inputs the payload names
+    (``merge_legacy_payload``), and ``doc.flags.ignored_inputs`` lists what had no place. Phase H
+    moves the AI tool onto ``api/designer.py`` and a model-2 payload."""
     from erpnext_enhancements.water_engineering.engine import model as model_engine
 
     payload = _parse(payload)
@@ -720,12 +790,19 @@ def _save_design(payload):
             doc.set(key, value)
 
     tables = {t: payload[t] for t in EDITABLE_CHILD_TABLES if payload.get(t) is not None}
-    if tables or doc.is_new():
+    inputs = {k: v for k, v in fields.items() if k in EDITABLE_DESIGN_FIELDS and k not in _RECORD_FIELDS}
+    existing = _model(doc)
+    doc.flags.ignored_inputs = []
+    if existing and not model_engine.is_legacy(existing) and not doc.is_new():
+        if tables or inputs:
+            model, doc.flags.ignored_inputs = merge_legacy_payload(existing, tables, inputs)
+            doc.model_json = json.dumps(model)
+    elif tables or inputs or doc.is_new():
         legacy = dict(tables)
-        legacy["global_inputs"] = {k: v for k, v in fields.items() if k in EDITABLE_DESIGN_FIELDS and k not in _RECORD_FIELDS}
+        legacy["global_inputs"] = inputs
         legacy.setdefault("basins", [])
         model = model_engine.migrate(legacy)
-        model["acks"] = _model(doc).get("acks") or []
+        model["acks"] = existing.get("acks") or []
         doc.model_json = json.dumps(model)
 
     doc.save()  # validate() derives the model; permissions enforced (not ignored)

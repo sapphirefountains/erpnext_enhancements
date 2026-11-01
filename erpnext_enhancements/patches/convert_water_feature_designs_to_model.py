@@ -58,17 +58,17 @@ def execute():
 
 
 def _rows(name, field, child):
-	try:
-		if not frappe.db.table_exists(child):
-			return []
-		return frappe.get_all(
-			child,
-			filters={"parent": name, "parenttype": DOCTYPE, "parentfield": field},
-			fields=["*"],
-			order_by="idx asc",
-		)
-	except Exception:
+	"""The design's stored rows of one v1 child table. A table that does not exist has no rows; any
+	other failure raises, so ``execute`` logs it and marks the design not converted rather than
+	stamping it "converted from 0 rows" with an empty model."""
+	if not frappe.db.table_exists(child):
 		return []
+	return frappe.get_all(
+		child,
+		filters={"parent": name, "parenttype": DOCTYPE, "parentfield": field},
+		fields=["*"],
+		order_by="idx asc",
+	)
 
 
 def convert(name):
@@ -117,9 +117,14 @@ def convert(name):
 
 
 def _mark(name, why):
+	"""Note why a design was not converted, and still move its v1 status onto the new options: a
+	status the Select no longer offers would make every later save of the record fail."""
 	try:
-		notes = frappe.db.get_value(DOCTYPE, name, "notes") or ""
+		row = frappe.db.get_value(DOCTYPE, name, ["notes", "status"], as_dict=True) or {}
 		line = f"Not converted to the Fountain Designer model on {frappe.utils.today()}: {why}."
-		frappe.db.set_value(DOCTYPE, name, "notes", (notes + "\n" + line).strip(), update_modified=False)
+		updates = {"notes": ((row.get("notes") or "") + "\n" + line).strip()}
+		if row.get("status") in STATUS_MAP:
+			updates["status"] = STATUS_MAP[row["status"]]
+		frappe.db.set_value(DOCTYPE, name, updates, update_modified=False)
 	except Exception:
 		pass

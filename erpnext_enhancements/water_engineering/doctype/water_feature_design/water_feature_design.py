@@ -53,6 +53,7 @@ ROLLUP_FIELDS = {
 	"operating_head_ft": "operating_head_ft",
 	"pump_kw": "pump_kw",
 	"total_basin_gallons": "total_basin_gallons",
+	"required_circulation_gpm": "required_circulation_gpm",
 	"budget_total": "budget_total",
 	"om_cost_per_year": "om_cost_per_year",
 }
@@ -158,7 +159,7 @@ class WaterFeatureDesign(Document):
 		try:
 			from erpnext_enhancements.water_engineering.api.designer import run_derive
 
-			out = run_derive(model)
+			out = run_derive(model, geocode=True)
 		except Exception:
 			frappe.log_error(title="Water Feature Design derive", message=frappe.get_traceback())
 			write_issue_state(

@@ -147,6 +147,7 @@ def api(monkeypatch):
         monkeypatch.delitem(sys.modules, mod)
     module = importlib.import_module("erpnext_enhancements.water_engineering.api.designer")
     monkeypatch.setattr(module, "load_catalogs", lambda: {"pumps": []})
+    module._real_site_lookup = module.site_lookup
     monkeypatch.setattr(module, "site_lookup", lambda site: None)
     FakeDoc.saved = []
     module._frappe = frappe
@@ -345,3 +346,94 @@ def test_pushed_rows_carry_the_stock_uom(api):
     assert (row["uom"], row["stock_uom"], row["conversion_factor"]) == ("Nos", "Nos", 1)
     api.push_material_request("WFD-4")
     assert FakeDoc.saved[-1]["items"][0]["uom"] == "Nos"
+
+
+# ------------------------------------------------------------------ the #1399 review
+
+
+def test_the_page_derive_never_geocodes(api, monkeypatch):
+    def boom(site):
+        raise AssertionError("geocoded on a page derive")
+
+    monkeypatch.setattr(api, "site_lookup", boom)
+    api.derive(json.dumps(_boot_fixture()["kits"][0]["model"]))  # must not call it
+    seen = []
+    monkeypatch.setattr(api, "site_lookup", lambda site: seen.append(site) or None)
+    api.run_derive(_boot_fixture()["kits"][0]["model"], geocode=True)
+    assert seen  # a save does
+
+
+def test_a_geocode_failure_is_cached_briefly(api, monkeypatch):
+    stored = []
+    api._frappe.cache = lambda: types.SimpleNamespace(
+        get_value=lambda k: None, set_value=lambda k, v, expires_in_sec=None: stored.append(expires_in_sec))
+    sites = types.ModuleType("erpnext_enhancements.workforce.sites")
+    monkeypatch.setitem(sys.modules, "erpnext_enhancements.workforce.sites", sites)
+    for problem, ttl in (("OVER_QUERY_LIMIT", api.GEOCODE_RETRY_S), ("ZERO_RESULTS", api.GEOCODE_CACHE_S)):
+        sites.geocode_text = lambda address, problem=problem: (None, problem)
+        assert api._real_site_lookup({"address": "1 Main St"}) is None
+        assert stored[-1] == ttl
+    sites.geocode_text = lambda address: ({"lat": 40.7, "lng": -111.9}, None)
+    assert api._real_site_lookup({"address": "2 Main St"}) == {"lat": 40.7, "lng": -111.9}
+    assert stored[-1] == api.GEOCODE_CACHE_S
+
+
+def test_the_bom_rate_is_the_selling_price_and_valuation_only_for_who_may_see_it(api, monkeypatch):
+    monkeypatch.setattr(api, "list_rates", lambda codes: {c: 100 for c in codes if c == "LISTED"})
+    monkeypatch.setattr(api, "valuation_rates", lambda codes: {c: 60 for c in codes})
+    model = {"network": {"pumps": [{"item": "LISTED"}, {"item": "COSTED"}]}}
+    monkeypatch.setattr(api, "can_read_valuation", lambda: False)
+    assert api.load_prices(model)["items"] == {"LISTED": {"rate": 100}}
+    monkeypatch.setattr(api, "can_read_valuation", lambda: True)
+    assert api.load_prices(model)["items"] == {"LISTED": {"rate": 100}, "COSTED": {"rate": 60}}
+
+
+def test_a_pushed_unit_is_converted_or_flagged(api):
+    uoms = {"PIPE": {"stock": "Stick", "factors": {"Foot": 0.05}}, "PUMP": {"stock": "Nos", "factors": {}},
+            "ODD": {"stock": "Stick", "factors": {}}}
+    row, odd = api._item_row({"item_code": "PIPE", "qty": 40, "description": "2 in pipe", "uom_note": "ft"}, uoms)
+    assert (row["uom"], row["conversion_factor"], odd) == ("Foot", 0.05, False)
+    row, odd = api._item_row({"item_code": "PUMP", "qty": 1, "description": "Pump", "uom_note": "ea"}, uoms)
+    assert (row["uom"], row["conversion_factor"], odd) == ("Nos", 1, False)
+    row, odd = api._item_row({"item_code": "ODD", "qty": 11, "description": "Rail", "uom_note": "ft"}, uoms)
+    assert odd and row["uom"] == "Stick" and "11 ft" in row["description"]
+
+
+def test_a_partial_ai_payload_changes_only_what_it_names(api):
+    wd = importlib.import_module("erpnext_enhancements.water_engineering.api.water_design")
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["lighting"]["fixtures"] = [{"qty": 2, "watts": 35}]
+    model, ignored = wd.merge_legacy_payload(existing, {}, {"venue_type": "Commercial Spa", "static_lift_ft": 6})
+    assert model["site"]["venue_type"] == "Commercial Spa"
+    assert model["features"] == existing["features"] and model["lighting"] == existing["lighting"]
+    assert ignored == ["static_lift_ft"]
+    basin = {"shape": "Rectangular", "length_in": 60, "width_in": 30, "height_in": 12}
+    model, ignored = wd.merge_legacy_payload(existing, {"basins": [basin]}, {})
+    assert model["basins"][0]["length_in"] == 60 and model["setup"]["basin"] == "custom"
+    assert model["features"][0]["basin"] == model["basins"][0]["id"]
+    assert model["network"] == existing["network"] and model["kit"] == existing["kit"]
+    segs = [{"line_type": "Discharge", "nominal_size": '2"', "pipe_length_ft": 30}]
+    model, ignored = wd.merge_legacy_payload(existing, {"pipe_segments": segs, "electrical_loads": [{"hp": 1}]}, {})
+    assert model["network"] == existing["network"]  # segments alone cannot be laid against drawn features
+    assert any(i.startswith("pipe_segments") for i in ignored) and any(i.startswith("electrical_loads") for i in ignored)
+
+
+def test_a_features_only_payload_keeps_them_in_a_basin_and_a_pump_pick_brings_its_curve(api):
+    wd = importlib.import_module("erpnext_enhancements.water_engineering.api.water_design")
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["network"]["pumps"][0].update(item="OLD", curve={"points": [{"flow_gpm": 0, "head_ft": 9}]}, hp=1.5)
+    feature = {"feature_type": "Weir", "weir_length_ft": 6, "head_in": 0.25}
+    model, _ = wd.merge_legacy_payload(existing, {"features": [feature], "pumps": [{"pump_item": "NEW-5HP"}]}, {})
+    assert model["features"][0]["basin"] == existing["basins"][0]["id"]
+    pump = model["network"]["pumps"][0]
+    assert (pump["item"], pump["curve"]) == ("NEW-5HP", "NEW-5HP") and "hp" not in pump
+
+
+def test_a_text_line_on_the_placeholder_item_is_not_a_unit_mismatch(api):
+    row = {"item_code": "TEXT-LINE", "qty": 2, "description": "Concrete (2 Cubic Yard)", "uom_note": None}
+    built, odd = api._item_row(row, {"TEXT-LINE": {"stock": "Nos", "factors": {}}})
+    assert not odd and built["uom"] == "Nos" and built["description"] == "Concrete (2 Cubic Yard)"
