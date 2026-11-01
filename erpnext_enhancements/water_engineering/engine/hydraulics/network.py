@@ -74,7 +74,8 @@ The ``network`` dict (design model schema 2, PLAN.md 3.3; US units)
 
 A segment ending at a pump feeds its inlet, one starting at a pump leaves its outlet, so pumps
 in series are two pumps joined by a segment. ``control_node`` defaults to the only terminal node
-when there is one, else the pump's outlet.
+when there is one (and it is not an open discharge, whose pressure is pinned), else the pump's
+discharge (past its PRV, when it has one).
 """
 
 from __future__ import annotations
@@ -409,17 +410,20 @@ def build_network(
         terminals[tid] = {"node": nid, "kind": t.get("kind"), "links": idxs, "design_q": _design_q(t, demand), "row": t,
                           "demand": demand}
 
+    # A pressure control cannot hold an open discharge (its pressure is pinned at the overflow whatever
+    # the flow), so a network whose only terminal is one controls at the pump outlet instead.
     term_nodes = sorted({v["node"] for v in terminals.values()})
+    pinned_nodes = {v["node"] for v in terminals.values() if any(getattr(m, "p_fixed", None) is not None for m in _members(v["demand"]))}
     for pp in pumps:
         row = {**pump_rows[pp.id], **(pump_overrides.get(pp.id) or {})}
         cn = row.get("control_node")
         if pp.control in ("vfd", "prv"):
-            if cn:
-                pp.control_node = index.get(cn, pump_by_id[cn].i_out if cn in pump_by_id else None)
-            elif len(term_nodes) == 1:
+            if cn:  # a pump id means its discharge: past the PRV when it has one
+                pp.control_node = index.get(cn, pump_by_id[cn].discharge if cn in pump_by_id else None)
+            elif len(term_nodes) == 1 and term_nodes[0] not in pinned_nodes:
                 pp.control_node = index[term_nodes[0]]
             else:
-                pp.control_node = pp.i_out
+                pp.control_node = pp.discharge
             if pp.set_pa is None:
                 checks.append(make_check("control.no_setpoint", WARNING, f"Pump {pp.id}: {pp.control.upper()} has no set pressure",
                                          "Enter the set pressure, or let control derive it; solved uncontrolled.", "control", ref=pp.id))
@@ -484,16 +488,16 @@ def _floor(ds: list) -> tuple[float, float]:
     """(zero-slope threshold, floor) for one Newton step.
 
     A link is *pinned* when its slope is under 1e-8 of the median slope (an open discharge, a PRV, a
-    zero-length pipe, an orifice at no flow). It gets a slope of 1e-4 of the smallest real one: stiff
-    enough that the pinned pressure converges by four digits a step, soft enough that the head system
-    keeps about twelve good digits (a fixed tiny floor made it ill-conditioned)."""
+    zero-length pipe, an orifice at no flow). It gets a slope of 1e-3 of the smallest real one: stiff
+    enough that the pinned pressure converges by three digits a step, soft enough that the head system
+    keeps about thirteen good digits (a fixed tiny floor made it ill-conditioned)."""
     pos = sorted(d for d in ds if d > 0)
     if not pos:
         return 0.0, D_MIN
     med = pos[len(pos) // 2]
     zero = 1e-8 * med
     real = [d for d in pos if d >= zero]
-    return zero, _js.jmax(1e-4 * real[0], 1e-12) if real else D_MIN
+    return zero, _js.jmax(1e-3 * real[0], 1e-12) if real else D_MIN
 
 
 def _gauss(a: list, b: list) -> list:
@@ -665,7 +669,7 @@ def _gga(net: Network) -> tuple[bool, int]:
             prev = math.inf
             continue
         done = dq_sum <= TOL_Q * q_sum + Q_FLOOR
-        if not done and dq_sum <= 1e-12 * q_sum + Q_FLOOR and dq_sum >= 0.5 * prev:
+        if not done and dq_sum <= 1e-11 * q_sum + Q_FLOOR and dq_sum >= 0.5 * prev:
             stable += 1  # the finite-difference Jacobian has reached round-off: as close as doubles allow
             done = stable >= 3
         prev = dq_sum
