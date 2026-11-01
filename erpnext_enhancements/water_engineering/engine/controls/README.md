@@ -1,6 +1,6 @@
 # `engine/controls/` — controller and pump control design
 
-Phase L, PR 2 of the Fountain Designer rebuild (v1.759.0). Nikolas, 2026-11-01: the electrical
+Phase L, PR 2 of the Fountain Designer rebuild (v1.760.0). Nikolas, 2026-11-01: the electrical
 phase must also help design the controller and the pump control scheme, including a VFD with
 bypass.
 

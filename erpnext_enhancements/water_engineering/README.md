@@ -44,13 +44,13 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `feature.py` | Feature flow: weirs/slots (Francis), nozzle arrays, orifice nozzles from the Nozzle Profile catalog | DOC-0049 `I - Weir` |
 | `pipe.py` | Velocity, velocity-status banding, Hazen-Williams friction loss, and a size-walker that picks the smallest pipe within limits | DOC-0049 `A - Pipe Size` |
 | `tdh.py` | Total Dynamic Head: minor (fitting) loss, component loss, per-segment sum | DOC-0049 `H - TDH` |
-| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.758.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
-| `electrical/` | The electrical design (phase L, v1.758.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
+| `pump.py` | Pump selection by catalog match, plus the pump's branch breaker (`electrical_load`: the NEC 430.52 maximum since v1.759.0, with the 430.22 125% conductor figure beside it) | DOC-0049 + engineering standard (see below) |
+| `electrical/` | The electrical design (phase L, v1.759.0): load list from the design model, branch circuits (430.52 breakers, 310.16 conductors with 310.15 corrections, 250.122 EGC, voltage drop, conduit fill), feeder and service (430.24, 430.62/63), 12 V lighting and 24 V coil runs, lighting and control transformers, the Article 680 checklist, VFD, generator and battery, annual energy, BOM lines and the one-line. `electrical_report(model)` runs the chain. Module-by-article map in [`engine/electrical/README.md`](engine/electrical/README.md) | NEC 2023 tables; Digital Rain Curtain `electrical.js` (parity tests) |
 | `safety.py` | VGB / ANSI-APSP-16 suction-outlet anti-entrapment, NPSH cavitation check, Joukowsky water hammer | DOC-0049 `P - Suction Outlets`; HI standards |
 | `drainage.py` | Gravity drainage (Manning's) and surge-basin sizing (Phase 3) | DOC-0049 `10 - Gravity`, `G - Gravity`, `B - Surge Basin` |
 | `chemistry.py` | Chlorinator feed and chemical rate advisory (Phase 2) | DOC-0049 `C - Chemicals`, DOC-0119 |
 | `treatment.py` | LSI, ASHRAE evaporation, make-up water, heating load, chemical dose, UV dose, filtration area | DOC-0049 `O` sheet + standards |
-| `controls/` | Control-panel sizing: lighting relays, currents (Phase 4, the package's `__init__.py`), and since v1.759.0 the control design: per-pump topology (starter, soft starter, VFD, VFD with manual bypass and its interlock logic), drive frames with altitude and ambient derates, Splash Wizard selection with the I/O list, relays and 24 V DC supply, panel design (control transformer, enclosure, heat, SCCR, disconnect), panel BOM, Control Panel Design rows, Theory of Operation, power schematic and control ladder. `controls_report(model)` runs it. See [`engine/controls/README.md`](engine/controls/README.md) | DOC-0126, DOC-0028, DOC-0062, NEMA ICS 2, NEC 430, UL 508A SB |
+| `controls/` | Control-panel sizing: lighting relays, currents (Phase 4, the package's `__init__.py`), and since v1.760.0 the control design: per-pump topology (starter, soft starter, VFD, VFD with manual bypass and its interlock logic), drive frames with altitude and ambient derates, Splash Wizard selection with the I/O list, relays and 24 V DC supply, panel design (control transformer, enclosure, heat, SCCR, disconnect), panel BOM, Control Panel Design rows, Theory of Operation, power schematic and control ladder. `controls_report(model)` runs it. See [`engine/controls/README.md`](engine/controls/README.md) | DOC-0126, DOC-0028, DOC-0062, NEMA ICS 2, NEC 430, UL 508A SB |
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
 | `constants.py` | Physical constants, read from the workbooks' formula cells with openpyxl rather than a textbook | the workbooks |
@@ -81,7 +81,9 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 |---|---|
 | `issues.py` | The single producer of typed `DesignIssue` records and per-section readiness. The engine speaks in free-form status strings and warning sentences — good for the audit trail, useless to a designer who needs to know *what is wrong and where*. The form, wizard, list view, print formats and Triton all consume this one derived structure |
 | `api/water_design.py` | Whitelisted desk endpoints for the wizard and form JS — thin adapters over `engine/`. `save_inputs` and `get_design_state` expose the `_save_design` / `design_state` helpers the MCP tools reuse, so both surfaces share one implementation. Every endpoint gates on the `Water Feature Design` doctype, and `doc.save()` enforces document-level permission for the mutation itself |
-| `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads |
+| `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads, the aquatic-equipment fields, and (v1.758.0) the catalog fields: listing, light, filter and aerator specs and the Spec Source block |
+| `catalog_reader.py` | The catalog as plain dicts for the engine: `pump_curve_sets(item_codes)`, `nozzle_profiles(names)`, `light_specs(item_codes)`. Pump Curve records win over the Item's legacy `custom_pump_curve` table; an unpublished efficiency, NPSHr, power, spread or throw reads as None, never the stored 0; every read survives a site that has not migrated yet. 4 spaces |
+| `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
 | `workspace/water_engineering/` | Desk workspace |
@@ -105,8 +107,42 @@ Child tables and catalogs:
 | `Water Feature Electrical Load` | Electrical load rows |
 | `Water Feature Calc Result` | Persisted `CalcResult` audit trail |
 | `Water Design Issue Ack` | Designer acknowledgement of a typed issue |
-| `Nozzle Profile` | Nozzle catalog (orifice sizing input) |
-| `Pump Curve Point` | Pump curve catalog points |
+| `Nozzle Profile` | Nozzle catalog: `nozzle_type` (Orifice Jet, Foam / Aerating, Laminar, Cascade / Fan, Geyser, Bubbler, Spray Ring, Water Screen, Sheet Fall, Other), `item`, `connection_size`, `level_sensitive`, min/max water over the nozzle, `recommended_beam_deg`, the Cd and rated-GPM methods, provenance (`source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `read_method`, `error_band_pct`, `catalog_id`), `is_generic_estimate`, and the `performance` table. The controller fills head from PSI (or the reverse), sorts the rows, and warns when flow falls as head rises |
+| `Nozzle Performance Point` | Child of Nozzle Profile: `head_ft`, `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`, `depth_over_nozzle_in` |
+| `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `read_method`, `error_band_pct`, `catalog_id`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises again after its peak (beyond 1 % reading noise); a drooping curve (head climbing from shutoff to a peak) and a missing shutoff point or a gap only warn |
+| `Pump Curve Point` | Curve points: `flow_gpm`, `head_ft`, `efficiency_pct`, `npshr_ft`, `power_bhp`. Child of Pump Curve, and of Item as the legacy `custom_pump_curve` table the readers fall back to |
+
+**Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
+`custom_spec_revision`, `custom_spec_verified_by`, `custom_spec_verified_on`, `custom_generic_estimate`,
+`custom_catalog_id`, `custom_spec_confidence`, `custom_spec_method`, `custom_spec_error_band_pct`;
+lights `custom_lumens`, `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`
+(watts and volts are the shared `custom_elec_*` fields); filters `custom_filter_design_rate_gpm_sqft`,
+`custom_filter_backwash_gpm`; aerators `custom_aerator_pattern_height_ft`, `custom_aerator_pattern_diameter_ft`,
+`custom_aerator_min_depth_ft`, `custom_aerator_cord_lengths`; `custom_ul_listing`. `custom_equipment_class`
+gained Pump, Nozzle, Light, Aerator, Valve, Controller and Fitting kit, appended after the aquatic classes.
+Every Item field created in code must also be in `scripts/layout/code_owned_fields.json` and the Item
+layout spec (`tests/test_layout_field_order_coverage.py`).
+
+### Seeding the catalog
+
+The data and the approval list live in `docs/fountain-designer/catalog/`. `approved.json` names the
+rows Nikolas approved by `"Manufacturer|Model"` (case and spacing ignored) or by the row's `id`; an entry
+may be an object (`key` or `id`) with `item_code` to attach the row to an Item that already exists, or
+`item_name` to name the new one. Rows sharing a manufacturer + model (several part numbers of one model)
+are told apart by their first part number and must be approved by `id`. Floating aerators in
+`nozzles.json` (no pressure in their rows) load as Aerator Items, without a Nozzle Profile.
+The loader keys every record on the row's `id` (stamped as `custom_catalog_id` / `catalog_id`), and
+the `approved.json` id list is the gate: a row added to the data later stays unseeded until its id is
+appended. Dry run first, then write:
+
+```bash
+bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog
+bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog --kwargs "{'dry_run': 0}"
+```
+
+On an existing Item the loader writes specs and provenance only; the name, group, description and
+brand are filled when blank and never overwritten. The summary lists, per kind, what was created,
+updated, unchanged, unapproved, approved but not in the data, and refused (with the reason).
 | `Control Panel Design` | Phase-4 control panel parent |
 | `Control Pump`, `Control Light`, `Control Fuse`, `Control Interlock`, `Control IO Point` | Control-panel child rows |
 
@@ -121,12 +157,18 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_design_controller -v
 ```
 
+The catalog suite is plain pytest with its own in-memory frappe, so it runs on its own:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+```
+
 The electrical package's suites are plain pytest functions and run in their own CI step:
 
 ```bash
 python -m pytest erpnext_enhancements/tests/test_electrical_sizing.py erpnext_enhancements/tests/test_electrical_report.py erpnext_enhancements/tests/test_electrical_drc_parity.py erpnext_enhancements/tests/test_controls_design.py -q
 ```
 
-They are **golden tests**: each formula reproduces its sheet's own worked example. When you
+The engine suites are **golden tests**: each formula reproduces its sheet's own worked example. When you
 change an engine function, the failing assertion is telling you the result no longer matches
 the workbook — check the sheet before changing the expectation.
