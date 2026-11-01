@@ -14,7 +14,10 @@ ratings). DRC's OD-minus-wall figures are not used for those. The golden generat
 patches the same DOC-0049 rows into DRC's catalog before it runs
 (``tools/golden/drc/drc.mjs``), so every golden that touches one of these materials
 was regenerated with the DOC-0049 ID. Sizes DOC-0049 does not list (PVC 1/4"-1/2")
-are not offered; a custom bore covers them.
+are not offered: give the bore for them. A run with neither a catalog size nor a
+bore falls back to DRC's 25 mm default, and that is never silent: ``PipeSpec.defaulted``
+is set and every envelope card resting on it carries status ``Default Bore``.
+(Adding the ASTM D1785 small sizes is Nikolas's data call, not this module's.)
 
 Copper type L, PEX and hose keep DRC's tables (DOC-0049 has no rows for them).
 
@@ -37,6 +40,7 @@ from .units import CIT_DRC, MM_PER_IN
 from .water import area_of_si
 
 CIT_PIPE_SPECS = "DOC-0049 / 1,2,3 - Pipe Specs (OD, wall, ID, ratings) ; SUPPORT PipeType (velocity limits)"
+STATUS_DEFAULT_BORE = "Default Bore"  # set on every card that rests on the 25 mm fallback
 CIT_ROUGHNESS = "Absolute roughness: Moody (1944) / Crane TP-410 smooth-pipe values, as tabulated in DRC common.js"
 
 # DRC common.js tables for the materials DOC-0049 does not tabulate: [nominal, OD mm, wall mm].
@@ -139,6 +143,7 @@ class PipeSpec:
     psi_110f: float | None = None
     wet_lb_ft: float | None = None
     max_span_ft: float | None = None
+    defaulted: bool = False  # no catalog size and no positive fallback bore: the 25 mm default was used
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -160,18 +165,22 @@ def sizes_for(material) -> list[dict]:
     ]
 
 
-def pipe_spec_si(material, nominal=None, id_mm_fallback=25, wall_mm_fallback=3) -> PipeSpec:
-    """``pipeSpec``: the catalog size when (material, nominal) is known, else the fallback bore and wall."""
+def pipe_spec_si(material, nominal=None, id_mm_fallback=None, wall_mm_fallback=None) -> PipeSpec:
+    """``pipeSpec``: the catalog size when (material, nominal) is known, else the fallback bore and wall.
+
+    With no positive fallback bore it takes DRC's 25 mm (and 3 mm wall) and sets ``defaulted``."""
     key = resolve_material(material)
     m = MATERIALS[key] if key else MATERIALS["Custom"]
     nps = normalize_nominal(nominal)
     row = None
     if key != "Custom" and nps is not None:
         row = next((r for r in m["sizes"] if r[0] == nps), None)
+    defaulted = False
     if row:
         od_mm, wall_mm, id_mm = row[1], row[2], row[3]
     else:
         fb_id, fb_wall = _js.num(id_mm_fallback), _js.num(wall_mm_fallback)
+        defaulted = not (fb_id > 0)
         id_mm = fb_id if fb_id > 0 else 25.0
         wall_mm = fb_wall if fb_wall > 0 else 3.0
         od_mm = id_mm + 2 * wall_mm
@@ -190,7 +199,7 @@ def pipe_spec_si(material, nominal=None, id_mm_fallback=25, wall_mm_fallback=3) 
         density=m["density"],
         id_m=id_mm / 1000,
         area=area_of_si(id_mm / 1000),
-        source=m["source"] if row else "custom bore",
+        source=m["source"] if row else ("default bore (25 mm)" if defaulted else "custom bore"),
         max_suction_fps=limits["max_suction_fps"] if limits else None,
         max_discharge_fps=limits["max_discharge_fps"] if limits else None,
         legal_fps=limits["legal_fps"] if limits else None,
@@ -198,6 +207,7 @@ def pipe_spec_si(material, nominal=None, id_mm_fallback=25, wall_mm_fallback=3) 
         psi_110f=ratings["psi_110f"] if ratings else None,
         wet_lb_ft=ratings["wet_lb_ft"] if ratings else None,
         max_span_ft=ratings["max_span_ft"] if ratings else None,
+        defaulted=defaulted,
     )
 
 
@@ -256,4 +266,5 @@ def pipe_spec(material: str, nominal_size: str = "", id_in: float | None = None,
         ],
         citations=[CIT_PIPE_SPECS, CIT_ROUGHNESS, CIT_DRC],
         warnings=warnings,
+        status=STATUS_DEFAULT_BORE if spec.defaulted else None,
     )

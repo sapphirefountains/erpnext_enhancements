@@ -74,7 +74,9 @@ def interp(pts, x: float) -> float:
 class PumpCurve:
     """A pump: head (m), efficiency (%) and NPSHr (m) against flow (L/min), motor efficiency and speed.
 
-    Compared and hashed by identity (``eq=False``), so it can key a cache though it holds lists."""
+    Compared and hashed by identity (``eq=False``), so it can key a cache though it holds lists.
+    The curves are cleaned once, at construction (DRC re-cleans when a curve's content changes):
+    editing ``pump.curve`` in place afterwards is ignored, so build a new one (``dataclasses.replace``)."""
 
     curve: list = field(default_factory=list)
     eff: list = field(default_factory=list)
@@ -151,6 +153,8 @@ def pump_head_si(pump: PumpCurve, q: float, speed: float | None = None) -> float
         if not pump.quad:
             return 0.0
         h0, q_max = pump.quad
+        if not q_max > 0:
+            return 0.0  # a pump with no run-away flow delivers nothing (and DRC's q / 0 would be NaN at Q = 0)
         ratio = q / (s * q_max)
         return _js.jmax(0.0, h0 * s * s * (1 - ratio * ratio))
     x = (q * 60000) / s

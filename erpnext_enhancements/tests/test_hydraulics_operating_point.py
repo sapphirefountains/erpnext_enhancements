@@ -60,6 +60,7 @@ def system_of(sc: dict) -> System:
         control=i["control"],
         set_pa=i["setPa"],
         bypass_d_m=(i["bypassMm"] or 0) / 1000,
+        atm_pa=PATM,  # DRC's sea-level atmosphere, passed explicitly (the kernel has no default)
     )
 
 
@@ -109,7 +110,7 @@ def test_scenarios_cover_the_branches():
 W = water_si(20)
 RG = W.rho * G
 QUAD = PumpCurve(quad=(30.0, 0.01))
-BASE = System(pump=QUAD, w=W, static_m=10.0)
+BASE = System(pump=QUAD, w=W, static_m=10.0, atm_pa=PATM)
 
 
 def test_open_discharge_hand_golden():
@@ -266,3 +267,32 @@ def test_hot_water_vapor_pressure_is_not_clamped():
 def test_pump_and_system_are_hashable():
     system = replace(BASE, supply=(Segment(spec=pipe_spec_si("SCH40 PVC", '2"'), length_m=3, fittings=(("elbow_90", 1),)),))
     assert hash(QUAD) and hash(system) and {QUAD: 1}[QUAD] == 1
+
+
+def test_the_kernel_has_no_default_atmosphere():
+    """A hand-built System without atm_pa must not quietly get sea level (audit E5)."""
+    bare = System(pump=QUAD, w=W, static_m=10.0)
+    with pytest.raises(ValueError, match="atm_pa"):
+        operating_point_si(bare, OrificeDemand(1e-4))
+    with pytest.raises(ValueError, match="atm_pa"):
+        npsha_si(bare, 1e-3)
+    assert system_curve_si(bare, OrificeDemand(1e-4), 4, 0.01)  # no NPSH, no atmosphere needed
+
+
+def test_control_set_below_the_overflow_is_flagged():
+    """Weir lift 2 m, VFD set at 1 m: the drive shuts the weir off. Same arithmetic, but never silent."""
+    weir = OpenDischargeDemand(2.0, W.rho)
+    for control in ("vfd", "prv"):
+        op = operating_point_si(replace(BASE, control=control, set_pa=RG * 1.0), weir)
+        assert op.q == 0 and op.control_below_overflow, control
+    ok = operating_point_si(replace(BASE, control="vfd", set_pa=RG * 2.5), weir)
+    assert not ok.control_below_overflow and ok.open_discharge and ok.q > 0
+    r = operating_point(QUAD_US, TERMINAL, static_ft=8, control="vfd", set_psi=0.5)
+    assert r.status == "Control Below Overflow" and any("overflow" in w for w in r.warnings)
+
+
+def test_degenerate_constructors_give_js_infinities_not_exceptions():
+    assert OrificeDemand(0.0, 0, True).p_for(1e-3) == math.inf
+    assert OrificeDemand(0.0, 0, True).q(1e4) == 0
+    flat = PumpCurve(quad=(30.0, 0.0))
+    assert pump_head_si(flat, 0.0) == 0 and pump_head_si(flat, 1e-3) == 0

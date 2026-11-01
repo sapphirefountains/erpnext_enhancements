@@ -78,7 +78,10 @@ def test_doc0049_bore_governs():
     assert steel.id_mm == 4.026 * 25.4 and steel.psi_73f is None and steel.max_discharge_fps is None
     assert pipe_spec_si("Type K Copper", '1"').max_discharge_fps == 4.9
     assert pipe_spec_si("Type L Copper", '1"').max_discharge_fps == 4.9  # copper's erosion limit
-    assert pipe_spec_si("SCH40 PVC", '1/2"').nominal is None  # not in DOC-0049: a custom bore
+    half = pipe_spec_si("SCH40 PVC", '1/2"')  # not in DOC-0049
+    assert half.nominal is None and half.defaulted and half.source == "default bore (25 mm)"
+    assert not pipe_spec_si("SCH40 PVC", '1/2"', 15.8).defaulted and not s.defaulted
+    assert pipe_spec("SCH40 PVC", '1/2"').status == "Default Bore" and pipe_spec("SCH40 PVC", '2"').status is None
 
 
 def test_name_normalization():

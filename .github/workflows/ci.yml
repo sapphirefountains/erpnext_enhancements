@@ -2472,7 +2472,7 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
-      # Fountain Designer phase A (v1.758.0): the Darcy solver in engine/hydraulics/, ported from the
+      # Fountain Designer phase A (v1.760.0): the Darcy solver in engine/hydraulics/, ported from the
       # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
       # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of
       # their own -- `python -m unittest` would collect nothing and report success. No Node needed:
@@ -2488,6 +2488,27 @@ jobs:
           erpnext_enhancements/tests/test_hydraulics_pump.py
           erpnext_enhancements/tests/test_hydraulics_terminals.py
           erpnext_enhancements/tests/test_hydraulics_operating_point.py
+      # Fountain Designer catalog (v1.758.0). PLAIN PYTEST FUNCTIONS with their own in-memory
+      # frappe, so their own `python -m pytest` step (unittest would collect nothing). Guards the
+      # approved-seed loader -- only approved rows, provenance on every record, a second run
+      # changing nothing, one bad row not stopping the rest, an existing Item's name and
+      # description never overwritten -- plus the Pump Curve / nozzle point checks, the remap
+      # patch writing only live Select options, and api/water_design.pump_curves preferring
+      # Pump Curve records over the Item's legacy table.
+      - name: Water engineering catalog (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+      # Fountain Designer phase C (v1.759.0): the feature-family rules, the schema-2 design model,
+      # the kits and the Sapphire house rules. Plain pytest functions, so their own pytest step:
+      # `python -m unittest` would collect none of them. test_water_house_rules puts its frappe
+      # stub in sys.modules only for the length of each test (monkeypatch), so it shares the step.
+      - name: Fountain Designer families, model and house rules (bench-free pytest suite)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_families_weir.py
+          erpnext_enhancements/tests/test_families_jets.py
+          erpnext_enhancements/tests/test_families_others.py
+          erpnext_enhancements/tests/test_water_model.py
+          erpnext_enhancements/tests/test_water_house_rules.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops

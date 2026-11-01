@@ -26,7 +26,7 @@ from ..constants import HW_C_PVC, HW_CONSTANT
 from ..envelope import CalcResult, make_input
 from ..tdh import segment_loss_results as workbook_segment_cards
 from . import _js
-from .catalog import PipeSpec, pipe_spec_si
+from .catalog import STATUS_DEFAULT_BORE, PipeSpec, pipe_spec_si
 from .fittings import (
     CIT_COMPONENTS,
     CIT_DARBY,
@@ -62,6 +62,12 @@ class Segment:
     line: str = ""  # "suction" | "discharge" | ""
     note: str = ""  # set by from_us when the row named no catalog size and no bore
 
+    def __post_init__(self):
+        # N identical parallel branches: fewer than one has no meaning (0 would divide by zero, a
+        # negative count would flip the flow's sign), so it reads as one.
+        b = int(self.branches) if self.branches == self.branches and self.branches else 1
+        object.__setattr__(self, "branches", b if b >= 1 else 1)
+
     @classmethod
     def from_us(cls, row: dict) -> Segment:
         """A segment from the US-customary row shape the TDH sheet and the design model share:
@@ -77,7 +83,7 @@ class Segment:
         )
         comps = tuple((c.get("key") or c.get("type"), float(c.get("qty", c.get("count", 1)) or 0)) for c in row.get("components") or [])
         note = ""
-        if spec.nominal is None and not id_in:
+        if spec.defaulted:
             note = (
                 f"{row.get('material') or 'SCH40 PVC'} {row.get('nominal_size') or '(no size)'} is not in the catalog "
                 "and the row gives no id_in: solved with a 25 mm (0.98 in) default bore. Pick a catalog size or enter the ID."
@@ -284,6 +290,7 @@ def segment_loss(
             ],
             citations=[CIT_DARCY, CIT_CHURCHILL, CIT_DRC],
             warnings=[seg.note] if seg.note else [],
+            status=STATUS_DEFAULT_BORE if seg.spec.defaulted else None,
         )
     ]
     if seg.fittings or seg.k_extra:
@@ -345,8 +352,8 @@ def segment_loss(
             steps=[f"{c.calc}: {c.value:.4f} ft" for c in wb_cards if not c.calc.startswith("Component")]
             + [f"workbook {wb_pipe:.4f} ft vs Darcy {darcy_pipe:.4f} ft -> {rel:+.1%} ({status})"],
             citations=[CIT_CROSSCHECK, "DOC-0049 / H - TDH"],
-            warnings=warnings,
-            status=status,
+            warnings=warnings + ([seg.note] if seg.note else []),
+            status=STATUS_DEFAULT_BORE if seg.spec.defaulted else status,
         )
     )
     return cards
@@ -380,6 +387,7 @@ def _loss_card(calc: str, segs: list[Segment], rows: list[dict], flow_gpm: float
         steps=steps,
         citations=[CIT_DARCY, CIT_CHURCHILL, CIT_DARBY, CIT_DRC],
         warnings=warnings,
+        status=STATUS_DEFAULT_BORE if any(s.spec.defaulted for s in segs) else None,
     )
 
 

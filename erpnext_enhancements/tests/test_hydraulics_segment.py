@@ -172,3 +172,22 @@ def test_crosscheck_leaves_k_extra_out_of_both_sides():
     extra = segment_loss({**base, "k_extra": 8}, 50)[-1]
     assert extra.status == plain.status and extra.steps[-1] == plain.steps[-1]
     assert any("K_extra" in w for w in extra.warnings)
+
+
+def test_branches_below_one_read_as_one():
+    spec = pipe_spec_si("SCH40 PVC", '2"')
+    one = Segment(spec=spec, length_m=10)
+    w = water_si(20)
+    for b in (0, -2):
+        seg = Segment(spec=spec, length_m=10, branches=b)
+        assert seg.branches == 1 and segment_loss_si(seg, 2e-3, w) == segment_loss_si(one, 2e-3, w)
+
+
+def test_default_bore_is_a_status_not_just_a_sentence():
+    """1/2" PVC is not in DOC-0049: with no id_in the run rests on the 25 mm default, and every card says so."""
+    row = {"label": "Nozzle feed", "material": "SCH40 PVC", "nominal_size": '1/2"', "length_ft": 20}
+    cards = segment_loss(row, 8)
+    assert all(c.status == "Default Bore" for c in (cards[0], cards[-1]))
+    assert supply_loss([row], 8).status == "Default Bore"
+    given = segment_loss({**row, "id_in": 0.622}, 8)
+    assert given[0].status is None and abs(given[0].inputs["id"]["value"] - 0.622) < 1e-9
