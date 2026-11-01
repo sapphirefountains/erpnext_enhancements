@@ -103,11 +103,14 @@ def gravel_base(shell, rules: dict | None = None) -> CalcResult:
     rules = merged_rules(rules)
     s = _sv(shell)
     depth_in = float(rules["gravel_in"])
+    fill = float(s.get("ledge_fill_cuft") or 0.0)
     if s.get("rim_above_grade_ft") is None or depth_in <= 0:
-        return CalcResult(calc="structural_gravel_base", value={"cuft": 0.0, "yd3": 0.0, "tons": 0.0},
-                          unit="ton", steps=["basin on a structure: no gravel base"],
-                          citations=[CIT_DOC0119_GRAVEL], warnings=[DISCLAIMER])
-    cuft = s["footprint_sqft"] * depth_in / 12.0 + float(s.get("ledge_fill_cuft") or 0.0)
+        if not fill:
+            return CalcResult(calc="structural_gravel_base", value={"cuft": 0.0, "yd3": 0.0, "tons": 0.0},
+                              unit="ton", steps=["basin on a structure: no gravel base"],
+                              citations=[CIT_DOC0119_GRAVEL], warnings=[DISCLAIMER])
+        depth_in = 0.0  # no base under a basin on a structure, but its stepped-floor fill still counts
+    cuft = s["footprint_sqft"] * depth_in / 12.0 + fill
     yd3 = cuft / 27.0
     tons = yd3 * float(rules["gravel_tons_per_yd3"]) * (1 + float(rules["gravel_waste"]))
     return CalcResult(
@@ -264,14 +267,17 @@ def coating_area(shell, rules: dict | None = None) -> CalcResult:
     rules = merged_rules(rules)
     s = _sv(shell)
     tops = s["wall_centerline_ft"] * s["wall_in"] / 12.0
+    riser_faces = sum(r["length_ft"] * r["height_ft"] for r in s.get("risers") or [])
     if s["kind"] == "vault":
         below = min(s["slab_bottom_depth_ft"], s["wall_height_ft"] + (s["slab_in"] + s["lid_in"]) / 12.0)
         coat = s["outside_perimeter_ft"] * below
         where = "outside faces below grade (dry vault)"
     else:
-        coat = s["wall_area_inside_sqft"] + s["inside_area_sqft"] + (tops if rules["coat_wall_tops"] else 0.0)
-        where = "inside walls + floor" + (" + wall tops" if rules["coat_wall_tops"] else "")
-    curing = (s["wall_area_inside_sqft"] + s["inside_area_sqft"] + tops
+        coat = (s["wall_area_inside_sqft"] + s["inside_area_sqft"] + riser_faces
+                + (tops if rules["coat_wall_tops"] else 0.0))
+        where = "inside walls + floor" + (" + step risers" if riser_faces else "") + \
+            (" + wall tops" if rules["coat_wall_tops"] else "")
+    curing = (s["wall_area_inside_sqft"] + s["inside_area_sqft"] + tops + riser_faces
               + s["outside_perimeter_ft"] * s["wall_above_grade_ft"] + s.get("lid_area_sqft", 0.0))
     return CalcResult(
         calc="structural_coating_area",

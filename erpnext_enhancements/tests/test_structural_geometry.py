@@ -93,6 +93,14 @@ def test_stepped_floor_water_and_ledge():
     assert g["concrete_cuft"]["ledge_slab"] == approx(100 * 8 / 12)
     assert g["ledge_fill_cuft"] == approx(100 * (2 - 8 / 12))
     assert g["concrete_cuft"]["risers"] == approx(10 * 2 * 8 / 12)
+    # walls deeper than every step: each zone stands on a ledge down to the slab at 48 in
+    deep = shell(dict(basin, depth_in=48))
+    assert deep["concrete_cuft"]["ledge"] == approx(100 * 3.0 + 100 * 1.0)
+    # a 4 in step on an 8 in slab: the gravel option's raised slab is only 4 in thick
+    thin = basin_shell(dict(basin, steps=[{"depth_in": 32, "area_fraction": 0.5},
+                                         {"depth_in": 36, "area_fraction": 0.5}]), 8, 8, {"step_ledge": "gravel"})
+    assert thin.value["concrete_cuft"]["ledge_slab"] == approx(100 * 4 / 12)
+    assert thin.value["ledge_fill_cuft"] == 0.0
 
 
 def test_bad_inputs_are_named_not_used():

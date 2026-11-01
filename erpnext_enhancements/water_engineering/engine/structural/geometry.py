@@ -112,10 +112,10 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
 
     problems: list[str] = []
 
-    def positive(key, value, allow_zero=False):
+    def positive(key, value, allow_zero=False, zero_is_blank=False):
         """A number ≥ 0 (or > 0), or None with a note; a negative never reaches the math."""
         num = _opt(value)
-        if num is None:
+        if num is None or (num == 0 and zero_is_blank):
             return None
         if num < 0 or (num == 0 and not allow_zero):
             problems.append(f"{key} = {value!r} ignored (must be {'≥' if allow_zero else '>'} 0)")
@@ -168,8 +168,8 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         "corner_count": None if corners is None else int(corners),
         "rim_above_grade_in": _opt(get("rim_above_grade_in", None)),
         "lid": lid,
-        "slab_in": positive("slab_in", get("slab_in", None)),
-        "wall_in": positive("wall_in", get("wall_in", None)),
+        "slab_in": positive("slab_in", get("slab_in", None), zero_is_blank=True),
+        "wall_in": positive("wall_in", get("wall_in", None), zero_is_blank=True),
         "groundwater_depth_ft": gw if gw is not None else _opt(site.get("groundwater_depth_ft")),
         "soil_bearing_psf": positive("soil_bearing_psf", get("soil_bearing_psf", None))
         or positive("site.soil_bearing_psf", site.get("soil_bearing_psf")),
@@ -313,13 +313,13 @@ def basin_shell(
             risers.append({"length_ft": riser_len, "height_ft": (hi - lo) / 12.0})
         # the raised (shallower) floor zones stand on the deep slab: a ledge per zone
         frac_sum = sum(z["area_fraction"] for z in spec["steps"])
-        deepest = max(depths)
-        ledges = [(plan["inside_area"] * z["area_fraction"] / frac_sum, (deepest - z["depth_in"]) / 12.0)
-                  for z in spec["steps"] if z["depth_in"] < deepest]
+        slab_level = spec["depth_in"]  # the slab sits at depth_in, which is never above the deepest step
+        ledges = [(plan["inside_area"] * z["area_fraction"] / frac_sum, (slab_level - z["depth_in"]) / 12.0)
+                  for z in spec["steps"] if z["depth_in"] < slab_level]
         if str(rules["step_ledge"]).lower() == "gravel":
             ledge_slab_area = sum(a for a, _ in ledges)
             ledge_fill = sum(a * max(hgt - slab, 0.0) for a, hgt in ledges)
-            vol["ledge_slab"] = ledge_slab_area * slab
+            vol["ledge_slab"] = sum(a * min(hgt, slab) for a, hgt in ledges)
             vol["risers"] = sum(r["length_ft"] * r["height_ft"] * slab for r in risers)
             ledge_note = (f"raised floor = {ledge_slab_area:.2f} ft² slab on {ledge_fill:.2f} ft³ of compacted "
                           f"gravel, plus {len(risers)} riser wall(s) × {riser_len:.2f} ft")

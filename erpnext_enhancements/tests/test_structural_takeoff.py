@@ -269,4 +269,4 @@ def test_vault_coating_has_its_own_line_and_keys_stay_unique():
     assert "outside faces" in bom["structural.coating.exterior"]["description"]
     keys = [c["key"] for c in t["checks"]]
     assert len(keys) == len(set(keys))
-    assert "STRUCT_ACI350_ST|Pool (2)" in keys
+    assert {"STRUCT_ACI350_ST|Pool [b1]", "STRUCT_ACI350_ST|Pool [b2]"} <= set(keys)

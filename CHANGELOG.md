@@ -78,7 +78,9 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
   before, they produced negative volumes and phantom bars.
 - An incomplete basin says which input is missing.
 - A dry vault's exterior membrane gets its own BOM line.
-- Two basins with the same label no longer share a check key.
+- Two basins with the same label no longer share a check key. Each takes its basin id, which stays
+  stable when the basins are reordered.
+- Step risers take the membrane and the curing compound.
 - The shell and the thickness pick use one rim-above-grade rule.
 - The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
 

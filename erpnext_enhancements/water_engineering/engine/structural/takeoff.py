@@ -283,12 +283,12 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
     for line in bom.values():
         line["qty"] = _r(line["qty"], 2) if line["uom"] not in ("Nos",) else int(math.ceil(line["qty"] - 1e-9))
         lines.append(line)
-    seen: dict[str, int] = {}
-    for c in checks:  # two basins with the same label must not share an acknowledgement key
-        n = seen.get(c["key"], 0) + 1
-        seen[c["key"]] = n
-        if n > 1:
-            c["key"] = f"{c['key']} ({n})"
+    counts: dict[str, int] = {}
+    for c in checks:
+        counts[c["key"]] = counts.get(c["key"], 0) + 1
+    for c in checks:  # two basins with the same label: tell them apart by id, stable when reordered
+        if counts[c["key"]] > 1 and c.get("basin"):
+            c["key"] = f"{c['key']} [{c['basin']}]"
     sev = {BLOCKER: 0, WARNING: 1, INFO: 2}
     checks.sort(key=lambda c: sev[c["severity"]])
     return {
