@@ -27,7 +27,7 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
     and ACI 350 fill in: 12 in minimum for walls 10 ft and taller, and two mats over 10 in.
   - **Checks.** All are engineering aids:
     - the wall with water to the rim (62.4·h, triangular), and the empty wall with 60 pcf of
-      backfill, both checked for flexure and shear;
+      backfill (plus water pressure below a given water table), both checked for flexure and shear;
     - cover;
     - ACI 350 shrinkage steel;
     - uplift of the empty shell against a water table, factor of safety 1.3;

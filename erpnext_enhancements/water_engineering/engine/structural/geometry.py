@@ -58,6 +58,17 @@ def _num(value, default=0.0) -> float:
         return float(default)
 
 
+def _opt(value):
+    """A number, or ``None`` for a missing or blank value (a cleared form
+    field arrives as "")."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None) -> dict:
     """Flatten one model basin (plus site-level soil facts) into the keys the
     structural calcs read. Keys under ``basin["structure"]`` win over the same
@@ -105,7 +116,8 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
             "hatch_width_in": _num(given.get("hatch_width_in"), rules["vault_hatch_in"]),
         }
 
-    freeboard = get("freeboard_in", None)
+    freeboard = _opt(get("freeboard_in", None))
+    gw = _opt(get("groundwater_depth_ft", None))
     return {
         "_spec": True,
         "id": basin.get("id") or "",
@@ -119,17 +131,17 @@ def basin_spec(basin: dict, site: dict | None = None, rules: dict | None = None)
         "area_sqft": _num(get("area_sqft")),
         "perimeter_ft": _num(get("perimeter_ft")),
         "depth_in": depth_in,
-        "freeboard_in": None if freeboard is None else _num(freeboard),
+        "freeboard_in": freeboard,
         "steps": steps,
         "riser_length_ft": _num(get("riser_length_ft")) or None,
-        "corner_count": get("corner_count", None),
-        "rim_above_grade_in": get("rim_above_grade_in", None),
+        "corner_count": _opt(get("corner_count", None)),
+        "rim_above_grade_in": _opt(get("rim_above_grade_in", None)),
         "lid": lid,
         "slab_in": _num(get("slab_in")) or None,
         "wall_in": _num(get("wall_in")) or None,
-        "groundwater_depth_ft": get("groundwater_depth_ft", site.get("groundwater_depth_ft")),
-        "soil_bearing_psf": get("soil_bearing_psf", site.get("soil_bearing_psf")),
-        "floor_capacity_psf": get("floor_capacity_psf", None),
+        "groundwater_depth_ft": gw if gw is not None else _opt(site.get("groundwater_depth_ft")),
+        "soil_bearing_psf": _opt(get("soil_bearing_psf", None)) or _opt(site.get("soil_bearing_psf")),
+        "floor_capacity_psf": _opt(get("floor_capacity_psf", None)),
     }
 
 
@@ -184,7 +196,9 @@ def _plan(spec: dict, t_ft: float) -> dict | None:
     return None
 
 
-def basin_shell(basin: dict, slab_in: float, wall_in: float, rules: dict | None = None) -> CalcResult:
+def basin_shell(
+    basin: dict, slab_in: float, wall_in: float, rules: dict | None = None, site: dict | None = None
+) -> CalcResult:
     """Areas, lengths and volumes of one basin's concrete shell and its water.
 
     ``basin`` is a model basin or a ``basin_spec`` result. Returns a
@@ -192,7 +206,7 @@ def basin_shell(basin: dict, slab_in: float, wall_in: float, rules: dict | None 
     feet, cubic feet and gallons.
     """
     rules = merged_rules(rules)
-    spec = basin if (basin or {}).get("_spec") else basin_spec(basin, rules=rules)
+    spec = basin if (basin or {}).get("_spec") else basin_spec(basin, site, rules)
     calc = "structural_basin_shell"
     citations = ["Plane geometry; Steiner's formula for a convex outline grown by a constant offset"]
     t_in, s_in = float(wall_in or 0), float(slab_in or 0)
@@ -216,7 +230,7 @@ def basin_shell(basin: dict, slab_in: float, wall_in: float, rules: dict | None 
     steps_out = []
     h = spec["depth_in"] / 12.0
     slab = s_in / 12.0
-    corners = plan["corners"] if spec["corner_count"] is None else int(_num(spec["corner_count"]))
+    corners = plan["corners"] if spec["corner_count"] is None else int(spec["corner_count"])
 
     # water
     if spec["kind"] == "vault":
@@ -273,7 +287,7 @@ def basin_shell(basin: dict, slab_in: float, wall_in: float, rules: dict | None 
     if spec["placement"] == "on_structure":
         rim_above = None
     elif spec["rim_above_grade_in"] is not None:
-        rim_above = _num(spec["rim_above_grade_in"]) / 12.0
+        rim_above = spec["rim_above_grade_in"] / 12.0
     elif spec["placement"] == "raised":
         rim_above = h
     elif spec["kind"] == "vault":

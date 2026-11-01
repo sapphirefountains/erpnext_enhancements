@@ -18,6 +18,8 @@ Source tags:
 
 from __future__ import annotations
 
+import copy
+
 DISCLAIMER = "Engineering aid for quantities and early checks, not a stamped structural design"
 
 # --- citations --------------------------------------------------------------
@@ -159,7 +161,7 @@ def merged_rules(rules: dict | None = None) -> dict:
     """``DEFAULT_RULES`` overlaid with the caller's rules (``None`` values in
     ``rules`` fall back to the default, so a blank Settings field never zeroes
     a rule)."""
-    out = dict(DEFAULT_RULES)
+    out = copy.deepcopy(DEFAULT_RULES)
     for key, value in (rules or {}).items():
         if value is not None:
             out[key] = value

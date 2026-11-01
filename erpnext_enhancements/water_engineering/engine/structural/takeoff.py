@@ -45,6 +45,7 @@ from .sizing import (
     bearing_check,
     cover_check,
     floor_load,
+    lateral_soil_heights,
     select_thickness,
     shrinkage_temperature_check,
     uplift_check,
@@ -62,7 +63,7 @@ def _check(code, severity, spec, title, detail, remedy, citation):
             "remedy": remedy, "section": SECTION, "basin": spec.get("id"), "citation": citation}
 
 
-def _checks(spec, det, shell, res) -> list[dict]:
+def _checks(spec, det, shell, res, rules) -> list[dict]:
     out = []
     s = shell.value
     if det.value["beyond_standard_details"]:
@@ -115,10 +116,11 @@ def _checks(spec, det, shell, res) -> list[dict]:
                           f"The basin puts {fl.value['pressure_psf']:.0f} psf on the floor it stands on.",
                           "Enter the floor's live-load capacity or ask the building's engineer.", fl.citations[0]))
     ex = res["excavation"]
-    if ex.value.get("depth_ft", 0) + 1e-9 >= 5.0:
+    depth = ex.value.get("depth_ft", 0.0)
+    if depth + 1e-9 >= float(rules["excavation_slope_free_ft"]):
         out.append(_check("STRUCT_EXCAVATION_DEPTH", INFO, spec, "Excavation needs a protective system",
-                          ex.warnings[-1], "Slope, bench or shore the excavation; a competent person on site.",
-                          CIT_OSHA_SLOPE))
+                          f"Excavation {depth:.1f} ft deep: OSHA protective system required (sloped or shored).",
+                          "Slope, bench or shore the excavation; a competent person on site.", CIT_OSHA_SLOPE))
     return out
 
 
@@ -145,7 +147,7 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
         "waterstop_ft", "sealant_ft", "coating_sqft", "curing_sqft", "penetrations", "water_gal", "chairs",
         "tie_wire_lb")}
     stock = f"{float(rules['stock_length_ft']):g}"
-    mix = mix_notes(rules, site)
+    mix = mix_notes(rules)
 
     def add(key, description, qty, uom, item_hint, **extra):
         if qty <= 0:
@@ -172,11 +174,11 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
         res["wall_water"] = (None if spec["kind"] == "vault" else
                              wall_bending_check(h, d["wall_in"], d["wall_bar"], d["wall_spacing_in"],
                                                 d["wall_mats"], rules, case="water"))
-        res["wall_soil"] = (wall_bending_check(s["wall_below_grade_ft"], d["wall_in"], d["wall_bar"],
-                                               d["wall_spacing_in"], d["wall_mats"], rules, case="soil",
-                                               top="pinned" if (spec["lid"] or {}).get("type") == "concrete"
-                                               else "free")
-                            if s["wall_below_grade_ft"] > 0 else None)
+        soil_h, gw_h = lateral_soil_heights(h, s["rim_above_grade_ft"], s["groundwater_depth_ft"])
+        res["wall_soil"] = (wall_bending_check(soil_h, d["wall_in"], d["wall_bar"], d["wall_spacing_in"],
+                                               d["wall_mats"], rules, case="soil",
+                                               top="pinned" if s["lid_in"] else "free", groundwater_ft=gw_h)
+                            if soil_h > 0 else None)
         res["cover_wall"] = cover_check(d["wall_in"], d["wall_bar"], d["wall_mats"], rules)
         res["cover_slab"] = cover_check(d["slab_in"], d["slab_bar"], d["slab_mats"], rules)
         res["joints"] = joints(shell, rules)
@@ -196,7 +198,7 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
         res["penetrations"] = penetrations(model, spec["id"])
         res["rebar"] = rebar_schedule(shell, det, rules)
 
-        basin_checks = _checks(spec, det, shell, res)
+        basin_checks = _checks(spec, det, shell, res, rules)
         checks += basin_checks
         rb = res["rebar"].value
         for mk in rb["marks"]:
@@ -267,6 +269,8 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
     add("structural.anchors", "Anchor bolts, stainless wedge, equipment", anchors.value["count"], "Nos",
         "anchor_bolt_ss_wedge")
     totals["anchors"] = anchors.value["count"]
+    for key in ("penetrations", "chairs"):
+        totals[key] = int(totals[key])
     totals["trucks"] = math.ceil(totals["concrete_order_yd3"] / float(rules["truck_yd3"]) - 1e-9) \
         if totals["concrete_order_yd3"] > 0 else 0
 

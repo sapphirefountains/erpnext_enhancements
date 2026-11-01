@@ -119,6 +119,7 @@ def wall_bending_check(
     unit_weight_pcf: float | None = None,
     case: str = "water",
     top: str = "free",
+    groundwater_ft: float = 0.0,
 ) -> CalcResult:
     """Wall fixed at the slab under triangular pressure: the bar area flexure
     needs against the bar area the detail gives, and one-way shear at the base.
@@ -126,7 +127,10 @@ def wall_bending_check(
     ``case`` is "water" (full to the rim, tension on the water face) or "soil"
     (empty basin, backfill pushing in at ``soil_efp_pcf``). ``top`` is "free"
     (a cantilever: M = γh³/6, V = γh²/2) or "pinned" (a vault wall propped by
-    its lid: M = γh³/15, V = 2γh²/5 at the base)."""
+    its lid: M = γh³/15, V = 2γh²/5 at the base). ``groundwater_ft`` is how
+    far the water table stands above the wall's base in the soil case; that
+    much water pressure (62.4 pcf, triangular from the water table down) is
+    added to the soil's, which keeps its full unit weight (conservative)."""
     rules = merged_rules(rules)
     g = float(unit_weight_pcf if unit_weight_pcf is not None else
               (rules["water_pcf"] if case == "water" else rules["soil_efp_pcf"]))
@@ -135,15 +139,17 @@ def wall_bending_check(
     b = 12.0
     bar = rebar(bar_size)
     d = effective_depth_in(wall_in, bar_size, mats, rules["cover_in"])
-    load = hydrostatic_pressure(h, g).value
     pinned = str(top).lower() == "pinned"
-    m_base = g * h ** 3 / 15.0 if pinned else load["base_moment_lb_ft_per_ft"]
-    v_base = 2.0 * g * h * h / 5.0 if pinned else load["resultant_lb_per_ft"]
+    hw = min(max(float(groundwater_ft or 0), 0.0), h) if case == "soil" else 0.0
+    g_w = float(rules["water_pcf"])
+    m_base = (g * h ** 3 + g_w * hw ** 3) / (15.0 if pinned else 6.0)
+    v_base = (g * h * h + g_w * hw * hw) * (2.0 / 5.0 if pinned else 0.5)
     factor = float(rules["load_factor"]) * float(rules["durability_factor"])
     mu = factor * m_base * 12.0  # lb·in per ft
     vu = float(rules["load_factor"]) * v_base
     steps = [f"d = {d:.3f} in ({'two mats' if mats >= 2 else 'one centered mat'})",
-             f"M = γh³/{15 if pinned else 6} = {m_base:.2f} lb·ft/ft ({'propped by the lid' if pinned else 'cantilever'})",
+             f"M = (γh³ + γw·hw³)/{15 if pinned else 6} with hw = {hw:.2f} ft of groundwater = {m_base:.2f} "
+             f"lb·ft/ft ({'propped by the lid' if pinned else 'cantilever'})",
              f"Mu = {rules['load_factor']:g} × {rules['durability_factor']:g} × {m_base:.2f}"
              f" × 12 = {mu:.1f} lb·in/ft"]
     warnings = [DISCLAIMER]
@@ -173,7 +179,7 @@ def wall_bending_check(
         warnings.append(f"Shear: Vu {vu:.0f} lb/ft exceeds φVc {phi_vc:.0f} lb/ft.")
     return CalcResult(
         calc="structural_wall_bending",
-        value={"case": case, "top": "pinned" if pinned else "free", "height_ft": h, "unit_weight_pcf": g, "d_in": d, "mu_lb_in_per_ft": mu,
+        value={"case": case, "top": "pinned" if pinned else "free", "height_ft": h, "groundwater_ft": hw, "unit_weight_pcf": g, "d_in": d, "mu_lb_in_per_ft": mu,
                "as_required_in2_per_ft": as_req, "as_provided_in2_per_ft": as_prov, "vu_lb_per_ft": vu,
                "phi_vc_lb_per_ft": phi_vc, "flexure_ok": flex_ok, "shear_ok": shear_ok,
                "utilization": (as_req / as_prov) if as_prov else None},
@@ -254,6 +260,19 @@ def shrinkage_temperature_check(
     )
 
 
+def lateral_soil_heights(wall_height_ft: float, rim_above_grade_ft, groundwater_depth_ft=None) -> tuple:
+    """(backfill height on the wall, water-table height above the wall's
+    base) for a wall whose rim stands ``rim_above_grade_ft`` above grade
+    (``None`` for a basin on a structure: no soil)."""
+    h = float(wall_height_ft)
+    if rim_above_grade_ft is None:
+        return 0.0, 0.0
+    soil_h = min(max(h - float(rim_above_grade_ft), 0.0), h)
+    if groundwater_depth_ft is None:
+        return soil_h, 0.0
+    return soil_h, min(max(h - float(rim_above_grade_ft) - float(groundwater_depth_ft), 0.0), soil_h)
+
+
 def select_thickness(basin_spec: dict, rules: dict | None = None) -> CalcResult:
     """Slab and wall thickness and their bar details for one basin.
 
@@ -275,7 +294,18 @@ def select_thickness(basin_spec: dict, rules: dict | None = None) -> CalcResult:
         citations.append(CIT_ACI350_WALL)
         steps.append(f"wall height {h:.2f} ft ≥ {rules['aci350_tall_wall_ft']:g} ft: ACI 350 minimum "
                      f"{rules['aci350_tall_wall_min_in']:g} in (DOC-0119 is silent on height)")
-    soil_h = h if spec.get("placement") == "in_grade" else 0.0
+    lid = spec.get("lid") or {}
+    if spec.get("placement") == "on_structure":
+        rim = None
+    elif spec.get("rim_above_grade_in") is not None:
+        rim = float(spec["rim_above_grade_in"]) / 12.0
+    elif spec.get("placement") == "raised":
+        rim = h
+    elif spec.get("kind") == "vault" and lid.get("type") == "concrete":
+        rim = -float(lid.get("thickness_in") or slab_in) / 12.0
+    else:
+        rim = 0.0
+    soil_h, gw_h = lateral_soil_heights(h, rim, spec.get("groundwater_depth_ft"))
     water_h = 0.0 if spec.get("kind") == "vault" else h
     top = "pinned" if (spec.get("lid") or {}).get("type") == "concrete" else "free"
     beyond = False
@@ -291,7 +321,7 @@ def select_thickness(basin_spec: dict, rules: dict | None = None) -> CalcResult:
             det = detail_for_wall(t, rules)
             water = wall_bending_check(water_h, t, det["bar"], det["spacing_in"], det["mats"], rules, case="water")
             soil = wall_bending_check(soil_h, t, det["bar"], det["spacing_in"], det["mats"], rules, case="soil",
-                                      top=top)
+                                      top=top, groundwater_ft=gw_h)
             fits = cover_check(t, det["bar"], det["mats"], rules).status == "ok"
             if water.status == "ok" and soil.status == "ok" and fits:
                 wall_in = t

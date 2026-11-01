@@ -72,7 +72,7 @@ def concrete_volumes(shell, rules: dict | None = None) -> CalcResult:
     )
 
 
-def mix_notes(rules: dict | None = None, site: dict | None = None) -> CalcResult:
+def mix_notes(rules: dict | None = None) -> CalcResult:
     """The mix the drawings should call for: ACI 318 exposure F2 (wet and
     freezing, Utah winters) and ACI 350's environmental limits, plus
     DOC-0119's waterproofing admixture."""
@@ -327,7 +327,8 @@ def anchor_bolts(model: dict | None, rules: dict | None = None) -> CalcResult:
     other = 0
     for row in model.get("equipment") or []:
         if str(row.get("slot") or "").lower() in slots:
-            other += int(row.get("qty") or 1)
+            qty = row.get("qty")
+            other += 1 if qty is None or qty == "" else max(int(float(qty)), 0)
     per = int(rules["anchors_per_equipment"])
     count = (len(pumps) + other) * per
     return CalcResult(

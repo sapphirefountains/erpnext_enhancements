@@ -30,7 +30,7 @@ are paraphrased; the document itself stays in Drive.
 
 | # | Rule (paraphrased) | DOC-0119 section | Where the engine uses it |
 |---|---|---|---|
-| D1 | Two routes: a structural engineer's analysis (worth it on large, costly projects) or the "Big & Beefy" details, which are stout but not optimised and need no analysis | Concrete Design; Structural Analysis; Big & Beefy | `select_thickness` flags a basin beyond the details with `STRUCT_BEYOND_STANDARD` and sends it to an engineer |
+| D1 | Two routes: a structural engineer's analysis (worth it on large, costly projects) or the "Big & Beefy" details, which are stout but not optimized and need no analysis | Concrete Design; Structural Analysis; Big & Beefy | `select_thickness` flags a basin beyond the details with `STRUCT_BEYOND_STANDARD` and sends it to an engineer |
 | D2 | Keep at least 2 in of concrete between any outside face and anything embedded (rebar, pipe, waterstop) | Big & Beefy; Rebar | `cover_in` = 2; `cover_check`; bar lengths stop 2 in short of each face |
 | D3 | Stem walls 4 to 6 in thick, tied into the floor with U-shaped bars | Big & Beefy | `stem_wall_min_in` / `stem_wall_max_in`; wall verticals are L-bars into the floor mat |
 | D4 | Floors (slabs) 8 in thick | Big & Beefy | `slab_in` = 8 |
@@ -90,7 +90,7 @@ Each is a key in `DEFAULT_RULES`, editable through the `rules` dict (phase C's S
 | Load and durability factors for the wall check | 1.6 and 1.3 | ACI 318 Table 5.3.1; ACI 350-01 §9.2.6 |
 | Bar supports, spacers, ties | chairs and spacers at 4 ft each way; a tie at every intersection, 8 in of 16 ga wire each | CRSI practice; house rule |
 | Equipment anchors | 4 per floor-mounted pump, filter, heater, UV, chlorinator, control panel | house rule |
-| Equipment pads | not modelled | DOC-0119 silent |
+| Equipment pads | not modeled | DOC-0119 silent |
 | Vault walls and lid | vault walls propped by a concrete lid; lid quantities only, 36 in hatch | house rule; lid span and traffic load need an engineer |
 | Coating wall tops | off | house rule |
 | Unit costs (concrete per yd³, rebar per lb, gravel per ton) | `None` | Sapphire's cost register has none yet |
@@ -176,7 +176,8 @@ BOM keys: `structural.concrete`, `structural.admixture`, `structural.rebar.#4.lb
   volume = (footprint − inside) × height; slab = footprint × slab thickness. Freeform outlines grow
   by Steiner's formula, so a freeform with a circle's area and perimeter equals the cylinder.
 * **Walls.** Fixed at the slab, free at the top (a vault wall under a concrete lid is propped:
-  M = γh³/15). Two cases, each alone: full of water to the rim, and empty with backfill at 60 pcf.
+  M = γh³/15). Two cases, each alone: full of water to the rim, and empty with backfill at 60 pcf
+  plus water pressure below a given water table.
   Flexure by the ACI stress block with Mu = 1.6 × 1.3 × M, one-way shear against φ·2√f'c·b·d.
 * **Rebar.** Counts are `ceil(run/s)+1` on an open run, `ceil(loop/s)` round a closed loop. Bars
   longer than stock are lapped; every cut is packed into 20 ft (and 40 ft) bars first-fit-decreasing,

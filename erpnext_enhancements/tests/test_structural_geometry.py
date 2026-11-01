@@ -204,3 +204,51 @@ def test_deep_excavation_is_sloped():
     by_hand = w * w * D + 4 * w * k * D * D / 2 + 4 * k * k * D ** 3 / 3
     assert ex["yd3"] == approx(by_hand / 27)
     assert "STRUCT_EXCAVATION_DEPTH" in {c["code"] for c in t["checks"]}
+
+
+def test_blank_form_values_read_as_missing():
+    t = structural_takeoff({"basins": [{"id": "b", "label": "B", "shape": "rectangular", "length_in": 120,
+                                        "width_in": 72, "depth_in": 18, "groundwater_depth_ft": "",
+                                        "corner_count": "", "rim_above_grade_in": " ", "freeboard_in": ""}],
+                            "site": {"groundwater_depth_ft": ""}})
+    b = t["basins"][0]
+    assert b["results"]["uplift"]["status"] == "n/a"
+    assert b["geometry"]["corner_count"] == 4  # blank falls back to the rectangle's corners
+    assert b["geometry"]["rim_above_grade_ft"] == 0.0
+    assert b["geometry"]["freeboard_in"] == 2.0
+
+
+def test_groundwater_adds_to_the_soil_case():
+    # 6 ft wall, water table 2 ft below grade: 4 ft of water pressure on top of 60 pcf soil
+    # M = (60 × 216 + 62.4 × 64) / 6 = 2,825.6 lb·ft/ft
+    dry = wall_bending_check(6.0, 8, 4, 16, 1, case="soil").value
+    wet = wall_bending_check(6.0, 8, 4, 16, 1, case="soil", groundwater_ft=4.0).value
+    assert wet["mu_lb_in_per_ft"] == approx(1.6 * 1.3 * (60 * 216 + 62.4 * 64) / 6 * 12)
+    assert wet["mu_lb_in_per_ft"] > dry["mu_lb_in_per_ft"]
+    t = structural_takeoff({"basins": [{"id": "b", "label": "B", "shape": "rectangular", "length_in": 120,
+                                        "width_in": 120, "depth_in": 72, "wall_in": 8,
+                                        "groundwater_depth_ft": 2}]})
+    assert t["basins"][0]["results"]["wall_soil"]["value"]["groundwater_ft"] == approx(4.0)
+
+
+def test_rules_defaults_are_not_shared():
+    from erpnext_enhancements.water_engineering.engine.structural import DEFAULT_RULES, merged_rules
+
+    rules = merged_rules()
+    rules["wall_details"].append({"wall_in": 12.0, "bar": 5, "spacing_in": 12.0})
+    assert len(DEFAULT_RULES["wall_details"]) == 2
+
+
+def test_anchor_qty_zero_is_zero():
+    from erpnext_enhancements.water_engineering.engine.structural import anchor_bolts
+
+    assert anchor_bolts({"equipment": [{"slot": "filter", "qty": 0}, {"slot": "heater"}]}).value["count"] == 4
+
+
+def test_excavation_check_follows_the_rule():
+    deep = {"id": "d", "label": "D", "shape": "rectangular", "length_in": 120, "width_in": 120, "depth_in": 36}
+    # dig 3 + 8/12 + 1 = 4.67 ft: no check at the 5 ft default, a check when the rule is 4 ft
+    assert "STRUCT_EXCAVATION_DEPTH" not in {c["code"] for c in structural_takeoff({"basins": [deep]})["checks"]}
+    checks = structural_takeoff({"basins": [deep]}, {"excavation_slope_free_ft": 4})["checks"]
+    ex = [c for c in checks if c["code"] == "STRUCT_EXCAVATION_DEPTH"]
+    assert ex and "4.7 ft deep" in ex[0]["detail"]
