@@ -76,7 +76,12 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
     aerator fields and no Nozzle Profile.
   - Notes on a Pump Curve or Nozzle Profile are written once and then left to whoever edits them.
 - **`water_engineering/catalog_reader.py`**: `pump_curve_sets`, `nozzle_profiles` and `light_specs`, the plain-dict read
-  interface for the design engine's `derive()`.
+  interface for the design engine's `derive()`. An unpublished efficiency, NPSHr or power (and a nozzle row's spread or
+  throw) reads as None, not the 0 a NOT NULL DEFAULT 0 child column stores: 162 of the 169 research pumps publish none
+  of the three, and `npshr_ft: 0` would pass every NPSH check. Efficiency at zero flow stays 0, which is true at shutoff.
+- `seed_catalog` passes `dry_run` to `load_catalog` as sent. Running it through `cint` first turned `frappe.call`'s
+  `"true"` (and "yes", "on") into 0, so asking for a dry run by name wrote every approved row. Now only "0", "false",
+  "no", "off", 0 or False write.
 - **Catalog editor**: the Item form's Pump Specifications section (now shown for item group Pumps *or* equipment class
   Pump) has a Pump Curves panel listing the Item's curves, best first, charted together, with New Pump Curve. A Pump
   Curve charts head vs flow live; a Nozzle Profile charts display height and flow vs head. A Generic-estimate banner
@@ -84,7 +89,7 @@ site until someone runs the loader, and the loader only loads rows listed in `ap
   spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
   New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
   user who cannot read them).
-- `tests/test_water_catalog.py` (60 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+- `tests/test_water_catalog.py` (70 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
   rows.
 
 ### Changed

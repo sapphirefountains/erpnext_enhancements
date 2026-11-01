@@ -20,6 +20,11 @@ What these are careful about:
   then a sourced curve before a generic estimate, then the larger impeller, then the most
   recently changed. ``api/water_design.pump_curves`` takes the first; ``derive()`` may look
   at all of them (a VFD design wants the reduced-speed curves too).
+* **Unknown reads as None, not 0.** Child Float columns are NOT NULL DEFAULT 0, so a point
+  saved without efficiency, NPSHr or power stores 0, and 162 of the 169 research pumps publish
+  none of the three. :func:`_point` turns those zeros back into None (efficiency at zero flow
+  excepted: it is 0 at shutoff by definition), and a nozzle row's spread and throw likewise. A
+  ``derive()`` reading ``npshr_ft: 0`` as "needs no suction head" would pass every NPSH check.
 * **Never raises on a site that has not migrated yet.** ``doc_events`` and the wizard can
   run during a migrate, before the new tables or columns exist, so each read falls back to
   less (the legacy fields, or nothing) instead of failing the caller.
@@ -146,8 +151,16 @@ def _clean(row, keys):
     return out
 
 
+#: Optional point values a stored 0 means "not published" for. See the module docstring.
+UNKNOWN_IF_ZERO = {"efficiency_pct", "npshr_ft", "power_bhp", "display_diameter_ft", "throw_ft"}
+
+
 def _point(row, keys):
-    return {k: row.get(k) for k in keys if k != "parent"}
+    point = {k: row.get(k) for k in keys if k != "parent"}
+    for key in UNKNOWN_IF_ZERO & set(point):
+        if point[key] in (0, 0.0, "") and not (key == "efficiency_pct" and not point.get("flow_gpm")):
+            point[key] = None
+    return point
 
 
 def curve_rank(curve):

@@ -918,3 +918,42 @@ def test_a_wiggle_within_reading_noise_after_the_peak_only_warns(fake):
     points = [(0, 176.1), (20, 175.3), (40, 175.7), (80, 170.0), (120, 150.0)]
     _ordered, errors, warnings = check_points([{"flow_gpm": f, "head_ft": h} for f, h in points])
     assert errors == [] and any("within reading noise" in w for w in warnings)
+
+
+def test_unpublished_point_values_read_as_none_not_zero(fake):
+    """A NOT NULL DEFAULT 0 column stores 0 for "not published"; the reader must not pass it on."""
+    fake.insert(
+        FakeDoc(
+            fake,
+            {"doctype": "Pump Curve", "item": "500999", "curve_label": "Z", "source": "Digitized", "speed_pct": 100,
+             "points": [
+                 {"flow_gpm": 0, "head_ft": 30, "efficiency_pct": 0, "npshr_ft": 0, "power_bhp": 0},
+                 {"flow_gpm": 20, "head_ft": 20, "efficiency_pct": 0, "npshr_ft": 0, "power_bhp": 0},
+                 {"flow_gpm": 40, "head_ft": 8, "efficiency_pct": 55, "npshr_ft": 7.5, "power_bhp": 1.1},
+             ]},
+        )
+    )
+    from erpnext_enhancements.water_engineering import catalog_reader
+
+    points = catalog_reader.pump_curve_sets(["500999"])["500999"][0]["points"]
+    assert points[0] == {"flow_gpm": 0, "head_ft": 30, "efficiency_pct": 0, "npshr_ft": None, "power_bhp": None}
+    assert points[1]["efficiency_pct"] is None and points[1]["npshr_ft"] is None
+    assert points[2] == {"flow_gpm": 40, "head_ft": 8, "efficiency_pct": 55, "npshr_ft": 7.5, "power_bhp": 1.1}
+
+
+@pytest.mark.parametrize("sent", ["true", "yes", "on", "1", 1, True])
+def test_the_endpoint_treats_every_spelling_of_true_as_a_dry_run(fake, monkeypatch, sent):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    monkeypatch.setattr(catalog_seed, "CATALOG_DIR", FIXTURES)
+    assert catalog_seed.seed_catalog(dry_run=sent)["dry_run"] is True
+    assert fake.inserts == []
+
+
+@pytest.mark.parametrize("sent", ["false", "0", 0])
+def test_the_endpoint_writes_only_for_an_explicit_no(fake, monkeypatch, sent):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    monkeypatch.setattr(catalog_seed, "CATALOG_DIR", FIXTURES)
+    assert catalog_seed.seed_catalog(dry_run=sent)["dry_run"] is False
+    assert fake.inserts

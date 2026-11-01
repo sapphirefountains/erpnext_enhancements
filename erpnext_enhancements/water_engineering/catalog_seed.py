@@ -1058,6 +1058,11 @@ def load_catalog(catalog_dir=None, dry_run=True):
 
 @frappe.whitelist(methods=["POST"])
 def seed_catalog(dry_run=1):
-	"""System Manager: :func:`load_catalog` from the repo's catalog folder. ``dry_run`` defaults to 1."""
+	"""System Manager: :func:`load_catalog` from the repo's catalog folder. ``dry_run`` defaults to 1.
+
+	``dry_run`` goes through raw: ``load_catalog`` writes only for an explicit no ("0", "false",
+	"no", "off", 0, False). ``cint`` here would turn ``frappe.call``'s ``"true"`` (and "yes", "on")
+	into 0, a dry run requested by name becoming a write of every approved row.
+	"""
 	frappe.only_for("System Manager")
-	return load_catalog(dry_run=frappe.utils.cint(dry_run))
+	return load_catalog(dry_run=dry_run)
