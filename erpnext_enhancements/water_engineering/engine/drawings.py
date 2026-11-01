@@ -6,12 +6,18 @@ functions build a self-contained inline ``<svg>`` string from a plain state dict
 (no frappe, unit-testable) that wkhtmltopdf renders reliably — literal colors (no
 CSS variables, since print has no theme), no external refs, no script.
 
-Two drawings:
+Four drawings:
 
 * :func:`circulation_schematic_svg` — the equipment train (basin -> pump ->
   filter -> heater -> return) as a left-to-right rail of labeled boxes.
 * :func:`electrical_oneline_svg` — the panel one-line: a service bus with the
   main breaker and a branch tap per load, plus the control transformer.
+* :func:`power_schematic_svg` — the control panel's power circuit: service,
+  disconnect, a column per pump with its breaker and starter, drive or
+  drive-with-bypass contactor arrangement down to the motor, and the
+  transformers (phase L, ``engine/controls``).
+* :func:`control_ladder_svg` — the control ladder: two rails and a rung per
+  control circuit (E-stop, HOA, run, fault, bypass, wind stages, level, lights).
 
 They render whatever nodes/branches they are given; ``packet.py`` builds the
 state from a Water Feature Design + its linked Control Panel Design.
@@ -222,3 +228,183 @@ def electrical_oneline_svg(state: dict[str, Any] | None = None) -> str:
         parts.append(_box(branch_x, int(y - box_h / 2), box_w, box_h, lines, fill="#eef6ff"))
         y += row_h
     return _wrap(width, height, "".join(parts), title)
+
+
+def _seg(x1, y1, x2, y2, color=_BORDER, width=2):
+    return f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" stroke="{color}" stroke-width="{width}"/>'
+
+
+def _small_box(cx, y, label, w=96, h=26, fill=_BOX):
+    return _box(int(cx - w / 2), int(y), w, h, [label], fill=fill)
+
+
+def _motor(cx, cy, label):
+    return (
+        f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="18" fill="{_BOX}" stroke="{_BORDER}" stroke-width="1.5"/>'
+        f'<text x="{cx:.0f}" y="{cy + 4:.0f}" text-anchor="middle" font-size="12" font-weight="bold" fill="{_INK}">M</text>'
+        f'<text x="{cx:.0f}" y="{cy + 34:.0f}" text-anchor="middle" font-size="10" fill="{_INK}">{_esc(label)}</text>'
+    )
+
+
+def power_schematic_svg(state: dict[str, Any] | None = None) -> str:
+    """Control-panel power schematic. ``state`` = ``{title, service:{label},
+    disconnect:{label}, spd, pumps:[{tag, label, topology, breaker, contactor,
+    overload, vfd, sub}], transformers:[{label}]}``. ``topology`` is one of
+    across_the_line / soft_starter / vfd / vfd_bypass; a bypass column draws the
+    line (K1) and output (K2) contactors around the drive and the bypass
+    contactor (K3) with its overload beside it, rejoining at the motor."""
+    state = state or {}
+    pumps = state.get("pumps") or []
+    xfmrs = state.get("transformers") or []
+    title = state.get("title") or "Power Schematic"
+    col_w = 150
+    bypass_extra = 110
+    left = 30
+    widths = [col_w + (bypass_extra if p.get("topology") == "vfd_bypass" else 0) for p in pumps]
+    width = max(680, left + 190 + sum(widths) + len(xfmrs) * col_w + 30)
+    height = 470
+    bus_y = 110
+    parts = []
+    svc = state.get("service") or {}
+    parts.append(_box(left, 40, 150, 34, [svc.get("label") or "Service"]))
+    disc = (state.get("disconnect") or {}).get("label")
+    parts.append(_seg(left + 75, 74, left + 75, 84))
+    parts.append(_box(left, 84, 150, 22 if not disc else 22, [disc or "Main disconnect"], fill="#fff7e6"))
+    parts.append(_seg(left + 150, bus_y - 15, width - 20, bus_y - 15, _BORDER, 3))
+    parts.append(f'<text x="{left + 160}" y="{bus_y - 20}" font-size="9" fill="{_MUTED}">Line bus</text>')
+    if state.get("spd"):
+        parts.append(_small_box(left + 75, 130, "SPD Type 2", 90, 22, fill="#eef6ff"))
+        parts.append(_seg(left + 75, 106, left + 75, 130, _MUTED, 1))
+    x = left + 190
+    for p, w in zip(pumps, widths, strict=True):
+        cx = x + col_w / 2
+        parts.append(_seg(cx, bus_y - 15, cx, bus_y + 5))
+        parts.append(_small_box(cx, bus_y + 5, str(p.get("breaker") or "Breaker")))
+        y = bus_y + 31
+        topo = p.get("topology") or "across_the_line"
+        if topo == "vfd_bypass":
+            bx = cx + bypass_extra
+            parts.append(_seg(cx, y, cx, y + 14))
+            parts.append(_seg(cx, y + 7, bx, y + 7))
+            parts.append(_seg(bx, y + 7, bx, y + 20))
+            parts.append(_small_box(cx, y + 14, f"{p.get('tag')}-K1 line", fill="#fff7e6"))
+            parts.append(_seg(cx, y + 40, cx, y + 54))
+            parts.append(_small_box(cx, y + 54, str(p.get("vfd") or "VFD"), fill="#fff7e6"))
+            parts.append(_seg(cx, y + 80, cx, y + 94))
+            parts.append(_small_box(cx, y + 94, f"{p.get('tag')}-K2 output", fill="#fff7e6"))
+            parts.append(_small_box(bx, y + 20, f"{p.get('tag')}-K3 bypass", fill="#fdecea"))
+            parts.append(_seg(bx, y + 46, bx, y + 74))
+            parts.append(_small_box(bx, y + 74, str(p.get("overload") or "OL"), fill="#fdecea"))
+            parts.append(_seg(bx, y + 100, bx, y + 140))
+            parts.append(_seg(cx, y + 120, cx, y + 140))
+            parts.append(_seg(cx, y + 140, bx, y + 140))
+            parts.append(f'<text x="{(cx + bx) / 2:.0f}" y="{y + 134:.0f}" text-anchor="middle" font-size="8" '
+                         f'fill="{_MUTED}">K2 / K3 interlocked</text>')
+            parts.append(_seg(cx, y + 140, cx, y + 180))
+            y = y + 180
+        else:
+            parts.append(_seg(cx, y, cx, y + 14))
+            if topo in ("vfd",):
+                parts.append(_small_box(cx, y + 14, str(p.get("vfd") or "VFD"), fill="#fff7e6"))
+                y += 40
+            elif topo == "soft_starter":
+                parts.append(_small_box(cx, y + 14, str(p.get("contactor") or "Soft starter"), fill="#fff7e6"))
+                y += 40
+            else:
+                parts.append(_small_box(cx, y + 14, str(p.get("contactor") or "Contactor")))
+                parts.append(_seg(cx, y + 40, cx, y + 54))
+                parts.append(_small_box(cx, y + 54, str(p.get("overload") or "OL")))
+                y += 80
+            parts.append(_seg(cx, y, cx, y + 40))
+            y += 40
+        parts.append(_motor(cx, y + 18, f"{p.get('tag')} {p.get('label') or ''}".strip()))
+        if p.get("sub"):
+            parts.append(f'<text x="{cx:.0f}" y="{y + 64:.0f}" text-anchor="middle" font-size="9" '
+                         f'fill="{_MUTED}">{_esc(p["sub"])}</text>')
+        x += w
+    for xf in xfmrs:
+        cx = x + col_w / 2
+        parts.append(_seg(cx, bus_y - 15, cx, bus_y + 5))
+        parts.append(_small_box(cx, bus_y + 5, "Breaker"))
+        parts.append(_seg(cx, bus_y + 31, cx, bus_y + 45))
+        parts.append(_box(int(cx - 60), bus_y + 45, 120, 40, [xf.get("label") or "Transformer"], fill="#eef6ff"))
+        x += col_w
+    if not pumps and not xfmrs:
+        parts.append(f'<text x="{left + 190}" y="{bus_y + 40}" font-size="11" fill="{_MUTED}">No motor circuits.</text>')
+    return _wrap(int(width), height, "".join(parts), title)
+
+
+def _ladder_element(x, y, el):
+    kind = el.get("type")
+    label = _esc(el.get("label", ""))
+    out = []
+    if kind in ("no", "nc"):
+        out.append(_seg(x, y - 9, x, y + 9, _INK))
+        out.append(_seg(x + 12, y - 9, x + 12, y + 9, _INK))
+        if kind == "nc":
+            out.append(_seg(x - 2, y + 9, x + 14, y - 9, _INK, 1.5))
+        out.append(f'<text x="{x + 6}" y="{y - 13}" text-anchor="middle" font-size="8" fill="{_MUTED}">{label}</text>')
+        return out, 12
+    if kind in ("coil", "light"):
+        r = 10
+        fill = {"green": "#c6f6d5", "red": "#fed7d7"}.get(el.get("color"), "#ffffff")
+        out.append(f'<circle cx="{x + r}" cy="{y}" r="{r}" fill="{fill if kind == "light" else "#ffffff"}" '
+                   f'stroke="{_INK}" stroke-width="1.5"/>')
+        if kind == "light":
+            out.append(_seg(x + r - 6, y - 6, x + r + 6, y + 6, _INK, 1))
+            out.append(_seg(x + r - 6, y + 6, x + r + 6, y - 6, _INK, 1))
+        out.append(f'<text x="{x + r}" y="{y - 14}" text-anchor="middle" font-size="8" fill="{_MUTED}">{label}</text>')
+        return out, 2 * r
+    # a labeled box for anything else (selector positions, controller outputs)
+    w = max(40, 6 * len(el.get("label", "")))
+    out.append(f'<rect x="{x}" y="{y - 9}" width="{w}" height="18" rx="3" fill="{_BOX}" stroke="{_BORDER}"/>')
+    out.append(f'<text x="{x + w / 2:.0f}" y="{y + 4}" text-anchor="middle" font-size="8" fill="{_INK}">{label}</text>')
+    return out, w
+
+
+def control_ladder_svg(state: dict[str, Any] | None = None) -> str:
+    """Control ladder. ``state`` = ``{title, supply, rungs:[{label, elements:[
+    {type: no|nc|coil|light|box, label, color}]}]}``. Contacts run left to right
+    from the left rail; the last coil or light sits against the right rail."""
+    state = state or {}
+    rungs = state.get("rungs") or []
+    title = state.get("title") or "Control Ladder"
+    left, right = 70, 640
+    top = 70
+    row_h = 44
+    height = top + max(len(rungs), 1) * row_h + 40
+    parts = [
+        f'<text x="{left}" y="{top - 26}" font-size="10" fill="{_MUTED}">{_esc(state.get("supply") or "")}</text>',
+        _seg(left, top - 14, left, top + max(len(rungs), 1) * row_h - 20, _INK, 2),
+        _seg(right, top - 14, right, top + max(len(rungs), 1) * row_h - 20, _INK, 2),
+        f'<text x="{left - 6}" y="{top - 18}" text-anchor="end" font-size="9" fill="{_INK}">X1</text>',
+        f'<text x="{right + 6}" y="{top - 18}" font-size="9" fill="{_INK}">X2</text>',
+    ]
+    y = top
+    for i, rung in enumerate(rungs, start=1):
+        parts.append(f'<text x="{left - 10}" y="{y + 4}" text-anchor="end" font-size="9" fill="{_MUTED}">{i}</text>')
+        els = rung.get("elements") or []
+        coils = [e for e in els if e.get("type") in ("coil", "light")]
+        contacts = [e for e in els if e.get("type") not in ("coil", "light")]
+        x = left + 20
+        parts.append(_seg(left, y, x, y, _INK, 1.5))
+        for el in contacts:
+            svg, w = _ladder_element(x, y, el)
+            parts += svg
+            nx = x + w + 18
+            parts.append(_seg(x + w, y, nx, y, _INK, 1.5))
+            x = nx
+        end = right - 40
+        parts.append(_seg(x, y, end, y, _INK, 1.5))
+        for el in coils[-1:]:
+            svg, w = _ladder_element(end, y, el)
+            parts += svg
+            parts.append(_seg(end + w, y, right, y, _INK, 1.5))
+        if not coils:
+            parts.append(_seg(end, y, right, y, _INK, 1.5))
+        if rung.get("label"):
+            parts.append(f'<text x="{right + 10}" y="{y + 4}" font-size="9" fill="{_INK}">{_esc(rung["label"])}</text>')
+        y += row_h
+    if not rungs:
+        parts.append(f'<text x="{left + 20}" y="{top + 10}" font-size="11" fill="{_MUTED}">No control circuits.</text>')
+    return _wrap(right + 170, height, "".join(parts), title)

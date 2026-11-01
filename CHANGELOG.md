@@ -7,7 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.758.0] - 2026-11-01
+## [1.759.0] - 2026-11-01
+
+ERPNext: TASK-2026-03030 (under TASK-2026-03018), phase L, PR 2. It is stacked on 1.758.0, the
+electrical package. Nikolas, 2026-11-01: the electrical phase must also help design the controller
+and the pump control scheme, with a VFD with bypass included.
+
+### Added: `engine/controls/` package
+
+`engine/controls.py` became `engine/controls/__init__.py` with its content kept whole. So
+`calc_lighting`, `calc_solenoid_relays`, `lighting_sizing` and the seeded interlock and I/O lists
+import as before.
+
+New modules:
+
+- **`topology.py`: how each pump is started and run.**
+  - **Schemes:** across-the-line starter (NEMA ICS 2 size or IEC AC-3 frame, plus an overload relay
+    of class 10 or 20, set to the nameplate FLA, tripping at no more than 125% under 430.32(A)(1)),
+    soft starter, VFD, or VFD with manual bypass.
+  - **The bypass:** line, output and bypass contactors, the K2/K3 interlock, Hand-Off-Auto, a
+    VFD/Bypass selector, an overload in the bypass path, and optional automatic transfer on a drive
+    fault.
+  - **`recommend_topology`** picks a scheme from size and duty (wind stages, show modulation,
+    circulation, generator power) and gives its reasons.
+  - **`bypass_truth_table`** checks all 192 states: K2 and K3 never close together, and nothing runs
+    on E-stop or OFF.
+- **`vfd.py`: the drive frame.**
+  - **Derates:** altitude above 3,300 ft (every Wasatch Front job), ambient above 40 °C, and
+    single-phase input. All three are typical drive-maker figures and are labeled as such.
+  - **Also:** input fuses per the listing (430.130), heat loss, reactors and filters by lead length,
+    a carrier-frequency and inverter-duty-motor note, and the bypass contactor size.
+- **`controller.py`: the controller.**
+  - **The Splash Wizard part** is picked by valve count: Basic, PLUS or MAX, 6 or 9 valves, plus
+    expansions (DOC-0028 500624-500631, WP-40 500615/500616).
+  - **Industrial (PLC)** is recommended when the design needs something DOC-0062's SDP001 does not
+    list, such as a drive speed reference, DMX, 4-20 mA inputs or automatic bypass transfer.
+  - **The I/O list** is generated from the design. Per pump: run, fault and speed. Also level and
+    fill, wind (two stages), E-stop, flow proof, temperature, ORP/pH, one output per valve,
+    lighting relays or DMX universes, and push button.
+  - **Also:** relay and SSR counts (DOC-0126), the 24 V DC supply, and the seeded interlocks plus
+    each pump's bypass interlocks.
+- **`panel.py`: the panel.**
+  - Control transformer VA from the coils, pilot lights, controller and DC supply
+    (`control_transformer_va` is kept).
+  - Enclosure size from component footprints, plus 30% for wire duct and 20% spare, using the
+    Polycase YH-161407 backplane 500656 where it fits.
+  - NEMA type: 3R outdoors, 4X near chemicals, 12 indoors.
+  - A heat check that calls for a fan in CFM, or an air conditioner in BTU/h.
+  - SCCR per UL 508A Supplement SB: the weakest component governs, checked against the available
+    fault current.
+  - Main disconnect (430.110), Type 2 SPD, terminal counts, and internal wire sizes and colors.
+- **`outputs.py`.**
+  - A panel BOM in the electrical shape plus `part_no`.
+  - Control Panel Design parent fields and child rows, using exactly the fieldnames of Control Pump,
+    Light, Fuse, Interlock and IO Point.
+  - A draft Theory of Operation.
+- **`drawings.py`** builds the states for two new SVGs in `engine/drawings.py`:
+  - **`power_schematic_svg`:** service, disconnect, SPD, a column per pump with its breaker and
+    starter, or the K1-VFD-K2 path beside K3 and its overload, and the transformers.
+  - **`control_ladder_svg`:** an MCR behind the E-stop, then per pump the HOA, level and overload
+    permissives, the run coil or K2/K3, and the run and fault lights; also wind stages, autofill and
+    lighting.
+
+`controls_report(model)` runs the chain for phase E's `derive()`.
+
+### Tests
+
+`test_controls_design.py`, 37 pytest cases. It runs in the existing electrical pytest step, renamed
+"electrical and controls". Its hand goldens:
+
+- **A 5 HP, 230 V, single-phase pump:**
+  - NEMA size 1P, or size 2 where 1P isn't made.
+  - A 32 A AC-3 contactor.
+  - A 23-32 A overload range.
+  - A VFD frame of 10 HP at sea level, 15 HP at 4,500 ft on single-phase input.
+- **The bypass truth table** and each of its interlock rules.
+- **A control transformer** of 64 VA, which rounds up to 75 VA.
+- **An enclosure heat check** that fails and asks for a 27 CFM fan.
+- **The Control Panel Design rows,** checked against the child tables' JSON fieldnames.
+
+
 
 ERPNext: TASK-2026-03018 "Fountain Designer rebuild" (PRJ-00580), phase L. Nikolas, 2026-11-01:
 electrical calculations as a first-class deliverable (PLAN.md sections 1, 2.2 step 10, 3.1 and 4).
