@@ -51,12 +51,14 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `treatment.py` | LSI, ASHRAE evaporation, make-up water, heating load, chemical dose, UV dose, filtration area | DOC-0049 `O` sheet + standards |
 | `controls.py` | Control-panel sizing: lighting relays, currents (Phase 4) | DOC-0126 |
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
+| `structural/` | Basin and vault structure (Fountain Designer phase S): slab and wall thickness from the standard details, rebar schedule, concrete, gravel, excavation, formwork, joints, waterproofing, penetrations, anchors, and hydrostatic, uplift, bearing and floor-load checks as engineering aids. `structural_takeoff(model, rules)` returns one dict with quantities, checks and BOM lines. Its [`README.md`](engine/structural/README.md) lists every DOC-0119 rule and the gaps filled from ACI 318/350 | DOC-0119 `Concrete Design`; ACI 318/350 where DOC-0119 is silent |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
 | `constants.py` | Physical constants, read from the workbooks' formula cells with openpyxl rather than a textbook | the workbooks |
 | `units.py` | Unit conversions | — |
 | `data/pipe_specs.py` | Pipe ID + velocity-limit table | DOC-0049 `SUPPORT` → `PipeType` |
 | `data/fittings.py` | Minor-loss K-factors and component head-loss coefficients | DOC-0049 `H - TDH` |
 | `data/drainage.py` | Gravity-drain pipe table (ID + Manning's n) | DOC-0049 `SUPPORT` → `GravityPipes` |
+| `data/rebar.py` | Rebar diameters, areas and weights (#3 to #8) and stock lengths | ASTM A615 Table 1 |
 | `data/chemistry.py` | Ozone contact-tank catalog and water-balance target ranges | DOC-0049 `SUPPORT` → `ContactTanks`, DOC-0119 |
 
 ### Where the workbook stops and engineering standard starts
