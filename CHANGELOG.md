@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.765.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on
+2026-11-01 how much rebar and concrete a basin of a given size needs. This adds the engine package
+that answers it. Nothing is wired to a page, an endpoint or a DocType yet; phase E's `derive()` will
+call it.
+
+**What the deploy does.** Nothing at runtime. There are no migrations, fixtures, patches or hooks.
+The change is pure engine code (stdlib only, never imports frappe) and its tests.
+
+### Added
+- `water_engineering/engine/structural/`: the quantity takeoff for basins and equipment vaults.
+  - **Shapes.** Rectangular, cylindrical and freeform basins (freeform by area and perimeter),
+    stepped floors, walls in grade or raised, a basin on a slab or roof, and a vault with a lid.
+  - **Thickness.** Slab and wall thickness come from DOC-0119's standard details: 2 in cover, 8 in
+    floors, its wall table (8 in wall with #4 at 16 in, 10 in wall with #4 at 12 in), wall bars with
+    24 in legs into the floor mat, and #4 at 18 in for the slab. Where DOC-0119 is silent, ACI 318
+    and ACI 350 fill in: 12 in minimum for walls 10 ft and taller, and two mats over 10 in.
+  - **Checks.** All are engineering aids:
+    - the wall with water to the rim (62.4·h, triangular), and the empty wall with 60 pcf of
+      backfill (plus water pressure below a given water table), both checked for flexure and shear;
+    - cover;
+    - ACI 350 shrinkage steel;
+    - uplift of the empty shell against a water table, factor of safety 1.3;
+    - soil bearing;
+    - floor load for a basin on a slab or roof.
+  - **Rebar schedule.** Bar marks per element, corner bars, lapped bars (ACI Class B; 40 bar
+    diameters on request) and hooks. Cuts are packed into 20 ft and 40 ft stock bars, with chairs,
+    spacers and tie wire.
+  - **Quantities.** Concrete by element with 10% waste, ordered in quarter yards and 10 yd³ trucks,
+    plus mix notes (F2 freeze-thaw exposure, w/cm 0.45, 6% air, DOC-0119's crystalline admixture).
+    Also: the 12 in gravel base, excavation with working room and OSHA slopes, backfill and
+    haul-off, formwork, waterstop at cold joints, joint sealant, coating and curing areas, a
+    Link-Seal per pipe through the shell (from the design network), and equipment anchors.
+  - `structural_takeoff(model, rules)` returns one dict: per-basin quantities and CalcResults, the
+    rebar schedule, typed checks in `issues.py`'s `CODE|label` key shape, totals, and BOM lines in
+    the `{section, key, description, qty, uom, item_hint}` shape. A bar-count line has
+    `priced: false` so it is not priced twice beside its pound line.
+  - Every rule is a key in `defaults.DEFAULT_RULES` with its source in `RULE_SOURCES`, ready for
+    Water Engineering Settings. Unit costs stay `None`, because the cost register has none yet.
+- `engine/structural/README.md`: every structural rule DOC-0119 states, paraphrased, with its
+  section, and the rules it does not state, which Nikolas and the designers should set as house
+  rules. It also records where DOC-0119 contradicts itself or ACI:
+  - "4 to 6 in" stem walls appear beside an 8 in / 10 in wall table.
+  - A 4 in wall cannot hold 2 in cover around crossing #4 bars.
+  - #4 at 16–18 in is lighter than ACI 350's shrinkage minimum.
+- `engine/data/rebar.py`: ASTM A615 diameters, areas and weights for bars #3 to #8.
+- Tests: `test_structural_takeoff.py` has hand goldens for Nikolas's example basin (10 × 6 ft,
+  18 in deep, 6 in slab, 8 in walls):
+  - 2.823 yd³ net, ordered as 3.25 yd³ in one truck;
+  - 328.33 ft and 219.33 lb of #4, bought as 18 bars of 20 ft (240.48 lb);
+  - 4.74 t of gravel;
+  - 19.31 yd³ of excavation;
+  - uplift factor of safety 1.10 with the water table at grade.
+
+  `test_structural_geometry.py` checks shape round trips (a freeform circle equals the cylinder)
+  and the sizing checks by hand. Both are pytest suites with their own CI step.
+
+### Fixed (independent review, before merge)
+- A stepped floor now carries the concrete under its raised zones. Before, the shallow half of the
+  floor floated 12 in above the deep slab with nothing under it, about 17% of the concrete missing.
+  House rule `step_ledge`: `concrete` to the step height (the default), or `gravel` for a slab on
+  compacted gravel with riser walls.
+- A wall too thin for any bar area returned `inf`, which JSON cannot store. Phase E would have failed
+  to save exactly the basins that need an engineer. It now returns `None` with `flexure_ok = False`.
+- Gravel is billed in pounds (short tons × 2,000), because ERPNext has no `Ton` unit.
+- Negative or blank optional inputs are ignored and named in the warnings. These are freeboard,
+  corner count, riser length, soil bearing, floor capacity, slab, wall and lid sizes, and step rows;
+  before, they produced negative volumes and phantom bars.
+- An incomplete basin says which input is missing.
+- A dry vault's exterior membrane gets its own BOM line.
+- Two basins with the same label no longer share a check key. Each takes its basin id, which stays
+  stable when the basins are reordered.
+- Step risers take the membrane and the curing compound.
+- The shell and the thickness pick use one rim-above-grade rule.
+- The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
+
+
 ## [1.764.0] - 2026-11-01
 
 ERPNext: TASK-2026-03030 (under TASK-2026-03018), phase L, PR 2. It is stacked on 1.763.0, the
