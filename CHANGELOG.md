@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.758.0] - 2026-11-01
+## [1.760.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase A. The plan is
 `docs/fountain-designer/PLAN.md` (PR #1389), and the porting spec is section 3 of the engine audit
