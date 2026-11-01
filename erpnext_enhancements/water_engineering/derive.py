@@ -47,7 +47,7 @@ from .engine import autosize, drawings, kits, upkeep
 from .engine import bom as bom_engine
 from .engine import model as model_engine
 from .engine import rules as rules_engine
-from .engine.aquatic import is_regulated, minimum_flow_rate
+from .engine.aquatic import minimum_flow_rate
 from .engine.basin import basin_volume
 from .engine.constants import FT_PER_PSI
 from .engine.controls import controls_report
@@ -180,14 +180,21 @@ class _Run:
 # --------------------------------------------------------------------------------------
 
 
+# The venues a health department regulates as pools: an allow-list. ``aquatic.is_regulated`` is a
+# deny-list of fountain venues (anything else counts as a pool), so a pond, a lake or an event rental
+# came out regulated and got a spa's code-minimum blocker.
+REGULATED_WORDS = ("pool", "spa")
+
+
 def regulated_site(site: dict) -> bool:
-    """Regulated by the venue (pool, spa) or, in Utah, any interactive water feature (R392-302).
-    Worked out from the venue every time, never read back from ``site.regulated``: the derive writes
-    that field, so reading it would keep a design regulated after its venue changed."""
-    venue = str(site.get("venue_type") or "")
-    if is_regulated(venue):
+    """Regulated when the venue is a pool or spa (Commercial Pool, Commercial Spa, Wading Pool, Therapy
+    Pool) or, in Utah, an interactive water feature (R392-302). Worked out from the venue every time,
+    never read back from ``site.regulated``: the derive writes that field, so reading it would keep a
+    design regulated after its venue changed."""
+    words = str(site.get("venue_type") or "").lower().replace("/", " ").split()
+    if any(w in words for w in REGULATED_WORDS):
         return True
-    return "interactive" in venue.lower() and str(site.get("jurisdiction") or "UT").upper() == "UT"
+    return "interactive" in words and str(site.get("jurisdiction") or "UT").upper() == "UT"
 
 
 def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[dict, dict]:
@@ -881,14 +888,19 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     run.result(site_result)
     regulated = bool(site.get("regulated"))
 
-    # 1 basins
+    # 1 basins (measured again after phase B, which deepens an auto basin: see below)
     run.stage("pond area", lambda: pond_area(m))
-    volumes: dict[str, float] = {}
-    for b in m.get("basins") or []:
-        r = run.stage(f"basin {b.get('id')}", lambda b=b: _basin_volume(b), {})
-        run.result(r, f"basin_volume|{b.get('id')}")
-        if _num(r.get("value")):
-            volumes[b.get("id")] = _num(r["value"])
+
+    def measure() -> dict[str, float]:
+        out: dict[str, float] = {}
+        for b in m.get("basins") or []:
+            r = run.stage(f"basin {b.get('id')}", lambda b=b: _basin_volume(b), {})
+            run.results[f"basin_volume|{b.get('id')}"] = r  # the latest measure replaces the first
+            if _num(r.get("value")):
+                out[b.get("id")] = _num(r["value"])
+        return out
+
+    volumes = measure()
     total_gal = sum(volumes.values())
 
     # 2 features
@@ -910,20 +922,6 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         f["_terminal"] = out.get("terminal")
     design_gpm = sum((_num((fl.get("data") or {}).get("gpm")) or _num(fl.get("value")) or 0.0)
                      for fl in flows.values()) or None
-
-    # 3 regulated minimums
-    if regulated and total_gal:
-        venue = str(site.get("venue_type") or "")
-        if "interactive" not in venue.lower():
-            r = run.stage("minimum flow", lambda: minimum_flow_rate(total_gal, 0.0, "pool" if "pool" in venue.lower() else "spa",
-                                                                       site.get("governing_code") or ""))
-            mf = run.result(r)
-            need = _num(mf.get("value"))
-            if need and design_gpm is not None and design_gpm < need:
-                run.checks.append({"code": "REG_MIN_FLOW", "severity": "blocker", "section": "pump",
-                                   "title": f"Circulation {design_gpm:.0f} gpm is under the code minimum {need:.0f} gpm",
-                                   "remedy": "Raise the circulation flow (a larger pump or a separate filter loop).",
-                                   "citation": "; ".join(mf.get("citations") or []), "_source": "engine"})
 
     # 5-8 network: skeleton, terminals, route template, then phase B
     run.stage("network skeleton", lambda: build_network(m), False)
@@ -961,6 +959,28 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         for p in (m.get("network") or {}).get("pumps") or []:
             if p.get("item") and sources.get(p["item"]):
                 p["catalog_source"] = sources[p["item"]]
+    # 1 again: phase B sizes an auto basin's depth, so the volume every later step and the rollups read
+    # is measured on the basins as they now stand, not as they came in (one reply, one set of numbers).
+    volumes = measure()
+    total_gal = sum(volumes.values())
+    op_gpm = _num(((network_result or {}).get("totals") or {}).get("pump_flow_gpm"))
+
+    # 3 regulated minimums, at the flow that actually circulates (Nikolas, 2026-11-01: checks run at the
+    # operating flow); the design flow stands in only when there is no solved network.
+    venue = str(site.get("venue_type") or "")
+    if regulated and total_gal and "interactive" not in venue.lower():
+        r = run.stage("minimum flow", lambda: minimum_flow_rate(total_gal, 0.0, "pool" if "pool" in venue.lower() else "spa",
+                                                                   site.get("governing_code") or ""))
+        mf = run.result(r)
+        need = _num(mf.get("value"))
+        have = op_gpm if op_gpm else design_gpm
+        if need and have is not None and have < need:
+            basis = "operating" if op_gpm else "design"
+            run.checks.append({"code": "REG_MIN_FLOW", "severity": "blocker", "section": "pump",
+                               "title": f"Circulation {have:.0f} gpm ({basis}) is under the code minimum {need:.0f} gpm",
+                               "remedy": "Raise the circulation flow (a larger pump or a separate filter loop).",
+                               "citation": "; ".join(mf.get("citations") or []), "_source": "engine"})
+
     hw = run.stage("hazen-williams", lambda: hw_crosscheck(network_result, (m.get("network") or {}).get("segments")))
     if hw:
         run.result(hw)
@@ -971,7 +991,6 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
                                "citation": hw["citations"][0], "_source": "engine"})
 
     # 9 treatment
-    op_gpm = _num(((network_result or {}).get("totals") or {}).get("pump_flow_gpm"))
     circ = max(op_gpm or 0.0, design_gpm or 0.0) or None
     if circ and (m.get("treatment") or {}).get("sanitizer") not in (None, "", "none"):
         media = (m.get("treatment") or {}).get("filter_media") or "cartridge"
@@ -1078,6 +1097,9 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         "selected_pump_label": _pump_label(first, ranking) if first else None,
         "pump_kw": _round(kw, 2),
         "total_basin_gallons": _round(total_gal, 1) if total_gal else None,
+        # Not in the page's contract: the v1 column the Design dashboard's Hydraulic Headroom widget
+        # filters on. The flow that circulates: the operating flow, else the design flow.
+        "required_circulation_gpm": _round(op_gpm or design_gpm, 1),
         "budget_total": budget,
         "om_cost_per_year": _round((om or {}).get("total"), 0),
     }

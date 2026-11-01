@@ -379,3 +379,66 @@ def test_the_hazen_williams_crosscheck_runs():
     assert hw["inputs"]["darcy_ft"]["value"] > 0 and hw["inputs"]["hazen_williams_ft"]["value"] > 0
     if hw["status"] == "Diverges":
         assert next(i for i in out["issues"] if i["code"] == "HW_CROSSCHECK")["severity"] == "info"
+
+
+# ------------------------------------------------------------------ the #1399 review
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_every_demo_feature_has_a_real_flow(name):
+    out = run(fixture(name)["model"])
+    for fid, row in out["values"]["features"].items():
+        assert row["flow_gpm"] and row["flow_gpm"] > 0, (name, fid)
+    assert not {"terminal.no_flow", "pump.dead_head"} & {i["code"] for i in out["issues"]}
+
+
+@pytest.mark.parametrize("kit", [k.key for k in kits.KITS])
+def test_a_second_derive_reproduces_the_first(kit):
+    first = run(kits.apply_kit(kit))
+    second = run(first["model"])
+    for key, value in first["rollups"].items():
+        if isinstance(value, float):
+            assert second["rollups"][key] == pytest.approx(value, rel=1e-6), (kit, key)
+        else:
+            assert second["rollups"][key] == value, (kit, key)
+    assert {i["key"] for i in first["issues"]} == {i["key"] for i in second["issues"]}
+
+
+def test_the_reported_volume_is_the_basin_phase_b_sized():
+    out = run(kits.apply_kit("plaza-interactive-12-jets"))
+    b = out["model"]["basins"][0]
+    expected = b["length_in"] * b["width_in"] * b["depth_in"] / 231.0
+    assert out["rollups"]["total_basin_gallons"] == pytest.approx(expected, rel=0.01)
+    assert out["values"]["basins"][b["id"]]["volume_gal"] == pytest.approx(expected, rel=0.01)
+
+
+@pytest.mark.parametrize("venue, regulated", [("Pond / Lake", False), ("Event Rental", False),
+                                              ("Decorative Fountain", False), ("Commercial Pool", True),
+                                              ("Commercial Spa", True), ("Wading Pool", True), ("Therapy Pool", True),
+                                              ("Interactive Water Feature", True)])
+def test_only_pools_spas_and_utah_interactive_features_are_regulated(venue, regulated):
+    assert derive.regulated_site({"venue_type": venue, "jurisdiction": "UT"}) is regulated
+
+
+def test_a_pond_gets_no_code_minimum_blocker():
+    model = kits.apply_kit("lobby-sheet-wall-8ft")
+    model["site"]["venue_type"] = "Pond / Lake"
+    model["basins"][0].update(length_in=600, width_in=600)
+    assert "REG_MIN_FLOW" not in {i["code"] for i in run(model)["issues"]}
+
+
+def test_the_code_minimum_is_judged_at_the_operating_flow():
+    model = kits.apply_kit("lobby-sheet-wall-8ft")
+    model["site"]["venue_type"] = "Commercial Spa"
+    out = run(model)
+    mf = next(v for k, v in out["results"].items() if k.startswith("minimum_flow"))
+    blocker = next((i for i in out["issues"] if i["code"] == "REG_MIN_FLOW"), None)
+    if out["rollups"]["operating_flow_gpm"] >= mf["value"]:
+        assert blocker is None
+    else:
+        assert blocker and "(operating)" in blocker["title"]
+
+
+def test_the_circulation_rollup_is_written():
+    r = run(kits.apply_kit("lobby-sheet-wall-8ft"))["rollups"]
+    assert r["required_circulation_gpm"] == pytest.approx(r["operating_flow_gpm"])

@@ -39,6 +39,7 @@ REPLY_KEYS = ("model", "results", "values", "rollups", "issues", "readiness", "v
 CATALOG_CACHE_KEY = "fountain_designer:pump_catalog"
 CATALOG_CACHE_S = 600
 GEOCODE_CACHE_S = 30 * 24 * 3600
+GEOCODE_RETRY_S = 600
 
 # Family order on the page: the most common first ("Add a feature" falls back to the first).
 FAMILY_ORDER = ("weir", "jets", "interactive", "cascade", "laminar", "foam", "pondless", "curtain", "mist", "aerator")
@@ -206,15 +207,20 @@ def load_catalogs():
         for c in sets or []:
             if len(c.get("points") or []) >= 2 or (c.get("shutoff_head_ft") and c.get("max_flow_gpm")):
                 rows.append(_catalog_row(items.get(code) or {"name": code}, c))
-    # The pumps' rates are cached with them: the derive may pick any of them, on every edit.
-    out = {"pumps": rows, "rates": item_rates({r["item"] for r in rows})}
+    # The pumps' rates are cached with them: the derive may pick any of them, on every edit. The
+    # valuation rates stay server-side; load_prices serves them only to a user who may read them.
+    codes = {r["item"] for r in rows}
+    out = {"pumps": rows, "list_rates": list_rates(codes), "valuation_rates": valuation_rates(codes)}
     frappe.cache().set_value(CATALOG_CACHE_KEY, out, expires_in_sec=CATALOG_CACHE_S)
     return out
 
 
 def site_lookup(site):
-    """The geocoded point for the site's address when its lat/lng are blank, cached a month per
-    address. The app has no elevation lookup, so elevation comes from the jurisdiction default."""
+    """The geocoded point for the site's address when its lat/lng are blank. A found point, or
+    Google's definite ZERO_RESULTS, is cached a month per address; any other failure (a timeout, a
+    rate limit, no key) only ten minutes, so it is asked again soon. The controller calls this on a
+    save, never the page's per-keystroke derive, so a half-typed address costs nothing. The app has
+    no elevation lookup, so elevation comes from the jurisdiction default."""
     site = site or {}
     address = str(site.get("address") or "").strip()
     if not address or (site.get("lat") not in (None, "") and site.get("lng") not in (None, "")):
@@ -227,19 +233,23 @@ def site_lookup(site):
     try:
         from erpnext_enhancements.workforce.sites import geocode_text
 
-        found, _problem = geocode_text(address)
+        found, problem = geocode_text(address)
     except Exception:
-        found = None
+        found, problem = None, "error"
     point = {"lat": found.get("lat"), "lng": found.get("lng")} if found else {}
-    cache.set_value(key, point, expires_in_sec=GEOCODE_CACHE_S)
+    definite = bool(found) or str(problem or "").upper().startswith("ZERO_RESULTS")
+    cache.set_value(key, point, expires_in_sec=GEOCODE_CACHE_S if definite else GEOCODE_RETRY_S)
     return point or None
 
 
 def load_prices(model, catalogs=None):
     """``{items: {item: {rate}}, hints: {}}`` for the Items a derive can name: every catalog pump
-    (their rates come cached with the catalog), the model's pumps and its equipment. The rate is the
-    Item's valuation rate, else its price on the default selling price list (PLAN.md 3.4)."""
-    rates = dict((catalogs or {}).get("rates") or {})
+    (their rates come cached with the catalog), the model's pumps and its equipment.
+
+    The rate is the Item's price on the default selling price list: the BOM is a budget for a quote,
+    and a selling price is what anyone who can read the design may see. The Item's valuation rate (a
+    cost) stands in only where there is no list price, and only for a user who may read Item
+    valuation (``can_read_valuation``); for anyone else such a line stays unpriced."""
     codes = set()
     for p in (model.get("network") or {}).get("pumps") or []:
         if p.get("item"):
@@ -247,34 +257,68 @@ def load_prices(model, catalogs=None):
     for e in model.get("equipment") or []:
         if e.get("item"):
             codes.add(e["item"])
-    rates.update(item_rates(codes - set(rates)))
+    cat = catalogs or {}
+    listed = dict(cat.get("list_rates") or {})
+    listed.update(list_rates(codes - set(listed)))
+    valued = {}
+    if can_read_valuation():
+        valued = dict(cat.get("valuation_rates") or {})
+        valued.update(valuation_rates(codes - set(valued)))
+    rates = {}
+    for code in set(listed) | set(valued):
+        rate = listed.get(code) or valued.get(code)
+        if rate:
+            rates[code] = {"rate": rate}
     return {"items": rates, "hints": {}}
 
 
-def item_rates(codes):
+def can_read_valuation():
+    """True when the user may read Item and the permlevel the Item's ``valuation_rate`` sits at."""
+    try:
+        if not frappe.has_permission("Item", "read"):
+            return False
+        meta = frappe.get_meta("Item")
+        field = meta.get_field("valuation_rate")
+        level = (field.permlevel if field else 0) or 0
+        return level == 0 or level in meta.get_permlevel_access("read")
+    except Exception:
+        return False
+
+
+def list_rates(codes):
+    """``{item: rate}`` on the default selling price list."""
     codes = [c for c in codes if c]
     if not codes:
         return {}
-    out = {}
     try:
-        for row in frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "valuation_rate"]):
-            out[row["name"]] = {"rate": row.get("valuation_rate") or 0}
         price_list = frappe.db.get_single_value("Selling Settings", "selling_price_list") or "Standard Selling"
-        missing = [c for c in codes if not (out.get(c) or {}).get("rate")]
-        if missing:
-            for row in frappe.get_all("Item Price", filters={"item_code": ["in", missing], "price_list": price_list},
-                                      fields=["item_code", "price_list_rate"]):
-                out.setdefault(row["item_code"], {})["rate"] = row.get("price_list_rate") or 0
+        rows = frappe.get_all("Item Price", filters={"item_code": ["in", codes], "price_list": price_list},
+                              fields=["item_code", "price_list_rate"])
     except Exception:
-        pass
-    return out
+        return {}
+    return {r["item_code"]: r.get("price_list_rate") for r in rows if r.get("price_list_rate")}
 
 
-def run_derive(model):
-    """The full derive with every lookup filled in: what the page and the controller both run."""
+def valuation_rates(codes):
+    """``{item: valuation_rate}``. Read without the caller's permissions: never send it to a page
+    without ``can_read_valuation``."""
+    codes = [c for c in codes if c]
+    if not codes:
+        return {}
+    try:
+        rows = frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "valuation_rate"])
+    except Exception:
+        return {}
+    return {r["name"]: r.get("valuation_rate") for r in rows if r.get("valuation_rate")}
+
+
+def run_derive(model, geocode=False):
+    """The full derive with every lookup filled in: what the page and the controller both run.
+    ``geocode`` is the controller's (a save): the page's debounced derive never calls Google."""
     model = model if isinstance(model, dict) else _parse(model)
     catalogs = load_catalogs()
-    return derive_mod.derive_model(model, catalogs, load_rules(), site_lookup=site_lookup(model.get("site")),
+    lookup = site_lookup(model.get("site")) if geocode else None
+    return derive_mod.derive_model(model, catalogs, load_rules(), site_lookup=lookup,
                                    prices=load_prices(model, catalogs), on_error=_log)
 
 
@@ -590,36 +634,70 @@ def _push_rows(doc):
         qty = float(row.qty or 0)
         if qty <= 0:
             continue
-        line = {"qty": qty, "rate": float(row.rate or 0), "description": row.description or row.item or ""}
+        line = {"qty": qty, "rate": float(row.rate or 0), "description": row.description or row.item or "",
+                "uom_note": row.uom}
         if row.item:
             items.append(dict(line, item_code=row.item))
         elif text_item:
-            texts.append(dict(line, item_code=text_item, uom_note=row.uom))
+            # A placeholder Item carries no unit conversions: the line goes in its stock UOM at the
+            # designed quantity with the designed unit in the description, never flagged a mismatch.
+            unit = f" ({qty:g} {row.uom})" if row.uom else ""
+            texts.append(dict(line, item_code=text_item, uom_note=None, description=line["description"] + unit))
         else:
             texts.append(dict(line, item_code=None, uom_note=row.uom))
     return items, texts
 
 
+# The engine's units and the ERPNext UOM each names.
+ENGINE_UOMS = {"ea": "Nos", "each": "Nos", "nos": "Nos", "ft": "Foot", "foot": "Foot", "hr": "Hour", "hour": "Hour",
+               "gal": "Gallon Liquid (US)", "lb": "Pound", "cubic yard": "Cubic Yard", "yd3": "Cubic Yard",
+               "ton": "Ton (Short)", "sq ft": "Square Foot", "sqft": "Square Foot"}
+
+
 def _uoms(rows):
-    """``{item: stock_uom}`` for the push rows: an item row gets its stock UOM and a conversion
-    factor of 1 here, as the Desk's item trigger would, rather than relying on the server filling
-    the mandatory UOM columns."""
+    """``{item: {"stock": stock_uom, "factors": {uom: conversion_factor}}}`` for the push rows."""
     codes = sorted({r["item_code"] for r in rows if r.get("item_code")})
     if not codes:
         return {}
+    out = {}
     try:
-        return {r["name"]: r.get("stock_uom") for r in frappe.get_all("Item", filters={"name": ["in", codes]},
-                                                                      fields=["name", "stock_uom"])}
+        for r in frappe.get_all("Item", filters={"name": ["in", codes]}, fields=["name", "stock_uom"]):
+            out[r["name"]] = {"stock": r.get("stock_uom"), "factors": {}}
+        for r in frappe.get_all("UOM Conversion Detail", filters={"parent": ["in", codes], "parenttype": "Item"},
+                                fields=["parent", "uom", "conversion_factor"]):
+            if r.get("parent") in out and r.get("conversion_factor"):
+                out[r["parent"]]["factors"][r.get("uom")] = r["conversion_factor"]
     except Exception:
-        return {}
+        pass
+    return out
 
 
 def _item_row(row, uoms, **extra):
+    """One pushed item row in the unit the design counted it in. The engine's unit becomes the ERPNext
+    UOM it names (``ft`` -> Foot): the stock UOM itself, or one of the Item's UOM conversions, goes
+    with its factor. A unit the Item has no conversion for goes in the stock UOM at the designed
+    quantity with the description saying so, never silently relabeled (11 ft is not 11 sticks).
+    Returns (row, True when the unit could not be matched)."""
     out = {"item_code": row["item_code"], "qty": row["qty"], "description": row["description"], **extra}
-    uom = uoms.get(row["item_code"])
-    if uom:
-        out.update(uom=uom, stock_uom=uom, conversion_factor=1)
-    return out
+    info = uoms.get(row["item_code"]) or {}
+    stock = info.get("stock")
+    if not stock:
+        return out, False
+    if not row.get("uom_note"):  # a text line on the placeholder Item: its stock UOM, as written
+        out.update(uom=stock, stock_uom=stock, conversion_factor=1)
+        return out, False
+    wanted = ENGINE_UOMS.get(str(row.get("uom_note")).strip().lower(), row.get("uom_note"))
+    if wanted == stock:
+        out.update(uom=stock, stock_uom=stock, conversion_factor=1)
+        return out, False
+    factor = info.get("factors", {}).get(wanted)
+    if factor:
+        out.update(uom=wanted, stock_uom=stock, conversion_factor=factor)
+        return out, False
+    out.update(uom=stock, stock_uom=stock, conversion_factor=1)
+    out["description"] = (f"{row['description']} (designed as {row['qty']:g} {row.get('uom_note')}; "
+                          f"no conversion to {stock} on the Item: check the quantity)")
+    return out, True
 
 
 def _company():
@@ -668,8 +746,11 @@ def push_quotation(name, quotation=None):
             qtn.project = doc.project
     rows = items + [t for t in texts if t["item_code"]]
     uoms = _uoms(rows)
+    unmatched = 0
     for row in rows:
-        qtn.append("items", _item_row(row, uoms, rate=row["rate"]))
+        built, odd = _item_row(row, uoms, rate=row["rate"])
+        qtn.append("items", built)
+        unmatched += odd
     loose = [t for t in texts if not t["item_code"]]
     if loose:
         listing = "".join(f"<li>{frappe.utils.escape_html(t['description'])} ({t['qty']:g} {frappe.utils.escape_html(t['uom_note'] or '')})</li>"
@@ -679,7 +760,7 @@ def push_quotation(name, quotation=None):
         frappe.throw(_("None of the design's lines has an Item yet, so there is nothing to quote. Pick Items, or set a Text-line Item in Water Engineering Settings."))
     qtn.save()
     return {"doctype": "Quotation", "name": qtn.name, "url": f"/desk/{_slug('Quotation')}/{qtn.name}",
-            "lines": len(items), "text_lines": len(texts)}
+            "lines": len(items), "text_lines": len(texts), "unit_mismatches": unmatched}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -699,8 +780,11 @@ def push_material_request(name):
     mr.company = _company()
     mr.schedule_date = schedule
     uoms = _uoms(rows)
+    unmatched = 0
     for row in rows:
-        mr.append("items", _item_row(row, uoms, schedule_date=schedule, project=doc.get("project") or None))
+        built, odd = _item_row(row, uoms, schedule_date=schedule, project=doc.get("project") or None)
+        mr.append("items", built)
+        unmatched += odd
     mr.save()
     return {"doctype": "Material Request", "name": mr.name, "url": f"/desk/{_slug('Material Request')}/{mr.name}",
-            "lines": len(items), "text_lines": len(texts)}
+            "lines": len(items), "text_lines": len(texts), "unit_mismatches": unmatched}
