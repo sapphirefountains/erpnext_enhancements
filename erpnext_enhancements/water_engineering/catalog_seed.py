@@ -1,0 +1,791 @@
+# Copyright (c) 2026, Sapphire Fountains and contributors
+# For license information, please see license.txt
+
+"""Seed the Fountain Designer catalog from digitized manufacturer data, approved rows only.
+
+Nikolas decided on 2026-11-01 that the designer's catalog comes from public manufacturer
+data, cited per row and approved by him before it reaches the site. The data lives in the
+repo, in ``docs/fountain-designer/catalog/``:
+
+* ``pumps.json``, ``nozzles.json``, ``lights.json`` — the digitized rows, each with its source.
+* ``approved.json`` — the rows Nikolas approved, by ``"Manufacturer|Model"`` key::
+
+	{
+	  "approved_by": "nikolas.bradshaw@sapphirefountains.com",
+	  "approved_on": "2026-11-05",
+	  "pumps":   ["Atlantic|TT1500", {"key": "Atlantic|A-21", "item_code": "500141"}],
+	  "nozzles": ["OASE|Geyser 35-10 E"],
+	  "lights":  []
+	}
+
+  A plain string approves the row as it is. An object may also map the row onto an Item that
+  already exists (``item_code``) or choose the new Item's ``item_name`` / ``item_code``.
+
+Run it from a shell, dry run first (nothing written; the summary says what would change)::
+
+	bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog
+	bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog \\
+	    --kwargs "{'dry_run': 0}"
+
+or as a System Manager over HTTP: ``seed_catalog`` (POST, ``dry_run`` defaults to 1).
+
+What it is careful about:
+
+* **Only approved rows, and never on migrate.** A row whose key is not in ``approved.json`` is
+  reported and skipped. Nothing here is wired to ``after_migrate``: the catalog reaches a site
+  when a person runs this, not when a deploy happens.
+* **Idempotent, keyed on manufacturer + model.** The Item is found by the approval's
+  ``item_code``, else by ``brand`` + ``custom_model_no``, else created. A Pump Curve is found by
+  Item + curve label, a Nozzle Profile by manufacturer + model. A second run with the same files
+  changes nothing and reports every row ``unchanged``.
+* **It writes specs and provenance, never a person's curation.** On an Item that already exists
+  it sets the spec and provenance fields only; the name, group, description, brand and stock
+  settings are filled when blank and otherwise left alone. It never deletes a curve, a profile
+  row it did not write, or an Item.
+* **Provenance on every record**: source URL, document and page, ``verified_by`` (the approver,
+  when that is a User) and ``verified_on`` (the approval date).
+* **One bad row does not stop the rest.** Each row is checked before anything is written (the
+  same curve checks the Pump Curve form applies) and written in its own savepoint; a failure
+  is reported in ``errors`` with the row's key.
+* **The Item naming guard is bypassed on purpose** (``flags.ignore_naming_guard``), as for the
+  other in-request callers whose user cannot choose the code: the code is generated here, or
+  set in ``approved.json``.
+"""
+
+import json
+import re
+from pathlib import Path
+
+import frappe
+from frappe import _
+
+from erpnext_enhancements.water_engineering.doctype.nozzle_profile.nozzle_profile import (
+	check_performance_points,
+)
+from erpnext_enhancements.water_engineering.doctype.pump_curve.pump_curve import check_points
+from erpnext_enhancements.water_engineering.engine.constants import FT_PER_PSI
+
+CATALOG_DIR = Path(__file__).resolve().parents[2] / "docs" / "fountain-designer" / "catalog"
+FILES = {"pumps": "pumps.json", "nozzles": "nozzles.json", "lights": "lights.json"}
+APPROVAL_FILE = "approved.json"
+KW_PER_HP = 0.745699872
+
+#: Item Groups the new Items go in: (group, parent group). "Pumps" already exists on prod.
+GROUPS = {
+	"pumps": ("Pumps", "All Item Groups"),
+	"nozzles": ("Nozzles", "Aquatic Equipment"),
+	"lights": ("Lights", "Aquatic Equipment"),
+}
+#: ``confidence`` in the data -> Pump Curve ``source``.
+CONFIDENCE_SOURCE = {
+	"table": "Datasheet",
+	"datasheet": "Datasheet",
+	"digitized": "Digitized",
+	"rep": "Rep-supplied",
+	"rep-supplied": "Rep-supplied",
+	"generic": "Generic estimate",
+	"generic estimate": "Generic estimate",
+}
+#: Words in the data's nozzle ``type`` -> Nozzle Profile ``nozzle_type``. First match wins.
+NOZZLE_TYPE_WORDS = [
+	("foam", "Foam / Aerating"),
+	("aerat", "Foam / Aerating"),
+	("laminar", "Laminar"),
+	("geyser", "Geyser"),
+	("bubbler", "Bubbler"),
+	("ring", "Spray Ring"),
+	("screen", "Water Screen"),
+	("curtain", "Water Screen"),
+	("sheet", "Sheet Fall"),
+	("cascade", "Cascade / Fan"),
+	("fan", "Cascade / Fan"),
+	("tulip", "Cascade / Fan"),
+	("mushroom", "Cascade / Fan"),
+	("spray", "Spray Ring"),
+	("jet", "Orifice Jet"),
+	("orifice", "Orifice Jet"),
+	("smooth", "Orifice Jet"),
+	("comet", "Orifice Jet"),
+]
+#: Types whose display moves with the water depth over the nozzle.
+LEVEL_SENSITIVE_TYPES = {"Foam / Aerating", "Geyser"}
+LIGHT_CONTROL = {"switched": "Switched", "dmx": "DMX", "proprietary": "Proprietary"}
+
+
+class CatalogRowError(Exception):
+	"""A data row that cannot be loaded; the message names what is wrong."""
+
+
+# ----------------------------------------------------------------------------- reading
+
+
+def catalog_key(manufacturer, model):
+	"""``"manufacturer|model"``, case- and spacing-insensitive: the approval and lookup key."""
+
+	def norm(value):
+		return " ".join(str(value or "").split()).casefold()
+
+	return f"{norm(manufacturer)}|{norm(model)}"
+
+
+def _read_json(path):
+	path = Path(path)
+	if not path.exists():
+		return None
+	return json.loads(path.read_text(encoding="utf-8"))
+
+
+def rows_of(data, kind):
+	"""The row list in a data file: a bare list, or ``{kind: [...]}`` / ``{"rows": [...]}``."""
+	if data is None:
+		return []
+	if isinstance(data, list):
+		return data
+	for key in (kind, "rows", "items"):
+		if isinstance(data.get(key), list):
+			return data[key]
+	return []
+
+
+def read_approvals(data):
+	"""``(meta, {kind: {key: overrides}})`` from ``approved.json``'s parsed content."""
+	data = data or {}
+	meta = {"approved_by": data.get("approved_by") or "", "approved_on": data.get("approved_on") or ""}
+	out = {}
+	for kind in FILES:
+		entries = {}
+		for entry in data.get(kind) or []:
+			if isinstance(entry, str):
+				manufacturer, _sep, model = entry.partition("|")
+				entries[catalog_key(manufacturer, model)] = {}
+			elif isinstance(entry, dict) and entry.get("key"):
+				manufacturer, _sep, model = str(entry["key"]).partition("|")
+				entries[catalog_key(manufacturer, model)] = {k: v for k, v in entry.items() if k != "key"}
+		out[kind] = entries
+	return meta, out
+
+
+# ----------------------------------------------------------------------------- planning
+# Pure: a data row + its approval -> the field values to write. No database access, so the
+# bench-free suite checks every mapping directly.
+
+
+def _pick(row, *names):
+	for name in names:
+		if row.get(name) not in (None, ""):
+			return row[name]
+	return None
+
+
+def _num(value):
+	try:
+		return float(value) if value not in (None, "") else None
+	except (TypeError, ValueError):
+		return None
+
+
+def _required(row, name):
+	value = row.get(name)
+	if value in (None, "") or not str(value).strip():
+		raise CatalogRowError(_("{0} is missing.").format(name))
+	return str(value).strip()
+
+
+def _slug(value):
+	return re.sub(r"[^A-Z0-9]+", "-", str(value).upper()).strip("-")
+
+
+def _as_list(value):
+	if value in (None, ""):
+		return []
+	if isinstance(value, (list, tuple)):
+		return [v for v in value if v not in (None, "")]
+	return [part.strip() for part in re.split(r"[/,]", str(value)) if part.strip()]
+
+
+def _fmt(value):
+	number = _num(value)
+	return f"{number:g}" if number is not None else str(value)
+
+
+def provenance(row, meta):
+	"""``{url, document, page, generic}`` from a row's ``source`` and ``confidence``."""
+	source = row.get("source") or {}
+	if isinstance(source, str):
+		source = {"url": source}
+	document = str(source.get("document") or "").strip()
+	if source.get("accessed"):
+		document = f"{document} (accessed {source['accessed']})".strip()
+	confidence = str(row.get("confidence") or "").strip().casefold()
+	return {
+		"url": str(source.get("url") or "").strip(),
+		"document": document,
+		"page": str(source.get("page") or "").strip(),
+		"generic": confidence.startswith("generic"),
+		"approved_by": meta.get("approved_by") or "",
+		"approved_on": str(meta.get("approved_on") or "")[:10],
+	}
+
+
+def _item_provenance(prov):
+	revision = prov["document"]
+	if prov["page"]:
+		revision = f"{revision}, p. {prov['page']}".strip(", ")
+	return {
+		"custom_spec_source_url": prov["url"] or None,
+		"custom_spec_revision": revision or None,
+		"custom_generic_estimate": 1 if prov["generic"] else 0,
+		"custom_spec_verified_by": prov["approved_by"] or None,
+		"custom_spec_verified_on": prov["approved_on"] or None,
+	}
+
+
+def _item_plan(kind, manufacturer, model, approval, name_word, specs, description, prov):
+	"""The Item half of a plan: fields always written, and fields filled only when blank."""
+	code = approval.get("item_code") or f"{name_word}-{_slug(manufacturer)}-{_slug(model)}"
+	return {
+		"item_code": code,
+		"match_existing_code": bool(approval.get("item_code")),
+		"manufacturer": manufacturer,
+		"model": model,
+		"set": {**specs, **_item_provenance(prov)},
+		"fill": {
+			"item_name": approval.get("item_name") or f"{name_word}, {manufacturer} {model}".upper(),
+			"item_group": GROUPS[kind][0],
+			"stock_uom": "Nos",
+			"is_stock_item": 0,
+			"brand": manufacturer,
+			"description": description,
+		},
+	}
+
+
+def _bhp(point):
+	"""Brake horsepower of a curve point: given directly, or converted from ``kw``."""
+	bhp = _num(_pick(point, "power_bhp", "bhp"))
+	if bhp is not None:
+		return bhp
+	kw = _num(point.get("kw"))
+	return round(kw / KW_PER_HP, 3) if kw is not None else None
+
+
+def plan_pump(row, approval, meta):
+	"""``{key, item, curves, warnings}`` for one ``pumps.json`` row. Raises CatalogRowError."""
+	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	prov = provenance(row, meta)
+	voltages = [_fmt(v) for v in _as_list(_pick(row, "voltage", "voltages"))]
+	fla = _pick(row, "fla_amps", "fla")
+	if isinstance(fla, dict):
+		fla_map = {_fmt(k): _num(v) for k, v in fla.items()}
+		first_fla = fla_map.get(voltages[0]) if voltages else None
+		if first_fla is None and fla_map:
+			first_fla = next(iter(fla_map.values()))
+	else:
+		first_fla = _num(fla)
+		fla_map = {voltages[0]: first_fla} if (voltages and first_fla is not None) else {}
+	rpm = _pick(row, "rpm")
+	variable = bool(row.get("variable_speed")) or str(rpm or "").strip().casefold().startswith("var")
+	rpm = None if variable else (int(_num(rpm)) if _num(rpm) else None)
+	source = CONFIDENCE_SOURCE.get(str(row.get("confidence") or "").strip().casefold(), "Digitized")
+	if prov["generic"]:
+		source = "Generic estimate"
+
+	curve_rows = row.get("curves") or [
+		{
+			"points": _pick(row, "curve", "curve_points", "points") or [],
+			"rpm": rpm,
+			"impeller_dia_in": _pick(row, "impeller_dia_in"),
+		}
+	]
+	curves, warnings = [], []
+	for spec in curve_rows:
+		points = [
+			{
+				"flow_gpm": _num(_pick(p, "flow_gpm")),
+				"head_ft": _num(_pick(p, "head_ft")),
+				"efficiency_pct": _num(_pick(p, "eff_pct", "efficiency_pct")),
+				"npshr_ft": _num(_pick(p, "npshr_ft")),
+				"power_bhp": _bhp(p),
+			}
+			for p in spec.get("points") or []
+		]
+		ordered, errors, curve_warnings = check_points(points)
+		if errors:
+			raise CatalogRowError(" ".join(str(e) for e in dict.fromkeys(errors)))
+		curve_rpm = int(_num(spec["rpm"])) if _num(spec.get("rpm")) else (None if variable else rpm)
+		impeller = _num(spec.get("impeller_dia_in"))
+		speed = _num(spec.get("speed_pct")) or 100
+		label = spec.get("label") or spec.get("curve_label")
+		if not label:
+			if impeller:
+				label = f"{impeller:g} in impeller"
+			elif curve_rpm:
+				label = f"{curve_rpm} rpm"
+			elif speed != 100:
+				label = f"{speed:g} % speed"
+			else:
+				label = "Full speed" if variable else "Published curve"
+		notes = [f"Seeded from docs/fountain-designer/catalog/pumps.json ({manufacturer} {model})."]
+		if variable:
+			notes.append("Variable-speed pump.")
+		if prov["approved_by"]:
+			notes.append(f"Approved by {prov['approved_by']} on {prov['approved_on']}.")
+		curves.append(
+			{
+				"curve_label": str(label),
+				"source": source,
+				"impeller_dia_in": impeller,
+				"rpm": curve_rpm,
+				"speed_pct": speed,
+				"max_flow_gpm": _num(spec.get("max_flow_gpm")) or ordered[-1]["flow_gpm"],
+				"shutoff_head_ft": _num(spec.get("shutoff_head_ft"))
+				or (ordered[0]["head_ft"] if ordered[0]["flow_gpm"] == 0 else None),
+				"source_url": prov["url"] or None,
+				"source_document": prov["document"] or None,
+				"source_page": prov["page"] or None,
+				"verified_by": prov["approved_by"] or None,
+				"verified_on": prov["approved_on"] or None,
+				"notes": " ".join(notes),
+				"points": ordered,
+			}
+		)
+		warnings += [f"{label}: {w}" for w in curve_warnings]
+
+	main = curves[0]
+	max_flow = _num(row.get("max_flow_gpm")) or main["max_flow_gpm"]
+	shutoff = _num(row.get("shutoff_head_ft")) or main["shutoff_head_ft"] or main["points"][0]["head_ft"]
+	phase = str(int(_num(row.get("phase")))) if _num(row.get("phase")) in (1.0, 3.0) else None
+	hp = _num(row.get("hp"))
+	connections = _as_list(_pick(row, "connection_sizes", "connections", "connection_size"))
+	parts = [f"{manufacturer} {row.get('series') or ''} {model} pump".replace("  ", " ")]
+	if hp:
+		parts.append(f"{hp:g} HP")
+	if voltages:
+		parts.append(f"{'/'.join(voltages)} V")
+	if phase:
+		parts.append(f"{phase}-phase")
+	if fla_map:
+		parts.append("FLA " + ", ".join(f"{a:g} A @ {v} V" for v, a in fla_map.items() if a is not None))
+	if connections:
+		parts.append(f"connections {', '.join(str(c) for c in connections)}")
+	if row.get("part_no"):
+		parts.append(f"part no. {row['part_no']}")
+	specs = {
+		"custom_equipment_class": "Pump",
+		"custom_model_no": model,
+		"custom_rated_gpm": max_flow,
+		"custom_rated_tdh_ft": shutoff,
+		"custom_pump_hp": hp,
+		"custom_pump_phase": phase,
+		"custom_pump_voltage": "/".join(voltages) or None,
+		"custom_pump_fla_amps": first_fla,
+		"custom_ul_listing": _pick(row, "listing", "ul_listing"),
+	}
+	item = _item_plan("pumps", manufacturer, model, approval, "PUMP", specs, "; ".join(parts) + ".", prov)
+	return {"key": catalog_key(manufacturer, model), "item": item, "curves": curves, "warnings": warnings}
+
+
+def nozzle_type_for(text):
+	"""Map the data's free-text nozzle type onto a Nozzle Profile ``nozzle_type`` option."""
+	words = str(text or "").casefold()
+	for word, option in NOZZLE_TYPE_WORDS:
+		if word in words:
+			return option
+	return "Other"
+
+
+def plan_nozzle(row, approval, meta):
+	"""``{key, item, profile, warnings}`` for one ``nozzles.json`` row. Raises CatalogRowError."""
+	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	prov = provenance(row, meta)
+	nozzle_type = nozzle_type_for(_pick(row, "type", "nozzle_type"))
+	points = []
+	for r in _pick(row, "rows", "points", "performance") or []:
+		psi, head = _num(_pick(r, "pressure_psi", "psi")), _num(_pick(r, "head_ft"))
+		points.append(
+			{
+				"psi": psi,
+				"head_ft": head
+				if head is not None
+				else (round(psi * FT_PER_PSI, 3) if psi is not None else None),
+				"flow_gpm": _num(_pick(r, "flow_gpm")),
+				"display_height_ft": _num(_pick(r, "height_ft", "display_height_ft")),
+				"display_diameter_ft": _num(_pick(r, "spread_ft", "diameter_ft", "display_diameter_ft")),
+				"throw_ft": _num(_pick(r, "throw_ft")),
+				"depth_over_nozzle_in": _num(_pick(r, "depth_over_nozzle_in", "depth_in")),
+			}
+		)
+	if not points:
+		raise CatalogRowError(_("A nozzle needs at least one performance row."))
+	ordered, errors, warnings = check_performance_points(points)
+	if errors:
+		raise CatalogRowError(" ".join(str(e) for e in dict.fromkeys(errors)))
+	mid = ordered[len(ordered) // 2]
+	level_sensitive = row.get("level_sensitive")
+	if level_sensitive is None:
+		level_sensitive = nozzle_type in LEVEL_SENSITIVE_TYPES
+	inlet = _pick(row, "inlet_size", "connection_size")
+	profile = {
+		"profile_name": f"{manufacturer} {model}",
+		"manufacturer": manufacturer,
+		"model_no": model,
+		"nozzle_type": nozzle_type,
+		"is_generic_estimate": 1 if prov["generic"] else 0,
+		"connection_size": str(inlet) if inlet is not None else None,
+		"level_sensitive": 1 if level_sensitive else 0,
+		"min_depth_in": _num(row.get("min_depth_in")),
+		"max_depth_in": _num(row.get("max_depth_in")),
+		"recommended_beam_deg": _num(row.get("recommended_beam_deg")),
+		"source_url": prov["url"] or None,
+		"source_document": prov["document"] or None,
+		"verified_by": prov["approved_by"] or None,
+		"verified_on": prov["approved_on"] or None,
+		"performance": ordered,
+	}
+	# The rated-GPM method's anchor, from the middle row: only where the profile has none, so
+	# a designer's own Cd / rated values are never replaced.
+	fill = {"rated_gpm": mid["flow_gpm"], "rated_head_ft": mid["head_ft"]}
+	specs = {
+		"custom_equipment_class": "Nozzle",
+		"custom_model_no": model,
+		"custom_ul_listing": _pick(row, "listing"),
+	}
+	description = (
+		f"{manufacturer} {model} nozzle ({nozzle_type})" + (f", {inlet} inlet" if inlet else "") + "."
+	)
+	item = _item_plan("nozzles", manufacturer, model, approval, "NOZZLE", specs, description, prov)
+	return {
+		"key": catalog_key(manufacturer, model),
+		"item": item,
+		"profile": profile,
+		"profile_fill": fill,
+		"warnings": warnings,
+	}
+
+
+def plan_light(row, approval, meta):
+	"""``{key, item, warnings}`` for one ``lights.json`` row. Raises CatalogRowError."""
+	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	prov = provenance(row, meta)
+	watts = _num(row.get("watts"))
+	if watts is None or watts <= 0:
+		raise CatalogRowError(_("A light needs its watts."))
+	voltages = [_fmt(v) for v in _as_list(_pick(row, "voltage", "voltages"))]
+	control = LIGHT_CONTROL.get(str(row.get("control") or "").strip().casefold())
+	specs = {
+		"custom_equipment_class": "Light",
+		"custom_model_no": model,
+		"custom_elec_watts": watts,
+		"custom_elec_voltage": "/".join(voltages) or None,
+		"custom_lumens": _num(row.get("lumens")),
+		"custom_beam_deg": _num(_pick(row, "beam_deg", "beam")),
+		"custom_light_control": control,
+		"custom_max_depth_ft": _num(row.get("max_depth_ft")),
+		"custom_ip_rating": _pick(row, "ip_rating"),
+		"custom_ul_listing": _pick(row, "listing", "ul_listing"),
+	}
+	description = f"{manufacturer} {model} underwater light, {watts:g} W" + (
+		f", {'/'.join(voltages)} V." if voltages else "."
+	)
+	item = _item_plan("lights", manufacturer, model, approval, "LIGHT", specs, description, prov)
+	return {"key": catalog_key(manufacturer, model), "item": item, "warnings": []}
+
+
+PLANNERS = {"pumps": plan_pump, "nozzles": plan_nozzle, "lights": plan_light}
+
+
+# ----------------------------------------------------------------------------- writing
+
+
+def _same(current, desired):
+	"""True when the stored ``current`` already holds ``desired`` (numbers within 1e-6, dates as ISO)."""
+	if desired in (None, ""):
+		return current in (None, "")
+	if isinstance(desired, (int, float)):
+		number = _num(current)
+		return number is not None and abs(number - float(desired)) < 1e-6
+	if hasattr(current, "isoformat"):
+		current = current.isoformat()
+	return str(current if current is not None else "") == str(desired)
+
+
+def _apply_fields(doc, values, fill_only=False):
+	"""Set each differing value on ``doc``; with ``fill_only`` only where it is blank.
+
+	A None value is skipped either way: the data being silent about a field is not a reason to
+	clear what someone entered. Returns the changed field names.
+	"""
+	changed = []
+	for field, value in values.items():
+		if value is None:
+			continue
+		current = doc.get(field)
+		if fill_only and current not in (None, "", 0):
+			continue
+		if not _same(current, value):
+			doc.set(field, value)
+			changed.append(field)
+	return changed
+
+
+def _rows_differ(current_rows, desired_rows, fields):
+	if len(current_rows) != len(desired_rows):
+		return True
+	for cur, want in zip(current_rows, desired_rows, strict=True):
+		for f in fields:
+			if not _same(cur.get(f), want.get(f)):
+				return True
+	return False
+
+
+def _user_or_none(user):
+	return user if user and frappe.db.exists("User", user) else None
+
+
+def _ensure_group(kind):
+	group, parent = GROUPS[kind]
+	if frappe.db.exists("Item Group", group):
+		return
+	if parent != "All Item Groups" and not frappe.db.exists("Item Group", parent):
+		frappe.get_doc(
+			{
+				"doctype": "Item Group",
+				"item_group_name": parent,
+				"parent_item_group": "All Item Groups",
+				"is_group": 1,
+			}
+		).insert(ignore_permissions=True)
+	frappe.get_doc(
+		{"doctype": "Item Group", "item_group_name": group, "parent_item_group": parent, "is_group": 0}
+	).insert(ignore_permissions=True)
+
+
+def _ensure_brand(name):
+	if name and not frappe.db.exists("Brand", name):
+		frappe.get_doc({"doctype": "Brand", "brand": name}).insert(ignore_permissions=True)
+
+
+def find_item(item_plan):
+	"""The existing Item for a plan, or None: the approval's code, else brand + model number."""
+	code = item_plan["item_code"]
+	if item_plan["match_existing_code"]:
+		return code if frappe.db.exists("Item", code) else None
+	matches = frappe.get_all(
+		"Item",
+		filters={"brand": item_plan["manufacturer"], "custom_model_no": item_plan["model"]},
+		pluck="name",
+		order_by="creation asc",
+	)
+	if matches:
+		return matches[0]
+	return code if frappe.db.exists("Item", code) else None
+
+
+def apply_item(kind, item_plan, verified_by, dry_run):
+	"""Create or update the Item. Returns ``(item_code, changes, created)``."""
+	values = dict(item_plan["set"])
+	values["custom_spec_verified_by"] = verified_by
+	existing = find_item(item_plan)
+	if not existing:
+		if not dry_run:
+			_ensure_group(kind)
+			_ensure_brand(item_plan["fill"].get("brand"))
+			doc = frappe.get_doc(
+				{
+					"doctype": "Item",
+					"item_code": item_plan["item_code"],
+					**{k: v for k, v in item_plan["fill"].items() if v not in (None, "")},
+					**{k: v for k, v in values.items() if v is not None},
+				}
+			)
+			doc.flags.ignore_naming_guard = True
+			doc.insert(ignore_permissions=True)
+			return doc.name, [f"Item {doc.name} created"], True
+		return item_plan["item_code"], [f"Item {item_plan['item_code']} would be created"], True
+
+	doc = frappe.get_doc("Item", existing)
+	if not doc.get("brand") and not dry_run:
+		_ensure_brand(item_plan["fill"].get("brand"))
+	changed = _apply_fields(doc, values) + _apply_fields(doc, item_plan["fill"], fill_only=True)
+	if changed and not dry_run:
+		doc.save(ignore_permissions=True)
+	return existing, ([f"Item {existing}: {', '.join(changed)}"] if changed else []), False
+
+
+CURVE_POINT_FIELDS = ("flow_gpm", "head_ft", "efficiency_pct", "npshr_ft", "power_bhp")
+NOZZLE_POINT_FIELDS = (
+	"head_ft",
+	"psi",
+	"flow_gpm",
+	"display_height_ft",
+	"display_diameter_ft",
+	"throw_ft",
+	"depth_over_nozzle_in",
+)
+
+
+def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
+	"""Create or update one Pump Curve, keyed on Item + label. Returns the change lines."""
+	fields = {k: v for k, v in curve.items() if k != "points"}
+	fields["verified_by"] = verified_by
+	name = None
+	if item_exists:
+		names = frappe.get_all(
+			"Pump Curve", filters={"item": item_code, "curve_label": curve["curve_label"]}, pluck="name"
+		)
+		name = names[0] if names else None
+	if not name:
+		if not dry_run:
+			doc = frappe.get_doc(
+				{
+					"doctype": "Pump Curve",
+					"item": item_code,
+					**{k: v for k, v in fields.items() if v is not None},
+					"points": [{f: p.get(f) for f in CURVE_POINT_FIELDS} for p in curve["points"]],
+				}
+			)
+			doc.insert(ignore_permissions=True)
+			return [f"Pump Curve {doc.name} ({curve['curve_label']}) created"]
+		return [f"Pump Curve ({curve['curve_label']}) would be created"]
+	doc = frappe.get_doc("Pump Curve", name)
+	changed = _apply_fields(doc, fields)
+	if _rows_differ(doc.get("points") or [], curve["points"], CURVE_POINT_FIELDS):
+		changed.append("points")
+		doc.set("points", [])
+		for p in curve["points"]:
+			doc.append("points", {f: p.get(f) for f in CURVE_POINT_FIELDS})
+	if changed and not dry_run:
+		doc.save(ignore_permissions=True)
+	return [f"Pump Curve {name}: {', '.join(changed)}"] if changed else []
+
+
+def find_profile(profile):
+	names = frappe.get_all(
+		"Nozzle Profile",
+		filters={"manufacturer": profile["manufacturer"], "model_no": profile["model_no"]},
+		pluck="name",
+	)
+	if names:
+		return names[0]
+	return profile["profile_name"] if frappe.db.exists("Nozzle Profile", profile["profile_name"]) else None
+
+
+def apply_profile(item_code, plan, verified_by, dry_run):
+	"""Create or update the Nozzle Profile, keyed on manufacturer + model. Returns the change lines."""
+	profile = plan["profile"]
+	fields = {k: v for k, v in profile.items() if k != "performance"}
+	fields["item"] = item_code
+	fields["verified_by"] = verified_by
+	name = find_profile(profile)
+	if not name:
+		if not dry_run:
+			doc = frappe.get_doc(
+				{
+					"doctype": "Nozzle Profile",
+					**{k: v for k, v in fields.items() if v is not None},
+					**{k: v for k, v in plan["profile_fill"].items() if v is not None},
+					"performance": [
+						{f: p.get(f) for f in NOZZLE_POINT_FIELDS} for p in profile["performance"]
+					],
+				}
+			)
+			doc.insert(ignore_permissions=True)
+			return [f"Nozzle Profile {doc.name} created"]
+		return [f"Nozzle Profile {profile['profile_name']} would be created"]
+	doc = frappe.get_doc("Nozzle Profile", name)
+	fields.pop("profile_name", None)  # the name is the record's key; never renamed here
+	changed = _apply_fields(doc, fields) + _apply_fields(doc, plan["profile_fill"], fill_only=True)
+	if _rows_differ(doc.get("performance") or [], profile["performance"], NOZZLE_POINT_FIELDS):
+		changed.append("performance")
+		doc.set("performance", [])
+		for p in profile["performance"]:
+			doc.append("performance", {f: p.get(f) for f in NOZZLE_POINT_FIELDS})
+	if changed and not dry_run:
+		doc.save(ignore_permissions=True)
+	return [f"Nozzle Profile {name}: {', '.join(changed)}"] if changed else []
+
+
+def _empty_summary():
+	return {
+		"created": [],
+		"updated": [],
+		"unchanged": [],
+		"unapproved": [],
+		"approved_not_found": [],
+		"errors": [],
+		"warnings": [],
+	}
+
+
+def load_catalog(catalog_dir=None, dry_run=True):
+	"""Load the approved catalog rows. ``dry_run`` (the default) writes nothing.
+
+	Returns ``{dry_run, catalog_dir, approved_by, approved_on, pumps, nozzles, lights}``; each
+	kind is ``{created, updated, unchanged, unapproved, approved_not_found, errors, warnings}``.
+	``created``/``updated`` hold ``{key, item_code, changes}``, the others keys (or
+	``{key, error}``). A missing data file is an empty kind, not an error.
+	"""
+	dry_run = bool(int(dry_run)) if isinstance(dry_run, (str, int)) else bool(dry_run)
+	folder = Path(catalog_dir) if catalog_dir else CATALOG_DIR
+	meta, approvals = read_approvals(_read_json(folder / APPROVAL_FILE))
+	verified_by = _user_or_none(meta["approved_by"])
+	summary = {
+		"dry_run": dry_run,
+		"catalog_dir": str(folder),
+		"approved_by": meta["approved_by"],
+		"approved_on": meta["approved_on"],
+	}
+	if meta["approved_by"] and not verified_by:
+		summary["note"] = f"approved_by {meta['approved_by']} is not a User here; verified_by left blank"
+
+	for kind, filename in FILES.items():
+		out = summary[kind] = _empty_summary()
+		approved = approvals.get(kind, {})
+		seen = set()
+		for row in rows_of(_read_json(folder / filename), kind):
+			key = catalog_key(row.get("manufacturer"), row.get("model"))
+			seen.add(key)
+			if key not in approved:
+				out["unapproved"].append(key)
+				continue
+			try:
+				plan = PLANNERS[kind](row, approved[key], meta)
+			except CatalogRowError as exc:
+				out["errors"].append({"key": key, "error": str(exc)})
+				continue
+			out["warnings"] += [f"{key}: {w}" for w in plan["warnings"]]
+			try:
+				if not dry_run:
+					frappe.db.savepoint("catalog_seed_row")
+				item_code, changes, created = apply_item(kind, plan["item"], verified_by, dry_run)
+				if kind == "pumps":
+					for curve in plan["curves"]:
+						changes += apply_curve(
+							item_code, curve, verified_by, dry_run, item_exists=not created
+						)
+				elif kind == "nozzles":
+					changes += apply_profile(item_code, plan, verified_by, dry_run)
+			except Exception as exc:
+				if not dry_run:
+					frappe.db.rollback(save_point="catalog_seed_row")
+				out["errors"].append({"key": key, "error": str(exc) or exc.__class__.__name__})
+				continue
+			entry = {"key": key, "item_code": item_code, "changes": changes}
+			if created:
+				out["created"].append(entry)
+			elif changes:
+				out["updated"].append(entry)
+			else:
+				out["unchanged"].append(key)
+		out["approved_not_found"] = sorted(set(approved) - seen)
+
+	if not dry_run:
+		frappe.db.commit()
+	return summary
+
+
+@frappe.whitelist(methods=["POST"])
+def seed_catalog(dry_run=1):
+	"""System Manager: :func:`load_catalog` from the repo's catalog folder. ``dry_run`` defaults to 1."""
+	frappe.only_for("System Manager")
+	return load_catalog(dry_run=frappe.utils.cint(dry_run))

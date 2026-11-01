@@ -79,7 +79,9 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 |---|---|
 | `issues.py` | The single producer of typed `DesignIssue` records and per-section readiness. The engine speaks in free-form status strings and warning sentences — good for the audit trail, useless to a designer who needs to know *what is wrong and where*. The form, wizard, list view, print formats and Triton all consume this one derived structure |
 | `api/water_design.py` | Whitelisted desk endpoints for the wizard and form JS — thin adapters over `engine/`. `save_inputs` and `get_design_state` expose the `_save_design` / `design_state` helpers the MCP tools reuse, so both surfaces share one implementation. Every endpoint gates on the `Water Feature Design` doctype, and `doc.save()` enforces document-level permission for the mutation itself |
-| `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads |
+| `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads, the aquatic-equipment fields, and (v1.758.0) the catalog fields: listing, light, filter and aerator specs and the Spec Source block |
+| `catalog_reader.py` | The catalog as plain dicts for the engine: `pump_curve_sets(item_codes)`, `nozzle_profiles(names)`, `light_specs(item_codes)`. Pump Curve records win over the Item's legacy `custom_pump_curve` table; every read survives a site that has not migrated yet. 4 spaces |
+| `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
 | `workspace/water_engineering/` | Desk workspace |
@@ -103,8 +105,36 @@ Child tables and catalogs:
 | `Water Feature Electrical Load` | Electrical load rows |
 | `Water Feature Calc Result` | Persisted `CalcResult` audit trail |
 | `Water Design Issue Ack` | Designer acknowledgement of a typed issue |
-| `Nozzle Profile` | Nozzle catalog (orifice sizing input) |
-| `Pump Curve Point` | Pump curve catalog points |
+| `Nozzle Profile` | Nozzle catalog: `nozzle_type` (Orifice Jet, Foam / Aerating, Laminar, Cascade / Fan, Geyser, Bubbler, Spray Ring, Water Screen, Sheet Fall, Other), `item`, `connection_size`, `level_sensitive`, min/max water over the nozzle, `recommended_beam_deg`, the Cd and rated-GPM methods, provenance (`source_url`, `source_document`, `verified_by`, `verified_on`), `is_generic_estimate`, and the `performance` table. The controller fills head from PSI (or the reverse), sorts the rows, and warns when flow falls as head rises |
+| `Nozzle Performance Point` | Child of Nozzle Profile: `head_ft`, `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`, `depth_over_nozzle_in` |
+| `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises, and warns on a missing shutoff point or a gap |
+| `Pump Curve Point` | Curve points: `flow_gpm`, `head_ft`, `efficiency_pct`, `npshr_ft`, `power_bhp`. Child of Pump Curve, and of Item as the legacy `custom_pump_curve` table the readers fall back to |
+
+**Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
+`custom_spec_revision`, `custom_spec_verified_by`, `custom_spec_verified_on`, `custom_generic_estimate`;
+lights `custom_lumens`, `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`
+(watts and volts are the shared `custom_elec_*` fields); filters `custom_filter_design_rate_gpm_sqft`,
+`custom_filter_backwash_gpm`; aerators `custom_aerator_pattern_height_ft`, `custom_aerator_pattern_diameter_ft`,
+`custom_aerator_min_depth_ft`, `custom_aerator_cord_lengths`; `custom_ul_listing`. `custom_equipment_class`
+gained Pump, Nozzle, Light, Aerator, Valve, Controller and Fitting kit, appended after the aquatic classes.
+Every Item field created in code must also be in `scripts/layout/code_owned_fields.json` and the Item
+layout spec (`tests/test_layout_field_order_coverage.py`).
+
+### Seeding the catalog
+
+The data and the approval list live in `docs/fountain-designer/catalog/`. `approved.json` names the
+rows Nikolas approved by `"Manufacturer|Model"` (case and spacing ignored); an entry may be an object
+with `item_code` to attach the row to an Item that already exists, or `item_name` to name the new one.
+Dry run first, then write:
+
+```bash
+bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog
+bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.load_catalog --kwargs "{'dry_run': 0}"
+```
+
+On an existing Item the loader writes specs and provenance only; the name, group, description and
+brand are filled when blank and never overwritten. The summary lists, per kind, what was created,
+updated, unchanged, unapproved, approved but not in the data, and refused (with the reason).
 | `Control Panel Design` | Phase-4 control panel parent |
 | `Control Pump`, `Control Light`, `Control Fuse`, `Control Interlock`, `Control IO Point` | Control-panel child rows |
 
@@ -119,6 +149,12 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_design_controller -v
 ```
 
-They are **golden tests**: each formula reproduces its sheet's own worked example. When you
+The catalog suite is plain pytest with its own in-memory frappe, so it runs on its own:
+
+```bash
+python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+```
+
+The engine suites are **golden tests**: each formula reproduces its sheet's own worked example. When you
 change an engine function, the failing assertion is telling you the result no longer matches
 the workbook — check the sheet before changing the expectation.

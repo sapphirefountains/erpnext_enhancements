@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.758.0] - 2026-11-01
+
+ERPNext: phase D of the Fountain Designer rebuild (PRJ-00580, group task TASK-2026-03018). Nikolas decided on
+2026-11-01 that the designer's catalog comes from digitized public manufacturer data, cited per row and approved by
+him before it is seeded, plus the designers' own entries, anchored on the ERPNext Item so BOM, prices and purchasing
+keep working. This release is the schema, the loader and the editor. **It seeds nothing**: no catalog row reaches a
+site until someone runs the loader, and the loader only loads rows listed in `approved.json`.
+
+**What the deploy does.**
+- **Migrate** creates two doctypes, **Pump Curve** and its sibling child **Nozzle Performance Point**, and adds columns
+  to **Pump Curve Point** (`efficiency_pct`, `npshr_ft`, `power_bhp`) and **Nozzle Profile** (`item`,
+  `connection_size`, `level_sensitive`, `min_depth_in`, `max_depth_in`, `recommended_beam_deg`, `source_url`,
+  `source_document`, `verified_by`, `verified_on`, and the `performance` table).
+- **Two patches**, both logging instead of raising and both safe twice:
+  - `remap_nozzle_profile_types` moves Nozzle Profile rows off the retired `nozzle_type` names (prod's five profiles:
+    Smooth Bore → Orifice Jet, Aerating → Foam / Aerating, Spray → Spray Ring, Cascade → Cascade / Fan; Geyser stays).
+    A Select value missing from the options makes the row unsaveable, so the rename ships with its data move.
+  - `migrate_item_pump_curves` copies each Item's legacy `custom_pump_curve` table into a Pump Curve record. The Item
+    rows stay. Prod had no curve points on 2026-11-01, so this is expected to do nothing there.
+- **after_migrate** adds the Item catalog fields (listing, light, filter, aerator, Spec Source) and appends Pump,
+  Nozzle, Light, Aerator, Valve, Controller and Fitting kit to `custom_equipment_class`.
+
+### Added
+- **Pump Curve**: one record per pump Item and impeller / speed, with `source` (Datasheet / Digitized / Rep-supplied /
+  Generic estimate) and full provenance. Its controller refuses points whose flow is not strictly rising or whose head
+  rises (the operating-point solver would find no duty point, or two), and only warns on a missing shutoff point or a
+  gap. A gap is a jump wider than a quarter of the flow span *and* more than twice the table's smallest step, so an
+  evenly spaced four-point table is not reported as gappy.
+- **Nozzle Profile** extended for the designer's families, with a **Nozzle Performance Point** table (head or PSI, flow,
+  display height and diameter, throw, water over the nozzle). The controller fills head from PSI or the reverse using
+  the engine's `FT_PER_PSI`, sorts by depth then head, and warns when flow falls as head rises.
+- **Item catalog fields**: `custom_spec_source_url`, `custom_spec_revision`, `custom_spec_verified_by`,
+  `custom_spec_verified_on`, `custom_generic_estimate`, `custom_ul_listing`, the light fields (`custom_lumens`,
+  `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`), `custom_filter_design_rate_gpm_sqft`,
+  `custom_filter_backwash_gpm`, and the aerator pattern, depth and cord fields. Light, Aerator, Valve and Controller now
+  show the shared electrical fields. All registered in `scripts/layout/code_owned_fields.json` and placed in the Item
+  layout.
+- **`water_engineering/catalog_seed.py`**, the approved-seed loader: `load_catalog(catalog_dir=None, dry_run=True)` for
+  `bench execute`, and `seed_catalog` (System Manager, POST, dry run by default). Reads
+  `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and `approved.json`; creates or updates Items, Pump Curves
+  and Nozzle Profiles keyed on manufacturer + model (or the approval's `item_code`), writing provenance on every record.
+  On an existing Item it writes specs and provenance only and never overwrites the name, group, description or brand.
+  Each row is checked before anything is written and runs in its own savepoint; a second run reports every row
+  unchanged. It bypasses the Item naming guard with `flags.ignore_naming_guard`, as the other in-request callers whose
+  user cannot choose the code do.
+- **`water_engineering/catalog_reader.py`**: `pump_curve_sets`, `nozzle_profiles` and `light_specs`, the plain-dict read
+  interface for the design engine's `derive()`.
+- **Catalog editor**: the Item form's Pump Specifications section (now shown for item group Pumps *or* equipment class
+  Pump) has a Pump Curves panel listing the Item's curves, best first, charted together, with New Pump Curve. A Pump
+  Curve charts head vs flow live; a Nozzle Profile charts display height and flow vs head. A Generic-estimate banner
+  shows on all three when flagged. The charts are inline SVG on proportional axes, because frappe.Chart's line chart
+  spaces x labels evenly and drew a 30 GPM jump as wide as a 5 GPM one, misreading exactly the gaps a designer looks for.
+  New whitelisted read `api/water_design.item_pump_curves` (read-gated on Pump Curve; an empty list, not an error, for a
+  user who cannot read them).
+- `tests/test_water_catalog.py` (36 bench-free pytest tests, own CI step) over invented `tests/fixtures/water_catalog/`
+  rows.
+
+### Changed
+- `api/water_design.pump_curves` reads each Item's best Pump Curve record first (full speed, sourced, largest impeller)
+  and falls back to the Item's legacy table; its return shape is unchanged. `nozzle_profile_params` also returns
+  `nozzle_type`, `level_sensitive`, `is_generic_estimate` and the performance `points`.
+- The Item's `custom_pump_curve` table is relabeled "Pump Curve (legacy table)" and shows only while it still has rows.
+- The generic starter Nozzle Profiles seed under the new type names.
+
 ## [1.757.0] - 2026-10-29
 
 ERPNext: TASK-2026-03015 (PRJ-00580, under TASK-2026-00866). Nik's

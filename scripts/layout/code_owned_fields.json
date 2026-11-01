@@ -61,6 +61,12 @@
    "reqd": 0
   },
   {
+   "fieldname": "custom_pump_curves_html",
+   "fieldtype": "HTML",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
    "fieldname": "custom_source_configuration",
    "fieldtype": "Link",
    "hidden": 1,
@@ -92,6 +98,12 @@
   },
   {
    "fieldname": "custom_iapmo_listing",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_ul_listing",
    "fieldtype": "Data",
    "hidden": 0,
    "reqd": 0
@@ -175,6 +187,18 @@
    "reqd": 0
   },
   {
+   "fieldname": "custom_filter_design_rate_gpm_sqft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_filter_backwash_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
    "fieldname": "custom_heater_fuel",
    "fieldtype": "Select",
    "hidden": 0,
@@ -249,6 +273,102 @@
   {
    "fieldname": "custom_controller_channels",
    "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_lumens",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_beam_deg",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_light_control",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_max_depth_ft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_ip_rating",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_aerator_pattern_height_ft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_aerator_pattern_diameter_ft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_aerator_min_depth_ft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_aerator_cord_lengths",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_source_section",
+   "fieldtype": "Section Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_source_url",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_revision",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_generic_estimate",
+   "fieldtype": "Check",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_source_cb",
+   "fieldtype": "Column Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_verified_by",
+   "fieldtype": "Link",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_verified_on",
+   "fieldtype": "Date",
    "hidden": 0,
    "reqd": 0
   }

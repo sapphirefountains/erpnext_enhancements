@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "autoname": "format:PCRV-{#####}",
+ "creation": "2026-11-01 12:00:00.000000",
+ "description": "One performance curve of a pump Item at one impeller and speed: the flow/head points the Fountain Designer solves the operating point against, with where they came from.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item",
+  "item_name",
+  "curve_label",
+  "cb_identity",
+  "source",
+  "impeller_dia_in",
+  "rpm",
+  "speed_pct",
+  "sb_range",
+  "max_flow_gpm",
+  "cb_range",
+  "shutoff_head_ft",
+  "sb_points",
+  "points",
+  "curve_chart",
+  "sb_provenance",
+  "source_url",
+  "source_document",
+  "source_page",
+  "cb_provenance",
+  "verified_by",
+  "verified_on",
+  "sb_notes",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Pump Item",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "curve_label",
+   "fieldtype": "Data",
+   "label": "Curve Label",
+   "in_list_view": 1,
+   "description": "Which curve of this pump, e.g. \"6.25 in impeller\" or \"3450 rpm\". The seed loader keys on Item + label."
+  },
+  {
+   "fieldname": "cb_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Datasheet",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Datasheet\nDigitized\nRep-supplied\nGeneric estimate",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Datasheet: a published table of points. Digitized: read off a published chart. Generic estimate: a typical curve for sizing before a model is chosen; the design warns when one reaches a submittal."
+  },
+  {
+   "fieldname": "impeller_dia_in",
+   "fieldtype": "Float",
+   "label": "Impeller Diameter (in)"
+  },
+  {
+   "fieldname": "rpm",
+   "fieldtype": "Int",
+   "label": "RPM",
+   "description": "Blank for a variable-speed pump's full-speed curve."
+  },
+  {
+   "default": "100",
+   "fieldname": "speed_pct",
+   "fieldtype": "Float",
+   "label": "Speed (% of full)"
+  },
+  {
+   "fieldname": "sb_range",
+   "fieldtype": "Section Break",
+   "label": "Range"
+  },
+  {
+   "fieldname": "max_flow_gpm",
+   "fieldtype": "Float",
+   "label": "Max Flow (GPM)",
+   "description": "Run-out flow. Filled from the last point when left blank."
+  },
+  {
+   "fieldname": "cb_range",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "shutoff_head_ft",
+   "fieldtype": "Float",
+   "label": "Shutoff Head (ft)",
+   "description": "Head at zero flow. Filled from a zero-flow point when left blank."
+  },
+  {
+   "fieldname": "sb_points",
+   "fieldtype": "Section Break",
+   "label": "Curve Points"
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Table",
+   "label": "Points",
+   "options": "Pump Curve Point",
+   "description": "Rising flow, falling head. Rows are sorted by flow on save."
+  },
+  {
+   "fieldname": "curve_chart",
+   "fieldtype": "HTML",
+   "label": "Curve Chart"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_provenance",
+   "fieldtype": "Section Break",
+   "label": "Provenance"
+  },
+  {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Source URL",
+   "options": "URL"
+  },
+  {
+   "fieldname": "source_document",
+   "fieldtype": "Data",
+   "label": "Source Document",
+   "description": "Title and revision of the brochure or datasheet."
+  },
+  {
+   "fieldname": "source_page",
+   "fieldtype": "Data",
+   "label": "Source Page"
+  },
+  {
+   "fieldname": "cb_provenance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "verified_by",
+   "fieldtype": "Link",
+   "label": "Verified By",
+   "options": "User"
+  },
+  {
+   "fieldname": "verified_on",
+   "fieldtype": "Date",
+   "label": "Verified On"
+  },
+  {
+   "fieldname": "sb_notes",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Pump Curve",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "export": 1
+  }
+ ],
+ "search_fields": "item,item_name,curve_label",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "curve_label",
+ "track_changes": 1
+}

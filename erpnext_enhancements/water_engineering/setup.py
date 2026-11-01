@@ -43,7 +43,7 @@ def create_pump_item_fields():
 					"label": "Pump Specifications",
 					"fieldtype": "Section Break",
 					"insert_after": "stock_uom",
-					"depends_on": "eval:doc.item_group=='Pumps'",
+					"depends_on": "eval:doc.item_group=='Pumps' || doc.custom_equipment_class=='Pump'",
 					"collapsible": 1,
 				},
 				{
@@ -92,18 +92,31 @@ def create_pump_item_fields():
 					"insert_after": "custom_pump_fla_amps",
 				},
 				{
+					# The pre-v1.758 place for curve points. Pump Curve records replace it
+					# (one per impeller / speed, with provenance); the readers still fall back
+					# to this table, and it shows only on an Item that still has rows in it.
 					"fieldname": "custom_pump_curve",
-					"label": "Pump Curve",
+					"label": "Pump Curve (legacy table)",
 					"fieldtype": "Table",
 					"options": "Pump Curve Point",
 					"insert_after": "custom_pump_cut_sheet",
-					"description": "Flow/head points read off the manufacturer curve; the design selector interpolates the head at the design flow.",
+					"depends_on": "eval:(doc.custom_pump_curve || []).length",
+					"description": "Legacy points. A Pump Curve record for this Item takes precedence; enter new curves under Pump Curves below.",
 				},
 				{
 					"fieldname": "custom_pump_curve_chart",
 					"label": "Pump Curve Chart",
 					"fieldtype": "HTML",
 					"insert_after": "custom_pump_curve",
+					"depends_on": "eval:(doc.custom_pump_curve || []).length",
+				},
+				{
+					# Filled by public/js/water_engineering/pump_curve_chart.js: this Item's
+					# Pump Curve records, charted, with a button to add one.
+					"fieldname": "custom_pump_curves_html",
+					"label": "Pump Curves",
+					"fieldtype": "HTML",
+					"insert_after": "custom_pump_curve_chart",
 				},
 			]
 		},
@@ -180,12 +193,19 @@ def ensure_pump_catalog():
 # after_migrate pattern as the pump catalog.
 # --------------------------------------------------------------------------
 
+# v1.758.0 added the Fountain Designer catalog classes after the aquatic ones (Pump to
+# Fitting kit). Appended, never reordered or renamed: a stored value missing from the
+# options makes the Item unsaveable.
 EQUIPMENT_CLASS_OPTIONS = (
 	"\nFilter\nHeater\nChemical Feed Pump\nChemical Controller\nSkimmer\n"
 	"Suction Outlet (VGB)\nTherapy Jet\nReturn Inlet\nGauge / Meter\n"
-	"Panel Electrical Device\nControl Hardware"
+	"Panel Electrical Device\nControl Hardware\n"
+	"Pump\nNozzle\nLight\nAerator\nValve\nController\nFitting kit"
 )
-_ELEC_CLASSES = "['Heater','Chemical Feed Pump','Chemical Controller','Panel Electrical Device','Control Hardware']"
+_ELEC_CLASSES = (
+	"['Heater','Chemical Feed Pump','Chemical Controller','Panel Electrical Device','Control Hardware',"
+	"'Light','Aerator','Valve','Controller']"
+)
 
 
 def create_equipment_item_fields():
@@ -421,6 +441,156 @@ def create_equipment_item_fields():
 	frappe.db.commit()
 
 
+def create_catalog_item_fields():
+	"""Fountain Designer catalog fields on Item (v1.758.0): listing, light, filter and
+	aerator specs, and where every spec came from. Runs after
+	``create_equipment_item_fields``, whose fields these are placed beside. The
+	provenance block applies to every catalog class, the pumps included; the seed
+	loader (``catalog_seed.py``) writes it on every record it touches."""
+	create_custom_fields(
+		{
+			"Item": [
+				{
+					"fieldname": "custom_ul_listing",
+					"label": "UL / ETL Listing",
+					"fieldtype": "Data",
+					"insert_after": "custom_iapmo_listing",
+					"depends_on": "eval:doc.custom_equipment_class",
+					"description": "e.g. UL 676 for an underwater light, UL 778 for a pump.",
+				},
+				{
+					"fieldname": "custom_filter_design_rate_gpm_sqft",
+					"label": "Filter Design Rate (GPM/sq ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_filter_media",
+					"depends_on": "eval:doc.custom_equipment_class=='Filter'",
+				},
+				{
+					"fieldname": "custom_filter_backwash_gpm",
+					"label": "Filter Backwash (GPM)",
+					"fieldtype": "Float",
+					"insert_after": "custom_filter_design_rate_gpm_sqft",
+					"depends_on": "eval:doc.custom_equipment_class=='Filter'",
+				},
+				{
+					"fieldname": "custom_lumens",
+					"label": "Lumens",
+					"fieldtype": "Float",
+					"insert_after": "custom_controller_channels",
+					"depends_on": "eval:doc.custom_equipment_class=='Light'",
+				},
+				{
+					"fieldname": "custom_beam_deg",
+					"label": "Beam Angle (deg)",
+					"fieldtype": "Float",
+					"insert_after": "custom_lumens",
+					"depends_on": "eval:doc.custom_equipment_class=='Light'",
+				},
+				{
+					"fieldname": "custom_light_control",
+					"label": "Light Control",
+					"fieldtype": "Select",
+					"options": "\nSwitched\nDMX\nProprietary",
+					"insert_after": "custom_beam_deg",
+					"depends_on": "eval:doc.custom_equipment_class=='Light'",
+				},
+				{
+					"fieldname": "custom_max_depth_ft",
+					"label": "Max Submersion Depth (ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_light_control",
+					"depends_on": "eval:doc.custom_equipment_class=='Light'",
+				},
+				{
+					"fieldname": "custom_ip_rating",
+					"label": "IP Rating",
+					"fieldtype": "Data",
+					"insert_after": "custom_max_depth_ft",
+					"depends_on": "eval:doc.custom_equipment_class=='Light'",
+				},
+				{
+					"fieldname": "custom_aerator_pattern_height_ft",
+					"label": "Aerator Pattern Height (ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_ip_rating",
+					"depends_on": "eval:doc.custom_equipment_class=='Aerator'",
+				},
+				{
+					"fieldname": "custom_aerator_pattern_diameter_ft",
+					"label": "Aerator Pattern Diameter (ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_aerator_pattern_height_ft",
+					"depends_on": "eval:doc.custom_equipment_class=='Aerator'",
+				},
+				{
+					"fieldname": "custom_aerator_min_depth_ft",
+					"label": "Aerator Min Water Depth (ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_aerator_pattern_diameter_ft",
+					"depends_on": "eval:doc.custom_equipment_class=='Aerator'",
+				},
+				{
+					"fieldname": "custom_aerator_cord_lengths",
+					"label": "Aerator Cord Lengths",
+					"fieldtype": "Data",
+					"insert_after": "custom_aerator_min_depth_ft",
+					"depends_on": "eval:doc.custom_equipment_class=='Aerator'",
+					"description": "Available power-cord lengths, e.g. 50 / 100 / 150 ft.",
+				},
+				{
+					"fieldname": "custom_spec_source_section",
+					"label": "Spec Source",
+					"fieldtype": "Section Break",
+					"insert_after": "custom_aerator_cord_lengths",
+					"collapsible": 1,
+					"depends_on": "eval:doc.custom_equipment_class || doc.item_group=='Pumps'",
+				},
+				{
+					"fieldname": "custom_spec_source_url",
+					"label": "Spec Source URL",
+					"fieldtype": "Data",
+					"options": "URL",
+					"insert_after": "custom_spec_source_section",
+				},
+				{
+					"fieldname": "custom_spec_revision",
+					"label": "Spec Revision",
+					"fieldtype": "Data",
+					"insert_after": "custom_spec_source_url",
+					"description": "The datasheet or brochure and its revision the specs were read from.",
+				},
+				{
+					"fieldname": "custom_generic_estimate",
+					"label": "Generic Estimate",
+					"fieldtype": "Check",
+					"insert_after": "custom_spec_revision",
+					"description": "Typical values for sizing before a model is chosen; the design warns when one reaches a submittal.",
+				},
+				{
+					"fieldname": "custom_spec_source_cb",
+					"fieldtype": "Column Break",
+					"insert_after": "custom_generic_estimate",
+				},
+				{
+					"fieldname": "custom_spec_verified_by",
+					"label": "Spec Verified By",
+					"fieldtype": "Link",
+					"options": "User",
+					"insert_after": "custom_spec_source_cb",
+				},
+				{
+					"fieldname": "custom_spec_verified_on",
+					"label": "Spec Verified On",
+					"fieldtype": "Date",
+					"insert_after": "custom_spec_verified_by",
+				},
+			]
+		},
+		ignore_validate=True,
+	)
+	frappe.db.commit()
+
+
 AQUATIC_EQUIPMENT_GROUPS = [
 	"Filters", "Heaters", "Chemical Feed Pumps", "Chemical Controllers",
 	"Skimmers", "Suction Outlets", "Therapy Jets", "Return Inlets",
@@ -553,14 +723,18 @@ def seed_equipment_catalog():
 	Idempotent; auto-run on migrate via ``ensure_equipment_catalog`` and also
 	callable directly (bench console / FAC)."""
 	create_equipment_item_fields()
+	create_catalog_item_fields()
 	return _seed_equipment_items()
 
 
 def ensure_equipment_catalog():
-	"""after_migrate entry: ensure the equipment-spec Item fields and seed the
-	Fika reference catalog. Fields (schema) are created unguarded; the seed is
-	guarded so a data hiccup can never break a deploy/migrate."""
+	"""after_migrate entry: ensure the equipment-spec and catalog Item fields and seed
+	the Fika reference catalog. Fields (schema) are created unguarded; the seed is
+	guarded so a data hiccup can never break a deploy/migrate. The Fountain Designer
+	catalog itself is never seeded here: ``catalog_seed.seed_catalog`` loads only the
+	rows Nikolas approved, and only when someone runs it."""
 	create_equipment_item_fields()
+	create_catalog_item_fields()
 	try:
 		result = _seed_equipment_items()
 		if result.get("created"):
@@ -573,12 +747,14 @@ def ensure_equipment_catalog():
 # estimates the legacy assistant used — clearly flagged so engineers replace them
 # with manufacturer cut-sheet data. Orifice nozzle flow needs sourced Cd/orifice,
 # so a starter catalog lets orifice features compute immediately.
+# The types are v1.758.0's Nozzle Profile options; patches/remap_nozzle_profile_types
+# moved the rows seeded under the old names (Smooth Bore, Aerating, Spray, Cascade).
 NOZZLE_PROFILE_SEED = [
-	{"profile_name": "Generic Smooth Bore", "nozzle_type": "Smooth Bore", "cd": 0.97, "area": 0.20},
-	{"profile_name": "Generic Aerating", "nozzle_type": "Aerating", "cd": 0.70, "area": 0.55},
+	{"profile_name": "Generic Smooth Bore", "nozzle_type": "Orifice Jet", "cd": 0.97, "area": 0.20},
+	{"profile_name": "Generic Aerating", "nozzle_type": "Foam / Aerating", "cd": 0.70, "area": 0.55},
 	{"profile_name": "Generic Geyser", "nozzle_type": "Geyser", "cd": 0.62, "area": 0.90},
-	{"profile_name": "Generic Spray", "nozzle_type": "Spray", "cd": 0.85, "area": 0.30},
-	{"profile_name": "Generic Cascade", "nozzle_type": "Cascade", "cd": 0.80, "area": 0.40},
+	{"profile_name": "Generic Spray", "nozzle_type": "Spray Ring", "cd": 0.85, "area": 0.30},
+	{"profile_name": "Generic Cascade", "nozzle_type": "Cascade / Fan", "cd": 0.80, "area": 0.40},
 ]
 
 

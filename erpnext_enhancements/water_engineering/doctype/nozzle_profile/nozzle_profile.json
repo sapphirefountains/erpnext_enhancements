@@ -8,9 +8,20 @@
   "profile_name",
   "nozzle_type",
   "is_generic_estimate",
+  "item",
   "cb_head",
   "manufacturer",
   "model_no",
+  "connection_size",
+  "level_sensitive",
+  "sb_depth",
+  "min_depth_in",
+  "max_depth_in",
+  "cb_depth",
+  "recommended_beam_deg",
+  "sb_performance",
+  "performance",
+  "performance_chart",
   "sb_orifice",
   "discharge_coefficient",
   "orifice_diameter_in",
@@ -20,6 +31,11 @@
   "rated_head_ft",
   "sb_ref",
   "cut_sheet",
+  "source_url",
+  "source_document",
+  "cb_ref",
+  "verified_by",
+  "verified_on",
   "notes"
  ],
  "fields": [
@@ -35,8 +51,9 @@
    "fieldname": "nozzle_type",
    "fieldtype": "Select",
    "label": "Nozzle Type",
-   "options": "Smooth Bore\nAerating\nGeyser\nSpray\nCascade\nFoam\nJet\nOther",
-   "in_list_view": 1
+   "options": "Orifice Jet\nFoam / Aerating\nLaminar\nCascade / Fan\nGeyser\nBubbler\nSpray Ring\nWater Screen\nSheet Fall\nOther",
+   "in_list_view": 1,
+   "in_standard_filter": 1
   },
   {
    "fieldname": "is_generic_estimate",
@@ -44,6 +61,13 @@
    "label": "Generic Estimate",
    "in_list_view": 1,
    "description": "Seeded placeholder \u2014 replace Cd/orifice with manufacturer cut-sheet data."
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "description": "The Item this nozzle is bought and quoted as."
   },
   {
    "fieldname": "cb_head",
@@ -58,6 +82,59 @@
    "fieldname": "model_no",
    "fieldtype": "Data",
    "label": "Model No"
+  },
+  {
+   "fieldname": "connection_size",
+   "fieldtype": "Data",
+   "label": "Connection Size",
+   "description": "Inlet thread or connection, e.g. 1 in NPT."
+  },
+  {
+   "fieldname": "level_sensitive",
+   "fieldtype": "Check",
+   "label": "Level Sensitive",
+   "description": "The display changes with the water depth over the nozzle (foam jets, geysers)."
+  },
+  {
+   "fieldname": "sb_depth",
+   "fieldtype": "Section Break",
+   "label": "Placement"
+  },
+  {
+   "fieldname": "min_depth_in",
+   "fieldtype": "Float",
+   "label": "Min Water Over Nozzle (in)"
+  },
+  {
+   "fieldname": "max_depth_in",
+   "fieldtype": "Float",
+   "label": "Max Water Over Nozzle (in)"
+  },
+  {
+   "fieldname": "cb_depth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "recommended_beam_deg",
+   "fieldtype": "Float",
+   "label": "Recommended Light Beam (deg)"
+  },
+  {
+   "fieldname": "sb_performance",
+   "fieldtype": "Section Break",
+   "label": "Performance Table",
+   "description": "Manufacturer rows: pressure, flow and the display they make. The designer interpolates between rows; with no rows it falls back to the Cd or rated-GPM method below."
+  },
+  {
+   "fieldname": "performance",
+   "fieldtype": "Table",
+   "label": "Performance Points",
+   "options": "Nozzle Performance Point"
+  },
+  {
+   "fieldname": "performance_chart",
+   "fieldtype": "HTML",
+   "label": "Performance Chart"
   },
   {
    "fieldname": "sb_orifice",
@@ -109,13 +186,40 @@
    "label": "Cut Sheet"
   },
   {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Source URL",
+   "options": "URL"
+  },
+  {
+   "fieldname": "source_document",
+   "fieldtype": "Data",
+   "label": "Source Document",
+   "description": "Title and revision of the catalog or datasheet."
+  },
+  {
+   "fieldname": "cb_ref",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "verified_by",
+   "fieldtype": "Link",
+   "label": "Verified By",
+   "options": "User"
+  },
+  {
+   "fieldname": "verified_on",
+   "fieldtype": "Date",
+   "label": "Verified On"
+  },
+  {
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
   }
  ],
  "links": [],
- "modified": "2026-06-23 12:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Nozzle Profile",
@@ -157,5 +261,6 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "track_changes": 1,
+ "search_fields": "manufacturer,model_no,nozzle_type"
 }

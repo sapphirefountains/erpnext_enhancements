@@ -288,6 +288,8 @@ doctype_js = {
 		# for two of its findings only --
 		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
+		# v1.758.0 -- the Pump Curves panel (this Item's Pump Curve records, charted, with
+		# "New Pump Curve") and the legacy custom_pump_curve chart.
 		"public/js/water_engineering/pump_curve_chart.js",
 		# v1.726.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
 		"public/js/supplier_finder_buttons.js",
@@ -299,6 +301,11 @@ doctype_js = {
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
 	# used by the design form's live dashboard; loaded before the auto-loaded form script.
 	"Water Feature Design": ["public/js/water_engineering/fountain_canvas.js"],
+	# v1.758.0 -- the Fountain Designer catalog editor: the same script as on Item draws the
+	# head-vs-flow chart and the Generic-estimate banner on a Pump Curve, and display height
+	# and flow vs head on a Nozzle Profile. It registers its handlers once per session.
+	"Pump Curve": ["public/js/water_engineering/pump_curve_chart.js"],
+	"Nozzle Profile": ["public/js/water_engineering/pump_curve_chart.js"],
 	"Process Document": ["public/js/process_document.js"],
 	"Employee": [
 		"public/js/vue.global.js",
