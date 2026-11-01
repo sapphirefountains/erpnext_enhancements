@@ -692,7 +692,7 @@ class DrawingsTests(unittest.TestCase):
 
 class ElectricalTests(unittest.TestCase):
     # Motor branch breaker = the NEC 430.52 / Table 430.52(C)(1) maximum (inverse-time
-    # breaker 250% of FLC, next standard size up). Before v1.758.0 this was 125% of FLA,
+    # breaker 250% of FLC, next standard size up). Before v1.759.0 this was 125% of FLA,
     # which is the 430.22 conductor rule; that figure is now inputs["conductor_min_a"].
     def test_branch_breaker_from_fla(self):
         # 1 HP circ pump ~8 A FLA: 2.5*8 = 20 -> 20 A (was 15 A at 125%); conductors >= 10 A
@@ -739,7 +739,7 @@ class ElectricalTests(unittest.TestCase):
         # ceiling = 20 (largest 430.52 branch OCPD, 2.5*8) + 11.4 (other motors)
         # + 62.29 (non-motor: 1.25*45.83 continuous + 5) = 93.69 A -> 90 A (largest
         # standard <= ceiling; NOT 100), and 90 A >= the 83.69 A 430.24 load.
-        # Before v1.758.0: 15 + 11.4 + 50.83 = 77.23 -> 70 A, under the load it fed.
+        # Before v1.759.0: 15 + 11.4 + 50.83 = 77.23 -> 70 A, under the load it fed.
         self.assertEqual(service_main_breaker(self._FIKA_LOADS).value, 90)
 
     def test_control_transformer_va(self):
