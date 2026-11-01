@@ -50,7 +50,7 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `drainage.py` | Gravity drainage (Manning's) and surge-basin sizing (Phase 3) | DOC-0049 `10 - Gravity`, `G - Gravity`, `B - Surge Basin` |
 | `chemistry.py` | Chlorinator feed and chemical rate advisory (Phase 2) | DOC-0049 `C - Chemicals`, DOC-0119 |
 | `treatment.py` | LSI, ASHRAE evaporation, make-up water, heating load, chemical dose, UV dose, filtration area | DOC-0049 `O` sheet + standards |
-| `controls.py` | Control-panel sizing: lighting relays, currents (Phase 4) | DOC-0126 |
+| `controls/` | Control-panel sizing: lighting relays, currents (Phase 4, the package's `__init__.py`), and since v1.764.0 the control design: per-pump topology (starter, soft starter, VFD, VFD with manual bypass and its interlock logic), drive frames with altitude and ambient derates, Splash Wizard selection with the I/O list, relays and 24 V DC supply, panel design (control transformer, enclosure, heat, SCCR, disconnect), panel BOM, Control Panel Design rows, Theory of Operation, power schematic and control ladder. `controls_report(model)` runs it. See [`engine/controls/README.md`](engine/controls/README.md) | DOC-0126, DOC-0028, DOC-0062, NEMA ICS 2, NEC 430, UL 508A SB |
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
 | `families/` | Fountain Designer (schema 2): one rule module per feature family (weir, jets, foam, laminar, interactive, cascade, pondless, curtain, mist, aerator) plus the lighting, winterization and heat system modules. See [`engine/families/README.md`](engine/families/README.md) | industry report section 1, per-rule URLs |
@@ -185,7 +185,7 @@ python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
 The electrical package's suites are plain pytest functions and run in their own CI step:
 
 ```bash
-python -m pytest erpnext_enhancements/tests/test_electrical_sizing.py erpnext_enhancements/tests/test_electrical_report.py erpnext_enhancements/tests/test_electrical_drc_parity.py -q
+python -m pytest erpnext_enhancements/tests/test_electrical_sizing.py erpnext_enhancements/tests/test_electrical_report.py erpnext_enhancements/tests/test_electrical_drc_parity.py erpnext_enhancements/tests/test_controls_design.py -q
 ```
 
 The Fountain Designer's families, model, kits and house rules are pytest suites with their
