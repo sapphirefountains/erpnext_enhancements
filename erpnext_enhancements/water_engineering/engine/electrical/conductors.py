@@ -266,6 +266,7 @@ def wire_for_load(
     current_carrying: int | None = None,
     max_drop_pct: float = BRANCH_DROP_PCT,
     pool: bool = False,
+    egc_ocpd_a: float | None = None,
 ) -> CalcResult:
     """The conductor a circuit needs: sized for ampacity, then upsized until the
     drop over ``length_ft`` (one way) is within ``max_drop_pct``, with its EGC.
@@ -301,7 +302,9 @@ def wire_for_load(
         steps.append(f"voltage drop: upsized to {size} for {drop.value:.2f}% over {num(length_ft):g} ft")
     else:
         steps.append(f"voltage drop: {drop.value:.2f}% over {num(length_ft):g} ft")
-    ocpd_for_egc = num(ocpd_a) or next_standard(CONTINUOUS_FACTOR * num(load_amps))
+    # The EGC follows the device actually ahead of the conductor (250.122), which on a motor
+    # feeder may be larger than the protection check needs (``egc_ocpd_a``).
+    ocpd_for_egc = num(egc_ocpd_a) or num(ocpd_a) or next_standard(CONTINUOUS_FACTOR * num(load_amps))
     egc = egc_size(ocpd_for_egc, material, ungrounded_min=amp.value, ungrounded_actual=size, pool=pool)
     steps.append(f"EGC: {egc.value} {material}")
     warnings = [*list(drop.warnings), edition_warning()]

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.760.0] - 2026-11-01
+## [1.763.0] - 2026-11-01
 
 ERPNext: TASK-2026-03018 "Fountain Designer rebuild" (PRJ-00580), phase L. Nikolas, 2026-11-01:
 electrical calculations as a first-class deliverable (PLAN.md sections 1, 2.2 step 10, 3.1 and 4).
@@ -89,6 +89,35 @@ noted where it moved. Every result tells the reader to verify the edition Utah h
 
 `engine/drawings.electrical_oneline_svg` now also draws a feeder, a panel label, conductor notes,
 VFD boxes and several transformers. The packet's existing state still renders as before.
+
+### Changed after independent review
+
+- **Printed labels.** The Control Panel Design print now heads its column "Max breaker (A)". Its
+  footnote now explains the 430.52 maximum, the smaller breaker that is allowed, and the 125%
+  conductor rule. The packet one-line labels each breaker "N A max". Before this, a 5 HP panel would
+  have printed "Breaker 70" under a footnote that described the old 125% rule.
+- **GFCI over 60 A.** GFCI breakers stop at 60 A, and 680.21(C) and 680.59 cover pump circuits of
+  60 A or less. So when GFCI governs and the 430.52 maximum is above 60 A:
+  - A motor whose conductors fit 60 A gets a 60 A GFCI breaker. A smaller device than the maximum
+    is permitted.
+  - A pump circuit over 60 A is outside those sections.
+  - Submersible equipment over 60 A is flagged for an SPGFCI or GFPE device.
+  - The BOM no longer orders a "GFCI breaker 70 A", which does not exist. The Article 680 check
+    reads each circuit's actual device.
+- **Motor feeder conductors.** They are sized to the 430.24 load, not to the 430.62 device
+  (240.4(G)). The equipment grounding conductor still follows the device. A single 5 HP feeder is
+  now #8, not #4.
+- **Feeder breaker above the 430.62 limit.** When the feeder breaker has to go up to carry the
+  load and that passes the 430.62 limit, the result now says so and suggests an adjustable-trip
+  breaker.
+- **Valve DC supply.** It follows the rain curtain's `coilPlan`: logic watts are included, and the
+  load is split over 1000 W units.
+- **A blank voltage or distance that arrives as 0** now means "not entered" instead of dividing by
+  zero.
+- **Pool pump cords** are checked against the 3 to 10 ft window.
+- **Circuit packing is not ported, on purpose.** The rain curtain's `circuitPlan` puts a portable
+  rig's loads on shared 15/20 A circuits. A permanent fountain gives each motor and each piece of
+  680 equipment its own circuit, so `branch_circuits` does too.
 
 ### Tests
 

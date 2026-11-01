@@ -2473,7 +2473,7 @@ jobs:
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
       # The electrical package (engine/electrical/, phase L of the Fountain Designer,
-      # v1.760.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
+      # v1.763.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
       # feeders, the Article 680 checklist and electrical_report, plus parity with the
       # Digital Rain Curtain's electrical.js. Plain pytest functions, so its own pytest
       # step -- `python -m unittest` would collect nothing from these files.

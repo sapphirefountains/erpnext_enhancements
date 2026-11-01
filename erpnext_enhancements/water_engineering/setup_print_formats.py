@@ -567,7 +567,7 @@ PANEL_SCHEDULE_HTML = """
       <th style="padding:4px 6px; border:1px solid #ddd; text-align:right;">FLA (A)</th>
       <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">V / phase</th>
       <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">Control</th>
-      <th style="padding:4px 6px; border:1px solid #ddd; text-align:right;">Breaker (A)</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:right;">Max breaker (A)</th>
     </tr></thead>
     <tbody>
       {% for c in sched.circuits %}
@@ -583,7 +583,7 @@ PANEL_SCHEDULE_HTML = """
       {% if not sched.circuits %}<tr><td colspan="6" style="padding:6px; border:1px solid #ddd; color:#999;">No pump loads entered.</td></tr>{% endif %}
     </tbody>
   </table>
-  <p style="margin:10px 0 0; color:#999; font-size:10px;">Branch breakers round UP to the next standard size (NEC 240.6); the feeder/main rounds DOWN (NEC 430.62). Motor FLA uses the NEC 430.248/250 table value unless a nameplate FLA is entered. Code-based design aid for the engineer of record to confirm &mdash; not a stamped calculation.</p>
+  <p style="margin:10px 0 0; color:#999; font-size:10px;">Max breaker is the largest motor branch breaker NEC 430.52 allows (250% of FLC for an inverse-time breaker, next standard size up per 240.6); a smaller breaker that carries the pump's starting current is permitted, and conductors are sized at 125% of FLC (430.22). The feeder/main rounds DOWN (NEC 430.62). Motor FLA uses the NEC 430.248/250 table value unless a nameplate FLA is entered. Code-based design aid for the engineer of record to confirm &mdash; not a stamped calculation.</p>
 </div>
 """.strip()
 

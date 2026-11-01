@@ -18,6 +18,32 @@ from .voltage_drop import BRANCH_DROP_PCT
 
 TAG_PREFIX = {"pump": "M", "aerator": "M", "motor": "M", "light": "L", "lighting_transformer": "L", "controls": "X"}
 CIT_BRANCH = "NEC 430 Part II-IV (motor circuits) / 210.19-210.20 (other branch circuits)"
+# Class A GFCI breakers stop at 60 A, and 680.21(C) / 680.59 cover pump circuits of 60 A or less.
+GFCI_MAX_A = 60
+GFCI_60A_SCOPED = ("680.21(C)", "680.59")
+
+
+def _gfci_device(gfci: dict, max_a: int, motor: bool, amps: float) -> tuple[int, bool, str, str | None]:
+    """(breaker, gfci required, note, device) once the 60 A ceiling of GFCI
+    breakers is applied. The 430.52 value is a maximum, so a motor whose
+    conductors fit 60 A takes a 60 A GFCI breaker; a pump circuit over 60 A falls
+    outside 680.21(C) / 680.59; submersible equipment over 60 A (680.51(A)) needs a
+    special-purpose GFCI or GFPE device."""
+    note = gfci["note"]
+    if not gfci["required"] or not max_a or max_a <= GFCI_MAX_A:
+        return max_a, bool(gfci["required"]), note, ("GFCI breaker" if gfci["required"] else None)
+    if motor and 1.25 * amps <= GFCI_MAX_A:
+        note += (f" The 430.52 maximum is {max_a} A; GFCI breakers stop at {GFCI_MAX_A} A, so a {GFCI_MAX_A} A GFCI "
+                 "breaker is chosen (430.52 allows a smaller device): confirm it holds the starting current.")
+        return GFCI_MAX_A, True, note, "GFCI breaker"
+    if gfci["article"] in GFCI_60A_SCOPED:
+        note += (f" The circuit is over {GFCI_MAX_A} A, outside {gfci['article']} (60 A or less): no GFCI required; "
+                 "verify with the adopted edition.")
+        return max_a, False, note, None
+    note += (f" Over {GFCI_MAX_A} A no GFCI breaker exists: use a special-purpose GFCI (SPGFCI) or ground-fault "
+             "protection of equipment as the inspector accepts.")
+    return max_a, True, note, "SPGFCI / GFPE"
+
 
 
 def branch_circuit(
@@ -56,15 +82,18 @@ def branch_circuit(
             # The drive's input current sets the conductors (430.122); FLC still seeds the 430.52 placeholder.
             cond_a = num(vfd.inputs["input_a_est"]["value"]) or amps
         oc = motor_branch_ocpd(amps, device=device, phase=ph, hp=load.get("hp") or 0, voltage=v)
-        basis = "430.122 / drive maker" if is_vfd else "430.52 max"
+        breaker, gfci_req, gfci_note, gfci_dev = _gfci_device(gfci, oc.value, True, amps)
+        basis = "430.122 / drive maker" if is_vfd else (
+            "430.52 max" if breaker == oc.value else f"60 A GFCI (430.52 max {oc.value} A)")
         control = "VFD" if is_vfd else "Motor Starter"
         wire = wire_for_load(
-            cond_a, voltage=v, phase=ph, length_ft=load.get("run_ft"), is_motor=True, ocpd_a=oc.value,
+            cond_a, voltage=v, phase=ph, length_ft=load.get("run_ft"), is_motor=True, ocpd_a=breaker,
             material=material, ambient_f=ambient_f, max_drop_pct=max_drop_pct, termination_c=termination_c,
             pool=venue_part(venue) == "pool",
         )
     else:
         oc = continuous_ocpd(amps, continuous=bool(load.get("continuous")))
+        breaker, gfci_req, gfci_note, gfci_dev = _gfci_device(gfci, oc.value, False, amps)
         basis = "210.20(A)"
         control = ""
         wire = wire_for_load(
@@ -91,7 +120,8 @@ def branch_circuit(
         "phase": ph,
         "poles": poles_for(v, ph),
         "control_method": control,
-        "breaker_a": oc.value,
+        "breaker_a": breaker,
+        "breaker_max_a": oc.value if motor else None,
         "breaker_basis": basis,
         "conductor_min_a": round(1.25 * cond_a, 2) if motor else None,
         "conductor": wire.value,
@@ -102,9 +132,10 @@ def branch_circuit(
         "conduit_type": conduit_type,
         "run_ft": num(load.get("run_ft")),
         "drop_pct": wire.inputs.get("drop_pct", {}).get("value"),
-        "gfci": bool(gfci["required"]),
+        "gfci": gfci_req,
+        "gfci_device": gfci_dev,
         "gfci_basis": gfci["article"],
-        "gfci_note": gfci["note"],
+        "gfci_note": gfci_note,
         "va": num(load.get("va")) * qty,
         "vfd_hp": vfd.value if vfd else None,
         "calcs": calcs,

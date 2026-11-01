@@ -36,12 +36,11 @@ from ..data.nec_tables import (
     FLC_1PH,
     FLC_3PH,
     FLC_VOLTAGE_BANDS,
-    LOW_VOLTAGE_CONTACT_LIMIT,
 )
 from ..envelope import CalcResult, make_input
-from ._util import amps_of, edition_warning, num, phase_of, va_of
+from ._util import amps_of, edition_warning, is_low_voltage, num, phase_of, pos, va_of
 
-CIT_CONTINUOUS = "NEC Article 100 'Continuous Load' (3 hours or more)"
+CIT_CONTINUOUS_LOAD = "NEC Article 100 'Continuous Load' (3 hours or more)"
 CIT_FLC_RULE = "NEC 430.6(A)(1) (size from the FLC tables, overloads from the nameplate)"
 LOAD_KEYS = (
     "key", "label", "kind", "qty", "is_motor", "continuous", "voltage", "phase", "hp",
@@ -122,6 +121,7 @@ def motor_load(
     """One motor row: FLC from the table when the HP is a table size, else the
     nameplate FLA, else an estimate from kW."""
     ph = phase_of(phase)
+    voltage = pos(voltage, DEFAULT_SERVICE_V)
     notes = []
     h = num(hp)
     if h <= 0 and num(kw) > 0:
@@ -181,7 +181,7 @@ def simple_load(
     """A non-motor row from whichever of watts / VA / amps is given (unity power
     factor when only watts are known)."""
     ph = phase_of(phase)
-    v = num(voltage, 120)
+    v = pos(voltage, 120)
     if num(amps) > 0:
         a = num(amps)
         load_va = va_of(a, v, ph)
@@ -196,10 +196,6 @@ def simple_load(
     )
 
 
-def _is_low_voltage(volts: float) -> bool:
-    return 0 < num(volts) <= LOW_VOLTAGE_CONTACT_LIMIT["dc_continuous"]
-
-
 def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResult:
     """Load list from the design model. ``value`` is a list of load dicts
     (:data:`LOAD_KEYS`); ``pumps`` overrides ``network.pumps`` (each
@@ -209,9 +205,9 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
     elec = model.get("electrical") or {}
     site = model.get("site") or {}
     treatment = model.get("treatment") or {}
-    service_v = num(elec.get("service_v"), DEFAULT_SERVICE_V)
+    service_v = pos(elec.get("service_v"), DEFAULT_SERVICE_V)
     service_ph = phase_of(elec.get("phase"), 1)
-    panel_ft = num(elec.get("panel_distance_ft"), DEFAULT_PANEL_FT)
+    panel_ft = pos(elec.get("panel_distance_ft"), DEFAULT_PANEL_FT)
     pump_hours = num(elec.get("pump_hours_day"), DEFAULT_PUMP_HOURS_DAY)
     light_hours = num(elec.get("light_hours_day"), DEFAULT_LIGHT_HOURS_DAY)
     regulated = bool(site.get("regulated"))
@@ -226,7 +222,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
             f"pump:{pe.get('id') or i}",
             pe.get("label") or f"Pump {pe.get('id') or i}",
             hp=pe.get("hp"), fla=pe.get("fla") or pe.get("fla_amps"), kw=pe.get("kw"),
-            voltage=num(pe.get("voltage"), service_v), phase=pe.get("phase") or service_ph,
+            voltage=pos(pe.get("voltage"), service_v), phase=pe.get("phase") or service_ph,
             qty=pe.get("qty") or 1, control=control, code_letter=pe.get("code_letter"),
             submersible=bool(pe.get("submersible")), run_ft=num(pe.get("run_ft"), panel_ft),
             duty_hours_day=num(pe.get("duty_hours_day"), pump_hours), motor_phase=pe.get("motor_phase"),
@@ -239,7 +235,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         fi = f.get("inputs") or {}
         loads.append(motor_load(
             f"aerator:{f.get('id')}", f.get("label") or "Aerator", kind="aerator",
-            hp=fi.get("hp"), fla=fi.get("fla"), voltage=num(fi.get("voltage"), service_v),
+            hp=fi.get("hp"), fla=fi.get("fla"), voltage=pos(fi.get("voltage"), service_v),
             phase=fi.get("phase") or service_ph, qty=f.get("count") or 1, submersible=True,
             run_ft=panel_ft + num(fi.get("cable_ft")), duty_hours_day=num(fi.get("duty_hours_day"), 24.0),
         ))
@@ -251,7 +247,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         volts = num(fx.get("voltage"), DEFAULT_LV)
         qty = max(1, int(num(fx.get("qty"), 1)))
         w = num(fx.get("watts"))
-        if _is_low_voltage(volts):
+        if is_low_voltage(volts):
             lv_w += w * qty
             lv_count += qty
             continue
@@ -261,7 +257,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
             duty_hours_day=light_hours, underwater=fx.get("underwater", True) is not False,
         ))
     if lv_w > 0:
-        lv_v = next(num(f.get("voltage"), DEFAULT_LV) for f in fixtures if _is_low_voltage(num(f.get("voltage"), DEFAULT_LV)))
+        lv_v = next(num(f.get("voltage"), DEFAULT_LV) for f in fixtures if is_low_voltage(num(f.get("voltage"), DEFAULT_LV)))
         # The panel load is the fixture watts; the continuous-load 125% is applied once, by
         # the branch and feeder rules. The transformer itself is sized at 1.25 x W (transformers.py).
         loads.append(simple_load(
@@ -286,7 +282,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
 
     heater_kw = num(treatment.get("heater_kw"))
     if heater_kw > 0:
-        hv = num(treatment.get("heater_voltage"), service_v)
+        hv = pos(treatment.get("heater_voltage"), service_v)
         loads.append(simple_load(
             "heater", "Heater", "heater", watts=heater_kw * 1000.0, voltage=hv,
             phase=treatment.get("heater_phase") or 1, run_ft=panel_ft,
@@ -333,7 +329,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         if extra.get("is_motor") or num(extra.get("hp")) > 0:
             loads.append(motor_load(
                 key, extra.get("label") or f"Motor {k}", kind=extra.get("kind") or "motor",
-                hp=extra.get("hp"), fla=extra.get("fla"), voltage=num(extra.get("voltage"), service_v),
+                hp=extra.get("hp"), fla=extra.get("fla"), voltage=pos(extra.get("voltage"), service_v),
                 phase=extra.get("phase") or service_ph, qty=extra.get("qty") or 1,
                 control=extra.get("control") or "none", submersible=bool(extra.get("submersible")),
                 run_ft=num(extra.get("run_ft"), panel_ft), duty_hours_day=num(extra.get("duty_hours_day"), 24.0),
@@ -342,7 +338,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
             loads.append(simple_load(
                 key, extra.get("label") or f"Load {k}", extra.get("kind") or "other",
                 watts=extra.get("watts"), va=extra.get("va"), amps=extra.get("amps"),
-                voltage=num(extra.get("voltage"), 120), phase=extra.get("phase") or 1, qty=extra.get("qty") or 1,
+                voltage=pos(extra.get("voltage"), 120), phase=extra.get("phase") or 1, qty=extra.get("qty") or 1,
                 continuous=extra.get("continuous", True), run_ft=num(extra.get("run_ft"), panel_ft),
                 duty_hours_day=num(extra.get("duty_hours_day"), 24.0),
                 submersible=bool(extra.get("submersible")), underwater=bool(extra.get("submersible")),
@@ -371,7 +367,7 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         },
         formula="one row per load ; motors from Table 430.248/430.250 by HP ; continuous = runs 3 h or more",
         steps=steps,
-        citations=[CIT_FLC_1PH, CIT_FLC_3PH, CIT_FLC_RULE, CIT_CONTINUOUS],
+        citations=[CIT_FLC_1PH, CIT_FLC_3PH, CIT_FLC_RULE, CIT_CONTINUOUS_LOAD],
         warnings=warnings,
     )
 

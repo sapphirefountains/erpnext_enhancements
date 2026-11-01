@@ -1,6 +1,6 @@
 # `engine/electrical/` — electrical design
 
-Phase L of the Fountain Designer rebuild (PLAN.md section 4, v1.760.0). Nikolas, 2026-11-01:
+Phase L of the Fountain Designer rebuild (PLAN.md section 4, v1.763.0). Nikolas, 2026-11-01:
 electrical calculations as a first-class deliverable. This package replaced the single module
 `engine/electrical.py`; its four functions (`motor_flc`, `total_connected_load`,
 `service_main_breaker`, `control_transformer_va`) keep their names and import paths.
@@ -54,6 +54,26 @@ Example: a 5 HP, 230 V, single-phase pump.
 | `energy.py` | `annual_energy`: kWh and cost per load | Site rate. `workbook.electric_cost` stays the DOC-0049 pump figure |
 | `bom.py` | `electrical_bom`: lines in phase B's `{section: "Electrical", key, description, qty, uom, item_hint}` shape. Wire and conduit carry 10% waste | 430.102, 430.110, 680.13 for disconnects |
 | `drawings.py` | `oneline_state` and `electrical_oneline` | Feeds the extended `engine/drawings.electrical_oneline_svg` |
+
+## What the rain curtain does that this package does not
+
+**`circuitPlan` is not ported.** The rain curtain packs a portable rental rig onto shared 15 or 20 A
+circuits, the pump taking at most half of one (210.23(A)). A permanent fountain is wired the other
+way: each motor gets its own branch circuit (Article 430), and so does each piece of Article 680
+equipment. That way each one carries its own GFCI and its own maintenance disconnect, so
+`branch_circuits` gives every load its own circuit. A rental rig is designed in the rain curtain
+app.
+
+## GFCI and the 60 A ceiling
+
+Class A GFCI breakers stop at 60 A, and 680.21(C) and 680.59 cover pump circuits of 60 A or less.
+When GFCI governs and the 430.52 maximum is above 60 A, `circuits.py` decides as follows:
+
+- **A motor whose conductors fit 60 A** gets a 60 A GFCI breaker. 430.52 allows a smaller device
+  than its maximum; confirm the 60 A breaker holds the starting current.
+- **A pump circuit over 60 A** is outside those sections.
+- **Submersible equipment over 60 A** (680.51(A), which has no 60 A limit) is flagged for an SPGFCI
+  or GFPE device.
 
 ## How results are returned
 

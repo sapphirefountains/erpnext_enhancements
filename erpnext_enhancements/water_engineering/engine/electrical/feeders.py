@@ -11,7 +11,7 @@ rounded-down value is under the 430.24 load, the feeder goes up to the next
 standard size at or above that load and the result says so.
 
 The largest branch device is the 430.52 rating from ``ocpd.motor_branch_ocpd``.
-Before v1.760.0 it was 125% of FLA (the 430.22 conductor figure), which seeded
+Before v1.763.0 it was 125% of FLA (the 430.22 conductor figure), which seeded
 430.62 too low.
 """
 
@@ -234,12 +234,17 @@ def feeder_ocpd(
     raised = False
     if rating + EPS < load_a:
         new = next_standard(load_a)
-        warnings.append(
-            f"Rounding down gave {rating} A, under the {load_a:.2f} A the feeder carries; raised to "
-            f"{new} A, the next standard size at or above the load (430.63 sets a minimum)."
-        )
+        msg = (f"Rounding down gave {rating} A, under the {load_a:.2f} A the feeder carries, which would trip in "
+               f"service; raised to {new} A, the next standard size at or above the load.")
+        if new > ceiling + EPS and motors:
+            msg += (f" {new} A is above the {ceiling:.2f} A that 430.62(A) allows, and 430.62 has no next-size-up "
+                    "allowance: use an adjustable-trip breaker set between the load and the ceiling, or a smaller "
+                    "largest-motor branch device, and confirm with the engineer.")
+        warnings.append(msg)
         steps.append(f"raised to {new} A (>= feeder load {load_a:.2f} A)")
         rating, raised = new, True
+    elif rating > ceiling + EPS and motors:
+        warnings.append(f"{ceiling:.2f} A is below the smallest {rating} A breaker; use fuses sized to the ceiling.")
     warnings.append(
         "Feeder/service OCPD (NEC 430.62) rounds DOWN, unlike a branch breaker; "
         "confirm the largest-motor selection and the load list with the engineer."

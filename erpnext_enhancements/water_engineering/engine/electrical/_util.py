@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from ..data.nec_tables import STD_AMPS_240_6, VERIFY_EDITION
+from ..data.nec_tables import LOW_VOLTAGE_CONTACT_LIMIT, STD_AMPS_240_6, VERIFY_EDITION
 
 SQRT3 = math.sqrt(3.0)
 # Floating-point slack for "at least" comparisons, so 28 A x 2.5 = 70.0000001
@@ -19,6 +19,18 @@ def num(value, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return out if math.isfinite(out) else default
+
+
+def pos(value, default: float) -> float:
+    """``num(value)`` when it is above zero, else ``default``: a blank numeric
+    field that arrives as 0 (a voltage, a distance) means "not entered"."""
+    out = num(value, default)
+    return out if out > 0 else default
+
+
+def is_low_voltage(volts) -> bool:
+    """At or below the 680.2 low-voltage contact limit for DC (30 V)."""
+    return 0 < num(volts) <= LOW_VOLTAGE_CONTACT_LIMIT["dc_continuous"]
 
 
 def phase_of(value, default: int = 1) -> int:

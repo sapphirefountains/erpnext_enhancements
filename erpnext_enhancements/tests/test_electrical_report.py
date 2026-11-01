@@ -185,7 +185,8 @@ def test_panel_schedule_columns_match_control_panel_design():
 def test_branch_circuit_for_the_5hp_pump():
     circuits = E.branch_circuits(E.build_loads(_model()).value, ambient_f=86).value
     m1 = next(c for c in circuits if c["tag"] == "M1")
-    assert m1["breaker_a"] == 70 and m1["poles"] == 2
+    # 430.52 allows 70 A; GFCI breakers stop at 60 A, and 60 A is within 430.52
+    assert m1["breaker_max_a"] == 70 and m1["breaker_a"] == 60 and m1["poles"] == 2
     assert m1["conductor_min_a"] == 35.0
     assert m1["conductor"] == "8"  # #8 at 60 C; 150 ft at 28 A is 2.72% on #8, inside 3%
     assert m1["drop_pct"] < 3.0
@@ -321,9 +322,10 @@ def test_report_bom_wire_includes_waste():
     r = E.electrical_report(_model())
     m1 = next(c for c in r["circuits"] if c["tag"] == "M1")
     wire = next(b for b in r["bom"] if b["key"] == f"wire:Cu:{m1['conductor']}")
-    # M1's two #8 conductors and its #8 EGC over 150 ft, plus anything else on #8, x 1.1
-    assert wire["qty"] >= round(3 * 150 * 1.1)
-    assert any(b["key"].startswith("breaker:70:2") for b in r["bom"])
+    # M1's two #8 conductors over 150 ft, plus anything else on #8, x 1.1 (its EGC is #10 for 60 A)
+    assert wire["qty"] >= round(2 * 150 * 1.1)
+    assert m1["egc"] == "10"
+    assert any(b["key"].startswith("breaker:60:2:1") for b in r["bom"])
     assert any(b["key"] == "bond:wire" for b in r["bom"])
 
 
@@ -365,3 +367,69 @@ def test_every_public_function_returns_a_calcresult_with_citations():
         assert isinstance(r, CalcResult), r
         assert r.citations, r.calc
         assert r.formula, r.calc
+
+
+# --- independent review of #1395 -------------------------------------------------------------
+
+
+def test_gfci_breaker_capped_at_60a_for_a_5hp_pump():
+    # 430.52 allows 70 A, but GFCI breakers stop at 60 A: 60 A is within 430.52 and is the chosen device.
+    r = E.electrical_report({"network": {"pumps": [{"id": "p", "hp": 5, "voltage": 230, "phase": 1}]}})
+    m1 = next(c for c in r["circuits"] if c["tag"] == "M1")
+    assert m1["breaker_max_a"] == 70 and m1["breaker_a"] == 60 and m1["gfci"]
+    assert m1["gfci_device"] == "GFCI breaker"
+    assert any(b["description"] == "GFCI circuit breaker 2P 60 A" for b in r["bom"])
+    assert not any("GFCI circuit breaker 2P 70 A" == b["description"] for b in r["bom"])
+
+
+def test_pump_circuit_over_60a_is_outside_680_59():
+    # 10 HP 230 V single-phase: FLC 50 A, 125% = 62.5 A > 60 A: no GFCI breaker can serve it.
+    loads = E.build_loads({}, pumps=[{"id": "p", "hp": 10, "voltage": 230, "phase": 1}]).value
+    c = E.branch_circuits(loads).value[0]
+    assert c["breaker_a"] == 125 and c["gfci"] is False and "outside 680.59" in c["gfci_note"]
+    sub = E.build_loads({}, pumps=[{"id": "s", "hp": 10, "voltage": 230, "phase": 1, "submersible": True}]).value
+    s = E.branch_circuits(sub).value[0]
+    assert s["gfci"] and s["gfci_device"] == "SPGFCI / GFPE"
+    chk = E.article680_checklist(loads, circuits=[c, s])
+    gf = next(x for x in chk.value if x["key"] == "gfci_equipment")
+    assert gf["status"] == "verify" and "over 60 A" in gf["detail"]
+
+
+def test_zero_voltage_means_not_entered():
+    r = E.electrical_report({"electrical": {"service_v": 0},
+                             "network": {"pumps": [{"id": "p", "hp": 4, "voltage": 0, "phase": 1}]}})
+    assert r["loads"][0]["voltage"] == 240 and r["loads"][0]["amps"] > 0
+
+
+def test_valve_supply_follows_coil_plan():
+    from erpnext_enhancements.water_engineering.engine.electrical import valve_supply
+
+    # rain-curtain demo: 128 valves x 1.62 W + 3 W logic -> 1.25 x 210.36 = 263 W -> one 350 W supply
+    assert valve_supply(128 * 1.62) == {"n": 1, "W": 350}
+    # 400 valves x 4 W: 1.25 x 1603 = 2004 W -> three 750 W supplies (two 1000 W units would carry 2000 W)
+    assert valve_supply(400 * 4) == {"n": 3, "W": 750}
+    # 300 valves x 4 W: 1.25 x 1203 = 1504 W -> two 1000 W units
+    assert valve_supply(300 * 4) == {"n": 2, "W": 1000}
+
+
+def test_motor_feeder_conductor_carries_the_load_not_the_device():
+    r = E.electrical_report({"network": {"pumps": [{"id": "p", "hp": 5, "voltage": 240, "phase": 1}]},
+                             "electrical": {"service_v": 240, "feeder_ft": 20}})
+    f = r["feeder"]
+    assert f["load_a"] == pytest.approx(35.0, abs=0.25)  # 1.25 x 28 A, plus the control panel (30 VA)
+    assert f["ocpd_a"] == 70
+    assert f["conductor"] == "8"  # 40 A at 60 C carries 35 A (was #4 when sized to the 70 A device)
+    assert f["egc"] == "8"  # the EGC still follows the 70 A device (Table 250.122)
+
+
+def test_feeder_raise_past_the_ceiling_is_flagged():
+    raised = E.feeder_ocpd([{"is_motor": True, "amps": 1.7}, {"continuous": True, "amps": 100}])
+    assert raised.value == 150
+    assert any("adjustable-trip" in w for w in raised.warnings)
+
+
+def test_pool_cord_window():
+    r = E.article680_checklist([], venue="Spa", fixtures=[{"label": "x", "voltage": 12, "cord_ft": 2}])
+    assert next(c for c in r.value if c["key"] == "cord_length")["status"] == "fail"
+    ok = E.article680_checklist([], venue="Spa", fixtures=[{"label": "x", "voltage": 12, "cord_ft": 6}])
+    assert next(c for c in ok.value if c["key"] == "cord_length")["status"] == "pass"
