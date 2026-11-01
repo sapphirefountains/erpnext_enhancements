@@ -151,6 +151,7 @@ def we_panel_schedule(doc):
 			"voltage": ld["voltage"],
 			"phase": ld["phase"],
 			"control_method": ld.get("control_method") or "",
+			# The NEC 430.52 maximum (printed as "Max breaker"), not a chosen device size.
 			"breaker_a": electrical_load(fla).value if fla else None,
 		})
 	tcl = total_connected_load(loads) if loads else None

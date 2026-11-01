@@ -692,26 +692,31 @@ class DrawingsTests(unittest.TestCase):
 
 
 class ElectricalTests(unittest.TestCase):
-    # Branch-circuit breaker sizing (NEC 240.6 / 430.52): next standard size >= 1.25*FLA.
+    # Motor branch breaker = the NEC 430.52 / Table 430.52(C)(1) maximum (inverse-time
+    # breaker 250% of FLC, next standard size up). Before v1.763.0 this was 125% of FLA,
+    # which is the 430.22 conductor rule; that figure is now inputs["conductor_min_a"].
     def test_branch_breaker_from_fla(self):
-        # 1 HP circ pump ~8 A FLA: 1.25*8 = 10 -> next standard 15 A
-        self.assertEqual(electrical_load(8).value, 15)
+        # 1 HP circ pump ~8 A FLA: 2.5*8 = 20 -> 20 A (was 15 A at 125%); conductors >= 10 A
+        r = electrical_load(8)
+        self.assertEqual(r.value, 20)
+        self.assertEqual(r.inputs["conductor_min_a"]["value"], 10.0)
 
     def test_small_feed_pump_min_breaker(self):
-        # Stenner 45M1 chem pump 1.7 A: 1.25*1.7 = 2.125 -> smallest standard 15 A
+        # Stenner 45M1 chem pump 1.7 A: 2.5*1.7 = 4.25 -> smallest standard 15 A
         self.assertEqual(electrical_load(1.7).value, 15)
 
     def test_heater_continuous_breaker(self):
-        # Fika Coates 11 kW / 240 V = 45.83 A; 1.25*45.83 = 57.3 -> 60 A
-        self.assertEqual(electrical_load(11000 / 240).value, 60)
+        # Fika Coates 11 kW / 240 V = 45.83 A, a non-motor continuous load:
+        # 1.25*45.83 = 57.3 -> 60 A (210.20(A)); 430.52 does not apply to a heater
+        self.assertEqual(electrical_load(11000 / 240, is_motor=False).value, 60)
 
     def test_breaker_only_rounds_up(self):
-        # 30 A load: 1.25*30 = 37.5 -> next standard 40 A (branch never rounds down)
-        self.assertEqual(electrical_load(30).value, 40)
+        # 30 A motor: 2.5*30 = 75 -> next standard 80 A (branch never rounds down)
+        self.assertEqual(electrical_load(30).value, 80)
 
     def test_motor_flc_table(self):
         self.assertEqual(motor_flc(1, 1, 230), 8.0)   # NEC 430.248, 1ph 1HP @ 230V
-        self.assertEqual(motor_flc(1, 1, 208), 8.0)   # 208V maps to the 230V column
+        self.assertEqual(motor_flc(1, 1, 208), 8.8)   # 430.248's own 208V column (was mapped to 230V)
         self.assertEqual(motor_flc(1, 3, 208), 4.6)   # NEC 430.250, 3ph 1HP @ 208V
         self.assertIsNone(motor_flc(1 / 30, 1, 120))  # fractional HP -> use nameplate FLA
 
@@ -732,9 +737,11 @@ class ElectricalTests(unittest.TestCase):
         self.assertAlmostEqual(total_connected_load(self._FIKA_LOADS).value, 83.69, delta=0.05)
 
     def test_service_main_breaker_rounds_down(self):
-        # ceiling = 15 (largest branch OCPD) + 11.4 (other motors) + 50.83 (non-motor)
-        # = 77.23 A -> feeder OCPD 70 A (largest standard <= ceiling; NOT 80)
-        self.assertEqual(service_main_breaker(self._FIKA_LOADS).value, 70)
+        # ceiling = 20 (largest 430.52 branch OCPD, 2.5*8) + 11.4 (other motors)
+        # + 62.29 (non-motor: 1.25*45.83 continuous + 5) = 93.69 A -> 90 A (largest
+        # standard <= ceiling; NOT 100), and 90 A >= the 83.69 A 430.24 load.
+        # Before v1.763.0: 15 + 11.4 + 50.83 = 77.23 -> 70 A, under the load it fed.
+        self.assertEqual(service_main_breaker(self._FIKA_LOADS).value, 90)
 
     def test_control_transformer_va(self):
         # 2 contactors (20 VA) + 1 HMI (10 VA) = 50 VA -> 50 VA transformer
