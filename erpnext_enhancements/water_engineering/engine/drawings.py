@@ -129,34 +129,62 @@ def circulation_schematic_svg(state: dict[str, Any] | None = None) -> str:
 
 
 def electrical_oneline_svg(state: dict[str, Any] | None = None) -> str:
-    """Panel one-line: a vertical service bus with the main breaker at top and a
-    branch tap per load. ``state`` = ``{service:{label,main_breaker}, branches:[
-    {label, breaker, sub}], transformer_va}``."""
+    """Panel one-line: the service at top left, an optional feeder to the panel,
+    a vertical panel bus, and a branch tap per load.
+
+    ``state`` = ``{service:{label, main_breaker, sub}, feeder:{label, sub},
+    panel:{label}, branches:[{label, breaker, sub, wire, vfd}],
+    transformers:[{label, sub}], transformer_va}``. Only ``service`` and
+    ``branches`` are needed; ``feeder``, ``panel``, a branch's ``wire`` (the
+    conductor note under its tap) and ``vfd`` (a drive box in line with the load)
+    and ``transformers`` come from ``engine/electrical`` (phase L) and are drawn
+    when present. ``transformer_va`` is the older single control-transformer box.
+    """
     state = state or {}
     service = state.get("service") or {}
+    feeder = state.get("feeder") or {}
+    panel = state.get("panel") or {}
     branches = state.get("branches") or []
+    xfmrs = list(state.get("transformers") or [])
     xfmr_va = state.get("transformer_va")
+    if xfmr_va:
+        xfmrs.append({"label": f"Control Transformer {xfmr_va} VA"})
     title = state.get("title") or "Electrical One-Line"
 
     left = 40
-    bus_x = 150
+    feeder_len = 150 if feeder else 0
+    bus_x = 150 + feeder_len
     top = 50
-    row_h = 46
-    branch_x = 250
+    has_wire = any(br.get("wire") for br in branches)
+    row_h = 56 if has_wire else 46
+    has_vfd = any(br.get("vfd") for br in branches)
+    vfd_w = 90
+    branch_x = bus_x + 100 + (vfd_w + 20 if has_vfd else 0)
     box_w, box_h = 200, 34
-    n = len(branches) + (1 if xfmr_va else 0)
-    height = top + max(n, 1) * row_h + 40
+    n = len(branches) + len(xfmrs)
+    height = top + max(n, 1) * row_h + 40 + (16 if panel else 0)
     width = branch_x + box_w + 30
 
     parts = [_ARROW_DEF]
     # service source + main breaker
     main_label = service.get("label") or "Service"
     main_breaker = service.get("main_breaker")
-    parts.append(_box(left, top - 24, 150, 48,
-                      [main_label] + ([f"Main: {main_breaker} A"] if main_breaker else [])))
-    bus_top = top + 30
-    bus_bottom = top + max(n, 1) * row_h
-    parts.append(f'<line x1="{bus_x}" y1="{top + 24}" x2="{bus_x}" y2="{bus_bottom}" '
+    svc_lines = [main_label] + ([f"Main: {main_breaker} A"] if main_breaker else [])
+    if service.get("sub"):
+        svc_lines.append(service["sub"])
+    parts.append(_box(left, top - 24, 150, 48 + (12 if service.get("sub") else 0), svc_lines))
+    if feeder:
+        parts.append(f'<text x="{left + 150 + feeder_len / 2:.0f}" y="{top - 6}" text-anchor="middle" '
+                     f'font-size="9" fill="{_MUTED}">{_esc(feeder.get("label", "Feeder"))}</text>')
+        if feeder.get("sub"):
+            parts.append(f'<text x="{left + 150 + feeder_len / 2:.0f}" y="{top + 14}" text-anchor="middle" '
+                         f'font-size="9" fill="{_MUTED}">{_esc(feeder["sub"])}</text>')
+    if panel:
+        parts.append(f'<text x="{bus_x + 6}" y="{top + 30}" font-size="10" font-weight="bold" '
+                     f'fill="{_INK}">{_esc(panel.get("label", "Panel"))}</text>')
+    bus_top = top + 30 + (16 if panel else 0)
+    bus_bottom = bus_top - 30 + max(n, 1) * row_h
+    parts.append(f'<line x1="{bus_x}" y1="{top + 24 if not feeder else top}" x2="{bus_x}" y2="{bus_bottom}" '
                  f'stroke="{_BORDER}" stroke-width="3"/>')
     parts.append(f'<line x1="{left + 150}" y1="{top}" x2="{bus_x}" y2="{top}" '
                  f'stroke="{_BORDER}" stroke-width="3"/>')
@@ -167,17 +195,30 @@ def electrical_oneline_svg(state: dict[str, Any] | None = None) -> str:
         sub = br.get("sub", "")
         if sub:
             lines.append(sub)
-        parts.append(f'<line x1="{bus_x}" y1="{y}" x2="{branch_x}" y2="{y}" '
-                     f'stroke="{_ACCENT}" stroke-width="2" marker-end="url(#arrow)"/>')
+        tap_end = bus_x + 100
+        if br.get("vfd"):
+            parts.append(f'<line x1="{bus_x}" y1="{y}" x2="{tap_end}" y2="{y}" '
+                         f'stroke="{_ACCENT}" stroke-width="2"/>')
+            parts.append(_box(tap_end, int(y - 14), vfd_w, 28, [str(br["vfd"])], fill="#fff7e6"))
+            parts.append(f'<line x1="{tap_end + vfd_w}" y1="{y}" x2="{branch_x}" y2="{y}" '
+                         f'stroke="{_ACCENT}" stroke-width="2" marker-end="url(#arrow)"/>')
+        else:
+            parts.append(f'<line x1="{bus_x}" y1="{y}" x2="{branch_x}" y2="{y}" '
+                         f'stroke="{_ACCENT}" stroke-width="2" marker-end="url(#arrow)"/>')
         bk = br.get("breaker")
         if bk:
-            parts.append(f'<text x="{(bus_x + branch_x) / 2:.0f}" y="{y - 5}" text-anchor="middle" '
-                         f'font-size="9" fill="{_MUTED}">{_esc(str(bk) + " A")}</text>')
+            bk_text = bk if isinstance(bk, str) else f"{bk} A"
+            parts.append(f'<text x="{(bus_x + tap_end) / 2:.0f}" y="{y - 5}" text-anchor="middle" '
+                         f'font-size="9" fill="{_MUTED}">{_esc(bk_text)}</text>')
+        if br.get("wire"):
+            parts.append(f'<text x="{(bus_x + tap_end) / 2:.0f}" y="{y + 12}" text-anchor="middle" '
+                         f'font-size="8" fill="{_MUTED}">{_esc(br["wire"])}</text>')
         parts.append(_box(branch_x, int(y - box_h / 2), box_w, box_h, lines))
         y += row_h
-    if xfmr_va:
+    for xf in xfmrs:
         parts.append(f'<line x1="{bus_x}" y1="{y}" x2="{branch_x}" y2="{y}" '
                      f'stroke="{_ACCENT}" stroke-width="2" marker-end="url(#arrow)"/>')
-        parts.append(_box(branch_x, int(y - box_h / 2), box_w, box_h,
-                          [f"Control Transformer {xfmr_va} VA"], fill="#eef6ff"))
+        lines = [xf.get("label", "Transformer")] + ([xf["sub"]] if xf.get("sub") else [])
+        parts.append(_box(branch_x, int(y - box_h / 2), box_w, box_h, lines, fill="#eef6ff"))
+        y += row_h
     return _wrap(width, height, "".join(parts), title)
