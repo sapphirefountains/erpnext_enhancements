@@ -1838,6 +1838,17 @@ jobs:
         run: node scripts/test_sf_kit.mjs
       - name: sf_kit page pieces (stylesheet rules + wiring)
         run: python -m unittest erpnext_enhancements.tests.test_sf_kit -v
+      # Fountain Designer page (phase F of the rebuild, v1.761.0): the guided designer built against
+      # phase E's API contract with a ?demo=1 fixture. The node step runs the page's pure modules: the
+      # route and the address it writes, the quick/full step lists, the debounced derive dropping a
+      # stale reply, the model helpers (pinning, presets, merge_derived), the SVG allow-list, every step
+      # rendered for the three demo designs, and the demo answering every endpoint. The unittest step
+      # holds the page record, the bundles (by name, never global), the stylesheet to the tokens, the
+      # workspace/Dock entries, and the README contract to every key the fixture sends.
+      - name: Fountain Designer page (pure modules, node)
+        run: node scripts/test_fountain_designer.mjs
+      - name: Fountain Designer page (wiring, stylesheet, contract)
+        run: python -m unittest erpnext_enhancements.tests.test_fountain_designer -v
       # Form kit P4-A, the guided-entry engine (form_kit/): an Opportunity's form walked into
       # steps against the real v16 meta plus this app's custom fields and property setters
       # (every field the form shows is in the flow), permissions per field as the Desk works
@@ -2488,6 +2499,22 @@ jobs:
           erpnext_enhancements/tests/test_structural_walls.py
           erpnext_enhancements/tests/test_structural_steel.py
           erpnext_enhancements/tests/test_structural_supports.py -q
+      # Fountain Designer phase A (v1.760.0): the Darcy solver in engine/hydraulics/, ported from the
+      # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
+      # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of
+      # their own -- `python -m unittest` would collect nothing and report success. No Node needed:
+      # regenerating the JSON is a manual step with the DRC checkout (tools/golden/drc/). The suites
+      # import no frappe and install no stub, so one process runs all seven.
+      - name: Water engineering hydraulics (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_hydraulics_water.py
+          erpnext_enhancements/tests/test_hydraulics_catalog.py
+          erpnext_enhancements/tests/test_hydraulics_fittings.py
+          erpnext_enhancements/tests/test_hydraulics_segment.py
+          erpnext_enhancements/tests/test_hydraulics_pump.py
+          erpnext_enhancements/tests/test_hydraulics_terminals.py
+          erpnext_enhancements/tests/test_hydraulics_operating_point.py
       # Fountain Designer catalog (v1.758.0). PLAIN PYTEST FUNCTIONS with their own in-memory
       # frappe, so their own `python -m pytest` step (unittest would collect nothing). Guards the
       # approved-seed loader -- only approved rows, provenance on every record, a second run

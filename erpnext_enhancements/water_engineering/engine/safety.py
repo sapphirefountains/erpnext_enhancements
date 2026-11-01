@@ -298,7 +298,7 @@ def water_hammer(
             "static_psi": make_input(static_psi, "psi", "user", "operating pressure"),
             "pipe_rating_psi": make_input(rating, "psi", "lookup", "pipe schedule rating"),
         },
-        formula="dP = rho*a*dV  ->  surge_psi = (a*dV/g)/2.31 ; scaled by 2L/a if slow",
+        formula="dP = rho*a*dV  ->  surge_psi = (a*dV/g)/2.308966 ; scaled by 2L/a if slow",
         steps=[
             f"wave speed a = {a:g} ft/s ({material})",
             f"full surge = ({a:g}*{dv:g}/{GRAVITY_FT_S2:g})/{FT_PER_PSI} = {surge_psi_full:.1f} psi",

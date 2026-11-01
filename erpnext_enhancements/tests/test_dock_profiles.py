@@ -64,6 +64,8 @@ SHIPPED_DOCKS = {
 	"2026-10-23 12:00:00.000000": "57f2f9138bc9cd0cb6ec2eb63dd0e3d05339a383900c4abd64bb39656035e858",
 	"2026-10-23 16:00:00.000000": "c0f45e1fbb5e83c5fb47d4fd7768bc5f26ca3629b1cf68e0b09f9a77d59ec90a",
 	"2026-10-27 12:00:00.000000": "bc0d11f00b0429f2553ce3d8360fb6b72c8a6a75a0a4f42db40cf1d2a9184bd7",
+	# v1.761.0: Fountain Designer, a URL row after Water Engineering (phase F of the rebuild).
+	"2026-11-01 12:00:00.000000": "3b1fdf3c32862c51c22f8726f03e3c315df4ac2dc57bcd0e443007f45e7e8a7f",
 }
 
 STATE = {}

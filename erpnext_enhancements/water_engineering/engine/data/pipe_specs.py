@@ -4,6 +4,12 @@ Verified from DOC-0049 ``SUPPORT`` named range ``PipeType`` ($G$5:$K$38):
 each row = (size label, inside diameter in, max suction FPS, max discharge FPS,
 legally-defensible FPS). Suction limit is 4.5 FPS for every material; discharge
 and legal limits differ between PVC (6.5 / 8.0) and copper (4.9 / 5.0).
+
+These tables also govern the Darcy solver's bores: ``hydraulics/catalog.py`` takes
+OD, wall and ID from ``PIPE_PRESSURE_SPECS`` (not DRC's OD-minus-wall figures) and
+attaches the limits and ratings here, and ``tests/test_hydraulics_catalog.py``
+fails if the two tables' IDs, or the table patched into the DRC golden generator,
+ever disagree (decision D2, 2026-11-01).
 """
 
 from __future__ import annotations

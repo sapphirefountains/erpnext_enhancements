@@ -1,0 +1,609 @@
+{
+ "model": {
+  "schema": 2,
+  "mode": "quick",
+  "kit": "plaza-interactive-24jet",
+  "site": {
+   "address": "",
+   "lat": 40.7608,
+   "lng": -111.891,
+   "elevation_ft": 4226,
+   "air_temp_f": 97,
+   "water_temp_f": 72,
+   "frost_depth_in": 30,
+   "hardness_ppm": 250,
+   "kwh_rate": 0.105,
+   "water_rate_per_ccf": 3.53,
+   "jurisdiction": "UT",
+   "venue_type": "Interactive Water Feature",
+   "regulated": true
+  },
+  "setup": {
+   "basin": "auto",
+   "piping": "auto",
+   "pump": "auto",
+   "control": "auto",
+   "bypass": "auto",
+   "surge": "auto",
+   "treatment": "auto",
+   "lighting": "auto",
+   "electrical": "auto",
+   "winterization": "auto",
+   "features": "custom"
+  },
+  "presets": {},
+  "features": [
+   {
+    "id": "f1",
+    "family": "interactive",
+    "type": "Splash pad (in-ground jets)",
+    "label": "Plaza jets",
+    "inputs": {
+     "jet_count": 24,
+     "jet_height_ft": 6,
+     "pad_area_sqft": 1600,
+     "tank_minutes": 3
+    },
+    "effect": {
+     "look": "chase"
+    },
+    "product": {
+     "item": null,
+     "generic": true
+    },
+    "count": 1,
+    "basin": "b1",
+    "node": "t1"
+   }
+  ],
+  "basins": [
+   {
+    "id": "b1",
+    "label": "Surge tank",
+    "shape": "rectangular",
+    "length_in": 96,
+    "width_in": 72,
+    "depth_in": 24,
+    "freeboard_in": null,
+    "volume_gal_override": null,
+    "elevation_ft": -6
+   }
+  ],
+  "pump_room": {
+   "location": "room",
+   "distance_ft": 60,
+   "elevation_ft": -6,
+   "route_template": "interactive-manifold",
+   "material": "SCH80 PVC"
+  },
+  "network": {
+   "nodes": [
+    {
+     "id": "src",
+     "kind": "basin",
+     "basin": "b1",
+     "elevation_ft": 0
+    },
+    {
+     "id": "p1",
+     "kind": "pump"
+    },
+    {
+     "id": "t1",
+     "kind": "terminal",
+     "feature": "f1",
+     "elevation_ft": 6
+    }
+   ],
+   "pumps": [
+    {
+     "item": "GLD-3656-5",
+     "curve": "GLD-3656-5-7.0in",
+     "generic_class": "end-suction",
+     "label": "Goulds 3656 5 HP",
+     "id": "p1",
+     "speed_pct": 100,
+     "control": "vfd",
+     "setpoint_psi": null
+    }
+   ],
+   "segments": [
+    {
+     "id": "s1",
+     "from": "src",
+     "to": "p1",
+     "line": "suction",
+     "material": "SCH80 PVC",
+     "nominal_size": "4\"",
+     "length_ft": 8,
+     "fittings": [
+      {
+       "key": "elbow_90",
+       "qty": 2
+      },
+      {
+       "key": "ball_valve",
+       "qty": 1
+      }
+     ],
+     "components": []
+    },
+    {
+     "id": "s2",
+     "from": "p1",
+     "to": "t1",
+     "line": "discharge",
+     "material": "SCH80 PVC",
+     "nominal_size": "3\"",
+     "length_ft": 140,
+     "fittings": [
+      {
+       "key": "elbow_90",
+       "qty": 4
+      },
+      {
+       "key": "tee_branch",
+       "qty": 1
+      }
+     ],
+     "components": [
+      {
+       "key": "filter_ccp520"
+      }
+     ]
+    }
+   ],
+   "terminals": [
+    {
+     "id": "t1",
+     "kind": "manifold",
+     "feature": "f1",
+     "params": {}
+    }
+   ]
+  },
+  "equipment": [
+   {
+    "slot": "filter",
+    "item": "PNT-TR100",
+    "qty": 2,
+    "auto": true
+   },
+   {
+    "slot": "chlorinator",
+    "item": null,
+    "qty": 1,
+    "auto": true
+   },
+   {
+    "slot": "vfd",
+    "item": null,
+    "qty": 1,
+    "auto": true
+   },
+   {
+    "slot": "light",
+    "item": "HYD-RGBW-24",
+    "qty": 12,
+    "auto": true
+   }
+  ],
+  "treatment": {
+   "sanitizer": "chlorine",
+   "uv": false
+  },
+  "lighting": {
+   "fixtures": [],
+   "control": "dmx"
+  },
+  "electrical": {
+   "service_v": 208,
+   "phase": 3,
+   "panel_distance_ft": 90
+  },
+  "winterization": {},
+  "acks": [],
+  "notes": ""
+ },
+ "results": {
+  "interactive_flow": {
+   "value": 144,
+   "unit": "gpm",
+   "formula": "24 jets × 6 gpm, busiest chase step",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  },
+  "tank": {
+   "value": 598,
+   "unit": "gal",
+   "formula": "3-minute rule: 160 gpm × 3.7 min",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  }
+ },
+ "values": {
+  "features": {
+   "f1": {
+    "flow_gpm": 144,
+    "head_ft": 9.4,
+    "note": "Chase: 24 jets at 6 gpm on the busiest step"
+   }
+  },
+  "basins": {
+   "b1": {
+    "volume_gal": 598,
+    "weight_lb": 4985,
+    "surge_in": 5.1,
+    "freeboard_in": 6.4,
+    "tank_minutes": 3.7
+   }
+  },
+  "segments": {
+   "s1": {
+    "velocity_fps": 6.2,
+    "loss_ft": 1.1,
+    "size": "4\""
+   },
+   "s2": {
+    "velocity_fps": 7.4,
+    "loss_ft": 18.6,
+    "size": "3\""
+   }
+  },
+  "pumps": {
+   "p1": {
+    "flow_gpm": 160,
+    "head_ft": 62,
+    "kw": 3.7,
+    "npsh_margin_ft": 6.1,
+    "bep_pct": 104
+   }
+  }
+ },
+ "rollups": {
+  "design_flow_gpm": 144,
+  "operating_flow_gpm": 160,
+  "tdh_ft": 64.5,
+  "operating_head_ft": 62.0,
+  "selected_pump": "GLD-3656-5",
+  "selected_pump_label": "Goulds 3656 5 HP",
+  "pump_kw": 3.7,
+  "total_basin_gallons": 598,
+  "om_cost_per_year": 9800,
+  "blocker_count": 1,
+  "warning_count": 1,
+  "completion_percent": 64,
+  "issue_ready": false,
+  "budget_total": 169320.0
+ },
+ "issues": [
+  {
+   "key": "IWF_UV_REQUIRED",
+   "code": "IWF_UV_REQUIRED",
+   "severity": "blocker",
+   "title": "Interactive features need UV",
+   "detail": "Utah R392-302-41 requires a secondary disinfection system on an interactive water feature.",
+   "section": "treatment",
+   "path": "treatment.uv",
+   "fix_hint": "Turn on UV in Treatment, or apply the Chlorine, UV and sand filter preset.",
+   "citation": "Utah R392-302-41",
+   "remedies": [
+    {
+     "label": "Add UV",
+     "set": {
+      "treatment.uv": true
+     }
+    }
+   ]
+  },
+  {
+   "key": "SUCTION_VELOCITY|s1",
+   "code": "SUCTION_VELOCITY",
+   "severity": "warning",
+   "title": "Suction velocity 6.2 ft/s is over 6.0 ft/s",
+   "detail": "Interactive suction is held to 6 ft/s at the real operating flow (160 gpm).",
+   "section": "piping",
+   "path": "network.segments.0.nominal_size",
+   "fix_hint": "Upsize the suction to 5 in.",
+   "citation": "DOC-0049",
+   "remedies": [
+    {
+     "label": "Upsize the suction to 5 in",
+     "set": {
+      "network.segments.0.nominal_size": "5\""
+     }
+    }
+   ]
+  },
+  {
+   "key": "TURNOVER_OK",
+   "code": "TURNOVER_OK",
+   "severity": "info",
+   "title": "Turnover is 28 minutes against the 30-minute rule",
+   "detail": "",
+   "section": "treatment",
+   "fix_hint": "",
+   "citation": "Utah R392-302-41",
+   "remedies": []
+  }
+ ],
+ "readiness": {
+  "sections": [
+   {
+    "key": "site",
+    "label": "Site",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "features",
+    "label": "Features",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "basin",
+    "label": "Basins",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "piping",
+    "label": "Piping",
+    "status": "warn",
+    "missing": []
+   },
+   {
+    "key": "pump",
+    "label": "Pump",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "treatment",
+    "label": "Treatment",
+    "status": "blocked",
+    "missing": [
+     "UV system"
+    ]
+   },
+   {
+    "key": "electrical",
+    "label": "Electrical",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "deliverables",
+    "label": "Package",
+    "status": "missing",
+    "missing": [
+     "Resolve 1 blocking issue",
+     "Acknowledge 1 open warning"
+    ]
+   }
+  ],
+  "calc_ready": true,
+  "issue_ready": false
+ },
+ "verdict": {
+  "level": "bad",
+  "headline": "Not buildable yet: one code blocker.",
+  "package_ready": false
+ },
+ "bom": [
+  {
+   "section": "Pump",
+   "item": "GLD-3656-5",
+   "description": "Goulds 3656 5 HP end-suction, 208 V 3 ph",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 6400,
+   "amount": 6400,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Pump",
+   "item": null,
+   "description": "Filtration pump, 2 HP self-priming",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 2600,
+   "amount": 2600,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Treatment",
+   "item": "PNT-TR100",
+   "description": "Pentair Triton II TR100 sand filter",
+   "qty": 2,
+   "uom": "Nos",
+   "rate": 1650,
+   "amount": 3300,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Treatment",
+   "item": null,
+   "description": "Chlorine feeder and controller",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 4800,
+   "amount": 4800,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Piping",
+   "item": null,
+   "description": "3 in SCH80 PVC pipe, with 10% waste",
+   "qty": 140,
+   "uom": "Ft",
+   "rate": 11.2,
+   "amount": 1568.0,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Piping",
+   "item": null,
+   "description": "1-1/2 in SCH80 PVC pipe, with 10% waste",
+   "qty": 520,
+   "uom": "Ft",
+   "rate": 4.6,
+   "amount": 2392.0,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Fittings",
+   "item": null,
+   "description": "Manifold and valve set, 24 zones",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 14800,
+   "amount": 14800,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Feature",
+   "item": "CRY-IJ-075",
+   "description": "Crystal Fountains in-ground jet 3/4 in",
+   "qty": 24,
+   "uom": "Nos",
+   "rate": 690,
+   "amount": 16560,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Feature",
+   "item": null,
+   "description": "Solenoid valves, 24 zones",
+   "qty": 24,
+   "uom": "Nos",
+   "rate": 410,
+   "amount": 9840,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Basin",
+   "item": null,
+   "description": "Surge tank 600 gal, concrete, with liner",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 28500,
+   "amount": 28500,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Lighting",
+   "item": "HYD-RGBW-24",
+   "description": "Hydrel RGBW 24 V DMX",
+   "qty": 12,
+   "uom": "Nos",
+   "rate": 1180,
+   "amount": 14160,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Electrical",
+   "item": null,
+   "description": "Control panel with PLC, VFD, GFCI (NEC 680)",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 24500,
+   "amount": 24500,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Labor",
+   "item": null,
+   "description": "Installation, interactive plaza (house labor assembly)",
+   "qty": 420,
+   "uom": "Hour",
+   "rate": 95,
+   "amount": 39900,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  }
+ ],
+ "charts": {
+  "duty_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 480 300\" role=\"img\" aria-label=\"Duty point: 160 gpm at 62 ft\"><title>Duty point: 160 gpm at 62 ft</title><rect class=\"fd-bep\" x=\"273.8\" y=\"28\" width=\"95.1\" height=\"228\" fill=\"currentColor\" fill-opacity=\"0.08\"/><line class=\"fd-grid\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"256\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><line class=\"fd-grid\" x1=\"52\" y1=\"210.4\" x2=\"464\" y2=\"210.4\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"210.4\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">22</text><line class=\"fd-grid\" x1=\"52\" y1=\"164.8\" x2=\"464\" y2=\"164.8\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"164.8\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">44</text><line class=\"fd-grid\" x1=\"52\" y1=\"119.2\" x2=\"464\" y2=\"119.2\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"119.2\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">66</text><line class=\"fd-grid\" x1=\"52\" y1=\"73.6\" x2=\"464\" y2=\"73.6\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"73.6\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">88</text><line class=\"fd-grid\" x1=\"52\" y1=\"28\" x2=\"464\" y2=\"28\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"28\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">110</text><text class=\"fd-label\" x=\"52\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><text class=\"fd-label\" x=\"134.4\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">52</text><text class=\"fd-label\" x=\"216.8\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">104</text><text class=\"fd-label\" x=\"299.2\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">156</text><text class=\"fd-label\" x=\"381.6\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">208</text><text class=\"fd-label\" x=\"464\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">260</text><line class=\"fd-axis\" x1=\"52\" y1=\"28\" x2=\"52\" y2=\"256\" stroke=\"currentColor\"/><line class=\"fd-axis\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\"/><text class=\"fd-label\" x=\"258.0\" y=\"292\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\">Flow (gpm)</text><text class=\"fd-label\" x=\"14\" y=\"142.0\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\" transform=\"rotate(-90 14 142.0)\">Head (ft)</text><polyline class=\"fd-curve-pump\" data-series=\"pump\" points=\"52,65.3 62.3,65.4 72.6,65.7 82.9,66.2 93.2,67 103.5,67.9 113.8,69 124.1,70.3 134.4,71.9 144.7,73.6 155,75.6 165.3,77.7 175.6,80.1 185.9,82.7 196.2,85.4 206.5,88.4 216.8,91.6 227.1,95 237.4,98.6 247.7,102.4 258,106.4 268.3,110.6 278.6,115 288.9,119.6 299.2,124.4 309.5,129.4 319.8,134.7 330.1,140.1 340.4,145.8 350.7,151.6 361,157.7 371.3,163.9 381.6,170.4 391.9,177.1 402.2,183.9 412.5,191 422.8,198.3 433.1,205.8 443.4,213.5 453.7,221.4 464,229.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"/><polyline class=\"fd-curve-system\" data-series=\"system\" points=\"52,210.4 62.3,210.3 72.6,209.9 82.9,209.2 93.2,208.2 103.5,207 113.8,205.5 124.1,203.7 134.4,201.6 144.7,199.3 155,196.7 165.3,193.8 175.6,190.7 185.9,187.3 196.2,183.6 206.5,179.6 216.8,175.4 227.1,170.9 237.4,166.1 247.7,161 258,155.7 268.3,150.1 278.6,144.2 288.9,138 299.2,131.6 309.5,124.9 319.8,117.9 330.1,110.6 340.4,103.1 350.7,95.3 361,87.3 371.3,78.9 381.6,70.3 391.9,61.4 402.2,52.2 412.5,42.8 422.8,33.1\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><circle class=\"fd-point\" data-point=\"duty\" cx=\"305.5\" cy=\"127.5\" r=\"6\" fill=\"currentColor\"/><text class=\"fd-label fd-point-label\" x=\"315.5\" y=\"117.5\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">160 gpm @ 62 ft</text><line class=\"fd-curve-pump\" x1=\"310\" y1=\"14\" x2=\"330\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2.5\"/><text class=\"fd-label\" x=\"334\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">Pump</text><line class=\"fd-curve-system\" x1=\"380\" y1=\"14\" x2=\"400\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text class=\"fd-label\" x=\"404\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">System</text></svg>",
+  "schematic_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 160\" role=\"img\" aria-label=\"Schematic: surge tank to pump to filters to manifold to jets\"><title>Schematic: surge tank to pump to filters to manifold to jets</title><rect class=\"fd-node\" x=\"20\" y=\"50\" width=\"74\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"57\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Surge tank</text><text class=\"fd-label\" x=\"57\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">600 gal</text><line class=\"fd-pipe\" x1=\"94\" y1=\"78\" x2=\"124\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"124\" y=\"50\" width=\"74\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"161\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Pump</text><text class=\"fd-label\" x=\"161\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">5 HP VFD</text><line class=\"fd-pipe\" x1=\"198\" y1=\"78\" x2=\"228\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"228\" y=\"50\" width=\"74\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"265\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Filters</text><text class=\"fd-label\" x=\"265\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">2 × TR100</text><line class=\"fd-pipe\" x1=\"302\" y1=\"78\" x2=\"332\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"332\" y=\"50\" width=\"74\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"369\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Manifold</text><text class=\"fd-label\" x=\"369\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">24 zones</text><line class=\"fd-pipe\" x1=\"406\" y1=\"78\" x2=\"436\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"436\" y=\"50\" width=\"74\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"473\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Jets</text><text class=\"fd-label\" x=\"473\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">24 × 6 ft</text></svg>",
+  "oneline_svg": null
+ },
+ "outputs": {
+  "schedules": [
+   {
+    "key": "equipment",
+    "label": "Equipment schedule",
+    "url": null
+   },
+   {
+    "key": "piping",
+    "label": "Piping schedule",
+    "url": null
+   },
+   {
+    "key": "fittings",
+    "label": "Fitting schedule",
+    "url": null
+   }
+  ],
+  "packet": {
+   "label": "Submittal packet (health department)",
+   "url": null
+  },
+  "om": {
+   "total_per_year": 9800,
+   "lines": [
+    {
+     "label": "Power (3.7 kW, 10 h a day, May to September)",
+     "amount": 2130
+    },
+    {
+     "label": "Water (splash-out and backwash)",
+     "amount": 1450
+    },
+    {
+     "label": "Chemicals",
+     "amount": 2400
+    },
+    {
+     "label": "UV lamps and filter media",
+     "amount": 920
+    },
+    {
+     "label": "Service visits (weekly in season)",
+     "amount": 2900
+    }
+   ]
+  },
+  "winterization": {
+   "needed": true,
+   "steps": [
+    "Drain the surge tank and the manifold to below the 30 in frost depth.",
+    "Blow out every zone line with air and leave the solenoids open.",
+    "Pull the jets and cap the fittings.",
+    "Drain the pumps and filters; leave the drain plugs out."
+   ]
+  },
+  "startup": [
+   "Fill the surge tank.",
+   "Prime both pumps.",
+   "Balance chlorine and pH; record the first test.",
+   "Run every zone and check the jet heights."
+  ]
+ }
+}
