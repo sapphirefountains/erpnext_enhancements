@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.760.0] - 2026-11-01
+## [1.761.0] - 2026-11-01
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,125 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.760.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase A. The plan is
+`docs/fountain-designer/PLAN.md` (PR #1389), and the porting spec is section 3 of the engine audit
+beside it. **Nothing user-facing changes, and the deploy does nothing.** The new package is not
+imported by `run_spine`, any DocType, any endpoint or any assistant tool; phase E wires it in. The
+deploy has no migrate work, no patches and no fixtures.
+
+### Added
+- **`water_engineering/engine/hydraulics/`: the solver the workbook engine never had.** It is a
+  stdlib-only Python port of the Digital Rain Curtain's `src/hydro` JavaScript (`common.js`, `flow.js`,
+  and the demand contract from `manifold.js`), held to it by golden vectors. Modules:
+  - `water.py`: water properties from temperature (Thiesen density, Vogel viscosity, Antoine vapor
+    pressure, IAPWS surface tension), the Churchill friction factor and Korteweg wave speed.
+  - `catalog.py`: materials, sizes and the resolved pipe spec.
+  - `fittings.py`: Darby 3-K fittings, Crane L/D, and the clog factor.
+  - `segment.py`: Darcy-Weisbach loss per run, with equipment curves.
+  - `pump.py`: head, efficiency and NPSHr curves, BEP, run-out, shaft power and the affinity laws.
+  - `terminals.py`: the demand curves.
+  - `operating_point.py`: where the pump meets the system, with bypass, PRV and VFD (15% floor), and
+    the cannot-lift and dead-head checks.
+
+  Each calculation has an `*_si` kernel, which is the port, plus a US-unit envelope that returns the
+  usual `CalcResult`. `hydraulics/README.md` maps every module to its JS source and golden file.
+- **Why Darcy governs** (Nikolas, 2026-11-01).
+  - `engine/pump.select_pump` only checks `head(design flow) >= TDH`. It cannot say what flow a pump
+    actually delivers, what the pump draws, its NPSH margin, or whether an oversized pump runs out past
+    the VGB suction-cover rating. That last gap is a safety blind spot. The operating point answers all
+    four.
+  - The DOC-0049 Hazen-Williams form is an empirical fit for water near 60 F in turbulent flow and
+    larger pipe. It has no temperature term, so a 104 F spa loop gets the same friction as a 50 F
+    fountain. Its fixed K per fitting fits roughly 3/4"-1" pipe: the workbook's 90° elbow is K 0.81,
+    while Darby gives about 0.5 in 4".
+  - Darcy-Weisbach with the Churchill factor and 3-K fittings is right across laminar, transition and
+    turbulent flow, and at any temperature.
+- **Where the workbook figure stays.** `tdh.py`, `pipe.hazen_williams_loss` and every DOC-0049 golden
+  are untouched; they remain the workbook reproduction. `segment.segment_loss` returns the audit cards
+  in `tdh.segment_loss_results`' shape: Darcy friction, 3-K fittings, equipment, and a fourth card that
+  is the workbook's own Hazen-Williams + fixed-K figure for the same run. When the two differ by more
+  than 10%, that card is marked `Diverges` for `issues.py` to raise in phase E.
+  - **Expect it to fire on most PVC runs.** With DOC-0049's C = 130, Hazen-Williams is 15-35% above
+    smooth-pipe Darcy. Examples:
+    - 100 ft of 2" at 50 GPM: 5.21 ft workbook vs 3.94 ft Darcy.
+    - 4" at 250 GPM with ten elbows: 8.98 ft vs 6.06 ft.
+  - The workbook is conservative, so this is not an error. It is a decision for phase E: raise the
+    issue per segment or once per system.
+- **Terminals.**
+  - `OrificeDemand` is DRC's `demandModel` and matches it at 1e-12. It is built from a Nozzle Profile's
+    Cd and orifice, or from a rated GPM at a rated head. Its flow equals `feature.nozzle_flow` at any
+    water temperature.
+  - `OpenDischargeDemand` is new: a weir trough or spillway fed until it overflows. It is a constant
+    static lift with infinite conductance. Its design flow comes from `feature.weir_flow` or the GPM/ft
+    rule. The operating point solves it on flow, because a pressure bisection cannot resolve a terminal
+    that takes any flow at one pressure.
+  - `FixedFlowDemand` reports when the pump cannot hold its minimum pressure.
+  - `ParallelDemand` sums the members at one node. With N orifices it equals one lumped orifice to
+    1e-12, which is the case phase B's network solver must reproduce.
+- **NPSHa at the site's elevation.** DRC fixes the atmosphere at sea level (`PATM = 101325`) and has
+  no elevation anywhere, so it overstates NPSHa by about 4.9 ft at Salt Lake City. That is about three
+  times its own margin (audit E5). The envelope passes the barometric figure from
+  `safety._atm_head_ft` and the vapor pressure from `safety._vapor_pressure_psia`. `npsh_available`
+  and the operating point therefore agree, and the steps show DRC's sea-level figure beside it.
+- **Golden-vector infrastructure.**
+  - `tools/golden/drc/gen_<module>.mjs` follows aquafect's `drc.mjs` pattern. Each generator imports
+    the DRC checkout read-only, runs a scenario list and writes
+    `erpnext_enhancements/tests/golden/drc/<module>.json`, recording the DRC commit (`737fa80f`) and
+    Node version (v24.22.1).
+  - Each file stays under 200 KB, because this repository is public; aquafect's equivalents are
+    0.7-2.6 MB each.
+  - `tests/drc_golden.py` provides `close` (relative to the larger magnitude, NaN = NaN, exact ±inf),
+    `close_f32`, and the NaN/Infinity string decoding.
+  - `hydraulics/_js.py` reproduces the JS number semantics the match depends on: NaN-propagating
+    max/min, `x || d`, `toFixed` ties, and pow overflow. The bisections use DRC's exact caps and
+    tolerances.
+  - Closed-form math matches at 1e-12 and bisections at 1e-9.
+  - Seven bench-free pytest suites (`test_hydraulics_*.py`, 108 tests) run in their own `ci.yml` step.
+    CI needs no Node.
+
+### Changed
+- **`FT_PER_PSI` is now 2.308966**, DOC-0049 F-Formulas!F173. It was 2.31, with a comment saying the
+  workbooks had no figure; they do (audit E12). This moves workbook outputs in the fourth significant
+  figure (for example, sea-level NPSHa 20.11 → 20.09 ft and the Joukowsky surge 104.86 → 104.91 psi).
+  Two goldens moved and were refreshed: `test_conversions`, and `test_npsh_lift_golden`
+  (20.11 → 20.09 ft, now asserted to 2 places). The `2.31` written into the formula strings and
+  comments of `safety.water_hammer`, `feature.jet_trajectory`, `pipeline.py`,
+  `water_feature_design.py` and `constants.py` now reads 2.308966; the arithmetic always used the
+  constant. The Darcy solver converts with ρ(T)·g instead and does not use the constant.
+- **Pipe bores: DOC-0049 governs** (decision D2). `hydraulics/catalog.py` takes OD, wall and ID from
+  DOC-0049 "1, 2, 3 - Pipe Specs" (Sch 40 2" = 2.067") for Sch 40 and Sch 80 PVC, Type K copper and
+  galvanized steel Sch 40. DRC's OD-minus-wall figures (2.066") are not used.
+  - The generators patch the same rows into DRC's in-memory catalog. So `segment.json`,
+    `operating_point.json` and the DOC-0049 rows of `catalog.json` are regenerated with the DOC-0049
+    ID, and differ from DRC's own tests by the 0-0.3% the bores differ by.
+  - A test fails if the generator's table and `data/pipe_specs.py` ever drift.
+  - The DOC-0049 velocity limits and PSI ratings stay the authority. They are left unset where
+    DOC-0049 has none: steel ratings, PEX, hose.
+
+### Hardened in review (before merge)
+The independent review of PR #1391 found no blocker. Its six follow-ups and two nits are applied
+here, so phase B builds on the hardened interfaces. `hydraulics/README.md` lists each interface
+change.
+- **A pipe with no catalog size and no bore is never silent.** 1/2" PVC is the usual nozzle feed and
+  is not in DOC-0049. Without an `id_in` it solves on DRC's 25 mm default, which is roughly 1" pipe.
+  `PipeSpec.defaulted` now flags it, and every card resting on it carries status `Default Bore`.
+- **The kernel has no default atmosphere.** A hand-built `System` used to get sea level silently,
+  the audit-E5 error, when phase B calls `operating_point_si` directly. Now `atm_pa` is required.
+- **A PRV or VFD set below an open terminal's overflow is flagged.** It shuts the weir off, and the
+  result used to read as a quiet Q = 0. It is now status `Control Below Overflow`, with the remedy.
+- **Degenerate inputs give JavaScript's results instead of raising:**
+  - `Segment(branches=0)` reads as one branch;
+  - a zero-conductance orifice needs infinite pressure;
+  - a quadratic pump with no run-away flow gives zero head.
+
+### Not done here (phase B and E)
+- Manifold terminals, the junction-balancing network solver, surge, basin checks and autosize are
+  phase B. Wiring the solver into `run_spine`, the DocTypes and `issues.py` is phase E.
+- Every pump on prod has 0 curve points, so until phase D's catalog lands, the operating point runs on
+  the two-point quadratic (shut-off head and maximum flow) or on hand-entered curves.
 
 ## [1.759.0] - 2026-11-01
 
