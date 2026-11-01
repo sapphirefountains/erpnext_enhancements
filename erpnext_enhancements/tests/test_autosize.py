@@ -191,3 +191,21 @@ def test_derive_with_switched_terminals_adds_bypass_and_surge():
     assert "auto_bypass" in [r["calc"] for r in out["results"]]
     assert out["model"]["surge"]["closure_ms"] == RULE_DEFAULTS["valve_close_ms"]
     assert m3s_to_gpm(0) == 0
+
+
+def test_derive_reports_a_half_drawn_network_instead_of_raising():
+    m = model()
+    m["network"]["segments"].append({"id": "s9", "from": "j1", "to": "nowhere", "length_ft": 3})
+    out = derive(m, catalogs=CATALOG)
+    assert out["network"] is None and out["checks"][0]["code"] == "network.invalid"
+    assert out["checks"][0]["severity"] == "blocker"
+
+
+def test_derive_keeps_the_model_json_with_a_pumpcurve_catalog():
+    import json
+
+    cat = {"pumps": [dict(CATALOG["pumps"][2], points=None, curve=PumpCurve.from_us(pts(45, 120, 72)))]}
+    out = derive(model(), catalogs=cat)
+    json.dumps(out["model"])  # no PumpCurve object leaked into the model
+    rows = out["model"]["network"]["pumps"][0]["curve"]
+    assert abs(rows[2]["head_ft"] - 36) < 1e-9 and rows[2]["efficiency_pct"] == 72

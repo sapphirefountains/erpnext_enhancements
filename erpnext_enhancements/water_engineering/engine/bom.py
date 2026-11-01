@@ -231,8 +231,8 @@ def bom_rows(model: dict, *, rules: dict | None = None) -> CalcResult:
         lines.append(line("Piping", f"pipe|{spec.material}|{k[1]}", f"{spec.label} pipe {k[1]} ({math.ceil(qty / STICK_FT)} x 20 ft sticks, incl. {waste:.0%} waste)",
                           qty, "ft", {"kind": "pipe", "material": spec.material, "nominal_size": spec.nominal, "id_mm": spec.id_mm, "length_ft": ft}))
 
-    # Fittings and valves
-    fits = fitting_counts(segs)
+    # Fittings and valves (an unsized run's fittings wait for its size, as its pipe does)
+    fits = fitting_counts([s for s in segs if s.get("nominal_size") or s.get("id_in")])
     joints = 0.0
     for f in fits:
         section = "Valves" if f["key"] in VALVE_KEYS else ("Equipment" if f["key"] in EQUIPMENT_KEYS else "Piping")

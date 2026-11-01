@@ -59,7 +59,7 @@ RULE_DEFAULTS = {
 
 def water_plan_si(*, vol_l: float, evap_lph: float, spray_lph: float, hours_per_day: float, water_c: float, outdoor: bool,
                   treatment: str = "chlorine", pct: float = 0.0, ppm: float = 0.0, loss_ppm: float = 0.0, max_cycles: float = 3.0) -> dict:
-    """``waterPlan`` (litres, ppm, days)."""
+    """``waterPlan`` (liters, ppm, days)."""
     hours = _js.jmax(0.0, _js.or_(_js.num(hours_per_day), 0.0))
     t = TREATMENTS.get(treatment) or TREATMENTS["chlorine"]
     evap_lpd, spray_lpd = (evap_lph or 0) * hours, (spray_lph or 0) * hours
@@ -68,8 +68,8 @@ def water_plan_si(*, vol_l: float, evap_lph: float, spray_lph: float, hours_per_
     loss_ppm = float(loss_ppm) if loss_ppm and loss_ppm > 0 else (3 if outdoor else 1)
     pct = (float(pct) if pct and pct > 0 else t["pct"]) if t["kind"] == "chlorine" else 0
 
-    def ml(d_ppm: float, litres: float) -> float:
-        return (d_ppm * litres) / (pct * 10) if pct > 0 else 0.0
+    def ml(d_ppm: float, liters: float) -> float:
+        return (d_ppm * liters) / (pct * 10) if pct > 0 else 0.0
 
     dose = {"fill_ml": ml(ppm, vol_l), "daily_ml": ml(loss_ppm, vol_l) + ml(ppm, makeup_lpd)} if t["kind"] == "chlorine" else None
     k = _js.jmax(1.2, _js.or_(_js.num(max_cycles), 3))

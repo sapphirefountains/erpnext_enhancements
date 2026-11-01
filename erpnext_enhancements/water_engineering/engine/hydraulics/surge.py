@@ -101,7 +101,7 @@ def surge_for_si(dq: float, w: Water, t_close_s: float, supply=(), manifold: Man
 
 def accumulator_gas_l_si(dq: float, p_op_pa: float, allow_pa: float, w: Water, supply=(), manifold: Manifold | None = None,
                          atm_pa: float = PATM) -> float:
-    """``accumulatorGasL``: litres of gas that absorb the trunk's kinetic energy within ``allow_pa``."""
+    """``accumulatorGasL``: liters of gas that absorb the trunk's kinetic energy within ``allow_pa``."""
     if not (dq > 0) or not (allow_pa > 0):
         return 0.0
     mf = manifold_wave_si(manifold, w) if manifold is not None else None

@@ -94,3 +94,13 @@ def test_merge_sections_folds_other_phases_lines():
 def test_no_labor_rules_is_flagged():
     lines, checks = labor_rows(model(), None)
     assert lines == [] and checks[0]["code"] == "bom.no_labor_rules"
+
+
+def test_unsized_segment_adds_neither_pipe_nor_fittings():
+    m = model()
+    m["network"]["segments"] = [dict(SEGS[1], nominal_size=None)]
+    v = bom_rows(m).value
+    # Only the manifold terminal's own 1-1/2" header remains: nothing from the unsized run, at any size.
+    assert [ln["key"] for ln in v["lines"] if ln["key"].startswith("pipe|")] == ['pipe|SCH40 PVC|1-1/2"']
+    assert not [ln for ln in v["lines"] if ln["key"].startswith(("fitting|check", "fitting|elbow", "fitting|coupling"))]
+    assert any(c["code"] == "bom.unsized_segment" for c in v["checks"])

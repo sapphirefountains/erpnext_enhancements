@@ -308,7 +308,7 @@ def manifold_solve_si(m: Manifold, p_in: float, w: Water, open_=None) -> Manifol
 
 
 def manifold_volume_l(m: Manifold) -> float:
-    """``manifoldVolumeL``: litres of water in the manifold pipe, overhang included."""
+    """``manifoldVolumeL``: liters of water in the manifold pipe, overhang included."""
     return area_of_si(m.spec.id_m) * (m.span_m + 2 * m.overhang_m) * 1000
 
 
@@ -379,7 +379,7 @@ def curtain_spec(material, nominal, bore_mm: float, wall_mm: float) -> PipeSpec:
 
 
 def manifold_beam_si(spec: PipeSpec, valves: int, pitch_mm: float, hanger_m: float, w: Water) -> dict:
-    """``manifoldBeam``: hanger spans, wet load per metre, EI and the mid-span sag ``5wL^4/384EI``."""
+    """``manifoldBeam``: hanger spans, wet load per meter, EI and the mid-span sag ``5wL^4/384EI``."""
     width = (valves * pitch_mm) / 1000
     n_spans = _js.jmax(1, math.ceil(width / _js.jmax(0.1, _js.or_(_js.num(hanger_m), 1)) - 1e-9))
     span = width / n_spans
@@ -524,8 +524,9 @@ class ManifoldDemand:
         for _ in range(200):
             if f_hi >= 0:
                 break
+            width = hi - lo
             lo, f_lo = hi, f_hi
-            hi = hi + 2 * (hi - lo) + 1.0
+            hi = hi + 2 * width + 1.0
             f_hi = self.q(hi) - q
         else:
             return math.inf

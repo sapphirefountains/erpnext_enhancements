@@ -217,3 +217,13 @@ def test_envelopes():
     assert sweep.value is not None and any(o.recommended for o in sweep.options)
     assert abs(sweep.inputs["inlet"]["value"] - 10.0) < 1e-12
     assert PA_PER_PSI > 0
+
+
+def test_exact_p_for_far_from_the_lumped_reference():
+    """The exact inverse must bracket a pressure far above the lumped estimate (it once grew 1 Pa a step)."""
+    m = build(GOLD["solves"][8]["P"])
+    w = water_si(20)
+    exact = ManifoldDemand(m, w, exact=True, p_ref=200.0)  # a reference far below the operating pressure
+    for p in (2e4, 8e4):
+        q = exact.q(p)
+        assert abs(exact.p_for(q) - p) < 1e-7 * p

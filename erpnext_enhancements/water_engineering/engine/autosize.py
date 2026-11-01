@@ -43,7 +43,7 @@ from .hydraulics import _js
 from .hydraulics._checks import BLOCKER, INFO, WARNING, make_check
 from .hydraulics.basin_checks import basin_checks
 from .hydraulics.catalog import MATERIALS, pipe_spec_si, resolve_material, sizes_for
-from .hydraulics.network import CLOSED, _report, build_network, solve_network_si
+from .hydraulics.network import CLOSED, _members, _report, build_network, solve_network_si
 from .hydraulics.pump import PumpCurve, bep_flow_si, pump_head_si
 from .hydraulics.segment import Segment
 from .hydraulics.surge import ceil_to, surge_for_si
@@ -250,10 +250,34 @@ def _shutoff_and_surge(net, res, rr: dict, water_temp_f: float, switched: bool) 
     rg = w.rho * G
     temp = float(rr["design_temp_f"] or water_temp_f)
     close_ms = float(rr["valve_close_ms"] if switched else rr["pump_stop_ms"])
-    h_ref = max((pp.h0 + net.nodes[pp.i_in].H for pp in net.pumps if pp.running and math.isfinite(net.nodes[pp.i_in].H)), default=None)
-    for lk in net.links:
+    # Each segment sees the shut-off head of the pumps that can push into it (downstream of their outlet).
+    out_links: dict = {}
+    for i, lk in enumerate(net.links):
+        if lk.kind in ("segment", "prv", "pump"):
+            out_links.setdefault(lk.a, []).append(i)
+            if lk.kind == "segment":
+                out_links.setdefault(lk.b, []).append(i)  # a pipe carries either way (a ring)
+    reach: dict = {}
+    for pp in net.pumps:
+        if not (pp.running and math.isfinite(net.nodes[pp.i_in].H)):
+            continue
+        h_pp = pp.h0 + net.nodes[pp.i_in].H
+        seen, stack = {pp.i_in}, [pp.i_out]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            for li in out_links.get(node, ()):
+                lk = net.links[li]
+                if lk.kind == "pump":
+                    continue  # another pump's own head is its own
+                reach[li] = max(reach.get(li, -math.inf), h_pp)
+                stack.append(lk.b if lk.a == node else lk.a)
+    for li, lk in enumerate(net.links):
         if lk.kind != "segment" or lk.seg.spec.nominal is None or net.nodes[lk.b].kind == "pump_in":
             continue
+        h_ref = reach.get(li)
         spec = lk.seg.spec
         rating = pipe_pressure_rating(spec.material, spec.nominal, temp).value
         if rating is None:
@@ -280,8 +304,7 @@ def control_node(net, pp, row: dict | None = None) -> int:
     if cn and cn in net.node_index:
         return net.node_index[cn]
     nodes = {t["node"] for t in net.terminals.values()}
-    pinned = {t["node"] for t in net.terminals.values()
-              if any(getattr(m, "p_fixed", None) is not None for m in [t["demand"], *getattr(t["demand"], "members", [])])}
+    pinned = {t["node"] for t in net.terminals.values() if any(getattr(m, "p_fixed", None) is not None for m in _members(t["demand"]))}
     if len(nodes) == 1 and not (nodes & pinned):
         return net.node_index[next(iter(nodes))]
     return pp.discharge
@@ -294,32 +317,39 @@ def _node_ref(net, i: int) -> str:
 
 def eval_pump(network: dict, curve, *, pump_ids: list | None = None, name: str = "", control: str | None = None,
               water_temp_f: float = 68.0, elevation_ft: float = 0.0, clog_pct: float = 0.0, rules: dict | None = None,
-              vgb: list | None = None, hp: float | None = None) -> dict:
+              vgb: list | None = None, hp: float | None = None, memo: dict | None = None) -> dict:
     """How a candidate curve runs this network, with the reasons it fails (``fails``, empty = ok).
 
     ``pump_ids``: the pump slots the candidate fills (default: every pump; identical pumps on a
     header). ``control``: ``none``, ``vfd`` or ``prv`` to try the candidate with that control holding
     the pressure it gives at the design flow (None: each pump's own control). ``vgb``: suction-outlet
     covers ``[{pump, cover_length_in, cover_width_in, open_area_fraction, outlets}]``, checked at the
-    larger of design and operating flow."""
+    larger of design and operating flow. ``memo``: a dict shared by the trials of one curve, so a
+    control trial reuses the uncontrolled design point instead of searching for it again."""
     rr = _rules(rules)
     ids = pump_ids or [p["id"] for p in network.get("pumps") or []]
     pc = curve if isinstance(curve, PumpCurve) else None
     curves = {pid: curve for pid in ids}
     overrides = {pid: {"control": "none", "setpoint_psi": None} for pid in ids} if control else {}
-    net = build_network(network, water_temp_f=water_temp_f, elevation_ft=elevation_ft, clog_pct=clog_pct, curves=curves,
-                        pump_overrides=overrides)
-    solve_network_si(net)
     fails: list[dict] = []
 
     def fail(code: str, text: str, ref: str = "") -> None:
         fails.append({"code": code, "ref": ref, "text": text})
 
-    q_op = _terminal_flow(net)
-    q_des = _design_total(net)
-    margin_pct = None
-    setpoints: dict = {}
-    if q_des:
+    cached = memo.get("design") if memo is not None and control else None
+    if cached is not None:
+        q_des, margin_pct, setpoints = cached["q_des"], cached["margin_pct"], cached["setpoints"]
+        fails.extend(cached["fails"])
+        net = None
+    else:
+        net = build_network(network, water_temp_f=water_temp_f, elevation_ft=elevation_ft, clog_pct=clog_pct, curves=curves,
+                            pump_overrides=overrides)
+        solve_network_si(net)
+        q_op = _terminal_flow(net)
+        q_des = _design_total(net)
+        margin_pct = None
+        setpoints: dict = {}
+    if cached is None and q_des:
         pump_states = {pp.id: (pp.speed, net.links[pp.link].q) for pp in net.pumps}
         s_star = _design_point(net, ids, q_des)
         if s_star is None:
@@ -342,8 +372,13 @@ def eval_pump(network: dict, curve, *, pump_ids: list | None = None, name: str =
             if margin_pct is not None and margin_pct < float(rr["head_margin_pct"]):
                 fail("head_margin", f"only {max(0.0, margin_pct):.0f}% head to spare at the design flow "
                      f"({rr['head_margin_pct']:g}% keeps it working as the strainer clogs)")
+    if memo is not None and control and cached is None:
+        memo["design"] = {"q_des": q_des, "margin_pct": margin_pct, "setpoints": setpoints, "fails": list(fails)}
     if control and control != "none" and setpoints:
         overrides = {pid: {"control": control, **setpoints[pid]} for pid in ids if pid in setpoints}
+        net = build_network(network, water_temp_f=water_temp_f, elevation_ft=elevation_ft, clog_pct=clog_pct, curves=curves,
+                            pump_overrides=overrides)
+    elif net is None:
         net = build_network(network, water_temp_f=water_temp_f, elevation_ft=elevation_ft, clog_pct=clog_pct, curves=curves,
                             pump_overrides=overrides)
     res = _report(net, solve_network_si(net), float(rr["npsh_margin_ft"]))
@@ -401,9 +436,10 @@ def rank_pumps(network: dict, catalog: list[dict], *, pump_ids: list | None = No
         if tries == ["auto"]:
             tries = ["none", "vfd" if (row.get("hp") or 0) >= float(rr["vfd_min_hp"]) else "prv"]
         e = None
+        memo: dict = {}
         for c in tries:
             trial = eval_pump(network, curve, pump_ids=pump_ids, name=row.get("name") or row.get("item") or "", hp=row.get("hp"),
-                              control=c, rules=rules, **kw)
+                              control=c, rules=rules, memo=memo, **kw)
             if e is None or trial["ok"]:
                 e = trial
             if trial["ok"]:
@@ -415,6 +451,23 @@ def rank_pumps(network: dict, catalog: list[dict], *, pump_ids: list | None = No
     out.sort(key=lambda e: (0, e["hp"] if e["hp"] is not None else big, e["power_kw"]) if e["ok"]
              else (1, e["miss"], e["hp"] if e["hp"] is not None else big))
     return out
+
+
+def _curve_rows(pc: PumpCurve) -> list[dict]:
+    """A PumpCurve back as Pump Curve Point rows (US), so the derived model stays plain JSON."""
+    from .hydraulics.units import LPM_PER_GPM
+
+    eff = dict(pc.eff_points)
+    npshr = dict(pc.npshr_points)
+    rows = []
+    for lpm, h in pc.head_points:
+        row = {"flow_gpm": lpm / LPM_PER_GPM, "head_ft": h / M_PER_FT}
+        if lpm in eff:
+            row["efficiency_pct"] = eff[lpm]
+        if lpm in npshr:
+            row["npshr_ft"] = npshr[lpm] / M_PER_FT
+        rows.append(row)
+    return rows
 
 
 def _catalog_curve(row: dict) -> PumpCurve | None:
@@ -547,6 +600,11 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
     rr = _rules(rules)
     derived = copy.deepcopy(model)
     setup = setup if setup is not None else (derived.get("setup") or {})
+    try:
+        build_network(derived.get("network") or {}, water_temp_f=float((derived.get("site") or {}).get("water_temp_f") or 68.0))
+    except (ValueError, KeyError, TypeError) as exc:  # a half-drawn network: say what is wrong, derive nothing
+        bad = make_check("network.invalid", BLOCKER, "The network cannot be solved yet", str(exc), "piping")
+        return {"model": derived, "results": [], "checks": [bad], "network": None, "ranking": []}
     site = derived.get("site") or {}
     temp = float(site.get("water_temp_f") or 68.0)
     elev = float(site.get("elevation_ft") or 0.0)
@@ -657,7 +715,8 @@ def derive(model: dict, setup: dict | None = None, catalogs: dict | None = None,
             best = ranking[0]
             for p in net_d.get("pumps") or []:
                 p["item"] = best.get("item")
-                p["curve"] = best["row"].get("points") or best["row"].get("curve")
+                raw = best["row"].get("points") or best["row"].get("curve")
+                p["curve"] = _curve_rows(raw) if isinstance(raw, PumpCurve) else raw
                 for k in ("shutoff_head_ft", "max_flow_gpm", "motor_eff_pct"):
                     if best["row"].get(k) is not None:
                         p[k] = best["row"][k]
