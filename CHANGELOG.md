@@ -52,8 +52,18 @@ head. Without it, the page says it could not open and offers **Open the demo**.
   - A reply to a model that has since been edited is dropped, never painted over the newer state.
   - A section the person pins, or edits, becomes `custom`, and a reply never writes into it again.
   - The design saves itself 1.5 s after the last edit, and at once on a step change.
+  - Push to Quotation, Push to Material Request and a sign-off wait for every edit to be saved, the
+    save in flight included, and a failed save sends none of them. A push builds from the stored BOM,
+    and a save landing after a sign-off would otherwise carry the old acks.
+  - Switching a design to Quick asks first when any section was set by hand, naming them: quick mode
+    hands them back to the engine.
+  - A stored design without a schema-2 model is never opened as a blank design (its first autosave
+    would overwrite it); the page says so and offers the form.
+  - A new address in quick mode re-looks-up the site values; full mode has **Refresh from the address**.
 - **The address keeps your place**: `?design=<name>&step=<key>`. Each step is a history entry, so Back,
-  Forward, a reload and a pasted link all land where you were. The page reads `frappe.route_options` and
+  Forward, a reload and a pasted link all land where you were. An entry with no keys is the list, out of
+  the demo: Back onto the bare address the page was opened at lands on the design list, and Back out of
+  "Open the demo" leaves the demo. The page reads `frappe.route_options` and
   writes its own address, like the Maintenance Day Board, because `set_route` before v16.50 drops the
   query.
 - **States, keyboard and phone.**
@@ -76,6 +86,9 @@ head. Without it, the page says it could not open and offers **Open the demo**.
   - It also lists four additions to the schema-2 model that phase C's `validate()` must accept:
     `setup[...] = "preset"`, `presets`, `pump_room` and `winterization`.
   - `get_design()` with no name returns the list of designs.
+  - `boot.catalogs.slot_classes` names the catalog class each equipment slot searches; a slot without
+    one gets an item-code field. **Add a feature** uses the design's own family, else the first in
+    `boot.families`.
 
 ### Notes
 - **The page bundles are not in `hooks.py`.** Like every other page bundle here (Bin Manager, Count Desk,
@@ -87,12 +100,16 @@ head. Without it, the page says it could not open and offers **Open the demo**.
   page can color the curves for both themes.
 
 ### Tests
-- `scripts/test_fountain_designer.mjs` (node, 40 checks) covers:
+- `scripts/test_fountain_designer.mjs` (node, 49 checks) covers:
   - the bundle entry, the route parsing and the address it writes;
   - the quick and full step lists, and the debounce with its stale-reply guard;
   - the model helpers: pinning, presets, `merge_derived` and coerce;
   - the SVG allow-list and the verdict panel;
-  - every step rendered for the three demo designs, and the demo answering every endpoint.
+  - every step rendered for the three demo designs, and the demo answering every endpoint;
+  - Back and Forward over the bare entry, the design, a step and the demo;
+  - the real controller against held calls: a push and a sign-off wait for the saves before them, a
+    failed save sends nothing, Quick asks before replacing hand-set sections, and an old model is
+    never opened blank.
 - `tests/test_fountain_designer.py` checks:
   - the page record, and that the bundles are loaded by name and never globally;
   - the stylesheet: tokens only, no shadow, the two media queries, `.fd-` selectors;

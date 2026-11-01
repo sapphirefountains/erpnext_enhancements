@@ -151,19 +151,21 @@ function control(ctx) {
 		full: true,
 		model,
 		presets: preset_list(ctx, "control"),
-		simple: simple || `<p class="fd-muted">${h.esc(h.__("No pump yet."))}</p>`,
+		// The drive or valve that does the controlling (a vfd or prv slot) sits with the choice it serves.
+		simple: (simple || `<p class="fd-muted">${h.esc(h.__("No pump yet."))}</p>`) + equipment_rows(ctx, "control"),
 	});
 }
 
 // The equipment rows of one section (model.equipment, by slot), each a catalog pick and a quantity.
 function equipment_rows(ctx, section) {
 	const { h, model } = ctx;
+	const classes = (ctx.boot.catalogs && ctx.boot.catalogs.slot_classes) || {};
 	return (model.equipment || [])
 		.map((row, i) => ({ row, i }))
 		.filter(({ row }) => SLOT_SECTION[row && row.slot] === section)
 		.map(
 			({ row, i }) => `<div class="fd-grid">
-				${field(h, { path: `equipment.${i}.item`, label: h.__(slot_label(row.slot)), kind: "catalog", equipment_class: slot_class(row.slot), value: row.item || "", placeholder: "Generic, pick later" })}
+				${item_field(h, `equipment.${i}.item`, slot_label(row.slot), classes[row.slot], row.item)}
 				${field(h, { path: `equipment.${i}.qty`, label: "Quantity", kind: "int", value: row.qty })}
 			</div>`
 		)
@@ -187,8 +189,13 @@ function slot_label(slot) {
 	);
 }
 
-function slot_class(slot) {
-	return { filter: "filter", uv: "uv", light: "light", transformer: "light" }[slot] || "pump";
+// The catalog class a slot searches comes from boot.catalogs.slot_classes (README, the contract). A slot
+// the server names no class for is an item code typed in, never a search of some other class.
+function item_field(h, path, label, equipment_class, value) {
+	if (equipment_class) {
+		return field(h, { path, label: h.__(label), kind: "catalog", equipment_class, value: value || "", placeholder: "Generic, pick later" });
+	}
+	return field(h, { path, label: h.__(label), kind: "text", value: value || "", blank_null: true, placeholder: h.__("Item code, or blank for generic") });
 }
 
 function equipment_card(ctx, section, title, lede) {

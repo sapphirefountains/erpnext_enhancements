@@ -29,7 +29,12 @@ Tests:
 - **Two modes, one page.**
   - Quick shows Start, Site, Features, Review and Outputs. Features holds only the kit's headline inputs, and every section except the features is `auto`.
   - Full shows all seven steps, with a setup-policy select and an Advanced reveal on each card.
-  - `model.set_mode` switches between them. Going to quick puts every section back on `auto`.
+  - `model.set_mode` switches between them. Going to quick puts every section back on `auto`. When any section was set by hand (custom or a preset), the page asks first, naming the sections, because the next derive replaces them and the autosave keeps that.
+- **The site.**
+  - The engine fills the looked-up site fields (`model.SITE_LOOKUPS`) only where they are blank. The model does not record which of them a person typed.
+  - In quick mode, where they are never inputs, a new address blanks them, so the next derive looks them up for the new address.
+  - In full mode, the Site card's Advanced has **Refresh from the address**, which blanks them all, typed ones too.
+- **A design not made here.** A stored design whose `model` is not schema 2 (an old wizard record, or one started in the form) is never opened as a blank design, whose first autosave would overwrite it. The page says so and offers the form and All designs.
 - **Live results.**
   - Every edit calls `derive(model_json)` once the person has paused for 400 ms.
   - Only the reply to the newest model is drawn. A reply to a model edited since it was sent is dropped, and so is its error.
@@ -42,10 +47,12 @@ Tests:
   - A save still waiting when the person goes to another Desk page runs anyway: a Desk page stays in memory.
   - The footer says Saved, Saving, Unsaved changes, or Not saved (with Try again).
   - Closing or reloading the tab with unsaved edits asks first.
+  - A push and a sign-off wait for every edit to be saved first, the one in flight included: a push builds from the stored BOM, and a save that lands after a sign-off must not carry the old acks. A failed save sends neither. After a sign-off, the model (with the new acks) is saved once more.
 - **The address.**
   - The address is `/desk/fountain-designer?design=<name>&step=<key>`, with `&demo=1` in demo mode.
   - Every step and every design opened is a history entry, so Back and Forward work, and a reload or a link lands on the same place.
   - The page reads its place from `frappe.route_options`, consuming the keys, on every `on_page_show`. It writes its own address with `pushState` / `replaceState` on `location.pathname`, like the Maintenance Day Board.
+  - Every entry stands for its own place. An entry with no `design`, `step` or `demo` key is the list on Start, out of the demo, so Back onto the bare address the page was opened at lands on the list, and a return from another Desk page to the bare address leaves the demo (`router.place_from`).
 - **States.**
   - Every load has a loading, empty, error and no-access panel, drawn by sf_kit.
   - When the designer's server side is missing, the error panel offers **Open the demo**.
@@ -82,10 +89,11 @@ section in the same PR.
 | `can` | `{read, write, create, push_quotation, push_material_request}`, booleans | `create` shows New design. `write` allows edits, saves and sign-offs. The two `push_*` keys enable the Outputs buttons. |
 | `kits[]` | `{key, label, family, venue_type, desc, headline[], model}` | The Start tiles. `model` is the kit's starter model (schema 2). It is copied and stamped with `kit` and `mode`. |
 | `kits[].headline[]` | `{path, label, kind, unit, min, max, step, options[]}` | Quick mode's Features inputs. `path` is a model path (`features.0.inputs.length_ft`). `kind` is `number`, `int` or `tiles`, and `tiles` takes `options[] = {value, label, desc}`. Each path must exist in the kit's model. |
-| `families[]` | `{key, label, product_class, types[], inputs[], looks[]}` | Full mode's feature cards. `inputs[] = {key, label, kind, unit, options[], advanced}`, written to `features.N.inputs.<key>`, and `advanced: true` puts it behind Advanced. `looks[] = {value, label}`, written to `features.N.effect.look`. `product_class` is the catalog class for the product picker. |
+| `families[]` | `{key, label, product_class, types[], inputs[], looks[]}` | Full mode's feature cards. **Add a feature** uses the family of the design's first feature, else the first family here, so put the most common family first. A blank design starts with one feature of that family and one basin. `inputs[] = {key, label, kind, unit, options[], advanced}`, written to `features.N.inputs.<key>`, and `advanced: true` puts it behind Advanced. `looks[] = {value, label}`, written to `features.N.effect.look`. `product_class` is the catalog class for the product picker. |
 | `sections[]` | `{key, label, presets[]}`, one per setup section, **in ladder order**: `features`, `basin`, `piping`, `pump`, `control`, `bypass`, `surge`, `treatment`, `lighting`, `electrical`, `winterization` | The policy select. `presets[] = {key, label, desc, values: {path: value}}`. A preset is applied by setting each path, and a section on a preset whose values no longer match shows Custom. |
 | `options` | `{venue_types[], jurisdictions[], basin_shapes[], pump_locations[] ({value,label}), materials[], controls[] ({value,label}), pump_classes[], sanitizers[], lighting_controls[], service_voltages[] (numbers), lines[]}` | The selects. A list of numbers stores numbers. |
 | `catalogs.equipment_classes[]` | `{key, label}` | The catalog picker classes. |
+| `catalogs.slot_classes` | `{<equipment slot>: <class key>}` | The class each `model.equipment[].slot` searches: `filter`, `uv`, `chlorinator`, `light`, `transformer`, `bypass`, `surge_arrestor`, `autofill`, `vfd` and `prv` (the page's `model.SLOT_SECTION`). A slot with no class here gets a plain item-code field, never a search of another class. The pumps search `pump`, and a feature's product searches its family's `product_class`. |
 | `house_rules[]` | `{key, label, value, unit, citation}` | The constants listed on the page (PLAN.md 2.3). |
 
 ### `get_design()` and `get_design(name)`
@@ -188,6 +196,12 @@ must accept them, and E must store them as they are:
 4. **`winterization: {}`.** This is the winterization section's model, filled by the engine when `auto`.
 
 The page also reads `pumps[].label` (a pump's display name) and `equipment[].auto` (false once the person has edited the row) as PLAN.md writes them.
+
+## After phase E
+
+When `api/designer.py` is on the site:
+- The error panel's second sentence ("Until the designer's server side is installed, the demo shows how it works.") and its **Open the demo** button (`app.js`, `failed()`) no longer fit. Phase H rewords the sentence and moves the demo to a link meant for training.
+- The Dock row on the Design profile then opens a working page. Until then it opens the error panel.
 
 ## Demo mode
 

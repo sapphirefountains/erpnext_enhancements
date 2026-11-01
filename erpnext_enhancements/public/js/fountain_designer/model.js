@@ -191,6 +191,28 @@ export function merge_derived(local, derived) {
 	return next;
 }
 
+// The site fields the engine looks up from the address (ladder step 0).
+export const SITE_LOOKUPS = [
+	"lat",
+	"lng",
+	"elevation_ft",
+	"air_temp_f",
+	"water_temp_f",
+	"frost_depth_in",
+	"hardness_ppm",
+	"kwh_rate",
+	"water_rate_per_ccf",
+];
+
+// Blank every looked-up site field so the next derive fills them from the address on screen. The model
+// does not record which of them a person typed, so this clears those too; the page asks for it only
+// where that is right (quick mode, which never shows them as inputs, or a "Refresh from the address").
+export function clear_site_lookups(model) {
+	let next = model;
+	for (const key of SITE_LOOKUPS) next = set_in(next, ["site", key], null);
+	return next;
+}
+
 // Pumps carry two sections: the pump itself and its control fields.
 function merge_pumps(next, derived) {
 	const theirs = get_in(derived, "network.pumps");
@@ -279,6 +301,12 @@ export function model_from_kit(kit, mode) {
 	next.kit = kit.key || null;
 	next.setup = Object.assign(blank_model(mode).setup, next.setup || {});
 	return next;
+}
+
+// The sections a person set by hand (custom or a preset), features apart: what quick mode would hand
+// back to the engine, so the page asks before it does.
+export function pinned_sections(model) {
+	return SECTION_KEYS.filter((key) => key !== "features" && policy_of(model, key) !== "auto");
 }
 
 // Quick mode is the same model with every section but the features back on "auto" (PLAN.md 2.1); full

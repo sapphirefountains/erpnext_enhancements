@@ -155,6 +155,13 @@ class TestThePage(unittest.TestCase):
 				self.assertNotIn("frappe.utils.cint", code)
 				self.assertNotIn("innerHTML = reply", code)
 
+	def test_a_design_not_made_here_is_never_opened_blank(self):
+		"""A blank model in its place would be autosaved over the stored record."""
+		code = _strip_js_comments((FD / "app.js").read_text(encoding="utf-8"))
+		at = code.index("open_design(name) {")
+		self.assertNotIn("blank_model", code[at : code.index("load_designs() {")])
+		self.assertIn("this.cannot_open(name)", code)
+
 	def test_modules_touch_no_globals_at_import(self):
 		"""node runs them; window and document come in through env."""
 		for name in (*MODULES[:6], *(f"steps/{s}" for s in STEPS), "demo/demo"):
@@ -280,7 +287,7 @@ class TestTheContract(unittest.TestCase):
 
 	def test_every_boot_key_is_written_down(self):
 		boot = _json(FD / "demo" / "boot.json")
-		for key in [*boot, *boot["can"], *boot["options"]]:
+		for key in [*boot, *boot["can"], *boot["options"], *boot["catalogs"], *boot["catalogs"]["slot_classes"]]:
 			with self.subTest(key):
 				self.assertIn(key, self.readme)
 

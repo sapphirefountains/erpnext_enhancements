@@ -103,5 +103,39 @@
    "generic": false,
    "source": "datasheet"
   }
+ ],
+ "valve": [
+  {
+   "item": "WAT-ABV-1",
+   "item_name": "Watts 1 in autofill valve",
+   "description": "Float-operated, brass",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "GEN-PRV-2",
+   "item_name": "Generic 2 in PRV",
+   "description": "Sizing estimate until a model is picked",
+   "generic": true,
+   "source": "generic estimate"
+  }
+ ],
+ "chemical": [
+  {
+   "item": "PNT-RC-CTRL",
+   "item_name": "Pentair chlorine feeder and controller",
+   "description": "ORP and pH control",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "drive": [
+  {
+   "item": "ABB-ACH580-5",
+   "item_name": "ABB ACH580 VFD, 5 HP",
+   "description": "208 V 3 ph",
+   "generic": false,
+   "source": "datasheet"
+  }
  ]
 }

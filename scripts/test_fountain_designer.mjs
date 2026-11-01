@@ -202,6 +202,42 @@ await test("write_address pushes a chosen place, replaces to correct one, and sk
 	assert.equal(calls[2][1], "/desk/water-engineering/fountain-designer?design=D1&step=site", "the path on screen is kept");
 });
 
+await test("an entry with no keys is the list, out of the demo, whatever was on screen", () => {
+	// The bare address the page was opened at (from the Dock), as Back lands on it: the router leaves
+	// route_options empty and the address bare.
+	assert.deepEqual(R.place_from(null, ""), { design: null, step: "start", demo: false });
+	assert.deepEqual(R.place_from({}, ""), { design: null, step: "start", demo: false });
+	// The router copied the query in: it wins, and its keys are consumed.
+	const opts = { design: "D1", step: "site", demo: "1" };
+	assert.deepEqual(R.place_from(opts, ""), { design: "D1", step: "site", demo: true });
+	assert.deepEqual(opts, {});
+	// Nothing in route_options (consumed on an earlier show): the address on screen decides.
+	assert.deepEqual(R.place_from(null, "?design=D1&step=review&demo=1"), { design: "D1", step: "review", demo: true });
+	assert.deepEqual(R.place_from(null, "?design=D1"), { design: "D1", step: "start", demo: false });
+	assert.deepEqual(R.place_from(null, "?step=site"), { design: null, step: "start", demo: false }, "no design is Start");
+});
+
+await test("Back and Forward walk list, design, step and the demo", () => {
+	// A browser history the page pushed onto, read back the way each show reads it.
+	const entries = [
+		"", // opened from the Dock
+		"?design=D1&step=review", // a design opened
+		"?design=D1&step=site", // a step
+		"?demo=1", // Open the demo
+	];
+	const shown = entries.map((search) => R.place_from(null, search));
+	assert.deepEqual(shown[0], { design: null, step: "start", demo: false }, "Back to the bare entry is the list");
+	assert.deepEqual(shown[1], { design: "D1", step: "review", demo: false });
+	assert.deepEqual(shown[2], { design: "D1", step: "site", demo: false });
+	assert.equal(shown[3].demo, true);
+	assert.equal(R.place_from(null, entries[2]).demo, false, "Back out of the demo leaves it");
+	// And what each entry writes back is itself: no correction rewrites an entry into another one.
+	for (const search of entries) {
+		const place = R.place_from(null, search);
+		assert.equal(R.build_query(place), search.replace(/^\?$/, ""), search);
+	}
+});
+
 console.log("steps");
 
 await test("quick and full step lists", () => {
@@ -536,6 +572,27 @@ await test("coerce: a blank number is null, never 0", () => {
 	assert.equal(M.section_of(M.blank_model(), "equipment.9.item"), null, "a row that is not there");
 });
 
+await test("pinned_sections names what quick mode would hand back", () => {
+	let m = M.model_from_kit(lobby_kit, "full");
+	assert.deepEqual(M.pinned_sections(m), []);
+	m = M.edit(m, "basins.0.depth_in", 20);
+	m = M.apply_preset(m, "electrical", boot.sections.find((x) => x.key === "electrical").presets[0]);
+	assert.deepEqual(M.pinned_sections(m), ["basin", "electrical"], "features are never counted");
+	assert.deepEqual(M.pinned_sections(M.set_mode(m, "quick")), []);
+});
+
+await test("clear_site_lookups blanks every looked-up field and keeps the rest", () => {
+	const m = M.merge_derived(M.model_from_kit(lobby_kit, "quick"), replies["lobby-sheet-wall-8ft"].model);
+	assert.equal(m.site.elevation_ft, 4226);
+	const cleared = M.clear_site_lookups(M.set_in(m, "site.address", "1 Main St, Boise"));
+	for (const key of M.SITE_LOOKUPS) assert.equal(cleared.site[key], null, key);
+	assert.equal(cleared.site.address, "1 Main St, Boise");
+	assert.equal(cleared.site.jurisdiction, m.site.jurisdiction);
+	assert.equal(m.site.elevation_ft, 4226, "the model it was given is untouched");
+	const refilled = M.merge_derived(cleared, replies["lobby-sheet-wall-8ft"].model);
+	assert.equal(refilled.site.elevation_ft, 4226, "the next derive fills them again");
+});
+
 console.log("charts");
 
 await test("the fixture's charts pass the sanitizer unchanged", () => {
@@ -592,6 +649,8 @@ await test("the panel: words on every chip, escaped server text, the rollups and
 	assert.match(html, /data-fd-goto="pump_room"/);
 	assert.match(html, /<svg/);
 	const strip = V.strip_html(r, H);
+	assert.match(strip, /1 blocker</, "singular");
+	assert.match(strip, /1 warning</);
 	assert.ok(!/sf-chip--\w+">\d+<\/span>/.test(strip), "no bare number for a chip");
 	assert.match(V.verdict_html(null, H, {}), /Not worked out yet/, "no green count before the first reply");
 	assert.ok(!/0 blockers/.test(V.verdict_html(null, H, {})));
@@ -659,6 +718,14 @@ await test("full Pump room has a policy select for every ladder section it holds
 		assert.ok(html.includes(`data-fd-policy="${s}"`), s);
 	}
 	assert.ok(html.includes('data-fd-catalog="pump"'), "a catalog picker for the pump");
+	assert.ok(html.includes('data-fd-catalog="chemical"'), "the chlorinator searches its own class, from boot");
+	assert.ok(html.includes('data-fd-catalog="drive"'), "the VFD too");
+	const no_class = JSON.parse(JSON.stringify(boot));
+	delete no_class.catalogs.slot_classes.vfd;
+	const plain = STEPS.pump_room.render(ctx_for(replies["plaza-interactive-24jet"], "full", { boot: no_class }));
+	assert.ok(!plain.includes('data-fd-catalog="drive"'));
+	assert.match(plain, /Item code, or blank for generic/, "a slot with no class is an item code, never a pump search");
+	assert.match(plain, /data-fd-kind="text" data-fd-null/, "an emptied item code is null (generic), not an empty name");
 	assert.ok(html.includes('aria-expanded="true"'), "Advanced reveals are buttons with aria-expanded");
 });
 
@@ -811,6 +878,138 @@ await test("the demo remembers its saves in the storage it is given, and survive
 	};
 	const third = A.create_api(D.create_demo(fixture, { delay: 0, storage: broken }));
 	assert.ok((await third.save_design(null, M.model_from_kit(lobby_kit, "quick"), { design_title: "x" })).name);
+});
+
+console.log("controller: saves before what reads the stored design");
+
+// The real controller against stand-ins: enough of a DOM to construct and draw, and an api whose calls
+// we hold open and release in the order a slow server would.
+function stub_el() {
+	return {
+		innerHTML: "",
+		hidden: false,
+		addEventListener() {},
+		setAttribute() {},
+		querySelector: () => null,
+		querySelectorAll: () => [],
+		contains: () => false,
+		appendChild() {},
+	};
+}
+async function controller() {
+	const app = await import(url(path.join(FD, "app.js")));
+	const root = stub_el();
+	const win = {
+		addEventListener() {},
+		setTimeout: (fn, ms) => setTimeout(fn, ms),
+		clearTimeout: (id) => clearTimeout(id),
+		localStorage: { getItem: () => null, setItem() {} },
+		location: { pathname: "/desk/fountain-designer", search: "" },
+		history: { state: null, pushState() {}, replaceState() {} },
+	};
+	const sf = { esc, t: __, chip: H.chip, state: { html: H.state_html, render() {} }, toast() {} };
+	const d = app.mount({ root, sf, frappe: {}, win, doc: { activeElement: null, getElementById: () => null }, __ });
+	const log = [];
+	const held = [];
+	const hold = (name, value) => (...args) =>
+		new Promise((resolve, reject) => {
+			log.push(name);
+			held.push({ name, args, resolve: () => resolve(value), reject });
+		});
+	d.api = {
+		save_design: hold("save", { status: "Derived" }),
+		push_quotation: hold("push", { doctype: "Quotation", name: "Q1", lines: 1, text_lines: 0 }),
+		push_material_request: hold("push_mr", { doctype: "Material Request", name: "M1" }),
+		acknowledge_issue: hold("ack", { acks: [{ issue_key: "K", note: "n" }] }),
+		derive: () => new Promise(() => {}),
+	};
+	d.deriver = A.create_deriver({ derive: () => new Promise(() => {}), delay: 100000 });
+	d.boot = Object.assign({}, boot);
+	d.stage = stub_el();
+	d.model = M.model_from_kit(lobby_kit, "quick");
+	d.meta = { name: "D1", design_title: "T", can_write: true };
+	return { d, log, held };
+}
+
+await test("a push waits for the save in flight and the one after it", async () => {
+	const { d, log, held } = await controller();
+	d.edit("features.0.inputs.length_ft", 9);
+	d.save(); // the autosave goes out
+	d.edit("features.0.inputs.length_ft", 10); // and the person edits again while it is out
+	d.push("quotation");
+	await settle();
+	assert.deepEqual(log, ["save"], "nothing pushed while a save is out");
+	held[0].resolve();
+	await settle();
+	assert.deepEqual(log, ["save", "save"], "the edit made meanwhile is saved first");
+	assert.equal(JSON.parse(held[1].args[1] ? JSON.stringify(held[1].args[1]) : "{}").features[0].inputs.length_ft, 10);
+	held[1].resolve();
+	await settle();
+	assert.deepEqual(log, ["save", "save", "push"], "then the push, built from what is stored");
+	d.autosave.cancel();
+});
+
+await test("a failed save pushes nothing", async () => {
+	const { d, log, held } = await controller();
+	d.edit("features.0.inputs.length_ft", 9);
+	d.push("material_request");
+	await settle();
+	held[0].reject({ message: "Locked" });
+	await settle();
+	assert.deepEqual(log, ["save"]);
+	assert.equal(d.busy, false);
+	assert.equal(d.dirty, true, "still unsaved, and the footer says so");
+});
+
+await test("a sign-off goes after the save, and the acks are saved once more after it", async () => {
+	const { d, log, held } = await controller();
+	d.edit("features.0.inputs.length_ft", 9);
+	d.acknowledge("K", "n");
+	await settle();
+	assert.deepEqual(log, ["save"]);
+	held[0].resolve();
+	await settle();
+	assert.deepEqual(log, ["save", "ack"]);
+	held[1].resolve();
+	await settle();
+	assert.deepEqual(d.model.acks, [{ issue_key: "K", note: "n" }]);
+	assert.equal(d.dirty, true, "an autosave carrying the acks is due");
+	d.autosave.flush();
+	await settle();
+	assert.deepEqual(log, ["save", "ack", "save"]);
+	assert.deepEqual(held[2].args[1].acks, [{ issue_key: "K", note: "n" }]);
+	held[2].resolve();
+	await settle();
+});
+
+await test("switching a hand-sized design to Quick asks first, and No changes nothing", async () => {
+	const { d } = await controller();
+	d.model = M.edit(M.set_mode(d.model, "full"), "basins.0.depth_in", 20);
+	let asked = null;
+	d.ask = (message, yes) => (asked = { message, yes });
+	d.choose_tile("mode", "quick");
+	assert.match(asked.message, /Basins/);
+	assert.equal(d.model.mode, "full", "nothing until they say yes");
+	assert.equal(d.model.setup.basin, "custom");
+	asked.yes();
+	assert.equal(d.model.mode, "quick");
+	asked = null;
+	d.choose_tile("mode", "full");
+	assert.equal(asked, null, "to Full loses nothing, so it does not ask");
+	d.autosave.cancel();
+});
+
+await test("a stored model that is not schema 2 is never opened as a blank design", async () => {
+	const { d } = await controller();
+	d.api.get_design = () => Promise.resolve({ name: "OLD-1", model: null, mode: "Full" });
+	let shown = null;
+	d.sf.state.render = (el, kind, opts) => (shown = { kind, title: opts.title });
+	d.open_design("OLD-1");
+	await settle();
+	assert.equal(d.model, null);
+	assert.equal(d.meta, null, "no design to autosave over the stored one");
+	assert.equal(shown.kind, "error");
+	assert.match(shown.title, /OLD-1/);
 });
 
 await settle();

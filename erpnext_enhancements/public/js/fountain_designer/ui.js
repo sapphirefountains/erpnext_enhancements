@@ -32,7 +32,8 @@ export function field(h, f) {
 	const ro = f.readonly ? " disabled" : "";
 	const hint = f.hint ? `<p class="fd-hint" id="${id}-hint">${esc(__(f.hint))}</p>` : "";
 	const described = f.hint ? ` aria-describedby="${id}-hint"` : "";
-	const data = `data-fd-path="${esc(f.path)}" data-fd-kind="${esc(kind)}"`;
+	// blank_null: an emptied box is null (an Item left generic), not "".
+	const data = `data-fd-path="${esc(f.path)}" data-fd-kind="${esc(kind)}"${f.blank_null ? " data-fd-null" : ""}`;
 	let control;
 	if (kind === "select") {
 		const blank = f.blank ? `<option value="">${esc(__(f.blank))}</option>` : "";

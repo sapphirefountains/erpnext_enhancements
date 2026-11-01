@@ -1063,8 +1063,32 @@
    {
     "key": "aerator",
     "label": "Aerators"
+   },
+   {
+    "key": "valve",
+    "label": "Valves"
+   },
+   {
+    "key": "chemical",
+    "label": "Chemical feed"
+   },
+   {
+    "key": "drive",
+    "label": "Drives"
    }
-  ]
+  ],
+  "slot_classes": {
+   "filter": "filter",
+   "uv": "uv",
+   "chlorinator": "chemical",
+   "light": "light",
+   "transformer": "light",
+   "bypass": "valve",
+   "surge_arrestor": "valve",
+   "autofill": "valve",
+   "prv": "valve",
+   "vfd": "drive"
+  }
  },
  "house_rules": [
   {

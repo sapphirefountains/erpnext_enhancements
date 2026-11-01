@@ -115,6 +115,17 @@ function decode(text) {
 	}
 }
 
+// The place an entry stands for, on every show. The route's options when the router put ours there, else
+// the address itself (the router has already put the entry's URL on screen when it fires on_page_show).
+// A key that is absent means its default: no design is the list on Start, no demo is the real server.
+// So Back onto the bare address the page was opened at lands on the list, and a return from another
+// Desk page to the bare address leaves the demo; neither keeps whatever was on screen.
+export function place_from(route_options, search) {
+	let asked = take_route(route_options);
+	if (!asked.asked) asked = parse_search(search);
+	return { design: asked.design, step: asked.design ? asked.step || "start" : "start", demo: asked.demo };
+}
+
 // The query for a place: design, step, demo, in that order, each only when it says something. Start with
 // no design is the bare address.
 export function build_query(place) {

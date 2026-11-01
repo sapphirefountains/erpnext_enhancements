@@ -175,8 +175,8 @@ export function strip_html(reply, h) {
 	const c = counts(reply);
 	const budget = reply && reply.rollups ? format_value(reply.rollups.budget_total, { kind: "money" }) : "";
 	// Each chip keeps its word: a status is never a bare number or a color.
-	return `${chip(__("{0} blockers", [c.blockers]), c.blockers ? "danger" : "good")} ${chip(
-		__("{0} warnings", [c.warnings]),
+	return `${chip(c.blockers === 1 ? __("1 blocker") : __("{0} blockers", [c.blockers]), c.blockers ? "danger" : "good")} ${chip(
+		c.warnings === 1 ? __("1 warning") : __("{0} warnings", [c.warnings]),
 		c.warnings ? "warn" : "neutral"
 	)} ${chip(c.ready ? __("Ready") : __("Not ready"), c.ready ? "good" : "neutral")}${
 		budget ? ` <span class="fd-strip-budget">${esc(budget)}</span>` : ""

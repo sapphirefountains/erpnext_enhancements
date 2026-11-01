@@ -61,7 +61,14 @@ export function render(ctx) {
 			full,
 			open: ctx.adv("site"),
 			simple: `${address}<div class="fd-grid">${venue}${juris}</div>${regulated}`,
-			advanced: `<div class="fd-grid">${looked_up}</div>`,
+			advanced: `<div class="fd-grid">${looked_up}</div>
+				${
+					ctx.can_write
+						? `<div class="fd-actions"><button type="button" class="sf-btn sf-btn--secondary" data-fd-action="site-refresh">${h.esc(
+								__("Refresh from the address")
+						  )}</button></div><p class="fd-hint">${h.esc(__("Blanks every value above, typed ones too, and looks them up again."))}</p>`
+						: ""
+				}`,
 			adv_note: "Left blank, each of these is looked up from the address.",
 		})}`;
 }

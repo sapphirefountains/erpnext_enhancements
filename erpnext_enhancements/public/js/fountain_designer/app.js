@@ -82,10 +82,10 @@ class Designer {
 	// into frappe.route_options), or a return from another page.
 	show() {
 		const fr = this.env.frappe;
-		let asked = R.take_route(fr.route_options);
+		// Every entry says where it is, and an entry with no keys is the list, out of the demo: Back onto
+		// the bare address the page was opened at must land there, not keep the design on screen.
+		const place = R.place_from(fr.route_options, this.win.location.search);
 		if (fr.route_options && !Object.keys(fr.route_options).length) fr.route_options = null;
-		if (!asked.asked && this.started_demo === null) asked = R.parse_search(this.win.location.search);
-		const place = asked.asked ? { design: asked.design, step: asked.step || "start", demo: asked.demo } : Object.assign({}, this.place);
 		if (this.started_demo !== null && place.demo !== this.started_demo) {
 			// Into or out of the demo: a different source of every answer, so start again.
 			this.autosave.flush();
@@ -170,17 +170,28 @@ class Designer {
 			body: demo ? err.message : [err.message, __("Until the designer's server side is installed, the demo shows how it works.")].filter(Boolean).join(" "),
 			on_action: () => this.show_again(),
 		});
-		if (!demo) {
-			const link = this.doc.createElement("button");
-			link.type = "button";
-			link.className = "sf-btn sf-btn--secondary fd-demo-link";
-			link.textContent = __("Open the demo");
-			link.addEventListener("click", () => this.go_place({ design: null, step: "start", demo: true }, true));
-			// Beside Try again, inside the panel.
-			const action = el.querySelector(".sf-state-action");
-			if (action) action.insertAdjacentElement("afterend", link);
-			else el.appendChild(link);
-		}
+		// After phase E the server side is there and this button only helps training; phase H drops it
+		// with the copy above (README, "After phase E").
+		if (!demo) this.extra_button(el, __("Open the demo"), () => this.go_place({ design: null, step: "start", demo: true }, true));
+	}
+
+	// A second button in a state panel, beside its own (sf_kit draws one).
+	extra_button(el, label, on_click) {
+		const btn = this.doc.createElement("button");
+		btn.type = "button";
+		btn.className = "sf-btn sf-btn--secondary fd-demo-link";
+		btn.textContent = label;
+		btn.addEventListener("click", on_click);
+		const action = el.querySelector(".sf-state-action");
+		if (action) action.insertAdjacentElement("afterend", btn);
+		else el.appendChild(btn);
+	}
+
+	// Ask before something that cannot be undone: the Desk's own dialog when it is there.
+	ask(message, yes) {
+		const fr = this.env.frappe;
+		if (fr && typeof fr.confirm === "function") return fr.confirm(this.h.esc(message), yes);
+		if (this.win.confirm(message)) yes();
 	}
 
 	show_again() {
@@ -259,8 +270,10 @@ class Designer {
 		this.api.get_design(name).then(
 			(d) => {
 				if (token !== this.open_token) return;
-				const model = d && d.model && d.model.schema === M.SCHEMA ? d.model : M.blank_model(String(d && d.mode).toLowerCase());
+				if (!(d && d.model && d.model.schema === M.SCHEMA)) return this.cannot_open(name);
+				const model = d.model;
 				this.model = model;
+				this.lookup_address = (model.site && model.site.address) || "";
 				this.meta = {
 					name: d.name,
 					design_title: d.design_title || "",
@@ -290,6 +303,25 @@ class Designer {
 				this.failed(this.stage, err || {}, true);
 			}
 		);
+	}
+
+	// A design with no schema-2 model (an old wizard record, or one made in the form): never opened as a
+	// blank design, whose first autosave would write over what is stored.
+	cannot_open(name) {
+		const { __ } = this.h;
+		const fr = this.env.frappe;
+		this.model = null;
+		this.meta = null;
+		this.draw();
+		this.sf.state.render(this.stage, "error", {
+			title: __("{0} was not made in the Fountain Designer.", [name]),
+			body: __("It is left as it is. Open it in the Water Feature Design form, or start a new design here."),
+			action_label: __("All designs"),
+			on_action: () => this.go_place({ design: null, step: "start", demo: this.place.demo }, true),
+		});
+		if (fr && typeof fr.set_route === "function") {
+			this.extra_button(this.stage, __("Open the form"), () => fr.set_route("Form", "Water Feature Design", name));
+		}
 	}
 
 	load_designs() {
@@ -561,31 +593,53 @@ class Designer {
 		this.paint_footer();
 	}
 
+	// Resolves true once nothing is left unsaved, false when the save failed. One request at a time: a call
+	// while one is out waits for it, then saves again if edits came in meanwhile.
 	save() {
-		if (!this.meta || !this.meta.name || !this.dirty || !this.can_write()) return Promise.resolve();
-		if (this.save_state.saving) {
-			this.autosave();
-			return Promise.resolve();
-		}
+		if (this.save_promise) return this.save_promise.then(() => (this.dirty ? this.save() : true));
+		if (!this.meta || !this.meta.name || !this.dirty || !this.can_write()) return Promise.resolve(true);
 		const seq = this.edit_seq;
 		const name = this.meta.name;
 		const fields = { design_title: this.meta.design_title, project: this.meta.project || null, opportunity: this.meta.opportunity || null, customer: this.meta.customer || null };
 		this.save_state = { saving: true, error: "" };
 		this.paint_footer();
-		return this.api.save_design(name, this.model, fields).then(
-			(r) => {
-				this.save_state = { saving: false, error: "" };
-				if (this.meta && this.meta.name === name) {
-					if (seq === this.edit_seq) this.dirty = false;
-					if (r && r.status) this.meta.status = r.status;
+		this.save_promise = this.api
+			.save_design(name, this.model, fields)
+			.then(
+				(r) => {
+					this.save_state = { saving: false, error: "" };
+					if (this.meta && this.meta.name === name) {
+						if (seq === this.edit_seq) this.dirty = false;
+						if (r && r.status) this.meta.status = r.status;
+					}
+					this.paint_footer();
+					return true;
+				},
+				(err) => {
+					this.save_state = { saving: false, error: (err && err.message) || this.h.__("no answer") };
+					this.paint_footer();
+					return false;
 				}
-				this.paint_footer();
-			},
-			(err) => {
-				this.save_state = { saving: false, error: (err && err.message) || this.h.__("no answer") };
-				this.paint_footer();
-			}
-		);
+			)
+			.then((ok) => {
+				this.save_promise = null;
+				return ok;
+			});
+		return this.save_promise;
+	}
+
+	// Every edit on the server, now: before a call that reads the stored design (a push builds from the
+	// stored BOM) or writes beside it (a sign-off, which a save landing later must not undo).
+	saved() {
+		this.autosave.cancel();
+		return this.save();
+	}
+
+	not_saved(what) {
+		const { __ } = this.h;
+		this.busy = false;
+		this.draw_stage();
+		this.sf.toast(__("The design could not be saved, so {0}: {1}", [__(what), this.save_state.error]), { tone: "warning" });
 	}
 
 	create() {
@@ -602,7 +656,7 @@ class Designer {
 		const kit_key = form.kit == null ? (kits[0] && kits[0].key) || "" : form.kit;
 		const kit = kits.find((k) => k.key === kit_key) || null;
 		const model = M.model_from_kit(kit, form.mode);
-		if (!kit) Object.assign(model, M.add_basin(M.add_feature(model, "weir")));
+		if (!kit) Object.assign(model, M.add_basin(M.add_feature(model, ((this.boot.families || [])[0] || {}).key || null)));
 		this.busy = true;
 		this.draw_stage();
 		this.api.save_design(null, model, { design_title: title }).then(
@@ -622,17 +676,25 @@ class Designer {
 	push(kind) {
 		const { esc, __ } = this.h;
 		if (!this.meta || !this.meta.name || this.busy) return;
-		this.autosave.flush();
+		const name = this.meta.name;
 		this.busy = true;
 		this.draw_stage();
-		const call = kind === "quotation" ? this.api.push_quotation(this.meta.name) : this.api.push_material_request(this.meta.name);
+		this.saved().then((ok) => (ok ? this.send_push(kind, name) : this.not_saved(__("nothing was pushed"))));
+	}
+
+	send_push(kind, name) {
+		const { esc, __ } = this.h;
+		const call = kind === "quotation" ? this.api.push_quotation(name) : this.api.push_material_request(name);
 		call.then(
 			(r) => {
 				this.busy = false;
 				const doctype = (r && r.doctype) || (kind === "quotation" ? "Quotation" : "Material Request");
 				const route = r && r.name && !r.demo ? `/desk/${slug(doctype)}/${encodeURIComponent(r.name)}` : "";
 				const words = __("{0} {1}: {2} item lines, {3} text lines.", [__(doctype), r && r.name, (r && r.lines) || 0, (r && r.text_lines) || 0]);
-				this.last_push = route ? `<a href="${esc(route)}">${esc(words)}</a>` : esc(words) + (r && r.demo ? " " + esc(__("(demo: nothing was created)")) : "");
+				// Shown on its own design only: the person may have opened another while the push was out.
+				if (this.meta && this.meta.name === name) {
+					this.last_push = route ? `<a href="${esc(route)}">${esc(words)}</a>` : esc(words) + (r && r.demo ? " " + esc(__("(demo: nothing was created)")) : "");
+				}
 				this.draw_stage();
 				this.sf.toast(
 					r && r.demo
@@ -652,13 +714,26 @@ class Designer {
 	acknowledge(key, note) {
 		const { __ } = this.h;
 		if (!this.meta || !this.meta.name) return;
+		const name = this.meta.name;
 		this.busy = true;
-		this.autosave.flush();
-		this.api.acknowledge_issue(this.meta.name, key, note).then(
+		this.saved().then((ok) => (ok ? this.send_ack(name, key, note) : this.not_saved(__("the warning was not signed off"))));
+	}
+
+	send_ack(name, key, note) {
+		const { __ } = this.h;
+		this.api.acknowledge_issue(name, key, note).then(
 			(r) => {
 				this.busy = false;
+				if (!this.meta || this.meta.name !== name) return;
 				this.acking = null;
-				if (r && Array.isArray(r.acks)) this.model = M.set_in(this.model, "acks", r.acks);
+				if (r && Array.isArray(r.acks)) {
+					this.model = M.set_in(this.model, "acks", r.acks);
+					// The stored model now holds the sign-off. An edit made while it was being written may have
+					// gone out with the old acks, so the model is saved once more, after it.
+					this.dirty = true;
+					this.edit_seq += 1;
+					this.autosave();
+				}
 				this.deriver.now(this.model);
 				this.draw_stage();
 				this.sf.toast(__("Warning signed off."), { tone: "success" });
@@ -768,9 +843,13 @@ class Designer {
 				return this.create();
 			case "all-designs":
 				return this.go_place({ design: null, step: "start", demo: this.place.demo }, true);
-			case "add-feature":
-				this.model = M.add_feature(this.model, "weir");
+			case "add-feature": {
+				// The design's own family, else the first of boot.families (README, the contract).
+				const first = (this.model.features || [])[0];
+				const family = (first && first.family) || ((this.boot.families || [])[0] || {}).key || null;
+				this.model = M.add_feature(this.model, family);
 				return this.changed(true);
+			}
 			case "add-basin":
 				// Adding a basin is an edit of the basins: the section is the person's from here on.
 				this.model = M.add_basin(this.model);
@@ -785,6 +864,11 @@ class Designer {
 				return this.draw_stage();
 			case "save-now":
 				return this.save();
+			case "site-refresh":
+				if (!this.model || !this.can_write()) return;
+				this.lookup_address = (this.model.site && this.model.site.address) || "";
+				this.model = M.clear_site_lookups(this.model);
+				return this.changed(true);
 		}
 	}
 
@@ -808,6 +892,16 @@ class Designer {
 			return;
 		}
 		const kind = el.getAttribute("data-fd-kind");
+		// A new address in quick mode, where the looked-up site values are never inputs: they belong to the
+		// old address, so they are blanked and the next derive fills them for the new one.
+		if (path === "site.address" && committed && this.model && this.model.mode !== "full") {
+			const address = M.coerce("text", el.value);
+			if (address !== this.lookup_address) {
+				this.lookup_address = address;
+				this.model = M.clear_site_lookups(M.edit(this.model, path, address));
+				return this.changed(false);
+			}
+		}
 		if (el.type === "checkbox") return committed && this.edit(path, el.checked);
 		if (el.tagName === "SELECT") {
 			if (!committed) return;
@@ -834,8 +928,9 @@ class Designer {
 			if (value !== M.get_in(this.model, path)) this.edit(path, value);
 			return;
 		}
-		const value = M.coerce(kind, el.value);
-		if (value !== (M.get_in(this.model, path) || "")) this.edit(path, value);
+		let value = M.coerce(kind, el.value);
+		if (value === "" && el.hasAttribute("data-fd-null")) value = null;
+		if ((value || "") !== (M.get_in(this.model, path) || "")) this.edit(path, value);
 	}
 
 	on_submit(e) {
@@ -914,9 +1009,19 @@ class Designer {
 		}
 		if (path === "mode") {
 			if (!this.model || !this.can_write() || this.model.mode === value) return;
-			this.model = M.set_mode(this.model, value);
-			this.place.step = R.normalize_step(this.model.mode, this.place.step);
-			return this.changed(true);
+			const go = () => {
+				this.model = M.set_mode(this.model, value);
+				this.place.step = R.normalize_step(this.model.mode, this.place.step);
+				R.write_address(this.win, this.place, false);
+				this.changed(true);
+			};
+			// Quick hands every section back to the engine: what a designer sized by hand would be
+			// overwritten by the next derive and saved, so they are asked first.
+			const pinned = value === "quick" ? M.pinned_sections(this.model) : [];
+			if (!pinned.length) return go();
+			const { __ } = this.h;
+			const names = pinned.map((key) => __((M.SECTIONS.find((s) => s.key === key) || { label: key }).label)).join(", ");
+			return this.ask(__("Quick mode works every section out again, so what you set by hand in {0} will be replaced. Switch to Quick?", [names]), go);
 		}
 		if (M.get_in(this.model, path) === value) return;
 		this.edit(path, value, true);
