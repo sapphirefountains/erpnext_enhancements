@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.762.0] - 2026-11-01
+## [1.767.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03023. This is
 phase B, stacked on phase A. **Nothing user-facing changes, and the deploy does nothing.** Nothing
@@ -75,6 +75,12 @@ or fixtures.
     freeboard at 1.3 × drain-back rise).
   - `derive(model, setup, catalogs, rules)` runs PLAN.md 2.2 steps 5 to 8 in order. It writes only
     `auto` sections and returns the derived model plus every `CalcResult`.
+  - **`derive` never raises.** The page calls it on every edit, and a half-drawn model is its normal
+    input. Anything the network cannot be built from comes back as one `network.invalid` blocker,
+    for example a segment to a node that is not drawn yet, or a `control_node` naming a deleted
+    terminal. A basin with no plan area is a `basin.no_area` blocker. The output is strict JSON: an
+    infinite figure, such as turnover at zero flow, is None. The independent review of PR #1398 found
+    four crash paths here, and all four are closed.
 - **`engine/bom.py`** is generalized from DRC `bomRows` and `cutList`. It resolves the open
   "aggregated Fitting Schedule" item in `SOURCE_DATA_AUDIT.md` as an engine function:
   - pipe by size and material, with 10% waste, in 20 ft sticks;
