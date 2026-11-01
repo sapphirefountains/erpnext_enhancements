@@ -97,7 +97,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
     checks: list[dict] = []
     bom: list[tuple] = []
     totals = {"steel_lb": 0.0, "site_concrete_cuft": 0.0, "site_rebar_lb": 0.0, "grating_sqft": 0.0,
-              "veneer_anchors": 0, "equipment_anchors": 0, "braces": 0, "mooring_blocks": 0,
+              "veneer_anchors": 0, "equipment_anchors": 0, "pads": 0, "braces": 0, "mooring_blocks": 0,
               "trench_drain_pieces": 0, "waterstop_ring_ft": 0.0}
 
     def record(group, row, res):
@@ -117,10 +117,10 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         totals["steel_lb"] += lb
 
     wall_rebar: dict[str, float] = {}
-    def complete(group):
-        """Rows of ``group`` with every required number > 0; the rest become an INFO check
-        (a half-filled form row must never take the whole takeoff down)."""
-        for i, row in enumerate(struct.get(group) or [], start=1):
+    def complete(group, rows=None):
+        """Rows of ``group`` (or the given ``rows``) with every required number > 0; the rest become
+        an INFO check (a half-filled form row must never take the whole takeoff down)."""
+        for i, row in enumerate(struct.get(group) or [] if rows is None else rows, start=1):
             row = row or {}
             missing = [k for k in REQUIRED[group] if not (_num(row.get(k), 0.0) > 0)]
             if missing:
@@ -239,7 +239,8 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         record("weir_lips", row, res)
         if res.status != "ok":
             check("STRUCT_WEIR_SAG", WARNING, "features", row.get("label") or row.get("id"),
-                  "Weir lip sags past the edge tolerance", res.warnings[-1],
+                  "Weir lip sags past the edge tolerance",
+                  next((w for w in res.warnings if " sags " in w), res.steps[1]),
                   f"Support the lip at {res.value['max_support_spacing_in']:.0f} in or stiffen the flange.",
                   res.citations[0])
 
@@ -361,9 +362,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
         record("pads", row, res)
         totals["site_concrete_cuft"] += res.value["concrete_cuft"]
         totals["equipment_anchors"] += res.value["anchors"]
-        if res.status != "ok":
+        totals["pads"] += 1
+        if res.status == "bad":  # "warn" only means no SDS was given; the project check already says so
             check("STRUCT_ANCHORS", WARNING, "pump", row.get("label") or row.get("id"), "Equipment anchors overstressed",
-                  res.warnings[-1], "Larger or deeper anchors.", res.citations[1])
+                  next((w for w in res.warnings if "overstressed" in w), res.steps[-1]), "Larger or deeper anchors.",
+                  res.citations[1])
 
     def bad_size(group, row, err):
         check("STRUCT_PIPE_SIZE", INFO, "piping", row.get("label") or row.get("id"), "Pipe size not set",
@@ -410,9 +413,7 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
 
     rig = struct.get("rigging")
     if rig:
-        struct = dict(struct, _rig=[rig])
-        REQUIRED["_rig"] = REQUIRED["rigging"]
-        rig = next(complete("_rig"), None)
+        rig = next(complete("rigging", [rig]), None)
     if rig:
         res = rig_plan(_num(rig.get("hung_lb_per_ft"), 0.0), _num(rig.get("hung_length_ft"), 0.0),
                        int(_num(rig.get("hanger_spans"), 1)), _num(rig.get("hanger_span_ft"), 1.0),

@@ -216,3 +216,11 @@ def test_moorings_of_different_weights_stay_on_their_own_lines():
                                                        {"id": "b", "above_water_sqft": 30, "submerged_sqft": 20}]}})
     keys = [line["key"] for line in t["bom"] if line["key"].startswith("structural.mooring_blocks")]
     assert len(keys) == 2
+
+
+def test_pad_checks_only_fire_on_real_failures():
+    no_sds = structural_takeoff({"structure": {"pads": [{"id": "p", "length_in": 30, "width_in": 20, "weight_lb": 400}]}})
+    assert "STRUCT_ANCHORS" not in [c["code"] for c in no_sds["checks"]]
+    # a half-filled pad row is skipped and covers no equipment
+    t = structural_takeoff({"network": {"pumps": [{"id": "p1"}]}, "structure": {"pads": [{"id": "x"}]}})
+    assert {line["key"]: line for line in t["bom"]}["structural.anchors"]["qty"] == 4

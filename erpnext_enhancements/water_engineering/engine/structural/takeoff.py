@@ -279,7 +279,7 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
     totals.update({k: (totals.get(k, 0) + v) for k, v in general["totals"].items()})
     anchors = anchor_bolts(model, rules)
     # listed pads carry their own anchors; equipment beyond the pads keeps the house-rule count
-    pads = len([p for p in (model.get("structure") or {}).get("pads") or [] if p])
+    pads = general["totals"]["pads"]  # computed pads only; a skipped half-filled row covers nothing
     uncovered = max(anchors.value["pieces_of_equipment"] - pads, 0) * anchors.value["per_equipment"]
     add("structural.anchors", "Anchor bolts, stainless wedge, equipment", uncovered, "Nos", "anchor_bolt_ss_wedge")
     totals["anchors"] = uncovered + general["totals"]["equipment_anchors"]
