@@ -92,14 +92,16 @@ ENCLOSURE_SIZES_IN = [
     (12, 10, 6), (16, 12, 6), (16, 14, 7), (20, 16, 8), (24, 20, 8), (24, 24, 10), (30, 24, 10),
     (36, 30, 12), (42, 36, 12), (48, 36, 12), (60, 36, 16), (72, 36, 16),
 ]
-# Sapphire parts for the sizes they fit (DOC-0028 / IDP009). The Saginaw
-# dimensions are read from Saginaw's model numbering (height, width x depth), not
-# from a datasheet: verify before ordering.
+# Sapphire parts for the sizes they fit. Only the Polycase YH-161407 backplane
+# (500656) is in DOC-0028 / the source audit; the enclosure itself has no Sapphire
+# part number and its NEMA rating is not recorded, so the result asks the designer
+# to confirm it against the type the location needs. (IDP009's drawing labels name
+# Saginaw SCE-24EL2410LP / SCE-30EL2410LP panels; with no datasheet or part number
+# behind them they are listed as an open question, not selected.)
 ENCLOSURE_PARTS = {
     (16, 14, 7): {"enclosure": "Polycase YH-161407", "part_no": None,
-                  "backplane": "Backplane, Polycase YH-161407", "backplane_part_no": "500656"},
-    (24, 24, 10): {"enclosure": "Saginaw SCE-24EL2410LP", "part_no": None},
-    (30, 24, 10): {"enclosure": "Saginaw SCE-30EL2410LP", "part_no": None},
+                  "backplane": "Backplane, Polycase YH-161407", "backplane_part_no": "500656",
+                  "note": "NEMA rating not recorded in DOC-0028: confirm it matches the location's type"},
 }
 SPLASH_WIZARD_HOUSING = {"box": "500615", "lid": "500616", "label": "WP-40"}  # DOC-0028, EDP001
 WIREWAY_FACTOR = 0.30  # wire duct and spacing around the components
@@ -139,6 +141,9 @@ SB4_DEFAULT_KA = {
     "power_supply": 5,
     "vfd": 5,
     "miniature_breaker_supplementary": 0,  # supplementary protectors carry no SCCR of their own
+    # Branch breakers are marked with an interrupting rating (UL 489); 10 kA is the common
+    # minimum, used only when the model gives none (control.component_ka.branch_breaker).
+    "branch_breaker": 10,
 }
 CIT_SCCR = "UL 508A Supplement SB (SCCR: the lowest-rated power component governs); NEC 409.22, 409.110"
 

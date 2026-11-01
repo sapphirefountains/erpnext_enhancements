@@ -74,8 +74,24 @@ def ladder_rungs(
             base.append({"type": "no", "label": "LSL ok"})
         hoa = {"type": "box", "label": "HOA: H / A+run"}
         if topo == "vfd_bypass":
-            rungs.append({"label": f"{tag} drive run (K2)", "elements": [*base, hoa, {"type": "box", "label": "SEL=VFD"}, {"type": "nc", "label": f"{tag}-K3"}, {"type": "coil", "label": f"{tag}-K2"}]})
-            rungs.append({"label": f"{tag} bypass (K3)", "elements": [*base, hoa, {"type": "box", "label": "SEL=BYP or fault xfer"}, {"type": "nc", "label": f"{tag}-K2"}, {"type": "nc", "label": f"{tag}-OLB"}, {"type": "coil", "label": f"{tag}-K3"}]})
+            mcr = [{"type": "no", "label": "MCR"}]
+            # K1 powers the drive whenever the VFD path is selected (drive healthy, able to report).
+            rungs.append({"label": f"{tag} drive input (K1)", "elements": [
+                *mcr, {"type": "box", "label": "SEL=VFD"}, {"type": "nc", "label": f"{tag} xfer"},
+                {"type": "coil", "label": f"{tag}-K1"}]})
+            # DR is the drive's run command; K2 holds through a time-delay-off (TDO, the decel time)
+            # after DR drops, so K2 opens with the drive stopped. A drive fault opens K2 at once.
+            rungs.append({"label": f"{tag} drive run command (DR)", "elements": [
+                *base, hoa, {"type": "box", "label": "SEL=VFD"}, {"type": "nc", "label": f"{tag} VFD flt"},
+                {"type": "coil", "label": f"{tag}-DR"}]})
+            rungs.append({"label": f"{tag} drive output (K2), TDO hold", "elements": [
+                *mcr, {"type": "box", "label": f"{tag}-DR or TDO"}, {"type": "nc", "label": f"{tag} VFD flt"},
+                {"type": "nc", "label": f"{tag}-K3"}, {"type": "coil", "label": f"{tag}-K2"}]})
+            # Fault transfer: the drive-fault contact with transfer enabled stands in for SEL=BYP;
+            # K2 has already dropped on that fault, so the NC K2 contact lets K3 pull in.
+            rungs.append({"label": f"{tag} bypass (K3)", "elements": [
+                *base, hoa, {"type": "box", "label": "SEL=BYP or (flt + xfer)"}, {"type": "nc", "label": f"{tag}-K2"},
+                {"type": "nc", "label": f"{tag}-OLB"}, {"type": "coil", "label": f"{tag}-K3"}]})
             run_contact = f"{tag}-K2/K3"
             fault_contact = f"{tag} VFD flt"
         elif topo == "vfd":

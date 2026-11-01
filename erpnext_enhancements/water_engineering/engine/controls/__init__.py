@@ -143,7 +143,7 @@ def calc_solenoid_relays(valve_qty: int) -> CalcResult:
 # Imported after the definitions above: controller.interlocks reads the seeded lists from here.
 from ..data.motor_control import MAX_INTERNAL_F
 from ..electrical._util import num
-from .controller import dc_supply, interlocks, io_list, relay_counts, select_controller
+from .controller import dc_supply, interlocks, io_list, relay_counts, select_controller, wind_control
 from .drawings import control_ladder, ladder_rungs, power_schematic, power_state
 from .outputs import control_panel_rows, panel_bom, theory_of_operation
 from .panel import (
@@ -180,7 +180,8 @@ def _feature_for_pumps(model: dict) -> dict:
     def any_flag(key):
         return bool(ctl.get(key)) or any(f.get(key) or (f.get("inputs") or {}).get(key) for f in feats)
 
-    return {"wind_control": any_flag("wind_control"), "show_modulation": any_flag("show_modulation"),
+    # Wind uses the same predicate as the I/O list, so a pump on wind duty always has its sensor.
+    return {"wind_control": wind_control(model), "show_modulation": any_flag("show_modulation"),
             "setpoint": any_flag("setpoint")}
 
 
@@ -194,8 +195,29 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     Basic / PLUS / MAX, ``topology`` per pump id, ``auto_transfer``,
     ``wind_control``, ``show_modulation``, ``location`` outdoor / indoor /
     pool_equipment_room, ``near_chemicals``, ``available_fault_ka``,
-    ``application_type``, ``nema_starters``), pump ``role`` and ``topology``,
-    ``site.elevation_ft`` and ``site.air_temp_f``.
+    ``application_type``, ``nema_starters``, ``analog_monitoring``, ``shaded``,
+    ``panel_ambient_f``, ``component_ka`` {kind: marked kA}), pump ``role`` and
+    ``topology``, ``site.elevation_ft`` and ``site.air_temp_f``.
+
+    Returns (also in ``README.md``):
+
+    * ``pumps``: per motor circuit, ``topology.pump_control``'s value (tag, key,
+      label, role, hp, topology, components, contactor, overload, speed_reference,
+      interlocks, flc_a, fla_a, ...)
+    * ``vfds``: per drive, ``{tag, frame, voltage_class, phase_in, input_fuse_a,
+      loss_w, line_reactor, lead_treatment, bypass_contactor_a}``
+    * ``controller``: ``{platform, family, part_no, valve_channels, expansions,
+      housing?, reasons}``
+    * ``io_points`` (Control IO Point rows plus ``powered``), ``relays``,
+      ``dc_supply`` ``{watts, units, load_w}``, ``interlocks`` (Control Interlock rows)
+    * ``panel``: control transformer VA, enclosure size / dims / part, NEMA type,
+      heat, thermal ``{status, rise_f, fan_cfm, ac_btu_h, hx_w_per_f}``, SCCR and
+      its status, main disconnect, SPD, terminals, GFCI poles
+    * ``bom`` (``{section: "Controls", key, description, qty, uom, item_hint,
+      part_no}``), ``control_panel`` (``{parent, pumps, lights, fuses, interlocks,
+      io_points}`` in the DocType's fieldnames), ``theory_of_operation``
+    * ``power_svg``, ``ladder_svg``, ``warnings``, ``status`` (good / warn /
+      bad), ``results`` (every CalcResult behind them, as dicts)
     """
     from ..electrical import electrical_report
 
@@ -239,6 +261,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     panel_ambient = num(ctl.get("panel_ambient_f"), num(site.get("air_temp_f"), 95.0))
     location = ctl.get("location") or "outdoor"
     outdoor = location.startswith("outdoor")
+    sun = outdoor and not ctl.get("shaded")
     vfd_frames, frames_by_tag = [], {}
     for pc in pump_controls:
         if pc["topology"] not in ("vfd", "vfd_bypass"):
@@ -246,7 +269,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
         circ = next((c for c in motor_circuits if c["tag"] == pc["tag"]), {})
         # The drive sees the enclosure's interior, which the thermal check holds at or below
         # 104 F (with a fan or air conditioner when needed), not the sun-loaded outdoor air.
-        drive_ambient = min(panel_ambient + (15 if outdoor else 0), MAX_INTERNAL_F)
+        drive_ambient = min(panel_ambient + (15 if sun else 0), MAX_INTERNAL_F)
         vf = vfd_frame(circ.get("hp") or 0, circ.get("voltage") or 230, circ.get("phase") or 3,
                        fla=pc.get("fla_a") if not circ.get("hp") else None, elevation_ft=elevation,
                        ambient_f=drive_ambient, cable_ft=circ.get("run_ft") or 0,
@@ -294,7 +317,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
     results["panel_heat"] = heat.to_dict()
     material = "stainless" if etype.value == "NEMA 4X" else "steel"
     thermal = enclosure_thermal(enc.inputs["dims_in"]["value"], heat.value, ambient_f=panel_ambient,
-                                outdoor_sun=outdoor, material=material)
+                                outdoor_sun=sun, material=material, sealed=etype.value in ("NEMA 4", "NEMA 4X"))
     results["thermal"] = thermal.to_dict()
     sccr_parts = [{"name": f"{pc['tag']} {d['device']}",
                    "kind": "motor_controller_0_50hp" if num(pc.get("hp")) <= 50 else "motor_controller_51_200hp"}
@@ -304,13 +327,22 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
                    if pc["topology"] in ("across_the_line", "vfd_bypass")]
     sccr_parts += [{"name": f"{v['tag']} drive", "kind": "vfd"} for v in vfd_frames]
     sccr_parts.append({"name": "terminal blocks", "kind": "terminal_block"})
-    sc = sccr(sccr_parts, ctl.get("available_fault_ka"))
-    results["sccr"] = sc.to_dict()
     feeder = elec_r.get("feeder") or {}
     disc = main_disconnect([pc.get("flc_a") for pc in pump_controls],
                            other_a=sum(num(c.get("load_a"), 0) for c in circuits if not c.get("is_motor")),
                            feeder_ocpd_a=feeder.get("ocpd_a"))
     results["main_disconnect"] = disc.to_dict()
+    sccr_parts.append({"name": "main disconnect", "kind": "switch"})
+    if circuits:
+        sccr_parts.append({"name": "branch breakers", "kind": "branch_breaker"})
+    marked = ctl.get("component_ka") or {}
+    if marked.get("spd"):
+        sccr_parts.append({"name": "SPD", "kind": "spd"})
+    for part in sccr_parts:  # a marked rating from the model replaces the SB4.1 default
+        if num(marked.get(part["kind"])) > 0:
+            part["ka"] = num(marked[part["kind"]])
+    sc = sccr(sccr_parts, ctl.get("available_fault_ka"))
+    results["sccr"] = sc.to_dict()
     spd = surge_protection(elec_r.get("inputs", {}).get("service_v") or 240, elec_r.get("inputs", {}).get("phase") or 1)
     results["surge_protection"] = spd.to_dict()
 
@@ -321,6 +353,7 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
         enclosure={"dims_in": enc.inputs["dims_in"]["value"], "part": enc.inputs["part"]["value"]},
         nema_type=etype.value, disconnect_a=disc.value, terminals=tw.value,
         fan_cfm=thermal.inputs["fan_cfm"]["value"], ac_btu=thermal.inputs["ac_btu_h"]["value"],
+        hx_w_per_f=thermal.inputs["hx_w_per_f"]["value"],
     )
     results["panel_bom"] = bom.to_dict()
     fuses = [{"fuse_qty": 3 if v["phase_in"] == 3 else 2, "rating": f"{v['input_fuse_a']} A Class J",
@@ -390,7 +423,8 @@ def controls_report(model: dict | None, *, electrical: dict | None = None, pumps
             "nema_type": etype.value,
             "heat_w": heat.value,
             "thermal": {"status": thermal.status, "rise_f": thermal.value,
-                        "fan_cfm": thermal.inputs["fan_cfm"]["value"], "ac_btu_h": thermal.inputs["ac_btu_h"]["value"]},
+                        "fan_cfm": thermal.inputs["fan_cfm"]["value"], "ac_btu_h": thermal.inputs["ac_btu_h"]["value"],
+                        "hx_w_per_f": thermal.inputs["hx_w_per_f"]["value"]},
             "sccr_ka": sc.value,
             "sccr_status": sc.status,
             "main_disconnect_a": disc.value,

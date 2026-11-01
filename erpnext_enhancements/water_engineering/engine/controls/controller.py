@@ -16,9 +16,12 @@ What the sources say about the Splash Wizard (read 2026-11-01):
 
 So the valve count picks the part, and the Basic / PLUS / MAX tier is the
 designer's call (``control.family``, Basic by default): no source says what
-separates the tiers. A design that needs something outside SDP001's list gets the
-Industrial (PLC) platform recommended. That covers a drive speed reference, DMX,
-4-20 mA analog inputs and automatic bypass transfer; the reasons say which.
+separates the tiers. A drive's speed is set by preset speeds over digital outputs,
+the DOC-0123 "VFDs ramp to windy speed" step the Splash Wizard family already
+describes. A design that needs something outside SDP001's list gets the Industrial
+(PLC) platform recommended: an analog (0-10 V) speed reference for show modulation
+or a setpoint, DMX, 4-20 mA analog inputs, automatic bypass transfer. The reasons
+say which.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from __future__ import annotations
 import math
 
 from ..data.motor_control import DC_DEVICE_W, PSU_24VDC_W, PSU_EFF, SPLASH_WIZARD_HOUSING
-from ..electrical._util import EPS, num
+from ..electrical._util import EPS, is_low_voltage, num
 from ..envelope import CalcOption, CalcResult, make_input
 
 CIT_DOC_0028 = "DOC-0028 Design Part Numbers (500615-500631)"
@@ -38,7 +41,6 @@ SPLASH_WIZARD_PARTS = {
     "MAX": {6: "500628", 9: "500629"},
 }
 VALVE_EXPANSION_PARTS = {6: "500630", 9: "500631"}
-ERPNEXT_ITEMS = {"Basic": "PDT-0000", "PLUS": "PDT-0001", "MAX": "PDT-0002", "Industrial": "PDT-0003"}
 SDP001_FUNCTIONS = (
     "4-button UI and LCD", "time of day", "valve sequencing (patterns, random)", "water level monitoring and fill",
     "feature and circulation pump control", "daily run window", "push-button activation",
@@ -58,6 +60,16 @@ def _io(name, io_type, signal, device, description, qty=1, mechanism="", ref="",
         "description": description, "qty": int(qty), "control_mechanism": mechanism, "drawing_ref": ref,
         "powered": bool(powered),
     }
+
+
+def wind_control(model: dict | None) -> bool:
+    """Does the design have wind control? The one predicate the I/O list, the
+    ladder and the pump topology all use: ``control.wind_control``,
+    ``electrical.wind_sensor`` or any feature with ``wind_control``."""
+    model = model or {}
+    if (model.get("control") or {}).get("wind_control") or (model.get("electrical") or {}).get("wind_sensor"):
+        return True
+    return any(f.get("wind_control") or (f.get("inputs") or {}).get("wind_control") for f in model.get("features") or [])
 
 
 def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> CalcResult:
@@ -85,9 +97,12 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
                         f"Run command to {label}", 1, "VFD" if drive else "Motor Starter", tag))
         rows.append(_io(f"{tag} fault", "Input", "Dry Contact NO", f"{label} {'drive fault' if drive else 'overload aux'}",
                         f"{label} fault / overload", 1, "", tag))
-        if drive:
+        if drive and pc.get("speed_reference") == "analog":
             rows.append(_io(f"{tag} speed", "Output", "0-10V", f"{label} drive speed reference",
                             f"Speed reference to {label}", 1, "VFD", tag))
+        elif drive:
+            rows.append(_io(f"{tag} preset speed", "Output", "24VDC", f"{label} drive preset-speed input",
+                            f"Windy / normal preset speed for {label} (DOC-0123)", 1, "VFD", tag))
         if topo == "vfd_bypass":
             rows.append(_io(f"{tag} in bypass", "Input", "Dry Contact NO", f"{label} K3 aux",
                             f"{label} running in bypass", 1, "", tag))
@@ -102,9 +117,7 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
                         "Fill call per basin", max(1, len(basins)), powered=True))
         rows.append(_io("Autofill valve", "Output", "24VDC", "Autofill solenoid", "Opens the fill valve", 1,
                         "Solid State Relay"))
-    features = model.get("features") or []
-    if any(f.get("wind_control") or (f.get("inputs") or {}).get("wind_control") for f in features) \
-            or elec.get("wind_sensor"):
+    if wind_control(model):
         rows.append(_io("Wind sensor", "Input", "Reed Switch Pulse", "Anemometer (Inspeed WS, DOC-0062)",
                         "Wind speed: medium and high setpoints (two stages, DOC-0123)", 1))
     if pcs:
@@ -130,15 +143,17 @@ def io_list(model: dict | None, pump_controls: list[dict] | None = None) -> Calc
         rows.append(_io("Solenoid valves", "Output", "24VDC", "Manifold solenoid valve", "One output per valve",
                         n_valves, "Solid State Relay"))
     fixtures = lighting.get("fixtures") or []
-    lv_w = sum(num(f.get("watts")) * max(1, int(num(f.get("qty"), 1))) for f in fixtures
-               if 0 < num(f.get("voltage"), 12) <= 30)
+    lv_lights = [{"qty": max(1, int(num(f.get("qty"), 1))), "watts_each": num(f.get("watts"))}
+                 for f in fixtures if is_low_voltage(num(f.get("voltage"), 12))]
     dmx = (lighting.get("control") or "").lower() == "dmx"
     if dmx:
         channels = sum(max(1, int(num(f.get("qty"), 1))) for f in fixtures) * DMX_CHANNELS_PER_FIXTURE
         universes = max(1, math.ceil(channels / DMX_UNIVERSE))
         rows.append(_io("DMX", "Output", "Digital", "DMX512 port", f"{channels} channels", universes))
-    elif lv_w > 0:
-        relays = math.ceil(lv_w / 60.0)
+    elif lv_lights:
+        from . import lighting_sizing  # the DOC-0126 rule (60 W per 12 V DC relay), defined in __init__
+
+        relays = lighting_sizing(lv_lights)["relay_count"]
         rows.append(_io("Lighting", "Output", "24VDC", "Lighting relay (60 W at 12 V DC each)",
                         "Switched lighting circuits", relays, "Solid State Relay"))
     if pcs:
@@ -254,7 +269,8 @@ def select_controller(
     valves = sum(r["qty"] for r in rows if r["point_name"] == "Solenoid valves")
     reasons = []
     if any(r["signal"] == "0-10V" for r in rows):
-        reasons.append("a drive speed reference (0-10 V) is not among SDP001's functions")
+        reasons.append("an analog drive speed reference (0-10 V, for show modulation or a setpoint) is not among "
+                       "SDP001's functions")
     if any(r["point_name"] == "DMX" for r in rows):
         reasons.append("DMX lighting is not among SDP001's functions")
     if any(r["signal"] == "4-20mA" for r in rows):
@@ -276,10 +292,9 @@ def select_controller(
         "part_no": SPLASH_WIZARD_PARTS[fam][base],
         "expansions": [{"valves": e, "part_no": VALVE_EXPANSION_PARTS[e]} for e in expansions],
         "housing": SPLASH_WIZARD_HOUSING,
-        "erpnext_item": ERPNEXT_ITEMS[fam],
     }
     industrial = {"platform": "Industrial", "family": "Industrial", "part_no": None, "expansions": [],
-                  "erpnext_item": ERPNEXT_ITEMS["Industrial"], "valve_channels": valves}
+                  "valve_channels": valves}
     chosen = dict(industrial if reasons else sw)
     chosen["reasons"] = reasons or [f"{valves} valve(s) and the I/O fit SDP001's functions"]
     options = [

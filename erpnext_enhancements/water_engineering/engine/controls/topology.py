@@ -286,10 +286,15 @@ def pump_control(
     comps: list[dict] = []
     interlocks: list[dict] = []
     contactor = nema_size(hp, v, ph) if (nema and hp) else iec_contactor(flc)
+    nema_used = bool(nema and hp and contactor.value)
+    nema_note = None
+    if nema and hp and not contactor.value:
+        nema_note = f"{hp:g} HP is past the NEMA starter table; an IEC AC-3 frame is used instead."
+        contactor = iec_contactor(flc)
     ol = overload_relay(fla, submersible=submersible, nema=nema, service_factor=num(pump.get("service_factor"), 1.15))
-    c_rating = (f"NEMA size {contactor.value}" if nema and hp else f"{contactor.value} A AC-3")
+    c_rating = (f"NEMA size {contactor.value}" if nema_used else f"{contactor.value} A AC-3")
     # Contactor current, for footprints and SCCR: the NEMA size's continuous rating or the AC-3 frame.
-    c_amps = NEMA_CONTINUOUS_A.get(contactor.value) if nema and hp else contactor.value
+    c_amps = NEMA_CONTINUOUS_A.get(contactor.value) if nema_used else contactor.value
     if topo == "across_the_line":
         comps += [
             _component(f"{tag}-M", "Contactor", c_rating, 1, "across-the-line", c_amps),
@@ -326,7 +331,7 @@ def pump_control(
     comps.append(_component(f"{tag}-HOA", "Selector switch Hand-Off-Auto", "22 mm, 3-position"))
     comps += [_component(f"{tag}-PL1", "Pilot light, run (green)", "22 mm LED"),
               _component(f"{tag}-PL2", "Pilot light, fault (red)", "22 mm LED")]
-    warnings = []
+    warnings = [nema_note] if nema_note else []
     if topo in ("vfd", "vfd_bypass") and ph == 1:
         warnings.append(f"{pump.get('label')}: a drive needs a three-phase motor (fed from single-phase) or a "
                         "drive listed for the single-phase pump.")
@@ -351,7 +356,12 @@ def pump_control(
             "recommended": rec.value,
             "components": comps,
             "contactor": contactor.value,
-            "contactor_basis": "NEMA" if nema and hp else "IEC AC-3",
+            "contactor_basis": "NEMA" if nema_used else "IEC AC-3",
+            # How the controller sets a drive's speed: preset speeds over digital outputs (the
+            # DOC-0123 windy-speed step) unless the show modulates it or it holds a setpoint.
+            "speed_reference": (None if topo not in ("vfd", "vfd_bypass")
+                                else "analog" if ((feature or {}).get("show_modulation") or (feature or {}).get("setpoint"))
+                                else "preset"),
             "overload": {"range": ol.value, "setting_a": ol.inputs["setting_a"]["value"],
                          "class": ol.inputs["trip_class"]["value"], "max_trip_a": ol.inputs["max_trip_a"]["value"]},
             "start_multiple": START_MULTIPLE[topo],

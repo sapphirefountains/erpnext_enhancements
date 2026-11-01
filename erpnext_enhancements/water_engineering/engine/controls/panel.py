@@ -59,7 +59,9 @@ def panel_control_transformer(
 ) -> CalcResult:
     """Control transformer from the panel's own parts: a coil per contactor,
     pilot lights, relays, the controller (HMI or PLC) and the 24 V DC supply's
-    input, through ``electrical.transformers.control_transformer_va``."""
+    input, through ``electrical.transformers.control_transformer_va``. When the
+    DC supply's input is given, the relays and the controller are already in it
+    (they run on 24 V DC) and are not counted again."""
     pcs = pump_controls or []
     contactors = sum(c["qty"] for pc in pcs for c in pc.get("components", []) if "contactor" in c["device"].lower())
     pilots = sum(c["qty"] for pc in pcs for c in pc.get("components", []) if c["device"].lower().startswith("pilot"))
@@ -68,9 +70,11 @@ def panel_control_transformer(
         rows.append({"device": "contactor", "qty": contactors})
     if pilots:
         rows.append({"device": "pilot_light", "qty": pilots})
-    if relays:
+    on_dc = num(psu_input_w) > 0
+    if relays and not on_dc:
         rows.append({"device": "relay", "qty": relays})
-    rows.append({"device": "plc" if platform == "Industrial" else "hmi", "qty": 1})
+    if not on_dc:
+        rows.append({"device": "plc" if platform == "Industrial" else "hmi", "qty": 1})
     if fill_valve_24vac:
         rows.append({"device": "solenoid", "qty": 1})
     if num(psu_input_w) > 0:
@@ -183,12 +187,16 @@ def enclosure_thermal(
     material: str = "steel",
     max_internal_f: float = MAX_INTERNAL_F,
     wall_mounted: bool = True,
+    sealed: bool = False,
 ) -> CalcResult:
     """Can the enclosure shed its heat by natural convection? Exposed area (front,
     top and two sides of a wall-mounted box) x k x the allowed rise must cover the
-    internal heat. If not: a filtered fan (CFM = 3.17 x W / allowed rise) when the
-    ambient is under the internal limit, otherwise an air conditioner sized in
-    BTU/h. ``status`` is good / bad, ``value`` the internal rise (deg F)."""
+    internal heat. If not, the cooling it needs: a filtered fan (CFM = 3.17 x W /
+    allowed rise) when the ambient is under the internal limit, otherwise an air
+    conditioner sized in BTU/h. A ``sealed`` (NEMA 4 / 4X) box never takes a fan,
+    which would break its rating: an air-to-air heat exchanger (W per deg F) or an
+    air conditioner instead. ``status`` is good when natural convection is enough
+    and warn when cooling is designed in; ``value`` is the natural rise (deg F)."""
     h, w, d = (num(x) for x in dims_in)
     area_in2 = w * h + w * d + 2 * h * d + (0 if wall_mounted else w * h)
     area_m2 = area_in2 / IN2_PER_M2
@@ -200,9 +208,12 @@ def enclosure_thermal(
     rise_f = (q / (k * area_m2)) * 1.8 if area_m2 > 0 else 0.0
     ok = q <= capacity_w + EPS
     remedy = None
-    cfm = btu = None
+    cfm = btu = hx = None
     if not ok:
-        if allowed_f > 5:
+        if allowed_f > 5 and sealed:
+            hx = math.ceil(10 * q / allowed_f) / 10
+            remedy = f"an air-to-air heat exchanger of at least {hx:g} W/F (keeps the sealed rating)"
+        elif allowed_f > 5:
             cfm = math.ceil(CFM_PER_W_PER_F * q / allowed_f)
             remedy = f"a filtered fan of at least {cfm} CFM (rated for the enclosure type)"
         else:
@@ -221,6 +232,8 @@ def enclosure_thermal(
             "capacity_w": make_input(round(capacity_w, 1), "W", "prior_calc"),
             "fan_cfm": make_input(cfm, "CFM", "prior_calc"),
             "ac_btu_h": make_input(btu, "BTU/h", "prior_calc"),
+            "hx_w_per_f": make_input(hx, "W/F", "prior_calc"),
+            "sealed": make_input(bool(sealed), "", "user"),
         },
         formula="capacity = k x A x (T_max - T_ambient) ; fan CFM = 3.17 x W / dT(F) ; AC BTU/h = 1.1 x 3.412 x W",
         steps=[
@@ -229,9 +242,8 @@ def enclosure_thermal(
             "natural convection is enough" if ok else f"over by {q - capacity_w:.0f} W -> {remedy}",
         ],
         citations=[CIT_THERMAL],
-        warnings=([] if ok else [f"Enclosure overheats: add {remedy}. A fan lowers a 4X rating; use an air "
-                                 "conditioner or heat exchanger there."]),
-        status="good" if ok else "bad",
+        warnings=([] if ok else [f"Natural convection is not enough: {remedy} is designed in."]),
+        status="good" if ok else "warn",
     )
 
 

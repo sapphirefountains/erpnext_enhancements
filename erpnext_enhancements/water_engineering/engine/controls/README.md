@@ -64,6 +64,13 @@ The interlock rules:
 
 `bypass_truth_table()` walks all 192 states and checks these rules.
 
+The ladder implements the same logic with these rungs:
+
+- **K1** is energized while VFD is selected and there's no transfer.
+- **DR**, the drive run command, opens on a drive fault.
+- **K2** holds through a time-delay-off (the drive's deceleration time) after DR drops, so it opens with the drive stopped. A drive fault opens it at once.
+- **K3** closes on BYPASS, or on a fault with transfer enabled, through a normally closed K2 contact.
+
 Automatic transfer starts the pump across the line at full speed. The result warns about water
 hammer and overspray, and keeps the feature to circulation and filtration pumps.
 
@@ -87,15 +94,47 @@ The selector works from those facts:
 
 - **The valve count picks the part.** Past nine valves, expansions are added.
 - **The Basic / PLUS / MAX tier is the designer's choice:** `control.family`, Basic by default.
+- **A drive's speed is set by preset speeds** over a digital output: the DOC-0123 "VFDs ramp to windy speed" step, which the Splash Wizard family already describes. Wind control alone therefore keeps the Splash Wizard.
 - **Industrial (PLC) is recommended when the design needs something SDP001 does not list,** and the reasons say what:
-  - a drive speed reference
+  - an analog (0-10 V) speed reference, for show modulation or a setpoint
   - DMX
   - 4-20 mA inputs
   - automatic bypass transfer
+
+## `controls_report(model)`: what it returns
+
+One JSON-ready dict:
+
+| Key | What it holds |
+|---|---|
+| `pumps` | For each motor circuit, `topology.pump_control`'s value: tag, key, label, role, hp, submersible, topology, components (each with its amps), contactor and its basis, overload `{range, setting_a, class, max_trip_a}`, `speed_reference` (`preset` / `analog` / `None`), starting current, interlocks, `flc_a`, `fla_a` |
+| `vfds` | Per drive: `{tag, frame, voltage_class, phase_in, input_fuse_a, loss_w, line_reactor, lead_treatment, bypass_contactor_a}` |
+| `controller` | `{platform, family, part_no, valve_channels, expansions, housing, reasons}` |
+| `io_points` | Control IO Point rows, plus `powered` |
+| `relays` | `{ssr, interposing, spare, total}` |
+| `dc_supply` | `{watts, units, load_w}` |
+| `interlocks` | Control Interlock rows |
+| `panel` | `control_transformer_va`, enclosure size, dims and part, `nema_type`, `heat_w`, `thermal`, `sccr_ka` and `sccr_status`, `main_disconnect_a`, `spd`, `terminals`, `gfci_poles` |
+| `bom` | Lines of `{section: "Controls", key, description, qty, uom, item_hint, part_no}` |
+| `control_panel` | `{parent, pumps, lights, fuses, interlocks, io_points}`, in the Control Panel Design fieldnames |
+| `theory_of_operation` | Draft text for the submittal |
+| `power_svg`, `ladder_svg` | The two drawings |
+| `warnings`, `status`, `results` | Warnings; `good`, `warn` or `bad`; and every CalcResult behind the report, as dicts |
+
+`panel.thermal` is `{status, rise_f, fan_cfm, ac_btu_h, hx_w_per_f}`.
+
+The `control` keys it reads:
+
+- `family`, `topology`, `auto_transfer`, `nema_starters`, `analog_monitoring`
+- `wind_control`, `show_modulation`
+- `location`, `shaded`, `near_chemicals`, `panel_ambient_f`
+- `available_fault_ka`, `component_ka` (marked kA ratings by kind), `application_type`
 
 ## Open questions
 
 - **The tiers.** What separates Basic, PLUS and MAX? Is MAX FCA003? Can a Splash Wizard put out a 0-10 V speed reference?
 - **The screen.** Does the shipping Splash Wizard use an LCD with 4 buttons (DOC-0062), or the Nextion HMI the DocType defaults to?
-- **Panel enclosures.** IDP009 labels Saginaw SCE-24EL2410LP and SCE-30EL2410LP as panel enclosures. Their sizes are read from Saginaw's numbering, not from a datasheet.
+- **Panel enclosures.** IDP009's drawing labels name Saginaw SCE-24EL2410LP and SCE-30EL2410LP panels. Neither has a part number or a datasheet behind it, so neither is selected.
+  - The only enclosure part the engine attaches is the Polycase YH-161407 backplane (500656), and its NEMA rating isn't recorded, so the result asks the designer to confirm it.
+  - DC-34P (500109) is a 4.6 x 3.1 x 1.8 in box, too small to be a panel enclosure. Its vendor number reads DC-34B.
 - **Available fault current.** It is needed at each site for the SCCR check. Without it the check reports `warn`.

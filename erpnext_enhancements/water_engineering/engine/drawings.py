@@ -327,7 +327,11 @@ def power_schematic_svg(state: dict[str, Any] | None = None) -> str:
         parts.append(_seg(cx, bus_y - 15, cx, bus_y + 5))
         parts.append(_small_box(cx, bus_y + 5, "Breaker"))
         parts.append(_seg(cx, bus_y + 31, cx, bus_y + 45))
-        parts.append(_box(int(cx - 60), bus_y + 45, 120, 40, [xf.get("label") or "Transformer"], fill="#eef6ff"))
+        label = xf.get("label") or "Transformer"
+        # Two lines when the label is longer than the box: "Control transformer" / "350 VA".
+        words = label.split()
+        lines = [label] if len(label) <= 18 or len(words) < 3 else [" ".join(words[:-2]), " ".join(words[-2:])]
+        parts.append(_box(int(cx - 64), bus_y + 45, 128, 40, lines, fill="#eef6ff"))
         x += col_w
     if not pumps and not xfmrs:
         parts.append(f'<text x="{left + 190}" y="{bus_y + 40}" font-size="11" fill="{_MUTED}">No motor circuits.</text>')
@@ -339,12 +343,18 @@ def _ladder_element(x, y, el):
     label = _esc(el.get("label", ""))
     out = []
     if kind in ("no", "nc"):
-        out.append(_seg(x, y - 9, x, y + 9, _INK))
-        out.append(_seg(x + 12, y - 9, x + 12, y + 9, _INK))
+        # The contact's slot is as wide as its label, so adjacent labels never run together.
+        slot = max(12, int(4.6 * len(el.get("label", ""))) + 4)
+        bx = x + (slot - 12) / 2
+        out.append(_seg(x, y, bx, y, _INK, 1.5))
+        out.append(_seg(bx + 12, y, x + slot, y, _INK, 1.5))
+        out.append(_seg(bx, y - 9, bx, y + 9, _INK))
+        out.append(_seg(bx + 12, y - 9, bx + 12, y + 9, _INK))
         if kind == "nc":
-            out.append(_seg(x - 2, y + 9, x + 14, y - 9, _INK, 1.5))
-        out.append(f'<text x="{x + 6}" y="{y - 13}" text-anchor="middle" font-size="8" fill="{_MUTED}">{label}</text>')
-        return out, 12
+            out.append(_seg(bx - 2, y + 9, bx + 14, y - 9, _INK, 1.5))
+        out.append(f'<text x="{x + slot / 2:.0f}" y="{y - 13}" text-anchor="middle" font-size="8" '
+                   f'fill="{_MUTED}">{label}</text>')
+        return out, slot
     if kind in ("coil", "light"):
         r = 10
         fill = {"green": "#c6f6d5", "red": "#fed7d7"}.get(el.get("color"), "#ffffff")

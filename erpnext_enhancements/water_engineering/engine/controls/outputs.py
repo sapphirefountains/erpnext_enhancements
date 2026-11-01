@@ -40,9 +40,10 @@ def panel_bom(
     spd: bool = True,
     fan_cfm: float | None = None,
     ac_btu: float | None = None,
+    hx_w_per_f: float | None = None,
 ) -> CalcResult:
-    """Panel BOM lines. Like parts are grouped by description, so two pumps on
-    the same contactor make one line of qty 2."""
+    """Panel BOM lines. Like parts are grouped, so the K1 / K2 / K3 contactors of
+    a bypass and two pumps' starters on the same rating make one line."""
     grouped: dict[str, dict] = {}
 
     def add(key, description, qty, uom="ea", hint="", part_no=None):
@@ -67,11 +68,19 @@ def panel_bom(
     elif c:
         add("ctl:industrial", "Splash Wizard Industrial controller (PLC + HMI)", 1, hint="Splash Wizard Industrial")
     for pc in pump_controls or []:
+        bypass_rating = None
         for comp in pc.get("components", []):
             d = comp["device"]
             if d == "Variable frequency drive":
                 continue  # drives come from vfd_frames with their derated frame
+            if "contactor" in d.lower():
+                add(f"contactor:{comp.get('rating')}", f"Contactor, {comp.get('rating')}", comp.get("qty", 1))
+                if d.startswith("Bypass"):
+                    bypass_rating = comp.get("rating")
+                continue
             add(f"{d}:{comp.get('rating')}", f"{d}, {comp.get('rating')}".rstrip(", "), comp.get("qty", 1))
+        if bypass_rating:
+            add(f"interlock:{bypass_rating}", f"Mechanical interlock kit for K2 / K3, {bypass_rating}", 1)
     for vf in vfd_frames or []:
         add(f"vfd:{vf.get('frame')}:{vf.get('voltage_class')}",
             f"Variable frequency drive, {vf.get('frame')} HP frame, {vf.get('voltage_class')} V", 1,
@@ -117,6 +126,8 @@ def panel_bom(
         add(f"fan:{int(fan_cfm)}", f"Filtered enclosure fan, {int(fan_cfm)} CFM, with exhaust grille", 1)
     if ac_btu:
         add(f"ac:{int(ac_btu)}", f"Enclosure air conditioner, {int(ac_btu)} BTU/h", 1)
+    if hx_w_per_f:
+        add(f"hx:{hx_w_per_f:g}", f"Air-to-air heat exchanger, {hx_w_per_f:g} W/F (keeps the NEMA 4X rating)", 1)
     add("estop", "E-stop pushbutton, 40 mm mushroom, maintained", 1 if pump_controls else 0)
     lines = list(grouped.values())
     return CalcResult(

@@ -213,14 +213,16 @@ def test_io_list_and_relays():
     model = _model()
     io = C.io_list(model, pcs).value
     names = {r["point_name"]: r for r in io}
-    assert names["M1 speed"]["signal"] == "0-10V"
+    # wind duty: preset speeds over a digital output (DOC-0123), not an analog reference
+    assert names["M1 preset speed"]["signal"] == "24VDC"
+    assert "M1 speed" not in names
     assert names["Solenoid valves"]["qty"] == 12 and names["Solenoid valves"]["control_mechanism"] == "Solid State Relay"
     assert names["Wind sensor"]["signal"] == "Reed Switch Pulse"
     assert names["E-stop"]["signal"] == "Dry Contact NC"
     assert names["Lighting"]["qty"] == 5  # 280 W / 60 W per relay (DOC-0126)
     rel = C.relay_counts(io).value
     assert rel["ssr"] == 12 + 5 + 1  # valves + lighting + autofill
-    assert rel["interposing"] == 1
+    assert rel["interposing"] == 2  # run command and preset speed, each to the drive through an interposing relay
 
 
 def test_dc_supply_hand_sum():
@@ -248,15 +250,17 @@ def test_control_transformer_va_sum():
     # 2 contactors x 20 + 4 pilot lights x 2 + 2 relays x 3 + HMI 10 = 64 VA -> 75 VA
     assert r.inputs["sealed_va_total"]["value"] == 64.0
     assert r.value == 75
-    with_psu = C.panel_control_transformer(pcs, relays=2, psu_input_w=90)  # + 90 W / 0.9 pf = 100 VA
-    assert with_psu.inputs["sealed_va_total"]["value"] == 164.0 and with_psu.value == 200
+    # With the DC supply counted, the relays and the controller are already in its input:
+    # 40 + 8 + 90 W / 0.9 pf (100 VA) = 148 VA -> 150 VA
+    with_psu = C.panel_control_transformer(pcs, relays=2, psu_input_w=90)
+    assert with_psu.inputs["sealed_va_total"]["value"] == 148.0 and with_psu.value == 150
 
 
 def test_enclosure_thermal_fails_and_asks_for_a_fan():
     # 16 x 14 x 7 in wall box: exposed 546 in^2 = 0.352 m^2 ; indoors at 86 F the rise allowed is 18 F
     # -> 5.5 x 0.352 x 10 C = 19.4 W, far under 150 W ; fan = 3.17 x 150 / 18 = 26.4 -> 27 CFM
     r = C.enclosure_thermal([16, 14, 7], 150, ambient_f=86, outdoor_sun=False)
-    assert r.status == "bad"
+    assert r.status == "warn"  # cooling is designed in
     assert r.inputs["capacity_w"]["value"] == pytest.approx(19.4, abs=0.1)
     assert r.inputs["fan_cfm"]["value"] == 27
     hot = C.enclosure_thermal([16, 14, 7], 150, ambient_f=100, outdoor_sun=True)  # 115 F > 104 F inside
@@ -430,3 +434,111 @@ def test_role_survives_a_multi_unit_pump_row():
     r = C.controls_report(m)
     assert [p["role"] for p in r["pumps"]] == ["circulation", "circulation"]
     assert all(p["topology"] == "vfd_bypass" for p in r["pumps"])
+
+
+
+# --- independent review of #1397 ---------------------------------------------------------------
+
+
+def _bypass_model(**ctl):
+    m = _model()
+    m["network"]["pumps"] = [{"id": "p", "label": "Circ", "hp": 10, "voltage": 230, "phase": 3,
+                              "role": "circulation", "control": "vfd"}]
+    m["features"] = []
+    m["control"] = {"auto_transfer": True, **ctl}
+    return m
+
+
+def test_ladder_can_transfer_to_bypass_on_a_drive_fault():
+    r = C.controls_report(_bypass_model())
+    rungs = C.ladder_rungs(r["pumps"], r["io_points"])["rungs"]
+    by = {x["label"]: [e["label"] for e in x["elements"]] for x in rungs}
+    k2 = by["M1 drive output (K2), TDO hold"]
+    assert "M1 VFD flt" in k2 and "M1-K3" in k2  # a drive fault drops K2 ...
+    assert "SEL=BYP or (flt + xfer)" in by["M1 bypass (K3)"] and "M1-K2" in by["M1 bypass (K3)"]  # ... so K3 can close
+    assert "M1-K1" in by["M1 drive input (K1)"]
+    assert "M1-DR" in by["M1 drive run command (DR)"]
+    # the state logic agrees: fault + transfer -> K2 open, K3 closed
+    out = C.bypass_logic("VFD", "AUTO", True, drive_fault=True, auto_transfer=True)
+    assert not out["K2"] and out["K3"]
+
+
+def test_control_wind_control_flag_keeps_the_sensor():
+    m = _model()
+    m["features"] = [{"id": "f1", "family": "jets"}]
+    m["control"] = {"wind_control": True}
+    r = C.controls_report(m)
+    names = {p["point_name"] for p in r["io_points"]}
+    assert "Wind sensor" in names
+    assert any(x["label"].startswith("Wind stage 2") for x in C.ladder_rungs(r["pumps"], r["io_points"])["rungs"])
+    assert r["results"]["dc_supply"]["inputs"]["breakdown_w"]["value"]["anemometer"] == 0.5
+
+
+def test_sealed_4x_box_never_takes_a_fan():
+    r = C.enclosure_thermal([24, 20, 8], 159, ambient_f=86, outdoor_sun=False, material="stainless", sealed=True)
+    assert r.inputs["fan_cfm"]["value"] is None
+    assert r.inputs["hx_w_per_f"]["value"] == pytest.approx(8.9, abs=0.1)  # 159 W / 18 F
+    m = _bypass_model(location="pool_equipment_room")
+    rep = C.controls_report(m)
+    assert rep["panel"]["nema_type"] == "NEMA 4X"
+    assert not any("fan" in b["description"].lower() for b in rep["bom"])
+
+
+def test_no_invented_erpnext_item_codes():
+    r = C.controls_report(_model())
+    assert "erpnext_item" not in r["controller"]
+    assert "PDT-0003" not in json.dumps(r["controller"])
+
+
+def test_default_outdoor_panel_is_not_bad():
+    m = _model()
+    m["network"]["pumps"] = [{"id": "p", "label": "Feature", "hp": 2, "voltage": 230, "phase": 3}]
+    m["features"] = []
+    m["control"] = {"location": "outdoor"}
+    r = C.controls_report(m)
+    assert r["panel"]["thermal"]["status"] in ("good", "warn")
+    assert r["status"] != "bad"
+    shaded = C.controls_report({**m, "control": {"location": "outdoor", "shaded": True}})
+    assert shaded["results"]["thermal"]["inputs"]["design_ambient_f"]["value"] == 95
+
+
+def test_enclosure_part_is_only_the_sourced_backplane():
+    assert C.enclosure_size([], breaker_poles=4, terminals=10, relays=4, psu_w=60, spd=False,
+                            disconnect=False).inputs["part"]["value"]["backplane_part_no"] == "500656"
+    big = C.enclosure_size([], breaker_poles=40, terminals=100, relays=30, psu_w=240, xfmr_va=300)
+    assert big.inputs["part"]["value"] is None  # no Saginaw guess
+
+
+def test_sccr_covers_disconnect_and_breakers_and_takes_marked_ratings():
+    r = C.controls_report(_bypass_model(available_fault_ka=10))
+    kinds = {c["kind"] for c in r["results"]["sccr"]["inputs"]["components"]["value"]}
+    assert {"switch", "branch_breaker", "vfd", "terminal_block"} <= kinds
+    marked = C.controls_report(_bypass_model(available_fault_ka=10, component_ka={
+        "motor_controller_0_50hp": 65, "overload_relay": 65, "vfd": 65, "branch_breaker": 22}))
+    assert marked["panel"]["sccr_ka"] == 10  # now the 10 kA terminal blocks and disconnect govern
+    assert marked["panel"]["sccr_status"] == "good"
+
+
+def test_bom_groups_contactors_and_adds_the_interlock_kit():
+    r = C.controls_report(_bypass_model())
+    lines = {b["description"]: b["qty"] for b in r["bom"]}
+    assert lines["Contactor, 32 A AC-3"] == 3  # K1, K2, K3
+    assert lines["Mechanical interlock kit for K2 / K3, 32 A AC-3"] == 1
+
+
+def test_nema_past_the_table_falls_back_to_iec():
+    pc = C.pump_control({"tag": "M1", "label": "Huge", "hp": 250, "voltage": 230, "phase": 3}, "across_the_line",
+                        nema=True)
+    assert pc.value["contactor_basis"] == "IEC AC-3"
+    assert any("past the NEMA starter table" in w for w in pc.warnings)
+
+
+def test_show_modulation_needs_the_analog_reference_and_industrial():
+    m = _model()
+    m["features"] = [{"id": "f1", "family": "jets", "show_modulation": True}]
+    m["control"] = {}
+    r = C.controls_report(m)
+    assert any(p["signal"] == "0-10V" for p in r["io_points"])
+    assert r["controller"]["platform"] == "Industrial"
+    wind_only = C.controls_report(_model(control={}))
+    assert wind_only["controller"]["platform"] == "Splash Wizard"  # preset speeds fit SDP001

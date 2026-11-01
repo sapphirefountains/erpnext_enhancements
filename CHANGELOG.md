@@ -76,9 +76,42 @@ New modules:
 
 `controls_report(model)` runs the chain for phase E's `derive()`.
 
+### Changed after independent review
+
+- **The ladder now performs the fault transfer it draws.**
+  - A drive fault opens the K2 rung, and the K3 rung pulls in through K2's normally closed contact.
+  - K1 now has its own rung.
+  - K2 holds through a time-delay-off after the run command drops, so it opens with the drive stopped.
+- **One wind-control predicate.** `control.wind_control` now adds the anemometer, the wind-stage
+  rungs and the anemometer's 24 V DC load, just as the `features[]` flag does.
+- **Drive speed by preset, not analog, for wind.** A drive's speed is set by preset speeds over a
+  digital output (DOC-0123's windy speed), so wind control keeps the Splash Wizard. An analog 0-10 V
+  reference, and the Industrial recommendation that comes with it, is used only for show modulation
+  or a setpoint.
+- **Cooling for a sealed panel.**
+  - A sealed NEMA 4 or 4X panel gets an air-to-air heat exchanger or an air conditioner, never a fan.
+  - Cooling that is designed in reports `warn`, not `bad`.
+  - `control.shaded` drops the sun allowance, so a default outdoor panel no longer makes every
+    design `bad`.
+- **Part numbers come only from sources.**
+  - The `erpnext_item` codes (PDT-000x) are dropped: they are not in the source audit.
+  - The Saginaw enclosure guesses are dropped.
+  - The only enclosure part attached is the Polycase YH-161407 backplane, with a note to confirm its
+    NEMA rating.
+- **SCCR covers more of the power circuit.** It now includes the main disconnect and the branch
+  breakers, and `control.component_ka` takes marked ratings.
+- **BOM.**
+  - Contactors are grouped by rating.
+  - Each bypass gets a mechanical interlock kit for K2 and K3.
+- **Control transformer.** It no longer counts the DC-powered relays and the controller twice.
+- **A NEMA rating past the table** falls back to an IEC frame, with a warning.
+- **Lighting relays** use `lighting_sizing`.
+- **Transformer box on the power schematic** is now wide enough for its label.
+- **`controls_report`'s return shape** is documented in its docstring and the README.
+
 ### Tests
 
-`test_controls_design.py`, 43 pytest cases. It runs in the existing electrical pytest step, renamed
+`test_controls_design.py`, 53 pytest cases. It runs in the existing electrical pytest step, renamed
 "electrical and controls". Its hand goldens:
 
 - **A 5 HP, 230 V, single-phase pump:**
@@ -88,7 +121,8 @@ New modules:
   - A VFD frame of 10 HP at sea level, 15 HP at 4,500 ft on single-phase input.
 - **The bypass truth table** and each of its interlock rules.
 - **A control transformer** of 64 VA, which rounds up to 75 VA.
-- **An enclosure heat check** that fails and asks for a 27 CFM fan.
+- **An enclosure heat check** that natural convection can't carry, which calls for a 27 CFM fan; a sealed
+  4X panel gets a heat exchanger instead.
 - **The Control Panel Design rows,** checked against the child tables' JSON fieldnames.
 
 ## [1.763.0] - 2026-11-01
