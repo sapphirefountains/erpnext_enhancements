@@ -27,8 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     2.5 to 3 x height.
   - `PLAN.md` records the decisions (two modes, a new guided page over the kept engine, all venues,
     Python in ERPNext canonical, physics governs with DOC-0049 as a cross-check, multi-pump headers in
-    version one), the design model, the API contract, the page, and eight phases, each its own draft
-    PR. Nothing executable changes in this release.
+    version one), the design model, the API contract, the page, and ten phases, each its own draft
+    PR: the eight of the first cut plus electrical (NEC loads, conductors, voltage drop, OCPD,
+    feeders, the Article 680 checklist) and structural (basin slab and walls, rebar schedule,
+    concrete, gravel and waterproofing quantities), which Nikolas added the same day. Nothing
+    executable changes in this release.
 
 ## [1.757.0] - 2026-10-29
 
