@@ -7,12 +7,11 @@ Bench-free pytest suite: python -m pytest erpnext_enhancements/tests/test_hydrau
 
 import math
 
-from erpnext_enhancements.tests.drc_golden import REL, close, close_all, close_f32, golden, num
+from erpnext_enhancements.tests.drc_golden import REL, close, close_all, close_f32, golden, manifold_from_drc, num
 from erpnext_enhancements.water_engineering.engine.hydraulics.manifold import (
     Manifold,
     ManifoldDemand,
     Takeoff,
-    curtain_manifold,
     curtain_spec,
     manifold_distribution,
     manifold_runs,
@@ -32,12 +31,7 @@ GOLD = golden("manifold")
 
 def build(P: dict) -> Manifold:
     """The DRC project fields -> the per-takeoff manifold (curtain_manifold)."""
-    spec = curtain_spec(P["manMat"], P["manNps"], P["pipeIdMm"], P["manWallMm"])
-    return curtain_manifold(
-        spec=spec, valves=P["valves"], pitch_mm=P["pitchMm"], orifice_mm=P["orificeMm"], w_c=P["waterC"], cc=P["nozzleCc"],
-        cv=P["cv"], v0=P["v0"], valve_kv=P["valveKv"], tube_id_mm=P["tubeIdMm"], tube_len_m=P["tubeLenM"], tilt_mm=P["tiltMm"],
-        sag=P["sag"], hanger_m=P["hangerM"], nozzle_below_m=P["nozzleBelowM"], regain=P["regain"], feed=P["feed"],
-    )
+    return manifold_from_drc(P)
 
 
 def pattern(n: int, kind: str) -> list[bool]:
