@@ -1,0 +1,383 @@
+{
+ "model": {
+  "schema": 2,
+  "mode": "quick",
+  "kit": "pond-aerator-1ac",
+  "site": {
+   "address": "",
+   "lat": 40.7608,
+   "lng": -111.891,
+   "elevation_ft": 4226,
+   "air_temp_f": 97,
+   "water_temp_f": 72,
+   "frost_depth_in": 30,
+   "hardness_ppm": 250,
+   "kwh_rate": 0.105,
+   "water_rate_per_ccf": 3.53,
+   "jurisdiction": "UT",
+   "venue_type": "Pond / Lake",
+   "regulated": false
+  },
+  "setup": {
+   "basin": "auto",
+   "piping": "auto",
+   "pump": "auto",
+   "control": "auto",
+   "bypass": "auto",
+   "surge": "auto",
+   "treatment": "auto",
+   "lighting": "auto",
+   "electrical": "auto",
+   "winterization": "auto",
+   "features": "custom"
+  },
+  "presets": {},
+  "features": [
+   {
+    "id": "f1",
+    "family": "aerator",
+    "type": "Floating fountain aerator",
+    "label": "Pond aerator",
+    "inputs": {
+     "pond_acres": 1,
+     "pond_depth_ft": 6,
+     "cable_ft": 300
+    },
+    "effect": {
+     "look": "crown"
+    },
+    "product": {
+     "item": null,
+     "generic": true
+    },
+    "count": 1,
+    "basin": "b1",
+    "node": "t1"
+   }
+  ],
+  "basins": [
+   {
+    "id": "b1",
+    "label": "Pond",
+    "shape": "irregular",
+    "length_in": null,
+    "width_in": null,
+    "depth_in": 72,
+    "freeboard_in": null,
+    "volume_gal_override": 1955000,
+    "elevation_ft": 0
+   }
+  ],
+  "pump_room": {
+   "location": "submersible",
+   "distance_ft": 300,
+   "elevation_ft": 0,
+   "route_template": "floating-unit",
+   "material": "None"
+  },
+  "network": {
+   "nodes": [
+    {
+     "id": "src",
+     "kind": "basin",
+     "basin": "b1",
+     "elevation_ft": 0
+    },
+    {
+     "id": "p1",
+     "kind": "pump"
+    },
+    {
+     "id": "t1",
+     "kind": "terminal",
+     "feature": "f1",
+     "elevation_ft": 0
+    }
+   ],
+   "pumps": [
+    {
+     "id": "p1",
+     "item": "KAS-3400-1",
+     "curve": null,
+     "generic_class": "submersible",
+     "label": "Kasco 3400JF 1 HP",
+     "speed_pct": 100,
+     "control": "none",
+     "setpoint_psi": null
+    }
+   ],
+   "segments": [],
+   "terminals": [
+    {
+     "id": "t1",
+     "kind": "fixed_flow",
+     "feature": "f1",
+     "params": {
+      "flow_gpm": 270
+     }
+    }
+   ]
+  },
+  "equipment": [
+   {
+    "slot": "light",
+    "item": null,
+    "qty": 3,
+    "auto": true
+   }
+  ],
+  "treatment": {
+   "sanitizer": "none",
+   "uv": false
+  },
+  "lighting": {
+   "fixtures": [],
+   "control": "timer"
+  },
+  "electrical": {
+   "service_v": 240,
+   "phase": 1,
+   "panel_distance_ft": 300
+  },
+  "winterization": {},
+  "acks": [],
+  "notes": ""
+ },
+ "results": {
+  "aeration": {
+   "value": 1,
+   "unit": "HP",
+   "formula": "1 HP per acre",
+   "status": "ok",
+   "citations": [],
+   "warnings": []
+  }
+ },
+ "values": {
+  "features": {
+   "f1": {
+    "flow_gpm": 270,
+    "head_ft": 6,
+    "note": "1 HP per acre (house rule); crown pattern 14 ft × 22 ft"
+   }
+  },
+  "basins": {
+   "b1": {
+    "volume_gal": 1955000,
+    "weight_lb": null,
+    "surge_in": null,
+    "freeboard_in": null
+   }
+  },
+  "segments": {},
+  "pumps": {
+   "p1": {
+    "flow_gpm": 270,
+    "head_ft": 6,
+    "kw": 0.9,
+    "npsh_margin_ft": null,
+    "bep_pct": 100
+   }
+  }
+ },
+ "rollups": {
+  "design_flow_gpm": 270,
+  "operating_flow_gpm": 270,
+  "tdh_ft": 6.0,
+  "operating_head_ft": 6.0,
+  "selected_pump": "KAS-3400-1",
+  "selected_pump_label": "Kasco 3400JF 1 HP",
+  "pump_kw": 0.9,
+  "total_basin_gallons": 1955000,
+  "om_cost_per_year": 640,
+  "blocker_count": 0,
+  "warning_count": 0,
+  "completion_percent": 100,
+  "issue_ready": true,
+  "budget_total": 8670
+ },
+ "issues": [
+  {
+   "key": "CABLE_DROP",
+   "code": "CABLE_DROP",
+   "severity": "info",
+   "title": "Voltage drop on the 300 ft cable is 3.1%",
+   "detail": "Inside the 5% the manufacturer allows; 10 AWG chosen for it.",
+   "section": "electrical",
+   "path": "electrical.panel_distance_ft",
+   "fix_hint": "",
+   "citation": "NEC 210.19 informational note",
+   "remedies": []
+  }
+ ],
+ "readiness": {
+  "sections": [
+   {
+    "key": "site",
+    "label": "Site",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "features",
+    "label": "Features",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "basin",
+    "label": "Basins",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "piping",
+    "label": "Piping",
+    "status": "n_a",
+    "missing": []
+   },
+   {
+    "key": "pump",
+    "label": "Pump",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "treatment",
+    "label": "Treatment",
+    "status": "n_a",
+    "missing": []
+   },
+   {
+    "key": "electrical",
+    "label": "Electrical",
+    "status": "ok",
+    "missing": []
+   },
+   {
+    "key": "deliverables",
+    "label": "Package",
+    "status": "ok",
+    "missing": []
+   }
+  ],
+  "calc_ready": true,
+  "issue_ready": true
+ },
+ "verdict": {
+  "level": "good",
+  "headline": "Good to quote.",
+  "package_ready": true
+ },
+ "bom": [
+  {
+   "section": "Feature",
+   "item": "KAS-3400-1",
+   "description": "Kasco 3400JF 1 HP floating fountain, 240 V",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 3450,
+   "amount": 3450,
+   "source": "Auto",
+   "catalog_source": "datasheet"
+  },
+  {
+   "section": "Electrical",
+   "item": null,
+   "description": "Power cable 300 ft, 10/3 SJOW",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 890,
+   "amount": 890,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Electrical",
+   "item": null,
+   "description": "Control panel with timer and GFCI",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 1150,
+   "amount": 1150,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Lighting",
+   "item": null,
+   "description": "LED light kit, 3 fixtures",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 1290,
+   "amount": 1290,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Feature",
+   "item": null,
+   "description": "Mooring kit",
+   "qty": 1,
+   "uom": "Nos",
+   "rate": 180,
+   "amount": 180,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  },
+  {
+   "section": "Labor",
+   "item": null,
+   "description": "Installation, floating aerator (house labor assembly)",
+   "qty": 18,
+   "uom": "Hour",
+   "rate": 95,
+   "amount": 1710,
+   "source": "Auto",
+   "catalog_source": "generic estimate"
+  }
+ ],
+ "charts": {
+  "duty_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 480 300\" role=\"img\" aria-label=\"Duty point: 270 gpm at 6 ft\"><title>Duty point: 270 gpm at 6 ft</title><rect class=\"fd-bep\" x=\"288.9\" y=\"28\" width=\"92.7\" height=\"228\" fill=\"currentColor\" fill-opacity=\"0.08\"/><line class=\"fd-grid\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"256\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><line class=\"fd-grid\" x1=\"52\" y1=\"210.4\" x2=\"464\" y2=\"210.4\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"210.4\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">4</text><line class=\"fd-grid\" x1=\"52\" y1=\"164.8\" x2=\"464\" y2=\"164.8\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"164.8\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">8</text><line class=\"fd-grid\" x1=\"52\" y1=\"119.2\" x2=\"464\" y2=\"119.2\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"119.2\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">12</text><line class=\"fd-grid\" x1=\"52\" y1=\"73.6\" x2=\"464\" y2=\"73.6\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"73.6\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">16</text><line class=\"fd-grid\" x1=\"52\" y1=\"28\" x2=\"464\" y2=\"28\" stroke=\"currentColor\" stroke-opacity=\"0.15\"/><text class=\"fd-label\" x=\"46\" y=\"28\" text-anchor=\"end\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">20</text><text class=\"fd-label\" x=\"52\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">0</text><text class=\"fd-label\" x=\"134.4\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">80</text><text class=\"fd-label\" x=\"216.8\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">160</text><text class=\"fd-label\" x=\"299.2\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">240</text><text class=\"fd-label\" x=\"381.6\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">320</text><text class=\"fd-label\" x=\"464\" y=\"272\" text-anchor=\"middle\" font-size=\"11\" fill=\"currentColor\">400</text><line class=\"fd-axis\" x1=\"52\" y1=\"28\" x2=\"52\" y2=\"256\" stroke=\"currentColor\"/><line class=\"fd-axis\" x1=\"52\" y1=\"256\" x2=\"464\" y2=\"256\" stroke=\"currentColor\"/><text class=\"fd-label\" x=\"258.0\" y=\"292\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\">Flow (gpm)</text><text class=\"fd-label\" x=\"14\" y=\"142.0\" text-anchor=\"middle\" font-size=\"12\" fill=\"currentColor\" transform=\"rotate(-90 14 142.0)\">Head (ft)</text><polyline class=\"fd-curve-pump\" data-series=\"pump\" points=\"52,96.4 62.3,96.5 72.6,96.9 82.9,97.5 93.2,98.4 103.5,99.5 113.8,100.9 124.1,102.5 134.4,104.4 144.7,106.5 155,108.9 165.3,111.5 175.6,114.4 185.9,117.5 196.2,120.9 206.5,124.5 216.8,128.4 227.1,132.6 237.4,136.9 247.7,141.6 258,146.4 268.3,151.6 278.6,156.9 288.9,162.6 299.2,168.5 309.5,174.6 319.8,181 330.1,187.6 340.4,194.5 350.7,201.6 361,209 371.3,216.6 381.6,224.5 391.9,232.6 402.2,241 412.5,249.7\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"/><polyline class=\"fd-curve-system\" data-series=\"system\" points=\"52,233.2 62.3,233.1 72.6,232.9 82.9,232.6 93.2,232.2 103.5,231.6 113.8,230.9 124.1,230.1 134.4,229.2 144.7,228.1 155,226.9 165.3,225.6 175.6,224.2 185.9,222.6 196.2,220.9 206.5,219.1 216.8,217.2 227.1,215.1 237.4,212.9 247.7,210.6 258,208.2 268.3,205.6 278.6,202.9 288.9,200.1 299.2,197.2 309.5,194.1 319.8,190.9 330.1,187.6 340.4,184.2 350.7,180.6 361,176.9 371.3,173.1 381.6,169.1 391.9,165.1 402.2,160.9 412.5,156.6 422.8,152.1 433.1,147.6 443.4,142.9 453.7,138.1 464,133.1\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><circle class=\"fd-point\" data-point=\"duty\" cx=\"330.1\" cy=\"187.6\" r=\"6\" fill=\"currentColor\"/><text class=\"fd-label fd-point-label\" x=\"340.1\" y=\"177.6\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">270 gpm @ 6 ft</text><line class=\"fd-curve-pump\" x1=\"310\" y1=\"14\" x2=\"330\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2.5\"/><text class=\"fd-label\" x=\"334\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">Pump</text><line class=\"fd-curve-system\" x1=\"380\" y1=\"14\" x2=\"400\" y2=\"14\" stroke=\"currentColor\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text class=\"fd-label\" x=\"404\" y=\"14\" dominant-baseline=\"middle\" font-size=\"11\" fill=\"currentColor\">System</text></svg>",
+  "schematic_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 160\" role=\"img\" aria-label=\"Schematic: panel to cable to floating aerator\"><title>Schematic: panel to cable to floating aerator</title><rect class=\"fd-node\" x=\"20\" y=\"50\" width=\"143.3\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"91.7\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Panel</text><text class=\"fd-label\" x=\"91.7\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">240 V, timer</text><line class=\"fd-pipe\" x1=\"163.3\" y1=\"78\" x2=\"193.3\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"193.3\" y=\"50\" width=\"143.3\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"265\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Cable</text><text class=\"fd-label\" x=\"265\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">300 ft 10/3</text><line class=\"fd-pipe\" x1=\"336.7\" y1=\"78\" x2=\"366.7\" y2=\"78\" stroke=\"currentColor\" stroke-width=\"2.5\"/><rect class=\"fd-node\" x=\"366.7\" y=\"50\" width=\"143.3\" height=\"56\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><text class=\"fd-label\" x=\"438.3\" y=\"74\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"currentColor\">Aerator</text><text class=\"fd-label\" x=\"438.3\" y=\"92\" text-anchor=\"middle\" font-size=\"10\" fill=\"currentColor\">1 HP crown</text></svg>",
+  "oneline_svg": null
+ },
+ "outputs": {
+  "schedules": [
+   {
+    "key": "equipment",
+    "label": "Equipment schedule",
+    "url": null
+   }
+  ],
+  "packet": {
+   "label": "Submittal packet",
+   "url": null
+  },
+  "om": {
+   "total_per_year": 640,
+   "lines": [
+    {
+     "label": "Power (0.9 kW, 12 h a day)",
+     "amount": 415
+    },
+    {
+     "label": "Spring start-up and fall pull",
+     "amount": 225
+    }
+   ]
+  },
+  "winterization": {
+   "needed": true,
+   "steps": [
+    "Pull the unit before the pond freezes.",
+    "Coil the cable and store the unit upright, indoors."
+   ]
+  },
+  "startup": [
+   "Set the unit, moor it at three points.",
+   "Check the GFCI trips.",
+   "Set the timer."
+  ]
+ }
+}

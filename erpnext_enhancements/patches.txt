@@ -1538,3 +1538,6 @@ erpnext_enhancements.patches.backfill_marketing_insights_settings
 # Marketing insights (v1.757.0): re-import the Marketing Hub (the six marketing reports; Marketing Event, Tracked Link
 # and Business Profile Review). Logs a failure, never raises, safe twice.
 erpnext_enhancements.patches.marketing_insights_hub_links
+# Fountain Designer page (v1.758.0, phase F): re-import the Water Engineering workspace (the Fountain Designer
+# shortcut and its Tools link). Logs a failure, never raises, safe twice.
+erpnext_enhancements.patches.fountain_designer_workspace_link

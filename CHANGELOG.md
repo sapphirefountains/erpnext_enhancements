@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.758.0] - 2026-11-01
+
+ERPNext: TASK-2026-03018 (PRJ-00580), the Fountain Designer rebuild, phase F. This is the plan in
+`docs/fountain-designer/PLAN.md` (draft PR #1389), sections 2, 3.3, 3.4 and 3.5.
+
+**The page ships behind its demo fixture until phase E lands.** Its server side, phase E's
+`water_engineering/api/designer.py`, is built after this. So on a site today the page opens only with
+`?demo=1`, which answers every call in the browser from a fixture and is labeled **Demo data** in the
+head. Without it, the page says it could not open and offers **Open the demo**.
+
+**What the deploy does.**
+- **Migrate** imports the new Page `fountain-designer` (module Water Engineering).
+- **One patch runs**: `fountain_designer_workspace_link` re-imports the Water Engineering workspace, so its
+  new shortcut and Tools link reach a site whose row is newer than the file. It logs a failure and
+  never raises.
+- **The Dock** gains a Fountain Designer row after Water Engineering. The **Design** dock profile shows
+  it; every other profile has it on the Hidden pane.
+- Nothing else changes: no doctype, no field, no permission, no scheduled job. The old Water
+  Engineering Wizard is untouched; phase H retires it.
+
+### Added
+- **The Fountain Designer page** (`/desk/fountain-designer`), a guided single-page designer in the
+  style of the Digital Rain Curtain's guided setup:
+  - **The layout.**
+    - A step rail on the left: Start, Site, Features, Basins, Pump room, Review, Outputs.
+    - The current step in the middle.
+    - The verdict panel, always beside the step. It shows chips for blockers, warnings and package
+      readiness, the top issues with a link to the step that fixes each, the rollups (flows, TDH and
+      operating head, pump, kW, basin water, budget, O&M per year), and the duty-point chart.
+  - **Quick mode**, for sales: a kit and a name, the address, then only the kit's headline inputs
+    (height, length, look), then Review and Outputs with the budget.
+  - **Full mode**, for the design team: every section's rows. Each card has its setup policy (Auto,
+    a preset, or Custom) and an Advanced reveal. The catalog typeahead picks pumps, nozzles, filters
+    and lights.
+  - **Review**: the verdict with one-click remedies, sign-off for a warning with a note, readiness by
+    section, and the schematic.
+  - **Outputs**: the bill of materials and the budget, Push to Quotation and Push to Material Request,
+    and the schedule and packet links. The O&M per year, winterization and start-up checklist open as
+    drawers. The prints themselves come with phase G.
+  - **Start** lists the existing designs, each with its mode, status and chips.
+- **Live results.**
+  - Every edit sends the model to `derive` once the person has paused for 400 ms.
+  - A reply to a model that has since been edited is dropped, never painted over the newer state.
+  - A section the person pins, or edits, becomes `custom`, and a reply never writes into it again.
+  - The design saves itself 1.5 s after the last edit, and at once on a step change.
+- **The address keeps your place**: `?design=<name>&step=<key>`. Each step is a history entry, so Back,
+  Forward, a reload and a pasted link all land where you were. The page reads `frappe.route_options` and
+  writes its own address, like the Maintenance Day Board, because `set_route` before v16.50 drops the
+  query.
+- **States, keyboard and phone.**
+  - Loading, empty, error and no-access panels come from sf_kit, and every call takes its quiet path.
+  - Arrow keys move along the step rail and the tiles, and the typeahead is a combobox.
+  - At phone width the rail becomes a bar across the top, a strip of chips and the budget sits above
+    the step, and Back and Next stick to the bottom.
+  - It works in light and dark, on the app's tokens.
+- **Access** is gated like the old wizard: read on Water Feature Design (`api/water_design.check_permission`),
+  in demo mode too.
+- **The demo fixture** (`public/js/fountain_designer/demo/`) is its own bundle, fetched only with
+  `?demo=1`. It holds three designs: a hotel lobby sheet wall (two warnings), a plaza interactive (a
+  UV blocker) and a pond aerator (good to quote), each with a duty chart and a schematic.
+  - It reacts a little: headline inputs scale the numbers and redraw the chart, a remedy clears its
+    issue, and signing off the warnings makes the package ready.
+  - It stays after phase E, as the training mode.
+- **The contract phase E must honor** is written field by field in `public/js/fountain_designer/README.md`.
+  - It covers every endpoint's arguments and reply, the issue `remedies` and `acknowledged`, and the
+    chart rules.
+  - It also lists four additions to the schema-2 model that phase C's `validate()` must accept:
+    `setup[...] = "preset"`, `presets`, `pump_room` and `winterization`.
+  - `get_design()` with no name returns the list of designs.
+
+### Notes
+- **The page bundles are not in `hooks.py`.** Like every other page bundle here (Bin Manager, Count Desk,
+  Opportunity Board), the page `frappe.require`s `fountain_designer.bundle.js/.css` itself, so nothing
+  loads on other pages.
+- **Charts are drawn as the server sends them**, but through an allow-list (`chart.js`). Drawing elements
+  only: no script, `foreignObject`, link, `style` or `on*` attribute, and no `url()` other than
+  `url(#id)`. A chart that fails it is not drawn. The contract asks E to draw in `currentColor`, so the
+  page can color the curves for both themes.
+
+### Tests
+- `scripts/test_fountain_designer.mjs` (node, 40 checks) covers:
+  - the bundle entry, the route parsing and the address it writes;
+  - the quick and full step lists, and the debounce with its stale-reply guard;
+  - the model helpers: pinning, presets, `merge_derived` and coerce;
+  - the SVG allow-list and the verdict panel;
+  - every step rendered for the three demo designs, and the demo answering every endpoint.
+- `tests/test_fountain_designer.py` checks:
+  - the page record, and that the bundles are loaded by name and never globally;
+  - the stylesheet: tokens only, no shadow, the two media queries, `.fd-` selectors;
+  - the workspace and Dock entries and the patch;
+  - that the README names every key the fixture sends.
+- CI runs both, each as its own step. `SHIPPED_DOCKS` in `test_dock_profiles.py` gains the new Dock stamp.
+
 ## [1.757.0] - 2026-10-29
 
 ERPNext: TASK-2026-03015 (PRJ-00580, under TASK-2026-00866). Nik's

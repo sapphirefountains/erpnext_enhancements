@@ -82,6 +82,7 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 | `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
+| `page/fountain_designer/` | The guided Fountain Designer (v1.758.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract phase E's `api/designer.py` honors; until E lands it runs on `?demo=1` |
 | `workspace/water_engineering/` | Desk workspace |
 
 ## DocTypes

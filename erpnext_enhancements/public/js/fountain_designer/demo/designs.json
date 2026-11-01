@@ -1,0 +1,52 @@
+{
+ "designs": [
+  {
+   "name": "DEMO-LOBBY",
+   "design_title": "Marriott lobby sheet wall",
+   "kit": "lobby-sheet-wall-8ft",
+   "mode": "Quick",
+   "status": "Derived",
+   "family": "weir",
+   "project": null,
+   "opportunity": "CRM-OPP-DEMO-1",
+   "customer": null,
+   "blocker_count": 0,
+   "warning_count": 2,
+   "issue_ready": 0,
+   "budget_total": 36506.4,
+   "modified": "2026-10-31 16:20:00"
+  },
+  {
+   "name": "DEMO-PLAZA",
+   "design_title": "Library plaza splash pad",
+   "kit": "plaza-interactive-24jet",
+   "mode": "Full",
+   "status": "Draft",
+   "family": "interactive",
+   "project": "PRO-DEMO-1",
+   "opportunity": null,
+   "customer": null,
+   "blocker_count": 1,
+   "warning_count": 1,
+   "issue_ready": 0,
+   "budget_total": 169320.0,
+   "modified": "2026-10-30 09:05:00"
+  },
+  {
+   "name": "DEMO-POND",
+   "design_title": "HOA pond aerator",
+   "kit": "pond-aerator-1ac",
+   "mode": "Quick",
+   "status": "Reviewed",
+   "family": "aerator",
+   "project": null,
+   "opportunity": "CRM-OPP-DEMO-2",
+   "customer": null,
+   "blocker_count": 0,
+   "warning_count": 0,
+   "issue_ready": 1,
+   "budget_total": 8670,
+   "modified": "2026-10-28 13:40:00"
+  }
+ ]
+}

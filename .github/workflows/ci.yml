@@ -1838,6 +1838,17 @@ jobs:
         run: node scripts/test_sf_kit.mjs
       - name: sf_kit page pieces (stylesheet rules + wiring)
         run: python -m unittest erpnext_enhancements.tests.test_sf_kit -v
+      # Fountain Designer page (phase F of the rebuild, v1.758.0): the guided designer built against
+      # phase E's API contract with a ?demo=1 fixture. The node step runs the page's pure modules: the
+      # route and the address it writes, the quick/full step lists, the debounced derive dropping a
+      # stale reply, the model helpers (pinning, presets, merge_derived), the SVG allow-list, every step
+      # rendered for the three demo designs, and the demo answering every endpoint. The unittest step
+      # holds the page record, the bundles (by name, never global), the stylesheet to the tokens, the
+      # workspace/Dock entries, and the README contract to every key the fixture sends.
+      - name: Fountain Designer page (pure modules, node)
+        run: node scripts/test_fountain_designer.mjs
+      - name: Fountain Designer page (wiring, stylesheet, contract)
+        run: python -m unittest erpnext_enhancements.tests.test_fountain_designer -v
       # Form kit P4-A, the guided-entry engine (form_kit/): an Opportunity's form walked into
       # steps against the real v16 meta plus this app's custom fields and property setters
       # (every field the form shows is in the flow), permissions per field as the Desk works
