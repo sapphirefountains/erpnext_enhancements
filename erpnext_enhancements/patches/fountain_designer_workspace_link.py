@@ -1,5 +1,5 @@
 """Force the Water Engineering workspace to re-sync, so the Fountain Designer shortcut and its
-link on the Tools card actually appear (v1.758.0, phase F of the Fountain Designer rebuild).
+link on the Tools card actually appear (v1.761.0, phase F of the Fountain Designer rebuild).
 
 A Workspace JSON is age-gated on the way in: ``bench migrate`` hands it to ``import_file``, which
 compares the file's ``modified`` with the row already in the database and silently skips the file
