@@ -52,6 +52,10 @@ work, and what makes a design's `calc_results` an audit trail rather than a cach
 | `controls.py` | Control-panel sizing: lighting relays, currents (Phase 4) | DOC-0126 |
 | `workbook.py` | Electric cost, vertical pipe, open-channel flow, lazy-river horsepower, programmatic planning | DOC-0049 `E`, `K`, `J`, `L`, `D` |
 | `envelope.py` | `CalcResult` — the standard return envelope | — |
+| `families/` | Fountain Designer (schema 2): one rule module per feature family (weir, jets, foam, laminar, interactive, cascade, pondless, curtain, mist, aerator) plus the lighting, winterization and heat system modules. See [`engine/families/README.md`](engine/families/README.md) | industry report section 1, per-rule URLs |
+| `model.py` | The schema-2 design model: dataclasses, lossless JSON round-trip, `validate`, and `migrate` from the old child-table shape | `docs/fountain-designer/PLAN.md` section 3.3 |
+| `kits.py` | Whole-design starting points (feature presets + a setup policy per section); `apply_kit`, `match_kit` | — (data) |
+| `rules.py` | The Sapphire house rules and utility rates as a plain dict (`DEFAULTS`, `resolve`); the same values are fields on Water Engineering Settings | "Sapphire standard" placeholders; SLC and RMP rates |
 | `constants.py` | Physical constants, read from the workbooks' formula cells with openpyxl rather than a textbook | the workbooks |
 | `units.py` | Unit conversions | — |
 | `data/pipe_specs.py` | Pipe ID + velocity-limit table | DOC-0049 `SUPPORT` → `PipeType` |
@@ -105,6 +109,7 @@ Child tables and catalogs:
 | `Water Design Issue Ack` | Designer acknowledgement of a typed issue |
 | `Nozzle Profile` | Nozzle catalog (orifice sizing input) |
 | `Pump Curve Point` | Pump curve catalog points |
+| `Water Engineering Settings` | Single: engineer of record, contractor, and (House Rules tab, v1.759.0) the Sapphire house rules and utility rates that `engine/rules.py` mirrors |
 | `Control Panel Design` | Phase-4 control panel parent |
 | `Control Pump`, `Control Light`, `Control Fuse`, `Control Interlock`, `Control IO Point` | Control-panel child rows |
 
@@ -117,6 +122,13 @@ python -m unittest \
   erpnext_enhancements.tests.test_water_engine \
   erpnext_enhancements.tests.test_water_design_issues \
   erpnext_enhancements.tests.test_water_design_controller -v
+```
+
+The Fountain Designer's families, model, kits and house rules are pytest suites with their
+own CI step (`python -m unittest` collects none of them):
+
+```bash
+python -m pytest -q erpnext_enhancements/tests/test_families_weir.py   erpnext_enhancements/tests/test_families_jets.py erpnext_enhancements/tests/test_families_others.py   erpnext_enhancements/tests/test_water_model.py erpnext_enhancements/tests/test_water_house_rules.py
 ```
 
 They are **golden tests**: each formula reproduces its sheet's own worked example. When you

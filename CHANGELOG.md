@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.759.0] - 2026-11-01
+
+ERPNext: TASK-2026-03018 (PRJ-00580), Fountain Designer rebuild, phase C. The plan is
+`docs/fountain-designer/PLAN.md` (PR #1389). This release adds the feature-family rules, the
+kits, the Sapphire house rules and the schema-2 design model. **Nothing calls them yet:**
+`run_spine`, `issues.py` and the Water Feature Design controller are untouched. Phase E wires
+them in. Numbered 1.759.0 because phase D's PR (the catalog) takes 1.758.0 and merges first.
+
+**What the deploy does.**
+- **Migrate** adds a House Rules tab of fields to Water Engineering Settings (a Single).
+- **One patch runs.** `backfill_water_house_rules` writes each declared default that has no
+  `tabSingles` row. It never writes over a stored value, so a rule set to 0 stays 0. It cannot
+  raise, and it is safe to run twice.
+- No cron entries, no fixtures, no permission changes. Nothing user-facing changes until the
+  designer page (phase F) and the wiring (phase E) land.
+
+### Added
+- **`engine/families/`: one rule module per feature family.** Ten families, each with
+  `inputs()`, `flow()`, `checks()` and `terminal()`: `weir`, `jets`, `foam`, `laminar`,
+  `interactive`, `cascade`, `pondless`, `curtain`, `mist` and `aerator`. Three system modules
+  (`lighting`, `winterization`, `heat`) read the whole model.
+  - Every rule cites its source URL, taken from the industry report, section 1.
+  - `families/README.md` lists each module's inputs, rules, sources and checks.
+- **Jets size from nozzle performance tables.** The table maps display height to flow and
+  head, interpolated linearly between the cut sheet's points.
+  - A height outside the table is a blocker. The engine never extrapolates.
+  - The old `height = k × head` survives only as a flagged fallback. Its k values are the
+    sourced ones: 0.82 for a smooth bore and 0.39 for decorative nozzles (Atlantic's column
+    nozzle makes 12 ft at 31 ft of head). The engine's 0.90 is not used.
+- **A 2-D drag trajectory for jets and laminar arcs.** It models a point mass with quadratic
+  drag and wind, solved with RK4, using air density at the site's elevation.
+  - It is calibrated so its still-air apex matches the table height. It then gives the range,
+    the landing point and the drift in wind for the splash-setback checks.
+  - Tests check it against the vacuum parabola and the closed-form vertical rise with drag.
+- **Interactive features follow Utah R392-302-41 as a pass/fail list.** The rule covers
+  30-minute turnover, 4 inlets, a 3-minute tank, 20 ft/s nozzle velocity, ½ in openings, the
+  deck, slope and treatment items, potable foggers and 5 fc of night lighting.
+  - The feature pump is sized to the worst sequence step, not to the sum of all features.
+  - An item the designer has not answered shows as info, never as a pass.
+- **`engine/model.py`: the schema-2 design model** (PLAN.md section 3.3). It provides
+  dataclasses with a lossless JSON round trip: keys the engine does not know are kept and
+  written back.
+  - `validate()` returns typed problems: unknown family, missing basin or node, unknown
+    segment endpoint, an empty `custom` section, duplicate ids.
+  - `migrate()` reads both schema-1 shapes: `_engine_inputs` and the `save_water_design`
+    payload. Old fields with no new home are kept under `legacy`. Migrated features size
+    exactly as the old engine sized them.
+- **`engine/kits.py`: twelve kits**, at least one per family. Four have names: "Hotel lobby
+  sheet wall 8 ft", "Plaza interactive 12 jets", "Pond aerator 1 acre", and "Event rental
+  curtain", which links to the Digital Rain Curtain app.
+  - `apply_kit()` builds the features, basins, setup policy and a network skeleton. The pipe
+    sizes are left blank for the piping step to fill.
+  - `match_kit()` returns "custom" once any value the kit sets has changed.
+- **Sapphire house rules (`engine/rules.py`) and their Water Engineering Settings fields.**
+  These are the rules with no public source:
+  - foam-jet submergence band and autofill deadband;
+  - freeboard multiplier (1.3) and liner overlap;
+  - lighting watts per foot of jet and weir, and the default fixture size;
+  - the two wind-control setpoints;
+  - the aerator split ratio;
+  - spray loss per family;
+  - labor per family, per sq ft of basin and per light fixture.
+
+  Each is cited "Sapphire standard, 2026-11-01 (placeholder until the designers set it)".
+  Setting `house_rules_set_on` changes the citation to that date. The utility rates are on the
+  same tab: SLC FY26 water at $3.53/ccf, and Rocky Mountain Power's proposed 2026 rate of
+  $0.1049/kWh.
+- **Five bench-free pytest suites in their own CI step:** `test_families_weir`,
+  `test_families_jets`, `test_families_others`, `test_water_model` and
+  `test_water_house_rules`. Their expected values are the report's sourced figures, for
+  example a ¼ in head on a 1 ft weir ≈ 4.5 gpm and Utah's tank = 3 minutes of flow.
+
+### Why some choices look the way they do
+- **Labor hours ship as 0, which means "not set".** It does not mean free. A budget built
+  on a made-up labor figure is worse than one that says the figure is missing.
+  `rules.is_unset()` reports which rules are still unset.
+- **The backfill writes every missing default, not only the new ones.** Writing a single
+  field of a Single that was never saved makes `load_from_db` read `tabSingles`. Every field
+  without a row then loads blank, so `contractor_name` would lose its default. This is the
+  second Singles gotcha in `CLAUDE.md`.
+- **Round tiered-fountain rims keep the DOC-0049 rule of 0.5 / 4 / 6 gpm per foot of rim.**
+  They do not use the waterfall look bands. The Aquascape and Pond Trade bands are written
+  for naturalistic spillways. Applied to a 48 in bowl they ask for about 500 gpm.
+- **The heat module uses the I-P form of the Carrier equation**, with V in fpm. The
+  rain-curtain app's `(0.089 + 0.0782 V)` is the SI form (kPa, m², m/s); mixed with inHg and
+  square feet it understates evaporation about 1,000-fold. `treatment.heating_load` (DOC-0049) is unchanged and is reported beside
+  the new result.
+
 ## [1.757.0] - 2026-10-29
 
 ERPNext: TASK-2026-03015 (PRJ-00580, under TASK-2026-00866). Nik's

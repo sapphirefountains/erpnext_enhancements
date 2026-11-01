@@ -14,7 +14,52 @@
   "sb_contractor",
   "contractor_name",
   "contractor_phone",
-  "contractor_address"
+  "contractor_address",
+  "tab_house_rules",
+  "house_rules_intro",
+  "house_rules_set_on",
+  "sb_hr_foam",
+  "foam_submergence_min_in",
+  "foam_submergence_max_in",
+  "autofill_deadband_in",
+  "sb_hr_basin",
+  "freeboard_multiplier",
+  "liner_overlap_ft",
+  "sb_hr_lighting",
+  "light_watts_per_ft_jet",
+  "light_watts_per_ft_weir",
+  "light_fixture_watts",
+  "sb_hr_wind",
+  "wind_reduce_mph",
+  "wind_stop_mph",
+  "sb_hr_aerator",
+  "aerator_max_aspect",
+  "sb_hr_spray",
+  "spray_loss_pct_weir",
+  "spray_loss_pct_jets",
+  "spray_loss_pct_foam",
+  "spray_loss_pct_laminar",
+  "spray_loss_pct_interactive",
+  "spray_loss_pct_cascade",
+  "spray_loss_pct_pondless",
+  "spray_loss_pct_curtain",
+  "spray_loss_pct_aerator",
+  "sb_hr_labor",
+  "labor_hours_weir",
+  "labor_hours_jets",
+  "labor_hours_foam",
+  "labor_hours_laminar",
+  "labor_hours_interactive",
+  "labor_hours_cascade",
+  "labor_hours_pondless",
+  "labor_hours_curtain",
+  "labor_hours_aerator",
+  "labor_hours_mist",
+  "labor_hours_per_sqft_basin",
+  "labor_hours_per_light_fixture",
+  "sb_hr_utility",
+  "kwh_rate",
+  "water_rate_per_ccf"
  ],
  "fields": [
   {
@@ -72,11 +117,315 @@
    "fieldname": "contractor_address",
    "fieldtype": "Small Text",
    "label": "Contractor Address"
+  },
+  {
+   "fieldname": "tab_house_rules",
+   "fieldtype": "Tab Break",
+   "label": "House Rules"
+  },
+  {
+   "fieldname": "house_rules_intro",
+   "fieldtype": "HTML",
+   "options": "<p>Design constants no public source gives. Each ships as a placeholder cited \"Sapphire standard, 2026-11-01 (placeholder until the designers set it)\". When the designers have agreed the values, set the date below: the Fountain Designer then cites \"Sapphire standard, &lt;that date&gt;\". Labor hours of 0 mean <b>not set</b>, never free.</p>"
+  },
+  {
+   "fieldname": "house_rules_set_on",
+   "fieldtype": "Date",
+   "label": "House rules set on",
+   "description": "The date the designers agreed these values. Blank keeps the placeholder citation."
+  },
+  {
+   "fieldname": "sb_hr_foam",
+   "fieldtype": "Section Break",
+   "label": "Foam jets",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "foam_submergence_min_in",
+   "fieldtype": "Float",
+   "label": "Foam-jet submergence, minimum (in)",
+   "default": "2.0",
+   "description": "Shallowest water over a level-sensitive foam jet when the cut sheet gives no band. Default: 2.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "foam_submergence_max_in",
+   "fieldtype": "Float",
+   "label": "Foam-jet submergence, maximum (in)",
+   "default": "4.0",
+   "description": "Deepest water over a level-sensitive foam jet when the cut sheet gives no band. Default: 4.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "autofill_deadband_in",
+   "fieldtype": "Float",
+   "label": "Autofill deadband (in)",
+   "default": "0.5",
+   "description": "How far the level drifts before the autofill opens; must sit inside the jet's band. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_basin",
+   "fieldtype": "Section Break",
+   "label": "Basins and liners",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "freeboard_multiplier",
+   "fieldtype": "Float",
+   "label": "Freeboard multiplier (x)",
+   "default": "1.3",
+   "description": "Freeboard = this x the computed drain-back level rise. Default: 1.3. Sapphire standard, 2026-11-01 (placeholder until the designers set it); modeled on digital-rain-curtain src/hydro/presets.js autoBasin (1.3 x drain-back rise)"
+  },
+  {
+   "fieldname": "liner_overlap_ft",
+   "fieldtype": "Float",
+   "label": "Liner overlap allowance (ft)",
+   "default": "2.0",
+   "description": "Liner = length + 2 x depth + this overlap (each direction). Default: 2.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_lighting",
+   "fieldtype": "Section Break",
+   "label": "Lighting",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "light_watts_per_ft_jet",
+   "fieldtype": "Float",
+   "label": "Lighting watts per foot of jet (W/ft)",
+   "default": "5.0",
+   "description": "Lamp watts per foot of display height when no fixture is picked. Default: 5.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "light_watts_per_ft_weir",
+   "fieldtype": "Float",
+   "label": "Lighting watts per foot of weir (W/ft)",
+   "default": "4.0",
+   "description": "Lamp watts per foot of weir or sheet length when no fixture is picked. Default: 4.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "light_fixture_watts",
+   "fieldtype": "Float",
+   "label": "Default fixture watts (W)",
+   "default": "35.0",
+   "description": "The fixture size used to count fixtures before a model is picked. Default: 35.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_wind",
+   "fieldtype": "Section Break",
+   "label": "Wind control",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "wind_reduce_mph",
+   "fieldtype": "Float",
+   "label": "Wind control stage 1 (reduce) (mph)",
+   "default": "12.0",
+   "description": "Anemometer speed at which jets drop to the reduced height. Default: 12.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "wind_stop_mph",
+   "fieldtype": "Float",
+   "label": "Wind control stage 2 (stop) (mph)",
+   "default": "20.0",
+   "description": "Anemometer speed at which jets shut off. Default: 20.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_aerator",
+   "fieldtype": "Section Break",
+   "label": "Floating aerators",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "aerator_max_aspect",
+   "fieldtype": "Float",
+   "label": "Aerator: pond length-to-width per unit (ratio)",
+   "default": "3.0",
+   "description": "Above this length-to-width ratio, split the horsepower over several units. Default: 3.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_spray",
+   "fieldtype": "Section Break",
+   "label": "Spray and splash loss",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "spray_loss_pct_weir",
+   "fieldtype": "Float",
+   "label": "Spray loss, weirs and sheet falls (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_jets",
+   "fieldtype": "Float",
+   "label": "Spray loss, nozzle jets (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_foam",
+   "fieldtype": "Float",
+   "label": "Spray loss, foam jets (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_laminar",
+   "fieldtype": "Float",
+   "label": "Spray loss, laminar jets (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_interactive",
+   "fieldtype": "Float",
+   "label": "Spray loss, interactive features (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_cascade",
+   "fieldtype": "Float",
+   "label": "Spray loss, cascades and streams (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_pondless",
+   "fieldtype": "Float",
+   "label": "Spray loss, pondless kits (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_curtain",
+   "fieldtype": "Float",
+   "label": "Spray loss, passive curtains (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "spray_loss_pct_aerator",
+   "fieldtype": "Float",
+   "label": "Spray loss, floating aerators (% of flow)",
+   "default": "0.5",
+   "description": "Water lost to spray and splash beyond evaporation, as a share of flow. Default: 0.5. Sapphire standard, 2026-11-01 (placeholder until the designers set it); starting value from digital-rain-curtain src/hydro/checks.js basinChecks (spray loss 0.5% of flow)"
+  },
+  {
+   "fieldname": "sb_hr_labor",
+   "fieldtype": "Section Break",
+   "label": "Labor",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "labor_hours_weir",
+   "fieldtype": "Float",
+   "label": "Labor hours, weirs and sheet falls (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_jets",
+   "fieldtype": "Float",
+   "label": "Labor hours, nozzle jets (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_foam",
+   "fieldtype": "Float",
+   "label": "Labor hours, foam jets (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_laminar",
+   "fieldtype": "Float",
+   "label": "Labor hours, laminar jets (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_interactive",
+   "fieldtype": "Float",
+   "label": "Labor hours, interactive features (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_cascade",
+   "fieldtype": "Float",
+   "label": "Labor hours, cascades and streams (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_pondless",
+   "fieldtype": "Float",
+   "label": "Labor hours, pondless kits (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_curtain",
+   "fieldtype": "Float",
+   "label": "Labor hours, passive curtains (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_aerator",
+   "fieldtype": "Float",
+   "label": "Labor hours, floating aerators (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_mist",
+   "fieldtype": "Float",
+   "label": "Labor hours, misting (h/feature)",
+   "default": "0",
+   "description": "Install hours per feature of this family. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_per_sqft_basin",
+   "fieldtype": "Float",
+   "label": "Labor hours per sq ft of basin (h/sq ft)",
+   "default": "0",
+   "description": "Basin construction hours per square foot of water surface. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "labor_hours_per_light_fixture",
+   "fieldtype": "Float",
+   "label": "Labor hours per light fixture (h/fixture)",
+   "default": "0",
+   "description": "Install hours per fixture. 0 means not set yet. Default: 0.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
+   "fieldname": "sb_hr_utility",
+   "fieldtype": "Section Break",
+   "label": "Utility rates",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "kwh_rate",
+   "fieldtype": "Float",
+   "label": "Electricity rate ($/kWh)",
+   "default": "0.1049",
+   "description": "Source: https://utahnewsdispatch.com/?p=4025 (Rocky Mountain Power proposed 2026 average non-residential 10.49 c/kWh; confirm against the approved tariff)",
+   "precision": "4"
+  },
+  {
+   "fieldname": "water_rate_per_ccf",
+   "fieldtype": "Float",
+   "label": "Water rate ($/ccf)",
+   "default": "3.53",
+   "description": "Source: https://www.slc.gov/utilities/fy26-what-new-rates-mean/ (SLC commercial FY26, $3.53/ccf)",
+   "precision": "4"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-28 12:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Engineering Settings",
