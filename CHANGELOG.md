@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.775.0] - 2026-11-02
+
+**The Fountain Designer catalog's Items are coded by the manufacturer's part number, and a new endpoint
+renames the 380 already on prod.** Nik, 2026-11-02, catalog item codes: "I'd like the item IDs to match
+the manufacturer ID for the items (for what you put in with the pumps lights and other items added)."
+
+**Why.** The loader coded every Item from a slug of its manufacturer and model
+(`PUMP-PENTAIR-EQ500-EQK500`, `LIGHT-JANDY-COMMERCIAL-WHITE-LED-LIGHT-LARGE-12-VAC-42-W-5000K`). Sapphire's
+own Items already use the maker's number where there is one (`AL10300`), and a code nobody can type from
+a datasheet is no use at a supplier counter.
+
+**Added.**
+
+- **The code rule** (`catalog_seed.item_code_for` / `assign_codes`): an `approved.json` `item_code`
+  always wins; else the row's `part_no` (first entry, trailing parenthetical notes removed, first of a
+  ` / ` set of alternatives: `340030 (EQ500 1-ph)` -> `340030`); else, when the row has none, names a
+  range, or another row holds it too, the model as written with commas dropped (`NBS 015-090`). Codes are
+  judged across all three files at once and compared as the Item naming guard compares them, ignoring
+  case and punctuation. A collision, with another row or with an Item already on the site, refuses the
+  row with its reason; nothing is ever suffixed. Against the real catalog: 380 rows, 380 distinct codes,
+  320 of them part numbers; 41 rows have no part number (12 Grundfos NBS, 10 Goulds 3656LH, 12 Kasco,
+  4 Otterbine, 2 Roman, Pentair SuperFlo VS), 9 name a range (3 Kasco 7.3JF, 4 Pentair IntelliBrite,
+  2 Kasco light kits) and 10 share one (the 8 Safe Rain bubbler and fan-of-jets rows, and Jandy `SHPF.50`
+  and `SHPF5.0`, two different pumps that are one code to the guard). The summary gains `codes` and
+  `renames_pending`.
+- **`rename_catalog_items`** (POST, System Manager; `dry_run` defaults to 1 and only an explicit no
+  writes; `limit` defaults to 25). It plans a rename for every Item with a `custom_catalog_id`, refuses
+  with a reason (no such row, two Items with one id, a colliding code, an Item whose code is not the one
+  the old rule gave its row, a new code another Item holds) and, on a write, renames up to `limit` Items
+  with `frappe.model.rename_doc.rename_doc`, one savepoint per Item, committing every five. Not the
+  top-level `frappe.rename_doc`: at frappe v16.53.0 that wrapper takes no `ignore_permissions`, so the
+  call would have been a `TypeError` on every Item. `rebuild_search=False`, because the default enqueues a
+  global-search rebuild of every Item; the one row is moved by hand. The test fake now takes exactly
+  v16.53.0's parameters, so a keyword the real function lacks fails the build.
+- **Designs follow their pumps.** `rename_doc` rewrites Link fields; a design names its pump inside
+  `model_json` (`network.pumps[].item`, and `.curve` when the curve is named by its Item), its equipment
+  in `equipment[].item`, nozzles in `features[].product.item`, and the derived JSON names them in BOM line
+  keys (`nozzle|<code>`). Each committed batch rewrites every Water Feature Design whose `model_json`,
+  `results_json`, `design_issues_json` or `readiness_json` names an old code (a whole value, a key, or one
+  `|`-part), leaves `modified` alone, adds an Info Comment, and clears the designer's ten-minute pump
+  catalog cache, which `rename_doc`'s `clear_cache` does not reach. The map covers every catalog Item
+  already renamed, so a design saved with an old code between rounds is repaired by the next round.
+
+**Changed.**
+
+- `find_item` no longer adopts an Item just because it holds the row's code: an Item is this row's only
+  by an explicit `item_code`, its catalog id, or brand + model number. An Item that only holds the code
+  refuses the row instead, which is what stops a catalog row merging silently into a Sapphire Item.
+- `load_catalog`'s `dry_run=None` is a dry run (it was a write).
+
+**On prod.** All 380 catalog Items carry exactly the old rule's codes (hashed against the site). The plan
+is 377 renames and 3 refusals: `022035`, `342002` and `348190` are already Sapphire Items for the same
+three Pentair pumps (made by hand, no stock, no invoices), so those catalog rows keep their old codes
+until Nikolas decides whether to merge them. One design, WFD-2026-1328192, names a catalog pump.
+One `rename_doc` was not timed on a copy of the schema: it updates 140 Link-to-Item fields and clears
+the cache, so the endpoint returns `seconds` and the first round should be `limit: 5`.
+
 ## [1.774.3] - 2026-11-02
 
 **The Fountain Designer's catalog loader can load every approved row, and its dry run refuses the rows a
