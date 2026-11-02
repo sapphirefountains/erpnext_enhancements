@@ -42,7 +42,7 @@ CIT_LUX = "https://saferain.com/en/faq (light a 10 m jet to >= 300 lux; a 75 W s
 CIT_NEC = (
     "https://iaeimagazine.org/2013/septemberoctober-2013/fountains-and-reflection-pools/; "
     "https://www.ecmweb.com/code-basics/pools-and-spas-part-3-3 (NEC 680 Part V: GFCI unless listed low-voltage "
-    "<= 15 V AC / 30 V DC per 680.23(A)(2); luminaire circuits <= 150 V). Verify against the edition Utah enforces"
+    "<= 15 V AC / 30 V DC per 680.23(A)(2); luminaire circuits <= 150 V). Verify against the edition the site's state enforces"
 )
 
 TWO_LIGHTS_OVER_FT = 4.0

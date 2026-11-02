@@ -498,6 +498,11 @@ class Designer {
 		if (strip) strip.innerHTML = this.meta ? strip_html(this.reply, this.h) : "";
 		this.paint_footer();
 		if (!this.stage || !this.meta) return;
+		// The Site step's cards drawn from the reply: what the state enforces and what was filled in.
+		const codes = this.stage.querySelector("[data-fd-codes]");
+		if (codes) codes.innerHTML = site.codes_html(this.h, this.reply, this.model);
+		const found = this.stage.querySelector("[data-fd-site-found]");
+		if (found) found.innerHTML = site.found_html(this.h, this.model);
 		const values = (this.reply && this.reply.values) || {};
 		for (const el of this.stage.querySelectorAll("[data-fd-derived]")) {
 			const value = M.get_in(values, el.getAttribute("data-fd-derived"));
@@ -1007,13 +1012,16 @@ class Designer {
 		// The Calculator drawer's fields: never the model.
 		if (path.startsWith(CALC.PREFIX)) return this.calc_input(path, el, committed);
 		const kind = el.getAttribute("data-fd-kind");
-		// A new address in quick mode, where the looked-up site values are never inputs: they belong to the
-		// old address, so they are blanked and the next derive fills them for the new one.
-		if (path === "site.address" && committed && this.model && this.model.mode !== "full") {
+		// A new address. In quick mode, where the looked-up site values are never inputs, they all belong to
+		// the old address, so they are blanked and the next derive fills them for the new one. In full mode
+		// only what the lookups filled (the point, the elevation, the seismic values) is blanked, so the next
+		// save looks them up again; a typed value stays.
+		if (path === "site.address" && committed && this.model) {
 			const address = M.coerce("text", el.value);
 			if (address !== this.lookup_address) {
 				this.lookup_address = address;
-				this.model = M.clear_site_lookups(M.edit(this.model, path, address));
+				const edited = M.edit(this.model, path, address);
+				this.model = this.model.mode !== "full" ? M.clear_site_lookups(edited) : M.clear_looked_up(edited);
 				return this.changed(false);
 			}
 		}

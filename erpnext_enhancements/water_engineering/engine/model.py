@@ -112,6 +112,10 @@ class Site(Record):
     jurisdiction: str = "UT"
     venue_type: str = "Decorative Fountain"
     regulated: bool = False
+    # ASCE 7 Seismic Design Category: the USGS lookup for the point, else the state's default (phase J).
+    # The lookup's SDS and SD1 ride in ``extra`` as ``sds`` and ``sd1``; ``extra.sources`` records where
+    # each engine-filled site value came from (``derive.derive_site``).
+    seismic_sdc: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
