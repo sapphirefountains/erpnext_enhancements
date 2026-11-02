@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.774.2] - 2026-11-02
+
+**The committed-secrets gate scans what a pull request adds, and the full-history walk skips blobs it
+has already scanned clean.** Nikolas asked on 2026-11-02 whether the scan could be quicker, and whether a
+PR could scan only what changed, with a local check first. CI and tooling only; nothing deployed changes.
+
+**Why it had become slow.** `scripts/check_no_committed_secrets.py` reads every blob reachable from every
+ref, because a key committed and reverted is still in every clone of a public repository. It took ~22 s
+when it was written (2026-08-08: 2,187 working-tree files, 7,437 history blobs), 5-10 minutes by
+2026-10-14 (two runs cancelled at the old 10-minute limit, scan clean), and 10-15 minutes by 2026-11-02.
+The cause is `CHANGELOG.md`: a multi-megabyte file with 1,400+ versions, one per PR, so each run read
+about 5 GB of text that it had found clean the day before.
+
+**Measured.** In CI, `main`'s full walk took 14 m 37 s and 14 m 43 s on 2026-11-02. This PR's own
+range check (4 commits, 10 new blobs, 4,432 working-tree files) took **9.9 s** in the scan step, 37 s
+for the whole job. On a fresh clone of `main` on a Windows laptop: the old script's full walk took 443 s
+(22,416 blobs, 254 skipped as oversize); the new full walk took 543 s with an empty cache (22,670 blobs,
+the extra time being those 254 CHANGELOG versions, now read, see below) and **6.1 s** with a warm one
+(22,676 skipped, 0 read, the working tree being all of it); the range took 37-41 s for the last one and
+the last ten merged PRs (69 and 669 blobs), with other work running alongside. **Expect the first full
+walk on `main` after this merges to be the slow one, ~15-20 minutes,** because this change is itself a
+change of rules: the cache starts empty. The job's 30-minute limit covers it.
+
+### Changed
+- **Two scopes in CI, both hard gates.** On a pull request the job is now **"No committed secrets (PR
+  range)"**: the working tree plus every blob reachable from the PR's merge commit and not from `main`
+  (`--since origin/main`, after an explicit `git fetch` of `main`). Intermediate commits are in the
+  range, so a key added and removed inside the PR is still caught. That is sound because `main`'s
+  history was gated as it landed. Loose objects are left to the full walk: a push carries only objects
+  reachable from what is pushed, and those are all in the range. Including them added nothing a PR
+  could publish and cost a lot locally. A long-lived checkout here holds ~13,000 loose objects
+  (1.6 GB), which made a local `--since origin/main` run take over 5 minutes, against ~35 s on a
+  fresh clone. Without them, the same checkout's run takes 7.4 s. On every push to `main`, and on a new nightly
+  schedule (09:17 UTC), it is **"No committed secrets (full history)"**: the whole object database, as
+  before, with the cache below. That walk is the backstop: for a rule that got stronger, and for anything
+  a range could not see. The schedule runs nothing else; every other CI job now carries
+  `if: github.event_name != 'schedule'`. The workflow's concurrency group now includes the event name.
+  The nightly runs on `refs/heads/main`, so it would otherwise share the main-push group. With
+  cancel-in-progress off, a group holds one pending run and a new arrival replaces it, so a nightly
+  could have replaced a merged commit's pending CI run. Nothing else in the repository named the old job ("No committed
+  secrets (working tree + full git history)"), and `main` has no branch protection or ruleset requiring
+  it, so the rename breaks no required check.
+- **"Standalone unit tests" gets 20 minutes, up from 10.** Slow tests are not the reason. On 2026-11-02
+  GitHub took 2.5 to 8 minutes to close that job after its last step had finished, on every branch, and
+  `timeout-minutes` counts that closing lag. The steps themselves take 6.5 to 7.5 minutes, and the step
+  count grows with almost every PR, so the job was cancelled three times that day with every step
+  passed. 20 minutes still catches a real hang.
+- **The CHANGELOG had stopped being scanned at all.** Blobs over `MAX_BLOB_BYTES` (4 MiB) were skipped
+  with a `note:` line, in the working tree as well as in history. `CHANGELOG.md` crossed 4 MiB at
+  v1.734.0 (2026-10-23, PR #1351), so from then on the one file every PR edits was the one file this gate
+  never read, on a green job. The cap is now 64 MiB: a binary is dropped on its first NUL byte anyway,
+  GitHub refuses files over 100 MB, and with the cache a large blob is read once per rule set rather
+  than every run.
+- A blob found both under `tests/` (where a whole-file `FAKE-DO-NOT-USE` header is honoured) and
+  elsewhere is now attributed to the elsewhere. Before, it took whichever path git named first, so a
+  key that also sat in a test fixture could borrow the fixture's excuse for its other copies.
+
+### Added
+- **`--since <ref>`** on the scanner: the PR range above. It refuses a shallow clone as the full walk
+  does, and refuses a `<ref>` that does not resolve rather than scan an empty range. It prints the range,
+  its two shas and the commit count alongside the usual counts.
+- **`--cache [FILE]`, the clean-blob cache.** A list of blob shas scanned clean, headed by a fingerprint
+  of the rules (`--rules-hash`: a hash of the whole script, so a change to any pattern, the marker, the
+  window or the code that applies them starts from empty, and a file written under other rules is
+  ignored whole). Skipped blobs are counted and printed. The one path-dependent fact, whether a blob sits
+  in test data, is recorded with the entry: a blob clean only under `tests/` is read again anywhere else.
+  CI keeps it with `actions/cache` keyed on the fingerprint plus the run id, with `restore-keys` on the
+  fingerprint, so each run starts from the newest list under the same rules. Only `main` and the nightly
+  run read or write it, and GitHub scopes a PR's caches to that PR, so no pull request can write a list
+  that `main` then trusts. Blobs ruled out by their header (not a blob, noisy path, oversize, cached) are
+  never read, which is where the time went.
+- **`--staged`** and a `no-committed-secrets` **pre-commit hook** (`.pre-commit-config.yaml`, `repo:
+  local`): scans the index versions of the files being committed, not the files on disk. Documented in
+  the README's linting and CI sections and in `docs/development.md`, with
+  `python scripts/check_no_committed_secrets.py --since origin/main` as the pre-push equivalent of the PR
+  check.
+- **`tests/test_secret_scan.py`** (Standalone unit tests, its own step): 16 tests on throwaway git
+  repositories. The full walk and the PR range each find the three planted kinds (a service-account key
+  file, an OAuth client secret, a base64 token beside a googleapis URL); the range finds a key added and
+  removed inside it, leaves `main`'s history and unreachable loose objects to the full walk (which
+  finds both), and refuses an unknown base and a shallow clone; the cache skips a clean blob, is ignored after a rule change, and a
+  test-data entry does not excuse the same blob elsewhere; any edit to the window, the marker, a pattern
+  or the logic changes the fingerprint; `--staged` reads the index. The planted values are assembled at
+  run time, so the test file carries no credential-shaped literal for this scanner or GitHub's to flag.
+
+### Not code: GitHub secret scanning and push protection
+Both are **off** on this public repository (checked 2026-11-02 through the API). They are repository
+settings that only an admin can change: Settings -> Advanced Security -> Secret Protection, then Push
+protection. Both are free on a public repository. Push protection refuses a push carrying a known
+provider's token before it reaches GitHub, which no CI job can do; this script covers Sapphire's own
+credential shapes, which GitHub's patterns do not. The script's docstring and the README say the same.
+
 ## [1.774.1] - 2026-11-02
 
 Nik, 2026-11-02: "when a tech is backfilling the visit information, it won't let them go past their

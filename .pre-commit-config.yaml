@@ -66,6 +66,20 @@ repos:
                 erpnext_enhancements/public/js/gantt_widget/lib/.*
             )$
 
+  # The committed-secrets gate, run on what is about to be committed (the index, not the
+  # files on disk). CI runs the same script on everything a PR adds and, on main and
+  # nightly, on the whole history; this is the cheap place to catch a key, before it is a
+  # blob anyone else has. Before pushing, `python scripts/check_no_committed_secrets.py
+  # --since origin/main` runs exactly the PR check. Stdlib only, so no environment.
+  - repo: local
+    hooks:
+      - id: no-committed-secrets
+        name: No committed secrets (staged files)
+        entry: python scripts/check_no_committed_secrets.py --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+
 ci:
     autoupdate_schedule: weekly
     skip: []

@@ -30,7 +30,10 @@ pre-commit install
 ```
 
 Hooks ([`.pre-commit-config.yaml`](../.pre-commit-config.yaml)): **ruff** (lint + format),
-**eslint**, **prettier** (JSON/CSS/Markdown/YAML), **pyupgrade**.
+**eslint**, **prettier** (JSON/CSS/Markdown/YAML), **pyupgrade**, and **no-committed-secrets**,
+which runs [`scripts/check_no_committed_secrets.py`](../scripts/check_no_committed_secrets.py)
+`--staged` on what you are committing. CI's PR check is the same script with `--since
+origin/main`; run that before pushing to see what the PR check will see.
 
 `ruff format` is configured for **tabs**, double quotes, `line-length = 110`
 ([`pyproject.toml`](../pyproject.toml)). But **indentation in this repo is mixed** — Frappe

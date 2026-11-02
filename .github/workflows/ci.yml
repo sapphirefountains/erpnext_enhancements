@@ -19,10 +19,17 @@ name: CI
 # matters; scoping `push` to main keeps CI on the deploy branch (main deploys
 # automatically) without re-running the same commit twice. The trade-off, stated
 # plainly: a branch pushed with NO open PR now gets no CI until the PR is opened.
+#
+# `schedule` runs ONLY the secret scan's full-history walk (every other job carries
+# `if: github.event_name != 'schedule'`). A PR scans only what it adds, so the nightly
+# full walk is half of the backstop for whatever that range cannot see; the other half
+# is the full walk on every push to main. See the `secret-scan` job.
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 9 * * *" # 09:17 UTC, 02:17 or 03:17 in Utah: nobody is merging
 
 # Keyed on the PR number for PR runs so a new commit supersedes the previous run
 # for that same PR -- which is what cancel-in-progress is actually for. Falls
@@ -42,8 +49,14 @@ on:
 #
 # So: supersede on PRs, never on main. The cost is that back-to-back merges queue
 # instead of collapsing, which is the correct trade for the deploy branch.
+#
+# The event name is in the key too, for the nightly `schedule` run. It runs on
+# refs/heads/main, so without it the nightly shared main-push runs' group -- and with
+# cancel-in-progress off, a group holds one running and ONE pending run, a new arrival
+# replacing the pending one. A nightly arriving behind a running push could have
+# replaced a pending push run, leaving a merged commit's CI never run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -84,6 +97,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint (ruff, advisory)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -118,6 +132,7 @@ jobs:
   # job gates nothing. Errors are at zero today, so any error is a new one.
   eslint:
     name: Lint JS (eslint, errors are a gate)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -156,6 +171,7 @@ jobs:
   # ---------------------------------------------------------------------------
   undefined-names:
     name: No undefined names (F821)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -185,8 +201,15 @@ jobs:
   # ---------------------------------------------------------------------------
   unit-tests:
     name: Standalone unit tests
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10, and not because the tests got slow. On 2026-11-02 GitHub took 2.5 to 8
+    # minutes to close this job after its last step had finished, on every branch, and the
+    # timeout counts that closing lag. With the steps themselves at 6.5-7.5 minutes (and the
+    # step count growing with almost every PR), the job was cancelled three times that day
+    # with every step passed -- a red X that means nothing. 20 minutes still catches a real
+    # hang.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -3602,6 +3625,14 @@ jobs:
       # broken this way from the day it was written until v1.159.10.
       - name: www controller filenames must be importable
         run: python scripts/check_www_controllers.py
+      # The committed-secrets gate's own proof (the `secret-scan` job runs the script; this
+      # proves the script). Throwaway git repos with planted fakes: the full walk and the PR
+      # range each find a service-account key, an OAuth client secret and a googleapis token,
+      # the range finds a key added and removed inside it, the full walk reads loose objects, both
+      # refuse a shallow clone, and the clean-blob cache is discarded whole when the rules
+      # change -- a stale cache is a key a stronger rule never reads, and the job stays green.
+      - name: Committed-secrets scanner (planted keys, PR range, clean-blob cache)
+        run: python -m unittest erpnext_enhancements.tests.test_secret_scan -v
       # Frappe calls orjson.loads() on EVERY file in the app-level directories named by
       # IMPORTABLE_DOCTYPES — no *.json filter. One stray file aborts the whole schema
       # sync, so the site fails to migrate on deploy. This killed production's migrate on
@@ -4482,6 +4513,7 @@ jobs:
   # ---------------------------------------------------------------------------
   version-sync:
     name: Version sync (__init__.py == package.json)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -4531,53 +4563,98 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Committed secrets — a HARD gate, and deliberately its own job.
+  # Committed secrets — a HARD gate on every event, and deliberately its own job.
   #
-  # This app has no service-account JSON key anywhere: Drive and Calendar delegate
-  # through the VM's own identity, and the retired Google Chat integration did the
-  # same (ADR 0009 was keyless by construction, and ADR 0011 removed it entirely).
-  # The design removes the credential; this job is what keeps it removed, because
-  # the design holds only until somebody drops a key file in the tree to test
-  # something locally.
+  # Drive and Calendar share a real service-account key, held in an encrypted Password
+  # field and never in the tree; the retired Google Chat integration was keyless (ADR
+  # 0009, removed by ADR 0011). This job is what keeps "never in the tree" true, because
+  # it holds only until somebody drops a key file in to test something locally.
   #
-  # NOT a step in `unit-tests`, for one concrete reason: `actions/checkout` clones
-  # at depth 1, and the whole point of the scan is HISTORY. `git rm` does not
-  # un-publish anything — a key committed and reverted an hour later is still in
-  # the pack, still in every clone, still on GitHub. On a shallow clone the script
-  # would examine one commit and report a clean history it never read, which is the
-  # precise failure mode ("passes because the pattern is wrong") a secret scanner
-  # must not have. So: its own job, `fetch-depth: 0`, and the script itself REFUSES
-  # to run on a shallow clone rather than reporting a false pass.
+  # HISTORY, not just HEAD: `git rm` does not un-publish anything. A key committed and
+  # reverted an hour later is still in the pack, in every clone and on GitHub (the repo
+  # is public). So: its own job with `fetch-depth: 0`, and the script REFUSES a shallow
+  # clone rather than report a clean history it never read. NO `continue-on-error`:
+  # ruff is advisory because of a style backlog, and that reasoning does not transfer.
+  # An advisory secret scan is not a secret scan.
   #
-  # NO `continue-on-error`. `ruff check` above is advisory by design, because of a
-  # known style backlog; that reasoning does not transfer. An advisory secret scan
-  # is not a secret scan.
+  # TWO SCOPES, one script, one set of rules:
   #
-  # Proven, not assumed (2026-08-08): planting a fake service-account key, an OAuth
-  # client secret and a base64 token beside a googleapis URL made it exit 1 on all
-  # three; removing them returned it to 0 over 2,187 working-tree files and 7,437
-  # history blobs in ~22s. Scanning this repo's real history found nothing.
+  #   pull_request -> "No committed secrets (PR range)": the working tree plus every blob
+  #     reachable from the PR's merge commit and not from main (`--since origin/main`),
+  #     intermediate commits included, so a key added and removed inside the PR is still
+  #     caught. (Not loose objects: a push carries only reachable ones, all in the range.) That is sound because main's history was gated as it landed: what a PR
+  #     can add to the repository is exactly that range.
+  #   push to main, and nightly -> "No committed secrets (full history)": every blob in
+  #     the object database, with a cache of blobs already scanned clean. This is the
+  #     backstop: for a rule that got stronger (a new rule is a new fingerprint, so the
+  #     cache is discarded and everything is re-read), and for anything a range could not
+  #     see.
+  #
+  # Why the split. The full walk took ~22s when this job was written (2026-08-08: 2,187
+  # working-tree files, 7,437 history blobs) and 10-15 minutes by 2026-11-02, two runs
+  # having been cancelled at the old 10-minute limit on 2026-10-14 with the scan itself
+  # clean. CHANGELOG.md is the cause: a multi-megabyte file with 1,400+ versions, one per
+  # PR, about 5 GB of text per run that was nearly all read and found clean the day
+  # before: 14m37s and 14m43s on main that day. Measured for v1.774.2 (see CHANGELOG): the
+  # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
+  # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
+  # after one is the slow run, and 30 minutes is the headroom for it.
+  #
+  # THE CACHE is a list of blob shas keyed on `--rules-hash`, a hash of the whole script,
+  # so any change to a pattern, the marker, the window or the code that applies them
+  # starts from empty. The cache key adds the run id and `restore-keys` takes the newest
+  # cache under the same rules, so each run starts from the last one's list. Only main
+  # and the nightly run read or write it, and GitHub scopes a PR's caches to that PR, so
+  # no pull request can write a list that main then trusts.
+  #
+  # Proven, not assumed: planting a fake service-account key, an OAuth client secret and
+  # a base64 token beside a googleapis URL makes it exit 1 on all three, in both scopes —
+  # tests/test_secret_scan.py (Standalone unit tests) does it on every PR now, along with
+  # a cache written under other rules being ignored.
   # ---------------------------------------------------------------------------
-  # The history scan reads every version of every file, and CHANGELOG.md alone is now a
-  # 3.7 MB file with 1,400+ versions (every PR adds one): about 5 GB of text per run. That
-  # took ~22s when this job was written and 5-10 minutes by 2026-10-14, when two runs were
-  # cancelled at the old 10-minute limit with the scan itself still clean. 30 minutes is
-  # headroom, not a fix; the fix is to skip blobs already scanned clean (a blob is
-  # content-addressed, so clean once is clean for the same rules).
   secret-scan:
-    name: No committed secrets (working tree + full git history)
+    name: ${{ github.event_name == 'pull_request' && 'No committed secrets (PR range)' || 'No committed secrets (full history)' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
-          # Load-bearing. The default depth of 1 makes the history scan a no-op.
+          # Load-bearing for the full walk (depth 1 would make it a one-commit scan), and
+          # the range needs main's history to subtract. The script refuses a shallow clone.
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Scan every tracked file and every blob in history
-        run: python scripts/check_no_committed_secrets.py
+
+      - name: Fetch main, the base of the range
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: Scan the working tree and every blob this PR adds
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_no_committed_secrets.py --since origin/main
+
+      - name: Rules fingerprint (the cache key)
+        id: rules
+        if: github.event_name != 'pull_request'
+        run: echo "hash=$(python scripts/check_no_committed_secrets.py --rules-hash)" >> "$GITHUB_OUTPUT"
+      - name: Restore the clean-blob cache
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/secret-scan/clean-blobs.txt
+          key: secret-scan-${{ steps.rules.outputs.hash }}-${{ github.run_id }}
+          restore-keys: secret-scan-${{ steps.rules.outputs.hash }}-
+      - name: Scan the working tree and every blob in history
+        if: github.event_name != 'pull_request'
+        run: python scripts/check_no_committed_secrets.py --cache ~/.cache/secret-scan/clean-blobs.txt
+      # Saved even when the scan fails: the list holds only blobs found clean, and a
+      # finding in one blob says nothing about the others.
+      - name: Save the clean-blob cache
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && steps.rules.outputs.hash != '' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/secret-scan/clean-blobs.txt
+          key: secret-scan-${{ steps.rules.outputs.hash }}-${{ github.run_id }}
 
   # ---------------------------------------------------------------------------
   # NOTE: A Frappe integration-test job (spinning up a real bench with ERPNext
