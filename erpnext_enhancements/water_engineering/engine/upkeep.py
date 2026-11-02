@@ -229,6 +229,7 @@ def om_per_year(plan: dict, pumps: list[dict], *, volume_gal: float, rules: dict
 
     ``plan``: :func:`water_plan`'s value. ``pumps``: ``[{flow_gpm, head_ft, efficiency_pct,
     motor_eff_pct, hours_per_day, electrical_kw}]`` at their operating points (the network result).
+    A row with an ``electrical_kw`` and no flow or head (a floating aerator) is priced as kW x hours.
     ``rules``: ``kwh_rate``, ``water_rate_per_ccf``, ``chlorine_per_gal``, ``parts_pct_of_equipment`` /
     ``parts_per_year``, ``days_per_year`` (defaults in :data:`RULE_DEFAULTS`)."""
     rr = {**RULE_DEFAULTS, **{k: v for k, v in (rules or {}).items() if v is not None}}
@@ -240,6 +241,11 @@ def om_per_year(plan: dict, pumps: list[dict], *, volume_gal: float, rules: dict
     power_cost, power_cross, kwh = 0.0, 0.0, 0.0
     for p in pumps:
         hrs = float(p.get("hours_per_day") or 8.0)
+        if not p.get("flow_gpm") and not p.get("head_ft") and p.get("electrical_kw"):
+            # A motor with no flow and head to price (a floating aerator): its kW over its hours.
+            kwh += float(p["electrical_kw"]) * hrs * days
+            power_cost += float(p["electrical_kw"]) * hrs * days * float(rr["kwh_rate"])
+            continue
         eff = float(p["efficiency_pct"]) / 100 if p.get("efficiency_pct") else DEFAULT_PUMP_EFF
         motor = float(p["motor_eff_pct"]) / 100 if p.get("motor_eff_pct") else DEFAULT_MOTOR_EFF
         ec = electric_cost(float(p.get("flow_gpm") or 0), float(p.get("head_ft") or 0), hours_per_day=hrs, rate_per_kwh=float(rr["kwh_rate"]),

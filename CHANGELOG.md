@@ -158,6 +158,22 @@ stored drawing has been through `drawings.page_svg`.
     over the pond's surface, all day.
   - **The result.** The pond demo's water is $930 a year (540 gal/day of make-up). A recirculating
     feature is unchanged.
+- **A floating aerator draws power.** Its motor never reached the electrical loads: they read
+  `inputs.hp`, which nothing sets, so the pond demo's aerator was 0 kW, cost $0 to run, and had no
+  circuit.
+  - **Where the horsepower comes from.** The derive now hands phase L the unit HP: the one typed from the
+  aerator's Item (`unit_hp`), else the family's HP-per-acre pick split over its units. It also hands over
+  the cable run and a new house rule, `aerator_duty_hours_day` (24 by default; Settings field included,
+  filled on existing sites by `backfill_water_budget_rules`).
+  - **The O&M.** `om_per_year` prices a motor with no flow and head as kW × hours.
+  - **The pond demo** now draws 0.83 kW around the clock: $761 a year, and an M1 circuit with its 20 A GFCI
+  breaker and wire in the BOM.
+- **The circulation schematic keeps its text in its boxes.** The pump's subtitle (its full name and
+  room) ran past the box. Each box now holds a name and a short role ("in a vault"); the model is the
+  schedules'. `drawings._box` also cuts any line to its box's width with an ellipsis.
+- **The Budget Proposal reads as a proposal.** A line with no priced Item printed "No Item" in bold red
+  on 74 of the demo's 75 lines. It now shows a muted dash in the rate and amount, with one footnote
+  ("N lines have no priced Item yet"). Only the summary's count stays red.
 - **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
   source "house rule"), so `budget_total` includes labor once the rate is set.
 - **The Outputs step's winterization drawer shows the real steps.** It printed the module's

@@ -688,6 +688,22 @@ def _pumps_for_power(m: dict, network_result: dict | None, ranking: list) -> lis
     return out
 
 
+def _aerator_power(m: dict, flows: dict, rules: dict) -> None:
+    """A floating aerator's motor for phase L's loads, as ``feature["_power"]`` (dropped again before the
+    reply): the unit HP typed from its Item (``unit_hp``) else the family's HP-per-acre pick split over its
+    units, its cable run, and the house-rule running hours (``aerator_duty_hours_day``, 24 by default)."""
+    hours = rules_engine.rule(rules, "aerator_duty_hours_day")
+    for f in m.get("features") or []:
+        if f.get("family") != "aerator":
+            continue
+        data = (flows.get(f.get("id")) or {}).get("data") or {}
+        units = int(_num(data.get("units")) or 1)
+        unit_hp = _num((f.get("inputs") or {}).get("unit_hp")) or _num(data.get("hp_per_unit"))
+        if unit_hp:
+            f["_power"] = {"hp": round(unit_hp, 3), "units": units, "cable_ft": _num(data.get("cable_run_ft")) or 0.0,
+                           "duty_hours_day": hours}
+
+
 def _lighting_fixtures(m: dict, light: dict) -> None:
     """An ``auto`` lighting section with no fixtures takes one row per lit effect from the house
     rules, so the electrical step has loads to size."""
@@ -817,13 +833,18 @@ def _duty_state(m: dict, network_result: dict | None, design_gpm: float | None, 
     }
 
 
-def _schematic_state(m: dict, label_of_pump: str) -> dict:
+PUMP_ROLES = {"vault": "in a vault", "room": "in the pump room", "submersible": "submersible"}
+
+
+def _schematic_state(m: dict) -> dict:
+    """Each box: a name on one line and a short role under it. Models and ratings are the schedules';
+    a pump's full name ran past its box."""
     nodes = []
     basins = m.get("basins") or []
     if basins:
         nodes.append({"label": basins[0].get("label") or "Basin", "sub": "source"})
     room = (m.get("pump_room") or {}).get("location") or "vault"
-    nodes.append({"label": "Pump", "sub": f"{label_of_pump} ({room})"})
+    nodes.append({"label": "Pump", "sub": PUMP_ROLES.get(room, room)})
     slots = [e.get("slot") for e in m.get("equipment") or []]
     if "filter" in slots or (m.get("treatment") or {}).get("sanitizer") not in (None, "", "none"):
         nodes.append({"label": "Filter", "sub": "treatment"})
@@ -1143,8 +1164,11 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         run.checks.append({**c, "_source": "family"})
     run.stage("lighting fixtures", lambda: _lighting_fixtures(m, light))
     run.stage("pump power", lambda: _pumps_for_power(m, network_result, ranking))
+    run.stage("aerator power", lambda: _aerator_power(m, flows, rules))
     elec = run.stage("electrical", lambda: electrical_report(m), None)
     ctl = run.stage("controls", lambda: controls_report(m, electrical=elec), None) if elec else None
+    for f in m.get("features") or []:
+        f.pop("_power", None)
     for name, rep in (("electrical", elec), ("controls", ctl)):
         for r in (rep or {}).get("results") or []:
             run.result(r)
@@ -1196,6 +1220,10 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         pump = next((p for p in (m.get("network") or {}).get("pumps") or [] if p.get("id") == pid), {})
         op_rows.append({"flow_gpm": op.get("flow_gpm"), "head_ft": op.get("head_ft"), "efficiency_pct": op.get("efficiency_pct"),
                         "motor_eff_pct": pump.get("motor_eff_pct"), "hours_per_day": hours, "electrical_kw": op.get("electrical_kw")})
+    # A floating aerator moves no metered flow against a head: its power is phase L's motor kW over its hours.
+    for row in ((elec or {}).get("energy") or {}).get("rows") or []:
+        if row.get("kind") == "aerator" and _num(row.get("kw")):
+            op_rows.append({"electrical_kw": _num(row["kw"]), "hours_per_day": _num(row.get("hours_day")) or 24.0})
     om = None
     if plan:
         equip_cost = sum(r["amount"] for r in bom if r["section"] == "Equipment") or None
@@ -1233,7 +1261,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     charts = {
         "duty_svg": run.stage("duty chart", lambda: duty_fn(duty_state)) if (duty_fn and duty_state) else None,
         "schematic_svg": run.stage("schematic", lambda: _page_svg(drawings.circulation_schematic_svg(
-            _schematic_state(m, rollups["selected_pump_label"] or "pump")))) if m.get("features") else None,
+            _schematic_state(m)))) if m.get("features") else None,
         "oneline_svg": run.stage("one-line", lambda: _page_svg((elec or {}).get("oneline_svg"))),
     }
 

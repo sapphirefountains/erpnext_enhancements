@@ -36,6 +36,7 @@
   "wind_stop_mph",
   "sb_hr_aerator",
   "aerator_max_aspect",
+  "aerator_duty_hours_day",
   "sb_hr_spray",
   "spray_loss_pct_weir",
   "spray_loss_pct_jets",
@@ -260,6 +261,13 @@
    "description": "Above this length-to-width ratio, split the horsepower over several units. Default: 3.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
   },
   {
+   "fieldname": "aerator_duty_hours_day",
+   "fieldtype": "Float",
+   "label": "Aerator running hours a day (h/day)",
+   "default": "24",
+   "description": "Hours a day a floating aerator runs in season; most run around the clock. Default: 24.0. Sapphire standard, 2026-11-01 (placeholder until the designers set it)"
+  },
+  {
    "fieldname": "sb_hr_spray",
    "fieldtype": "Section Break",
    "label": "Spray and splash loss",
@@ -470,7 +478,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 18:00:00.000000",
+ "modified": "2026-11-01 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Engineering Settings",

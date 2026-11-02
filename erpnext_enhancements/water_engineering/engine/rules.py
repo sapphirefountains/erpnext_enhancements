@@ -127,6 +127,10 @@ RULES: tuple[Rule, ...] = (
         "aerator_max_aspect", "Aerator: pond length-to-width per unit", "ratio", 3.0, "aerator",
         description="Above this length-to-width ratio, split the horsepower over several units.",
     ),
+    Rule(
+        "aerator_duty_hours_day", "Aerator running hours a day", "h/day", 24.0, "aerator",
+        description="Hours a day a floating aerator runs in season; most run around the clock.",
+    ),
     # Spray loss, per family
     *(
         Rule(

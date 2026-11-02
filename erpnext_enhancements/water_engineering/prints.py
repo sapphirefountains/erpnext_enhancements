@@ -1020,14 +1020,11 @@ def sheet_budget(d: Design) -> list:
                 desc = f"{desc} ({ln['item']})"
             if ln.get("source") == "Manual":
                 desc += " [added by hand]"
-            if ln["priced"]:
-                rate_cell = cell(money(ln.get("rate")), num=True)
-            elif g["label"] == "Labor":
-                rate_cell = cell("Rate not set", num=True, tone="open")
-            else:
-                rate_cell = cell("No Item price" if ln.get("item") else "No Item", num=True, tone="open")
+            # A client reads this page: an unpriced line is a quiet dash, explained once in the footnote,
+            # and only the summary's count is red.
+            rate_cell = cell(money(ln.get("rate")), num=True) if ln["priced"] else cell(DASH, num=True, tone="muted")
             rows.append([cell(desc), cell(fqty(ln.get("qty")), num=True), cell(ln.get("uom") or "ea", tone="muted"), rate_cell,
-                         cell(money(ln.get("amount")), num=True, tone="" if ln["priced"] else "muted")])
+                         (cell(money(ln.get("amount")), num=True) if ln["priced"] else cell(DASH, num=True, tone="muted"))])
     foot = [
         [cell("Subtotal (the BOM)", tone="strong"), *blank(3), cell(money(s["subtotal"]), num=True, tone="strong")],
         [cell(f"Contingency ({fnum(s['contingency_pct'], 0)}%)"), *blank(3), cell(money(s["contingency"]), num=True)],
@@ -1038,8 +1035,9 @@ def sheet_budget(d: Design) -> list:
                      cell(f"{money(s['low'], cents=False)} to {money(s['high'], cents=False)}", num=True)])
     notes = []
     if s["unpriced"]:
-        notes.append(f"{s['unpriced']} of {s['lines']} lines have no price and are left out of the total "
-                     f"({', '.join(s['unpriced_groups'])}). Pick an Item with a price on the selling price list for each.")
+        notes.append(f"A dash in the rate column: {s['unpriced']} line{'s' if s['unpriced'] != 1 else ''} "
+                     f"{'have' if s['unpriced'] != 1 else 'has'} no priced Item yet ({', '.join(s['unpriced_groups'])}), "
+                     "so the total leaves them out.")
     if any(g["label"] == "Labor" for g in s["groups"]) and not s["labor_rate"]:
         notes.append("The labor rate is not set in Water Engineering Settings, so the labor hours are not priced.")
     if not any(g["label"] == "Labor" for g in s["groups"]):

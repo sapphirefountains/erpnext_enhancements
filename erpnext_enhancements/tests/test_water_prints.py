@@ -315,6 +315,37 @@ def test_the_pond_takes_make_up_water_only(spf):
     assert lobby["paper"]["upkeep"]["om"]["refills"] > 0 and not lobby["paper"]["upkeep"]["water_plan"]["natural"]
 
 
+def test_the_aerator_draws_power(spf):
+    """A floating aerator's motor (its unit HP, else the HP-per-acre pick) reaches phase L's loads and the
+    O&M, running the house-rule hours (24 by default): the pond has real running power and a circuit."""
+    out, stored = designed("pond")
+    rows = [r for r in stored["electrical"]["energy"]["rows"] if r["kind"] == "aerator"]
+    assert rows and rows[0]["kw"] > 0 and rows[0]["hours_day"] == 24
+    assert any(r["description"] == "Pond aerator" and r["breaker_a"] for r in stored["electrical"]["panel_rows"])
+    om = stored["paper"]["upkeep"]["om"]
+    assert om["power"] > 0 and om["kwh"] == pytest.approx(rows[0]["kw"] * 24 * 365, rel=1e-6)
+    assert any(r["section"] == "Electrical" and r["line_key"].startswith("breaker:") for r in out["bom"])
+    assert not any("_power" in f for f in out["model"]["features"]), "the derived HP never lands in the model"
+    # A typed unit HP (from the aerator's Item) wins over the HP-per-acre pick, and the hours follow the rule.
+    m = demo_model("pond")
+    m["features"][0]["inputs"]["unit_hp"] = 3
+    out2 = derive.derive_model(m, CATALOG, {"aerator_duty_hours_day": 12}, prices=PRICES)
+    row2 = next(r for r in out2["electrical"]["energy"]["rows"] if r["kind"] == "aerator")
+    assert row2["kw"] > rows[0]["kw"] and row2["hours_day"] == 12
+    text = visible_text(render(spf, "pond", prints.PF_OM))
+    assert prints.money(om["power"]) in text
+
+
+def test_schematic_boxes_keep_their_text_inside():
+    _, stored = designed("lobby")
+    svg = stored["charts"]["schematic_svg"]
+    assert "Self-priming" not in svg and "in a vault" in svg, "the pump box names its role; the model is the schedule's"
+    from erpnext_enhancements.water_engineering.engine import drawings
+
+    long = drawings.circulation_schematic_svg({"nodes": [{"label": "Pump", "sub": "Self-priming 1.5 HP (generic) (vault) " * 3}]})
+    assert "…" in long and "(vault) Self-priming" not in long
+
+
 def test_winterization_reads_the_module_checklist(spf):
     out, stored = designed("plaza")
     w = stored["paper"]["winterization"]
@@ -387,8 +418,12 @@ def test_the_budget_subtotal_is_the_rollup_and_says_what_has_no_price(spf):
     out, stored = designed("lobby")
     s = prints.budget_summary(out["bom"], stored["paper"]["budget_rules"])
     assert s["subtotal"] == pytest.approx(out["rollups"]["budget_total"])
-    text = visible_text(render(spf, "lobby", prints.PF_BUDGET))
-    assert "No Item" in text and "have no price" in text and "Contingency (10%)" in text
+    page = render(spf, "lobby", prints.PF_BUDGET)
+    text = visible_text(page)
+    assert f"{s['unpriced']} lines have no priced Item yet" in text and "Contingency (10%)" in text
+    # A client page: an unpriced line is a muted dash, never red; the red is the summary's count alone.
+    assert "No Item" not in text
+    assert page.count(prints.ps.FAIL) == 2, "red is the DRAFT marker and the summary's 'Lines without a price' only"
     assert "Range (plus or minus 15%)" in text
     assert "No published cost-per-square-foot figure" in text
 
