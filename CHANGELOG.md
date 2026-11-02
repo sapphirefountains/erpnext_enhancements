@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.771.1] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03032. This is
+the data half of phase J: **a cited jurisdiction table for the 48 contiguous states.** Nikolas decided on
+2026-11-01 to extend the Fountain Designer beyond Utah. Each state carries its adopted codes, its
+pool, spa and interactive-feature regulation, design-city climate defaults, and contractor licensing and
+permit notes. It is state level for now, and every cited row ships without a review pass. Docs and data
+only: nothing in the app reads the file until the phase J loader merges.
+
+### Added
+- **`docs/fountain-designer/catalog/jurisdictions.json`.** 48 entries in the fixed phase J schema.
+  - **Every value carries a cite** (URL, what the source says, read date).
+  - **168 values are `null`**, each with a cite saying why. Most of them are states with no statewide
+    code, rule text that state sites would not serve to an automated reader, or a city water report
+    that publishes no hardness.
+  - **Six states read like Utah R392-302-41** and get the Utah interactive-feature checklist as
+    blockers: CA, FL, GA, NV, OR and UT. A state counts only when it requires all four elements: about
+    a 30-minute turnover, a collector tank, secondary disinfection, and automated ORP and pH control.
+- **`jurisdictions-validate.py`.** A stdlib check that fails on a missing or extra key, a wrong type, a
+  value without a cite, a state missing from the 48, a `winterize` that disagrees with the heating
+  temperature, or a Utah row that drifts from `derive.SITE_DEFAULTS["UT"]`.
+- **A "Jurisdiction table" section in the catalog README:** schema, method, state summary table,
+  sources by state, and open questions by state.
+
+### Notes
+- **Climate values are scripted, not transcribed.**
+  - Design temperatures come from ASHRAE 2025 climatic design conditions at each city's main airport.
+  - Elevation comes from USGS EPQS, and the seismic category from the USGS ASCE 7-16 design-maps
+    service (Risk Category II, Site Class D).
+- **`water_temp_f` is a Sapphire basis, not a published figure.** It is the ASHRAE 1% evaporation
+  wet-bulb plus a 5 °F approach: a sprayed basin runs toward the wet-bulb like a cooling tower. The
+  5 °F was chosen so Salt Lake City reproduces the engine's 70 °F.
+- **`climate.cites` has two keys beyond the brief's list,** `water_temp_f` and `winterize`, so every
+  number has a cite.
+- **Utah keeps the engine's current values,** and two of them disagree with their sources:
+  - Hardness: the engine's 250 ppm sits above every SLC treatment plant in the 2026 water report
+    (136–212 ppm).
+  - Design air: the engine's 95 °F is below ASHRAE 2025's 96.4 °F.
+
+  Both are listed as open questions, not changed here.
+
 ## [1.771.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03029. This is
