@@ -46,6 +46,7 @@ one, so the history of the reasoning survives.
 | [0015](0015-ai-grades-short-answers-without-sign-off.md) | An AI grades Short Answers unreviewed, and the learner disputes | Accepted |
 | [0016](0016-every-source-files-an-enhancement-request.md) | Every source (feedback form, capture widget, Design Review) files an Enhancement Request; the breakdown reads the real files; shipped work reports back through the changelog | Accepted (amends [0010](0010-employee-feedback-to-tasks.md)) |
 | [0017](0017-company-knowledge-lives-in-a-native-module.md) | Company knowledge lives in a native Knowledge Base module: a published-snapshot doctype plus a separate version doctype, approval by someone else enforced in code, two read-only AI tools with frozen names, a one-way Drive copy for Gemini and outages, restricted material outside ERPNext, and Training integrated one way as pointers | Accepted (2026-09-25; amended 2026-09-28) |
+| [0018](0018-fountain-designer-rebuild.md) | Rebuild water engineering as the Fountain Designer: one JSON design model, a guided page, the engine kept; the nine child DocTypes and the Water Engineering Wizard retired | Accepted (2026-11-01; retirement v1.771.0) |
 
 0009 carries two appendices linked from the record itself — the widget behaviour inventory and
 the file-by-file implementation plan — and two **addenda**. The addenda are listed above

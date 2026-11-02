@@ -122,7 +122,7 @@ const ALL_PAGES = {
 	'inspection-wizard': { title: 'Inspection Wizard' },
 	'location-timeline': { title: 'Location Timeline' },
 	learn: { title: 'Training' },
-	'water-engineering-wizard': { title: 'Water Engineering Wizard' },
+	'fountain-designer': { title: 'Fountain Designer' },
 	'marketing-performance': { title: 'Marketing Performance' },
 	'device-console': { title: 'Device Console' },
 	'fleet-maintenance-schedule': { title: 'Fleet Maintenance Schedule' },

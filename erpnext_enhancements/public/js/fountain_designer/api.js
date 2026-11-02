@@ -4,9 +4,10 @@
 
 export const METHOD_BASE = "erpnext_enhancements.water_engineering.api.designer.";
 
-// The access check the old wizard uses (read on Water Feature Design). It is already on every site, so
-// the page gates on it before the designer's own endpoints exist (phase E).
-export const PERMISSION_METHOD = "erpnext_enhancements.water_engineering.api.water_design.check_permission";
+// The access check (read on Water Feature Design), asked before boot. It was the old wizard's,
+// api.water_design.check_permission, until the wizard was retired in v1.771.0 (phase H); that path stays as
+// a deprecated re-export for a tab still running an older bundle.
+export const PERMISSION_METHOD = METHOD_BASE + "check_permission";
 
 export const METHODS = [
 	"boot",
@@ -18,6 +19,7 @@ export const METHODS = [
 	"catalog_search",
 	"acknowledge_issue",
 	"email_draft",
+	"run_calc",
 ];
 
 // Which calls only read: they go as GET on the quiet path. derive is a read too, but its model can be
@@ -48,6 +50,8 @@ export function create_api(transport) {
 		acknowledge_issue: (design, issue_key, note) => send("acknowledge_issue", { design, issue_key, note: note || "" }),
 		// The start of an email sending one paper of a saved design, with that paper as a PDF File on the design.
 		email_draft: (name, print_format) => send("email_draft", { name, print_format: print_format || null, attach_pdf: 1 }),
+		// The Calculator drawer: one engine calculation by key (boot().calculator lists them), with its math.
+		run_calc: (calc, inputs) => send("run_calc", { calc, inputs: json(inputs || {}) }),
 	};
 }
 

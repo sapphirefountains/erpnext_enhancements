@@ -18,6 +18,7 @@ import * as features from "./steps/features.js";
 import * as basins from "./steps/basins.js";
 import * as pump_room from "./steps/pump_room.js";
 import * as review from "./steps/review.js";
+import * as CALC from "./steps/calculator.js";
 import * as outputs from "./steps/outputs.js";
 
 const STEP_MODULES = { start, site, features, basins, pump_room, review, outputs };
@@ -165,14 +166,14 @@ class Designer {
 		if (err.status === 403) {
 			return this.sf.state.render(el, "no-access", { title: __("You do not have access to Water Feature Designs."), body: err.message });
 		}
+		// The server side has been on every site since v1.768.0, so a failure here is a failure, not a missing
+		// install: the panel says what the server said and offers Try again. The training demo is a link on
+		// Start (v1.771.0, phase H).
 		this.sf.state.render(el, "error", {
 			title: __("Could not open the Fountain Designer."),
-			body: demo ? err.message : [err.message, __("Until the designer's server side is installed, the demo shows how it works.")].filter(Boolean).join(" "),
+			body: err.message || (demo ? "" : __("Try again in a moment. If it keeps failing, tell the design team.")),
 			on_action: () => this.show_again(),
 		});
-		// After phase E the server side is there and this button only helps training; phase H drops it
-		// with the copy above (README, "After phase E").
-		if (!demo) this.extra_button(el, __("Open the demo"), () => this.go_place({ design: null, step: "start", demo: true }, true));
 	}
 
 	// A second button in a state panel, beside its own (sf_kit draws one).
@@ -392,8 +393,10 @@ class Designer {
 			can_write: this.can_write(),
 			can_create: Boolean(boot.can && boot.can.create),
 			designs_state: this.designs_state,
+			demo: Boolean(this.place && this.place.demo),
 			new_form: this.new_form,
 			acking: this.acking,
+			calc: this.calc,
 			busy: this.busy,
 			last_push: this.last_push,
 			adv: (id) => this.adv_open.has(id),
@@ -504,6 +507,8 @@ class Designer {
 		for (const el of this.stage.querySelectorAll("[data-fd-path]")) {
 			if (el === this.doc.activeElement || el.hasAttribute("data-fd-catalog")) continue;
 			const path = el.getAttribute("data-fd-path");
+			// The Calculator drawer's fields are not the model's: their text lives in this.calc.raw.
+			if (path.startsWith(CALC.PREFIX)) continue;
 			const value = M.get_in(this.model, path);
 			if (el.type === "checkbox") el.checked = Boolean(value);
 			else if (el.tagName !== "BUTTON") {
@@ -759,6 +764,60 @@ class Designer {
 		if (file && typeof composer.render_attachment_rows === "function") composer.render_attachment_rows(file);
 	}
 
+	// The Calculator drawer (steps/calculator.js). Its state outlives a redraw and a step change, never the
+	// page: { key, raw: { input: text }, result, error, busy }.
+	calc_state() {
+		if (!this.calc) {
+			const s = CALC.spec(this.boot);
+			this.calc = { key: s ? s.key : null, raw: CALC.default_raw(s), result: null, error: null, busy: false };
+		}
+		return this.calc;
+	}
+
+	calc_input(path, el, committed) {
+		if (path === CALC.PICK) {
+			if (!committed) return;
+			const s = CALC.spec(this.boot, el.value);
+			this.calc_seq = (this.calc_seq || 0) + 1;
+			this.calc = { key: s ? s.key : null, raw: CALC.default_raw(s), result: null, error: null, busy: false };
+			return this.draw_stage();
+		}
+		this.calc_state().raw[path.slice(CALC.PREFIX.length)] = el.type === "checkbox" ? el.checked : el.value;
+	}
+
+	run_calc() {
+		const { __ } = this.h;
+		const state = this.calc_state();
+		const s = CALC.spec(this.boot, state.key);
+		if (!s || state.busy) return;
+		const { inputs, errors } = CALC.coerce(s, state.raw);
+		if (errors.length) {
+			state.result = null;
+			state.error = __("These do not read as a number or a list: {0}.", [errors.join(", ")]);
+			return this.draw_stage();
+		}
+		// Only the newest answer is drawn: another calc picked, or another run, makes this one stale.
+		const seq = (this.calc_seq = (this.calc_seq || 0) + 1);
+		state.busy = true;
+		state.error = null;
+		this.draw_stage();
+		return Promise.resolve(this.api.run_calc(s.key, inputs)).then(
+			(r) => {
+				if (seq !== this.calc_seq || this.calc !== state) return;
+				state.busy = false;
+				state.result = r || null;
+				this.draw_stage();
+			},
+			(err) => {
+				if (seq !== this.calc_seq || this.calc !== state) return;
+				state.busy = false;
+				state.result = null;
+				state.error = String((err && err.message) || "") || __("The calculation could not run.");
+				this.draw_stage();
+			}
+		);
+	}
+
 	acknowledge(key, note) {
 		const { __ } = this.h;
 		if (!this.meta || !this.meta.name) return;
@@ -891,6 +950,8 @@ class Designer {
 				return this.create();
 			case "all-designs":
 				return this.go_place({ design: null, step: "start", demo: this.place.demo }, true);
+			case "open-demo":
+				return this.go_place({ design: null, step: "start", demo: true }, true);
 			case "add-feature": {
 				// The design's own family, else the first of boot.families (README, the contract).
 				const first = (this.model.features || [])[0];
@@ -943,6 +1004,8 @@ class Designer {
 			this.new_form[path.slice(4)] = el.value;
 			return;
 		}
+		// The Calculator drawer's fields: never the model.
+		if (path.startsWith(CALC.PREFIX)) return this.calc_input(path, el, committed);
 		const kind = el.getAttribute("data-fd-kind");
 		// A new address in quick mode, where the looked-up site values are never inputs: they belong to the
 		// old address, so they are blanked and the next derive fills them for the new one.
@@ -986,6 +1049,10 @@ class Designer {
 	}
 
 	on_submit(e) {
+		if (e.target.closest && e.target.closest("[data-fd-calc-form]")) {
+			e.preventDefault();
+			return this.run_calc();
+		}
 		const form = e.target.closest && e.target.closest("[data-fd-ack-form]");
 		if (!form) return;
 		e.preventDefault();

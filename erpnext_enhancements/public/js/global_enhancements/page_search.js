@@ -130,7 +130,7 @@
 		{ page: "inspection-wizard", aliases: ["inspection", "qc", "quality", "wizard"] },
 		{ page: "location-timeline", aliases: ["location", "gps", "timeline"] },
 		{ page: "learn", aliases: ["training", "lms", "courses", "learn"] },
-		{ page: "water-engineering-wizard", aliases: ["water", "hydraulics", "pump", "wizard"] },
+		{ page: "fountain-designer", aliases: ["water", "hydraulics", "pump", "fountain", "designer", "calculator"] },
 		{ page: "marketing-performance", aliases: ["ga4", "analytics", "google analytics", "web traffic", "search console", "seo", "marketing"] },
 		{ page: "device-console", aliases: ["device", "devices", "mdm", "console"] },
 		{ page: "fleet-maintenance-schedule", aliases: ["fleet", "vehicles", "vehicle maintenance"] },

@@ -2,7 +2,7 @@
 
 Covers the Pump Curve and Nozzle Profile point checks, the approved-seed loader
 (``water_engineering/catalog_seed.py``: approvals, mapping, provenance, idempotence, one bad row
-not stopping the rest), the read layer (``catalog_reader``) and ``api/water_design.pump_curves``
+not stopping the rest), the read layer (``catalog_reader``) and ``api/designer.pump_curves``
 preferring Pump Curve records over the Item's legacy table, the legacy-curve migration patch,
 and the doctype structure the build relies on (module, controller class name).
 
@@ -639,7 +639,7 @@ def test_pump_curves_prefers_pump_curve_records_over_the_legacy_table(fake):
         "custom_pump_curve": [{"flow_gpm": 5, "head_ft": 40}, {"flow_gpm": 0, "head_ft": 44}],
     }
     _curve(fake, "500999", "Real", [(0, 30), (15, 24), (30, 10)])
-    from erpnext_enhancements.water_engineering.api import water_design
+    from erpnext_enhancements.water_engineering.api import designer as water_design  # moved in v1.771.0
 
     curves = water_design.pump_curves(["500999", "LEGACY-ONLY", "NO-CURVE", None])
     assert curves["500999"] == [
@@ -666,7 +666,7 @@ def test_curve_sets_rank_full_speed_sourced_curves_first(fake):
 
 def test_nozzle_profile_params_return_the_points(fake):
     _seed()
-    from erpnext_enhancements.water_engineering.api import water_design
+    from erpnext_enhancements.water_engineering.api import designer as water_design  # moved in v1.771.0
 
     params = water_design.nozzle_profile_params("Fixtureco FIXTURE-N10")
     assert params["rated_gpm"] == 14 and params["nozzle_type"] == "Foam / Aerating"

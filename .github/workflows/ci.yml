@@ -2477,12 +2477,24 @@ jobs:
       # builders and checks every fieldname they read against the JSON defining it.
       - name: Project Brief type sections (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_project_brief_sections -v
-      - name: Water engineering (pure engine + design issues + controller helpers)
+      # test_water_design_issues tested the schema-1 issue producers (build_issues, build_readiness);
+      # both went with the nine child DocTypes in v1.771.0 (Fountain Designer phase H), and the model-2
+      # producers are tested in test_designer_derive.
+      - name: Water engineering (pure engine + controller helpers)
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_water_engine
-          erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # Fountain Designer phase H (v1.771.0): the nine schema-1 child DocTypes and the Water
+      # Engineering Wizard are gone and stay gone. A sweep of every .py/.js/.json/.html under the app
+      # and scripts/ (comments and docstrings stripped) for their names, the survivors PLAN.md 3.2
+      # keeps, the /desk/water-engineering-wizard redirect, and both patches run dry against an
+      # in-memory site shaped like production (13 rows, all of the schema-2 WFD-2026-209315): the
+      # drop patch keeps an unconverted design's rows and its table, and neither patch ever raises,
+      # because a raising patch aborts bench migrate, which is the deploy. Its own stand-ins for
+      # frappe, so its own step.
+      - name: Water engineering retirement (phase H sweep + the two patches, dry)
+        run: python -m unittest erpnext_enhancements.tests.test_water_engineering_retirement -v
       # Fountain Designer phase S (v1.765.0): basin concrete, rebar, gravel and earthwork
       # quantities with hand goldens (Nikolas's 10 x 6 ft x 18 in basin) and the hydrostatic,
       # uplift and bearing checks. Plain pytest functions, so its own pytest step: `python -m

@@ -1,11 +1,16 @@
-"""water_design_status — read a Water Feature Design's running state (read-only).
+"""water_design_status — read a Water Feature Design the way the Fountain Designer shows it (read-only).
 
-Returns where a design stands so the assistant knows what to ask next and never
-re-asks: the headline rollups (basin gallons, circulation/design GPM, TDH,
-selected pump), completion %, the calculations still missing inputs
-(``next_inputs_needed``), child-row counts, and the calculation audit trail.
-With no ``design`` it lists the recent designs the user can see (optionally
-filtered by ``project``) — the resume entry point for a design session.
+Returns where a design stands so the assistant knows what to say and what to ask next: the same
+verdict the page's right panel shows, the rollups of the last derive, the typed issues with their fix
+hints and remedies, the per-section readiness, the counts, the canvas the Triton chat draws, and the
+links: ``designer_url`` (the Fountain Designer on this design), the form, every paper's print link and
+the submittal packet's. With ``include_model`` it adds the schema-2 ``model`` itself, the payload
+``save_water_design`` takes back after an edit. With no ``design`` it lists the recent designs the
+user can see (optionally filtered by ``project``), the resume entry point.
+
+Since v1.771.0 (phase H) it reads the record ``api/designer.design_status`` builds from
+``results_json``, ``design_issues_json`` and ``readiness_json``; until then it read
+``api/water_design.design_state`` and the schema-1 counts.
 
 Only imported by frappe_assistant_core's tool loader via the assistant_tools
 hook; see the package docstring for the FAC-optional invariant.
@@ -25,19 +30,18 @@ class WaterDesignStatus(BaseTool):
         super().__init__()
         self.name = "water_design_status"  # must match module filename
         self.description = (
-            "Read a Water Feature Design's running state to drive a calculation "
-            "session: rollups (basin gallons, circulation GPM, design flow, TDH, "
-            "selected pump), completion %, what inputs are still needed "
-            "(next_inputs_needed), typed 'issues' (severity blocker/warning/info "
-            "with fix hints + citations) and per-section 'readiness' (the "
-            "calc-ready and package-ready gates), child-row counts, and the "
-            "calculation audit trail (each calc's value, formula, steps, "
-            "citations). Pass 'design' for one design; omit it to LIST recent "
-            "designs (optionally filter by 'project') to resume or start one. "
-            "Read-only. Always call this first in a design conversation; report "
-            "any BLOCKER issues to the user before asking the next question "
-            "(blockers stop Reviewed/Issued status and submission), then ask "
-            "only for the missing inputs."
+            "Read a Fountain Designer design (a Water Feature Design) as the page shows it: the 'verdict' "
+            "(level good/warn/bad and its headline, the same as the page's verdict panel), the 'rollups' "
+            "of the last derive (design and operating flow, TDH, selected pump, pump kW, basin gallons, "
+            "budget, O&M a year), typed 'issues' (severity blocker/warning/info, with fix hints, remedies, "
+            "citations and whether a warning is signed off), per-section 'readiness' with the calc-ready "
+            "and issue-ready gates, 'next_inputs_needed', counts, 'designer_url' (open it in the Fountain "
+            "Designer), 'form_url', and the print links: 'prints' (each paper) and 'packet' (the "
+            "submittal packet). With include_model it also returns 'model', the schema-2 design itself, "
+            "to edit and send back through save_water_design. Pass 'design' for one design; omit it to LIST recent designs (optionally "
+            "filter by 'project') to resume or start one. Read-only. Always call this first in a design "
+            "conversation; report any BLOCKER issues before asking the next question (blockers stop "
+            "Reviewed and Issued), then ask only for what is still needed."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"
@@ -57,7 +61,12 @@ class WaterDesignStatus(BaseTool):
                 "include_results": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Include the per-calculation audit trail for a specific design.",
+                    "description": "Include each engine calculation of the last derive (value, formula, steps, citations).",
+                },
+                "include_model": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include the schema-2 'model' (large): only to edit the design and save it back.",
                 },
             },
             "required": [],
@@ -68,13 +77,16 @@ class WaterDesignStatus(BaseTool):
         if not frappe.has_permission("Water Feature Design", "read"):
             frappe.throw(_("You do not have access to Water Feature Designs."), frappe.PermissionError)
 
-        from erpnext_enhancements.water_engineering.api.water_design import design_state
+        from erpnext_enhancements.water_engineering.api import designer
 
-        state = design_state(
-            design=args.get("design"),
-            project=args.get("project"),
-            include_results=args.get("include_results", True),
-        )
+        if args.get("design"):
+            state = designer.design_status(
+                args["design"],
+                include_results=args.get("include_results", True) is not False,
+                include_model=args.get("include_model") is True,
+            )
+        else:
+            state = designer.design_list(args.get("project"))
         return {"success": True, **state}
 
 

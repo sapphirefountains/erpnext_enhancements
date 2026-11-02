@@ -38,7 +38,13 @@ function render_list(ctx) {
 				}>${esc(__("Create design"))}</button></div>`,
 			})
 		: "";
+	// The training demo (?demo=1): every answer from a fixture, nothing saved. Offered here, out of the demo.
+	const demo = ctx.demo
+		? ""
+		: `<p class="fd-hint">${esc(__("Learning the designer? The training demo has three worked designs and saves nothing."))}
+			<button type="button" class="fd-link" data-fd-action="open-demo">${esc(__("Open the training demo"))}</button></p>`;
 	return `${stage_head(h, __("Fountain Designer"), __("Pick a kit and a name to start a design, or open one already made."))}
+		${demo}
 		${create}
 		<section class="fd-card" aria-labelledby="fd-designs-title">
 			<header class="fd-card-head"><h3 class="fd-card-title" id="fd-designs-title">${esc(__("Designs"))}</h3></header>

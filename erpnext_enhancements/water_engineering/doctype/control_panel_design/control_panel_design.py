@@ -137,7 +137,7 @@ def _row_fla(load):
 def we_panel_schedule(doc):
 	"""Panel-schedule rows + service totals for the Control Panel Design print
 	format. The NEC math can't run in the Jinja print sandbox, so it is computed
-	here (registered as a jinja method in hooks.py, like we_fitting_schedule)."""
+	here (registered as a jinja method in hooks.py, like we_design_issues)."""
 	if isinstance(doc, str):
 		doc = frappe.get_doc("Control Panel Design", doc)
 	loads = _panel_loads(doc)

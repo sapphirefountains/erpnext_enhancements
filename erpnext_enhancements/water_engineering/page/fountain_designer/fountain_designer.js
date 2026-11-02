@@ -19,11 +19,13 @@
 // for every entry; the page reads its place there and writes its own address (router.js says why).
 //
 // THE SERVER SIDE is phase E's api/designer.py (boot, derive, get_design, save_design, push_quotation,
-// push_material_request, catalog_search, acknowledge_issue), built after this page, against the contract
-// in public/js/fountain_designer/README.md. Until it is on the site, ?demo=1 answers every call in the
-// browser from a fixture (a lobby sheet wall, a plaza interactive, a pond aerator), labeled "Demo data"
-// in the head; it stays after E lands, for training. Access is gated like the old wizard, on read of Water
-// Feature Design (api/water_design.check_permission), in demo mode too.
+// push_material_request, catalog_search, acknowledge_issue, email_draft, run_calc), built after this page,
+// against the contract in public/js/fountain_designer/README.md. ?demo=1 answers every call in the browser
+// from a fixture (a lobby sheet wall, a plaza interactive, a pond aerator), labeled "Demo data" in the
+// head, for training. Access is gated on read of Water Feature Design (api/designer.check_permission), in
+// demo mode too. The Water Engineering Wizard this page replaced was retired in v1.771.0 (phase H); its
+// quick calculator is the Calculator drawer on the Review step, and /desk/water-engineering-wizard comes
+// here (public/js/global_enhancements/retired_routes.js).
 //
 // The code is public/js/fountain_designer/ (fountain_designer.bundle.js, window.sf_fountain_designer),
 // the styles public/css/fountain_designer.bundle.css (every selector .fd-), states, chips and toasts from

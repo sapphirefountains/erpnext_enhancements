@@ -147,7 +147,7 @@
 		}
 		frappe
 			.call({
-				method: "erpnext_enhancements.water_engineering.api.water_design.item_pump_curves",
+				method: "erpnext_enhancements.water_engineering.api.designer.item_pump_curves",
 				args: { item_code: frm.doc.name },
 			})
 			.then((r) => {

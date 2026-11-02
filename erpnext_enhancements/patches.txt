@@ -1567,3 +1567,14 @@ erpnext_enhancements.patches.backfill_water_budget_rules
 # design that is not canceled, from its stored bom rows and the current rules. set_value without modified; logs
 # per design, never raises, safe twice.
 erpnext_enhancements.patches.backfill_water_design_budget
+# Fountain Designer phase H (v1.771.0): retire the nine schema-1 child DocTypes of Water Feature Design. Rows of a
+# schema-2 or vanished design are deleted from the five tables the conversion above read and from Calc Result (derived);
+# a live design's rows in Electrical Load, Venue Fixture or Equipment (never read) and an unconverted design's are KEPT with
+# its table and DocType and named in the Error Log. A table is dropped once empty (delete_doc never drops it), and only
+# then its DocType and any Custom Field / Property Setter. Logs every outcome, never raises, safe twice. Prod
+# 2026-11-01: 13 rows, all of the schema-2 WFD-2026-209315, all in those six tables.
+erpnext_enhancements.patches.retire_water_feature_child_doctypes
+# Fountain Designer phase H (v1.771.0): retire the Water Engineering Wizard page. Re-import the Water Engineering and
+# Design Hub workspaces (import_file_by_path force), delete the Page row, point any other Workspace Link / Shortcut /
+# Sidebar item still naming it at the Fountain Designer, delete any Desktop Icon that opens it. Logs, never raises.
+erpnext_enhancements.patches.retire_water_engineering_wizard
