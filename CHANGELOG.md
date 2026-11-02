@@ -174,6 +174,24 @@ stored drawing has been through `drawings.page_svg`.
 - **The Budget Proposal reads as a proposal.** A line with no priced Item printed "No Item" in bold red
   on 74 of the demo's 75 lines. It now shows a muted dash in the rate and amount, with one footnote
   ("N lines have no priced Item yet"). Only the summary's count stays red.
+- **From the independent review of #1401:**
+  - **The email chrome goes on at send time.** frappe's composer is a rich-text editor that strips a
+    `<style>` block and mangles the shell's tables and MSO comments. So `email_draft` now hands it plain
+    paragraphs. A new Communication `before_insert` hook (`wrap_design_email`) then puts a sent email
+    from a Water Feature Design into `email_style.wrap` (Design pillar), once. It returns at once for
+    any other reference and never raises.
+  - **The papers offered** to email are the ones this site has, the same filter as `boot().prints`.
+  - **The page's PDF of a paper is reused** until the design changes, so sending twice does not pile up
+    attachments.
+  - **A toast** says so when the page has no composer.
+  - **Small print uses the design-system inks.** Notes are ink-700 and a pass is teal-deep. The
+    off-token grey read 4.42:1, under the 4.5 the print design system holds.
+  - **A BOM amount is the printed quantity × the printed rate.** A labor line printed 25.13 × $95 =
+    $2,387.61. Quantities now print to three places, as they are stored.
+  - **The Desk form's budget** is labeled "Budget (BOM subtotal)". The Budget Proposal and the Design
+    Report add the contingency and the range.
+  - **The packet's preview and PDF endpoints** check the design itself, not only the doctype.
+    `frappe.get_print` checks only the doctype.
 - **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
   source "house rule"), so `budget_total` includes labor once the rate is set.
 - **The Outputs step's winterization drawer shows the real steps.** It printed the module's

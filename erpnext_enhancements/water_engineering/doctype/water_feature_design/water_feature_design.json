@@ -236,9 +236,9 @@
   {
    "fieldname": "budget_total",
    "fieldtype": "Currency",
-   "label": "Budget",
+   "label": "Budget (BOM subtotal)",
    "read_only": 1,
-   "description": "Sum of the bill of materials below."
+   "description": "Sum of the bill of materials below, before contingency. The Budget Proposal and the Design Report add the contingency and print the range."
   },
   {
    "fieldname": "om_cost_per_year",
@@ -425,7 +425,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 18:00:00.000000",
+ "modified": "2026-11-01 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Feature Design",

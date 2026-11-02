@@ -95,7 +95,7 @@ section in the same PR.
 | `catalogs.equipment_classes[]` | `{key, label}` | The catalog picker classes. |
 | `catalogs.slot_classes` | `{<equipment slot>: <class key>}` | The class each `model.equipment[].slot` searches: `filter`, `uv`, `chlorinator`, `light`, `transformer`, `bypass`, `surge_arrestor`, `autofill`, `vfd` and `prv` (the page's `model.SLOT_SECTION`). A slot with no class here gets a plain item-code field, never a search of another class. The pumps search `pump`, and a feature's product searches its family's `product_class`. |
 | `house_rules[]` | `{key, label, value, unit, citation}` | The constants listed on the page (PLAN.md 2.3). |
-| `prints[]` | `{key, label, print_format}`, one per paper whose Print Format exists on the site (phase G): the keys of `outputs.schedules[]`, plus `packet` | The Outputs step links each paper of a **saved** design to `/printview?doctype=Water%20Feature%20Design&name=<name>&format=<print_format>`. An unsaved design says "save the design to print it"; a key with no entry says "not available yet". |
+| `prints[]` | `{key, label, print_format}`, one per paper whose Print Format exists on the site (phase G): the keys of `outputs.schedules[]`, plus `packet` | The Outputs step links each paper of a **saved** design to `/printview?doctype=Water%20Feature%20Design&name=<name>&format=<print_format>&no_letterhead=1` (the formats draw their own letterhead). An unsaved design says "save the design to print it"; a key with no entry says "not available yet". |
 
 ### `get_design()` and `get_design(name)`
 
@@ -187,9 +187,9 @@ Phase G, Send design. POST. The start of an email that sends one paper of a **sa
 - **`print_format`**: one of `boot.prints[].print_format`. Blank means the Design Report.
 - **`subject`**: `<design title>: <paper> (#<name>)`.
 - **`recipients`**: the customer's email, found the way the prints find the party (`print_lookup.party_details`), or `""`.
-- **`message`**: the body, in the email design system's chrome (`email_style.wrap`, the Design pillar).
-- **`formats[]`**: `{print_format, label}` for every paper the person may pick.
-- **`attachment`**: with `attach_pdf` 1, the paper as a private PDF File on the design (`{name, file_name, file_url}`); otherwise null.
+- **`message`**: the starting text, as plain paragraphs: the composer is a rich-text editor and strips the email shell. The shell (`email_style.wrap`, the Design pillar) goes on when the email is sent, in a Communication `before_insert` hook (`wrap_design_email`).
+- **`formats[]`**: `{print_format, label}` for every paper this site has (the same filter as `boot.prints`).
+- **`attachment`**: with `attach_pdf` 1, the paper as a private PDF File on the design (`{name, file_name, file_url}`); otherwise null. The one made since the design last changed is reused.
 - **What the page does with it.** It opens frappe's `CommunicationComposer` on `{doctype, name}` with the file attached and ticked. The person sends the email from there, and the composer links it to the design's timeline. The Desk form instead uses the composer's own Attach Document Print.
 - **What the server refuses.** It refuses without the email permission, and refuses a format that is not one of the design's papers. The demo answers `{demo: true}` and sends nothing.
 

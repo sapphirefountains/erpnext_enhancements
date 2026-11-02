@@ -570,10 +570,10 @@ def _customer_email(doc):
 
 
 def email_body(doc, print_format, label):
-    """The email's body in the email design system's chrome (``email_style.wrap``, the Design pillar),
-    with no container of its own (docs/email-design-system.md)."""
-    from erpnext_enhancements import email_style as es
-
+    """The email's starting text for frappe's composer: plain paragraphs, because the composer is a
+    rich-text editor that strips a ``<style>`` block and mangles the email shell's tables and MSO comments.
+    The shell (``email_style.wrap``, the Design pillar) goes on when the email is sent:
+    :func:`wrap_design_email`."""
     title = doc.get("design_title") or doc.name
     rollups = (stored_json(doc).get("rollups") or {})
     facts = [(_("Design"), f"{title} ({doc.name})")]
@@ -584,12 +584,36 @@ def email_body(doc, print_format, label):
         facts.append((_("Water in the system"), prints_mod.fnum(rollups["total_basin_gallons"], 0, "gallons")))
     if print_format in BUDGET_PAPERS and doc.get("budget_total"):
         facts.append((_("Budget (before contingency)"), prints_mod.money(doc.get("budget_total"), cents=False)))
-    body = (
-        es.p(_("Attached is the {0} for {1}.").format(_(label).lower(), title))
-        + es.kv(facts)
-        + es.note(_("The figures are design estimates from Sapphire Fountains' Fountain Designer."))
+    esc = frappe.utils.escape_html
+    return (
+        f"<p>{esc(_('Attached is the {0} for {1}.').format(_(label).lower(), title))}</p>"
+        "<p>" + "<br>".join(f"<strong>{esc(k)}:</strong> {esc(v)}" for k, v in facts) + "</p>"
+        f"<p><em>{esc(_('The figures are design estimates from Sapphire Fountains’ Fountain Designer.'))}</em></p>"
     )
-    return es.wrap(body, title=f"{_(label)}: {title}", eyebrow=_(label), pillar="design", tagline=True)
+
+
+# Marks an email already in the shell, so a re-save never wraps it twice.
+SHELL_MARK = "<!-- water-feature-design-email -->"
+
+
+def wrap_design_email(doc, method=None):
+    """Communication ``before_insert``: an email sent from a Water Feature Design (Send design, or any
+    email on its timeline) goes out in the email design system's chrome, the Design pillar
+    (docs/email-design-system.md). Frappe's composer sends what is in ``content``, so wrapping it here is
+    what the recipient gets, and what the timeline keeps. Anything else, and anything already wrapped,
+    passes untouched. Never raises: a failed wrap must not stop an email."""
+    try:
+        if doc.get("reference_doctype") != DESIGN_DOCTYPE or doc.get("communication_medium") != "Email":
+            return
+        if doc.get("sent_or_received") != "Sent" or SHELL_MARK in (doc.get("content") or ""):
+            return
+        from erpnext_enhancements import email_style as es
+
+        subject = str(doc.get("subject") or "").split(" (#")[0]
+        doc.content = SHELL_MARK + es.wrap(doc.get("content") or "", title=subject, eyebrow=_("Design"),
+                                           pillar="design", tagline=True)
+    except Exception:
+        frappe.log_error(title="Water Feature Design email wrap", message=frappe.get_traceback())
 
 
 def stored_json(doc):
@@ -604,12 +628,22 @@ def stored_json(doc):
 
 
 def _print_pdf(doc, print_format):
-    """The paper as a PDF File on the design (private), for a composer with no form to print from."""
+    """The paper as a PDF File on the design (private), for a composer with no form to print from. The
+    one made since the design last changed is reused, so sending twice does not pile up attachments."""
+    safe = str(doc.name).replace("/", "-")
+    slug = print_format.split(" - ", 1)[-1].lower().replace(" ", "-")
+    try:
+        made = frappe.get_all("File", filters={"attached_to_doctype": DESIGN_DOCTYPE, "attached_to_name": doc.name,
+                                               "file_name": ["like", f"{safe}-print-{slug}%.pdf"],
+                                               "creation": [">=", doc.get("modified")]},
+                              fields=["name", "file_name", "file_url"], order_by="creation desc", limit=1)
+    except Exception:
+        made = []
+    if made:
+        return {"name": made[0]["name"], "file_name": made[0]["file_name"], "file_url": made[0]["file_url"]}
     pdf = frappe.get_print(DESIGN_DOCTYPE, doc.name, print_format=print_format, as_pdf=True, pdf_generator="chrome")
     if not pdf:
         frappe.throw(_("The PDF could not be made. Try again, or print it from the form."))
-    safe = str(doc.name).replace("/", "-")
-    slug = print_format.split(" - ", 1)[-1].lower().replace(" ", "-")
     file_doc = frappe.get_doc({
         "doctype": "File",
         # "-print-" marks a paper made for an email, so the packet never merges it as a CAD drawing.
@@ -637,6 +671,8 @@ def email_draft(name, print_format=None, attach_pdf=0):
     print_format = print_format or prints_mod.PF_REPORT
     if print_format not in PRINT_LABELS:
         frappe.throw(_("{0} is not one of the design's papers.").format(print_format))
+    # The papers this site has, as boot().prints lists them for the page.
+    have = [pf for pf in prints_mod.PRINT_FORMATS if pf in {r["print_format"] for r in print_formats()}]
     label = PRINT_LABELS[print_format]
     title = doc.get("design_title") or doc.name
     out = {
@@ -644,7 +680,7 @@ def email_draft(name, print_format=None, attach_pdf=0):
         "recipients": _customer_email(doc),
         "message": email_body(doc, print_format, label),
         "print_format": print_format,
-        "formats": [{"print_format": pf, "label": _(PRINT_LABELS[pf])} for pf in prints_mod.PRINT_FORMATS],
+        "formats": [{"print_format": pf, "label": _(PRINT_LABELS[pf])} for pf in have],
         "attachment": None,
     }
     if str(attach_pdf) in ("1", "true", "True"):

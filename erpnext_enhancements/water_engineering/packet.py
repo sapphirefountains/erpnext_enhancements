@@ -232,7 +232,9 @@ def assemble_packet(design):
     print-to-PDF ready; ``generate_packet`` additionally produces the PDF."""
     if not frappe.has_permission(DESIGN_DOCTYPE, "read"):
         frappe.throw(_("You do not have access to Water Feature Designs."), frappe.PermissionError)
-    return build_packet_html(design)
+    doc = _doc(design)
+    doc.check_permission("read")  # frappe.get_print checks the doctype, not this design
+    return build_packet_html(doc)
 
 
 # ---------------------------------------------------------------- PDF + Drive
@@ -349,6 +351,7 @@ def generate_packet(design):
     if not frappe.has_permission(DESIGN_DOCTYPE, "write"):
         frappe.throw(_("You do not have write permission for Water Feature Designs."), frappe.PermissionError)
     doc = _doc(design)
+    doc.check_permission("write")
     html = None
     try:
         html = build_packet_html(doc)

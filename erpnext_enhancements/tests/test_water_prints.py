@@ -435,8 +435,10 @@ def test_labor_is_priced_at_the_house_rule_and_never_invented():
     assert labor and all(r["rate"] == 0 and r["amount"] == 0 for r in labor), "0 = not set: no fabricated labor"
     priced, stored = designed("lobby", {**rules, "labor_rate_per_hr": 95})
     labor = [r for r in priced["bom"] if r["section"] == "Labor"]
-    assert all(r["rate"] == 95 and r["amount"] == pytest.approx(95 * r["qty"], abs=0.01) and r["catalog_source"] == "house rule"
-               for r in labor)
+    assert all(r["rate"] == 95 and r["catalog_source"] == "house rule" for r in labor)
+    # The amount is the printed qty x the printed rate, to the cent (the review found 25.13 x $95 = $2,387.61).
+    assert all(r["amount"] == round(r["rate"] * r["qty"], 2) for r in priced["bom"])
+    assert all(prints.fqty(r["qty"]) == f"{r['qty']:,.3f}".rstrip("0").rstrip(".") for r in labor)
     assert priced["rollups"]["budget_total"] == pytest.approx(unpriced["rollups"]["budget_total"] + sum(r["amount"] for r in labor), abs=0.05)
     assert stored["paper"]["budget_rules"] == {"labor_rate_per_hr": 95.0, "contingency_pct": 10.0, "range_pct": 15.0}
 
@@ -511,6 +513,30 @@ def test_we_print_reads_the_record(packet):
     pump = rows[0]["cells"]
     assert pump[1]["text"] == "Self-priming pump" and pump[3]["text"] == "SP-15" and pump[7]["href"] == "https://example.com/sp15.pdf"
     assert packet.we_circulation_schematic(doc).startswith("<svg")
+
+
+def test_the_packet_endpoints_check_the_design_itself(packet):
+    """frappe.get_print checks the doctype, not the record: a user who may read some designs must not
+    preview the packet of one they may not."""
+    packet._frappe.has_permission = lambda *a, **k: True
+    asked = []
+
+    class Doc(FakeDoc):
+        def check_permission(self, ptype):
+            asked.append(ptype)
+            raise PermissionError(ptype)
+
+    with pytest.raises(PermissionError):
+        packet.assemble_packet(Doc(name="WFD-X"))
+    with pytest.raises(PermissionError):
+        packet.generate_packet(Doc(name="WFD-X"))
+    assert asked == ["read", "write"]
+
+
+def test_small_print_uses_the_design_system_inks():
+    """Tokens only: ink-700 for small print (12.1:1), teal-deep for a pass (6.4:1). The review measured
+    the off-token grey at 4.42:1, under the 4.5 the print design system holds itself to."""
+    assert prints.MUTED == prints.ps.INK_700 and prints.GREEN == prints.ps.TEAL_DEEP
 
 
 def test_we_print_never_raises(packet):

@@ -802,6 +802,10 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
+		# Fountain Designer phase G: an email sent from a Water Feature Design goes out in the email
+		# design system's chrome (Design pillar). The composer edits plain text; this wraps it on send.
+		# Returns at once for any other reference; never raises.
+		"before_insert": "erpnext_enhancements.water_engineering.api.designer.wrap_design_email",
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
 		# email_from_communication runs on on_update, NOT after_insert: Frappe's
 		# inbound-mail pipeline inserts the Communication BEFORE it creates the
@@ -2598,7 +2602,8 @@ after_migrate = [
 	# water_engineering: starter Standard Details (schematic SVG placeholders) for
 	# the packet's SP-4 details sheet. Idempotent + guarded; replaced with cut-sheets.
 	"erpnext_enhancements.water_engineering.setup.ensure_standard_details",
-	# water_engineering: the Results + Calculation Audit Print Formats for a design
+	# water_engineering: the Water Feature Design print formats (Design Report, Engineering
+	# Calculations, Schedules, Drawings, Budget Proposal, Operations and Winterization, Packet)
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
 	# water_engineering: workspace triage Number Cards over the denormalized

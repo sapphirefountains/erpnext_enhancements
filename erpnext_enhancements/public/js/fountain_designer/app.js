@@ -743,7 +743,10 @@ class Designer {
 
 	open_composer(name, draft) {
 		const fr = this.env.frappe;
-		if (!fr || !fr.views || !fr.views.CommunicationComposer) return;
+		if (!fr || !fr.views || !fr.views.CommunicationComposer) {
+			this.sf.toast(this.h.__("The email window is not available here. Open the design in the Desk form to send it."), { tone: "warning" });
+			return;
+		}
 		const file = draft.attachment;
 		const composer = new fr.views.CommunicationComposer({
 			doc: { doctype: "Water Feature Design", name },

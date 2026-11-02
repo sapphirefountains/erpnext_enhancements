@@ -588,7 +588,8 @@ def price_bom(lines: list[dict], model: dict, prices: dict | None, rules: dict |
             "qty": round(qty, 3),
             "uom": ln.get("uom") or "ea",
             "rate": round(rate, 2),
-            "amount": round(rate * qty, 2),
+            # on the quantity the line prints and pushes, so qty x rate on paper is the amount to the cent
+            "amount": round(round(rate, 2) * round(qty, 3), 2),
             "source": "Auto",
             "catalog_source": source,
             "line_key": str(ln.get("key") or "")[:250],

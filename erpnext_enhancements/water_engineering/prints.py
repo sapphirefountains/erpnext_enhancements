@@ -79,8 +79,10 @@ PRINT_FORMATS = (*FORMATS, PF_PACKET)
 PACKET_SHEETS = ("basis", "equipment", "piping", "fittings", "electrical", "structural", "drawings", "calcs", "audit")
 
 DASH = "—"
-GREEN = "#2f8557"
-MUTED = "#6c7a83"
+# Tokens only (docs/print-design-system.md): small print is ink-700 (12.1:1), a pass is teal-deep, the
+# email system's success token (6.4:1). An off-token grey read 4.4:1, under the 4.5 the system holds.
+GREEN = ps.TEAL_DEEP
+MUTED = ps.INK_700
 
 # ----------------------------------------------------------------------------- formatting
 
@@ -113,7 +115,7 @@ def fqty(value: Any) -> str:
         return DASH
     if abs(v - round(v)) < 1e-9:
         return f"{round(v):,}"
-    return f"{v:,.2f}".rstrip("0").rstrip(".")
+    return f"{v:,.3f}".rstrip("0").rstrip(".")
 
 
 def money(value: Any, cents: bool = True) -> str:
