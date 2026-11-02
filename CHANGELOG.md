@@ -21,7 +21,7 @@ and frappe 16.53.0, prod's versions.
   - Then, and only once that template exists, it ticks **Disabled** on the old *Design Project
     Template*. That is a field write and nothing else. The old template's 40 template Tasks and the 16
     projects made from it are not touched.
-- **The Create Project dialog** prefills the new template for Design deals.
+- **The Create Project dialog** prefills the new template for deals whose only value stream is Design.
 - Nothing changes on any existing project.
 
 ### Added
@@ -49,21 +49,30 @@ and frappe 16.53.0, prod's versions.
     needed no new code.
   - **Each description is a one-line summary plus "Process: PRO-0206 Design Process."** This repository
     is public and PRO-0206 is an internal document, so the procedure itself is not copied here.
-- **The Create Project dialog prefills the template for a Design deal.** The template field had no
-  default before. Now `design_projects.opportunity_defaults` picks the new template when one of the
-  Opportunity's value streams is Design:
-  - It reads both of the Value Stream row's columns.
-  - Design is also the stream `create_project_from_opportunity_background` ranks first when it sets the
-    project type, so the two agree.
+- **The Create Project dialog prefills the template for a Design-only deal.** The template field had
+  no default before. Now `design_projects.opportunity_defaults` picks the new template only when Design
+  is the Opportunity's **only** value stream (Nik, 2026-11-02):
+  - A Build + Design deal opens the dialog with the template empty. On prod, 8 of the 118
+    Opportunities with a Design stream have Design alone; most of the rest are Build + Design or
+    Build + Design + Service jobs, which the four design stages do not describe.
+  - It reads both of the Value Stream row's columns, and ignores a blank row.
+  - The project type is unchanged: `create_project_from_opportunity_background` still ranks Design
+    first when it sets it.
   - The pick stays changeable.
   - A Fountain Move intake's template still wins.
-  - It checks Opportunity read permission, skips a missing or disabled template, and never raises.
+  - **A name that is not an Opportunity returns nothing, quietly.** `frappe.has_permission` raises
+    `DoesNotExistError` for a missing name, and the endpoint's catch-all would have written an Error
+    Log row for every junk name any logged-in user sent. It checks `frappe.db.exists` first now; an
+    Opportunity that exists still needs read permission.
+  - It skips a missing or disabled template, and never raises.
 
 ### Changed
 - **The old *Design Project Template* is disabled.** Nik chose this on 2026-10-30. Frappe's link
-  search leaves disabled records out, so neither the dialog nor the Project form offers it again.
-  Frappe's link check reads only whether a record exists and its docstatus, so the 16 projects that name
-  it still save. What prod showed about the old template:
+  search (`search_widget`) leaves disabled records out, so neither the dialog nor the Project form
+  offers it again. The 16 projects that name it still save: ERPNext 16.52.1's
+  `Project.validate_project_template` throws "Project Template {0} is disabled" only when
+  `has_value_changed("project_template")`. A new project with it, or an edit that sets it, is refused.
+  What prod showed about the old template:
   - **Every row starts on day 0**, with no length, no hours and no dependencies.
   - **7 of its 40 rows have a parent outside the template.** ERPNext can only re-parent a task whose
     parent is in the template, so on every project those 7 landed at the top level.
@@ -77,8 +86,10 @@ and frappe 16.53.0, prod's versions.
   - the seed: insert-only, and each stage waiting on the one before;
   - the old template, disabled only once the new one exists, and only its Disabled box written;
   - the patch never raising, and rolling back the seed on a failure;
-  - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
-    a Fountain Move intake winning.
+  - the dialog: Design-only deals prefilled, Build + Design and no value stream left empty, read
+    permission, a missing or disabled template, never raising, and a Fountain Move intake winning;
+  - a name that is not an Opportunity returning nothing without reaching the permission check or the
+    Error Log.
 
 ## [1.772.0] - 2026-11-01
 

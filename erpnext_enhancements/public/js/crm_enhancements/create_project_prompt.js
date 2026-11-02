@@ -180,8 +180,9 @@ frappe.provide("erpnext_enhancements.crm");
 				.catch(function () {
 					return {};
 				}),
-			// Design projects (Nik, 2026-10-30): a deal with a Design value stream preselects the
-			// Design Project (PRO-0206) template. A Fountain Move intake's template wins. Advisory too.
+			// Design projects (Nik, 2026-10-30): a deal whose only value stream is Design (2026-11-02)
+			// preselects the Design Project (PRO-0206) template. A Fountain Move intake's template wins.
+			// Advisory too.
 			frappe
 				.xcall("erpnext_enhancements.project_enhancements.design_projects.opportunity_defaults", {
 					opportunity: opportunity_name,

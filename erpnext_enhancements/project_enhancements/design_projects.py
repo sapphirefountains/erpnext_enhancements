@@ -17,12 +17,14 @@ just those four for now: four tasks, nothing under them, in order, with rough le
 * **Seeded once** by ``patches.seed_design_project_template``, insert-only by name: once it exists it
   is Nik's to edit in the Desk, and a later migrate never touches it.
 * **The old "Design Project Template" is disabled** by the same patch, and only once the new one
-  exists (Nik, 2026-10-30), so nobody can pick it for a new project. ``disabled`` is all that changes:
-  frappe's link check reads only whether a record exists and its docstatus, so the 16 projects made
-  from it keep their link and their tasks.
-* **The Create Project dialog prefills it** (:func:`opportunity_defaults`) when the deal's value streams
-  include Design, the stream ``create_project_from_opportunity_background`` ranks first when it derives
-  the project type. It stays changeable, and a Fountain Move intake's own template wins.
+  exists (Nik, 2026-10-30), so nobody can pick it for a new project. ``disabled`` is all that changes,
+  and the 16 projects made from it keep their link, their tasks and the ability to save: ERPNext's
+  ``Project.validate_project_template`` refuses a disabled template only when ``project_template``
+  changes (erpnext 16.52.1). A new project, or an edit that sets the old template, is refused, and
+  frappe's link search leaves ``disabled`` records out of the dropdown.
+* **The Create Project dialog prefills it** (:func:`opportunity_defaults`) only when Design is the
+  deal's **only** value stream (Nik, 2026-11-02). A Build + Design deal opens the dialog with the
+  template empty. It stays changeable, and a Fountain Move intake's own template wins.
 * **The stages are not build phases.** A project's build phases are named ``Phase 100`` ... ``Phase
   700`` (decision 2026-10-12) and the planner recognises a phase by that number
   (``planner_templates.phase_number``), so no stage's name starts with one. On the planners' Simple mode
@@ -42,7 +44,7 @@ TEMPLATE = "Design Project (PRO-0206)"
 OLD_TEMPLATE = "Design Project Template"
 TEMPLATE_DOCTYPE = "Project Template"
 PROJECT_TYPE = "Design"
-#: A deal is a Design deal when one of its value streams is this.
+#: A deal gets the template when this is its only value stream (Nik, 2026-11-02).
 VALUE_STREAM = "Design"
 #: Opportunity.custom_value_stream rows; live rows use ``value_stream``, older ones ``value_streams``.
 STREAM_DOCTYPE = "Value Stream"
@@ -110,13 +112,23 @@ def template_task_values(stage):
 	}
 
 
-def is_design_deal(rows):
-	"""True when any value-stream row (``{"value_stream", "value_streams"}``) is Design."""
-	for row in rows or []:
-		for column in STREAM_COLUMNS:
-			if ((row or {}).get(column) or "").strip() == VALUE_STREAM:
-				return True
-	return False
+def row_stream(row):
+	"""A value-stream row's stream (``value_stream``, else the older ``value_streams``), stripped."""
+	for column in STREAM_COLUMNS:
+		value = ((row or {}).get(column) or "").strip()
+		if value:
+			return value
+	return ""
+
+
+def is_design_only_deal(rows):
+	"""True when Design is the deal's only value stream (Nik, 2026-11-02); blank rows are ignored.
+
+	A Build + Design deal is not one. On prod (2026-11-02) 8 of the 118 Opportunities with a Design
+	stream had Design alone; the rest were mostly Build + Design or Build + Design + Service jobs.
+	"""
+	streams = {row_stream(row) for row in rows or []} - {""}
+	return streams == {VALUE_STREAM}
 
 
 # ---------------------------------------------------------------------- reads
@@ -159,12 +171,21 @@ def _stream_rows(opportunity):
 
 @frappe.whitelist()
 def opportunity_defaults(opportunity):
-	"""``{"template"}`` for the Create Project dialog of ``opportunity``: :data:`TEMPLATE` for a Design
-	deal while it exists and is enabled, else None. Advisory: never raises."""
+	"""``{"template"}`` for the Create Project dialog of ``opportunity``: :data:`TEMPLATE` for a deal
+	whose only value stream is Design, while the template exists and is enabled, else None. Advisory:
+	never raises.
+
+	A name that is not an Opportunity returns None before the permission check, which would raise
+	``DoesNotExistError`` for it and turn any logged-in user's junk name into an Error Log row.
+	"""
 	try:
-		if not opportunity or not frappe.has_permission("Opportunity", "read", doc=opportunity):
+		if not isinstance(opportunity, str) or not opportunity:
 			return {"template": None}
-		if not is_design_deal(_stream_rows(opportunity)) or not template_enabled():
+		if not frappe.db.exists("Opportunity", opportunity):
+			return {"template": None}
+		if not frappe.has_permission("Opportunity", "read", doc=opportunity):
+			return {"template": None}
+		if not is_design_only_deal(_stream_rows(opportunity)) or not template_enabled():
 			return {"template": None}
 		return {"template": TEMPLATE}
 	except Exception:

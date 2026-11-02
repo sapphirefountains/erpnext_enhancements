@@ -11,8 +11,9 @@ Project dialog and the Project form stop offering it.
 * **All or nothing.** The four Tasks and the template go in under one savepoint; a failure rolls them
   back together, so no orphan template Task is left behind.
 * **The old template is disabled only when the new one exists.** Nothing else about it changes: its
-  40 template Tasks and the 16 projects made from it are untouched, and a project's link to a disabled
-  template still validates. If the seed failed, Design projects keep the template they have.
+  40 template Tasks and the 16 projects made from it are untouched, and those projects still save:
+  ERPNext refuses a disabled template only when a project's ``project_template`` changes. If the seed
+  failed, Design projects keep the template they have.
 * **Cannot raise.** A patch that raises aborts ``bench migrate``, which on this repo is the deploy.
   A failure is logged; re-run with
   ``bench --site <site> execute erpnext_enhancements.patches.seed_design_project_template.execute``.

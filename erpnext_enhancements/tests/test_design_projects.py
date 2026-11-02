@@ -2,7 +2,7 @@
 
 Nik, 2026-10-30: PRO-0206's four design stages (PD, SD, DD, CD) as four tasks, in order, with rough
 lengths; the old "Design Project Template" disabled; the Create Project dialog prefilling the new one
-for Design deals.
+for Design deals. Nik, 2026-11-02: only for a deal whose **only** value stream is Design.
 
 What fails expensively and quietly here, and so is pinned:
 
@@ -12,8 +12,10 @@ What fails expensively and quietly here, and so is pinned:
   template to pick, or anything about the old template changing **beyond its Disabled box**;
 * stage dates that **overlap or leave gaps**, or a stage named like a build phase (``Phase 300``),
   which the planner would then treat as one;
-* the dialog prefilling the template for a deal that is **not Design**, or for someone who cannot read
-  the Opportunity, or **raising** instead of leaving the field empty;
+* the dialog prefilling the template for a deal that is **not Design alone** (a Build + Design job), or
+  for someone who cannot read the Opportunity, or **raising** instead of leaving the field empty;
+* a name that is **not an Opportunity** reaching the permission check, which raises for it, so any
+  logged-in user could write Error Log rows;
 * the dialog's prefill **beating a Fountain Move intake's** template.
 
 A plain pytest module with its own ``frappe`` stub, so CI runs it in a ``python -m pytest`` step of
@@ -122,10 +124,12 @@ class Doc(dict):
 
 
 class Site:
-	"""Which Project Templates exist and which are disabled; records every field write."""
+	"""Which Project Templates and Opportunities exist and which templates are disabled; records every
+	field write."""
 
-	def __init__(self, dp, templates):
+	def __init__(self, dp, templates, opportunities=("CRM-OPP-1",)):
 		self.templates = dict(templates)
+		self.opportunities = set(opportunities)
 		self.writes = []
 		dp.frappe.db.exists = self.exists
 		dp.frappe.db.get_value = self.get_value
@@ -136,6 +140,8 @@ class Site:
 			return True
 		if doctype == "Project Type":
 			return name == "Design"
+		if doctype == "Opportunity":
+			return name if name in self.opportunities else None
 		return doctype == "Project Template" and name in self.templates
 
 	def get_value(self, doctype, name, field, *a, **k):
@@ -297,13 +303,22 @@ def test_patch_is_registered_post_model_sync():
 # ---------------------------------------------------------------------- the Create Project dialog
 
 
-def test_a_design_stream_in_either_column_is_a_design_deal(dp):
-	assert dp.is_design_deal([{"value_stream": "Design"}])
-	assert dp.is_design_deal([{"value_stream": None, "value_streams": "Design"}])
-	assert dp.is_design_deal([{"value_stream": "Build"}, {"value_stream": "Design "}])
-	assert not dp.is_design_deal([{"value_stream": "Build"}, {"value_streams": "Products"}])
-	assert not dp.is_design_deal([])
-	assert not dp.is_design_deal(None)
+def test_only_a_deal_whose_only_stream_is_design_is_design_only(dp):
+	# Nik, 2026-11-02: Design alone, in either column; a blank row is not a stream.
+	assert dp.is_design_only_deal([{"value_stream": "Design"}])
+	assert dp.is_design_only_deal([{"value_stream": None, "value_streams": "Design "}])
+	assert dp.is_design_only_deal([{"value_stream": "Design"}, {"value_streams": "Design"}])
+	assert dp.is_design_only_deal([{"value_stream": "Design"}, {"value_stream": "", "value_streams": None}])
+	# Build + Design, and Build + Design + Service, are not.
+	assert not dp.is_design_only_deal([{"value_stream": "Build"}, {"value_stream": "Design"}])
+	assert not dp.is_design_only_deal(
+		[{"value_stream": "Build"}, {"value_streams": "Design"}, {"value_stream": "Service"}]
+	)
+	assert not dp.is_design_only_deal([{"value_stream": "Build"}, {"value_streams": "Products"}])
+	# No value stream at all is not.
+	assert not dp.is_design_only_deal([])
+	assert not dp.is_design_only_deal([{"value_stream": "", "value_streams": None}])
+	assert not dp.is_design_only_deal(None)
 
 
 def _streams(dp, monkeypatch, rows):
@@ -317,19 +332,58 @@ def _streams(dp, monkeypatch, rows):
 	return seen
 
 
-def test_dialog_prefills_the_template_for_a_design_deal(dp, monkeypatch):
+def test_dialog_prefills_the_template_for_a_design_only_deal(dp, monkeypatch):
 	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
-	seen = _streams(dp, monkeypatch, [{"value_stream": "Build"}, {"value_stream": "Design"}])
+	seen = _streams(dp, monkeypatch, [{"value_stream": "Design"}])
 	assert dp.opportunity_defaults("CRM-OPP-1") == {"template": dp.TEMPLATE}
 	assert seen[0][0] == "Value Stream"
 	assert seen[0][1] == {"parenttype": "Opportunity", "parent": "CRM-OPP-1"}
 	assert seen[0][2] == ["value_stream", "value_streams"]
 
 
+def test_dialog_prefills_nothing_for_a_build_and_design_deal(dp, monkeypatch):
+	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
+	_streams(dp, monkeypatch, [{"value_stream": "Build"}, {"value_stream": "Design"}])
+	assert dp.opportunity_defaults("CRM-OPP-1") == {"template": None}
+
+
+def test_dialog_prefills_nothing_without_a_value_stream(dp, monkeypatch):
+	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
+	_streams(dp, monkeypatch, [])
+	assert dp.opportunity_defaults("CRM-OPP-1") == {"template": None}
+
+
 def test_dialog_prefills_nothing_for_other_deals(dp, monkeypatch):
 	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
 	_streams(dp, monkeypatch, [{"value_stream": "Service"}])
 	assert dp.opportunity_defaults("CRM-OPP-1") == {"template": None}
+
+
+def test_a_name_that_is_not_an_opportunity_is_never_logged(dp, monkeypatch):
+	# frappe.has_permission(doc=<missing name>) raises DoesNotExistError; reaching it would log a row
+	# per junk name, from any logged-in user. The exists check returns first, quietly.
+	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
+	seen = _streams(dp, monkeypatch, [{"value_stream": "Design"}])
+	logged, asked = [], []
+	monkeypatch.setattr(dp.frappe, "log_error", lambda **k: logged.append(k))
+
+	def has_permission(*a, **k):
+		asked.append(k.get("doc"))
+		raise RuntimeError("DoesNotExistError: Opportunity CRM-OPP-NOPE not found")
+
+	monkeypatch.setattr(dp.frappe, "has_permission", has_permission)
+	for junk in ("CRM-OPP-NOPE", "", None, {"name": "CRM-OPP-1"}, ["CRM-OPP-1"]):
+		assert dp.opportunity_defaults(junk) == {"template": None}
+	assert asked == [] and logged == [] and seen == []
+
+
+def test_an_existing_opportunity_still_needs_read_permission(dp, monkeypatch):
+	Site(dp, {dp.TEMPLATE: {"disabled": 0}})
+	_streams(dp, monkeypatch, [{"value_stream": "Design"}])
+	asked = []
+	monkeypatch.setattr(dp.frappe, "has_permission", lambda *a, **k: asked.append((a, k)) or True)
+	assert dp.opportunity_defaults("CRM-OPP-1") == {"template": dp.TEMPLATE}
+	assert asked == [(("Opportunity", "read"), {"doc": "CRM-OPP-1"})]
 
 
 def test_dialog_prefills_nothing_without_read_permission(dp, monkeypatch):
