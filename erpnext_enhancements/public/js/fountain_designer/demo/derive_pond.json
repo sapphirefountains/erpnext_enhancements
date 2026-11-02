@@ -150,7 +150,8 @@
   "warning_count": 0,
   "completion_percent": 100,
   "issue_ready": true,
-  "budget_total": 8670
+  "budget_total": 8670,
+  "bom_subtotal": 8670
  },
  "issues": [
   {
@@ -301,8 +302,33 @@
  "outputs": {
   "schedules": [
    {
-    "key": "equipment",
-    "label": "Equipment schedule",
+    "key": "report",
+    "label": "Design report",
+    "url": null
+   },
+   {
+    "key": "schedules",
+    "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
+    "url": null
+   },
+   {
+    "key": "drawings",
+    "label": "Design drawings",
+    "url": null
+   },
+   {
+    "key": "calcs",
+    "label": "Engineering calculations and plan check",
+    "url": null
+   },
+   {
+    "key": "budget",
+    "label": "Budget proposal",
+    "url": null
+   },
+   {
+    "key": "om",
+    "label": "Operations, maintenance and winterization",
     "url": null
    }
   ],
@@ -326,8 +352,10 @@
   "winterization": {
    "needed": true,
    "steps": [
-    "Pull the unit before the pond freezes.",
-    "Coil the cable and store the unit upright, indoors."
+    "Shut off and disconnect the autofill",
+    "Lower the water below the returns and skimmers, or drain the basin",
+    "Drain the filter, heater and strainers; open every equipment drain",
+    "Turn off and lock out the feature circuits; leave heat on in a heated room"
    ]
   },
   "startup": [

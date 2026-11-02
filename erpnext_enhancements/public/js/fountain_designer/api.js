@@ -17,6 +17,7 @@ export const METHODS = [
 	"push_material_request",
 	"catalog_search",
 	"acknowledge_issue",
+	"email_draft",
 ];
 
 // Which calls only read: they go as GET on the quiet path. derive is a read too, but its model can be
@@ -45,6 +46,8 @@ export function create_api(transport) {
 		push_material_request: (name) => send("push_material_request", { name }),
 		catalog_search: (equipment_class, q) => send("catalog_search", { equipment_class, q: q || "" }),
 		acknowledge_issue: (design, issue_key, note) => send("acknowledge_issue", { design, issue_key, note: note || "" }),
+		// The start of an email sending one paper of a saved design, with that paper as a PDF File on the design.
+		email_draft: (name, print_format) => send("email_draft", { name, print_format: print_format || null, attach_pdf: 1 }),
 	};
 }
 

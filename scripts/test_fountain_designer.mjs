@@ -742,13 +742,40 @@ await test("Outputs: the budget, the BOM, and print links only to this site", as
 	const html = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full"));
 	assert.match(html, /\$36,506/);
 	assert.match(html, /data-fd-action="push-quotation"/);
-	assert.match(html, /not available yet/);
+	assert.ok(!/Contingency/.test(html), "no contingency in the demo: the foot is the budget alone");
+	// With a contingency, the foot is the subtotal, the contingency and the budget (README, rollups).
+	const priced = JSON.parse(JSON.stringify(replies["lobby-sheet-wall-8ft"]));
+	priced.rollups.budget_total = Math.round(priced.rollups.bom_subtotal * 1.1 * 100) / 100;
+	const with_c = STEPS.outputs.render(ctx_for(priced, "full"));
+	assert.match(with_c, /Subtotal<\/th><td class="fd-num">\$36,506<\/td>/);
+	assert.match(with_c, /Contingency<\/th><td class="fd-num">\$3,651<\/td>/);
+	assert.match(with_c, /Budget<\/th><td class="fd-num"><strong>\$40,157<\/strong>/);
+	// Every paper boot.prints names links to the saved design's print view (phase G).
+	assert.match(html, /href="\/printview\?doctype=Water%20Feature%20Design&amp;name=DEMO-X&amp;format=Water%20Feature%20Design%20-%20Design%20Report&amp;no_letterhead=1"/);
+	assert.match(html, /format=Water%20Feature%20Design%20-%20Budget%20Proposal/);
+	assert.match(html, /format=Water%20Feature%20Design%20-%20Submittal%20Packet/);
+	assert.ok(!/not available yet/.test(html), "every demo paper has a format in boot.prints");
+	// Send design: a paper picker over boot.prints and the button, on a saved design with the email permission.
+	assert.match(html, /<select id="fd-send-format" class="fd-input" data-fd-send-format>/);
+	assert.match(html, /<option value="Water Feature Design - Design Report">Design report<\/option>/);
+	assert.match(html, /data-fd-action="send-design">/);
+	const no_email = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full", { can: Object.assign({}, boot.can, { email: false }) }));
+	assert.match(no_email, /data-fd-action="send-design" disabled/);
+	const bare = JSON.parse(JSON.stringify(boot));
+	bare.prints = bare.prints.filter((p) => p.key !== "budget");
+	assert.match(STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full", { boot: bare })), /Budget proposal <span class="fd-muted">\(not available yet\)/);
+	assert.equal(STEPS.outputs.print_url(boot, "", "budget"), "");
+	assert.equal(STEPS.outputs.print_url(boot, "A&B", "nope"), "");
+	assert.match(STEPS.outputs.print_url(boot, "A&B", "budget"), /name=A%26B&/);
 	assert.equal(STEPS.outputs.safe_desk_url("/printview?doctype=Water%20Feature%20Design&name=X"), "/printview?doctype=Water%20Feature%20Design&name=X");
 	assert.equal(STEPS.outputs.safe_desk_url("javascript:alert(1)"), "");
 	assert.equal(STEPS.outputs.safe_desk_url("https://evil.example/x"), "");
 	assert.equal(STEPS.outputs.safe_desk_url('/desk/x" onclick="y'), "");
 	const unsaved = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full", { design: { name: null } }));
 	assert.match(unsaved, /data-fd-action="push-quotation" disabled/);
+	assert.match(unsaved, /save the design to print it/);
+	assert.ok(!/href="\/printview/.test(unsaved), "no print link before the design is saved");
+	assert.match(unsaved, /data-fd-action="send-design" disabled/);
 });
 
 console.log("demo fixture and contract");
@@ -763,6 +790,7 @@ const ROLLUP_KEYS = [
 	"pump_kw",
 	"total_basin_gallons",
 	"budget_total",
+	"bom_subtotal",
 	"om_cost_per_year",
 	"blocker_count",
 	"warning_count",
@@ -782,9 +810,10 @@ await test("every fixture reply has the contract's keys", () => {
 		assert.equal(r.model.schema, 2);
 		assert.ok(["good", "warn", "bad"].includes(r.verdict.level));
 		const total = Math.round(r.bom.reduce((s, l) => s + l.amount, 0) * 100) / 100;
-		assert.equal(r.rollups.budget_total, total, "the budget is the BOM's sum");
+		assert.equal(r.rollups.bom_subtotal, total, "the subtotal is the BOM's sum");
+		assert.equal(r.rollups.budget_total, total, "the demo carries no contingency, so its budget is that sum");
 	}
-	for (const k of ["schema", "can", "kits", "families", "sections", "options", "catalogs", "house_rules"]) assert.ok(k in boot, `boot.${k}`);
+	for (const k of ["schema", "can", "kits", "families", "sections", "options", "catalogs", "house_rules", "prints"]) assert.ok(k in boot, `boot.${k}`);
 	for (const kit of boot.kits) {
 		assert.ok(replies[kit.key], `a reply for ${kit.key}`);
 		for (const h of kit.headline) assert.notEqual(M.get_in(kit.model, h.path), undefined, `${kit.key}: ${h.path}`);
@@ -816,6 +845,7 @@ await test("the demo answers every contract endpoint", async () => {
 	assert.equal(q.demo, true);
 	assert.ok(q.lines > 0 && q.text_lines > 0);
 	assert.equal((await api.push_material_request("DEMO-LOBBY")).doctype, "Material Request");
+	assert.equal((await api.email_draft("DEMO-LOBBY", "Water Feature Design - Design Report")).demo, true, "the demo emails nothing");
 	assert.deepEqual((await api.catalog_search("pump", "goulds")).map((x) => x.item), ["GLD-3656-5"]);
 	assert.equal((await api.catalog_search("pump", "")).length, 4);
 	await assert.rejects(api.get_design("NOPE"), (e) => e.status === 404);
@@ -948,6 +978,51 @@ await test("a push waits for the save in flight and the one after it", async () 
 	assert.deepEqual(log, ["save", "save", "push"], "then the push, built from what is stored");
 	d.autosave.cancel();
 });
+
+await test("Send design saves first, then opens the composer with the paper attached and ticked", async () => {
+	const { d, log, held } = await controller();
+	const file = { name: "F1", file_name: "D1-print-design-report.pdf", file_url: "/private/files/x.pdf" };
+	const opened = [];
+	d.env.frappe = {
+		views: {
+			CommunicationComposer: class {
+				constructor(opts) {
+					this.opts = opts;
+					this.ticked = [];
+					opened.push(this);
+				}
+				render_attachment_rows(f) {
+					this.ticked.push(f.name);
+				}
+			},
+		},
+	};
+	d.api.email_draft = hold_into(log, held, "email", { subject: "T: Design report (#D1)", recipients: "a@b.c", message: "<p>x</p>", attachment: file });
+	d.edit("features.0.inputs.length_ft", 9);
+	d.send_design("Water Feature Design - Design Report");
+	await settle();
+	assert.deepEqual(log, ["save"], "nothing is prepared while the design is unsaved");
+	held[0].resolve();
+	await settle();
+	assert.deepEqual(log, ["save", "email"]);
+	assert.deepEqual(held[1].args, ["D1", "Water Feature Design - Design Report"]);
+	held[1].resolve();
+	await settle();
+	assert.equal(opened.length, 1);
+	assert.deepEqual(opened[0].opts.doc, { doctype: "Water Feature Design", name: "D1" }, "the email links to the design's timeline");
+	assert.equal(opened[0].opts.recipients, "a@b.c");
+	assert.deepEqual(opened[0].ticked, ["F1"], "the paper is attached, not just offered");
+	assert.equal(d.busy, false);
+	d.autosave.cancel();
+});
+
+function hold_into(log, held, name, value) {
+	return (...args) =>
+		new Promise((resolve, reject) => {
+			log.push(name);
+			held.push({ name, args, resolve: () => resolve(value), reject });
+		});
+}
 
 await test("a failed save pushes nothing", async () => {
 	const { d, log, held } = await controller();

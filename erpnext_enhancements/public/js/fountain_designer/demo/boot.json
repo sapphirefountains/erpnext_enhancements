@@ -6,7 +6,8 @@
   "write": true,
   "create": true,
   "push_quotation": true,
-  "push_material_request": true
+  "push_material_request": true,
+  "email": true
  },
  "kits": [
   {
@@ -1121,6 +1122,43 @@
    "value": 1.5,
    "unit": "% of flow per day",
    "citation": "Sapphire standard, 2026-11-01"
+  }
+ ],
+ "prints": [
+  {
+   "key": "report",
+   "label": "Design report",
+   "print_format": "Water Feature Design - Design Report"
+  },
+  {
+   "key": "schedules",
+   "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
+   "print_format": "Water Feature Design - Schedules"
+  },
+  {
+   "key": "drawings",
+   "label": "Design drawings",
+   "print_format": "Water Feature Design - Design Drawings"
+  },
+  {
+   "key": "calcs",
+   "label": "Engineering calculations and plan check",
+   "print_format": "Water Feature Design - Engineering Calculations"
+  },
+  {
+   "key": "budget",
+   "label": "Budget proposal",
+   "print_format": "Water Feature Design - Budget Proposal"
+  },
+  {
+   "key": "om",
+   "label": "Operations, maintenance and winterization",
+   "print_format": "Water Feature Design - Operations and Winterization"
+  },
+  {
+   "key": "packet",
+   "label": "Submittal packet",
+   "print_format": "Water Feature Design - Submittal Packet"
   }
  ]
 }

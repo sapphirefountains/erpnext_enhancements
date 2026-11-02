@@ -1,492 +1,168 @@
-"""after_migrate setup for the Water Feature Design Print Formats.
+"""after_migrate setup for the Water Engineering Print Formats.
 
-Ships several views of a design, all rendered server-side (Jinja) from the
-persisted rollups + ``calc_results`` audit trail:
+**Water Feature Design** (schema 2, Fountain Designer phase G, v1.770.0). Nikolas asked for "a printable
+report view and other views with design information for printing and emailing" that match the other
+print formats, so every format is the print design system's chrome (``print_style``, the Design pillar:
+violet stripe, letterhead, eyebrow, a facts row of customer, project and site, ruled tables, the running
+line and closing stripe) around one Jinja block macro (:data:`BLOCK_MACRO`). Each reads one context,
+``we_print(doc, sheets)`` (``packet.we_print`` -> ``prints.build``), built from the stored ``model_json``,
+``results_json`` and ``bom`` rows: nothing recomputes the engine, and no template formats a number.
+Letter size, a page break between sheets.
 
-* **Water Feature Design - Results** — the simple, final end-results: headline
-  rollups (basin gallons, circulation, TDH, selected pump, ...) and each
-  calculation's final value/unit/status.
-* **Water Feature Design - Calculation Audit** — the robust view: for every
-  calculation, the exact formula, the inputs (with provenance), the step-by-step
-  working, the source citation, and any warnings — laid out to hand-compare
-  against the source workbooks.
-* **Water Feature Design - Design Calculations** — a single-sheet plan-check
-  calc sheet for regulated venues (spa / pool): the vessel, the design-basis
-  calcs, and the equipment grouped by hydraulic system (circulation vs. the
-  therapy-jet loop) with narrative equipment lines.
+* **Design Report** (the doctype's default): the client-facing summary.
+* **Engineering Calculations**: every ``CalcResult`` by ladder section, then the plan check (the Utah
+  R392-302-41 and NEC 680 checklists).
+* **Schedules**: equipment, piping, fittings and cut list, structural takeoff, electrical, controls BOM.
+* **Design Drawings**, **Budget Proposal**, **Operations and Winterization**.
+* **Submittal Packet**: the cover and title block, then the basis, schedules, electrical, structural,
+  drawings, plan check, calculations, standard details and notes (never the budget or the O&M).
 
-Created idempotently on every migrate (Frappe Cloud has no ``bench`` shell), and
-guarded so a hiccup only logs. Re-upserting the HTML means template edits deploy
-on the next migrate.
+The formats v1.768.0 and earlier seeded (``prints.SUPERSEDED``) read the retired child tables; they are
+disabled here, not deleted, so a site keeps its history and nobody prints an empty one.
+
+**Control Panel Design**: Submittal and Panel Schedule, unchanged.
+
+Created idempotently on every migrate (Frappe Cloud has no ``bench`` shell), and guarded so a
+hiccup only logs. Re-upserting the HTML means template edits deploy on the next migrate.
 """
 
 import frappe
 
-DOCTYPE = "Water Feature Design"
+from erpnext_enhancements import print_style as ps
+from erpnext_enhancements.water_engineering import prints
+
+DOCTYPE = prints.DOCTYPE
 CONTROL_DOCTYPE = "Control Panel Design"
 MODULE = "Water Engineering"
-RESULTS_PF = "Water Feature Design - Results"
-AUDIT_PF = "Water Feature Design - Calculation Audit"
-SCHEDULES_PF = "Water Feature Design - Schedules"
-DESIGN_CALC_PF = "Water Feature Design - Design Calculations"
 SUBMITTAL_PF = "Control Panel Design - Submittal"
 PANEL_SCHEDULE_PF = "Control Panel Design - Panel Schedule"
-PACKET_PF = "Water Feature Design - Submittal Packet"
+PACKET_PF = prints.PF_PACKET
 
-# --- simple "end results" view ----------------------------------------------
-RESULTS_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
-  <h2 style="margin:0;">{{ doc.design_title or doc.name }}</h2>
-  <div style="color:#777; margin:2px 0 14px; font-size:11px;">
-    {{ doc.name }}{% if doc.project %} &middot; {{ doc.project }}{% endif %}{% if doc.status %} &middot; {{ doc.status }}{% endif %}{% if doc.completion_percent %} &middot; {{ doc.completion_percent }}% complete{% endif %}
-  </div>
+# --- the block macro --------------------------------------------------------
+# One macro draws every block prints.build returns. A table with no rows prints its `empty`
+# sentence, never a header over nothing. frappe's Jinja has no autoescape, so every piece of
+# text is escaped here with `|e` (prints.py hands over plain Unicode, so an ampersand prints once).
+# frappe renders with DebugUndefined, which PRINTS a missing name with its braces, so every value
+# printed here is a key prints.py always sets; optional keys are only ever tested in an `if`.
+_H3 = f"margin:12px 0 4px;font-size:13px;font-weight:700;color:{ps.DEEP_SEA_BLUE};page-break-after:avoid"
+_HEADING = (f"margin:18px 0 6px;padding-top:6px;border-top:2px solid {ps.DEEP_SEA_BLUE};font-size:14px;font-weight:700;"
+            f"color:{ps.DEEP_SEA_BLUE};page-break-after:avoid")
+_NOTE = f"margin:2px 0 10px;font-size:10.5px;color:{prints.MUTED}"
+_EMPTY = f"margin:2px 0 10px;font-size:11.5px;font-style:italic;color:{prints.MUTED}"
+_TABLE = "width:100%;border-collapse:collapse;margin:0 0 4px;font-size:11.5px"
+_FACT_LABEL = f"{ps.TD};width:34%;{ps.LABEL}"
+_MONO = "font-family:'SF Mono',Consolas,monospace;font-size:10.5px"
 
-  <h3 style="margin:0 0 4px; font-size:13px;">Key results</h3>
-  <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Result</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Value</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Unit</th>
-    </tr></thead>
-    <tbody>
-      {% set rollups = [
-        ('Total basin volume', doc.total_basin_gallons, 'gal'),
-        ('Required circulation', doc.required_circulation_gpm, 'GPM'),
-        ('Design feature flow', doc.design_flow_gpm, 'GPM'),
-        ('Total dynamic head (TDH)', doc.computed_tdh_ft, 'ft'),
-        ('Selected pump', doc.selected_pump, ''),
-        ('Chlorinator feed', doc.chlorinator_feed_gph, 'gal/hr'),
-        ('Drain capacity', doc.drain_capacity_gpm, 'GPM'),
-        ('Surge basin volume', doc.surge_basin_gallons, 'gal')
-      ] %}
-      {% for label, value, unit in rollups %}{% if value %}
-      <tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ label }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right; font-weight:bold;">{{ "%.2f"|format(value) if value is number else value }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ unit }}</td>
-      </tr>
-      {% endif %}{% endfor %}
-    </tbody>
-  </table>
+BLOCK_MACRO = (
+    "{%- macro we_table(t) -%}"
+    "{%- if t.rows -%}"
+    '<table style="' + _TABLE + '"><thead><tr>'
+    '{%- for c in t.columns %}<th style="{{ c.style }}">{{ c.label|e }}</th>{% endfor -%}'
+    "</tr></thead><tbody>"
+    "{%- for r in t.rows -%}"
+    '{%- if r.group %}<tr><td colspan="{{ r.span }}" style="{{ r.style }}">{{ r.group|e }}</td></tr>'
+    "{%- else %}<tr>{% for c in r.cells %}"
+    '<td style="{{ c.style }}">{% if c.href %}<a href="{{ c.href|e }}">{{ c.text|e }}</a>{% else %}{{ c.text|e }}{% endif %}</td>'
+    "{% endfor %}</tr>{% endif -%}"
+    "{%- endfor -%}</tbody>"
+    '{%- if t.foot %}<tfoot>{% for r in t.foot %}<tr>{% for c in r %}<td style="{{ c.style }}">{{ c.text|e }}</td>'
+    "{% endfor %}</tr>{% endfor %}</tfoot>{% endif -%}"
+    "</table>"
+    '{%- elif t.empty %}<p style="' + _EMPTY + '">{{ t.empty|e }}</p>{% endif -%}'
+    "{%- endmacro -%}"
+    "{%- macro we_block(b) -%}"
+    "{%- if b.kind == 'heading' -%}"
+    '<h3 style="' + _HEADING + '">{{ b.title|e }}</h3>'
+    "{%- elif b.title %}" '<h3 style="' + _H3 + '">{{ b.title|e }}</h3>{% endif -%}'
+    "{%- if b.kind == 'break' -%}"
+    '<div style="page-break-after:always"></div>'
+    "{%- elif b.kind == 'table' -%}{{ we_table(b) }}"
+    "{%- elif b.kind == 'facts' -%}"
+    '{%- if b.lines %}<table style="' + _TABLE + '">{% for f in b.lines %}<tr><td style="' + _FACT_LABEL + '">{{ f.label|e }}</td>'
+    '<td style="' + ps.TD + ';{{ f.style }}">{{ f.value|e }}</td></tr>{% endfor %}</table>'
+    '{%- else %}<p style="' + _EMPTY + '">{{ b.empty|e }}</p>{% endif -%}'
+    "{%- elif b.kind == 'drawing' -%}"
+    '{%- if b.svg %}<div class="we-drawing" style="page-break-inside:avoid;margin:0 0 8px;text-align:center">{{ b.svg }}</div>'
+    '{%- else %}<p style="' + _EMPTY + '">{{ b.empty|e }}</p>{% endif -%}'
+    "{%- elif b.kind == 'list' -%}"
+    '{%- if b.entries %}<table style="' + _TABLE + '">{% for i in b.entries %}<tr>'
+    '<td style="' + ps.TD + ';width:22px">{% if b.boxes %}&#9744;{% else %}{{ loop.index }}.{% endif %}</td>'
+    '<td style="' + ps.TD + '">{{ i|e }}</td></tr>{% endfor %}</table>'
+    '{%- else %}<p style="' + _EMPTY + '">{{ b.empty|e }}</p>{% endif -%}'
+    "{%- elif b.kind == 'text' -%}"
+    '<pre style="margin:0 0 4px;padding:8px 10px;white-space:pre-wrap;border:1px solid ' + ps.BORDER_100 + ";" + _MONO + '">{{ b.body|e }}</pre>'
+    "{%- elif b.kind == 'calc' -%}"
+    '<div style="margin:0 0 8px;page-break-inside:avoid">'
+    '<div style="' + ps.STRONG + '">{{ b.value|e }}{% if b.status %} &middot; {{ b.status|e }}{% endif %}</div>'
+    '{%- if b.formula %}<div style="margin-top:3px"><span style="' + ps.LABEL + '">FORMULA</span> '
+    '<span class="we-working" style="' + _MONO + '">{{ b.formula|e }}</span></div>{% endif -%}'
+    "{{ we_table(b.inputs) }}"
+    '{%- if b.steps %}<pre class="we-working" style="margin:2px 0;white-space:pre-wrap;' + _MONO + '">{{ b.steps|join("\\n")|e }}</pre>{% endif -%}'
+    '{%- if b.citations %}<div style="' + _NOTE + '">Source: {{ b.citations|join("; ")|e }}</div>{% endif -%}'
+    '{%- if b.warnings %}<div style="' + ps.FAIL + ';font-size:11px">{{ b.warnings|join(" ")|e }}</div>{% endif -%}'
+    "</div>"
+    "{%- elif b.kind == 'note' -%}"
+    '<p style="' + _NOTE + '">{{ b.text|e }}</p>'
+    "{%- endif -%}"
+    '{%- if b.note %}<p style="' + _NOTE + '">{{ b.note|e }}</p>{% endif -%}'
+    "{%- endmacro -%}"
+)
 
-  <h3 style="margin:0 0 4px; font-size:13px;">Final calculation values</h3>
-  <table style="width:100%; border-collapse:collapse;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Calculation</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Value</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Unit</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Status</th>
-    </tr></thead>
-    <tbody>
-      {% for r in doc.calc_results %}
-      <tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ r.calc }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right; font-weight:bold;">{{ r.value }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ r.unit }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ r.status or '' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% set issues = we_design_issues(doc) %}
-  {% if issues %}
-  <h3 style="margin:16px 0 4px; font-size:13px;">Design review — open issues</h3>
-  <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Severity</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Section</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Issue</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Source</th>
-    </tr></thead>
-    <tbody>
-      {% for i in issues %}
-      <tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-weight:bold; color:{{ '#b52a2a' if i.severity == 'blocker' else ('#b54708' if i.severity == 'warning' else '#555') }};">{{ i.severity|title }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ i.section }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ i.title }}{% if i.fix_hint %}<br><span style="color:#777; font-size:11px;">Fix: {{ i.fix_hint }}</span>{% endif %}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#999; font-size:11px;">{{ i.citation or '' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  {% if doc.issue_acks %}
-  <h3 style="margin:16px 0 4px; font-size:13px;">Acknowledged warnings</h3>
-  <table style="width:100%; border-collapse:collapse;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Warning</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Acknowledged by</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">On</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Note</th>
-    </tr></thead>
-    <tbody>
-      {% for a in doc.issue_acks %}
-      <tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ a.title or a.issue_key }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ a.acknowledged_by or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ a.acknowledged_on or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#555;">{{ a.note or '' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</div>
-""".strip()
-
-# --- robust "formula audit" view --------------------------------------------
-AUDIT_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
-  <h2 style="margin:0;">{{ doc.design_title or doc.name }} &mdash; calculation audit</h2>
-  <div style="color:#777; margin:2px 0 14px; font-size:11px;">
-    {{ doc.name }}{% if doc.project %} &middot; {{ doc.project }}{% endif %} &middot; every result below with its exact formula, inputs, and step-by-step working for hand-verification against the source workbooks.
-  </div>
-
-  {% for r in doc.calc_results %}
-  <div style="border:1px solid #ddd; border-radius:5px; margin:0 0 10px; padding:8px 12px; page-break-inside:avoid;">
-    <div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid #eee; padding-bottom:4px;">
-      <span style="font-weight:bold; font-size:13px;">{{ r.calc }}</span>
-      <span><b>{{ r.value }}</b> <span style="color:#777;">{{ r.unit }}</span>{% if r.status %} &middot; <span style="color:#555;">{{ r.status }}</span>{% endif %}</span>
-    </div>
-
-    {% if r.formula %}
-    <div style="margin-top:6px;"><span style="color:#888; font-size:11px;">FORMULA</span><br>
-      <code style="background:#f6f8fa; padding:2px 5px; border-radius:3px; font-size:11px;">{{ r.formula }}</code>
-    </div>
-    {% endif %}
-
-    {% if r.inputs_text %}
-    <div style="margin-top:6px;"><span style="color:#888; font-size:11px;">INPUTS</span>
-      <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:2px;">
-        {% for line in r.inputs_text.split('\n') %}{% set c = line.split('\t') %}
-        <tr>
-          <td style="padding:2px 6px; color:#444; white-space:nowrap;">{{ c[0] }}</td>
-          <td style="padding:2px 6px; text-align:right; font-weight:bold;">{{ c[1] if c|length > 1 else '' }}</td>
-          <td style="padding:2px 6px; color:#777;">{{ c[2] if c|length > 2 else '' }}</td>
-          <td style="padding:2px 6px; color:#999;">{{ c[3] if c|length > 3 else '' }}</td>
-        </tr>
-        {% endfor %}
-      </table>
-    </div>
-    {% endif %}
-
-    {% if r.steps %}
-    <div style="margin-top:6px;"><span style="color:#888; font-size:11px;">WORKING</span>
-      <pre style="margin:2px 0 0; padding:6px 8px; background:#f6f8fa; border-radius:3px; font-size:11px; white-space:pre-wrap; font-family:'SF Mono',Consolas,monospace;">{{ r.steps }}</pre>
-    </div>
-    {% endif %}
-
-    {% if r.citations %}<div style="margin-top:5px; font-size:11px; color:#777;">Source: {{ r.citations }}</div>{% endif %}
-    {% if r.warnings %}<div style="margin-top:5px; font-size:11px; color:#b54708; background:#fffaeb; border:1px solid #fedf89; border-radius:3px; padding:4px 6px;">&#9888; {{ r.warnings }}</div>{% endif %}
-  </div>
-  {% endfor %}
-
-  {% if not doc.calc_results %}
-  <div style="color:#999; font-style:italic;">No calculations yet — set the design's inputs and recompute.</div>
-  {% endif %}
-</div>
-""".strip()
+# Letter paper; drawings carry a viewBox, so this sizes them to the sheet.
+_PAGE_CSS = "<style>@page{size:letter}.we-drawing svg{width:100%;height:auto;max-height:600px}</style>\n"
+_PRELIMINARY = (
+    "{% if we_title_block(doc.name).preliminary %}"
+    f'<div style="text-align:center;color:{ps.RED};font-size:9px;font-weight:700;letter-spacing:1px;'
+    f'border-bottom:1px solid {ps.BORDER_100};padding-bottom:4px;margin-bottom:8px">'
+    "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
+)
+# The meta block beside the title: the design, its date (issue date, else last saved) and the red
+# DRAFT a document that is not issued carries (ps_state).
+_META = (
+    "{% for m in p.meta %}<div>{{ m|e }}</div>{% endfor %}"
+    "<div>{{ ps_date(doc.issue_date or doc.modified) }}</div>"
+    "{{ ps_state(doc.docstatus) }}"
+)
+# The facts row: the customer's party block, the project and site, the designer and status.
+_FACTS = (
+    ps.facts_open()
+    + ps.fact("CUSTOMER", "{% if doc.customer %}{{ ps_party(doc) }}{% else %}&mdash;{% endif %}", width="40%")
+    + ps.fact("PROJECT AND SITE", "{{ p.facts.project|e }}<br>{{ p.facts.site|e }}", width="32%")
+    + ps.fact("DESIGNER", "{{ p.facts.designer|e }}<br>Status: {{ p.facts.status|e }}", width="28%")
+    + ps.facts_close()
+)
 
 
-# --- Equipment + Piping Schedules (DOC-0121 design-package deliverable) ------
-SCHEDULES_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
-  <h2 style="margin:0;">{{ doc.design_title or doc.name }} &mdash; Schedules</h2>
-  <div style="color:#777; margin:2px 0 14px; font-size:11px;">
-    {{ doc.name }}{% if doc.project %} &middot; {{ doc.project }}{% endif %} &middot; Equipment &amp; Piping schedules (DOC-0121).
-  </div>
-
-  <h3 style="margin:0 0 4px; font-size:13px;">Equipment Schedule</h3>
-  <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Item</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Spec</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Rated GPM</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Rated TDH (ft)</th>
-    </tr></thead>
-    <tbody>
-      {% if doc.selected_pump %}<tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-weight:bold;">Selected pump</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ doc.selected_pump }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ "%.0f"|format(doc.design_flow_gpm) if doc.design_flow_gpm else '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ "%.1f"|format(doc.computed_tdh_ft) if doc.computed_tdh_ft else '' }}</td>
-      </tr>{% endif %}
-      {% for p in doc.pumps %}<tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ p.pump_item or '' }}{% if p.part_number %} ({{ p.part_number }}){% endif %}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ p.pump_description or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ p.rated_gpm or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ p.rated_tdh_ft or '' }}</td>
-      </tr>{% endfor %}
-      {% for b in doc.basins %}<tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">Basin{% if b.basin_label %} &mdash; {{ b.basin_label }}{% endif %}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ b.shape }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ "%.0f"|format(b.volume_gal) if b.volume_gal else '' }} gal</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;"></td>
-      </tr>{% endfor %}
-    </tbody>
-  </table>
-
-  <h3 style="margin:0 0 4px; font-size:13px;">Piping Schedule</h3>
-  <table style="width:100%; border-collapse:collapse;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Segment</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Line</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Material</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Size</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Len (ft)</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Vel (fps)</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Head (ft)</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Fittings / Equipment</th>
-    </tr></thead>
-    <tbody>
-      {% for s in doc.pipe_segments %}<tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ s.segment_label or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ s.line_type or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ s.material or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ s.nominal_size or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ s.pipe_length_ft or '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ "%.2f"|format(s.velocity_fps) if s.velocity_fps else '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;">{{ "%.2f"|format(s.head_loss_ft) if s.head_loss_ft else '' }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#555;">{{ s.fittings_summary or '' }}{% if s.fittings_summary and s.components_summary %}; {% endif %}{{ s.components_summary or '' }}</td>
-      </tr>{% endfor %}
-    </tbody>
-  </table>
-
-  {% set schedule = we_fitting_schedule(doc) %}
-  {% if schedule %}
-  <h3 style="margin:16px 0 4px; font-size:13px;">Fitting Schedule</h3>
-  <table style="width:100%; border-collapse:collapse;">
-    <thead><tr style="background:#f4f5f7;">
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Type</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Fitting / Component</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Material</th>
-      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Size</th>
-      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Qty</th>
-    </tr></thead>
-    <tbody>
-      {% for f in schedule %}
-      <tr>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ f.kind }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.type }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.material }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.size }}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right; font-weight:bold;">{{ f.qty }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</div>
-""".strip()
+def _sheets_body(sheets, headed=True):
+    """Each sheet's blocks, under the sheet's heading when ``headed``; every sheet after the first
+    starts a page."""
+    keys = "[" + ", ".join(f"'{k}'" for k in sheets) + "]"
+    head = ps.section_title("{{ sh.title|e }}") if headed else ""
+    return (
+        "{% for key in " + keys + " %}{% set sh = p.sheets[key] %}"
+        + '<div{% if not loop.first %} style="page-break-before:always"{% endif %}>'
+        + head
+        + "{% for b in sh.blocks %}{{ we_block(b) }}{% endfor %}</div>{% endfor %}"
+    )
 
 
-# --- Design Calculations (single-sheet plan-check view, regulated venues) ---
-# Groups the captured data by hydraulic SYSTEM (vessel -> design basis ->
-# circulation loop -> therapy-jet loop -> heating/treatment -> instrumentation
-# -> compliance) with narrative equipment lines, the way an AHJ plan-checker
-# reads a spa/pool calc sheet. Fixtures/pumps/piping route to a loop via their
-# `system` tag; catalog equipment routes by `equipment_class`. All figures are
-# the engine's persisted rollups + per-row computed columns — nothing is retyped.
-DESIGN_CALC_HTML = """
-{%- set tb = we_title_block(doc.name) -%}
-{%- macro sechead(no, title, note='') -%}
-<table style="width:100%; border-collapse:collapse; margin:20px 0 8px;"><tr>
-  <td style="width:26px; font:bold 18px 'Helvetica Neue',Arial,sans-serif; color:#1b5e82; vertical-align:bottom; padding-bottom:3px;">{{ no }}</td>
-  <td style="font:bold 13px 'Helvetica Neue',Arial,sans-serif; letter-spacing:0.5px; text-transform:uppercase; vertical-align:bottom; border-bottom:1px solid #cbd6dd; padding-bottom:4px;">{{ title }}</td>
-  <td style="text-align:right; font:11px 'Helvetica Neue',Arial,sans-serif; color:#6c7a83; vertical-align:bottom; border-bottom:1px solid #cbd6dd; padding-bottom:4px;">{{ note }}</td>
-</tr></table>
-{%- endmacro -%}
-{%- macro line(role, desc, tag='', ok=false) -%}
-<tr>
-  <td style="padding:6px 12px 6px 0; vertical-align:top; width:118px; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.3px; color:#4a5a63; border-bottom:1px solid #e6ebee;">{{ role }}</td>
-  <td style="padding:6px 12px 6px 0; vertical-align:top; font:12px 'Helvetica Neue',Arial,sans-serif; color:#16232e; border-bottom:1px solid #e6ebee;">{{ desc }}</td>
-  <td style="padding:6px 0; vertical-align:top; text-align:right; white-space:nowrap; font:bold 11px 'Helvetica Neue',Arial,sans-serif; color:{{ '#2f8557' if ok else '#124a67' }}; border-bottom:1px solid #e6ebee;">{% if ok and tag %}&#10003; {% endif %}{{ tag }}</td>
-</tr>
-{%- endmacro -%}
-{%- set ns = namespace(surface=0, jet=false) -%}
-{%- for b in doc.basins %}{% set ns.surface = ns.surface + (b.surface_area_sf or 0) %}{% endfor -%}
-{%- for fx in doc.venue_fixtures %}{% if fx.fixture_type == 'Therapy Jet' or fx.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
-{%- for p in doc.pumps %}{% if p.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
-{%- for s in doc.pipe_segments %}{% if s.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#16232e; font-size:12px;">
+def _format_html(print_format):
+    """One Water Feature Design format: chrome and facts row, then its sheets from ``prints.FORMATS``."""
+    eyebrow, sheets = prints.FORMATS[print_format]
+    keys = "[" + ", ".join(f"'{k}'" for k in sheets) + "]"
+    preliminary = _PRELIMINARY if "calcs" in sheets else ""
+    return (
+        "{%- set p = we_print(doc, " + keys + ") -%}"
+        + BLOCK_MACRO
+        + _PAGE_CSS
+        + ps.page_open(prints.PILLAR)
+        + preliminary
+        + ps.letterhead(prints.PILLAR, eyebrow, "{{ p.title|e }}", _META)
+        + _FACTS
+        + _sheets_body(sheets, headed=len(sheets) > 1)
+        + ps.page_close(prints.PILLAR)
+    )
 
-  {% if tb.preliminary %}<div style="text-align:center; color:#8f5a1d; font:bold 9px 'Helvetica Neue',Arial,sans-serif; letter-spacing:1px; border-bottom:1px solid #e6d3bd; padding-bottom:6px; margin-bottom:10px;">PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; SEALED BY P.E. BEFORE ISSUE</div>{% endif %}
-
-  <table style="width:100%; border-collapse:collapse; border-bottom:2px solid #1b5e82;">
-    <tr>
-      <td style="vertical-align:bottom; padding-bottom:10px;">
-        <div style="font:bold 11px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:1.5px; color:#124a67;">Design Calculations{% if doc.venue_type %} &middot; {{ doc.venue_type }}{% endif %}</div>
-        <div style="font:bold 24px 'Helvetica Neue',Arial,sans-serif; margin:5px 0 2px;">{{ tb.project.name }}</div>
-        {% if doc.vessel_model %}<div style="color:#5a6a73; font-size:12px;">{{ doc.vessel_model }}</div>{% endif %}
-      </td>
-      <td style="vertical-align:bottom; padding-bottom:10px; text-align:right; font-size:11px; color:#3a4a53; white-space:nowrap;">
-        <div><span style="color:#8794a0;">Design</span> &nbsp;{{ doc.name }}</div>
-        {% if doc.governing_code %}<div><span style="color:#8794a0;">Code</span> &nbsp;{{ doc.governing_code }}</div>{% endif %}
-        <div><span style="color:#8794a0;">Issue</span> &nbsp;{{ doc.issue_date or '&mdash;' }}</div>
-        <div><span style="color:#8794a0;">By</span> &nbsp;{{ doc.drawn_by or tb.contractor.name }}</div>
-        <div><span style="color:#8794a0;">Status</span> &nbsp;{{ doc.status or 'Draft' }}</div>
-      </td>
-    </tr>
-  </table>
-
-  {{ sechead('1', 'Vessel & Volume', doc.vessel_listing or '') }}
-  {% if doc.vessel_model or doc.vessel_construction %}
-  <p style="margin:0 0 8px; font-size:12px;">{% if doc.vessel_model %}<b>{{ doc.vessel_model }}</b>{% endif %}{% if doc.vessel_construction %} &mdash; {{ doc.vessel_construction }}{% endif %}{% if doc.vessel_listing %} Listing {{ doc.vessel_listing }}.{% endif %}</p>
-  {% endif %}
-  {% for b in doc.basins %}
-  <table style="width:100%; border-collapse:collapse; margin-bottom:8px; font-size:11px;">
-    <tr>
-      {% if b.basin_label %}<td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Vessel</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ b.basin_label }}</td>{% endif %}
-      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Shape</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ b.shape or '&mdash;' }}</td>
-      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Volume</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%.0f"|format(b.volume_gal) if b.volume_gal else '&mdash;' }} gal</td>
-    </tr>
-    <tr>
-      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Dimensions</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{% if b.length_in %}{{ "%g"|format(b.length_in) }} &times; {{ "%g"|format(b.width_in) }}{% if b.height_in %} &times; {{ "%g"|format(b.height_in) }}{% endif %} in{% elif b.diameter_in %}&#8960; {{ "%g"|format(b.diameter_in) }}{% if b.height_in %} &times; {{ "%g"|format(b.height_in) }}{% endif %} in{% else %}&mdash;{% endif %}</td>
-      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Perimeter</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%g"|format(b.perimeter_ft) if b.perimeter_ft else '&mdash;' }} ft</td>
-      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Water surface</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%g"|format(b.surface_area_sf) if b.surface_area_sf else '&mdash;' }} sq ft</td>
-    </tr>
-  </table>
-  {% endfor %}
-  {% if not doc.basins %}<p style="color:#98a4ac; font-style:italic; font-size:11px;">No basin defined.</p>{% endif %}
-
-  {{ sechead('2', 'Design Basis', (("%g"|format(doc.max_turnover_min)) ~ '-min max turnover') if doc.max_turnover_min else '') }}
-  <table style="width:100%; border-collapse:collapse; background:#f1f5f8; border-left:3px solid #1b5e82;">
-    {% if doc.design_flow_published_gpm or doc.design_flow_gpm %}
-    <tr>
-      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Design flow rate <span style="color:#8794a0; font-size:10px;">(published)</span></td>
-      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;"><b style="color:#124a67;">{{ "%.0f"|format(doc.design_flow_published_gpm or doc.design_flow_gpm) }} GPM</b></td>
-    </tr>
-    {% endif %}
-    {% if doc.minimum_flow_gpm %}
-    <tr>
-      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Minimum circulation flow <span style="color:#8794a0; font-size:10px;">(volume &divide; turnover)</span></td>
-      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;">{% if doc.total_basin_gallons and doc.max_turnover_min %}{{ "%.0f"|format(doc.total_basin_gallons) }} &divide; {{ "%g"|format(doc.max_turnover_min) }} min = {% endif %}<b style="color:#124a67;">{{ "%.2f"|format(doc.minimum_flow_gpm) }} GPM</b></td>
-    </tr>
-    {% endif %}
-    {% if doc.turnover_time_min %}
-    <tr>
-      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Turnover time at published flow <span style="color:#8794a0; font-size:10px;">(volume &divide; flow)</span></td>
-      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;">{% if doc.total_basin_gallons and (doc.design_flow_published_gpm or doc.design_flow_gpm) %}{{ "%.0f"|format(doc.total_basin_gallons) }} &divide; {{ "%.0f"|format(doc.design_flow_published_gpm or doc.design_flow_gpm) }} = {% endif %}<b style="color:#124a67;">{{ "%.2f"|format(doc.turnover_time_min) }} min</b></td>
-    </tr>
-    {% endif %}
-    {% if doc.bather_load %}
-    <tr>
-      <td style="padding:7px 12px; font-size:12px;">Bather load <span style="color:#8794a0; font-size:10px;">(surface &divide; sq ft per person)</span></td>
-      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73;">{% if ns.surface and doc.bather_sf_per_person %}{{ "%g"|format(ns.surface) }} &divide; {{ "%g"|format(doc.bather_sf_per_person) }} = {% endif %}<b style="color:#124a67;">{{ doc.bather_load }} persons</b></td>
-    </tr>
-    {% endif %}
-  </table>
-
-  {{ sechead('3', 'Circulation System', (("%.0f"|format(doc.required_circulation_gpm)) ~ ' GPM') if doc.required_circulation_gpm else '') }}
-  <div style="border-left:3px solid #1b5e82; padding-left:14px; margin-bottom:6px;">
-    <div style="display:inline-block; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.8px; color:#1b5e82; background:#eef4f8; padding:3px 8px; border-radius:3px; margin-bottom:4px;">Circulation Loop{% if doc.design_flow_gpm %} &middot; {{ "%.0f"|format(doc.design_flow_gpm) }} GPM{% endif %}</div>
-    <table style="width:100%; border-collapse:collapse;">
-      {% for e in doc.design_equipment if e.equipment_class == 'Filter' %}
-        {{ line('Filter', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
-      {% endfor %}
-      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Skimmer' and fx.system != 'Therapy-Jet' %}
-        {{ line('Skimmer', (((fx.qty or 1)|string) ~ ' × ' ~ (fx.part_no or 'skimmer') ~ ((' · ' ~ fx.status) if fx.status else '')), (("%.1f"|format(fx.computed_flow_gpm) ~ ' GPM') if fx.computed_flow_gpm else ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else ''))) }}
-      {% endfor %}
-      {% if doc.skimmer_count %}{{ line('', 'Skimmers required (1 per ' ~ (("%g"|format(doc.skimmer_sf_each)) if doc.skimmer_sf_each else '100') ~ ' sq ft)', doc.skimmer_count|string) }}{% endif %}
-      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Main Drain' and fx.system != 'Therapy-Jet' %}
-        {{ line('Main drains', ((fx.part_no or 'Main drain') ~ ', ' ~ ((fx.qty or 1)|string) ~ ' drains' ~ ((' · ' ~ ("%g"|format(fx.open_area_in2)) ~ ' sq in open area') if fx.open_area_in2 else '') ~ ((' · ' ~ ("%.0f"|format(fx.computed_flow_gpm)) ~ ' GPM') if fx.computed_flow_gpm else '')), (fx.status or 'VGB'), ok=true) }}
-      {% endfor %}
-      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Return Inlet' and fx.system != 'Therapy-Jet' %}
-        {{ line('Return inlets', (((fx.qty or 1)|string) ~ ' × ' ~ (fx.part_no or 'return inlet')), ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else (((fx.qty or 1)|string) ~ ' inlets'))) }}
-      {% endfor %}
-      {% set circp = namespace(any=false) %}
-      {% for p in doc.pumps if p.system != 'Therapy-Jet' and p.is_selected %}{% set circp.any = true %}{% endfor %}
-      {% for p in doc.pumps if p.system != 'Therapy-Jet' and (p.is_selected or not circp.any) %}
-        {{ line(('Pump ★' if p.is_selected else 'Pump'), ((p.pump_item or p.pump_description or 'Pump') ~ ((' · ' ~ p.part_number) if p.part_number else '')), ((("%.0f"|format(p.rated_gpm)) ~ ' GPM') if p.rated_gpm else '') ~ ((' / ' ~ ("%.0f"|format(p.rated_tdh_ft)) ~ ' ft') if p.rated_tdh_ft else '')) }}
-      {% endfor %}
-      {% set cs = namespace(suction='', discharge='') %}
-      {% for s in doc.pipe_segments if s.system != 'Therapy-Jet' %}{% if s.line_type == 'Suction' and not cs.suction %}{% set cs.suction = s.nominal_size %}{% endif %}{% if s.line_type == 'Discharge' and not cs.discharge %}{% set cs.discharge = s.nominal_size %}{% endif %}{% endfor %}
-      {% if cs.suction or cs.discharge %}{{ line('Piping', ((cs.suction ~ ' suction') if cs.suction else '') ~ ((' / ') if (cs.suction and cs.discharge) else '') ~ ((cs.discharge ~ ' return') if cs.discharge else '')) }}{% endif %}
-    </table>
-  </div>
-
-  {% if ns.jet %}
-  {{ sechead('4', 'Therapy-Jet System', 'Independent loop') }}
-  <div style="border-left:3px solid #8f5a1d; padding-left:14px; margin-bottom:6px;">
-    <div style="display:inline-block; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.8px; color:#8f5a1d; background:#f6efe6; padding:3px 8px; border-radius:3px; margin-bottom:4px;">Therapy-Jet Loop</div>
-    <table style="width:100%; border-collapse:collapse;">
-      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Therapy Jet' %}
-        {{ line('Therapy jets', ((fx.part_no or 'Therapy jets') ~ ' · ' ~ ((fx.qty or 1)|string) ~ ' jets'), (("%.0f"|format(fx.computed_flow_gpm) ~ ' GPM') if fx.computed_flow_gpm else ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else ''))) }}
-      {% endfor %}
-      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Main Drain' and fx.system == 'Therapy-Jet' %}
-        {{ line('Main drains', ((fx.part_no or 'Main drain') ~ ', ' ~ ((fx.qty or 1)|string) ~ ' drains' ~ ((' · ' ~ ("%g"|format(fx.open_area_in2)) ~ ' sq in open area') if fx.open_area_in2 else '') ~ ((' · ' ~ ("%.0f"|format(fx.computed_flow_gpm)) ~ ' GPM') if fx.computed_flow_gpm else '')), (fx.status or 'VGB'), ok=true) }}
-      {% endfor %}
-      {% set jetp = namespace(any=false) %}
-      {% for p in doc.pumps if p.system == 'Therapy-Jet' and p.is_selected %}{% set jetp.any = true %}{% endfor %}
-      {% for p in doc.pumps if p.system == 'Therapy-Jet' and (p.is_selected or not jetp.any) %}
-        {{ line(('Pump ★' if p.is_selected else 'Pump'), ((p.pump_item or p.pump_description or 'Pump') ~ ((' · ' ~ p.part_number) if p.part_number else '')), ((("%.0f"|format(p.rated_gpm)) ~ ' GPM') if p.rated_gpm else '') ~ ((' / ' ~ ("%.0f"|format(p.rated_tdh_ft)) ~ ' ft') if p.rated_tdh_ft else '')) }}
-      {% endfor %}
-      {% set js = namespace(suction='', discharge='') %}
-      {% for s in doc.pipe_segments if s.system == 'Therapy-Jet' %}{% if s.line_type == 'Suction' and not js.suction %}{% set js.suction = s.nominal_size %}{% endif %}{% if s.line_type == 'Discharge' and not js.discharge %}{% set js.discharge = s.nominal_size %}{% endif %}{% endfor %}
-      {% if js.suction or js.discharge %}{{ line('Piping', ((js.suction ~ ' suction') if js.suction else '') ~ ((' / ') if (js.suction and js.discharge) else '') ~ ((js.discharge ~ ' return') if js.discharge else '')) }}{% endif %}
-    </table>
-  </div>
-  {% endif %}
-
-  {% set treat = doc.design_equipment | selectattr('equipment_class', 'in', ['Heater', 'Chemical Controller', 'Chemical Feed Pump']) | list %}
-  {% if treat or doc.chlorinator_feed_gph %}
-  {{ sechead('5', 'Heating & Treatment', doc.chem_water_type or '') }}
-  <div style="border-left:3px solid #a6b4bd; padding-left:14px; margin-bottom:6px;">
-    <table style="width:100%; border-collapse:collapse;">
-      {% for e in doc.design_equipment if e.equipment_class == 'Heater' %}
-        {{ line('Heater', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
-      {% endfor %}
-      {% for e in doc.design_equipment if e.equipment_class == 'Chemical Controller' %}
-        {{ line('Chem control', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else ''))) }}
-      {% endfor %}
-      {% for e in doc.design_equipment if e.equipment_class == 'Chemical Feed Pump' %}
-        {{ line('Feeder', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), (('×' ~ (e.qty|string)) if (e.qty and e.qty > 1) else '')) }}
-      {% endfor %}
-      {% if doc.chlorinator_feed_gph %}{{ line('Chlorinator', ('Feed at ' ~ (("%g"|format(doc.chem_chlorine_pct)) if doc.chem_chlorine_pct else '10') ~ '% chlorine'), ("%.2f"|format(doc.chlorinator_feed_gph) ~ ' gal/hr')) }}{% endif %}
-    </table>
-  </div>
-  {% endif %}
-
-  {% set meters = doc.design_equipment | selectattr('equipment_class', 'equalto', 'Gauge / Meter') | list %}
-  {% if meters %}
-  {{ sechead('6', 'Instrumentation') }}
-  <div style="border-left:3px solid #a6b4bd; padding-left:14px; margin-bottom:6px;">
-    <table style="width:100%; border-collapse:collapse;">
-      {% for e in meters %}
-        {{ line('Meter / gauge', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
-      {% endfor %}
-    </table>
-  </div>
-  {% endif %}
-
-  {{ sechead('7', 'Code Compliance') }}
-  <table style="width:100%; border-collapse:collapse; font-size:11px;">
-    <tr>
-      <td style="width:33%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
-        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Anti-entrapment</div>
-        <div style="color:#4a5a63; margin-top:3px;">{{ doc.main_drain_status or 'Dual-drain, VGB &mdash; &le; 1.5 ft/sec with one drain blocked' }}</div>
-      </td>
-      <td style="width:33%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
-        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Vessel listing</div>
-        <div style="color:#4a5a63; margin-top:3px;">{{ doc.vessel_listing or 'Listed shell' }}</div>
-      </td>
-      <td style="width:34%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
-        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Turnover</div>
-        <div style="color:#4a5a63; margin-top:3px;">{{ "%g"|format(doc.max_turnover_min) if doc.max_turnover_min else '30' }} min max{% if doc.turnover_time_min %} &middot; {{ "%.1f"|format(doc.turnover_time_min) }} min at published flow{% endif %}</div>
-      </td>
-    </tr>
-  </table>
-
-  {% if tb.preliminary %}
-  <div style="margin-top:20px; padding-top:10px; border-top:1px solid #cbd6dd; font-size:10px; color:#8794a0;">
-    <span style="color:#8f5a1d; font-weight:bold;">PRELIMINARY &mdash; not for construction; sealed by P.E. before issue.</span>
-    &nbsp;{{ tb.contractor.name }} &middot; Water Engineering.
-  </div>
-  {% endif %}
-</div>
-""".strip()
 
 # --- Control Panel Submittal (DOC-0126, verbatim section wording) -----------
 SUBMITTAL_HTML = """
@@ -589,165 +265,164 @@ PANEL_SCHEDULE_HTML = """
 
 
 # --------------------------------------------------------------------------
-# Submittal packet — the assembled health-department plan set. Composed from a
-# cover (title block + PRELIMINARY watermark), the spa-data + schedules, the
-# auto-generated circulation/one-line schematics, the standard notes, and the
-# calculation audit, each on its own page. The packet is a DRAFT for a P.E. to
-# seal (see packet.py); the per-sheet banner + cover marking say so.
+# Submittal packet: the assembled health-department plan set. A cover (title block,
+# PRELIMINARY marking, revisions), then the model-2 sheets prints.PACKET_SHEETS names,
+# the standard details and the standard notes, each on its own page. The packet is a
+# DRAFT for a P.E. to seal (see packet.py); the per-sheet banner and the cover say so.
 # --------------------------------------------------------------------------
 
+# `preliminary` and `tb` (the title block) are set once at the top of the packet (_packet_html): each
+# sheet repeats the banner, and we_title_block reads Settings and the Project.
 _PACKET_BANNER = (
-    "{% if we_title_block(doc.name).preliminary %}"
-    '<div style="text-align:center; color:#b00; font-size:9px; font-weight:bold; '
-    'letter-spacing:1px; border-bottom:1px solid #f0c0c0; margin-bottom:8px;">'
+    "{% if preliminary %}"
+    f'<div style="text-align:center;color:{ps.RED};font-size:9px;font-weight:700;letter-spacing:1px;'
+    f'border-bottom:1px solid {ps.BORDER_100};padding-bottom:4px;margin-bottom:8px">'
     "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
 )
 
-PACKET_COVER_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; page-break-after:always;">
-  {% set tb = we_title_block(doc.name) %}
-  <div style="text-align:center; border-bottom:3px solid #222; padding-bottom:12px; margin-bottom:16px;">
-    <div style="font-size:22px; font-weight:bold;">{{ tb.project.name }}</div>
-    <div style="font-size:13px; color:#555;">Health Department Submittal{% if tb.governing_code %} &middot; {{ tb.governing_code }}{% endif %}</div>
-    {% if tb.preliminary %}<div style="color:#b00; font-weight:bold; letter-spacing:2px; margin-top:6px;">PRELIMINARY &mdash; NOT FOR CONSTRUCTION</div>{% endif %}
-  </div>
-  <table style="width:100%; font-size:12px; border-collapse:collapse;">
-    <tr>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">ENGINEER</div>
-        <div>{{ tb.engineer.name or '(engineer of record)' }}</div>
-        {% if tb.engineer.license %}<div>P.E. {{ tb.engineer.license }}</div>{% endif %}
-        <div style="white-space:pre-wrap;">{{ tb.engineer.address or '' }}</div>
-        <div>{{ tb.engineer.phone or '' }}</div>
-        <div style="margin-top:8px; width:120px; height:120px; border:1px dashed #bbb; text-align:center; line-height:120px; color:#bbb; font-size:10px;">
-          {% if tb.engineer.stamp and not tb.preliminary %}<img src="{{ tb.engineer.stamp }}" style="max-width:118px; max-height:118px; vertical-align:middle;">{% else %}P.E. STAMP{% endif %}
-        </div>
-      </td>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">CONTRACTOR</div>
-        <div>{{ tb.contractor.name }}</div>
-        <div style="white-space:pre-wrap;">{{ tb.contractor.address or '' }}</div>
-        <div>{{ tb.contractor.phone or '' }}</div>
-        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">PROJECT</div>
-        <div>{{ tb.project.name }}</div>
-        {% if tb.project.customer %}<div>{{ tb.project.customer }}</div>{% endif %}
-      </td>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">ISSUE</div>
-        <div>Issue Date: {{ tb.issue_date or '________' }}</div>
-        <div>Drawn By: {{ tb.drawn_by or '____' }}</div>
-        {% if tb.venue_type %}<div>Venue: {{ tb.venue_type }}</div>{% endif %}
-        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">SHEET INDEX</div>
-        <div>Cover &middot; Spa Data &amp; Schedules &middot; Schematics &middot; Standard Notes &middot; Design Calculations</div>
-      </td>
-    </tr>
-  </table>
-  <div style="margin-top:16px;">
-    <div style="font-weight:bold; color:#888; font-size:10px;">REVISIONS</div>
-    <table style="width:100%; border-collapse:collapse; font-size:11px;">
-      <tr style="background:#f4f4f4;"><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Mark</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Date</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Description</th></tr>
-      {% for r in tb.revisions %}<tr><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.mark }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.date }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.description }}</td></tr>{% endfor %}
-      {% if not tb.revisions %}<tr><td colspan="3" style="border:1px solid #ddd; padding:3px 6px; color:#999;">No revisions.</td></tr>{% endif %}
-    </table>
-  </div>
-</div>
-""".strip()
+_COVER_META = (
+    "{% if tb.governing_code %}<div>{{ tb.governing_code|e }}</div>{% endif %}"
+    "<div>Issued {{ ps_date(tb.issue_date) if tb.issue_date else '________' }}</div>"
+    "<div>Drawn by {{ (tb.drawn_by or '____')|e }}</div>"
+    "{% if tb.preliminary %}"
+    f'<div style="{ps.FAIL};letter-spacing:1px">PRELIMINARY &mdash; NOT FOR CONSTRUCTION</div>'
+    "{% endif %}"
+)
+def _lines(expr):
+    """A multi-line text field as escaped lines, each after a break."""
+    return "{% for line in (" + expr + " or '').split('\\n') %}{% if line %}<br>{{ line|e }}{% endif %}{% endfor %}"
+_STAMP = (
+    f'<div style="width:130px;height:130px;border:1px dashed {ps.BORDER_100};text-align:center;line-height:130px;'
+    f'font-size:10px;color:{prints.MUTED}">'
+    "{% if tb.engineer.stamp and not tb.preliminary %}"
+    '<img src="{{ tb.engineer.stamp|e }}" style="max-width:128px;max-height:128px;vertical-align:middle">'
+    "{% else %}P.E. STAMP{% endif %}</div>"
+)
+_SHEET_INDEX = (
+    "Cover",
+    "Design basis",
+    "Equipment, piping and fitting schedules",
+    "Electrical",
+    "Structural takeoff",
+    "Design drawings",
+    "Plan check",
+    "Calculations by section",
+    "Standard details",
+    "Standard notes",
+)
 
-PACKET_SPA_DATA_HTML = """
-<h3 style="margin:0 0 6px; font-size:14px;">Spa / Pool Data</h3>
-<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:14px;">
-  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555; width:20%;">Volume</td><td style="border:1px solid #ddd; padding:3px 6px; width:30%;">{{ doc.total_basin_gallons or '&mdash;' }} gal</td>
-      <td style="border:1px solid #ddd; padding:3px 6px; color:#555; width:20%;">Design Flow</td><td style="border:1px solid #ddd; padding:3px 6px; width:30%;">{{ doc.design_flow_gpm or '&mdash;' }} GPM</td></tr>
-  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Turnover</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.turnover_time_min or '&mdash;' }} min</td>
-      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Minimum Flow</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.minimum_flow_gpm or '&mdash;' }} GPM</td></tr>
-  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Bather Load</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.bather_load or '&mdash;' }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Skimmers</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.skimmer_count or '&mdash;' }}</td></tr>
-  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">TDH</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.computed_tdh_ft or '&mdash;' }} ft</td>
-      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Main Drain (VGB)</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.main_drain_status or '&mdash;' }}</td></tr>
-</table>
-""".strip()
+# The cover: the print design system's letterhead (Design pillar, HEALTH DEPARTMENT SUBMITTAL), a facts
+# row of the engineer, the contractor and the project, the P.E. stamp box beside the sheet index, and the
+# revisions as a ruled table.
+PACKET_COVER_HTML = (
+    ps.letterhead(prints.PILLAR, "HEALTH DEPARTMENT SUBMITTAL", "{{ tb.project.name|e }}", _COVER_META)
+    + ps.facts_open()
+    + ps.fact(
+        "ENGINEER",
+        "{{ (tb.engineer.name or '(engineer of record)')|e }}"
+        "{% if tb.engineer.license %}<br>P.E. {{ tb.engineer.license|e }}{% endif %}"
+        + _lines("tb.engineer.address")
+        + "{% if tb.engineer.phone %}<br>{{ tb.engineer.phone|e }}{% endif %}",
+    )
+    + ps.fact(
+        "CONTRACTOR",
+        "{{ tb.contractor.name|e }}" + _lines("tb.contractor.address")
+        + "{% if tb.contractor.phone %}<br>{{ tb.contractor.phone|e }}{% endif %}",
+    )
+    + ps.fact(
+        "PROJECT",
+        "{{ tb.project.name|e }}{% if tb.project.customer %}<br>{{ tb.project.customer|e }}{% endif %}"
+        "{% if tb.venue_type %}<br>{{ tb.venue_type|e }}{% endif %}",
+    )
+    + ps.facts_close()
+    + '<div style="display:table;width:100%;margin-top:10px">'
+    + '<div style="display:table-cell;width:160px;vertical-align:top">' + _STAMP + "</div>"
+    + '<div style="display:table-cell;vertical-align:top">'
+    + f'<div style="{ps.LABEL}">SHEET INDEX</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
+    + "".join(
+        f'<tr><td style="{ps.TD};width:26px">{n}</td><td style="{ps.TD}">{title}</td></tr>'
+        for n, title in enumerate(_SHEET_INDEX, 1)
+    )
+    + "</table></div></div>"
+    + ps.section_title("Revisions")
+    + '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr>'
+    + f'<th style="{ps.th(prints.PILLAR)}">Mark</th><th style="{ps.th(prints.PILLAR)}">Date</th>'
+    + f'<th style="{ps.th(prints.PILLAR)}">Description</th></tr></thead><tbody>'
+    + "{% for r in tb.revisions %}"
+    + f'<tr><td style="{ps.TD}">{{{{ r.mark|e }}}}</td><td style="{ps.TD}">{{{{ ps_date(r.date) }}}}</td>'
+    + f'<td style="{ps.TD}">{{{{ r.description|e }}}}</td></tr>'
+    + "{% endfor %}</tbody></table>"
+    + "{% if not tb.revisions %}"
+    + f'<p style="margin:2px 0 10px;font-size:11.5px;font-style:italic;color:{prints.MUTED}">No revisions yet.</p>'
+    + "{% endif %}"
+)
 
-PACKET_EQUIPMENT_HTML = """
-{% if doc.design_equipment %}
-<h3 style="margin:0 0 6px; font-size:14px;">Circulation Equipment Schedule</h3>
-<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:14px;">
-  <thead><tr style="background:#f4f4f4;">
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Mark</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Class</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Equipment / Model</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:right;">Qty</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Rating</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Electrical</th>
-    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Check</th>
-  </tr></thead>
-  <tbody>
-    {% for e in doc.design_equipment %}
-    <tr>
-      <td style="border:1px solid #ddd; padding:3px 6px;">{{ loop.index }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.equipment_class or '' }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.equipment_item }}{% if e.model_no %} &middot; {{ e.model_no }}{% endif %}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px; text-align:right;">{{ e.qty or 1 }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.rating or '' }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.electrical or '' }}</td>
-      <td style="border:1px solid #ddd; padding:3px 6px;{% if e.note and e.note != 'OK' %} color:#b00;{% endif %}">{{ e.note or '' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-""".strip()
+# Standard details two to a row, as a table: the PDF backends lay out no flex or grid.
+PACKET_DETAILS_HTML = (
+    ps.section_title("Standard details (SP-4)")
+    + "{% set details = we_standard_details(doc.governing_code) %}"
+    + "{% if not details %}"
+    + f'<p style="font-size:11.5px;font-style:italic;color:{prints.MUTED}">'
+    + "No standard details are configured yet (add them under Standard Detail).</p>"
+    + "{% endif %}"
+    + '<table style="width:100%;border-collapse:collapse">'
+    + "{% for row in details|batch(2) %}<tr>{% for d in row %}"
+    + '<td style="width:50%;vertical-align:top;padding:6px !important;page-break-inside:avoid">'
+    + f'<div style="{ps.LABEL};margin-bottom:4px">{{{{ (d.title or d.detail_key)|e }}}}</div>'
+    + f'<div class="we-drawing" style="border:1px solid {ps.BORDER_100};padding:6px">{{{{ d.svg }}}}</div></td>'
+    + "{% endfor %}</tr>{% endfor %}</table>"
+)
 
-PACKET_SCHEMATICS_HTML = """
-<h3 style="margin:0 0 8px; font-size:14px;">Circulation Equipment Schematic (SP-3)</h3>
-<div style="overflow-x:auto;">{{ we_circulation_schematic(doc.name) | safe }}</div>
-<h3 style="margin:20px 0 8px; font-size:14px;">Electrical One-Line (SP-6)</h3>
-<div style="overflow-x:auto;">{{ we_electrical_oneline(doc.name) | safe }}</div>
-<p style="margin:12px 0 0; color:#999; font-size:10px;">Schematics are generated from the design data; the plan-specific site/piping CAD drawings are attached separately.</p>
-""".strip()
-
-PACKET_DETAILS_HTML = """
-<h3 style="margin:0 0 8px; font-size:14px;">Standard Details (SP-4)</h3>
-{% set details = we_standard_details(doc.governing_code) %}
-{% if not details %}<p style="color:#999; font-size:11px;">No standard details are configured yet (add them under Standard Detail).</p>{% endif %}
-<div style="display:flex; flex-wrap:wrap; gap:16px;">
-{% for d in details %}
-  <div style="width:46%; min-width:270px;">
-    <div style="font-weight:bold; font-size:11px; margin-bottom:4px;">{{ d.title or d.detail_key }}</div>
-    <div style="border:1px solid #e2e8f0; padding:6px; overflow-x:auto;">{{ d.svg | safe }}</div>
-  </div>
-{% endfor %}
-</div>
-""".strip()
-
-PACKET_NOTES_HTML = """
-<h3 style="margin:0 0 8px; font-size:14px;">Standard Notes</h3>
-{% set notes = we_standard_notes(doc.governing_code) %}
-{% if not notes %}<p style="color:#999; font-size:11px;">No standard notes are configured yet (add them under Standard Note, keyed to the governing code).</p>{% endif %}
-{% set ns = namespace(cat='') %}
-{% for n in notes %}
-  {% if n.category != ns.cat %}<div style="font-weight:bold; color:#888; font-size:10px; margin:10px 0 4px; text-transform:uppercase;">{{ n.category }}</div>{% set ns.cat = n.category %}{% endif %}
-  <p style="margin:0 0 6px; font-size:11px;">{% if n.title %}<b>{{ n.title }}.</b> {% endif %}{{ n.body }}</p>
-{% endfor %}
-""".strip()
+PACKET_NOTES_HTML = (
+    ps.section_title("Standard notes")
+    + "{% set notes = we_standard_notes(doc.governing_code) %}"
+    + "{% if not notes %}"
+    + f'<p style="font-size:11.5px;font-style:italic;color:{prints.MUTED}">'
+    + "No standard notes are configured yet (add them under Standard Note, keyed to the governing code).</p>"
+    + "{% endif %}"
+    + "{% set ns = namespace(cat='') %}"
+    + "{% for n in notes %}"
+    + "{% if n.category != ns.cat %}"
+    + f'<div style="{ps.LABEL};margin:10px 0 4px;text-transform:uppercase">{{{{ n.category|e }}}}</div>'
+    + "{% set ns.cat = n.category %}{% endif %}"
+    + '<p style="margin:0 0 6px;font-size:11.5px">{% if n.title %}<b>{{ n.title|e }}.</b> {% endif %}{{ n.body|e }}</p>'
+    + "{% endfor %}"
+)
 
 
-def _packet_sheet(html):
+def _packet_sheet(key):
+    """One packet sheet: a page of its own, the preliminary banner, its heading and blocks."""
     return (
-        '<div style="page-break-after:always; font-family:Helvetica,Arial,sans-serif; color:#222;">'
-        + _PACKET_BANNER + html + "</div>"
+        '<div style="page-break-before:always">' + _PACKET_BANNER
+        + "{% set sh = p.sheets['" + key + "'] %}" + ps.section_title("{{ sh.title|e }}")
+        + "{% for b in sh.blocks %}{{ we_block(b) }}{% endfor %}</div>"
     )
 
 
 def _packet_html():
-    """Compose the master packet from the cover + the existing/new sheet bodies."""
+    """The health-department plan set: cover and title block, the model-2 sheets
+    (``prints.PACKET_SHEETS``), then the standard details and notes. No budget, no O&M."""
+    keys = "[" + ", ".join(f"'{k}'" for k in prints.PACKET_SHEETS) + "]"
     return (
-        PACKET_COVER_HTML
-        + _packet_sheet(PACKET_SPA_DATA_HTML + PACKET_EQUIPMENT_HTML + SCHEDULES_HTML)
-        + _packet_sheet(PACKET_SCHEMATICS_HTML)
-        + _packet_sheet(PACKET_DETAILS_HTML)
-        + _packet_sheet(PACKET_NOTES_HTML)
-        + _packet_sheet(AUDIT_HTML)
+        "{%- set p = we_print(doc, " + keys + ") -%}"
+        + "{%- set tb = we_title_block(doc.name) -%}{%- set preliminary = tb.preliminary -%}"
+        + BLOCK_MACRO
+        + _PAGE_CSS
+        + ps.page_open(prints.PILLAR)
+        + PACKET_COVER_HTML
+        + "".join(_packet_sheet(k) for k in prints.PACKET_SHEETS)
+        + '<div style="page-break-before:always">' + _PACKET_BANNER + PACKET_DETAILS_HTML + "</div>"
+        + '<div style="page-break-before:always">' + _PACKET_BANNER + PACKET_NOTES_HTML + "</div>"
+        + ps.page_close(prints.PILLAR)
     )
+
+
+def water_formats():
+    """Every Water Feature Design Print Format this module seeds: ``{name: html}``."""
+    out = {pf: _format_html(pf) for pf in prints.FORMATS}
+    out[PACKET_PF] = _packet_html()
+    return out
 
 
 def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
@@ -773,21 +448,71 @@ def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
     pf.save(ignore_permissions=True)
 
 
-def ensure_water_print_formats():
-    """after_migrate entry: ship the Water Feature Design (Results, Calculation
-    Audit, Schedules, Design Calculations, Submittal Packet) + Control Panel
-    Design (Submittal, Panel Schedule) Print Formats. Idempotent (upserts the
-    HTML) and guarded (a failure only logs)."""
+def set_default_report():
+    """Make the Design Report the doctype's default print format, only once it exists and is enabled.
+
+    Not a fixture: a fixture applies whether or not the format seeded, and a default naming a missing
+    format breaks the form's Print. A default an admin chose is kept, unless it names a format that is
+    gone, disabled, or one of ``prints.SUPERSEDED``. Never raises."""
     try:
-        if frappe.db.exists("DocType", DOCTYPE):
-            _upsert_print_format(RESULTS_PF, RESULTS_HTML)
-            _upsert_print_format(AUDIT_PF, AUDIT_HTML)
-            _upsert_print_format(SCHEDULES_PF, SCHEDULES_HTML)
-            _upsert_print_format(DESIGN_CALC_PF, DESIGN_CALC_HTML)
-            _upsert_print_format(PACKET_PF, _packet_html(), pdf_generator="chrome")
-        if frappe.db.exists("DocType", CONTROL_DOCTYPE):
-            _upsert_print_format(SUBMITTAL_PF, SUBMITTAL_HTML, doc_type=CONTROL_DOCTYPE)
-            _upsert_print_format(PANEL_SCHEDULE_PF, PANEL_SCHEDULE_HTML, doc_type=CONTROL_DOCTYPE)
+        if not frappe.db.exists("Print Format", prints.PF_REPORT) or frappe.db.get_value(
+            "Print Format", prints.PF_REPORT, "disabled"
+        ):
+            return
+        current = frappe.db.get_value(
+            "Property Setter",
+            {"doc_type": DOCTYPE, "doctype_or_field": "DocType", "property": "default_print_format"},
+            "value",
+        )
+        if current == prints.PF_REPORT:
+            return
+        usable = (
+            current
+            and current not in prints.SUPERSEDED
+            and frappe.db.exists("Print Format", current)
+            and not frappe.db.get_value("Print Format", current, "disabled")
+        )
+        if usable:
+            return
+        from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+        make_property_setter(DOCTYPE, None, "default_print_format", prints.PF_REPORT, "Data", for_doctype=True)
+        frappe.clear_cache(doctype=DOCTYPE)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water Feature Design default print format")
+
+
+def disable_superseded_formats():
+    """Disable the formats that read the retired child tables (``prints.SUPERSEDED``). Disabled, not
+    deleted: a removed seed leaves the record live, printing empty tables, and a delete would lose its
+    history. Re-run every migrate, so one an admin turns back on is turned off again."""
+    for name in prints.SUPERSEDED:
+        try:
+            if frappe.db.exists("Print Format", name) and not frappe.db.get_value("Print Format", name, "disabled"):
+                frappe.db.set_value("Print Format", name, "disabled", 1, update_modified=False)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Water Engineering print format {name}")
+
+
+def ensure_water_print_formats():
+    """after_migrate entry: ship the Water Feature Design formats (``water_formats``) and the
+    Control Panel Design Submittal and Panel Schedule. Idempotent (upserts the HTML) and guarded
+    per format (a failure only logs, and the others still ship)."""
+    jobs = []
+    if frappe.db.exists("DocType", DOCTYPE):
+        for name, html in water_formats().items():
+            jobs.append((name, html, DOCTYPE, "chrome" if name == PACKET_PF else None))
+    if frappe.db.exists("DocType", CONTROL_DOCTYPE):
+        jobs.append((SUBMITTAL_PF, SUBMITTAL_HTML, CONTROL_DOCTYPE, None))
+        jobs.append((PANEL_SCHEDULE_PF, PANEL_SCHEDULE_HTML, CONTROL_DOCTYPE, None))
+    for name, html, doc_type, generator in jobs:
+        try:
+            _upsert_print_format(name, html, doc_type=doc_type, pdf_generator=generator)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Water Engineering print format {name}")
+    disable_superseded_formats()
+    set_default_report()
+    try:
         frappe.db.commit()
         frappe.logger().info("[water_engineering] ensured Water Engineering print formats")
     except Exception:

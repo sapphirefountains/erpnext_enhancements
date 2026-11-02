@@ -28,6 +28,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt
 
 from erpnext_enhancements.water_engineering import issues as design_issues
+from erpnext_enhancements.water_engineering import prints
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
 from erpnext_enhancements.water_engineering.engine import model as model_engine
 
@@ -42,6 +43,8 @@ RESULT_KEYS = (
 	"electrical",
 	"structural",
 	"controls",
+	# what the print formats read beyond the page's reply (phase G, water_engineering/prints.py)
+	"paper",
 )
 
 # Rollup key (the API's) -> field. TDH keeps its v1 column, computed_tdh_ft, which the dashboard
@@ -287,13 +290,15 @@ def write_derive(doc, out):
 	doc.kit = kits_engine.match_kit(model) if model.get("kit") else ""
 	doc.mode = "Full" if str(model.get("mode") or "").lower() == "full" else "Quick"
 	write_bom(doc, out.get("bom") or [])
-	doc.budget_total = round(
-		sum(
-			flt(getattr(r, "amount", None) if not isinstance(r, dict) else r.get("amount"))
-			for r in doc.get("bom") or []
-		),
-		2,
-	)
+	# The BOM's sum with the Manual lines, and the budget the Budget print shows: that sum plus the
+	# house-rule contingency (prints.budget_summary, so the record and the paper are one figure).
+	rows = [
+		{f: (r.get(f) if isinstance(r, dict) else getattr(r, f, None)) for f in LINE_FIELDS}
+		for r in doc.get("bom") or []
+	]
+	summary = prints.budget_summary(rows, (out.get("paper") or {}).get("budget_rules") or {})
+	doc.bom_subtotal = summary["subtotal"]
+	doc.budget_total = summary["total"]
 	readiness = out.get("readiness") or {}
 	write_issue_state(doc, out.get("issues") or [], readiness)
 	if (doc.get("status") or "Draft") in ("Draft", "Derived"):

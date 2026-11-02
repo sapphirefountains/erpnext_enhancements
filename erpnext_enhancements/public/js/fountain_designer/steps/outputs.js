@@ -43,7 +43,7 @@ export function render(ctx) {
 			<thead><tr><th scope="col">${esc(__("Line"))}</th><th scope="col" class="fd-num">${esc(__("Qty"))}</th><th scope="col">${esc(__("Unit"))}</th>
 			<th scope="col" class="fd-num">${esc(__("Rate"))}</th><th scope="col" class="fd-num">${esc(__("Amount"))}</th></tr></thead>
 			${body}
-			<tfoot><tr><th scope="row" colspan="4">${esc(__("Budget"))}</th><td class="fd-num"><strong>${esc(money(total))}</strong></td></tr></tfoot>
+			<tfoot>${foot_rows(h, bom, reply.rollups || {}, money)}</tfoot>
 		</table></div>`
 		: h.state_html("empty", { title: __("No bill of materials yet."), body: __("It appears once the design is worked out.") });
 	const saved = Boolean(ctx.design && ctx.design.name);
@@ -56,13 +56,17 @@ export function render(ctx) {
 	${ctx.last_push ? `<p class="fd-push-result" role="status">${ctx.last_push}</p>` : ""}`;
 	const out = reply.outputs || {};
 	const papers = (out.schedules || []).concat(out.packet ? [Object.assign({ key: "packet" }, out.packet)] : []);
+	const design_name = ctx.design && ctx.design.name;
 	const papers_html = papers.length
 		? `<ul class="fd-list">${papers
 				.map((p) => {
-					const url = safe_desk_url(p.url);
-					return `<li>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(__(p.label))}</a>` : `${esc(__(p.label))} <span class="fd-muted">${esc(__("(not available yet)"))}</span>`}</li>`;
+					const url = safe_desk_url(p.url) || safe_desk_url(print_url(ctx.boot, design_name, p.key));
+					const why = !design_name && print_url(ctx.boot, "x", p.key) ? __("(save the design to print it)") : __("(not available yet)");
+					return `<li>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(__(p.label))}</a>` : `${esc(__(p.label))} <span class="fd-muted">${esc(why)}</span>`}</li>`;
 				})
-				.join("")}</ul>`
+				.join("")}</ul>
+			${design_name ? `<p class="fd-hint">${esc(__("Each paper prints the design as last saved."))}</p>` : ""}
+			${send_html(ctx, h)}`
 		: `<p class="fd-muted">${esc(__("No schedules yet."))}</p>`;
 	const om = out.om;
 	const om_html = om
@@ -87,6 +91,43 @@ export function render(ctx) {
 		${drawer("om", __("O&M per year: {0}", [money(om && om.total_per_year) || "—"]), om_html)}
 		${drawer("winterization", winter && winter.needed === false ? __("Winterization: not needed") : __("Winterization"), winter_html)}
 		${start ? drawer("startup", __("Start-up checklist"), start) : ""}`;
+}
+
+// The BOM's foot: the subtotal of its lines, the contingency, and the budget (README, rollups: budget_total
+// is bom_subtotal plus the house-rule contingency, the figure the Budget print shows). A reply with no
+// contingency shows the budget alone.
+function foot_rows(h, bom, rollups, money) {
+	const { esc, __ } = h;
+	const total = rollups.budget_total;
+	const sub = rollups.bom_subtotal != null ? rollups.bom_subtotal : bom.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+	const row = (label, value, strong) =>
+		`<tr><th scope="row" colspan="4">${esc(label)}</th><td class="fd-num">${strong ? `<strong>${esc(money(value))}</strong>` : esc(money(value))}</td></tr>`;
+	if (total == null || Math.abs(total - sub) < 0.005) return row(__("Budget"), total, true);
+	return row(__("Subtotal"), sub) + row(__("Contingency"), total - sub) + row(__("Budget"), total, true);
+}
+
+// Send design: pick a paper, then frappe's email composer with it attached as a PDF (app.send_design).
+// Needs a saved design, the email permission (boot.can.email) and at least one paper on this site.
+function send_html(ctx, h) {
+	const { esc, __ } = h;
+	const prints = (ctx.boot && ctx.boot.prints) || [];
+	const can = Boolean(ctx.design && ctx.design.name && ctx.can && ctx.can.email && prints.length && !ctx.busy);
+	if (!prints.length) return "";
+	const options = prints.map((p) => `<option value="${esc(p.print_format)}">${esc(__(p.label))}</option>`).join("");
+	return `<div class="fd-actions">
+		<label class="fd-visually-hidden" for="fd-send-format">${esc(__("Paper to send"))}</label>
+		<select id="fd-send-format" class="fd-input" data-fd-send-format${can ? "" : " disabled"}>${options}</select>
+		<button type="button" class="sf-btn sf-btn--secondary" data-fd-action="send-design"${can ? "" : " disabled"}>${esc(__("Send design"))}</button>
+	</div>`;
+}
+
+// The print view of a saved design in the Print Format boot.prints names for this paper (README, boot),
+// or "" when the design is unsaved or this site has no such format.
+export function print_url(boot, name, key) {
+	const row = ((boot && boot.prints) || []).find((r) => r.key === key);
+	if (!row || !row.print_format || !name) return "";
+	const q = (v) => encodeURIComponent(v);
+	return `/printview?doctype=${q("Water Feature Design")}&name=${q(name)}&format=${q(row.print_format)}&no_letterhead=1`;
 }
 
 // A print link only to a desk route or the print view on this site; anything else is shown as text.

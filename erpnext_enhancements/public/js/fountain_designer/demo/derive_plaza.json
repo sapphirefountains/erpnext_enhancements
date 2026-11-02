@@ -285,7 +285,8 @@
   "warning_count": 1,
   "completion_percent": 64,
   "issue_ready": false,
-  "budget_total": 169320.0
+  "budget_total": 169320.0,
+  "bom_subtotal": 169320.0
  },
  "issues": [
   {
@@ -555,18 +556,33 @@
  "outputs": {
   "schedules": [
    {
-    "key": "equipment",
-    "label": "Equipment schedule",
+    "key": "report",
+    "label": "Design report",
     "url": null
    },
    {
-    "key": "piping",
-    "label": "Piping schedule",
+    "key": "schedules",
+    "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
     "url": null
    },
    {
-    "key": "fittings",
-    "label": "Fitting schedule",
+    "key": "drawings",
+    "label": "Design drawings",
+    "url": null
+   },
+   {
+    "key": "calcs",
+    "label": "Engineering calculations and plan check",
+    "url": null
+   },
+   {
+    "key": "budget",
+    "label": "Budget proposal",
+    "url": null
+   },
+   {
+    "key": "om",
+    "label": "Operations, maintenance and winterization",
     "url": null
    }
   ],
@@ -602,10 +618,14 @@
   "winterization": {
    "needed": true,
    "steps": [
-    "Drain the surge tank and the manifold to below the 30 in frost depth.",
-    "Blow out every zone line with air and leave the solenoids open.",
-    "Pull the jets and cap the fittings.",
-    "Drain the pumps and filters; leave the drain plugs out."
+    "Shut off and disconnect the autofill",
+    "Lower the water below the returns and skimmers, or drain the basin",
+    "Drain pump p1: open the drain plugs, store them in the basket",
+    "Drain the filter, heater and strainers; open every equipment drain",
+    "Blow out line s1",
+    "Blow out line s2",
+    "Pull the upward-facing nozzles and fit winter caps",
+    "Turn off and lock out the feature circuits; leave heat on in a heated room"
    ]
   },
   "startup": [

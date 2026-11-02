@@ -125,7 +125,9 @@ def test_reply_vocabularies_and_strict_json(name):
     for line in out["bom"]:
         assert line["source"] in {"Auto", "Manual"}
         assert line["amount"] == pytest.approx(line["qty"] * line["rate"], abs=0.01)
-    assert out["rollups"]["budget_total"] == pytest.approx(sum(r["amount"] for r in out["bom"]), abs=0.01)
+    assert out["rollups"]["bom_subtotal"] == pytest.approx(sum(r["amount"] for r in out["bom"]), abs=0.01)
+    # the budget is the subtotal plus the house-rule contingency (10 % by default), the Budget print's figure
+    assert out["rollups"]["budget_total"] == pytest.approx(out["rollups"]["bom_subtotal"] * 1.10, abs=0.01)
     assert out["rollups"]["blocker_count"] == sum(1 for i in out["issues"] if i["severity"] == "blocker")
     for url in [s["url"] for s in out["outputs"]["schedules"]] + [out["outputs"]["packet"]["url"]]:
         assert url is None  # phase G prints them

@@ -1,9 +1,11 @@
-"""Submittal packet assembly for a Water Feature Design.
+"""Submittal packet assembly for a Water Feature Design, and the print formats' Jinja helpers.
 
-Assembles the health-department plan set — title block, spa data, schedules,
-design calculations, standard notes, and the auto-generated circulation +
-one-line schematics — into one branded HTML print format ("Water Feature Design
-- Submittal Packet").
+Assembles the health-department plan set (cover and title block, design basis, schedules,
+electrical, structural, drawings, design calculations, the calculation audit, standard details
+and notes) into one branded HTML print format ("Water Feature Design - Submittal Packet").
+Since phase G of the Fountain Designer (v1.770.0) every sheet reads the schema-2 record through
+``we_print``: the stored ``model_json``, ``results_json`` and ``bom`` rows, built into sheets by
+the frappe-free ``prints.build``. Nothing on paper recomputes the engine.
 
 The packet is a DRAFT for a licensed P.E. to review and seal: it carries a
 "PRELIMINARY — NOT FOR CONSTRUCTION" watermark and a stamp placeholder until a PE
@@ -13,25 +15,20 @@ today); the server-side combined PDF + Drive upload is deferred until the prod
 PDF backend is fixed (docs/pdf-generation.md).
 
 The Jinja helpers here are registered in hooks.py `jinja.methods` and compute in
-Python what the print sandbox can't — the SVG schematics, the resolved title
-block, and the code-keyed standard-note list.
+Python what the print sandbox can't: the print context (``we_print``), the resolved
+title block, the stored drawings, and the code-keyed standard notes and details.
 """
 
 import json
 
 import frappe
 from frappe import _
-from frappe.utils import flt
 
 from erpnext_enhancements.utils.normalize import phone_display
-from erpnext_enhancements.water_engineering.engine import (
-    circulation_schematic_svg,
-    electrical_oneline_svg,
-)
+from erpnext_enhancements.water_engineering import prints
 
-PACKET_PF = "Water Feature Design - Submittal Packet"
+PACKET_PF = prints.PF_PACKET
 DESIGN_DOCTYPE = "Water Feature Design"
-CONTROL_DOCTYPE = "Control Panel Design"
 
 # The fountain venues (mirrors engine.aquatic) — a regulated packet is any other.
 _FOUNTAIN_VENUES = {"", "decorative fountain", "interactive water feature"}
@@ -47,16 +44,6 @@ def _settings():
         return frappe.get_cached_doc("Water Engineering Settings")
     except Exception:
         return frappe._dict()
-
-
-def _loads(text):
-    if not text:
-        return []
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, list) else []
-    except (ValueError, TypeError):
-        return []
 
 
 def is_regulated_packet(doc):
@@ -102,69 +89,94 @@ def we_title_block(design):
     }
 
 
-def _circulation_nodes(doc):
-    nodes = [{
-        "label": "Basin",
-        "sub": f"{flt(doc.get('total_basin_gallons')):.0f} gal" if flt(doc.get("total_basin_gallons")) else "",
-    }]
-    for p in doc.get("pumps") or []:
-        nodes.append({
-            "label": p.get("pump_description") or p.get("part_number") or p.get("pump_item") or "Pump",
-            "sub": "",
-        })
-    seen = set()
-    for s in doc.get("pipe_segments") or []:
-        for c in _loads(s.get("components_json")):
-            name = str(c.get("type") or c.get("label") or "").strip()
-            if name and name.lower() not in seen:
-                seen.add(name.lower())
-                nodes.append({"label": name, "sub": ""})
-    nodes.append({"label": "Return", "sub": ""})
-    return nodes
+def _json(raw, kind=dict):
+    """A JSON field as ``kind``: it reads back as text or already parsed, and may be junk."""
+    if isinstance(raw, kind):
+        return raw
+    if not raw:
+        return kind()
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return kind()
+    return data if isinstance(data, kind) else kind()
+
+
+RECORD_FIELDS = ("name", "design_title", "project", "customer", "opportunity", "status", "venue_type", "governing_code",
+                 "issue_date", "drawn_by", "docstatus", "owner")
+BOM_FIELDS = ("section", "item", "description", "qty", "uom", "rate", "amount", "source", "catalog_source", "line_key")
+
+
+def _item_info(codes):
+    """``{item: {item_name, model_no, spec_url}}`` for the Items a print names. The model number and
+    the cut-sheet link are the catalog's custom fields (phase D), read only where Item has them."""
+    codes = sorted({c for c in codes if c})
+    if not codes:
+        return {}
+    try:
+        meta = frappe.get_meta("Item")
+        fields = ["name", "item_name"] + [f for f in ("custom_model_no", "custom_spec_source_url") if meta.has_field(f)]
+        rows = frappe.get_all("Item", filters={"name": ["in", codes]}, fields=fields)
+    except Exception:
+        return {}
+    return {
+        r["name"]: {"item_name": r.get("item_name"), "model_no": r.get("custom_model_no"),
+                    "spec_url": r.get("custom_spec_source_url")}
+        for r in rows
+    }
+
+
+def print_inputs(doc):
+    """The record as plain data for ``prints.build``: fields, model, stored derive, BOM rows, issues."""
+    model = _json(doc.get("model_json"))
+    stored = _json(doc.get("results_json"))
+    bom = [{f: getattr(r, f, None) if not isinstance(r, dict) else r.get(f) for f in BOM_FIELDS} for r in doc.get("bom") or []]
+    codes = [r.get("item") for r in bom]
+    net = model.get("network") or {}
+    codes += [p.get("item") for p in net.get("pumps") or [] if isinstance(p, dict)]
+    codes += [e.get("item") for e in model.get("equipment") or [] if isinstance(e, dict)]
+    codes += [(f.get("product") or {}).get("item") for f in model.get("features") or [] if isinstance(f, dict)]
+    record = {f: doc.get(f) for f in RECORD_FIELDS}
+    # The facts row's designer: who drew it, else who made the record.
+    try:
+        record["designer"] = record.get("drawn_by") or (frappe.utils.get_fullname(record["owner"]) if record.get("owner") else "")
+    except Exception:
+        record["designer"] = record.get("drawn_by") or ""
+    return {
+        "doc": record,
+        "model": model,
+        "stored": stored,
+        "bom": bom,
+        "items": _item_info(codes),
+        "issues": _json(doc.get("design_issues_json"), list),
+    }
+
+
+def we_print(design, sheets=None):
+    """The print context of a design (``prints.build``): every Water Feature Design format and the
+    packet call this once with the sheets they print. Never raises: a record it cannot read prints
+    the "not worked out yet" sheets rather than a 500 from the print view."""
+    try:
+        doc = _doc(design)
+        data = print_inputs(doc)
+        return prints.build(data["doc"], data["model"], data["stored"], data["bom"], items=data["items"],
+                            issues=data["issues"], sheets=sheets)
+    except Exception:
+        frappe.log_error(title="Water Feature Design print", message=frappe.get_traceback())
+        name = design if isinstance(design, str) else getattr(design, "name", "")
+        return prints.build({"name": name}, {}, {}, [], sheets=sheets)
 
 
 def we_circulation_schematic(design):
-    """Inline SVG of the circulation equipment train (packet sheet SP-3)."""
+    """The stored circulation schematic (SVG) of the last derive, or ``""``."""
     doc = _doc(design)
-    return circulation_schematic_svg({
-        "title": "Circulation Equipment Schematic",
-        "nodes": _circulation_nodes(doc),
-    })
+    return prints.unique_ids((_json(doc.get("results_json")).get("charts") or {}).get("schematic_svg"), "sch") or ""
 
 
 def we_electrical_oneline(design):
-    """Inline SVG one-line from the design's linked Control Panel Design (SP-6)."""
+    """The stored electrical one-line (SVG) of the last derive, from phase L's report, or ``""``."""
     doc = _doc(design)
-    panel = None
-    if doc.get("project"):
-        name = frappe.db.get_value(CONTROL_DOCTYPE, {"project": doc.project}, "name")
-        if name:
-            panel = frappe.get_doc(CONTROL_DOCTYPE, name)
-    if not panel:
-        return electrical_oneline_svg({"title": "Electrical One-Line", "service": {}, "branches": []})
-    from erpnext_enhancements.water_engineering.doctype.control_panel_design.control_panel_design import (
-        we_panel_schedule,
-    )
-    sched = we_panel_schedule(panel)
-    service = sched.get("service") or {}
-    branches = [
-        {
-            "label": c.get("description"),
-            "sub": f"{c.get('load_a')} A" if c.get("load_a") else "",
-            # The 430.52 maximum, labeled as one: a smaller breaker that starts the pump is allowed.
-            "breaker": f"{c.get('breaker_a')} A max" if c.get("breaker_a") else None,
-        }
-        for c in sched.get("circuits") or []
-    ]
-    return electrical_oneline_svg({
-        "title": "Electrical One-Line",
-        "service": {
-            "label": f"{service.get('main_line_voltage') or '?'}V {service.get('phase') or '?'}φ Service",
-            "main_breaker": sched.get("main_breaker_a"),
-        },
-        "branches": branches,
-        "transformer_va": sched.get("control_transformer_va"),
-    })
+    return prints.unique_ids((_json(doc.get("results_json")).get("charts") or {}).get("oneline_svg"), "one") or ""
 
 
 def we_standard_notes(governing_code=None, category=None):
@@ -220,7 +232,9 @@ def assemble_packet(design):
     print-to-PDF ready; ``generate_packet`` additionally produces the PDF."""
     if not frappe.has_permission(DESIGN_DOCTYPE, "read"):
         frappe.throw(_("You do not have access to Water Feature Designs."), frappe.PermissionError)
-    return build_packet_html(design)
+    doc = _doc(design)
+    doc.check_permission("read")  # frappe.get_print checks the doctype, not this design
+    return build_packet_html(doc)
 
 
 # ---------------------------------------------------------------- PDF + Drive
@@ -247,6 +261,8 @@ def _cad_pdf_files(doc):
         if packet_url and r.get("file_url") == packet_url:
             continue
         if "submittal-packet" in (r.get("file_name") or "").lower():
+            continue
+        if "-print-" in (r.get("file_name") or "").lower():  # a paper made for an email (api/designer.email_draft)
             continue
         out.append(r)
     return out
@@ -335,6 +351,7 @@ def generate_packet(design):
     if not frappe.has_permission(DESIGN_DOCTYPE, "write"):
         frappe.throw(_("You do not have write permission for Water Feature Designs."), frappe.PermissionError)
     doc = _doc(design)
+    doc.check_permission("write")
     html = None
     try:
         html = build_packet_html(doc)

@@ -277,7 +277,8 @@
   "warning_count": 2,
   "completion_percent": 78,
   "issue_ready": false,
-  "budget_total": 36506.4
+  "budget_total": 36506.4,
+  "bom_subtotal": 36506.4
  },
  "issues": [
   {
@@ -540,18 +541,33 @@
  "outputs": {
   "schedules": [
    {
-    "key": "equipment",
-    "label": "Equipment schedule",
+    "key": "report",
+    "label": "Design report",
     "url": null
    },
    {
-    "key": "piping",
-    "label": "Piping schedule",
+    "key": "schedules",
+    "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
     "url": null
    },
    {
-    "key": "fittings",
-    "label": "Fitting schedule",
+    "key": "drawings",
+    "label": "Design drawings",
+    "url": null
+   },
+   {
+    "key": "calcs",
+    "label": "Engineering calculations and plan check",
+    "url": null
+   },
+   {
+    "key": "budget",
+    "label": "Budget proposal",
+    "url": null
+   },
+   {
+    "key": "om",
+    "label": "Operations, maintenance and winterization",
     "url": null
    }
   ],
@@ -585,9 +601,16 @@
    ]
   },
   "winterization": {
-   "needed": false,
+   "needed": true,
    "steps": [
-    "Indoor feature: no winterization. Shut down and drain only for service."
+    "Shut off and disconnect the autofill",
+    "Lower the water below the returns and skimmers, or drain the basin",
+    "Drain pump p1: open the drain plugs, store them in the basket",
+    "Drain the filter, heater and strainers; open every equipment drain",
+    "Blow out line s1",
+    "Blow out line s2",
+    "Pull the underwater lights or confirm they are rated to stay in frozen water",
+    "Turn off and lock out the feature circuits; leave heat on in a heated room"
    ]
   },
   "startup": [
