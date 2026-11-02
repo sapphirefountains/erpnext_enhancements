@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.774.1] - 2026-11-02
+
+**The committed-secrets gate scans what a pull request adds, and the full-history walk skips blobs it
+has already scanned clean.** Nikolas asked on 2026-11-02 whether the scan could be quicker, and whether a
+PR could scan only what changed, with a local check first. CI and tooling only; nothing deployed changes.
+
+**Why it had become slow.** `scripts/check_no_committed_secrets.py` reads every blob reachable from every
+ref, because a key committed and reverted is still in every clone of a public repository. It took ~22 s
+when it was written (2026-08-08: 2,187 working-tree files, 7,437 history blobs), 5-10 minutes by
+2026-10-14 (two runs cancelled at the old 10-minute limit, scan clean), and 10-15 minutes by 2026-11-02.
+The cause is `CHANGELOG.md`: a multi-megabyte file with 1,400+ versions, one per PR, so each run read
+about 5 GB of text that it had found clean the day before.
+
+**Measured on a fresh clone of `main` (Windows laptop, CI numbers in the PR):** the old full walk took
+OLD_FULL; the PR range took ~40 s for the last merged PR (17 commits, 69 new blobs) and ~37 s for the
+last ten (97 commits, 669 blobs), of which the 4,430-file working tree is nearly all; the new full walk
+took COLD_FULL with an empty cache and WARM_FULL with a warm one (WARM_DETAIL).
+
+### Changed
+- **Two scopes in CI, both hard gates.** On a pull request the job is now **"No committed secrets (PR
+  range)"**: the working tree plus every blob reachable from the PR's merge commit and not from `main`
+  (`--since origin/main`, after an explicit `git fetch` of `main`), plus loose objects. Intermediate
+  commits are in the range, so a key added and removed inside the PR is still caught. That is sound
+  because `main`'s history was gated as it landed. On every push to `main`, and on a new nightly
+  schedule (09:17 UTC), it is **"No committed secrets (full history)"**: the whole object database, as
+  before, with the cache below. That walk is the backstop: for a rule that got stronger, and for anything
+  a range could not see. The schedule runs nothing else; every other CI job now carries
+  `if: github.event_name != 'schedule'`. Nothing else in the repository named the old job ("No committed
+  secrets (working tree + full git history)"), and `main` has no branch protection or ruleset requiring
+  it, so the rename breaks no required check.
+- **The CHANGELOG had stopped being scanned at all.** Blobs over `MAX_BLOB_BYTES` (4 MiB) were skipped
+  with a `note:` line, in the working tree as well as in history. `CHANGELOG.md` crossed 4 MiB at
+  v1.734.0 (2026-10-23, PR #1351), so from then on the one file every PR edits was the one file this gate
+  never read, on a green job. The cap is now 64 MiB: a binary is dropped on its first NUL byte anyway,
+  GitHub refuses files over 100 MB, and with the cache a large blob is read once per rule set rather
+  than every run.
+- A blob found both under `tests/` (where a whole-file `FAKE-DO-NOT-USE` header is honoured) and
+  elsewhere is now attributed to the elsewhere. Before, it took whichever path git named first, so a
+  key that also sat in a test fixture could borrow the fixture's excuse for its other copies.
+
+### Added
+- **`--since <ref>`** on the scanner: the PR range above. It refuses a shallow clone as the full walk
+  does, and refuses a `<ref>` that does not resolve rather than scan an empty range. It prints the range,
+  its two shas and the commit count alongside the usual counts.
+- **`--cache [FILE]`, the clean-blob cache.** A list of blob shas scanned clean, headed by a fingerprint
+  of the rules (`--rules-hash`: a hash of the whole script, so a change to any pattern, the marker, the
+  window or the code that applies them starts from empty, and a file written under other rules is
+  ignored whole). Skipped blobs are counted and printed. The one path-dependent fact, whether a blob sits
+  in test data, is recorded with the entry: a blob clean only under `tests/` is read again anywhere else.
+  CI keeps it with `actions/cache` keyed on the fingerprint plus the run id, with `restore-keys` on the
+  fingerprint, so each run starts from the newest list under the same rules. Only `main` and the nightly
+  run read or write it, and GitHub scopes a PR's caches to that PR, so no pull request can write a list
+  that `main` then trusts. Blobs ruled out by their header (not a blob, noisy path, oversize, cached) are
+  never read, which is where the time went.
+- **`--staged`** and a `no-committed-secrets` **pre-commit hook** (`.pre-commit-config.yaml`, `repo:
+  local`): scans the index versions of the files being committed, not the files on disk. Documented in
+  the README's linting and CI sections and in `docs/development.md`, with
+  `python scripts/check_no_committed_secrets.py --since origin/main` as the pre-push equivalent of the PR
+  check.
+- **`tests/test_secret_scan.py`** (Standalone unit tests, its own step): 16 tests on throwaway git
+  repositories. The full walk and the PR range each find the three planted kinds (a service-account key
+  file, an OAuth client secret, a base64 token beside a googleapis URL); the range finds a key added and
+  removed inside it, reads loose objects, leaves `main`'s history to the full walk, and refuses an
+  unknown base and a shallow clone; the cache skips a clean blob, is ignored after a rule change, and a
+  test-data entry does not excuse the same blob elsewhere; any edit to the window, the marker, a pattern
+  or the logic changes the fingerprint; `--staged` reads the index. The planted values are assembled at
+  run time, so the test file carries no credential-shaped literal for this scanner or GitHub's to flag.
+
+### Not code: GitHub secret scanning and push protection
+Both are **off** on this public repository (checked 2026-11-02 through the API). They are repository
+settings that only an admin can change: Settings -> Advanced Security -> Secret Protection, then Push
+protection. Both are free on a public repository. Push protection refuses a push carrying a known
+provider's token before it reaches GitHub, which no CI job can do; this script covers Sapphire's own
+credential shapes, which GitHub's patterns do not. The script's docstring and the README say the same.
+
 ## [1.774.0] - 2026-11-02
 
 ERPNext: PRJ-00580, under TASK-2026-03034, task TASK-2026-03035. **The Fountain Designer's Site step
