@@ -36,6 +36,7 @@ And one about the browser's Back button (``TestVisitWizardHistory``):
 """
 
 import io
+import json
 import os
 import re
 import shutil
@@ -230,6 +231,77 @@ class TestVisitWizardHistory(unittest.TestCase):
 		)
 		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 		self.assertIn(" 0 failed", result.stdout)
+
+
+class TestVisitDateWindow(unittest.TestCase):
+	"""The date picker mirrors ``checked_visit_date`` (api/maintenance_visit.py), executed in node.
+
+	Nik, 2026-11-02: PRJ-00744-2026-V002 was scheduled 96 days back and the wizard refused its
+	own scheduled day. A scheduled visit may now be dated back to that day; an unscheduled one
+	keeps the 60-day window; a Maintenance Reviewer has none; the future is refused for all.
+	The server's suite (test_maintenance_visit_crews) checks the same cases.
+	"""
+
+	TODAY = "2026-11-02"
+	SCHEDULED = "2026-07-29"  # 96 days back
+
+	CASES = [
+		# (value, scheduled, reviewer, refused with)
+		("2026-07-29", "2026-07-29", False, ""),
+		("2026-08-15", "2026-07-29", False, ""),
+		("2026-07-28", "2026-07-29", False, "scheduled for"),
+		("2026-09-03", None, False, ""),  # 60 days back
+		("2026-09-02", None, False, "backdated"),  # 61 days back
+		("2026-09-02", "2026-10-20", False, "backdated"),  # a recent schedule does not widen it
+		("2026-11-03", "2026-07-29", False, "future"),
+		("2025-01-01", None, True, ""),
+		("2026-11-03", None, True, "future"),
+	]
+
+	def test_the_client_rule_matches_the_server(self):
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		with open(WIZARD, encoding="utf-8") as handle:
+			source = handle.read()
+		pieces = [re.search(r"\nconst VZ_MAX_BACKFILL_DAYS = \d+;\n", source).group(0)]
+		for name in ("vz_visit_date_floor", "vz_visit_date_refusal"):
+			match = re.search(rf"\nfunction {name}\(.*?\n\}}\n", source, re.S)
+			self.assertIsNotNone(match, f"{name}() is gone from visit_wizard.js")
+			pieces.append(match.group(0))
+		script = (
+			"let reviewer = false;\n"
+			"const __ = (text, args) => text.replace(/\\{(\\d+)\\}/g, (_m, i) => String(args[i]));\n"
+			"const frappe = {\n"
+			"  user: { has_role: (role) => reviewer && role === 'Maintenance Reviewer' },\n"
+			"  datetime: {\n"
+			"    str_to_user: (d) => d,\n"
+			"    add_days: (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n);"
+			" return t.toISOString().slice(0, 10); },\n"
+			"  },\n"
+			"};\n"
+			+ "".join(pieces)
+			+ f"const cases = {json.dumps([case[:3] for case in self.CASES])};\n"
+			"console.log(JSON.stringify(cases.map(([value, scheduled, as_reviewer]) => {\n"
+			"  reviewer = as_reviewer;\n"
+			f"  return vz_visit_date_refusal(value, '{self.TODAY}', scheduled);\n"
+			"})));\n"
+		)
+		result = subprocess.run(
+			[node, "-e", script],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			check=False,
+			timeout=60,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		for case, refusal in zip(self.CASES, json.loads(result.stdout), strict=True):
+			with self.subTest(case=case):
+				if case[3]:
+					self.assertIn(case[3], refusal)
+				else:
+					self.assertEqual(refusal, "")
 
 
 if __name__ == "__main__":

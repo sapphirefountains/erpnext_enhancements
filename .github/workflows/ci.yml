@@ -197,7 +197,13 @@ jobs:
     name: Standalone unit tests
     if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10, and not because the tests got slow. On 2026-11-02 GitHub took 2.5 to 8
+    # minutes to close this job after its last step had finished, on every branch, and the
+    # timeout counts that closing lag. With the steps themselves at 6.5-7.5 minutes (and the
+    # step count growing with almost every PR), the job was cancelled three times that day
+    # with every step passed -- a red X that means nothing. 20 minutes still catches a real
+    # hang.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -4583,7 +4589,7 @@ jobs:
   # having been cancelled at the old 10-minute limit on 2026-10-14 with the scan itself
   # clean. CHANGELOG.md is the cause: a multi-megabyte file with 1,400+ versions, one per
   # PR, about 5 GB of text per run that was nearly all read and found clean the day
-  # before: 14m37s and 14m43s on main that day. Measured for v1.774.1 (see CHANGELOG): the
+  # before: 14m37s and 14m43s on main that day. Measured for v1.774.2 (see CHANGELOG): the
   # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
   # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
   # after one is the slow run, and 30 minutes is the headroom for it.

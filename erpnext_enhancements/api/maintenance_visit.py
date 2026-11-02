@@ -67,7 +67,8 @@ UPCOMING_LIMIT = 50
 # How far back create_visit will accept a backfilled visit_date. A backfill is
 # meant for "I forgot to fill the form in on Tuesday", not for reconstructing
 # last season — and a mistyped year would otherwise roll the contract cadence
-# to a nonsense date, since the roll-forward keys on visit_date.
+# to a nonsense date, since the roll-forward keys on visit_date. A visit with an
+# older scheduled_visit_date may still be dated back to that day (checked_visit_date).
 MAX_BACKFILL_DAYS = 60
 
 PAYLOAD_TABLE_MAP = {
@@ -244,13 +245,21 @@ def _reassign_todo(doc, prior):
         frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (add) failed")
 
 
-def checked_visit_date(value):
+def checked_visit_date(value, scheduled=None):
     """The day a visit's work was done, checked. Today when ``value`` is empty.
 
     Never in the future, and at most :data:`MAX_BACKFILL_DAYS` back: the same rule whether
     the visit is started by Log a visit (:func:`create_visit`) or an existing draft is
-    re-dated in the wizard (:func:`save_visit`). A reviewer can still set any date on the
-    desk form, which does not come through here.
+    re-dated in the wizard (:func:`save_visit`).
+
+    A visit with a ``scheduled`` date may always be dated on or after that day, however long
+    ago it was. The window is for unscheduled work, where a mistyped year would roll the
+    contract cadence to a nonsense date; a scheduled visit's own day is not a typo. Until
+    v1.774.1 the window refused it: PRJ-00744-2026-V002, scheduled 96 days back, could only be
+    dated on the desk form (Nik, 2026-11-02).
+
+    A Maintenance Reviewer has no window: the desk form already lets them set any date, and
+    the wizard now agrees with it. The future is refused for everyone.
     """
     from frappe.utils import add_days, getdate, nowdate
 
@@ -258,6 +267,19 @@ def checked_visit_date(value):
     day = getdate(value) if value else today
     if day > today:
         frappe.throw(_("A visit cannot be logged for a future date."))
+    if "Maintenance Reviewer" in frappe.get_roles():
+        return day
+    scheduled = getdate(scheduled) if scheduled else None
+    if scheduled and scheduled < add_days(today, -MAX_BACKFILL_DAYS):
+        if day < scheduled:
+            from frappe.utils import formatdate
+
+            frappe.throw(
+                _("This visit was scheduled for {0}; you can date it any day from then to today.").format(
+                    formatdate(scheduled)
+                )
+            )
+        return day
     if day < add_days(today, -MAX_BACKFILL_DAYS):
         frappe.throw(
             _("A visit can only be backdated {0} days. Check the date, or ask a supervisor to enter it.").format(
@@ -605,7 +627,7 @@ def save_visit(record, patch, modified=None):
         if field == "visit_date":
             # Filling in a form for an earlier day (Nik, 2026-10-12: "Sometimes the workers
             # might forget a visit wizard form"). Empty means "the day it is submitted".
-            value = checked_visit_date(value) if value else None
+            value = checked_visit_date(value, doc.get("scheduled_visit_date")) if value else None
             clock_cleared = _clear_clock_from_another_day(doc, value) or clock_cleared
         doc.set(field, value)
 
@@ -902,7 +924,8 @@ def get_loggable_sites():
 
     Returns:
         list[dict]: [{contract, project, project_title, customer, visit_shape,
-        next_visit_date, open_draft, features: [{serial_no, item_name}]}],
+        next_visit_date, open_draft, open_draft_scheduled, features: [{serial_no,
+        item_name}]}],
         ordered by project title.
     """
     contracts = frappe.get_list(
@@ -941,6 +964,8 @@ def get_loggable_sites():
     for contract in contracts:
         rows = grouped.get(contract.name, [])
         due = [row.next_visit_date for row in rows if row.next_visit_date]
+        draft = open_regular_draft(contract.name)
+        scheduled = frappe.db.get_value(DOCTYPE, draft, "scheduled_visit_date") if draft else None
         entries.append({
             "contract": contract.name,
             "project": contract.project,
@@ -948,7 +973,9 @@ def get_loggable_sites():
             "customer": contract.customer,
             "visit_shape": contract.visit_shape,
             "next_visit_date": str(min(due)) if due else None,
-            "open_draft": open_regular_draft(contract.name),
+            "open_draft": draft,
+            # Log a visit may date that draft back to this day (checked_visit_date).
+            "open_draft_scheduled": str(scheduled) if scheduled else None,
             "features": [
                 {"serial_no": row.serial_no, "item_name": item_names.get(row.serial_no)}
                 for row in rows
@@ -998,7 +1025,8 @@ def create_visit(contract, serial_no=None, visit_date=None):
     This is the unscheduled path: it does not care whether anything was due.
     ``visit_date`` defaults to today and may be **backdated** up to
     :data:`MAX_BACKFILL_DAYS` so a technician can fill in the form for work
-    already done on an earlier day.
+    already done on an earlier day, or further, to the scheduled day of the
+    site's open regular draft when that is older (:func:`checked_visit_date`).
 
     Deliberately carries **no** ``visit_label``. A label suppresses the cadence
     roll-forward in ``api.maintenance_scheduling.update_next_visit_dates``,
@@ -1019,7 +1047,11 @@ def create_visit(contract, serial_no=None, visit_date=None):
     if contract_doc.status != "Active":
         frappe.throw(_("{0} is not an Active contract.").format(contract))
 
-    visit_date = checked_visit_date(visit_date)
+    # An open regular draft is the visit being filled in, so its scheduled day sets the
+    # earliest date allowed; a new record has none and keeps the plain window.
+    existing = open_regular_draft(contract_doc.name)
+    scheduled = frappe.db.get_value(DOCTYPE, existing, "scheduled_visit_date") if existing else None
+    visit_date = checked_visit_date(visit_date, scheduled)
 
     covered = [row.serial_no for row in contract_doc.covered_features]
     if not covered:
@@ -1031,7 +1063,6 @@ def create_visit(contract, serial_no=None, visit_date=None):
     if serial_no and serial_no not in covered:
         frappe.throw(_("{0} is not a covered feature on {1}.").format(serial_no, contract))
 
-    existing = open_regular_draft(contract_doc.name)
     if existing:
         _date_existing_draft(existing, visit_date)
         return existing
