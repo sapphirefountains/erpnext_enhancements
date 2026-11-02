@@ -49,8 +49,12 @@ class SaveWaterDesign(BaseTool):
             "one (omit to create), 'project' to link it, 'global_inputs' "
             "{design_title, status, turnover_per_hr, hazen_williams_c, "
             "pipe_material, static_lift_ft}, and any of the row lists 'basins', "
-            "'features', 'pipe_segments', 'pumps', 'electrical_loads' (each REPLACES "
-            "that table). This tool WRITES: when AI write gating is on it returns "
+            "'features', 'pipe_segments', 'pumps' (each REPLACES that part of the design; "
+            "parts not sent are kept). Designs live in the Fountain Designer's model since "
+            "v1.768.0: 'pipe_segments' is laid from the features, so send it with 'features'; "
+            "'electrical_loads' and the inputs turnover_per_hr, hazen_williams_c and "
+            "static_lift_ft have no place there and come back listed under 'ignored'. "
+            "This tool WRITES: when AI write gating is on it returns "
             "status='awaiting_user_confirmation' with an action_id and saves nothing "
             "until a human confirms in ERPNext — then call check_ai_pending_action "
             "with that action_id. Never claim the design was saved from the envelope "
@@ -138,7 +142,8 @@ class SaveWaterDesign(BaseTool):
 
         doc = _save_design(payload)
         frappe.db.commit()
-        return {"success": True, "design": doc.name, **design_state(doc.name)}
+        return {"success": True, "design": doc.name, "ignored": list(doc.flags.ignored_inputs or []),
+                **design_state(doc.name)}
 
 
 __all__ = ["SaveWaterDesign"]

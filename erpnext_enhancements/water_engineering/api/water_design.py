@@ -106,20 +106,6 @@ EDITABLE_CHILD_TABLES = (
     "venue_fixtures", "design_equipment",
 )
 
-# Parent input fields the live form preview may set (the editable design fields
-# plus the chemistry/drainage inputs) — read-only rollups are never accepted.
-PREVIEW_PARENT_FIELDS = EDITABLE_DESIGN_FIELDS | {
-    "chem_water_type",
-    "chem_chlorine_pct",
-    "chem_cya_ppm",
-    "chem_free_cl_ppm",
-    "drain_nominal_size",
-    "drain_slope_in_per_ft",
-    "surge_pool_area_sf",
-    "surge_basin_area_sf",
-}
-
-
 # ----------------------------------------------------------------- helpers
 
 
@@ -199,70 +185,86 @@ def item_pump_curves(item_code):
     }
 
 
+def _model(doc):
+    """The design's schema-2 model (``model_json``), or {}."""
+    raw = doc.get("model_json")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _results(doc):
+    raw = doc.get("results_json")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _canvas_state(doc):
     """The fountain-design "canvas" state — everything the shared SVG renderer
-    (window.WaterFountain / the Triton chat) needs to draw the design. Built once
-    here so the desk live preview and the AI walkthrough show the SAME picture."""
+    (window.WaterFountain / the Triton chat) needs to draw the design, read from
+    the schema-2 model and the last derive's per-row values (v1.768.0)."""
 
     def _f(v):
-        return float(v) if v not in (None, "") else 0.0
+        try:
+            return float(v) if v not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            return 0.0
 
     def _ft(inch):
         return f"{round(_f(inch) / 12.0, 1):g}"
 
-    segs = doc.get("pipe_segments") or []
-    worst = ""
-    for s in segs:
-        v = (s.velocity_status or "").lower()
-        if "exceed" in v:
-            worst = s.velocity_status
-        elif "increase" in v and "exceed" not in (worst or "").lower():
-            worst = s.velocity_status
-        elif not worst:
-            worst = s.velocity_status
+    model = _model(doc)
+    values = _results(doc).get("values") or {}
+    seg_values = values.get("segments") or {}
+    segs = (model.get("network") or {}).get("segments") or []
 
     label = ""
-    basins = doc.get("basins") or []
+    basins = model.get("basins") or []
     if basins:
         b = basins[0]
-        if "cyl" in (b.shape or "").lower() and _f(b.diameter_in):
-            label = f"{_ft(b.diameter_in)} ft dia x {_ft(b.height_in)} ft deep"
-        elif _f(b.length_in) and _f(b.width_in):
-            label = f"{_ft(b.length_in)} x {_ft(b.width_in)} ft x {_ft(b.height_in)} ft deep"
+        if str(b.get("shape") or "").lower().startswith(("round", "cyl", "circ")) and _f(b.get("diameter_in")):
+            label = f"{_ft(b.get('diameter_in'))} ft dia x {_ft(b.get('depth_in'))} ft deep"
+        elif _f(b.get("length_in")) and _f(b.get("width_in")):
+            label = f"{_ft(b.get('length_in'))} x {_ft(b.get('width_in'))} ft x {_ft(b.get('depth_in'))} ft deep"
 
-    # Tallest jet across features that carry a supply head (~0.9 * head, the smooth
-    # jet de-rating) — illustrative; kept inline so the canvas has no calc dependency.
-    jet = 0.0
-    for f in doc.get("features") or []:
-        head = _f(getattr(f, "supply_head_ft", 0))
-        if head > 0:
-            jet = max(jet, 0.9 * head)
-
-    curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.selected_pump else []
-    features = doc.get("features") or []
-    # The schematic draws the primary (first) feature's kind.
-    kind = feature_visual_kind(features[0].feature_type) if features else None
+    features = model.get("features") or []
+    jet = max((_f((f.get("inputs") or {}).get("height_ft")) for f in features), default=0.0)
+    tiers = []
+    for f in features:
+        for t in (f.get("inputs") or {}).get("tiers") or []:
+            tiers.append({"diameter_in": _f(t.get("diameter_in")), "rim_height_in": _f(t.get("rim_height_in"))})
+    curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.get("selected_pump") else []
+    kind = feature_visual_kind(features[0].get("type") or "") if features else None
     return {
-        "basin_gallons": doc.total_basin_gallons,
-        "flow_gpm": doc.design_flow_gpm,
+        "basin_gallons": doc.get("total_basin_gallons"),
+        "flow_gpm": doc.get("design_flow_gpm"),
         "feature_count": len(features),
         "feature_kind": kind,
-        "tiers": [
-            {"diameter_in": _f(t.diameter_in), "rim_height_in": _f(t.rim_height_in)} for t in doc.get("tiers") or []
-        ],
+        "tiers": tiers,
         "jet_height_ft": jet or None,
-        "pump": doc.selected_pump,
-        "tdh_ft": doc.computed_tdh_ft,
-        "static_lift_ft": _f(doc.static_lift_ft),
+        "pump": doc.get("selected_pump"),
+        "tdh_ft": doc.get("computed_tdh_ft"),
+        "static_lift_ft": max((_f(n.get("elevation_ft")) for n in (model.get("network") or {}).get("nodes") or []
+                               if n.get("kind") == "terminal"), default=0.0),
         "basin_label": label,
-        "worst_status": worst,
+        "worst_status": "",
         "segments": [
-            {"label": s.segment_label, "velocity_fps": s.velocity_fps, "velocity_status": s.velocity_status}
+            {"label": s.get("label") or s.get("id"), "velocity_fps": (seg_values.get(s.get("id")) or {}).get("velocity_fps"),
+             "velocity_status": ""}
             for s in segs
         ],
         "curve": curve or [],
-        "duty_flow": _f(doc.design_flow_gpm) or _f(doc.required_circulation_gpm),
-        "duty_head": _f(doc.computed_tdh_ft),
+        "duty_flow": _f(doc.get("operating_flow_gpm")) or _f(doc.get("design_flow_gpm")),
+        "duty_head": _f(doc.get("computed_tdh_ft")),
     }
 
 
@@ -552,7 +554,7 @@ def design_state(design=None, project=None, include_results=True):
             },
             "has_warnings": bool(doc.has_warnings),
             "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
-            "counts": {t: len(doc.get(t) or []) for t in EDITABLE_CHILD_TABLES},
+            "counts": _model_counts(doc),
             # Typed issues + per-section readiness (additive; the legacy
             # warnings/next_inputs_needed shapes above are unchanged).
             "issues": _parse(doc.design_issues_json) if doc.get("design_issues_json") else [],
@@ -568,15 +570,16 @@ def design_state(design=None, project=None, include_results=True):
         if include_results:
             state["calc_results"] = [
                 {
-                    "calc": r.calc,
-                    "value": r.value,
-                    "unit": r.unit,
-                    "formula": r.formula,
-                    "steps": r.steps,
-                    "citations": r.citations,
-                    "warnings": r.warnings,
+                    "calc": key,
+                    "value": r.get("value"),
+                    "unit": r.get("unit"),
+                    "formula": r.get("formula"),
+                    "steps": "\n".join(str(s) for s in r.get("steps") or []),
+                    "citations": ", ".join(str(c) for c in r.get("citations") or []),
+                    "warnings": "\n".join(str(w) for w in r.get("warnings") or []),
                 }
-                for r in (doc.calc_results or [])
+                for key, r in (_results(doc).get("results") or {}).items()
+                if isinstance(r, dict)
             ]
         return state
 
@@ -672,10 +675,105 @@ def get_control_panel_state(panel=None, project=None):
 # ----------------------------------------------------------------- save
 
 
+def _model_counts(doc):
+    """Row counts per v1 table name, from the schema-2 model (the AI status tool reads these)."""
+    model = _model(doc)
+    net = model.get("network") or {}
+    return {
+        "basins": len(model.get("basins") or []),
+        "features": len(model.get("features") or []),
+        "pipe_segments": len(net.get("segments") or []),
+        "pumps": len(net.get("pumps") or []),
+        "electrical_loads": len(net.get("pumps") or []) + len((model.get("lighting") or {}).get("fixtures") or []),
+        "tiers": sum(len((f.get("inputs") or {}).get("tiers") or []) for f in model.get("features") or []),
+        "venue_fixtures": 0,
+        "design_equipment": len(model.get("equipment") or []),
+    }
+
+
+# The record's own fields; everything else in a v1 payload's ``fields`` is a design input that
+# ``engine.model.migrate`` reads from ``global_inputs``.
+_RECORD_FIELDS = ("project", "customer", "serial_no", "design_title", "status")
+
+
+# Schema-1 design inputs that have a place in a schema-2 model: (section, key).
+_GLOBAL_INPUT_PATHS = {
+    "venue_type": ("site", "venue_type"),
+    "governing_code": ("site", "governing_code"),
+    "pipe_material": ("pump_room", "material"),
+}
+
+
+def merge_legacy_payload(existing, tables, global_inputs):
+    """A schema-1 payload laid onto an existing schema-2 model, table by table, as the old tool
+    promised ("each list REPLACES that table"): only the sections the payload names change, and
+    each one it changes is pinned ``custom`` so the next derive keeps it. Returns (model, ignored),
+    ``ignored`` naming every input there is no place for, so the caller can say so instead of
+    dropping it in silence."""
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    model = model_engine.from_dict(existing).to_dict()
+    setup = model.setdefault("setup", {})
+    ignored = []
+    legacy = {t: rows for t, rows in tables.items() if t in ("basins", "features", "tiers", "pipe_segments", "pumps")}
+    legacy["global_inputs"] = dict(global_inputs or {})
+    legacy.setdefault("basins", [])
+    if "pipe_segments" in tables and "features" not in tables and model.get("features"):
+        # The old shape has no topology: its segments are laid from the feature list, so a segment list
+        # alone cannot be placed against the features the Designer drew.
+        legacy.pop("pipe_segments")
+        ignored.append("pipe_segments (send features with them, or edit the piping in the Fountain Designer)")
+    migrated = model_engine.migrate(legacy)
+    if "basins" in tables:
+        model["basins"] = migrated["basins"]
+        setup["basin"] = "custom"
+    if "features" in tables:
+        model["features"] = migrated["features"]
+        setup["features"] = "custom"
+    elif "tiers" in tables:
+        ignored.append("tiers (send them with the features they belong to)")
+    # A feature caught by no basin the model has (new basins, or features sent without their basins,
+    # which migrate leaves unattached) lands in the first basin, as the old engine read it.
+    ids = [b.get("id") for b in model.get("basins") or []]
+    for f in model.get("features") or []:
+        if f.get("basin") not in ids:
+            f["basin"] = ids[0] if ids else None
+    if "pipe_segments" in legacy:
+        model["network"] = migrated["network"]
+        setup["piping"] = "custom"
+    if "pumps" in tables:
+        picks = [e for e in migrated.get("equipment") or [] if e.get("slot") == "pump"]
+        model["equipment"] = [e for e in model.get("equipment") or [] if e.get("slot") != "pump"] + picks
+        pumps = (model.get("network") or {}).get("pumps") or []
+        if picks and pumps:
+            # The curve goes with the Item: naming it lets the derive load that pump's own curve
+            # (derive.resolve_curves), rather than solve the new pump on the old pick's curve.
+            pumps[0]["item"] = picks[0]["item"]
+            pumps[0]["curve"] = picks[0]["item"]
+            for key in ("hp", "kw", "shutoff_head_ft", "max_flow_gpm", "motor_eff_pct", "catalog_source"):
+                pumps[0].pop(key, None)
+            setup["pump"] = "custom"
+    for table in ("electrical_loads", "venue_fixtures", "design_equipment"):
+        if table in tables:
+            ignored.append(f"{table} (the Fountain Designer derives these)")
+    for key, value in (global_inputs or {}).items():
+        path = _GLOBAL_INPUT_PATHS.get(key)
+        if path:
+            model.setdefault(path[0], {})[path[1]] = value
+        else:
+            ignored.append(key)
+    return model, ignored
+
+
 def _save_design(payload):
-    """Load-or-create a Water Feature Design from a payload, set allowlisted
-    parent fields + child rows, save (triggers recompute), and return the doc.
-    Core helper reused by the desk save and the MCP write tool."""
+    """Load-or-create a Water Feature Design from a schema-1 payload (the old wizard and the
+    ``save_water_design`` AI tool) and save it. Since v1.768.0 the design lives in ``model_json``:
+    a new design (or one never converted) is built from the payload with ``engine.model.migrate``;
+    an existing schema-2 design takes only the tables and inputs the payload names
+    (``merge_legacy_payload``), and ``doc.flags.ignored_inputs`` lists what had no place. Phase H
+    moves the AI tool onto ``api/designer.py`` and a model-2 payload."""
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
     payload = _parse(payload)
     name = payload.get("design")
     if name and name != "new" and frappe.db.exists(DESIGN_DOCTYPE, name):
@@ -684,17 +782,30 @@ def _save_design(payload):
         doc = frappe.new_doc(DESIGN_DOCTYPE)
 
     fields = _parse(payload.get("fields")) or {}
-    for key, value in fields.items():
-        if key in EDITABLE_DESIGN_FIELDS:
+    for key in _RECORD_FIELDS:
+        if key in fields and key in EDITABLE_DESIGN_FIELDS:
+            value = fields[key]
+            if key == "status":  # the v1 statuses (v1.768.0 has Draft / Derived / Reviewed / Issued)
+                value = {"Inputs Gathered": "Draft", "Calculated": "Derived"}.get(value, value)
             doc.set(key, value)
 
-    for table in EDITABLE_CHILD_TABLES:
-        if table in payload and payload[table] is not None:
-            doc.set(table, [])
-            for row in payload[table] or []:
-                doc.append(table, row)
+    tables = {t: payload[t] for t in EDITABLE_CHILD_TABLES if payload.get(t) is not None}
+    inputs = {k: v for k, v in fields.items() if k in EDITABLE_DESIGN_FIELDS and k not in _RECORD_FIELDS}
+    existing = _model(doc)
+    doc.flags.ignored_inputs = []
+    if existing and not model_engine.is_legacy(existing) and not doc.is_new():
+        if tables or inputs:
+            model, doc.flags.ignored_inputs = merge_legacy_payload(existing, tables, inputs)
+            doc.model_json = json.dumps(model)
+    elif tables or inputs or doc.is_new():
+        legacy = dict(tables)
+        legacy["global_inputs"] = inputs
+        legacy.setdefault("basins", [])
+        model = model_engine.migrate(legacy)
+        model["acks"] = existing.get("acks") or []
+        doc.model_json = json.dumps(model)
 
-    doc.save()  # validate() -> recompute(); permissions enforced (not ignored)
+    doc.save()  # validate() derives the model; permissions enforced (not ignored)
     return doc
 
 
@@ -756,112 +867,6 @@ def acknowledge_issue(design, issue_key, note=None):
         doc.save()
         frappe.db.commit()
     return design_state(doc.name)
-
-
-@frappe.whitelist()
-def preview_design(payload):
-    """Recompute a design IN MEMORY from the live form (no save), so the desk form
-    can show rollups, per-row velocity/flow/head-loss, warnings, and completion as
-    the user edits. Reuses the exact controller ``recompute()`` — the preview is
-    byte-identical to a save — so there is no second implementation to drift."""
-    _require("read")
-    # Lazy import avoids a circular import (the controller imports from this module).
-    from erpnext_enhancements.water_engineering.doctype.water_feature_design.water_feature_design import (
-        compute_completion_percent,
-    )
-
-    payload = _parse(payload)
-    doc = frappe.new_doc(DESIGN_DOCTYPE)
-    for key, value in (_parse(payload.get("fields")) or {}).items():
-        if key in PREVIEW_PARENT_FIELDS:
-            doc.set(key, value)
-    for table in EDITABLE_CHILD_TABLES:
-        if payload.get(table) is not None:
-            doc.set(table, [])
-            for row in payload[table] or []:
-                doc.append(table, row)
-    # Acknowledgement keys from the saved doc, so the live readiness/issue view
-    # doesn't re-count warnings the engineer has already signed off on.
-    for ack in payload.get("issue_acks") or []:
-        key = (ack or {}).get("issue_key")
-        if key:
-            doc.append("issue_acks", {"issue_key": key})
-
-    try:
-        doc.recompute()
-        completion = compute_completion_percent(doc)
-    except Exception:
-        frappe.log_error(frappe.get_traceback(), "Water Feature Design preview")
-        return {"error": True}
-
-    warnings, seen = [], set()
-    for r in doc.get("calc_results") or []:
-        for w in (r.warnings or "").split("\n"):
-            if w and w not in seen:
-                seen.add(w)
-                warnings.append(w)
-
-    def _f(v):
-        return float(v) if v not in (None, "") else 0.0
-
-    return {
-        "rollups": {
-            "total_basin_gallons": doc.total_basin_gallons,
-            "required_circulation_gpm": doc.required_circulation_gpm,
-            "design_flow_gpm": doc.design_flow_gpm,
-            "computed_tdh_ft": doc.computed_tdh_ft,
-            "selected_pump": doc.selected_pump,
-            "chlorinator_feed_gph": doc.chlorinator_feed_gph,
-            "drain_capacity_gpm": doc.drain_capacity_gpm,
-            "surge_basin_gallons": doc.surge_basin_gallons,
-        },
-        "static_lift_ft": _f(doc.static_lift_ft),
-        "canvas": _canvas_state(doc),
-        "completion_percent": completion,
-        "has_warnings": bool(doc.has_warnings),
-        "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
-        "warnings": warnings,
-        # Typed issues + readiness (additive) — recompute() already produced them
-        # on the in-memory doc, so the live panel costs zero extra engine work.
-        "issues": _parse(doc.design_issues_json) if doc.get("design_issues_json") else [],
-        "readiness": _parse(doc.readiness_json) if doc.get("readiness_json") else {},
-        "blocker_count": doc.get("blocker_count") or 0,
-        "warning_count": doc.get("warning_count") or 0,
-        "issue_ready": bool(doc.get("issue_ready")),
-        "fitting_schedule": design_issues.fitting_schedule(doc),
-        "basins": [{"volume_gal": b.volume_gal, "weight_lb": b.weight_lb} for b in doc.get("basins") or []],
-        "features": [{"flow_gpm": f.flow_gpm} for f in doc.get("features") or []],
-        "pipe_segments": [
-            {
-                "velocity_fps": s.velocity_fps,
-                "velocity_status": s.velocity_status,
-                "head_loss_ft": s.head_loss_ft,
-                "pressure_status": s.pressure_status,
-                "pressure_margin_psi": s.pressure_margin_psi,
-                "segment_label": s.segment_label,
-            }
-            for s in doc.get("pipe_segments") or []
-        ],
-        # The full math behind every calc (formula + working + inputs + citations),
-        # so the form's "Show the math" toggle can expand it live. recompute() has
-        # already populated calc_results in memory — zero extra compute.
-        "calc_results": [
-            {
-                "calc": r.calc,
-                "value": r.value,
-                "unit": r.unit,
-                "status": r.status,
-                "formula": r.formula,
-                # the child row stores these as joined strings — split back to the
-                # lists the form's math view expects.
-                "steps": [s for s in (r.steps or "").split("\n") if s],
-                "inputs_text": r.inputs_text,
-                "citations": [c for c in (r.citations or "").split(", ") if c],
-                "warnings": [w for w in (r.warnings or "").split("\n") if w],
-            }
-            for r in (doc.get("calc_results") or [])
-        ],
-    }
 
 
 # ----------------------------------------------------------- pump catalog

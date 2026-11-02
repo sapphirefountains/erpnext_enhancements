@@ -39,10 +39,19 @@
     "type": "Splash pad (in-ground jets)",
     "label": "Plaza jets",
     "inputs": {
-     "jet_count": 24,
-     "jet_height_ft": 6,
-     "pad_area_sqft": 1600,
-     "tank_minutes": 3
+     "play_features": [
+      {
+       "label": "Ground jets",
+       "gpm": 8,
+       "count": 24
+      }
+     ],
+     "sequence": [
+      {
+       "open": "Ground jets"
+      }
+     ],
+     "inlet_count": 4
     },
     "effect": {
      "look": "chase"

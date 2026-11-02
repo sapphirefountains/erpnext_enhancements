@@ -15,6 +15,8 @@
   "contractor_name",
   "contractor_phone",
   "contractor_address",
+  "sb_designer",
+  "designer_text_item",
   "tab_house_rules",
   "house_rules_intro",
   "house_rules_set_on",
@@ -117,6 +119,18 @@
    "fieldname": "contractor_address",
    "fieldtype": "Small Text",
    "label": "Contractor Address"
+  },
+  {
+   "fieldname": "sb_designer",
+   "fieldtype": "Section Break",
+   "label": "Fountain Designer"
+  },
+  {
+   "fieldname": "designer_text_item",
+   "fieldtype": "Link",
+   "label": "Text-line Item",
+   "options": "Item",
+   "description": "A non-stock Item the Fountain Designer uses for a BOM line that has no Item yet, when it pushes a Quotation or Material Request; the line's own description replaces the Item's. Blank: such lines are listed in the Quotation's terms instead, and left off a Material Request."
   },
   {
    "fieldname": "tab_house_rules",

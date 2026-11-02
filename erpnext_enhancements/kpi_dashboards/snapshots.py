@@ -946,7 +946,7 @@ def _design_metrics():
 	today = getdate(nowdate())
 	d30 = add_days(today, -30)
 	values, add = _collector()
-	wip = "status in ('Draft','Inputs Gathered','Calculated','Reviewed')"
+	wip = "status in ('Draft','Derived','Inputs Gathered','Calculated','Reviewed')"
 
 	add(
 		"designs_created_30",

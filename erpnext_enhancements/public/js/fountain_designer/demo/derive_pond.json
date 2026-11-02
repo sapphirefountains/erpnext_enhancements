@@ -39,9 +39,10 @@
     "type": "Floating fountain aerator",
     "label": "Pond aerator",
     "inputs": {
-     "pond_acres": 1,
-     "pond_depth_ft": 6,
-     "cable_ft": 300
+     "surface_acres": 1,
+     "depth_ft": 6,
+     "purpose": "aeration",
+     "shore_power_ft": 300
     },
     "effect": {
      "look": "crown"
@@ -52,7 +53,7 @@
     },
     "count": 1,
     "basin": "b1",
-    "node": "t1"
+    "node": null
    }
   ],
   "basins": [
@@ -76,47 +77,10 @@
    "material": "None"
   },
   "network": {
-   "nodes": [
-    {
-     "id": "src",
-     "kind": "basin",
-     "basin": "b1",
-     "elevation_ft": 0
-    },
-    {
-     "id": "p1",
-     "kind": "pump"
-    },
-    {
-     "id": "t1",
-     "kind": "terminal",
-     "feature": "f1",
-     "elevation_ft": 0
-    }
-   ],
-   "pumps": [
-    {
-     "id": "p1",
-     "item": "KAS-3400-1",
-     "curve": null,
-     "generic_class": "submersible",
-     "label": "Kasco 3400JF 1 HP",
-     "speed_pct": 100,
-     "control": "none",
-     "setpoint_psi": null
-    }
-   ],
+   "nodes": [],
+   "pumps": [],
    "segments": [],
-   "terminals": [
-    {
-     "id": "t1",
-     "kind": "fixed_flow",
-     "feature": "f1",
-     "params": {
-      "flow_gpm": 270
-     }
-    }
-   ]
+   "terminals": []
   },
   "equipment": [
    {
@@ -170,15 +134,7 @@
    }
   },
   "segments": {},
-  "pumps": {
-   "p1": {
-    "flow_gpm": 270,
-    "head_ft": 6,
-    "kw": 0.9,
-    "npsh_margin_ft": null,
-    "bep_pct": 100
-   }
-  }
+  "pumps": {}
  },
  "rollups": {
   "design_flow_gpm": 270,

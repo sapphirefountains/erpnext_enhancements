@@ -90,40 +90,51 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 
 | File | Purpose |
 |---|---|
-| `issues.py` | The single producer of typed `DesignIssue` records and per-section readiness. The engine speaks in free-form status strings and warning sentences — good for the audit trail, useless to a designer who needs to know *what is wrong and where*. The form, wizard, list view, print formats and Triton all consume this one derived structure |
-| `api/water_design.py` | Whitelisted desk endpoints for the wizard and form JS — thin adapters over `engine/`. `save_inputs` and `get_design_state` expose the `_save_design` / `design_state` helpers the MCP tools reuse, so both surfaces share one implementation. Every endpoint gates on the `Water Feature Design` doctype, and `doc.save()` enforces document-level permission for the mutation itself |
+| `derive.py` | The Fountain Designer's ladder (v1.768.0, rebuild phase E): `derive_model(model, catalogs, rules, *, site_lookup, prices, on_error)` runs PLAN.md 2.2 in order over a schema-2 model — site defaults, basins, the families, regulated minimums, the route template from the Pump room step, phase B's `autosize.derive` (network, pipe sizes, pump, control, bypass, surge), treatment, lighting, phase L's `electrical_report` and `controls_report`, phase S's `structural_takeoff`, winterization, then the merged and priced BOM, O&M and the charts — and returns the reply the page draws (its README, "derive"). It imports no frappe: the API hands it the catalogs, rules, prices and geocoded point as plain dicts. A stage that fails becomes one `ENGINE_STAGE_FAILED` blocker, never an exception; `custom` sections are never written; every float is finite or None. It is also where the phases' shapes meet: a family's `design_flow_gpm` and takeoff `flow_gpm`/`head_ft` become phase B's `design_gpm` and `rated_gpm`/`rated_head_ft`, a curve named by its catalog name gets its points, and phase L/S text item hints are folded into phase B's merge. 4 spaces |
+| `issues.py` | The single producer of typed `DesignIssue` records and per-section readiness. The engine speaks in free-form status strings and warning sentences — good for the audit trail, useless to a designer who needs to know *what is wrong and where*. Two generations: `build_issues` / `build_readiness` read a v1 record's child rows (the old wizard path and the print fallback); `model_issues` / `model_readiness` / `model_verdict` (v1.768.0) map every typed check from every phase of a schema-2 derive onto the same `DesignIssue` dict plus `step`, `path`, one-click `remedies` and `acknowledged` (from `model.acks`) |
+| `api/designer.py` | The Fountain Designer page's endpoints (v1.768.0): `boot`, `derive`, `get_design`, `save_design`, `push_quotation`, `push_material_request`, `catalog_search`, `acknowledge_issue`, `run_calc`, field for field as `public/js/fountain_designer/README.md` documents. The loaders that feed `derive.py` live here: the house rules (Water Engineering Settings), the pump catalog (`catalog_reader.pump_curve_sets` over pump Items, cached ten minutes), Item prices (valuation rate, else the default selling price list) and the geocoded site (`workforce.sites.geocode_text`, cached a month per address; the app has no elevation lookup, so elevation is the jurisdiction default). `boot`, `get_design` and `catalog_search` answer GET; every write is POST-only. 4 spaces |
+| `api/water_design.py` | Whitelisted desk endpoints for the old wizard — thin adapters over `engine/` — kept until phase H. `get_design_state` / `design_state` read the v1.768.0 record (rollups, model counts, issues, the fitting schedule from the model, the canvas); `_save_design` (the `save_water_design` AI tool) turns its schema-1 payload into a model through `engine.model.migrate`. `preview_design` went with the old form's live preview. Every endpoint gates on the `Water Feature Design` doctype, and `doc.save()` enforces document-level permission for the mutation itself |
 | `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads, the aquatic-equipment fields, and (v1.758.0) the catalog fields: listing, light, filter and aerator specs and the Spec Source block |
 | `catalog_reader.py` | The catalog as plain dicts for the engine: `pump_curve_sets(item_codes)`, `nozzle_profiles(names)`, `light_specs(item_codes)`. Pump Curve records win over the Item's legacy `custom_pump_curve` table; an unpublished efficiency, NPSHr, power, spread or throw reads as None, never the stored 0; every read survives a site that has not migrated yet. 4 spaces |
 | `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
 | `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
-| `page/fountain_designer/` | The guided Fountain Designer (v1.761.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract phase E's `api/designer.py` honors; until E lands it runs on `?demo=1` |
+| `page/fountain_designer/` | The guided Fountain Designer (v1.761.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract `api/designer.py` honors (v1.768.0); `?demo=1` stays as the labeled training demo |
 | `workspace/water_engineering/` | Desk workspace |
 
 ## DocTypes
 
-**`Water Feature Design`** is the submittable parent that accumulates a fountain's Phase-1
-design. Its controller's single frappe↔engine bridge is `recompute()`: convert child rows to
-plain dicts, run the pure spine, write back the headline rollups, the per-row computed
-columns, and the `calc_results` audit trail. Keep that the only crossing point.
+**`Water Feature Design`** is the submittable design record, rebuilt in v1.768.0 (PLAN.md 3.2):
+identity links (`project`, `opportunity`, `customer`, `serial_no`, `design_title`), `mode`
+(Quick / Full), `kit`, `family`, `venue_type`, `status` (Draft / Derived / Reviewed / Issued;
+Issued = submitted), `model_json` (the schema-2 model, the source of truth), `results_json`,
+`design_issues_json`, `readiness_json`, the rollups (`design_flow_gpm`, `operating_flow_gpm`,
+`computed_tdh_ft` — the API's `tdh_ft`, kept in its v1 column for the dashboard and packet —
+`operating_head_ft`, `selected_pump`, `pump_kw`, `total_basin_gallons`, `budget_total`,
+`om_cost_per_year`, the issue counts, `completion_percent`, `issue_ready`), `bom`, `issue_acks`
+and the packet fields. Its controller's single frappe↔engine bridge is `recompute()`: run
+`api/designer.run_derive` over `model_json` and write everything back (`write_derive`); `Auto`
+BOM lines are rewritten on every save and `Manual` ones kept. `before_submit` refuses blockers,
+unsigned warnings and a package that is not `issue_ready`. The Desk form is thin — Design Health
+chips, the rollups, the BOM grid, the acknowledgements, and **Open in Designer**.
+
+The nine schema-1 child tables left the parent in v1.768.0;
+`patches/convert_water_feature_designs_to_model.py` read each design's stored rows straight from
+their tables into `model_json` (`model.migrate`) and deleted nothing. Their DocTypes (Water Feature
+Basin, Tier, Nozzle, Pipe Segment, Pump, Electrical Load, Venue Fixture, Equipment, Calc Result)
+stay until phase H removes them with a `delete_doc` patch.
 
 Child tables and catalogs:
 
 | DocType | Role |
 |---|---|
-| `Water Feature Basin` | Basin geometry |
-| `Water Feature Tier` | Tier definitions |
-| `Water Feature Nozzle` | Nozzle rows on a design |
-| `Water Feature Pipe Segment` | Piping segments |
-| `Water Feature Pump` | Selected pump rows |
-| `Water Feature Electrical Load` | Electrical load rows |
-| `Water Feature Calc Result` | Persisted `CalcResult` audit trail |
-| `Water Design Issue Ack` | Designer acknowledgement of a typed issue |
+| `Water Feature Design Line` | The design's BOM (`bom`): `section`, `item`, `description`, `qty`, `uom`, `rate`, `amount`, `source` (Auto / Manual), `catalog_source`, `line_key`. What `push_quotation` and `push_material_request` read; a line with no Item goes as the Text-line Item set on Water Engineering Settings, or (unset) in the Quotation's terms |
+| `Water Design Issue Ack` | Designer acknowledgement of a typed issue (mirrored in `model.acks`) |
 | `Nozzle Profile` | Nozzle catalog: `nozzle_type` (Orifice Jet, Foam / Aerating, Laminar, Cascade / Fan, Geyser, Bubbler, Spray Ring, Water Screen, Sheet Fall, Other), `item`, `connection_size`, `level_sensitive`, min/max water over the nozzle, `recommended_beam_deg`, the Cd and rated-GPM methods, provenance (`source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `read_method`, `error_band_pct`, `catalog_id`), `is_generic_estimate`, and the `performance` table. The controller fills head from PSI (or the reverse), sorts the rows, and warns when flow falls as head rises |
 | `Nozzle Performance Point` | Child of Nozzle Profile: `head_ft`, `psi`, `flow_gpm`, `display_height_ft`, `display_diameter_ft`, `throw_ft`, `depth_over_nozzle_in` |
 | `Pump Curve` | One curve of a pump Item at one impeller / speed (v1.758.0): `item`, `curve_label`, `impeller_dia_in`, `rpm`, `speed_pct`, `max_flow_gpm`, `shutoff_head_ft`, `source` (Datasheet / Digitized / Rep-supplied / Generic estimate), `source_url`, `source_document`, `source_page`, `verified_by`, `verified_on`, `read_method`, `error_band_pct`, `catalog_id`, `notes`, `points`. The controller refuses a curve whose flow is not strictly rising or whose head rises again after its peak (beyond 1 % reading noise); a drooping curve (head climbing from shutoff to a peak) and a missing shutoff point or a gap only warn |
 | `Pump Curve Point` | Curve points: `flow_gpm`, `head_ft`, `efficiency_pct`, `npshr_ft`, `power_bhp`. Child of Pump Curve, and of Item as the legacy `custom_pump_curve` table the readers fall back to |
-| `Water Engineering Settings` | Single: engineer of record, contractor, and (House Rules tab, v1.759.0) the Sapphire house rules and utility rates that `engine/rules.py` mirrors |
+| `Water Engineering Settings` | Single: engineer of record, contractor, the Fountain Designer's Text-line Item (v1.768.0), and (House Rules tab, v1.759.0) the Sapphire house rules and utility rates that `engine/rules.py` mirrors |
 
 **Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
 `custom_spec_revision`, `custom_spec_verified_by`, `custom_spec_verified_on`, `custom_generic_estimate`,
@@ -197,6 +208,13 @@ own CI step (`python -m unittest` collects none of them):
 python -m pytest -q erpnext_enhancements/tests/test_families_weir.py \
   erpnext_enhancements/tests/test_families_jets.py erpnext_enhancements/tests/test_families_others.py \
   erpnext_enhancements/tests/test_water_model.py erpnext_enhancements/tests/test_water_house_rules.py
+```
+
+The Fountain Designer's derive and API (v1.768.0) are pytest suites with their own CI step; the
+derive suite also runs a real reply through the page's own modules under node (skipped without it):
+
+```bash
+python -m pytest -q erpnext_enhancements/tests/test_designer_derive.py erpnext_enhancements/tests/test_designer_api.py
 ```
 
 The engine suites are **golden tests**: each formula reproduces its sheet's own worked example. When you
