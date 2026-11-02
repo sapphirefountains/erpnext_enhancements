@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.774.3] - 2026-11-02
+
+**The Fountain Designer's catalog loader can load every approved row, and its dry run refuses the rows a
+write would.** Nik, 2026-11-02, catalog seed on prod.
+
+**What happened.** Nikolas found the designer's pump picker empty ("Nothing in the catalog matches"):
+`catalog_seed.load_catalog` had never been run on prod. The dry run came back clean. The write then
+loaded **260 of the 380 approved rows** (72 pumps, 169 nozzles, 19 lights) and refused 120 with Frappe's
+length error, e.g. `Item PUMP-PENTAIR-WHISPERFLOXF-…: 'Spec Revision' (Pentair Pool 2024 Product Catalog
+- Pumps section … (accessed 2026-11-01), p. 7) will get truncated, as max characters allowed is 140`.
+97 pumps and 7 nozzles had a revision (the source title, its access date and the page, as
+`_item_provenance` writes it) over 140 characters, up to 185; 16 lights had a source URL over 140, up to
+154. The per-row savepoints held: the refused rows left nothing behind and nothing reached the Error Log.
+
+**Why the dry run missed it.** Frappe checks a value against its column's length in
+`Document._validate_length`, which runs on insert and save. A dry run does neither, so it could not see
+a length problem at all.
+
+**Changed.**
+
+- `custom_spec_revision` and `custom_spec_source_url` on Item are **Small Text** instead of Data
+  (`water_engineering/setup.py`, `scripts/layout/code_owned_fields.json`). They are code-owned fields, not
+  in `fixtures/custom_field.json`: `create_catalog_item_fields` runs on every migrate, updates the
+  existing Custom Field and widens the column. Frappe allows Data → Small Text in place
+  (`ALLOWED_FIELDTYPE_CHANGE`, checked on the v16.53.0 tag prod runs), so no patch. The URL keeps
+  `options: "URL"`: Small Text's control extends Data's, so the editable field keeps its open-link
+  button. In a read-only view the URL now shows as plain text rather than a link.
+- **`source_document` on Pump Curve and Nozzle Profile is Small Text too.** The same text goes there (up
+  to 178 characters on a curve, 170 on a profile), and Data would have refused 97 pumps and 7 nozzles
+  again on the re-run. The prod write never reached those, because each row failed on its Item first.
+  Both doctype JSONs' `modified` moved so the migrate re-syncs them.
+- **The loader checks lengths before it writes, in both modes** (`_check_lengths`). Every value about to
+  go into an Item, a Pump Curve and its points, or a Nozzle Profile and its points is held against the
+  field's type and `length` from `frappe.get_meta`. The rule is Frappe's own: `length` characters, else
+  the width in the site's `frappe.db.type_map`, 140 for Data and Link. Small Text and Text are unbounded.
+  An overlong value is the row's error, in Frappe's words. A dry run and a write now refuse the same
+  rows, and nothing is truncated.
+
+**Tests** (`tests/test_water_catalog.py`, its existing pytest step). The fake frappe's `get_meta` now
+serves the schema this repo declares (setup.py's Item fields, the four catalog doctype JSONs, ERPNext's
+own Item fields as v16.52.1 declares them), so every loader test runs the check. New cases cover:
+
+- a 185-character revision refused as a Data field (the dry run and the write give the same error) and
+  loaded whole as Small Text;
+- a light URL over 140;
+- an overlong curve value, which also rolls back the row's Item;
+- updates;
+- a declared `length` and the site's type map.
+
+The real catalog is walked as well: every field the loader writes is declared, and a dry run of all 380
+approved rows reports no error. Against the old Data fields the same dry run refuses exactly the rows
+prod refused (97 pumps, 7 nozzles, 16 lights), and without the loader change six of the new tests fail.
+
+**After deploy:** re-run `seed_catalog` with `dry_run=0` as a System Manager. Expected: 97 pumps, 7
+nozzles and 16 lights created, 260 unchanged, 0 errors.
+
 ## [1.774.2] - 2026-11-02
 
 **The committed-secrets gate scans what a pull request adds, and the full-history walk skips blobs it

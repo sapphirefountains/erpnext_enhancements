@@ -446,7 +446,14 @@ def create_catalog_item_fields():
 	aerator specs, and where every spec came from. Runs after
 	``create_equipment_item_fields``, whose fields these are placed beside. The
 	provenance block applies to every catalog class, the pumps included; the seed
-	loader (``catalog_seed.py``) writes it on every record it touches."""
+	loader (``catalog_seed.py``) writes it on every record it touches.
+
+	The source URL and the revision are Small Text, not Data (v1.774.3): a cited
+	brochure title with its access date and page runs to 185 characters and some
+	manufacturer URLs to 154, past Data's 140. Data -> Small Text is a change Frappe
+	allows in place, and ``create_custom_fields`` makes it on the next migrate (it
+	updates the existing Custom Field and widens the column). The URL keeps
+	``options: "URL"``: Small Text's control inherits Data's open-link button."""
 	create_custom_fields(
 		{
 			"Item": [
@@ -548,14 +555,14 @@ def create_catalog_item_fields():
 				{
 					"fieldname": "custom_spec_source_url",
 					"label": "Spec Source URL",
-					"fieldtype": "Data",
+					"fieldtype": "Small Text",
 					"options": "URL",
 					"insert_after": "custom_spec_source_section",
 				},
 				{
 					"fieldname": "custom_spec_revision",
 					"label": "Spec Revision",
-					"fieldtype": "Data",
+					"fieldtype": "Small Text",
 					"insert_after": "custom_spec_source_url",
 					"description": "The datasheet or brochure and its revision the specs were read from.",
 				},

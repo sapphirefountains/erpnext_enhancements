@@ -38,6 +38,41 @@ CHILD_TABLES = {
     "Nozzle Performance Point": {"Nozzle Profile": "performance"},
 }
 NAME_FIELD = {"Item": "item_code", "Nozzle Profile": "profile_name", "Brand": "brand", "Item Group": "item_group_name"}
+#: The ERPNext Item fields the loader writes, as erpnext v16.52.1's item.json declares them.
+ITEM_STANDARD_FIELDS = {
+    "item_code": ("Data", "Item Code"),
+    "item_name": ("Data", "Item Name"),
+    "item_group": ("Link", "Item Group"),
+    "stock_uom": ("Link", "Default Unit of Measure"),
+    "is_stock_item": ("Check", "Maintain Stock"),
+    "brand": ("Link", "Brand"),
+    "description": ("Text Editor", "Description"),
+}
+
+
+def declared_fields():
+    """``{doctype: {fieldname: {fieldtype, length, label}}}`` as this repo declares them.
+
+    Item: ERPNext's own fields above plus every custom field ``water_engineering/setup.py`` creates
+    (the literal keys of each ``{"fieldname": ...}`` dict). The four catalog doctypes: their JSON.
+    The fake's ``get_meta`` serves these, so every loader test runs the field-length check against
+    the schema a migrate would build.
+    """
+    item = {f: {"fieldtype": t, "length": 0, "label": label} for f, (t, label) in ITEM_STANDARD_FIELDS.items()}
+    for node in ast.walk(ast.parse((WE / "setup.py").read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Dict):
+            continue
+        df = {k.value: v.value for k, v in zip(node.keys, node.values, strict=True)
+              if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)}
+        if "fieldname" in df and "fieldtype" in df:
+            item[df["fieldname"]] = {"fieldtype": df["fieldtype"], "length": df.get("length", 0),
+                                     "label": df.get("label")}
+    out = {"Item": item}
+    for folder in NEW_DOCTYPES:
+        data = json.loads((WE / "doctype" / folder / f"{folder}.json").read_text(encoding="utf-8"))
+        out[data["name"]] = {f["fieldname"]: {"fieldtype": f["fieldtype"], "length": f.get("length", 0),
+                                              "label": f.get("label")} for f in data["fields"]}
+    return out
 
 
 # ----------------------------------------------------------------------------- the fake frappe
@@ -146,6 +181,13 @@ class FakeFrappe:
         self.inserts = []
         self.saves = []
         self.fail_insert = set()
+        self.fields = declared_fields()
+
+    def get_meta(self, doctype):
+        fields = self.fields.get(doctype, {})
+        meta = types.SimpleNamespace()
+        meta.get_field = lambda fieldname: Row(fields[fieldname]) if fieldname in fields else None
+        return meta
 
     # --- writes
     def _stamp(self, data, creating):
@@ -219,6 +261,7 @@ def _install(fake):
     frappe.db = fake.db
     frappe.get_doc = fake.get_doc
     frappe.get_all = fake.get_all
+    frappe.get_meta = fake.get_meta
     frappe.flags = types.SimpleNamespace()
     frappe.messages = []
     frappe.msgprint = lambda msg, *a, **k: frappe.messages.append(msg)
@@ -957,3 +1000,181 @@ def test_the_endpoint_writes_only_for_an_explicit_no(fake, monkeypatch, sent):
     monkeypatch.setattr(catalog_seed, "CATALOG_DIR", FIXTURES)
     assert catalog_seed.seed_catalog(dry_run=sent)["dry_run"] is False
     assert fake.inserts
+
+
+# ----------------------------------------------------------------------------- field lengths
+# On 2026-11-02 the first write on prod refused 120 of the 380 approved rows: Frappe checks a value
+# against its column's length only on insert, so the dry run before it had reported clean. The
+# loader now applies the same rule before writing, in both modes. Rows below are INVENTED.
+
+#: 157 characters, so the revision "<title> (accessed 2026-11-01), p. 7" is 185, the longest on prod.
+LONG_TITLE = "FIXTURE brochure " + "x" * 140
+
+
+def _long_pump(title=LONG_TITLE):
+    return _twin("LONG", 1, id="fixtureco-long", model="FIXTURE-LONG",
+                 source=[{"url": "https://example.invalid/long.pdf", "title": title, "page": 7,
+                          "accessed": "2026-11-01"}])
+
+
+def _as_data(fake, doctype, *fields, length=0):
+    """The field as it was declared before v1.774.3: Data (140 characters unless ``length`` says)."""
+    for field in fields:
+        fake.fields[doctype][field] = {**fake.fields[doctype][field], "fieldtype": "Data", "length": length}
+
+
+def _load(folder, dry_run):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    return catalog_seed.load_catalog(catalog_dir=folder, dry_run=dry_run)
+
+
+def test_a_185_character_revision_is_a_dry_run_error_against_a_data_field(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _long_pump()
+    revision = catalog_seed._item_provenance(catalog_seed.provenance(row, {}))["custom_spec_revision"]
+    assert len(revision) == 185
+    _write(tmp_path, pumps=[row], approved={"pumps": ["fixtureco-long"]})
+    _as_data(fake, "Item", "custom_spec_revision")
+
+    dry = _load(tmp_path, dry_run=True)
+    assert dry["pumps"]["created"] == []
+    (error,) = dry["pumps"]["errors"]
+    assert error["key"] == "fixtureco-long"
+    assert error["error"] == (f"Item PUMP-FIXTURECO-FIXTURE-LONG: 'Spec Revision' ({revision}) will get "
+                              "truncated, as max characters allowed is 140")
+    # The write refuses the same row with the same words, and leaves nothing of it behind.
+    wrote = _load(tmp_path, dry_run=False)
+    assert wrote["pumps"]["errors"] == dry["pumps"]["errors"]
+    assert "PUMP-FIXTURECO-FIXTURE-LONG" not in fake.store["Item"]
+    assert "Fixtureco" not in fake.store.get("Brand", {}) and not fake.store.get("Pump Curve")
+
+
+def test_a_185_character_revision_loads_once_the_field_is_small_text(fake, tmp_path):
+    _write(tmp_path, pumps=[_long_pump()], approved={"pumps": ["fixtureco-long"]})
+    assert fake.fields["Item"]["custom_spec_revision"]["fieldtype"] == "Small Text"
+    assert fake.fields["Pump Curve"]["source_document"]["fieldtype"] == "Small Text"
+
+    dry = _load(tmp_path, dry_run=True)
+    assert dry["pumps"]["errors"] == [] and [e["key"] for e in dry["pumps"]["created"]] == ["fixtureco-long"]
+    wrote = _load(tmp_path, dry_run=False)
+    assert wrote["pumps"]["errors"] == []
+    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]
+    assert len(item["custom_spec_revision"]) == 185  # whole, never truncated
+    (curve,) = fake.store["Pump Curve"].values()
+    assert curve["source_document"] == f"{LONG_TITLE} (accessed 2026-11-01)"
+
+
+def test_a_curve_value_too_long_refuses_the_row_and_its_item_with_it(fake, tmp_path):
+    """The prod write never reached this: each overlong row failed on its Item first."""
+    _write(tmp_path, pumps=[_long_pump()], approved={"pumps": ["fixtureco-long"]})
+    _as_data(fake, "Pump Curve", "source_document")
+
+    dry = _load(tmp_path, dry_run=True)
+    (error,) = dry["pumps"]["errors"]
+    assert error["error"].startswith("Pump Curve (3450 rpm): 'Source Document' (FIXTURE brochure x")
+    wrote = _load(tmp_path, dry_run=False)
+    assert wrote["pumps"]["errors"] == dry["pumps"]["errors"]
+    assert "PUMP-FIXTURECO-FIXTURE-LONG" not in fake.store["Item"]  # inserted, then rolled back
+
+
+def test_a_light_url_over_140_characters_is_caught_the_same_way(fake, tmp_path):
+    url = "https://example.invalid/fixture-light-sheets/" + "l" * 100 + ".pdf"
+    assert 140 < len(url) <= 154
+    light = {"id": "fixtureco-l-long", "manufacturer": "Fixtureco", "model": "FIXTURE-LLONG", "watts": 20,
+             "voltage": [12], "source": {"url": url, "title": "FIXTURE light sheet"}}
+    _write(tmp_path, lights=[light], approved={"lights": ["fixtureco-l-long"]})
+    _as_data(fake, "Item", "custom_spec_source_url")
+
+    (error,) = _load(tmp_path, dry_run=True)["lights"]["errors"]
+    assert error["error"] == (f"Item LIGHT-FIXTURECO-FIXTURE-LLONG: 'Spec Source URL' ({url}) will get "
+                              "truncated, as max characters allowed is 140")
+
+    fake.fields = declared_fields()
+    wrote = _load(tmp_path, dry_run=False)
+    assert wrote["lights"]["errors"] == []
+    assert fake.store["Item"]["LIGHT-FIXTURECO-FIXTURE-LLONG"]["custom_spec_source_url"] == url
+
+
+def test_an_update_is_checked_like_an_insert(fake, tmp_path):
+    _write(tmp_path, pumps=[_long_pump("FIXTURE brochure rev A")], approved={"pumps": ["fixtureco-long"]})
+    _load(tmp_path, dry_run=False)
+    stored = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]["custom_spec_revision"]
+    _write(tmp_path, pumps=[_long_pump()], approved={"pumps": ["fixtureco-long"]})
+    _as_data(fake, "Item", "custom_spec_revision")
+
+    for dry_run in (True, False):
+        (error,) = _load(tmp_path, dry_run=dry_run)["pumps"]["errors"]
+        assert "Item PUMP-FIXTURECO-FIXTURE-LONG: 'Spec Revision'" in error["error"]
+    assert fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]["custom_spec_revision"] == stored
+
+
+def test_a_declared_length_and_the_sites_type_map_set_the_limit(fake, tmp_path):
+    _write(tmp_path, pumps=[_long_pump()], approved={"pumps": ["fixtureco-long"]})
+    _as_data(fake, "Item", "custom_spec_revision", length=185)
+    assert _load(tmp_path, dry_run=True)["pumps"]["errors"] == []
+    _as_data(fake, "Item", "custom_spec_revision", length=184)
+    assert "max characters allowed is 184" in _load(tmp_path, dry_run=True)["pumps"]["errors"][0]["error"]
+    # length 0 takes the type's width from the site's own map when it has one.
+    _as_data(fake, "Item", "custom_spec_revision")
+    fake.db.type_map = {"Data": ("varchar", 190), "Small Text": ("text", "")}
+    assert _load(tmp_path, dry_run=True)["pumps"]["errors"] == []
+
+
+# ----------------------------------------------------------------------------- the real catalog
+
+REAL_CATALOG = REPO_ROOT / "docs" / "fountain-designer" / "catalog"
+
+
+def _real_plans():
+    """``(kind, label, plan)`` for every approved row of the real catalog, planned by the loader."""
+    from erpnext_enhancements.water_engineering import catalog_seed as cs
+
+    meta, approvals = cs.read_approvals(cs._read_json(REAL_CATALOG / cs.APPROVAL_FILE))
+    for kind, filename in cs.FILES.items():
+        by_key, by_id = approvals[kind]["keys"], approvals[kind]["ids"]
+        for key, _base, row in cs.resolve_rows(cs.rows_of(cs._read_json(REAL_CATALOG / filename), kind)):
+            row_id = str(row.get("id") or "").strip()
+            if row_id in by_id or key in by_key:
+                approval = by_id[row_id] if row_id in by_id else by_key[key]
+                yield kind, row_id or key, cs.PLANNERS[kind](row, approval, meta)
+
+
+def test_every_field_the_loader_writes_from_the_real_catalog_is_declared(fake):
+    """So the length check below cannot pass by skipping a field the meta does not know."""
+    declared = declared_fields()
+    plans = list(_real_plans())
+    assert {k for k, _l, _p in plans} == {"pumps", "nozzles", "lights"}
+    for _kind, label, plan in plans:
+        item = {"item_code", *plan["item"]["set"], *plan["item"]["fill"]}
+        assert item <= set(declared["Item"]), (label, item - set(declared["Item"]))
+        for curve in plan.get("curves") or []:
+            assert {*curve, "item", "verified_by"} - {"points"} <= set(declared["Pump Curve"]), label
+            assert {f for p in curve["points"] for f in p} <= set(declared["Pump Curve Point"]), label
+        if plan.get("profile"):
+            fields = {*plan["profile"], *plan["profile_fill"], "item", "verified_by"} - {"performance"}
+            assert fields <= set(declared["Nozzle Profile"]), (label, fields - set(declared["Nozzle Profile"]))
+            points = {f for p in plan["profile"]["performance"] for f in p}
+            assert points <= set(declared["Nozzle Performance Point"]), label
+
+
+def test_every_approved_row_of_the_real_catalog_fits_its_declared_fields(fake):
+    """A catalog row that would overflow a field fails CI here, not on the site's first write."""
+    summary = _load(REAL_CATALOG, dry_run=True)
+    for kind in ("pumps", "nozzles", "lights"):
+        assert summary[kind]["errors"] == [], summary[kind]["errors"][:3]
+    approved = len(list(_real_plans()))
+    assert sum(len(summary[k]["created"]) for k in ("pumps", "nozzles", "lights")) == approved
+
+
+def test_the_real_catalog_overflowed_the_old_data_fields(fake):
+    """The schema before v1.774.3 refuses rows of all three kinds, every one of them for length."""
+    _as_data(fake, "Item", "custom_spec_revision", "custom_spec_source_url")
+    _as_data(fake, "Pump Curve", "source_document")
+    _as_data(fake, "Nozzle Profile", "source_document")
+    summary = _load(REAL_CATALOG, dry_run=True)
+    for kind in ("pumps", "nozzles", "lights"):
+        assert summary[kind]["errors"], kind
+        assert all("max characters allowed is 140" in e["error"] for e in summary[kind]["errors"])
+    assert all("Spec Source URL" in e["error"] for e in summary["lights"]["errors"])

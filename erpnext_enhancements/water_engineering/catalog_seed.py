@@ -49,6 +49,13 @@ What it is careful about:
 * **One bad row does not stop the rest.** Each row is checked before anything is written (the
   same curve checks the Pump Curve form applies) and written in its own savepoint; a failure
   is reported in ``errors`` with the row's key.
+* **A dry run refuses the rows a write would.** Frappe checks a value against its column's
+  length only on insert and save, so a dry run that skips those never saw it: on 2026-11-02 a
+  clean dry run was followed by a write that refused 120 of 380 rows for a revision or URL
+  over Data's 140 characters. Every value about to be written, child rows included, is now
+  checked against the target field's type and ``length`` (``_check_lengths``, Frappe's own
+  ``_validate_length`` rule) in both modes, and an overlong one is the row's error. Nothing
+  is truncated.
 * **The Item naming guard is bypassed on purpose** (``flags.ignore_naming_guard``), as for the
   other in-request callers whose user cannot choose the code: the code is generated here, or
   set in ``approved.json``.
@@ -760,6 +767,61 @@ def _rows_differ(current_rows, desired_rows, fields):
 	return False
 
 
+#: The varchar fieldtypes and their default width, for a ``frappe.db`` without ``type_map`` (the
+#: bench-free stub). A real site reads Frappe's own map, so a framework change reaches this too.
+VARCHAR_FIELDTYPES = {
+	fieldtype: ("varchar", 140)
+	for fieldtype in (
+		"Data",
+		"Link",
+		"Dynamic Link",
+		"Select",
+		"Read Only",
+		"Color",
+		"Icon",
+		"Phone",
+		"Autocomplete",
+	)
+}
+
+
+def _too_long(doctype, values, reference):
+	"""The values Frappe would refuse as longer than their column, as its own messages.
+
+	Frappe's ``Document._validate_length`` rule: a varchar field holds ``length`` characters, or
+	the type's default (140) when ``length`` is 0; Small Text, Text and the rest are unbounded. A
+	field the meta does not have is skipped, as Frappe skips it.
+	"""
+	meta = frappe.get_meta(doctype)
+	type_map = getattr(frappe.db, "type_map", None) or VARCHAR_FIELDTYPES
+	problems = []
+	for field, value in values.items():
+		if value in (None, ""):
+			continue
+		df = meta.get_field(field)
+		if not df or df.fieldtype == "Check":
+			continue
+		column, size = type_map.get(df.fieldtype) or (None, None)
+		if column != "varchar":
+			continue
+		limit = int(df.get("length") or 0) or int(size)
+		if len(str(value)) > limit:
+			problems.append(
+				f"{reference}: '{df.label or field}' ({value}) will get truncated, "
+				f"as max characters allowed is {limit}"
+			)
+	return problems
+
+
+def _check_lengths(doctype, values, reference, child_doctype=None, rows=()):
+	"""Raise CatalogRowError naming every value of a record (and its child rows) too long to store."""
+	problems = _too_long(doctype, values, reference)
+	for idx, row in enumerate(rows, start=1):
+		problems += _too_long(child_doctype, row, f"{child_doctype}, Row {idx}")
+	if problems:
+		raise CatalogRowError(" ".join(problems))
+
+
 def _user_or_none(user):
 	return user if user and frappe.db.exists("User", user) else None
 
@@ -822,17 +884,16 @@ def apply_item(kind, item_plan, verified_by, dry_run):
 	values["custom_spec_verified_by"] = verified_by
 	existing = find_item(item_plan)
 	if not existing:
+		new = {
+			"item_code": item_plan["item_code"],
+			**{k: v for k, v in item_plan["fill"].items() if v not in (None, "")},
+			**{k: v for k, v in values.items() if v is not None},
+		}
+		_check_lengths("Item", new, f"Item {item_plan['item_code']}")
 		if not dry_run:
 			_ensure_group(item_plan["fill"]["item_group"])
 			_ensure_brand(item_plan["fill"].get("brand"))
-			doc = frappe.get_doc(
-				{
-					"doctype": "Item",
-					"item_code": item_plan["item_code"],
-					**{k: v for k, v in item_plan["fill"].items() if v not in (None, "")},
-					**{k: v for k, v in values.items() if v is not None},
-				}
-			)
+			doc = frappe.get_doc({"doctype": "Item", **new})
 			doc.flags.ignore_naming_guard = True
 			doc.insert(ignore_permissions=True)
 			return doc.name, [f"Item {doc.name} created"], True
@@ -842,6 +903,7 @@ def apply_item(kind, item_plan, verified_by, dry_run):
 	if not doc.get("brand") and not dry_run:
 		_ensure_brand(item_plan["fill"].get("brand"))
 	changed = _apply_fields(doc, values) + _apply_fields(doc, item_plan["fill"], fill_only=True)
+	_check_lengths("Item", {f: doc.get(f) for f in changed}, f"Item {existing}")
 	if changed and not dry_run:
 		doc.save(ignore_permissions=True)
 	return existing, ([f"Item {existing}: {', '.join(changed)}"] if changed else []), False
@@ -870,27 +932,35 @@ def apply_curve(item_code, curve, verified_by, dry_run, item_exists):
 		)
 		name = names[0] if names else None
 	if not name:
+		new = {
+			"item": item_code,
+			**{k: v for k, v in fields.items() if v is not None},
+			"notes": curve.get("notes"),
+		}
+		points = [{f: p.get(f) for f in CURVE_POINT_FIELDS} for p in curve["points"]]
+		_check_lengths("Pump Curve", new, f"Pump Curve ({curve['curve_label']})", "Pump Curve Point", points)
 		if not dry_run:
-			doc = frappe.get_doc(
-				{
-					"doctype": "Pump Curve",
-					"item": item_code,
-					**{k: v for k, v in fields.items() if v is not None},
-					"notes": curve.get("notes"),
-					"points": [{f: p.get(f) for f in CURVE_POINT_FIELDS} for p in curve["points"]],
-				}
-			)
+			doc = frappe.get_doc({"doctype": "Pump Curve", **new, "points": points})
 			doc.insert(ignore_permissions=True)
 			return [f"Pump Curve {doc.name} ({curve['curve_label']}) created"]
 		return [f"Pump Curve ({curve['curve_label']}) would be created"]
 	doc = frappe.get_doc("Pump Curve", name)
 	# Notes are filled once and then belong to whoever edits the curve.
 	changed = _apply_fields(doc, fields) + _apply_fields(doc, {"notes": curve.get("notes")}, fill_only=True)
+	points = []
 	if _rows_differ(doc.get("points") or [], curve["points"], CURVE_POINT_FIELDS):
 		changed.append("points")
+		points = [{f: p.get(f) for f in CURVE_POINT_FIELDS} for p in curve["points"]]
 		doc.set("points", [])
-		for p in curve["points"]:
-			doc.append("points", {f: p.get(f) for f in CURVE_POINT_FIELDS})
+		for p in points:
+			doc.append("points", p)
+	_check_lengths(
+		"Pump Curve",
+		{f: doc.get(f) for f in changed if f != "points"},
+		f"Pump Curve {name}",
+		"Pump Curve Point",
+		points,
+	)
 	if changed and not dry_run:
 		doc.save(ignore_permissions=True)
 	return [f"Pump Curve {name}: {', '.join(changed)}"] if changed else []
@@ -920,28 +990,40 @@ def apply_profile(item_code, plan, verified_by, dry_run):
 	fields["verified_by"] = verified_by
 	name = find_profile(profile)
 	if not name:
+		new = {
+			**{k: v for k, v in fields.items() if v is not None},
+			**{k: v for k, v in plan["profile_fill"].items() if v is not None},
+		}
+		points = [{f: p.get(f) for f in NOZZLE_POINT_FIELDS} for p in profile["performance"]]
+		_check_lengths(
+			"Nozzle Profile",
+			new,
+			f"Nozzle Profile {profile['profile_name']}",
+			"Nozzle Performance Point",
+			points,
+		)
 		if not dry_run:
-			doc = frappe.get_doc(
-				{
-					"doctype": "Nozzle Profile",
-					**{k: v for k, v in fields.items() if v is not None},
-					**{k: v for k, v in plan["profile_fill"].items() if v is not None},
-					"performance": [
-						{f: p.get(f) for f in NOZZLE_POINT_FIELDS} for p in profile["performance"]
-					],
-				}
-			)
+			doc = frappe.get_doc({"doctype": "Nozzle Profile", **new, "performance": points})
 			doc.insert(ignore_permissions=True)
 			return [f"Nozzle Profile {doc.name} created"]
 		return [f"Nozzle Profile {profile['profile_name']} would be created"]
 	doc = frappe.get_doc("Nozzle Profile", name)
 	fields.pop("profile_name", None)  # the name is the record's key; never renamed here
 	changed = _apply_fields(doc, fields) + _apply_fields(doc, plan["profile_fill"], fill_only=True)
+	points = []
 	if _rows_differ(doc.get("performance") or [], profile["performance"], NOZZLE_POINT_FIELDS):
 		changed.append("performance")
+		points = [{f: p.get(f) for f in NOZZLE_POINT_FIELDS} for p in profile["performance"]]
 		doc.set("performance", [])
-		for p in profile["performance"]:
-			doc.append("performance", {f: p.get(f) for f in NOZZLE_POINT_FIELDS})
+		for p in points:
+			doc.append("performance", p)
+	_check_lengths(
+		"Nozzle Profile",
+		{f: doc.get(f) for f in changed if f != "performance"},
+		f"Nozzle Profile {name}",
+		"Nozzle Performance Point",
+		points,
+	)
 	if changed and not dry_run:
 		doc.save(ignore_permissions=True)
 	return [f"Nozzle Profile {name}: {', '.join(changed)}"] if changed else []

@@ -225,7 +225,8 @@ Child tables and catalogs:
 
 **Catalog provenance on Item** (v1.758.0, `setup.create_catalog_item_fields`): `custom_spec_source_url`,
 `custom_spec_revision`, `custom_spec_verified_by`, `custom_spec_verified_on`, `custom_generic_estimate`,
-`custom_catalog_id`, `custom_spec_confidence`, `custom_spec_method`, `custom_spec_error_band_pct`;
+`custom_catalog_id`, `custom_spec_confidence`, `custom_spec_method`, `custom_spec_error_band_pct`
+(the source URL and the revision are Small Text since v1.774.3; see Seeding the catalog);
 lights `custom_lumens`, `custom_beam_deg`, `custom_light_control`, `custom_max_depth_ft`, `custom_ip_rating`
 (watts and volts are the shared `custom_elec_*` fields); filters `custom_filter_design_rate_gpm_sqft`,
 `custom_filter_backwash_gpm`; aerators `custom_aerator_pattern_height_ft`, `custom_aerator_pattern_diameter_ft`,
@@ -254,6 +255,25 @@ bench --site <site> execute erpnext_enhancements.water_engineering.catalog_seed.
 On an existing Item the loader writes specs and provenance only; the name, group, description and
 brand are filled when blank and never overwritten. The summary lists, per kind, what was created,
 updated, unchanged, unapproved, approved but not in the data, and refused (with the reason).
+
+**What the dry run checks** (v1.774.3). Besides the curve and nozzle checks the forms apply, every
+value about to be written (Item, Pump Curve and its Pump Curve Points, Nozzle Profile and its Nozzle
+Performance Points) is checked against its field's type and `length` from `frappe.get_meta`, by
+Frappe's own `_validate_length` rule: a Data, Link or Select field holds `length` characters, 140 when
+`length` is 0, and Small Text and Text are unbounded. An overlong value is the row's error, worded as
+Frappe words it, in a dry run and a write alike. Nothing is truncated. Frappe itself checks lengths only
+on insert, so before this a dry run could not see them.
+
+**Prod, 2026-11-02.** The loader had never been run on prod, so the designer's pump picker was empty.
+The dry run came back clean, and the first write loaded **260 of the 380 approved rows** (72 pumps, 169
+nozzles, 19 lights) and refused 120: 97 pumps and 7 nozzles whose revision (title, access date and page)
+ran to 185 characters, and 16 lights whose source URL ran to 154, past Data's 140. Each refused row's
+savepoint held, so nothing of it was left behind. v1.774.3 made `custom_spec_revision` and
+`custom_spec_source_url` Small Text, and the `source_document` of Pump Curve and Nozzle Profile with them:
+the same text reaches those (178 and 170 characters), which the prod write never got to because each
+row failed on its Item first. After that deploy a second write should create the 120 and report the 260
+unchanged. `tests/test_water_catalog.py` dry-runs the whole real catalog against the declared schema,
+so a row added later that would overflow a field fails CI.
 
 ## Retired in v1.771.0 (rebuild phase H)
 
