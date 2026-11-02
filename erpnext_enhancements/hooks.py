@@ -2241,6 +2241,9 @@ jinja = {
 		# schematics (SVG), and the code-keyed standard-note list — all computed in
 		# Python because the print sandbox can't build them.
 		"erpnext_enhancements.water_engineering.packet.we_title_block",
+		# The print context of a schema-2 design (Fountain Designer phase G): every Water
+		# Feature Design format and the packet read their sheets from it (prints.build).
+		"erpnext_enhancements.water_engineering.packet.we_print",
 		"erpnext_enhancements.water_engineering.packet.we_circulation_schematic",
 		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
 		"erpnext_enhancements.water_engineering.packet.we_standard_notes",

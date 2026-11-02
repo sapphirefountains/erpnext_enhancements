@@ -742,13 +742,24 @@ await test("Outputs: the budget, the BOM, and print links only to this site", as
 	const html = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full"));
 	assert.match(html, /\$36,506/);
 	assert.match(html, /data-fd-action="push-quotation"/);
-	assert.match(html, /not available yet/);
+	// Every paper boot.prints names links to the saved design's print view (phase G).
+	assert.match(html, /href="\/printview\?doctype=Water%20Feature%20Design&amp;name=DEMO-X&amp;format=Water%20Feature%20Design%20-%20Budget&amp;no_letterhead=1"/);
+	assert.match(html, /format=Water%20Feature%20Design%20-%20Submittal%20Packet/);
+	assert.ok(!/not available yet/.test(html), "every demo paper has a format in boot.prints");
+	const bare = JSON.parse(JSON.stringify(boot));
+	bare.prints = bare.prints.filter((p) => p.key !== "budget");
+	assert.match(STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full", { boot: bare })), /Budget <span class="fd-muted">\(not available yet\)/);
+	assert.equal(STEPS.outputs.print_url(boot, "", "budget"), "");
+	assert.equal(STEPS.outputs.print_url(boot, "A&B", "nope"), "");
+	assert.match(STEPS.outputs.print_url(boot, "A&B", "budget"), /name=A%26B&/);
 	assert.equal(STEPS.outputs.safe_desk_url("/printview?doctype=Water%20Feature%20Design&name=X"), "/printview?doctype=Water%20Feature%20Design&name=X");
 	assert.equal(STEPS.outputs.safe_desk_url("javascript:alert(1)"), "");
 	assert.equal(STEPS.outputs.safe_desk_url("https://evil.example/x"), "");
 	assert.equal(STEPS.outputs.safe_desk_url('/desk/x" onclick="y'), "");
 	const unsaved = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full", { design: { name: null } }));
 	assert.match(unsaved, /data-fd-action="push-quotation" disabled/);
+	assert.match(unsaved, /save the design to print it/);
+	assert.ok(!/href="\/printview/.test(unsaved), "no print link before the design is saved");
 });
 
 console.log("demo fixture and contract");
@@ -784,7 +795,7 @@ await test("every fixture reply has the contract's keys", () => {
 		const total = Math.round(r.bom.reduce((s, l) => s + l.amount, 0) * 100) / 100;
 		assert.equal(r.rollups.budget_total, total, "the budget is the BOM's sum");
 	}
-	for (const k of ["schema", "can", "kits", "families", "sections", "options", "catalogs", "house_rules"]) assert.ok(k in boot, `boot.${k}`);
+	for (const k of ["schema", "can", "kits", "families", "sections", "options", "catalogs", "house_rules", "prints"]) assert.ok(k in boot, `boot.${k}`);
 	for (const kit of boot.kits) {
 		assert.ok(replies[kit.key], `a reply for ${kit.key}`);
 		for (const h of kit.headline) assert.notEqual(M.get_in(kit.model, h.path), undefined, `${kit.key}: ${h.path}`);

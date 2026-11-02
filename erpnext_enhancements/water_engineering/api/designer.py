@@ -20,6 +20,7 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements.water_engineering import derive as derive_mod
+from erpnext_enhancements.water_engineering import prints as prints_mod
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
 from erpnext_enhancements.water_engineering.engine import model as model_engine
 from erpnext_enhancements.water_engineering.engine import rules as rules_engine
@@ -414,10 +415,26 @@ def house_rules(rules=None):
             for r in rows]
 
 
+def print_formats():
+    """The Outputs step's papers whose Print Format exists here (``prints.OUTPUTS`` and the packet), as
+    ``{key, label, print_format}``. The page links each to the print view of the saved design; a site
+    where ``after_migrate`` could not seed a format shows that paper as not available rather than a 404."""
+    rows = [{"key": k, "label": label, "print_format": pf} for k, label, pf in prints_mod.OUTPUTS]
+    rows.append({"key": "packet", "label": "Submittal packet", "print_format": prints_mod.PF_PACKET})
+    exists = {}
+    for pf in dict.fromkeys(r["print_format"] for r in rows):
+        try:
+            exists[pf] = bool(frappe.db.exists("Print Format", pf))
+        except Exception:
+            exists[pf] = False
+    return [r for r in rows if exists[r["print_format"]]]
+
+
 @frappe.whitelist()
 def boot():
     """Everything the page needs before the first design: kits, families, sections and presets,
-    the select options, the catalog classes, the house rules and what the caller may do."""
+    the select options, the catalog classes, the house rules, the print formats the Outputs step
+    links to, and what the caller may do."""
     _require("read")
     return {
         "schema": model_engine.SCHEMA,
@@ -436,6 +453,7 @@ def boot():
         "catalogs": {"equipment_classes": [{"key": c["key"], "label": c["label"]} for c in EQUIPMENT_CLASSES],
                      "slot_classes": dict(SLOT_CLASSES)},
         "house_rules": house_rules(),
+        "prints": print_formats(),
     }
 
 

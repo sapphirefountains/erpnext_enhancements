@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.770.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03028. This is
+phase G: **every paper a design produces now reads the schema-2 record.** Since v1.768.0 the print
+formats and the submittal packet read the nine retired child tables and printed empty tables. They are
+rebuilt on what the derive stores, and the Fountain Designer's Outputs step links to each of them.
+v1.769.0 is #1400 (the duty-point chart); this release does not need it, and prints the duty point as
+soon as it lands.
+
+### Added
+- **`water_engineering/prints.py`, the print context.** `build(doc, model, stored, bom)` turns a record
+  into sheets of blocks (tables, facts, drawings, lists, text, calculations, notes). Every number arrives
+  formatted and every cell styled, so no template formats a number. It reads what the derive stored
+  and never recomputes the engine; its only arithmetic is presentation (sums of stored rows, and volume
+  divided by flow for the turnover line). It imports no frappe.
+- **Eleven Water Feature Design print formats** (`setup_print_formats.py`), all in the print design
+  system's chrome (Design pillar) around one Jinja block macro:
+  - **Results** and **Calculation Audit**, rebuilt on `results_json` (they read `calc_results`, gone
+    since v1.768.0).
+  - **Schedules**:
+    - the Equipment Schedule (tag, Item, model, quantity, duty at the solved operating point,
+      electrical from phase L's circuit, cut-sheet link);
+    - the Piping Schedule (segment, run, size, material, length, flow, velocity, head loss, end
+      pressure, status);
+    - the aggregated **Fitting Schedule** (`engine.bom.fitting_counts`: total per fitting type, size
+      and material);
+    - the cut list in 20 ft sticks.
+  - **Electrical Schedule** (new): service and feeder, the panel schedule, the circuit list with the
+    breaker basis and GFCI device, energy per year.
+  - **Controls BOM** (new): the panel, motor control per pump, the controls BOM with part numbers, the
+    draft Theory of Operation.
+  - **Structural Takeoff** (new): quantities and the rebar schedule, with phase S's disclaimer.
+  - **Design Drawings** (new): the duty point, circulation schematic, one-line, power schematic and
+    control ladder on one page. Every drawing defines `<marker id="arrow">`, so each one's ids get a
+    suffix of their own; without it, `url(#arrow)` resolves to the first drawing's marker.
+  - **Design Calculations**, rebuilt as the plan-check sheet:
+    - venue and vessel; the Fika spa path reads the vessel, its listing and the bather load from
+      `model.legacy`, where `engine.model.migrate` keeps them;
+    - the design basis: code minimum circulation, turnover, filter area, chlorinator feed;
+    - the circulation system;
+    - the **Utah interactive water feature checklist** (R392-302-41) and the **NEC Article 680
+      checklist**. Each line is printed Pass, Fail, Open, Verify or N/A, with its citation.
+  - **Operations and Maintenance** (new): cost per year; where the water goes (evaporation, spray,
+    drain and refill, at the Settings rates; these add up to `om_per_year`'s own water figure);
+    the water plan (refresh interval, cycles of concentration, Legionella band, doses); the
+    maintenance schedule (`upkeep.maintenance_schedule`, now run by the derive).
+  - **Winterization** (new): frost depth, equipment, drain points, the winterize and spring start-up
+    checklists from `engine.families.winterization`, the first start-up checks, and the whole list as
+    plain text to paste into a Maintenance Visit.
+  - **Budget** (new): the BOM grouped as hydraulic, treatment, lighting, electrical, controls,
+    structural, labor and other, then the subtotal (the `budget_total` rollup), a contingency, the
+    budget, and a plus-or-minus range. A line with no Item, no Item price or no labor rate says so.
+    Prices are Sapphire's own Item prices on the selling price list, and labor uses the house rule.
+    No published cost-per-square-foot figure is used (Nikolas, 2026-11-01).
+- **Three house rules on Water Engineering Settings, under Budget:**
+  - `labor_rate_per_hr`: 0 means not set, so labor prints unpriced rather than invented;
+  - `budget_contingency_pct`: 10;
+  - `budget_range_pct`: 15.
+
+  The patch `backfill_water_budget_rules` re-runs v1.759.0's backfill, so the existing Single gets
+  their defaults. A `default` on a new field of a Single never reaches the row that already exists.
+- **`boot().prints`.** The page's Outputs step links each paper of a saved design to
+  `/printview?…&format=<its Print Format>`.
+  - `boot` lists only the formats the site has, so a format `after_migrate` could not seed shows as
+    "not available yet" rather than a 404.
+  - An unsaved design says "save the design to print it".
+  - The demo mode lists none, because a demo design is not a record.
+  - Contract and fixtures updated: `public/js/fountain_designer/README.md`, `demo/boot.json`, and the
+    three demo replies' `outputs.schedules`.
+- **Tests.** `tests/test_water_prints.py` (its own CI step) renders every format and the packet under
+  real Jinja2, set up as frappe sets it up (no autoescape, `DebugUndefined`). It runs over the three
+  demo designs through `derive_model` and over a regulated spa. It checks for:
+  - no Jinja left over, no doubled escape, no table with no rows, no raw float, and no drawing id
+    twice on a page;
+  - the plan-check lines, the O&M water split, the winterization steps and the budget arithmetic;
+  - labor priced only when the rate is set;
+  - `we_print` surviving a broken record.
+
+  `test_designer_api` checks the `boot().prints` filter, and the page's node test checks the links.
+
+### Changed
+- **The derive stores what the prints read**, so nothing on paper recomputes:
+  - `electrical` gains `circuits`, `feeder`, `service`, `edition`, `verify`, `inputs`, `low_voltage`
+    and `transformers`;
+  - `controls` gains `bom`, `panel`, `controller`, `pumps`, `relays`, `dc_supply`, and the power
+    schematic and control ladder SVGs (page-safe when #1400's `page_svg` is in);
+  - `paper` is new: the O&M detail, the maintenance schedule, the winterization checklist with drain
+    points and the plain-text block, the plan-check lines (passes included: the issues list drops
+    them) and the budget rules.
+
+  The controller writes `paper` into `results_json`.
+- **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
+  source "house rule"), so `budget_total` includes labor once the rate is set.
+- **The Outputs step's winterization drawer shows the real steps.** It printed the module's
+  formula-step text ("frost depth 30 in"), because it read `data.items`, a key the module does not
+  have. It now reads the module's own checklist titles.
+- **The submittal packet is rebuilt on model 2.** Cover and title block, design basis, the schedules,
+  electrical, structural takeoff, drawings, design calculations, calculation audit, standard details
+  and standard notes, each on its own sheet. It never includes the budget or the O&M. The Chrome PDF,
+  the CAD merge and the Project attachment (Drive sync) are unchanged.
+- **The packet's one-line is phase L's drawing**, stored by the derive. It labels the breaker phase L
+  designed, so `test_electrical_report`'s guard on the old Control Panel Design one-line now checks
+  that. `we_circulation_schematic` and `we_electrical_oneline` return the stored drawings.
+- **`ensure_water_print_formats` guards each format on its own.** One bad upsert no longer stops the
+  formats after it.
+
+### Removed
+- The print templates that read the retired child tables (`calc_results`, `pumps`, `basins`,
+  `pipe_segments`, `venue_fixtures`, `design_equipment`). Their print formats keep their names, and the
+  next migrate replaces their HTML.
+
+### Not verified without a bench
+- The Desk print view, the Chrome PDF (`generate_packet`), the Drive upload, and the seeding itself on
+  `bench migrate`.
+- The Item lookup for model numbers and cut sheets (`custom_model_no`, `custom_spec_source_url`).
+
 ## [1.768.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03026. This is

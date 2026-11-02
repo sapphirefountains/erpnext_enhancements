@@ -42,6 +42,8 @@ RESULT_KEYS = (
 	"electrical",
 	"structural",
 	"controls",
+	# what the print formats read beyond the page's reply (phase G, water_engineering/prints.py)
+	"paper",
 )
 
 # Rollup key (the API's) -> field. TDH keeps its v1 column, computed_tdh_ft, which the dashboard

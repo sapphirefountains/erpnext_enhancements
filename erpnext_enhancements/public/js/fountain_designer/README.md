@@ -95,6 +95,7 @@ section in the same PR.
 | `catalogs.equipment_classes[]` | `{key, label}` | The catalog picker classes. |
 | `catalogs.slot_classes` | `{<equipment slot>: <class key>}` | The class each `model.equipment[].slot` searches: `filter`, `uv`, `chlorinator`, `light`, `transformer`, `bypass`, `surge_arrestor`, `autofill`, `vfd` and `prv` (the page's `model.SLOT_SECTION`). A slot with no class here gets a plain item-code field, never a search of another class. The pumps search `pump`, and a feature's product searches its family's `product_class`. |
 | `house_rules[]` | `{key, label, value, unit, citation}` | The constants listed on the page (PLAN.md 2.3). |
+| `prints[]` | `{key, label, print_format}`, one per paper whose Print Format exists on the site (phase G): the keys of `outputs.schedules[]`, plus `packet` | The Outputs step links each paper of a **saved** design to `/printview?doctype=Water%20Feature%20Design&name=<name>&format=<print_format>`. An unsaved design says "save the design to print it"; a key with no entry says "not available yet". |
 
 ### `get_design()` and `get_design(name)`
 
@@ -146,10 +147,10 @@ A chart that breaks a rule is not drawn at all. Read `chart.js` for the full lis
 
 | Key | Shape |
 |---|---|
-| `schedules[]` | `{key, label, url}`. `url` is null until phase G prints it. Only a site-relative `/desk/…`, `/app/…`, `/printview…` or `/api/method/…` link becomes a link. |
+| `schedules[]` | `{key, label, url}`. The keys are `water_engineering/prints.py`'s `OUTPUTS`. `url` stays null: the derive is stateless and does not know the design's name, so the page builds the link from `boot.prints[]`. Only a site-relative `/desk/…`, `/app/…`, `/printview…` or `/api/method/…` link becomes a link. |
 | `packet` | `{label, url}`, or null. |
 | `om` | `{total_per_year, lines[]}`, where each line is `{label, amount}`. |
-| `winterization` | `{needed, steps[]}`. |
+| `winterization` | `{needed, steps[]}`. `steps[]` are the titles of the winterization module's checklist (`engine.families.winterization`). |
 | `startup[]` | Strings. |
 
 ### `save_design(name, model_json, fields_json)` → `{name, status, mode, modified, design_title}`

@@ -1558,3 +1558,7 @@ erpnext_enhancements.patches.fountain_designer_workspace_link
 # and map the v1 statuses (Inputs Gathered -> Draft, Calculated -> Derived). db.set_value only, no modified bump;
 # deletes nothing, a design it cannot convert gets a line in its notes. Logs, never raises, safe twice.
 erpnext_enhancements.patches.convert_water_feature_designs_to_model
+# Fountain Designer phase G (v1.770.0): Water Engineering Settings gains the budget rules (labor rate, contingency,
+# range); run backfill_water_house_rules again so the existing row gets their defaults, only where tabSingles has no
+# row for them. Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_water_budget_rules

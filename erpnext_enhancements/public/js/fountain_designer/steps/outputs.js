@@ -56,13 +56,16 @@ export function render(ctx) {
 	${ctx.last_push ? `<p class="fd-push-result" role="status">${ctx.last_push}</p>` : ""}`;
 	const out = reply.outputs || {};
 	const papers = (out.schedules || []).concat(out.packet ? [Object.assign({ key: "packet" }, out.packet)] : []);
+	const design_name = ctx.design && ctx.design.name;
 	const papers_html = papers.length
 		? `<ul class="fd-list">${papers
 				.map((p) => {
-					const url = safe_desk_url(p.url);
-					return `<li>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(__(p.label))}</a>` : `${esc(__(p.label))} <span class="fd-muted">${esc(__("(not available yet)"))}</span>`}</li>`;
+					const url = safe_desk_url(p.url) || safe_desk_url(print_url(ctx.boot, design_name, p.key));
+					const why = !design_name && print_url(ctx.boot, "x", p.key) ? __("(save the design to print it)") : __("(not available yet)");
+					return `<li>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(__(p.label))}</a>` : `${esc(__(p.label))} <span class="fd-muted">${esc(why)}</span>`}</li>`;
 				})
-				.join("")}</ul>`
+				.join("")}</ul>
+			${design_name ? `<p class="fd-hint">${esc(__("Each paper prints the design as last saved."))}</p>` : ""}`
 		: `<p class="fd-muted">${esc(__("No schedules yet."))}</p>`;
 	const om = out.om;
 	const om_html = om
@@ -87,6 +90,15 @@ export function render(ctx) {
 		${drawer("om", __("O&M per year: {0}", [money(om && om.total_per_year) || "—"]), om_html)}
 		${drawer("winterization", winter && winter.needed === false ? __("Winterization: not needed") : __("Winterization"), winter_html)}
 		${start ? drawer("startup", __("Start-up checklist"), start) : ""}`;
+}
+
+// The print view of a saved design in the Print Format boot.prints names for this paper (README, boot),
+// or "" when the design is unsaved or this site has no such format.
+export function print_url(boot, name, key) {
+	const row = ((boot && boot.prints) || []).find((r) => r.key === key);
+	if (!row || !row.print_format || !name) return "";
+	const q = (v) => encodeURIComponent(v);
+	return `/printview?doctype=${q("Water Feature Design")}&name=${q(name)}&format=${q(row.print_format)}&no_letterhead=1`;
 }
 
 // A print link only to a desk route or the print view on this site; anything else is shown as text.

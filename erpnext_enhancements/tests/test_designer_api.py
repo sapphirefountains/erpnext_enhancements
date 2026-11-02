@@ -182,6 +182,26 @@ def test_boot_sections_are_in_ladder_order(api):
     assert [s["key"] for s in api.boot()["sections"]] == LADDER
 
 
+def test_boot_lists_only_the_print_formats_this_site_has(api):
+    """Phase G: the Outputs step links each paper to its Print Format; a format after_migrate could not
+    seed is left out, so the page says "not available yet" instead of linking to a 404."""
+    from erpnext_enhancements.water_engineering import prints
+
+    every = api.boot()["prints"]
+    assert [r["key"] for r in every] == [k for k, _l, _pf in prints.OUTPUTS] + ["packet"]
+    assert every == _boot_fixture()["prints"]
+    api._frappe.db.exists = lambda doctype, name=None, *a, **k: name != prints.PF_SCHEDULES
+    keys = {r["key"] for r in api.boot()["prints"]}
+    assert not keys & {"equipment", "piping", "fittings"}
+    assert {"budget", "packet", "calcs"} <= keys
+
+    def broken(*a, **k):
+        raise RuntimeError("db gone")
+
+    api._frappe.db.exists = broken
+    assert api.boot()["prints"] == []
+
+
 def test_every_kit_is_a_schema_2_model_and_its_headline_paths_exist(api):
     from erpnext_enhancements.water_engineering.engine import model as model_engine
 

@@ -31,7 +31,8 @@ export function create_demo(fixture, env) {
 	let request_no = 0;
 
 	const handlers = {
-		boot: () => clone(fixture.boot),
+		// A demo design is not a record, so its papers have nothing to print: no print links.
+		boot: () => Object.assign(clone(fixture.boot), { prints: [] }),
 		get_design: (args) => {
 			if (!args.name) {
 				return {

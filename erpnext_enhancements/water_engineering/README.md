@@ -97,10 +97,38 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 | `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads, the aquatic-equipment fields, and (v1.758.0) the catalog fields: listing, light, filter and aerator specs and the Spec Source block |
 | `catalog_reader.py` | The catalog as plain dicts for the engine: `pump_curve_sets(item_codes)`, `nozzle_profiles(names)`, `light_specs(item_codes)`. Pump Curve records win over the Item's legacy `custom_pump_curve` table; an unpublished efficiency, NPSHr, power, spread or throw reads as None, never the stored 0; every read survives a site that has not migrated yet. 4 spaces |
 | `catalog_seed.py` | The approved-seed loader. Reads `docs/fountain-designer/catalog/{pumps,nozzles,lights}.json` and loads only the rows `approved.json` lists, creating or updating Items, Pump Curves and Nozzle Profiles keyed on manufacturer + model, with provenance on each. `load_catalog(dry_run=True)` for `bench execute`, `seed_catalog` (System Manager, POST) over HTTP. Never on `after_migrate`. Tabs |
-| `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
+| `prints.py` | The paper outputs (v1.770.0, rebuild phase G): `build(doc, model, stored, bom, items=, issues=, sheets=)` turns a schema-2 record (`model_json`, `results_json`, the `bom` rows) into **sheets** of blocks (table, facts, drawing, list, text, calc, note) with every number already formatted and every cell styled, for the print formats and the packet. It reads what the derive stored and never recomputes the engine. Also `OUTPUTS` (the papers the Outputs step lists, with their Print Formats), `budget_summary` (BOM groups, contingency, range) and `unique_ids` (drawing ids suffixed so several share a page). No frappe. 4 spaces |
+| `packet.py` | The frappe side of the prints. `we_print(doc, sheets)` loads the record and the Items it names (model number, cut-sheet link) and calls `prints.build`; never raises. `we_title_block`, `we_standard_notes`, `we_standard_details`, the stored-drawing helpers, and `assemble_packet` / `generate_packet` (HTML snapshot, Chrome PDF with the attached CAD PDFs merged, attached to the Project so Drive sync uploads it). 4 spaces |
+| `setup_print_formats.py` | `after_migrate`: seeds the print formats below idempotently, each upsert guarded on its own. Every Water Feature Design format is the print design system's chrome (Design pillar) around one Jinja block macro (`BLOCK_MACRO`) over `we_print`. The Control Panel Design Submittal and Panel Schedule are unchanged. 4 spaces |
 | `page/water_engineering_wizard/` | The desk wizard UI |
 | `page/fountain_designer/` | The guided Fountain Designer (v1.761.0, rebuild phase F): quick and full modes, live derive, the verdict panel. Its code is `public/js/fountain_designer/`, whose README is the API contract `api/designer.py` honors (v1.768.0); `?demo=1` stays as the labeled training demo |
 | `workspace/water_engineering/` | Desk workspace |
+
+## Print formats
+
+Seeded by `setup_print_formats.ensure_water_print_formats` on every migrate. Since v1.770.0 every
+Water Feature Design format reads the schema-2 record through `we_print` (`prints.py`): nothing on
+paper recomputes the engine, and the nine retired child tables are not read anywhere.
+
+| Print Format | Sheets | What it prints |
+|---|---|---|
+| Water Feature Design - Results | `results` | Verdict, flows, head, pump, power, water, budget, O&M, completion; open issues; signed-off warnings |
+| Water Feature Design - Calculation Audit | `audit` | Every `CalcResult` in `results_json`: value, formula, inputs with provenance, working, citations, warnings |
+| Water Feature Design - Schedules | `equipment`, `piping`, `fittings` | Equipment Schedule (tag, Item, model, qty, duty, electrical, cut sheet); Piping Schedule (segment, run, size, material, length, flow, velocity, head loss, end pressure, status); Fitting Schedule (`engine.bom.fitting_counts`, totals per type, size and material); cut list in 20 ft sticks |
+| Water Feature Design - Electrical Schedule | `electrical` | Service and feeder, panel schedule, circuit list (breaker basis, GFCI device), energy per year (phase L) |
+| Water Feature Design - Controls BOM | `controls` | Control panel, motor control per pump, controls BOM with part numbers, draft Theory of Operation |
+| Water Feature Design - Structural Takeoff | `structural` | Quantities (concrete, rebar, gravel, earthwork, formwork, waterproofing, anchors) and the rebar schedule (phase S) |
+| Water Feature Design - Design Drawings | `drawings` | Duty point (when #1400's chart is in), circulation schematic, electrical one-line, power schematic, control ladder |
+| Water Feature Design - Design Calculations | `calcs` | The plan-check sheet: venue and vessel (the Fika spa path reads the vessel from `model.legacy`), basins, design basis (code minimum circulation, turnover, filter area, chlorinator), circulation system, the Utah R392-302-41 checklist and the NEC 680 checklist, each line with its status |
+| Water Feature Design - Operations and Maintenance | `om` | Cost per year (power, water, chemicals, parts), where the water goes (evaporation, spray, drain and refill, backwash not yet modeled), the water plan (refresh interval, cycles, Legionella band, doses), maintenance schedule |
+| Water Feature Design - Winterization | `winterization` | Frost depth, equipment, drain points; the winterize and spring start-up checklists; first start-up checks; the checklist as text for a Maintenance Visit |
+| Water Feature Design - Budget | `budget` | BOM rows by group (hydraulic, treatment, lighting, electrical, controls, structural, labor, other) at the Item's selling price and the house-rule labor rate, contingency and range from house rules, and which lines have no price |
+| Water Feature Design - Submittal Packet | cover, then `prints.PACKET_SHEETS`, standard details and notes | The health-department plan set; never the budget or the O&M. Chrome PDF |
+| Control Panel Design - Submittal | | DOC-0126 wording |
+| Control Panel Design - Panel Schedule | | NEC 430.24 / 430.62 / Art. 450 |
+
+The Fountain Designer's Outputs step links each paper of a saved design to its format through
+`api/designer.boot().prints`, which lists only the formats the site has.
 
 ## DocTypes
 

@@ -566,7 +566,47 @@
    },
    {
     "key": "fittings",
-    "label": "Fitting schedule",
+    "label": "Fitting schedule and cut list",
+    "url": null
+   },
+   {
+    "key": "electrical",
+    "label": "Electrical panel schedule",
+    "url": null
+   },
+   {
+    "key": "controls",
+    "label": "Controls bill of materials",
+    "url": null
+   },
+   {
+    "key": "structural",
+    "label": "Structural takeoff",
+    "url": null
+   },
+   {
+    "key": "drawings",
+    "label": "Design drawings",
+    "url": null
+   },
+   {
+    "key": "calcs",
+    "label": "Design calculations",
+    "url": null
+   },
+   {
+    "key": "om",
+    "label": "Operations and maintenance per year",
+    "url": null
+   },
+   {
+    "key": "winterization",
+    "label": "Winterization and start-up",
+    "url": null
+   },
+   {
+    "key": "budget",
+    "label": "Budget",
     "url": null
    }
   ],
