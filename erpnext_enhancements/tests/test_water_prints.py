@@ -146,8 +146,9 @@ def visible_text(page):
 
 
 def formatted_text(page):
-    """The visible text minus the engine's own formulas and working, which the audit prints verbatim."""
-    page = re.sub(r'<(span|pre) class="we-working".*?</\1>', " ", page, flags=re.S)
+    """The visible text minus the engine's own formulas and working, and the sources it quotes, which the
+    audit prints verbatim (a jurisdiction cite quotes coordinates as its source gives them, phase J)."""
+    page = re.sub(r'<(span|pre|div|td) class="we-(?:working|source)".*?</\1>', " ", page, flags=re.S)
     return visible_text(page)
 
 
@@ -168,8 +169,9 @@ def test_every_format_renders_clean_on_every_design(spf, name, print_format):
     assert title in text, "the title prints its ampersand once"
     assert not re.search(r"<tbody>\s*</tbody>", page), "a table with no rows"
     assert not re.search(r"\b(None|nan|inf|NaN|Infinity|undefined|Undefined)\b", text)
-    # Every number on paper is formatted: no float repr, no exponent.
-    numbers = formatted_text(page)
+    # Every number on paper is formatted: no float repr, no exponent. A citation's URL is not a number on
+    # paper: the jurisdiction table cites USGS queries such as "...asce7-16.json?latitude=40.776928" (phase J).
+    numbers = re.sub(r"https?://\S+", " ", formatted_text(page))
     assert not re.search(r"\d\.\d{5,}", numbers), re.findall(r".{30}\d\.\d{5,}.{10}", numbers)[:3]
     assert not re.search(r"\d(e|E)[+-]\d", numbers)
     ids = re.findall(r'\bid="([^"]+)"', page)
@@ -649,10 +651,22 @@ def test_schedules_start_each_schedule_on_a_page(spf):
         assert title in text
 
 
+def test_a_design_derived_before_phase_j_keeps_utahs_checklist_title():
+    """v1.772.0: a design whose stored results predate the jurisdiction result is still Utah's checklist."""
+    out, stored = designed("plaza")
+    stored = dict(stored, results={k: v for k, v in stored["results"].items() if k != "jurisdiction"})
+    design = prints.Design({"name": "X"}, out["model"], stored, out["bom"], {}, out["issues"])
+    text = " ".join(json.dumps(b) for b in prints.sheet_calcs(design))
+    assert "Utah interactive water feature checklist (R392-302-41)" in text and "as advice" not in text
+
+
 def test_engineering_calculations_follow_the_ladder(spf):
     text = visible_text(render(spf, "plaza", prints.PF_CALCS))
-    order = [s for s, _n in prints.LADDER if s in text]
-    positions = [text.index(s) for s in order]
+    # whole words only: a citation in a calc's inputs may contain a later section's name
+    # (".../Commercial_Fountain_Winterization_Instructions.pdf", phase J's Site working)
+    found = {s: re.search(r"(?<!\S)" + re.escape(s) + r"(?!\S)", text) for s, _n in prints.LADDER}
+    order = [s for s, _n in prints.LADDER if found[s]]
+    positions = [found[s].start() for s in order]
     assert positions == sorted(positions) and len(order) >= 6, order
     assert text.index("Calculations by section") < text.index("Plan check")
 

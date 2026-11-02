@@ -39,7 +39,7 @@ import math
 
 from ..data.rebar import bar as rebar
 from .building import building_floor_load, deck_beam
-from .defaults import DISCLAIMER
+from .defaults import DISCLAIMER, RULE_SOURCES
 from .fabrications import pedestal_check, veneer_attachment, weir_lip_sag
 from .loads import (
     freeze_thaw_notes,
@@ -73,6 +73,12 @@ def _num(value, default=None):
         return float(value) if value not in (None, "") else default
     except (TypeError, ValueError):
         return default
+
+
+def _lookup_source(site: dict, key: str) -> bool:
+    """True when the derive filled ``site[key]`` from the address lookup (``site.sources``, phase J)."""
+    rec = (site.get("sources") or {}).get(key) if isinstance(site.get("sources"), dict) else None
+    return isinstance(rec, dict) and rec.get("src") == "lookup" and rec.get("v") == site.get(key)
 
 
 def _wall_phi_mn(wall_in, bar_size, spacing_in, mats, rules) -> float:
@@ -131,6 +137,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             yield row
 
     frost = _num(site.get("frost_depth_in"), float(rules["frost_depth_in"]))
+    if _num(site.get("frost_depth_in")) is None and (basins or struct):
+        check("STRUCT_FROST_DEFAULT", INFO, "site", "site", "No frost depth for the site",
+              f"The footing and freeze-thaw checks use the house rule's {frost:g} in, which is Salt Lake County's; "
+              "the site's state has no frost depth on file.",
+              "Type the frost depth on the Site step (the building department publishes it).", RULE_SOURCES["frost_depth_in"])
     soil_class = site.get("soil_class")
     bearing = _num(site.get("soil_bearing_psf"))
 
@@ -140,12 +151,18 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
     sds = sd1 = sdc = None
     if seismic.status == "incomplete":
         if basins or struct:
+            sdc_note = (f"The site is taken as Seismic Design Category {site['seismic_sdc']} (its state's default); "
+                        if site.get("seismic_sdc") else "")
             check("STRUCT_SEISMIC_INPUTS", INFO, "project", "site", "Seismic values not entered",
-                  "The Wasatch Front is normally Seismic Design Category D; the hydrodynamic, anchor and pedestal "
-                  "checks need Ss and S1.", "Look up Ss and S1 for the address in the USGS / ASCE Hazard Tool.",
+                  sdc_note + "the hydrodynamic, anchor and pedestal checks need SDS and SD1 (or Ss and S1).",
+                  "Save the design with its address to look them up from USGS, or enter Ss and S1 from the ASCE Hazard Tool.",
                   seismic.citations[0])
     else:
         sds, sd1, sdc = seismic.value["sds"], seismic.value["sd1"], seismic.value["sdc"]
+        if (_lookup_source(site, "sds") or _lookup_source(site, "sd1")):
+            seismic.warnings.append("SDS and SD1 come from the USGS lookup, which answers ASCE 7-22; this category table "
+                                    "and the structural rules are ASCE 7-16's (IBC 2021): confirm the category under "
+                                    "the edition the state enforces.")
 
     # basins: hydrodynamic walls, vault lids, penetration rings, building floors
     for b in basins:

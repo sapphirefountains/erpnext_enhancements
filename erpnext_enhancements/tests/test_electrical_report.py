@@ -298,7 +298,7 @@ def test_gfci_rules():
 
 
 REPORT_KEYS = {
-    "edition", "verify", "inputs", "loads", "circuits", "low_voltage", "transformers", "feeder", "service",
+    "edition", "state_edition", "code_cite", "verify", "inputs", "loads", "circuits", "low_voltage", "transformers", "feeder", "service",
     "panel_rows", "control_pump_rows", "checklist", "backup", "energy", "bom", "oneline_svg", "warnings",
     "status", "results",
 }

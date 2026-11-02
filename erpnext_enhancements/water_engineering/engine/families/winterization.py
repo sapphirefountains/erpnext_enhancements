@@ -5,7 +5,9 @@ Industry report section 1.12. A **system module** (see :mod:`.lighting`): ``inpu
 
 It reads the schema-2 model:
 
-* ``site.frost_depth_in`` (30 in for Salt Lake City when blank);
+* ``site.frost_depth_in`` and ``site.winterize``, which ``derive.derive_site`` fills from the state's
+  row of the jurisdiction table (phase J). There is no Salt Lake City fallback: a blank frost depth
+  stays unknown, and a state that does not freeze gets an INFO that winterization does not apply;
 * each ``network.segments[*]``: ``drain`` (a drain point), ``slopes_to_drain`` and
   ``buried_depth_in`` (optional keys the route templates set);
 * each ``network.pumps[*].location`` (``vault`` | ``room`` | ``submersible``) and ``heated``;
@@ -18,12 +20,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import jurisdiction as juris
 from .base import INFO, WARNING, Check, FamilyResult, feature_dict, num
 
 FAMILY = "winterization"
 LABEL = "Winterization"
 
-CIT_FROST = "https://www.slc.gov/buildingservices/wp-content/uploads/sites/9/2026/07/SLC-Design-Criteria-2024-IBC_IRC.pdf (frost depth 30 in, Salt Lake City)"
+CIT_FROST = "IBC 2021 §1809.5 (footings and buried lines below the frost line); the frost depth is the site's, else its state's design city"
 CIT_WHEN = "https://cdn.shopify.com/s/files/1/0566/4492/7571/files/Commercial_Fountain_Winterization_Instructions.pdf (below 32 F; disconnect the autofill)"
 CIT_BLOWOUT = (
     "https://rainbird.com/media/1332 (blow out at <= 50 psi, <= 2 min per circuit, never through a pump or backflow "
@@ -31,7 +34,11 @@ CIT_BLOWOUT = (
 )
 CIT_SPLASH = "https://www.vortex-intl.com/blog/winterize-water-play-system/ (pull upward-facing nozzles; fit winter caps)"
 
-SLC_FROST_IN = 30.0
+
+
+def _frost(site: dict[str, Any]) -> float | None:
+    v = num(site.get("frost_depth_in"), -1.0)
+    return v if v >= 0 else None
 
 
 def inputs() -> list[dict[str, Any]]:
@@ -44,7 +51,8 @@ def _item(key: str, title: str, detail: str = "", citation: str = "", applies_to
 
 def calc(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: dict[str, Any] | None = None) -> FamilyResult:
     site = model.get("site") or {}
-    frost = num(site.get("frost_depth_in")) or SLC_FROST_IN
+    frost = _frost(site)
+    needed = juris.winterize(site)
     net = model.get("network") or {}
     features = [feature_dict(f) for f in model.get("features") or []]
     families = {f.get("family") for f in features}
@@ -65,7 +73,7 @@ def calc(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: di
         sid = s.get("id") or ""
         if s.get("drain") or s.get("slopes_to_drain"):
             winter.append(_item(f"seg_{sid}", f"Drain line {sid} at its drain point", applies_to=sid))
-        elif num(s.get("buried_depth_in")) >= frost:
+        elif frost is not None and num(s.get("buried_depth_in")) >= frost:
             winter.append(_item(f"seg_{sid}", f"Line {sid} is below the {frost:g} in frost depth; cap it",
                                 citation=CIT_FROST, applies_to=sid))
         else:
@@ -96,17 +104,33 @@ def calc(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: di
         value=len(winter),
         unit="items",
         formula="checklist from routes, pumps, features and lights; frost depth from the site",
-        steps=[f"frost depth {frost:g} in" + ("" if num(site.get("frost_depth_in")) else " (Salt Lake City default)")],
+        steps=[(f"frost depth {frost:g} in" if frost is not None else "no frost depth on file")
+               + ("" if needed else f"; {juris.state_name(site)} does not freeze: no winterization")],
         citations=[CIT_FROST, CIT_WHEN, CIT_BLOWOUT],
-        data={"frost_depth_in": frost, "winterize": winter, "spring_startup": spring},
+        data={"frost_depth_in": frost, "needed": needed, "winterize": winter, "spring_startup": spring},
     )
 
 
 def checks(model: dict[str, Any], derived: dict[str, Any] | None = None, rules: dict[str, Any] | None = None) -> list[Check]:
     site = model.get("site") or {}
-    frost = num(site.get("frost_depth_in")) or SLC_FROST_IN
+    frost = _frost(site)
     net = model.get("network") or {}
+    if not juris.winterize(site):
+        return [Check(
+            "WINTER_NOT_NEEDED", INFO, "Winterization does not apply",
+            detail=f"{juris.state_name(site)} is not a freezing climate (the site's design city), so the design carries "
+                   "no winterization checklist. Drain only for service.",
+            remedy="Tick Winterize on the Site step if this site does freeze.", section="winterization",
+            citation=str((juris.climate(juris.entry_for(site)).get("cites") or {}).get("winterize") or ""),
+        )]
     out: list[Check] = []
+    if frost is None:
+        out.append(Check(
+            "WINTER_FROST_UNKNOWN", INFO, "No frost depth for the site",
+            detail="The lines' burial cannot be judged against the frost line.",
+            remedy="Type the frost depth on the Site step (the building department publishes it).", section="winterization",
+        ))
+        frost = 0.0
     exposed = [
         s.get("id") or "" for s in net.get("segments") or []
         if not (s.get("drain") or s.get("slopes_to_drain")) and s.get("buried_depth_in") not in (None, "")

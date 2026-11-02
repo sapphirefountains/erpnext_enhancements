@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.772.0] - 2026-11-01
+## [1.773.0] - 2026-11-02
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,146 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.772.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03033. This is
+phase J: **the Fountain Designer is jurisdiction-aware for the 48 contiguous states.** Nikolas decided
+2026-11-01 to extend it beyond Utah with a per-state table (codes, regulation, climate, licensing; state
+level now, metro overrides later), to look up USGS seismic design values and Google elevations by
+address, and to ship every row cited. `docs/fountain-designer/PLAN.md` section 8 is the design.
+
+The 48 cited rows come from the parallel research session (TASK-2026-03032, draft PR #1404, merged in
+here: this entry folds its 1.771.1 entry). `docs/fountain-designer/catalog/jurisdictions.json` is the
+researched source and `water_engineering/engine/data/jurisdictions.json` the engine's copy; a test holds
+them equal and CI runs the research's validator. Utah's row fills the editions the engine lacked (NEC
+2023, IBC 2024, IRC 2021, ISPSC 2024, all statewide), which settles the open item in PLAN.md section 6, so
+Utah designs no longer carry the confirm-the-codes issue.
+
+### Added
+- **The jurisdiction table**, `water_engineering/engine/data/jurisdictions.json`, and its loader
+  `jurisdictions.py` (`get(code)`, `codes()`, `names()`). A JSON file in the package works because
+  Frappe apps install editable and flit packs every file under the module. An unknown or blank code
+  returns None, and every caller treats that as "no jurisdiction data", never as Utah.
+- **`engine/jurisdiction.py`**, the rules every caller shares: the code lines and the AHJ notes, who is
+  regulated, `winterize`, `dry_climate`, and the `jurisdiction` CalcResult the derive returns (code
+  editions, agency, regulated venues, plan review, licensing) for the page and the prints.
+- **Site lookups on a save** (`api/designer.site_lookup`): Google's elevation at the geocoded point
+  (`workforce.sites.elevation_at`, beside `geocode_text` because `tests/test_geocoding_key.py` allows
+  only that module to call Google from the server) and the USGS ASCE 7-22 design values (`sds`, `sd1`,
+  `sdc` at Risk Category II, Site Class D). Each is cached a month per point, a failure ten minutes,
+  and none raises or logs: a failed lookup leaves the state's default standing. The three run one after
+  another inside a save, so each waits 5 s at most (`geocode_text` and `elevation_at` gained a
+  `timeout` argument; the Project Planner's geocoding keeps its 10 s). **The Elevation API has
+  to be enabled on the server key** (`Travel Settings.google_geocoding_api_key`); until it is, Google
+  answers REQUEST_DENIED and the elevation stays the state default.
+- **`site.seismic_sdc`** on the design model, with `sds` and `sd1` in `site.extra`, where the structural
+  checks already read them; and `site.winterize`. A frost depth the designer types decides `winterize`
+  (0 or less: the site does not freeze), over the state's design city, unless they tick Winterize too.
+  The structural seismic result says when SDS and SD1 are the lookup's ASCE 7-22 values read against
+  its ASCE 7-16 (IBC 2021) category table.
+- **`site.sources`**: which site values the engine filled (`lookup`, `default`, `house_rule`, `rule`) and
+  the value it wrote (`{key: {src, v}}`). A value with no source is the designer's and is never touched.
+  So is one that no longer matches what the engine wrote: the page drops a typed field's source, but
+  the `save_water_design` AI tool, a script or an older client sends `sources` back as it read them, and
+  without the recorded value an elevation such a writer changed snapped back to the state default on
+  the save. One the engine still owns is refreshed on each derive.
+  This fixes two orderings at once. Changing the state now replaces the old state's climate. Before,
+  the page stored the filled values, so they looked typed and stayed. And a lookup made on a save now
+  replaces a state default. Before, the page's own derive filled the default first, so an address
+  lookup could never fill the elevation. A design saved before this release has no `sources`, so every
+  value in it counts as typed, exactly as before.
+- **One issue for the codes to confirm**: `JURISDICTION_CONFIRM_AHJ`, a warning when the state adopts a
+  governing code locally or not at all, an advisory when the table only lacks an edition;
+  `JURISDICTION_NO_DATA`, a warning, for a code the table does not have. The governing codes are the
+  NEC and the IBC, plus the ISPSC for a pool, spa or interactive venue; the IRC (dwellings) is shown but
+  never asked about. With the researched table that is 13 of 48 states for a decorative fountain and 35
+  for an interactive feature, against 35 for every venue had all four codes counted.
+- A rule the table leaves null is said to be **not on file**, never read as a no: seven states have no
+  interactive-feature rule on file and ten no fog-water rule.
+- **Page:** the State picker on the Site step in both modes, listing the table's states (Utah first,
+  then by name), and a **Codes and jurisdiction** card (editions, health authority, regulated venues,
+  plan review, licensing, and a "confirm with the AHJ" line), repainted after every derive. Full mode
+  gains the seismic design category and a Winterize box among the looked-up fields.
+- **Prints:** the Design Report gains a "Site and codes" block (jurisdiction, code editions, health
+  authority, regulated venues, plan review, licensing, the AHJ note); the packet's basis sheet lists the
+  editions, the health authority and the seismic category; the packet cover's small print gains the
+  code editions.
+- `tests/test_jurisdictions.py` (pytest, on the families step): the loader and schema, a cite beside
+  every value, the package copy equal to the catalog, and every rule run
+  on a fixture state with each flag opposite to Utah's, a state with its own interactive rule, and a
+  code the table lacks; plus `elevation_at` against a stubbed `requests`. The API suite covers both
+  lookups, and the page harness covers the picker, the card and the merge.
+
+- **`docs/fountain-designer/catalog/jurisdictions.json`.** 48 entries in the fixed phase J schema.
+  - **Every value carries a cite** (URL, what the source says, read date).
+  - **168 values are `null`**, each with a cite saying why. Most of them are states with no statewide
+    code, rule text that state sites would not serve to an automated reader, or a city water report
+    that publishes no hardness.
+  - **Six states read like Utah R392-302-41** and get the Utah interactive-feature checklist as
+    blockers: CA, FL, GA, NV, OR and UT. A state counts only when it requires all four elements: about
+    a 30-minute turnover, a collector tank, secondary disinfection, and automated ORP and pH control.
+- **`jurisdictions-validate.py`.** A stdlib check that fails on a missing or extra key, a wrong type, a
+  value without a cite, a state missing from the 48, a `winterize` that disagrees with the heating
+  temperature, or a Utah row that drifts from the values the engine's golden tests use (phase J removed
+  `derive.SITE_DEFAULTS`, so the validator pins Utah's row itself). CI runs it beside the package test.
+- **A "Jurisdiction table" section in the catalog README:** schema, method, state summary table,
+  sources by state, and open questions by state.
+
+### Changed
+- **The rules key on the state's row, never on "UT":** `derive_site` takes the climate defaults from the
+  row (warning by name for a value it lacks); `regulated_site` reads `spa_regulated` and
+  `iwf_regulated`; the interactive checklist is a blocker only where the state regulates interactive
+  features with a rule like Utah's, else a warning, cited with the state's `iwf_cite`, with an info
+  carrying the state's notes; mist's potable supply follows `fogger_potable`; the dry-climate nozzle hint
+  follows the climate (summer RH, else the 100th meridian, else a high, hot design city); winterization
+  reads `winterize` and the frost depth from the site, with no Salt Lake City fallback, and a state that
+  does not freeze gets an info that it does not apply.
+- **The electrical report** names the state's NEC (`state_edition`, `code_cite`) and its `verify` line is
+  the state's; a state on another edition than the tables' NEC 2023 gets a note to check each article.
+  `nec_tables.VERIFY_EDITION` no longer names Utah. **The structural takeoff** names the state's IBC (and
+  ISPSC for a pool, spa or interactive venue) under `codes`, with an advisory to confirm the edition, and
+  says aloud when it falls back to the house rule's 30 in frost depth.
+- The interactive checklist on the Engineering Calculations print is titled as advice outside a state
+  that applies Utah's rule, with the state's note as its lead. A design derived before this release
+  (no jurisdiction result stored) keeps Utah's title.
+- **A site outside Utah is told its utility rates are Salt Lake City's.** The house-rule power and water
+  rates are sourced for SLC (`engine/rules.py`), so `derive_site` warns when it fills them for another
+  state, rather than pricing the running costs at Utah rates in silence.
+- **A new address in full mode** now blanks what the lookups filled for the old one (the point, the
+  elevation, the seismic values; `model.clear_looked_up`), so the next save looks them up again. Typed
+  values and state defaults stay. Quick mode still blanks every looked-up field, as before.
+
+### Fixed
+- The print tests' "every number is formatted" check read the jurisdiction table's quoted sources (USGS
+  query URLs, a design city's coordinates) as unformatted numbers. Source lines and the calc audit's
+  Reference cells now carry `class="we-source"` and are read apart, as the engine's working already was.
+- The ladder print test found section names by their first occurrence, so a citation that contained one
+  (`.../Commercial_Fountain_Winterization_Instructions.pdf` in the Site working) broke the order check. It
+  now matches whole words.
+
+### Notes
+- **The USGS address in the phase brief has moved.** `https://earthquake.usgs.gov/ws/designmaps/asce7-22.json`
+  answers 301 to `/ws/building-codes/asce7-22/calculate`, and the redirect goes through plain http. The
+  code calls the current address directly. Its reply is `response.data` with `sds`, `sd1` and `sdc`
+  (checked 2026-11-01 for Salt Lake City: 1.09, 0.83, D).
+- Not verified on a bench: the save path with live lookups (the Elevation API on the key, USGS from the
+  production host), the Desk rendering of the new card, and the print formats on wkhtmltopdf. Every
+  bench-free suite and the page harness pass.
+- **Climate values are scripted, not transcribed.**
+  - Design temperatures come from ASHRAE 2025 climatic design conditions at each city's main airport.
+  - Elevation comes from USGS EPQS, and the seismic category from the USGS ASCE 7-16 design-maps
+    service (Risk Category II, Site Class D).
+- **`water_temp_f` is a Sapphire basis, not a published figure.** It is the ASHRAE 1% evaporation
+  wet-bulb plus a 5 °F approach: a sprayed basin runs toward the wet-bulb like a cooling tower. The
+  5 °F was chosen so Salt Lake City reproduces the engine's 70 °F.
+- **`climate.cites` has two keys beyond the brief's list,** `water_temp_f` and `winterize`, so every
+  number has a cite.
+- **Utah's hardness is now 212 ppm, not 250.** Nikolas's rule is that cited values ship. The SLC 2026
+  Water Quality Report gives 136–212 ppm across the treatment plants and never 250, so the row takes the
+  upper bound, for scaling conservatism, and its cite says so. Utah's design air stays at the engine's
+  95 °F against ASHRAE 2025's 96.4 °F, an open question the research lists.
+
 
 ## [1.771.0] - 2026-11-01
 

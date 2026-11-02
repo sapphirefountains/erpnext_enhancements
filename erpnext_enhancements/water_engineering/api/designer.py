@@ -22,6 +22,7 @@ re-exports of the moved endpoints for an old Desk tab.
 import copy
 import hashlib
 import json
+import math
 from urllib.parse import urlencode
 
 import frappe
@@ -34,6 +35,7 @@ from erpnext_enhancements.water_engineering import issues as issues_mod
 from erpnext_enhancements.water_engineering import prints as prints_mod
 from erpnext_enhancements.water_engineering.engine import feature_visual_kind
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+from erpnext_enhancements.water_engineering.engine.data import jurisdictions as jurisdictions_data
 from erpnext_enhancements.water_engineering.engine import model as model_engine
 from erpnext_enhancements.water_engineering.engine import pipe as pipe_engine
 from erpnext_enhancements.water_engineering.engine.data.pipe_specs import PIPE_SPECS
@@ -55,6 +57,19 @@ CATALOG_CACHE_KEY = "fountain_designer:pump_catalog"
 CATALOG_CACHE_S = 600
 GEOCODE_CACHE_S = 30 * 24 * 3600
 GEOCODE_RETRY_S = 600
+# Phase J's point lookups, cached a month per point like the geocode (a failure ten minutes). The
+# USGS address in the phase brief (/ws/designmaps/asce7-22.json) answers 301 to this one by way of
+# plain http, so the current one is called directly.
+USGS_URL = "https://earthquake.usgs.gov/ws/building-codes/asce7-22/calculate"
+# Three lookups run one after another inside a save, so each waits 5 s at most (15 s when all fail; the
+# failure is then cached ten minutes, so the next save does not wait again).
+LOOKUP_TIMEOUT_S = 5
+USGS_TIMEOUT_S = LOOKUP_TIMEOUT_S
+CIT_USGS = ("USGS Seismic Design Web Services, ASCE 7-22, Risk Category II, Site Class D "
+            "(https://earthquake.usgs.gov/ws/building-codes/asce7-22/calculate)")
+CIT_ELEVATION = "Google Maps Elevation API at the geocoded point"
+CIT_GEOCODE = "Google Geocoding API (the site's address)"
+SEISMIC_FIELDS = ("seismic_sdc", "sds", "sd1")
 
 # Family order on the page: the most common first ("Add a feature" falls back to the first).
 FAMILY_ORDER = ("weir", "jets", "interactive", "cascade", "laminar", "foam", "pondless", "curtain", "mist", "aerator")
@@ -119,7 +134,8 @@ SECTION_PRESETS = {
 OPTIONS = {
     "venue_types": ["Decorative Fountain", "Interactive Water Feature", "Pond / Lake", "Commercial Spa", "Commercial Pool",
                     "Wading Pool", "Therapy Pool", "Event Rental"],
-    "jurisdictions": ["UT", "ID", "NV", "AZ", "CO", "WY"],
+    # Filled at boot from the jurisdiction table (jurisdiction_options): Utah first, then by state name.
+    "jurisdictions": [],
     "basin_shapes": ["rectangular", "round", "other"],
     "pump_locations": [{"value": "vault", "label": "Vault"}, {"value": "room", "label": "Pump room"},
                        {"value": "submersible", "label": "Submersible"}],
@@ -289,31 +305,132 @@ def load_catalogs():
     return out
 
 
-def site_lookup(site):
-    """The geocoded point for the site's address when its lat/lng are blank. A found point, or
-    Google's definite ZERO_RESULTS, is cached a month per address; any other failure (a timeout, a
-    rate limit, no key) only ten minutes, so it is asked again soon. The controller calls this on a
-    save, never the page's per-keystroke derive, so a half-typed address costs nothing. The app has
-    no elevation lookup, so elevation comes from the jurisdiction default."""
-    site = site or {}
-    address = str(site.get("address") or "").strip()
-    if not address or (site.get("lat") not in (None, "") and site.get("lng") not in (None, "")):
-        return None
-    key = "fountain_designer:geocode:" + hashlib.sha1(address.lower().encode("utf-8")).hexdigest()
+def _cached(key, fetch):
+    """``fetch()`` -> ``(value, definite)`` behind the cache: a definite answer (a value, or a definite "no")
+    for a month, anything else ten minutes, so a timeout or a rate limit is asked again soon."""
     cache = frappe.cache()
     hit = cache.get_value(key)
     if hit is not None:
         return hit or None
     try:
+        value, definite = fetch()
+    except Exception:
+        value, definite = None, False
+    cache.set_value(key, value or {}, expires_in_sec=GEOCODE_CACHE_S if definite else GEOCODE_RETRY_S)
+    return value or None
+
+
+def _engine_may_fill(site, key):
+    """True when the derive may write ``site[key]``: it is blank, or the engine filled it and nobody has
+    changed it since (``derive.engine_owned``)."""
+    if site.get(key) not in (None, ""):
+        return derive_mod.engine_owned(site, key) is not None
+    return True
+
+
+def _point_key(kind, lat, lng):
+    return f"fountain_designer:{kind}:{float(lat):.4f},{float(lng):.4f}"
+
+
+def _valid_point(lat, lng):
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return False
+    return bool(lat or lng) and -90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0
+
+
+def geocode_lookup(address):
+    """``{lat, lng}`` for an address, or None. Google's ZERO_RESULTS is a definite answer."""
+    def fetch():
         from erpnext_enhancements.workforce.sites import geocode_text
 
-        found, problem = geocode_text(address)
-    except Exception:
-        found, problem = None, "error"
-    point = {"lat": found.get("lat"), "lng": found.get("lng")} if found else {}
-    definite = bool(found) or str(problem or "").upper().startswith("ZERO_RESULTS")
-    cache.set_value(key, point, expires_in_sec=GEOCODE_CACHE_S if definite else GEOCODE_RETRY_S)
-    return point or None
+        found, problem = geocode_text(address, timeout=LOOKUP_TIMEOUT_S)
+        point = {"lat": found.get("lat"), "lng": found.get("lng")} if found else {}
+        return point, bool(found) or str(problem or "").upper().startswith("ZERO_RESULTS")
+
+    return _cached("fountain_designer:geocode:" + hashlib.sha1(address.lower().encode("utf-8")).hexdigest(), fetch)
+
+
+def elevation_lookup(lat, lng):
+    """``{"elevation_ft": ft}`` at a point from Google's Elevation API (``workforce.sites.elevation_at``), or None."""
+    def fetch():
+        from erpnext_enhancements.workforce.sites import elevation_at
+
+        feet, _problem = elevation_at(lat, lng, timeout=LOOKUP_TIMEOUT_S)
+        return ({"elevation_ft": feet} if feet is not None else {}), feet is not None
+
+    return _cached(_point_key("elevation", lat, lng), fetch)
+
+
+def seismic_lookup(lat, lng):
+    """``{"seismic_sdc", "sds", "sd1"}`` at a point from the USGS ASCE 7-22 service (Risk Category II, Site
+    Class D: the house's default site class until a geotechnical report says otherwise), or None. Never
+    raises or logs: a failure falls back to the state's default category."""
+    def fetch():
+        import requests
+
+        response = requests.get(USGS_URL, params={"latitude": float(lat), "longitude": float(lng), "riskCategory": "II",
+                                                  "siteClass": "D", "title": "Sapphire Fountain Designer"},
+                                timeout=USGS_TIMEOUT_S)
+        try:
+            payload = response.json() if response.content else {}
+        except ValueError:
+            payload = {}
+        body = payload.get("response") if isinstance(payload, dict) else None
+        if isinstance(body, list):
+            body = body[0] if body else None
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, dict):
+            return {}, False
+        out = {}
+        sdc = str(data.get("sdc") or "").strip().upper()
+        if sdc in ("A", "B", "C", "D", "E", "F"):
+            out["seismic_sdc"] = sdc
+        for key in ("sds", "sd1"):
+            try:
+                v = float(data.get(key))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(v) and v >= 0:
+                out[key] = round(v, 3)
+        return out, bool(out)
+
+    return _cached(_point_key("seismic", lat, lng), fetch)
+
+
+def site_lookup(site):
+    """What the address tells the derive (``derive.derive_site``): the geocoded point when the site has
+    none, then at that point Google's elevation and the USGS seismic design values, each only where the
+    derive may still fill the field (blank, or filled by the engine before). ``cites`` names each one's
+    source. Every lookup is cached a month (a failure ten minutes) and none raises or logs: a failure
+    leaves the state's default standing. The controller calls this on a save, never the page's
+    per-keystroke derive, so a half-typed address costs nothing."""
+    site = site or {}
+    out, cites = {}, {}
+    address = str(site.get("address") or "").strip()
+    lat, lng = site.get("lat"), site.get("lng")
+    if address and (lat in (None, "") or lng in (None, "")):
+        point = geocode_lookup(address)
+        if point:
+            out.update(point)
+            cites.update(lat=CIT_GEOCODE, lng=CIT_GEOCODE)
+            lat, lng = point.get("lat"), point.get("lng")
+    if _valid_point(lat, lng):
+        if _engine_may_fill(site, "elevation_ft"):
+            found = elevation_lookup(lat, lng)
+            if found:
+                out.update(found)
+                cites["elevation_ft"] = CIT_ELEVATION
+        if any(_engine_may_fill(site, k) for k in SEISMIC_FIELDS):
+            found = seismic_lookup(lat, lng)
+            if found:
+                out.update(found)
+                cites.update({k: CIT_USGS for k in found})
+    if not out:
+        return None
+    out["cites"] = cites
+    return out
 
 
 def load_prices(model, catalogs=None):
@@ -502,6 +619,12 @@ def print_formats():
     return [r for r in rows if r["print_format"] in have]
 
 
+def jurisdiction_options():
+    """The Site step's picker: every state in the jurisdiction table as ``{value, label}``, Utah first and
+    then by name (``engine/data/jurisdictions.py``)."""
+    return [{"value": code, "label": f"{name} ({code})"} for code, name in jurisdictions_data.names().items()]
+
+
 @frappe.whitelist()
 def boot():
     """Everything the page needs before the first design: kits, families, sections and presets,
@@ -522,7 +645,7 @@ def boot():
         "kits": kits(),
         "families": families(),
         "sections": sections(),
-        "options": copy.deepcopy(OPTIONS),
+        "options": dict(copy.deepcopy(OPTIONS), jurisdictions=jurisdiction_options()),
         "catalogs": {"equipment_classes": [{"key": c["key"], "label": c["label"]} for c in EQUIPMENT_CLASSES],
                      "slot_classes": dict(SLOT_CLASSES)},
         "house_rules": house_rules(),

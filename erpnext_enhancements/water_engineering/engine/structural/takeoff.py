@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 import re
 
+from .. import jurisdiction as juris
 from .concrete import (
     anchor_bolts,
     coating_area,
@@ -274,6 +275,13 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
 
     general = general_structure(model, basins_out, rules)
     checks += general["checks"]
+    codes = state_codes(site)
+    code_notes = list(dict.fromkeys(w for c in codes.values() for w in c["warnings"]))
+    if code_notes:
+        checks.append({"key": "STRUCT_CODE_EDITION", "code": "STRUCT_CODE_EDITION", "severity": INFO,
+                       "title": "Confirm the building code edition for the structure",
+                       "detail": " ".join(code_notes), "remedy": "Check with the building department before the drawings issue.",
+                       "section": "site", "basin": None, "citation": "; ".join(c["cite"] for c in codes.values() if c["cite"])})
     for key, description, qty, uom, hint, extra in general["bom"]:
         add(key, description, qty, uom, hint, **extra)
     totals.update({k: (totals.get(k, 0) + v) for k, v in general["totals"].items()})
@@ -313,6 +321,17 @@ def structural_takeoff(model: dict, rules: dict | None = None) -> dict:
         "structure": general["results"],
         "seismic": general["seismic"],
         "notes": general["notes"],
+        "codes": {k: {"edition": c["edition"], "cite": c["cite"]} for k, c in codes.items()},
         "rules": rules,
-        "warnings": [DISCLAIMER],
+        "warnings": [DISCLAIMER, *code_notes],
     }
+
+
+def state_codes(site: dict) -> dict:
+    """The site's state's IBC, and its ISPSC for a pool, spa or interactive venue (phase J): what the
+    takeoff cites (``juris.code_report``). The rules themselves are written to IBC 2021."""
+    keys = ["ibc"]
+    venue = str((site or {}).get("venue_type") or "").lower()
+    if any(w in venue for w in ("pool", "spa", "interactive")):
+        keys.append("ispsc")
+    return {k: juris.code_report(site, k) for k in keys}

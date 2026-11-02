@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 
+from .. import jurisdiction as juris
 from ..data.nec_tables import NEC_EDITION, VERIFY_EDITION
 from ._util import num, phase_of
 from .article680 import article680_checklist, gfci_requirement
@@ -104,7 +105,9 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
     (each ``{id, label, hp, fla, kw, voltage, phase, qty, control, code_letter,
     submersible, run_ft}``). Keys:
 
-    ``edition``, ``verify``, ``inputs``, ``loads``, ``circuits``,
+    ``edition`` (the NEC these tables are written to), ``state_edition`` and
+    ``code_cite`` (the site's state's NEC, from the jurisdiction table),
+    ``verify``, ``inputs``, ``loads``, ``circuits``,
     ``low_voltage``, ``transformers``, ``feeder``, ``service``, ``panel_rows``,
     ``control_pump_rows``, ``checklist``, ``backup``, ``energy``, ``bom``,
     ``oneline_svg``, ``warnings``, ``status``, and ``results`` (every
@@ -249,11 +252,16 @@ def electrical_report(model: dict | None, *, pumps: list[dict] | None = None) ->
             )
     for r in (loads_r, circ_r, fo, sc, checklist):
         warnings += [w for w in r.warnings if w != VERIFY_EDITION]
+    # The state's NEC (phase J): its edition and basis, and what to confirm with the AHJ.
+    nec = juris.code_report(site, "nec")
+    warnings += nec["warnings"]
     statuses = [sc.status, checklist.status] + [c["calcs"]["wire"].get("status") for c in circuits]
     status = "bad" if "bad" in statuses else ("warn" if "warn" in statuses else "good")
     return {
         "edition": NEC_EDITION,
-        "verify": VERIFY_EDITION,
+        "state_edition": nec["edition"],
+        "verify": nec["verify"],
+        "code_cite": nec["cite"],
         "inputs": {
             "service_v": service_v, "phase": service_ph, "venue": venue, "conduit_type": conduit_type,
             "ambient_f": ambient_f, "ocpd_device": device, "material": material,

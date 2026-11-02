@@ -7,9 +7,10 @@ the typed issues, readiness, the verdict, the BOM, the charts and the outputs.
 
 The ladder, and the engine each step calls:
 
-* 0 site: blank site fields from the address lookup the caller passes (``site_lookup``), then the
-  jurisdiction defaults and the house-rule utility rates; ``regulated`` widened to Utah
-  interactive features.
+* 0 site: blank site fields from the address lookups the caller passes (``site_lookup``: the point,
+  the elevation and the USGS seismic values), then the state's row of the jurisdiction table and the
+  house-rule utility rates; ``regulated`` from the state's rules (pools, spas, interactive features);
+  and the ``jurisdiction`` result (code editions, agency, regulated venues, licensing) the prints read.
 * 1 basins: ``basin.basin_volume``.
 * 2 features: ``engine.families`` (flow, checks, terminal) per feature.
 * 3 regulated minimums: ``aquatic.turnover_time`` / ``minimum_flow_rate`` on a regulated venue.
@@ -48,6 +49,7 @@ from . import issues as design_issues
 from . import prints
 from .engine import autosize, drawings, kits, upkeep
 from .engine import bom as bom_engine
+from .engine import jurisdiction as juris
 from .engine import model as model_engine
 from .engine import rules as rules_engine
 from .engine.aquatic import minimum_flow_rate
@@ -60,20 +62,30 @@ from .engine.structural import structural_takeoff
 from .engine.treatment import evaporation_rate, filtration_area
 from .engine.units import gallons_to_pounds
 
-# Site defaults by jurisdiction, used only where the site field is blank and the address lookup
-# found nothing. Salt Lake City's figures stand for Utah: elevation 4,226 ft at the airport (rounded
-# to the valley's 4,300), 30 in frost depth (SLC design criteria), and the house-rule rates.
-CIT_SITE_DEFAULTS = (
-    "Utah defaults (Salt Lake City): elevation 4,300 ft, design air 95 F, water 70 F, frost depth 30 in "
-    "(SLC Design Criteria 2024 IBC/IRC), hardness 250 ppm (SLC public utilities water quality report)"
-)
-SITE_DEFAULTS = {
-    "UT": {"elevation_ft": 4300.0, "air_temp_f": 95.0, "water_temp_f": 70.0, "frost_depth_in": 30.0, "hardness_ppm": 250.0},
-}
+# The site fields the engine fills where the designer left them blank (phase J): from the address
+# lookups (the geocoded point, Google's elevation, USGS's seismic design values), then the state's row
+# of the jurisdiction table (``engine/data/jurisdictions.json``: the design city's climate), then the
+# house-rule utility rates.
 SITE_LOOKUPS = (
     "lat", "lng", "elevation_ft", "air_temp_f", "water_temp_f", "frost_depth_in", "hardness_ppm", "kwh_rate",
-    "water_rate_per_ccf",
+    "water_rate_per_ccf", "seismic_sdc", "sds", "sd1", "winterize",
 )
+# The ones the jurisdiction table gives, by the name its climate block uses.
+CLIMATE_KEYS = {"elevation_ft": "elevation_ft", "air_temp_f": "air_temp_f", "water_temp_f": "water_temp_f",
+                "frost_depth_in": "frost_depth_in", "hardness_ppm": "hardness_ppm", "seismic_sdc": "seismic_default",
+                "winterize": "winterize"}
+CLIMATE_LABELS = {"elevation_ft": "elevation", "air_temp_f": "design air temperature", "water_temp_f": "design water temperature",
+                  "frost_depth_in": "frost depth", "hardness_ppm": "water hardness", "seismic_sdc": "seismic design category",
+                  "winterize": "whether it freezes"}
+SITE_UNITS = {"lat": "deg", "lng": "deg", "elevation_ft": "ft", "air_temp_f": "F", "water_temp_f": "F", "frost_depth_in": "in",
+              "hardness_ppm": "ppm", "kwh_rate": "$/kWh", "water_rate_per_ccf": "$/ccf", "seismic_sdc": "", "sds": "g",
+              "sd1": "g", "winterize": ""}
+# ASCE 7 categories, and the IRC's D0 to D2 the table's schema allows (catalog/jurisdictions-validate.py).
+SDC_VALUES = ("A", "B", "C", "D", "D0", "D1", "D2", "E", "F")
+CIT_HOUSE_RATES = "Water Engineering Settings house rules"
+# The house-rule utility rates are sourced for Salt Lake City (``engine/rules.py``: SLC water, Rocky
+# Mountain Power), so a site in another state is told to type its own.
+HOUSE_RATES_STATE = "UT"
 
 # The Pump room step's route template (PLAN.md 2.2 step 6), applied to an ``auto`` piping section
 # where a segment has no length yet. Sapphire standard 2026-11-01, for the designers to confirm.
@@ -178,53 +190,169 @@ class _Run:
 # --------------------------------------------------------------------------------------
 
 
-# The venues a health department regulates as pools: an allow-list. ``aquatic.is_regulated`` is a
-# deny-list of fountain venues (anything else counts as a pool), so a pond, a lake or an event rental
-# came out regulated and got a spa's code-minimum blocker.
-REGULATED_WORDS = ("pool", "spa")
+# The venues a health department regulates are an allow-list (pool, spa, interactive), read from the
+# venue's words in ``regulated_site``. ``aquatic.is_regulated`` is a deny-list of fountain venues
+# (anything else counts as a pool), so a pond, a lake or an event rental came out regulated and got a
+# spa's code-minimum blocker.
 
 
 def regulated_site(site: dict) -> bool:
-    """Regulated when the venue is a pool or spa (Commercial Pool, Commercial Spa, Wading Pool, Therapy
-    Pool) or, in Utah, an interactive water feature (R392-302). Worked out from the venue every time,
-    never read back from ``site.regulated``: the derive writes that field, so reading it would keep a
-    design regulated after its venue changed."""
+    """Regulated when the venue is a public pool, a spa the state regulates (``regulation.spa_regulated``),
+    or an interactive water feature in a state that regulates them (``regulation.iwf_regulated``). The
+    state's row of the jurisdiction table decides, never the code "UT"; a state with no row regulates
+    pools and spas as everywhere, and interactive features not at all (the interactive family warns).
+    Worked out from the venue every time, never read back from ``site.regulated``: the derive writes that
+    field, so reading it would keep a design regulated after its venue changed."""
     words = str(site.get("venue_type") or "").lower().replace("/", " ").split()
-    if any(w in words for w in REGULATED_WORDS):
+    entry = juris.entry_for(site)
+    if "pool" in words:
         return True
-    return "interactive" in words and str(site.get("jurisdiction") or "UT").upper() == "UT"
+    if "spa" in words:
+        return juris.spa_regulated(entry)
+    return "interactive" in words and juris.iwf_regulated(entry)
+
+
+def _site_value(key: str, value: Any) -> Any:
+    """A site value in its kind (a number, the SDC letter, the winterize flag), or None when blank or junk."""
+    if key == "winterize":
+        return value if isinstance(value, bool) else None
+    if key == "seismic_sdc":
+        letter = str(value or "").strip().upper()
+        return letter if letter in SDC_VALUES else None
+    return _num(value)
+
+
+def _show(value: Any) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return f"{value:g}" if isinstance(value, float) else str(value)
+
+
+def engine_owned(site: dict, key: str) -> str | None:
+    """Who filled ``site[key]`` (``lookup``, ``default``, ``house_rule``, ``rule``), or None when it is the
+    designer's. ``site.sources[key]`` is ``{"src", "v"}``, the value the engine wrote; a field holding any
+    other value was changed since by someone (the page, the ``save_water_design`` tool, a script, an older
+    client), so it is theirs. A blanked field with a source is the engine's to fill again."""
+    sources = site.get("sources") if isinstance(site.get("sources"), dict) else {}
+    rec = sources.get(key)
+    if key not in SITE_LOOKUPS or not isinstance(rec, dict) or not rec.get("src"):
+        return None
+    have = _site_value(key, site.get(key))
+    if have is None or have == _site_value(key, rec.get("v")):
+        return str(rec["src"])
+    return None
 
 
 def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[dict, dict]:
-    """Fill the blank site fields: the caller's address lookup first, then the jurisdiction defaults,
-    then the house-rule utility rates. A field the person typed is never touched. Returns
-    (site, CalcResult dict naming the source of each filled field)."""
+    """Fill the site fields the designer did not type: the caller's address lookups first (the geocoded
+    point, the elevation, the USGS seismic values), then the state's row of the jurisdiction table, then
+    the house-rule utility rates. Returns (site, CalcResult dict naming the source of each value).
+
+    ``site.sources`` records which values the engine filled and what it wrote (``{key: {"src", "v"}}``,
+    :func:`engine_owned`): a value with no source, or one changed since the engine wrote it, is the
+    designer's and is never touched; one the engine still owns is refreshed, so a new state's climate
+    replaces the old state's, and a lookup made on a save replaces a state default. A looked-up value
+    stays until a new lookup answers (the page's own derive makes none). An engine value whose source no
+    longer has one (a state with no frost depth on file) is blanked rather than left standing from the
+    old state. ``winterize`` follows a frost depth the designer typed (``rule``): 0 or less means the site
+    does not freeze, whatever the state's design city does."""
     out = dict(site or {})
-    filled: dict[str, dict] = {}
-    defaults = SITE_DEFAULTS.get(str(out.get("jurisdiction") or "UT").upper(), SITE_DEFAULTS["UT"])
-    sources = (
-        ("lookup", lookup or {}, "address lookup"),
-        ("default", defaults, CIT_SITE_DEFAULTS),
-        ("house_rule", {"kwh_rate": rules.get("kwh_rate"), "water_rate_per_ccf": rules.get("water_rate_per_ccf")},
-         "Water Engineering Settings house rules"),
-    )
+    lookup = dict(lookup or {})
+    lookup_cites = lookup.pop("cites", None) or {}
+    owned = {k: src for k in SITE_LOOKUPS if (src := engine_owned(out, k))}
+    entry = juris.entry_for(out)
+    state = juris.state_name(out, entry)
+    climate = juris.climate(entry)
+    climate_cites = climate.get("cites") if isinstance(climate.get("cites"), dict) else {}
+    house = {"kwh_rate": rules.get("kwh_rate"), "water_rate_per_ccf": rules.get("water_rate_per_ccf")}
+    shown: dict[str, dict] = {}
+    citations: list[str] = []
+
+    def cite(text: Any) -> str:
+        text = str(text or "")
+        if text and text not in citations:
+            citations.append(text)
+        return text
+
     for key in SITE_LOOKUPS:
-        if _num(out.get(key)) is not None:
+        have = _site_value(key, out.get(key))
+        owner = owned.get(key)
+        if have is not None and owner is None:
+            continue  # the designer's
+        fresh = _site_value(key, lookup.get(key))
+        if fresh is None and owner == "lookup" and have is not None:
+            shown[key] = {"value": have, "unit": SITE_UNITS.get(key, ""), "source": "lookup",
+                          "ref": cite(lookup_cites.get(key) or "address lookup (an earlier save)")}
             continue
-        for source, values, ref in sources:
-            v = _num(values.get(key))
-            if v is not None:
-                out[key] = v
-                filled[key] = {"value": v, "unit": "", "source": source, "ref": ref}
-                break
+        candidates = (
+            ("lookup", fresh, lookup_cites.get(key) or "address lookup"),
+            ("default", _site_value(key, climate.get(CLIMATE_KEYS[key])) if key in CLIMATE_KEYS else None,
+             climate_cites.get(CLIMATE_KEYS.get(key, key)) or f"{state} jurisdiction defaults"),
+            ("house_rule", _site_value(key, house.get(key)), CIT_HOUSE_RATES),
+        )
+        pick = next(((src, v, ref) for src, v, ref in candidates if v is not None), None)
+        if pick:
+            src, v, ref = pick
+            out[key] = v
+            owned[key] = src
+            shown[key] = {"value": v, "unit": SITE_UNITS.get(key, ""), "source": src, "ref": cite(ref)}
+        elif owner:
+            out[key] = None
+            owned.pop(key, None)
+    # A frost depth the designer typed decides whether the site freezes, unless they ticked Winterize too.
+    frost = _site_value("frost_depth_in", out.get("frost_depth_in"))
+    if frost is not None and "frost_depth_in" not in owned and \
+            (owned.get("winterize") or _site_value("winterize", out.get("winterize")) is None):
+        out["winterize"] = frost > 0
+        owned["winterize"] = "rule"
+        shown["winterize"] = {"value": out["winterize"], "unit": "", "source": "rule",
+                              "ref": cite("the frost depth typed for the site (0 or less: it does not freeze)")}
+    if owned:
+        out["sources"] = {k: {"src": src, "v": out.get(k)} for k, src in owned.items()}
+    else:
+        out.pop("sources", None)
     out["regulated"] = regulated_site(out)
-    steps = [f"{k} = {meta['value']:g} ({meta['source']})" for k, meta in filled.items()]
+    warnings = []
+    house_rated = [k for k in ("kwh_rate", "water_rate_per_ccf") if owned.get(k) == "house_rule"]
+    if house_rated and juris.code_of(out) != HOUSE_RATES_STATE:
+        warnings.append("The power and water rates are the house rules, sourced for Salt Lake City: type the "
+                        f"site's own utility rates for {state}, or the running costs are Utah's.")
+    if entry is None:
+        warnings.append(juris.no_data_warning(out))
+    else:
+        blank = [CLIMATE_LABELS[k] for k in CLIMATE_KEYS if _site_value(k, out.get(k)) is None]
+        if blank:
+            warnings.append(f"{state} has no {', '.join(blank)} on file for the design city: type "
+                            f"{'it' if len(blank) == 1 else 'them'} on the Site step.")
+    steps = [f"{k} = {_show(meta['value'])} ({meta['source']}: {meta['ref']})" for k, meta in shown.items()]
     return out, {
-        "calc": "site_lookups", "value": len(filled), "unit": "fields", "inputs": filled,
-        "formula": "blank site fields <- address lookup, then jurisdiction defaults, then house rules",
-        "steps": steps or ["every site field was given"], "citations": [CIT_SITE_DEFAULTS],
-        "warnings": [], "options": [], "status": "Okay",
+        "calc": "site_lookups", "value": len(shown), "unit": "fields", "inputs": shown,
+        "formula": "blank site fields <- address lookups, then the state's jurisdiction defaults, then house rules",
+        "steps": steps or ["every site field was given"], "citations": citations,
+        "warnings": warnings, "options": [], "status": "Okay" if not warnings else "Check",
     }
+
+
+def jurisdiction_checks(result: dict | None) -> list[dict]:
+    """One issue for the codes the designer must confirm with the authority having jurisdiction: a
+    warning when the state has no row, or adopts a code locally or not at all (to sign off once it is
+    confirmed); an advisory when the table only lacks an edition."""
+    v = (result or {}).get("value") or {}
+    if not result:
+        return []
+    if not v.get("known"):
+        return [{"code": "JURISDICTION_NO_DATA", "key": "JURISDICTION_NO_DATA", "severity": "warning", "section": "site",
+                 "title": f"No jurisdiction data for {v.get('code') or 'this site'}",
+                 "detail": " ".join(result.get("warnings") or []),
+                 "remedy": "Pick the site's state, or type the site facts and confirm the codes with the authority having jurisdiction.",
+                 "_source": "engine"}]
+    if not v.get("confirm_ahj"):
+        return []
+    return [{"code": "JURISDICTION_CONFIRM_AHJ", "key": "JURISDICTION_CONFIRM_AHJ",
+             "severity": "warning" if v.get("ahj_local") else "info", "section": "site",
+             "title": f"Confirm the code editions for {v.get('name') or v.get('code')}", "detail": v.get("ahj_note") or "",
+             "remedy": "Call the building department and the health department, then sign this off.",
+             "citation": "; ".join((result.get("citations") or [])[:3]), "_source": "engine"}]
 
 
 # --------------------------------------------------------------------------------------
@@ -886,7 +1014,7 @@ def _startup(m: dict, regulated: bool) -> list[str]:
 
 # What results_json keeps of phase L's reports: the page's keys (E) and what the print formats read (G).
 ELECTRICAL_KEYS = ("panel_rows", "control_pump_rows", "checklist", "energy", "circuits", "feeder", "service", "edition",
-                   "verify", "inputs", "low_voltage", "transformers")
+                   "state_edition", "code_cite", "verify", "inputs", "low_voltage", "transformers")
 CONTROLS_KEYS = ("control_panel", "theory_of_operation", "bom", "panel", "controller", "pumps", "relays", "dc_supply")
 GAL_PER_CCF = upkeep.GAL_PER_CCF
 DAYS_PER_YEAR = 365.0
@@ -986,6 +1114,7 @@ def paper_data(m: dict, *, plan: dict | None, om: dict | None, om_inputs: dict, 
                                            "citation", "value", "limit", "unit")} for c in iwf],
             "nec680": list((elec or {}).get("checklist") or []),
             "nec_edition": (elec or {}).get("edition"),
+            "nec_state_edition": (elec or {}).get("state_edition"),
             "nec_verify": (elec or {}).get("verify"),
         },
         "budget_rules": budget_rules(rules),
@@ -1020,6 +1149,8 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
                                   (m.get("site") or {}, None))
     m["site"] = site
     run.result(site_result)
+    jr = run.result(run.stage("jurisdiction", lambda: juris.summary(site)))
+    run.checks.extend(run.stage("jurisdiction checks", lambda: jurisdiction_checks(jr), []))
     regulated = bool(site.get("regulated"))
 
     # 1 basins (measured again after phase B, which deepens an auto basin: see below)
@@ -1238,7 +1369,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         omr = run.stage("o&m", lambda: upkeep.om_per_year(plan, op_rows, volume_gal=total_gal, rules=rules, equipment_cost=equip_cost))
         om = run.result(omr).get("value") if omr else None
     maintenance = run.stage("maintenance", lambda: _maintenance(m, plan, bom, ctl, hours, outdoor=not indoor,
-                                                                    frost=(_num(site.get("frost_depth_in")) or 0) > 0), []) if plan else []
+                                                                    frost=juris.winterize(site)), []) if plan else []
 
     # rollups
     ops = (network_result or {}).get("pumps") or {}
@@ -1276,7 +1407,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
 
     # outputs
     wdata = wint.get("data") or {}
-    frost = (_num(site.get("frost_depth_in")) or 0) > 0 and not indoor
+    frost = juris.winterize(site) and not indoor
     om_lines = []
     if om:
         om_lines = [{"label": label, "amount": round(_num(om.get(k)) or 0.0, 0)} for k, label in
@@ -1288,7 +1419,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         # The winterization module's own checklist (``data.winterize``), one title per step.
         "winterization": {"needed": bool(frost),
                           "steps": [str(i.get("title")) for i in wdata.get("winterize") or [] if isinstance(i, dict) and i.get("title")][:40]
-                          if frost else ["Indoor feature or no frost on site: no winterization. Drain only for service."]},
+                          if frost else ["Indoor feature or a site that does not freeze: no winterization. Drain only for service."]},
         "startup": _startup(m, regulated),
     }
     paper = run.stage("paper", lambda: paper_data(

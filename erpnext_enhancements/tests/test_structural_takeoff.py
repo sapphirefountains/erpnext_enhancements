@@ -236,8 +236,8 @@ def test_rules_override_and_none_fallback():
 def test_incomplete_basin_is_an_info_check():
     t = structural_takeoff({"basins": [{"id": "b9", "label": "Draft", "shape": "rectangular", "depth_in": 18}]})
     assert t["basins"][0]["complete"] is False
-    # the seismic-inputs note is the only other one: the site gives no Ss/S1
-    assert sorted(c["code"] for c in t["checks"]) == ["STRUCT_INCOMPLETE", "STRUCT_SEISMIC_INPUTS"]
+    # the only other notes: the site gives no Ss/S1 and no frost depth (phase J: the house rule's 30 in is said aloud)
+    assert sorted(c["code"] for c in t["checks"]) == ["STRUCT_FROST_DEFAULT", "STRUCT_INCOMPLETE", "STRUCT_SEISMIC_INPUTS"]
     assert t["bom"] == []
 
 

@@ -256,6 +256,13 @@
 	font-size: var(--sf-text-sm);
 }
 
+/* A line to act on (phase J: "confirm with the authority having jurisdiction"): the hint with the warn rule. */
+.fd-hint--warn {
+	padding-left: var(--sf-space-10);
+	border-left: 4px solid var(--sf-warn);
+	color: var(--sf-text);
+}
+
 .fd-derived {
 	margin: var(--sf-space-5) 0 var(--sf-space-10);
 	font-size: var(--sf-text-sm);
