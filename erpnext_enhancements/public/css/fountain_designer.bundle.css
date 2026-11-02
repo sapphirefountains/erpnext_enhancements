@@ -186,7 +186,11 @@
 	border-top: 1px solid var(--sf-rule);
 }
 
-.fd-grid {
+/* The form classes skip SVG: the server's charts (engine/drawings.py) label their text fd-label and
+   their grid lines fd-grid, and any CSS declaration outranks an SVG presentation attribute, so a
+   rule that matched would restyle the chart's text (bold, form-label size) rather than leave it as
+   drawn. Not matching is the only way to keep the drawing's own font-size and weight. */
+.fd-grid:not(line) {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 	gap: 0 var(--sf-space-15);
@@ -196,7 +200,7 @@
 	margin: 0 0 var(--sf-space-15);
 }
 
-.fd-label {
+.fd-label:not(text) {
 	display: block;
 	margin-bottom: var(--sf-space-5);
 	color: var(--sf-label);

@@ -10,8 +10,8 @@
   failing stage becomes one blocker, issue keys survive a re-derive, a sign-off in ``model.acks``
   marks its warning.
 
-The charts (the duty point, and the page-safe schematic and one-line) and their allow-list checks
-land with the next change.
+The charts (v1.769.0: the duty point, and the schematic and one-line made page-safe) are held to
+the page's SVG allow-list (chart.js) here and under node.
 
 The derive imports no frappe, so this needs no stub. Plain pytest functions: its own
 ``python -m pytest`` step in ci.yml.
@@ -30,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from erpnext_enhancements.tests.test_drawings_duty_chart import refusal
 from erpnext_enhancements.water_engineering import derive
 from erpnext_enhancements.water_engineering.engine import kits
 
@@ -130,6 +131,14 @@ def test_reply_vocabularies_and_strict_json(name):
         assert url is None  # phase G prints them
 
 
+@pytest.mark.parametrize("name", FIXTURES)
+def test_charts_pass_the_page_allow_list(name):
+    out = run(fixture(name)["model"])
+    for key, svg in out["charts"].items():
+        if svg:
+            assert refusal(svg) is None, (key, refusal(svg))
+
+
 # ----------------------------------------------------------------- the ladder
 
 
@@ -142,6 +151,8 @@ def test_lobby_kit_sizes_end_to_end():
     assert r["tdh_ft"] > 10  # the 10 ft fall plus friction
     assert r["total_basin_gallons"] == pytest.approx(120 * 24 * 14 / 231, rel=0.2)
     assert r["budget_total"] > 0 and r["om_cost_per_year"] > 0
+    assert out["charts"]["duty_svg"] and "fd-point" in out["charts"]["duty_svg"]
+    assert out["charts"]["schematic_svg"] and out["charts"]["oneline_svg"]
     assert all(s["size"] for s in out["values"]["segments"].values())
     assert not [i for i in out["issues"] if i["severity"] == "blocker"]
 
@@ -254,6 +265,7 @@ const [dir, file] = process.argv.slice(2);
 const load = (name) => import(pathToFileURL(`${dir}/${name}`).href);
 const M = await load("model.js");
 const V = await load("verdict.js");
+const C = await load("chart.js");
 const esc = (v) => (v == null ? "" : String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]));
 const __ = (t, a) => String(t).replace(/\{(\d+)\}/g, (m, n) => (a && a[n] !== undefined ? String(a[n]) : m));
 const H = { esc, __, chip: (l, t) => (l ? `<span class="sf-chip sf-chip--${t}">${esc(l)}</span>` : ""), state_html: () => "", parser: null };
@@ -261,7 +273,8 @@ const out = [];
 for (const [name, pair] of Object.entries(JSON.parse(fs.readFileSync(file, "utf8")))) {
   const merged = M.merge_derived(pair.local, pair.reply.model);
   const html = V.verdict_html(pair.reply, H, {});
-  out.push({ name, merged_schema: merged.schema, has_html: html.length > 0,
+  const charts = Object.fromEntries(Object.entries(pair.reply.charts).map(([k, v]) => [k, v ? C.safe_svg(v, null).length > 0 : null]));
+  out.push({ name, merged_schema: merged.schema, has_html: html.length > 0, charts,
              steps: pair.reply.issues.map((i) => V.step_for_issue(i)) });
 }
 console.log(JSON.stringify(out));
@@ -269,7 +282,7 @@ console.log(JSON.stringify(out));
 
 
 def test_a_real_reply_runs_through_the_page_modules(tmp_path):
-    """The page's own merge and verdict panel, under node, on real derive replies."""
+    """The page's own merge, verdict panel and chart allow-list, under node, on real derive replies."""
     import shutil
     import subprocess
 
@@ -288,6 +301,7 @@ def test_a_real_reply_runs_through_the_page_modules(tmp_path):
     assert done.returncode == 0, done.stderr
     for row in json.loads(done.stdout):
         assert row["merged_schema"] == 2 and row["has_html"], row["name"]
+        assert all(v in (True, None) for v in row["charts"].values()), row  # every chart drawn, none refused
         assert all(isinstance(s, str) and s for s in row["steps"]), row
 
 
