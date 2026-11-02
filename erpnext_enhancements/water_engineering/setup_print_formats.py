@@ -448,6 +448,40 @@ def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
     pf.save(ignore_permissions=True)
 
 
+def set_default_report():
+    """Make the Design Report the doctype's default print format, only once it exists and is enabled.
+
+    Not a fixture: a fixture applies whether or not the format seeded, and a default naming a missing
+    format breaks the form's Print. A default an admin chose is kept, unless it names a format that is
+    gone, disabled, or one of ``prints.SUPERSEDED``. Never raises."""
+    try:
+        if not frappe.db.exists("Print Format", prints.PF_REPORT) or frappe.db.get_value(
+            "Print Format", prints.PF_REPORT, "disabled"
+        ):
+            return
+        current = frappe.db.get_value(
+            "Property Setter",
+            {"doc_type": DOCTYPE, "doctype_or_field": "DocType", "property": "default_print_format"},
+            "value",
+        )
+        if current == prints.PF_REPORT:
+            return
+        usable = (
+            current
+            and current not in prints.SUPERSEDED
+            and frappe.db.exists("Print Format", current)
+            and not frappe.db.get_value("Print Format", current, "disabled")
+        )
+        if usable:
+            return
+        from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+        make_property_setter(DOCTYPE, None, "default_print_format", prints.PF_REPORT, "Data", for_doctype=True)
+        frappe.clear_cache(doctype=DOCTYPE)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water Feature Design default print format")
+
+
 def disable_superseded_formats():
     """Disable the formats that read the retired child tables (``prints.SUPERSEDED``). Disabled, not
     deleted: a removed seed leaves the record live, printing empty tables, and a delete would lose its
@@ -477,6 +511,7 @@ def ensure_water_print_formats():
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Water Engineering print format {name}")
     disable_superseded_formats()
+    set_default_report()
     try:
         frappe.db.commit()
         frappe.logger().info("[water_engineering] ensured Water Engineering print formats")

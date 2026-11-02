@@ -38,7 +38,7 @@ PILLAR = "design"
 
 # The views Nikolas asked for (2026-11-01): "a printable report view and other views with design
 # information for printing and emailing". The Design Report is the doctype's default format
-# (fixtures/property_setter.json).
+# (setup_print_formats.set_default_report, once the format exists).
 PF_REPORT = "Water Feature Design - Design Report"
 PF_CALCS = "Water Feature Design - Engineering Calculations"
 PF_SCHEDULES = "Water Feature Design - Schedules"
@@ -973,7 +973,7 @@ def budget_summary(bom: list, budget_rules: dict | None) -> dict:
     """BOM rows grouped for the Budget print, with the contingency, the total and the range.
 
     ``amount`` is the row's own (rate x qty, as the record stores it); the subtotal is therefore the
-    ``budget_total`` rollup. Contingency and range are house rules (``budget_contingency_pct``,
+    ``bom_subtotal`` rollup and the total the ``budget_total`` one (the derive and the controller call this). Contingency and range are house rules (``budget_contingency_pct``,
     ``budget_range_pct``), printed under the subtotal and kept out of the BOM a Quotation takes."""
     rules = _d(budget_rules)
     groups = {g: {"label": g, "lines": [], "subtotal": 0.0, "unpriced": 0} for g in BUDGET_GROUPS}

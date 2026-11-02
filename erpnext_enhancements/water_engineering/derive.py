@@ -892,6 +892,15 @@ GAL_PER_CCF = upkeep.GAL_PER_CCF
 DAYS_PER_YEAR = 365.0
 
 
+def budget_rules(rules: dict) -> dict:
+    """The budget's house rules as the prints and the record read them (``prints.budget_summary``)."""
+    return {
+        "labor_rate_per_hr": rules_engine.rule(rules, "labor_rate_per_hr"),
+        "contingency_pct": rules_engine.rule(rules, "budget_contingency_pct"),
+        "range_pct": rules_engine.rule(rules, "budget_range_pct"),
+    }
+
+
 def _maintenance(m: dict, plan: dict, bom: list, ctl: dict | None, hours: float, *, outdoor: bool, frost: bool) -> list[dict]:
     """``upkeep.maintenance_schedule`` for the design as derived: its filters, UV, lights, drives, nozzles
     and switched valves."""
@@ -979,11 +988,7 @@ def paper_data(m: dict, *, plan: dict | None, om: dict | None, om_inputs: dict, 
             "nec_edition": (elec or {}).get("edition"),
             "nec_verify": (elec or {}).get("verify"),
         },
-        "budget_rules": {
-            "labor_rate_per_hr": rules_engine.rule(rules, "labor_rate_per_hr"),
-            "contingency_pct": rules_engine.rule(rules, "budget_contingency_pct"),
-            "range_pct": rules_engine.rule(rules, "budget_range_pct"),
-        },
+        "budget_rules": budget_rules(rules),
     }
 
 
@@ -1208,7 +1213,9 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         run.checks.append({**c, "_source": "network"})
     lines = run.stage("bom merge", lambda: merge_bom((hyd.get("value") or {}).get("lines") or [], elec, ctl, struct, family_lines), [])
     bom = run.stage("prices", lambda: price_bom(lines, m, prices, rules), [])
-    budget = round(sum(r["amount"] for r in bom), 2)
+    # The budget is the one the Budget print shows: the BOM subtotal plus the house-rule contingency.
+    bom_subtotal = round(sum(r["amount"] for r in bom), 2)
+    budget = prints.budget_summary(bom, budget_rules(rules))["total"]
     unpriced = sum(1 for r in bom if not r["rate"])
     if bom and unpriced:
         run.checks.append({"code": "BOM_UNPRICED", "key": "BOM_UNPRICED", "severity": "info", "section": "outputs",
@@ -1253,6 +1260,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         # filters on. The flow that circulates: the operating flow, else the design flow.
         "required_circulation_gpm": _round(op_gpm or design_gpm, 1),
         "budget_total": budget,
+        "bom_subtotal": bom_subtotal,
         "om_cost_per_year": _round((om or {}).get("total"), 0),
     }
 

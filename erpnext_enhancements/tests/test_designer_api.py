@@ -379,13 +379,15 @@ def test_email_draft_text_is_plain_for_the_composer(api):
     comments, so the starting text is plain paragraphs and the email chrome goes on at send time."""
     from erpnext_enhancements.water_engineering import prints
 
-    _emailable(api)
+    doc, _seeded = _emailable(api)
+    doc["results_json"] = json.dumps({"rollups": {"operating_flow_gpm": 80.0}, "paper": {"budget_rules": {"contingency_pct": 10}}})
     msg = api.email_draft("WFD-9", prints.PF_BUDGET)["message"]
     assert msg.startswith("<p>Attached is the budget proposal for Lobby & wall.</p>")
-    assert "<strong>Budget (before contingency):</strong> $12,000" in msg and "<strong>Flow:</strong> 80 gpm" in msg
+    # budget_total is the paper's Budget (the subtotal plus the contingency), and the email says so
+    assert "<strong>Budget (with 10% contingency):</strong> $12,000" in msg and "<strong>Flow:</strong> 80 gpm" in msg
     for tag in ("<style", "<table", "<!--", "max-width"):
         assert tag not in msg
-    assert "Budget (before contingency)" not in api.email_draft("WFD-9", prints.PF_CALCS)["message"]
+    assert "Budget" not in api.email_draft("WFD-9", prints.PF_CALCS)["message"]
     assert api.email_draft("WFD-9")["recipients"] == "", "no customer, no address"
 
 

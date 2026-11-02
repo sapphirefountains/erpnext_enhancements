@@ -277,7 +277,8 @@
   "warning_count": 2,
   "completion_percent": 78,
   "issue_ready": false,
-  "budget_total": 36506.4
+  "budget_total": 36506.4,
+  "bom_subtotal": 36506.4
  },
  "issues": [
   {

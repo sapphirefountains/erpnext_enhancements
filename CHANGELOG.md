@@ -32,7 +32,7 @@ stored drawing has been through `drawings.page_svg`.
     - the date, and a red DRAFT until the design is issued (`ps_state`);
     - ruled tables with the numbers right-aligned, the running line and the closing stripe;
     - Letter paper, and a page break between sections.
-  - **Design Report**, the doctype's **default** print format (Property Setter fixture). It is for the
+  - **Design Report**, the doctype's **default** print format. It is for the
     client:
     - what the feature does, the numbers at a glance;
     - the circulation schematic and the duty-point chart;
@@ -64,7 +64,8 @@ stored drawing has been through `drawings.page_svg`.
   - **Budget Proposal**:
     - the BOM grouped as hydraulic, treatment, lighting, electrical, controls, structural, labor and
       other;
-    - the subtotal (the `budget_total` rollup), a contingency, the budget, and a plus-or-minus range;
+    - the subtotal (the new `bom_subtotal` rollup), a contingency, the budget (`budget_total`), and a
+      plus-or-minus range;
     - a line with no Item, no Item price or no labor rate says so.
 
     Prices are Sapphire's own Item prices on the selling price list, and labor uses the house rule. No
@@ -188,12 +189,20 @@ stored drawing has been through `drawings.page_svg`.
     off-token grey read 4.42:1, under the 4.5 the print design system holds.
   - **A BOM amount is the printed quantity × the printed rate.** A labor line printed 25.13 × $95 =
     $2,387.61. Quantities now print to three places, as they are stored.
-  - **The Desk form's budget** is labeled "Budget (BOM subtotal)". The Budget Proposal and the Design
-    Report add the contingency and the range.
+  - **One budget figure everywhere.** `budget_total` is now the print's Budget, the BOM subtotal plus
+    the house-rule contingency, on the Desk form, the page and the email. That holds because the derive
+    and the controller compute it with the prints' own `budget_summary`. A new `bom_subtotal` rollup and
+    field (on the record, in the page contract and the demo fixtures) carries the BOM's sum. The page's BOM
+    foot shows the subtotal, the contingency and the budget. Existing records take the new meaning on
+    their next save.
+  - **The default print format is set in code, not a fixture.** A fixture applies whether or not the
+    Design Report seeded, and a default naming a missing format breaks the form's Print. So
+    `set_default_report` makes the Design Report the default only once it exists and is enabled. It keeps
+    a default an admin chose, unless that one is gone, disabled or superseded.
   - **The packet's preview and PDF endpoints** check the design itself, not only the doctype.
     `frappe.get_print` checks only the doctype.
 - **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
-  source "house rule"), so `budget_total` includes labor once the rate is set.
+  source "house rule"), so the budget includes labor once the rate is set.
 - **The Outputs step's winterization drawer shows the real steps.** It printed the module's
   formula-step text ("frost depth 30 in"), because it read `data.items`, a key the module does not
   have. It now reads the module's own checklist titles.

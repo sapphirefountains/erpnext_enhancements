@@ -417,7 +417,8 @@ def test_budget_groups_contingency_and_range():
 def test_the_budget_subtotal_is_the_rollup_and_says_what_has_no_price(spf):
     out, stored = designed("lobby")
     s = prints.budget_summary(out["bom"], stored["paper"]["budget_rules"])
-    assert s["subtotal"] == pytest.approx(out["rollups"]["budget_total"])
+    assert s["subtotal"] == pytest.approx(out["rollups"]["bom_subtotal"])
+    assert s["total"] == pytest.approx(out["rollups"]["budget_total"]), "the record and the paper show one Budget"
     page = render(spf, "lobby", prints.PF_BUDGET)
     text = visible_text(page)
     assert f"{s['unpriced']} lines have no priced Item yet" in text and "Contingency (10%)" in text
@@ -439,7 +440,7 @@ def test_labor_is_priced_at_the_house_rule_and_never_invented():
     # The amount is the printed qty x the printed rate, to the cent (the review found 25.13 x $95 = $2,387.61).
     assert all(r["amount"] == round(r["rate"] * r["qty"], 2) for r in priced["bom"])
     assert all(prints.fqty(r["qty"]) == f"{r['qty']:,.3f}".rstrip("0").rstrip(".") for r in labor)
-    assert priced["rollups"]["budget_total"] == pytest.approx(unpriced["rollups"]["budget_total"] + sum(r["amount"] for r in labor), abs=0.05)
+    assert priced["rollups"]["bom_subtotal"] == pytest.approx(unpriced["rollups"]["bom_subtotal"] + sum(r["amount"] for r in labor), abs=0.05)
     assert stored["paper"]["budget_rules"] == {"labor_rate_per_hr": 95.0, "contingency_pct": 10.0, "range_pct": 15.0}
 
 
@@ -605,10 +606,38 @@ def test_the_design_report_is_the_client_view(spf):
     assert "Contingency (10%)" in text and "Range (plus or minus 15%)" in text
 
 
-def test_the_report_is_the_doctype_default():
+def test_the_report_becomes_the_default_only_when_it_exists(spf, monkeypatch):
+    """Not a fixture: a fixture would apply even when the format failed to seed, and a default naming a
+    missing format breaks the form's Print. A default an admin chose is kept unless it is gone, disabled
+    or superseded."""
     rows = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
-    row = next(r for r in rows if r["name"] == "Water Feature Design-main-default_print_format")
-    assert (row["doc_type"], row["property"], row["value"]) == ("Water Feature Design", "default_print_format", prints.PF_REPORT)
+    assert not any(r["name"] == "Water Feature Design-main-default_print_format" for r in rows)
+    made = []
+    module = types.ModuleType("frappe.custom.doctype.property_setter.property_setter")
+    module.make_property_setter = lambda *a, **k: made.append((a, k))
+    for name in ("frappe.custom", "frappe.custom.doctype", "frappe.custom.doctype.property_setter"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "frappe.custom.doctype.property_setter.property_setter", module)
+    spf.frappe.clear_cache = lambda **k: None
+
+    def site(formats, current):
+        spf.frappe.db = types.SimpleNamespace(
+            exists=lambda doctype, name: name in formats,
+            get_value=lambda doctype, name, field: current if doctype == "Property Setter" else formats.get(name),
+        )
+        made.clear()
+        spf.set_default_report()
+        return list(made)
+
+    report = prints.PF_REPORT
+    assert site({}, None) == [], "no Design Report seeded: no default naming it"
+    assert site({report: 1}, None) == [], "a disabled Design Report is not made the default"
+    call = (("Water Feature Design", None, "default_print_format", report, "Data"), {"for_doctype": True})
+    assert site({report: 0}, None) == [call]
+    assert site({report: 0}, report) == [], "already the default: nothing written"
+    assert site({report: 0, "House Format": 0}, "House Format") == [], "an admin's choice stands"
+    assert site({report: 0, "Gone": 1}, "Gone") == [call], "a disabled default is replaced"
+    assert site({report: 0, prints.SUPERSEDED[0]: 0}, prints.SUPERSEDED[0]) == [call], "a superseded default is replaced"
 
 
 def test_schedules_start_each_schedule_on_a_page(spf):

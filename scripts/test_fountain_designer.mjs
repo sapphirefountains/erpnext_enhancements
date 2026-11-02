@@ -742,6 +742,14 @@ await test("Outputs: the budget, the BOM, and print links only to this site", as
 	const html = STEPS.outputs.render(ctx_for(replies["lobby-sheet-wall-8ft"], "full"));
 	assert.match(html, /\$36,506/);
 	assert.match(html, /data-fd-action="push-quotation"/);
+	assert.ok(!/Contingency/.test(html), "no contingency in the demo: the foot is the budget alone");
+	// With a contingency, the foot is the subtotal, the contingency and the budget (README, rollups).
+	const priced = JSON.parse(JSON.stringify(replies["lobby-sheet-wall-8ft"]));
+	priced.rollups.budget_total = Math.round(priced.rollups.bom_subtotal * 1.1 * 100) / 100;
+	const with_c = STEPS.outputs.render(ctx_for(priced, "full"));
+	assert.match(with_c, /Subtotal<\/th><td class="fd-num">\$36,506<\/td>/);
+	assert.match(with_c, /Contingency<\/th><td class="fd-num">\$3,651<\/td>/);
+	assert.match(with_c, /Budget<\/th><td class="fd-num"><strong>\$40,157<\/strong>/);
 	// Every paper boot.prints names links to the saved design's print view (phase G).
 	assert.match(html, /href="\/printview\?doctype=Water%20Feature%20Design&amp;name=DEMO-X&amp;format=Water%20Feature%20Design%20-%20Design%20Report&amp;no_letterhead=1"/);
 	assert.match(html, /format=Water%20Feature%20Design%20-%20Budget%20Proposal/);
@@ -782,6 +790,7 @@ const ROLLUP_KEYS = [
 	"pump_kw",
 	"total_basin_gallons",
 	"budget_total",
+	"bom_subtotal",
 	"om_cost_per_year",
 	"blocker_count",
 	"warning_count",
@@ -801,7 +810,8 @@ await test("every fixture reply has the contract's keys", () => {
 		assert.equal(r.model.schema, 2);
 		assert.ok(["good", "warn", "bad"].includes(r.verdict.level));
 		const total = Math.round(r.bom.reduce((s, l) => s + l.amount, 0) * 100) / 100;
-		assert.equal(r.rollups.budget_total, total, "the budget is the BOM's sum");
+		assert.equal(r.rollups.bom_subtotal, total, "the subtotal is the BOM's sum");
+		assert.equal(r.rollups.budget_total, total, "the demo carries no contingency, so its budget is that sum");
 	}
 	for (const k of ["schema", "can", "kits", "families", "sections", "options", "catalogs", "house_rules", "prints"]) assert.ok(k in boot, `boot.${k}`);
 	for (const kit of boot.kits) {

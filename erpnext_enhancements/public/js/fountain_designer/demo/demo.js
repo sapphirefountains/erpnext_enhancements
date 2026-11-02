@@ -274,7 +274,8 @@ function scale(reply, f) {
 		line.rate = round(line.rate * k, 2);
 		line.amount = round(line.qty * line.rate, 2);
 	}
-	r.budget_total = round((reply.bom || []).reduce((sum, l) => sum + l.amount, 0), 2);
+	// The demo carries no contingency, so its budget is the BOM's sum (README, rollups).
+	r.budget_total = r.bom_subtotal = round((reply.bom || []).reduce((sum, l) => sum + l.amount, 0), 2);
 	const feature = reply.values && reply.values.features && reply.values.features.f1;
 	if (feature && feature.flow_gpm != null) feature.flow_gpm = round(feature.flow_gpm * f.flow, 0);
 	const pump = reply.values && reply.values.pumps && reply.values.pumps.p1;

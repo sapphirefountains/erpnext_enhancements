@@ -495,7 +495,7 @@ def get_design(name=None):
         rows = frappe.get_list(
             DESIGN_DOCTYPE,
             fields=["name", "design_title", "kit", "mode", "status", "family", "project", "opportunity", "customer",
-                    "blocker_count", "warning_count", "issue_ready", "budget_total", "modified"],
+                    "blocker_count", "warning_count", "issue_ready", "budget_total", "bom_subtotal", "modified"],
             order_by="modified desc",
             limit_page_length=200,
         )
@@ -583,7 +583,10 @@ def email_body(doc, print_format, label):
     if rollups.get("total_basin_gallons"):
         facts.append((_("Water in the system"), prints_mod.fnum(rollups["total_basin_gallons"], 0, "gallons")))
     if print_format in BUDGET_PAPERS and doc.get("budget_total"):
-        facts.append((_("Budget (before contingency)"), prints_mod.money(doc.get("budget_total"), cents=False)))
+        # The same figure as the paper's Budget: the BOM subtotal plus the contingency.
+        pct = ((stored_json(doc).get("paper") or {}).get("budget_rules") or {}).get("contingency_pct")
+        budget_label = _("Budget (with {0}% contingency)").format(prints_mod.fnum(pct, 0)) if pct else _("Budget")
+        facts.append((budget_label, prints_mod.money(doc.get("budget_total"), cents=False)))
     esc = frappe.utils.escape_html
     return (
         f"<p>{esc(_('Attached is the {0} for {1}.').format(_(label).lower(), title))}</p>"

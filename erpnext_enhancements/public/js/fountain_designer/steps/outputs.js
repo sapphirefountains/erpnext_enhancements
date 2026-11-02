@@ -43,7 +43,7 @@ export function render(ctx) {
 			<thead><tr><th scope="col">${esc(__("Line"))}</th><th scope="col" class="fd-num">${esc(__("Qty"))}</th><th scope="col">${esc(__("Unit"))}</th>
 			<th scope="col" class="fd-num">${esc(__("Rate"))}</th><th scope="col" class="fd-num">${esc(__("Amount"))}</th></tr></thead>
 			${body}
-			<tfoot><tr><th scope="row" colspan="4">${esc(__("Budget"))}</th><td class="fd-num"><strong>${esc(money(total))}</strong></td></tr></tfoot>
+			<tfoot>${foot_rows(h, bom, reply.rollups || {}, money)}</tfoot>
 		</table></div>`
 		: h.state_html("empty", { title: __("No bill of materials yet."), body: __("It appears once the design is worked out.") });
 	const saved = Boolean(ctx.design && ctx.design.name);
@@ -91,6 +91,19 @@ export function render(ctx) {
 		${drawer("om", __("O&M per year: {0}", [money(om && om.total_per_year) || "—"]), om_html)}
 		${drawer("winterization", winter && winter.needed === false ? __("Winterization: not needed") : __("Winterization"), winter_html)}
 		${start ? drawer("startup", __("Start-up checklist"), start) : ""}`;
+}
+
+// The BOM's foot: the subtotal of its lines, the contingency, and the budget (README, rollups: budget_total
+// is bom_subtotal plus the house-rule contingency, the figure the Budget print shows). A reply with no
+// contingency shows the budget alone.
+function foot_rows(h, bom, rollups, money) {
+	const { esc, __ } = h;
+	const total = rollups.budget_total;
+	const sub = rollups.bom_subtotal != null ? rollups.bom_subtotal : bom.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+	const row = (label, value, strong) =>
+		`<tr><th scope="row" colspan="4">${esc(label)}</th><td class="fd-num">${strong ? `<strong>${esc(money(value))}</strong>` : esc(money(value))}</td></tr>`;
+	if (total == null || Math.abs(total - sub) < 0.005) return row(__("Budget"), total, true);
+	return row(__("Subtotal"), sub) + row(__("Contingency"), total - sub) + row(__("Budget"), total, true);
 }
 
 // Send design: pick a paper, then frappe's email composer with it attached as a PDF (app.send_design).

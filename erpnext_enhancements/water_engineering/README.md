@@ -120,7 +120,10 @@ emailing" in the house style, so every view is the print design system's chrome
 - ruled tables with the numbers right-aligned, the running line and the closing stripe;
 - Letter paper, and a page break between sections.
 
-The **Design Report** is the doctype's default format (`fixtures/property_setter.json`).
+The **Design Report** is the doctype's default format: `set_default_report` sets it on migrate once the
+format exists and is enabled, and keeps a default an admin chose unless it is gone, disabled or superseded.
+`budget_total` on the record is the Budget the prints show (the BOM subtotal plus the house-rule
+contingency); `bom_subtotal` is the BOM's sum.
 
 | Print Format | Sheets | What it prints |
 |---|---|---|

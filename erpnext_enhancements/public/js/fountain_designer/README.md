@@ -101,7 +101,7 @@ section in the same PR.
 
 - **With no `name`:** returns `{designs: [...]}`, the designs the caller may read, newest first, for Start's list. Each row is
   `{name, design_title, kit, mode ("Quick"|"Full"), status, family, project, opportunity, customer,
-  blocker_count, warning_count, issue_ready (0|1), budget_total, modified}`.
+  blocker_count, warning_count, issue_ready (0|1), budget_total, bom_subtotal, modified}`.
 - **With `name`:** returns `{name, design_title, mode, status, kit, project, opportunity, customer,
   docstatus, can_write, modified, model}`.
   - `model` is the stored `model_json`, parsed.
@@ -117,7 +117,7 @@ The call is stateless, and the page calls it on every edit. `model_json` is the 
 | `model` | The derived copy of the model. Every `auto` section is filled, and `custom` and `preset` sections come back untouched. Site fields the address fills: `lat`, `lng`, `elevation_ft`, `air_temp_f`, `water_temp_f`, `frost_depth_in`, `hardness_ppm`, `kwh_rate`, `water_rate_per_ccf`. |
 | `results` | `{<calc>: CalcResult}`. These are the envelope dicts (`value, unit, formula, status, citations[], warnings[]` …), shown nowhere yet and kept for the drawers. |
 | `values` | The derived values per row, keyed by row id. **These are the numbers the steps show beside the inputs.** `features.<id>`: `{flow_gpm, head_ft, note}`. `basins.<id>`: `{volume_gal, weight_lb, surge_in, freeboard_in}`. `segments.<id>`: `{velocity_fps, loss_ft, size}`. `pumps.<id>`: `{flow_gpm, head_ft, kw, npsh_margin_ft, bep_pct}`. A key may be null. |
-| `rollups` | `{design_flow_gpm, operating_flow_gpm, tdh_ft, operating_head_ft, selected_pump, selected_pump_label, pump_kw, total_basin_gallons, budget_total, om_cost_per_year, blocker_count, warning_count, completion_percent, issue_ready}`. These are the PLAN.md 3.2 rollup fields. `selected_pump_label` is what the panel prints. `budget_total` is the sum of `bom[].amount`. |
+| `rollups` | `{design_flow_gpm, operating_flow_gpm, tdh_ft, operating_head_ft, selected_pump, selected_pump_label, pump_kw, total_basin_gallons, budget_total, bom_subtotal, om_cost_per_year, blocker_count, warning_count, completion_percent, issue_ready}`. These are the PLAN.md 3.2 rollup fields. `selected_pump_label` is what the panel prints. `bom_subtotal` is the sum of `bom[].amount`, and `budget_total` is that plus the house-rule contingency (`budget_contingency_pct`): the Budget the Budget Proposal and the Design Report print (phase G). The Outputs step's BOM foot shows the subtotal, the contingency and the budget. |
 | `issues[]` | `{key, code, severity, title, detail, section, step?, path?, fix_hint, citation, remedies[], acknowledged}` (more on this below). |
 | `readiness` | `{sections[], calc_ready, issue_ready}`. Each entry of `sections[]` is `{key, label, status, missing[]}`, where `status` is `ok`, `warn`, `blocked`, `missing` or `n_a`, and `missing[]` holds strings. |
 | `verdict` | `{level: "good"\|"warn"\|"bad", headline, package_ready}`. `package_ready` means no blockers and every warning signed off. |
@@ -251,5 +251,5 @@ The demo is a little alive, and none of it is engineering:
 New designs and saves last for the tab (`sessionStorage`). Keep demo mode after phase E: it is the
 training mode.
 
-To regenerate the fixture, edit the JSON by hand. Keep `budget_total` equal to the BOM's sum (the
+To regenerate the fixture, edit the JSON by hand. Keep `bom_subtotal` and `budget_total` equal to the BOM's sum, the demo carrying no contingency (the
 node test checks it).
