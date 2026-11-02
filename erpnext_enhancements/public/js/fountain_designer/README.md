@@ -187,11 +187,11 @@ Phase G, Send design. POST. The start of an email that sends one paper of a **sa
 - **`print_format`**: one of `boot.prints[].print_format`. Blank means the Design Report.
 - **`subject`**: `<design title>: <paper> (#<name>)`.
 - **`recipients`**: the customer's email, found the way the prints find the party (`print_lookup.party_details`), or `""`.
-- **`message`**: the starting text, as plain paragraphs: the composer is a rich-text editor and strips the email shell. The shell (`email_style.wrap`, the Design pillar) goes on when the email is sent, in a Communication `before_insert` hook (`wrap_design_email`).
+- **`message`**: the starting text, as plain paragraphs: the composer is a rich-text editor and strips the email shell. The shell (`email_style.wrap`, the Design pillar) goes on when the email is sent: a Communication `after_insert` hook (`water_engineering/email_hooks.wrap_design_email`) wraps the in-memory content frappe sends, after the Text Editor sanitizer, so the stored copy stays plain.
 - **`formats[]`**: `{print_format, label}` for every paper this site has (the same filter as `boot.prints`).
 - **`attachment`**: with `attach_pdf` 1, the paper as a private PDF File on the design (`{name, file_name, file_url}`); otherwise null. The one made since the design last changed is reused.
 - **What the page does with it.** It opens frappe's `CommunicationComposer` on `{doctype, name}` with the file attached and ticked. The person sends the email from there, and the composer links it to the design's timeline. The Desk form instead uses the composer's own Attach Document Print.
-- **What the server refuses.** It refuses without the email permission, and refuses a format that is not one of the design's papers. The demo answers `{demo: true}` and sends nothing.
+- **What the server refuses.** It refuses without the email permission, a format that is not one of the design's papers, and one this site has not set up or has disabled. The demo answers `{demo: true}` and sends nothing.
 
 ### `acknowledge_issue(design, issue_key, note)` → `{acks: [{issue_key, note, by, on}]}`
 

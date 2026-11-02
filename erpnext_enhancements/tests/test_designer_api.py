@@ -391,34 +391,55 @@ def test_email_draft_text_is_plain_for_the_composer(api):
     assert api.email_draft("WFD-9")["recipients"] == "", "no customer, no address"
 
 
-def test_a_design_email_goes_out_in_the_email_chrome_once(api, monkeypatch):
+def test_a_design_email_goes_out_in_the_email_chrome(api, monkeypatch):
+    """The composer edits plain text; email_hooks.wrap_design_email puts the shell on the in-memory
+    content frappe's make() sends right after insert. after_insert, not before: the Text Editor sanitizer
+    runs between the two and strips the shell's <style> and Outlook comments."""
     from erpnext_enhancements import email_style
+    from erpnext_enhancements.water_engineering import email_hooks
 
     calls = []
     monkeypatch.setattr(email_style, "wrap", lambda body, **k: calls.append(k) or f"<shell>{body}</shell>")
     comm = Row(reference_doctype="Water Feature Design", communication_medium="Email", sent_or_received="Sent",
                subject="Lobby: Design report (#WFD-9)", content="<p>Hi</p>")
-    api.wrap_design_email(comm)
-    assert comm.content == api.SHELL_MARK + "<shell><p>Hi</p></shell>"
-    assert calls == [{"title": "Lobby: Design report", "eyebrow": "Design", "pillar": "design", "tagline": True}]
-    api.wrap_design_email(comm)
-    assert len(calls) == 1, "never wrapped twice"
+    email_hooks.wrap_design_email(comm)
+    assert comm.content == "<shell><p>Hi</p></shell>"
+    assert calls == [{"title": "Lobby: Design report", "pillar": "design", "tagline": True}], \
+        "no eyebrow: the shell already names the Design pillar"
     for other in (dict(reference_doctype="Lead"), dict(sent_or_received="Received"), dict(communication_medium="Phone")):
         c = Row(**{**dict(comm, content="<p>x</p>"), **other})
-        api.wrap_design_email(c)
+        email_hooks.wrap_design_email(c)
         assert c.content == "<p>x</p>", other
     monkeypatch.setattr(email_style, "wrap", lambda *a, **k: 1 / 0)
     broken = Row(**dict(comm, content="<p>y</p>"))
-    api.wrap_design_email(broken)  # never raises: a failed wrap must not stop an email
+    email_hooks.wrap_design_email(broken)  # never raises: a failed wrap must not stop an email
     assert broken.content == "<p>y</p>"
     hooks = (REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8")
-    assert '"before_insert": "erpnext_enhancements.water_engineering.api.designer.wrap_design_email"' in hooks
+    block = hooks[hooks.index('"Communication": {'):]
+    block = block[:block.index("},")]
+    assert '"after_insert": [' in block and "water_engineering.email_hooks.wrap_design_email" in block
+    assert "before_insert" not in block, "before_insert runs ahead of the sanitizer"
+    src = (REPO_ROOT / "erpnext_enhancements" / "water_engineering" / "email_hooks.py").read_text(encoding="utf-8")
+    assert "derive" not in src.split('"""', 2)[2] and "api.designer" not in src, \
+        "the hook runs for every Communication: it must not import the engine"
 
 
 def test_email_draft_refuses_what_it_should(api):
-    _emailable(api)
+    from erpnext_enhancements.water_engineering import prints
+
+    _doc, seeded = _emailable(api)
     with pytest.raises(Thrown):
         api.email_draft("WFD-9", "Sales Invoice - Sapphire")
+    seeded.remove(prints.PF_BUDGET)
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9", prints.PF_BUDGET)  # a paper this site could not seed is not accepted
+    seeded.remove(prints.PF_REPORT)
+    assert api.email_draft("WFD-9")["print_format"] == prints.PRINT_FORMATS[1], \
+        "no Design Report here: the first paper the site has"
+    seeded.clear()
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9")
+    seeded.extend(prints.PRINT_FORMATS)
     api._frappe.has_permission = lambda doctype, ptype="read", doc=None, throw=False: ptype != "email"
     with pytest.raises(PermissionError_):
         api.email_draft("WFD-9")

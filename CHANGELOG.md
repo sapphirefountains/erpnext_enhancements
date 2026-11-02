@@ -178,10 +178,19 @@ stored drawing has been through `drawings.page_svg`.
 - **From the independent review of #1401:**
   - **The email chrome goes on at send time.** frappe's composer is a rich-text editor that strips a
     `<style>` block and mangles the shell's tables and MSO comments. So `email_draft` now hands it plain
-    paragraphs. A new Communication `before_insert` hook (`wrap_design_email`) then puts a sent email
-    from a Water Feature Design into `email_style.wrap` (Design pillar), once. It returns at once for
-    any other reference and never raises.
-  - **The papers offered** to email are the ones this site has, the same filter as `boot().prints`.
+    paragraphs. A new Communication `after_insert` hook, `water_engineering/email_hooks.wrap_design_email`,
+    puts a sent email from a Water Feature Design into `email_style.wrap` (Design pillar).
+    - **In memory only.** frappe's `make()` sends the same object right after insert, so the recipient
+      gets the whole shell.
+    - **Not `before_insert`.** `Document._sanitize_content` runs between the two and strips the shell's
+      `<style>` and Outlook comments from a Text Editor field.
+    - **Plain on the timeline.** The stored copy stays plain, so the Desk timeline never renders the
+      email's CSS.
+    - **Light and safe.** A module of its own, light on imports, since it runs for every Communication.
+      It returns at once for any other reference and never raises. There is no eyebrow, because the shell
+      already names the pillar.
+  - **The papers offered and accepted** to email are the ones this site has, the same filter as
+    `boot().prints`. With no paper given, the Design Report, else the first one the site has.
   - **The page's PDF of a paper is reused** until the design changes, so sending twice does not pile up
     attachments.
   - **A toast** says so when the page has no composer.
@@ -193,8 +202,10 @@ stored drawing has been through `drawings.page_svg`.
     the house-rule contingency, on the Desk form, the page and the email. That holds because the derive
     and the controller compute it with the prints' own `budget_summary`. A new `bom_subtotal` rollup and
     field (on the record, in the page contract and the demo fixtures) carries the BOM's sum. The page's BOM
-    foot shows the subtotal, the contingency and the budget. Existing records take the new meaning on
-    their next save.
+    foot shows the subtotal, the contingency and the budget. The patch `backfill_water_design_budget`
+    writes both figures on every existing design that is not canceled, from its stored rows and the
+    current rules (`set_value`, no modified bump; logs per design, never raises). It runs after
+    `backfill_water_budget_rules`, so the contingency rule is in place first.
   - **The default print format is set in code, not a fixture.** A fixture applies whether or not the
     Design Report seeded, and a default naming a missing format breaks the form's Print. So
     `set_default_report` makes the Design Report the default only once it exists and is enabled. It keeps

@@ -668,3 +668,36 @@ def test_superseded_formats_are_disabled_not_deleted(spf):
     spf.disable_superseded_formats()
     assert writes == [("Water Feature Design - Results", "disabled", 1, False)]
     assert set(prints.SUPERSEDED).isdisjoint(prints.PRINT_FORMATS)
+
+
+def test_the_budget_backfill_gives_old_designs_the_new_figures(monkeypatch):
+    """budget_total changed meaning (subtotal + contingency) and bom_subtotal is new: the patch writes
+    both from the stored rows with the prints' own arithmetic, on every design not canceled, and never
+    raises out of execute."""
+    frappe = types.ModuleType("frappe")
+    lines = {"WFD-1": [{"section": "Equipment", "line_key": "pump|A", "qty": 1, "rate": 1000, "amount": 1000},
+                       {"section": "Labor", "line_key": "labor|basin", "qty": 10, "rate": 0, "amount": 0}],
+             "WFD-2": []}
+    written, logged = [], []
+    frappe.db = types.SimpleNamespace(exists=lambda *a: True,
+                                      set_value=lambda dt, name, values, update_modified=True: written.append((name, values, update_modified)))
+    frappe.get_meta = lambda dt: types.SimpleNamespace(has_field=lambda f: True)
+    frappe.get_all = lambda dt, filters=None, pluck=None, fields=None: (
+        ["WFD-1", "WFD-2"] if dt == "Water Feature Design" else lines[filters["parent"]])
+    frappe.log_error = lambda **k: logged.append(k["title"])
+    frappe.get_traceback = lambda: ""
+    monkeypatch.setitem(sys.modules, "frappe", frappe)
+    monkeypatch.delitem(sys.modules, "erpnext_enhancements.patches.backfill_water_design_budget", raising=False)
+    designer = types.ModuleType("erpnext_enhancements.water_engineering.api.designer")
+    designer.load_rules = lambda: {"budget_contingency_pct": 10, "budget_range_pct": 15}
+    monkeypatch.setitem(sys.modules, "erpnext_enhancements.water_engineering.api.designer", designer)
+    patch = importlib.import_module("erpnext_enhancements.patches.backfill_water_design_budget")
+    assert patch.backfill_water_design_budget() == 2
+    assert written == [("WFD-1", {"bom_subtotal": 1000.0, "budget_total": 1100.0}, False),
+                       ("WFD-2", {"bom_subtotal": 0.0, "budget_total": 0.0}, False)]
+    frappe.get_all = lambda *a, **k: 1 / 0
+    patch.execute()  # a raising patch aborts bench migrate, which is the deploy
+    assert logged == ["Water design budget backfill failed"]
+    patches = (APP / "patches.txt").read_text(encoding="utf-8")
+    assert patches.index("backfill_water_budget_rules") < patches.index("backfill_water_design_budget"), \
+        "the contingency rule is on the Single before the budgets are written"

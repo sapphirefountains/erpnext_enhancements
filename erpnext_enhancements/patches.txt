@@ -1562,3 +1562,8 @@ erpnext_enhancements.patches.convert_water_feature_designs_to_model
 # range); run backfill_water_house_rules again so the existing row gets their defaults, only where tabSingles has no
 # row for them. Cannot raise; safe twice.
 erpnext_enhancements.patches.backfill_water_budget_rules
+# Fountain Designer phase G (v1.770.0): Water Feature Design.budget_total now means the BOM subtotal plus the
+# house-rule contingency (the Budget the prints show), with the sum in the new bom_subtotal; write both on every
+# design that is not canceled, from its stored bom rows and the current rules. set_value without modified; logs
+# per design, never raises, safe twice.
+erpnext_enhancements.patches.backfill_water_design_budget

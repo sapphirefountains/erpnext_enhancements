@@ -802,11 +802,14 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
-		# Fountain Designer phase G: an email sent from a Water Feature Design goes out in the email
-		# design system's chrome (Design pillar). The composer edits plain text; this wraps it on send.
-		# Returns at once for any other reference; never raises.
-		"before_insert": "erpnext_enhancements.water_engineering.api.designer.wrap_design_email",
-		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		"after_insert": [
+			"erpnext_enhancements.api.communication.after_insert_communication",
+			# Fountain Designer phase G: an email sent from a Water Feature Design goes out in the email
+			# design system's chrome (Design pillar). The composer edits plain text; this wraps the
+			# in-memory content frappe's make() sends right after insert, after the Text Editor
+			# sanitizer, so the stored copy stays plain. Returns at once for anything else; never raises.
+			"erpnext_enhancements.water_engineering.email_hooks.wrap_design_email",
+		],
 		# email_from_communication runs on on_update, NOT after_insert: Frappe's
 		# inbound-mail pipeline inserts the Communication BEFORE it creates the
 		# attachment File docs (then re-saves), so at after_insert the attachment query

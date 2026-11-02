@@ -573,7 +573,7 @@ def email_body(doc, print_format, label):
     """The email's starting text for frappe's composer: plain paragraphs, because the composer is a
     rich-text editor that strips a ``<style>`` block and mangles the email shell's tables and MSO comments.
     The shell (``email_style.wrap``, the Design pillar) goes on when the email is sent:
-    :func:`wrap_design_email`."""
+    ``water_engineering.email_hooks.wrap_design_email``."""
     title = doc.get("design_title") or doc.name
     rollups = (stored_json(doc).get("rollups") or {})
     facts = [(_("Design"), f"{title} ({doc.name})")]
@@ -593,30 +593,6 @@ def email_body(doc, print_format, label):
         "<p>" + "<br>".join(f"<strong>{esc(k)}:</strong> {esc(v)}" for k, v in facts) + "</p>"
         f"<p><em>{esc(_('The figures are design estimates from Sapphire Fountains’ Fountain Designer.'))}</em></p>"
     )
-
-
-# Marks an email already in the shell, so a re-save never wraps it twice.
-SHELL_MARK = "<!-- water-feature-design-email -->"
-
-
-def wrap_design_email(doc, method=None):
-    """Communication ``before_insert``: an email sent from a Water Feature Design (Send design, or any
-    email on its timeline) goes out in the email design system's chrome, the Design pillar
-    (docs/email-design-system.md). Frappe's composer sends what is in ``content``, so wrapping it here is
-    what the recipient gets, and what the timeline keeps. Anything else, and anything already wrapped,
-    passes untouched. Never raises: a failed wrap must not stop an email."""
-    try:
-        if doc.get("reference_doctype") != DESIGN_DOCTYPE or doc.get("communication_medium") != "Email":
-            return
-        if doc.get("sent_or_received") != "Sent" or SHELL_MARK in (doc.get("content") or ""):
-            return
-        from erpnext_enhancements import email_style as es
-
-        subject = str(doc.get("subject") or "").split(" (#")[0]
-        doc.content = SHELL_MARK + es.wrap(doc.get("content") or "", title=subject, eyebrow=_("Design"),
-                                           pillar="design", tagline=True)
-    except Exception:
-        frappe.log_error(title="Water Feature Design email wrap", message=frappe.get_traceback())
 
 
 def stored_json(doc):
@@ -671,12 +647,17 @@ def email_draft(name, print_format=None, attach_pdf=0):
     doc.check_permission("read")
     if not frappe.has_permission(DESIGN_DOCTYPE, "email", doc=doc):
         frappe.throw(_("You are not allowed to email Water Feature Designs."), frappe.PermissionError)
-    print_format = print_format or prints_mod.PF_REPORT
+    # The papers this site has, as boot().prints lists them for the page: one it could not seed, or that
+    # is disabled, is neither offered nor accepted (the composer would ask frappe for a missing format).
+    have = [pf for pf in prints_mod.PRINT_FORMATS if pf in {r["print_format"] for r in print_formats()}]
+    if not have:
+        frappe.throw(_("No design papers are set up on this site yet. Run a migrate, then try again."))
+    print_format = print_format or (prints_mod.PF_REPORT if prints_mod.PF_REPORT in have else have[0])
     if print_format not in PRINT_LABELS:
         frappe.throw(_("{0} is not one of the design's papers.").format(print_format))
-    # The papers this site has, as boot().prints lists them for the page.
-    have = [pf for pf in prints_mod.PRINT_FORMATS if pf in {r["print_format"] for r in print_formats()}]
     label = PRINT_LABELS[print_format]
+    if print_format not in have:
+        frappe.throw(_("{0} is not set up on this site yet. Pick another paper.").format(_(label)))
     title = doc.get("design_title") or doc.name
     out = {
         "subject": f"{title}: {_(label)} (#{doc.name})",
