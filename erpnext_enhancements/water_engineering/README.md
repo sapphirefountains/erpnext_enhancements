@@ -307,12 +307,17 @@ await frappe.xcall("erpnext_enhancements.water_engineering.catalog_seed.rename_c
 **Merging a row into an Item Sapphire already had** (v1.775.0; Nikolas, 2026-11-02). Suppose an
 `approved.json` entry's `item_code` names an existing Item, and the loader's own Item for that row still
 carries the row's catalog id under its old code. That is not a rename, so it is planned as a **merge**.
-`merges` lists it as `{old, new, kind, catalog_id, basis, moves, delete: true}`. A write then does four
-things in one savepoint:
+`merges` lists it as `{old, new, kind, catalog_id, basis, moves, writes, delete: true}`. `writes`
+gives every field the merge changes on the existing Item as `{from, to}`, so the dry run shows exactly
+what Sapphire's Item will read. A write then does four things in one savepoint:
 
-1. It copies the fields the loader owns from the old Item onto the existing one: the specs, the
-   provenance, `custom_catalog_id` and the equipment class.
-2. It re-points the old Item's Pump Curves and Nozzle Profiles (`moves`).
+1. It writes the **catalog's own values** for the row onto the existing Item: specs, provenance,
+   `custom_catalog_id` and the equipment class. These are exactly what the loader writes on every seed,
+   with Nones left out. They are never copied from the old Item. A field the catalog leaves unset sits
+   on the old Item as Frappe's 0, and copying it would overwrite Sapphire's figure. Prod's `342002`
+   would have lost its 1.5 HP that way (review of 57614687).
+2. It re-points the old Item's Pump Curves and Nozzle Profiles (`moves`). A curve's fetched
+   `item_name` is set to the existing Item's, because `db.set_value` does not re-fetch it.
 3. It deletes the old Item with `frappe.delete_doc`, never forced.
 4. It rewrites the designs, as a rename does.
 

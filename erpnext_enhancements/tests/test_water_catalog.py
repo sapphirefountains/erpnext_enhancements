@@ -167,8 +167,9 @@ class FakeDB:
     def get_value(self, doctype, name, field):
         return self.fake.store.get(doctype, {}).get(name, {}).get(field)
 
-    def set_value(self, doctype, name, field, value, update_modified=True):
-        self.fake.store[doctype][name][field] = value
+    def set_value(self, doctype, name, field, value=None, update_modified=True):
+        values = field if isinstance(field, dict) else {field: value}
+        self.fake.store[doctype][name].update(values)
 
     def sql(self, query, values=None):
         self.fake.sql.append((" ".join(query.split()), values))
@@ -1584,8 +1585,10 @@ def _mergeable(fake, tmp_path):
         "custom_spec_source_url": "https://example.invalid/twin.pdf", "custom_generic_estimate": 0,
     }
     fake.store["Pump Curve"] = {
-        "PCRV-00001": {"doctype": "Pump Curve", "name": "PCRV-00001", "item": DUP, "curve_label": "3450 rpm"},
-        "PCRV-00002": {"doctype": "Pump Curve", "name": "PCRV-00002", "item": DUP, "curve_label": "1725 rpm"},
+        "PCRV-00001": {"doctype": "Pump Curve", "name": "PCRV-00001", "item": DUP, "item_name": f"PUMP, {DUP}",
+                       "curve_label": "3450 rpm"},
+        "PCRV-00002": {"doctype": "Pump Curve", "name": "PCRV-00002", "item": DUP, "item_name": f"PUMP, {DUP}",
+                       "curve_label": "1725 rpm"},
     }
     fake.store["Water Feature Design"] = {
         "WFD-1": {"name": "WFD-1", "model_json": "{}",
@@ -1600,10 +1603,16 @@ def test_a_dry_run_reports_a_merge_with_both_codes_and_that_the_duplicate_can_go
     row = _mergeable(fake, tmp_path)
     before = copy.deepcopy(fake.store)
     summary = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
-    assert summary["merges"] == [{
+    (merge,) = summary["merges"]
+    writes = merge.pop("writes")
+    assert merge == {
         "old": DUP, "new": "FX-M1", "kind": "pumps", "catalog_id": row["id"], "basis": "approved.json item_code",
         "moves": {"Pump Curve": ["PCRV-00001", "PCRV-00002"]}, "delete": True,
-    }]
+    }
+    # The dry run says what each field will become on Sapphire's Item, from the catalog's values.
+    assert writes["custom_catalog_id"] == {"from": None, "to": row["id"]}
+    assert writes["custom_pump_hp"] == {"from": None, "to": 1.0}
+    assert writes["custom_spec_verified_by"]["to"] == "fixture.approver@example.invalid"
     assert summary["renames"] == [] and summary["refused"] == [] and summary["remaining"] == 1
     assert summary["designs"] == [{"design": "WFD-1", "fields": ["results_json"], "replaced": 1}]
     assert fake.store == before and fake.deleted == []
@@ -1624,6 +1633,7 @@ def test_a_merge_moves_the_catalog_fields_and_curves_and_deletes_the_duplicate(f
     assert item["item_group"] == "Products" and item["item_name"] == "PUMP, FIXTURECO M1, 1HP"
     assert item["description"] == "Sapphire's own words." and not item.get("brand")
     assert {c["item"] for c in fake.store["Pump Curve"].values()} == {"FX-M1"}
+    assert {c["item_name"] for c in fake.store["Pump Curve"].values()} == {"PUMP, FIXTURECO M1, 1HP"}
     results = json.loads(fake.store["Water Feature Design"]["WFD-1"]["results_json"])
     assert results["pump_candidates"][0]["item"] == "FX-M1"
     assert fake.cache.deleted and fake.db.commits >= 1
@@ -1695,9 +1705,9 @@ def test_the_planner_will_not_merge_into_another_catalog_rows_item(fake):
 
     codes = {
         "fx-a": {"kind": "pumps", "code": "SHARED-1", "basis": "approved.json item_code",
-                 "legacy_code": "PUMP-FX-A", "merge": True, "fields": []},
+                 "legacy_code": "PUMP-FX-A", "merge": True, "values": {}},
         "fx-b": {"kind": "pumps", "code": "SHARED-1", "basis": "part_no", "legacy_code": "PUMP-FX-B",
-                 "merge": False, "fields": []},
+                 "merge": False, "values": {}},
     }
     items = [{"name": "PUMP-FX-A", "custom_catalog_id": "fx-a"}, {"name": "SHARED-1", "custom_catalog_id": "fx-b"}]
     plan = catalog_seed.plan_renames(items, codes, [i["name"] for i in items])
@@ -1756,3 +1766,23 @@ def test_a_json_column_that_comes_back_parsed_is_rewritten_too(fake, tmp_path):
     written = fake.store["Water Feature Design"]["WFD-2"]["results_json"]
     assert isinstance(written, str)
     assert [c["item"] for c in json.loads(written)["pump_candidates"]] == ["FX-R2", "KEEP"]
+
+
+def test_a_merge_never_overwrites_sapphires_value_with_the_duplicates_blank(fake, tmp_path):
+    """Review of 57614687, prod's 342002: the catalog gives no HP for that pump, so the duplicate
+    holds Frappe's 0.0 and Sapphire's Item 1.5. The merge writes the catalog's values, never the
+    duplicate's, so 1.5 stays, and so it does through every later seed."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _twin("FX-M1", 1, model="FIXTURE-M1", hp=None)
+    _mergeable(fake, tmp_path)
+    _write(tmp_path, pumps=[row], approved={"pumps": [{"id": row["id"], "item_code": "FX-M1"}]})
+    fake.store["Item"]["FX-M1"]["custom_pump_hp"] = 1.5
+    fake.store["Item"][DUP]["custom_pump_hp"] = 0.0
+    dry = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
+    assert "custom_pump_hp" not in dry["merges"][0]["writes"]
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert "custom_pump_hp" not in summary["merged"][0]["fields"]
+    assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5
+    _load(tmp_path, dry_run=False)
+    assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5

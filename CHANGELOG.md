@@ -57,9 +57,14 @@ a datasheet is no use at a supplier counter.
   - When that code names an existing Item and the loader's own Item for the row is still on the
     site, the endpoint plans a merge rather than a rename. It is listed in `merges` with the old code,
     the target code, the curves that follow (`moves`) and `delete: true`.
-  - A write copies the loader-owned fields (specs, provenance, `custom_catalog_id`) to the existing
-    Item, re-points its Pump Curves and Nozzle Profiles, and deletes the old Item with an unforced
-    `frappe.delete_doc`, all in one savepoint.
+  - A write does three things, all in one savepoint:
+    - It writes the catalog's own values for the row (specs, provenance, `custom_catalog_id`, Nones
+      left out) onto the existing Item. It never copies them from the old Item. A field the catalog
+      leaves unset sits on the old Item as 0.0, and copying it would have set prod's `342002` from
+      1.5 HP to 0 (review of 57614687).
+    - It re-points the Pump Curves, with their fetched `item_name`, and the Nozzle Profiles.
+    - It deletes the old Item with an unforced `frappe.delete_doc`.
+  - The dry run lists each merge's `writes`, as `{field: {from, to}}`.
   - It is refused, with every `Doctype.field (n)` that still links to the old Item, when the old Item
     cannot be deleted. The list is built first because `delete_doc` on an Item says only "You can
     disable this Item instead of deleting it". `Item.on_trash` also deletes Item Prices and Bins before

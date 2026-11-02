@@ -47,7 +47,8 @@ What it is careful about:
 * **Merges.** Sometimes ``approved.json`` points a row at an Item Sapphire already had, while the
   loader's own Item for that row is still on the site. :func:`rename_catalog_items` then merges
   them instead of renaming:
-  - it moves the catalog id, the specs and provenance, and the curves to the existing Item;
+  - it writes the catalog's own values for the row (never the old Item's) onto the existing Item;
+  - it moves the curves there;
   - it deletes the loader's Item, and refuses to if anything else links to it;
   - until that has run, a load refuses the row.
   This is the one place anything here deletes an Item.
@@ -1386,26 +1387,31 @@ DESIGN_JSON_FIELDS = ("model_json", "results_json", "design_issues_json", "readi
 
 
 def catalog_codes(folder=None):
-	"""``{catalog id: {kind, code, legacy_code, basis, merge, fields} | {kind, error}}`` for every
+	"""``{catalog id: {kind, code, legacy_code, basis, merge, values} | {kind, error}}`` for every
 	row with an id.
 
 	``kind`` is the Item's kind (``pumps``, ``nozzles``, ``aerators``, ``lights``). ``legacy_code``
 	is the code the old rule gave the row, or None when the row cannot be planned. ``merge`` is
 	true when ``approved.json`` names the row's Item (``item_code``), which makes an existing Item
-	of that code the row's Item; ``fields`` are the Item fields the loader owns for the row (its
-	specs and provenance), which a merge carries over to that Item.
+	of that code the row's Item. ``values`` are the Item values the loader writes for the row: its
+	specs and provenance, exactly as :func:`apply_item` would write them, with every None left out
+	because the loader never writes one. A merge writes these onto that Item.
 	"""
 	meta, _approvals, entries = read_catalog(Path(folder) if folder else CATALOG_DIR)
+	verified_by = _user_or_none(meta["approved_by"])
 	out = {}
 	for entry in entries:
 		row_id = str(entry["row"].get("id") or "").strip()
 		if not row_id:
 			continue
-		kind, legacy, fields = entry["kind"], None, []
+		kind, legacy, values = entry["kind"], None, {}
 		try:
 			plan = PLANNERS[entry["kind"]](entry["row"], entry["approval"] or {}, meta, entry["code"])
 			kind = "aerators" if plan["item"]["fill"]["item_group"] == GROUPS["aerators"][0] else kind
-			legacy, fields = plan["item"]["legacy_code"], sorted(plan["item"]["set"])
+			legacy = plan["item"]["legacy_code"]
+			values = dict(plan["item"]["set"])
+			values["custom_spec_verified_by"] = verified_by
+			values = {field: value for field, value in values.items() if value is not None}
 		except CatalogRowError:
 			pass
 		if entry["code_error"]:
@@ -1417,7 +1423,7 @@ def catalog_codes(folder=None):
 				"basis": entry["code_basis"],
 				"legacy_code": legacy,
 				"merge": bool((entry["approval"] or {}).get("item_code")),
-				"fields": fields,
+				"values": values,
 			}
 	return out
 
@@ -1626,20 +1632,43 @@ def merge_links(old):
 	return {doctype: names for doctype, names in moves.items() if names}, linked
 
 
-def merge_item(merge, fields, moves):
+def merge_writes(target, values):
+	"""``{field: {"from": current, "to": new}}``: what a merge would change on Item ``target``.
+
+	``values`` are the catalog's own values for the row, from :func:`catalog_codes`. They are never
+	read from the duplicate Item. A field the catalog leaves unset sits on the duplicate as Frappe's
+	0, and copying that would overwrite Sapphire's figure. 342002's 1.5 HP is the case in point:
+	its duplicate holds 0.0. Each later seed then writes the same values again, so this is also
+	what the target will read from then on.
+	"""
+	doc = frappe.get_doc("Item", target)
+	return {
+		field: {"from": doc.get(field), "to": value}
+		for field, value in values.items()
+		if not _same(doc.get(field), value)
+	}
+
+
+def merge_item(merge, values, moves):
 	"""Fold the loader's Item ``merge["old"]`` into the existing Item ``merge["new"]``.
 
-	The catalog-owned ``fields`` (specs and provenance, ``custom_catalog_id`` among them) are
-	carried over. Only a value the old Item holds is written. The Item's name, group, brand and
-	description stay Sapphire's. The ``moves`` from :func:`merge_links` are re-pointed, then the old
-	Item is deleted. ``delete_doc`` is never forced, so a Link that appeared since the check still
-	refuses. Returns the fields changed on the existing Item.
+	The steps are:
+	1. Write the catalog's own ``values`` onto the existing Item, as the loader would (see
+	   :func:`merge_writes`). Its name, group, brand and description stay Sapphire's.
+	2. Re-point the ``moves`` from :func:`merge_links`. A Pump Curve's fetched ``item_name`` goes
+	   with it, because ``db.set_value`` does not re-fetch it.
+	3. Delete the old Item. ``delete_doc`` is never forced, so a Link that has appeared since the
+	   check still refuses the merge.
+
+	Returns the fields changed on the existing Item.
 	"""
-	old = frappe.get_doc("Item", merge["old"])
-	values = {field: old.get(field) for field in fields}
+	item_name = frappe.db.get_value("Item", merge["new"], "item_name")
 	for doctype, names in moves.items():
+		update = {"item": merge["new"]}
+		if doctype == "Pump Curve":
+			update["item_name"] = item_name
 		for name in names:
-			frappe.db.set_value(doctype, name, "item", merge["new"])
+			frappe.db.set_value(doctype, name, update)
 	frappe.delete_doc("Item", merge["old"], ignore_permissions=True)
 	doc = frappe.get_doc("Item", merge["new"])
 	changed = _apply_fields(doc, values)
@@ -1655,9 +1684,10 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 	Returns ``{dry_run, renames, merges, renamed, merged, unchanged, refused, errors, remaining,
 	designs, seconds}``.
 	* ``renames`` is every rename still to do: ``{old, new, kind, catalog_id, basis}``.
-	* ``merges`` is every merge still to do, in the same shape plus ``moves`` (the Pump Curves and
-	  Nozzle Profiles that follow, from :func:`merge_links`) and ``delete: True`` (nothing else
-	  links to the old Item, so it is deleted).
+	* ``merges`` is every merge still to do, in the same shape plus three keys:
+	  - ``moves``: the Pump Curves and Nozzle Profiles that follow, from :func:`merge_links`;
+	  - ``writes``: each field value the merge changes on the existing Item, from :func:`merge_writes`;
+	  - ``delete: True``: nothing else links to the old Item, so it is deleted.
 	* A merge whose old Item something else links to is refused instead, and carries ``linked``.
 
 	A write does the first ``limit`` of these, merges first (``merged``, then ``renamed``), with one
@@ -1693,7 +1723,8 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 				 f"cannot be deleted: {', '.join(linked)} link to it"}
 			)
 		else:
-			merges.append({**merge, "moves": moves, "delete": True})
+			writes = merge_writes(merge["new"], codes[merge["catalog_id"]]["values"])
+			merges.append({**merge, "moves": moves, "writes": writes, "delete": True})
 	summary = {
 		"dry_run": dry_run,
 		"renames": plan["renames"],
@@ -1726,7 +1757,7 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 			frappe.db.savepoint("catalog_rename_item")
 			try:
 				if op == "merge":
-					changed = merge_item(entry, codes[entry["catalog_id"]]["fields"], entry["moves"])
+					changed = merge_item(entry, codes[entry["catalog_id"]]["values"], entry["moves"])
 				else:
 					# The model function, not frappe.rename_doc: at v16.53.0 that wrapper takes no
 					# ignore_permissions, and passing it is a TypeError on every Item.
