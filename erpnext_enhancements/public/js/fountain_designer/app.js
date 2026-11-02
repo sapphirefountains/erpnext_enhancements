@@ -507,6 +507,8 @@ class Designer {
 		for (const el of this.stage.querySelectorAll("[data-fd-path]")) {
 			if (el === this.doc.activeElement || el.hasAttribute("data-fd-catalog")) continue;
 			const path = el.getAttribute("data-fd-path");
+			// The Calculator drawer's fields are not the model's: their text lives in this.calc.raw.
+			if (path.startsWith(CALC.PREFIX)) continue;
 			const value = M.get_in(this.model, path);
 			if (el.type === "checkbox") el.checked = Boolean(value);
 			else if (el.tagName !== "BUTTON") {

@@ -275,6 +275,9 @@ class FakeSite:
                     key = (r.get("parent"), r.get("parenttype"))
                     groups[key] = groups.get(key, 0) + 1
                 return [{"parent": p, "parenttype": t, "n": n} for (p, t), n in groups.items()]
+            if query.startswith("delete from") and "coalesce(parent" in query:
+                site.tables[table] = [r for r in site.tables[table] if r.get("parent")]
+                return []
             if query.startswith("delete from"):
                 doomed = set(values["parents"])
                 site.tables[table] = [r for r in site.tables[table] if r.get("parent") not in doomed]
@@ -392,6 +395,15 @@ class TestTheDropPatch(unittest.TestCase):
         self.assertEqual(len(site.errors), 1)
         self.assertIn("WFD-OLD", site.errors[0][1])
         self.assertIn("KEPT the table with 4", " ".join(site.printed))
+
+    def test_rows_with_no_parent_go_and_a_shared_name_is_counted_once(self):
+        rows = _rows("WFD-OLD", 2) + [{"parent": None, "parenttype": None}] + _rows("WFD-OLD", 1, "Control Panel Design")
+        site = self._on(FakeSite({"Water Feature Tier": rows}, {"WFD-OLD": SCHEMA_2}, doctypes={"Water Feature Tier"}))
+        plan = self.patch.plan("Water Feature Tier")
+        self.assertEqual(plan["parents"], {"WFD-OLD": "unconverted", "": "orphan"})
+        self.assertEqual((plan["delete_rows"], plan["keep_rows"]), (1, 3), "every row of WFD-OLD is kept")
+        self.patch.execute()
+        self.assertEqual([r["parent"] for r in site.tables["Water Feature Tier"]], ["WFD-OLD"] * 3)
 
     def test_a_design_with_no_model_is_unconverted(self):
         site = self._on(FakeSite({"Water Feature Basin": _rows("WFD-1", 1)}, {"WFD-1": None}))

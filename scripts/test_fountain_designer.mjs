@@ -1168,6 +1168,19 @@ await test("controller: a run sends the coerced inputs, draws the newest answer 
 	d.autosave.cancel();
 });
 
+await test("controller: a derive's repaint leaves the Calculator drawer's fields alone", async () => {
+	const { d } = await controller();
+	const field = (path, value) => ({ value, type: "text", tagName: "INPUT", getAttribute: (n) => (n === "data-fd-path" ? path : null), hasAttribute: () => false });
+	const calc_box = field("calc.length_ft", "4");
+	const model_box = field("features.0.inputs.length_ft", "stale");
+	d.stage.querySelectorAll = (sel) => (sel === "[data-fd-path]" ? [calc_box, model_box] : []);
+	d.root.querySelector = () => null;
+	d.paint();
+	assert.equal(calc_box.value, "4", "the typed calc input survives");
+	assert.equal(model_box.value, String(M.get_in(d.model, "features.0.inputs.length_ft")), "a model field is still repainted");
+	d.autosave.cancel();
+});
+
 await settle();
 if (unhandled.length) {
 	failures += 1;

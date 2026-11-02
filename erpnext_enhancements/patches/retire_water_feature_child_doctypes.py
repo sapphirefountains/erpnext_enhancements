@@ -125,18 +125,18 @@ def plan(doctype):
 		f"select parent, parenttype, count(*) as n from `tab{doctype}` group by parent, parenttype",
 		as_dict=True,
 	)
+	# Judge each parent once: a name that appears under two parenttypes takes the stricter verdict,
+	# and every row of it is counted (and later deleted, or kept) under that one verdict.
+	counts = {}
 	for g in groups:
-		n = int(g.get("n") or 0)
-		verdict = _verdict(g.get("parent"), g.get("parenttype"))
 		key = g.get("parent") or ""
-		# A parent can appear under two parenttypes; the stricter verdict wins.
+		verdict = _verdict(g.get("parent"), g.get("parenttype"))
 		if out["parents"].get(key) != UNCONVERTED:
 			out["parents"][key] = verdict
+		counts[key] = counts.get(key, 0) + int(g.get("n") or 0)
+	for key, n in counts.items():
 		out["rows"] += n
-		if verdict in DELETABLE:
-			out["delete_rows"] += n
-		else:
-			out["keep_rows"] += n
+		out["delete_rows" if out["parents"][key] in DELETABLE else "keep_rows"] += n
 	out["drop_table"] = out["keep_rows"] == 0
 	return out
 
@@ -171,7 +171,12 @@ def retire(doctype):
 			frappe.db.sql_ddl(f"drop table if exists `tab{doctype}`")
 			out["dropped"] = True
 		elif doomed:
-			frappe.db.sql(f"delete from `tab{doctype}` where parent in %(parents)s", {"parents": tuple(doomed)})
+			# "" stands for a row with no parent at all, which `in` never matches: delete those apart.
+			named = tuple(p for p in doomed if p)
+			if named:
+				frappe.db.sql(f"delete from `tab{doctype}` where parent in %(parents)s", {"parents": named})
+			if "" in doomed:
+				frappe.db.sql(f"delete from `tab{doctype}` where coalesce(parent, '') = ''")
 		if out["keep_rows"]:
 			kept = sorted(p for p, v in out["parents"].items() if v == UNCONVERTED)
 			_log(

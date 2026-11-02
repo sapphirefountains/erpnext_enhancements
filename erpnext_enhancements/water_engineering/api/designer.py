@@ -669,14 +669,8 @@ def email_body(doc, print_format, label):
 
 
 def stored_json(doc):
-    raw = doc.get("results_json")
-    if isinstance(raw, dict):
-        return raw
-    try:
-        data = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    """``results_json`` parsed, or {}."""
+    return _json_value(doc.get("results_json"), dict)
 
 
 def _print_pdf(doc, print_format):
@@ -788,9 +782,15 @@ def acknowledge_issue(design, issue_key, note=None):
 def _run_calc(calc, inputs):
     """One calculation's ``CalcResult`` dict (``calculator.run`` with the site's Nozzle Profiles). No
     permission check: ``run_calc`` and the ``water_calc`` AI tool gate before calling it."""
+    if not isinstance(inputs, dict):
+        # As the wizard's endpoint did: inputs that do not read as an object run on the defaults.
+        try:
+            inputs = json.loads(inputs) if inputs else {}
+        except (TypeError, ValueError):
+            inputs = {}
+        inputs = inputs if isinstance(inputs, dict) else {}
     try:
-        return calc_mod.run(calc, inputs if isinstance(inputs, dict) else _parse(inputs),
-                            nozzle_lookup=nozzle_profile_params)
+        return calc_mod.run(calc, inputs, nozzle_lookup=nozzle_profile_params)
     except calc_mod.UnknownCalc:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
 
@@ -1096,8 +1096,9 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
     * ``model`` (schema 2) is the whole design and replaces the stored one; ``tables`` and
       ``global_inputs`` are then ignored, and said so.
     * Otherwise the old payload: onto an existing schema-2 design through ``merge_legacy_payload``
-      (only the tables it names change); for a new design, or one never converted, through
-      ``engine.model.migrate`` into a fresh model, keeping the stored sign-offs.
+      (only the tables it names change), a stored schema-1 model being converted with
+      ``engine.model.migrate`` first (keeping its sign-offs); for a new design, the payload alone
+      through ``migrate`` into a fresh model.
     """
     tables = {t: rows for t, rows in (tables or {}).items() if rows is not None}
     global_inputs = dict(global_inputs or {})
@@ -1107,7 +1108,13 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
             frappe.throw(_("'model' must be a Fountain Designer model (schema {0}).").format(model_engine.SCHEMA))
         sent = list(tables) + list(global_inputs)
         return copy.deepcopy(model), [f"{k} (a model was sent, and it is the whole design)" for k in sent]
-    if existing and not model_engine.is_legacy(existing):
+    if existing and model_engine.is_legacy(existing):
+        # A design never converted: its stored schema-1 model is the only copy, so it is converted
+        # first and the payload laid on it, never replaced by a model built from the payload alone.
+        acks = existing.get("acks") or []
+        existing = model_engine.migrate(existing)
+        existing["acks"] = acks
+    if existing:
         if not tables and not global_inputs:
             return copy.deepcopy(existing), []
         return merge_legacy_payload(existing, tables, global_inputs)
@@ -1115,7 +1122,7 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
     legacy["global_inputs"] = global_inputs
     legacy.setdefault("basins", [])
     migrated = model_engine.migrate(legacy)
-    migrated["acks"] = (existing or {}).get("acks") or []
+    migrated["acks"] = []
     ignored = [f"{t} (the Fountain Designer derives these)" for t in DERIVED_TABLES if t in tables]
     ignored += [k for k in global_inputs if k not in _GLOBAL_INPUT_PATHS]
     return migrated, ignored
@@ -1171,16 +1178,17 @@ def _json_value(raw, kind):
     return data if isinstance(data, kind) else kind()
 
 
-def canvas_state(doc):
+def canvas_state(doc, model=None, stored=None):
     """The fountain-design "canvas" the shared SVG renderer draws (``window.WaterFountain``, and the
     Triton chat from ``water_design_status``), from the schema-2 model and the last derive's per-row
-    values. (``api/water_design._canvas_state`` until v1.771.0.)"""
+    values; ``model`` and ``stored`` (``results_json``) when the caller has already parsed them.
+    (``api/water_design._canvas_state`` until v1.771.0.)"""
 
     def _ft(inch):
         return f"{round(_num(inch) / 12.0, 1):g}"
 
-    model = stored_model(doc) or {}
-    seg_values = (stored_json(doc).get("values") or {}).get("segments") or {}
+    model = (stored_model(doc) or {}) if model is None else model
+    seg_values = (((stored_json(doc) if stored is None else stored).get("values") or {}).get("segments") or {})
     network = model.get("network") or {}
 
     label = ""
@@ -1270,7 +1278,7 @@ def design_status(name, include_results=True, include_model=False):
             "bom_lines": len(doc.get("bom") or []),
         },
         "fitting_schedule": issues_mod.fitting_schedule(doc),
-        "canvas": canvas_state(doc),
+        "canvas": canvas_state(doc, model, stored),
         "designer_url": designer_url(doc.name),
         "form_url": f"/desk/{_slug(DESIGN_DOCTYPE)}/{doc.name}",
         "prints": [p for p in papers if p["key"] != "packet"],

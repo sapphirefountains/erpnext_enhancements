@@ -15,6 +15,8 @@ passes (``api/designer.nozzle_profile_params`` on a site), so the tests run it b
 
 from __future__ import annotations
 
+import copy
+
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
     bather_load,
@@ -319,12 +321,8 @@ _BY_KEY = {c["key"]: c for c in CATALOG}
 
 
 def catalog():
-    """The calc list the page draws, a fresh copy (the caller may change it)."""
-    return [
-        {**c, "inputs": [{**i, "options": [dict(o) if isinstance(o, dict) else o for o in i["options"]]}
-                         if "options" in i else dict(i) for i in c["inputs"]]}
-        for c in CATALOG
-    ]
+    """The calc list the page draws, a deep copy (the caller may change it, defaults included)."""
+    return copy.deepcopy(CATALOG)
 
 
 def spec(calc):

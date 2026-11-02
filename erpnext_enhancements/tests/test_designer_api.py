@@ -741,3 +741,22 @@ def test_boot_lists_the_calculator_and_the_gate_moved_here(api):
         assert getattr(wd, name) is getattr(api, name), name  # deprecated re-exports, the same functions
     for gone in ("design_state", "save_inputs", "_save_design", "_run_calc", "get_design_issues", "merge_legacy_payload"):
         assert not hasattr(wd, gone), gone
+
+
+def test_tool_model_converts_an_unconverted_design_before_laying_the_payload_on(api):
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    stored = {"basins": [{"shape": "Rectangular", "length_in": 96, "width_in": 48, "height_in": 18}],
+              "features": [{"feature_type": "Weir", "weir_length_ft": 4, "head_in": 0.25}],
+              "global_inputs": {}, "acks": [{"issue_key": "K", "note": "ok"}]}
+    assert model_engine.is_legacy(stored)
+    kept, ignored = api.tool_model(stored, None, {}, {})
+    assert kept["schema"] == 2 and kept["basins"][0]["length_in"] == 96 and kept["features"], "a title-only save keeps it"
+    assert kept["acks"] == [{"issue_key": "K", "note": "ok"}] and ignored == []
+    merged, _ = api.tool_model(stored, None, {"basins": [{"shape": "Rectangular", "length_in": 60}]}, {})
+    assert merged["basins"][0]["length_in"] == 60 and merged["features"], "its features survive a basins-only payload"
+
+
+def test_run_calc_reads_unreadable_inputs_as_the_defaults(api):
+    assert api.run_calc("turnover_gpm", "not json")["calc"] == "turnover_gpm"
+    assert api.run_calc("turnover_gpm", "[1, 2]")["calc"] == "turnover_gpm"
