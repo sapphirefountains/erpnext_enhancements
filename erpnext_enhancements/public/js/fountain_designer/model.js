@@ -125,7 +125,7 @@ export function edit(model, path, value) {
 		next = set_in(next, ["equipment", keys[1], "auto"], false);
 	}
 	// A site value typed here is the person's: it loses the engine's source, so no later derive replaces it.
-	if (keys[0] === "site" && keys.length === 2 && SITE_LOOKUPS.includes(keys[1])) next = drop_source(next, keys[1]);
+	if (keys[0] === "site" && keys.length === 2 && SITE_OWNED.includes(keys[1])) next = drop_source(next, keys[1]);
 	return next;
 }
 
@@ -194,15 +194,23 @@ export function merge_derived(local, derived) {
 	for (const section of ["treatment", "lighting", "electrical", "winterization"]) {
 		if (is_auto(next, section)) take(section);
 	}
-	const site = derived.site || {};
+	return merge_site(next, derived.site);
+}
+
+// The site half of merge_derived, on its own for a save's reply (save_design returns the site as the save's
+// derive left it, with the elevation and seismic values it looked up). The caller merges it only when nothing
+// was edited since the save went out: a field typed meanwhile is not in the reply's sources yet.
+export function merge_site(local, derived_site) {
+	if (!derived_site || typeof derived_site !== "object") return local;
+	let next = local;
 	const own = (obj, key) => Boolean(obj) && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
-	const theirs = site.sources;
+	const theirs = derived_site.sources;
 	const before = next.site && next.site.sources;
-	for (const [key, value] of Object.entries(site)) {
+	for (const [key, value] of Object.entries(derived_site)) {
 		if (key === "sources" || value === undefined) continue;
 		const mine = next.site ? next.site[key] : undefined;
 		const blank = mine === undefined || mine === null || mine === "";
-		if (blank || own(theirs, key) || (SITE_LOOKUPS.includes(key) && own(before, key))) next = set_in(next, ["site", key], value);
+		if (blank || own(theirs, key) || (SITE_OWNED.includes(key) && own(before, key))) next = set_in(next, ["site", key], value);
 	}
 	if (theirs && typeof theirs === "object" && Object.keys(theirs).length) next = set_in(next, "site.sources", clone(theirs));
 	else if (before) next = set_in(next, "site.sources", null);
@@ -225,14 +233,50 @@ export const SITE_LOOKUPS = [
 	"sd1",
 	"winterize",
 ];
+// The state is the engine's too, from the address (derive.SITE_OWNED, v1.774.0), but it is never blanked with
+// the lookups above: a state somebody picked stays, and one the address gave is replaced by the next answer.
+export const SITE_OWNED = SITE_LOOKUPS.concat(["jurisdiction"]);
+
+// A new design's state ("UT", the house's home) is a default, not a choice: tagged as the engine's
+// (site.sources, the server's form), so the address a designer types or picks can move it. A design saved
+// before v1.774.0 has no tag, so its state counts as picked by hand, and only a pick from the list moves it.
+function default_state(model) {
+	const code = get_in(model, "site.jurisdiction");
+	if (!code || get_in(model, "site.sources.jurisdiction")) return model;
+	return set_in(model, "site.sources.jurisdiction", { src: "default", v: code });
+}
+
+// A suggestion picked from the Site step's address list (address_autocomplete's on_place: {address, lat, lng,
+// state, country_code}). The address and its point are the pick's, and the old address's lookups go as for a
+// typed one (clear_site_lookups in quick mode, clear_looked_up in full). The state follows the pick even over
+// one picked by hand: the pick is the designer's newer word on where the fountain goes, and the State select
+// still overrides it afterwards. The point and the state are tagged as looked up (site.sources, the server's
+// own form), so the next save looks up the elevation and seismic values at that point and geocodes nothing.
+export function apply_place(model, place) {
+	if (!model || !place) return model;
+	let next = set_in(model, "site.address", String(place.address || ""));
+	next = model.mode !== "full" ? clear_site_lookups(next) : clear_looked_up(next);
+	const tag = (m, key, value) => set_in(set_in(m, ["site", key], value), ["site", "sources", key], { src: "lookup", v: value });
+	const lat = typeof place.lat === "number" && isFinite(place.lat) ? place.lat : null;
+	const lng = typeof place.lng === "number" && isFinite(place.lng) ? place.lng : null;
+	if (lat !== null && lng !== null && (lat || lng)) next = tag(tag(next, "lat", lat), "lng", lng);
+	// Only a United States pick has a state to put the design in. Elsewhere the state is left as it was: the
+	// designer picks the nearest one, or the codes card says there is no data.
+	const state = String(place.state || "").trim().toUpperCase();
+	if (state && String(place.country_code || "").toUpperCase() === "US") next = tag(next, "jurisdiction", state);
+	return next;
+}
 
 // Blank every looked-up site field so the next derive fills them from the address on screen, typed ones
 // too; the page asks for it only where that is right (quick mode, which never shows them as inputs, or a
 // "Refresh from the address").
+// The state is not blanked, and its source is kept: a state the address gave stays the engine's, so the next
+// save replaces it with the new address's (api/designer.site_lookup), and one picked by hand stays put.
 export function clear_site_lookups(model) {
 	let next = model;
 	for (const key of SITE_LOOKUPS) next = set_in(next, ["site", key], null);
-	return set_in(next, "site.sources", null);
+	const state = get_in(next, "site.sources.jurisdiction");
+	return set_in(next, "site.sources", state ? { jurisdiction: state } : null);
 }
 
 // Blank only the site values the address lookups filled (site.sources[key].src is "lookup"): they belong to the
@@ -289,7 +333,7 @@ function merge_equipment(next, derived) {
 export function blank_model(mode) {
 	const setup = {};
 	for (const key of SECTION_KEYS) setup[key] = key === "features" ? "custom" : "auto";
-	return {
+	return default_state({
 		schema: SCHEMA,
 		mode: mode === "full" ? "full" : "quick",
 		kit: null,
@@ -321,7 +365,7 @@ export function blank_model(mode) {
 		winterization: {},
 		acks: [],
 		notes: "",
-	};
+	});
 }
 
 // A new design from a kit (boot.kits[].model is the kit's starter model), or blank.
@@ -333,7 +377,7 @@ export function model_from_kit(kit, mode) {
 	next.mode = mode === "full" ? "full" : "quick";
 	next.kit = kit.key || null;
 	next.setup = Object.assign(blank_model(mode).setup, next.setup || {});
-	return next;
+	return default_state(next);
 }
 
 // The sections a person set by hand (custom or a preset), features apart: what quick mode would hand

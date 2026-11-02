@@ -301,8 +301,27 @@ def to_dict(model: Model | dict[str, Any]) -> dict[str, Any]:
 
 
 def new_model(**overrides: Any) -> dict[str, Any]:
-    """An empty schema-2 model dict with the defaults filled in."""
-    return Model.from_dict(overrides).to_dict()
+    """An empty schema-2 model dict with the defaults filled in. Its default state is tagged as the
+    engine's (``default_state``) unless the caller named one."""
+    out = Model.from_dict(overrides).to_dict()
+    named = isinstance(overrides.get("site"), dict) and "jurisdiction" in overrides["site"]
+    return out if named else default_state(out)
+
+
+def default_state(model: dict[str, Any]) -> dict[str, Any]:
+    """Tag a new model's state (``Site.jurisdiction``, "UT") as a default in ``site.sources``, the way
+    ``derive.derive_site`` records what the engine filled, so the address's state replaces it on a save
+    (v1.774.0). Untagged, it would count as the designer's pick and an address in another state would
+    never move it. The page's ``model.blank_model`` and ``model_from_kit`` tag theirs the same way. A
+    state that already has a source is left alone. Changes ``model`` in place and returns it."""
+    site = model.get("site") if isinstance(model.get("site"), dict) else None
+    code = str((site or {}).get("jurisdiction") or "").strip()
+    if not code:
+        return model
+    sources = site.get("sources") if isinstance(site.get("sources"), dict) else {}
+    if "jurisdiction" not in sources:
+        site["sources"] = {**sources, "jurisdiction": {"src": "default", "v": code}}
+    return model
 
 
 # --------------------------------------------------------------------------------------
@@ -685,4 +704,5 @@ def migrate(old: dict[str, Any] | str) -> dict[str, Any]:
         "electrical": {"service_v": 240, "phase": 1, "panel_distance_ft": None},
         "winterization": {"items": []}, "acks": [], "notes": "", "legacy": legacy, "migrated_from": 1,
     }
-    return Model.from_dict(model).to_dict()
+    # A schema-1 design never had a state: the "UT" above is the house default, not a choice.
+    return default_state(Model.from_dict(model).to_dict())
