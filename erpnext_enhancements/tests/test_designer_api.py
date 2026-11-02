@@ -764,6 +764,31 @@ def test_a_save_derive_puts_a_typed_address_in_its_state(api, monkeypatch):
     assert site["jurisdiction"] == "NV" and site["sources"]["jurisdiction"] == {"src": "lookup", "v": "NV"}
 
 
+def test_a_design_the_ai_tool_creates_gets_its_state_from_the_address(api, monkeypatch):
+    """save_water_design with no model builds a new one (engine.model.migrate): its "UT" is the house
+    default, tagged as the engine's, so the address the tool sets next moves the state on the save."""
+    built, _ignored = api.tool_model(None, None, {"basins": [{"shape": "round"}]}, {"venue_type": "Decorative Fountain"})
+    assert built["site"]["jurisdiction"] == "UT"
+    assert built["site"]["sources"]["jurisdiction"] == {"src": "default", "v": "UT"}
+    # the assistant reads the design back, adds the Dallas address and saves the whole model
+    edited = json.loads(json.dumps(built))
+    edited["site"]["address"] = "1500 Marilla St, Dallas, TX"
+    model, _ignored = api.tool_model(built, edited)
+    monkeypatch.setattr(api, "site_lookup", api._real_site_lookup)
+    _ttls(api)
+    _sites(monkeypatch, geocode_text=_geocoded("TX"), elevation_at=lambda lat, lng, **k: (None, "x"))
+    site = api.run_derive(model, geocode=True)["model"]["site"]
+    assert site["jurisdiction"] == "TX" and site["sources"]["jurisdiction"] == {"src": "lookup", "v": "TX"}
+    # every way a model is born says the same: new_model, a kit, a migrated schema-1 design
+    from erpnext_enhancements.water_engineering.engine import kits
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    assert model_engine.new_model()["site"]["sources"]["jurisdiction"]["src"] == "default"
+    assert kits.apply_kit("plaza-interactive-12-jets")["site"]["sources"]["jurisdiction"]["src"] == "default"
+    # a state the caller names is theirs
+    assert "sources" not in model_engine.new_model(site={"jurisdiction": "NV"})["site"]
+
+
 def test_the_save_returns_the_site_its_derive_left(api):
     model = {"schema": 2, "mode": "quick", "site": {"address": "x", "elevation_ft": 4226.4}}
     out = api.save_design(None, json.dumps(model), "{}")

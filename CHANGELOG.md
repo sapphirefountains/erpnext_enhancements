@@ -49,8 +49,11 @@ server key only on the elevation, beside the USGS seismic lookup.
   - `derive.derive_site` settles the state first, because the state decides every default after it. It
     fills the state where it is blank or the engine's own (`SITE_OWNED`), tagged `lookup`. A state the
     designer picked is never replaced.
-  - New designs' `UT` is now tagged `{src: "default"}` (`model.blank_model`, `model_from_kit`), so an address
-    can move it. Designs saved before this release carry an untagged state, which counts as picked by hand.
+  - New designs' `UT` is now tagged `{src: "default"}`, so an address can move it. That covers every place
+    a model is born: `model.blank_model` and `model_from_kit` on the page, and `engine.model.new_model`,
+    `migrate` and `kits.apply_kit` on the server (`engine.model.default_state`). The last of these is where
+    a `save_water_design` call without a model starts a design. A state the caller names stays untagged
+    and counts as theirs. Designs saved before this release carry an untagged state, which counts as picked by hand.
     Only a pick from the list moves it.
 - **A save's lookups reach the page.** Before this, the elevation and seismic values a save looked up were
   stored but never shown until the design was reopened, because the page's own derive looks nothing up.
@@ -72,7 +75,8 @@ server key only on the elevation, beside the USGS seismic lookup.
 - `tests/test_jurisdictions.py` covers the state from a lookup, a picked state that is kept, a new address
   that replaces the old address's state, a state outside the table, `geocode_text`'s state and country, and
   `model.apply_place` under node.
-- `tests/test_designer_api.py` covers `site_lookup`'s state (US only, never over a picked one, no geocode
+- `tests/test_designer_api.py` covers a design the AI tool creates with a Dallas address landing in Texas,
+  and `site_lookup`'s state (US only, never over a picked one, no geocode
   for a site with its point and state) and the save's returned site.
 - `scripts/test_fountain_designer.mjs` checks the controller: a pick, the immediate save, the save's site
   merged into the page, and a reply that edits overtook is left alone.
