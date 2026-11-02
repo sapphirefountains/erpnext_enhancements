@@ -187,10 +187,21 @@ def test_boot_lists_only_the_print_formats_this_site_has(api):
     seed is left out, so the page says "not available yet" instead of linking to a 404."""
     from erpnext_enhancements.water_engineering import prints
 
+    seeded = [pf for _k, _l, pf in prints.OUTPUTS] + [prints.PF_PACKET]
+    asked = []
+
+    def get_all(doctype, filters=None, pluck=None, **k):
+        if doctype != "Print Format":
+            return []
+        asked.append(filters)
+        return [n for n in filters["name"][1] if n in seeded]
+
+    api._frappe.get_all = get_all
     every = api.boot()["prints"]
     assert [r["key"] for r in every] == [k for k, _l, _pf in prints.OUTPUTS] + ["packet"]
     assert every == _boot_fixture()["prints"]
-    api._frappe.db.exists = lambda doctype, name=None, *a, **k: name != prints.PF_SCHEDULES
+    assert len(asked) == 1 and asked[0]["disabled"] == 0, "one query, enabled formats only"
+    seeded[:] = [pf for pf in seeded if pf != prints.PF_SCHEDULES]
     keys = {r["key"] for r in api.boot()["prints"]}
     assert not keys & {"equipment", "piping", "fittings"}
     assert {"budget", "packet", "calcs"} <= keys
@@ -198,7 +209,7 @@ def test_boot_lists_only_the_print_formats_this_site_has(api):
     def broken(*a, **k):
         raise RuntimeError("db gone")
 
-    api._frappe.db.exists = broken
+    api._frappe.get_all = broken
     assert api.boot()["prints"] == []
 
 

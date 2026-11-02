@@ -625,9 +625,16 @@
    ]
   },
   "winterization": {
-   "needed": false,
+   "needed": true,
    "steps": [
-    "Indoor feature: no winterization. Shut down and drain only for service."
+    "Shut off and disconnect the autofill",
+    "Lower the water below the returns and skimmers, or drain the basin",
+    "Drain pump p1: open the drain plugs, store them in the basket",
+    "Drain the filter, heater and strainers; open every equipment drain",
+    "Blow out line s1",
+    "Blow out line s2",
+    "Pull the underwater lights or confirm they are rated to stay in frozen water",
+    "Turn off and lock out the feature circuits; leave heat on in a heated room"
    ]
   },
   "startup": [

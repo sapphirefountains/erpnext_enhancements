@@ -629,7 +629,10 @@ def sheet_om(d: Design) -> list:
     if not om:
         return [note("No operations and maintenance figures yet: the design needs a basin and a worked-out water plan.")]
     rows = [
-        [cell("Power"), cell(fnum(om.get("kwh"), 0, "kWh") if _num(om.get("kwh")) else DASH, num=True), cell(money(om.get("power")), num=True)],
+        # The cost is the workbook's pump-energy figure; the kWh is the operating point's, a cross-check
+        # (om_per_year computes both), so the row says so rather than invite kWh x rate = cost.
+        [cell("Power"), cell(f"about {fnum(om.get('kwh'), 0, 'kWh')} at the operating point" if _num(om.get("kwh")) else DASH, num=True),
+         cell(money(om.get("power")), num=True)],
         [cell("Water (make-up and refills)"), cell(fnum(om.get("water_gal"), 0, "gal"), num=True), cell(money(om.get("water")), num=True)],
         [cell("Chemicals"), cell(fnum(om.get("chlorine_gal"), 1, "gal chlorine") if _num(om.get("chlorine_gal")) else DASH, num=True),
          cell(money(om.get("chemicals")), num=True)],

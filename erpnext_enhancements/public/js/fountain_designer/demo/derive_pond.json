@@ -376,8 +376,10 @@
   "winterization": {
    "needed": true,
    "steps": [
-    "Pull the unit before the pond freezes.",
-    "Coil the cable and store the unit upright, indoors."
+    "Shut off and disconnect the autofill",
+    "Lower the water below the returns and skimmers, or drain the basin",
+    "Drain the filter, heater and strainers; open every equipment drain",
+    "Turn off and lock out the feature circuits; leave heat on in a heated room"
    ]
   },
   "startup": [

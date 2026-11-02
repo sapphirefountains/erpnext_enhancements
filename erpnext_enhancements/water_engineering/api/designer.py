@@ -421,13 +421,12 @@ def print_formats():
     where ``after_migrate`` could not seed a format shows that paper as not available rather than a 404."""
     rows = [{"key": k, "label": label, "print_format": pf} for k, label, pf in prints_mod.OUTPUTS]
     rows.append({"key": "packet", "label": "Submittal packet", "print_format": prints_mod.PF_PACKET})
-    exists = {}
-    for pf in dict.fromkeys(r["print_format"] for r in rows):
-        try:
-            exists[pf] = bool(frappe.db.exists("Print Format", pf))
-        except Exception:
-            exists[pf] = False
-    return [r for r in rows if exists[r["print_format"]]]
+    try:
+        names = sorted({r["print_format"] for r in rows})
+        have = set(frappe.get_all("Print Format", filters={"name": ["in", names], "disabled": 0}, pluck="name"))
+    except Exception:
+        have = set()
+    return [r for r in rows if r["print_format"] in have]
 
 
 @frappe.whitelist()

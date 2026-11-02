@@ -250,8 +250,10 @@ PANEL_SCHEDULE_HTML = """
 # DRAFT for a P.E. to seal (see packet.py); the per-sheet banner and the cover say so.
 # --------------------------------------------------------------------------
 
+# `preliminary` is set once at the top of the packet (_packet_html): each sheet repeats the banner,
+# and we_title_block reads Settings and the Project.
 _PACKET_BANNER = (
-    "{% if we_title_block(doc.name).preliminary %}"
+    "{% if preliminary %}"
     '<div style="text-align:center; color:#b00; font-size:9px; font-weight:bold; '
     'letter-spacing:1px; border-bottom:1px solid #f0c0c0; margin-bottom:8px;">'
     "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
@@ -348,6 +350,7 @@ def _packet_html():
     keys = "[" + ", ".join(f"'{k}'" for k in prints.PACKET_SHEETS) + "]"
     return (
         "{%- set p = we_print(doc, " + keys + ") -%}"
+        + "{%- set preliminary = we_title_block(doc.name).preliminary -%}"
         + BLOCK_MACRO
         + _DRAWING_CSS
         + ps.page_open(prints.PILLAR)
