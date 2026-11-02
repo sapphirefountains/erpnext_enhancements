@@ -95,6 +95,26 @@ def test_water_plan_envelope_and_governing_chlorine():
     assert "Winterize" in tasks and "Replace the UV lamp" in tasks and any("Drain, clean" in t for t in tasks)
 
 
+def test_a_pond_or_lake_is_never_drained():
+    """The drain-and-refill rule is for recirculating features: a pond or lake (or anything a floating
+    aerator sits in) takes make-up only (Sapphire standard 2026-11-01, phase G review)."""
+    from erpnext_enhancements.water_engineering.engine.upkeep import natural_water
+
+    assert natural_water("Pond / Lake") and natural_water("Retention lake") and natural_water("", ["jets", "aerator"])
+    assert not natural_water("Decorative Fountain", ["weir"]) and not natural_water(None)
+    plan = water_plan(1_955_000, evaporation_gph=45.0, spray_gph=0.0, hours_per_day=12, water_temp_f=72, natural=True).value
+    assert plan["natural"] and plan["refresh_days"] is None and plan["refresh_by"] == "never"
+    assert any(c["code"] == "upkeep.refresh" and "never drained" in c["title"] for c in plan["checks"])
+    om = om_per_year(plan, [], volume_gal=1_955_000).value
+    assert om["refills"] == 0
+    assert math.isclose(om["water_gal"], plan["makeup_gpd"] * 365, rel_tol=1e-9)
+    tasks = [t["task"] for t in maintenance_schedule(plan, outdoor=True, frost=True)]
+    assert not any("Drain, clean" in t for t in tasks)
+    # A recirculating feature is unchanged: it still refills.
+    fountain = water_plan(800, evaporation_gph=0.6, spray_gph=1.5, hours_per_day=10, water_temp_f=68).value
+    assert fountain["natural"] is False and om_per_year(fountain, [], volume_gal=800).value["refills"] > 0
+
+
 def test_om_per_year_by_hand():
     plan = water_plan(1000, evaporation_gph=1.0, spray_gph=2.0, hours_per_day=10, water_temp_f=68).value
     pumps = [{"flow_gpm": 100, "head_ft": 40, "efficiency_pct": 65, "motor_eff_pct": 88, "hours_per_day": 10, "electrical_kw": 1.36}]

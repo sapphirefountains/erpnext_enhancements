@@ -8,6 +8,8 @@
   113 F, ASHRAE 188 and the CDC toolkit, which covers decorative fountains). The chlorine figure
   that governs is ``chemistry.chlorinator_feed`` (IBC 3133B.1 minimum feed); DRC's practical
   fill and daily doses are shown beside it.
+  A pond or lake (:func:`natural_water`) is the exception: natural inflow, a large volume and no
+  drain-and-refill practice, so its plan is evaporation and spray make-up only and it is never drained.
 * :func:`maintenance_schedule` is ``maintenanceSchedule`` without the rain curtain's valve-life
   and rigging rows, plus what other families need (filters, UV, lights, winterizing).
 * :func:`om_per_year` is water, power, chemicals and parts at the site's rates. Power governs
@@ -46,6 +48,13 @@ HYGIENE_DAYS, WARM_DAYS = 30, 14
 LEGIONELLA_C = (25.0, 45.0)
 GAL_PER_CCF = 748.051948
 L_PER_GAL = 3.785411784
+
+# Natural bodies of water: the cycles-of-concentration drain-and-refill rule is for recirculating
+# decorative features; a pond or lake (and a floating aerator, which only ever sits in one) is never
+# drained and refilled. Sapphire standard, 2026-11-01 (Nikolas, via the phase G review).
+NATURAL_VENUE_WORDS = ("pond", "lake")
+NATURAL_FAMILIES = frozenset({"aerator"})
+CIT_NATURAL = "Sapphire standard 2026-11-01: a pond or lake is never drained; its make-up is evaporation and spray only"
 
 RULE_DEFAULTS = {
     "kwh_rate": 0.1049,  # $/kWh, engine/rules.py utility default (Rocky Mountain Power commercial)
@@ -94,13 +103,22 @@ def water_plan_si(*, vol_l: float, evap_lph: float, spray_lph: float, hours_per_
     }
 
 
+def natural_water(venue_type: str | None, families=()) -> bool:
+    """True for a pond or lake: the venue type names one, or a family that only sits in one (a floating
+    aerator) is among the features. Such water is never drained and refilled."""
+    venue = str(venue_type or "").lower()
+    return any(w in venue for w in NATURAL_VENUE_WORDS) or bool(NATURAL_FAMILIES & {str(f) for f in families or ()})
+
+
 def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, hours_per_day: float = 8.0, water_temp_f: float = 68.0,
                outdoor: bool = True, treatment: str = "chlorine", product_pct: float = 0.0, residual_ppm: float = 0.0,
-               loss_ppm: float = 0.0, max_cycles: float = 3.0) -> CalcResult:
+               loss_ppm: float = 0.0, max_cycles: float = 3.0, natural: bool = False) -> CalcResult:
     """Drain-and-refill interval, the Legionella band and the chlorine figures for a fountain's water.
 
     ``volume_gal``: everything the system holds (basin plus pipes); ``evaporation_gph`` and
-    ``spray_gph`` from :func:`.hydraulics.basin_checks.basin_checks` while running."""
+    ``spray_gph`` from :func:`.hydraulics.basin_checks.basin_checks` while running. ``natural``
+    (:func:`natural_water`): a pond or lake, never drained, so ``refresh_days`` is None and the only
+    water it takes is the make-up."""
     vol_l = float(volume_gal) * L_PER_GAL
     r = water_plan_si(vol_l=vol_l, evap_lph=float(evaporation_gph) * L_PER_GAL, spray_lph=float(spray_gph) * L_PER_GAL,
                       hours_per_day=hours_per_day, water_c=f_to_c(float(water_temp_f)), outdoor=outdoor, treatment=treatment,
@@ -114,13 +132,19 @@ def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, h
         checks.append(make_check("upkeep.legionella_band", WARNING, f"The water runs at {float(water_temp_f):.0f} F, inside the Legionella band",
                                  f"77-113 F is where Legionella grows: keep the residual up, drain and clean every {r['hygiene_days']} days, "
                                  "cool the water if you can.", "treatment"))
-    checks.append(make_check("upkeep.refresh", INFO, f"Drain, clean and refill every {r['refresh_days']} days",
-                             "Before minerals left by evaporation reach "
-                             f"{r['max_cycles']:g}x the fill water" if r["refresh_by"] == "minerals" else "For hygiene: scrub the basin and flush the lines.",
-                             "treatment", value={"days": r["refresh_days"], "by": r["refresh_by"]}))
+    if natural:
+        checks.append(make_check("upkeep.refresh", INFO, "A pond or lake is never drained",
+                                 "Its make-up replaces evaporation and spray only; natural inflow and its volume keep the minerals down.",
+                                 "treatment", value={"days": None, "by": "never"}))
+    else:
+        checks.append(make_check("upkeep.refresh", INFO, f"Drain, clean and refill every {r['refresh_days']} days",
+                                 "Before minerals left by evaporation reach "
+                                 f"{r['max_cycles']:g}x the fill water" if r["refresh_by"] == "minerals" else "For hygiene: scrub the basin and flush the lines.",
+                                 "treatment", value={"days": r["refresh_days"], "by": r["refresh_by"]}))
     gal = 1 / L_PER_GAL
     value = {
-        "refresh_days": r["refresh_days"], "refresh_by": r["refresh_by"],
+        "refresh_days": None if natural else r["refresh_days"], "refresh_by": "never" if natural else r["refresh_by"],
+        "natural": bool(natural),
         "mineral_days": r["mineral_days"] if math.isfinite(r["mineral_days"]) else None, "hygiene_days": r["hygiene_days"],
         "warm": r["warm"], "makeup_gpd": r["makeup_lpd"] * gal, "evaporation_gpd": r["evap_lpd"] * gal, "spray_gpd": r["spray_lpd"] * gal,
         "residual_ppm": r["ppm"], "treatment": r["key"],
@@ -131,6 +155,7 @@ def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, h
     }
     steps = [
         f"make-up {value['makeup_gpd']:.1f} gal/day (evaporation {value['evaporation_gpd']:.1f} + spray {value['spray_gpd']:.1f})",
+        "pond or lake: never drained, make-up only" if natural else
         (f"minerals reach {r['max_cycles']:g}x in {r['mineral_days']:.0f} days" if math.isfinite(r["mineral_days"])
          else f"minerals never reach {r['max_cycles']:g}x") + f" ; hygiene every {r['hygiene_days']} days -> refresh every {r['refresh_days']} days",
     ]
@@ -151,7 +176,7 @@ def water_plan(volume_gal: float, *, evaporation_gph: float, spray_gph: float, h
         },
         formula="C(t) = Css - (Css - 1) e^(-spray t / V), Css = (evap + spray)/spray ; refresh = min(t(C = k), hygiene days)",
         steps=steps,
-        citations=[CIT_CYCLES, CIT_LEGIONELLA, CIT_DRC_UPKEEP] + (feed.citations if feed else []),
+        citations=[CIT_CYCLES, CIT_LEGIONELLA, CIT_DRC_UPKEEP] + (feed.citations if feed else []) + ([CIT_NATURAL] if natural else []),
         warnings=[c["title"] for c in checks if c["severity"] != INFO],
     )
 
@@ -180,8 +205,9 @@ def maintenance_schedule(plan: dict, *, outdoor: bool = True, frost: bool = Fals
     if nozzles:
         add("Check every nozzle's pattern", "Weekly", "A weak or bent jet means a blocked nozzle")
         add("Descale the nozzles", "Monthly", "Soak in a descaler if scale shows")
-    add("Drain, clean and refill", f"Every {plan.get('refresh_days', HYGIENE_DAYS)} days",
-        "Before minerals concentrate" if plan.get("refresh_by") == "minerals" else "Scrub the basin; flush the lines")
+    if not plan.get("natural"):
+        add("Drain, clean and refill", f"Every {plan.get('refresh_days') or HYGIENE_DAYS} days",
+            "Before minerals concentrate" if plan.get("refresh_by") == "minerals" else "Scrub the basin; flush the lines")
     add("Press TEST on every GFCI", "Monthly", "Power must drop; reset it")
     if uv:
         add("Replace the UV lamp", "Every 9,000 running hours (about a year)", "Clean the quartz sleeve quarterly")
@@ -207,7 +233,8 @@ def om_per_year(plan: dict, pumps: list[dict], *, volume_gal: float, rules: dict
     ``parts_per_year``, ``days_per_year`` (defaults in :data:`RULE_DEFAULTS`)."""
     rr = {**RULE_DEFAULTS, **{k: v for k, v in (rules or {}).items() if v is not None}}
     days = float(rr["days_per_year"])
-    refills = days / max(1, plan.get("refresh_days") or HYGIENE_DAYS)
+    # A pond or lake is never drained (water_plan's ``natural``): its water is the make-up alone.
+    refills = 0.0 if plan.get("natural") else days / max(1, plan.get("refresh_days") or HYGIENE_DAYS)
     water_gal = plan.get("makeup_gpd", 0) * days + refills * float(volume_gal)
     water_cost = water_gal / GAL_PER_CCF * float(rr["water_rate_per_ccf"])
     power_cost, power_cross, kwh = 0.0, 0.0, 0.0

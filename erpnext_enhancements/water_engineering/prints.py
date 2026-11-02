@@ -449,7 +449,7 @@ def _value_text(value: Any, unit: str) -> str:
 # The ladder's sections (PLAN.md 2.2), in its order, and the calculation names each one holds.
 LADDER = (
     ("Site", ("site_lookups",)),
-    ("Basins", ("basin_volume", "basin_checks")),
+    ("Basins", ("basin_volume", "basin_checks", "evaporation_rate")),
     ("Features", ()),
     ("Regulated minimums", ("minimum_flow_rate", "turnover_time")),
     ("Piping", ("route_template", "pick_pipe", "hazen_williams_crosscheck")),
@@ -748,7 +748,8 @@ def sheet_om(d: Design) -> list:
         # (om_per_year computes both), so the row says so rather than invite kWh x rate = cost.
         [cell("Power"), cell(f"about {fnum(om.get('kwh'), 0, 'kWh')} at the operating point" if _num(om.get("kwh")) else DASH, num=True),
          cell(money(om.get("power")), num=True)],
-        [cell("Water (make-up and refills)"), cell(fnum(om.get("water_gal"), 0, "gal"), num=True), cell(money(om.get("water")), num=True)],
+        [cell("Water (make-up)" if plan.get("natural") else "Water (make-up and refills)"), cell(fnum(om.get("water_gal"), 0, "gal"), num=True),
+         cell(money(om.get("water")), num=True)],
         [cell("Chemicals"), cell(fnum(om.get("chlorine_gal"), 1, "gal chlorine") if _num(om.get("chlorine_gal")) else DASH, num=True),
          cell(money(om.get("chemicals")), num=True)],
         [cell("Parts"), cell(DASH, num=True), cell(money(om.get("parts")), num=True)],
@@ -770,9 +771,11 @@ def sheet_om(d: Design) -> list:
         ("Treatment", _sanitizer(plan.get("treatment"))),
         ("Residual to hold", fnum(plan.get("residual_ppm"), 1, "ppm") if _num(plan.get("residual_ppm")) else None),
         ("Make-up water", fnum(plan.get("makeup_gpd"), 0, "gal a day")),
-        ("Drain, clean and refill", f"Every {fqty(plan.get('refresh_days'))} days ({plan.get('refresh_by') or 'hygiene'})"
+        ("Drain, clean and refill", "Never: a pond or lake keeps its water; make-up replaces evaporation and spray"
+         if plan.get("natural") else f"Every {fqty(plan.get('refresh_days'))} days ({plan.get('refresh_by') or 'hygiene'})"
          if _num(plan.get("refresh_days")) else None),
-        ("Cycles of concentration", f"Minerals reach the limit in {fqty(plan.get('mineral_days'))} days"
+        # A pond or lake is never drained, so the minerals' clock does not set anything there.
+        ("Cycles of concentration", None if plan.get("natural") else f"Minerals reach the limit in {fnum(plan.get('mineral_days'), 0)} days"
          if _num(plan.get("mineral_days")) else "Spray loss keeps the minerals under the limit"),
         ("Legionella band (77 to 113 °F)", "Inside the band: hold the residual and clean more often" if warm else "Outside the band",
          "fail" if warm else "pass"),

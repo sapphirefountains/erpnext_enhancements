@@ -291,6 +291,30 @@ def test_om_splits_the_water_and_adds_up(spf):
     assert prints.money(up["om"]["total"]) in text
 
 
+def test_the_pond_takes_make_up_water_only(spf):
+    """A pond or lake is never drained and refilled (the cycles-of-concentration rule is for recirculating
+    features): its yearly water is the evaporation and spray make-up alone, and the prints say so."""
+    out, stored = designed("pond")
+    up = stored["paper"]["upkeep"]
+    plan, om = up["water_plan"], up["om"]
+    assert plan["natural"] and plan["refresh_days"] is None and om["refills"] == 0
+    assert om["water_gal"] == pytest.approx(plan["makeup_gpd"] * 365, rel=1e-9)
+    assert plan["makeup_gpd"] == pytest.approx(stored["results"]["evaporation_rate"]["value"], rel=1e-9), \
+        "an aerator pond with no pump network still evaporates (ASHRAE over its surface, all day)"
+    lines = {w["key"]: w for w in up["water_lines"]}
+    assert lines["refill"]["gal"] == 0 and lines["refill"]["note"].startswith("Never")
+    assert om["water"] == pytest.approx(lines["evaporation"]["cost"] + lines["spray"]["cost"], abs=0.02)
+    assert om["water"] < 2000, "make-up only: not the $112k a year of refilling 1.9 million gallons monthly"
+    assert not any("Drain, clean" in m["task"] for m in up["maintenance"])
+    text = visible_text(render(spf, "pond", prints.PF_OM))
+    assert "Never: a pond or lake keeps its water" in text
+    report = visible_text(render(spf, "pond", prints.PF_REPORT))
+    assert prints.money(om["total"], cents=False) + " a year" in report
+    # A recirculating feature still drains and refills.
+    _, lobby = designed("lobby")
+    assert lobby["paper"]["upkeep"]["om"]["refills"] > 0 and not lobby["paper"]["upkeep"]["water_plan"]["natural"]
+
+
 def test_winterization_reads_the_module_checklist(spf):
     out, stored = designed("plaza")
     w = stored["paper"]["winterization"]

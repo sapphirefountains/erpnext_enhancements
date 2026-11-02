@@ -57,7 +57,7 @@ from .engine.controls import controls_report
 from .engine.electrical import electrical_report
 from .engine.families import SYSTEM_MODULES, run_feature
 from .engine.structural import structural_takeoff
-from .engine.treatment import filtration_area
+from .engine.treatment import evaporation_rate, filtration_area
 from .engine.units import gallons_to_pounds
 
 # Site defaults by jurisdiction, used only where the site field is blank and the address lookup
@@ -899,6 +899,7 @@ def water_lines(plan: dict, om: dict, om_inputs: dict, total_gal: float) -> list
         ("evaporation", "Evaporation", (_num(plan.get("evaporation_gpd")) or 0.0) * days, ""),
         ("spray", "Spray and splash loss", (_num(plan.get("spray_gpd")) or 0.0) * days, ""),
         ("refill", "Drain and refill", refills * (total_gal or 0.0),
+         "Never: a pond or lake is not drained" if plan.get("natural") else
          f"{refills:.1f} a year, every {plan.get('refresh_days')} days ({plan.get('refresh_by') or 'hygiene'})" if refills else ""),
     ]
     out = [{"key": k, "label": label, "gal": round(gal, 1), "cost": round(gal / GAL_PER_CCF * rate, 2), "note": note}
@@ -1110,10 +1111,21 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     indoor = any((f.get("inputs") or {}).get("indoor") for f in m.get("features") or [])
     plan = None
     if total_gal:
+        natural = upkeep.natural_water(site.get("venue_type"), [f.get("family") for f in m.get("features") or []])
+        if natural:
+            # A pond or lake evaporates all day from its whole surface, pump or no pump (an aerator pond has no
+            # network, so phase B's basin checks never ran). ASHRAE over the plan area, per day; the water plan
+            # multiplies its evaporation by the pump hours, so it is handed as the day's figure over those hours.
+            area = sum(_num(b.get("area_sf")) or _num(b.get("surface_area_sqft")) or 0.0 for b in m.get("basins") or [])
+            if area:
+                er = run.result(run.stage("evaporation", lambda: evaporation_rate(
+                    area, _num(site.get("water_temp_f")) or 68.0, _num(site.get("air_temp_f")) or 85.0,
+                    _num(site.get("rh_pct")) or 40.0)))
+                evap = (_num(er.get("value")) or 0.0) / hours
         wp = run.stage("water plan", lambda: upkeep.water_plan(
             total_gal, evaporation_gph=evap, spray_gph=spray, hours_per_day=hours,
             water_temp_f=_num(site.get("water_temp_f")) or 68.0, outdoor=not indoor,
-            treatment=str((m.get("treatment") or {}).get("sanitizer") or "chlorine")))
+            treatment=str((m.get("treatment") or {}).get("sanitizer") or "chlorine"), natural=natural))
         plan = run.result(wp).get("value") if wp else None
         for c in (plan or {}).get("checks") or []:
             run.checks.append({**c, "_source": "network"})

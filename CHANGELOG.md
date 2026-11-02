@@ -145,6 +145,19 @@ stored drawing has been through `drawings.page_svg`.
     them) and the budget rules.
 
   The controller writes `paper` into `results_json`.
+- **A pond or lake is never drained.** `upkeep.om_per_year` refilled the pond demo's 1.9 million gallons
+  every 30 days, about $112k a year. The cycles-of-concentration drain-and-refill rule is for
+  recirculating decorative features; a pond or lake has natural inflow, a large volume, and no
+  drain-and-refill practice.
+  - **The new rule.** `upkeep.natural_water(venue_type, families)` is true when the venue names a pond or
+    lake, or when a floating aerator is among the features. Then `water_plan(natural=True)` has no
+    refresh interval, `om_per_year` counts no refills, the maintenance schedule has no drain row, and the
+    prints say "Never".
+  - **Evaporation without a pump.** An aerator pond has no pump network, so phase B's basin checks never
+    ran and its evaporation read 0. The derive now takes it from `treatment.evaporation_rate` (ASHRAE)
+    over the pond's surface, all day.
+  - **The result.** The pond demo's water is $930 a year (540 gal/day of make-up). A recirculating
+    feature is unchanged.
 - **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
   source "house rule"), so `budget_total` includes labor once the rate is set.
 - **The Outputs step's winterization drawer shows the real steps.** It printed the module's
