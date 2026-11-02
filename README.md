@@ -223,10 +223,13 @@ Configured hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)):
 - **eslint** — JavaScript lint ([`.eslintrc`](.eslintrc)).
 - **prettier** — formatting for JSON/CSS/Markdown/YAML.
 - **pyupgrade** — modernizes Python syntax.
+- **no-committed-secrets** — [`scripts/check_no_committed_secrets.py --staged`](scripts/check_no_committed_secrets.py) on the files you are committing.
 
 ### CI & releases
 
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the standalone `unit-tests` job. (The heavier Frappe integration-test job was removed in v0.2.9 — see the CHANGELOG — because it gated PRs on upstream/environment churn; the Frappe-dependent tests under `tests/` can still be run against a real bench locally.)
+- **Committed secrets** is a hard gate in the same workflow, in two scopes. A PR runs **"No committed secrets (PR range)"**: the working tree plus every blob the PR adds (`--since origin/main`, intermediate commits included), because main's history was already gated as it landed. Every push to `main`, and a nightly schedule, run **"No committed secrets (full history)"**, the whole object database, with a cache of blobs already scanned clean that is discarded whenever the scanner's rules change. Run the PR check locally before pushing with `python scripts/check_no_committed_secrets.py --since origin/main`; the pre-commit hook above runs it on staged files.
+- **GitHub secret scanning and push protection** should be on for this repository, and as of 2026-11-02 they are **off**. They are repository settings, not code: a repository admin enables them under *Settings → Advanced Security → Secret Protection*, then *Push protection*. Both are free on a public repository. Push protection refuses a push carrying a known provider's token before it reaches GitHub, which no CI job can do; the script above covers this app's own credential shapes, which GitHub's patterns do not know. Neither replaces the other.
 - **Release** ([`.github/workflows/release.yml`](.github/workflows/release.yml)) tags and publishes a GitHub Release whenever a new `__version__` lands on `main`, using the matching `CHANGELOG.md` section as release notes. Because `main` deploys automatically to the Google Cloud bench VM, the Releases page is a 1:1 log of what is deployed.
 
 ### Running tests
