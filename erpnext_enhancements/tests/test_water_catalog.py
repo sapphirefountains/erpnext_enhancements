@@ -1721,3 +1721,38 @@ def test_a_merge_counts_against_the_round_limit_and_goes_first(fake, tmp_path):
     assert [m["old"] for m in first["merged"]] == [DUP] and first["renamed"] == [] and first["remaining"] == 1
     second = catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
     assert [r["new"] for r in second["renamed"]] == ["FX-R9"] and second["remaining"] == 0
+
+
+def test_a_round_with_nothing_left_to_rename_still_repairs_the_designs(fake, tmp_path):
+    """Review of e6f01447: the repair ran only beside a rename, so after the last round a design
+    saved with an old code stayed broken however often the endpoint was run."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    stale = {"network": {"pumps": [{"id": "p1", "item": "PUMP-FIXTURECO-FIXTURE-R1"}]}}
+    fake.store["Water Feature Design"]["WFD-2"]["model_json"] = json.dumps(stale)
+    commits = fake.db.commits
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert summary["renamed"] == [] and summary["remaining"] == 0
+    assert summary["designs"] == [{"design": "WFD-2", "fields": ["model_json"], "replaced": 1}]
+    assert json.loads(fake.store["Water Feature Design"]["WFD-2"]["model_json"])["network"]["pumps"][0]["item"] == "FX-R1"
+    assert fake.db.commits == commits + 1
+    quiet = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert quiet["designs"] == [] and fake.db.commits == commits + 1
+
+
+def test_a_json_column_that_comes_back_parsed_is_rewritten_too(fake, tmp_path):
+    """Review of e6f01447: a JSON field read back as a dict was skipped as "not text"."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    fake.store["Water Feature Design"]["WFD-2"]["results_json"] = {
+        "pump_candidates": [{"item": "PUMP-FIXTURECO-FIXTURE-R2"}, {"item": "KEEP"}]
+    }
+    dry = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
+    assert {"design": "WFD-2", "fields": ["results_json"], "replaced": 1} in dry["designs"]
+    catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    written = fake.store["Water Feature Design"]["WFD-2"]["results_json"]
+    assert isinstance(written, str)
+    assert [c["item"] for c in json.loads(written)["pump_candidates"]] == ["FX-R2", "KEEP"]

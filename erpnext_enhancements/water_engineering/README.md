@@ -293,6 +293,8 @@ Feature Design whose `model_json`, `results_json`, `design_issues_json` or `read
 code is rewritten (any value, key, or `|`-part of a key equal to the code; text that merely contains it
 is left alone), with an Info Comment on the design. The rewrite maps every catalog Item already renamed,
 not only this round's, so a design saved with an old code between rounds is repaired by the next one.
+A write round with nothing left to rename still runs the repair, so running the endpoint again also
+fixes a design saved after the last rename. A JSON column read back already parsed is handled as well.
 Every round re-plans from the site, so a round that stopped is just run again. Nothing runs on migrate.
 
 ```js

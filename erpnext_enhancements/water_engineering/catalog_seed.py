@@ -1545,18 +1545,26 @@ def rewrite_designs(mapping, dry_run):
 	out = []
 	fields = ["name", *DESIGN_JSON_FIELDS]
 	for design in frappe.get_all("Water Feature Design", fields=fields):
-		changed, replaced = {}, 0
+		changed, before, replaced = {}, {}, 0
 		for field in DESIGN_JSON_FIELDS:
-			text = design.get(field)
-			if not text or not isinstance(text, str) or not any(old in text for old in mapping):
+			value = design.get(field)
+			# A JSON column can come back parsed rather than as text, depending on the field type and
+			# the driver; both are read, and written back as text.
+			if isinstance(value, (dict, list)):
+				text = json.dumps(value)
+			elif isinstance(value, str) and value:
+				text = value
+				try:
+					value = json.loads(text)
+				except ValueError:
+					continue
+			else:
 				continue
-			try:
-				value = json.loads(text)
-			except ValueError:
+			if not any(old in text for old in mapping):
 				continue
 			new, count = rewrite_codes(value, mapping)
 			if count:
-				changed[field], replaced = json.dumps(new), replaced + count
+				changed[field], before[field], replaced = json.dumps(new), text, replaced + count
 		if not changed:
 			continue
 		out.append({"design": design["name"], "fields": sorted(changed), "replaced": replaced})
@@ -1564,7 +1572,7 @@ def rewrite_designs(mapping, dry_run):
 			continue
 		for field, text in changed.items():
 			frappe.db.set_value("Water Feature Design", design["name"], field, text, update_modified=False)
-		named = sorted({old for old in mapping if any(old in design.get(f) or "" for f in changed)})
+		named = sorted({old for old in mapping if any(old in before[f] for f in changed)})
 		frappe.get_doc(
 			{
 				"doctype": "Comment",
@@ -1660,7 +1668,9 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 	``designs`` is the design rewrite (:func:`rewrite_designs`). Its old -> new map covers every
 	catalog Item whose current name is not the old rule's code, not only this round's. A design
 	saved with an old code between rounds is therefore still repaired by the next one. A merged Item
-	is covered as well, because the Item it merged into carries its catalog id.
+	is covered as well, because the Item it merged into carries its catalog id. That includes a write
+	round with nothing left to rename or merge: it still repairs the designs, and is the way to fix
+	one saved with an old code after the last round.
 	"""
 	from frappe.model.rename_doc import rename_doc
 
@@ -1749,6 +1759,13 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 			# The designer keeps its pump catalog, codes and all, for ten minutes, and rename_doc's
 			# clear_cache does not reach that key: a pick in that window would save an old code.
 			frappe.cache().delete_value(CATALOG_CACHE_KEY)
+	if not todo:
+		# Nothing left to rename, but a design saved with an old code since the last round still
+		# needs repairing. The batches above repair only alongside a rename, so a round that has
+		# none does the repair here.
+		summary["designs"] = rewrite_designs(done, False)
+		if summary["designs"]:
+			frappe.db.commit()
 	summary["remaining"] = len(work) - len(summary["renamed"]) - len(summary["merged"])
 	summary["seconds"] = round(time.monotonic() - started, 2)
 	return summary

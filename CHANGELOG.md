@@ -49,6 +49,9 @@ a datasheet is no use at a supplier counter.
   `|`-part), leaves `modified` alone, adds an Info Comment, and clears the designer's ten-minute pump
   catalog cache, which `rename_doc`'s `clear_cache` does not reach. The map covers every catalog Item
   already renamed, so a design saved with an old code between rounds is repaired by the next round.
+  That includes a write round with nothing left to rename. Before review that round skipped the
+  repair, so a design saved after the last rename could never be fixed. A JSON column that the
+  database returns already parsed, rather than as text, is rewritten too; it was skipped before.
 - **Merges into an Item Sapphire already had.** Nikolas decided, after the first dry run, to merge
   the three Pentair rows rather than leave them; `approved.json` now gives each an `item_code`.
   - When that code names an existing Item and the loader's own Item for the row is still on the
