@@ -4583,8 +4583,10 @@ jobs:
   # having been cancelled at the old 10-minute limit on 2026-10-14 with the scan itself
   # clean. CHANGELOG.md is the cause: a multi-megabyte file with 1,400+ versions, one per
   # PR, about 5 GB of text per run that was nearly all read and found clean the day
-  # before. Measured on a fresh clone at v1.773.1 (see CHANGELOG): PR range ~40s; full
-  # walk, cold cache, ~X; warm, ~Y.
+  # before: 14m37s and 14m43s on main that day. Measured for v1.774.1 (see CHANGELOG): the
+  # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
+  # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
+  # after one is the slow run, and 30 minutes is the headroom for it.
   #
   # THE CACHE is a list of blob shas keyed on `--rules-hash`, a hash of the whole script,
   # so any change to a pattern, the marker, the window or the code that applies them

@@ -20,10 +20,15 @@ when it was written (2026-08-08: 2,187 working-tree files, 7,437 history blobs),
 The cause is `CHANGELOG.md`: a multi-megabyte file with 1,400+ versions, one per PR, so each run read
 about 5 GB of text that it had found clean the day before.
 
-**Measured on a fresh clone of `main` (Windows laptop, CI numbers in the PR):** the old full walk took
-OLD_FULL; the PR range took ~40 s for the last merged PR (17 commits, 69 new blobs) and ~37 s for the
-last ten (97 commits, 669 blobs), of which the 4,430-file working tree is nearly all; the new full walk
-took COLD_FULL with an empty cache and WARM_FULL with a warm one (WARM_DETAIL).
+**Measured.** In CI, `main`'s full walk took 14 m 37 s and 14 m 43 s on 2026-11-02. This PR's own
+range check (4 commits, 10 new blobs, 4,432 working-tree files) took **9.9 s** in the scan step, 37 s
+for the whole job. On a fresh clone of `main` on a Windows laptop: the old script's full walk took 443 s
+(22,416 blobs, 254 skipped as oversize); the new full walk took 543 s with an empty cache (22,670 blobs,
+the extra time being those 254 CHANGELOG versions, now read, see below) and **6.1 s** with a warm one
+(22,676 skipped, 0 read, the working tree being all of it); the range took 37-41 s for the last one and
+the last ten merged PRs (69 and 669 blobs), with other work running alongside. **Expect the first full
+walk on `main` after this merges to be the slow one, ~15-20 minutes,** because this change is itself a
+change of rules: the cache starts empty. The job's 30-minute limit covers it.
 
 ### Changed
 - **Two scopes in CI, both hard gates.** On a pull request the job is now **"No committed secrets (PR
