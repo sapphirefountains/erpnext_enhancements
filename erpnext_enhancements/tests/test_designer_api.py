@@ -775,6 +775,9 @@ def test_a_model_sent_without_acks_keeps_the_stored_sign_offs(api):
     sent["acks"] = [{"issue_key": "OTHER", "note": "n"}]
     model, ignored = api.tool_model(existing, sent)
     assert model["acks"] == [{"issue_key": "OTHER", "note": "n"}] and ignored == [], "acks sent are the model's"
+    sent["acks"] = []
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == [] and ignored == [], "an empty list withdraws them"
 
 
 def test_new_piping_without_pumps_keeps_the_pumps_pick_curve_and_control(api):
@@ -810,3 +813,4 @@ def test_the_canvas_carries_each_segments_velocity_band_and_the_worst(api, monke
     assert canvas["worst_status"] == "Exceeds Legal Limit"
     assert api.segment_velocity_status({"line": "suction"}, {"velocity_fps": 5.0, "size": '2"'}) == "Increase Size"
     assert api.segment_velocity_status({}, {"velocity_fps": None}) == ""
+    assert api.segment_velocity_status({"material": "HDPE"}, {"velocity_fps": 7.0, "size": '2"'}) == "", "no limits"

@@ -36,6 +36,7 @@ from erpnext_enhancements.water_engineering.engine import feature_visual_kind
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
 from erpnext_enhancements.water_engineering.engine import model as model_engine
 from erpnext_enhancements.water_engineering.engine import pipe as pipe_engine
+from erpnext_enhancements.water_engineering.engine.data.pipe_specs import PIPE_SPECS
 from erpnext_enhancements.water_engineering.engine import rules as rules_engine
 from erpnext_enhancements.water_engineering.engine.families import FAMILIES
 
@@ -1118,8 +1119,9 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
         model = copy.deepcopy(model)
         ignored = [f"{k} (a model was sent, and it is the whole design)" for k in sent]
         stored_acks = [a for a in (existing or {}).get("acks") or [] if isinstance(a, dict)]
-        if not model.get("acks") and stored_acks:
-            # A model read back without its sign-offs must not erase them: the stored ones are kept.
+        if model.get("acks") is None and stored_acks:
+            # A model read back without its sign-offs must not erase them: the stored ones are kept. An
+            # explicit list, even an empty one, is the model's own.
             model["acks"] = copy.deepcopy(stored_acks)
             ignored.append(f"acks (the model sent had none, so the design's {len(stored_acks)} "
                            "stored sign-off(s) were kept)")
@@ -1202,13 +1204,12 @@ _VELOCITY_ORDER = (pipe_engine.STATUS_EXCEEDS, pipe_engine.STATUS_INCREASE, pipe
 def segment_velocity_status(segment, value):
     """A segment's velocity band (``engine.pipe.velocity_status``) from its derived velocity, its line
     and its pipe's limits (``data/pipe_specs``); "" when the velocity or the pipe is not known."""
-    from erpnext_enhancements.water_engineering.engine.data.pipe_specs import PIPE_SPECS
-
     velocity = (value or {}).get("velocity_fps")
     if velocity in (None, ""):
         return ""
-    material = PIPE_SPECS.get(segment.get("material") or "SCH40 PVC") or PIPE_SPECS["SCH40 PVC"]
-    spec = material.get((value or {}).get("size") or segment.get("nominal_size") or "")
+    # A material the spec table does not know has no limits to band against: no band, not PVC's.
+    spec = (PIPE_SPECS.get(segment.get("material") or "SCH40 PVC") or {}).get(
+        (value or {}).get("size") or segment.get("nominal_size") or "")
     if not spec:
         return ""
     return pipe_engine.velocity_status(_num(velocity), segment.get("line") or "discharge", spec["max_suction_fps"],

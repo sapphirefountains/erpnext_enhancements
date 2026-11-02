@@ -407,15 +407,19 @@ class TestTheDropPatch(unittest.TestCase):
     def test_the_tables_the_conversion_never_read_keep_any_rows(self):
         """Electrical Load, Venue Fixture and Equipment were never copied into a model: even a
         schema-2 design's rows stay, with the table and the DocType; an empty one still goes."""
-        site = self._on(FakeSite({"Water Feature Equipment": _rows("WFD-NEW", 2), "Water Venue Fixture": []},
+        site = self._on(FakeSite({"Water Feature Equipment": _rows("WFD-NEW", 2) + _rows("WFD-GONE", 1),
+                                  "Water Venue Fixture": []},
                                  {"WFD-NEW": SCHEMA_2}, doctypes={"Water Feature Equipment", "Water Venue Fixture"}))
         plan = self.patch.plan("Water Feature Equipment")
-        self.assertEqual((plan["parents"], plan["keep_rows"], plan["drop_table"]), ({"WFD-NEW": "not copied"}, 2, False))
+        self.assertEqual((plan["parents"], plan["keep_rows"], plan["drop_table"]),
+                         ({"WFD-NEW": "not copied", "WFD-GONE": "orphan"}, 2, False))
         self.patch.execute()
-        self.assertEqual(len(site.tables["Water Feature Equipment"]), 2)
+        self.assertEqual([r["parent"] for r in site.tables["Water Feature Equipment"]], ["WFD-NEW"] * 2,
+                         "its orphan goes; a live design's rows stay")
         self.assertNotIn("Water Venue Fixture", site.tables)
         self.assertEqual(site.deleted_doctypes, ["Water Venue Fixture"])
         self.assertIn("never copied", site.errors[0][1])
+        self.assertIn("then delete those rows", site.errors[0][1])
 
     def test_a_failed_drop_keeps_the_doctype_and_the_rest_still_go(self):
         site = production()

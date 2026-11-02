@@ -41,8 +41,9 @@ Per DocType, the stored rows are grouped by parent and judged one design at a ti
 * **orphan**: the parent design no longer exists. Nothing can read them; they are deleted.
 * **unconverted**: the parent design's ``model_json`` is missing or still schema 1, or the parent
   is not a Water Feature Design at all. These rows are the only copy of that design: KEPT.
-* **not copied**: any row of Electrical Load, Venue Fixture or Equipment, whatever its parent.
-  KEPT: those three tables are dropped only when they are empty.
+* **not copied**: a row of Electrical Load, Venue Fixture or Equipment whose design still exists,
+  schema 2 or not. KEPT: the Error Log says to move what it holds into the design and delete it.
+  (Its orphans go, as anywhere: there is no design to move them into.)
 
 A table is dropped only once it is empty. Its DocType row, and any Custom Field or Property Setter
 on it, go only once the table is gone: a table that keeps rows keeps them too, and the Error Log
@@ -145,7 +146,10 @@ def plan(doctype):
 	counts = {}
 	for g in groups:
 		key = g.get("parent") or ""
-		verdict = NOT_COPIED if doctype in NOT_COPIED_TABLES else _verdict(g.get("parent"), g.get("parenttype"))
+		verdict = _verdict(g.get("parent"), g.get("parenttype"))
+		if doctype in NOT_COPIED_TABLES and verdict != ORPHAN:
+			# Never copied into a model: kept for every design that still exists, schema 2 or not.
+			verdict = NOT_COPIED
 		if out["parents"].get(key) not in KEPT:
 			out["parents"][key] = verdict
 		counts[key] = counts.get(key, 0) + int(g.get("n") or 0)
@@ -197,7 +201,7 @@ def retire(doctype):
 			if doctype in NOT_COPIED_TABLES:
 				why = (
 					"which the v1.768.0 conversion never copied into a model. Move what they hold into each "
-					"design by hand (they stay readable by SQL)"
+					"design by hand (they stay readable by SQL), then delete those rows"
 				)
 			else:
 				why = (

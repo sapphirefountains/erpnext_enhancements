@@ -136,8 +136,9 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
   - **Orphan**: the parent no longer exists. Its rows are deleted.
   - **Unconverted**: no model, a schema-1 model, or a parent that is not a Water Feature Design. Those
     rows are the only copy of that design, so they are **kept**.
-  - **Not copied**: any row of Electrical Load, Venue Fixture or Equipment, whatever its parent, is
-    **kept**. Those three tables are dropped only when they are empty.
+  - **Not copied**: a row of Electrical Load, Venue Fixture or Equipment whose design still exists,
+    schema 2 or not, is **kept**, and the Error Log says to move what it holds into the design, delete
+    it and run the patch again. Its orphans go, as in any table.
 
   It drops a table only once it is empty, and drops it itself, because nothing in frappe does. Frappe
   16.53.0's `delete_doc("DocType", ...)` clears the DocType, its DocFields and DocPerms but never the
@@ -183,7 +184,8 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
   - **Both patches, dry**, against an in-memory site shaped like production:
     - all nine tables and DocTypes go;
     - an unconverted design keeps its rows, its table and its DocType, and gets one Error Log;
-    - a row in Electrical Load, Venue Fixture or Equipment is kept even for a schema-2 design;
+    - a row in Electrical Load, Venue Fixture or Equipment is kept even for a schema-2 design, and an
+      orphan one goes;
     - a failed `DROP TABLE` or `delete_doc` is logged, the rest still go, and a re-run finishes;
     - the conversion reads a retired table with SQL once its DocType is gone;
     - a failing DocType does not stop the others, and nothing raises;
