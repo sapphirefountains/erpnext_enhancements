@@ -156,10 +156,13 @@ TONES = {
 }
 
 
-def cell(text: Any, *, num: bool = False, tone: str = "", href: str | None = None) -> dict:
-    """One table cell: finished text (a dash for nothing) and its inline style."""
+def cell(text: Any, *, num: bool = False, tone: str = "", href: str | None = None, cls: str = "") -> dict:
+    """One table cell: finished text (a dash for nothing) and its inline style. ``cls`` marks a cell that
+    quotes a source verbatim (``we-source``), which the print tests read apart from formatted numbers."""
     style = (ps.TD_RIGHT if num else ps.TD) + (";" + TONES[tone] if TONES.get(tone) else "")
     out = {"text": _text(text) or DASH, "style": style}
+    if cls:
+        out["cls"] = cls
     if href and re.match(r"^https?://[^\s\"'<>]+$", str(href)):
         out["href"] = str(href)
     return out
@@ -516,7 +519,7 @@ def sheet_audit(d: Design) -> list:
         for k, v in _d(r.get("inputs")).items():
             v = _d(v) if isinstance(v, dict) else {"value": v}
             inputs.append([cell(_label(k)), cell(_value_text(v.get("value"), v.get("unit") or ""), num=True),
-                           cell(v.get("source") or DASH, tone="muted"), cell(v.get("ref") or DASH, tone="muted")])
+                           cell(v.get("source") or DASH, tone="muted"), cell(v.get("ref") or DASH, tone="muted", cls="we-source")])
         groups.setdefault(_ladder_section(name), []).append({
             "kind": "calc",
             "title": _label(name) + (f" ({ref})" if ref else ""),

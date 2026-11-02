@@ -240,8 +240,10 @@ def _state_note(site: dict[str, Any] | None, entry: dict[str, Any] | None, fid: 
     state = juris.state_name(site, entry)
     if juris.iwf_regulated(entry):
         title = f"{state} regulates interactive features under its own rule" + (f" ({reg['iwf_rule']})" if reg.get("iwf_rule") else "")
-    else:
+    elif reg.get("iwf_regulated") is False:
         title = f"{state} does not regulate interactive features as pools"
+    else:  # null in the table: the research could not pin the rule down (its cite says why)
+        title = f"{state}'s rule for interactive features is not on file"
     return [Check("IWF_STATE_RULES", INFO, title,
                   detail=(str(reg.get("notes") or "") + " The Utah R392-302-41 lines below are shown as advice.").strip(),
                   remedy="Check the state's rule and the local health department before plan review.", section="site",

@@ -345,6 +345,17 @@ def test_a_state_with_its_own_rule_gets_warnings_cited_with_its_rule(states):
     assert secondary.citation.startswith("YY iwf cite; ") and "MAHC" in secondary.citation
 
 
+def test_a_rule_the_table_leaves_null_is_unknown_not_a_no(states, monkeypatch):
+    row = copy.deepcopy(ZZ)
+    row["regulation"].update(iwf_regulated=None, fogger_potable=None)
+    monkeypatch.setitem(jurisdictions.table(), "ZZ", row)
+    note = next(x for x in interactive.checks(plaza(), site={"jurisdiction": "ZZ"}) if x.code == "IWF_STATE_RULES")
+    assert note.title == "Testland's rule for interactive features is not on file"
+    f = {"id": "m", "inputs": {"nozzle_count": 20, "supply": "reservoir", "line_rating_psi": 2000}}
+    fog = next(x for x in mist.checks(f, site={"jurisdiction": "ZZ"}) if x.code == "MIST_NOT_POTABLE")
+    assert fog.severity == "warning" and "not on file" in fog.detail
+
+
 def test_no_jurisdiction_data_is_advice_with_a_note(states):
     for site in ({"jurisdiction": "XX"}, None):
         c = interactive.checks(plaza(), site=site)
@@ -461,6 +472,44 @@ def test_the_derive_on_an_unknown_state_has_no_utah_numbers(states):
     assert site.get("frost_depth_in") is None and site.get("elevation_ft") is None
     assert {i["code"] for i in out["issues"]} >= {"JURISDICTION_NO_DATA"}
     assert out["results"]["jurisdiction"]["value"]["known"] is False
+
+
+def test_the_table_carries_the_lower_48_and_utahs_codes_need_no_confirming(states):
+    """The researched table (v1.772.0): 48 states; Utah's editions are on file and statewide, so a Utah
+    design carries no JURISDICTION_CONFIRM_AHJ; its hardness is the SLC report's upper bound."""
+    real = [c for c in jurisdictions.codes() if c not in ("ZZ", "YY")]
+    assert len(real) == 48 and "UT" in real and "AK" not in real and "HI" not in real
+    j = juris.summary({"jurisdiction": "UT"})["value"]
+    assert j["editions"] == ["NEC 2023", "IBC 2024", "IRC 2021", "ISPSC 2024"]
+    assert j["confirm_ahj"] is False and j["ahj_note"] is None
+    out = derive.derive_model(kits.apply_kit("plaza-interactive-12-jets"))
+    codes = {i["code"] for i in out["issues"]}
+    assert "JURISDICTION_CONFIRM_AHJ" not in codes and "JURISDICTION_NO_DATA" not in codes
+    assert out["model"]["site"]["hardness_ppm"] == 212
+    assert "upper bound" in out["results"]["site_lookups"]["inputs"]["hardness_ppm"]["ref"]
+
+
+@pytest.mark.parametrize("code", ["AZ", "CA", "FL", "LA", "NV", "SC"])
+def test_the_six_no_winterize_states(code):
+    site, _ = derive.derive_site({"jurisdiction": code}, {})
+    assert site["winterize"] is False
+
+
+@pytest.mark.parametrize("code", ["CA", "FL", "GA", "NV", "OR", "UT"])
+def test_the_six_utah_like_states_run_the_checklist_as_blockers(code):
+    assert juris.iwf_like_utah(jurisdictions.get(code))
+    assert codes_of(interactive.checks(plaza(), site={"jurisdiction": code}))["IWF_INLETS"] == "blocker"
+
+
+def test_every_state_derives_without_a_failed_stage():
+    for code in jurisdictions.codes():
+        model = kits.apply_kit("plaza-interactive-12-jets")
+        model["site"]["jurisdiction"] = code
+        out = derive.derive_model(model)
+        failed = [i["title"] for i in out["issues"] if i["code"] == "ENGINE_STAGE_FAILED"]
+        assert not failed, (code, failed)
+        assert out["results"]["jurisdiction"]["value"]["known"], code
+        json.dumps(out, allow_nan=False)
 
 
 def test_utah_still_derives_as_before(states):

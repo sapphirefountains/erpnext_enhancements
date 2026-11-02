@@ -62,7 +62,7 @@ BLOCK_MACRO = (
     "{%- for r in t.rows -%}"
     '{%- if r.group %}<tr><td colspan="{{ r.span }}" style="{{ r.style }}">{{ r.group|e }}</td></tr>'
     "{%- else %}<tr>{% for c in r.cells %}"
-    '<td style="{{ c.style }}">{% if c.href %}<a href="{{ c.href|e }}">{{ c.text|e }}</a>{% else %}{{ c.text|e }}{% endif %}</td>'
+    '<td{% if c.cls %} class="{{ c.cls|e }}"{% endif %} style="{{ c.style }}">{% if c.href %}<a href="{{ c.href|e }}">{{ c.text|e }}</a>{% else %}{{ c.text|e }}{% endif %}</td>'
     "{% endfor %}</tr>{% endif -%}"
     "{%- endfor -%}</tbody>"
     '{%- if t.foot %}<tfoot>{% for r in t.foot %}<tr>{% for c in r %}<td style="{{ c.style }}">{{ c.text|e }}</td>'
@@ -98,7 +98,7 @@ BLOCK_MACRO = (
     '<span class="we-working" style="' + _MONO + '">{{ b.formula|e }}</span></div>{% endif -%}'
     "{{ we_table(b.inputs) }}"
     '{%- if b.steps %}<pre class="we-working" style="margin:2px 0;white-space:pre-wrap;' + _MONO + '">{{ b.steps|join("\\n")|e }}</pre>{% endif -%}'
-    '{%- if b.citations %}<div style="' + _NOTE + '">Source: {{ b.citations|join("; ")|e }}</div>{% endif -%}'
+    '{%- if b.citations %}<div class="we-source" style="' + _NOTE + '">Source: {{ b.citations|join("; ")|e }}</div>{% endif -%}'
     '{%- if b.warnings %}<div style="' + ps.FAIL + ';font-size:11px">{{ b.warnings|join(" ")|e }}</div>{% endif -%}'
     "</div>"
     "{%- elif b.kind == 'note' -%}"

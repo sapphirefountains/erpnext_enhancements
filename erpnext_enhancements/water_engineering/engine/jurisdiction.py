@@ -277,6 +277,14 @@ def _cites(entry: dict | None) -> list[str]:
     return seen
 
 
+def governing_codes(site: dict | None) -> tuple:
+    """The codes that govern the design: the NEC and the IBC always, the ISPSC for a pool, spa or
+    interactive venue. The IRC (one- and two-family dwellings) governs none of Sapphire's venues, so it is
+    shown but never asked about."""
+    venue = str(_d(site).get("venue_type") or "").lower()
+    return ("nec", "ibc", "ispsc") if any(w in venue for w in ("pool", "spa", "interactive")) else ("nec", "ibc")
+
+
 def summary(site: dict | None) -> dict:
     """The ``jurisdiction`` CalcResult the derive returns and the prints read: the code editions, the
     agency, the regulated venues, plan review and licensing, with every cite and the AHJ lines."""
@@ -293,7 +301,8 @@ def summary(site: dict | None) -> dict:
     reg = regulation(entry)
     codes = {k: code_line(entry, k) for k in (*CODES, "mahc")}
     editions = [e for e in (edition(entry, k) for k in CODES) if e]
-    note = ahj_note(s, entry)
+    governing = governing_codes(s)
+    note = ahj_note(s, entry, governing)
     venues = regulated_venues(entry)
     plan = reg.get("plan_review")
     lic = licensing_sentence(entry)
@@ -317,7 +326,7 @@ def summary(site: dict | None) -> dict:
             "agency": reg.get("agency") or None, "regulated_venues": venues, "plan_review": plan or None,
             "pool_rule": reg.get("pool_rule") or None, "iwf_rule": reg.get("iwf_rule") if iwf_regulated(entry) else None,
             "iwf_like_utah": iwf_like_utah(entry), "licensing": lic, "confirm_ahj": bool(note), "ahj_note": note,
-            "ahj_local": any(str(code(entry, k).get("basis") or "").lower() in AHJ_BASES for k in CODES),
+            "ahj_local": any(str(code(entry, k).get("basis") or "").lower() in AHJ_BASES for k in governing),
             "notes": reg.get("notes") or None, "design_city": climate(entry).get("design_city") or None,
         },
         "unit": "",

@@ -7,7 +7,7 @@ import { card, field, stage_head } from "../ui.js";
 
 export const key = "site";
 
-const SDC = ["A", "B", "C", "D", "E", "F"];
+const SDC = ["A", "B", "C", "D", "D0", "D1", "D2", "E", "F"];
 
 const LOOKED_UP = [
 	{ key: "elevation_ft", label: "Elevation", unit: "ft", kind: "number" },

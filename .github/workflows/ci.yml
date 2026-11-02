@@ -2570,7 +2570,11 @@ jobs:
       # `python -m unittest` would collect none of them. test_water_house_rules puts its frappe
       # stub in sys.modules only for the length of each test (monkeypatch), so it shares the step.
       # Phase J (v1.772.0) adds test_jurisdictions: the per-state table, the rules keyed on it and
-      # workforce.sites.elevation_at, its frappe and requests stubs monkeypatched the same way.
+      # workforce.sites.elevation_at, its frappe and requests stubs monkeypatched the same way, and
+      # holds the package copy of the table equal to docs/fountain-designer/catalog/jurisdictions.json,
+      # which the validator step checks (keys, types, a cite beside every value, the 48 states).
+      - name: Fountain Designer jurisdiction table (the research's validator)
+        run: python docs/fountain-designer/catalog/jurisdictions-validate.py
       - name: Fountain Designer families, model and house rules (bench-free pytest suite)
         run: >-
           python -m pytest -q

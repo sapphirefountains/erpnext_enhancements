@@ -80,7 +80,8 @@ CLIMATE_LABELS = {"elevation_ft": "elevation", "air_temp_f": "design air tempera
 SITE_UNITS = {"lat": "deg", "lng": "deg", "elevation_ft": "ft", "air_temp_f": "F", "water_temp_f": "F", "frost_depth_in": "in",
               "hardness_ppm": "ppm", "kwh_rate": "$/kWh", "water_rate_per_ccf": "$/ccf", "seismic_sdc": "", "sds": "g",
               "sd1": "g", "winterize": ""}
-SDC_VALUES = ("A", "B", "C", "D", "E", "F")
+# ASCE 7 categories, and the IRC's D0 to D2 the table's schema allows (catalog/jurisdictions-validate.py).
+SDC_VALUES = ("A", "B", "C", "D", "D0", "D1", "D2", "E", "F")
 CIT_HOUSE_RATES = "Water Engineering Settings house rules"
 # The house-rule utility rates are sourced for Salt Lake City (``engine/rules.py``: SLC water, Rocky
 # Mountain Power), so a site in another state is told to type its own.

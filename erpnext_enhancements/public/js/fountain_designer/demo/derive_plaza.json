@@ -238,28 +238,33 @@
     "name": "Utah",
     "known": true,
     "codes": {
-     "nec": "NEC: edition not on file",
-     "ibc": "IBC: edition not on file",
-     "irc": "IRC: edition not on file",
-     "ispsc": "ISPSC: edition not on file",
-     "mahc": "MAHC: edition not on file"
+     "nec": "NEC 2023 (statewide, effective 2025-07-01)",
+     "ibc": "IBC 2024 (statewide)",
+     "irc": "IRC 2021 (statewide)",
+     "ispsc": "ISPSC 2024 (statewide)",
+     "mahc": "MAHC not adopted"
     },
-    "editions": [],
-    "agency": "Utah Department of Health and Human Services, enforced by the local health departments",
+    "editions": [
+     "NEC 2023",
+     "IBC 2024",
+     "IRC 2021",
+     "ISPSC 2024"
+    ],
+    "agency": "Utah Department of Health and Human Services (plan review and operating permits delegated to local health departments)",
     "regulated_venues": [
      "public pools",
      "spas",
      "interactive water features"
     ],
     "plan_review": "required",
-    "pool_rule": "Utah Admin. Code R392-302",
+    "pool_rule": "Utah Admin. Code R392-302 (Design, Construction and Operation of Public Pools)",
     "iwf_rule": "R392-302-41",
     "iwf_like_utah": true,
-    "licensing": null,
-    "confirm_ahj": true,
-    "ahj_note": "Confirm the NEC, IBC, IRC and ISPSC editions with the authority having jurisdiction: Utah adopts them locally, not at all, or the table has no edition.",
+    "licensing": "Contractor: Utah DOPL S330 Landscape and Recreation Contractor covers \"swimming pools, prefabricated pools, spas, decorative pools, tanks, fountains\" (excludes electrical work, which an S330 may subcontract to an E200/E201 contractor). Electrical: DOPL licenses electrical contractors (E200 general, E201 residential) and electricians in five classes (apprentice, journeyman, master, residential journeyman, residential master) under Utah Code Title 58, Chapter 55. Permits: Building and electrical permits are issued by the local building department (Salt Lake City Building Services, 451 South State Street, Room 215, for SLC projects); public pools, spas and interactive water features also need local health department plan review before construction (Salt Lake County Health Department in SLC) and an operating permit from that department.",
+    "confirm_ahj": false,
+    "ahj_note": null,
     "ahj_local": false,
-    "notes": null,
+    "notes": "Utah is the reference row: R392-302-41 requires filtering the whole IWF volume within 30 minutes ((9)(a)(i)), a collector tank holding at least 3 minutes of combined feature + filter flow ((9)(g)), an approved secondary disinfection system per R392-302-35(8) ((6)(b); UV listed in 35(7)(b), 99.9% Cryptosporidium inactivation), and an automated ORP and pH controller operating whenever open ((6)(a)). IWFs must also meet the Title 15A State Construction Code ((2)).",
     "design_city": "Salt Lake City"
    },
    "unit": "",
@@ -273,30 +278,35 @@
    },
    "formula": "the state's row of the jurisdiction table (engine/data/jurisdictions.json)",
    "steps": [
-    "NEC: edition not on file",
-    "IBC: edition not on file",
-    "IRC: edition not on file",
-    "ISPSC: edition not on file",
-    "MAHC: edition not on file",
-    "Health authority: Utah Department of Health and Human Services, enforced by the local health departments",
+    "NEC 2023 (statewide, effective 2025-07-01)",
+    "IBC 2024 (statewide)",
+    "IRC 2021 (statewide)",
+    "ISPSC 2024 (statewide)",
+    "MAHC not adopted",
+    "Health authority: Utah Department of Health and Human Services (plan review and operating permits delegated to local health departments)",
     "Regulated: public pools, spas, interactive water features",
     "Interactive features: R392-302-41 (Utah's R392-302-41 checklist applies as written)",
-    "Health-department plan review: required"
+    "Health-department plan review: required",
+    "Contractor: Utah DOPL S330 Landscape and Recreation Contractor covers \"swimming pools, prefabricated pools, spas, decorative pools, tanks, fountains\" (excludes electrical work, which an S330 may subcontract to an E200/E201 contractor). Electrical: DOPL licenses electrical contractors (E200 general, E201 residential) and electricians in five classes (apprentice, journeyman, master, residential journeyman, residential master) under Utah Code Title 58, Chapter 55. Permits: Building and electrical permits are issued by the local building department (Salt Lake City Building Services, 451 South State Street, Room 215, for SLC projects); public pools, spas and interactive water features also need local health department plan review before construction (Salt Lake County Health Department in SLC) and an operating permit from that department."
    ],
    "citations": [
-    "Utah Code Title 15A, State Construction and Fire Codes Act: the NEC is adopted statewide through the State Construction Code; the edition in force is an open item (docs/fountain-designer/PLAN.md section 6)",
-    "Utah Code Title 15A, State Construction and Fire Codes Act: the IBC is adopted statewide; edition to confirm",
-    "Utah Code Title 15A, State Construction and Fire Codes Act: the IRC is adopted statewide; edition to confirm",
-    "DOC-0119 / Utah R392-302-1 (public pools and spas)",
-    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41",
-    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41 (foggers fed with potable water)",
-    "Utah Admin. Code R392-302 (plans approved by the local health department before a public pool, spa or interactive feature is built)"
+    "https://le.utah.gov/xcode/Title15A/Chapter2/C15A-2-S103_2025070120250507.html — Utah Code 15A-2-103(1)(g): \"the 2023 edition of the National Electrical Code\" (version effective 7/1/2025; unchanged in the 7/1/2026 version) (read 2026-11-01) ; https://le.utah.gov/Session/2025/bills/enrolled/HB0313.pdf — H.B. 313 (2025) changes \"[2020] 2023 edition\" of the NEC, \"takes effect on July 1, 2025\" (read 2026-11-01) ; https://www.slc.gov/buildingservices/wp-content/uploads/sites/9/2026/07/SLC-Design-Criteria-2024-IBC_IRC.pdf — SLC Building Services enforces \"2023 National Electric Code\" (read 2026-11-01)",
+    "https://le.utah.gov/xcode/Title15A/Chapter2/C15A-2-S103_2026050620260701.html — Utah Code 15A-2-103(1)(a), version effective 7/1/2026: \"the 2024 edition of the International Building Code, including Appendices C and J\" (previously 2021, effective until 6/30/2026); enacted by H.B. 65 (2026), https://le.utah.gov/Session/2026/bills/enrolled/HB0065.pdf — \"this bill takes effect July 1, 2026\" (read 2026-11-01)",
+    "https://le.utah.gov/xcode/Title15A/Chapter2/C15A-2-S103_2026050620260701.html — Utah Code 15A-2-103(1)(b): \"the 2021 edition of the International Residential Code\" (IRC stays 2021 in the 7/1/2026 version) (read 2026-11-01)",
+    "https://le.utah.gov/xcode/Title15A/Chapter2/C15A-2-S103_2026050620260701.html — 15A-2-103(1)(n), effective 7/1/2026: \"the residential provisions of the 2024 edition of the International Swimming Pool and Spa Code\" (was 2021 until 6/30/2026; only the residential provisions are adopted, so public/commercial pools fall under health-department rule R392-302 instead) (read 2026-11-01)",
+    "https://www.law.cornell.edu/regulations/utah/health/title-R392/rule-R392-302 — R392-302 section index (R392-302-1 to -43) and the definitions/authority sections read for this research show no Model Aquatic Health Code reference or adoption; searches found no Utah MAHC adoption statement (read 2026-11-01). Absence of evidence, not a positive statement by the state.",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-1 — rule \"establishes minimum standards for the sanitation, design, construction, operation, and maintenance of public pools\"; authority 26B-1-202, 26B-7-113, 26B-7-402 (read 2026-11-01)",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41 — Special Purpose Pools: Interactive Water Features; defined in R392-302-3 as \"a public-use indoor or outdoor installation such as a splash pad, spray pad, wet deck\" (https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-3) (read 2026-11-01)",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41 — subsection (5)(g): foggers/misters must be \"supplied directly from a potable water source and not from the underground reservoir\" (read 2026-11-01)",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-5 — manager submits plans to the local health department; construction \"does not begin until\" the health officer's written review (within 30 days) is done; plans stamped by licensed engineer or architect (read 2026-11-01) ; https://slco.org/health/water-quality/swimming-pools — Salt Lake County Health Dept requires a Pool Plan Review Application and fee before building a public pool, spa or water feature (read 2026-11-01)",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R156-55a-301 — S330 Landscape and Recreation: swimming pools, spas, decorative pools, fountains; \"Excludes any electrical work\" (read 2026-11-01)",
+    "https://commerce.utah.gov/dopl/electrical/apply-for-a-license/ — DOPL electrical license classes (apprentice, journeyman, master, residential journeyman, residential master) (read 2026-11-01)",
+    "https://www.slc.gov/buildingservices/wp-content/uploads/sites/9/2026/07/SLC-Design-Criteria-2024-IBC_IRC.pdf — SLC Building Services, Permits, 451 South State Street Room 215 (read 2026-11-01)",
+    "https://slco.org/health/water-quality/swimming-pools — Salt Lake County Health Dept permits and plan-reviews public pools, spas and splash pads (read 2026-11-01)"
    ],
-   "warnings": [
-    "Confirm the NEC, IBC, IRC and ISPSC editions with the authority having jurisdiction: Utah adopts them locally, not at all, or the table has no edition."
-   ],
+   "warnings": [],
    "options": [],
-   "status": "Confirm with the AHJ"
+   "status": "Okay"
   }
  },
  "values": {

@@ -146,8 +146,9 @@ def visible_text(page):
 
 
 def formatted_text(page):
-    """The visible text minus the engine's own formulas and working, which the audit prints verbatim."""
-    page = re.sub(r'<(span|pre) class="we-working".*?</\1>', " ", page, flags=re.S)
+    """The visible text minus the engine's own formulas and working, and the sources it quotes, which the
+    audit prints verbatim (a jurisdiction cite quotes coordinates as its source gives them, phase J)."""
+    page = re.sub(r'<(span|pre|div|td) class="we-(?:working|source)".*?</\1>', " ", page, flags=re.S)
     return visible_text(page)
 
 
@@ -168,8 +169,9 @@ def test_every_format_renders_clean_on_every_design(spf, name, print_format):
     assert title in text, "the title prints its ampersand once"
     assert not re.search(r"<tbody>\s*</tbody>", page), "a table with no rows"
     assert not re.search(r"\b(None|nan|inf|NaN|Infinity|undefined|Undefined)\b", text)
-    # Every number on paper is formatted: no float repr, no exponent.
-    numbers = formatted_text(page)
+    # Every number on paper is formatted: no float repr, no exponent. A citation's URL is not a number on
+    # paper: the jurisdiction table cites USGS queries such as "...asce7-16.json?latitude=40.776928" (phase J).
+    numbers = re.sub(r"https?://\S+", " ", formatted_text(page))
     assert not re.search(r"\d\.\d{5,}", numbers), re.findall(r".{30}\d\.\d{5,}.{10}", numbers)[:3]
     assert not re.search(r"\d(e|E)[+-]\d", numbers)
     ids = re.findall(r'\bid="([^"]+)"', page)

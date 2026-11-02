@@ -97,9 +97,12 @@ def checks(feature: Any, derived: dict[str, Any] | None = None, site: dict[str, 
         state = juris.state_name(site, entry)
         out.append(Check(
             "MIST_NOT_POTABLE", BLOCKER if required else WARNING, "Mist is fed from the reservoir, not potable water",
-            detail=("Fog drifts onto people; " + (f"{state} requires a potable supply." if required else
-                    (f"{state}'s rules on file do not require one, but a potable supply is the safe practice."
-                     if entry else "there is no jurisdiction data, so confirm the rule with the health department."))),
+            detail=("Fog drifts onto people; " + (
+                f"{state} requires a potable supply." if required else
+                f"{state}'s rules on file do not require one, but a potable supply is the safe practice."
+                if juris.regulation(entry).get("fogger_potable") is False else
+                f"{state}'s rule on fog water is not on file, so confirm it with the health department."
+                if entry else "there is no jurisdiction data, so confirm the rule with the health department.")),
             remedy="Feed the mist pump from the potable supply through a backflow preventer.",
             citation=str(juris.regulation(entry).get("fogger_cite") or "") if required else CIT_POTABLE,
             section="treatment", feature=fid,
