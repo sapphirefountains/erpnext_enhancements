@@ -13,8 +13,8 @@ ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK
 phase G: **every paper a design produces now reads the schema-2 record.** Since v1.768.0 the print
 formats and the submittal packet read the nine retired child tables and printed empty tables. They are
 rebuilt on what the derive stores, and the Fountain Designer's Outputs step links to each of them.
-v1.769.0 is #1400 (the duty-point chart); this release does not need it, and prints the duty point as
-soon as it lands.
+It builds on v1.769.0 (#1400): the duty-point chart prints on the Design Drawings sheet, and every
+stored drawing has been through `drawings.page_svg`.
 
 ### Added
 - **`water_engineering/prints.py`, the print context.** `build(doc, model, stored, bom)` turns a record
@@ -92,7 +92,7 @@ soon as it lands.
   - `electrical` gains `circuits`, `feeder`, `service`, `edition`, `verify`, `inputs`, `low_voltage`
     and `transformers`;
   - `controls` gains `bom`, `panel`, `controller`, `pumps`, `relays`, `dc_supply`, and the power
-    schematic and control ladder SVGs (page-safe when #1400's `page_svg` is in);
+    schematic and control ladder SVGs, through `page_svg` like the other charts;
   - `paper` is new: the O&M detail, the maintenance schedule, the winterization checklist with drain
     points and the plain-text block, the plan-check lines (passes included: the issues list drops
     them) and the budget rules.
@@ -122,6 +122,83 @@ soon as it lands.
 - The Desk print view, the Chrome PDF (`generate_packet`), the Drive upload, and the seeding itself on
   `bench migrate`.
 - The Item lookup for model numbers and cut sheets (`custom_model_no`, `custom_spec_source_url`).
+
+## [1.769.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03026. This is
+phase E, part 2, stacked on part 1 (1.768.0). **The Fountain Designer's verdict panel gets its
+charts from the server:** the pump duty point, the circulation schematic and the electrical one-line.
+
+### Added
+- **`engine/drawings.py`, `pump_duty_svg(state)`, the duty-point chart.** It draws:
+  - the pump curve, plus a curve for each reduced VFD speed by the affinity laws (Q x s, H x s²);
+  - the system curve;
+  - the duty point;
+  - the BEP window, shaded;
+  - a dashed marker at the design flow;
+  - an NPSH margin caption.
+
+  It is drawn the way the page's contract asks (`public/js/fountain_designer/README.md`, "Charts"):
+  - in `currentColor`, with a `viewBox` and no fixed size;
+  - with the classes the page colors (`fd-curve-pump`, `fd-curve-system`, `fd-point`, `fd-bep`);
+  - using only the elements and attributes on `chart.js`'s allow-list.
+
+  It never raises: NaN, infinities, junk and a missing curve read as absent, and with nothing to draw
+  it says "No duty point yet". `derive.py` feeds it the first running pump's curve and operating
+  point from phase B's network solve, a system curve through that point, the BEP window from the
+  house rules (70-120%), and phase B's NPSH figures.
+- **`page_svg(svg)` makes the existing drawings page-safe.** It adapts the print drawings (the
+  circulation schematic, and phase L's one-line, power schematic and ladder) for the page:
+  - it drops the root `style`, `width` and `height`, the white background, and every attribute off
+    the allow-list (`markerUnits`);
+  - it maps the fixed ink colors to `currentColor`, so they read in dark mode too.
+
+  The print functions' own output is unchanged; the packet and the print formats use it as before.
+  - **Why it is needed.** `chart.js` without a DOM parser refuses a drawing outright for one
+    disallowed attribute, and the raw print drawings carry a root `style`.
+  - **What it loses.** The ladder's green and red pilot lamps become a neutral tint on the page;
+    their labels still say which is which.
+
+### Fixed (from the independent review of #1400)
+- **The page's form styles no longer restyle chart text.** The global `.fd-label` rule set every
+  label in the chart to the form label's bold 13 px. Any CSS `font-size` or `font-weight` outranks
+  the SVG attribute it would have to restore, so an override scoped to `.fd-chart` cannot fix it.
+  Instead the form rules are written `.fd-label:not(text)` and `.fd-grid:not(line)`, so they never
+  match inside a drawing. The page README's "Charts" paragraph says so.
+- **Zero flow is no duty point.** When the solve found no operating point (a starved or dead-headed
+  pump), the chart drew a dot on the head axis that read as a valid duty point. It now draws the
+  curves and says "No duty point yet".
+- **Labels no longer overlap:**
+  - "BEP" sits on the side of its window away from the design-flow line.
+  - "Design N gpm" moves to the top of the plot, clear of the reduced-speed tails.
+  - The duty label sits level with the point, where the pump and system curves open apart.
+  - Legend widths are sized for 13 px bold.
+  - Pumps that do not fit are folded into a "+N more" entry instead of being dropped silently.
+- **Characters XML forbids are dropped** in `_esc` and `_label`. One of them in a pump or title made
+  the whole SVG not well-formed, and the page refused it.
+- **`page_svg` gives each drawing's ids a suffix of its own.** Every print drawing defines
+  `<marker id="arrow">`, and with two on one page `url(#arrow)` resolved to the first, even in a
+  hidden tab or the other theme.
+
+### Changed
+- `public/js/fountain_designer/README.md`, "After phase E", now says:
+  - the page's default path calls the real API, and `?demo=1` stays the training demo;
+  - where each chart is drawn;
+  - the families' table inputs (cascade tiers, interactive play features and sequence) are not
+    editable on the page yet, because `ui.js` has no table field. The kits carry them.
+
+### Tests
+- `tests/test_drawings_duty_chart.py` (37) holds the drawings to a Python port of `chart.js`'s
+  `filtered()`. The port reads `ELEMENTS` and `ATTRIBUTES` out of `chart.js` at test time, so it
+  follows the page. The suite covers:
+  - a realistic chart, the affinity curves, and the duty point's position on the scale;
+  - empty and junk states;
+  - escaping;
+  - all four print drawings after `page_svg`.
+
+  When node is present, it also runs `chart.js`'s real `safe_svg`.
+- `tests/test_designer_derive.py` checks that every chart in a real reply passes the allow-list, here
+  and through the page's `chart.safe_svg` under node. The suite joins the Fountain Designer CI step.
 
 ## [1.768.0] - 2026-11-01
 

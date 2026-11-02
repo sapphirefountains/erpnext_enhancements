@@ -2568,16 +2568,18 @@ jobs:
       # Fountain Designer phase E (v1.768.0): water_engineering/derive.py runs the whole ladder end to
       # end with the real engine (phases A, B, C, L, S) on phase F's three demo designs and every kit,
       # and its reply is held to the page's contract (public/js/fountain_designer/README.md) key for
-      # key, then pushed through the page's own merge and verdict panel under node.
+      # key, then pushed through the page's own merge, verdict panel and chart allow-list under node.
       # test_designer_api checks api/designer.py (boot against the demo fixture, GET vs POST, save,
       # sign-off, the Quotation and Material Request pushes) with its own frappe stub, installed and
-      # removed per test (monkeypatch), so the suites share one process. Plain pytest functions: their
-      # own step.
-      - name: Fountain Designer derive and API (bench-free pytest suites)
+      # removed per test (monkeypatch), so the suites share one process. test_drawings_duty_chart
+      # (v1.769.0) holds the duty-point SVG and the page-safe drawings to chart.js's allow-list. Plain
+      # pytest functions: their own step.
+      - name: Fountain Designer derive, API and charts (bench-free pytest suites)
         run: >-
           python -m pytest -q
           erpnext_enhancements/tests/test_designer_derive.py
           erpnext_enhancements/tests/test_designer_api.py
+          erpnext_enhancements/tests/test_drawings_duty_chart.py
       # Fountain Designer phase G (v1.770.0): every Water Feature Design print format and the submittal
       # packet rendered under real Jinja2, set up as frappe sets it up (no autoescape, DebugUndefined,
       # which PRINTS a missing name with its braces), over the three demo designs and a regulated spa run

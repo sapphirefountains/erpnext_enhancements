@@ -118,7 +118,7 @@ paper recomputes the engine, and the nine retired child tables are not read anyw
 | Water Feature Design - Electrical Schedule | `electrical` | Service and feeder, panel schedule, circuit list (breaker basis, GFCI device), energy per year (phase L) |
 | Water Feature Design - Controls BOM | `controls` | Control panel, motor control per pump, controls BOM with part numbers, draft Theory of Operation |
 | Water Feature Design - Structural Takeoff | `structural` | Quantities (concrete, rebar, gravel, earthwork, formwork, waterproofing, anchors) and the rebar schedule (phase S) |
-| Water Feature Design - Design Drawings | `drawings` | Duty point (when #1400's chart is in), circulation schematic, electrical one-line, power schematic, control ladder |
+| Water Feature Design - Design Drawings | `drawings` | Duty point (`drawings.pump_duty_svg`), circulation schematic, electrical one-line, power schematic, control ladder |
 | Water Feature Design - Design Calculations | `calcs` | The plan-check sheet: venue and vessel (the Fika spa path reads the vessel from `model.legacy`), basins, design basis (code minimum circulation, turnover, filter area, chlorinator), circulation system, the Utah R392-302-41 checklist and the NEC 680 checklist, each line with its status |
 | Water Feature Design - Operations and Maintenance | `om` | Cost per year (power, water, chemicals, parts), where the water goes (evaporation, spray, drain and refill, backwash not yet modeled), the water plan (refresh interval, cycles, Legionella band, doses), maintenance schedule |
 | Water Feature Design - Winterization | `winterization` | Frost depth, equipment, drain points; the winterize and spring start-up checklists; first start-up checks; the checklist as text for a Maintenance Visit |
