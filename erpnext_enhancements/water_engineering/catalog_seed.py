@@ -36,10 +36,27 @@ What it is careful about:
 * **Only approved rows, and never on migrate.** A row whose key is not in ``approved.json`` is
   reported and skipped. Nothing here is wired to ``after_migrate``: the catalog reaches a site
   when a person runs this, not when a deploy happens.
-* **Idempotent, keyed on manufacturer + model.** The Item is found by the approval's
-  ``item_code``, else by ``brand`` + ``custom_model_no``, else created. A Pump Curve is found by
-  Item + curve label, a Nozzle Profile by manufacturer + model. A second run with the same files
-  changes nothing and reports every row ``unchanged``.
+* **The Item code is the manufacturer's part number** (Nikolas, 2026-11-02; :func:`item_code_for`):
+  the row's ``part_no`` without its trailing note (``340030 (EQ500 1-ph)`` -> ``340030``), else,
+  when there is none, it names a range, or another row holds it too, the model as written
+  (``NBS 015-090``). An ``approved.json`` ``item_code`` always wins. Codes are judged across all
+  three files at once (:func:`assign_codes`) and compared as the Item naming guard compares them;
+  a collision, with another row or with an Item already on the site, refuses the row with the
+  reason. Nothing is ever suffixed to make a code unique. The summary's ``codes`` shows each
+  row's code. Items loaded before this rule are renamed by :func:`rename_catalog_items`.
+* **Merges.** Sometimes ``approved.json`` points a row at an Item Sapphire already had, while the
+  loader's own Item for that row is still on the site. :func:`rename_catalog_items` then merges
+  them instead of renaming:
+  - it writes the catalog's own values for the row (never the old Item's) onto the existing Item;
+  - it moves the curves there;
+  - it deletes the loader's Item, and refuses to if anything else links to it;
+  - until that has run, a load refuses the row.
+  This is the one place anything here deletes an Item.
+* **Idempotent, keyed on the catalog row id.** The Item is found by the approval's
+  ``item_code``, else by the ``custom_catalog_id`` the loader stamped on it (so a renamed Item is
+  found under its new name), else by ``brand`` + ``custom_model_no``, else created. A Pump Curve
+  is found by Item + curve label, a Nozzle Profile by catalog id, else manufacturer + model. A
+  second run with the same files changes nothing and reports every row ``unchanged``.
 * **It writes specs and provenance, never a person's curation.** On an Item that already exists
   it sets the spec and provenance fields only; the name, group, description, brand and stock
   settings are filled when blank and otherwise left alone. It never deletes a curve, a profile
@@ -63,11 +80,13 @@ What it is careful about:
 
 import json
 import re
+import time
 from pathlib import Path
 
 import frappe
 from frappe import _
 
+from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming_rules
 from erpnext_enhancements.water_engineering import catalog_reader
 from erpnext_enhancements.water_engineering.doctype.nozzle_profile.nozzle_profile import (
 	check_performance_points,
@@ -79,6 +98,10 @@ CATALOG_DIR = Path(__file__).resolve().parents[2] / "docs" / "fountain-designer"
 FILES = {"pumps": "pumps.json", "nozzles": "nozzles.json", "lights": "lights.json"}
 APPROVAL_FILE = "approved.json"
 KW_PER_HP = 0.745699872
+#: ``Item.item_code`` is a Data field: Frappe's 140 characters.
+ITEM_CODE_LENGTH = 140
+#: Words that make a ``part_no`` a range of part numbers rather than one (:func:`part_number`).
+RANGE_WORDS = re.compile(r"\.\.\.|\u2026|\bto\b|x{3}", re.IGNORECASE)
 
 #: Item Groups the new Items go in: (group, parent group). "Pumps" already exists on prod.
 GROUPS = {
@@ -334,11 +357,124 @@ def _item_provenance(prov):
 	}
 
 
-def _item_plan(kind, manufacturer, model, approval, name_word, specs, description, prov):
-	"""The Item half of a plan: fields always written, and fields filled only when blank."""
-	code = approval.get("item_code") or f"{name_word}-{_slug(manufacturer)}-{_slug(model)}"
+def part_number(value):
+	"""The one manufacturer part number a row's ``part_no`` names, or None when it names no single part.
+
+	The first entry of a list (``["340030 (EQ500 1-ph)", "340031 ..."]``), with every trailing
+	parenthetical note removed and whitespace trimmed, and the first of a slash-separated set of
+	alternatives (``"F2462038 / F2462051 (ball joint)"``, ``"IWC15W100 / IWC15W200"``). A range is
+	not a part: ``"7.3JF100 to 7.3JF400 (cord length variants)"``, ``"LED3125050 ... LED3125400"``,
+	``"601000-601004"`` (two equal-length numbers, the second larger).
+	"""
+	if isinstance(value, (list, tuple)):
+		value = value[0] if value else None
+	text = " ".join(str(value if value is not None else "").split())
+	while True:
+		trimmed = re.sub(r"\s*\([^()]*\)$", "", text)
+		if trimmed == text:
+			break
+		text = trimmed
+	text = text.split(" / ")[0].strip()
+	if not text or RANGE_WORDS.search(text):
+		return None
+	numbers = re.fullmatch(r"(\d+)-(\d+)", text)
+	if numbers and len(numbers.group(1)) == len(numbers.group(2)) and int(numbers.group(2)) > int(numbers.group(1)):
+		return None
+	return text
+
+
+def model_code(model):
+	"""A model designation as an Item code: as written, whitespace collapsed, commas dropped.
+
+	The comma goes because the Item naming rules ask for exactly that of a code (SOP §6, "strip the
+	comma only, keep every other character"): ``3656LH 2x2-5 (also 3756LH), 3450 rpm, trim A 4"``.
+	"""
+	return " ".join(str(model or "").replace(",", " ").split())
+
+
+def item_code_for(row, approval=None, shared=()):
+	"""``(code, basis)`` for one row: the rule every catalog Item code follows (Nikolas, 2026-11-02).
+
+	* an ``approved.json`` entry's ``item_code`` always wins (that is how a row is attached to a
+	  Sapphire Item that already exists);
+	* else the manufacturer's part number (:func:`part_number`);
+	* else, when the row has none, names a range, or shares it with another row, the model
+	  designation (:func:`model_code`). ``shared`` is ``{normalized part number: [part numbers]}``
+	  for the part numbers more than one row holds, compared as the Item naming guard compares
+	  codes: ``SHPF.50`` (a 0.5 HP pump) and ``SHPF5.0`` (a 5 HP one) are one code to the guard, so
+	  neither row may have it.
+
+	No suffix is ever added to make a code unique: :func:`assign_codes` refuses a collision instead.
+	"""
+	if (approval or {}).get("item_code"):
+		return str(approval["item_code"]).strip(), "approved.json item_code"
+	part = part_number(row.get("part_no"))
+	model = model_code(row.get("model"))
+	holders = (shared or {}).get(naming_rules.normalise(part)) if part else None
+	if part and not holders:
+		return part, "part_no"
+	if part:
+		others = sorted({h for h in holders if h.casefold() != part.casefold()})
+		if others:
+			return model, f"model (part no. {part} is {', '.join(others)} once case and punctuation are ignored)"
+		return model, f"model (part no. {part} is shared with another row)"
+	if row.get("part_no") not in (None, "", []):
+		return model, "model (part_no is a range, not one part)"
+	return model, "model (no part_no)"
+
+
+def assign_codes(entries):
+	"""``{(kind, label): {code, basis} | {error}}`` for every row of every file at once.
+
+	``entries`` is ``[(kind, label, row, approval_or_None)]``. Codes are judged across all three
+	kinds together, approved or not, so a row's code does not change when another row is approved:
+	a part number held by two rows falls back to the model on both, and a code that still
+	collides with another row's (compared as the Item naming guard compares codes, ignoring case
+	and punctuation) is an error on every row that did not choose it in ``approved.json``.
+	"""
+	parts = {}
+	for _kind, _label, row, _approval in entries:
+		part = part_number(row.get("part_no"))
+		if part:
+			parts.setdefault(naming_rules.normalise(part), []).append(part)
+	shared = {norm: held for norm, held in parts.items() if len(held) > 1}
+	out, holders = {}, {}
+	for kind, label, row, approval in entries:
+		code, basis = item_code_for(row, approval, shared)
+		if not code:
+			out[(kind, label)] = {"error": _("The row has neither a part number nor a model to name its Item.")}
+			continue
+		if len(code) > ITEM_CODE_LENGTH:
+			out[(kind, label)] = {"error": f"Item code {code!r} is longer than {ITEM_CODE_LENGTH} characters."}
+			continue
+		out[(kind, label)] = {"code": code, "basis": basis, "chosen": bool((approval or {}).get("item_code"))}
+		holders.setdefault(naming_rules.normalise(code), []).append((kind, label))
+	for keys in holders.values():
+		if len(keys) < 2:
+			continue
+		for key in keys:
+			if out[key]["chosen"]:
+				continue
+			others = ", ".join(label for kind, label in keys if (kind, label) != key)
+			out[key] = {
+				"error": f"Item code {out[key]['code']!r} is also the code of {others}; "
+				"set item_code for one of them in approved.json"
+			}
+	return out
+
+
+def _item_plan(kind, row, approval, name_word, specs, description, prov, code=None):
+	"""The Item half of a plan: fields always written, and fields filled only when blank.
+
+	``code`` is the row's code from :func:`assign_codes`; without it (one row planned on its own)
+	the row is coded by :func:`item_code_for` alone. ``legacy_code`` is the code the loader gave
+	before 2026-11-02 (``PUMP-PENTAIR-EQ500-EQK500``), which :func:`rename_catalog_items` renames.
+	"""
+	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
+	code = item_code_for(row, approval)[0] if (approval.get("item_code") or not code) else code
 	return {
 		"item_code": code,
+		"legacy_code": f"{name_word}-{_slug(manufacturer)}-{_slug(model)}",
 		"match_existing_code": bool(approval.get("item_code")),
 		"catalog_id": prov["id"],
 		"manufacturer": manufacturer,
@@ -378,7 +514,7 @@ def _bhp(point):
 	return round(kw / KW_PER_HP, 3) if kw is not None else None
 
 
-def plan_pump(row, approval, meta):
+def plan_pump(row, approval, meta, code=None):
 	"""``{key, item, curves, warnings}`` for one ``pumps.json`` row. Raises CatalogRowError."""
 	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
 	prov = provenance(row, meta)
@@ -539,7 +675,7 @@ def plan_pump(row, approval, meta):
 		"custom_pump_fla_amps": first_fla,
 		"custom_ul_listing": _text(_pick(row, "listing", "ul_listing")),
 	}
-	item = _item_plan("pumps", manufacturer, model, approval, "PUMP", specs, "; ".join(parts) + ".", prov)
+	item = _item_plan("pumps", row, approval, "PUMP", specs, "; ".join(parts) + ".", prov, code)
 	return {"key": catalog_key(manufacturer, model), "item": item, "curves": curves, "warnings": warnings}
 
 
@@ -554,7 +690,7 @@ def nozzle_type_for(text):
 	return "Other"
 
 
-def plan_aerator(row, approval, meta):
+def plan_aerator(row, approval, meta, code=None):
 	"""``{key, item, profile: None, warnings}`` for a floating aerator filed in ``nozzles.json``.
 
 	The research data records Otterbine and Kasco floating aerators as one "nozzle" per unit
@@ -584,11 +720,11 @@ def plan_aerator(row, approval, meta):
 	if _text(row.get("part_no")):
 		parts.append(f"part no. {_text(row['part_no'])}")
 	description = "; ".join(parts) + "." + (f" {row['notes']}" if row.get("notes") else "")
-	item = _item_plan("aerators", manufacturer, model, approval, "AERATOR", specs, description, prov)
+	item = _item_plan("aerators", row, approval, "AERATOR", specs, description, prov, code)
 	return {"key": catalog_key(manufacturer, model), "item": item, "profile": None, "warnings": []}
 
 
-def plan_nozzle(row, approval, meta):
+def plan_nozzle(row, approval, meta, code=None):
 	"""``{key, item, profile, warnings}`` for one ``nozzles.json`` row. Raises CatalogRowError.
 
 	A row none of whose performance rows has a pressure or head is a floating aerator and is
@@ -597,7 +733,7 @@ def plan_nozzle(row, approval, meta):
 	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
 	table = _pick(row, "rows", "points", "performance") or []
 	if table and all(_pick(r, "pressure_psi", "psi", "head_ft") is None for r in table):
-		return plan_aerator(row, approval, meta)
+		return plan_aerator(row, approval, meta, code)
 	prov = provenance(row, meta)
 	nozzle_type = nozzle_type_for(_pick(row, "type", "nozzle_type"))
 	points = []
@@ -672,7 +808,7 @@ def plan_nozzle(row, approval, meta):
 		+ (f", part no. {_text(row['part_no'])}" if _text(row.get("part_no")) else "")
 		+ "."
 	)
-	item = _item_plan("nozzles", manufacturer, model, approval, "NOZZLE", specs, description, prov)
+	item = _item_plan("nozzles", row, approval, "NOZZLE", specs, description, prov, code)
 	return {
 		"key": catalog_key(manufacturer, model),
 		"item": item,
@@ -682,7 +818,7 @@ def plan_nozzle(row, approval, meta):
 	}
 
 
-def plan_light(row, approval, meta):
+def plan_light(row, approval, meta, code=None):
 	"""``{key, item, warnings}`` for one ``lights.json`` row. Raises CatalogRowError."""
 	manufacturer, model = _required(row, "manufacturer"), _required(row, "model")
 	prov = provenance(row, meta)
@@ -707,7 +843,7 @@ def plan_light(row, approval, meta):
 	if volts and all(_num(v) is not None for v in voltages):
 		volts += " V"
 	description = f"{manufacturer} {model} underwater light, {watts:g} W" + (f", {volts}." if volts else ".")
-	item = _item_plan("lights", manufacturer, model, approval, "LIGHT", specs, description, prov)
+	item = _item_plan("lights", row, approval, "LIGHT", specs, description, prov, code)
 	return {"key": catalog_key(manufacturer, model), "item": item, "warnings": []}
 
 
@@ -851,7 +987,13 @@ def _ensure_brand(name):
 
 def find_item(item_plan):
 	"""The existing Item for a plan, or None: the approval's code, else the catalog row id the
-	loader stamped on it, else brand + model number, else the generated code."""
+	loader stamped on it, else brand + model number.
+
+	The catalog id comes before everything but an explicit ``approved.json`` code, so an Item
+	renamed to its part number (:func:`rename_catalog_items`) is found under its new name rather
+	than created again under the old rule's. An Item that merely holds the row's code is not
+	this row's Item: :func:`apply_item` refuses the row rather than adopt it.
+	"""
 	code = item_plan["item_code"]
 	if item_plan["match_existing_code"]:
 		return code if frappe.db.exists("Item", code) else None
@@ -875,14 +1017,50 @@ def find_item(item_plan):
 	):
 		if catalog_key(row.get("brand"), row.get("custom_model_no")) == want:
 			return row["name"]
-	return code if frappe.db.exists("Item", code) else None
+	return None
 
 
-def apply_item(kind, item_plan, verified_by, dry_run):
-	"""Create or update the Item. Returns ``(item_code, changes, created)``."""
+def site_codes():
+	"""``{normalized code: Item name}`` for every Item on the site, compared as the naming guard does."""
+	out = {}
+	for name in frappe.get_all("Item", pluck="name"):
+		out.setdefault(naming_rules.normalise(name), name)
+	return out
+
+
+def apply_item(kind, item_plan, verified_by, dry_run, taken=None):
+	"""Create or update the Item. Returns ``(item_code, changes, created)``.
+
+	``taken`` is :func:`site_codes`; a new Item whose code an existing Item already holds (once
+	case and punctuation are ignored) is refused, never suffixed. The created code is added to it.
+	"""
 	values = dict(item_plan["set"])
 	values["custom_spec_verified_by"] = verified_by
 	existing = find_item(item_plan)
+	if existing and item_plan["match_existing_code"] and item_plan.get("catalog_id"):
+		# The loader's own Item for this row, still under its old code, has to be merged into the
+		# approved one first. Loading now would stamp the row's id on a second Item and give the
+		# approved Item a second set of curves.
+		stale = [
+			name
+			for name in frappe.get_all(
+				"Item", filters={"custom_catalog_id": item_plan["catalog_id"]}, pluck="name"
+			)
+			if name.casefold() != existing.casefold()
+		]
+		if stale:
+			raise CatalogRowError(
+				f"Item {stale[0]} still carries this row's catalog id. approved.json merges the row into "
+				f"Item {existing}, so run rename_catalog_items first."
+			)
+	if not existing and taken is not None:
+		holder = taken.get(naming_rules.normalise(item_plan["item_code"]))
+		if holder:
+			raise CatalogRowError(
+				f"Item code {item_plan['item_code']!r} is already held by Item {holder}, which is not this "
+				"row's Item. If it is the same part, set item_code in approved.json to attach the row to it."
+			)
+		taken[naming_rules.normalise(item_plan["item_code"])] = item_plan["item_code"]
 	if not existing:
 		new = {
 			"item_code": item_plan["item_code"],
@@ -1038,23 +1216,67 @@ def _empty_summary():
 		"approved_not_found": [],
 		"errors": [],
 		"warnings": [],
+		"codes": {},
+		"renames_pending": [],
 	}
+
+
+def _as_dry_run(dry_run):
+	"""Only an explicit no writes: "0", "false", "no", "off", 0, False. Anything else, None
+	included, stays a dry run."""
+	if dry_run is None:
+		return True
+	if isinstance(dry_run, str):
+		dry_run = dry_run.strip().casefold() not in ("0", "false", "no", "off")
+	return bool(dry_run)
+
+
+def read_catalog(folder):
+	"""``(meta, approvals, entries)``: every row of the three files, each with its approval.
+
+	An entry is ``{kind, key, base, label, row, approval, error}``: ``approval`` is the row's
+	``approved.json`` overrides (``{}`` for a plain approval) or None when the row is not approved;
+	``error`` is set when the row can only be approved by its id. ``code`` / ``code_error`` come
+	from :func:`assign_codes`, which sees every row of every file at once.
+	"""
+	meta, approvals = read_approvals(_read_json(folder / APPROVAL_FILE))
+	entries = []
+	for kind, filename in FILES.items():
+		approved = approvals.get(kind) or {"keys": {}, "ids": {}}
+		by_key, by_id = approved["keys"], approved["ids"]
+		for key, base, row in resolve_rows(rows_of(_read_json(folder / filename), kind)):
+			row_id = str(row.get("id") or "").strip()
+			entry = {"kind": kind, "key": key, "base": base, "label": row_id or key, "row": row}
+			entry["approval"], entry["error"] = None, None
+			if row_id and row_id in by_id:
+				entry["approval"] = by_id[row_id]
+			elif key in by_key:
+				entry["approval"] = by_key[key]
+			elif base != key and base in by_key:
+				entry["error"] = f"{base} names {row_id or 'several rows'} and others; approve this row by its id"
+			entries.append(entry)
+	codes = assign_codes([(e["kind"], e["label"], e["row"], e["approval"]) for e in entries])
+	for entry in entries:
+		coded = codes[(entry["kind"], entry["label"])]
+		entry["code"], entry["code_error"] = coded.get("code"), coded.get("error")
+		entry["code_basis"] = coded.get("basis")
+	return meta, approvals, entries
 
 
 def load_catalog(catalog_dir=None, dry_run=True):
 	"""Load the approved catalog rows. ``dry_run`` (the default) writes nothing.
 
 	Returns ``{dry_run, catalog_dir, approved_by, approved_on, pumps, nozzles, lights}``; each
-	kind is ``{created, updated, unchanged, unapproved, approved_not_found, errors, warnings}``.
-	``created``/``updated`` hold ``{key, item_code, changes}``, the others keys (or
-	``{key, error}``). A missing data file is an empty kind, not an error.
+	kind is ``{created, updated, unchanged, unapproved, approved_not_found, errors, warnings,
+	codes, renames_pending}``. ``created``/``updated`` hold ``{key, item_code, changes}``, the
+	others keys (or ``{key, error}``). ``codes`` is ``{key: item code}`` for every approved row,
+	the code it is created under; ``renames_pending`` lists the Items that already exist under
+	another code (``{key, item_code, code}``), which :func:`rename_catalog_items` renames. A
+	missing data file is an empty kind, not an error.
 	"""
-	if isinstance(dry_run, str):
-		# Only an explicit no writes: "0", "false", "no", "off". Anything else stays a dry run.
-		dry_run = dry_run.strip().casefold() not in ("0", "false", "no", "off")
-	dry_run = bool(dry_run)
+	dry_run = _as_dry_run(dry_run)
 	folder = Path(catalog_dir) if catalog_dir else CATALOG_DIR
-	meta, approvals = read_approvals(_read_json(folder / APPROVAL_FILE))
+	meta, approvals, entries = read_catalog(folder)
 	verified_by = _user_or_none(meta["approved_by"])
 	summary = {
 		"dry_run": dry_run,
@@ -1064,34 +1286,29 @@ def load_catalog(catalog_dir=None, dry_run=True):
 	}
 	if meta["approved_by"] and not verified_by:
 		summary["note"] = f"approved_by {meta['approved_by']} is not a User here; verified_by left blank"
+	taken = site_codes()
 
-	for kind, filename in FILES.items():
+	for kind in FILES:
 		out = summary[kind] = _empty_summary()
 		approved = approvals.get(kind) or {"keys": {}, "ids": {}}
 		by_key, by_id = approved["keys"], approved["ids"]
 		seen_keys, seen_ids = set(), set()
-		for key, base, row in resolve_rows(rows_of(_read_json(folder / filename), kind)):
-			row_id = str(row.get("id") or "").strip()
-			label = row_id or key
+		for entry in (e for e in entries if e["kind"] == kind):
+			key, base, row, label = entry["key"], entry["base"], entry["row"], entry["label"]
 			seen_keys.update((key, base))
-			seen_ids.add(row_id)
-			if row_id and row_id in by_id:
-				approval = by_id[row_id]
-			elif key in by_key:
-				approval = by_key[key]
-			elif base != key and base in by_key:
-				out["errors"].append(
-					{
-						"key": label,
-						"error": f"{base} names {row_id or 'several rows'} and others; approve this row by its id",
-					}
-				)
+			seen_ids.add(str(row.get("id") or "").strip())
+			if entry["error"]:
+				out["errors"].append({"key": label, "error": entry["error"]})
 				continue
-			else:
+			if entry["approval"] is None:
 				out["unapproved"].append(label)
 				continue
+			if entry["code_error"]:
+				out["errors"].append({"key": label, "error": entry["code_error"]})
+				continue
+			out["codes"][label] = entry["code"]
 			try:
-				plan = PLANNERS[kind](row, approval, meta)
+				plan = PLANNERS[kind](row, entry["approval"], meta, entry["code"])
 			except CatalogRowError as exc:
 				out["errors"].append({"key": label, "error": str(exc)})
 				continue
@@ -1099,14 +1316,16 @@ def load_catalog(catalog_dir=None, dry_run=True):
 			try:
 				if not dry_run:
 					frappe.db.savepoint("catalog_seed_row")
-				item_code, changes, created = apply_item(kind, plan["item"], verified_by, dry_run)
+				item_code, changes, created = apply_item(kind, plan["item"], verified_by, dry_run, taken)
 				if kind == "pumps":
 					for curve in plan["curves"]:
 						changes += apply_curve(
 							item_code, curve, verified_by, dry_run, item_exists=not created
 						)
-					# The pump selectors read item_group "Pumps" only, so a curve on an Item
-					# elsewhere would never reach a design.
+					# The designer's pump list (api.designer._pump_items) reads item_group "Pumps" or
+					# equipment class "Pump", and the loader sets the class, so an Item outside the
+					# group is still offered. Said anyway: the group is Sapphire's to choose, and a
+					# person filtering the Item list by "Pumps" will not see it.
 					group = (
 						plan["item"]["fill"]["item_group"]
 						if created
@@ -1114,8 +1333,8 @@ def load_catalog(catalog_dir=None, dry_run=True):
 					)
 					if group != GROUPS["pumps"][0]:
 						out["warnings"].append(
-							f"{label}: Item {item_code} is in item group {group!r}; the pump selector reads only "
-							f"{GROUPS['pumps'][0]!r}, so designs will not pick it"
+							f"{label}: Item {item_code} is in item group {group!r}, not {GROUPS['pumps'][0]!r}; "
+							"the designer still offers it by its equipment class (Pump)"
 						)
 				elif kind == "nozzles" and plan.get("profile"):
 					changes += apply_profile(item_code, plan, verified_by, dry_run)
@@ -1124,13 +1343,16 @@ def load_catalog(catalog_dir=None, dry_run=True):
 					frappe.db.rollback(save_point="catalog_seed_row")
 				out["errors"].append({"key": label, "error": str(exc) or exc.__class__.__name__})
 				continue
-			entry = {"key": label, "item_code": item_code, "changes": changes}
+			entry_out = {"key": label, "item_code": item_code, "changes": changes}
 			if created:
-				out["created"].append(entry)
+				out["created"].append(entry_out)
 			elif changes:
-				out["updated"].append(entry)
+				out["updated"].append(entry_out)
 			else:
 				out["unchanged"].append(label)
+			# Case alone is no rename: MariaDB compares names case-insensitively, as the guard does.
+			if item_code.casefold() != plan["item"]["item_code"].casefold() and not plan["item"]["match_existing_code"]:
+				out["renames_pending"].append({"key": label, "item_code": item_code, "code": plan["item"]["item_code"]})
 		out["approved_not_found"] = sorted(set(by_key) - seen_keys) + sorted(set(by_id) - seen_ids)
 
 	if not dry_run:
@@ -1148,3 +1370,441 @@ def seed_catalog(dry_run=1):
 	"""
 	frappe.only_for("System Manager")
 	return load_catalog(dry_run=dry_run)
+
+
+# ----------------------------------------------------------------------------- renaming
+# Nikolas, 2026-11-02: the catalog Items' codes are the manufacturer's part numbers. The 380
+# Items loaded that day carry the old rule's codes (PUMP-PENTAIR-EQ500-EQK500), so this renames
+# them, in rounds, from a person's request: nothing here runs on migrate and nothing is enqueued.
+
+#: Items renamed per call unless the caller says otherwise. A rename rewrites every Link to Item
+#: (140 fields on erpnext 16.52.1) and clears the cache, so a round is kept well inside a request.
+RENAME_LIMIT = 25
+#: Renames committed together, with the design rewrite that goes with them.
+RENAME_BATCH = 5
+#: The Water Feature Design fields that hold the design's JSON, any of which may name an Item code.
+DESIGN_JSON_FIELDS = ("model_json", "results_json", "design_issues_json", "readiness_json")
+
+
+def catalog_codes(folder=None):
+	"""``{catalog id: {kind, code, legacy_code, basis, merge, values} | {kind, error}}`` for every
+	row with an id.
+
+	``kind`` is the Item's kind (``pumps``, ``nozzles``, ``aerators``, ``lights``). ``legacy_code``
+	is the code the old rule gave the row, or None when the row cannot be planned. ``merge`` is
+	true when ``approved.json`` names the row's Item (``item_code``), which makes an existing Item
+	of that code the row's Item. ``values`` are the Item values the loader writes for the row: its
+	specs and provenance, exactly as :func:`apply_item` would write them, with every None left out
+	because the loader never writes one. A merge writes these onto that Item.
+	"""
+	meta, _approvals, entries = read_catalog(Path(folder) if folder else CATALOG_DIR)
+	verified_by = _user_or_none(meta["approved_by"])
+	out = {}
+	for entry in entries:
+		row_id = str(entry["row"].get("id") or "").strip()
+		if not row_id:
+			continue
+		kind, legacy, values = entry["kind"], None, {}
+		try:
+			plan = PLANNERS[entry["kind"]](entry["row"], entry["approval"] or {}, meta, entry["code"])
+			kind = "aerators" if plan["item"]["fill"]["item_group"] == GROUPS["aerators"][0] else kind
+			legacy = plan["item"]["legacy_code"]
+			values = dict(plan["item"]["set"])
+			values["custom_spec_verified_by"] = verified_by
+			values = {field: value for field, value in values.items() if value is not None}
+		except CatalogRowError:
+			pass
+		if entry["code_error"]:
+			out[row_id] = {"kind": kind, "error": entry["code_error"], "legacy_code": legacy}
+		else:
+			out[row_id] = {
+				"kind": kind,
+				"code": entry["code"],
+				"basis": entry["code_basis"],
+				"legacy_code": legacy,
+				"merge": bool((entry["approval"] or {}).get("item_code")),
+				"values": values,
+			}
+	return out
+
+
+def plan_renames(items, codes, existing_names):
+	"""``{renames, merges, unchanged, refused}`` for the Items that carry a catalog id. Pure.
+
+	``items`` is ``[{name, custom_catalog_id}]``, ``codes`` is :func:`catalog_codes`, and
+	``existing_names`` every Item name on the site. A rename is ``{old, new, kind, catalog_id,
+	basis}``. Refused, with the reason: an id no catalog row has; an id two Items carry; a row whose
+	code collides with another row's; an Item whose current code is not the one the old rule gave
+	its row (a Sapphire Item attached to the row, which is renamed by a person or not at all); a
+	new code another Item already holds once case and punctuation are ignored.
+
+	A merge has the same shape. It is planned where ``approved.json`` gives the row an
+	``item_code`` that an existing Item holds exactly (case aside), and the loader's Item for the
+	row still sits under its old code: that Item is folded into the existing one
+	(:func:`merge_item`) rather than renamed onto it. Nikolas, 2026-11-02, for the three Pentair
+	pumps Sapphire already stocked under their part numbers. The existing Item is refused when it
+	is another catalog row's Item.
+	"""
+	by_id, id_of = {}, {}
+	for item in items:
+		catalog_id = str(item.get("custom_catalog_id") or "").strip()
+		by_id.setdefault(catalog_id, []).append(item["name"])
+		id_of[item["name"].casefold()] = catalog_id
+	holders = {}
+	for name in existing_names:
+		holders.setdefault(naming_rules.normalise(name), []).append(name)
+	out = {"renames": [], "merges": [], "unchanged": [], "refused": []}
+	for catalog_id in sorted(by_id):
+		names = sorted(by_id[catalog_id])
+		coded = codes.get(catalog_id)
+		target = None
+		if coded and coded.get("merge") and not coded.get("error"):
+			target = next(
+				(n for n in holders.get(naming_rules.normalise(coded["code"]), [])
+				 if n.casefold() == coded["code"].casefold()),
+				None,
+			)
+		rivals = [n for n in names if not target or n.casefold() != target.casefold()]
+		for old in names:
+			kind = (coded or {}).get("kind")
+			base = {"old": old, "kind": kind, "catalog_id": catalog_id}
+			if not coded:
+				out["refused"].append({**base, "reason": "no row in the catalog files has this catalog id"})
+			elif target and old.casefold() == target.casefold():
+				out["unchanged"].append(base)
+			elif len(rivals) > 1:
+				out["refused"].append({**base, "reason": f"{len(names)} Items carry this catalog id: {', '.join(names)}"})
+			elif coded.get("error"):
+				out["refused"].append({**base, "reason": coded["error"]})
+			elif old == coded["code"]:
+				out["unchanged"].append(base)
+			elif old != coded.get("legacy_code"):
+				out["refused"].append(
+					{**base, "new": coded["code"],
+					 "reason": f"{old} is not the code the loader gave this row ({coded.get('legacy_code')}); "
+					 "rename it by hand, or set item_code in approved.json to keep it"}
+				)
+			elif target and id_of.get(target.casefold(), catalog_id) != catalog_id:
+				out["refused"].append(
+					{**base, "new": target,
+					 "reason": f"approved.json merges this row into Item {target}, which is already the Item "
+					 f"of catalog row {id_of[target.casefold()]}"}
+				)
+			elif target:
+				out["merges"].append({**base, "new": target, "basis": coded["basis"]})
+			else:
+				others = [n for n in holders.get(naming_rules.normalise(coded["code"]), []) if n != old]
+				if others:
+					out["refused"].append(
+						{**base, "new": coded["code"],
+						 "reason": f"Item {others[0]} already holds the code {coded['code']!r} "
+						 "(the same once case and punctuation are ignored)"}
+					)
+				else:
+					out["renames"].append({**base, "new": coded["code"], "basis": coded["basis"]})
+	return out
+
+
+def _rewrite_text(text, mapping):
+	"""``text`` with each ``|``-separated part equal to an old code replaced: a whole value
+	(``"PUMP-A"``) or one part of a composite key (``"nozzle|PUMP-A"``). Returns ``(text, count)``."""
+	parts = text.split("|")
+	count = sum(1 for p in parts if p in mapping)
+	return ("|".join(mapping.get(p, p) for p in parts), count) if count else (text, 0)
+
+
+def rewrite_codes(value, mapping):
+	"""``(value, count)``: a JSON value with every old Item code in ``mapping`` replaced by its new one.
+
+	Walks the whole tree, keys included, because a design names Items in more places than one
+	(``network.pumps[].item``, ``network.pumps[].curve`` when the curve is named by its Item,
+	``equipment[].item``, ``features[].product.item``, BOM line keys and item hints in the derived
+	JSON). A string is replaced only where all of it, or one ``|``-part of it, is an old code, so
+	text that merely contains one (a description) is left as written.
+	"""
+	if isinstance(value, dict):
+		out, count = {}, 0
+		for key, item in value.items():
+			new_key, n_key = _rewrite_text(key, mapping) if isinstance(key, str) else (key, 0)
+			new_item, n_item = rewrite_codes(item, mapping)
+			out[new_key] = new_item
+			count += n_key + n_item
+		return out, count
+	if isinstance(value, list):
+		pairs = [rewrite_codes(v, mapping) for v in value]
+		return [v for v, _n in pairs], sum(n for _v, n in pairs)
+	if isinstance(value, str):
+		return _rewrite_text(value, mapping)
+	return value, 0
+
+
+def rewrite_designs(mapping, dry_run):
+	"""Rewrite every Water Feature Design whose JSON names an old code. Returns ``[{design, fields,
+	replaced}]``.
+
+	``frappe.rename_doc`` rewrites Link fields only; a design names its pump inside ``model_json``
+	text, so without this a renamed pump drops out of every design that picked it. Written with
+	``db.set_value`` (no derive, ``modified`` kept) and a Comment on the design saying what changed.
+	"""
+	if not mapping:
+		return []
+	out = []
+	fields = ["name", *DESIGN_JSON_FIELDS]
+	for design in frappe.get_all("Water Feature Design", fields=fields):
+		changed, before, replaced = {}, {}, 0
+		for field in DESIGN_JSON_FIELDS:
+			value = design.get(field)
+			# A JSON column can come back parsed rather than as text, depending on the field type and
+			# the driver; both are read, and written back as text.
+			if isinstance(value, (dict, list)):
+				text = json.dumps(value)
+			elif isinstance(value, str) and value:
+				text = value
+				try:
+					value = json.loads(text)
+				except ValueError:
+					continue
+			else:
+				continue
+			if not any(old in text for old in mapping):
+				continue
+			new, count = rewrite_codes(value, mapping)
+			if count:
+				changed[field], before[field], replaced = json.dumps(new), text, replaced + count
+		if not changed:
+			continue
+		out.append({"design": design["name"], "fields": sorted(changed), "replaced": replaced})
+		if dry_run:
+			continue
+		for field, text in changed.items():
+			frappe.db.set_value("Water Feature Design", design["name"], field, text, update_modified=False)
+		named = sorted({old for old in mapping if any(old in before[f] for f in changed)})
+		frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": "Info",
+				"reference_doctype": "Water Feature Design",
+				"reference_name": design["name"],
+				"content": "Catalog Item codes renamed to the manufacturer's part numbers: "
+				+ ", ".join(f"{old} → {mapping[old]}" for old in named),
+			}
+		).insert(ignore_permissions=True)
+	return out
+
+
+#: The Links a merge moves to the Item it merges into. Any other Link to the old Item refuses the merge.
+MERGE_MOVES = (("Pump Curve", "item"), ("Nozzle Profile", "item"))
+
+
+def merge_links(old):
+	"""``(moves, linked)`` for folding Item ``old`` into another.
+
+	``moves`` is ``{doctype: [names]}``: the Pump Curves and Nozzle Profiles that the merge
+	re-points. ``linked`` lists every other Link to ``old``, as ``"Doctype.field (n)"``, across
+	every Link-to-Item field ``rename_doc`` itself would update. Anything in ``linked`` refuses
+	the merge. The old Item is deleted, so it is never left behind as a second copy, and it is
+	never deleted while a Link still points at it.
+
+	This list is the reason a refusal is useful. ``frappe.delete_doc`` checks links too, but on a
+	doctype with a ``disabled`` field it swaps the linked record for "You can disable this Item
+	instead of deleting it". It also runs ``Item.on_trash`` *before* that check, and on_trash
+	deletes the Item's Bins and Item Prices. Both are Link fields here, so they refuse the merge
+	before ``delete_doc`` is ever reached.
+	"""
+	from frappe.model.rename_doc import get_link_fields
+
+	moves = {doctype: frappe.get_all(doctype, filters={field: old}, pluck="name") for doctype, field in MERGE_MOVES}
+	linked = []
+	for link in get_link_fields("Item"):
+		parent, field = link["parent"], link["fieldname"]
+		if (parent, field) in MERGE_MOVES:
+			continue
+		try:
+			if link.get("issingle"):
+				count = 1 if frappe.db.get_single_value(parent, field) == old else 0
+			else:
+				count = frappe.db.count(parent, {field: old})
+		except Exception:
+			linked.append(f"{parent}.{field} (could not be checked)")
+			continue
+		if count:
+			linked.append(f"{parent}.{field} ({count})")
+	return {doctype: names for doctype, names in moves.items() if names}, linked
+
+
+def merge_writes(target, values):
+	"""``{field: {"from": current, "to": new}}``: what a merge would change on Item ``target``.
+
+	``values`` are the catalog's own values for the row, from :func:`catalog_codes`. They are never
+	read from the duplicate Item. A field the catalog leaves unset sits on the duplicate as Frappe's
+	0, and copying that would overwrite Sapphire's figure. 342002's 1.5 HP is the case in point:
+	its duplicate holds 0.0. Each later seed then writes the same values again, so this is also
+	what the target will read from then on.
+	"""
+	doc = frappe.get_doc("Item", target)
+	return {
+		field: {"from": doc.get(field), "to": value}
+		for field, value in values.items()
+		if not _same(doc.get(field), value)
+	}
+
+
+def merge_item(merge, values, moves):
+	"""Fold the loader's Item ``merge["old"]`` into the existing Item ``merge["new"]``.
+
+	The steps are:
+	1. Write the catalog's own ``values`` onto the existing Item, as the loader would (see
+	   :func:`merge_writes`). Its name, group, brand and description stay Sapphire's.
+	2. Re-point the ``moves`` from :func:`merge_links`. A Pump Curve's fetched ``item_name`` goes
+	   with it, because ``db.set_value`` does not re-fetch it.
+	3. Delete the old Item. ``delete_doc`` is never forced, so a Link that has appeared since the
+	   check still refuses the merge.
+
+	Returns the fields changed on the existing Item.
+	"""
+	item_name = frappe.db.get_value("Item", merge["new"], "item_name")
+	for doctype, names in moves.items():
+		update = {"item": merge["new"]}
+		if doctype == "Pump Curve":
+			update["item_name"] = item_name
+		for name in names:
+			frappe.db.set_value(doctype, name, update)
+	frappe.delete_doc("Item", merge["old"], ignore_permissions=True)
+	doc = frappe.get_doc("Item", merge["new"])
+	changed = _apply_fields(doc, values)
+	if changed:
+		doc.save(ignore_permissions=True)
+	return changed
+
+
+def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
+	"""Rename the catalog Items to the codes the catalog data gives them, and fold into its existing
+	Item each one that ``approved.json`` merges. ``dry_run`` writes nothing.
+
+	Returns ``{dry_run, renames, merges, renamed, merged, unchanged, refused, errors, remaining,
+	designs, seconds}``.
+	* ``renames`` is every rename still to do: ``{old, new, kind, catalog_id, basis}``.
+	* ``merges`` is every merge still to do, in the same shape plus three keys:
+	  - ``moves``: the Pump Curves and Nozzle Profiles that follow, from :func:`merge_links`;
+	  - ``writes``: each field value the merge changes on the existing Item, from :func:`merge_writes`;
+	  - ``delete: True``: nothing else links to the old Item, so it is deleted.
+	* A merge whose old Item something else links to is refused instead, and carries ``linked``.
+
+	A write does the first ``limit`` of these, merges first (``merged``, then ``renamed``), with one
+	savepoint per Item. It commits every :data:`RENAME_BATCH`, together with the design rewrite
+	those need, and ``remaining`` says how many are left for the next round. Each round re-plans
+	from the site, so a round that stopped halfway is simply run again.
+
+	``designs`` is the design rewrite (:func:`rewrite_designs`). Its old -> new map covers every
+	catalog Item whose current name is not the old rule's code, not only this round's. A design
+	saved with an old code between rounds is therefore still repaired by the next one. A merged Item
+	is covered as well, because the Item it merged into carries its catalog id. That includes a write
+	round with nothing left to rename or merge: it still repairs the designs, and is the way to fix
+	one saved with an old code after the last round.
+	"""
+	from frappe.model.rename_doc import rename_doc
+
+	from erpnext_enhancements.water_engineering.api.designer import CATALOG_CACHE_KEY
+
+	dry_run = _as_dry_run(dry_run)
+	limit = max(int(limit or 0), 0) or RENAME_LIMIT
+	started = time.monotonic()
+	codes = catalog_codes(catalog_dir)
+	every = frappe.get_all("Item", fields=["name", "custom_catalog_id"])
+	items = [i for i in every if str(i.get("custom_catalog_id") or "").strip()]
+	plan = plan_renames(items, codes, [i["name"] for i in every])
+	merges, refused = [], list(plan["refused"])
+	for merge in plan["merges"]:
+		moves, linked = merge_links(merge["old"])
+		if linked:
+			refused.append(
+				{**merge, "linked": linked,
+				 "reason": f"approved.json merges {merge['old']} into Item {merge['new']}, but {merge['old']} "
+				 f"cannot be deleted: {', '.join(linked)} link to it"}
+			)
+		else:
+			writes = merge_writes(merge["new"], codes[merge["catalog_id"]]["values"])
+			merges.append({**merge, "moves": moves, "writes": writes, "delete": True})
+	summary = {
+		"dry_run": dry_run,
+		"renames": plan["renames"],
+		"merges": merges,
+		"renamed": [],
+		"merged": [],
+		"unchanged": plan["unchanged"],
+		"refused": refused,
+		"errors": [],
+		"designs": [],
+	}
+	# Every catalog Item already under a new code, by the old rule's code: the designs still
+	# naming one are repaired whatever round renamed it.
+	done = {
+		codes[i["custom_catalog_id"]]["legacy_code"]: i["name"]
+		for i in items
+		if codes.get(i["custom_catalog_id"], {}).get("legacy_code")
+		and codes[i["custom_catalog_id"]]["legacy_code"] != i["name"]
+	}
+	work = [("merge", m) for m in merges] + [("rename", r) for r in plan["renames"]]
+	todo = work[:limit]
+	if dry_run:
+		summary["designs"] = rewrite_designs({**done, **{w["old"]: w["new"] for _op, w in work}}, True)
+		summary["remaining"] = len(work)
+		summary["seconds"] = round(time.monotonic() - started, 2)
+		return summary
+	for start in range(0, len(todo), RENAME_BATCH):
+		mapping = {}
+		for op, entry in todo[start : start + RENAME_BATCH]:
+			frappe.db.savepoint("catalog_rename_item")
+			try:
+				if op == "merge":
+					changed = merge_item(entry, codes[entry["catalog_id"]]["values"], entry["moves"])
+				else:
+					# The model function, not frappe.rename_doc: at v16.53.0 that wrapper takes no
+					# ignore_permissions, and passing it is a TypeError on every Item.
+					rename_doc(
+						doctype="Item",
+						old=entry["old"],
+						new=entry["new"],
+						ignore_permissions=True,
+						show_alert=False,
+						rebuild_search=False,
+					)
+					# rebuild_search would enqueue a rebuild of every Item; move this one's row instead.
+					frappe.db.sql(
+						"update `__global_search` set name = %s where doctype = 'Item' and name = %s",
+						(entry["new"], entry["old"]),
+					)
+			except Exception as exc:
+				frappe.db.rollback(save_point="catalog_rename_item")
+				summary["errors"].append({**entry, "error": str(exc) or exc.__class__.__name__})
+				continue
+			mapping[entry["old"]] = entry["new"]
+			if op == "merge":
+				summary["merged"].append({**entry, "fields": changed})
+			else:
+				summary["renamed"].append(entry)
+		summary["designs"] += rewrite_designs({**done, **mapping}, False)
+		done.update(mapping)
+		frappe.db.commit()
+		if mapping:
+			# The designer keeps its pump catalog, codes and all, for ten minutes, and rename_doc's
+			# clear_cache does not reach that key: a pick in that window would save an old code.
+			frappe.cache().delete_value(CATALOG_CACHE_KEY)
+	if not todo:
+		# Nothing left to rename, but a design saved with an old code since the last round still
+		# needs repairing. The batches above repair only alongside a rename, so a round that has
+		# none does the repair here.
+		summary["designs"] = rewrite_designs(done, False)
+		if summary["designs"]:
+			frappe.db.commit()
+	summary["remaining"] = len(work) - len(summary["renamed"]) - len(summary["merged"])
+	summary["seconds"] = round(time.monotonic() - started, 2)
+	return summary
+
+
+@frappe.whitelist(methods=["POST"])
+def rename_catalog_items(dry_run=1, limit=RENAME_LIMIT):
+	"""System Manager: :func:`rename_items`. ``dry_run`` defaults to 1, and like
+	:func:`seed_catalog` only an explicit no writes; ``limit`` is the Items renamed or merged this round."""
+	frappe.only_for("System Manager")
+	return rename_items(dry_run=dry_run, limit=limit)

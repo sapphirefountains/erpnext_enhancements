@@ -167,8 +167,18 @@ class FakeDB:
     def get_value(self, doctype, name, field):
         return self.fake.store.get(doctype, {}).get(name, {}).get(field)
 
-    def set_value(self, doctype, name, field, value, update_modified=True):
-        self.fake.store[doctype][name][field] = value
+    def set_value(self, doctype, name, field, value=None, update_modified=True):
+        values = field if isinstance(field, dict) else {field: value}
+        self.fake.store[doctype][name].update(values)
+
+    def sql(self, query, values=None):
+        self.fake.sql.append((" ".join(query.split()), values))
+
+    def count(self, doctype, filters=None):
+        return len(self.fake.get_all(doctype, filters=filters))
+
+    def get_single_value(self, doctype, field):
+        return self.fake.store.get(doctype, {}).get(doctype, {}).get(field)
 
 
 class FakeFrappe:
@@ -182,6 +192,59 @@ class FakeFrappe:
         self.saves = []
         self.fail_insert = set()
         self.fields = declared_fields()
+        self.sql = []
+        self.renamed = []
+        self.cache = types.SimpleNamespace(deleted=[], get_value=lambda key: None,
+                                           set_value=lambda *a, **k: None)
+        self.cache.delete_value = self.cache.deleted.append
+        self.fail_rename = set()
+        self.deleted = []
+        # Link-to-Item fields as frappe.model.rename_doc.get_link_fields returns them: a few real
+        # ones (erpnext 16.52.1), a Single among them.
+        self.link_fields = [
+            {"parent": "Pump Curve", "fieldname": "item", "issingle": 0},
+            {"parent": "Nozzle Profile", "fieldname": "item", "issingle": 0},
+            {"parent": "Quotation Item", "fieldname": "item_code", "issingle": 0},
+            {"parent": "Item Price", "fieldname": "item_code", "issingle": 0},
+            {"parent": "Fixture Settings", "fieldname": "default_pump", "issingle": 1},
+        ]
+
+    def get_link_fields(self, doctype):
+        return [dict(f) for f in self.link_fields] if doctype == "Item" else []
+
+    def delete_doc(self, doctype=None, name=None, force=0, ignore_doctypes=None, for_reload=False,
+                   ignore_permissions=False, flags=None, ignore_on_trash=False, ignore_missing=True,
+                   delete_permanently=False):
+        """``frappe.delete_doc`` at v16.53.0: never forced here, so any Link refuses, and on a
+        doctype with ``disabled`` the message names no linked record."""
+        for link in self.get_link_fields(doctype):
+            if link["issingle"]:
+                hit = self.db.get_single_value(link["parent"], link["fieldname"]) == name
+            else:
+                hit = self.db.count(link["parent"], {link["fieldname"]: name})
+            if hit and not force:
+                raise ValidationError(f"You can disable this {doctype} instead of deleting it.")
+        self.store[doctype].pop(name)
+        self.deleted.append((doctype, name, ignore_permissions, force))
+
+    def rename_doc(self, doctype=None, old=None, new=None, force=False, merge=False, ignore_permissions=False,
+                   ignore_if_exists=False, show_alert=True, rebuild_search=True, doc=None, validate=True):
+        """``frappe.model.rename_doc.rename_doc`` at frappe v16.53.0, its parameters exactly, so a
+        keyword it does not take fails here as it would on the site. The record moves and every
+        Link to it follows."""
+        kwargs = {"ignore_permissions": ignore_permissions, "show_alert": show_alert, "rebuild_search": rebuild_search}
+        if old in self.fail_rename:
+            raise ValidationError(f"rename of {old} refused")
+        if new in self.store[doctype]:
+            raise ValidationError(f"Another {doctype} with name {new} exists, select another name")
+        row = self.store[doctype].pop(old)
+        self.store[doctype][new] = {**row, "name": new, "item_code": new}
+        for linked, field in (("Pump Curve", "item"), ("Nozzle Profile", "item")):
+            for rec in self.store.get(linked, {}).values():
+                if rec.get(field) == old:
+                    rec[field] = new
+        self.renamed.append((old, new, kwargs))
+        return new
 
     def get_meta(self, doctype):
         fields = self.fields.get(doctype, {})
@@ -204,8 +267,10 @@ class FakeFrappe:
         if not data.get("name"):
             if doctype == "Pump Curve":
                 data["name"] = f"PCRV-{len(self.store.get(doctype, {})) + 1:05d}"
-            else:
+            elif doctype in NAME_FIELD:
                 data["name"] = data[NAME_FIELD[doctype]]
+            else:
+                data["name"] = f"{doctype[:4].upper()}-{len(self.store.get(doctype, {})) + 1:05d}"
         if data["name"] in self.store.get(doctype, {}):
             raise ValidationError(f"Duplicate {doctype} {data['name']}")
         self._stamp(data, True)
@@ -262,6 +327,8 @@ def _install(fake):
     frappe.get_doc = fake.get_doc
     frappe.get_all = fake.get_all
     frappe.get_meta = fake.get_meta
+    frappe.delete_doc = fake.delete_doc
+    frappe.cache = lambda: fake.cache
     frappe.flags = types.SimpleNamespace()
     frappe.messages = []
     frappe.msgprint = lambda msg, *a, **k: frappe.messages.append(msg)
@@ -290,9 +357,14 @@ def _install(fake):
 
     document.Document = Document
     model.document = document
+    rename = types.ModuleType("frappe.model.rename_doc")
+    rename.rename_doc = fake.rename_doc
+    rename.get_link_fields = fake.get_link_fields
+    model.rename_doc = rename
     frappe.model = model
     sys.modules.update(
-        {"frappe": frappe, "frappe.utils": utils, "frappe.model": model, "frappe.model.document": document}
+        {"frappe": frappe, "frappe.utils": utils, "frappe.model": model, "frappe.model.document": document,
+         "frappe.model.rename_doc": rename}
     )
     # Re-import the modules under test against this fake each time. The packages go too: a
     # cached package keeps its submodule as an attribute, and `from pkg import mod` would hand
@@ -512,7 +584,7 @@ def test_loads_only_approved_rows_and_reports_the_rest(fake):
 
 def test_pump_item_and_curve_mapping_with_provenance(fake):
     _seed()
-    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P100"]
+    item = fake.store["Item"]["FX-100-115"]
     assert item["item_group"] == "Pumps" and item["is_stock_item"] == 0 and item["stock_uom"] == "Nos"
     assert item["item_name"] == "PUMP, FIXTURECO FIXTURE-P100"
     assert item["brand"] == "Fixtureco" and "Fixtureco" in fake.store["Brand"]
@@ -540,12 +612,12 @@ def test_pump_item_and_curve_mapping_with_provenance(fake):
 
 def test_variable_speed_pump_gets_one_curve_per_speed(fake):
     _seed()
-    curves = {c["curve_label"]: c for c in fake.store["Pump Curve"].values() if c["item"] == "PUMP-FIXTURECO-FIXTURE-P200VS"}
+    curves = {c["curve_label"]: c for c in fake.store["Pump Curve"].values() if c["item"] == "FIXTURE-P200VS"}
     assert set(curves) == {"Full speed", "50 % speed"}
     assert curves["Full speed"].get("rpm") is None and curves["Full speed"]["source"] == "Digitized"
     assert curves["50 % speed"]["speed_pct"] == 50
     assert curves["Full speed"]["points"][1]["power_bhp"] == pytest.approx(1.2 / 0.745699872, abs=1e-3)
-    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P200VS"]
+    item = fake.store["Item"]["FIXTURE-P200VS"]
     assert item["custom_pump_voltage"] == "230" and item["custom_pump_fla_amps"] == 8.1
 
 
@@ -557,17 +629,17 @@ def test_an_approved_existing_item_keeps_its_curation(fake):
     assert item["custom_model_no"] == "FIXTURE-EXISTING" and item["custom_rated_gpm"] == 30
     assert item["brand"] == "Fixtureco"  # blank before, so filled
     assert any(c["item"] == "500999" for c in fake.store["Pump Curve"].values())
-    assert "PUMP-FIXTURECO-FIXTURE-EXISTING" not in fake.store["Item"]
+    assert "FIXTURE-EXISTING" not in fake.store["Item"]
 
 
 def test_nozzle_and_light_mapping(fake):
     _seed()
-    nozzle_item = fake.store["Item"]["NOZZLE-FIXTURECO-FIXTURE-N10"]
+    nozzle_item = fake.store["Item"]["FIXTURE-N10"]
     assert nozzle_item["item_group"] == "Nozzles" and nozzle_item["custom_equipment_class"] == "Nozzle"
     assert fake.store["Item Group"]["Nozzles"]["parent_item_group"] == "Aquatic Equipment"
-    assert fake.store["Item"]["NOZZLE-FIXTURECO-FIXTURE-N20"]["item_name"] == "NOZZLE, LAMINAR, FIXTURE N20"
+    assert fake.store["Item"]["FIXTURE-N20"]["item_name"] == "NOZZLE, LAMINAR, FIXTURE N20"
     profile = fake.store["Nozzle Profile"]["Fixtureco FIXTURE-N10"]
-    assert profile["item"] == "NOZZLE-FIXTURECO-FIXTURE-N10"
+    assert profile["item"] == "FIXTURE-N10"
     assert profile["nozzle_type"] == "Foam / Aerating" and profile["level_sensitive"] == 1
     assert profile["connection_size"] == "1 in NPT" and profile["is_generic_estimate"] == 0
     assert profile["source_document"] == "FIXTURE nozzle catalog 2026"
@@ -577,7 +649,7 @@ def test_nozzle_and_light_mapping(fake):
     assert fake.store["Nozzle Profile"]["Fixtureco FIXTURE-N20"]["nozzle_type"] == "Laminar"
     assert fake.store["Nozzle Profile"]["Fixtureco FIXTURE-N20"]["level_sensitive"] == 0
 
-    light = fake.store["Item"]["LIGHT-FIXTURECO-FIXTURE-L12"]
+    light = fake.store["Item"]["FIXTURE-L12"]
     assert light["item_group"] == "Lights" and light["custom_equipment_class"] == "Light"
     assert light["custom_elec_watts"] == 12 and light["custom_elec_voltage"] == "12"
     assert light["custom_lumens"] == 900 and light["custom_beam_deg"] == 30
@@ -616,7 +688,7 @@ def test_changed_data_updates_in_place(fake, tmp_path):
     assert any("custom_pump_hp" in c for c in updated["fixtureco|fixture-p100"]["changes"])
     assert any(c.endswith("points") for c in updated["fixtureco|fixture-p100"]["changes"])
     assert len(fake.store["Pump Curve"]) == curves_before
-    assert fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P100"]["custom_pump_hp"] == 1.5
+    assert fake.store["Item"]["FX-100-115"]["custom_pump_hp"] == 1.5
 
 
 def test_a_failed_write_rolls_back_only_its_row(fake):
@@ -624,8 +696,8 @@ def test_a_failed_write_rolls_back_only_its_row(fake):
     summary = _seed()
     errors = {e["key"] for e in summary["nozzles"]["errors"]}
     assert errors == {"fixtureco|fixture-n10", "fixtureco|fixture-n20"}
-    assert "NOZZLE-FIXTURECO-FIXTURE-N10" not in fake.store["Item"]  # its Item went with it
-    assert "PUMP-FIXTURECO-FIXTURE-P100" in fake.store["Item"]
+    assert "FIXTURE-N10" not in fake.store["Item"]  # its Item went with it
+    assert "FX-100-115" in fake.store["Item"]
 
 
 def test_unknown_approver_leaves_verified_by_blank(fake, tmp_path):
@@ -638,7 +710,7 @@ def test_unknown_approver_leaves_verified_by_blank(fake, tmp_path):
 
     summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
     assert "not a User" in summary["note"]
-    assert not fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P100"].get("custom_spec_verified_by")
+    assert not fake.store["Item"]["FX-100-115"].get("custom_spec_verified_by")
 
 
 def test_the_endpoint_is_system_manager_only_and_dry_by_default(fake, monkeypatch):
@@ -723,7 +795,7 @@ def test_light_specs(fake):
     _seed()
     from erpnext_enhancements.water_engineering import catalog_reader
 
-    spec = catalog_reader.light_specs(["LIGHT-FIXTURECO-FIXTURE-L12"])["LIGHT-FIXTURECO-FIXTURE-L12"]
+    spec = catalog_reader.light_specs(["FIXTURE-L12"])["FIXTURE-L12"]
     assert spec["watts"] == 12 and spec["voltage"] == "12" and spec["lumens"] == 900
     assert spec["control"] == "DMX" and spec["listing"] == "UL 676" and spec["is_generic_estimate"] is False
     assert spec["verified_on"] == "2026-11-01" and spec["manufacturer"] == "Fixtureco"
@@ -781,7 +853,7 @@ def test_item_lookup_ignores_spacing_like_the_approvals(fake, tmp_path):
     (tmp_path / "lights.json").write_text(json.dumps(data), encoding="utf-8")
     catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
     lights = [n for n, r in fake.store["Item"].items() if r.get("custom_equipment_class") == "Light"]
-    assert lights == ["LIGHT-FIXTURECO-FIXTURE-L12"]
+    assert lights == ["FIXTURE-L12"]
 
 
 def test_a_pump_outside_the_pumps_group_is_flagged(fake):
@@ -800,7 +872,7 @@ def test_item_ratings_come_from_the_best_curve(fake, tmp_path):
     from erpnext_enhancements.water_engineering import catalog_seed
 
     catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
-    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-P200VS"]
+    item = fake.store["Item"]["FIXTURE-P200VS"]
     assert item["custom_rated_gpm"] == 100 and item["custom_rated_tdh_ft"] == 80
 
 
@@ -861,7 +933,7 @@ def test_shared_model_names_split_by_part_number_and_approve_by_id(fake, tmp_pat
     summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
     assert [e["key"] for e in summary["pumps"]["created"]] == ["fixtureco-twin-fx-t1"]
     assert "approve this row by its id" in summary["pumps"]["errors"][0]["error"]
-    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-TWIN-FX-T1"]
+    item = fake.store["Item"]["FX-T1"]
     assert item["custom_model_no"] == "FIXTURE-TWIN FX-T1" and item["custom_pump_phase"] == "1"
     assert item["custom_pump_fla_amps"] == 5.1  # the first value that is a number; "4.0-4.4" is a range
     assert item["custom_ul_listing"] == "NSF/ANSI 50; UL 1081"
@@ -888,10 +960,10 @@ def test_the_catalog_id_finds_the_item_after_its_model_is_renamed(fake, tmp_path
     _write(tmp_path, pumps=[row], approved={"pumps": [row["id"]]})
     summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
     pumps = [n for n, r in fake.store["Item"].items() if r.get("custom_catalog_id") == row["id"]]
-    assert pumps == ["PUMP-FIXTURECO-FIXTURE-SOLO"]
-    assert fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-SOLO"]["custom_model_no"] == "FIXTURE-SOLO II"
+    assert pumps == ["FX-ID"]
+    assert fake.store["Item"]["FX-ID"]["custom_model_no"] == "FIXTURE-SOLO II"
     assert [e["key"] for e in summary["pumps"]["updated"]] == [row["id"]]
-    curve = next(c for c in fake.store["Pump Curve"].values() if c["item"] == "PUMP-FIXTURECO-FIXTURE-SOLO")
+    curve = next(c for c in fake.store["Pump Curve"].values() if c["item"] == "FX-ID")
     assert "Also cited: FIXTURE errata https://example.invalid/second.pdf." in curve["notes"]
 
 
@@ -912,9 +984,9 @@ def test_vs_speeds_and_printed_impeller_trims_become_separate_curves(fake, tmp_p
     by_item = {}
     for c in fake.store["Pump Curve"].values():
         by_item.setdefault(c["item"], {})[c["curve_label"]] = c
-    vs_curves = by_item["PUMP-FIXTURECO-FIXTURE-VS"]
+    vs_curves = by_item["FX-VS"]
     assert set(vs_curves) == {"3450 rpm", "1725 rpm"} and vs_curves["1725 rpm"]["speed_pct"] == 50
-    assert set(by_item["PUMP-FIXTURECO-FIXTURE-TRIM"]) == {"4 in impeller", "3.5 in impeller", "3.5 in impeller (2)"}
+    assert set(by_item["FX-TR"]) == {"4 in impeller", "3.5 in impeller", "3.5 in impeller (2)"}
     assert catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)["pumps"]["updated"] == []
 
 
@@ -947,7 +1019,7 @@ def test_a_floating_aerator_filed_as_a_nozzle_becomes_an_aerator_item(fake, tmp_
 
     summary = catalog_seed.load_catalog(catalog_dir=tmp_path, dry_run=False)
     assert summary["nozzles"]["errors"] == []
-    item = fake.store["Item"]["AERATOR-FIXTURECO-FIXTURE-AER-1-HP"]
+    item = fake.store["Item"]["FIXTURE-AER 1 HP"]
     assert item["item_group"] == "Aerators" and item["custom_equipment_class"] == "Aerator"
     assert item["custom_aerator_pattern_height_ft"] == 5 and item["custom_aerator_pattern_diameter_ft"] == 12
     assert item["custom_aerator_min_depth_ft"] == 2.5
@@ -1042,12 +1114,12 @@ def test_a_185_character_revision_is_a_dry_run_error_against_a_data_field(fake, 
     assert dry["pumps"]["created"] == []
     (error,) = dry["pumps"]["errors"]
     assert error["key"] == "fixtureco-long"
-    assert error["error"] == (f"Item PUMP-FIXTURECO-FIXTURE-LONG: 'Spec Revision' ({revision}) will get "
+    assert error["error"] == (f"Item LONG: 'Spec Revision' ({revision}) will get "
                               "truncated, as max characters allowed is 140")
     # The write refuses the same row with the same words, and leaves nothing of it behind.
     wrote = _load(tmp_path, dry_run=False)
     assert wrote["pumps"]["errors"] == dry["pumps"]["errors"]
-    assert "PUMP-FIXTURECO-FIXTURE-LONG" not in fake.store["Item"]
+    assert "LONG" not in fake.store["Item"]
     assert "Fixtureco" not in fake.store.get("Brand", {}) and not fake.store.get("Pump Curve")
 
 
@@ -1060,7 +1132,7 @@ def test_a_185_character_revision_loads_once_the_field_is_small_text(fake, tmp_p
     assert dry["pumps"]["errors"] == [] and [e["key"] for e in dry["pumps"]["created"]] == ["fixtureco-long"]
     wrote = _load(tmp_path, dry_run=False)
     assert wrote["pumps"]["errors"] == []
-    item = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]
+    item = fake.store["Item"]["LONG"]
     assert len(item["custom_spec_revision"]) == 185  # whole, never truncated
     (curve,) = fake.store["Pump Curve"].values()
     assert curve["source_document"] == f"{LONG_TITLE} (accessed 2026-11-01)"
@@ -1076,7 +1148,7 @@ def test_a_curve_value_too_long_refuses_the_row_and_its_item_with_it(fake, tmp_p
     assert error["error"].startswith("Pump Curve (3450 rpm): 'Source Document' (FIXTURE brochure x")
     wrote = _load(tmp_path, dry_run=False)
     assert wrote["pumps"]["errors"] == dry["pumps"]["errors"]
-    assert "PUMP-FIXTURECO-FIXTURE-LONG" not in fake.store["Item"]  # inserted, then rolled back
+    assert "LONG" not in fake.store["Item"]  # inserted, then rolled back
 
 
 def test_a_light_url_over_140_characters_is_caught_the_same_way(fake, tmp_path):
@@ -1088,26 +1160,26 @@ def test_a_light_url_over_140_characters_is_caught_the_same_way(fake, tmp_path):
     _as_data(fake, "Item", "custom_spec_source_url")
 
     (error,) = _load(tmp_path, dry_run=True)["lights"]["errors"]
-    assert error["error"] == (f"Item LIGHT-FIXTURECO-FIXTURE-LLONG: 'Spec Source URL' ({url}) will get "
+    assert error["error"] == (f"Item FIXTURE-LLONG: 'Spec Source URL' ({url}) will get "
                               "truncated, as max characters allowed is 140")
 
     fake.fields = declared_fields()
     wrote = _load(tmp_path, dry_run=False)
     assert wrote["lights"]["errors"] == []
-    assert fake.store["Item"]["LIGHT-FIXTURECO-FIXTURE-LLONG"]["custom_spec_source_url"] == url
+    assert fake.store["Item"]["FIXTURE-LLONG"]["custom_spec_source_url"] == url
 
 
 def test_an_update_is_checked_like_an_insert(fake, tmp_path):
     _write(tmp_path, pumps=[_long_pump("FIXTURE brochure rev A")], approved={"pumps": ["fixtureco-long"]})
     _load(tmp_path, dry_run=False)
-    stored = fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]["custom_spec_revision"]
+    stored = fake.store["Item"]["LONG"]["custom_spec_revision"]
     _write(tmp_path, pumps=[_long_pump()], approved={"pumps": ["fixtureco-long"]})
     _as_data(fake, "Item", "custom_spec_revision")
 
     for dry_run in (True, False):
         (error,) = _load(tmp_path, dry_run=dry_run)["pumps"]["errors"]
-        assert "Item PUMP-FIXTURECO-FIXTURE-LONG: 'Spec Revision'" in error["error"]
-    assert fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-LONG"]["custom_spec_revision"] == stored
+        assert "Item LONG: 'Spec Revision'" in error["error"]
+    assert fake.store["Item"]["LONG"]["custom_spec_revision"] == stored
 
 
 def test_a_declared_length_and_the_sites_type_map_set_the_limit(fake, tmp_path):
@@ -1178,3 +1250,539 @@ def test_the_real_catalog_overflowed_the_old_data_fields(fake):
         assert summary[kind]["errors"], kind
         assert all("max characters allowed is 140" in e["error"] for e in summary[kind]["errors"])
     assert all("Spec Source URL" in e["error"] for e in summary["lights"]["errors"])
+
+
+# ----------------------------------------------------------------------------- item codes (v1.775.0)
+# Nikolas, 2026-11-02: a catalog Item's code is the manufacturer's part number.
+
+
+@pytest.mark.parametrize("part_no, code", [
+    (["340030 (EQ500 1-ph)", "340031 (EQK500 3-ph ODP)"], "340030"),
+    ("51296 (order no. on sheet)", "51296"),
+    ("F2462038 / F2462051 (ball joint)", "F2462038"),
+    ("F2342002 / F2342057 (ball joint)", "F2342002"),
+    ("IWC15W100 / IWC15W200", "IWC15W100"),
+    (["022032-INT"], "022032-INT"),
+    ("4.0050.30.11", "4.0050.30.11"),
+    ("  SP0524LED  ", "SP0524LED"),
+    ("806-020", "806-020"),  # two numbers, different lengths: a part, not a range
+    ("7.3JF100 to 7.3JF400 (cord length variants)", None),
+    ("LED3125050 ... LED3125400", None),
+    ("601000-601004 / 602000-602004", None),
+    ("640120-640124", None),
+    (None, None),
+    ([], None),
+])
+def test_part_number_trims_notes_and_refuses_ranges(fake, part_no, code):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    assert catalog_seed.part_number(part_no) == code
+
+
+def test_every_row_of_the_real_catalog_gets_a_unique_code(fake):
+    from erpnext_enhancements.inventory_enhancements import item_naming_rules
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    codes = catalog_seed.catalog_codes(REAL_CATALOG)
+    assert len(codes) == 380
+    assert [k for k, v in codes.items() if v.get("error")] == []
+    normalized = [item_naming_rules.normalise(v["code"]) for v in codes.values()]
+    assert len(set(normalized)) == 380, "two codes are one code to the Item naming guard"
+    # 320 rows are coded by part number; approved.json names the Item of three of them (the
+    # Pentair pumps Sapphire already stocked under those part numbers), which is the same code.
+    assert sum(v["basis"] == "part_no" for v in codes.values()) == 317
+    merged = {k: v["code"] for k, v in codes.items() if v["merge"]}
+    assert merged == {
+        "pentair-whisperfloxf-vs-022035": "022035",
+        "pentair-superflo-vst-342002": "342002",
+        "pentair-superflo-348190": "348190",
+    }
+    assert all(codes[k]["basis"] == "approved.json item_code" for k in merged)
+    assert codes["pentair-eq-eq500"]["code"] == "340030"
+    assert codes["oase-profilux-led-1100-01"]["code"] == "51296"
+    assert codes["safe-rain-joint-cascade-f2462038"]["code"] == "F2462038"
+    assert codes["grundfos-nbs-015-090-4pole-9p84"]["code"] == "NBS 015-090"
+    assert codes["roman-rpj-375"]["code"] == "RPJ-375"
+    assert codes["otterbine-gemini-1hp-60hz"]["code"] == "Gemini Aerating Fountain 1 HP (60 Hz)"
+    assert codes["otterbine-gemini-1hp-60hz"]["kind"] == "aerators"
+    # The comma goes, as the naming rules ask of a code; every other character is the model's.
+    assert codes["goulds-3656lh-2x2-5-3450"]["code"] == '3656LH 2x2-5 (also 3756LH) 3450 rpm trim A 4"'
+
+
+def test_shared_part_numbers_and_ranges_fall_back_to_the_model(fake):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    codes = catalog_seed.catalog_codes(REAL_CATALOG)
+    shared = {k: v for k, v in codes.items() if "shared with another row" in v["basis"]}
+    assert len(shared) == 8
+    for part in ("F2501065", "F2501561", "F2751006", "F2751017"):
+        rows = [v for k, v in shared.items() if part.lower() in k]
+        assert len(rows) == 2 and all(part in v["code"] and v["code"] != part for v in rows), part
+    assert codes["safe-rain-bubbler-f2501065-water-level-5-cm"]["code"] == "Bubbler F2501065 (water level 5 cm)"
+    ranges = {k for k, v in codes.items() if "range" in v["basis"]}
+    assert {"kasco-7-3jf-linden", "kasco-7-3jf-sequoia", "kasco-7-3jf-birch"} <= ranges
+    assert codes["kasco-7-3jf-linden"]["code"] == "7.3JF Aerating Fountain Linden pattern"
+    assert codes["pentair-intellibrite-5g-color-spa-120v"]["code"] == "IntelliBrite 5G Color LED spa light 120 V"
+    # SHPF.50 (0.5 HP) and SHPF5.0 (5 HP) are different pumps whose numbers the guard reads as one.
+    assert codes["jandy-stealth-shpf050-shpm075"]["code"] == "SHPF.50 / SHPM.75"
+    assert codes["jandy-stealth-shpf500"]["code"] == "SHPF5.0 / SHPF5.0-3PH"
+    assert "once case and punctuation are ignored" in codes["jandy-stealth-shpf500"]["basis"]
+
+
+def _coded(**row):
+    return {"manufacturer": "Fixtureco", "model": "FIXTURE-X", **row}
+
+
+def test_an_approved_item_code_wins_and_a_collision_is_refused_not_suffixed(fake):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    entries = [
+        ("pumps", "a", _coded(part_no="FX-1"), {}),
+        ("lights", "b", _coded(part_no="FX-2", model="FIXTURE-Y"), {"item_code": "500141"}),
+        ("nozzles", "c", _coded(model="FX-1"), {}),  # no part number: its model is a's part number
+        ("pumps", "d", _coded(part_no="FX-3"), {"item_code": "FX-1"}),  # chose it: kept
+    ]
+    codes = catalog_seed.assign_codes(entries)
+    assert codes[("lights", "b")]["code"] == "500141" and codes[("lights", "b")]["basis"].startswith("approved")
+    assert codes[("pumps", "d")]["code"] == "FX-1"
+    for key in (("pumps", "a"), ("nozzles", "c")):
+        assert "is also the code of" in codes[key]["error"] and "approved.json" in codes[key]["error"]
+    assert not any(v.get("code", "").startswith("FX-1-") for v in codes.values())
+
+
+def test_a_fresh_load_creates_items_under_the_part_number_and_reports_each_code(fake):
+    summary = _seed()
+    assert summary["pumps"]["codes"]["Fixtureco|FIXTURE-P100".casefold()] == "FX-100-115"
+    assert "FX-100-115" in fake.store["Item"]
+    assert fake.store["Item"]["FX-100-115"]["item_name"].startswith("PUMP, FIXTURECO FIXTURE-P100")
+    assert summary["nozzles"]["codes"]["fixtureco|fixture-n10"] == "FIXTURE-N10"
+    assert summary["pumps"]["renames_pending"] == []
+
+
+def test_a_code_an_existing_item_holds_is_refused(fake):
+    fake.store["Item"]["FX100115"] = {"doctype": "Item", "name": "FX100115", "item_code": "FX100115",
+                                       "item_name": "PUMP, SOMETHING ELSE"}
+    summary = _seed(dry_run=True)
+    (error,) = [e for e in summary["pumps"]["errors"] if e["key"] == "fixtureco|fixture-p100"]
+    assert "already held by Item FX100115" in error["error"] and "approved.json" in error["error"]
+    assert summary["pumps"]["codes"]["fixtureco|fixture-p100"] == "FX-100-115"
+
+
+def test_an_item_under_the_old_code_is_found_by_its_catalog_id_and_flagged_for_rename(fake, tmp_path):
+    row = _twin("FX-OLD", 1, model="FIXTURE-OLD")
+    _write(tmp_path, pumps=[row], approved={"pumps": [row["id"]]})
+    fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-OLD"] = {
+        "doctype": "Item", "name": "PUMP-FIXTURECO-FIXTURE-OLD", "item_code": "PUMP-FIXTURECO-FIXTURE-OLD",
+        "item_name": "PUMP, FIXTURECO FIXTURE-OLD", "item_group": "Pumps", "brand": "Elsewhere",
+        "custom_catalog_id": row["id"],
+    }
+    summary = _load(tmp_path, dry_run=False)
+    assert summary["pumps"]["created"] == []
+    assert "FX-OLD" not in fake.store["Item"]
+    assert summary["pumps"]["renames_pending"] == [
+        {"key": row["id"], "item_code": "PUMP-FIXTURECO-FIXTURE-OLD", "code": "FX-OLD"}
+    ]
+
+
+def _codes(**rows):
+    return {cid: {"kind": "pumps", "code": code, "basis": "part_no", "legacy_code": f"PUMP-{cid.upper()}"}
+            for cid, code in rows.items()}
+
+
+def test_the_rename_planner_refuses_with_a_reason(fake):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    codes = _codes(a="FX-A", b="FX-B", c="FX-C", d="FX-D", e="FX-E")
+    codes["f"] = {"kind": "lights", "error": "Item code 'X' is also the code of g", "legacy_code": "LIGHT-F"}
+    items = [
+        {"name": "PUMP-A", "custom_catalog_id": "a"},  # renamed
+        {"name": "FX-B", "custom_catalog_id": "b"},  # done already
+        {"name": "PUMP-C", "custom_catalog_id": "c"},  # FX-C is taken by a Sapphire Item
+        {"name": "500141", "custom_catalog_id": "d"},  # a Sapphire Item attached to the row
+        {"name": "PUMP-E", "custom_catalog_id": "e"},
+        {"name": "PUMP-E2", "custom_catalog_id": "e"},
+        {"name": "LIGHT-F", "custom_catalog_id": "f"},
+        {"name": "PUMP-GONE", "custom_catalog_id": "gone"},
+    ]
+    names = [i["name"] for i in items] + ["fx.c"]
+    plan = catalog_seed.plan_renames(items, codes, names)
+    assert plan["renames"] == [{"old": "PUMP-A", "kind": "pumps", "catalog_id": "a", "new": "FX-A", "basis": "part_no"}]
+    assert plan["unchanged"] == [{"old": "FX-B", "kind": "pumps", "catalog_id": "b"}]
+    reasons = {r["old"]: r["reason"] for r in plan["refused"]}
+    assert "Item fx.c already holds the code 'FX-C'" in reasons["PUMP-C"]
+    assert "not the code the loader gave this row (PUMP-D)" in reasons["500141"]
+    assert reasons["PUMP-E"] == reasons["PUMP-E2"] == "2 Items carry this catalog id: PUMP-E, PUMP-E2"
+    assert reasons["LIGHT-F"].startswith("Item code 'X' is also the code of g")
+    assert reasons["PUMP-GONE"] == "no row in the catalog files has this catalog id"
+
+
+def test_the_rename_plan_for_prod_as_loaded_on_2026_11_02(fake):
+    """Prod's 380 Items carry the old rule's codes; three part numbers are Sapphire Items already,
+    and approved.json merges those three rows into them (Nikolas, 2026-11-02)."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    codes = catalog_seed.catalog_codes(REAL_CATALOG)
+    items = [{"name": v["legacy_code"], "custom_catalog_id": cid} for cid, v in codes.items()]
+    sapphire = ["022035", "342002", "348190", "AL10300", "500141"]
+    plan = catalog_seed.plan_renames(items, codes, [i["name"] for i in items] + sapphire)
+    assert len(plan["renames"]) == 377 and plan["unchanged"] == [] and plan["refused"] == []
+    # The names prod's duplicates carry, read on 2026-11-02.
+    assert {m["old"]: m["new"] for m in plan["merges"]} == {
+        "PUMP-PENTAIR-WHISPERFLOXF-VS-5-THP-COMMERCIAL-VARIABLE-SPEED": "022035",
+        "PUMP-PENTAIR-SUPERFLO-VST-VARIABLE-SPEED-2-2-THP": "342002",
+        "PUMP-PENTAIR-SUPERFLO-1-1-THP": "348190",
+    }
+    by_old = {r["old"]: r["new"] for r in plan["renames"]}
+    assert by_old["PUMP-PENTAIR-EQ500-EQK500"] == "340030"
+    assert by_old["LIGHT-JANDY-COMMERCIAL-WHITE-LED-LIGHT-LARGE-12-VAC-42-W-5000K"] == "WPLV3LS"
+    assert by_old["PUMP-GRUNDFOS-NBS-015-090"] == "NBS 015-090"
+
+
+def test_rewrite_codes_reaches_every_place_a_design_names_an_item(fake):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    model = {
+        "network": {"pumps": [{"id": "p1", "item": "PUMP-OLD", "curve": "PUMP-OLD"}]},
+        "equipment": [{"slot": "pump", "item": "PUMP-OLD"}, {"slot": "light", "item": "LIGHT-KEEP"}],
+        "features": [{"product": {"item": "NOZZLE-OLD", "generic": False}}],
+        "bom": [{"key": "nozzle|NOZZLE-OLD", "item_hint": {"item": "NOZZLE-OLD"}}],
+        "prices": {"PUMP-OLD": {"rate": 10}},
+        "notes": "was PUMP-OLD before",
+        "n": 3,
+    }
+    new, count = catalog_seed.rewrite_codes(model, {"PUMP-OLD": "340030", "NOZZLE-OLD": "F2501267"})
+    assert count == 7
+    assert new["network"]["pumps"][0] == {"id": "p1", "item": "340030", "curve": "340030"}
+    assert [e["item"] for e in new["equipment"]] == ["340030", "LIGHT-KEEP"]
+    assert new["features"][0]["product"]["item"] == "F2501267"
+    assert new["bom"][0] == {"key": "nozzle|F2501267", "item_hint": {"item": "F2501267"}}
+    assert new["prices"] == {"340030": {"rate": 10}}
+    assert new["notes"] == "was PUMP-OLD before" and new["n"] == 3
+
+
+def _renamable(fake, tmp_path, n=3):
+    rows = [_twin(f"FX-R{i}", 1, model=f"FIXTURE-R{i}") for i in range(n)]
+    _write(tmp_path, pumps=rows, approved={"pumps": [r["id"] for r in rows]})
+    for row in rows:
+        old = f"PUMP-FIXTURECO-FIXTURE-R{row['id'][-1]}"
+        fake.store["Item"][old] = {"doctype": "Item", "name": old, "item_code": old, "item_name": f"PUMP, {old}",
+                                   "item_group": "Pumps", "custom_catalog_id": row["id"]}
+    fake.store["Pump Curve"] = {"PCRV-00001": {"name": "PCRV-00001", "item": "PUMP-FIXTURECO-FIXTURE-R0"}}
+    model = {"network": {"pumps": [{"id": "p1", "item": "PUMP-FIXTURECO-FIXTURE-R0"}]},
+             "equipment": [{"slot": "pump", "item": "PUMP-FIXTURECO-FIXTURE-R2"}]}
+    fake.store["Water Feature Design"] = {
+        "WFD-1": {"name": "WFD-1", "model_json": json.dumps(model), "results_json": None},
+        "WFD-2": {"name": "WFD-2", "model_json": json.dumps({"network": {"pumps": []}}), "results_json": "{}"},
+    }
+    return rows
+
+
+def test_a_dry_run_rename_writes_nothing_and_shows_the_designs_it_would_fix(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    before = copy.deepcopy(fake.store)
+    summary = catalog_seed.rename_items(dry_run="true", catalog_dir=tmp_path)
+    assert summary["dry_run"] is True and fake.store == before and fake.renamed == []
+    assert [(r["old"], r["new"]) for r in summary["renames"]] == [
+        ("PUMP-FIXTURECO-FIXTURE-R0", "FX-R0"), ("PUMP-FIXTURECO-FIXTURE-R1", "FX-R1"),
+        ("PUMP-FIXTURECO-FIXTURE-R2", "FX-R2"),
+    ]
+    assert summary["designs"] == [{"design": "WFD-1", "fields": ["model_json"], "replaced": 2}]
+    assert summary["remaining"] == 3
+
+
+def test_renames_run_in_rounds_and_each_round_fixes_the_designs(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    first = catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
+    assert [r["new"] for r in first["renamed"]] == ["FX-R0"] and first["remaining"] == 2
+    assert fake.renamed[0][2] == {"ignore_permissions": True, "show_alert": False, "rebuild_search": False}
+    assert fake.store["Pump Curve"]["PCRV-00001"]["item"] == "FX-R0"
+    model = json.loads(fake.store["Water Feature Design"]["WFD-1"]["model_json"])
+    assert model["network"]["pumps"][0]["item"] == "FX-R0"
+    assert model["equipment"][0]["item"] == "PUMP-FIXTURECO-FIXTURE-R2"  # its round has not come
+    assert fake.db.commits == 1
+    assert any("__global_search" in q for q, _v in fake.sql)
+    assert fake.cache.deleted == ["fountain_designer:pump_catalog"]  # the designer's pump catalog
+    (comment,) = fake.store["Comment"].values()
+    assert comment["reference_name"] == "WFD-1" and "PUMP-FIXTURECO-FIXTURE-R0 → FX-R0" in comment["content"]
+
+    rest = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert [r["new"] for r in rest["renamed"]] == ["FX-R1", "FX-R2"] and rest["remaining"] == 0
+    model = json.loads(fake.store["Water Feature Design"]["WFD-1"]["model_json"])
+    assert (model["network"]["pumps"][0]["item"], model["equipment"][0]["item"]) == ("FX-R0", "FX-R2")
+
+    again = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert again["renames"] == [] and len(again["unchanged"]) == 3 and again["designs"] == []
+    assert sorted(fake.store["Item"]) == ["500999", "FX-R0", "FX-R1", "FX-R2"]
+
+
+def test_a_design_saved_with_an_old_code_after_its_round_is_repaired_by_the_next(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
+    stale = {"network": {"pumps": [{"id": "p1", "item": "PUMP-FIXTURECO-FIXTURE-R0"}]}}
+    fake.store["Water Feature Design"]["WFD-2"]["model_json"] = json.dumps(stale)
+    summary = catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
+    assert {d["design"] for d in summary["designs"]} >= {"WFD-2"}
+    assert json.loads(fake.store["Water Feature Design"]["WFD-2"]["model_json"])["network"]["pumps"][0]["item"] == "FX-R0"
+
+
+def test_a_failed_rename_rolls_back_only_that_item(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    fake.fail_rename.add("PUMP-FIXTURECO-FIXTURE-R1")
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert [r["new"] for r in summary["renamed"]] == ["FX-R0", "FX-R2"]
+    assert summary["errors"][0]["old"] == "PUMP-FIXTURECO-FIXTURE-R1" and "refused" in summary["errors"][0]["error"]
+    assert summary["remaining"] == 1 and "PUMP-FIXTURECO-FIXTURE-R1" in fake.store["Item"]
+
+
+def test_the_rename_endpoint_is_system_manager_only_and_dry_by_default(fake, tmp_path, monkeypatch):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    monkeypatch.setattr(catalog_seed, "CATALOG_DIR", tmp_path)
+    import frappe
+
+    for sent in (1, "1", "true", "yes", None):
+        summary = catalog_seed.rename_catalog_items(dry_run=sent)
+        assert summary["dry_run"] is True and fake.renamed == [], sent
+    assert set(frappe.roles_checked) == {"System Manager"}
+    assert catalog_seed.rename_catalog_items()["dry_run"] is True
+    assert catalog_seed.rename_catalog_items(dry_run="0", limit="2")["remaining"] == 1
+
+
+def test_the_rename_never_runs_on_migrate_or_in_a_job(fake):
+    hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+    source = (WE / "catalog_seed.py").read_text(encoding="utf-8")
+    assert "rename_catalog_items" not in hooks and "rename_items" not in hooks
+    assert "frappe.enqueue(" not in source and "rebuild_search=False" in source
+
+
+# --- merging a catalog row into an Item Sapphire already had (Nikolas, 2026-11-02)
+
+DUP = "PUMP-FIXTURECO-FIXTURE-M1"
+
+
+def _mergeable(fake, tmp_path):
+    """Prod's shape for 022035: a Sapphire Item under the part number, and the loader's Item for
+    the same pump under the old rule's code, holding the curves; approved.json names the former."""
+    row = _twin("FX-M1", 1, model="FIXTURE-M1")
+    _write(tmp_path, pumps=[row], approved={"pumps": [{"id": row["id"], "item_code": "FX-M1"}]})
+    fake.store["Item"]["FX-M1"] = {
+        "doctype": "Item", "name": "FX-M1", "item_code": "FX-M1", "item_name": "PUMP, FIXTURECO M1, 1HP",
+        "item_group": "Products", "description": "Sapphire's own words.",
+    }
+    fake.store["Item"][DUP] = {
+        "doctype": "Item", "name": DUP, "item_code": DUP, "item_name": f"PUMP, {DUP}", "item_group": "Pumps",
+        "brand": "Fixtureco", "custom_catalog_id": row["id"], "custom_equipment_class": "Pump",
+        "custom_model_no": "FIXTURE-M1", "custom_pump_hp": 1,
+        "custom_spec_source_url": "https://example.invalid/twin.pdf", "custom_generic_estimate": 0,
+    }
+    fake.store["Pump Curve"] = {
+        "PCRV-00001": {"doctype": "Pump Curve", "name": "PCRV-00001", "item": DUP, "item_name": f"PUMP, {DUP}",
+                       "curve_label": "3450 rpm"},
+        "PCRV-00002": {"doctype": "Pump Curve", "name": "PCRV-00002", "item": DUP, "item_name": f"PUMP, {DUP}",
+                       "curve_label": "1725 rpm"},
+    }
+    fake.store["Water Feature Design"] = {
+        "WFD-1": {"name": "WFD-1", "model_json": "{}",
+                  "results_json": json.dumps({"pump_candidates": [{"item": DUP, "ok": True}]})},
+    }
+    return row
+
+
+def test_a_dry_run_reports_a_merge_with_both_codes_and_that_the_duplicate_can_go(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _mergeable(fake, tmp_path)
+    before = copy.deepcopy(fake.store)
+    summary = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
+    (merge,) = summary["merges"]
+    writes = merge.pop("writes")
+    assert merge == {
+        "old": DUP, "new": "FX-M1", "kind": "pumps", "catalog_id": row["id"], "basis": "approved.json item_code",
+        "moves": {"Pump Curve": ["PCRV-00001", "PCRV-00002"]}, "delete": True,
+    }
+    # The dry run says what each field will become on Sapphire's Item, from the catalog's values.
+    assert writes["custom_catalog_id"] == {"from": None, "to": row["id"]}
+    assert writes["custom_pump_hp"] == {"from": None, "to": 1.0}
+    assert writes["custom_spec_verified_by"]["to"] == "fixture.approver@example.invalid"
+    assert summary["renames"] == [] and summary["refused"] == [] and summary["remaining"] == 1
+    assert summary["designs"] == [{"design": "WFD-1", "fields": ["results_json"], "replaced": 1}]
+    assert fake.store == before and fake.deleted == []
+
+
+def test_a_merge_moves_the_catalog_fields_and_curves_and_deletes_the_duplicate(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _mergeable(fake, tmp_path)
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert [m["old"] for m in summary["merged"]] == [DUP] and summary["errors"] == []
+    assert "custom_catalog_id" in summary["merged"][0]["fields"] and summary["remaining"] == 0
+    assert DUP not in fake.store["Item"] and fake.deleted == [("Item", DUP, True, 0)]
+    item = fake.store["Item"]["FX-M1"]
+    assert item["custom_catalog_id"] == row["id"] and item["custom_equipment_class"] == "Pump"
+    assert item["custom_pump_hp"] == 1 and item["custom_generic_estimate"] == 0
+    # Sapphire's own fields stay Sapphire's: the group is not moved to "Pumps".
+    assert item["item_group"] == "Products" and item["item_name"] == "PUMP, FIXTURECO M1, 1HP"
+    assert item["description"] == "Sapphire's own words." and not item.get("brand")
+    assert {c["item"] for c in fake.store["Pump Curve"].values()} == {"FX-M1"}
+    assert {c["item_name"] for c in fake.store["Pump Curve"].values()} == {"PUMP, FIXTURECO M1, 1HP"}
+    results = json.loads(fake.store["Water Feature Design"]["WFD-1"]["results_json"])
+    assert results["pump_candidates"][0]["item"] == "FX-M1"
+    assert fake.cache.deleted and fake.db.commits >= 1
+
+    again = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert again["merges"] == [] and again["merged"] == [] and again["remaining"] == 0
+    assert [u["old"] for u in again["unchanged"]] == ["FX-M1"]
+
+
+def test_after_the_merge_the_loader_treats_the_existing_item_as_the_catalog_item(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _mergeable(fake, tmp_path)
+    catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    curves = copy.deepcopy(fake.store["Pump Curve"])
+    summary = _load(tmp_path, dry_run=False)
+    pumps = summary["pumps"]
+    assert pumps["errors"] == [] and pumps["created"] == [] and pumps["renames_pending"] == []
+    assert pumps["codes"] == {"fixtureco-twin-fx-m1": "FX-M1"}
+    assert set(fake.store["Pump Curve"]) == set(curves), "the moved curves are found, not loaded again"
+    item = fake.store["Item"]["FX-M1"]
+    assert item["brand"] == "Fixtureco" and item["item_group"] == "Products"
+    assert any("FX-M1" in w and "equipment class" in w for w in pumps["warnings"])
+
+
+def test_the_loader_refuses_the_row_until_the_merge_has_run(fake, tmp_path):
+    _mergeable(fake, tmp_path)
+    summary = _load(tmp_path, dry_run=False)
+    (error,) = summary["pumps"]["errors"]
+    assert DUP in error["error"] and "rename_catalog_items" in error["error"]
+    assert not fake.store["Item"]["FX-M1"].get("custom_catalog_id")
+    assert {c["item"] for c in fake.store["Pump Curve"].values()} == {DUP}
+
+
+def test_a_merge_is_refused_with_the_links_that_keep_the_duplicate(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _mergeable(fake, tmp_path)
+    fake.store["Quotation Item"] = {"QI-1": {"name": "QI-1", "item_code": DUP}}
+    fake.store["Fixture Settings"] = {"Fixture Settings": {"default_pump": DUP}}
+    for dry_run in (1, 0):
+        summary = catalog_seed.rename_items(dry_run=dry_run, catalog_dir=tmp_path)
+        assert summary["merges"] == [] and summary["merged"] == [] and summary["remaining"] == 0
+        (refused,) = summary["refused"]
+        assert refused["old"] == DUP and refused["new"] == "FX-M1"
+        assert refused["linked"] == ["Quotation Item.item_code (1)", "Fixture Settings.default_pump (1)"]
+        assert "cannot be deleted" in refused["reason"] and "Quotation Item.item_code" in refused["reason"]
+    assert DUP in fake.store["Item"] and fake.deleted == []
+    assert {c["item"] for c in fake.store["Pump Curve"].values()} == {DUP}
+
+
+def test_a_merge_that_fails_on_delete_rolls_back_the_moved_curves(fake, tmp_path, monkeypatch):
+    """A Link that appears between the check and the delete: delete_doc refuses, never forced."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _mergeable(fake, tmp_path)
+    real = catalog_seed.merge_links
+    monkeypatch.setattr(catalog_seed, "merge_links", lambda old: (real(old)[0], []))
+    fake.store["Item Price"] = {"IP-1": {"name": "IP-1", "item_code": DUP}}
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert summary["merged"] == [] and summary["errors"][0]["old"] == DUP
+    assert "disable" in summary["errors"][0]["error"]
+    assert DUP in fake.store["Item"] and not fake.store["Item"]["FX-M1"].get("custom_catalog_id")
+    assert {c["item"] for c in fake.store["Pump Curve"].values()} == {DUP}
+
+
+def test_the_planner_will_not_merge_into_another_catalog_rows_item(fake):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    codes = {
+        "fx-a": {"kind": "pumps", "code": "SHARED-1", "basis": "approved.json item_code",
+                 "legacy_code": "PUMP-FX-A", "merge": True, "values": {}},
+        "fx-b": {"kind": "pumps", "code": "SHARED-1", "basis": "part_no", "legacy_code": "PUMP-FX-B",
+                 "merge": False, "values": {}},
+    }
+    items = [{"name": "PUMP-FX-A", "custom_catalog_id": "fx-a"}, {"name": "SHARED-1", "custom_catalog_id": "fx-b"}]
+    plan = catalog_seed.plan_renames(items, codes, [i["name"] for i in items])
+    assert plan["merges"] == []
+    (refused,) = [r for r in plan["refused"] if r["old"] == "PUMP-FX-A"]
+    assert "already the Item of catalog row fx-b" in refused["reason"]
+
+
+def test_a_merge_counts_against_the_round_limit_and_goes_first(fake, tmp_path):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _mergeable(fake, tmp_path)
+    other = _twin("FX-R9", 1, model="FIXTURE-R9")
+    _write(tmp_path, pumps=[row, other],
+           approved={"pumps": [{"id": row["id"], "item_code": "FX-M1"}, other["id"]]})
+    fake.store["Item"]["PUMP-FIXTURECO-FIXTURE-R9"] = {
+        "doctype": "Item", "name": "PUMP-FIXTURECO-FIXTURE-R9", "item_code": "PUMP-FIXTURECO-FIXTURE-R9",
+        "item_name": "PUMP, R9", "item_group": "Pumps", "custom_catalog_id": other["id"],
+    }
+    first = catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
+    assert [m["old"] for m in first["merged"]] == [DUP] and first["renamed"] == [] and first["remaining"] == 1
+    second = catalog_seed.rename_items(dry_run=0, limit=1, catalog_dir=tmp_path)
+    assert [r["new"] for r in second["renamed"]] == ["FX-R9"] and second["remaining"] == 0
+
+
+def test_a_round_with_nothing_left_to_rename_still_repairs_the_designs(fake, tmp_path):
+    """Review of e6f01447: the repair ran only beside a rename, so after the last round a design
+    saved with an old code stayed broken however often the endpoint was run."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    stale = {"network": {"pumps": [{"id": "p1", "item": "PUMP-FIXTURECO-FIXTURE-R1"}]}}
+    fake.store["Water Feature Design"]["WFD-2"]["model_json"] = json.dumps(stale)
+    commits = fake.db.commits
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert summary["renamed"] == [] and summary["remaining"] == 0
+    assert summary["designs"] == [{"design": "WFD-2", "fields": ["model_json"], "replaced": 1}]
+    assert json.loads(fake.store["Water Feature Design"]["WFD-2"]["model_json"])["network"]["pumps"][0]["item"] == "FX-R1"
+    assert fake.db.commits == commits + 1
+    quiet = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert quiet["designs"] == [] and fake.db.commits == commits + 1
+
+
+def test_a_json_column_that_comes_back_parsed_is_rewritten_too(fake, tmp_path):
+    """Review of e6f01447: a JSON field read back as a dict was skipped as "not text"."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    _renamable(fake, tmp_path)
+    fake.store["Water Feature Design"]["WFD-2"]["results_json"] = {
+        "pump_candidates": [{"item": "PUMP-FIXTURECO-FIXTURE-R2"}, {"item": "KEEP"}]
+    }
+    dry = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
+    assert {"design": "WFD-2", "fields": ["results_json"], "replaced": 1} in dry["designs"]
+    catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    written = fake.store["Water Feature Design"]["WFD-2"]["results_json"]
+    assert isinstance(written, str)
+    assert [c["item"] for c in json.loads(written)["pump_candidates"]] == ["FX-R2", "KEEP"]
+
+
+def test_a_merge_never_overwrites_sapphires_value_with_the_duplicates_blank(fake, tmp_path):
+    """Review of 57614687, prod's 342002: the catalog gives no HP for that pump, so the duplicate
+    holds Frappe's 0.0 and Sapphire's Item 1.5. The merge writes the catalog's values, never the
+    duplicate's, so 1.5 stays, and so it does through every later seed."""
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    row = _twin("FX-M1", 1, model="FIXTURE-M1", hp=None)
+    _mergeable(fake, tmp_path)
+    _write(tmp_path, pumps=[row], approved={"pumps": [{"id": row["id"], "item_code": "FX-M1"}]})
+    fake.store["Item"]["FX-M1"]["custom_pump_hp"] = 1.5
+    fake.store["Item"][DUP]["custom_pump_hp"] = 0.0
+    dry = catalog_seed.rename_items(dry_run=1, catalog_dir=tmp_path)
+    assert "custom_pump_hp" not in dry["merges"][0]["writes"]
+    summary = catalog_seed.rename_items(dry_run=0, catalog_dir=tmp_path)
+    assert "custom_pump_hp" not in summary["merged"][0]["fields"]
+    assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5
+    _load(tmp_path, dry_run=False)
+    assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5

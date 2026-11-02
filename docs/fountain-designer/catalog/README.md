@@ -183,6 +183,20 @@ common for pool lights.
 | Goulds (Xylem) | e-SHX Smart Pump (316 SS end-suction with Hydrovar X drive) | 9 | digitized / vector-path | 2 % |
 | Goulds (Xylem) | 3656LH / 3756LH low-head end suction (cast iron, bronze fitted) | 10 | digitized / vector-path | 2 % |
 
+## Item codes
+
+Since v1.775.0 a seeded Item's code is the manufacturer's part number, read from `part_no`: the first
+entry, without its trailing note (`"340030 (EQ500 1-ph)"` gives `340030`), and the first of a ` / ` set of
+alternatives. A row with no `part_no`, a range (`"7.3JF100 to 7.3JF400 (cord length variants)"`,
+`"601000-601004"`), or a part number another row also has (once case and punctuation are ignored) is coded
+by its `model` as written, commas dropped. So keep the real part number first in `part_no`, and put
+anything else (the variant, the supply, "order no. on sheet") in the parenthetical note after it. To code
+a row some other way, or to attach it to an Item Sapphire already has, give its `approved.json` entry an
+`item_code`. If the loader already created its own Item for that row, `rename_catalog_items` merges that
+Item into Sapphire's. Three rows are attached this way: `pentair-whisperfloxf-vs-022035`,
+`pentair-superflo-vst-342002` and `pentair-superflo-348190`, to Items `022035`, `342002` and `348190`.
+The full rule is in `erpnext_enhancements/water_engineering/README.md`, Seeding the catalog.
+
 ## Approval checklist
 
 Tick a manufacturer once its rows are approved for seeding. Approving means: the cited documents are the ones you want to rely on, the spot checks below pass, and the terms note for that maker is acceptable.
