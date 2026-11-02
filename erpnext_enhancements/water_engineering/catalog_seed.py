@@ -44,6 +44,13 @@ What it is careful about:
   a collision, with another row or with an Item already on the site, refuses the row with the
   reason. Nothing is ever suffixed to make a code unique. The summary's ``codes`` shows each
   row's code. Items loaded before this rule are renamed by :func:`rename_catalog_items`.
+* **Merges.** Sometimes ``approved.json`` points a row at an Item Sapphire already had, while the
+  loader's own Item for that row is still on the site. :func:`rename_catalog_items` then merges
+  them instead of renaming:
+  - it moves the catalog id, the specs and provenance, and the curves to the existing Item;
+  - it deletes the loader's Item, and refuses to if anything else links to it;
+  - until that has run, a load refuses the row.
+  This is the one place anything here deletes an Item.
 * **Idempotent, keyed on the catalog row id.** The Item is found by the approval's
   ``item_code``, else by the ``custom_catalog_id`` the loader stamped on it (so a renamed Item is
   found under its new name), else by ``brand`` + ``custom_model_no``, else created. A Pump Curve
@@ -1029,6 +1036,22 @@ def apply_item(kind, item_plan, verified_by, dry_run, taken=None):
 	values = dict(item_plan["set"])
 	values["custom_spec_verified_by"] = verified_by
 	existing = find_item(item_plan)
+	if existing and item_plan["match_existing_code"] and item_plan.get("catalog_id"):
+		# The loader's own Item for this row, still under its old code, has to be merged into the
+		# approved one first. Loading now would stamp the row's id on a second Item and give the
+		# approved Item a second set of curves.
+		stale = [
+			name
+			for name in frappe.get_all(
+				"Item", filters={"custom_catalog_id": item_plan["catalog_id"]}, pluck="name"
+			)
+			if name.casefold() != existing.casefold()
+		]
+		if stale:
+			raise CatalogRowError(
+				f"Item {stale[0]} still carries this row's catalog id. approved.json merges the row into "
+				f"Item {existing}, so run rename_catalog_items first."
+			)
 	if not existing and taken is not None:
 		holder = taken.get(naming_rules.normalise(item_plan["item_code"]))
 		if holder:
@@ -1298,8 +1321,10 @@ def load_catalog(catalog_dir=None, dry_run=True):
 						changes += apply_curve(
 							item_code, curve, verified_by, dry_run, item_exists=not created
 						)
-					# The pump selectors read item_group "Pumps" only, so a curve on an Item
-					# elsewhere would never reach a design.
+					# The designer's pump list (api.designer._pump_items) reads item_group "Pumps" or
+					# equipment class "Pump", and the loader sets the class, so an Item outside the
+					# group is still offered. Said anyway: the group is Sapphire's to choose, and a
+					# person filtering the Item list by "Pumps" will not see it.
 					group = (
 						plan["item"]["fill"]["item_group"]
 						if created
@@ -1307,8 +1332,8 @@ def load_catalog(catalog_dir=None, dry_run=True):
 					)
 					if group != GROUPS["pumps"][0]:
 						out["warnings"].append(
-							f"{label}: Item {item_code} is in item group {group!r}; the pump selector reads only "
-							f"{GROUPS['pumps'][0]!r}, so designs will not pick it"
+							f"{label}: Item {item_code} is in item group {group!r}, not {GROUPS['pumps'][0]!r}; "
+							"the designer still offers it by its equipment class (Pump)"
 						)
 				elif kind == "nozzles" and plan.get("profile"):
 					changes += apply_profile(item_code, plan, verified_by, dry_run)
@@ -1361,10 +1386,14 @@ DESIGN_JSON_FIELDS = ("model_json", "results_json", "design_issues_json", "readi
 
 
 def catalog_codes(folder=None):
-	"""``{catalog id: {kind, code, legacy_code, basis} | {kind, error}}`` for every row with an id.
+	"""``{catalog id: {kind, code, legacy_code, basis, merge, fields} | {kind, error}}`` for every
+	row with an id.
 
 	``kind`` is the Item's kind (``pumps``, ``nozzles``, ``aerators``, ``lights``). ``legacy_code``
-	is the code the old rule gave the row, or None when the row cannot be planned.
+	is the code the old rule gave the row, or None when the row cannot be planned. ``merge`` is
+	true when ``approved.json`` names the row's Item (``item_code``), which makes an existing Item
+	of that code the row's Item; ``fields`` are the Item fields the loader owns for the row (its
+	specs and provenance), which a merge carries over to that Item.
 	"""
 	meta, _approvals, entries = read_catalog(Path(folder) if folder else CATALOG_DIR)
 	out = {}
@@ -1372,22 +1401,29 @@ def catalog_codes(folder=None):
 		row_id = str(entry["row"].get("id") or "").strip()
 		if not row_id:
 			continue
-		kind, legacy = entry["kind"], None
+		kind, legacy, fields = entry["kind"], None, []
 		try:
 			plan = PLANNERS[entry["kind"]](entry["row"], entry["approval"] or {}, meta, entry["code"])
 			kind = "aerators" if plan["item"]["fill"]["item_group"] == GROUPS["aerators"][0] else kind
-			legacy = plan["item"]["legacy_code"]
+			legacy, fields = plan["item"]["legacy_code"], sorted(plan["item"]["set"])
 		except CatalogRowError:
 			pass
 		if entry["code_error"]:
 			out[row_id] = {"kind": kind, "error": entry["code_error"], "legacy_code": legacy}
 		else:
-			out[row_id] = {"kind": kind, "code": entry["code"], "basis": entry["code_basis"], "legacy_code": legacy}
+			out[row_id] = {
+				"kind": kind,
+				"code": entry["code"],
+				"basis": entry["code_basis"],
+				"legacy_code": legacy,
+				"merge": bool((entry["approval"] or {}).get("item_code")),
+				"fields": fields,
+			}
 	return out
 
 
 def plan_renames(items, codes, existing_names):
-	"""``{renames, unchanged, refused}`` for the Items that carry a catalog id. Pure.
+	"""``{renames, merges, unchanged, refused}`` for the Items that carry a catalog id. Pure.
 
 	``items`` is ``[{name, custom_catalog_id}]``, ``codes`` is :func:`catalog_codes`, and
 	``existing_names`` every Item name on the site. A rename is ``{old, new, kind, catalog_id,
@@ -1395,23 +1431,42 @@ def plan_renames(items, codes, existing_names):
 	code collides with another row's; an Item whose current code is not the one the old rule gave
 	its row (a Sapphire Item attached to the row, which is renamed by a person or not at all); a
 	new code another Item already holds once case and punctuation are ignored.
+
+	A merge has the same shape. It is planned where ``approved.json`` gives the row an
+	``item_code`` that an existing Item holds exactly (case aside), and the loader's Item for the
+	row still sits under its old code: that Item is folded into the existing one
+	(:func:`merge_item`) rather than renamed onto it. Nikolas, 2026-11-02, for the three Pentair
+	pumps Sapphire already stocked under their part numbers. The existing Item is refused when it
+	is another catalog row's Item.
 	"""
-	by_id = {}
+	by_id, id_of = {}, {}
 	for item in items:
-		by_id.setdefault(str(item.get("custom_catalog_id") or "").strip(), []).append(item["name"])
+		catalog_id = str(item.get("custom_catalog_id") or "").strip()
+		by_id.setdefault(catalog_id, []).append(item["name"])
+		id_of[item["name"].casefold()] = catalog_id
 	holders = {}
 	for name in existing_names:
 		holders.setdefault(naming_rules.normalise(name), []).append(name)
-	out = {"renames": [], "unchanged": [], "refused": []}
+	out = {"renames": [], "merges": [], "unchanged": [], "refused": []}
 	for catalog_id in sorted(by_id):
 		names = sorted(by_id[catalog_id])
 		coded = codes.get(catalog_id)
+		target = None
+		if coded and coded.get("merge") and not coded.get("error"):
+			target = next(
+				(n for n in holders.get(naming_rules.normalise(coded["code"]), [])
+				 if n.casefold() == coded["code"].casefold()),
+				None,
+			)
+		rivals = [n for n in names if not target or n.casefold() != target.casefold()]
 		for old in names:
 			kind = (coded or {}).get("kind")
 			base = {"old": old, "kind": kind, "catalog_id": catalog_id}
 			if not coded:
 				out["refused"].append({**base, "reason": "no row in the catalog files has this catalog id"})
-			elif len(names) > 1:
+			elif target and old.casefold() == target.casefold():
+				out["unchanged"].append(base)
+			elif len(rivals) > 1:
 				out["refused"].append({**base, "reason": f"{len(names)} Items carry this catalog id: {', '.join(names)}"})
 			elif coded.get("error"):
 				out["refused"].append({**base, "reason": coded["error"]})
@@ -1423,6 +1478,14 @@ def plan_renames(items, codes, existing_names):
 					 "reason": f"{old} is not the code the loader gave this row ({coded.get('legacy_code')}); "
 					 "rename it by hand, or set item_code in approved.json to keep it"}
 				)
+			elif target and id_of.get(target.casefold(), catalog_id) != catalog_id:
+				out["refused"].append(
+					{**base, "new": target,
+					 "reason": f"approved.json merges this row into Item {target}, which is already the Item "
+					 f"of catalog row {id_of[target.casefold()]}"}
+				)
+			elif target:
+				out["merges"].append({**base, "new": target, "basis": coded["basis"]})
 			else:
 				others = [n for n in holders.get(naming_rules.normalise(coded["code"]), []) if n != old]
 				if others:
@@ -1515,19 +1578,89 @@ def rewrite_designs(mapping, dry_run):
 	return out
 
 
-def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
-	"""Rename the catalog Items to the codes the catalog data gives them. ``dry_run`` writes nothing.
+#: The Links a merge moves to the Item it merges into. Any other Link to the old Item refuses the merge.
+MERGE_MOVES = (("Pump Curve", "item"), ("Nozzle Profile", "item"))
 
-	Returns ``{dry_run, renames, renamed, unchanged, refused, errors, remaining, designs, seconds}``.
-	``renames`` is every rename still to do (``{old, new, kind, catalog_id, basis}``); a write does
-	the first ``limit`` of them (``renamed``) with ``frappe.rename_doc``, one savepoint per Item,
-	committing every :data:`RENAME_BATCH` together with the design rewrite those renames need, and
-	``remaining`` says how many are left for the next round. Each round re-plans from the site, so
-	a round that stopped halfway is simply run again.
+
+def merge_links(old):
+	"""``(moves, linked)`` for folding Item ``old`` into another.
+
+	``moves`` is ``{doctype: [names]}``: the Pump Curves and Nozzle Profiles that the merge
+	re-points. ``linked`` lists every other Link to ``old``, as ``"Doctype.field (n)"``, across
+	every Link-to-Item field ``rename_doc`` itself would update. Anything in ``linked`` refuses
+	the merge. The old Item is deleted, so it is never left behind as a second copy, and it is
+	never deleted while a Link still points at it.
+
+	This list is the reason a refusal is useful. ``frappe.delete_doc`` checks links too, but on a
+	doctype with a ``disabled`` field it swaps the linked record for "You can disable this Item
+	instead of deleting it". It also runs ``Item.on_trash`` *before* that check, and on_trash
+	deletes the Item's Bins and Item Prices. Both are Link fields here, so they refuse the merge
+	before ``delete_doc`` is ever reached.
+	"""
+	from frappe.model.rename_doc import get_link_fields
+
+	moves = {doctype: frappe.get_all(doctype, filters={field: old}, pluck="name") for doctype, field in MERGE_MOVES}
+	linked = []
+	for link in get_link_fields("Item"):
+		parent, field = link["parent"], link["fieldname"]
+		if (parent, field) in MERGE_MOVES:
+			continue
+		try:
+			if link.get("issingle"):
+				count = 1 if frappe.db.get_single_value(parent, field) == old else 0
+			else:
+				count = frappe.db.count(parent, {field: old})
+		except Exception:
+			linked.append(f"{parent}.{field} (could not be checked)")
+			continue
+		if count:
+			linked.append(f"{parent}.{field} ({count})")
+	return {doctype: names for doctype, names in moves.items() if names}, linked
+
+
+def merge_item(merge, fields, moves):
+	"""Fold the loader's Item ``merge["old"]`` into the existing Item ``merge["new"]``.
+
+	The catalog-owned ``fields`` (specs and provenance, ``custom_catalog_id`` among them) are
+	carried over. Only a value the old Item holds is written. The Item's name, group, brand and
+	description stay Sapphire's. The ``moves`` from :func:`merge_links` are re-pointed, then the old
+	Item is deleted. ``delete_doc`` is never forced, so a Link that appeared since the check still
+	refuses. Returns the fields changed on the existing Item.
+	"""
+	old = frappe.get_doc("Item", merge["old"])
+	values = {field: old.get(field) for field in fields}
+	for doctype, names in moves.items():
+		for name in names:
+			frappe.db.set_value(doctype, name, "item", merge["new"])
+	frappe.delete_doc("Item", merge["old"], ignore_permissions=True)
+	doc = frappe.get_doc("Item", merge["new"])
+	changed = _apply_fields(doc, values)
+	if changed:
+		doc.save(ignore_permissions=True)
+	return changed
+
+
+def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
+	"""Rename the catalog Items to the codes the catalog data gives them, and fold into its existing
+	Item each one that ``approved.json`` merges. ``dry_run`` writes nothing.
+
+	Returns ``{dry_run, renames, merges, renamed, merged, unchanged, refused, errors, remaining,
+	designs, seconds}``.
+	* ``renames`` is every rename still to do: ``{old, new, kind, catalog_id, basis}``.
+	* ``merges`` is every merge still to do, in the same shape plus ``moves`` (the Pump Curves and
+	  Nozzle Profiles that follow, from :func:`merge_links`) and ``delete: True`` (nothing else
+	  links to the old Item, so it is deleted).
+	* A merge whose old Item something else links to is refused instead, and carries ``linked``.
+
+	A write does the first ``limit`` of these, merges first (``merged``, then ``renamed``), with one
+	savepoint per Item. It commits every :data:`RENAME_BATCH`, together with the design rewrite
+	those need, and ``remaining`` says how many are left for the next round. Each round re-plans
+	from the site, so a round that stopped halfway is simply run again.
 
 	``designs`` is the design rewrite (:func:`rewrite_designs`). Its old -> new map covers every
-	catalog Item whose current name is not the old rule's code, not only this round's, so a design
-	saved with an old code between rounds is still repaired by the next one.
+	catalog Item whose current name is not the old rule's code, not only this round's. A design
+	saved with an old code between rounds is therefore still repaired by the next one. A merged Item
+	is covered as well, because the Item it merged into carries its catalog id.
 	"""
 	from frappe.model.rename_doc import rename_doc
 
@@ -1540,12 +1673,25 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 	every = frappe.get_all("Item", fields=["name", "custom_catalog_id"])
 	items = [i for i in every if str(i.get("custom_catalog_id") or "").strip()]
 	plan = plan_renames(items, codes, [i["name"] for i in every])
+	merges, refused = [], list(plan["refused"])
+	for merge in plan["merges"]:
+		moves, linked = merge_links(merge["old"])
+		if linked:
+			refused.append(
+				{**merge, "linked": linked,
+				 "reason": f"approved.json merges {merge['old']} into Item {merge['new']}, but {merge['old']} "
+				 f"cannot be deleted: {', '.join(linked)} link to it"}
+			)
+		else:
+			merges.append({**merge, "moves": moves, "delete": True})
 	summary = {
 		"dry_run": dry_run,
 		"renames": plan["renames"],
+		"merges": merges,
 		"renamed": [],
+		"merged": [],
 		"unchanged": plan["unchanged"],
-		"refused": plan["refused"],
+		"refused": refused,
 		"errors": [],
 		"designs": [],
 	}
@@ -1557,38 +1703,45 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 		if codes.get(i["custom_catalog_id"], {}).get("legacy_code")
 		and codes[i["custom_catalog_id"]]["legacy_code"] != i["name"]
 	}
-	todo = plan["renames"][:limit]
+	work = [("merge", m) for m in merges] + [("rename", r) for r in plan["renames"]]
+	todo = work[:limit]
 	if dry_run:
-		summary["designs"] = rewrite_designs({**done, **{r["old"]: r["new"] for r in plan["renames"]}}, True)
-		summary["remaining"] = len(plan["renames"])
+		summary["designs"] = rewrite_designs({**done, **{w["old"]: w["new"] for _op, w in work}}, True)
+		summary["remaining"] = len(work)
 		summary["seconds"] = round(time.monotonic() - started, 2)
 		return summary
 	for start in range(0, len(todo), RENAME_BATCH):
 		mapping = {}
-		for rename in todo[start : start + RENAME_BATCH]:
+		for op, entry in todo[start : start + RENAME_BATCH]:
 			frappe.db.savepoint("catalog_rename_item")
 			try:
-				# The model function, not frappe.rename_doc: at v16.53.0 that wrapper takes no
-				# ignore_permissions, and passing it is a TypeError on every Item.
-				rename_doc(
-					doctype="Item",
-					old=rename["old"],
-					new=rename["new"],
-					ignore_permissions=True,
-					show_alert=False,
-					rebuild_search=False,
-				)
-				# rebuild_search would enqueue a rebuild of every Item; move this one's row instead.
-				frappe.db.sql(
-					"update `__global_search` set name = %s where doctype = 'Item' and name = %s",
-					(rename["new"], rename["old"]),
-				)
+				if op == "merge":
+					changed = merge_item(entry, codes[entry["catalog_id"]]["fields"], entry["moves"])
+				else:
+					# The model function, not frappe.rename_doc: at v16.53.0 that wrapper takes no
+					# ignore_permissions, and passing it is a TypeError on every Item.
+					rename_doc(
+						doctype="Item",
+						old=entry["old"],
+						new=entry["new"],
+						ignore_permissions=True,
+						show_alert=False,
+						rebuild_search=False,
+					)
+					# rebuild_search would enqueue a rebuild of every Item; move this one's row instead.
+					frappe.db.sql(
+						"update `__global_search` set name = %s where doctype = 'Item' and name = %s",
+						(entry["new"], entry["old"]),
+					)
 			except Exception as exc:
 				frappe.db.rollback(save_point="catalog_rename_item")
-				summary["errors"].append({**rename, "error": str(exc) or exc.__class__.__name__})
+				summary["errors"].append({**entry, "error": str(exc) or exc.__class__.__name__})
 				continue
-			mapping[rename["old"]] = rename["new"]
-			summary["renamed"].append(rename)
+			mapping[entry["old"]] = entry["new"]
+			if op == "merge":
+				summary["merged"].append({**entry, "fields": changed})
+			else:
+				summary["renamed"].append(entry)
 		summary["designs"] += rewrite_designs({**done, **mapping}, False)
 		done.update(mapping)
 		frappe.db.commit()
@@ -1596,7 +1749,7 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 			# The designer keeps its pump catalog, codes and all, for ten minutes, and rename_doc's
 			# clear_cache does not reach that key: a pick in that window would save an old code.
 			frappe.cache().delete_value(CATALOG_CACHE_KEY)
-	summary["remaining"] = len(plan["renames"]) - len(summary["renamed"])
+	summary["remaining"] = len(work) - len(summary["renamed"]) - len(summary["merged"])
 	summary["seconds"] = round(time.monotonic() - started, 2)
 	return summary
 
@@ -1604,6 +1757,6 @@ def rename_items(dry_run=True, limit=RENAME_LIMIT, catalog_dir=None):
 @frappe.whitelist(methods=["POST"])
 def rename_catalog_items(dry_run=1, limit=RENAME_LIMIT):
 	"""System Manager: :func:`rename_items`. ``dry_run`` defaults to 1, and like
-	:func:`seed_catalog` only an explicit no writes; ``limit`` is the Items renamed this round."""
+	:func:`seed_catalog` only an explicit no writes; ``limit`` is the Items renamed or merged this round."""
 	frappe.only_for("System Manager")
 	return rename_items(dry_run=dry_run, limit=limit)

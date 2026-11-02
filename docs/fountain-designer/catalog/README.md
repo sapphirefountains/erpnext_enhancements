@@ -192,7 +192,10 @@ alternatives. A row with no `part_no`, a range (`"7.3JF100 to 7.3JF400 (cord len
 by its `model` as written, commas dropped. So keep the real part number first in `part_no`, and put
 anything else (the variant, the supply, "order no. on sheet") in the parenthetical note after it. To code
 a row some other way, or to attach it to an Item Sapphire already has, give its `approved.json` entry an
-`item_code`. The full rule is in `erpnext_enhancements/water_engineering/README.md`, Seeding the catalog.
+`item_code`. If the loader already created its own Item for that row, `rename_catalog_items` merges that
+Item into Sapphire's. Three rows are attached this way: `pentair-whisperfloxf-vs-022035`,
+`pentair-superflo-vst-342002` and `pentair-superflo-348190`, to Items `022035`, `342002` and `348190`.
+The full rule is in `erpnext_enhancements/water_engineering/README.md`, Seeding the catalog.
 
 ## Approval checklist
 

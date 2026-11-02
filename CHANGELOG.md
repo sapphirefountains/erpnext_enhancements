@@ -49,8 +49,28 @@ a datasheet is no use at a supplier counter.
   `|`-part), leaves `modified` alone, adds an Info Comment, and clears the designer's ten-minute pump
   catalog cache, which `rename_doc`'s `clear_cache` does not reach. The map covers every catalog Item
   already renamed, so a design saved with an old code between rounds is repaired by the next round.
+- **Merges into an Item Sapphire already had.** Nikolas decided, after the first dry run, to merge
+  the three Pentair rows rather than leave them; `approved.json` now gives each an `item_code`.
+  - When that code names an existing Item and the loader's own Item for the row is still on the
+    site, the endpoint plans a merge rather than a rename. It is listed in `merges` with the old code,
+    the target code, the curves that follow (`moves`) and `delete: true`.
+  - A write copies the loader-owned fields (specs, provenance, `custom_catalog_id`) to the existing
+    Item, re-points its Pump Curves and Nozzle Profiles, and deletes the old Item with an unforced
+    `frappe.delete_doc`, all in one savepoint.
+  - It is refused, with every `Doctype.field (n)` that still links to the old Item, when the old Item
+    cannot be deleted. The list is built first because `delete_doc` on an Item says only "You can
+    disable this Item instead of deleting it". `Item.on_trash` also deletes Item Prices and Bins before
+    `delete_doc` checks links at all, so both count as links here.
+  - It is also refused when the target is another catalog row's Item.
+  - The loader refuses such a row until the merge has run, so a load cannot leave the catalog id on
+    two Items and the curves on both.
+  - The existing Item keeps its name, group, description and brand.
 
 **Changed.**
+
+- The load's pump-group warning said "the pump selector reads only 'Pumps', so designs will not pick
+  it". It was wrong: `api.designer._pump_items` also reads equipment class "Pump", which the loader
+  sets. It now says the Item is outside "Pumps" and is still offered.
 
 - `find_item` no longer adopts an Item just because it holds the row's code: an Item is this row's only
   by an explicit `item_code`, its catalog id, or brand + model number. An Item that only holds the code
@@ -58,9 +78,15 @@ a datasheet is no use at a supplier counter.
 - `load_catalog`'s `dry_run=None` is a dry run (it was a write).
 
 **On prod.** All 380 catalog Items carry exactly the old rule's codes (hashed against the site). The plan
-is 377 renames and 3 refusals: `022035`, `342002` and `348190` are already Sapphire Items for the same
-three Pentair pumps (made by hand, no stock, no invoices), so those catalog rows keep their old codes
-until Nikolas decides whether to merge them. One design, WFD-2026-1328192, names a catalog pump.
+is 377 renames, 3 merges and 0 refusals.
+- `022035`, `342002` and `348190` are Sapphire Items for the same three Pentair pumps. They were made
+  by hand and sit in group Products, with no stock and no invoices.
+- They absorb the loader's three duplicates, which carry 4, 5 and 1 Pump Curves and no Item Price,
+  Bin or order line. They stay in Products.
+- WFD-2026-1328192 names one catalog pump in `model_json` and the 342002 duplicate in a `results_json`
+  candidate.
+
+The plan was read on 2026-11-02; the endpoint re-plans from the site every round.
 One `rename_doc` was not timed on a copy of the schema: it updates 140 Link-to-Item fields and clears
 the cache, so the endpoint returns `seconds` and the first round should be `limit: 5`.
 

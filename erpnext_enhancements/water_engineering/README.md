@@ -302,10 +302,49 @@ await frappe.xcall("erpnext_enhancements.water_engineering.catalog_seed.rename_c
 // read `seconds` from the first round, then raise `limit` so a round stays well under a minute
 ```
 
-On prod (2026-11-02) the plan is 377 renames and 3 refusals: `022035`, `342002` and `348190` are already
-Sapphire Items (`PUMP, PENTAIR WHISPERFLO XF VS, 5HP` and two more, created by hand, with no stock or
-invoices), so the catalog rows for those three Pentair pumps keep their old codes until Nikolas decides
-whether to merge them. One design, WFD-2026-1328192, names a catalog pump (a Goulds 3656LH).
+**Merging a row into an Item Sapphire already had** (v1.775.0; Nikolas, 2026-11-02). Suppose an
+`approved.json` entry's `item_code` names an existing Item, and the loader's own Item for that row still
+carries the row's catalog id under its old code. That is not a rename, so it is planned as a **merge**.
+`merges` lists it as `{old, new, kind, catalog_id, basis, moves, delete: true}`. A write then does four
+things in one savepoint:
+
+1. It copies the fields the loader owns from the old Item onto the existing one: the specs, the
+   provenance, `custom_catalog_id` and the equipment class.
+2. It re-points the old Item's Pump Curves and Nozzle Profiles (`moves`).
+3. It deletes the old Item with `frappe.delete_doc`, never forced.
+4. It rewrites the designs, as a rename does.
+
+The existing Item keeps its name, group, description and brand. The designer still lists it outside
+the "Pumps" group, because `_pump_items` also reads equipment class "Pump". The load's group warning
+now says so, instead of claiming the opposite.
+
+A merge is refused when anything else links to the old Item. The refusal names every
+`Doctype.field (n)` found across all of `rename_doc`'s Link-to-Item fields, Item Price and Bin
+included. Those two count because `Item.on_trash` deletes them before `delete_doc` checks links.
+`delete_doc`'s own message on an Item ("You can disable this Item instead") names nothing.
+
+A merge is also refused when the existing Item is another catalog row's. Until the merge has run, a
+load refuses the row. Otherwise it would stamp the id on a second Item and load a second set of curves.
+After the merge, the loader finds the existing Item by its `item_code` and its curves by label.
+Merges run before renames and count against `limit`.
+
+The one framework side effect is `delete_doc`'s own `delete_dynamic_links` job, enqueued after commit.
+It clears ToDos, Comments and Versions that point at the deleted Item. Nothing in this module enqueues.
+
+On prod (2026-11-02) the plan is 377 renames, 3 merges and 0 refusals. The merges are the catalog rows
+for three Pentair pumps that Sapphire already had under their part numbers:
+
+| Old Item | Merged into | Curves moved |
+| --- | --- | --- |
+| `PUMP-PENTAIR-WHISPERFLOXF-VS-5-THP-COMMERCIAL-VARIABLE-SPEED` | `022035` | 4 |
+| `PUMP-PENTAIR-SUPERFLO-VST-VARIABLE-SPEED-2-2-THP` | `342002` | 5 |
+| `PUMP-PENTAIR-SUPERFLO-1-1-THP` | `348190` | 1 |
+
+The three Sapphire Items stay in "Products". The old Items have no Item Price, Bin or order line.
+Two designs name catalog pumps, both in WFD-2026-1328192:
+
+- a Goulds 3656LH, in `model_json`;
+- the 342002 duplicate, in a `results_json` candidate.
 
 **What the dry run checks** (v1.774.3). Besides the curve and nozzle checks the forms apply, every
 value about to be written (Item, Pump Curve and its Pump Curve Points, Nozzle Profile and its Nozzle
