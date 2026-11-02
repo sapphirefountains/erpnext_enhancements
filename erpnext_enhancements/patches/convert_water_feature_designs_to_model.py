@@ -6,9 +6,9 @@
 Water Feature Design no longer declares its nine child tables (basins, features, tiers, pipe
 segments, pumps, electrical loads, venue fixtures, equipment, calc results): the design model
 in ``model_json`` replaced them (``docs/fountain-designer/PLAN.md`` 3.2). The rows themselves
-are still in their tables, because the child DocTypes stay until phase H, so this reads them
+stayed in their tables until phase H dropped them (v1.771.0), so this reads them
 straight from there with ``get_all`` (``frappe.get_doc`` no longer loads them), builds the old
-engine input with the controller's ``legacy_inputs``, and runs ``engine.model.migrate``.
+engine input with ``legacy_inputs`` (below), and runs ``engine.model.migrate``.
 
 It writes only with ``db.set_value`` and ``update_modified=False``: no validate, no derive, no
 child row touched. The old rollups stay as they were until the design is next saved, which
@@ -24,6 +24,7 @@ it. Safe twice: a design whose ``model_json`` is already schema 2 is skipped.
 import json
 
 import frappe
+from frappe.utils import cint, flt
 
 DOCTYPE = "Water Feature Design"
 
@@ -73,7 +74,6 @@ def _rows(name, field, child):
 
 def convert(name):
 	from erpnext_enhancements.water_engineering.doctype.water_feature_design.water_feature_design import (
-		legacy_inputs,
 		stored_model,
 	)
 	from erpnext_enhancements.water_engineering.engine import model as model_engine
@@ -128,3 +128,86 @@ def _mark(name, why):
 		frappe.db.set_value(DOCTYPE, name, updates, update_modified=False)
 	except Exception:
 		pass
+
+
+def _json_list(text):
+	"""A JSON list field parsed; [] on empty or garbage."""
+	try:
+		data = json.loads(text or "[]")
+	except (TypeError, ValueError):
+		return []
+	return data if isinstance(data, list) else []
+
+
+def legacy_inputs(doc, rows):
+	"""The schema-1 engine input (``model.migrate``'s first shape) from a record's parent fields
+	and its child rows, ``rows = {table: [row dicts]}``, as read straight from the child tables:
+	the parent no longer declares them, so this patch reads them with ``get_all``. It lived on the
+	controller until v1.771.0, when phase H retired the child DocTypes and left this patch the only
+	reader of the schema-1 rows."""
+
+	def val(key, default=None):
+		v = doc.get(key) if hasattr(doc, "get") else getattr(doc, key, None)
+		return default if v in (None, "") else v
+
+	default_material = val("pipe_material", "SCH40 PVC")
+	tiers = [
+		{
+			"diameter_in": flt(t.get("diameter_in")),
+			"rim_height_in": flt(t.get("rim_height_in")),
+			"spill_gpm_per_ft": flt(t.get("spill_gpm_per_ft")) or 0.5,
+		}
+		for t in rows.get("tiers") or []
+	]
+	features = []
+	for f in rows.get("features") or []:
+		row = {
+			"feature_type": f.get("feature_type") or "Weir",
+			"feature_label": f.get("feature_label"),
+			"weir_length_ft": flt(f.get("weir_length_ft")),
+			"head_in": flt(f.get("head_in")),
+			"contractions": cint(f.get("end_contractions")) or 2,
+			"nozzle_count": cint(f.get("nozzle_count")),
+			"gpm_each": flt(f.get("gpm_each")),
+			"nozzle_profile": f.get("nozzle_profile") or "",
+			"supply_head_ft": flt(f.get("supply_head_ft")),
+		}
+		if "tier" in (row["feature_type"] or "").lower() or "cascade" in (row["feature_type"] or "").lower():
+			row["tiers"] = tiers
+		features.append(row)
+	return {
+		"basins": [
+			{
+				"basin_label": b.get("basin_label"),
+				"shape": b.get("shape") or "Rectangular",
+				"length_in": flt(b.get("length_in")),
+				"width_in": flt(b.get("width_in")),
+				"height_in": flt(b.get("height_in")),
+				"diameter_in": flt(b.get("diameter_in")),
+				"surface_area_sf": flt(b.get("surface_area_sf")),
+				"volume_gal_override": flt(b.get("volume_gal_override")),
+			}
+			for b in rows.get("basins") or []
+		],
+		"features": features,
+		"pipe_segments": [
+			{
+				"label": s.get("segment_label"),
+				"flow_gpm": flt(s.get("flow_gpm")),
+				"nominal_size": s.get("nominal_size"),
+				"material": s.get("material") or default_material,
+				"length_ft": flt(s.get("pipe_length_ft")),
+				"line_type": s.get("line_type") or "Discharge",
+				"fittings": _json_list(s.get("fittings_json")),
+				"components": _json_list(s.get("components_json")),
+			}
+			for s in rows.get("pipe_segments") or []
+		],
+		"pumps": [{"pump_item": p.get("pump_item")} for p in rows.get("pumps") or [] if p.get("pump_item")],
+		"static_lift_ft": flt(val("static_lift_ft", 0)),
+		"turnovers_per_hr": flt(val("turnover_per_hr", 0)) or 2,
+		"hazen_williams_c": cint(val("hazen_williams_c", 0)) or 130,
+		"pipe_material": default_material,
+		"venue_type": val("venue_type", "") or "",
+		"governing_code": val("governing_code", "") or "",
+	}

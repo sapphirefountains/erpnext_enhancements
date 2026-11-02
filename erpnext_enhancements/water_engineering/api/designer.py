@@ -7,20 +7,32 @@ module only hands it what lives in the database — the house rules on Water Eng
 the pump catalog from phase D's ``catalog_reader``, Item prices, and the geocoded address.
 
 ``boot``, ``get_design`` and ``catalog_search`` are called as GET, so none of them is
-``methods=["POST"]``. Permissions gate on the ``Water Feature Design`` doctype like
-``api/water_design.py`` (read to look, write to save); ``doc.save()`` enforces the document-level
-permission on every mutation. ``api/water_design.py`` stays for the old wizard until phase H.
+``methods=["POST"]``. Permissions gate on the ``Water Feature Design`` doctype (read to look, write to
+save); ``doc.save()`` enforces the document-level permission on every mutation.
+
+Since v1.771.0 (phase H) this module also holds what outlived the Water Engineering Wizard and the old
+``api/water_design.py``: the page's access check (``check_permission``), the stateless calculator
+(``run_calc`` over ``water_engineering.calculator``, the page's Calculator drawer and the ``water_calc``
+AI tool), the Item form's pump-curve panel (``item_pump_curves``), and the helpers the
+``save_water_design`` and ``water_design_status`` AI tools call (``tool_save``, ``design_status``,
+``merge_legacy_payload``). ``api/water_design.py`` keeps the Control Panel Design reader and thin
+re-exports of the moved endpoints for an old Desk tab.
 """
 
 import copy
 import hashlib
 import json
+from urllib.parse import urlencode
 
 import frappe
 from frappe import _
 
+from erpnext_enhancements.water_engineering import calculator as calc_mod
+from erpnext_enhancements.water_engineering import catalog_reader
 from erpnext_enhancements.water_engineering import derive as derive_mod
+from erpnext_enhancements.water_engineering import issues as issues_mod
 from erpnext_enhancements.water_engineering import prints as prints_mod
+from erpnext_enhancements.water_engineering.engine import feature_visual_kind
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
 from erpnext_enhancements.water_engineering.engine import model as model_engine
 from erpnext_enhancements.water_engineering.engine import rules as rules_engine
@@ -143,6 +155,65 @@ def _require(ptype):
 
 def _log(stage, exc):
     frappe.log_error(title=f"Fountain Designer derive: {stage}", message=frappe.get_traceback() or repr(exc))
+
+
+@frappe.whitelist()
+def check_permission():
+    """True if the caller may open the Fountain Designer (read on Water Feature Design). The page's gate,
+    asked before ``boot``; it was ``api/water_design.check_permission`` until v1.771.0."""
+    return bool(frappe.has_permission(DESIGN_DOCTYPE, "read"))
+
+
+# ---------------------------------------------- catalog readers (pumps, nozzles)
+
+
+def nozzle_profile_params(profile_name):
+    """A Nozzle Profile's orifice and rated figures for the engine's ``nozzle_flow``, with its type,
+    generic flag and performance ``points`` (``catalog_reader.nozzle_profiles``); {} if it is missing."""
+    if not profile_name:
+        return {}
+    p = catalog_reader.nozzle_profiles([profile_name]).get(profile_name)
+    if not p:
+        return {}
+    return {
+        "cd": p.get("discharge_coefficient"),
+        "orifice_diameter_in": p.get("orifice_diameter_in"),
+        "orifice_area_in2": p.get("orifice_area_in2"),
+        "rated_gpm": p.get("rated_gpm"),
+        "rated_head_ft": p.get("rated_head_ft"),
+        "nozzle_type": p.get("nozzle_type"),
+        "level_sensitive": p.get("level_sensitive"),
+        "is_generic_estimate": p.get("is_generic_estimate"),
+        "points": p.get("points") or [],
+    }
+
+
+def pump_curves(item_codes):
+    """{item_code: [{flow_gpm, head_ft}, ...]}: each pump Item's best curve (full speed, sourced, largest
+    impeller), else its legacy ``custom_pump_curve`` table. Items with no curve are absent.
+    ``catalog_reader.pump_curve_sets`` has every curve, with efficiency, NPSHr and provenance."""
+    out = {}
+    for item_code, curves in catalog_reader.pump_curve_sets(item_codes).items():
+        points = curves[0]["points"] if curves else []
+        if points:
+            out[item_code] = [{"flow_gpm": p["flow_gpm"], "head_ft": p["head_ft"]} for p in points]
+    return out
+
+
+@frappe.whitelist()
+def item_pump_curves(item_code):
+    """The Item form's Pump Curves panel (``public/js/water_engineering/pump_curve_chart.js``): this
+    Item's curves, best first, with points. A user who cannot read Pump Curves gets an empty list and
+    ``can_read`` False rather than an error, so the Item form still opens for them."""
+    if not item_code or not frappe.has_permission("Pump Curve", "read"):
+        return {"curves": [], "can_read": False, "can_create": False}
+    frappe.has_permission("Item", "read", doc=item_code, throw=True)
+    curves = catalog_reader.pump_curve_sets([item_code]).get(item_code, [])
+    return {
+        "curves": curves,
+        "can_read": True,
+        "can_create": bool(frappe.has_permission("Pump Curve", "create")),
+    }
 
 
 # ------------------------------------------------------------ the loaders
@@ -454,6 +525,8 @@ def boot():
                      "slot_classes": dict(SLOT_CLASSES)},
         "house_rules": house_rules(),
         "prints": print_formats(),
+        # The Review step's Calculator drawer: every calc with its inputs (water_engineering/calculator.py).
+        "calculator": calc_mod.catalog(),
     }
 
 
@@ -712,11 +785,21 @@ def acknowledge_issue(design, issue_key, note=None):
     return {"acks": acks}
 
 
+def _run_calc(calc, inputs):
+    """One calculation's ``CalcResult`` dict (``calculator.run`` with the site's Nozzle Profiles). No
+    permission check: ``run_calc`` and the ``water_calc`` AI tool gate before calling it."""
+    try:
+        return calc_mod.run(calc, inputs if isinstance(inputs, dict) else _parse(inputs),
+                            nozzle_lookup=nozzle_profile_params)
+    except calc_mod.UnknownCalc:
+        frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
+
+
 @frappe.whitelist()
 def run_calc(calc, inputs=None):
-    """The stateless calculator (the wizard's and the AI tool's), kept as it is."""
-    from erpnext_enhancements.water_engineering.api.water_design import run_calc as _run_calc
-
+    """The stateless calculator (the Review step's Calculator drawer): one engine calculation and its
+    math, the formula, steps, citations, warnings and options (``boot().calculator`` lists them)."""
+    _require("read")
     return _run_calc(calc, inputs)
 
 
@@ -932,3 +1015,296 @@ def push_material_request(name):
     mr.save()
     return {"doctype": "Material Request", "name": mr.name, "url": f"/desk/{_slug('Material Request')}/{mr.name}",
             "lines": len(items), "text_lines": len(texts), "unit_mismatches": unmatched}
+
+
+# ------------------------------------------------------------- the AI tools
+# save_water_design and water_design_status (assistant_tools/) call these. They read and write the
+# record the page does, so the assistant and the page agree on every number (v1.771.0, phase H).
+
+# A schema-1 payload's design inputs that have a place in a schema-2 model: (section, key).
+_GLOBAL_INPUT_PATHS = {
+    "venue_type": ("site", "venue_type"),
+    "governing_code": ("site", "governing_code"),
+    "pipe_material": ("pump_room", "material"),
+}
+# The tables of the old payload the Fountain Designer derives for itself.
+DERIVED_TABLES = ("electrical_loads", "venue_fixtures", "design_equipment")
+
+
+def merge_legacy_payload(existing, tables, global_inputs):
+    """A schema-1 payload laid onto an existing schema-2 model, table by table, as the old tool
+    promised ("each list REPLACES that table"): only the sections the payload names change, and
+    each one it changes is pinned ``custom`` so the next derive keeps it. Returns (model, ignored),
+    ``ignored`` naming every input there is no place for, so the caller can say so instead of
+    dropping it in silence. (In ``api/water_design.py`` until v1.771.0.)"""
+    model = model_engine.from_dict(existing).to_dict()
+    setup = model.setdefault("setup", {})
+    ignored = []
+    legacy = {t: rows for t, rows in tables.items() if t in ("basins", "features", "tiers", "pipe_segments", "pumps")}
+    legacy["global_inputs"] = dict(global_inputs or {})
+    legacy.setdefault("basins", [])
+    if "pipe_segments" in tables and "features" not in tables and model.get("features"):
+        # The old shape has no topology: its segments are laid from the feature list, so a segment list
+        # alone cannot be placed against the features the Designer drew.
+        legacy.pop("pipe_segments")
+        ignored.append("pipe_segments (send features with them, or edit the piping in the Fountain Designer)")
+    migrated = model_engine.migrate(legacy)
+    if "basins" in tables:
+        model["basins"] = migrated["basins"]
+        setup["basin"] = "custom"
+    if "features" in tables:
+        model["features"] = migrated["features"]
+        setup["features"] = "custom"
+    elif "tiers" in tables:
+        ignored.append("tiers (send them with the features they belong to)")
+    # A feature caught by no basin the model has (new basins, or features sent without their basins,
+    # which migrate leaves unattached) lands in the first basin, as the old engine read it.
+    ids = [b.get("id") for b in model.get("basins") or []]
+    for f in model.get("features") or []:
+        if f.get("basin") not in ids:
+            f["basin"] = ids[0] if ids else None
+    if "pipe_segments" in legacy:
+        model["network"] = migrated["network"]
+        setup["piping"] = "custom"
+    if "pumps" in tables:
+        picks = [e for e in migrated.get("equipment") or [] if e.get("slot") == "pump"]
+        model["equipment"] = [e for e in model.get("equipment") or [] if e.get("slot") != "pump"] + picks
+        pumps = (model.get("network") or {}).get("pumps") or []
+        if picks and pumps:
+            # The curve goes with the Item: naming it lets the derive load that pump's own curve
+            # (derive.resolve_curves), rather than solve the new pump on the old pick's curve.
+            pumps[0]["item"] = picks[0]["item"]
+            pumps[0]["curve"] = picks[0]["item"]
+            for key in ("hp", "kw", "shutoff_head_ft", "max_flow_gpm", "motor_eff_pct", "catalog_source"):
+                pumps[0].pop(key, None)
+            setup["pump"] = "custom"
+    for table in DERIVED_TABLES:
+        if table in tables:
+            ignored.append(f"{table} (the Fountain Designer derives these)")
+    for key, value in (global_inputs or {}).items():
+        path = _GLOBAL_INPUT_PATHS.get(key)
+        if path:
+            model.setdefault(path[0], {})[path[1]] = value
+        else:
+            ignored.append(key)
+    return model, ignored
+
+
+def tool_model(existing, model=None, tables=None, global_inputs=None):
+    """The model ``save_water_design`` saves, and what it ignored: ``(model, ignored)``.
+
+    * ``model`` (schema 2) is the whole design and replaces the stored one; ``tables`` and
+      ``global_inputs`` are then ignored, and said so.
+    * Otherwise the old payload: onto an existing schema-2 design through ``merge_legacy_payload``
+      (only the tables it names change); for a new design, or one never converted, through
+      ``engine.model.migrate`` into a fresh model, keeping the stored sign-offs.
+    """
+    tables = {t: rows for t, rows in (tables or {}).items() if rows is not None}
+    global_inputs = dict(global_inputs or {})
+    if model:
+        model = model if isinstance(model, dict) else _parse(model)
+        if model.get("schema") != model_engine.SCHEMA or model_engine.is_legacy(model):
+            frappe.throw(_("'model' must be a Fountain Designer model (schema {0}).").format(model_engine.SCHEMA))
+        sent = list(tables) + list(global_inputs)
+        return copy.deepcopy(model), [f"{k} (a model was sent, and it is the whole design)" for k in sent]
+    if existing and not model_engine.is_legacy(existing):
+        if not tables and not global_inputs:
+            return copy.deepcopy(existing), []
+        return merge_legacy_payload(existing, tables, global_inputs)
+    legacy = dict(tables)
+    legacy["global_inputs"] = global_inputs
+    legacy.setdefault("basins", [])
+    migrated = model_engine.migrate(legacy)
+    migrated["acks"] = (existing or {}).get("acks") or []
+    ignored = [f"{t} (the Fountain Designer derives these)" for t in DERIVED_TABLES if t in tables]
+    ignored += [k for k in global_inputs if k not in _GLOBAL_INPUT_PATHS]
+    return migrated, ignored
+
+
+def tool_save(name=None, model=None, tables=None, global_inputs=None, fields=None):
+    """Create (no ``name``) or update a design for the ``save_water_design`` AI tool, through
+    ``save_design``, the page's own save (its permission checks, its re-derive, its refusal of an issued
+    design). Returns ``(design name, ignored)``."""
+    existing = None
+    if name:
+        if not frappe.db.exists(DESIGN_DOCTYPE, name):
+            frappe.throw(_("Water Feature Design {0} was not found.").format(name), frappe.DoesNotExistError)
+        existing = stored_model(frappe.get_doc(DESIGN_DOCTYPE, name))
+    built, ignored = tool_model(existing, model, tables, global_inputs)
+    fields = fields or {}
+    record = {k: v for k, v in fields.items() if k in DESIGN_FIELDS}
+    ignored += [f"{k} (set it on the record in ERPNext)" for k in fields if k not in DESIGN_FIELDS]
+    saved = save_design(name or None, json.dumps(built), json.dumps(record))
+    return saved["name"], ignored
+
+
+def designer_url(name, step="review"):
+    """The Fountain Designer open on one design, at a step (``router.js``: ``?design=&step=``)."""
+    return f"/desk/{DESIGNER_ROUTE}?" + urlencode({"design": name, "step": step})
+
+
+def paper_links(name, prints=None):
+    """``[{key, label, print_format, url}]``: the print view of each paper this site has, the packet
+    last, as the Outputs step links them (``steps/outputs.js`` ``print_url``)."""
+    rows = print_formats() if prints is None else prints
+    return [
+        dict(r, url="/printview?" + urlencode(
+            {"doctype": DESIGN_DOCTYPE, "name": name, "format": r["print_format"], "no_letterhead": 1}))
+        for r in rows
+    ]
+
+
+def _num(v):
+    try:
+        return float(v) if v not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _json_value(raw, kind):
+    if isinstance(raw, kind):
+        return raw
+    try:
+        data = json.loads(raw or ("[]" if kind is list else "{}"))
+    except (TypeError, ValueError):
+        return kind()
+    return data if isinstance(data, kind) else kind()
+
+
+def canvas_state(doc):
+    """The fountain-design "canvas" the shared SVG renderer draws (``window.WaterFountain``, and the
+    Triton chat from ``water_design_status``), from the schema-2 model and the last derive's per-row
+    values. (``api/water_design._canvas_state`` until v1.771.0.)"""
+
+    def _ft(inch):
+        return f"{round(_num(inch) / 12.0, 1):g}"
+
+    model = stored_model(doc) or {}
+    seg_values = (stored_json(doc).get("values") or {}).get("segments") or {}
+    network = model.get("network") or {}
+
+    label = ""
+    basins = model.get("basins") or []
+    if basins:
+        b = basins[0]
+        if str(b.get("shape") or "").lower().startswith(("round", "cyl", "circ")) and _num(b.get("diameter_in")):
+            label = f"{_ft(b.get('diameter_in'))} ft dia x {_ft(b.get('depth_in'))} ft deep"
+        elif _num(b.get("length_in")) and _num(b.get("width_in")):
+            label = f"{_ft(b.get('length_in'))} x {_ft(b.get('width_in'))} ft x {_ft(b.get('depth_in'))} ft deep"
+
+    features = model.get("features") or []
+    jet = max((_num((f.get("inputs") or {}).get("height_ft")) for f in features), default=0.0)
+    tiers = [
+        {"diameter_in": _num(t.get("diameter_in")), "rim_height_in": _num(t.get("rim_height_in"))}
+        for f in features
+        for t in (f.get("inputs") or {}).get("tiers") or []
+    ]
+    pump = doc.get("selected_pump")
+    return {
+        "basin_gallons": doc.get("total_basin_gallons"),
+        "flow_gpm": doc.get("design_flow_gpm"),
+        "feature_count": len(features),
+        "feature_kind": feature_visual_kind(features[0].get("type") or "") if features else None,
+        "tiers": tiers,
+        "jet_height_ft": jet or None,
+        "pump": pump,
+        "tdh_ft": doc.get("computed_tdh_ft"),
+        "static_lift_ft": max((_num(n.get("elevation_ft")) for n in network.get("nodes") or []
+                               if n.get("kind") == "terminal"), default=0.0),
+        "basin_label": label,
+        "worst_status": "",
+        "segments": [
+            {"label": s.get("label") or s.get("id"),
+             "velocity_fps": (seg_values.get(s.get("id")) or {}).get("velocity_fps"), "velocity_status": ""}
+            for s in network.get("segments") or []
+        ],
+        "curve": (pump_curves([pump]).get(pump) if pump else None) or [],
+        "duty_flow": _num(doc.get("operating_flow_gpm")) or _num(doc.get("design_flow_gpm")),
+        "duty_head": _num(doc.get("computed_tdh_ft")),
+    }
+
+
+def design_status(name, include_results=True, include_model=False):
+    """One design as the page shows it, for the ``water_design_status`` AI tool: the verdict and the
+    rollups of the last derive (``results_json``), the typed issues (``design_issues_json``), the
+    readiness (``readiness_json``) and counts, the Fountain Designer link and every paper's print link;
+    with ``include_model``, the schema-2 model itself. Checks read permission on the record."""
+    doc = frappe.get_doc(DESIGN_DOCTYPE, name)
+    doc.check_permission("read")
+    stored = stored_json(doc)
+    model = stored_model(doc) or {}
+    network = model.get("network") or {}
+    issues = _json_value(doc.get("design_issues_json"), list)
+    readiness = _json_value(doc.get("readiness_json"), dict)
+    papers = paper_links(doc.name)
+    state = {
+        "design": doc.name,
+        "design_title": doc.get("design_title"),
+        "status": doc.get("status"),
+        "docstatus": doc.docstatus,
+        "mode": doc.get("mode"),
+        "kit": doc.get("kit"),
+        "family": doc.get("family"),
+        "project": doc.get("project"),
+        "opportunity": doc.get("opportunity"),
+        "customer": doc.get("customer"),
+        "schema": model.get("schema"),
+        # What the page's right panel shows: the stored verdict, else the one these issues give.
+        "verdict": stored.get("verdict") or issues_mod.model_verdict(issues, readiness),
+        "rollups": stored.get("rollups") or {},
+        "budget_total": doc.get("budget_total"),
+        "bom_subtotal": doc.get("bom_subtotal"),
+        "issues": issues,
+        "blocker_count": doc.get("blocker_count") or 0,
+        "warning_count": doc.get("warning_count") or 0,
+        "issue_summary": doc.get("issue_summary") or "",
+        "readiness": readiness,
+        "completion_percent": doc.get("completion_percent") or 0,
+        "issue_ready": bool(doc.get("issue_ready")),
+        "next_inputs_needed": [s for s in (doc.get("next_inputs_needed") or "").split("\n") if s],
+        "counts": {
+            "basins": len(model.get("basins") or []),
+            "features": len(model.get("features") or []),
+            "pipe_segments": len(network.get("segments") or []),
+            "pumps": len(network.get("pumps") or []),
+            "bom_lines": len(doc.get("bom") or []),
+        },
+        "fitting_schedule": issues_mod.fitting_schedule(doc),
+        "canvas": canvas_state(doc),
+        "designer_url": designer_url(doc.name),
+        "form_url": f"/desk/{_slug(DESIGN_DOCTYPE)}/{doc.name}",
+        "prints": [p for p in papers if p["key"] != "packet"],
+        "packet": next((p for p in papers if p["key"] == "packet"), None),
+    }
+    if include_model:
+        state["model"] = model
+    if include_results:
+        state["calc_results"] = [
+            {
+                "calc": key,
+                "value": r.get("value"),
+                "unit": r.get("unit"),
+                "formula": r.get("formula"),
+                "steps": "\n".join(str(s) for s in r.get("steps") or []),
+                "citations": ", ".join(str(c) for c in r.get("citations") or []),
+                "warnings": "\n".join(str(w) for w in r.get("warnings") or []),
+            }
+            for key, r in (stored.get("results") or {}).items()
+            if isinstance(r, dict)
+        ]
+    return state
+
+
+def design_list(project=None, limit=20):
+    """The designs the caller may read, newest first, each with its counts and its designer link."""
+    rows = frappe.get_list(
+        DESIGN_DOCTYPE,
+        filters={"project": project} if project else {},
+        fields=["name", "design_title", "project", "opportunity", "customer", "status", "mode", "kit",
+                "completion_percent", "blocker_count", "warning_count", "issue_ready", "budget_total", "modified"],
+        order_by="modified desc",
+        limit_page_length=limit,
+    )
+    for r in rows:
+        r["designer_url"] = designer_url(r["name"])
+    return {"designs": rows}

@@ -106,12 +106,13 @@ for (const key of ["start", "site", "features", "basins", "pump_room", "review",
 const boot = read_json("boot.json");
 const catalog = read_json("catalog.json");
 const designs = read_json("designs.json");
+const calc = read_json("calc.json");
 const replies = {};
 for (const name of ["derive_lobby.json", "derive_plaza.json", "derive_pond.json"]) {
 	const r = read_json(name);
 	replies[r.model.kit] = r;
 }
-const fixture = { boot, catalog, designs, replies };
+const fixture = { boot, catalog, designs, replies, calc };
 
 const esc = (v) =>
 	v == null
@@ -407,6 +408,7 @@ await test("the api sends the contract's names and arguments", async () => {
 	await api.push_quotation("D1");
 	await api.push_material_request("D1");
 	await api.check_permission();
+	await api.run_calc("weir_flow", { length_ft: 4 });
 	const base = "erpnext_enhancements.water_engineering.api.designer.";
 	assert.deepEqual(
 		calls.map((c) => c.method),
@@ -420,9 +422,13 @@ await test("the api sends the contract's names and arguments", async () => {
 			base + "acknowledge_issue",
 			base + "push_quotation",
 			base + "push_material_request",
-			"erpnext_enhancements.water_engineering.api.water_design.check_permission",
+			// The gate moved here from the retired wizard's api.water_design in v1.771.0 (phase H).
+			base + "check_permission",
+			base + "run_calc",
 		]
 	);
+	assert.deepEqual(calls[10].args, { calc: "weir_flow", inputs: '{"length_ft":4}' }, "the calc inputs go as JSON text");
+	assert.equal(calls[10].opts.method, "POST");
 	assert.equal(calls[1].args.model_json, '{"schema":2}', "the model goes as JSON text");
 	assert.deepEqual(calls[2].args, { name: null, model_json: '{"schema":2}', fields_json: '{"design_title":"X"}' });
 	assert.deepEqual(calls[3].args, {}, "the list is get_design with no name");
@@ -849,7 +855,11 @@ await test("the demo answers every contract endpoint", async () => {
 	assert.deepEqual((await api.catalog_search("pump", "goulds")).map((x) => x.item), ["GLD-3656-5"]);
 	assert.equal((await api.catalog_search("pump", "")).length, 4);
 	await assert.rejects(api.get_design("NOPE"), (e) => e.status === 404);
-	await assert.rejects(t(BASE + "run_calc", {}), (e) => e.status === 404);
+	const weir = await api.run_calc("weir_flow", { length_ft: 99 });
+	assert.equal(weir.calc, "weir_flow");
+	assert.deepEqual(weir.demo_inputs, calc.weir_flow.inputs, "the demo says which inputs its answer is for");
+	await assert.rejects(api.run_calc("water_hammer", {}), (e) => e.status === 417, "a calc the fixture has no answer for");
+	await assert.rejects(t(BASE + "no_such_method", {}), (e) => e.status === 404);
 	await assert.rejects(api.acknowledge_issue("DEMO-PLAZA", "IWF_UV_REQUIRED", "x"), (e) => e.status === 417, "a blocker cannot be acknowledged");
 });
 
@@ -1085,6 +1095,77 @@ await test("a stored model that is not schema 2 is never opened as a blank desig
 	assert.equal(d.meta, null, "no design to autosave over the stored one");
 	assert.equal(shown.kind, "error");
 	assert.match(shown.title, /OLD-1/);
+});
+
+console.log("the Calculator drawer (Review step)");
+
+const CALC = await import(url(path.join(FD, "steps", "calculator.js")));
+
+await test("boot lists every calc with typed inputs, and the fixture's examples are among them", () => {
+	const list = CALC.calcs(boot);
+	assert.ok(list.length >= 40, "the wizard's whole calc list");
+	const kinds = new Set(list.flatMap((c) => c.inputs.map((i) => i.kind)));
+	for (const k of kinds) assert.ok(["number", "int", "select", "check", "text", "json"].includes(k), k);
+	for (const key of Object.keys(calc)) assert.ok(list.some((c) => c.key === key), key);
+});
+
+await test("the drawer draws the picked calc's fields under the calc. prefix, never a model path", () => {
+	const ctx = Object.assign(ctx_for(replies["plaza-interactive-24jet"], "full"), { calc: { key: "weir_flow", raw: null } });
+	const html = STEPS.review.render(ctx);
+	assert.match(html, /data-fd-drawer="calculator"/);
+	assert.match(html, /data-fd-calc-form/);
+	const paths = [...html.matchAll(/data-fd-path="([^"]+)"/g)].map((m) => m[1]).filter((p) => p.startsWith("calc."));
+	assert.deepEqual(paths, ["calc._pick", "calc.length_ft", "calc.head_in", "calc.contractions"]);
+	assert.match(html, /<option value="weir_flow" selected>/);
+});
+
+await test("coerce: numbers and lists read or are named; a blank box is left to the engine", () => {
+	const tdh = CALC.spec(boot, "total_dynamic_head");
+	const ok = CALC.coerce(tdh, { segments: '[{"flow_gpm": 10}]', static_lift_ft: "2.5", c: "" });
+	assert.deepEqual(ok, { inputs: { segments: [{ flow_gpm: 10 }], static_lift_ft: 2.5 }, errors: [] });
+	const bad = CALC.coerce(tdh, { segments: "{oops", static_lift_ft: "two" });
+	assert.deepEqual(bad.errors, ["Pipe segments", "Static lift"]);
+	const weir = CALC.spec(boot, "weir_flow");
+	assert.deepEqual(CALC.coerce(weir, { contractions: "1.5" }).errors, ["End contractions"], "an int is whole");
+	assert.deepEqual(CALC.coerce(CALC.spec(boot, "heating_load"), { wind: false }).inputs.wind, false);
+});
+
+await test("the result shows the value, formula, every step, the sources, warnings and options", () => {
+	const s = CALC.spec(boot, "size_pipe");
+	const r = calc.size_pipe.result;
+	const html = CALC.result_html({ h: H }, s, { result: r });
+	assert.ok(html.includes(esc(r.formula)), "the formula");
+	for (const step of r.steps) assert.ok(html.includes(esc(step)), step);
+	assert.ok(r.options.every((o) => html.includes(esc(o.label))), "every option is a row");
+	assert.match(html, /Recommended/);
+	assert.ok(r.citations.every((c) => html.includes(esc(c))));
+	assert.equal(CALC.result_html({ h: H }, CALC.spec(boot, "weir_flow"), { result: r }), "", "an answer for another calc is not drawn");
+	assert.match(CALC.result_html({ h: H }, s, { error: "Unknown calculation: x" }), /sf-state--error/);
+});
+
+await test("controller: a run sends the coerced inputs, draws the newest answer and never touches the model", async () => {
+	const { d } = await controller();
+	const before = JSON.stringify(d.model);
+	const sent = [];
+	let answer;
+	d.api.run_calc = (key, inputs) => (sent.push([key, inputs]), new Promise((resolve) => (answer = resolve)));
+	d.calc_input("calc._pick", { value: "weir_flow" }, true);
+	d.calc_input("calc.length_ft", { value: "4" }, false);
+	d.calc_input("calc.head_in", { value: "0.5" }, false);
+	const run = d.run_calc();
+	assert.equal(d.calc.busy, true);
+	assert.deepEqual(sent, [["weir_flow", { length_ft: 4, head_in: 0.5, contractions: 2 }]]);
+	answer(calc.weir_flow.result);
+	await run;
+	assert.equal(d.calc.result.calc, "weir_flow");
+	assert.equal(d.calc.busy, false);
+	d.calc_input("calc._pick", { value: "basin_volume" }, true);
+	assert.equal(d.calc.result, null, "another calc starts empty");
+	assert.equal(JSON.stringify(d.model), before, "the design is untouched");
+	d.calc_input("calc.length_in", { value: "ten" }, false);
+	d.run_calc();
+	assert.match(d.calc.error, /Length/);
+	d.autosave.cancel();
 });
 
 await settle();

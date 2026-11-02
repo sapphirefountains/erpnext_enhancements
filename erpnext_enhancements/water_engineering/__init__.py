@@ -1,11 +1,12 @@
 """Water Engineering module.
 
-Fountain / water-feature engineering calculations (the "hydraulic spine":
-basin volume & turnover, feature/weir flow, pipe sizing & velocity,
-Hazen-Williams friction loss, Total Dynamic Head, pump + electrical selection)
-plus the persistent design DocTypes and the desk wizard.
+The Fountain Designer: fountain, pool and water-feature engineering (hydraulics,
+electrical and controls, structure, treatment), the schema-2 design model stored on
+Water Feature Design, the guided page, the prints and the AI tools. README.md is the
+map; ADR 0018 records the rebuild, and the retirement of the old desk wizard and its
+nine child DocTypes in v1.771.0.
 
 The ``engine`` subpackage is PURE Python (stdlib only) so it is bench-free
-unit-testable and can be imported by both the FAC assistant tools and the
-whitelisted desk endpoints — one source of truth for the math.
+unit-testable and is called by the page's API, the record's save and the FAC
+assistant tools alike — one source of truth for the math.
 """

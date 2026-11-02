@@ -15,7 +15,7 @@ and 3.5 (draft PR #1389 until it merges). The tracker is TASK-2026-03018 on PRJ-
 | `verdict.js` | The verdict panel and the phone strip. |
 | `chart.js` | The SVG allow-list for the charts the server draws. |
 | `ui.js` | Fields, cards with the setup policy and the Advanced reveal, and tiles. |
-| `steps/*.js` | One module per step: `start`, `site`, `features`, `basins`, `pump_room`, `review`, `outputs`. |
+| `steps/*.js` | One module per step: `start`, `site`, `features`, `basins`, `pump_room`, `review`, `outputs`; and `calculator.js`, the Review step's Calculator drawer (v1.771.0). |
 | `demo/` | The fixture (`*.json`) and `demo.js`, which answers every call in the browser. It ships as `fountain_designer_demo.bundle.js` and is fetched only with `?demo=1`. |
 | `public/css/fountain_designer.bundle.css` | The styles. Every selector is `.fd-`, and every color is an `--sf-*` token. |
 
@@ -55,8 +55,9 @@ Tests:
   - Every entry stands for its own place. An entry with no `design`, `step` or `demo` key is the list on Start, out of the demo, so Back onto the bare address the page was opened at lands on the list, and a return from another Desk page to the bare address leaves the demo (`router.place_from`).
 - **States.**
   - Every load has a loading, empty, error and no-access panel, drawn by sf_kit.
-  - When the designer's server side is missing, the error panel offers **Open the demo**.
-- **Access.** The page is gated like the old wizard: `api.water_design.check_permission` (read on Water Feature Design), in demo mode too. What a person may do comes from `boot().can`.
+  - A failed start-up says what the server said and offers Try again. The training demo is a link on Start (**Open the training demo**), out of the demo.
+- **Access.** The page is gated on `api.designer.check_permission` (read on Water Feature Design), in demo mode too. Until v1.771.0 it was the retired wizard's `api.water_design.check_permission`, which stays as a deprecated re-export for a tab on an older bundle. What a person may do comes from `boot().can`.
+- **The Calculator drawer** (Review step, v1.771.0). The retired Water Engineering Wizard's quick calculator: pick one of `boot().calculator`, fill its inputs (each with the default the engine uses when it is left blank), **Work it out**, and the drawer shows the `CalcResult` whole: the value and status, the formula, every step, the warnings, the options (the recommended one marked) and the sources. Its fields are bound under the `calc.` path prefix, which `app.js` keeps apart from the model: nothing in the drawer edits or saves the design. A list input (pipe segments, loads, lights) is typed as JSON. Only the newest answer is drawn. `/desk/water-engineering-wizard` lands on this page (`public/js/global_enhancements/retired_routes.js`, through `frappe.re_route`, so Back steps over it).
 - **Keyboard.**
   - The step rail and the tiles move with the arrow keys. Tiles are a radio group.
   - The catalog picker is a combobox: Down opens it, the arrows choose, Enter picks and Esc closes.
@@ -95,6 +96,7 @@ section in the same PR.
 | `catalogs.equipment_classes[]` | `{key, label}` | The catalog picker classes. |
 | `catalogs.slot_classes` | `{<equipment slot>: <class key>}` | The class each `model.equipment[].slot` searches: `filter`, `uv`, `chlorinator`, `light`, `transformer`, `bypass`, `surge_arrestor`, `autofill`, `vfd` and `prv` (the page's `model.SLOT_SECTION`). A slot with no class here gets a plain item-code field, never a search of another class. The pumps search `pump`, and a feature's product searches its family's `product_class`. |
 | `house_rules[]` | `{key, label, value, unit, citation}` | The constants listed on the page (PLAN.md 2.3). |
+| `calculator[]` | `{key, label, group, note, inputs[]}`, every calc of `water_engineering/calculator.py`'s `CATALOG` in its order; `inputs[] = {key, label, kind, unit, default, options[]}`, `kind` one of `number`, `int`, `select`, `check`, `text`, `json` (a list the engine takes whole), `options[]` plain values or `{value, label}` (v1.771.0) | The Calculator drawer: the pick list, then one field per input, prefilled with `default`. |
 | `prints[]` | `{key, label, print_format}`, one per paper whose Print Format exists on the site (phase G): the keys of `outputs.schedules[]`, plus `packet` | The Outputs step links each paper of a **saved** design to `/printview?doctype=Water%20Feature%20Design&name=<name>&format=<print_format>&no_letterhead=1` (the formats draw their own letterhead). An unsaved design says "save the design to print it"; a key with no entry says "not available yet". |
 
 ### `get_design()` and `get_design(name)`
@@ -193,6 +195,16 @@ Phase G, Send design. POST. The start of an email that sends one paper of a **sa
 - **What the page does with it.** It opens frappe's `CommunicationComposer` on `{doctype, name}` with the file attached and ticked. The person sends the email from there, and the composer links it to the design's timeline. The Desk form instead uses the composer's own Attach Document Print.
 - **What the server refuses.** It refuses without the email permission, a format that is not one of the design's papers, and one this site has not set up or has disabled. The demo answers `{demo: true}` and sends nothing.
 
+### `run_calc(calc, inputs)` → `CalcResult` (v1.771.0)
+
+- **Arguments.** `calc` is a `boot().calculator[].key`; `inputs` is JSON text of `{<input key>: value}`, numbers as numbers and a `json` input as the list itself. A key left out takes the engine's default. POST.
+- **The reply.** `{calc, value, unit, inputs, formula, steps[], citations[], warnings[], options[], status}`; `options[] = {key, label, value, recommended, detail: {...}}`. The same dispatch the `water_calc` AI tool runs (`water_engineering/calculator.py`), so the drawer and the assistant show the same math.
+- **What the server refuses.** An unknown `calc` (417, "Unknown calculation: …") and a caller without read on Water Feature Design. The demo answers the calcs in `demo/calc.json` with a real engine answer for their example inputs, adds `demo_inputs` (the drawer says the answer is for those), and refuses the rest with 417.
+
+### `check_permission()` → boolean (v1.771.0)
+
+The gate, asked before `boot`: read on Water Feature Design. Not part of the demo: it always goes to the server.
+
 ### `acknowledge_issue(design, issue_key, note)` → `{acks: [{issue_key, note, by, on}]}`
 
 - **What it does.** It signs off one open **warning**, and the page re-derives afterwards.
@@ -225,11 +237,9 @@ the labeled training demo.
   cascade's `tiers`, an interactive feature's `play_features` and `sequence`), because `ui.js` has no
   table field. The kits carry them in their models, and the derive reads them. A table editor is page
   work for later.
-- **Phase H's two jobs.**
-  - The error panel's second sentence ("Until the designer's server side is installed, the demo shows
-    how it works.") and its **Open the demo** button (`app.js`, `failed()`) no longer fit. Phase H
-    rewords the sentence and moves the demo to a link meant for training.
-  - The Dock row on the Design profile now opens a working page.
+- **Phase H (v1.771.0) did its two jobs.** The error panel's "Until the designer's server side is
+  installed" sentence and its **Open the demo** button are gone (`app.js`, `failed()`), and the demo is
+  **Open the training demo** on Start. The Dock row on the Design profile opens the working page.
 
 ## Demo mode
 
@@ -246,7 +256,8 @@ The demo is a little alive, and none of it is engineering:
 - the kit's headline inputs scale the flows, heads, power and budget;
 - the duty chart is redrawn at the new point;
 - a remedy clears its issue;
-- signing off the warnings makes the package ready.
+- signing off the warnings makes the package ready;
+- the Calculator drawer answers five calcs (`demo/calc.json`: basin volume, turnover, weir flow, pipe size, motor branch circuit) with a real engine answer at example inputs, and says so.
 
 New designs and saves last for the tab (`sessionStorage`). Keep demo mode after phase E: it is the
 training mode.

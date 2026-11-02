@@ -2227,10 +2227,10 @@ website_route_rules = [
 page_renderer = ["erpnext_enhancements.setup.stock_web_forms.UnpublishedStockWebFormPage"]
 website_clear_cache = ["erpnext_enhancements.setup.stock_web_forms.clear_route_cache"]
 
-# Jinja methods available to Print Formats / web templates. The print sandbox
-# cannot parse the Water Feature Design pipe segments' fittings/components JSON
-# rows, so the aggregation (DOC-0121 Fitting Schedule) and the typed design
-# issues (Design Review section) are exposed as callables instead.
+# Jinja methods available to Print Formats / web templates. A Water Feature Design's typed
+# issues (the Design Review section) are exposed as a callable because the print sandbox cannot
+# parse the stored JSON. we_fitting_schedule went in v1.771.0 (Fountain Designer phase H): no
+# print reads it since the phase G formats, whose context is built by packet.we_print.
 #
 # The Project Schedule format draws Gantt bars as percentage-positioned divs, and
 # a bar's left/width are a fraction of the project's whole date span. The print
@@ -2239,7 +2239,6 @@ website_clear_cache = ["erpnext_enhancements.setup.stock_web_forms.clear_route_c
 # public/js/gantt_widget/gantt_export.js cannot help) -- hence pre-computed rows.
 jinja = {
 	"methods": [
-		"erpnext_enhancements.water_engineering.issues.we_fitting_schedule",
 		"erpnext_enhancements.water_engineering.issues.we_design_issues",
 		# Control-panel NEC panel schedule (circuits + service totals). The 430.24/
 		# 430.62/Art.450 math can't run in the print sandbox, so it's computed here.
@@ -3650,8 +3649,12 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.closed_won_handoff_status.ClosedWonHandoffStatus",
 	# v1.90.0 Water Engineering — fountain hydraulic calc tools. water_calc and
 	# water_design_status are read-only (EXPLICIT_READONLY); save_water_design
-	# writes a Water Feature Design and is gated (APP_MUTATING, Low risk). All
-	# three share the pure water_engineering.engine with the desk wizard.
+	# writes a Water Feature Design and is gated (APP_MUTATING, Low risk). Since
+	# v1.771.0 (Fountain Designer phase H) all three go through api/designer.py, the
+	# page's own API: water_calc runs water_engineering/calculator.py (the Calculator
+	# drawer's list and dispatch), water_design_status reads the stored verdict,
+	# issues and readiness (design_status), and save_water_design saves a schema-2
+	# model, or the old table payload merged onto it, through save_design.
 	"erpnext_enhancements.assistant_tools.water_calc.WaterCalc",
 	"erpnext_enhancements.assistant_tools.water_design_status.WaterDesignStatus",
 	"erpnext_enhancements.assistant_tools.save_water_design.SaveWaterDesign",

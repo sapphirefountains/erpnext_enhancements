@@ -10,7 +10,7 @@
 // "Demo data".
 //
 // create_demo(fixture, env) -> transport(method, args) -> Promise. fixture: { boot, catalog, designs,
-// replies: { <kit>: derive reply } }. env: { set_timeout, delay, storage }.
+// replies: { <kit>: derive reply }, calc: { <calc>: { inputs, result } } }. env: { set_timeout, delay, storage }.
 
 import { METHOD_BASE } from "../api.js";
 import { clone, get_in, merge_derived, set_in } from "../model.js";
@@ -110,6 +110,16 @@ export function create_demo(fixture, env) {
 		email_draft: (args) => {
 			if (!store.designs[args.name]) return { _error: [404, `Design ${args.name} was not found.`] };
 			return { demo: true, subject: "", recipients: "", message: "", print_format: args.print_format || null, formats: [], attachment: null };
+		},
+		// The calculator cannot run the engine in a browser: the fixture holds a real answer for a few calcs at
+		// example inputs (calc.json), returned with those inputs whatever was typed, and said so on the page.
+		run_calc: (args) => {
+			const example = fixture.calc && fixture.calc[args.calc];
+			if (!example) {
+				const have = Object.keys(fixture.calc || {}).join(", ");
+				return { _error: [417, `In the demo the calculator only shows worked examples (${have}). Open a real design to run the others.`] };
+			}
+			return Object.assign(clone(example.result), { demo_inputs: clone(example.inputs) });
 		},
 		acknowledge_issue: (args) => {
 			const d = store.designs[args.design];

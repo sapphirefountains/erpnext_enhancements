@@ -30,9 +30,6 @@ from erpnext_enhancements.water_engineering import prints
 PACKET_PF = prints.PF_PACKET
 DESIGN_DOCTYPE = "Water Feature Design"
 
-# The fountain venues (mirrors engine.aquatic) — a regulated packet is any other.
-_FOUNTAIN_VENUES = {"", "decorative fountain", "interactive water feature"}
-
 
 def _doc(design):
     return frappe.get_doc(DESIGN_DOCTYPE, design) if isinstance(design, str) else design
@@ -44,10 +41,6 @@ def _settings():
         return frappe.get_cached_doc("Water Engineering Settings")
     except Exception:
         return frappe._dict()
-
-
-def is_regulated_packet(doc):
-    return (doc.get("venue_type") or "").strip().lower() not in _FOUNTAIN_VENUES
 
 
 def we_title_block(design):

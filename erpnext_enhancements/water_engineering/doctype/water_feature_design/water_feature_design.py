@@ -16,8 +16,9 @@ house rules, the pump catalog, Item prices and the geocoded site) and writes bac
 
 The page (``api/designer.save_design``), the AI tools and a Desk save all go through here, so a
 design reads the same wherever it was last saved. The nine schema-1 child tables left this
-doctype in v1.768.0; ``patches/convert_water_feature_designs_to_model.py`` turned the stored rows
-into ``model_json`` and deleted nothing (the child DocTypes go in phase H).
+doctype in v1.768.0, when ``patches/convert_water_feature_designs_to_model.py`` turned the stored rows
+into ``model_json``; the child DocTypes and their tables went in v1.771.0 (phase H,
+``patches/retire_water_feature_child_doctypes.py``).
 """
 
 import json
@@ -308,83 +309,3 @@ def write_derive(doc, out):
 def compute_completion_percent(doc):
 	"""0-100 from the readiness the last derive wrote: the share of applicable sections done."""
 	return design_issues.completion_from_readiness(_json_dict(doc.get("readiness_json")))
-
-
-# --------------------------------------------- schema 1 (the conversion patch)
-
-
-def _loads(text):
-	"""Parse a JSON list field; return [] on empty/garbage."""
-	return _json_list(text)
-
-
-def legacy_inputs(doc, rows):
-	"""The schema-1 engine input (``model.migrate``'s first shape) from a record's parent fields
-	and its child rows, ``rows = {table: [row dicts]}``, as read straight from the child tables:
-	the parent no longer declares them, so the conversion patch reads them with ``get_all``."""
-
-	def val(key, default=None):
-		v = doc.get(key) if hasattr(doc, "get") else getattr(doc, key, None)
-		return default if v in (None, "") else v
-
-	default_material = val("pipe_material", "SCH40 PVC")
-	tiers = [
-		{
-			"diameter_in": flt(t.get("diameter_in")),
-			"rim_height_in": flt(t.get("rim_height_in")),
-			"spill_gpm_per_ft": flt(t.get("spill_gpm_per_ft")) or 0.5,
-		}
-		for t in rows.get("tiers") or []
-	]
-	features = []
-	for f in rows.get("features") or []:
-		row = {
-			"feature_type": f.get("feature_type") or "Weir",
-			"feature_label": f.get("feature_label"),
-			"weir_length_ft": flt(f.get("weir_length_ft")),
-			"head_in": flt(f.get("head_in")),
-			"contractions": cint(f.get("end_contractions")) or 2,
-			"nozzle_count": cint(f.get("nozzle_count")),
-			"gpm_each": flt(f.get("gpm_each")),
-			"nozzle_profile": f.get("nozzle_profile") or "",
-			"supply_head_ft": flt(f.get("supply_head_ft")),
-		}
-		if "tier" in (row["feature_type"] or "").lower() or "cascade" in (row["feature_type"] or "").lower():
-			row["tiers"] = tiers
-		features.append(row)
-	return {
-		"basins": [
-			{
-				"basin_label": b.get("basin_label"),
-				"shape": b.get("shape") or "Rectangular",
-				"length_in": flt(b.get("length_in")),
-				"width_in": flt(b.get("width_in")),
-				"height_in": flt(b.get("height_in")),
-				"diameter_in": flt(b.get("diameter_in")),
-				"surface_area_sf": flt(b.get("surface_area_sf")),
-				"volume_gal_override": flt(b.get("volume_gal_override")),
-			}
-			for b in rows.get("basins") or []
-		],
-		"features": features,
-		"pipe_segments": [
-			{
-				"label": s.get("segment_label"),
-				"flow_gpm": flt(s.get("flow_gpm")),
-				"nominal_size": s.get("nominal_size"),
-				"material": s.get("material") or default_material,
-				"length_ft": flt(s.get("pipe_length_ft")),
-				"line_type": s.get("line_type") or "Discharge",
-				"fittings": _loads(s.get("fittings_json")),
-				"components": _loads(s.get("components_json")),
-			}
-			for s in rows.get("pipe_segments") or []
-		],
-		"pumps": [{"pump_item": p.get("pump_item")} for p in rows.get("pumps") or [] if p.get("pump_item")],
-		"static_lift_ft": flt(val("static_lift_ft", 0)),
-		"turnovers_per_hr": flt(val("turnover_per_hr", 0)) or 2,
-		"hazen_williams_c": cint(val("hazen_williams_c", 0)) or 130,
-		"pipe_material": default_material,
-		"venue_type": val("venue_type", "") or "",
-		"governing_code": val("governing_code", "") or "",
-	}

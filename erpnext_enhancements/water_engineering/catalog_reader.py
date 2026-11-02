@@ -25,8 +25,8 @@ What these are careful about:
   none of the three. :func:`_point` turns those zeros back into None (efficiency at zero flow
   excepted: it is 0 at shutoff by definition), and a nozzle row's spread and throw likewise. A
   ``derive()`` reading ``npshr_ft: 0`` as "needs no suction head" would pass every NPSH check.
-* **Never raises on a site that has not migrated yet.** ``doc_events`` and the wizard can
-  run during a migrate, before the new tables or columns exist, so each read falls back to
+* **Never raises on a site that has not migrated yet.** ``doc_events`` and the designer's
+  save can run during a migrate, before the new tables or columns exist, so each read falls back to
   less (the legacy fields, or nothing) instead of failing the caller.
 """
 

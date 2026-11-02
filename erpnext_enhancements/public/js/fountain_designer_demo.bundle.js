@@ -9,6 +9,7 @@
  */
 
 import boot from "./fountain_designer/demo/boot.json";
+import calc from "./fountain_designer/demo/calc.json";
 import catalog from "./fountain_designer/demo/catalog.json";
 import designs from "./fountain_designer/demo/designs.json";
 import lobby from "./fountain_designer/demo/derive_lobby.json";
@@ -16,12 +17,13 @@ import plaza from "./fountain_designer/demo/derive_plaza.json";
 import pond from "./fountain_designer/demo/derive_pond.json";
 import { create_demo } from "./fountain_designer/demo/demo.js";
 
-const VERSION = 1;
+const VERSION = 2;
 
 const fixture = {
 	boot,
 	catalog,
 	designs,
+	calc,
 	replies: {
 		[lobby.model.kit]: lobby,
 		[plaza.model.kit]: plaza,

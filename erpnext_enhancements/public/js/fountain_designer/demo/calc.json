@@ -1,0 +1,415 @@
+{
+ "basin_volume": {
+  "inputs": {
+   "shape": "rectangular",
+   "length_in": 120,
+   "width_in": 72,
+   "height_in": 18
+  },
+  "result": {
+   "calc": "basin_volume",
+   "value": 673.24608,
+   "unit": "gal",
+   "inputs": {
+    "length": {
+     "value": 120,
+     "unit": "in",
+     "source": "user",
+     "ref": "Basin!E"
+    },
+    "width": {
+     "value": 72,
+     "unit": "in",
+     "source": "user",
+     "ref": "Basin!F"
+    },
+    "height": {
+     "value": 18,
+     "unit": "in",
+     "source": "user",
+     "ref": "Basin!G"
+    }
+   },
+   "formula": "vol_gal = (L * W * H) * 0.004329 ; weight_lb = vol_gal * 8.34",
+   "steps": [
+    "area = 120 * 72 = 8640 in^2",
+    "vol_in3 = 8640 * 18 = 155520 in^3",
+    "vol_gal = 155520 * 0.004329 = 673.2461 gal",
+    "weight_lb = 673.2461 * 8.34 = 5614.87 lb"
+   ],
+   "citations": [
+    "DOC-0048 / Basin"
+   ],
+   "warnings": [],
+   "options": [],
+   "status": null
+  }
+ },
+ "turnover_gpm": {
+  "inputs": {
+   "volume_gal": 673,
+   "turnovers_per_hr": 2
+  },
+  "result": {
+   "calc": "turnover_gpm",
+   "value": 22.433333333333334,
+   "unit": "GPM",
+   "inputs": {
+    "volume": {
+     "value": 673,
+     "unit": "gal",
+     "source": "prior_calc",
+     "ref": "basin_volume"
+    },
+    "turnovers_per_hr": {
+     "value": 2,
+     "unit": "1/hr",
+     "source": "user",
+     "ref": "Basin!D15 (default 2)"
+    }
+   },
+   "formula": "circ_gpm = volume_gal * turnovers_per_hr / 60",
+   "steps": [
+    "gal_per_hr = 673 * 2 = 1346",
+    "gpm = 1346 / 60 = 22.4333"
+   ],
+   "citations": [
+    "DOC-0048 / Basin"
+   ],
+   "warnings": [],
+   "options": [],
+   "status": null
+  }
+ },
+ "weir_flow": {
+  "inputs": {
+   "length_ft": 4,
+   "head_in": 0.5,
+   "contractions": 2
+  },
+  "result": {
+   "calc": "weir_flow",
+   "value": 50.80562222825345,
+   "unit": "GPM",
+   "inputs": {
+    "length": {
+     "value": 4.0,
+     "unit": "ft",
+     "source": "user",
+     "ref": "I - Weir!C12"
+    },
+    "head": {
+     "value": 0.5,
+     "unit": "in",
+     "source": "user",
+     "ref": "I - Weir!C14"
+    },
+    "contractions": {
+     "value": 2,
+     "unit": "",
+     "source": "user",
+     "ref": "I - Weir!C15 (default 2)"
+    }
+   },
+   "formula": "Q_gpm = (36 * L_ft * h_in^1.5) - (0.3 * n * h_in^2.5)",
+   "steps": [
+    "Q = (36 * 4.0 * 0.5^1.5) - (0.3 * 2 * 0.5^2.5)",
+    "Q = 50.8056 GPM",
+    "12.70 GPM/ft of edge (conservative (engineered) edge; operate near 0.5 GPM/ft, engineer plumbing for 4-6 GPM/ft)"
+   ],
+   "citations": [
+    "DOC-0049 / I - Weir",
+    "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
+   ],
+   "warnings": [],
+   "options": [],
+   "status": null
+  }
+ },
+ "size_pipe": {
+  "inputs": {
+   "flow_gpm": 100,
+   "length_ft": 50,
+   "material": "SCH40 PVC",
+   "line": "discharge",
+   "c": 130
+  },
+  "result": {
+   "calc": "size_pipe",
+   "value": "3\"",
+   "unit": "nominal size",
+   "inputs": {
+    "flow": {
+     "value": 100.0,
+     "unit": "GPM",
+     "source": "prior_calc",
+     "ref": ""
+    },
+    "length": {
+     "value": 50.0,
+     "unit": "ft",
+     "source": "user",
+     "ref": ""
+    },
+    "material": {
+     "value": "SCH40 PVC",
+     "unit": "",
+     "source": "user",
+     "ref": ""
+    },
+    "line": {
+     "value": "discharge",
+     "unit": "",
+     "source": "user",
+     "ref": ""
+    }
+   },
+   "formula": "recommend smallest size where V = GPM*0.4085/ID^2 stays within the velocity limit",
+   "steps": [
+    "3/4\" SCH40 PVC: V=60.164 FPS -> Exceeds Legal Limit",
+    "1\" SCH40 PVC: V=37.123 FPS -> Exceeds Legal Limit",
+    "1-1/4\" SCH40 PVC: V=21.45 FPS -> Exceeds Legal Limit",
+    "1-1/2\" SCH40 PVC: V=15.759 FPS -> Exceeds Legal Limit",
+    "2\" SCH40 PVC: V=9.561 FPS -> Exceeds Legal Limit",
+    "2-1/2\" SCH40 PVC: V=6.701 FPS -> Increase Size",
+    "3\" SCH40 PVC: V=4.34 FPS -> Okay",
+    "4\" SCH40 PVC: V=2.52 FPS -> Okay",
+    "6\" SCH40 PVC: V=1.111 FPS -> Okay",
+    "8\" SCH40 PVC: V=0.641 FPS -> Okay",
+    "10\" SCH40 PVC: V=0.407 FPS -> Below Self-Cleaning",
+    "12\" SCH40 PVC: V=0.287 FPS -> Below Self-Cleaning"
+   ],
+   "citations": [
+    "DOC-0049 / A - Pipe Size"
+   ],
+   "warnings": [],
+   "options": [
+    {
+     "key": "3/4\"",
+     "label": "3/4\" SCH40 PVC",
+     "value": "3/4\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 0.824,
+      "velocity_fps": 60.164,
+      "status": "Exceeds Legal Limit",
+      "head_loss_ft": 824.008
+     }
+    },
+    {
+     "key": "1\"",
+     "label": "1\" SCH40 PVC",
+     "value": "1\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 1.049,
+      "velocity_fps": 37.123,
+      "status": "Exceeds Legal Limit",
+      "head_loss_ft": 254.561
+     }
+    },
+    {
+     "key": "1-1/4\"",
+     "label": "1-1/4\" SCH40 PVC",
+     "value": "1-1/4\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 1.38,
+      "velocity_fps": 21.45,
+      "status": "Exceeds Legal Limit",
+      "head_loss_ft": 67.034
+     }
+    },
+    {
+     "key": "1-1/2\"",
+     "label": "1-1/2\" SCH40 PVC",
+     "value": "1-1/2\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 1.61,
+      "velocity_fps": 15.759,
+      "status": "Exceeds Legal Limit",
+      "head_loss_ft": 31.664
+     }
+    },
+    {
+     "key": "2\"",
+     "label": "2\" SCH40 PVC",
+     "value": "2\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 2.067,
+      "velocity_fps": 9.561,
+      "status": "Exceeds Legal Limit",
+      "head_loss_ft": 9.388
+     }
+    },
+    {
+     "key": "2-1/2\"",
+     "label": "2-1/2\" SCH40 PVC",
+     "value": "2-1/2\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 2.469,
+      "velocity_fps": 6.701,
+      "status": "Increase Size",
+      "head_loss_ft": 3.954
+     }
+    },
+    {
+     "key": "3\"",
+     "label": "3\" SCH40 PVC",
+     "value": "3\"",
+     "recommended": true,
+     "detail": {
+      "id_in": 3.068,
+      "velocity_fps": 4.34,
+      "status": "Okay",
+      "head_loss_ft": 1.374
+     }
+    },
+    {
+     "key": "4\"",
+     "label": "4\" SCH40 PVC",
+     "value": "4\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 4.026,
+      "velocity_fps": 2.52,
+      "status": "Okay",
+      "head_loss_ft": 0.366
+     }
+    },
+    {
+     "key": "6\"",
+     "label": "6\" SCH40 PVC",
+     "value": "6\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 6.065,
+      "velocity_fps": 1.111,
+      "status": "Okay",
+      "head_loss_ft": 0.05
+     }
+    },
+    {
+     "key": "8\"",
+     "label": "8\" SCH40 PVC",
+     "value": "8\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 7.981,
+      "velocity_fps": 0.641,
+      "status": "Okay",
+      "head_loss_ft": 0.013
+     }
+    },
+    {
+     "key": "10\"",
+     "label": "10\" SCH40 PVC",
+     "value": "10\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 10.02,
+      "velocity_fps": 0.407,
+      "status": "Below Self-Cleaning",
+      "head_loss_ft": 0.004
+     }
+    },
+    {
+     "key": "12\"",
+     "label": "12\" SCH40 PVC",
+     "value": "12\"",
+     "recommended": false,
+     "detail": {
+      "id_in": 11.938,
+      "velocity_fps": 0.287,
+      "status": "Below Self-Cleaning",
+      "head_loss_ft": 0.002
+     }
+    }
+   ],
+   "status": "Okay"
+  }
+ },
+ "electrical_load": {
+  "inputs": {
+   "fla_amps": 12,
+   "hp": 2,
+   "phase": 1,
+   "voltage": 230,
+   "is_motor": true,
+   "device": "inverse_time_breaker"
+  },
+  "result": {
+   "calc": "electrical_load",
+   "value": 30,
+   "unit": "A breaker",
+   "inputs": {
+    "fla": {
+     "value": 12.0,
+     "unit": "A",
+     "source": "lookup",
+     "ref": "pump nameplate"
+    },
+    "hp": {
+     "value": 2,
+     "unit": "HP",
+     "source": "lookup",
+     "ref": "pump nameplate"
+    },
+    "phase": {
+     "value": 1,
+     "unit": "",
+     "source": "user",
+     "ref": ""
+    },
+    "voltage": {
+     "value": 230,
+     "unit": "V",
+     "source": "user",
+     "ref": ""
+    },
+    "is_motor": {
+     "value": true,
+     "unit": "",
+     "source": "user",
+     "ref": ""
+    },
+    "device": {
+     "value": "inverse_time_breaker",
+     "unit": "",
+     "source": "user",
+     "ref": ""
+    },
+    "conductor_min_a": {
+     "value": 15.0,
+     "unit": "A",
+     "source": "prior_calc",
+     "ref": "NEC 430.22 / 210.19(A)"
+    }
+   },
+   "formula": "breaker = Table 430.52(C)(1) % x FLA, next standard size up ; conductors >= 1.25 x FLA (430.22)",
+   "steps": [
+    "Inverse-time breaker, single phase motor: 250% of FLC",
+    "250% x 12 A = 30.00 A",
+    "max OCPD = 30 A (next standard size at or above 30.00 A)",
+    "if it will not start: up to 45 A (400% of FLC, Exception 2, rounded down)",
+    "branch conductors are sized separately at 125% x 12 = 15.00 A (430.22)",
+    "conductor minimum = 1.25 * 12.0 = 15.00 A (NEC 430.22)"
+   ],
+   "citations": [
+    "NEC 430.52(C)(1) and Table 430.52(C)(1) (Table 430.52 before 2020)",
+    "NEC 240.6(A) (standard ampere ratings)",
+    "NEC 430.22 (motor branch conductors at 125% of FLC)"
+   ],
+   "warnings": [
+    "30 A is the MAXIMUM 430.52 allows for this inverse-time breaker; a smaller device is permitted if it carries the starting current. It is not overload protection (430.32: size the overload relay from the nameplate FLA).",
+    "Verify against the NEC edition Utah has adopted and any local amendments; the authority having jurisdiction decides.",
+    "VFD-vs-motor-starter choice is not in the Sapphire source documents; confirm against the pump nameplate and local code with the engineer."
+   ],
+   "options": [],
+   "status": null
+  }
+ }
+}
