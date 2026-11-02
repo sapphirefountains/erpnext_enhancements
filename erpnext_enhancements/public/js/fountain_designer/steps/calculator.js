@@ -6,7 +6,7 @@
 //
 // Pure: strings in, strings out, and the input coercion the page sends with.
 
-import { card, field, fmt } from "../ui.js";
+import { card, field } from "../ui.js";
 
 export const DRAWER = "calculator";
 export const PREFIX = "calc.";
@@ -120,9 +120,18 @@ function form_html(ctx, list, s, state) {
 		<div class="fd-calc-result" aria-live="polite">${result_html(ctx, s, state)}</div>`;
 }
 
+// A number as the engine gave it, to four significant figures: a 0.004 ft loss reads 0.004, not 0.00, and a
+// 673.246 gal basin reads 673.2. Whole numbers and anything of 1,000 or more keep every whole digit.
+export function number_text(n) {
+	if (!Number.isFinite(n)) return String(n);
+	if (Number.isInteger(n)) return n.toLocaleString("en-US");
+	if (Math.abs(n) >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 1 });
+	return n.toLocaleString("en-US", { maximumSignificantDigits: 4 });
+}
+
 function shown(value, unit) {
 	if (value === null || value === undefined || value === "") return "—";
-	if (typeof value === "number") return fmt(value, { digits: Number.isInteger(value) ? 0 : 2, unit });
+	if (typeof value === "number") return unit ? `${number_text(value)} ${unit}` : number_text(value);
 	if (typeof value === "object") return JSON.stringify(value);
 	return unit ? `${value} ${unit}` : String(value);
 }
@@ -144,7 +153,7 @@ export function result_html(ctx, s, state) {
 						o.recommended ? " " + h.chip(__("Recommended"), "good") : ""
 					}</th><td>${esc(shown(o.value, ""))}</td><td>${esc(
 						Object.entries(o.detail || {})
-							.map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "number" ? fmt(v, { digits: 2 }) : v}`)
+							.map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "number" ? number_text(v) : v}`)
 							.join("; ")
 					)}</td></tr>`
 				)

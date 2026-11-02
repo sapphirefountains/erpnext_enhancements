@@ -18,7 +18,7 @@ What these are careful about:
 * **"Best first" is a ranking, not a choice.** A curve with fewer than two points cannot be
   interpolated and sorts last; then full speed (``speed_pct`` 100) before reduced speed,
   then a sourced curve before a generic estimate, then the larger impeller, then the most
-  recently changed. ``api/water_design.pump_curves`` takes the first; ``derive()`` may look
+  recently changed. ``api/designer.pump_curves`` takes the first; ``derive()`` may look
   at all of them (a VFD design wants the reduced-speed curves too).
 * **Unknown reads as None, not 0.** Child Float columns are NOT NULL DEFAULT 0, so a point
   saved without efficiency, NPSHr or power stores 0, and 162 of the 169 research pumps publish

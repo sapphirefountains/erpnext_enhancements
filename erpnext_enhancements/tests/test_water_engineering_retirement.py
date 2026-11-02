@@ -251,11 +251,12 @@ class FakeSite:
 
     DESIGN = "Water Feature Design"
 
-    def __init__(self, tables, designs, doctypes=None, raise_for=()):
+    def __init__(self, tables, designs, doctypes=None, raise_for=(), ddl_fails=(), delete_doc_fails=()):
         self.tables = {dt: [dict(r) for r in rows] for dt, rows in tables.items()}
         self.designs = dict(designs)
         self.doctypes = set(RETIRED if doctypes is None else doctypes)
         self.raise_for = set(raise_for)
+        self.ddl_fails, self.delete_doc_fails = set(ddl_fails), set(delete_doc_fails)
         self.errors, self.printed, self.ddl, self.deleted_doctypes, self.cleared = [], [], [], [], []
 
     def frappe(self):
@@ -285,8 +286,10 @@ class FakeSite:
             raise AssertionError(query)
 
         def sql_ddl(query):
-            site.ddl.append(query)
             table = re.search(r"`tab([^`]+)`", query).group(1)
+            if table in site.ddl_fails:
+                raise RuntimeError(f"cannot drop tab{table}")
+            site.ddl.append(query)
             site.tables.pop(table, None)
 
         def exists(doctype, name=None):
@@ -309,6 +312,8 @@ class FakeSite:
 
         def delete_doc(doctype, name, force=False, ignore_missing=False):
             assert doctype == "DocType" and force and ignore_missing
+            if name in site.delete_doc_fails:
+                raise RuntimeError(f"cannot delete DocType {name}")
             site.doctypes.discard(name)
             site.deleted_doctypes.append(name)
 
@@ -391,10 +396,50 @@ class TestTheDropPatch(unittest.TestCase):
         self.patch.execute()
         self.assertEqual(sorted(r["parent"] for r in site.tables["Water Feature Pump"]), ["CPD-1"] + ["WFD-OLD"] * 3)
         self.assertEqual(site.ddl, [], "a table holding the only copy of a design is never dropped")
-        self.assertEqual(site.deleted_doctypes, ["Water Feature Pump"])
+        self.assertEqual(site.deleted_doctypes, [], "a kept table keeps its DocType")
+        self.assertNotIn(("Custom Field", {"dt": "Water Feature Pump"}), site.cleared, "and its customizations")
         self.assertEqual(len(site.errors), 1)
         self.assertIn("WFD-OLD", site.errors[0][1])
         self.assertIn("KEPT the table with 4", " ".join(site.printed))
+        self.assertIn("DocType kept with its table", " ".join(site.printed))
+        self.assertIn("convert_water_feature_designs_to_model", site.errors[0][1])
+
+    def test_the_tables_the_conversion_never_read_keep_any_rows(self):
+        """Electrical Load, Venue Fixture and Equipment were never copied into a model: even a
+        schema-2 design's rows stay, with the table and the DocType; an empty one still goes."""
+        site = self._on(FakeSite({"Water Feature Equipment": _rows("WFD-NEW", 2), "Water Venue Fixture": []},
+                                 {"WFD-NEW": SCHEMA_2}, doctypes={"Water Feature Equipment", "Water Venue Fixture"}))
+        plan = self.patch.plan("Water Feature Equipment")
+        self.assertEqual((plan["parents"], plan["keep_rows"], plan["drop_table"]), ({"WFD-NEW": "not copied"}, 2, False))
+        self.patch.execute()
+        self.assertEqual(len(site.tables["Water Feature Equipment"]), 2)
+        self.assertNotIn("Water Venue Fixture", site.tables)
+        self.assertEqual(site.deleted_doctypes, ["Water Venue Fixture"])
+        self.assertIn("never copied", site.errors[0][1])
+
+    def test_a_failed_drop_keeps_the_doctype_and_the_rest_still_go(self):
+        site = production()
+        site.ddl_fails = {"Water Feature Pump"}
+        self._on(site)
+        self.patch.execute()  # must not raise
+        self.assertEqual(list(site.tables), ["Water Feature Pump"])
+        self.assertEqual(sorted(site.deleted_doctypes), sorted(set(RETIRED) - {"Water Feature Pump"}))
+        self.assertEqual(len(site.errors), 1)
+        site.ddl_fails = set()
+        self.patch.execute()
+        self.assertEqual((site.tables, len(site.deleted_doctypes)), ({}, 9), "a re-run finishes it")
+
+    def test_a_failed_delete_doc_after_the_drop_is_logged_and_a_rerun_finishes(self):
+        site = production()
+        site.delete_doc_fails = {"Water Feature Basin"}
+        self._on(site)
+        self.patch.execute()  # must not raise
+        self.assertEqual(site.tables, {})
+        self.assertIn("Water Feature Basin", site.doctypes)
+        self.assertEqual(len(site.errors), 1)
+        site.delete_doc_fails = set()
+        self.patch.execute()
+        self.assertEqual(site.doctypes, set())
 
     def test_rows_with_no_parent_go_and_a_shared_name_is_counted_once(self):
         rows = _rows("WFD-OLD", 2) + [{"parent": None, "parenttype": None}] + _rows("WFD-OLD", 1, "Control Panel Design")
@@ -429,6 +474,34 @@ class TestTheDropPatch(unittest.TestCase):
         self.assertEqual(len(site.printed), 9)
         self.assertTrue(all("no table; DocType already gone" in ln for ln in site.printed))
         self.assertEqual(site.errors, [])
+
+
+class TestTheConversionReadsATableWithNoDocType(unittest.TestCase):
+    """``remove_orphan_doctypes`` deletes a retired DocType in the same migrate, so the rows the drop
+    patch kept for an unconverted design must stay convertible: ``_rows`` reads them with SQL."""
+
+    def test_rows_are_read_with_sql_when_the_doctype_is_gone(self):
+        utils = types.ModuleType("frappe.utils")
+        utils.cint = lambda v=0: int(float(v or 0))
+        utils.flt = lambda v=0, precision=None: float(v or 0)
+        with mock.patch.dict(sys.modules, {"frappe": sys.modules.get("frappe") or types.ModuleType("frappe"),
+                                           "frappe.utils": sys.modules.get("frappe.utils") or utils}):
+            sys.modules.pop("erpnext_enhancements.patches.convert_water_feature_designs_to_model", None)
+            from erpnext_enhancements.patches import convert_water_feature_designs_to_model as conv
+
+        calls = []
+        fr = types.ModuleType("frappe")
+        fr.db = types.SimpleNamespace(
+            table_exists=lambda child: True,
+            exists=lambda doctype, name=None: False,
+            sql=lambda q, values=None, as_dict=False: calls.append((q, values)) or [{"segment_label": "S"}],
+        )
+        fr.get_all = lambda *a, **k: (_ for _ in ()).throw(AssertionError("get_all needs the DocType"))
+        with mock.patch.object(conv, "frappe", fr):
+            rows = conv._rows("WFD-OLD", "pipe_segments", "Water Feature Pipe Segment")
+        self.assertEqual(rows, [{"segment_label": "S"}])
+        self.assertIn("`tabWater Feature Pipe Segment`", calls[0][0])
+        self.assertEqual(calls[0][1], ("WFD-OLD", "Water Feature Design", "pipe_segments"))
 
 
 # ------------------------------------------------------------------ the wizard patch, dry

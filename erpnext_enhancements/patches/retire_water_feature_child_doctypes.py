@@ -29,22 +29,31 @@ Three framework facts, read from frappe v16.53.0 (prod's version on 2026-11-01)
 What it deletes, and what it refuses to
 -------------------------------------------------------------------------------------
 
+What the conversion copied decides what may go. ``convert_water_feature_designs_to_model`` read
+five tables into the model (``CHILD_TABLES``: Basin, Nozzle, Tier, Pipe Segment, Pump), and Calc
+Result is the old engine's output, which every derive writes again into ``results_json``. It never
+read Electrical Load, Venue Fixture or Equipment, so a row in one of those three is nowhere else.
+
 Per DocType, the stored rows are grouped by parent and judged one design at a time:
 
-* **converted**: the parent is a Water Feature Design whose ``model_json`` is schema 2. The rows
-  were copied into the model in v1.768.0 and nothing reads them; they are deleted.
+* **converted** (the five tables and Calc Result): the parent is a Water Feature Design whose
+  ``model_json`` is schema 2. Its rows are in the model (or rebuilt by the derive); they are deleted.
 * **orphan**: the parent design no longer exists. Nothing can read them; they are deleted.
 * **unconverted**: the parent design's ``model_json`` is missing or still schema 1, or the parent
-  is not a Water Feature Design at all. These rows are the only copy of that design, so they are
-  KEPT, the table is kept with them, and the Error Log says which designs to convert.
+  is not a Water Feature Design at all. These rows are the only copy of that design: KEPT.
+* **not copied**: any row of Electrical Load, Venue Fixture or Equipment, whatever its parent.
+  KEPT: those three tables are dropped only when they are empty.
 
-The table is dropped only once it is empty. The DocType row is deleted either way (the orphan sweep
-would delete it in the same migrate), which leaves a kept table readable by SQL and invisible to
-the Desk, the state ``remove_orphan_doctypes`` itself leaves every table in.
+A table is dropped only once it is empty. Its DocType row, and any Custom Field or Property Setter
+on it, go only once the table is gone: a table that keeps rows keeps them too, and the Error Log
+names the designs. ``remove_orphan_doctypes`` deletes a DocType whose folder is gone later in the
+same migrate whatever this patch does, so the conversion patch reads a retired table with SQL when
+its DocType is missing: converting a design and running both patches again finishes the job.
 
 Production on 2026-11-01 (read-only through the ERPNext MCP): 13 rows in five of the nine tables,
 every one a child of WFD-2026-209315, whose ``model_json`` is schema 2. Basin 1, Nozzle 1, Pipe
-Segment 1, Pump 2, Calc Result 8; Tier, Electrical Load, Venue Fixture and Equipment are empty.
+Segment 1, Pump 2, Calc Result 8; Tier, Electrical Load, Venue Fixture and Equipment are empty. So
+every table and every DocType goes.
 
 -------------------------------------------------------------------------------------
 Mechanics
@@ -77,10 +86,16 @@ RETIRED = (
 	"Water Feature Calc Result",
 )
 
+#: The tables the v1.768.0 conversion never read into the model: any row in one is its only copy.
+NOT_COPIED_TABLES = ("Water Feature Electrical Load", "Water Venue Fixture", "Water Feature Equipment")
+
 CONVERTED = "converted"
 ORPHAN = "orphan"
 UNCONVERTED = "unconverted"
+NOT_COPIED = "not copied"
 DELETABLE = (CONVERTED, ORPHAN)
+#: The verdicts that keep rows; a parent judged differently in two groups keeps the kept one.
+KEPT = (NOT_COPIED, UNCONVERTED)
 
 
 def execute():
@@ -130,8 +145,8 @@ def plan(doctype):
 	counts = {}
 	for g in groups:
 		key = g.get("parent") or ""
-		verdict = _verdict(g.get("parent"), g.get("parenttype"))
-		if out["parents"].get(key) != UNCONVERTED:
+		verdict = NOT_COPIED if doctype in NOT_COPIED_TABLES else _verdict(g.get("parent"), g.get("parenttype"))
+		if out["parents"].get(key) not in KEPT:
 			out["parents"][key] = verdict
 		counts[key] = counts.get(key, 0) + int(g.get("n") or 0)
 	for key, n in counts.items():
@@ -178,17 +193,30 @@ def retire(doctype):
 			if "" in doomed:
 				frappe.db.sql(f"delete from `tab{doctype}` where coalesce(parent, '') = ''")
 		if out["keep_rows"]:
-			kept = sorted(p for p, v in out["parents"].items() if v == UNCONVERTED)
+			kept = sorted(p or "(no parent)" for p, v in out["parents"].items() if v in KEPT)
+			if doctype in NOT_COPIED_TABLES:
+				why = (
+					"which the v1.768.0 conversion never copied into a model. Move what they hold into each "
+					"design by hand (they stay readable by SQL)"
+				)
+			else:
+				why = (
+					"the only copy of each. Convert each design (bench execute "
+					"erpnext_enhancements.patches.convert_water_feature_designs_to_model.execute)"
+				)
 			_log(
-				f"{doctype}: kept the table and {out['keep_rows']} row(s), the only copy of design(s) "
-				f"{', '.join(kept)}. Convert each to the Fountain Designer model, then run this patch "
-				"again (bench execute erpnext_enhancements.patches.retire_water_feature_child_doctypes.execute)."
+				f"{doctype}: kept the table, its DocType and {out['keep_rows']} row(s) of design(s) "
+				f"{', '.join(kept)}, {why}, then run this patch again (bench execute "
+				"erpnext_enhancements.patches.retire_water_feature_child_doctypes.execute)."
 			)
-	for dt, field in (("Custom Field", "dt"), ("Property Setter", "doc_type")):
-		frappe.db.delete(dt, {field: doctype})
-	out["deleted_doctype"] = bool(frappe.db.exists("DocType", doctype))
-	if out["deleted_doctype"]:
-		frappe.delete_doc("DocType", doctype, force=True, ignore_missing=True)
+	# The DocType and any customization on it go only once its table is gone.
+	out["deleted_doctype"] = False
+	if not frappe.db.table_exists(doctype, cached=False):
+		for dt, field in (("Custom Field", "dt"), ("Property Setter", "doc_type")):
+			frappe.db.delete(dt, {field: doctype})
+		if frappe.db.exists("DocType", doctype):
+			frappe.delete_doc("DocType", doctype, force=True, ignore_missing=True)
+			out["deleted_doctype"] = True
 	frappe.db.commit()
 	return out
 
@@ -197,10 +225,16 @@ def _describe(o):
 	if not o["table"]:
 		table = "no table"
 	elif o["dropped"]:
-		table = f"dropped its table ({o['rows']} row(s), all converted or orphaned)"
+		table = f"dropped its table ({o['rows']} row(s), none kept)"
 	else:
 		table = f"deleted {o['delete_rows']} row(s), KEPT the table with {o['keep_rows']} (see the Error Log)"
-	return f"{table}; DocType {'deleted' if o['deleted_doctype'] else 'already gone'}"
+	if o["deleted_doctype"]:
+		doctype = "DocType deleted"
+	elif o["table"] and not o["dropped"]:
+		doctype = "DocType kept with its table"
+	else:
+		doctype = "DocType already gone"
+	return f"{table}; {doctype}"
 
 
 def _log(message, trace=False):

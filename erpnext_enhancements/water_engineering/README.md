@@ -262,9 +262,13 @@ records why.
 - **Nine child DocTypes**: Water Feature Basin, Water Feature Tier, Water Feature Nozzle, Water
   Feature Pipe Segment, Water Feature Pump, Water Feature Electrical Load, Water Venue Fixture, Water
   Feature Equipment and Water Feature Calc Result. `patches/retire_water_feature_child_doctypes.py`
-  deletes the rows of converted (schema-2) and vanished designs, drops each table once it is empty
-  (frappe's `delete_doc` never drops a table), and removes the DocType and any customization on it.
-  Rows of a design that is still schema 1 are kept with their table and named in the Error Log.
+  deletes the rows of converted (schema-2) and vanished designs from the five tables the v1.768.0
+  conversion read (Basin, Nozzle, Tier, Pipe Segment, Pump) and from Calc Result (derived output),
+  drops each table once it is empty (frappe's `delete_doc` never drops a table), and only then removes
+  the DocType and any customization on it. Rows of a design that is still schema 1, and any row of
+  Electrical Load, Venue Fixture or Equipment (which the conversion never read), are kept with their
+  table and DocType and named in the Error Log; the conversion patch reads a retired table with SQL
+  once `remove_orphan_doctypes` has taken its DocType, so a kept design stays convertible.
   Production had 13 rows on 2026-11-01, every one a child of the schema-2 WFD-2026-209315.
 - **The Water Engineering Wizard** (`page/water_engineering_wizard/`). Its quick calculator is the
   Calculator drawer on the Fountain Designer's Review step. `patches/retire_water_engineering_wizard.py`

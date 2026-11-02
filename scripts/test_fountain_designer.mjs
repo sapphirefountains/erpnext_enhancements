@@ -1130,6 +1130,19 @@ await test("coerce: numbers and lists read or are named; a blank box is left to 
 	assert.deepEqual(CALC.coerce(CALC.spec(boot, "heating_load"), { wind: false }).inputs.wind, false);
 });
 
+await test("a small result keeps its significant figures", () => {
+	assert.equal(CALC.number_text(0.004123), "0.004123");
+	assert.equal(CALC.number_text(673.24608), "673.2");
+	assert.equal(CALC.number_text(22.433333), "22.43");
+	assert.equal(CALC.number_text(12345.67), "12,345.7");
+	assert.equal(CALC.number_text(30), "30");
+	const html = CALC.result_html({ h: H }, CALC.spec(boot, "hazen_williams_loss"), {
+		result: { calc: "hazen_williams_loss", value: 0.0042, unit: "ft", steps: [], warnings: [], citations: [], options: [] },
+	});
+	assert.match(html, /0\.0042 ft/);
+	assert.doesNotMatch(html, /0\.00 ft/);
+});
+
 await test("the result shows the value, formula, every step, the sources, warnings and options", () => {
 	const s = CALC.spec(boot, "size_pipe");
 	const r = calc.size_pipe.result;

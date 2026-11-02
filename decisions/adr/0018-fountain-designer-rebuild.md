@@ -74,11 +74,14 @@ merging in order (tracker TASK-2026-03018 on PRJ-00580).
 What phase H retired, and why each could go:
 
 - **The nine child DocTypes.** The parent stopped declaring them in v1.768.0, when
-  `convert_water_feature_designs_to_model` copied every design's rows into `model_json`; no print,
-  page or tool read them after phase G. `retire_water_feature_child_doctypes` deletes rows only of
-  schema-2 designs (or of designs that no longer exist), drops each table once empty (frappe's
-  `delete_doc` never drops one), removes the DocType, and keeps any unconverted design's rows with
-  their table, named in the Error Log. Production had 13 rows, all of the schema-2 WFD-2026-209315.
+  `convert_water_feature_designs_to_model` copied each design's rows from five of them (Basin, Nozzle,
+  Tier, Pipe Segment, Pump) into `model_json`; Calc Result was the old engine's output, and Electrical
+  Load, Venue Fixture and Equipment were never read. No print, page or tool read any of them after
+  phase G. `retire_water_feature_child_doctypes` deletes rows only where they are copied or derived
+  (schema-2 designs, or designs that no longer exist, in those six tables), drops each table once empty
+  (frappe's `delete_doc` never drops one), removes the DocType only once its table is gone, and keeps
+  every other row with its table and DocType, named in the Error Log. Production had 13 rows, all of
+  the schema-2 WFD-2026-209315 and all in the six tables, so all nine went.
 - **The Water Engineering Wizard.** The page replaced it; its quick calculator is the Calculator
   drawer on the Review step (`water_engineering/calculator.py`, the same dispatch). The Page row goes,
   the workspaces are re-imported, a leftover sidebar row is repointed, and `frappe.re_route` sends

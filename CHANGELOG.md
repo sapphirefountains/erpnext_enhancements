@@ -59,6 +59,7 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
     from the model, so nothing in the drawer edits or saves the design. A list input (pipe segments,
     loads, lights) is typed as JSON. Only the newest answer is drawn.
   - **It is built from F's helpers**: `ui.field` for every input and `ui.card` for the result.
+  - **Numbers keep four significant figures**, so a 0.004 ft loss reads 0.004, not 0.00.
   - **In the demo**, five calcs answer with a real engine result at example inputs (`demo/calc.json`),
     and the drawer says the answer is for those inputs.
 - **`water_engineering/calculator.py`**: the calc list with typed inputs (`CATALOG`, `CALCS`) and
@@ -76,7 +77,9 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
 
   `api/water_design.py` keeps the Control Panel Design reader (`control_panel_state`, the
   `control_panel_status` tool's) and re-exports the moved endpoints, deprecated, for a Desk tab still
-  running an older bundle.
+  running an older bundle. **Removal:** the five re-exports (`check_permission`, `run_calc`,
+  `item_pump_curves`, `pump_curves`, `nozzle_profile_params`) have no caller in the repo and go in the
+  first release on or after 2026-12-01, by when no Desk tab can still be running a pre-1.771.0 bundle.
 - **ADR 0018** (`decisions/adr/0018-fountain-designer-rebuild.md`), indexed in the ADR README.
 
 ### Changed
@@ -96,6 +99,13 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
   counts, the designer and form links, every paper's print link and the packet's, and the canvas the
   Triton chat draws. With `include_model`, the schema-2 model itself, to edit and send back. With no
   design, the recent designs, each with its designer link.
+- **`save_water_design` loses nothing it was not sent.** A whole `model` sent without `acks` keeps
+  the design's stored sign-offs, and `ignored` says so. The old payload with `features` and
+  `pipe_segments` but no `pumps` keeps each pump's Item, curve, control and setpoint on the re-laid
+  network, rather than resetting them to a generic pump.
+- **The canvas `water_design_status` returns** carries each segment's `velocity_status` (the engine's
+  own band, from the derived velocity and the pipe's limits) and the design's `worst_status`, which
+  the Triton chat colours the supply line by.
 - **`water_calc`** dispatches through `api/designer._run_calc`, and its `calc` enum is `calculator.CALCS`:
   the drawer, the tool and the dispatch share one list. Tool descriptions, `hooks.py`'s annotation and
   `assistant_tools/README.md` say all of this.
@@ -117,19 +127,27 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
 
 ### Migration
 - **`patches/retire_water_feature_child_doctypes.py`** (`post_model_sync`, after the v1.768.0
-  conversion). For each of the nine DocTypes it groups the stored rows by parent and judges each one:
-  - **Converted**: the parent's `model_json` is schema 2. Its rows were copied into the model in
-    v1.768.0, so they are deleted.
+  conversion). The conversion read five of the nine tables into the model (`CHILD_TABLES`: Basin,
+  Nozzle, Tier, Pipe Segment, Pump), and Calc Result is the old engine's output, which every derive
+  writes again. It never read Electrical Load, Venue Fixture or Equipment. For each DocType the patch
+  groups the stored rows by parent and judges each one:
+  - **Converted** (the five tables and Calc Result): the parent's `model_json` is schema 2. Its rows
+    are in the model, or rebuilt by the derive, so they are deleted.
   - **Orphan**: the parent no longer exists. Its rows are deleted.
   - **Unconverted**: no model, a schema-1 model, or a parent that is not a Water Feature Design. Those
-    rows are the only copy of that design, so they are **kept**, the table is kept with them, and the
-    Error Log names the designs to convert.
+    rows are the only copy of that design, so they are **kept**.
+  - **Not copied**: any row of Electrical Load, Venue Fixture or Equipment, whatever its parent, is
+    **kept**. Those three tables are dropped only when they are empty.
 
   It drops a table only once it is empty, and drops it itself, because nothing in frappe does. Frappe
   16.53.0's `delete_doc("DocType", ...)` clears the DocType, its DocFields and DocPerms but never the
-  table, and `remove_orphan_doctypes` says so ("Deleting the entry doesn't delete any data"). That
-  sweep runs after `post_model_sync` patches and would delete the DocType rows anyway; this deletes
-  them first, with any Custom Field or Property Setter on them. Every outcome is one line in the
+  table, and `remove_orphan_doctypes` says so ("Deleting the entry doesn't delete any data"). The
+  DocType and any Custom Field or Property Setter on it are removed only once its table is gone; a
+  table that keeps rows keeps its DocType, and the Error Log names its designs and the way on
+  (convert, then run both patches again). `remove_orphan_doctypes` runs after `post_model_sync`
+  patches and deletes a DocType whose folder is gone whatever this patch does, so the conversion
+  patch now reads a retired table with SQL when its DocType is missing: a kept design stays
+  convertible. Every outcome is one line in the
   migrate log, every failure is in the Error Log, each DocType is its own try, and a second run finds
   nothing. **Production on 2026-11-01** (read-only, through the ERPNext MCP): all nine tables exist,
   with 13 rows, every one a child of WFD-2026-209315, whose `model_json` is schema 2:
@@ -164,7 +182,10 @@ decisions of 2026-11-01, the phases and their PRs, and why each retired piece co
   - **The wizard.** The redirect is registered, and both workspaces link the designer.
   - **Both patches, dry**, against an in-memory site shaped like production:
     - all nine tables and DocTypes go;
-    - an unconverted design keeps its rows and its table, and gets one Error Log;
+    - an unconverted design keeps its rows, its table and its DocType, and gets one Error Log;
+    - a row in Electrical Load, Venue Fixture or Equipment is kept even for a schema-2 design;
+    - a failed `DROP TABLE` or `delete_doc` is logged, the rest still go, and a re-run finishes;
+    - the conversion reads a retired table with SQL once its DocType is gone;
     - a failing DocType does not stop the others, and nothing raises;
     - a second run is quiet, and `report()` changes nothing.
 - **`test_designer_api`.**

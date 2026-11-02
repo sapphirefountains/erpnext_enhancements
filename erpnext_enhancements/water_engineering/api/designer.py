@@ -35,6 +35,7 @@ from erpnext_enhancements.water_engineering import prints as prints_mod
 from erpnext_enhancements.water_engineering.engine import feature_visual_kind
 from erpnext_enhancements.water_engineering.engine import kits as kits_engine
 from erpnext_enhancements.water_engineering.engine import model as model_engine
+from erpnext_enhancements.water_engineering.engine import pipe as pipe_engine
 from erpnext_enhancements.water_engineering.engine import rules as rules_engine
 from erpnext_enhancements.water_engineering.engine.families import FAMILIES
 
@@ -1064,8 +1065,14 @@ def merge_legacy_payload(existing, tables, global_inputs):
         if f.get("basin") not in ids:
             f["basin"] = ids[0] if ids else None
     if "pipe_segments" in legacy:
+        old_pumps = (model.get("network") or {}).get("pumps") or []
         model["network"] = migrated["network"]
         setup["piping"] = "custom"
+        if "pumps" not in tables:
+            # New piping is not a new pump: each pump of the re-laid network keeps the stored one's pick,
+            # curve, control and the rest, under the new network's own id (its nodes name that id).
+            for new, old in zip(model["network"].get("pumps") or [], old_pumps):
+                new.update({k: copy.deepcopy(v) for k, v in old.items() if k != "id"})
     if "pumps" in tables:
         picks = [e for e in migrated.get("equipment") or [] if e.get("slot") == "pump"]
         model["equipment"] = [e for e in model.get("equipment") or [] if e.get("slot") != "pump"] + picks
@@ -1094,7 +1101,8 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
     """The model ``save_water_design`` saves, and what it ignored: ``(model, ignored)``.
 
     * ``model`` (schema 2) is the whole design and replaces the stored one; ``tables`` and
-      ``global_inputs`` are then ignored, and said so.
+      ``global_inputs`` are then ignored, and said so. A model with no ``acks`` keeps the stored
+      sign-offs (and says so): leaving them out of an edited model is not withdrawing them.
     * Otherwise the old payload: onto an existing schema-2 design through ``merge_legacy_payload``
       (only the tables it names change), a stored schema-1 model being converted with
       ``engine.model.migrate`` first (keeping its sign-offs); for a new design, the payload alone
@@ -1107,7 +1115,15 @@ def tool_model(existing, model=None, tables=None, global_inputs=None):
         if model.get("schema") != model_engine.SCHEMA or model_engine.is_legacy(model):
             frappe.throw(_("'model' must be a Fountain Designer model (schema {0}).").format(model_engine.SCHEMA))
         sent = list(tables) + list(global_inputs)
-        return copy.deepcopy(model), [f"{k} (a model was sent, and it is the whole design)" for k in sent]
+        model = copy.deepcopy(model)
+        ignored = [f"{k} (a model was sent, and it is the whole design)" for k in sent]
+        stored_acks = [a for a in (existing or {}).get("acks") or [] if isinstance(a, dict)]
+        if not model.get("acks") and stored_acks:
+            # A model read back without its sign-offs must not erase them: the stored ones are kept.
+            model["acks"] = copy.deepcopy(stored_acks)
+            ignored.append(f"acks (the model sent had none, so the design's {len(stored_acks)} "
+                           "stored sign-off(s) were kept)")
+        return model, ignored
     if existing and model_engine.is_legacy(existing):
         # A design never converted: its stored schema-1 model is the only copy, so it is converted
         # first and the payload laid on it, never replaced by a model built from the payload alone.
@@ -1178,6 +1194,27 @@ def _json_value(raw, kind):
     return data if isinstance(data, kind) else kind()
 
 
+# Worst first: the canvas colours the supply line by the worst segment (fountain_canvas.statusColor).
+_VELOCITY_ORDER = (pipe_engine.STATUS_EXCEEDS, pipe_engine.STATUS_INCREASE, pipe_engine.STATUS_SETTLING,
+                   pipe_engine.STATUS_OKAY)
+
+
+def segment_velocity_status(segment, value):
+    """A segment's velocity band (``engine.pipe.velocity_status``) from its derived velocity, its line
+    and its pipe's limits (``data/pipe_specs``); "" when the velocity or the pipe is not known."""
+    from erpnext_enhancements.water_engineering.engine.data.pipe_specs import PIPE_SPECS
+
+    velocity = (value or {}).get("velocity_fps")
+    if velocity in (None, ""):
+        return ""
+    material = PIPE_SPECS.get(segment.get("material") or "SCH40 PVC") or PIPE_SPECS["SCH40 PVC"]
+    spec = material.get((value or {}).get("size") or segment.get("nominal_size") or "")
+    if not spec:
+        return ""
+    return pipe_engine.velocity_status(_num(velocity), segment.get("line") or "discharge", spec["max_suction_fps"],
+                                       spec["max_discharge_fps"], spec["legal_fps"])
+
+
 def canvas_state(doc, model=None, stored=None):
     """The fountain-design "canvas" the shared SVG renderer draws (``window.WaterFountain``, and the
     Triton chat from ``water_design_status``), from the schema-2 model and the last derive's per-row
@@ -1208,6 +1245,12 @@ def canvas_state(doc, model=None, stored=None):
         for t in (f.get("inputs") or {}).get("tiers") or []
     ]
     pump = doc.get("selected_pump")
+    segments = [
+        {"label": s.get("label") or s.get("id"), "velocity_fps": (seg_values.get(s.get("id")) or {}).get("velocity_fps"),
+         "velocity_status": segment_velocity_status(s, seg_values.get(s.get("id")))}
+        for s in network.get("segments") or []
+    ]
+    statuses = {s["velocity_status"] for s in segments if s["velocity_status"]}
     return {
         "basin_gallons": doc.get("total_basin_gallons"),
         "flow_gpm": doc.get("design_flow_gpm"),
@@ -1220,12 +1263,8 @@ def canvas_state(doc, model=None, stored=None):
         "static_lift_ft": max((_num(n.get("elevation_ft")) for n in network.get("nodes") or []
                                if n.get("kind") == "terminal"), default=0.0),
         "basin_label": label,
-        "worst_status": "",
-        "segments": [
-            {"label": s.get("label") or s.get("id"),
-             "velocity_fps": (seg_values.get(s.get("id")) or {}).get("velocity_fps"), "velocity_status": ""}
-            for s in network.get("segments") or []
-        ],
+        "worst_status": next((st for st in _VELOCITY_ORDER if st in statuses), ""),
+        "segments": segments,
         "curve": (pump_curves([pump]).get(pump) if pump else None) or [],
         "duty_flow": _num(doc.get("operating_flow_gpm")) or _num(doc.get("design_flow_gpm")),
         "duty_head": _num(doc.get("computed_tdh_ft")),

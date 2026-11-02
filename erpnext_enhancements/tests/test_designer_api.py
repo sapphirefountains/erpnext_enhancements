@@ -760,3 +760,53 @@ def test_tool_model_converts_an_unconverted_design_before_laying_the_payload_on(
 def test_run_calc_reads_unreadable_inputs_as_the_defaults(api):
     assert api.run_calc("turnover_gpm", "not json")["calc"] == "turnover_gpm"
     assert api.run_calc("turnover_gpm", "[1, 2]")["calc"] == "turnover_gpm"
+
+
+def test_a_model_sent_without_acks_keeps_the_stored_sign_offs(api):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["acks"] = [{"issue_key": "SURGE|trough", "note": "ok by Logan", "by": "l@x", "on": "2026-11-01"}]
+    sent = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    sent.pop("acks", None)
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == existing["acks"] and "acks" not in sent
+    assert any(i.startswith("acks (") and "1 stored sign-off" in i for i in ignored)
+    sent["acks"] = [{"issue_key": "OTHER", "note": "n"}]
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == [{"issue_key": "OTHER", "note": "n"}] and ignored == [], "acks sent are the model's"
+
+
+def test_new_piping_without_pumps_keeps_the_pumps_pick_curve_and_control(api):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["network"]["pumps"][0].update(item="PUMP-A", curve="PUMP-A", control="vfd", setpoint_psi=30)
+    feature = {"feature_type": "Weir", "weir_length_ft": 6, "head_in": 0.25}
+    segs = [{"line_type": "Discharge", "nominal_size": '2"', "pipe_length_ft": 30}]
+    model, _ = api.merge_legacy_payload(existing, {"features": [feature], "pipe_segments": segs}, {})
+    pump = model["network"]["pumps"][0]
+    assert (pump["item"], pump["curve"], pump["control"], pump["setpoint_psi"]) == ("PUMP-A", "PUMP-A", "vfd", 30)
+    assert model["setup"]["piping"] == "custom" and model["network"]["segments"] != existing["network"]["segments"]
+    ids = {n.get("pump") for n in model["network"]["nodes"] if n.get("pump")} | {pump["id"]}
+    assert pump["id"] in ids
+    model, _ = api.merge_legacy_payload(existing, {"features": [feature], "pipe_segments": segs,
+                                                   "pumps": [{"pump_item": "PUMP-B"}]}, {})
+    assert model["network"]["pumps"][0]["item"] == "PUMP-B", "a pump sent still wins"
+
+
+def test_the_canvas_carries_each_segments_velocity_band_and_the_worst(api, monkeypatch):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    monkeypatch.setattr(api, "pump_curves", lambda codes: {})
+    model = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    segs = model["network"]["segments"]
+    assert len(segs) >= 2
+    values = {segs[0]["id"]: {"velocity_fps": 3.0, "size": '2"'}, segs[1]["id"]: {"velocity_fps": 9.5, "size": '2"'}}
+    doc, _ = _stored_design(api, model=model, results_json=json.dumps({"values": {"segments": values}}))
+    canvas = api.canvas_state(doc)
+    bands = [s["velocity_status"] for s in canvas["segments"][:2]]
+    assert bands == ["Okay", "Exceeds Legal Limit"]
+    assert canvas["worst_status"] == "Exceeds Legal Limit"
+    assert api.segment_velocity_status({"line": "suction"}, {"velocity_fps": 5.0, "size": '2"'}) == "Increase Size"
+    assert api.segment_velocity_status({}, {"velocity_fps": None}) == ""

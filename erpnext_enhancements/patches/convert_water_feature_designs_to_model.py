@@ -61,9 +61,19 @@ def execute():
 def _rows(name, field, child):
 	"""The design's stored rows of one v1 child table. A table that does not exist has no rows; any
 	other failure raises, so ``execute`` logs it and marks the design not converted rather than
-	stamping it "converted from 0 rows" with an empty model."""
+	stamping it "converted from 0 rows" with an empty model.
+
+	A table whose DocType is gone (``remove_orphan_doctypes`` deletes it in the migrate that drops the
+	folder, v1.771.0) is read with SQL: ``get_all`` needs the DocType, and the rows that
+	``retire_water_feature_child_doctypes`` kept for an unconverted design must still be convertible."""
 	if not frappe.db.table_exists(child):
 		return []
+	if not frappe.db.exists("DocType", child):
+		return frappe.db.sql(
+			f"select * from `tab{child}` where parent = %s and parenttype = %s and parentfield = %s order by idx asc",
+			(name, DOCTYPE, field),
+			as_dict=True,
+		)
 	return frappe.get_all(
 		child,
 		filters={"parent": name, "parenttype": DOCTYPE, "parentfield": field},
