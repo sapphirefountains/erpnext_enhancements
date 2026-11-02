@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.772.1] - 2026-11-02
+
+Nik, 2026-11-02: "when a tech is backfilling the visit information, it won't let them go past their
+scheduled visit so we can't go back in the past very far and add an entry." Visit PRJ-00744-2026-V002 was
+scheduled for 2026-07-29, 96 days back, and the Visit Wizard refused that day, so it was dated on the desk
+form by hand. **A scheduled visit's own date was being refused by a window meant for unscheduled work.**
+`MAX_BACKFILL_DAYS` (60, from 2026-10-12) exists because a mistyped year on a visit nobody scheduled would
+roll the contract cadence to a nonsense date; a visit's scheduled day is not a typo.
+
+### Fixed
+- **`checked_visit_date` takes the visit's scheduled day** (`api/maintenance_visit.py`). The earliest day
+  allowed is now the earlier of today − `MAX_BACKFILL_DAYS` and `scheduled_visit_date`, so a scheduled visit
+  may always be dated on or after its scheduled day. A day before it is refused with "This visit was
+  scheduled for …; you can date it any day from then to today." Never in the future, unchanged.
+  - `save_visit` passes the record's scheduled day.
+  - `create_visit` (Log a visit) passes the scheduled day of the site's open regular draft, the record it
+    will open. With no open draft it makes a new record whose scheduled day is the chosen one, so the plain
+    60-day rule applies and still says "ask a supervisor to enter it". The draft is now looked up before the
+    date is checked; nothing else about the order changed.
+  - `_date_existing_draft` receives a date its caller already checked, as before.
+- **A Maintenance Reviewer has no backfill window** in the wizard or Log a visit. The desk form already
+  lets a reviewer set any date, and the role was a one-line check (the workflow's own reviewer role, the
+  one `api/maintenance_review.py` reads for `can_review`). Maintenance Supervisor and System Manager are not
+  given it: they review in the queue but the workflow does not hand them the decision.
+- **The wizard mirrors it.** `vz_visit_date_floor` / `vz_visit_date_refusal` (`visit_wizard.js`) set the
+  Date of visit picker's `min` (none for a reviewer), explain an older scheduled day in the hint, and refuse
+  in the server's words. Log a visit's date field now checks the lower bound too, using
+  `get_loggable_sites`' new `open_draft_scheduled`; before, it checked only the future and left the rest
+  to the server.
+
+### Tests
+- `tests/test_maintenance_visit_crews.py` (`TestFillingInAnEarlierDay`): scheduled 96 days back accepts the
+  scheduled day and a later one and refuses the day before; unscheduled, or scheduled recently, refuses day
+  61; the future is refused; a reviewer has no window; `save_visit` and `create_visit` with an open draft
+  scheduled 96 days back; `create_visit` with no draft keeps the window.
+- `tests/test_visit_wizard_markup.py` (`TestVisitDateWindow`): runs the wizard's two functions in node
+  against the same cases, so the client and server rules cannot drift apart unnoticed.
 ## [1.772.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03033. This is
