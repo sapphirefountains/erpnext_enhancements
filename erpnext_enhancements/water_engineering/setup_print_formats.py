@@ -1,26 +1,24 @@
 """after_migrate setup for the Water Engineering Print Formats.
 
-**Water Feature Design** (schema 2, Fountain Designer phase G, v1.770.0). Every format reads one
-context, ``we_print(doc, sheets)`` (``packet.we_print`` -> ``prints.build``), built from the stored
-``model_json``, ``results_json`` and ``bom`` rows; nothing recomputes the engine, and no template
-formats a number. The formats share one block macro (:data:`BLOCK_MACRO`) and the print design
-system's chrome (``print_style``, the Design pillar):
+**Water Feature Design** (schema 2, Fountain Designer phase G, v1.770.0). Nikolas asked for "a printable
+report view and other views with design information for printing and emailing" that match the other
+print formats, so every format is the print design system's chrome (``print_style``, the Design pillar:
+violet stripe, letterhead, eyebrow, a facts row of customer, project and site, ruled tables, the running
+line and closing stripe) around one Jinja block macro (:data:`BLOCK_MACRO`). Each reads one context,
+``we_print(doc, sheets)`` (``packet.we_print`` -> ``prints.build``), built from the stored ``model_json``,
+``results_json`` and ``bom`` rows: nothing recomputes the engine, and no template formats a number.
+Letter size, a page break between sheets.
 
-* **Results** and **Calculation Audit**: the rollups and open issues; every ``CalcResult`` with its
-  formula, inputs, working and citations.
-* **Schedules**: the Equipment Schedule (tag, Item, model, duty, electrical, cut sheet), the Piping
-  Schedule (segment, size, length, flow, velocity, head loss, end pressure, status), the aggregated
-  Fitting Schedule (``engine.bom.fitting_counts``) and the 20 ft cut list.
-* **Electrical Schedule**, **Controls BOM**, **Structural Takeoff**: phase L's panel schedule,
-  circuits and energy; the panel, starters, BOM and draft Theory of Operation; phase S's quantities
-  and rebar schedule.
-* **Design Drawings**: the duty point, circulation schematic, one-line, power schematic and control
-  ladder, each with its ids suffixed so they share a page.
-* **Design Calculations**: the plan-check sheet, with the Utah interactive checklist
-  (R392-302-41) and the NEC Article 680 checklist line by line.
-* **Operations and Maintenance**, **Winterization**, **Budget**.
-* **Submittal Packet**: the cover and title block, then the design basis, schedules, electrical,
-  structural, drawings, calculations, standard details and notes (never the budget).
+* **Design Report** (the doctype's default): the client-facing summary.
+* **Engineering Calculations**: every ``CalcResult`` by ladder section, then the plan check (the Utah
+  R392-302-41 and NEC 680 checklists).
+* **Schedules**: equipment, piping, fittings and cut list, structural takeoff, electrical, controls BOM.
+* **Design Drawings**, **Budget Proposal**, **Operations and Winterization**.
+* **Submittal Packet**: the cover and title block, then the basis, schedules, electrical, structural,
+  drawings, plan check, calculations, standard details and notes (never the budget or the O&M).
+
+The formats v1.768.0 and earlier seeded (``prints.SUPERSEDED``) read the retired child tables; they are
+disabled here, not deleted, so a site keeps its history and nobody prints an empty one.
 
 **Control Panel Design**: Submittal and Panel Schedule, unchanged.
 
@@ -47,6 +45,8 @@ PACKET_PF = prints.PF_PACKET
 # frappe renders with DebugUndefined, which PRINTS a missing name with its braces, so every value
 # printed here is a key prints.py always sets; optional keys are only ever tested in an `if`.
 _H3 = f"margin:12px 0 4px;font-size:13px;font-weight:700;color:{ps.DEEP_SEA_BLUE};page-break-after:avoid"
+_HEADING = (f"margin:18px 0 6px;padding-top:6px;border-top:2px solid {ps.DEEP_SEA_BLUE};font-size:14px;font-weight:700;"
+            f"color:{ps.DEEP_SEA_BLUE};page-break-after:avoid")
 _NOTE = f"margin:2px 0 10px;font-size:10.5px;color:{prints.MUTED}"
 _EMPTY = f"margin:2px 0 10px;font-size:11.5px;font-style:italic;color:{prints.MUTED}"
 _TABLE = "width:100%;border-collapse:collapse;margin:0 0 4px;font-size:11.5px"
@@ -71,8 +71,12 @@ BLOCK_MACRO = (
     '{%- elif t.empty %}<p style="' + _EMPTY + '">{{ t.empty|e }}</p>{% endif -%}'
     "{%- endmacro -%}"
     "{%- macro we_block(b) -%}"
-    '{%- if b.title %}<h3 style="' + _H3 + '">{{ b.title|e }}</h3>{% endif -%}'
-    "{%- if b.kind == 'table' -%}{{ we_table(b) }}"
+    "{%- if b.kind == 'heading' -%}"
+    '<h3 style="' + _HEADING + '">{{ b.title|e }}</h3>'
+    "{%- elif b.title %}" '<h3 style="' + _H3 + '">{{ b.title|e }}</h3>{% endif -%}'
+    "{%- if b.kind == 'break' -%}"
+    '<div style="page-break-after:always"></div>'
+    "{%- elif b.kind == 'table' -%}{{ we_table(b) }}"
     "{%- elif b.kind == 'facts' -%}"
     '{%- if b.lines %}<table style="' + _TABLE + '">{% for f in b.lines %}<tr><td style="' + _FACT_LABEL + '">{{ f.label|e }}</td>'
     '<td style="' + ps.TD + ';{{ f.style }}">{{ f.value|e }}</td></tr>{% endfor %}</table>'
@@ -104,40 +108,57 @@ BLOCK_MACRO = (
     "{%- endmacro -%}"
 )
 
-# Drawings carry a viewBox; this sizes them to the sheet.
-_DRAWING_CSS = "<style>.we-drawing svg{width:100%;height:auto;max-height:620px}</style>\n"
+# Letter paper; drawings carry a viewBox, so this sizes them to the sheet.
+_PAGE_CSS = "<style>@page{size:letter}.we-drawing svg{width:100%;height:auto;max-height:600px}</style>\n"
 _PRELIMINARY = (
     "{% if we_title_block(doc.name).preliminary %}"
     f'<div style="text-align:center;color:{ps.RED};font-size:9px;font-weight:700;letter-spacing:1px;'
     f'border-bottom:1px solid {ps.BORDER_100};padding-bottom:4px;margin-bottom:8px">'
     "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
 )
-_META = '{% for m in p.meta %}<div>{{ m|e }}</div>{% endfor %}'
+# The meta block beside the title: the design, its date (issue date, else last saved) and the red
+# DRAFT a document that is not issued carries (ps_state).
+_META = (
+    "{% for m in p.meta %}<div>{{ m|e }}</div>{% endfor %}"
+    "<div>{{ ps_date(doc.issue_date or doc.modified) }}</div>"
+    "{{ ps_state(doc.docstatus) }}"
+)
+# The facts row: the customer's party block, the project and site, the designer and status.
+_FACTS = (
+    ps.facts_open()
+    + ps.fact("CUSTOMER", "{% if doc.customer %}{{ ps_party(doc) }}{% else %}&mdash;{% endif %}", width="40%")
+    + ps.fact("PROJECT AND SITE", "{{ p.facts.project|e }}<br>{{ p.facts.site|e }}", width="32%")
+    + ps.fact("DESIGNER", "{{ p.facts.designer|e }}<br>Status: {{ p.facts.status|e }}", width="28%")
+    + ps.facts_close()
+)
 
 
 def _sheets_body(sheets, headed=True):
-    """Each sheet's blocks, under the sheet's heading when ``headed``."""
+    """Each sheet's blocks, under the sheet's heading when ``headed``; every sheet after the first
+    starts a page."""
     keys = "[" + ", ".join(f"'{k}'" for k in sheets) + "]"
     head = ps.section_title("{{ sh.title|e }}") if headed else ""
     return (
         "{% for key in " + keys + " %}{% set sh = p.sheets[key] %}"
+        + '<div{% if not loop.first %} style="page-break-before:always"{% endif %}>'
         + head
-        + "{% for b in sh.blocks %}{{ we_block(b) }}{% endfor %}{% endfor %}"
+        + "{% for b in sh.blocks %}{{ we_block(b) }}{% endfor %}</div>{% endfor %}"
     )
 
 
 def _format_html(print_format):
-    """One Water Feature Design format: chrome, then its sheets from ``prints.FORMATS``."""
-    eyebrow, _title, sheets = prints.FORMATS[print_format]
+    """One Water Feature Design format: chrome and facts row, then its sheets from ``prints.FORMATS``."""
+    eyebrow, sheets = prints.FORMATS[print_format]
     keys = "[" + ", ".join(f"'{k}'" for k in sheets) + "]"
-    preliminary = _PRELIMINARY if print_format == prints.PF_DESIGN_CALC else ""
+    preliminary = _PRELIMINARY if "calcs" in sheets else ""
     return (
         "{%- set p = we_print(doc, " + keys + ") -%}"
         + BLOCK_MACRO
-        + _DRAWING_CSS
+        + _PAGE_CSS
         + ps.page_open(prints.PILLAR)
         + preliminary
         + ps.letterhead(prints.PILLAR, eyebrow, "{{ p.title|e }}", _META)
+        + _FACTS
         + _sheets_body(sheets, headed=len(sheets) > 1)
         + ps.page_close(prints.PILLAR)
     )
@@ -250,89 +271,124 @@ PANEL_SCHEDULE_HTML = """
 # DRAFT for a P.E. to seal (see packet.py); the per-sheet banner and the cover say so.
 # --------------------------------------------------------------------------
 
-# `preliminary` is set once at the top of the packet (_packet_html): each sheet repeats the banner,
-# and we_title_block reads Settings and the Project.
+# `preliminary` and `tb` (the title block) are set once at the top of the packet (_packet_html): each
+# sheet repeats the banner, and we_title_block reads Settings and the Project.
 _PACKET_BANNER = (
     "{% if preliminary %}"
-    '<div style="text-align:center; color:#b00; font-size:9px; font-weight:bold; '
-    'letter-spacing:1px; border-bottom:1px solid #f0c0c0; margin-bottom:8px;">'
+    f'<div style="text-align:center;color:{ps.RED};font-size:9px;font-weight:700;letter-spacing:1px;'
+    f'border-bottom:1px solid {ps.BORDER_100};padding-bottom:4px;margin-bottom:8px">'
     "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
 )
 
-PACKET_COVER_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222;">
-  {% set tb = we_title_block(doc.name) %}
-  <div style="text-align:center; border-bottom:3px solid #222; padding-bottom:12px; margin-bottom:16px;">
-    <div style="font-size:22px; font-weight:bold;">{{ tb.project.name }}</div>
-    <div style="font-size:13px; color:#555;">Health Department Submittal{% if tb.governing_code %} &middot; {{ tb.governing_code }}{% endif %}</div>
-    {% if tb.preliminary %}<div style="color:#b00; font-weight:bold; letter-spacing:2px; margin-top:6px;">PRELIMINARY &mdash; NOT FOR CONSTRUCTION</div>{% endif %}
-  </div>
-  <table style="width:100%; font-size:12px; border-collapse:collapse;">
-    <tr>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">ENGINEER</div>
-        <div>{{ tb.engineer.name or '(engineer of record)' }}</div>
-        {% if tb.engineer.license %}<div>P.E. {{ tb.engineer.license }}</div>{% endif %}
-        <div style="white-space:pre-wrap;">{{ tb.engineer.address or '' }}</div>
-        <div>{{ tb.engineer.phone or '' }}</div>
-        <div style="margin-top:8px; width:120px; height:120px; border:1px dashed #bbb; text-align:center; line-height:120px; color:#bbb; font-size:10px;">
-          {% if tb.engineer.stamp and not tb.preliminary %}<img src="{{ tb.engineer.stamp }}" style="max-width:118px; max-height:118px; vertical-align:middle;">{% else %}P.E. STAMP{% endif %}
-        </div>
-      </td>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">CONTRACTOR</div>
-        <div>{{ tb.contractor.name }}</div>
-        <div style="white-space:pre-wrap;">{{ tb.contractor.address or '' }}</div>
-        <div>{{ tb.contractor.phone or '' }}</div>
-        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">PROJECT</div>
-        <div>{{ tb.project.name }}</div>
-        {% if tb.project.customer %}<div>{{ tb.project.customer }}</div>{% endif %}
-      </td>
-      <td style="vertical-align:top; width:33%; padding:6px;">
-        <div style="font-weight:bold; color:#888; font-size:10px;">ISSUE</div>
-        <div>Issue Date: {{ ps_date(tb.issue_date) if tb.issue_date else '________' }}</div>
-        <div>Drawn By: {{ tb.drawn_by or '____' }}</div>
-        {% if tb.venue_type %}<div>Venue: {{ tb.venue_type }}</div>{% endif %}
-        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">SHEET INDEX</div>
-        <div>Cover &middot; Design Basis &middot; Equipment, Piping and Fitting Schedules &middot; Electrical &middot; Structural Takeoff &middot; Design Drawings &middot; Design Calculations &middot; Calculation Audit &middot; Standard Details &middot; Standard Notes</div>
-      </td>
-    </tr>
-  </table>
-  <div style="margin-top:16px;">
-    <div style="font-weight:bold; color:#888; font-size:10px;">REVISIONS</div>
-    <table style="width:100%; border-collapse:collapse; font-size:11px;">
-      <tr style="background:#f4f4f4;"><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Mark</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Date</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Description</th></tr>
-      {% for r in tb.revisions %}<tr><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.mark }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.date }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.description }}</td></tr>{% endfor %}
-      {% if not tb.revisions %}<tr><td colspan="3" style="border:1px solid #ddd; padding:3px 6px; color:#999;">No revisions.</td></tr>{% endif %}
-    </table>
-  </div>
-</div>
-""".strip()
+_COVER_META = (
+    "{% if tb.governing_code %}<div>{{ tb.governing_code|e }}</div>{% endif %}"
+    "<div>Issued {{ ps_date(tb.issue_date) if tb.issue_date else '________' }}</div>"
+    "<div>Drawn by {{ (tb.drawn_by or '____')|e }}</div>"
+    "{% if tb.preliminary %}"
+    f'<div style="{ps.FAIL};letter-spacing:1px">PRELIMINARY &mdash; NOT FOR CONSTRUCTION</div>'
+    "{% endif %}"
+)
+def _lines(expr):
+    """A multi-line text field as escaped lines, each after a break."""
+    return "{% for line in (" + expr + " or '').split('\\n') %}{% if line %}<br>{{ line|e }}{% endif %}{% endfor %}"
+_STAMP = (
+    f'<div style="width:130px;height:130px;border:1px dashed {ps.BORDER_100};text-align:center;line-height:130px;'
+    f'font-size:10px;color:{prints.MUTED}">'
+    "{% if tb.engineer.stamp and not tb.preliminary %}"
+    '<img src="{{ tb.engineer.stamp|e }}" style="max-width:128px;max-height:128px;vertical-align:middle">'
+    "{% else %}P.E. STAMP{% endif %}</div>"
+)
+_SHEET_INDEX = (
+    "Cover",
+    "Design basis",
+    "Equipment, piping and fitting schedules",
+    "Electrical",
+    "Structural takeoff",
+    "Design drawings",
+    "Plan check",
+    "Calculations by section",
+    "Standard details",
+    "Standard notes",
+)
 
-PACKET_DETAILS_HTML = """
-<h3 style="margin:0 0 8px; font-size:14px;">Standard Details (SP-4)</h3>
-{% set details = we_standard_details(doc.governing_code) %}
-{% if not details %}<p style="color:#999; font-size:11px;">No standard details are configured yet (add them under Standard Detail).</p>{% endif %}
-<div style="display:flex; flex-wrap:wrap; gap:16px;">
-{% for d in details %}
-  <div style="width:46%; min-width:270px;">
-    <div style="font-weight:bold; font-size:11px; margin-bottom:4px;">{{ d.title or d.detail_key }}</div>
-    <div style="border:1px solid #e2e8f0; padding:6px; overflow-x:auto;">{{ d.svg | safe }}</div>
-  </div>
-{% endfor %}
-</div>
-""".strip()
+# The cover: the print design system's letterhead (Design pillar, HEALTH DEPARTMENT SUBMITTAL), a facts
+# row of the engineer, the contractor and the project, the P.E. stamp box beside the sheet index, and the
+# revisions as a ruled table.
+PACKET_COVER_HTML = (
+    ps.letterhead(prints.PILLAR, "HEALTH DEPARTMENT SUBMITTAL", "{{ tb.project.name|e }}", _COVER_META)
+    + ps.facts_open()
+    + ps.fact(
+        "ENGINEER",
+        "{{ (tb.engineer.name or '(engineer of record)')|e }}"
+        "{% if tb.engineer.license %}<br>P.E. {{ tb.engineer.license|e }}{% endif %}"
+        + _lines("tb.engineer.address")
+        + "{% if tb.engineer.phone %}<br>{{ tb.engineer.phone|e }}{% endif %}",
+    )
+    + ps.fact(
+        "CONTRACTOR",
+        "{{ tb.contractor.name|e }}" + _lines("tb.contractor.address")
+        + "{% if tb.contractor.phone %}<br>{{ tb.contractor.phone|e }}{% endif %}",
+    )
+    + ps.fact(
+        "PROJECT",
+        "{{ tb.project.name|e }}{% if tb.project.customer %}<br>{{ tb.project.customer|e }}{% endif %}"
+        "{% if tb.venue_type %}<br>{{ tb.venue_type|e }}{% endif %}",
+    )
+    + ps.facts_close()
+    + '<div style="display:table;width:100%;margin-top:10px">'
+    + '<div style="display:table-cell;width:160px;vertical-align:top">' + _STAMP + "</div>"
+    + '<div style="display:table-cell;vertical-align:top">'
+    + f'<div style="{ps.LABEL}">SHEET INDEX</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
+    + "".join(
+        f'<tr><td style="{ps.TD};width:26px">{n}</td><td style="{ps.TD}">{title}</td></tr>'
+        for n, title in enumerate(_SHEET_INDEX, 1)
+    )
+    + "</table></div></div>"
+    + ps.section_title("Revisions")
+    + '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr>'
+    + f'<th style="{ps.th(prints.PILLAR)}">Mark</th><th style="{ps.th(prints.PILLAR)}">Date</th>'
+    + f'<th style="{ps.th(prints.PILLAR)}">Description</th></tr></thead><tbody>'
+    + "{% for r in tb.revisions %}"
+    + f'<tr><td style="{ps.TD}">{{{{ r.mark|e }}}}</td><td style="{ps.TD}">{{{{ ps_date(r.date) }}}}</td>'
+    + f'<td style="{ps.TD}">{{{{ r.description|e }}}}</td></tr>'
+    + "{% endfor %}</tbody></table>"
+    + "{% if not tb.revisions %}"
+    + f'<p style="margin:2px 0 10px;font-size:11.5px;font-style:italic;color:{prints.MUTED}">No revisions yet.</p>'
+    + "{% endif %}"
+)
 
-PACKET_NOTES_HTML = """
-<h3 style="margin:0 0 8px; font-size:14px;">Standard Notes</h3>
-{% set notes = we_standard_notes(doc.governing_code) %}
-{% if not notes %}<p style="color:#999; font-size:11px;">No standard notes are configured yet (add them under Standard Note, keyed to the governing code).</p>{% endif %}
-{% set ns = namespace(cat='') %}
-{% for n in notes %}
-  {% if n.category != ns.cat %}<div style="font-weight:bold; color:#888; font-size:10px; margin:10px 0 4px; text-transform:uppercase;">{{ n.category }}</div>{% set ns.cat = n.category %}{% endif %}
-  <p style="margin:0 0 6px; font-size:11px;">{% if n.title %}<b>{{ n.title }}.</b> {% endif %}{{ n.body }}</p>
-{% endfor %}
-""".strip()
+# Standard details two to a row, as a table: the PDF backends lay out no flex or grid.
+PACKET_DETAILS_HTML = (
+    ps.section_title("Standard details (SP-4)")
+    + "{% set details = we_standard_details(doc.governing_code) %}"
+    + "{% if not details %}"
+    + f'<p style="font-size:11.5px;font-style:italic;color:{prints.MUTED}">'
+    + "No standard details are configured yet (add them under Standard Detail).</p>"
+    + "{% endif %}"
+    + '<table style="width:100%;border-collapse:collapse">'
+    + "{% for row in details|batch(2) %}<tr>{% for d in row %}"
+    + '<td style="width:50%;vertical-align:top;padding:6px !important;page-break-inside:avoid">'
+    + f'<div style="{ps.LABEL};margin-bottom:4px">{{{{ (d.title or d.detail_key)|e }}}}</div>'
+    + f'<div class="we-drawing" style="border:1px solid {ps.BORDER_100};padding:6px">{{{{ d.svg }}}}</div></td>'
+    + "{% endfor %}</tr>{% endfor %}</table>"
+)
+
+PACKET_NOTES_HTML = (
+    ps.section_title("Standard notes")
+    + "{% set notes = we_standard_notes(doc.governing_code) %}"
+    + "{% if not notes %}"
+    + f'<p style="font-size:11.5px;font-style:italic;color:{prints.MUTED}">'
+    + "No standard notes are configured yet (add them under Standard Note, keyed to the governing code).</p>"
+    + "{% endif %}"
+    + "{% set ns = namespace(cat='') %}"
+    + "{% for n in notes %}"
+    + "{% if n.category != ns.cat %}"
+    + f'<div style="{ps.LABEL};margin:10px 0 4px;text-transform:uppercase">{{{{ n.category|e }}}}</div>'
+    + "{% set ns.cat = n.category %}{% endif %}"
+    + '<p style="margin:0 0 6px;font-size:11.5px">{% if n.title %}<b>{{ n.title|e }}.</b> {% endif %}{{ n.body|e }}</p>'
+    + "{% endfor %}"
+)
 
 
 def _packet_sheet(key):
@@ -350,9 +406,9 @@ def _packet_html():
     keys = "[" + ", ".join(f"'{k}'" for k in prints.PACKET_SHEETS) + "]"
     return (
         "{%- set p = we_print(doc, " + keys + ") -%}"
-        + "{%- set preliminary = we_title_block(doc.name).preliminary -%}"
+        + "{%- set tb = we_title_block(doc.name) -%}{%- set preliminary = tb.preliminary -%}"
         + BLOCK_MACRO
-        + _DRAWING_CSS
+        + _PAGE_CSS
         + ps.page_open(prints.PILLAR)
         + PACKET_COVER_HTML
         + "".join(_packet_sheet(k) for k in prints.PACKET_SHEETS)
@@ -392,6 +448,18 @@ def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
     pf.save(ignore_permissions=True)
 
 
+def disable_superseded_formats():
+    """Disable the formats that read the retired child tables (``prints.SUPERSEDED``). Disabled, not
+    deleted: a removed seed leaves the record live, printing empty tables, and a delete would lose its
+    history. Re-run every migrate, so one an admin turns back on is turned off again."""
+    for name in prints.SUPERSEDED:
+        try:
+            if frappe.db.exists("Print Format", name) and not frappe.db.get_value("Print Format", name, "disabled"):
+                frappe.db.set_value("Print Format", name, "disabled", 1, update_modified=False)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Water Engineering print format {name}")
+
+
 def ensure_water_print_formats():
     """after_migrate entry: ship the Water Feature Design formats (``water_formats``) and the
     Control Panel Design Submittal and Panel Schedule. Idempotent (upserts the HTML) and guarded
@@ -408,6 +476,7 @@ def ensure_water_print_formats():
             _upsert_print_format(name, html, doc_type=doc_type, pdf_generator=generator)
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Water Engineering print format {name}")
+    disable_superseded_formats()
     try:
         frappe.db.commit()
         frappe.logger().info("[water_engineering] ensured Water Engineering print formats")

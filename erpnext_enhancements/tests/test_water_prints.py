@@ -119,13 +119,16 @@ def environment(context):
         we_standard_notes=lambda code=None: [{"category": "General", "title": "Code", "body": "Build to R392-302 & the NEC."}],
         we_standard_details=lambda code=None: [{"title": "Main drain", "detail_key": "md", "svg": '<svg viewBox="0 0 10 10"></svg>'}],
         ps_date=lambda value: "11/01/2026" if value else "",
+        ps_state=prints.ps.ps_state,
+        ps_party=lambda doc: "<b>Acme &amp; Sons</b><br>1 Main St",
     )
     return env
 
 
 def render(spf, name, print_format, doc_extra=None):
     out, stored = designed(name)
-    doc = {"name": f"WFD-{name}", "design_title": f"{name.title()} & Co. design", "status": "Derived", "project": "PRJ-1"}
+    doc = {"name": f"WFD-{name}", "design_title": f"{name.title()} & Co. design", "status": "Derived", "project": "PRJ-1",
+           "customer": "Acme & Sons", "docstatus": 0, "issue_date": None, "modified": "2026-11-01 10:00:00", "designer": "Logan"}
     doc.update(doc_extra or {})
 
     def context(sheets):
@@ -148,7 +151,7 @@ def formatted_text(page):
     return visible_text(page)
 
 
-ALL_FORMATS = (*prints.FORMATS, prints.PF_PACKET)
+ALL_FORMATS = prints.PRINT_FORMATS
 
 
 # ----------------------------------------------------------------------------- every format renders
@@ -217,7 +220,7 @@ def test_schedules_read_the_solved_network_and_the_aggregated_fittings(spf):
 
 
 def test_design_calculations_carry_the_utah_and_nec_checklists(spf):
-    text = visible_text(render(spf, "plaza", prints.PF_DESIGN_CALC))
+    text = visible_text(render(spf, "plaza", prints.PF_CALCS))
     assert "Utah interactive water feature checklist (R392-302-41)" in text
     assert "Whole volume treated within 30 minutes" in text and "Open" in text
     assert "NEC Article 680 checklist" in text and "680.51(A)" in text
@@ -230,7 +233,7 @@ def test_design_calculations_carry_the_utah_and_nec_checklists(spf):
 def test_the_spa_path_works_on_a_model_2_design(spf):
     out, stored = designed("spa")
     assert out["model"]["site"]["regulated"] is True
-    text = visible_text(render(spf, "spa", prints.PF_DESIGN_CALC))
+    text = visible_text(render(spf, "spa", prints.PF_CALCS))
     assert "Code minimum circulation" in text and prints.fnum(stored["results"]["minimum_flow_rate"]["value"], 2, "gpm") in text
     assert "Fika reflexology spa" in text and "NSF/ANSI 50" in text and "Bather load" in text
     assert "Turnover at the operating flow" in text
@@ -295,7 +298,7 @@ def test_winterization_reads_the_module_checklist(spf):
     assert out["outputs"]["winterization"]["steps"] == titles[:40], "the page's drawer gets the real steps"
     assert "Pull the upward-facing nozzles and fit winter caps" in titles
     assert w["checklist_text"].startswith("WINTERIZE") and "[ ] Inspect the basin" in w["checklist_text"]
-    text = visible_text(render(spf, "plaza", prints.PF_WINTER))
+    text = visible_text(render(spf, "plaza", prints.PF_OM))
     assert "Spring start-up" in text and "Checklist text for a Maintenance Visit" in text and "30 in" in text
 
 
@@ -311,9 +314,9 @@ def test_an_indoor_feature_needs_no_winterization():
 def test_the_packet_is_the_plan_set_and_never_the_budget(spf):
     page = render(spf, "spa", prints.PF_PACKET)
     text = visible_text(page)
-    for title in ("Health Department Submittal", "Design basis", "Equipment schedule", "Piping schedule", "Fittings and cut list",
-                  "Electrical", "Structural takeoff", "Design drawings", "Design calculations", "Calculation audit",
-                  "Standard Details (SP-4)", "Standard Notes", "Issued for plan check", "11/01/2026"):
+    for title in ("HEALTH DEPARTMENT SUBMITTAL", "Design basis", "Equipment schedule", "Piping schedule", "Fittings and cut list",
+                  "Electrical", "Structural takeoff", "Design drawings", "Plan check", "Calculations by section",
+                  "Standard details (SP-4)", "Standard notes", "P.E. STAMP", "SHEET INDEX", "Issued for plan check", "11/01/2026"):
         assert title in text, title
     assert "Budget by section" not in text and "Cost per year" not in text
     assert page.count("page-break-before:always") == len(prints.PACKET_SHEETS) + 2
@@ -469,3 +472,85 @@ def test_the_print_inputs_copy_from_a_deep_copy():
     before = copy.deepcopy(stored)
     prints.build({}, out["model"], stored, out["bom"])
     assert stored == before, "building the context never writes into the stored derive"
+
+
+# ----------------------------------------------------------------------------- the house style (Nikolas, 2026-11-01)
+
+
+@pytest.mark.parametrize("print_format", list(prints.FORMATS))
+def test_every_view_wears_the_print_design_system(spf, print_format):
+    """The Pillar Stripe chrome (docs/print-design-system.md): Design pillar stripe and eyebrow, letterhead,
+    the facts row (customer party block, project and site, designer and status), a red DRAFT on a design
+    not issued, the running line and closing stripe, Letter paper."""
+    page = render(spf, "lobby", print_format)
+    text = visible_text(page)
+    stripe = prints.ps.stripe_css(prints.PILLAR)
+    assert page.count(stripe) == 2, "the top stripe and the closing stripe, in the Design pillar's colors"
+    assert f"color:{prints.ps.VIOLET_DEEP}" in page and "DESIGN" in text, "the Design pillar's eyebrow"
+    for label in ("CUSTOMER", "PROJECT AND SITE", "DESIGNER"):
+        assert label in text
+    assert "Acme & Sons" in text and "PRJ-1" in text and "Logan" in text
+    assert "DRAFT" in text and "11/01/2026" in text
+    assert "@page{size:letter}" in page
+    assert "Sapphire Fountains, LLC" in text and "www.sapphirefountains.com" in text
+    squashed = page.replace(" ", "")
+    assert "display:flex" not in squashed and "display:grid" not in squashed, "print-safe CSS only"
+    assert "box-shadow" not in page and "border-radius" not in page, "no cards, no shadows"
+
+
+def test_an_issued_design_prints_no_draft_marker(spf):
+    text = visible_text(render(spf, "lobby", prints.PF_REPORT, {"docstatus": 1, "issue_date": "2026-11-02"}))
+    assert "DRAFT" not in text
+
+
+def test_the_design_report_is_the_client_view(spf):
+    out, stored = designed("lobby")
+    page = render(spf, "lobby", prints.PF_REPORT)
+    text = visible_text(page)
+    for heading in ("What the feature does", "At a glance", "How the water moves", "Where the pump runs", "Equipment",
+                    "Budget by section", "Running costs per year", "Notes and assumptions"):
+        assert heading in text, heading
+    assert page.count("<svg") >= 3, "the wordmark, the schematic and the duty-point chart"
+    assert page.count("page-break-after:always") == 2, "summary, drawings, then the lists"
+    # The client's equipment list names things; part numbers stay on the Schedules.
+    for code in [r["item"] for r in out["bom"] if r.get("item")] + ["PNT-CCP520", "PNT-MCL-12"]:
+        assert code not in text, code
+    s = prints.budget_summary(out["bom"], stored["paper"]["budget_rules"])
+    assert prints.money(s["total"], cents=False) in text
+    assert "Contingency (10%)" in text and "Range (plus or minus 15%)" in text
+
+
+def test_the_report_is_the_doctype_default():
+    rows = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+    row = next(r for r in rows if r["name"] == "Water Feature Design-main-default_print_format")
+    assert (row["doc_type"], row["property"], row["value"]) == ("Water Feature Design", "default_print_format", prints.PF_REPORT)
+
+
+def test_schedules_start_each_schedule_on_a_page(spf):
+    page = render(spf, "plaza", prints.PF_SCHEDULES)
+    sheets = prints.FORMATS[prints.PF_SCHEDULES][1]
+    assert page.count("page-break-before:always") == len(sheets) - 1
+    text = visible_text(page)
+    for title in ("Equipment schedule", "Piping schedule", "Fittings and cut list", "Structural takeoff", "Electrical", "Controls"):
+        assert title in text
+
+
+def test_engineering_calculations_follow_the_ladder(spf):
+    text = visible_text(render(spf, "plaza", prints.PF_CALCS))
+    order = [s for s, _n in prints.LADDER if s in text]
+    positions = [text.index(s) for s in order]
+    assert positions == sorted(positions) and len(order) >= 6, order
+    assert text.index("Calculations by section") < text.index("Plan check")
+
+
+def test_superseded_formats_are_disabled_not_deleted(spf):
+    state = {"Water Feature Design - Results": 0, "Water Feature Design - Calculation Audit": 1}
+    writes = []
+    spf.frappe.db = types.SimpleNamespace(
+        exists=lambda doctype, name: name in state,
+        get_value=lambda doctype, name, field: state[name],
+        set_value=lambda doctype, name, field, value, update_modified=True: writes.append((name, field, value, update_modified)),
+    )
+    spf.disable_superseded_formats()
+    assert writes == [("Water Feature Design - Results", "disabled", 1, False)]
+    assert set(prints.SUPERSEDED).isdisjoint(prints.PRINT_FORMATS)

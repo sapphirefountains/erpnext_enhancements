@@ -711,6 +711,51 @@ class Designer {
 		);
 	}
 
+	// Send design: save, have the server make the chosen paper into a PDF on the design, then open
+	// frappe's email composer on the record with it attached and the customer's address and body filled
+	// in. The person sends it there; the composer links the email to the design's timeline.
+	send_design(print_format) {
+		const { __ } = this.h;
+		if (!this.meta || !this.meta.name || this.busy) return;
+		const name = this.meta.name;
+		this.busy = true;
+		this.draw_stage();
+		this.saved().then((ok) => {
+			if (!ok) return this.not_saved(__("nothing was sent"));
+			this.api.email_draft(name, print_format).then(
+				(r) => {
+					this.busy = false;
+					this.draw_stage();
+					if (!r || r.demo) {
+						this.sf.toast(__("Demo: the design would be emailed with its paper attached. Nothing was sent."), { tone: "info" });
+						return;
+					}
+					this.open_composer(name, r);
+				},
+				(err) => {
+					this.busy = false;
+					this.draw_stage();
+					this.sf.toast((err && err.message) || __("Could not prepare the email."), { tone: "warning" });
+				}
+			);
+		});
+	}
+
+	open_composer(name, draft) {
+		const fr = this.env.frappe;
+		if (!fr || !fr.views || !fr.views.CommunicationComposer) return;
+		const file = draft.attachment;
+		const composer = new fr.views.CommunicationComposer({
+			doc: { doctype: "Water Feature Design", name },
+			subject: draft.subject,
+			recipients: draft.recipients || "",
+			message: draft.message,
+			attachments: file ? [file] : [],
+		});
+		// The composer lists a passed attachment without ticking it (v16 communication.js); this ticks it.
+		if (file && typeof composer.render_attachment_rows === "function") composer.render_attachment_rows(file);
+	}
+
 	acknowledge(key, note) {
 		const { __ } = this.h;
 		if (!this.meta || !this.meta.name) return;
@@ -859,6 +904,10 @@ class Designer {
 				return this.push("quotation");
 			case "push-mr":
 				return this.push("material_request");
+			case "send-design": {
+				const select = this.stage && this.stage.querySelector("[data-fd-send-format]");
+				return this.send_design(select ? select.value : null);
+			}
 			case "ack-cancel":
 				this.acking = null;
 				return this.draw_stage();

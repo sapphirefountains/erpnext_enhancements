@@ -301,33 +301,13 @@
  "outputs": {
   "schedules": [
    {
-    "key": "equipment",
-    "label": "Equipment schedule",
+    "key": "report",
+    "label": "Design report",
     "url": null
    },
    {
-    "key": "piping",
-    "label": "Piping schedule",
-    "url": null
-   },
-   {
-    "key": "fittings",
-    "label": "Fitting schedule and cut list",
-    "url": null
-   },
-   {
-    "key": "electrical",
-    "label": "Electrical panel schedule",
-    "url": null
-   },
-   {
-    "key": "controls",
-    "label": "Controls bill of materials",
-    "url": null
-   },
-   {
-    "key": "structural",
-    "label": "Structural takeoff",
+    "key": "schedules",
+    "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
     "url": null
    },
    {
@@ -337,22 +317,17 @@
    },
    {
     "key": "calcs",
-    "label": "Design calculations",
-    "url": null
-   },
-   {
-    "key": "om",
-    "label": "Operations and maintenance per year",
-    "url": null
-   },
-   {
-    "key": "winterization",
-    "label": "Winterization and start-up",
+    "label": "Engineering calculations and plan check",
     "url": null
    },
    {
     "key": "budget",
-    "label": "Budget",
+    "label": "Budget proposal",
+    "url": null
+   },
+   {
+    "key": "om",
+    "label": "Operations, maintenance and winterization",
     "url": null
    }
   ],

@@ -65,7 +65,8 @@ export function render(ctx) {
 					return `<li>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(__(p.label))}</a>` : `${esc(__(p.label))} <span class="fd-muted">${esc(why)}</span>`}</li>`;
 				})
 				.join("")}</ul>
-			${design_name ? `<p class="fd-hint">${esc(__("Each paper prints the design as last saved."))}</p>` : ""}`
+			${design_name ? `<p class="fd-hint">${esc(__("Each paper prints the design as last saved."))}</p>` : ""}
+			${send_html(ctx, h)}`
 		: `<p class="fd-muted">${esc(__("No schedules yet."))}</p>`;
 	const om = out.om;
 	const om_html = om
@@ -90,6 +91,21 @@ export function render(ctx) {
 		${drawer("om", __("O&M per year: {0}", [money(om && om.total_per_year) || "—"]), om_html)}
 		${drawer("winterization", winter && winter.needed === false ? __("Winterization: not needed") : __("Winterization"), winter_html)}
 		${start ? drawer("startup", __("Start-up checklist"), start) : ""}`;
+}
+
+// Send design: pick a paper, then frappe's email composer with it attached as a PDF (app.send_design).
+// Needs a saved design, the email permission (boot.can.email) and at least one paper on this site.
+function send_html(ctx, h) {
+	const { esc, __ } = h;
+	const prints = (ctx.boot && ctx.boot.prints) || [];
+	const can = Boolean(ctx.design && ctx.design.name && ctx.can && ctx.can.email && prints.length && !ctx.busy);
+	if (!prints.length) return "";
+	const options = prints.map((p) => `<option value="${esc(p.print_format)}">${esc(__(p.label))}</option>`).join("");
+	return `<div class="fd-actions">
+		<label class="fd-visually-hidden" for="fd-send-format">${esc(__("Paper to send"))}</label>
+		<select id="fd-send-format" class="fd-input" data-fd-send-format${can ? "" : " disabled"}>${options}</select>
+		<button type="button" class="sf-btn sf-btn--secondary" data-fd-action="send-design"${can ? "" : " disabled"}>${esc(__("Send design"))}</button>
+	</div>`;
 }
 
 // The print view of a saved design in the Print Format boot.prints names for this paper (README, boot),

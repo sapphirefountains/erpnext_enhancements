@@ -86,7 +86,7 @@ section in the same PR.
 |---|---|---|
 | `schema` | `2` | The model version the page writes. |
 | `units` | `"US"` | Labels. |
-| `can` | `{read, write, create, push_quotation, push_material_request}`, booleans | `create` shows New design. `write` allows edits, saves and sign-offs. The two `push_*` keys enable the Outputs buttons. |
+| `can` | `{read, write, create, push_quotation, push_material_request, email}`, booleans | `create` shows New design. `write` allows edits, saves and sign-offs. The two `push_*` keys enable the Outputs buttons. `email` (the design's email permission) enables Send design. |
 | `kits[]` | `{key, label, family, venue_type, desc, headline[], model}` | The Start tiles. `model` is the kit's starter model (schema 2). It is copied and stamped with `kit` and `mode`. |
 | `kits[].headline[]` | `{path, label, kind, unit, min, max, step, options[]}` | Quick mode's Features inputs. `path` is a model path (`features.0.inputs.length_ft`). `kind` is `number`, `int` or `tiles`, and `tiles` takes `options[] = {value, label, desc}`. Each path must exist in the kit's model. |
 | `families[]` | `{key, label, product_class, types[], inputs[], looks[]}` | Full mode's feature cards. **Add a feature** uses the family of the design's first feature, else the first family here, so put the most common family first. A blank design starts with one feature of that family and one basin. `inputs[] = {key, label, kind, unit, options[], advanced}`, written to `features.N.inputs.<key>`, and `advanced: true` puts it behind Advanced. `looks[] = {value, label}`, written to `features.N.effect.look`. `product_class` is the catalog class for the product picker. |
@@ -179,6 +179,19 @@ Each row is `{item, item_name, description, generic, source, equipment_class}`:
 - `source` is `datasheet`, `digitized`, `rep-supplied` or `generic estimate`.
 
 The page shows up to 12 rows.
+
+### `email_draft(name, print_format, attach_pdf)` → `{subject, recipients, message, print_format, formats[], attachment}`
+
+Phase G, Send design. POST. The start of an email that sends one paper of a **saved** design.
+
+- **`print_format`**: one of `boot.prints[].print_format`. Blank means the Design Report.
+- **`subject`**: `<design title>: <paper> (#<name>)`.
+- **`recipients`**: the customer's email, found the way the prints find the party (`print_lookup.party_details`), or `""`.
+- **`message`**: the body, in the email design system's chrome (`email_style.wrap`, the Design pillar).
+- **`formats[]`**: `{print_format, label}` for every paper the person may pick.
+- **`attachment`**: with `attach_pdf` 1, the paper as a private PDF File on the design (`{name, file_name, file_url}`); otherwise null.
+- **What the page does with it.** It opens frappe's `CommunicationComposer` on `{doctype, name}` with the file attached and ticked. The person sends the email from there, and the composer links it to the design's timeline. The Desk form instead uses the composer's own Attach Document Print.
+- **What the server refuses.** It refuses without the email permission, and refuses a format that is not one of the design's papers. The demo answers `{demo: true}` and sends nothing.
 
 ### `acknowledge_issue(design, issue_key, note)` → `{acks: [{issue_key, note, by, on}]}`
 

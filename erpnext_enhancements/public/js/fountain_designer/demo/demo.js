@@ -106,6 +106,11 @@ export function create_demo(fixture, env) {
 				.filter((r) => !q || [r.item, r.item_name, r.description].some((t) => String(t || "").toLowerCase().includes(q)))
 				.map((r) => Object.assign({ equipment_class: args.equipment_class }, r));
 		},
+		// A demo design is not a record: nothing to print, so nothing to email.
+		email_draft: (args) => {
+			if (!store.designs[args.name]) return { _error: [404, `Design ${args.name} was not found.`] };
+			return { demo: true, subject: "", recipients: "", message: "", print_format: args.print_format || null, formats: [], attachment: null };
+		},
 		acknowledge_issue: (args) => {
 			const d = store.designs[args.design];
 			if (!d) return { _error: [404, `Design ${args.design} was not found.`] };

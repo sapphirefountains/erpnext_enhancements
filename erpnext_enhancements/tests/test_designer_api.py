@@ -336,6 +336,81 @@ def _design_with_bom(api, **fields):
     return doc
 
 
+def _emailable(api, **extra):
+    doc = FakeDoc(doctype="Water Feature Design", name="WFD-9", design_title="Lobby & wall", docstatus=0, budget_total=12000,
+                  results_json=json.dumps({"rollups": {"operating_flow_gpm": 80.0, "total_basin_gallons": 200.0}}), **extra)
+    api._frappe._store[("Water Feature Design", "WFD-9")] = doc
+    return doc
+
+
+def test_email_draft_starts_the_email_and_sends_nothing(api, monkeypatch):
+    """Phase G, Send design: subject, the customer's address (the prints' party lookup), the body and the
+    papers to choose from. Nothing is sent and, without attach_pdf, nothing is made."""
+    from erpnext_enhancements import print_lookup
+    from erpnext_enhancements.water_engineering import prints
+
+    _emailable(api, customer="ACME")
+    monkeypatch.setattr(print_lookup, "party_details", lambda doc: {"email": "pm@acme.example"})
+    out = api.email_draft("WFD-9")
+    assert out["print_format"] == prints.PF_REPORT, "the Design Report unless another is picked"
+    assert out["subject"] == "Lobby & wall: Design report (#WFD-9)"
+    assert out["recipients"] == "pm@acme.example"
+    assert [f["print_format"] for f in out["formats"]] == list(prints.PRINT_FORMATS)
+    assert out["attachment"] is None
+    assert api.email_draft("WFD-9", prints.PF_PACKET)["subject"].endswith("Submittal packet (#WFD-9)")
+
+
+def test_email_draft_quotes_the_budget_only_on_the_budget_papers(api, monkeypatch):
+    from erpnext_enhancements import email_style
+    from erpnext_enhancements.water_engineering import prints
+
+    _emailable(api)
+    seen = []
+    monkeypatch.setattr(email_style, "kv", lambda rows: seen.append(dict(rows)) or "")
+    monkeypatch.setattr(email_style, "wrap", lambda body, **k: f"<wrapped pillar={k.get('pillar')}>{body}")
+    out = api.email_draft("WFD-9", prints.PF_BUDGET)
+    assert out["message"].startswith("<wrapped pillar=design>")
+    assert "Budget (before contingency)" in seen[-1] and seen[-1]["Flow"] == "80 gpm"
+    api.email_draft("WFD-9", prints.PF_CALCS)
+    assert "Budget (before contingency)" not in seen[-1]
+    assert api.email_draft("WFD-9")["recipients"] == "", "no customer, no address"
+
+
+def test_email_draft_refuses_what_it_should(api):
+    _emailable(api)
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9", "Sales Invoice - Sapphire")
+    api._frappe.has_permission = lambda doctype, ptype="read", doc=None, throw=False: ptype != "email"
+    with pytest.raises(PermissionError_):
+        api.email_draft("WFD-9")
+
+
+def test_email_draft_makes_the_pdf_for_the_page(api):
+    """The page's composer has no form to print from, so the paper comes as a File on the design. Its
+    name carries "-print-", which keeps the packet from merging it as a CAD drawing."""
+    from erpnext_enhancements.water_engineering import prints
+
+    _emailable(api)
+    made = []
+    api._frappe.get_print = lambda doctype, name, print_format=None, as_pdf=False, pdf_generator=None: (
+        made.append((doctype, name, print_format, as_pdf, pdf_generator)) or b"%PDF")
+    real_get_doc = api._frappe.get_doc
+
+    def get_doc(doctype, name=None):
+        if isinstance(doctype, dict):
+            return types.SimpleNamespace(insert=lambda **k: types.SimpleNamespace(
+                name="F-1", file_name=doctype["file_name"], file_url="/private/files/" + doctype["file_name"]), **doctype)
+        return real_get_doc(doctype, name)
+
+    api._frappe.get_doc = get_doc
+    out = api.email_draft("WFD-9", prints.PF_SCHEDULES, attach_pdf=1)
+    assert made == [("Water Feature Design", "WFD-9", prints.PF_SCHEDULES, True, "chrome")]
+    assert out["attachment"] == {"name": "F-1", "file_name": "WFD-9-print-schedules.pdf",
+                                 "file_url": "/private/files/WFD-9-print-schedules.pdf"}
+    packet = (REPO_ROOT / "erpnext_enhancements" / "water_engineering" / "packet.py").read_text(encoding="utf-8")
+    assert '"-print-" in' in packet, "the packet skips the emailed papers"
+
+
 def test_push_quotation_splits_item_and_text_lines(api):
     _design_with_bom(api, customer="ACME")
     out = api.push_quotation("WFD-4")

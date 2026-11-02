@@ -36,48 +36,45 @@ from erpnext_enhancements import print_style as ps
 DOCTYPE = "Water Feature Design"
 PILLAR = "design"
 
-PF_RESULTS = "Water Feature Design - Results"
-PF_AUDIT = "Water Feature Design - Calculation Audit"
+# The views Nikolas asked for (2026-11-01): "a printable report view and other views with design
+# information for printing and emailing". The Design Report is the doctype's default format
+# (fixtures/property_setter.json).
+PF_REPORT = "Water Feature Design - Design Report"
+PF_CALCS = "Water Feature Design - Engineering Calculations"
 PF_SCHEDULES = "Water Feature Design - Schedules"
-PF_ELECTRICAL = "Water Feature Design - Electrical Schedule"
-PF_CONTROLS = "Water Feature Design - Controls BOM"
-PF_STRUCTURAL = "Water Feature Design - Structural Takeoff"
 PF_DRAWINGS = "Water Feature Design - Design Drawings"
-PF_DESIGN_CALC = "Water Feature Design - Design Calculations"
-PF_OM = "Water Feature Design - Operations and Maintenance"
-PF_WINTER = "Water Feature Design - Winterization"
-PF_BUDGET = "Water Feature Design - Budget"
+PF_BUDGET = "Water Feature Design - Budget Proposal"
+PF_OM = "Water Feature Design - Operations and Winterization"
 PF_PACKET = "Water Feature Design - Submittal Packet"
+# Formats earlier versions seeded that read the retired child tables; the Engineering Calculations
+# and the Design Report replace them. after_migrate disables them (a removed seed would leave them live).
+SUPERSEDED = (
+    "Water Feature Design - Results",
+    "Water Feature Design - Calculation Audit",
+    "Water Feature Design - Design Calculations",
+)
 
 # Page key, label, Print Format: the Outputs step's list, in the order it shows them.
 OUTPUTS = (
-    ("equipment", "Equipment schedule", PF_SCHEDULES),
-    ("piping", "Piping schedule", PF_SCHEDULES),
-    ("fittings", "Fitting schedule and cut list", PF_SCHEDULES),
-    ("electrical", "Electrical panel schedule", PF_ELECTRICAL),
-    ("controls", "Controls bill of materials", PF_CONTROLS),
-    ("structural", "Structural takeoff", PF_STRUCTURAL),
+    ("report", "Design report", PF_REPORT),
+    ("schedules", "Schedules: equipment, piping, fittings, structural, electrical, controls", PF_SCHEDULES),
     ("drawings", "Design drawings", PF_DRAWINGS),
-    ("calcs", "Design calculations", PF_DESIGN_CALC),
-    ("om", "Operations and maintenance per year", PF_OM),
-    ("winterization", "Winterization and start-up", PF_WINTER),
-    ("budget", "Budget", PF_BUDGET),
+    ("calcs", "Engineering calculations and plan check", PF_CALCS),
+    ("budget", "Budget proposal", PF_BUDGET),
+    ("om", "Operations, maintenance and winterization", PF_OM),
 )
 
-# Print Format -> (eyebrow, title suffix, sheets). The packet is composed in setup_print_formats.
+# Print Format -> (eyebrow, sheets). The packet is composed in setup_print_formats.
 FORMATS = {
-    PF_RESULTS: ("RESULTS", "Design results", ("results",)),
-    PF_AUDIT: ("CALCULATION AUDIT", "Calculation audit", ("audit",)),
-    PF_SCHEDULES: ("SCHEDULES", "Schedules", ("equipment", "piping", "fittings")),
-    PF_ELECTRICAL: ("ELECTRICAL", "Electrical schedule", ("electrical",)),
-    PF_CONTROLS: ("CONTROLS", "Controls bill of materials", ("controls",)),
-    PF_STRUCTURAL: ("STRUCTURAL", "Structural takeoff", ("structural",)),
-    PF_DRAWINGS: ("DRAWINGS", "Design drawings", ("drawings",)),
-    PF_DESIGN_CALC: ("PLAN CHECK", "Design calculations", ("calcs",)),
-    PF_OM: ("OPERATIONS", "Operations and maintenance", ("om",)),
-    PF_WINTER: ("SEASONAL", "Winterization and start-up", ("winterization",)),
-    PF_BUDGET: ("BUDGET", "Budget", ("budget",)),
+    PF_REPORT: ("REPORT", ("report",)),
+    PF_CALCS: ("ENGINEERING CALCULATIONS", ("audit", "calcs")),
+    PF_SCHEDULES: ("SCHEDULES", ("equipment", "piping", "fittings", "structural", "electrical", "controls")),
+    PF_DRAWINGS: ("DRAWINGS", ("drawings",)),
+    PF_BUDGET: ("BUDGET PROPOSAL", ("budget",)),
+    PF_OM: ("OPERATIONS", ("om", "winterization")),
 }
+# Every format a person can pick to print or email, packet last.
+PRINT_FORMATS = (*FORMATS, PF_PACKET)
 # The health-department packet's sheets, after its cover. The budget and the O&M are internal.
 PACKET_SHEETS = ("basis", "equipment", "piping", "fittings", "electrical", "structural", "drawings", "calcs", "audit")
 
@@ -317,33 +314,120 @@ class Design:
 NOT_DERIVED = "This design has not been worked out yet: save it (or open it in the Fountain Designer) and print again."
 
 
-def sheet_results(d: Design) -> list:
+def _feature_line(f: dict, v: dict) -> str:
+    """One feature in words: its name, its type, and the flow and head it runs at."""
+    name = f.get("label") or f.get("id") or "Feature"
+    kind = f.get("type") or _label(f.get("family"))
+    count = int(_num(f.get("count")) or 1)
+    text = f"{name}: {kind}" + (f" (x {count})" if count > 1 else "")
+    if _num(v.get("flow_gpm")):
+        text += f", {fnum(v.get('flow_gpm'), 0, 'gpm')}" + (f" at {fnum(v.get('head_ft'), 1, 'ft')} of head" if _num(v.get("head_ft")) else "")
+    return text
+
+
+def _equipment_by_name(d: Design) -> list:
+    """The equipment a client reads: what it is and how many, never a part number."""
+    rows = []
+    pvals = _d(d.values.get("pumps"))
+    for i, p in enumerate(_l(d.net.get("pumps"))):
+        p = _d(p)
+        v = _d(pvals.get(p.get("id")))
+        role = f"Moves {fnum(v.get('flow_gpm'), 0, 'gpm')}" if _num(v.get("flow_gpm")) else "Circulation"
+        if str(p.get("control") or "").lower() == "vfd":
+            role += ", on a variable-speed drive"
+        rows.append([cell(_pump_name(p, i, d.rollups, d.items)), cell("1", num=True), cell(role)])
+    # Equipment rows by name only: the client reads what it is, the Schedules print carry the part numbers.
+    roles = {"filter": "Keeps the water clear", "uv": "Second stage of disinfection", "chlorinator": "Feeds the sanitizer",
+             "light": "Lights the feature", "transformer": "Low-voltage power for the lights", "autofill": "Holds the water level",
+             "vfd": "Sets the pump speed", "bypass": "Protects the pump at low flow", "surge_arrestor": "Absorbs pressure surges",
+             "prv": "Holds the pressure", "heater": "Heats the water"}
+    for e in _l(d.model.get("equipment")):
+        e = _d(e)
+        slot = str(e.get("slot") or "equipment")
+        if slot == "pump":
+            continue
+        name = d.item(e.get("item")).get("item_name") or SLOT_LABELS.get(slot) or _label(slot)
+        rows.append([cell(name), cell(fqty(e.get("qty") or 1), num=True), cell(roles.get(slot, DASH))])
+    if d.controls:
+        family = _d(_d(d.controls.get("control_panel")).get("parent")).get("product_family") or "Control panel"
+        rows.append([cell(str(family)), cell("1", num=True), cell("Runs the feature, with its starters and safety devices")])
+    return rows
+
+
+def sheet_report(d: Design) -> list:
+    """The client-facing Design Report: what the feature does, the headline numbers, the two drawings that
+    explain it, the equipment by name, the budget by section, the yearly running costs, and the assumptions."""
+    if not d.derived:
+        return [note(NOT_DERIVED)]
     r = d.rollups
-    verdict = _d(d.stored.get("verdict"))
-    blocks = [facts("Key results", [
-        ("Verdict", verdict.get("headline"), {"good": "pass", "bad": "fail"}.get(verdict.get("level"), "open")),
-        ("Design flow", fnum(r.get("design_flow_gpm"), 1, "gpm")),
-        ("Operating flow", fnum(r.get("operating_flow_gpm"), 1, "gpm")),
-        ("Total dynamic head", fnum(r.get("tdh_ft"), 1, "ft")),
-        ("Selected pump", r.get("selected_pump_label") or r.get("selected_pump")),
-        ("Pump power", fnum(r.get("pump_kw"), 2, "kW")),
-        ("Water in the basins", fnum(r.get("total_basin_gallons"), 0, "gal")),
-        ("Budget (BOM)", money(r.get("budget_total"), cents=False)),
-        ("Operations and maintenance", money(r.get("om_cost_per_year"), cents=False) + " a year" if _num(r.get("om_cost_per_year")) else None),
-        ("Complete", fnum(r.get("completion_percent"), 0, "%")),
-    ], note="" if d.derived else NOT_DERIVED)]
-    open_issues = [i for i in d.issues if i.get("severity") in ("blocker", "warning", "info") and not i.get("acknowledged")]
-    tone = {"blocker": "fail", "warning": "open", "info": "muted"}
-    blocks.append(table("Open issues", [("Severity", False), ("Section", False), ("Issue", False), ("Source", False)], [
-        [cell(_label(i.get("severity")), tone=tone.get(i.get("severity"), "")), cell(_label(i.get("section"))),
-         cell(str(i.get("title") or "") + (f". Fix: {i['fix_hint']}" if i.get("fix_hint") else "")), cell(i.get("citation") or DASH, tone="muted")]
-        for i in open_issues], empty="No open issues."))
-    acked = [i for i in d.issues if i.get("acknowledged")]
-    if acked:
-        blocks.append(table("Signed-off warnings", [("Warning", False), ("By", False), ("On", False), ("Note", False)], [
-            [cell(i.get("title")), cell(_d(i.get("acknowledged")).get("by")), cell(_d(i.get("acknowledged")).get("on")),
-             cell(_d(i.get("acknowledged")).get("note"))] for i in acked], empty=""))
+    s = budget_summary(d.bom, _d(d.paper.get("budget_rules")))
+    om = _d(_d(d.paper.get("upkeep")).get("om"))
+    fvals = _d(d.values.get("features"))
+    lines = [_feature_line(_d(f), _d(fvals.get(_d(f).get("id")))) for f in _l(d.model.get("features"))]
+    for b in _l(d.model.get("basins")):
+        b = _d(b)
+        gal = _d(_d(d.values.get("basins")).get(b.get("id"))).get("volume_gal")
+        lines.append(f"{b.get('label') or 'Basin'}: {_label(b.get('shape'))} basin holding {fnum(gal, 0, 'gallons')}")
+    treat = _d(d.model.get("treatment"))
+    lines.append(f"Water care: {_sanitizer(treat.get('sanitizer'))}" + (" with UV" if treat.get("uv") else "")
+                 + (", filtered" if any(_d(e).get("slot") == "filter" for e in _l(d.model.get("equipment"))) else ""))
+    blocks = [
+        bullets("What the feature does", lines, empty="No features yet."),
+        facts("At a glance", [
+            ("Water moving through the feature", fnum(r.get("operating_flow_gpm") or r.get("design_flow_gpm"), 0, "gallons a minute")),
+            ("Water in the system", fnum(r.get("total_basin_gallons"), 0, "gallons")),
+            ("Pump", r.get("selected_pump_label") or r.get("selected_pump")),
+            ("Pump power", fnum(r.get("pump_kw"), 2, "kW")),
+            ("Budget", f"{money(s['total'], cents=False)} ({money(s['low'], cents=False)} to {money(s['high'], cents=False)})"
+             if s["range_pct"] else money(s["total"], cents=False), "strong"),
+            ("Running cost", f"{money(om.get('total'), cents=False)} a year" if _num(om.get("total")) else None),
+        ]),
+        {"kind": "break"},
+        drawing("How the water moves", d.charts.get("schematic_svg"), "sch", empty="No schematic yet: the design has no features."),
+        drawing("Where the pump runs", d.charts.get("duty_svg"), "duty",
+                empty="No pump chart yet: the pump or its curve is not picked.",
+                note="The pump's curve against the system's: they cross at the operating point, inside the pump's best-efficiency window."),
+        {"kind": "break"},
+        table("Equipment", [("Equipment", False), ("Qty", True), ("What it does", False)], [x for x in _equipment_by_name(d) if x],
+              empty="No equipment yet."),
+        table("Budget by section", [("Section", False), ("Amount", True)],
+              [[cell(g["label"]), cell(money(g["subtotal"], cents=False), num=True)] for g in s["groups"]],
+              foot=[[cell("Subtotal", tone="strong"), cell(money(s["subtotal"], cents=False), num=True, tone="strong")],
+                    [cell(f"Contingency ({fnum(s['contingency_pct'], 0)}%)"), cell(money(s["contingency"], cents=False), num=True)],
+                    [cell("Budget", tone="strong"), cell(money(s["total"], cents=False), num=True, tone="strong")]]
+              + ([[cell(f"Range (plus or minus {fnum(s['range_pct'], 0)}%)"),
+                   cell(f"{money(s['low'], cents=False)} to {money(s['high'], cents=False)}", num=True)]] if s["range_pct"] else []),
+              empty="No bill of materials yet."),
+        table("Running costs per year", [("Line", False), ("Per year", True)],
+              [[cell(label), cell(money(om.get(k), cents=False), num=True)]
+               for k, label in (("power", "Power"), ("water", "Water"), ("chemicals", "Chemicals"), ("parts", "Parts"))] if om else [],
+              foot=[[cell("Total", tone="strong"), cell(money(om.get("total"), cents=False), num=True, tone="strong")]] if om else [],
+              empty="Running costs come once the design has a basin."),
+        bullets("Notes and assumptions", _assumptions(d, s), empty=""),
+    ]
     return blocks
+
+
+def _assumptions(d: Design, s: dict) -> list:
+    site, rates = d.site, _d(_d(d.paper.get("upkeep")).get("rates"))
+    out = ["A design estimate from Sapphire's Fountain Designer; the engineer of record seals anything that needs a stamp."]
+    if any(_num(site.get(k)) for k in ("elevation_ft", "frost_depth_in", "hardness_ppm")):
+        out.append(f"Site: {fnum(site.get('elevation_ft'), 0, 'ft')} elevation, {fnum(site.get('frost_depth_in'), 0, 'in')} frost depth, "
+                   f"{fnum(site.get('hardness_ppm'), 0, 'ppm')} water hardness.")
+    if any(not _d(p).get("item") for p in _l(d.net.get("pumps"))):
+        out.append("The pump is sized from a generic estimate; the model is chosen before ordering.")
+    out.append(f"Budget: Sapphire's own prices, with a {fnum(s['contingency_pct'], 0)}% contingency"
+               + (f" and a range of plus or minus {fnum(s['range_pct'], 0)}%." if s["range_pct"] else "."))
+    if s["unpriced"]:
+        out.append(f"{s['unpriced']} of {s['lines']} budget lines are not priced yet, so the budget will rise as they are.")
+    if _num(rates.get("kwh_rate")):
+        out.append(f"Running costs at {fnum(rates.get('kwh_rate'), 4)} $/kWh and {fnum(rates.get('water_rate_per_ccf'), 2)} $/ccf of water.")
+    if d.regulated:
+        out.append("This venue needs health-department plan approval before it is built.")
+    open_items = sum(1 for i in d.issues if i.get("severity") in ("blocker", "warning") and not i.get("acknowledged"))
+    if open_items:
+        out.append(f"{open_items} design-review item{'s' if open_items != 1 else ''} still open.")
+    return out
 
 
 def _value_text(value: Any, unit: str) -> str:
@@ -362,21 +446,47 @@ def _value_text(value: Any, unit: str) -> str:
     return DASH
 
 
+# The ladder's sections (PLAN.md 2.2), in its order, and the calculation names each one holds.
+LADDER = (
+    ("Site", ("site_lookups",)),
+    ("Basins", ("basin_volume", "basin_checks")),
+    ("Features", ()),
+    ("Regulated minimums", ("minimum_flow_rate", "turnover_time")),
+    ("Piping", ("route_template", "pick_pipe", "hazen_williams_crosscheck")),
+    ("Pump and network", ("rank_pumps", "network_operating_point")),
+    ("Control, bypass and surge", ("auto_surge", "auto_bypass")),
+    ("Treatment", ("filtration_area", "water_plan", "heat_family", "heat_loss")),
+    ("Lighting and electrical", ("lighting_family",)),
+    ("Winterization", ("winterization_checklist",)),
+    ("Bill of materials and running costs", ("bom_rows", "om_per_year")),
+)
+
+
+def _ladder_section(name: str) -> str:
+    if name.endswith("_family_flow") and not name.startswith("lighting"):
+        return "Features"
+    for section, names in LADDER:
+        if name in names:
+            return section
+    return "Other calculations"
+
+
 def sheet_audit(d: Design) -> list:
-    blocks = []
+    groups: dict = {}
     for key, r in _d(d.stored.get("results")).items():
         r = _d(r)
         if not r:
             continue
         name, _, ref = str(key).partition("|")
+        name = name.split("#")[0]
         inputs = []
         for k, v in _d(r.get("inputs")).items():
             v = _d(v) if isinstance(v, dict) else {"value": v}
             inputs.append([cell(_label(k)), cell(_value_text(v.get("value"), v.get("unit") or ""), num=True),
                            cell(v.get("source") or DASH, tone="muted"), cell(v.get("ref") or DASH, tone="muted")])
-        blocks.append({
+        groups.setdefault(_ladder_section(name), []).append({
             "kind": "calc",
-            "title": _label(name.split("#")[0]) + (f" ({ref})" if ref else ""),
+            "title": _label(name) + (f" ({ref})" if ref else ""),
             "value": _value_text(r.get("value"), r.get("unit") or ""),
             "status": str(r.get("status") or ""),
             "formula": str(r.get("formula") or ""),
@@ -385,6 +495,11 @@ def sheet_audit(d: Design) -> list:
             "citations": [str(c) for c in _l(r.get("citations"))],
             "warnings": [str(w) for w in _l(r.get("warnings"))],
         })
+    blocks = []
+    for section in [s for s, _n in LADDER] + ["Other calculations"]:
+        if groups.get(section):
+            blocks.append({"kind": "heading", "title": section})
+            blocks.extend(groups[section])
     if not blocks:
         blocks.append(note(NOT_DERIVED))
     return blocks
@@ -905,9 +1020,9 @@ def sheet_budget(d: Design) -> list:
             if ln["priced"]:
                 rate_cell = cell(money(ln.get("rate")), num=True)
             elif g["label"] == "Labor":
-                rate_cell = cell("Rate not set", num=True, tone="fail")
+                rate_cell = cell("Rate not set", num=True, tone="open")
             else:
-                rate_cell = cell("No Item price" if ln.get("item") else "No Item", num=True, tone="fail")
+                rate_cell = cell("No Item price" if ln.get("item") else "No Item", num=True, tone="open")
             rows.append([cell(desc), cell(fqty(ln.get("qty")), num=True), cell(ln.get("uom") or "ea", tone="muted"), rate_cell,
                          cell(money(ln.get("amount")), num=True, tone="" if ln["priced"] else "muted")])
     foot = [
@@ -943,8 +1058,8 @@ def sheet_budget(d: Design) -> list:
 # ----------------------------------------------------------------------------- the context
 
 SHEETS = {
-    "results": ("Results", sheet_results),
-    "audit": ("Calculation audit", sheet_audit),
+    "report": ("Design report", sheet_report),
+    "audit": ("Calculations by section", sheet_audit),
     "basis": ("Design basis", sheet_basis),
     "equipment": ("Equipment schedule", sheet_equipment),
     "piping": ("Piping schedule", sheet_piping),
@@ -953,7 +1068,7 @@ SHEETS = {
     "controls": ("Controls", sheet_controls),
     "structural": ("Structural takeoff", sheet_structural),
     "drawings": ("Design drawings", sheet_drawings),
-    "calcs": ("Design calculations", sheet_calcs),
+    "calcs": ("Plan check", sheet_calcs),
     "om": ("Operations and maintenance", sheet_om),
     "winterization": ("Winterization and start-up", sheet_winterization),
     "budget": ("Budget", sheet_budget),
@@ -977,16 +1092,21 @@ def build(doc: dict | None, model: dict | None, stored: dict | None, bom: list |
     """The print context of one design: its title, meta lines and the sheets asked for (all by default)."""
     d = Design(doc or {}, model or {}, stored or {}, bom or [], items, issues)
     keys = [k for k in (sheets or SHEETS) if k in SHEETS]
+    # The meta block beside the title; the date and the DRAFT marker are the template's (ps_date, ps_state).
     meta = [d.name]
-    if d.doc.get("project"):
-        meta.append(f"Project {d.doc['project']}")
-    if d.doc.get("customer"):
-        meta.append(str(d.doc["customer"]))
-    meta.append(f"Status: {d.doc.get('status') or 'Draft'}")
+    site = d.site
     return {
         "name": d.name,
         "title": d.title,
         "meta": [m for m in meta if m],
+        # The facts row under the letterhead (print design system): who, where, when, by whom.
+        "facts": {
+            "project": str(d.doc.get("project") or DASH),
+            "site": str(site.get("address") or site.get("venue_type") or DASH),
+            "venue": str(site.get("venue_type") or ""),
+            "designer": str(d.doc.get("designer") or d.doc.get("drawn_by") or DASH),
+            "status": str(d.doc.get("status") or "Draft"),
+        },
         "regulated": d.regulated,
         "derived": d.derived,
         "sheets": {k: _sheet(d, k) for k in keys},

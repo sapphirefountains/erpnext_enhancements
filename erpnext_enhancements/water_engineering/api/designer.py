@@ -444,6 +444,7 @@ def boot():
             "create": bool(frappe.has_permission(DESIGN_DOCTYPE, "create")),
             "push_quotation": bool(frappe.has_permission("Quotation", "create")),
             "push_material_request": bool(frappe.has_permission("Material Request", "create")),
+            "email": bool(frappe.has_permission(DESIGN_DOCTYPE, "email")),
         },
         "kits": kits(),
         "families": families(),
@@ -543,6 +544,112 @@ def save_design(name=None, model_json=None, fields_json=None):
     doc.save()
     return {"name": doc.name, "status": doc.status, "mode": doc.mode, "modified": str(doc.modified),
             "design_title": doc.get("design_title")}
+
+
+# ------------------------------------------------------------------- email
+
+
+# What each paper is called in an email's subject and body.
+PRINT_LABELS = {pf: label for _k, label, pf in prints_mod.OUTPUTS}
+PRINT_LABELS[prints_mod.PF_PACKET] = "Submittal packet"
+# The papers whose email may quote the budget: the client's report and the proposal itself.
+BUDGET_PAPERS = {prints_mod.PF_REPORT, prints_mod.PF_BUDGET}
+
+
+def _customer_email(doc):
+    """The customer's address the way the prints find it (``print_lookup.party_details``: the
+    customer's primary contact, its address, its own fields), or ``""``."""
+    if not doc.get("customer"):
+        return ""
+    try:
+        from erpnext_enhancements.print_lookup import party_details
+
+        return party_details(doc).get("email") or ""
+    except Exception:
+        return ""
+
+
+def email_body(doc, print_format, label):
+    """The email's body in the email design system's chrome (``email_style.wrap``, the Design pillar),
+    with no container of its own (docs/email-design-system.md)."""
+    from erpnext_enhancements import email_style as es
+
+    title = doc.get("design_title") or doc.name
+    rollups = (stored_json(doc).get("rollups") or {})
+    facts = [(_("Design"), f"{title} ({doc.name})")]
+    flow = rollups.get("operating_flow_gpm") or rollups.get("design_flow_gpm")
+    if flow:
+        facts.append((_("Flow"), prints_mod.fnum(flow, 0, "gpm")))
+    if rollups.get("total_basin_gallons"):
+        facts.append((_("Water in the system"), prints_mod.fnum(rollups["total_basin_gallons"], 0, "gallons")))
+    if print_format in BUDGET_PAPERS and doc.get("budget_total"):
+        facts.append((_("Budget (before contingency)"), prints_mod.money(doc.get("budget_total"), cents=False)))
+    body = (
+        es.p(_("Attached is the {0} for {1}.").format(_(label).lower(), title))
+        + es.kv(facts)
+        + es.note(_("The figures are design estimates from Sapphire Fountains' Fountain Designer."))
+    )
+    return es.wrap(body, title=f"{_(label)}: {title}", eyebrow=_(label), pillar="design", tagline=True)
+
+
+def stored_json(doc):
+    raw = doc.get("results_json")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _print_pdf(doc, print_format):
+    """The paper as a PDF File on the design (private), for a composer with no form to print from."""
+    pdf = frappe.get_print(DESIGN_DOCTYPE, doc.name, print_format=print_format, as_pdf=True, pdf_generator="chrome")
+    if not pdf:
+        frappe.throw(_("The PDF could not be made. Try again, or print it from the form."))
+    safe = str(doc.name).replace("/", "-")
+    slug = print_format.split(" - ", 1)[-1].lower().replace(" ", "-")
+    file_doc = frappe.get_doc({
+        "doctype": "File",
+        # "-print-" marks a paper made for an email, so the packet never merges it as a CAD drawing.
+        "file_name": f"{safe}-print-{slug}.pdf",
+        "content": pdf,
+        "is_private": 1,
+        "attached_to_doctype": DESIGN_DOCTYPE,
+        "attached_to_name": doc.name,
+    }).insert(ignore_permissions=True)
+    return {"name": file_doc.name, "file_name": file_doc.file_name, "file_url": file_doc.file_url}
+
+
+@frappe.whitelist(methods=["POST"])
+def email_draft(name, print_format=None, attach_pdf=0):
+    """The start of an email that sends one of the design's papers (README, "email_draft"): the subject,
+    the customer's address, the body in the email chrome, and the formats to choose from. With
+    ``attach_pdf`` (the page, whose composer has no form to print from) the paper is made into a PDF File
+    on the design. Nothing is sent here: the person sends from frappe's composer, which links the email
+    to the design's timeline."""
+    _require("read")
+    doc = frappe.get_doc(DESIGN_DOCTYPE, name)
+    doc.check_permission("read")
+    if not frappe.has_permission(DESIGN_DOCTYPE, "email", doc=doc):
+        frappe.throw(_("You are not allowed to email Water Feature Designs."), frappe.PermissionError)
+    print_format = print_format or prints_mod.PF_REPORT
+    if print_format not in PRINT_LABELS:
+        frappe.throw(_("{0} is not one of the design's papers.").format(print_format))
+    label = PRINT_LABELS[print_format]
+    title = doc.get("design_title") or doc.name
+    out = {
+        "subject": f"{title}: {_(label)} (#{doc.name})",
+        "recipients": _customer_email(doc),
+        "message": email_body(doc, print_format, label),
+        "print_format": print_format,
+        "formats": [{"print_format": pf, "label": _(PRINT_LABELS[pf])} for pf in prints_mod.PRINT_FORMATS],
+        "attachment": None,
+    }
+    if str(attach_pdf) in ("1", "true", "True"):
+        out["attachment"] = _print_pdf(doc, print_format)
+    return out
 
 
 # --------------------------------------------------------------- sign-offs

@@ -6,7 +6,8 @@
   "write": true,
   "create": true,
   "push_quotation": true,
-  "push_material_request": true
+  "push_material_request": true,
+  "email": true
  },
  "kits": [
   {
@@ -1125,34 +1126,14 @@
  ],
  "prints": [
   {
-   "key": "equipment",
-   "label": "Equipment schedule",
+   "key": "report",
+   "label": "Design report",
+   "print_format": "Water Feature Design - Design Report"
+  },
+  {
+   "key": "schedules",
+   "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
    "print_format": "Water Feature Design - Schedules"
-  },
-  {
-   "key": "piping",
-   "label": "Piping schedule",
-   "print_format": "Water Feature Design - Schedules"
-  },
-  {
-   "key": "fittings",
-   "label": "Fitting schedule and cut list",
-   "print_format": "Water Feature Design - Schedules"
-  },
-  {
-   "key": "electrical",
-   "label": "Electrical panel schedule",
-   "print_format": "Water Feature Design - Electrical Schedule"
-  },
-  {
-   "key": "controls",
-   "label": "Controls bill of materials",
-   "print_format": "Water Feature Design - Controls BOM"
-  },
-  {
-   "key": "structural",
-   "label": "Structural takeoff",
-   "print_format": "Water Feature Design - Structural Takeoff"
   },
   {
    "key": "drawings",
@@ -1161,23 +1142,18 @@
   },
   {
    "key": "calcs",
-   "label": "Design calculations",
-   "print_format": "Water Feature Design - Design Calculations"
-  },
-  {
-   "key": "om",
-   "label": "Operations and maintenance per year",
-   "print_format": "Water Feature Design - Operations and Maintenance"
-  },
-  {
-   "key": "winterization",
-   "label": "Winterization and start-up",
-   "print_format": "Water Feature Design - Winterization"
+   "label": "Engineering calculations and plan check",
+   "print_format": "Water Feature Design - Engineering Calculations"
   },
   {
    "key": "budget",
-   "label": "Budget",
-   "print_format": "Water Feature Design - Budget"
+   "label": "Budget proposal",
+   "print_format": "Water Feature Design - Budget Proposal"
+  },
+  {
+   "key": "om",
+   "label": "Operations, maintenance and winterization",
+   "print_format": "Water Feature Design - Operations and Winterization"
   },
   {
    "key": "packet",

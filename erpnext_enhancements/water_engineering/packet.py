@@ -103,7 +103,7 @@ def _json(raw, kind=dict):
 
 
 RECORD_FIELDS = ("name", "design_title", "project", "customer", "opportunity", "status", "venue_type", "governing_code",
-                 "issue_date", "drawn_by", "docstatus")
+                 "issue_date", "drawn_by", "docstatus", "owner")
 BOM_FIELDS = ("section", "item", "description", "qty", "uom", "rate", "amount", "source", "catalog_source", "line_key")
 
 
@@ -136,8 +136,14 @@ def print_inputs(doc):
     codes += [p.get("item") for p in net.get("pumps") or [] if isinstance(p, dict)]
     codes += [e.get("item") for e in model.get("equipment") or [] if isinstance(e, dict)]
     codes += [(f.get("product") or {}).get("item") for f in model.get("features") or [] if isinstance(f, dict)]
+    record = {f: doc.get(f) for f in RECORD_FIELDS}
+    # The facts row's designer: who drew it, else who made the record.
+    try:
+        record["designer"] = record.get("drawn_by") or (frappe.utils.get_fullname(record["owner"]) if record.get("owner") else "")
+    except Exception:
+        record["designer"] = record.get("drawn_by") or ""
     return {
-        "doc": {f: doc.get(f) for f in RECORD_FIELDS},
+        "doc": record,
         "model": model,
         "stored": stored,
         "bom": bom,
@@ -253,6 +259,8 @@ def _cad_pdf_files(doc):
         if packet_url and r.get("file_url") == packet_url:
             continue
         if "submittal-packet" in (r.get("file_name") or "").lower():
+            continue
+        if "-print-" in (r.get("file_name") or "").lower():  # a paper made for an email (api/designer.email_draft)
             continue
         out.append(r)
     return out
