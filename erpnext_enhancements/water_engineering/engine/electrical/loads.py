@@ -233,11 +233,17 @@ def build_loads(model: dict | None, pumps: list[dict] | None = None) -> CalcResu
         if (f.get("family") or "").lower() != "aerator":
             continue
         fi = f.get("inputs") or {}
+        # ``_power`` is the derive's: the unit HP (typed from its Item, else the family's HP-per-acre pick),
+        # the units it splits into, and the house-rule running hours. An HP typed on the feature wins.
+        power = f.get("_power") or {}
+        typed = num(fi.get("hp")) > 0
         loads.append(motor_load(
             f"aerator:{f.get('id')}", f.get("label") or "Aerator", kind="aerator",
-            hp=fi.get("hp"), fla=fi.get("fla"), voltage=pos(fi.get("voltage"), service_v),
-            phase=fi.get("phase") or service_ph, qty=f.get("count") or 1, submersible=True,
-            run_ft=panel_ft + num(fi.get("cable_ft")), duty_hours_day=num(fi.get("duty_hours_day"), 24.0),
+            hp=fi.get("hp") if typed else power.get("hp"), fla=fi.get("fla"), voltage=pos(fi.get("voltage"), service_v),
+            phase=fi.get("phase") or service_ph,
+            qty=(f.get("count") or 1) * (1 if typed else max(1, int(num(power.get("units"), 1)))), submersible=True,
+            run_ft=panel_ft + num(fi.get("cable_ft"), num(power.get("cable_ft"))),
+            duty_hours_day=num(fi.get("duty_hours_day"), num(power.get("duty_hours_day"), 24.0)),
         ))
 
     fixtures = (model.get("lighting") or {}).get("fixtures") or []

@@ -86,7 +86,7 @@ section in the same PR.
 |---|---|---|
 | `schema` | `2` | The model version the page writes. |
 | `units` | `"US"` | Labels. |
-| `can` | `{read, write, create, push_quotation, push_material_request}`, booleans | `create` shows New design. `write` allows edits, saves and sign-offs. The two `push_*` keys enable the Outputs buttons. |
+| `can` | `{read, write, create, push_quotation, push_material_request, email}`, booleans | `create` shows New design. `write` allows edits, saves and sign-offs. The two `push_*` keys enable the Outputs buttons. `email` (the design's email permission) enables Send design. |
 | `kits[]` | `{key, label, family, venue_type, desc, headline[], model}` | The Start tiles. `model` is the kit's starter model (schema 2). It is copied and stamped with `kit` and `mode`. |
 | `kits[].headline[]` | `{path, label, kind, unit, min, max, step, options[]}` | Quick mode's Features inputs. `path` is a model path (`features.0.inputs.length_ft`). `kind` is `number`, `int` or `tiles`, and `tiles` takes `options[] = {value, label, desc}`. Each path must exist in the kit's model. |
 | `families[]` | `{key, label, product_class, types[], inputs[], looks[]}` | Full mode's feature cards. **Add a feature** uses the family of the design's first feature, else the first family here, so put the most common family first. A blank design starts with one feature of that family and one basin. `inputs[] = {key, label, kind, unit, options[], advanced}`, written to `features.N.inputs.<key>`, and `advanced: true` puts it behind Advanced. `looks[] = {value, label}`, written to `features.N.effect.look`. `product_class` is the catalog class for the product picker. |
@@ -95,12 +95,13 @@ section in the same PR.
 | `catalogs.equipment_classes[]` | `{key, label}` | The catalog picker classes. |
 | `catalogs.slot_classes` | `{<equipment slot>: <class key>}` | The class each `model.equipment[].slot` searches: `filter`, `uv`, `chlorinator`, `light`, `transformer`, `bypass`, `surge_arrestor`, `autofill`, `vfd` and `prv` (the page's `model.SLOT_SECTION`). A slot with no class here gets a plain item-code field, never a search of another class. The pumps search `pump`, and a feature's product searches its family's `product_class`. |
 | `house_rules[]` | `{key, label, value, unit, citation}` | The constants listed on the page (PLAN.md 2.3). |
+| `prints[]` | `{key, label, print_format}`, one per paper whose Print Format exists on the site (phase G): the keys of `outputs.schedules[]`, plus `packet` | The Outputs step links each paper of a **saved** design to `/printview?doctype=Water%20Feature%20Design&name=<name>&format=<print_format>&no_letterhead=1` (the formats draw their own letterhead). An unsaved design says "save the design to print it"; a key with no entry says "not available yet". |
 
 ### `get_design()` and `get_design(name)`
 
 - **With no `name`:** returns `{designs: [...]}`, the designs the caller may read, newest first, for Start's list. Each row is
   `{name, design_title, kit, mode ("Quick"|"Full"), status, family, project, opportunity, customer,
-  blocker_count, warning_count, issue_ready (0|1), budget_total, modified}`.
+  blocker_count, warning_count, issue_ready (0|1), budget_total, bom_subtotal, modified}`.
 - **With `name`:** returns `{name, design_title, mode, status, kit, project, opportunity, customer,
   docstatus, can_write, modified, model}`.
   - `model` is the stored `model_json`, parsed.
@@ -116,7 +117,7 @@ The call is stateless, and the page calls it on every edit. `model_json` is the 
 | `model` | The derived copy of the model. Every `auto` section is filled, and `custom` and `preset` sections come back untouched. Site fields the address fills: `lat`, `lng`, `elevation_ft`, `air_temp_f`, `water_temp_f`, `frost_depth_in`, `hardness_ppm`, `kwh_rate`, `water_rate_per_ccf`. |
 | `results` | `{<calc>: CalcResult}`. These are the envelope dicts (`value, unit, formula, status, citations[], warnings[]` …), shown nowhere yet and kept for the drawers. |
 | `values` | The derived values per row, keyed by row id. **These are the numbers the steps show beside the inputs.** `features.<id>`: `{flow_gpm, head_ft, note}`. `basins.<id>`: `{volume_gal, weight_lb, surge_in, freeboard_in}`. `segments.<id>`: `{velocity_fps, loss_ft, size}`. `pumps.<id>`: `{flow_gpm, head_ft, kw, npsh_margin_ft, bep_pct}`. A key may be null. |
-| `rollups` | `{design_flow_gpm, operating_flow_gpm, tdh_ft, operating_head_ft, selected_pump, selected_pump_label, pump_kw, total_basin_gallons, budget_total, om_cost_per_year, blocker_count, warning_count, completion_percent, issue_ready}`. These are the PLAN.md 3.2 rollup fields. `selected_pump_label` is what the panel prints. `budget_total` is the sum of `bom[].amount`. |
+| `rollups` | `{design_flow_gpm, operating_flow_gpm, tdh_ft, operating_head_ft, selected_pump, selected_pump_label, pump_kw, total_basin_gallons, budget_total, bom_subtotal, om_cost_per_year, blocker_count, warning_count, completion_percent, issue_ready}`. These are the PLAN.md 3.2 rollup fields. `selected_pump_label` is what the panel prints. `bom_subtotal` is the sum of `bom[].amount`, and `budget_total` is that plus the house-rule contingency (`budget_contingency_pct`): the Budget the Budget Proposal and the Design Report print (phase G). The Outputs step's BOM foot shows the subtotal, the contingency and the budget. |
 | `issues[]` | `{key, code, severity, title, detail, section, step?, path?, fix_hint, citation, remedies[], acknowledged}` (more on this below). |
 | `readiness` | `{sections[], calc_ready, issue_ready}`. Each entry of `sections[]` is `{key, label, status, missing[]}`, where `status` is `ok`, `warn`, `blocked`, `missing` or `n_a`, and `missing[]` holds strings. |
 | `verdict` | `{level: "good"\|"warn"\|"bad", headline, package_ready}`. `package_ready` means no blockers and every warning signed off. |
@@ -146,10 +147,10 @@ A chart that breaks a rule is not drawn at all. Read `chart.js` for the full lis
 
 | Key | Shape |
 |---|---|
-| `schedules[]` | `{key, label, url}`. `url` is null until phase G prints it. Only a site-relative `/desk/…`, `/app/…`, `/printview…` or `/api/method/…` link becomes a link. |
+| `schedules[]` | `{key, label, url}`. The keys are `water_engineering/prints.py`'s `OUTPUTS`. `url` stays null: the derive is stateless and does not know the design's name, so the page builds the link from `boot.prints[]`. Only a site-relative `/desk/…`, `/app/…`, `/printview…` or `/api/method/…` link becomes a link. |
 | `packet` | `{label, url}`, or null. |
 | `om` | `{total_per_year, lines[]}`, where each line is `{label, amount}`. |
-| `winterization` | `{needed, steps[]}`. |
+| `winterization` | `{needed, steps[]}`. `steps[]` are the titles of the winterization module's checklist (`engine.families.winterization`). |
 | `startup[]` | Strings. |
 
 ### `save_design(name, model_json, fields_json)` → `{name, status, mode, modified, design_title}`
@@ -178,6 +179,19 @@ Each row is `{item, item_name, description, generic, source, equipment_class}`:
 - `source` is `datasheet`, `digitized`, `rep-supplied` or `generic estimate`.
 
 The page shows up to 12 rows.
+
+### `email_draft(name, print_format, attach_pdf)` → `{subject, recipients, message, print_format, formats[], attachment}`
+
+Phase G, Send design. POST. The start of an email that sends one paper of a **saved** design.
+
+- **`print_format`**: one of `boot.prints[].print_format`. Blank means the Design Report.
+- **`subject`**: `<design title>: <paper> (#<name>)`.
+- **`recipients`**: the customer's email, found the way the prints find the party (`print_lookup.party_details`), or `""`.
+- **`message`**: the starting text, as plain paragraphs: the composer is a rich-text editor and strips the email shell. The shell (`email_style.wrap`, the Design pillar) goes on when the email is sent: a Communication `after_insert` hook (`water_engineering/email_hooks.wrap_design_email`) wraps the in-memory content frappe sends, after the Text Editor sanitizer, so the stored copy stays plain.
+- **`formats[]`**: `{print_format, label}` for every paper this site has (the same filter as `boot.prints`).
+- **`attachment`**: with `attach_pdf` 1, the paper as a private PDF File on the design (`{name, file_name, file_url}`); otherwise null. The one made since the design last changed is reused.
+- **What the page does with it.** It opens frappe's `CommunicationComposer` on `{doctype, name}` with the file attached and ticked. The person sends the email from there, and the composer links it to the design's timeline. The Desk form instead uses the composer's own Attach Document Print.
+- **What the server refuses.** It refuses without the email permission, a format that is not one of the design's papers, and one this site has not set up or has disabled. The demo answers `{demo: true}` and sends nothing.
 
 ### `acknowledge_issue(design, issue_key, note)` → `{acks: [{issue_key, note, by, on}]}`
 
@@ -237,5 +251,5 @@ The demo is a little alive, and none of it is engineering:
 New designs and saves last for the tab (`sessionStorage`). Keep demo mode after phase E: it is the
 training mode.
 
-To regenerate the fixture, edit the JSON by hand. Keep `budget_total` equal to the BOM's sum (the
+To regenerate the fixture, edit the JSON by hand. Keep `bom_subtotal` and `budget_total` equal to the BOM's sum, the demo carrying no contingency (the
 node test checks it).

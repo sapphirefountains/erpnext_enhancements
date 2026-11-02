@@ -127,6 +127,10 @@ RULES: tuple[Rule, ...] = (
         "aerator_max_aspect", "Aerator: pond length-to-width per unit", "ratio", 3.0, "aerator",
         description="Above this length-to-width ratio, split the horsepower over several units.",
     ),
+    Rule(
+        "aerator_duty_hours_day", "Aerator running hours a day", "h/day", 24.0, "aerator",
+        description="Hours a day a floating aerator runs in season; most run around the clock.",
+    ),
     # Spray loss, per family
     *(
         Rule(
@@ -152,6 +156,20 @@ RULES: tuple[Rule, ...] = (
         "labor_hours_per_light_fixture", "Labor hours per light fixture", "h/fixture", 0.0, "labor",
         description="Install hours per fixture. 0 means not set yet.",
     ),
+    # Budget (phase G): the labor rate prices the labor hours above; contingency and range sit on
+    # the Budget print under the BOM subtotal.
+    Rule(
+        "labor_rate_per_hr", "Labor rate", "$/h", 0.0, "budget",
+        description="Billed rate per labor hour on the budget. 0 means not set yet: labor prints unpriced.",
+    ),
+    Rule(
+        "budget_contingency_pct", "Budget contingency", "%", 10.0, "budget",
+        description="Contingency added under the priced subtotal on the Budget print. 0 means none.",
+    ),
+    Rule(
+        "budget_range_pct", "Budget range (plus or minus)", "%", 15.0, "budget",
+        description="How far either way the budget may land, printed as a low and a high figure. 0 means none.",
+    ),
     # Utility rates (sourced, but owned and updated by the designers)
     Rule("kwh_rate", "Electricity rate", "$/kWh", 0.1049, "utility", CIT_RMP_POWER, house=False),
     Rule("water_rate_per_ccf", "Water rate", "$/ccf", 3.53, "utility", CIT_SLC_WATER, house=False),
@@ -165,11 +183,16 @@ DEFAULTS: dict[str, float] = {r.key: r.default for r in RULES}
 SET_ON_FIELD = "house_rules_set_on"
 
 # The labor rules where 0 means "not set" rather than a real zero.
-UNSET_ZERO_KEYS = frozenset(r.key for r in RULES if r.key.startswith("labor_hours_"))
-# Rules where 0 is a value the engine accepts: labor (0 = not set, see is_unset) and spray
-# loss (0 = none). Every other rule falls back to its default at 0 or below, because Frappe
-# stores a cleared Float as 0 and a 0 fixture size or aspect ratio divides by zero.
-ZERO_OK_KEYS = UNSET_ZERO_KEYS | frozenset(r.key for r in RULES if r.key.startswith("spray_loss_pct_"))
+UNSET_ZERO_KEYS = frozenset(r.key for r in RULES if r.key.startswith("labor_hours_")) | {"labor_rate_per_hr"}
+# Rules where 0 is a value the engine accepts: labor (0 = not set, see is_unset), spray
+# loss and the budget's contingency and range (0 = none). Every other rule falls back to its
+# default at 0 or below, because Frappe stores a cleared Float as 0 and a 0 fixture size or
+# aspect ratio divides by zero.
+ZERO_OK_KEYS = (
+    UNSET_ZERO_KEYS
+    | frozenset(r.key for r in RULES if r.key.startswith("spray_loss_pct_"))
+    | {"budget_contingency_pct", "budget_range_pct"}
+)
 
 
 def _coerce(key: str, value: Any) -> float | None:

@@ -81,8 +81,16 @@ def _wrap(width: int, height: int, body: str, title: str = "") -> str:
     )
 
 
+def _fit(text: Any, width: float, size: int, bold: bool = False) -> str:
+    """``text`` cut with an ellipsis to what fits ``width`` at ``size`` px (an average Helvetica glyph is
+    about half the size, 0.56 bold): a box label never spills over its border."""
+    s = str(text if text is not None else "")
+    room = max(3, int(width / (size * (0.56 if bold else 0.5))))
+    return s if len(s) <= room else s[: room - 1].rstrip() + "…"
+
+
 def _box(x: int, y: int, w: int, h: int, lines: list[str], fill: str = _BOX) -> str:
-    """A labeled rounded box; ``lines`` stack centered."""
+    """A labeled rounded box; ``lines`` stack centered, each cut to the box's width."""
     out = [
         f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" ry="6" '
         f'fill="{fill}" stroke="{_BORDER}" stroke-width="1.5"/>'
@@ -96,7 +104,7 @@ def _box(x: int, y: int, w: int, h: int, lines: list[str], fill: str = _BOX) -> 
         size = 12 if i == 0 else 10
         out.append(
             f'<text x="{x + w / 2:.0f}" y="{start + i * line_h:.0f}" text-anchor="middle" '
-            f'font-size="{size}" font-weight="{weight}" fill="{color}">{_esc(ln)}</text>'
+            f'font-size="{size}" font-weight="{weight}" fill="{color}">{_esc(_fit(ln, w - 6, size, i == 0))}</text>'
         )
     return "".join(out)
 

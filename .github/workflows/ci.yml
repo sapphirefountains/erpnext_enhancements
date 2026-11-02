@@ -2580,6 +2580,15 @@ jobs:
           erpnext_enhancements/tests/test_designer_derive.py
           erpnext_enhancements/tests/test_designer_api.py
           erpnext_enhancements/tests/test_drawings_duty_chart.py
+      # Fountain Designer phase G (v1.770.0): every Water Feature Design print format and the submittal
+      # packet rendered under real Jinja2, set up as frappe sets it up (no autoescape, DebugUndefined,
+      # which PRINTS a missing name with its braces), over the three demo designs and a regulated spa run
+      # through derive_model. Checks no Jinja left over, no doubled escape, no table with no rows, no raw
+      # float, no drawing id twice on a page; the Utah R392-302-41 and NEC 680 lines, the O&M water
+      # split, the winterization checklist and the budget arithmetic. Plain pytest functions with their
+      # own frappe stub per test: its own step (unittest would collect nothing).
+      - name: Fountain Designer print formats and packet (bench-free pytest suite)
+        run: python -m pytest -q erpnext_enhancements/tests/test_water_prints.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops

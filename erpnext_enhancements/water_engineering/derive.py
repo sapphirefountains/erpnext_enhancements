@@ -21,7 +21,9 @@ The ladder, and the engine each step calls:
 * 10b structure: ``structural_takeoff``.
 * 11 winterization: the winterization system module.
 * 12 outputs: ``bom.bom_rows`` merged with the electrical, controls and structural lines and priced
-  from the caller's ``prices``; ``upkeep.om_per_year``; the duty, schematic and one-line SVGs.
+  from the caller's ``prices`` (labor at the house-rule rate); ``upkeep.om_per_year`` and
+  ``maintenance_schedule``; the duty, schematic and one-line SVGs; and ``paper``, what the print
+  formats read (``water_engineering/prints.py``, phase G).
 
 Nothing here imports frappe, so the whole ladder runs bench-free (``tests/test_designer_derive.py``).
 The frappe side (catalogs from phase D's ``catalog_reader``, Item prices, the house rules on Water
@@ -43,6 +45,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import issues as design_issues
+from . import prints
 from .engine import autosize, drawings, kits, upkeep
 from .engine import bom as bom_engine
 from .engine import model as model_engine
@@ -54,7 +57,7 @@ from .engine.controls import controls_report
 from .engine.electrical import electrical_report
 from .engine.families import SYSTEM_MODULES, run_feature
 from .engine.structural import structural_takeoff
-from .engine.treatment import filtration_area
+from .engine.treatment import evaporation_rate, filtration_area
 from .engine.units import gallons_to_pounds
 
 # Site defaults by jurisdiction, used only where the site field is blank and the address lookup
@@ -88,13 +91,8 @@ DEFAULT_HOURS_PER_DAY = 12.0
 DEFAULT_HW_C = 130
 HW_CROSSCHECK_PCT = 10.0
 
-SCHEDULES = (
-    ("equipment", "Equipment schedule"),
-    ("piping", "Piping schedule"),
-    ("fittings", "Fitting schedule"),
-    ("electrical", "Electrical panel schedule"),
-    ("structural", "Structural takeoff"),
-)
+# The outputs the page lists (key, label, Print Format) live in prints.OUTPUTS beside the formats.
+SCHEDULES = tuple((key, label) for key, label, _pf in prints.OUTPUTS)
 
 
 # --------------------------------------------------------------------------------------
@@ -565,10 +563,14 @@ def _hint_dict(line: dict) -> dict:
     return dict(line, item_hint=out)
 
 
-def price_bom(lines: list[dict], model: dict, prices: dict | None) -> list[dict]:
-    """The merged engine lines as Water Feature Design Line rows (the contract's ``bom[]``)."""
+def price_bom(lines: list[dict], model: dict, prices: dict | None, rules: dict | None = None) -> list[dict]:
+    """The merged engine lines as Water Feature Design Line rows (the contract's ``bom[]``).
+
+    A labor line (hours, no Item) is priced at the house rule ``labor_rate_per_hr``; 0 is "not set",
+    so the line stays unpriced and the Budget print says so (Nikolas, 2026-11-01: no fabricated labor)."""
     items = (prices or {}).get("items") or {}
     hints = (prices or {}).get("hints") or {}
+    labor_rate = rules_engine.rule(rules, "labor_rate_per_hr")
     out = []
     for ln in lines:
         item, source = _line_item(ln, model, hints)
@@ -577,6 +579,8 @@ def price_bom(lines: list[dict], model: dict, prices: dict | None) -> list[dict]
         rate = _num(info.get("rate")) or 0.0
         if item and not source:
             source = str(info.get("catalog_source") or "")
+        if not item and ln.get("section") == "Labor" and labor_rate > 0:
+            rate, source = labor_rate, "house rule"
         out.append({
             "section": ln.get("section") or "",
             "item": item or None,
@@ -584,7 +588,8 @@ def price_bom(lines: list[dict], model: dict, prices: dict | None) -> list[dict]
             "qty": round(qty, 3),
             "uom": ln.get("uom") or "ea",
             "rate": round(rate, 2),
-            "amount": round(rate * qty, 2),
+            # on the quantity the line prints and pushes, so qty x rate on paper is the amount to the cent
+            "amount": round(round(rate, 2) * round(qty, 3), 2),
             "source": "Auto",
             "catalog_source": source,
             "line_key": str(ln.get("key") or "")[:250],
@@ -682,6 +687,22 @@ def _pumps_for_power(m: dict, network_result: dict | None, ranking: list) -> lis
                 p["kw"] = round(kw, 3)
         out.append(p)
     return out
+
+
+def _aerator_power(m: dict, flows: dict, rules: dict) -> None:
+    """A floating aerator's motor for phase L's loads, as ``feature["_power"]`` (dropped again before the
+    reply): the unit HP typed from its Item (``unit_hp``) else the family's HP-per-acre pick split over its
+    units, its cable run, and the house-rule running hours (``aerator_duty_hours_day``, 24 by default)."""
+    hours = rules_engine.rule(rules, "aerator_duty_hours_day")
+    for f in m.get("features") or []:
+        if f.get("family") != "aerator":
+            continue
+        data = (flows.get(f.get("id")) or {}).get("data") or {}
+        units = int(_num(data.get("units")) or 1)
+        unit_hp = _num((f.get("inputs") or {}).get("unit_hp")) or _num(data.get("hp_per_unit"))
+        if unit_hp:
+            f["_power"] = {"hp": round(unit_hp, 3), "units": units, "cable_ft": _num(data.get("cable_run_ft")) or 0.0,
+                           "duty_hours_day": hours}
 
 
 def _lighting_fixtures(m: dict, light: dict) -> None:
@@ -813,13 +834,18 @@ def _duty_state(m: dict, network_result: dict | None, design_gpm: float | None, 
     }
 
 
-def _schematic_state(m: dict, label_of_pump: str) -> dict:
+PUMP_ROLES = {"vault": "in a vault", "room": "in the pump room", "submersible": "submersible"}
+
+
+def _schematic_state(m: dict) -> dict:
+    """Each box: a name on one line and a short role under it. Models and ratings are the schedules';
+    a pump's full name ran past its box."""
     nodes = []
     basins = m.get("basins") or []
     if basins:
         nodes.append({"label": basins[0].get("label") or "Basin", "sub": "source"})
     room = (m.get("pump_room") or {}).get("location") or "vault"
-    nodes.append({"label": "Pump", "sub": f"{label_of_pump} ({room})"})
+    nodes.append({"label": "Pump", "sub": PUMP_ROLES.get(room, room)})
     slots = [e.get("slot") for e in m.get("equipment") or []]
     if "filter" in slots or (m.get("treatment") or {}).get("sanitizer") not in (None, "", "none"):
         nodes.append({"label": "Filter", "sub": "treatment"})
@@ -856,6 +882,114 @@ def _startup(m: dict, regulated: bool) -> list[str]:
     if regulated:
         steps.append("Book the health department's inspection with the plan-check sheet.")
     return steps
+
+
+# What results_json keeps of phase L's reports: the page's keys (E) and what the print formats read (G).
+ELECTRICAL_KEYS = ("panel_rows", "control_pump_rows", "checklist", "energy", "circuits", "feeder", "service", "edition",
+                   "verify", "inputs", "low_voltage", "transformers")
+CONTROLS_KEYS = ("control_panel", "theory_of_operation", "bom", "panel", "controller", "pumps", "relays", "dc_supply")
+GAL_PER_CCF = upkeep.GAL_PER_CCF
+DAYS_PER_YEAR = 365.0
+
+
+def budget_rules(rules: dict) -> dict:
+    """The budget's house rules as the prints and the record read them (``prints.budget_summary``)."""
+    return {
+        "labor_rate_per_hr": rules_engine.rule(rules, "labor_rate_per_hr"),
+        "contingency_pct": rules_engine.rule(rules, "budget_contingency_pct"),
+        "range_pct": rules_engine.rule(rules, "budget_range_pct"),
+    }
+
+
+def _maintenance(m: dict, plan: dict, bom: list, ctl: dict | None, hours: float, *, outdoor: bool, frost: bool) -> list[dict]:
+    """``upkeep.maintenance_schedule`` for the design as derived: its filters, UV, lights, drives, nozzles
+    and switched valves."""
+    filters = sum(int(_num(e.get("qty")) or 1) for e in m.get("equipment") or [] if e.get("slot") == "filter")
+    lights = sum(int(_num(x.get("qty")) or 1) for x in (m.get("lighting") or {}).get("fixtures") or [] if isinstance(x, dict))
+    nozzles = int(sum(_num(r.get("qty")) or 0 for r in bom or [] if r.get("section") == "Nozzles"))
+    valves = int(_num((((ctl or {}).get("control_panel") or {}).get("parent") or {}).get("solenoid_valve_qty")) or 0)
+    vfd = any(str(p.get("control") or "").lower() == "vfd" for p in (m.get("network") or {}).get("pumps") or [])
+    return upkeep.maintenance_schedule(plan, outdoor=outdoor, frost=frost, filters=filters, uv=bool((m.get("treatment") or {}).get("uv")),
+                                       lights=lights, vfd=vfd, nozzles=nozzles, switched_valves=valves,
+                                       run_hours_year=hours * DAYS_PER_YEAR)
+
+
+def _input_value(inputs: dict, key: str) -> float | None:
+    entry = inputs.get(key)
+    return _num(entry.get("value")) if isinstance(entry, dict) else _num(entry)
+
+
+def water_lines(plan: dict, om: dict, om_inputs: dict, total_gal: float) -> list[dict]:
+    """``om.water`` split by where the water goes: evaporation, spray and splash, and the drain-and-refills.
+    The three add up to ``om_per_year``'s own water figure (same days, same rate); the filter's backwash
+    is not in that figure yet, so it is listed with no number rather than a guess."""
+    days = _input_value(om_inputs, "days") or DAYS_PER_YEAR
+    rate = _input_value(om_inputs, "water_rate") or 0.0
+    refills = _num(om.get("refills")) or 0.0
+    rows = [
+        ("evaporation", "Evaporation", (_num(plan.get("evaporation_gpd")) or 0.0) * days, ""),
+        ("spray", "Spray and splash loss", (_num(plan.get("spray_gpd")) or 0.0) * days, ""),
+        ("refill", "Drain and refill", refills * (total_gal or 0.0),
+         "Never: a pond or lake is not drained" if plan.get("natural") else
+         f"{refills:.1f} a year, every {plan.get('refresh_days')} days ({plan.get('refresh_by') or 'hygiene'})" if refills else ""),
+    ]
+    out = [{"key": k, "label": label, "gal": round(gal, 1), "cost": round(gal / GAL_PER_CCF * rate, 2), "note": note}
+           for k, label, gal, note in rows]
+    out.append({"key": "backwash", "label": "Filter backwash", "gal": None, "cost": None,
+                "note": "Not in the engine's water figure yet: add it for a sand or DE filter."})
+    return out
+
+
+def _checklist_text(winterize: list, spring: list, startup: list) -> str:
+    """The checklists as plain text with a box per step, to paste into a Maintenance Visit or a schedule."""
+    lines = []
+    if winterize:
+        lines += ["WINTERIZE (before the first freeze)"] + [f"[ ] {i.get('title')}" for i in winterize if i.get("title")]
+    if spring:
+        lines += ([""] if lines else []) + ["SPRING START-UP"] + [f"[ ] {i.get('title')}" for i in spring if i.get("title")]
+    if startup:
+        lines += ([""] if lines else []) + ["FIRST START-UP CHECKS"] + [f"[ ] {s}" for s in startup]
+    return "\n".join(lines)
+
+
+def paper_data(m: dict, *, plan: dict | None, om: dict | None, om_inputs: dict, maintenance: list, wint: dict, frost: bool,
+               iwf: list, elec: dict | None, rules: dict, regulated: bool, total_gal: float, startup: list) -> dict:
+    """What the print formats read beyond the page's reply (phase G, ``prints.py``): the O&M detail, the
+    winterization checklist with its drain points, the plan-check lines (passes included) and the budget
+    rules. Engine output reshaped, never recomputed."""
+    segs = (m.get("network") or {}).get("segments") or []
+    frost_in = _num(wint.get("frost_depth_in")) or _num((m.get("site") or {}).get("frost_depth_in"))
+    winterize = [i for i in wint.get("winterize") or [] if isinstance(i, dict)] if frost else []
+    spring = [i for i in wint.get("spring_startup") or [] if isinstance(i, dict)] if frost else []
+    return {
+        "upkeep": {
+            "water_plan": {k: v for k, v in (plan or {}).items() if k != "checks"} if plan else None,
+            "om": om,
+            "water_lines": water_lines(plan, om, om_inputs, total_gal) if plan and om else [],
+            "rates": {"kwh_rate": _input_value(om_inputs, "kwh_rate"), "water_rate_per_ccf": _input_value(om_inputs, "water_rate"),
+                      "chlorine_per_gal": _input_value(om_inputs, "chlorine_price"), "days": _input_value(om_inputs, "days")},
+            "maintenance": maintenance or [],
+        },
+        "winterization": {
+            "needed": frost,
+            "frost_depth_in": frost_in,
+            "equipment_room": (m.get("pump_room") or {}).get("location"),
+            "drain_points": [s.get("id") for s in segs if s.get("drain") or s.get("slopes_to_drain")],
+            "below_frost": [s.get("id") for s in segs if frost_in and (_num(s.get("buried_depth_in")) or 0) >= frost_in],
+            "winterize": winterize,
+            "spring_startup": spring,
+            "checklist_text": _checklist_text(winterize, spring, startup),
+        },
+        "plan_check": {
+            "regulated": regulated,
+            "iwf": [{k: c.get(k) for k in ("feature", "feature_label", "code", "title", "severity", "detail", "remedy",
+                                           "citation", "value", "limit", "unit")} for c in iwf],
+            "nec680": list((elec or {}).get("checklist") or []),
+            "nec_edition": (elec or {}).get("edition"),
+            "nec_verify": (elec or {}).get("verify"),
+        },
+        "budget_rules": budget_rules(rules),
+    }
 
 
 def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | None = None, *,
@@ -907,6 +1041,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     basins_by_id = {b.get("id"): b for b in m.get("basins") or []}
     flows: dict[str, dict] = {}
     family_lines: list[dict] = []
+    iwf_lines: list[dict] = []
     for f in m.get("features") or []:
         out = run.stage(f"feature {f.get('id')}",
                         lambda f=f: run_feature(f, site, rules, _family_ctx(f, basins_by_id, volumes)), None)
@@ -916,6 +1051,8 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         run.result(out.get("flow"), f"{(out.get('flow') or {}).get('calc') or f.get('family')}|{f.get('id')}")
         for c in out.get("checks") or []:
             run.checks.append({**c, "_source": "family", "feature": c.get("feature") or f.get("id")})
+            if str(c.get("code") or "").startswith("IWF_"):
+                iwf_lines.append({**c, "feature": c.get("feature") or f.get("id"), "feature_label": f.get("label") or f.get("id")})
         for ln in (out.get("flow") or {}).get("data", {}).get("bom") or []:
             if isinstance(ln, dict):
                 family_lines.append(ln)
@@ -1001,10 +1138,21 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     indoor = any((f.get("inputs") or {}).get("indoor") for f in m.get("features") or [])
     plan = None
     if total_gal:
+        natural = upkeep.natural_water(site.get("venue_type"), [f.get("family") for f in m.get("features") or []])
+        if natural:
+            # A pond or lake evaporates all day from its whole surface, pump or no pump (an aerator pond has no
+            # network, so phase B's basin checks never ran). ASHRAE over the plan area, per day; the water plan
+            # multiplies its evaporation by the pump hours, so it is handed as the day's figure over those hours.
+            area = sum(_num(b.get("area_sf")) or _num(b.get("surface_area_sqft")) or 0.0 for b in m.get("basins") or [])
+            if area:
+                er = run.result(run.stage("evaporation", lambda: evaporation_rate(
+                    area, _num(site.get("water_temp_f")) or 68.0, _num(site.get("air_temp_f")) or 85.0,
+                    _num(site.get("rh_pct")) or 40.0)))
+                evap = (_num(er.get("value")) or 0.0) / hours
         wp = run.stage("water plan", lambda: upkeep.water_plan(
             total_gal, evaporation_gph=evap, spray_gph=spray, hours_per_day=hours,
             water_temp_f=_num(site.get("water_temp_f")) or 68.0, outdoor=not indoor,
-            treatment=str((m.get("treatment") or {}).get("sanitizer") or "chlorine")))
+            treatment=str((m.get("treatment") or {}).get("sanitizer") or "chlorine"), natural=natural))
         plan = run.result(wp).get("value") if wp else None
         for c in (plan or {}).get("checks") or []:
             run.checks.append({**c, "_source": "network"})
@@ -1022,8 +1170,11 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         run.checks.append({**c, "_source": "family"})
     run.stage("lighting fixtures", lambda: _lighting_fixtures(m, light))
     run.stage("pump power", lambda: _pumps_for_power(m, network_result, ranking))
+    run.stage("aerator power", lambda: _aerator_power(m, flows, rules))
     elec = run.stage("electrical", lambda: electrical_report(m), None)
     ctl = run.stage("controls", lambda: controls_report(m, electrical=elec), None) if elec else None
+    for f in m.get("features") or []:
+        f.pop("_power", None)
     for name, rep in (("electrical", elec), ("controls", ctl)):
         for r in (rep or {}).get("results") or []:
             run.result(r)
@@ -1061,8 +1212,10 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     for c in (hyd.get("value") or {}).get("checks") or []:
         run.checks.append({**c, "_source": "network"})
     lines = run.stage("bom merge", lambda: merge_bom((hyd.get("value") or {}).get("lines") or [], elec, ctl, struct, family_lines), [])
-    bom = run.stage("prices", lambda: price_bom(lines, m, prices), [])
-    budget = round(sum(r["amount"] for r in bom), 2)
+    bom = run.stage("prices", lambda: price_bom(lines, m, prices, rules), [])
+    # The budget is the one the Budget print shows: the BOM subtotal plus the house-rule contingency.
+    bom_subtotal = round(sum(r["amount"] for r in bom), 2)
+    budget = prints.budget_summary(bom, budget_rules(rules))["total"]
     unpriced = sum(1 for r in bom if not r["rate"])
     if bom and unpriced:
         run.checks.append({"code": "BOM_UNPRICED", "key": "BOM_UNPRICED", "severity": "info", "section": "outputs",
@@ -1075,11 +1228,17 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         pump = next((p for p in (m.get("network") or {}).get("pumps") or [] if p.get("id") == pid), {})
         op_rows.append({"flow_gpm": op.get("flow_gpm"), "head_ft": op.get("head_ft"), "efficiency_pct": op.get("efficiency_pct"),
                         "motor_eff_pct": pump.get("motor_eff_pct"), "hours_per_day": hours, "electrical_kw": op.get("electrical_kw")})
+    # A floating aerator moves no metered flow against a head: its power is phase L's motor kW over its hours.
+    for row in ((elec or {}).get("energy") or {}).get("rows") or []:
+        if row.get("kind") == "aerator" and _num(row.get("kw")):
+            op_rows.append({"electrical_kw": _num(row["kw"]), "hours_per_day": _num(row.get("hours_day")) or 24.0})
     om = None
     if plan:
         equip_cost = sum(r["amount"] for r in bom if r["section"] == "Equipment") or None
         omr = run.stage("o&m", lambda: upkeep.om_per_year(plan, op_rows, volume_gal=total_gal, rules=rules, equipment_cost=equip_cost))
         om = run.result(omr).get("value") if omr else None
+    maintenance = run.stage("maintenance", lambda: _maintenance(m, plan, bom, ctl, hours, outdoor=not indoor,
+                                                                    frost=(_num(site.get("frost_depth_in")) or 0) > 0), []) if plan else []
 
     # rollups
     ops = (network_result or {}).get("pumps") or {}
@@ -1101,6 +1260,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         # filters on. The flow that circulates: the operating flow, else the design flow.
         "required_circulation_gpm": _round(op_gpm or design_gpm, 1),
         "budget_total": budget,
+        "bom_subtotal": bom_subtotal,
         "om_cost_per_year": _round((om or {}).get("total"), 0),
     }
 
@@ -1110,7 +1270,7 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
     charts = {
         "duty_svg": run.stage("duty chart", lambda: duty_fn(duty_state)) if (duty_fn and duty_state) else None,
         "schematic_svg": run.stage("schematic", lambda: _page_svg(drawings.circulation_schematic_svg(
-            _schematic_state(m, rollups["selected_pump_label"] or "pump")))) if m.get("features") else None,
+            _schematic_state(m)))) if m.get("features") else None,
         "oneline_svg": run.stage("one-line", lambda: _page_svg((elec or {}).get("oneline_svg"))),
     }
 
@@ -1125,12 +1285,16 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         "schedules": [{"key": k, "label": label, "url": None} for k, label in SCHEDULES],
         "packet": {"label": "Submittal packet", "url": None},
         "om": {"total_per_year": rollups["om_cost_per_year"], "lines": om_lines},
+        # The winterization module's own checklist (``data.winterize``), one title per step.
         "winterization": {"needed": bool(frost),
-                          "steps": [str(i.get("text") or i.get("label") or i) if isinstance(i, dict) else str(i)
-                                    for i in (wdata.get("items") or wint.get("steps") or [])][:40]
+                          "steps": [str(i.get("title")) for i in wdata.get("winterize") or [] if isinstance(i, dict) and i.get("title")][:40]
                           if frost else ["Indoor feature or no frost on site: no winterization. Drain only for service."]},
         "startup": _startup(m, regulated),
     }
+    paper = run.stage("paper", lambda: paper_data(
+        m, plan=plan, om=om, om_inputs=(run.results.get("om_per_year") or {}).get("inputs") or {}, maintenance=maintenance,
+        wint=wdata, frost=bool(frost), iwf=iwf_lines, elec=elec, rules=rules, regulated=regulated, total_gal=total_gal,
+        startup=outputs["startup"]), None)
 
     # issues, readiness, verdict
     for fail in run.failures:
@@ -1168,7 +1332,10 @@ def derive_model(model: dict | str, catalogs: dict | None = None, rules: dict | 
         "charts": charts,
         "outputs": outputs,
         "problems": problems,
-        "electrical": {k: (elec or {}).get(k) for k in ("panel_rows", "control_pump_rows", "checklist", "energy")} if elec else None,
+        "electrical": {k: (elec or {}).get(k) for k in ELECTRICAL_KEYS} if elec else None,
         "structural": {k: (struct or {}).get(k) for k in ("totals", "rebar_schedule", "disclaimer")} if struct else None,
-        "controls": {k: (ctl or {}).get(k) for k in ("control_panel", "theory_of_operation")} if ctl else None,
+        "controls": dict({k: (ctl or {}).get(k) for k in CONTROLS_KEYS},
+                         power_svg=_page_svg((ctl or {}).get("power_svg")),
+                         ladder_svg=_page_svg((ctl or {}).get("ladder_svg"))) if ctl else None,
+        "paper": paper,
     })

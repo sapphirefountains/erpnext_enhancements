@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.770.0] - 2026-11-01
+## [1.771.0] - 2026-11-01
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,238 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.770.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03028. This is
+phase G: **every paper a design produces now reads the schema-2 record.** Since v1.768.0 the print
+formats and the submittal packet read the nine retired child tables and printed empty tables. They are
+rebuilt on what the derive stores, and the Fountain Designer's Outputs step links to each of them.
+It builds on v1.769.0 (#1400): the duty-point chart prints on the Design Drawings sheet, and every
+stored drawing has been through `drawings.page_svg`.
+
+### Added
+- **`water_engineering/prints.py`, the print context.** `build(doc, model, stored, bom)` turns a record
+  into sheets of blocks (tables, facts, drawings, lists, text, calculations, notes). Every number arrives
+  formatted and every cell styled, so no template formats a number. It reads what the derive stored
+  and never recomputes the engine; its only arithmetic is presentation (sums of stored rows, and volume
+  divided by flow for the turnover line). It imports no frappe.
+- **Seven views of a design, in the house style.** Nikolas asked for "a printable report view and other
+  views with design information for printing and emailing" that match the other print formats.
+  - **The house style.** Every view is the print design system's chrome (`print_style`, the Design
+    pillar):
+    - the violet stripe, the letterhead and the eyebrow;
+    - a facts row: the customer's party block (`ps_party`), the project and site, the designer and
+      status;
+    - the date, and a red DRAFT until the design is issued (`ps_state`);
+    - ruled tables with the numbers right-aligned, the running line and the closing stripe;
+    - Letter paper, and a page break between sections.
+  - **Design Report**, the doctype's **default** print format. It is for the
+    client:
+    - what the feature does, the numbers at a glance;
+    - the circulation schematic and the duty-point chart;
+    - the equipment by name (no part numbers);
+    - the budget by section with contingency and range;
+    - running costs per year;
+    - notes and assumptions.
+  - **Engineering Calculations**: every `CalcResult` grouped by the ladder's sections (value, formula,
+    inputs with their sources, working, citations, warnings). Then the **plan check**:
+    - venue and vessel (the Fika spa path reads the vessel, its listing and the bather load from
+      `model.legacy`, where `engine.model.migrate` keeps them);
+    - basins and the design basis (code minimum circulation, turnover, filter area, chlorinator feed);
+    - the circulation system;
+    - the **Utah interactive water feature checklist** (R392-302-41) and the **NEC Article 680
+      checklist**, each line Pass, Fail, Open, Verify or N/A, with its citation.
+  - **Schedules**, each schedule starting on its own page:
+    - the Equipment Schedule (tag, Item, model, quantity, duty at the solved operating point,
+      electrical from phase L's circuit, cut-sheet link);
+    - the Piping Schedule (segment, run, size, material, length, flow, velocity, head loss, end
+      pressure, status);
+    - the aggregated **Fitting Schedule** (`engine.bom.fitting_counts`: total per fitting type, size and
+      material) and the cut list in 20 ft sticks;
+    - phase S's structural quantities and rebar schedule;
+    - phase L's service, feeder, panel schedule, circuit list and energy;
+    - the control panel, motor control and the controls BOM with part numbers.
+  - **Design Drawings**: the duty point, circulation schematic, one-line, power schematic and control
+    ladder on one sheet. Every drawing defines `<marker id="arrow">`, so each one's ids get a suffix of
+    their own; without it, `url(#arrow)` resolves to the first drawing's marker.
+  - **Budget Proposal**:
+    - the BOM grouped as hydraulic, treatment, lighting, electrical, controls, structural, labor and
+      other;
+    - the subtotal (the new `bom_subtotal` rollup), a contingency, the budget (`budget_total`), and a
+      plus-or-minus range;
+    - a line with no Item, no Item price or no labor rate says so.
+
+    Prices are Sapphire's own Item prices on the selling price list, and labor uses the house rule. No
+    published cost-per-square-foot figure is used (Nikolas, 2026-11-01).
+  - **Operations and Winterization**:
+    - cost per year;
+    - where the water goes (evaporation, spray, drain and refill, at the Settings rates; these add up to
+      `om_per_year`'s own water figure);
+    - the water plan (refresh interval, cycles of concentration, Legionella band, doses) and the
+      maintenance schedule (`upkeep.maintenance_schedule`, now run by the derive);
+    - then the winterization checklist from `engine.families.winterization`: frost depth, equipment,
+      drain points, winterize and spring start-up, first start-up checks, and the whole list as plain
+      text to paste into a Maintenance Visit.
+  - **Submittal Packet**, rebuilt on model 2 in the same style:
+    - a cover with the letterhead (HEALTH DEPARTMENT SUBMITTAL), the engineer, contractor and project,
+      the P.E. stamp box, the sheet index and the revisions;
+    - then the design basis, schedules, electrical, structural takeoff, drawings, plan check, the
+      calculations, and the standard details and notes;
+    - never the budget or the O&M.
+
+    The standard details lay out as a table, not flex, which the PDF backends cannot render. The Chrome
+    PDF, the CAD merge and the Project attachment (Drive sync) are unchanged.
+- **Send design**, on the Fountain Designer's Outputs step and on the Desk form. Pick a paper, and
+  frappe's email composer opens on the design with:
+  - that paper attached as a PDF;
+  - the customer's address (the prints' own party lookup);
+  - a body in the email design system's chrome (`email_style.wrap`, Design pillar, no container of its
+    own).
+
+  The person sends it, and the email lands on the design's timeline.
+  - **The endpoint.** `api/designer.email_draft` (new, POST, in the page README's contract) builds the
+    draft. It refuses without the design's email permission.
+  - **The Desk form** uses the composer's own Attach Document Print, the path the Quotation's email
+    takes.
+  - **The page.** Its composer has no form to print from, so the server makes the PDF as a private File
+    on the design named `<design>-print-<paper>.pdf`. The packet's CAD merge skips files with
+    `-print-` in the name.
+  - **Permission and demo.** `boot().can.email` gates the button. The demo mode sends nothing.
+- **Three house rules on Water Engineering Settings, under Budget:**
+  - `labor_rate_per_hr`: 0 means not set, so labor prints unpriced rather than invented;
+  - `budget_contingency_pct`: 10;
+  - `budget_range_pct`: 15.
+
+  The patch `backfill_water_budget_rules` re-runs v1.759.0's backfill, so the existing Single gets
+  their defaults. A `default` on a new field of a Single never reaches the row that already exists.
+- **`boot().prints`.** The page's Outputs step links each of the six papers and the packet of a saved
+  design to `/printview?…&format=<its Print Format>`.
+  - `boot` lists only the formats the site has, so a format `after_migrate` could not seed shows as
+    "not available yet" rather than a 404.
+  - An unsaved design says "save the design to print it".
+  - The demo mode lists none, because a demo design is not a record.
+  - Contract and fixtures updated: `public/js/fountain_designer/README.md`, `demo/boot.json`, and the
+    three demo replies' `outputs.schedules`.
+- **Tests.** `tests/test_water_prints.py` (its own CI step) renders every format and the packet under
+  real Jinja2, set up as frappe sets it up (no autoescape, `DebugUndefined`). It runs over the three
+  demo designs through `derive_model` and over a regulated spa. It checks for:
+  - no Jinja left over, no doubled escape, no table with no rows, no raw float, and no drawing id
+    twice on a page;
+  - the plan-check lines, the O&M water split, the winterization steps and the budget arithmetic;
+  - labor priced only when the rate is set;
+  - `we_print` surviving a broken record.
+
+  It also checks the house style on every view (Design pillar stripes, facts row, DRAFT, Letter, no flex
+  or shadows), the report's client view (no part numbers), the page breaks, and the superseded formats.
+  `test_designer_api` checks the `boot().prints` filter and `email_draft` (subject, the customer's
+  address, the budget quoted only on the budget papers, refusals, the PDF File for the page). The page's
+  node test checks the links, the Send design control, and that the composer opens after the save with
+  the paper attached and ticked.
+
+### Changed
+- **The derive stores what the prints read**, so nothing on paper recomputes:
+  - `electrical` gains `circuits`, `feeder`, `service`, `edition`, `verify`, `inputs`, `low_voltage`
+    and `transformers`;
+  - `controls` gains `bom`, `panel`, `controller`, `pumps`, `relays`, `dc_supply`, and the power
+    schematic and control ladder SVGs, through `page_svg` like the other charts;
+  - `paper` is new: the O&M detail, the maintenance schedule, the winterization checklist with drain
+    points and the plain-text block, the plan-check lines (passes included: the issues list drops
+    them) and the budget rules.
+
+  The controller writes `paper` into `results_json`.
+- **A pond or lake is never drained.** `upkeep.om_per_year` refilled the pond demo's 1.9 million gallons
+  every 30 days, about $112k a year. The cycles-of-concentration drain-and-refill rule is for
+  recirculating decorative features; a pond or lake has natural inflow, a large volume, and no
+  drain-and-refill practice.
+  - **The new rule.** `upkeep.natural_water(venue_type, families)` is true when the venue names a pond or
+    lake, or when a floating aerator is among the features. Then `water_plan(natural=True)` has no
+    refresh interval, `om_per_year` counts no refills, the maintenance schedule has no drain row, and the
+    prints say "Never".
+  - **Evaporation without a pump.** An aerator pond has no pump network, so phase B's basin checks never
+    ran and its evaporation read 0. The derive now takes it from `treatment.evaporation_rate` (ASHRAE)
+    over the pond's surface, all day.
+  - **The result.** The pond demo's water is $930 a year (540 gal/day of make-up). A recirculating
+    feature is unchanged.
+- **A floating aerator draws power.** Its motor never reached the electrical loads: they read
+  `inputs.hp`, which nothing sets, so the pond demo's aerator was 0 kW, cost $0 to run, and had no
+  circuit.
+  - **Where the horsepower comes from.** The derive now hands phase L the unit HP: the one typed from the
+  aerator's Item (`unit_hp`), else the family's HP-per-acre pick split over its units. It also hands over
+  the cable run and a new house rule, `aerator_duty_hours_day` (24 by default; Settings field included,
+  filled on existing sites by `backfill_water_budget_rules`).
+  - **The O&M.** `om_per_year` prices a motor with no flow and head as kW × hours.
+  - **The pond demo** now draws 0.83 kW around the clock: $761 a year, and an M1 circuit with its 20 A GFCI
+  breaker and wire in the BOM.
+- **The circulation schematic keeps its text in its boxes.** The pump's subtitle (its full name and
+  room) ran past the box. Each box now holds a name and a short role ("in a vault"); the model is the
+  schedules'. `drawings._box` also cuts any line to its box's width with an ellipsis.
+- **The Budget Proposal reads as a proposal.** A line with no priced Item printed "No Item" in bold red
+  on 74 of the demo's 75 lines. It now shows a muted dash in the rate and amount, with one footnote
+  ("N lines have no priced Item yet"). Only the summary's count stays red.
+- **From the independent review of #1401:**
+  - **The email chrome goes on at send time.** frappe's composer is a rich-text editor that strips a
+    `<style>` block and mangles the shell's tables and MSO comments. So `email_draft` now hands it plain
+    paragraphs. A new Communication `after_insert` hook, `water_engineering/email_hooks.wrap_design_email`,
+    puts a sent email from a Water Feature Design into `email_style.wrap` (Design pillar).
+    - **In memory only.** frappe's `make()` sends the same object right after insert, so the recipient
+      gets the whole shell.
+    - **Not `before_insert`.** `Document._sanitize_content` runs between the two and strips the shell's
+      `<style>` and Outlook comments from a Text Editor field.
+    - **Plain on the timeline.** The stored copy stays plain, so the Desk timeline never renders the
+      email's CSS.
+    - **Light and safe.** A module of its own, light on imports, since it runs for every Communication.
+      It returns at once for any other reference and never raises. There is no eyebrow, because the shell
+      already names the pillar.
+  - **The papers offered and accepted** to email are the ones this site has, the same filter as
+    `boot().prints`. With no paper given, the Design Report, else the first one the site has.
+  - **The page's PDF of a paper is reused** until the design changes, so sending twice does not pile up
+    attachments.
+  - **A toast** says so when the page has no composer.
+  - **Small print uses the design-system inks.** Notes are ink-700 and a pass is teal-deep. The
+    off-token grey read 4.42:1, under the 4.5 the print design system holds.
+  - **A BOM amount is the printed quantity × the printed rate.** A labor line printed 25.13 × $95 =
+    $2,387.61. Quantities now print to three places, as they are stored.
+  - **One budget figure everywhere.** `budget_total` is now the print's Budget, the BOM subtotal plus
+    the house-rule contingency, on the Desk form, the page and the email. That holds because the derive
+    and the controller compute it with the prints' own `budget_summary`. A new `bom_subtotal` rollup and
+    field (on the record, in the page contract and the demo fixtures) carries the BOM's sum. The page's BOM
+    foot shows the subtotal, the contingency and the budget. The patch `backfill_water_design_budget`
+    writes both figures on every existing design that is not canceled, from its stored rows and the
+    current rules (`set_value`, no modified bump; logs per design, never raises). It runs after
+    `backfill_water_budget_rules`, so the contingency rule is in place first.
+  - **The default print format is set in code, not a fixture.** A fixture applies whether or not the
+    Design Report seeded, and a default naming a missing format breaks the form's Print. So
+    `set_default_report` makes the Design Report the default only once it exists and is enabled. It keeps
+    a default an admin chose, unless that one is gone, disabled or superseded.
+  - **The packet's preview and PDF endpoints** check the design itself, not only the doctype.
+    `frappe.get_print` checks only the doctype.
+- **Labor is priced.** A BOM labor line, in hours with no Item, takes `labor_rate_per_hr` (catalog
+  source "house rule"), so the budget includes labor once the rate is set.
+- **The Outputs step's winterization drawer shows the real steps.** It printed the module's
+  formula-step text ("frost depth 30 in"), because it read `data.items`, a key the module does not
+  have. It now reads the module's own checklist titles.
+- **The packet's one-line is phase L's drawing**, stored by the derive. It labels the breaker phase L
+  designed, so `test_electrical_report`'s guard on the old Control Panel Design one-line now checks
+  that. `we_circulation_schematic` and `we_electrical_oneline` return the stored drawings.
+- **`ensure_water_print_formats` guards each format on its own.** One bad upsert no longer stops the
+  formats after it.
+
+### Removed
+- **Results, Calculation Audit and Design Calculations** read the retired child tables (`calc_results`,
+  `pumps`, `basins`, `pipe_segments`, `venue_fixtures`, `design_equipment`). The Design Report and the
+  Engineering Calculations replace them.
+  - `disable_superseded_formats` disables them on every migrate, so nobody prints an empty one.
+  - They are not deleted: a record keeps its history, and an admin who re-enables one sees it turned off
+    again.
+
+### Not verified without a bench
+- The Desk print view, the Chrome PDF (`generate_packet`), the Drive upload, and the seeding itself on
+  `bench migrate`. The screenshots in the PR come from headless Edge over the same HTML, not from the
+  bench PDF.
+- Send design end to end: the composer on the Desk form and on the page, the PDF File, the email on the
+  timeline.
+- The Item lookup for model numbers and cut sheets (`custom_model_no`, `custom_spec_source_url`).
 
 ## [1.769.0] - 2026-11-01
 

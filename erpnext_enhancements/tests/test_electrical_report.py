@@ -464,4 +464,7 @@ def test_printed_breaker_is_labeled_a_maximum():
     pf = (we / "setup_print_formats.py").read_text(encoding="utf-8")
     assert "Max breaker (A)" in pf and ">Breaker (A)<" not in pf
     assert "Branch breakers round UP" not in pf
-    assert 'A max" if c.get("breaker_a")' in (we / "packet.py").read_text(encoding="utf-8")
+    # Since v1.770.0 (phase G) the packet's one-line is this report's own drawing, stored by the derive,
+    # which prints the breaker it designed (breaker_a, beside breaker_max_a): no 430.52 maximum to label.
+    packet = (we / "packet.py").read_text(encoding="utf-8")
+    assert "we_panel_schedule" not in packet and '.get("oneline_svg")' in packet

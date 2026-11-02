@@ -4,7 +4,7 @@
 // The Water Feature Design form is thin since v1.768.0: the design is edited in the Fountain
 // Designer page (/desk/fountain-designer?design=<name>), and this form shows what the last save
 // derived. The rollups and the BOM grid are fields; this script adds the verdict headline, the
-// readiness chips in Design Health, and the buttons (Open in Designer, the submittal packet).
+// readiness chips in Design Health, and the buttons (Open in Designer, Send design, the submittal packet).
 // The old templates, live preview and loss dialogs went with the child tables they edited.
 
 const WFD_STATUS_COLOR = { ok: "green", warn: "orange", blocked: "red", missing: "gray", n_a: "gray" };
@@ -13,6 +13,7 @@ frappe.ui.form.on("Water Feature Design", {
 	refresh(frm) {
 		frm.add_custom_button(__("Open in Designer"), () => wfd_open_designer(frm));
 		if (!frm.is_new()) {
+			if (frappe.model.can_email(frm.doctype, frm)) frm.add_custom_button(__("Send design"), () => wfd_send_design(frm));
 			frm.add_custom_button(__("Preview Packet"), () => wfd_preview_packet(frm), __("Submittal"));
 			frm.add_custom_button(__("Generate Packet PDF"), () => wfd_generate_packet(frm), __("Submittal"));
 		}
@@ -87,6 +88,52 @@ function wfd_render_health(frm) {
 			${top ? `<ul class="list-unstyled" style="margin:0">${top}</ul>` : `<p class="text-muted">${__("No blockers or warnings.")}</p>`}
 			${more ? `<p class="text-muted small">${__("{0} advisory notes: open the Designer to read them.", [more])}</p>` : ""}
 		</div>`);
+}
+
+// Send design (phase G): pick a paper, then frappe's own email composer on the record, with that print
+// attached as a PDF (the composer's Attach Document Print, the path the Quotation's email takes), the
+// customer's address, and a body in the email design system's chrome from api/designer.email_draft.
+// The person sends it; the composer links the email to this design's timeline.
+const WFD_API = "erpnext_enhancements.water_engineering.api.designer.";
+
+function wfd_send_design(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Save the design first: the email attaches the saved design."));
+		return;
+	}
+	const send = (print_format) =>
+		frappe.call({
+			method: WFD_API + "email_draft",
+			args: { name: frm.doc.name, print_format },
+			freeze: true,
+			callback: (r) => {
+				const m = r && r.message;
+				if (!m) return;
+				new frappe.views.CommunicationComposer({
+					doc: frm.doc,
+					frm,
+					subject: m.subject,
+					recipients: m.recipients || "",
+					message: m.message,
+					attach_document_print: true,
+					print_format: m.print_format,
+				});
+			},
+		});
+	frappe.call({
+		method: WFD_API + "email_draft",
+		args: { name: frm.doc.name },
+		callback: (r) => {
+			const formats = ((r && r.message && r.message.formats) || []).map((f) => ({ value: f.print_format, label: f.label }));
+			if (!formats.length) return;
+			frappe.prompt(
+				[{ fieldname: "print_format", fieldtype: "Select", label: __("Paper to send"), options: formats, default: formats[0].value, reqd: 1 }],
+				(v) => send(v.print_format),
+				__("Send design"),
+				__("Write the email")
+			);
+		},
+	});
 }
 
 function wfd_preview_packet(frm) {

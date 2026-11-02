@@ -182,6 +182,37 @@ def test_boot_sections_are_in_ladder_order(api):
     assert [s["key"] for s in api.boot()["sections"]] == LADDER
 
 
+def test_boot_lists_only_the_print_formats_this_site_has(api):
+    """Phase G: the Outputs step links each paper to its Print Format; a format after_migrate could not
+    seed is left out, so the page says "not available yet" instead of linking to a 404."""
+    from erpnext_enhancements.water_engineering import prints
+
+    seeded = [pf for _k, _l, pf in prints.OUTPUTS] + [prints.PF_PACKET]
+    asked = []
+
+    def get_all(doctype, filters=None, pluck=None, **k):
+        if doctype != "Print Format":
+            return []
+        asked.append(filters)
+        return [n for n in filters["name"][1] if n in seeded]
+
+    api._frappe.get_all = get_all
+    every = api.boot()["prints"]
+    assert [r["key"] for r in every] == [k for k, _l, _pf in prints.OUTPUTS] + ["packet"]
+    assert every == _boot_fixture()["prints"]
+    assert len(asked) == 1 and asked[0]["disabled"] == 0, "one query, enabled formats only"
+    seeded[:] = [pf for pf in seeded if pf != prints.PF_SCHEDULES]
+    keys = {r["key"] for r in api.boot()["prints"]}
+    assert not keys & {"equipment", "piping", "fittings"}
+    assert {"budget", "packet", "calcs"} <= keys
+
+    def broken(*a, **k):
+        raise RuntimeError("db gone")
+
+    api._frappe.get_all = broken
+    assert api.boot()["prints"] == []
+
+
 def test_every_kit_is_a_schema_2_model_and_its_headline_paths_exist(api):
     from erpnext_enhancements.water_engineering.engine import model as model_engine
 
@@ -303,6 +334,156 @@ def _design_with_bom(api, **fields):
     ], **fields)
     api._frappe._store[("Water Feature Design", "WFD-4")] = doc
     return doc
+
+
+def _emailable(api, **extra):
+    from erpnext_enhancements.water_engineering import prints
+
+    doc = FakeDoc(doctype="Water Feature Design", name="WFD-9", design_title="Lobby & wall", docstatus=0, budget_total=12000,
+                  modified="2026-11-01 12:00:00",
+                  results_json=json.dumps({"rollups": {"operating_flow_gpm": 80.0, "total_basin_gallons": 200.0}}), **extra)
+    api._frappe._store[("Water Feature Design", "WFD-9")] = doc
+    seeded = list(prints.PRINT_FORMATS)
+
+    def get_all(doctype, filters=None, pluck=None, **k):
+        if doctype == "Print Format":
+            return [n for n in filters["name"][1] if n in seeded]
+        return []
+
+    api._frappe.get_all = get_all
+    return doc, seeded
+
+
+def test_email_draft_starts_the_email_and_sends_nothing(api, monkeypatch):
+    """Phase G, Send design: subject, the customer's address (the prints' party lookup), the starting text
+    and the papers this site has. Nothing is sent and, without attach_pdf, nothing is made."""
+    from erpnext_enhancements import print_lookup
+    from erpnext_enhancements.water_engineering import prints
+
+    _doc, seeded = _emailable(api, customer="ACME")
+    monkeypatch.setattr(print_lookup, "party_details", lambda doc: {"email": "pm@acme.example"})
+    out = api.email_draft("WFD-9")
+    assert out["print_format"] == prints.PF_REPORT, "the Design Report unless another is picked"
+    assert out["subject"] == "Lobby & wall: Design report (#WFD-9)"
+    assert out["recipients"] == "pm@acme.example"
+    assert [f["print_format"] for f in out["formats"]] == list(prints.PRINT_FORMATS)
+    assert out["attachment"] is None
+    assert api.email_draft("WFD-9", prints.PF_PACKET)["subject"].endswith("Submittal packet (#WFD-9)")
+    seeded.remove(prints.PF_BUDGET)
+    assert prints.PF_BUDGET not in [f["print_format"] for f in api.email_draft("WFD-9")["formats"]], \
+        "a paper this site could not seed is not offered (boot().prints' filter)"
+
+
+def test_email_draft_text_is_plain_for_the_composer(api):
+    """frappe's composer is a rich-text editor: it strips a <style> block and mangles tables and MSO
+    comments, so the starting text is plain paragraphs and the email chrome goes on at send time."""
+    from erpnext_enhancements.water_engineering import prints
+
+    doc, _seeded = _emailable(api)
+    doc["results_json"] = json.dumps({"rollups": {"operating_flow_gpm": 80.0}, "paper": {"budget_rules": {"contingency_pct": 10}}})
+    msg = api.email_draft("WFD-9", prints.PF_BUDGET)["message"]
+    assert msg.startswith("<p>Attached is the budget proposal for Lobby & wall.</p>")
+    # budget_total is the paper's Budget (the subtotal plus the contingency), and the email says so
+    assert "<strong>Budget (with 10% contingency):</strong> $12,000" in msg and "<strong>Flow:</strong> 80 gpm" in msg
+    for tag in ("<style", "<table", "<!--", "max-width"):
+        assert tag not in msg
+    assert "Budget" not in api.email_draft("WFD-9", prints.PF_CALCS)["message"]
+    assert api.email_draft("WFD-9")["recipients"] == "", "no customer, no address"
+
+
+def test_a_design_email_goes_out_in_the_email_chrome(api, monkeypatch):
+    """The composer edits plain text; email_hooks.wrap_design_email puts the shell on the in-memory
+    content frappe's make() sends right after insert. after_insert, not before: the Text Editor sanitizer
+    runs between the two and strips the shell's <style> and Outlook comments."""
+    from erpnext_enhancements import email_style
+    from erpnext_enhancements.water_engineering import email_hooks
+
+    calls = []
+    monkeypatch.setattr(email_style, "wrap", lambda body, **k: calls.append(k) or f"<shell>{body}</shell>")
+    comm = Row(reference_doctype="Water Feature Design", communication_medium="Email", sent_or_received="Sent",
+               subject="Lobby: Design report (#WFD-9)", content="<p>Hi</p>")
+    email_hooks.wrap_design_email(comm)
+    assert comm.content == "<shell><p>Hi</p></shell>"
+    assert calls == [{"title": "Lobby: Design report", "pillar": "design", "tagline": True}], \
+        "no eyebrow: the shell already names the Design pillar"
+    for other in (dict(reference_doctype="Lead"), dict(sent_or_received="Received"), dict(communication_medium="Phone")):
+        c = Row(**{**dict(comm, content="<p>x</p>"), **other})
+        email_hooks.wrap_design_email(c)
+        assert c.content == "<p>x</p>", other
+    monkeypatch.setattr(email_style, "wrap", lambda *a, **k: 1 / 0)
+    broken = Row(**dict(comm, content="<p>y</p>"))
+    email_hooks.wrap_design_email(broken)  # never raises: a failed wrap must not stop an email
+    assert broken.content == "<p>y</p>"
+    hooks = (REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8")
+    block = hooks[hooks.index('"Communication": {'):]
+    block = block[:block.index("},")]
+    assert '"after_insert": [' in block and "water_engineering.email_hooks.wrap_design_email" in block
+    assert "before_insert" not in block, "before_insert runs ahead of the sanitizer"
+    src = (REPO_ROOT / "erpnext_enhancements" / "water_engineering" / "email_hooks.py").read_text(encoding="utf-8")
+    assert "derive" not in src.split('"""', 2)[2] and "api.designer" not in src, \
+        "the hook runs for every Communication: it must not import the engine"
+
+
+def test_email_draft_refuses_what_it_should(api):
+    from erpnext_enhancements.water_engineering import prints
+
+    _doc, seeded = _emailable(api)
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9", "Sales Invoice - Sapphire")
+    seeded.remove(prints.PF_BUDGET)
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9", prints.PF_BUDGET)  # a paper this site could not seed is not accepted
+    seeded.remove(prints.PF_REPORT)
+    assert api.email_draft("WFD-9")["print_format"] == prints.PRINT_FORMATS[1], \
+        "no Design Report here: the first paper the site has"
+    seeded.clear()
+    with pytest.raises(Thrown):
+        api.email_draft("WFD-9")
+    seeded.extend(prints.PRINT_FORMATS)
+    api._frappe.has_permission = lambda doctype, ptype="read", doc=None, throw=False: ptype != "email"
+    with pytest.raises(PermissionError_):
+        api.email_draft("WFD-9")
+
+
+def test_email_draft_makes_the_pdf_for_the_page_and_reuses_it(api):
+    """The page's composer has no form to print from, so the paper comes as a File on the design. Its
+    name carries "-print-", which keeps the packet from merging it as a CAD drawing, and the one made
+    since the design last changed is reused rather than piling up."""
+    from erpnext_enhancements.water_engineering import prints
+
+    _doc, seeded = _emailable(api)
+    made, files = [], []
+    api._frappe.get_print = lambda doctype, name, print_format=None, as_pdf=False, pdf_generator=None: (
+        made.append((doctype, name, print_format, as_pdf, pdf_generator)) or b"%PDF")
+    real_get_doc = api._frappe.get_doc
+    print_formats = api._frappe.get_all
+
+    def get_doc(doctype, name=None):
+        if isinstance(doctype, dict):
+            def insert(**k):
+                row = {"name": f"F-{len(files) + 1}", "file_name": doctype["file_name"],
+                       "file_url": "/private/files/" + doctype["file_name"]}
+                files.append(row)
+                return types.SimpleNamespace(**row)
+            return types.SimpleNamespace(insert=insert, **doctype)
+        return real_get_doc(doctype, name)
+
+    def get_all(doctype, filters=None, **k):
+        if doctype == "File":
+            assert filters["creation"] == [">=", "2026-11-01 12:00:00"], "only one made since the design last changed"
+            return list(reversed(files))[:1]
+        return print_formats(doctype, filters=filters, **k)
+
+    api._frappe.get_doc = get_doc
+    api._frappe.get_all = get_all
+    out = api.email_draft("WFD-9", prints.PF_SCHEDULES, attach_pdf=1)
+    assert made == [("Water Feature Design", "WFD-9", prints.PF_SCHEDULES, True, "chrome")]
+    assert out["attachment"] == {"name": "F-1", "file_name": "WFD-9-print-schedules.pdf",
+                                 "file_url": "/private/files/WFD-9-print-schedules.pdf"}
+    again = api.email_draft("WFD-9", prints.PF_SCHEDULES, attach_pdf=1)
+    assert len(made) == 1 and again["attachment"]["name"] == "F-1", "the same paper is reused"
+    packet = (REPO_ROOT / "erpnext_enhancements" / "water_engineering" / "packet.py").read_text(encoding="utf-8")
+    assert '"-print-" in' in packet, "the packet skips the emailed papers"
 
 
 def test_push_quotation_splits_item_and_text_lines(api):

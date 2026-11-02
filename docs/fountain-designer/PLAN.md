@@ -134,7 +134,7 @@ workspace keep their routes) but is rebuilt:
 | `results_json` | JSON | the last `derive` output: CalcResults, rollups, charts |
 | `issues_json`, `readiness_json` | JSON | typed issues and readiness (as today) |
 | `bom` | Table → **Water Feature Design Line** (new child: `section`, `item`, `description`, `qty`, `uom`, `rate`, `amount`, `source` Auto / Manual, `catalog_source`) | the only child table; it is what pushes to a Quotation and what reports read |
-| rollups | Float / Int / Link | `design_flow_gpm`, `operating_flow_gpm`, `tdh_ft`, `operating_head_ft`, `selected_pump`, `pump_kw`, `total_basin_gallons`, `budget_total`, `om_cost_per_year`, `blocker_count`, `warning_count`, `completion_percent`, `issue_ready` |
+| rollups | Float / Int / Link | `design_flow_gpm`, `operating_flow_gpm`, `tdh_ft`, `operating_head_ft`, `selected_pump`, `pump_kw`, `total_basin_gallons`, `budget_total` (with contingency), `bom_subtotal`, `om_cost_per_year`, `blocker_count`, `warning_count`, `completion_percent`, `issue_ready` |
 | `issue_acks` | Table → Water Design Issue Ack (kept) | acknowledgements |
 | packet fields | as today | `issue_date`, `drawn_by`, `packet_document`, `revisions`, `packet_html` |
 

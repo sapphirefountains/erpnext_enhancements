@@ -33,6 +33,7 @@
   "pump_kw",
   "cb_cost",
   "budget_total",
+  "bom_subtotal",
   "om_cost_per_year",
   "sb_bom",
   "bom",
@@ -238,7 +239,14 @@
    "fieldtype": "Currency",
    "label": "Budget",
    "read_only": 1,
-   "description": "Sum of the bill of materials below."
+   "description": "The bill of materials plus the house-rule contingency: the Budget the Budget Proposal and the Design Report print. The BOM subtotal is below."
+  },
+  {
+   "fieldname": "bom_subtotal",
+   "fieldtype": "Currency",
+   "label": "BOM subtotal",
+   "read_only": 1,
+   "description": "Sum of the bill of materials below, before contingency."
   },
   {
    "fieldname": "om_cost_per_year",
@@ -425,7 +433,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 18:00:00.000000",
+ "modified": "2026-11-01 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Feature Design",

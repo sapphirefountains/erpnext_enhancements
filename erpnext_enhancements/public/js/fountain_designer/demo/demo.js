@@ -31,7 +31,8 @@ export function create_demo(fixture, env) {
 	let request_no = 0;
 
 	const handlers = {
-		boot: () => clone(fixture.boot),
+		// A demo design is not a record, so its papers have nothing to print: no print links.
+		boot: () => Object.assign(clone(fixture.boot), { prints: [] }),
 		get_design: (args) => {
 			if (!args.name) {
 				return {
@@ -104,6 +105,11 @@ export function create_demo(fixture, env) {
 			return rows
 				.filter((r) => !q || [r.item, r.item_name, r.description].some((t) => String(t || "").toLowerCase().includes(q)))
 				.map((r) => Object.assign({ equipment_class: args.equipment_class }, r));
+		},
+		// A demo design is not a record: nothing to print, so nothing to email.
+		email_draft: (args) => {
+			if (!store.designs[args.name]) return { _error: [404, `Design ${args.name} was not found.`] };
+			return { demo: true, subject: "", recipients: "", message: "", print_format: args.print_format || null, formats: [], attachment: null };
 		},
 		acknowledge_issue: (args) => {
 			const d = store.designs[args.design];
@@ -268,7 +274,8 @@ function scale(reply, f) {
 		line.rate = round(line.rate * k, 2);
 		line.amount = round(line.qty * line.rate, 2);
 	}
-	r.budget_total = round((reply.bom || []).reduce((sum, l) => sum + l.amount, 0), 2);
+	// The demo carries no contingency, so its budget is the BOM's sum (README, rollups).
+	r.budget_total = r.bom_subtotal = round((reply.bom || []).reduce((sum, l) => sum + l.amount, 0), 2);
 	const feature = reply.values && reply.values.features && reply.values.features.f1;
 	if (feature && feature.flow_gpm != null) feature.flow_gpm = round(feature.flow_gpm * f.flow, 0);
 	const pump = reply.values && reply.values.pumps && reply.values.pumps.p1;
