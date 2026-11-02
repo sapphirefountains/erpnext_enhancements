@@ -44,6 +44,7 @@ roll the contract cadence to a nonsense date; a visit's scheduled day is not a t
   scheduled 96 days back; `create_visit` with no draft keeps the window.
 - `tests/test_visit_wizard_markup.py` (`TestVisitDateWindow`): runs the wizard's two functions in node
   against the same cases, so the client and server rules cannot drift apart unnoticed.
+
 ## [1.772.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03033. This is
