@@ -33,13 +33,20 @@ change of rules: the cache starts empty. The job's 30-minute limit covers it.
 ### Changed
 - **Two scopes in CI, both hard gates.** On a pull request the job is now **"No committed secrets (PR
   range)"**: the working tree plus every blob reachable from the PR's merge commit and not from `main`
-  (`--since origin/main`, after an explicit `git fetch` of `main`), plus loose objects. Intermediate
-  commits are in the range, so a key added and removed inside the PR is still caught. That is sound
-  because `main`'s history was gated as it landed. On every push to `main`, and on a new nightly
+  (`--since origin/main`, after an explicit `git fetch` of `main`). Intermediate commits are in the
+  range, so a key added and removed inside the PR is still caught. That is sound because `main`'s
+  history was gated as it landed. Loose objects are left to the full walk: a push carries only objects
+  reachable from what is pushed, and those are all in the range. Including them added nothing a PR
+  could publish and cost a lot locally. A long-lived checkout here holds ~13,000 loose objects
+  (1.6 GB), which made a local `--since origin/main` run take over 5 minutes, against ~35 s on a
+  fresh clone. Without them, the same checkout's run takes 7.4 s. On every push to `main`, and on a new nightly
   schedule (09:17 UTC), it is **"No committed secrets (full history)"**: the whole object database, as
   before, with the cache below. That walk is the backstop: for a rule that got stronger, and for anything
   a range could not see. The schedule runs nothing else; every other CI job now carries
-  `if: github.event_name != 'schedule'`. Nothing else in the repository named the old job ("No committed
+  `if: github.event_name != 'schedule'`. The workflow's concurrency group now includes the event name.
+  The nightly runs on `refs/heads/main`, so it would otherwise share the main-push group. With
+  cancel-in-progress off, a group holds one pending run and a new arrival replaces it, so a nightly
+  could have replaced a merged commit's pending CI run. Nothing else in the repository named the old job ("No committed
   secrets (working tree + full git history)"), and `main` has no branch protection or ruleset requiring
   it, so the rename breaks no required check.
 - **"Standalone unit tests" gets 20 minutes, up from 10.** Slow tests are not the reason. On 2026-11-02
@@ -79,8 +86,8 @@ change of rules: the cache starts empty. The job's 30-minute limit covers it.
 - **`tests/test_secret_scan.py`** (Standalone unit tests, its own step): 16 tests on throwaway git
   repositories. The full walk and the PR range each find the three planted kinds (a service-account key
   file, an OAuth client secret, a base64 token beside a googleapis URL); the range finds a key added and
-  removed inside it, reads loose objects, leaves `main`'s history to the full walk, and refuses an
-  unknown base and a shallow clone; the cache skips a clean blob, is ignored after a rule change, and a
+  removed inside it, leaves `main`'s history and unreachable loose objects to the full walk (which
+  finds both), and refuses an unknown base and a shallow clone; the cache skips a clean blob, is ignored after a rule change, and a
   test-data entry does not excuse the same blob elsewhere; any edit to the window, the marker, a pattern
   or the logic changes the fingerprint; `--staged` reads the index. The planted values are assembled at
   run time, so the test file carries no credential-shaped literal for this scanner or GitHub's to flag.

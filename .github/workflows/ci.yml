@@ -49,8 +49,14 @@ on:
 #
 # So: supersede on PRs, never on main. The cost is that back-to-back merges queue
 # instead of collapsing, which is the correct trade for the deploy branch.
+#
+# The event name is in the key too, for the nightly `schedule` run. It runs on
+# refs/heads/main, so without it the nightly shared main-push runs' group -- and with
+# cancel-in-progress off, a group holds one running and ONE pending run, a new arrival
+# replacing the pending one. A nightly arriving behind a running push could have
+# replaced a pending push run, leaving a merged commit's CI never run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -3622,7 +3628,7 @@ jobs:
       # The committed-secrets gate's own proof (the `secret-scan` job runs the script; this
       # proves the script). Throwaway git repos with planted fakes: the full walk and the PR
       # range each find a service-account key, an OAuth client secret and a googleapis token,
-      # the range finds a key added and removed inside it and reads loose objects, both
+      # the range finds a key added and removed inside it, the full walk reads loose objects, both
       # refuse a shallow clone, and the clean-blob cache is discarded whole when the rules
       # change -- a stale cache is a key a stronger rule never reads, and the job stays green.
       - name: Committed-secrets scanner (planted keys, PR range, clean-blob cache)
@@ -4576,7 +4582,7 @@ jobs:
   #   pull_request -> "No committed secrets (PR range)": the working tree plus every blob
   #     reachable from the PR's merge commit and not from main (`--since origin/main`),
   #     intermediate commits included, so a key added and removed inside the PR is still
-  #     caught. That is sound because main's history was gated as it landed: what a PR
+  #     caught. (Not loose objects: a push carries only reachable ones, all in the range.) That is sound because main's history was gated as it landed: what a PR
   #     can add to the repository is exactly that range.
   #   push to main, and nightly -> "No committed secrets (full history)": every blob in
   #     the object database, with a cache of blobs already scanned clean. This is the

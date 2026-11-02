@@ -7,8 +7,8 @@ data in it, runs the real script against it as a subprocess, and reads the exit 
 - full history (no flag) still finds each of the three planted kinds — a service-account key
   file, an OAuth client secret, a base64 token beside a googleapis URL — after the file was
   deleted again, and still refuses a shallow clone;
-- the PR range (``--since``) finds a key committed and removed *inside* the range, reads
-  loose objects, ignores what the base already had (the full walk is the backstop for that),
+- the PR range (``--since``) finds a key committed and removed *inside* the range, and leaves
+  what the base already had and unreachable loose objects to the full walk, which finds both,
   and refuses an unknown base or a shallow clone rather than scanning an empty range;
 - the clean-blob cache skips what it lists, is discarded whole when the rules change, and an
   entry recorded at a test-data path does not excuse the same blob anywhere else;
@@ -186,7 +186,7 @@ class FullHistoryTests(_TempTestCase):
 
 
 class RangeTests(_TempTestCase):
-	"""``--since REF``: the working tree plus what HEAD has and REF does not, plus loose objects."""
+	"""``--since REF``: the working tree plus what HEAD has and REF does not."""
 
 	def test_finds_a_key_committed_and_removed_inside_the_range(self):
 		repo = self.repo()
@@ -228,7 +228,10 @@ class RangeTests(_TempTestCase):
 		code, out = _scan(repo.root)
 		self.assertEqual(code, 1, "the full walk is the backstop and must still see it:\n" + out)
 
-	def test_reads_loose_objects(self):
+	def test_leaves_unreachable_loose_objects_to_the_full_walk(self):
+		# A push sends only what is reachable from the pushed commit, so a loose object no ref
+		# names cannot reach the remote through this PR. The range skips them (they made a
+		# long-lived local checkout's run take minutes); the full walk still reads them.
 		repo = self.repo()
 		_git(repo.root, "checkout", "-q", "-b", "feature")
 		repo.commit({"feature.txt": "harmless\n"}, "feature work")
@@ -238,9 +241,13 @@ class RangeTests(_TempTestCase):
 		stray.write_text(text, encoding="utf-8", newline="\n")
 		_git(repo.root, "hash-object", "-w", str(stray))  # a loose object no ref names
 		code, out = _scan(repo.root, "--since", "main")
+		self.assertEqual(code, 0, out)
+		self.assertIn(", 1 history blobs scanned", out)
+
+		code, out = _scan(repo.root)
 		self.assertEqual(code, 1, out)
 		self.assertIn(f"rule: {rule}", out)
-		self.assertIn("(loose blob ", out)
+		self.assertIn("(unreachable blob ", out)
 
 	def test_refuses_an_unknown_base(self):
 		repo = self.repo()

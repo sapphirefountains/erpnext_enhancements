@@ -76,12 +76,20 @@ because ``CHANGELOG.md`` is a 3.7 MB file with 1,400+ versions and every PR adds
 5 GB of text per run, nearly all of it read and found clean the day before.
 
 **PR range** (``--since <ref>``) reads the working tree plus only the blobs reachable from
-HEAD and not from ``<ref>`` (``git rev-list --objects <ref>..HEAD``), and loose objects as
-the full walk does. That is sound because ``main``'s history was gated as it landed: what a
-PR can add to the repository is exactly what is in that range, intermediate commits
-included — a key committed and removed inside the PR is still in it. The full walk stays as
-the backstop, on every push to ``main`` and nightly. Both modes refuse a shallow clone, and
-the range mode refuses a ``<ref>`` it cannot resolve rather than scanning an empty range.
+HEAD and not from ``<ref>`` (``git rev-list --objects <ref>..HEAD``). That is sound because
+``main``'s history was gated as it landed: what a PR can add to the repository is exactly
+what is in that range, intermediate commits included — a key committed and removed inside
+the PR is still in it. The full walk stays as the backstop, on every push to ``main`` and
+nightly. Both modes refuse a shallow clone, and the range mode refuses a ``<ref>`` it cannot
+resolve rather than scanning an empty range.
+
+The range deliberately leaves out **loose objects**, which the full walk reads. A push sends
+only objects reachable from what is pushed, so a loose object a PR could publish is already
+in the range; the rest are local leftovers (a reset, an amend) that never leave the machine,
+and on the server they are the full walk's business. They are not cheap to include either: a
+long-lived checkout here held ~13,000 loose objects (1.6 GB, mostly CHANGELOG versions), which
+made a local ``--since origin/main`` take over 5 minutes against ~35 s on a fresh clone, for
+no object a pull request could carry.
 
 **Staged** (``--staged``) reads the index versions of the files about to be committed, and
 nothing else. It is the pre-commit hook: the cheapest place to catch a key is before it is
@@ -584,24 +592,6 @@ def _cat_file(batch: str, shas: Iterable[str] | None) -> Iterator[tuple[str, str
 				raise subprocess.CalledProcessError(proc.returncode, args)
 
 
-def _loose_object_shas() -> list[str]:
-	"""Every loose object in the repository, reachable or not.
-
-	The range mode reads these as the full walk does. On a fresh CI clone there are few or
-	none; locally they are where an object lives between ``git commit`` and the next
-	``git gc``, including the ones a reset or an amend left behind.
-	"""
-	objects = Path(_git("rev-parse", "--git-path", "objects").strip())
-	if not objects.is_absolute():
-		objects = REPO / objects
-	found: list[str] = []
-	for fan in sorted(objects.glob("[0-9a-f][0-9a-f]")):
-		for entry in fan.iterdir():
-			if len(entry.name) == 38:
-				found.append(fan.name + entry.name)
-	return found
-
-
 def rules_fingerprint(source: bytes | None = None) -> str:
 	"""The key a clean-blob cache is valid under: a hash of this whole file.
 
@@ -693,7 +683,6 @@ def iter_blobs(
 	paths: dict[str, str],
 	cache: CleanBlobCache,
 	counts: BlobCounts,
-	unnamed: str = "unreachable",
 ) -> Iterator[tuple[str, str, str, str]]:
 	"""Decode the blobs among ``objects`` that need reading: ``(label, text, sha, rel)``.
 
@@ -722,7 +711,7 @@ def iter_blobs(
 			cache.mark_clean(sha, rel)
 			continue
 		counts.scanned += 1
-		label = f"{rel} (blob {sha[:12]})" if rel else f"({unnamed} blob {sha[:12]})"
+		label = f"{rel} (blob {sha[:12]})" if rel else f"(unreachable blob {sha[:12]})"
 		yield label, payload.decode("utf-8", errors="replace"), sha, rel
 
 
@@ -732,10 +721,10 @@ def history_objects() -> tuple[Iterable[tuple[str, str, int]], dict[str, str]]:
 
 
 def range_objects(since: str) -> tuple[Iterable[tuple[str, str, int]], dict[str, str]]:
-	"""The PR range: objects reachable from HEAD and not from ``since``, plus loose objects."""
+	"""The PR range: objects reachable from HEAD and not from ``since``. No loose objects (see
+	the module docstring): a push carries only what is reachable, and that is all in here."""
 	paths = _blob_paths(f"{since}..HEAD")
-	shas = dict.fromkeys([*paths, *_loose_object_shas()])
-	return list(_batch_check(shas)), paths
+	return list(_batch_check(paths)), paths
 
 
 def iter_staged() -> Iterator[tuple[str, str]]:
@@ -832,7 +821,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 		"--since",
 		metavar="REF",
 		help="scan the working tree plus only the blobs reachable from HEAD and not from REF "
-		"(and loose objects); what a pull request adds. Default: every blob in history.",
+		"(what a pull request adds). Default: every blob in history.",
 	)
 	mode.add_argument(
 		"--staged",
@@ -925,14 +914,12 @@ def main(argv: list[str] | None = None) -> int:
 		commits = _git("rev-list", "--count", f"{args.since}..HEAD").strip()
 		print(
 			f"mode: PR range {args.since}..HEAD ({_short(args.since)}..{_short('HEAD')}, "
-			f"{commits} commits) + loose objects + working tree"
+			f"{commits} commits) + working tree"
 		)
 		objects, paths = range_objects(args.since)
-		unnamed = "loose"
 	else:
 		print("mode: full history (every object in the database: all refs + loose) + working tree")
 		objects, paths = history_objects()
-		unnamed = "unreachable"
 	print(f"cache: {cache.status}")
 
 	tree_count = 0
@@ -941,7 +928,7 @@ def main(argv: list[str] | None = None) -> int:
 		findings.extend(scan_text(where, text))
 
 	counts = BlobCounts()
-	for where, text, sha, rel in iter_blobs(objects, paths, cache, counts, unnamed):
+	for where, text, sha, rel in iter_blobs(objects, paths, cache, counts):
 		blob_findings = scan_text(where, text)
 		if blob_findings:
 			findings.extend(blob_findings)
