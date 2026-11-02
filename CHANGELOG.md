@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.771.0] - 2026-11-01
+## [1.772.0] - 2026-11-01
 
 ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
 (v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
@@ -79,6 +79,214 @@ and frappe 16.53.0, prod's versions.
   - the patch never raising, and rolling back the seed on a failure;
   - the dialog: Design deals only, read permission, a missing or disabled template, never raising, and
     a Fountain Move intake winning.
+
+## [1.771.0] - 2026-11-01
+
+ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03029. This is
+phase H, the last: **what the Fountain Designer replaced is retired, and the AI tools move onto its
+API.** The nine schema-1 child DocTypes of Water Feature Design and the Water Engineering Wizard page
+are removed, both in the repo's two steps (the files, and a `post_model_sync` patch for what the files
+leave on a site, which never raises). The wizard's quick calculator is now a drawer on the designer's
+Review step. [ADR 0018](decisions/adr/0018-fountain-designer-rebuild.md) records the rebuild: the
+decisions of 2026-11-01, the phases and their PRs, and why each retired piece could go.
+
+### Removed
+- **Nine child DocTypes**, which the JSON design model (`model_json`) replaced in v1.768.0:
+  - Water Feature Basin
+  - Water Feature Tier
+  - Water Feature Nozzle
+  - Water Feature Pipe Segment
+  - Water Feature Pump
+  - Water Feature Electrical Load
+  - Water Venue Fixture
+  - Water Feature Equipment
+  - Water Feature Calc Result
+
+  Their folders under `water_engineering/doctype/` are gone. None had a fixture row, a Custom Field or
+  a Property Setter, on disk or on production (checked 2026-11-01).
+- **The Water Engineering Wizard page** (`page/water_engineering_wizard/`), its shortcut and Tools-card
+  link on the Water Engineering workspace, and its "Jump to" shortcut on the Design Hub (now the
+  Fountain Designer's). It never had a Dock row. Page search offers the Fountain Designer instead.
+- **The old API's dead endpoints** (`api/water_design.py`): `design_state`, `get_design_state`,
+  `save_inputs`, `_save_design`, `get_design_issues`, `acknowledge_issue`, `run_design_spine`,
+  `get_pump_candidates`, `get_equipment_candidates` and `get_loss_catalog`. Their callers were the
+  wizard, the old form and the AI tools.
+- **The schema-1 issue producers**: `issues.build_issues`, `build_readiness` and their helpers, and the
+  `we_fitting_schedule` Jinja method (no print on production calls it). `we_design_issues` stays, and now
+  only reads the stored issues. `packet.is_regulated_packet`, unused since phase G.
+- `tests/test_water_design_issues.py`, which tested only those producers.
+
+### Added
+- **`/desk/water-engineering-wizard` lands on the Fountain Designer.** A bookmark, an emailed link or an
+  old awesomebar suggestion is sent on through frappe's own `frappe.re_route`
+  (`public/js/global_enhancements/retired_routes.js`, in the global bundle). Frappe's router checks it
+  before it parses the path, and its check against the page being left makes Back step over the old
+  address instead of bouncing on it. The app had no convention for a retired Desk page before; this is
+  the place for the next one.
+- **The Calculator drawer on the Review step** (`public/js/fountain_designer/steps/calculator.js`).
+  - **What it does.** Pick any of the engine's 46 calculations, fill its inputs (each prefilled with the
+    default the engine uses), and **Work it out**. The drawer shows the `CalcResult` whole: the value and
+    status, the formula, every step, the warnings, the options (the recommended one marked) and the
+    sources.
+  - **What it never does.** Its fields are bound under a `calc.` path prefix that the page keeps apart
+    from the model, so nothing in the drawer edits or saves the design. A list input (pipe segments,
+    loads, lights) is typed as JSON. Only the newest answer is drawn.
+  - **It is built from F's helpers**: `ui.field` for every input and `ui.card` for the result.
+  - **Numbers keep four significant figures**, so a 0.004 ft loss reads 0.004, not 0.00.
+  - **In the demo**, five calcs answer with a real engine result at example inputs (`demo/calc.json`),
+    and the drawer says the answer is for those inputs.
+- **`water_engineering/calculator.py`**: the calc list with typed inputs (`CATALOG`, `CALCS`) and
+  `run(calc, inputs, nozzle_lookup)`, the dispatch that was the wizard's `_run_calc`, moved unchanged.
+  No frappe. The option lists (contact tanks, protective devices, filter media, evaporation activity)
+  are read from the engine's own tables, so they cannot drift from the math.
+- **`api/designer.py` gains what outlived the old API**:
+  - `check_permission`, the page's gate;
+  - `run_calc`, over the calculator, and `boot().calculator`, its list (both in the page README's
+    contract);
+  - `item_pump_curves`, `pump_curves` and `nozzle_profile_params`, for the Item form's Pump Curves panel
+    and the calculator;
+  - the AI tools' helpers: `design_status`, `design_list`, `tool_save`, `tool_model`,
+    `merge_legacy_payload` and `canvas_state`.
+
+  `api/water_design.py` keeps the Control Panel Design reader (`control_panel_state`, the
+  `control_panel_status` tool's) and re-exports the moved endpoints, deprecated, for a Desk tab still
+  running an older bundle. **Removal:** the five re-exports (`check_permission`, `run_calc`,
+  `item_pump_curves`, `pump_curves`, `nozzle_profile_params`) have no caller in the repo and go in the
+  first release on or after 2026-12-01, by when no Desk tab can still be running a pre-1.771.0 bundle.
+- **ADR 0018** (`decisions/adr/0018-fountain-designer-rebuild.md`), indexed in the ADR README.
+
+### Changed
+- **`save_water_design` saves through the page's own `save_design`.**
+  - **What it takes.** Either a schema-2 `model`, which is the whole design and replaces the stored one,
+    or the old `basins` / `features` / `pipe_segments` / `pumps` payload with `global_inputs`. The old
+    payload is laid onto the stored model through `engine.model.migrate` and `merge_legacy_payload`,
+    each table sent replacing that section and pinning it `custom`. A new design is migrated whole.
+  - **What it says.** It replies with what the status tool returns (the verdict, the rollups, the issue
+    counts, `designer_url`, the print and packet links), plus `created` and `ignored`, which names every
+    input with no place in the model. A `status` sent is one of them: the status follows the derive, and
+    Reviewed and Issued are set in ERPNext.
+  - **Its own checks**: create permission for a new design, write for an update. `save_design` refuses
+    an issued design.
+- **`water_design_status` reads the record the page writes.** For one design: the stored verdict and
+  rollups (`results_json`), the typed issues (`design_issues_json`), the readiness (`readiness_json`), the
+  counts, the designer and form links, every paper's print link and the packet's, and the canvas the
+  Triton chat draws. With `include_model`, the schema-2 model itself, to edit and send back. With no
+  design, the recent designs, each with its designer link.
+- **`save_water_design` loses nothing it was not sent.** A whole `model` sent without `acks` keeps
+  the design's stored sign-offs, and `ignored` says so. The old payload with `features` and
+  `pipe_segments` but no `pumps` keeps each pump's Item, curve, control and setpoint on the re-laid
+  network, rather than resetting them to a generic pump.
+- **The canvas `water_design_status` returns** carries each segment's `velocity_status` (the engine's
+  own band, from the derived velocity and the pipe's limits) and the design's `worst_status`, which
+  the Triton chat colours the supply line by.
+- **`water_calc`** dispatches through `api/designer._run_calc`, and its `calc` enum is `calculator.CALCS`:
+  the drawer, the tool and the dispatch share one list. Tool descriptions, `hooks.py`'s annotation and
+  `assistant_tools/README.md` say all of this.
+- **The page's start-up error** no longer says "Until the designer's server side is installed, the demo
+  shows how it works" or offers **Open the demo** (the server side has been on every site since
+  v1.768.0). It says what the server said, and offers Try again. The demo is **Open the training demo**
+  on Start. These were the two jobs phase F's README left for phase H.
+- **`legacy_inputs`**, the schema-1 row reader, moved from the Water Feature Design controller into
+  `patches/convert_water_feature_designs_to_model.py`, its only caller. The controller no longer knows
+  the old child rows.
+- `patches/backfill_water_design_issue_fields.py` (v1.144.0, run on every site) is a no-op: it called
+  the removed `build_issues`. A fresh install marks every patch done without running it.
+- **Docs.** `water_engineering/README.md` is rewritten for the new module map (the engine packages,
+  `derive.py`, `calculator.py`, the API, the page, the prints, the catalogs, the AI tools, and a
+  **Retired** section). `SOURCE_DATA_AUDIT.md` is closed out: each open item is done (with the phase
+  that did it), dropped (with why) or moved to `PLAN.md` section 6. `PLAN.md` gains a status section.
+  The root README's module line, the page README and `docs/KPI_DASHBOARD_DESIGN.md` (whose Design
+  KPIs read the retired tables) are updated.
+
+### Migration
+- **`patches/retire_water_feature_child_doctypes.py`** (`post_model_sync`, after the v1.768.0
+  conversion). The conversion read five of the nine tables into the model (`CHILD_TABLES`: Basin,
+  Nozzle, Tier, Pipe Segment, Pump), and Calc Result is the old engine's output, which every derive
+  writes again. It never read Electrical Load, Venue Fixture or Equipment. For each DocType the patch
+  groups the stored rows by parent and judges each one:
+  - **Converted** (the five tables and Calc Result): the parent's `model_json` is schema 2. Its rows
+    are in the model, or rebuilt by the derive, so they are deleted.
+  - **Orphan**: the parent no longer exists. Its rows are deleted.
+  - **Unconverted**: no model, a schema-1 model, or a parent that is not a Water Feature Design. Those
+    rows are the only copy of that design, so they are **kept**.
+  - **Not copied**: a row of Electrical Load, Venue Fixture or Equipment whose design still exists,
+    schema 2 or not, is **kept**, and the Error Log says to move what it holds into the design, delete
+    it and run the patch again. Its orphans go, as in any table.
+
+  It drops a table only once it is empty, and drops it itself, because nothing in frappe does. Frappe
+  16.53.0's `delete_doc("DocType", ...)` clears the DocType, its DocFields and DocPerms but never the
+  table, and `remove_orphan_doctypes` says so ("Deleting the entry doesn't delete any data"). The
+  DocType and any Custom Field or Property Setter on it are removed only once its table is gone; a
+  table that keeps rows keeps its DocType, and the Error Log names its designs and the way on
+  (convert, then run both patches again). `remove_orphan_doctypes` runs after `post_model_sync`
+  patches and deletes a DocType whose folder is gone whatever this patch does, so the conversion
+  patch now reads a retired table with SQL when its DocType is missing: a kept design stays
+  convertible. Every outcome is one line in the
+  migrate log, every failure is in the Error Log, each DocType is its own try, and a second run finds
+  nothing. **Production on 2026-11-01** (read-only, through the ERPNext MCP): all nine tables exist,
+  with 13 rows, every one a child of WFD-2026-209315, whose `model_json` is schema 2:
+
+  | Table | Rows |
+  |---|---|
+  | Water Feature Basin | 1 |
+  | Water Feature Nozzle | 1 |
+  | Water Feature Pipe Segment | 1 |
+  | Water Feature Pump | 2 |
+  | Water Feature Calc Result | 8 |
+  | Water Feature Tier, Electrical Load, Venue Fixture, Equipment | 0 each |
+
+  So all nine tables and DocTypes go.
+- **`patches/retire_water_engineering_wizard.py`** (`post_model_sync`):
+  - re-imports the Water Engineering and Design Hub workspaces (`import_file_by_path`, forced, over
+    the timestamp gate; both files carry a new stamp);
+  - deletes the `water-engineering-wizard` Page row;
+  - points every other Workspace Link, Shortcut or Workspace Sidebar item still naming the page at the
+    Fountain Designer (production has one: the "Water Engineering Wizard" item of the site-made Water
+    Engineering sidebar);
+  - deletes any Desktop Icon that opens it (none on production).
+
+  Route History is left alone. It logs every failure and never raises.
+
+### Tests
+- **New: `tests/test_water_engineering_retirement.py`**, in its own unittest CI step.
+  - **The sweep.** No `.py`, `.js`, `.json` or `.html` under the app or `scripts/` names a retired
+    DocType or the wizard, with comments and docstrings stripped. The only exceptions are the patches
+    that remove them, the conversion patch and the redirect.
+  - **The survivors.** Every DocType PLAN.md 3.2 keeps is still on disk.
+  - **The wizard.** The redirect is registered, and both workspaces link the designer.
+  - **Both patches, dry**, against an in-memory site shaped like production:
+    - all nine tables and DocTypes go;
+    - an unconverted design keeps its rows, its table and its DocType, and gets one Error Log;
+    - a row in Electrical Load, Venue Fixture or Equipment is kept even for a schema-2 design, and an
+      orphan one goes;
+    - a failed `DROP TABLE` or `delete_doc` is logged, the rest still go, and a re-run finishes;
+    - the conversion reads a retired table with SQL once its DocType is gone;
+    - a failing DocType does not stop the others, and nothing raises;
+    - a second run is quiet, and `report()` changes nothing.
+- **`test_designer_api`.**
+  - `tool_model`, `tool_save` and `design_status` against schema-2 models;
+  - the legacy merge, now on `api.designer`;
+  - `run_calc`, and `boot().calculator` against `calculator.CALCS`;
+  - the deprecated re-exports are the same functions, and the removed endpoints are gone.
+- **`test_assistant_tools_schema`.**
+  - `water_calc`'s enum is the calculator's list;
+  - no water tool imports the retired API;
+  - `save_water_design`'s schema takes a `model` and the old tables;
+  - `execute` routes both payloads, and names what it ignored;
+  - `water_design_status` reads one design or lists them.
+- **The page harness** (`scripts/test_fountain_designer.mjs`): the Calculator drawer's fields, its input
+  coercion, the result card, and a controller run that never touches the model. The api sends `run_calc`
+  and the moved gate; the demo answers `run_calc`.
+- **Tests that read the removed code** move with it: `test_s3_page_states` (both halves),
+  `test_page_search.js`, `test_water_catalog`, `test_water_design_controller` and `test_fountain_designer`.
+
+### Needs a real bench
+- `bench migrate` on production, with the two patches: the tables dropped, the DocTypes gone, and the
+  sidebar row repointed.
+- The redirect in a browser: `/app/water-engineering-wizard` and `/desk/water-engineering-wizard` land on
+  the Fountain Designer, and Back works.
+- The Calculator drawer on a real design, and the three AI tools against the live site through the
+  ERPNext MCP: a status read, a gated save with a schema-2 model and with the old payload, and a calc.
 
 ## [1.770.0] - 2026-11-01
 

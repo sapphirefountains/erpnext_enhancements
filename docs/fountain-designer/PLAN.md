@@ -273,3 +273,24 @@ Collected for one conversation, none blocks a phase: the exact pump models Sapph
 rules in §2.3; whether sequenced shows with several pumps on one header are common (they are in scope
 either way); three past installs with logged jet height, flow and pressure to calibrate the jet model
 (audit D9); the NEC edition Utah enforces; MAHC 2023 and R392-302-35(8) wording for interactive venues.
+
+Moved here from `water_engineering/SOURCE_DATA_AUDIT.md` when phase H closed it out (v1.771.0); the
+audit's close-out table says which phase did everything else:
+
+- **Slot-channel circular-crest weir** (DOC-0049 M, C = 3.70): verify the cells, then a weir style.
+- **`controller_hardware`**: the Control Panel Design field defaults to the Nextion HMI, while
+  DOC-0062 and phase L's controller selection say 4-button UI and LCD. Which does the shipping
+  Splash Wizard use?
+- **Splash Wizard MAX** is labeled FCA002 in DOC-0062 (a duplicate of PLUS): confirm FCA003.
+- **Splash Wizard parts as Items**: the controllers, expansions and WP-40 enclosure (500615 to
+  500631) are named in the panel BOM by part number but are not seeded as Items.
+- **Control-panel O&M manual** (DOC-0123: parties, fuses, the screen tree) as a print, and a
+  per-point voltage on Control IO Point (DOC-0025).
+
+## 7. Status (2026-11-01)
+
+Every phase is merged or in review: D #1390 (1.758.0), C #1393 (1.759.0), A #1391 (1.760.0), F #1392
+(1.761.0), L #1395 and #1397 (1.763.0, 1.764.0), S #1394 and #1396 (1.765.0, 1.766.0), B #1398
+(1.767.0), E #1399 and #1400 (1.768.0, 1.769.0), G #1401 (1.770.0), and H (1.771.0), which retired the
+nine child DocTypes and the Water Engineering Wizard and moved the AI tools onto `api/designer.py`.
+[ADR 0018](../../decisions/adr/0018-fountain-designer-rebuild.md) records the rebuild.

@@ -66,7 +66,10 @@ ENDPOINTS = (
 	"push_material_request",
 	"catalog_search",
 	"acknowledge_issue",
+	"run_calc",
 )
+# Step modules that are not steps: the Review step's Calculator drawer (v1.771.0, phase H).
+STEP_PARTS = ("calculator",)
 ALLOWED_MEDIA = {"(max-width: 767px)", "(prefers-reduced-motion: reduce)"}
 COLOUR_PROPS = re.compile(
 	r"^(color|background(-color)?|border(-(top|right|bottom|left))?(-color)?|outline(-color)?"
@@ -137,7 +140,7 @@ class TestThePage(unittest.TestCase):
 			self.assertIn(f'"./steps/{step}.js"', app)
 
 	def test_a_module_per_step_and_a_sane_file_count(self):
-		self.assertEqual(sorted(p.stem for p in (FD / "steps").glob("*.js")), sorted(STEPS))
+		self.assertEqual(sorted(p.stem for p in (FD / "steps").glob("*.js")), sorted(STEPS + STEP_PARTS))
 		js = list(FD.rglob("*.js"))
 		self.assertLessEqual(len(js), 16, "a module per step plus the shared few")
 
@@ -147,7 +150,9 @@ class TestThePage(unittest.TestCase):
 		self.assertIn("quiet: true", api)
 		for name in ENDPOINTS:
 			self.assertRegex(api, rf'send\("{name}"', name)
-		self.assertIn("api.water_design.check_permission", api, "the gate the wizard uses")
+		# The gate moved to api.designer in v1.771.0, when phase H retired the wizard and its api.
+		self.assertIn('PERMISSION_METHOD = METHOD_BASE + "check_permission"', api)
+		self.assertNotIn("api.water_design", api)
 		for path in FD.rglob("*.js"):
 			code = _strip_js_comments(path.read_text(encoding="utf-8"))
 			with self.subTest(path.name):

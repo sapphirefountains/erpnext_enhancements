@@ -605,6 +605,52 @@
 	margin: var(--sf-space-10) 0 0;
 }
 
+/* --- the Calculator drawer (Review step, v1.771.0) ---------------------------------------------- */
+
+.fd-calc-inputs {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+	gap: 0 var(--sf-space-15);
+}
+
+.fd-calc-result .fd-card {
+	margin-top: var(--sf-space-15);
+}
+
+.fd-calc-value {
+	margin: 0 0 var(--sf-space-10);
+}
+
+.fd-calc-big {
+	color: var(--sf-heading);
+	font-family: var(--sf-font-display);
+	font-size: 1.5rem;
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+
+.fd-calc-formula code {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.fd-calc-head {
+	margin: var(--sf-space-15) 0 var(--sf-space-5);
+	color: var(--sf-heading);
+	font-size: 1rem;
+}
+
+.fd-calc-steps,
+.fd-calc-warnings {
+	margin: 0;
+	padding-left: var(--sf-space-20);
+	overflow-wrap: anywhere;
+}
+
+.fd-calc-pick th {
+	font-weight: var(--sf-weight-bold);
+}
+
 /* --- the verdict panel and the footer ----------------------------------------------------------- */
 
 .fd-verdict {

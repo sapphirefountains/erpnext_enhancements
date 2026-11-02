@@ -187,6 +187,9 @@ import "./training/desk_assets.js";
 // The guided page is where a guided DocType's records open, new and existing (form kit P5.2):
 // frappe.create_routes for New, and a before_show on the Form factory for the rest. See the file.
 import "./guided_default.js";
+// Retired Desk pages sent on to their replacements through frappe.re_route (v1.771.0: the Water
+// Engineering Wizard to the Fountain Designer). See the file.
+import "./global_enhancements/retired_routes.js";
 
 // v1.686.0: installed for the form scripts (see record_actions / party_sources above). Plain objects
 // copied from the module namespaces: erpnext_enhancements.record_actions.open_reminder and so on.

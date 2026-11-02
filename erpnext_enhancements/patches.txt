@@ -1567,7 +1567,18 @@ erpnext_enhancements.patches.backfill_water_budget_rules
 # design that is not canceled, from its stored bom rows and the current rules. set_value without modified; logs
 # per design, never raises, safe twice.
 erpnext_enhancements.patches.backfill_water_design_budget
-# Design projects (v1.771.0, Nik 2026-10-30): create the Project Template "Design Project (PRO-0206)" (type Design) of four
+# Fountain Designer phase H (v1.771.0): retire the nine schema-1 child DocTypes of Water Feature Design. Rows of a
+# schema-2 or vanished design are deleted from the five tables the conversion above read and from Calc Result (derived);
+# a live design's rows in Electrical Load, Venue Fixture or Equipment (never read) and an unconverted design's are KEPT with
+# its table and DocType and named in the Error Log. A table is dropped once empty (delete_doc never drops it), and only
+# then its DocType and any Custom Field / Property Setter. Logs every outcome, never raises, safe twice. Prod
+# 2026-11-01: 13 rows, all of the schema-2 WFD-2026-209315, all in those six tables.
+erpnext_enhancements.patches.retire_water_feature_child_doctypes
+# Fountain Designer phase H (v1.771.0): retire the Water Engineering Wizard page. Re-import the Water Engineering and
+# Design Hub workspaces (import_file_by_path force), delete the Page row, point any other Workspace Link / Shortcut /
+# Sidebar item still naming it at the Fountain Designer, delete any Desktop Icon that opens it. Logs, never raises.
+erpnext_enhancements.patches.retire_water_engineering_wizard
+# Design projects (v1.772.0, Nik 2026-10-30): create the Project Template "Design Project (PRO-0206)" (type Design) of four
 # template Tasks, PRO-0206's stages in order, each waiting on the one before: Predesign (PD) days 0-13, Schematic Design
 # (SD) 14-34, Design Development (DD) 35-62, Construction Documents (CD) 63-83, no hours. Insert-only by name, one
 # savepoint. Then, only once the new template exists, tick Disabled on the old "Design Project Template" (a field write;

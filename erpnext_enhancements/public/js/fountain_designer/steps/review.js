@@ -1,10 +1,12 @@
 // Review. The verdict with every issue and its remedies (one click applies a remedy as an edit), a way to
 // the step that fixes it, the sign-off for a warning the designer accepts (acknowledge_issue, with a
-// note), the readiness of each section, and the schematic.
+// note), the readiness of each section, the schematic, and the Calculator drawer (steps/calculator.js: one
+// engine calculation on its own, the retired wizard's quick calculator, v1.771.0).
 
 import { stage_head } from "../ui.js";
 import { goto_html, severity_chip, sort_issues } from "../verdict.js";
 import { chart_html } from "../chart.js";
+import * as calculator from "./calculator.js";
 
 export const key = "review";
 
@@ -12,7 +14,7 @@ export function render(ctx) {
 	const { h, reply } = ctx;
 	const { esc, __ } = h;
 	const head = stage_head(h, __("Review"), __("What works, what does not, and what to do about it."));
-	if (!reply) return head + h.state_html("loading", { title: __("Working out the design…") });
+	if (!reply) return head + h.state_html("loading", { title: __("Working out the design…") }) + calculator.render(ctx);
 	const v = reply.verdict || {};
 	const issues = sort_issues(reply.issues);
 	const list = issues.length
@@ -41,7 +43,8 @@ export function render(ctx) {
 		}
 		<section class="fd-card"><header class="fd-card-head"><h3 class="fd-card-title">${esc(__("Schematic"))}</h3></header>
 			${chart_html(reply.charts && reply.charts.schematic_svg, { esc, parser: h.parser, label: __("Schematic"), empty: __("No schematic yet.") })}
-		</section>`;
+		</section>
+		${calculator.render(ctx)}`;
 }
 
 function issue_html(ctx, issue) {

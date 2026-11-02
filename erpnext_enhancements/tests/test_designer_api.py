@@ -103,6 +103,7 @@ def api(monkeypatch):
     frappe._ = lambda msg, *a, **k: msg
     frappe.PermissionError = PermissionError_
     frappe.DoesNotExistError = Thrown
+    frappe.ValidationError = Thrown
 
     def throw(msg, exc=None, title=None):
         raise (exc or Thrown)(msg)
@@ -581,8 +582,9 @@ def test_a_pushed_unit_is_converted_or_flagged(api):
 
 
 def test_a_partial_ai_payload_changes_only_what_it_names(api):
-    wd = importlib.import_module("erpnext_enhancements.water_engineering.api.water_design")
     from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    wd = api  # merge_legacy_payload moved here from api/water_design.py in v1.771.0
 
     existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
     existing["lighting"]["fixtures"] = [{"qty": 2, "watts": 35}]
@@ -602,8 +604,9 @@ def test_a_partial_ai_payload_changes_only_what_it_names(api):
 
 
 def test_a_features_only_payload_keeps_them_in_a_basin_and_a_pump_pick_brings_its_curve(api):
-    wd = importlib.import_module("erpnext_enhancements.water_engineering.api.water_design")
     from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    wd = api  # merge_legacy_payload moved here from api/water_design.py in v1.771.0
 
     existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
     existing["network"]["pumps"][0].update(item="OLD", curve={"points": [{"flow_gpm": 0, "head_ft": 9}]}, hp=1.5)
@@ -618,3 +621,196 @@ def test_a_text_line_on_the_placeholder_item_is_not_a_unit_mismatch(api):
     row = {"item_code": "TEXT-LINE", "qty": 2, "description": "Concrete (2 Cubic Yard)", "uom_note": None}
     built, odd = api._item_row(row, {"TEXT-LINE": {"stock": "Nos", "factors": {}}})
     assert not odd and built["uom"] == "Nos" and built["description"] == "Concrete (2 Cubic Yard)"
+
+
+# ------------------------------------------- the AI tools and the calculator (v1.771.0, phase H)
+
+
+def _stored_design(api, name="WFD-7", model=None, **fields):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    model = model or kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    doc = FakeDoc(doctype="Water Feature Design", name=name, docstatus=0, model_json=json.dumps(model), **fields)
+    api._frappe._store[("Water Feature Design", name)] = doc
+    return doc, model
+
+
+def test_tool_model_takes_a_schema_2_model_whole_and_names_what_it_set_aside(api):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    sent = kits_engine.apply_kit("plaza-interactive-12-jets")
+    model, ignored = api.tool_model(kits_engine.apply_kit("lobby-sheet-wall-8ft"), sent,
+                                    {"basins": [{"length_in": 10}]}, {"static_lift_ft": 4})
+    assert model == sent and model is not sent
+    assert [i.split(" ")[0] for i in ignored] == ["basins", "static_lift_ft"]
+    with pytest.raises(Thrown, match="schema 2"):
+        api.tool_model(None, {"basins": [], "pipe_segments": []})
+    with pytest.raises(Thrown, match="schema 2"):
+        api.tool_model(None, {"schema": 1, "features": []})
+
+
+def test_tool_model_merges_the_old_tables_onto_a_schema_2_design_and_migrates_a_new_one(api):
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    _, existing = _stored_design(api)
+    basin = {"shape": "Rectangular", "length_in": 60, "width_in": 30, "height_in": 12}
+    merged, ignored = api.tool_model(existing, None, {"basins": [basin]}, {"turnover_per_hr": 3})
+    assert merged["basins"][0]["length_in"] == 60 and merged["setup"]["basin"] == "custom"
+    assert merged["features"] == existing["features"] and ignored == ["turnover_per_hr"]
+    same, ignored = api.tool_model(existing, None, {}, {})
+    assert same == existing and ignored == []
+    fresh, ignored = api.tool_model(None, None, {"basins": [basin], "electrical_loads": [{"hp": 1}]},
+                                    {"venue_type": "Decorative Fountain", "hazen_williams_c": 140})
+    assert fresh["schema"] == model_engine.SCHEMA and not model_engine.is_legacy(fresh)
+    assert fresh["basins"] and fresh["acks"] == []
+    assert ignored == ["electrical_loads (the Fountain Designer derives these)", "hazen_williams_c"]
+
+
+def test_tool_save_goes_through_save_design_with_the_record_fields(api):
+    doc, existing = _stored_design(api, design_title="Old")
+    name, ignored = api.tool_save("WFD-7", None, {"basins": [{"length_in": 48, "width_in": 48, "height_in": 12}]},
+                                  {}, {"design_title": "New wall", "project": "PROJ-1", "serial_no": "S1"})
+    saved = FakeDoc.saved[-1]
+    assert name == "WFD-7" and saved is doc
+    assert (saved["design_title"], saved["project"]) == ("New wall", "PROJ-1")
+    assert json.loads(saved["model_json"])["basins"][0]["length_in"] == 48
+    assert ignored == ["serial_no (set it on the record in ERPNext)"]
+    new_name, _ = api.tool_save(None, existing, None, None, {"design_title": "Fresh"})
+    assert new_name == FakeDoc.saved[-1]["name"] and FakeDoc.saved[-1]["design_title"] == "Fresh"
+    api._frappe.db.exists = lambda *a, **k: False
+    with pytest.raises(Thrown, match="not found"):
+        api.tool_save("WFD-404", existing)
+    doc["docstatus"] = 1
+    api._frappe.db.exists = lambda *a, **k: True
+    with pytest.raises(Thrown, match="issued"):
+        api.tool_save("WFD-7", existing)
+
+
+def test_design_status_is_what_the_page_shows_with_its_links(api, monkeypatch):
+    issues = [{"key": "A|x", "severity": "warning", "title": "Trough surge", "section": "basin"}]
+    readiness = {"sections": [], "calc_ready": True, "issue_ready": False}
+    results = {"verdict": {"level": "warn", "headline": "Works, with one warning."},
+               "rollups": {"design_flow_gpm": 120.0, "tdh_ft": 31.5},
+               "results": {"weir_flow": {"value": 120, "unit": "GPM", "formula": "Q = 3.33 L H^1.5", "steps": ["a"],
+                                         "citations": ["DOC-0049"], "warnings": []}}}
+    _stored_design(api, design_issues_json=json.dumps(issues), readiness_json=json.dumps(readiness),
+                   results_json=json.dumps(results), warning_count=1, design_flow_gpm=120.0, selected_pump=None,
+                   next_inputs_needed="Pump\nLighting", bom=[Row(item="P1")])
+    monkeypatch.setattr(api, "print_formats", lambda: [
+        {"key": "report", "label": "Design report", "print_format": "Water Feature Design - Design Report"},
+        {"key": "packet", "label": "Submittal packet", "print_format": "Water Feature Design - Submittal Packet"}])
+    state = api.design_status("WFD-7")
+    assert state["verdict"] == results["verdict"] and state["rollups"] == results["rollups"]
+    assert state["issues"] == issues and state["readiness"] == readiness and state["warning_count"] == 1
+    assert state["next_inputs_needed"] == ["Pump", "Lighting"] and state["counts"]["bom_lines"] == 1
+    assert state["designer_url"] == "/desk/fountain-designer?design=WFD-7&step=review"
+    assert [p["key"] for p in state["prints"]] == ["report"]
+    assert state["packet"]["url"].startswith("/printview?doctype=Water+Feature+Design&name=WFD-7&format=")
+    assert state["calc_results"][0]["calc"] == "weir_flow" and "model" not in state
+    assert api.design_status("WFD-7", include_results=False, include_model=True)["model"]["schema"] == 2
+    api._frappe._store[("Water Feature Design", "WFD-7")]["_allowed"] = False
+    with pytest.raises(PermissionError_):
+        api.design_status("WFD-7")
+
+
+def test_design_status_falls_back_to_the_verdict_of_the_stored_issues(api, monkeypatch):
+    monkeypatch.setattr(api, "print_formats", lambda: [])
+    issues = [{"key": "B", "severity": "blocker", "title": "No UV", "section": "treatment"}]
+    _stored_design(api, design_issues_json=json.dumps(issues),
+                   readiness_json=json.dumps({"sections": [], "calc_ready": True, "issue_ready": False}))
+    assert api.design_status("WFD-7")["verdict"]["level"] == "bad"
+
+
+def test_run_calc_dispatches_the_calculator_and_refuses_an_unknown_one(api):
+    out = api.run_calc("weir_flow", json.dumps({"length_ft": 4, "head_in": 0.5}))
+    assert out["calc"] == "weir_flow" and out["value"] > 0 and out["formula"]
+    with pytest.raises(Thrown, match="Unknown calculation"):
+        api.run_calc("no_such_calc", "{}")
+    api._frappe.has_permission = lambda *a, **k: False
+    with pytest.raises(PermissionError_):
+        api.run_calc("weir_flow", "{}")
+
+
+def test_boot_lists_the_calculator_and_the_gate_moved_here(api):
+    from erpnext_enhancements.water_engineering import calculator
+
+    assert [c["key"] for c in api.boot()["calculator"]] == list(calculator.CALCS)
+    assert api.check_permission() is True
+    wd = importlib.import_module("erpnext_enhancements.water_engineering.api.water_design")
+    for name in ("check_permission", "run_calc", "item_pump_curves", "pump_curves", "nozzle_profile_params"):
+        assert getattr(wd, name) is getattr(api, name), name  # deprecated re-exports, the same functions
+    for gone in ("design_state", "save_inputs", "_save_design", "_run_calc", "get_design_issues", "merge_legacy_payload"):
+        assert not hasattr(wd, gone), gone
+
+
+def test_tool_model_converts_an_unconverted_design_before_laying_the_payload_on(api):
+    from erpnext_enhancements.water_engineering.engine import model as model_engine
+
+    stored = {"basins": [{"shape": "Rectangular", "length_in": 96, "width_in": 48, "height_in": 18}],
+              "features": [{"feature_type": "Weir", "weir_length_ft": 4, "head_in": 0.25}],
+              "global_inputs": {}, "acks": [{"issue_key": "K", "note": "ok"}]}
+    assert model_engine.is_legacy(stored)
+    kept, ignored = api.tool_model(stored, None, {}, {})
+    assert kept["schema"] == 2 and kept["basins"][0]["length_in"] == 96 and kept["features"], "a title-only save keeps it"
+    assert kept["acks"] == [{"issue_key": "K", "note": "ok"}] and ignored == []
+    merged, _ = api.tool_model(stored, None, {"basins": [{"shape": "Rectangular", "length_in": 60}]}, {})
+    assert merged["basins"][0]["length_in"] == 60 and merged["features"], "its features survive a basins-only payload"
+
+
+def test_run_calc_reads_unreadable_inputs_as_the_defaults(api):
+    assert api.run_calc("turnover_gpm", "not json")["calc"] == "turnover_gpm"
+    assert api.run_calc("turnover_gpm", "[1, 2]")["calc"] == "turnover_gpm"
+
+
+def test_a_model_sent_without_acks_keeps_the_stored_sign_offs(api):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["acks"] = [{"issue_key": "SURGE|trough", "note": "ok by Logan", "by": "l@x", "on": "2026-11-01"}]
+    sent = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    sent.pop("acks", None)
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == existing["acks"] and "acks" not in sent
+    assert any(i.startswith("acks (") and "1 stored sign-off" in i for i in ignored)
+    sent["acks"] = [{"issue_key": "OTHER", "note": "n"}]
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == [{"issue_key": "OTHER", "note": "n"}] and ignored == [], "acks sent are the model's"
+    sent["acks"] = []
+    model, ignored = api.tool_model(existing, sent)
+    assert model["acks"] == [] and ignored == [], "an empty list withdraws them"
+
+
+def test_new_piping_without_pumps_keeps_the_pumps_pick_curve_and_control(api):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    existing = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    existing["network"]["pumps"][0].update(item="PUMP-A", curve="PUMP-A", control="vfd", setpoint_psi=30)
+    feature = {"feature_type": "Weir", "weir_length_ft": 6, "head_in": 0.25}
+    segs = [{"line_type": "Discharge", "nominal_size": '2"', "pipe_length_ft": 30}]
+    model, _ = api.merge_legacy_payload(existing, {"features": [feature], "pipe_segments": segs}, {})
+    pump = model["network"]["pumps"][0]
+    assert (pump["item"], pump["curve"], pump["control"], pump["setpoint_psi"]) == ("PUMP-A", "PUMP-A", "vfd", 30)
+    assert model["setup"]["piping"] == "custom" and model["network"]["segments"] != existing["network"]["segments"]
+    ids = {n.get("pump") for n in model["network"]["nodes"] if n.get("pump")} | {pump["id"]}
+    assert pump["id"] in ids
+    model, _ = api.merge_legacy_payload(existing, {"features": [feature], "pipe_segments": segs,
+                                                   "pumps": [{"pump_item": "PUMP-B"}]}, {})
+    assert model["network"]["pumps"][0]["item"] == "PUMP-B", "a pump sent still wins"
+
+
+def test_the_canvas_carries_each_segments_velocity_band_and_the_worst(api, monkeypatch):
+    from erpnext_enhancements.water_engineering.engine import kits as kits_engine
+
+    monkeypatch.setattr(api, "pump_curves", lambda codes: {})
+    model = kits_engine.apply_kit("lobby-sheet-wall-8ft")
+    segs = model["network"]["segments"]
+    assert len(segs) >= 2
+    values = {segs[0]["id"]: {"velocity_fps": 3.0, "size": '2"'}, segs[1]["id"]: {"velocity_fps": 9.5, "size": '2"'}}
+    doc, _ = _stored_design(api, model=model, results_json=json.dumps({"values": {"segments": values}}))
+    canvas = api.canvas_state(doc)
+    bands = [s["velocity_status"] for s in canvas["segments"][:2]]
+    assert bands == ["Okay", "Exceeds Legal Limit"]
+    assert canvas["worst_status"] == "Exceeds Legal Limit"
+    assert api.segment_velocity_status({"line": "suction"}, {"velocity_fps": 5.0, "size": '2"'}) == "Increase Size"
+    assert api.segment_velocity_status({}, {"velocity_fps": None}) == ""
+    assert api.segment_velocity_status({"material": "HDPE"}, {"velocity_fps": 7.0, "size": '2"'}) == "", "no limits"

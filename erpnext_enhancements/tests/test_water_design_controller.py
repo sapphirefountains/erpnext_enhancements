@@ -4,7 +4,9 @@ Imports the controller under the shared frappe stub (so a syntax/import error fa
 site) and exercises what it does on a save with a fake doc: ``write_derive`` (rollups, the BOM
 with Manual lines kept, the JSON fields, kit/family/mode, the Draft/Derived status),
 ``acks_from_rows``, ``compute_completion_percent`` from the readiness, ``recompute`` on a legacy
-model, and ``legacy_inputs`` + ``engine.model.migrate``, the path the conversion patch takes.
+model, and the conversion patch's ``legacy_inputs`` + ``engine.model.migrate`` (``legacy_inputs`` left
+the controller for ``patches/convert_water_feature_designs_to_model.py`` in v1.771.0, when phase H
+retired the schema-1 child DocTypes and left that patch its only reader).
 The real ``doc.save()`` is covered only on a bench.
 
 Run: python -m unittest erpnext_enhancements.tests.test_water_design_controller -v
@@ -179,6 +181,12 @@ class RecomputeTests(unittest.TestCase):
 class LegacyConversionTests(unittest.TestCase):
     """The conversion patch's path: the stored child rows -> legacy_inputs -> model.migrate."""
 
+    @classmethod
+    def setUpClass(cls):
+        from erpnext_enhancements.patches import convert_water_feature_designs_to_model as patch
+
+        cls.patch = patch
+
     def test_rows_become_a_schema_2_model(self):
         from erpnext_enhancements.water_engineering.engine import model as model_engine
 
@@ -193,7 +201,7 @@ class LegacyConversionTests(unittest.TestCase):
             ],
             "pumps": [{"pump_item": "PUMP-FIT"}],
         }
-        model = model_engine.migrate(wfd.legacy_inputs(parent, rows))
+        model = model_engine.migrate(self.patch.legacy_inputs(parent, rows))
         self.assertEqual(model["schema"], 2)
         self.assertEqual(model["basins"][0]["length_in"], 120)
         self.assertEqual(model["features"][0]["family"], "weir")
@@ -207,9 +215,12 @@ class LegacyConversionTests(unittest.TestCase):
     def test_an_empty_record_still_converts(self):
         from erpnext_enhancements.water_engineering.engine import model as model_engine
 
-        model = model_engine.migrate(wfd.legacy_inputs({}, {}))
+        model = model_engine.migrate(self.patch.legacy_inputs({}, {}))
         self.assertEqual(model["schema"], 2)
         self.assertEqual(model["features"], [])
+
+    def test_the_controller_no_longer_reads_schema_1_rows(self):
+        self.assertFalse(hasattr(wfd, "legacy_inputs"))
 
 
 if __name__ == "__main__":

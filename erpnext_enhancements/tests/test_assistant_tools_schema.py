@@ -501,6 +501,122 @@ class TestAssistantSkillsManifest(unittest.TestCase):
                 self.assertLess(len(content), 10_000, f"{skill_id}: content too large")
 
 
+class TestWaterToolsOnTheFountainDesigner(unittest.TestCase):
+    """The three water tools after phase H of the Fountain Designer rebuild (v1.771.0): they call
+    ``api/designer.py`` (the page's own API), ``save_water_design`` takes a schema-2 ``model`` or the
+    old tables, and ``water_calc`` lists exactly the calculator's calcs. ``execute`` is driven with a
+    stand-in for ``api.designer``, so what is checked here is the routing; the helpers it routes to
+    are tested against schema-2 models in ``test_designer_api``."""
+
+    DESIGNER = "erpnext_enhancements.water_engineering.api.designer"
+
+    @classmethod
+    def setUpClass(cls):
+        install_stubs()
+        from erpnext_enhancements.assistant_tools import save_water_design, water_calc, water_design_status
+
+        cls.save_mod, cls.calc_mod, cls.status_mod = save_water_design, water_calc, water_design_status
+
+    def _designer(self, **attrs):
+        """A stand-in ``api.designer`` module in sys.modules for the length of one test."""
+        from unittest import mock
+
+        fake = types.ModuleType(self.DESIGNER)
+        fake.calls = []
+        for name, value in attrs.items():
+            setattr(fake, name, value)
+        pkg = sys.modules.get("erpnext_enhancements.water_engineering.api")
+        patches = [mock.patch.dict(sys.modules, {self.DESIGNER: fake})]
+        if pkg is not None:
+            patches.append(mock.patch.object(pkg, "designer", fake, create=True))
+        frappe = sys.modules["frappe"]
+        db = types.SimpleNamespace(commit=lambda: fake.calls.append(("commit",)))
+        patches += [
+            mock.patch.object(frappe, "has_permission", lambda *a, **k: True, create=True),
+            mock.patch.object(frappe, "db", db, create=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return fake
+
+    def test_water_calc_lists_exactly_the_calculators_calcs(self):
+        from erpnext_enhancements.water_engineering import calculator
+
+        enum = self.calc_mod.WaterCalc().inputSchema["properties"]["calc"]["enum"]
+        self.assertEqual(enum, list(calculator.CALCS))
+        self.assertEqual(len(enum), len(set(enum)))
+
+    def test_no_water_tool_reaches_the_retired_api(self):
+        for mod in (self.save_mod, self.calc_mod, self.status_mod):
+            with self.subTest(tool=mod.__name__):
+                imported = set()
+                for node in ast.walk(ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))):
+                    if isinstance(node, ast.ImportFrom):
+                        imported |= {f"{node.module}.{a.name}" for a in node.names} | {node.module}
+                self.assertFalse({m for m in imported if "api.water_design" in m}, "the retired api")
+                self.assertTrue({m for m in imported if m.startswith(self.DESIGNER)}, "api.designer")
+
+    def test_save_schema_takes_a_model_and_the_old_tables(self):
+        props = self.save_mod.SaveWaterDesign().inputSchema["properties"]
+        self.assertEqual(props["model"]["type"], "object")
+        for key in ("design", "design_title", "project", "opportunity", "customer", "global_inputs",
+                    "basins", "features", "pipe_segments", "pumps", "electrical_loads"):
+            self.assertIn(key, props)
+        self.assertIn("include_model", self.status_mod.WaterDesignStatus().inputSchema["properties"])
+
+    def test_save_routes_the_old_payload_and_names_what_it_ignored(self):
+        def tool_save(name, model, tables, inputs, fields):
+            fake.calls.append(("tool_save", name, model, tables, inputs, fields))
+            return "WFD-1", ["static_lift_ft"]
+
+        def design_status(name, include_results=True, include_model=False):
+            fake.calls.append(("status", name, include_results, include_model))
+            return {"design": name, "verdict": {"level": "good"}, "designer_url": "/desk/fountain-designer?design=" + name}
+
+        fake = self._designer(tool_save=tool_save, design_status=design_status)
+        out = self.save_mod.SaveWaterDesign().execute({
+            "project": "PROJ-1",
+            "global_inputs": {"design_title": "Lobby wall", "status": "Reviewed", "static_lift_ft": 6, "venue_type": "Decorative Fountain"},
+            "basins": [{"shape": "Rectangular", "length_in": 120}],
+            "features": None,
+        })
+        self.assertEqual(fake.calls[0], (
+            "tool_save", None, None, {"basins": [{"shape": "Rectangular", "length_in": 120}]},
+            {"static_lift_ft": 6, "venue_type": "Decorative Fountain"}, {"design_title": "Lobby wall", "project": "PROJ-1"},
+        ))
+        self.assertEqual(fake.calls[1], ("commit",))
+        self.assertEqual(fake.calls[2], ("status", "WFD-1", False, False))
+        self.assertTrue(out["success"] and out["created"])
+        self.assertEqual(out["verdict"], {"level": "good"})
+        self.assertEqual(out["ignored"][0], "static_lift_ft")
+        self.assertTrue(out["ignored"][1].startswith("status"), "a status sent is said to be ignored")
+
+    def test_save_passes_a_schema_2_model_through_for_an_update(self):
+        def tool_save(name, model, tables, inputs, fields):
+            fake.calls.append((name, model, tables))
+            return name, []
+
+        fake = self._designer(tool_save=tool_save, design_status=lambda n, **k: {"design": n})
+        model = {"schema": 2, "mode": "full", "features": [], "basins": []}
+        out = self.save_mod.SaveWaterDesign().execute({"design": "WFD-9", "model": model})
+        self.assertEqual(fake.calls[0], ("WFD-9", model, {}))
+        self.assertEqual((out["design"], out["created"], out["ignored"]), ("WFD-9", False, []))
+
+    def test_status_reads_one_design_or_lists_them(self):
+        fake = self._designer(
+            design_status=lambda n, **k: (fake.calls.append(("one", n, k)), {"design": n})[1],
+            design_list=lambda project=None: (fake.calls.append(("list", project)), {"designs": []})[1],
+        )
+        tool = self.status_mod.WaterDesignStatus()
+        self.assertEqual(tool.execute({"design": "WFD-1", "include_model": True})["design"], "WFD-1")
+        self.assertEqual(tool.execute({"project": "PROJ-1"}), {"success": True, "designs": []})
+        self.assertEqual(fake.calls, [
+            ("one", "WFD-1", {"include_results": True, "include_model": True}),
+            ("list", "PROJ-1"),
+        ])
+
+
 class TestFacOptionalInvariant(unittest.TestCase):
     def test_no_app_code_imports_assistant_tools_or_fac(self):
         """erpnext_enhancements must keep working on sites without FAC: only
