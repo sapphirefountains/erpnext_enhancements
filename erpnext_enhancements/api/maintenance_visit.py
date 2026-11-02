@@ -255,7 +255,7 @@ def checked_visit_date(value, scheduled=None):
     A visit with a ``scheduled`` date may always be dated on or after that day, however long
     ago it was. The window is for unscheduled work, where a mistyped year would roll the
     contract cadence to a nonsense date; a scheduled visit's own day is not a typo. Until
-    v1.773.1 the window refused it: PRJ-00744-2026-V002, scheduled 96 days back, could only be
+    v1.774.1 the window refused it: PRJ-00744-2026-V002, scheduled 96 days back, could only be
     dated on the desk form (Nik, 2026-11-02).
 
     A Maintenance Reviewer has no window: the desk form already lets them set any date, and

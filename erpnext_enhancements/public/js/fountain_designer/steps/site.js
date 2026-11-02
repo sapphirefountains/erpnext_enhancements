@@ -2,6 +2,8 @@
 // hardness, seismic design category and utility rates from them (ladder step 0) wherever they are blank,
 // and never over a value typed here. The "Codes and jurisdiction" card says what the state enforces: the
 // code editions, the health authority, the venues it regulates, plan review and licensing (phase J).
+// The address field suggests Google addresses as it is typed (app.js mount_address, through the shared
+// address_autocomplete widget): a pick sets the point and, unless a state was picked by hand, the state.
 
 import { card, field, stage_head } from "../ui.js";
 
@@ -87,16 +89,28 @@ export function render(ctx) {
 		label: "Address",
 		kind: "text",
 		value: site.address || "",
-		hint: "Street address or the nearest intersection. The elevation, seismic values and temperatures come from it.",
+		hint: "Start typing and pick the address from the list: the state follows it, and the elevation, seismic values and temperatures come from it.",
 	});
+	// A state the address gave that the table does not have (Alaska, Hawaii, DC) is shown as itself, so the
+	// select does not read "Pick the state" over a design that has one; the codes card says it has no data.
+	const states = opts.jurisdictions || [];
+	const code = String(site.jurisdiction || "").trim();
+	const choices = code && !states.some((o) => String(o && typeof o === "object" ? o.value : o) === code)
+		? states.concat([{ value: code, label: __("{0} (no data)", [code]) }])
+		: states;
+	const from_address = Boolean(code && site.sources && site.sources.jurisdiction && site.sources.jurisdiction.src === "lookup");
 	const juris = field(h, {
 		path: "site.jurisdiction",
 		label: "State",
 		kind: "select",
-		options: opts.jurisdictions || [],
+		options: choices,
 		value: site.jurisdiction,
 		blank: "Pick the state",
-		hint: full ? "" : "Its codes, health rules and climate defaults apply.",
+		hint: from_address
+			? "From the address. Pick another state to override it."
+			: full
+				? ""
+				: "Its codes, health rules and climate defaults apply.",
 	});
 	const codes = card(h, {
 		id: "site-codes",

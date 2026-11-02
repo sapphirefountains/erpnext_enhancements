@@ -7,8 +7,8 @@ the typed issues, readiness, the verdict, the BOM, the charts and the outputs.
 
 The ladder, and the engine each step calls:
 
-* 0 site: blank site fields from the address lookups the caller passes (``site_lookup``: the point,
-  the elevation and the USGS seismic values), then the state's row of the jurisdiction table and the
+* 0 site: blank site fields from the address lookups the caller passes (``site_lookup``: the state,
+  the point, the elevation and the USGS seismic values), then the state's row of the jurisdiction table and the
   house-rule utility rates; ``regulated`` from the state's rules (pools, spas, interactive features);
   and the ``jurisdiction`` result (code editions, agency, regulated venues, licensing) the prints read.
 * 1 basins: ``basin.basin_volume``.
@@ -70,6 +70,9 @@ SITE_LOOKUPS = (
     "lat", "lng", "elevation_ft", "air_temp_f", "water_temp_f", "frost_depth_in", "hardness_ppm", "kwh_rate",
     "water_rate_per_ccf", "seismic_sdc", "sds", "sd1", "winterize",
 )
+# The state is the engine's to fill too, from the address's geocoded state code (v1.774.0), but only
+# from a lookup and before everything else: it decides which defaults the fields above take.
+SITE_OWNED = (*SITE_LOOKUPS, "jurisdiction")
 # The ones the jurisdiction table gives, by the name its climate block uses.
 CLIMATE_KEYS = {"elevation_ft": "elevation_ft", "air_temp_f": "air_temp_f", "water_temp_f": "water_temp_f",
                 "frost_depth_in": "frost_depth_in", "hardness_ppm": "hardness_ppm", "seismic_sdc": "seismic_default",
@@ -216,6 +219,8 @@ def _site_value(key: str, value: Any) -> Any:
     """A site value in its kind (a number, the SDC letter, the winterize flag), or None when blank or junk."""
     if key == "winterize":
         return value if isinstance(value, bool) else None
+    if key == "jurisdiction":
+        return str(value or "").strip().upper() or None
     if key == "seismic_sdc":
         letter = str(value or "").strip().upper()
         return letter if letter in SDC_VALUES else None
@@ -235,7 +240,7 @@ def engine_owned(site: dict, key: str) -> str | None:
     client), so it is theirs. A blanked field with a source is the engine's to fill again."""
     sources = site.get("sources") if isinstance(site.get("sources"), dict) else {}
     rec = sources.get(key)
-    if key not in SITE_LOOKUPS or not isinstance(rec, dict) or not rec.get("src"):
+    if key not in SITE_OWNED or not isinstance(rec, dict) or not rec.get("src"):
         return None
     have = _site_value(key, site.get(key))
     if have is None or have == _site_value(key, rec.get("v")):
@@ -246,7 +251,9 @@ def engine_owned(site: dict, key: str) -> str | None:
 def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[dict, dict]:
     """Fill the site fields the designer did not type: the caller's address lookups first (the geocoded
     point, the elevation, the USGS seismic values), then the state's row of the jurisdiction table, then
-    the house-rule utility rates. Returns (site, CalcResult dict naming the source of each value).
+    the house-rule utility rates. Returns (site, CalcResult dict naming the source of each value). The
+    state itself comes first, from the lookup's ``jurisdiction`` (the geocoded address's state code),
+    where the designer picked none or the engine filled it; a state they picked is never replaced.
 
     ``site.sources`` records which values the engine filled and what it wrote (``{key: {"src", "v"}}``,
     :func:`engine_owned`): a value with no source, or one changed since the engine wrote it, is the
@@ -259,12 +266,7 @@ def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[di
     out = dict(site or {})
     lookup = dict(lookup or {})
     lookup_cites = lookup.pop("cites", None) or {}
-    owned = {k: src for k in SITE_LOOKUPS if (src := engine_owned(out, k))}
-    entry = juris.entry_for(out)
-    state = juris.state_name(out, entry)
-    climate = juris.climate(entry)
-    climate_cites = climate.get("cites") if isinstance(climate.get("cites"), dict) else {}
-    house = {"kwh_rate": rules.get("kwh_rate"), "water_rate_per_ccf": rules.get("water_rate_per_ccf")}
+    owned = {k: src for k in SITE_OWNED if (src := engine_owned(out, k))}
     shown: dict[str, dict] = {}
     citations: list[str] = []
 
@@ -273,6 +275,23 @@ def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[di
         if text and text not in citations:
             citations.append(text)
         return text
+
+    # The state first, from the geocoded address, where the designer picked none (or the engine did: a new
+    # design's "UT" is tagged ``default`` by the page): it decides the defaults below. A state outside the
+    # table is filled all the same and has no data.
+    picked = _site_value("jurisdiction", out.get("jurisdiction"))
+    fresh_state = _site_value("jurisdiction", lookup.get("jurisdiction"))
+    if picked is None or owned.get("jurisdiction"):
+        if fresh_state is not None:
+            out["jurisdiction"], owned["jurisdiction"] = fresh_state, "lookup"
+        if out.get("jurisdiction") and owned.get("jurisdiction") == "lookup":
+            ref = (lookup_cites.get("jurisdiction") or "address lookup") if fresh_state else "address lookup (an earlier save)"
+            shown["jurisdiction"] = {"value": out["jurisdiction"], "unit": "", "source": owned["jurisdiction"], "ref": cite(ref)}
+    entry = juris.entry_for(out)
+    state = juris.state_name(out, entry)
+    climate = juris.climate(entry)
+    climate_cites = climate.get("cites") if isinstance(climate.get("cites"), dict) else {}
+    house = {"kwh_rate": rules.get("kwh_rate"), "water_rate_per_ccf": rules.get("water_rate_per_ccf")}
 
     for key in SITE_LOOKUPS:
         have = _site_value(key, out.get(key))

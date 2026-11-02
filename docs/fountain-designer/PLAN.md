@@ -341,12 +341,24 @@ state default. The page drops a field's source when the person types it.
 **The lookups** run on a save (the page's per-keystroke derive makes none), each cached a month per
 address or point and ten minutes after a failure, none raising or logging:
 
-- the geocoded point (`workforce.sites.geocode_text`);
+- the geocoded point and, for a United States address, its state (`workforce.sites.geocode_text`, which
+  returns the result's `administrative_area_level_1` and country codes since v1.774.0). The state fills
+  `site.jurisdiction` where it is blank or the engine's (a new design's `UT` is tagged `default`); a state the
+  designer picked is kept. A state the table has no row for (AK, HI, DC) is filled and has no data; a
+  non-US address gives none;
 - Google's elevation at it (`workforce.sites.elevation_at`, the same server key; the Elevation API must
   be enabled on that key);
 - the USGS ASCE 7-22 design values at it (`seismic_lookup`: `sds`, `sd1` and `sdc`, Risk Category II,
   Site Class D). `seismic_sdc` is a site field; `sds` and `sd1` ride in `site.extra`, where the
   structural checks read them.
+
+**The address suggests itself (v1.774.0).** The Site step's address field carries the shared Google Places
+widget (`public/js/global_enhancements/address_autocomplete.js`, its `on_place` option). A pick sets the
+formatted address, the point and the state on the page, tagged as lookups, and saves at once, so the save
+looks up only the elevation and seismic values. The suggestions use the referrer-restricted browser key
+(`Travel Settings.google_maps_api_key`, Places API (New)); every server lookup uses the server key
+(`google_geocoding_api_key`). `save_design` returns the derived site, so what a save looked up shows on the
+page without a reload.
 
 **Next: metro overrides.** A city or county row over the state's, for local code adoption (Arizona,
 Colorado and others adopt codes city by city), local health rules, and climate where one design city
