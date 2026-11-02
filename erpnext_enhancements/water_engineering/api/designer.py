@@ -61,7 +61,10 @@ GEOCODE_RETRY_S = 600
 # USGS address in the phase brief (/ws/designmaps/asce7-22.json) answers 301 to this one by way of
 # plain http, so the current one is called directly.
 USGS_URL = "https://earthquake.usgs.gov/ws/building-codes/asce7-22/calculate"
-USGS_TIMEOUT_S = 10
+# Three lookups run one after another inside a save, so each waits 5 s at most (15 s when all fail; the
+# failure is then cached ten minutes, so the next save does not wait again).
+LOOKUP_TIMEOUT_S = 5
+USGS_TIMEOUT_S = LOOKUP_TIMEOUT_S
 CIT_USGS = ("USGS Seismic Design Web Services, ASCE 7-22, Risk Category II, Site Class D "
             "(https://earthquake.usgs.gov/ws/building-codes/asce7-22/calculate)")
 CIT_ELEVATION = "Google Maps Elevation API at the geocoded point"
@@ -318,9 +321,10 @@ def _cached(key, fetch):
 
 
 def _engine_may_fill(site, key):
-    """True when the derive may write ``site[key]``: it is blank, or the engine filled it (``site.sources``)."""
+    """True when the derive may write ``site[key]``: it is blank, or the engine filled it and nobody has
+    changed it since (``derive.engine_owned``)."""
     if site.get(key) not in (None, ""):
-        return key in (site.get("sources") or {})
+        return derive_mod.engine_owned(site, key) is not None
     return True
 
 
@@ -341,7 +345,7 @@ def geocode_lookup(address):
     def fetch():
         from erpnext_enhancements.workforce.sites import geocode_text
 
-        found, problem = geocode_text(address)
+        found, problem = geocode_text(address, timeout=LOOKUP_TIMEOUT_S)
         point = {"lat": found.get("lat"), "lng": found.get("lng")} if found else {}
         return point, bool(found) or str(problem or "").upper().startswith("ZERO_RESULTS")
 
@@ -353,7 +357,7 @@ def elevation_lookup(lat, lng):
     def fetch():
         from erpnext_enhancements.workforce.sites import elevation_at
 
-        feet, _problem = elevation_at(lat, lng)
+        feet, _problem = elevation_at(lat, lng, timeout=LOOKUP_TIMEOUT_S)
         return ({"elevation_ft": feet} if feet is not None else {}), feet is not None
 
     return _cached(_point_key("elevation", lat, lng), fetch)

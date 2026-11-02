@@ -226,16 +226,19 @@ def licensing_sentence(entry: dict | None) -> str | None:
 
 
 def winterize(site: dict | None, entry: dict | None = None) -> bool:
-    """Does the site freeze? The site's own ``winterize`` when set, else the state's, else a frost depth over
-    zero. With none of them known the answer is yes: a checklist too many is cheap, a burst line is not."""
+    """Does the site freeze? The site's own ``winterize`` when set, else its frost depth (over zero), else
+    the state's flag. With none of them known the answer is yes: a checklist too many is cheap, a burst line
+    is not. ``derive.derive_site`` always sets ``winterize``, by the same order for a typed frost depth."""
     s = _d(site)
     if isinstance(s.get("winterize"), bool):
         return s["winterize"]
+    frost = _num(s.get("frost_depth_in"))
+    if frost is not None:
+        return frost > 0
     row = entry if entry is not None else entry_for(site)
     if isinstance(climate(row).get("winterize"), bool):
         return climate(row)["winterize"]
-    frost = _num(s.get("frost_depth_in"))
-    return True if frost is None else frost > 0
+    return True
 
 
 def dry_climate(site: dict | None, entry: dict | None = None) -> bool | None:

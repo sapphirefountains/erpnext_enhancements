@@ -601,20 +601,21 @@ await test("clear_site_lookups blanks every looked-up field and keeps the rest",
 
 await test("phase J: an engine-filled site value follows the engine, a typed one stays", () => {
 	let mine = M.model_from_kit(lobby_kit, "full");
+	const src = (v) => ({ src: "default", v });
 	mine = M.set_in(mine, "site", Object.assign({}, mine.site, { elevation_ft: 4300, frost_depth_in: 30, air_temp_f: 95,
-		sources: { elevation_ft: "default", frost_depth_in: "default", air_temp_f: "default" } }));
+		sources: { elevation_ft: src(4300), frost_depth_in: src(30), air_temp_f: src(95) } }));
 	const typed = M.edit(mine, "site.air_temp_f", 100);
 	assert.equal(typed.site.sources.air_temp_f, undefined, "typing a value takes it off the engine");
 	assert.equal(typed.setup.features, mine.setup.features, "a site edit pins no section");
 	// the reply to that model in another state: the engine's values for it, one it has no figure for
 	// (blanked, its source gone), and the typed value as it was sent
 	const derived = JSON.parse(JSON.stringify(typed));
-	Object.assign(derived.site, { jurisdiction: "AZ", elevation_ft: 1100, frost_depth_in: null, sources: { elevation_ft: "default" } });
+	Object.assign(derived.site, { jurisdiction: "AZ", elevation_ft: 1100, frost_depth_in: null, sources: { elevation_ft: src(1100) } });
 	const out = M.merge_derived(typed, derived);
 	assert.equal(out.site.elevation_ft, 1100, "an engine value follows the new state");
 	assert.equal(out.site.frost_depth_in, null, "one the new state lacks is blanked, not left from the old state");
 	assert.equal(out.site.air_temp_f, 100, "the typed value stays");
-	assert.deepEqual(out.site.sources, { elevation_ft: "default" }, "the reply's record replaces ours");
+	assert.deepEqual(out.site.sources, { elevation_ft: src(1100) }, "the reply's record replaces ours");
 	const none = M.merge_derived(out, Object.assign({}, derived, { site: Object.assign({}, derived.site, { sources: undefined }) }));
 	assert.equal(none.site.elevation_ft, 1100);
 	assert.equal(none.site.sources, null, "no record left: no sources");
@@ -622,13 +623,14 @@ await test("phase J: an engine-filled site value follows the engine, a typed one
 	for (const key of ["seismic_sdc", "sds", "sd1", "winterize"]) assert.ok(M.SITE_LOOKUPS.includes(key), key);
 	// full mode's answer to a new address: only what the lookups filled goes
 	const looked = M.set_in(mine, "site", Object.assign({}, mine.site, { lat: 40.7, lng: -111.9, elevation_ft: 4226, hardness_ppm: 300,
-		sources: { lat: "lookup", lng: "lookup", elevation_ft: "lookup", frost_depth_in: "default" } }));
+		sources: { lat: { src: "lookup", v: 40.7 }, lng: { src: "lookup", v: -111.9 }, elevation_ft: { src: "lookup", v: 4226 },
+			frost_depth_in: src(30) } }));
 	const moved = M.clear_looked_up(looked);
 	assert.equal(moved.site.lat, null);
 	assert.equal(moved.site.elevation_ft, null);
 	assert.equal(moved.site.hardness_ppm, 300, "a typed value stays");
 	assert.equal(moved.site.frost_depth_in, 30, "a state default stays");
-	assert.deepEqual(moved.site.sources, { frost_depth_in: "default" });
+	assert.deepEqual(moved.site.sources, { frost_depth_in: src(30) });
 });
 
 console.log("charts");

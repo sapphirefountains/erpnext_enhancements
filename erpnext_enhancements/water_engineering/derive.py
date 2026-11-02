@@ -227,23 +227,38 @@ def _show(value: Any) -> str:
     return f"{value:g}" if isinstance(value, float) else str(value)
 
 
+def engine_owned(site: dict, key: str) -> str | None:
+    """Who filled ``site[key]`` (``lookup``, ``default``, ``house_rule``, ``rule``), or None when it is the
+    designer's. ``site.sources[key]`` is ``{"src", "v"}``, the value the engine wrote; a field holding any
+    other value was changed since by someone (the page, the ``save_water_design`` tool, a script, an older
+    client), so it is theirs. A blanked field with a source is the engine's to fill again."""
+    sources = site.get("sources") if isinstance(site.get("sources"), dict) else {}
+    rec = sources.get(key)
+    if key not in SITE_LOOKUPS or not isinstance(rec, dict) or not rec.get("src"):
+        return None
+    have = _site_value(key, site.get(key))
+    if have is None or have == _site_value(key, rec.get("v")):
+        return str(rec["src"])
+    return None
+
+
 def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[dict, dict]:
     """Fill the site fields the designer did not type: the caller's address lookups first (the geocoded
     point, the elevation, the USGS seismic values), then the state's row of the jurisdiction table, then
     the house-rule utility rates. Returns (site, CalcResult dict naming the source of each value).
 
-    ``site.sources`` records which values the engine filled (``lookup``, ``default``, ``house_rule``): a
-    value with no source is the designer's and is never touched; one with a source is the engine's to
-    refresh, so a new state's climate replaces the old state's, and a lookup made on a save replaces a
-    state default. A looked-up value stays until a new lookup answers (the page's own derive makes
-    none). An engine value whose source no longer has one (a state with no frost depth on file) is
-    blanked rather than left standing from the old state. The page drops a field's source when the
-    designer types it (``public/js/fountain_designer/model.js``)."""
+    ``site.sources`` records which values the engine filled and what it wrote (``{key: {"src", "v"}}``,
+    :func:`engine_owned`): a value with no source, or one changed since the engine wrote it, is the
+    designer's and is never touched; one the engine still owns is refreshed, so a new state's climate
+    replaces the old state's, and a lookup made on a save replaces a state default. A looked-up value
+    stays until a new lookup answers (the page's own derive makes none). An engine value whose source no
+    longer has one (a state with no frost depth on file) is blanked rather than left standing from the
+    old state. ``winterize`` follows a frost depth the designer typed (``rule``): 0 or less means the site
+    does not freeze, whatever the state's design city does."""
     out = dict(site or {})
     lookup = dict(lookup or {})
     lookup_cites = lookup.pop("cites", None) or {}
-    owned = {k: v for k, v in (out.get("sources") or {}).items() if k in SITE_LOOKUPS} \
-        if isinstance(out.get("sources"), dict) else {}
+    owned = {k: src for k in SITE_LOOKUPS if (src := engine_owned(out, k))}
     entry = juris.entry_for(out)
     state = juris.state_name(out, entry)
     climate = juris.climate(entry)
@@ -283,8 +298,16 @@ def derive_site(site: dict, rules: dict, lookup: dict | None = None) -> tuple[di
         elif owner:
             out[key] = None
             owned.pop(key, None)
+    # A frost depth the designer typed decides whether the site freezes, unless they ticked Winterize too.
+    frost = _site_value("frost_depth_in", out.get("frost_depth_in"))
+    if frost is not None and "frost_depth_in" not in owned and \
+            (owned.get("winterize") or _site_value("winterize", out.get("winterize")) is None):
+        out["winterize"] = frost > 0
+        owned["winterize"] = "rule"
+        shown["winterize"] = {"value": out["winterize"], "unit": "", "source": "rule",
+                              "ref": cite("the frost depth typed for the site (0 or less: it does not freeze)")}
     if owned:
-        out["sources"] = owned
+        out["sources"] = {k: {"src": src, "v": out.get(k)} for k, src in owned.items()}
     else:
         out.pop("sources", None)
     out["regulated"] = regulated_site(out)

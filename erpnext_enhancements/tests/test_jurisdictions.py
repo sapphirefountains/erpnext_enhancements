@@ -171,7 +171,8 @@ def test_climate_defaults_come_from_the_states_row(states):
     assert (site["elevation_ft"], site["air_temp_f"], site["water_temp_f"]) == (50, 92, 80)
     assert (site["frost_depth_in"], site["hardness_ppm"], site["seismic_sdc"], site["winterize"]) == (0, 120, "A", False)
     assert site["kwh_rate"] == 0.12
-    assert site["sources"]["elevation_ft"] == "default" and site["sources"]["kwh_rate"] == "house_rule"
+    assert site["sources"]["elevation_ft"] == {"src": "default", "v": 50}
+    assert site["sources"]["kwh_rate"] == {"src": "house_rule", "v": 0.12}
     assert result["inputs"]["frost_depth_in"]["ref"] == "ZZ frost cite"
     assert "ZZ elevation cite" in result["citations"] and "ZZ seismic cite" in result["citations"]
     # the house rates are Salt Lake City's: a site elsewhere is told to type its own
@@ -224,15 +225,80 @@ def test_lookups_beat_the_state_and_persist_until_a_new_lookup(states):
               "cites": {"elevation_ft": "Google elevation", "sds": "USGS"}}
     site, result = derive.derive_site({"jurisdiction": "ZZ"}, {}, lookup)
     assert (site["elevation_ft"], site["seismic_sdc"], site["sds"]) == (1086.0, "B", 0.18)
-    assert site["sources"]["elevation_ft"] == "lookup" and result["inputs"]["elevation_ft"]["ref"] == "Google elevation"
+    assert site["sources"]["elevation_ft"]["src"] == "lookup" and result["inputs"]["elevation_ft"]["ref"] == "Google elevation"
     again, result = derive.derive_site(site, {})  # the page's derive: no lookup
-    assert again["elevation_ft"] == 1086.0 and again["sources"]["elevation_ft"] == "lookup"
+    assert again["elevation_ft"] == 1086.0 and again["sources"]["elevation_ft"]["src"] == "lookup"
     assert result["inputs"]["elevation_ft"]["source"] == "lookup"
 
 
 def test_a_junk_seismic_category_is_ignored(states):
     site, _ = derive.derive_site({"jurisdiction": "ZZ"}, {}, {"seismic_sdc": "Z9"})
-    assert site["seismic_sdc"] == "A" and site["sources"]["seismic_sdc"] == "default"
+    assert site["seismic_sdc"] == "A" and site["sources"]["seismic_sdc"]["src"] == "default"
+
+
+def test_a_value_changed_by_any_writer_is_the_designers(states):
+    """The page drops a typed field's source, but other writers (the save_water_design tool, a script, an
+    older client) keep ``sources`` as they read it. A value that is no longer what the engine wrote is theirs."""
+    ut, _ = derive.derive_site({"jurisdiction": "UT"}, {})
+    assert ut["elevation_ft"] == 4300 and ut["sources"]["elevation_ft"] == {"src": "default", "v": 4300}
+    edited = dict(ut, elevation_ft=5000)  # sources kept as read
+    site, result = derive.derive_site(edited, {})
+    assert site["elevation_ft"] == 5000 and "elevation_ft" not in site["sources"]
+    assert "elevation_ft" not in result["inputs"]
+    assert derive.engine_owned(edited, "elevation_ft") is None
+    assert derive.engine_owned(ut, "elevation_ft") == "default"
+    # a source in the old string form, or for a field the engine does not fill, owns nothing
+    assert derive.engine_owned({"elevation_ft": 1, "sources": {"elevation_ft": "default"}}, "elevation_ft") is None
+    assert derive.engine_owned({"address": "x", "sources": {"address": {"src": "default", "v": "x"}}}, "address") is None
+    # the state changes: an untouched default follows it, the edited value stays
+    moved, _ = derive.derive_site(dict(site, jurisdiction="ZZ"), {})
+    assert moved["elevation_ft"] == 5000 and moved["frost_depth_in"] == 0
+
+
+@pytest.mark.parametrize("code, frost, winterize", [("UT", 0, False), ("UT", -1, False), ("ZZ", 24, True), ("UT", 12, True)])
+def test_a_typed_frost_depth_decides_whether_the_site_freezes(states, code, frost, winterize):
+    site, result = derive.derive_site({"jurisdiction": code, "frost_depth_in": frost}, {})
+    assert site["winterize"] is winterize
+    assert site["sources"]["winterize"] == {"src": "rule", "v": winterize}
+    assert result["inputs"]["winterize"]["source"] == "rule"
+    assert juris.winterize(site) is winterize
+
+
+def test_a_ticked_winterize_beats_the_frost_depth_and_a_state_default_frost_does_not_count(states):
+    typed, _ = derive.derive_site({"jurisdiction": "UT", "frost_depth_in": 0, "winterize": True}, {})
+    assert typed["winterize"] is True and "winterize" not in typed.get("sources", {})
+    default, _ = derive.derive_site({"jurisdiction": "UT"}, {})
+    assert default["winterize"] is True and default["sources"]["winterize"]["src"] == "default"
+    # the designer then types 0 in: winterization goes off on the next derive, with no other edit
+    later, _ = derive.derive_site(dict(default, frost_depth_in=0), {})
+    assert later["winterize"] is False and later["sources"]["winterize"]["src"] == "rule"
+
+
+def test_a_site_frost_depth_beats_the_states_flag_without_derive_site(states):
+    """Callers that hand a site straight to the winterization module get the same order derive_site uses."""
+    assert juris.winterize({"jurisdiction": "UT", "frost_depth_in": 0}) is False
+    assert juris.winterize({"jurisdiction": "ZZ", "frost_depth_in": 18}) is True
+    assert juris.winterize({"jurisdiction": "UT"}) is True and juris.winterize({"jurisdiction": "ZZ"}) is False
+    model = {"site": {"jurisdiction": "UT", "frost_depth_in": 0}, "features": [], "network": {}}
+    assert codes_of(winterization.checks(model)) == {"WINTER_NOT_NEEDED": "info"}
+
+
+def test_the_asce_7_22_note_only_for_looked_up_seismic_values(states):
+    model = kits.apply_kit("lobby-sheet-wall-8ft")
+    model["site"].update(sds=1.09, sd1=0.83, sources={"sds": {"src": "lookup", "v": 1.09}, "sd1": {"src": "lookup", "v": 0.83}})
+    looked = structural_takeoff(model)["seismic"]["warnings"]
+    assert any("ASCE 7-22" in w for w in looked)
+    model["site"].pop("sources")  # typed from a report
+    assert not any("ASCE 7-22" in w for w in structural_takeoff(model)["seismic"]["warnings"])
+
+
+def test_the_derive_drops_winterization_for_a_typed_zero_frost_depth_in_utah(states):
+    model = kits.apply_kit("lobby-sheet-wall-8ft")
+    model["site"]["frost_depth_in"] = 0
+    out = derive.derive_model(model)
+    assert out["model"]["site"]["winterize"] is False
+    assert out["outputs"]["winterization"]["needed"] is False
+    assert "WINTER_NOT_NEEDED" in {i["code"] for i in out["issues"]}
 
 
 # ------------------------------------------------------------------------- regulated_site

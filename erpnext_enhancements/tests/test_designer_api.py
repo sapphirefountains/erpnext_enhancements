@@ -581,15 +581,17 @@ def _raise(message):
 
 def test_a_geocode_failure_is_cached_briefly(api, monkeypatch):
     stored = _ttls(api)
-    sites = _sites(monkeypatch, elevation_at=lambda lat, lng: (None, "REQUEST_DENIED"))
+    sites = _sites(monkeypatch, elevation_at=lambda lat, lng, **k: (None, "REQUEST_DENIED"))
     for problem, ttl in (("OVER_QUERY_LIMIT", api.GEOCODE_RETRY_S), ("ZERO_RESULTS", api.GEOCODE_CACHE_S)):
-        sites.geocode_text = lambda address, problem=problem: (None, problem)
+        sites.geocode_text = lambda address, problem=problem, **k: (None, problem)
         assert api._real_site_lookup({"address": "1 Main St"}) is None
         assert _ttl(stored, "geocode") == ttl
-    sites.geocode_text = lambda address: ({"lat": 40.7, "lng": -111.9}, None)
+    seen = []
+    sites.geocode_text = lambda address, **k: seen.append(k) or ({"lat": 40.7, "lng": -111.9}, None)
     found = api._real_site_lookup({"address": "2 Main St"})
     assert (found["lat"], found["lng"]) == (40.7, -111.9) and found["cites"]["lat"] == api.CIT_GEOCODE
     assert _ttl(stored, "geocode") == api.GEOCODE_CACHE_S
+    assert seen == [{"timeout": api.LOOKUP_TIMEOUT_S}] and api.LOOKUP_TIMEOUT_S <= 5, "a save waits 5 s at most"
     # the elevation and seismic lookups failed (no Elevation API on the key, no network): retried soon
     assert "elevation_ft" not in found and "seismic_sdc" not in found
     assert _ttl(stored, "elevation") == api.GEOCODE_RETRY_S
@@ -650,11 +652,14 @@ def test_a_cached_lookup_is_not_asked_again(api, monkeypatch):
 
 def test_the_site_lookup_fills_elevation_and_seismic_at_the_point(api, monkeypatch):
     _ttls(api)
-    _sites(monkeypatch, geocode_text=_raise("the site has its point"), elevation_at=lambda lat, lng: (4226.4, None))
+    waits = []
+    _sites(monkeypatch, geocode_text=_raise("the site has its point"),
+           elevation_at=lambda lat, lng, timeout=None: waits.append(timeout) or (4226.4, None))
     monkeypatch.setattr(sys.modules["requests"], "get", lambda *a, **k: _Reply(USGS_REPLY))
     found = api._real_site_lookup({"address": "451 S State St", "lat": 40.76, "lng": -111.89})
     assert found["elevation_ft"] == 4226.4 and found["seismic_sdc"] == "D" and found["sds"] == 1.09
     assert found["cites"]["elevation_ft"] == api.CIT_ELEVATION and found["cites"]["sd1"] == api.CIT_USGS
+    assert waits == [api.LOOKUP_TIMEOUT_S]
 
 
 def test_the_site_lookup_skips_what_the_designer_typed(api, monkeypatch):
@@ -664,9 +669,13 @@ def test_the_site_lookup_skips_what_the_designer_typed(api, monkeypatch):
     typed = {"lat": 40.7, "lng": -111.9, "elevation_ft": 5000, "seismic_sdc": "C", "sds": 0.5, "sd1": 0.2}
     assert api._real_site_lookup(typed) is None
     # a value the engine filled (site.sources) is the engine's to refresh
-    owned = dict(typed, sources={"elevation_ft": "default"})
-    _sites(monkeypatch, elevation_at=lambda lat, lng: (4300.0, None))
+    owned = dict(typed, sources={"elevation_ft": {"src": "default", "v": 5000}})
+    _sites(monkeypatch, elevation_at=lambda lat, lng, **k: (4300.0, None))
     assert api._real_site_lookup(owned)["elevation_ft"] == 4300.0
+    # a value changed since the engine wrote it is the designer's, whatever sources still says
+    changed = dict(typed, sources={"elevation_ft": {"src": "default", "v": 4300}})
+    _sites(monkeypatch, elevation_at=_raise("an edited elevation"))
+    assert api._real_site_lookup(changed) is None
 
 
 def test_a_save_derive_takes_the_lookups_over_the_state_defaults(api, monkeypatch):
@@ -675,13 +684,35 @@ def test_a_save_derive_takes_the_lookups_over_the_state_defaults(api, monkeypatc
                                                           "cites": {"elevation_ft": api.CIT_ELEVATION, "sds": api.CIT_USGS}})
     model = _boot_fixture()["kits"][0]["model"]
     page = api.derive(json.dumps(model))["model"]["site"]
-    assert page["sources"]["elevation_ft"] == "default"  # the page's derive makes no lookup
+    assert page["sources"]["elevation_ft"]["src"] == "default"  # the page's derive makes no lookup
     saved = api.run_derive(dict(model, site=page), geocode=True)
     site = saved["model"]["site"]
-    assert site["elevation_ft"] == 4226.4 and site["sources"]["elevation_ft"] == "lookup"
+    assert site["elevation_ft"] == 4226.4 and site["sources"]["elevation_ft"] == {"src": "lookup", "v": 4226.4}
     assert (site["seismic_sdc"], site["sds"], site["sd1"]) == ("D", 1.09, 0.83)
     inputs = saved["results"]["site_lookups"]["inputs"]
     assert inputs["elevation_ft"]["ref"] == api.CIT_ELEVATION and inputs["sds"]["source"] == "lookup"
+
+
+def test_an_elevation_the_ai_tool_changes_is_kept_though_sources_came_along(api, monkeypatch):
+    """The save_water_design tool sends a whole model read back from the record, sources and all: an
+    elevation it changed must survive the save's derive, not snap back to the state default."""
+    saved = api.run_derive(_boot_fixture()["kits"][0]["model"])["model"]
+    assert saved["site"]["elevation_ft"] == 4300 and saved["site"]["sources"]["elevation_ft"]["src"] == "default"
+    edited = json.loads(json.dumps(saved))
+    edited["site"]["elevation_ft"] = 5000
+    captured = {}
+    real_save = api.save_design
+
+    def save_design(name, model_json, fields_json):
+        captured["model"] = json.loads(model_json)
+        captured["derived"] = api.run_derive(captured["model"], geocode=True)["model"]
+        return real_save(name, model_json, fields_json)
+
+    monkeypatch.setattr(api, "save_design", save_design)
+    name, ignored = api.tool_save(None, edited)
+    assert captured["model"]["site"]["elevation_ft"] == 5000
+    assert captured["derived"]["site"]["elevation_ft"] == 5000
+    assert "elevation_ft" not in captured["derived"]["site"]["sources"]
 
 
 def test_boot_lists_every_jurisdiction_with_utah_first(api):

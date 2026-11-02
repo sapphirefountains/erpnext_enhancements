@@ -33,13 +33,22 @@ item, PLAN.md section 6), so every Utah design carries one advisory to confirm t
   (`workforce.sites.elevation_at`, beside `geocode_text` because `tests/test_geocoding_key.py` allows
   only that module to call Google from the server) and the USGS ASCE 7-22 design values (`sds`, `sd1`,
   `sdc` at Risk Category II, Site Class D). Each is cached a month per point, a failure ten minutes,
-  and none raises or logs: a failed lookup leaves the state's default standing. **The Elevation API has
+  and none raises or logs: a failed lookup leaves the state's default standing. The three run one after
+  another inside a save, so each waits 5 s at most (`geocode_text` and `elevation_at` gained a
+  `timeout` argument; the Project Planner's geocoding keeps its 10 s). **The Elevation API has
   to be enabled on the server key** (`Travel Settings.google_geocoding_api_key`); until it is, Google
   answers REQUEST_DENIED and the elevation stays the state default.
 - **`site.seismic_sdc`** on the design model, with `sds` and `sd1` in `site.extra`, where the structural
-  checks already read them; and `site.winterize`.
-- **`site.sources`**: which site values the engine filled (`lookup`, `default`, `house_rule`). A value
-  with no source is the designer's and is never touched; one with a source is refreshed on each derive.
+  checks already read them; and `site.winterize`. A frost depth the designer types decides `winterize`
+  (0 or less: the site does not freeze), over the state's design city, unless they tick Winterize too.
+  The structural seismic result says when SDS and SD1 are the lookup's ASCE 7-22 values read against
+  its ASCE 7-16 (IBC 2021) category table.
+- **`site.sources`**: which site values the engine filled (`lookup`, `default`, `house_rule`, `rule`) and
+  the value it wrote (`{key: {src, v}}`). A value with no source is the designer's and is never touched.
+  So is one that no longer matches what the engine wrote: the page drops a typed field's source, but
+  the `save_water_design` AI tool, a script or an older client sends `sources` back as it read them, and
+  without the recorded value an elevation such a writer changed snapped back to the state default on
+  the save. One the engine still owns is refreshed on each derive.
   This fixes two orderings at once. Changing the state now replaces the old state's climate. Before,
   the page stored the filled values, so they looked typed and stayed. And a lookup made on a save now
   replaces a state default. Before, the page's own derive filled the default first, so an address

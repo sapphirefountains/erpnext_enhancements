@@ -75,6 +75,12 @@ def _num(value, default=None):
         return default
 
 
+def _lookup_source(site: dict, key: str) -> bool:
+    """True when the derive filled ``site[key]`` from the address lookup (``site.sources``, phase J)."""
+    rec = (site.get("sources") or {}).get(key) if isinstance(site.get("sources"), dict) else None
+    return isinstance(rec, dict) and rec.get("src") == "lookup" and rec.get("v") == site.get(key)
+
+
 def _wall_phi_mn(wall_in, bar_size, spacing_in, mats, rules) -> float:
     """φMn per foot of a wall's tension mat (lb·ft/ft)."""
     b = rebar(bar_size)
@@ -153,6 +159,10 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
                   seismic.citations[0])
     else:
         sds, sd1, sdc = seismic.value["sds"], seismic.value["sd1"], seismic.value["sdc"]
+        if (_lookup_source(site, "sds") or _lookup_source(site, "sd1")):
+            seismic.warnings.append("SDS and SD1 come from the USGS lookup, which answers ASCE 7-22; this category table "
+                                    "and the structural rules are ASCE 7-16's (IBC 2021): confirm the category under "
+                                    "the edition the state enforces.")
 
     # basins: hydrodynamic walls, vault lids, penetration rings, building floors
     for b in basins:

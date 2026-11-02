@@ -254,8 +254,9 @@ def geocode_project(project, force=False):
 		return None
 
 
-def geocode_text(address):
+def geocode_text(address, timeout=GEOCODE_TIMEOUT_S):
 	"""``({"lat", "lng"}, None)`` for one address, or ``(None, problem)``. Never raises or logs.
+	``timeout`` is for a caller that waits on a person (the Fountain Designer's save waits 5 s).
 
 	The single place the server key meets Google's Geocoding API; the Project Planner's
 	routing (``project_enhancements/routing.py``) geocodes the shop and job addresses through
@@ -272,7 +273,7 @@ def geocode_text(address):
 			return None, "no key"
 		import requests
 
-		response = requests.get(GEOCODE_URL, params={"address": address, "key": key}, timeout=GEOCODE_TIMEOUT_S)
+		response = requests.get(GEOCODE_URL, params={"address": address, "key": key}, timeout=timeout)
 		try:
 			payload = response.json() if response.content else {}
 		except ValueError:
@@ -290,7 +291,7 @@ def geocode_text(address):
 		return None, type(exc).__name__
 
 
-def elevation_at(lat, lng):
+def elevation_at(lat, lng, timeout=GEOCODE_TIMEOUT_S):
 	"""``(feet, None)`` for the ground elevation at one point, or ``(None, problem)``. Never raises or logs.
 
 	Google's Elevation API answers in metres above mean sea level. Same rules as
@@ -306,7 +307,7 @@ def elevation_at(lat, lng):
 		import requests
 
 		response = requests.get(
-			ELEVATION_URL, params={"locations": f"{flt(lat)},{flt(lng)}", "key": key}, timeout=GEOCODE_TIMEOUT_S
+			ELEVATION_URL, params={"locations": f"{flt(lat)},{flt(lng)}", "key": key}, timeout=timeout
 		)
 		try:
 			payload = response.json() if response.content else {}

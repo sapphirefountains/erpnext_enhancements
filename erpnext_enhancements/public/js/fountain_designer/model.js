@@ -235,13 +235,13 @@ export function clear_site_lookups(model) {
 	return set_in(next, "site.sources", null);
 }
 
-// Blank only the site values the address lookups filled (site.sources says "lookup"): they belong to the
+// Blank only the site values the address lookups filled (site.sources[key].src is "lookup"): they belong to the
 // old address. A typed value and a state default stay. Full mode's answer to a new address.
 export function clear_looked_up(model) {
 	const sources = get_in(model, "site.sources") || {};
 	let next = model;
 	for (const key of SITE_LOOKUPS) {
-		if (sources[key] === "lookup") next = drop_source(set_in(next, ["site", key], null), key);
+		if (sources[key] && sources[key].src === "lookup") next = drop_source(set_in(next, ["site", key], null), key);
 	}
 	return next;
 }
