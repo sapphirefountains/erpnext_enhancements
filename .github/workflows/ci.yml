@@ -3716,6 +3716,13 @@ jobs:
       # task turning movable on the Project Planner or vanishing from the Maintenance Planner.
       - name: Fountain Move jobs (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move_jobs.py -q
+      # Design projects (Nik, 2026-10-30): PRO-0206's four stages as the Design Project (PRO-0206) template.
+      # Its own step because it installs its own frappe stub. Guards a seed patch that raises (an aborted
+      # migrate is a failed deploy) or re-seeds over Nik's edits, the old template disabled before the new
+      # one exists, stage dates that overlap or read as a build phase, and the Create Project dialog
+      # prefilling it for a deal that is not Design.
+      - name: Design project template (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_design_projects.py -q
       # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
       # sys.modules — sharing a process with another stub-installing suite is how
       # they cross-talk. Guards two things that fail expensively and quietly: a
@@ -4404,6 +4411,12 @@ jobs:
       # two-letter form cannot be exercised on this US-only site at all.
       - name: Address component mapping (bench-free, node)
         run: node scripts/test_address_components.js
+      # The same widget driven end to end against a fake DOM and a fake Places library (v1.774.0): a
+      # pick reaches on_place (the Fountain Designer's address, point and state) and on_pick (the
+      # Address forms' fields, through the Country lookup). Both run inside the pick handler, which the
+      # pure-region test above cannot reach, and a regression in either fills nothing, silently.
+      - name: Address autocomplete picks (bench-free, node)
+        run: node scripts/test_address_autocomplete_pick.js
       # The floating Triton widget's streaming re-entrancy rule: every function that
       # clears the transcript, or switches which session it belongs to, must refuse
       # while a stream is in flight. Two of the four were missing it, and the failure is

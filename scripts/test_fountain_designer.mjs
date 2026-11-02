@@ -1115,6 +1115,47 @@ function hold_into(log, held, name, value) {
 		});
 }
 
+await test("a picked address sets the point and the state, saves at once and takes the save's lookups", async () => {
+	const { d, log, held } = await controller();
+	const input = Object.assign(stub_el(), { value: "451 S St" });
+	const attached = [];
+	d.win.erpnext_enhancements = { address_autocomplete: { attach: (el, options) => (attached.push(options), { input: el, destroy() {} }) } };
+	d.stage.querySelector = (sel) => (sel === '[data-fd-path="site.address"]' ? input : null);
+	d.place.step = "site";
+	d.mount_address();
+	d.mount_address(); // the same input: not attached twice
+	assert.equal(attached.length, 1, "the shared widget is attached to the address field once");
+	attached[0].on_place({ address: "451 S State St, Salt Lake City, UT 84111, USA", lat: 40.7608, lng: -111.891, state: "UT", country_code: "US" });
+	await settle();
+	assert.equal(input.value, "451 S State St, Salt Lake City, UT 84111, USA");
+	assert.deepEqual(log, ["save"], "saved straight away, not after the autosave's delay");
+	const sent = held[0].args[1].site;
+	assert.deepEqual([sent.lat, sent.lng, sent.jurisdiction], [40.7608, -111.891, "UT"]);
+	assert.deepEqual(sent.sources.jurisdiction, { src: "lookup", v: "UT" }, "tagged the way the server tags a lookup");
+	held[0].resolve();
+	await settle();
+	// the next save's derive looked the elevation up at the point: the reply's site reaches the page
+	const site = Object.assign({}, sent, { elevation_ft: 4226.4, sources: Object.assign({}, sent.sources, { elevation_ft: { src: "lookup", v: 4226.4 } }) });
+	d.api.save_design = hold_into(log, held, "save", { status: "Derived", site });
+	d.edit("site.venue_type", "Decorative Fountain");
+	d.autosave.cancel();
+	d.save();
+	await settle();
+	held[1].resolve();
+	await settle();
+	assert.equal(d.model.site.elevation_ft, 4226.4, "the save's lookup is on the page");
+	assert.equal(d.model.site.jurisdiction, "UT");
+	// a reply to a save that edits overtook is not taken: what was typed since is not in its sources
+	d.api.save_design = hold_into(log, held, "save", { status: "Derived", site: Object.assign({}, site, { elevation_ft: 1 }) });
+	d.save();
+	d.edit("site.elevation_ft", 5000);
+	await settle();
+	held[held.length - 1].resolve();
+	await settle();
+	assert.equal(d.model.site.elevation_ft, 5000, "a value typed while the save was out stays");
+	d.autosave.cancel();
+});
+
 await test("a failed save pushes nothing", async () => {
 	const { d, log, held } = await controller();
 	d.edit("features.0.inputs.length_ft", 9);

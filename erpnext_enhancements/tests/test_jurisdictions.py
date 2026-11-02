@@ -581,3 +581,123 @@ def test_elevation_at_never_raises_and_never_shows_the_key(sites, monkeypatch):
     assert sites.elevation_at(None, None) == (None, "no point")
     monkeypatch.setattr(sites, "_geocoding_api_key", lambda: "")
     assert sites.elevation_at(40.7, -111.9) == (None, "no key")
+
+
+# ------------------------------------------------------------------------- the state from the address (v1.774.0)
+
+
+def test_the_addresss_state_fills_a_blank_state_and_its_defaults_follow(states):
+    site, result = derive.derive_site({"address": "1 Test Way"}, {}, {"jurisdiction": "zz", "cites": {"jurisdiction": "Google"}})
+    assert site["jurisdiction"] == "ZZ" and site["sources"]["jurisdiction"] == {"src": "lookup", "v": "ZZ"}
+    assert site["elevation_ft"] == 50 and site["winterize"] is False  # Testland's design city, not a blank state
+    assert result["inputs"]["jurisdiction"] == {"value": "ZZ", "unit": "", "source": "lookup", "ref": "Google"}
+    again, result = derive.derive_site(site, {})  # the page's derive: no lookup, the state stays the address's
+    assert again["jurisdiction"] == "ZZ" and again["sources"]["jurisdiction"]["src"] == "lookup"
+    assert result["inputs"]["jurisdiction"]["ref"] == "address lookup (an earlier save)"
+
+
+def test_a_picked_state_is_never_replaced_by_the_address(states):
+    site, result = derive.derive_site({"jurisdiction": "UT"}, {}, {"jurisdiction": "ZZ"})
+    assert site["jurisdiction"] == "UT" and "jurisdiction" not in site.get("sources", {})
+    assert "jurisdiction" not in result["inputs"]
+    # the address gave ZZ, then someone (the page, the AI tool, a script) set UT: theirs, whatever sources says
+    changed = {"jurisdiction": "UT", "sources": {"jurisdiction": {"src": "lookup", "v": "ZZ"}}}
+    assert derive.engine_owned(changed, "jurisdiction") is None
+    site, _ = derive.derive_site(changed, {}, {"jurisdiction": "YY"})
+    assert site["jurisdiction"] == "UT" and site["frost_depth_in"] == 30
+
+
+def test_a_new_address_replaces_the_state_the_old_one_gave(states):
+    zz, _ = derive.derive_site({}, {}, {"jurisdiction": "ZZ"})
+    assert derive.engine_owned(zz, "jurisdiction") == "lookup"
+    moved, _ = derive.derive_site(zz, {}, {"jurisdiction": "UT"})
+    assert moved["jurisdiction"] == "UT" and moved["frost_depth_in"] == 30 and moved["winterize"] is True
+    assert moved["sources"]["jurisdiction"] == {"src": "lookup", "v": "UT"}
+
+
+def test_a_state_outside_the_table_is_filled_and_has_no_data(states):
+    site, result = derive.derive_site({}, {}, {"jurisdiction": "AK"})
+    assert site["jurisdiction"] == "AK" and site.get("elevation_ft") is None
+    assert any("'AK'" in w for w in result["warnings"])
+    assert derive.jurisdiction_checks(derive.juris.summary(site))[0]["code"] == "JURISDICTION_NO_DATA"
+    blank, _ = derive.derive_site({}, {}, {"jurisdiction": "  "})
+    assert blank.get("jurisdiction") is None and "jurisdiction" not in blank.get("sources", {})
+
+
+def test_geocode_text_returns_the_state_and_country(sites):
+    sites._requests.get = lambda url, params=None, timeout=None: _Reply({"status": "OK", "results": [{
+        "geometry": {"location": {"lat": 40.76, "lng": -111.89}},
+        "address_components": [
+            {"short_name": "Salt Lake City", "types": ["locality", "political"]},
+            {"short_name": "ut", "long_name": "Utah", "types": ["administrative_area_level_1", "political"]},
+            {"short_name": "US", "types": ["country", "political"]},
+        ]}]})
+    assert sites.geocode_text("451 S State St") == ({"lat": 40.76, "lng": -111.89, "state": "UT", "country": "US"}, None)
+    sites._requests.get = lambda *a, **k: _Reply({"status": "OK", "results": [{"geometry": {"location": {"lat": 1, "lng": 2}}}]})
+    assert sites.geocode_text("somewhere") == ({"lat": 1.0, "lng": 2.0, "state": "", "country": ""}, None)
+    assert sites.address_region([None, {"types": "country"}, {"short_name": "X"}]) == {"state": "", "country": ""}
+
+
+PICK_ROUND_TRIP = r"""
+import { pathToFileURL } from "node:url";
+const [dir] = process.argv.slice(2);
+const M = await import(pathToFileURL(`${dir}/model.js`).href);
+const pick = { address: "451 S State St, Salt Lake City, UT 84111, USA", lat: 40.7608, lng: -111.891, state: "UT", country_code: "US" };
+const old = { mode: "full", site: { address: "1 Old Rd", jurisdiction: "NV", lat: 36.1, lng: -115.1, elevation_ft: 2000, hardness_ppm: 300,
+  sources: { jurisdiction: { src: "lookup", v: "NV" }, lat: { src: "lookup", v: 36.1 }, lng: { src: "lookup", v: -115.1 },
+             elevation_ft: { src: "lookup", v: 2000 } } } };
+const out = {
+  full: M.apply_place(old, pick).site,
+  quick: M.apply_place(Object.assign({}, old, { mode: "quick" }), pick).site,
+  picked_state: M.apply_place({ mode: "full", site: { jurisdiction: "AZ" } }, pick).site,
+  kept_abroad: M.apply_place({ mode: "full", site: { jurisdiction: "AZ" } }, Object.assign({}, pick, { state: "ON", country_code: "CA" })).site,
+  blank: M.blank_model("quick").site,
+  abroad: M.apply_place({ mode: "full", site: {} }, Object.assign({}, pick, { state: "ON", country_code: "CA" })).site,
+  cleared: M.clear_site_lookups(old).site,
+  edited: M.edit({ site: { jurisdiction: "UT", sources: { jurisdiction: { src: "lookup", v: "UT" } } } }, "site.jurisdiction", "AZ").site,
+  merged: M.merge_site({ site: { jurisdiction: "UT", elevation_ft: null, sources: { jurisdiction: { src: "lookup", v: "UT" } } } },
+    { jurisdiction: "UT", elevation_ft: 4226.4, sources: { jurisdiction: { src: "lookup", v: "UT" }, elevation_ft: { src: "lookup", v: 4226.4 } } }).site,
+};
+console.log(JSON.stringify(out));
+"""
+
+
+def test_a_picked_address_sets_the_point_and_the_state_on_the_page(tmp_path, states):
+    """model.apply_place (the Site step's on_place): the pick's point and state, tagged as looked up the way
+    derive_site tags them, so the page's next derive keeps them and the save geocodes nothing."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    script = tmp_path / "pick.mjs"
+    script.write_text(PICK_ROUND_TRIP, encoding="utf-8")
+    page = REPO_ROOT / "erpnext_enhancements" / "public" / "js" / "fountain_designer"
+    done = subprocess.run(["node", str(script), str(page)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    full = out["full"]
+    assert full["address"].startswith("451 S State St") and (full["lat"], full["lng"]) == (40.7608, -111.891)
+    assert full["jurisdiction"] == "UT" and full["sources"]["jurisdiction"] == {"src": "lookup", "v": "UT"}
+    assert full["sources"]["lat"] == {"src": "lookup", "v": 40.7608}
+    assert full["elevation_ft"] is None and "elevation_ft" not in full["sources"]  # the old address's: looked up again
+    assert full["hardness_ppm"] == 300  # typed: stays in full mode
+    assert out["quick"]["hardness_ppm"] is None and out["quick"]["jurisdiction"] == "UT"
+    # a typed new address in quick mode, and "Refresh from the address": the state and its source stay, so the
+    # save's geocode replaces a state the old address gave
+    assert out["cleared"]["jurisdiction"] == "NV" and out["cleared"]["sources"] == {"jurisdiction": {"src": "lookup", "v": "NV"}}
+    # a pick is the designer's newer word: it moves even a state picked by hand (the select overrides it after)
+    assert out["picked_state"]["jurisdiction"] == "UT" and out["picked_state"]["sources"]["jurisdiction"]["src"] == "lookup"
+    assert out["kept_abroad"]["jurisdiction"] == "AZ"  # no US state to move to
+    # a new design's Utah is the house default, so a typed address's geocode on the save can move it
+    assert out["blank"]["jurisdiction"] == "UT" and out["blank"]["sources"] == {"jurisdiction": {"src": "default", "v": "UT"}}
+    moved, _ = derive.derive_site(out["blank"], {}, {"jurisdiction": "ZZ"})
+    assert moved["jurisdiction"] == "ZZ" and moved["elevation_ft"] == 50
+    assert out["abroad"].get("jurisdiction") is None and "jurisdiction" not in out["abroad"]["sources"]
+    assert out["edited"]["jurisdiction"] == "AZ" and not out["edited"].get("sources")  # a hand pick is the designer's
+    assert out["merged"]["elevation_ft"] == 4226.4 and out["merged"]["sources"]["elevation_ft"]["src"] == "lookup"
+    # the page's site goes through the page's derive (no lookup) unchanged
+    site, result = derive.derive_site(full, {})
+    assert (site["jurisdiction"], site["lat"], site["lng"]) == ("UT", 40.7608, -111.891)
+    assert site["sources"]["jurisdiction"]["src"] == "lookup" and site["frost_depth_in"] == 30
+    assert result["inputs"]["lat"]["source"] == "lookup"

@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.774.0] - 2026-11-02
+
+ERPNext: PRJ-00580, under TASK-2026-03034, task TASK-2026-03035. **The Fountain Designer's Site step
+suggests the fountain's address as it is typed, and the state, the point and the lookups follow from the
+pick.** Nikolas asked on 2026-11-02 for an address autocomplete rather than only a list of states. Until
+now the designer typed the address and picked the state separately, and nothing tied the two together.
+(1.773.0 went to PR #1388.)
+
+**Why two Google keys.** The browser key does the suggesting. That is `Travel Settings.google_maps_api_key`,
+restricted by HTTP referrer and handed to the browser by design. The Address forms' Places autocomplete
+already uses it, so Places API (New) is enabled on it. The server key does the lookups. That is
+`google_geocoding_api_key`, an IP-restricted Password field that never leaves the server. Google refuses a
+referrer-restricted key on every server-side web-service call (v1.483.2), so neither key can do the other's
+job. A pick hands the page the point and the state directly. The save then geocodes nothing and spends the
+server key only on the elevation, beside the USGS seismic lookup.
+
+### Added
+- **Address suggestions on the Site step.** The shared widget
+  `erpnext_enhancements.address_autocomplete.attach(input, options)` gains an `on_place(details)` option. It
+  serves callers with no Address fields to fill and skips both the field mapping and the Country round trip.
+  `details` is `{address, lat, lng, state, country_code, place_id, label}`; `state` is the
+  `administrative_area_level_1` short code, and it is blank rather than a long name, which would match no
+  jurisdiction. The Address form, the quick-entry dialog and Plan a Trip keep `on_pick` as before. When a
+  caller passes both options, `on_place` runs first. The widget is already in the global bundle on every Desk
+  page, so the designer's `frappe.require` list did not change.
+  - The designer attaches the widget after every draw (`app.mount_address`).
+  - `model.apply_place` writes the formatted address, the point and, for a US address, the state. Each is
+    tagged `{src: "lookup", v}` in `site.sources`, the server's own form, so the page's derive keeps them.
+  - The page then saves at once, and that save's derive looks up the elevation and seismic values at the
+    point.
+  - The pick moves even a state the designer picked by hand, because the pick is the newer choice. The State
+    select still overrides it afterwards.
+  - A code the table has no row for (AK, HI, DC) shows in the select as "(no data)", next to the existing
+    "No jurisdiction data" note.
+- **A typed address gives the design its state too.** This covers the plain-text fallback and the
+  `save_water_design` AI tool. `workforce.sites.geocode_text` now returns the result's state and country
+  codes (`address_region`), and still never logs and never shows the key. `site_lookup` passes a United
+  States state on as `jurisdiction`, geocoding for it even when the site already has its point. A non-US
+  address gives none.
+  - `derive.derive_site` settles the state first, because the state decides every default after it. It
+    fills the state where it is blank or the engine's own (`SITE_OWNED`), tagged `lookup`. A state the
+    designer picked is never replaced.
+  - New designs' `UT` is now tagged `{src: "default"}`, so an address can move it. That covers every place
+    a model is born: `model.blank_model` and `model_from_kit` on the page, and `engine.model.new_model`,
+    `migrate` and `kits.apply_kit` on the server (`engine.model.default_state`). The last of these is where
+    a `save_water_design` call without a model starts a design. A state the caller names stays untagged
+    and counts as theirs. Designs saved before this release carry an untagged state, which counts as picked by hand.
+    Only a pick from the list moves it.
+- **A save's lookups reach the page.** Before this, the elevation and seismic values a save looked up were
+  stored but never shown until the design was reopened, because the page's own derive looks nothing up.
+  `save_design` now returns the derived `site`, and `model.merge_site` takes it when nothing was edited while
+  the save was out. A value typed in the meantime is not in the reply's sources, so it would otherwise be
+  overwritten.
+
+### Changed
+- `model.clear_site_lookups` (a new address in quick mode, and "Refresh from the address") keeps the
+  state and its source. Before, it dropped every source, so a state the old address gave would have become
+  the designer's and the new address could never move it.
+- The geocode cache key gains a `v2:` segment, because an answer cached before this release has no state
+  in it.
+
+### Tests
+- `scripts/test_address_autocomplete_pick.js` (a new CI step, node) runs the real widget from a typed query
+  to a picked suggestion against a fake DOM and a fake Places library. It covers `on_place`, `on_pick` with
+  its Country lookup, both together, and a destroyed widget.
+- `tests/test_jurisdictions.py` covers the state from a lookup, a picked state that is kept, a new address
+  that replaces the old address's state, a state outside the table, `geocode_text`'s state and country, and
+  `model.apply_place` under node.
+- `tests/test_designer_api.py` covers a design the AI tool creates with a Dallas address landing in Texas,
+  and `site_lookup`'s state (US only, never over a picked one, no geocode
+  for a site with its point and state) and the save's returned site.
+- `scripts/test_fountain_designer.mjs` checks the controller: a pick, the immediate save, the save's site
+  merged into the page, and a reply that edits overtook is left alone.
+
+## [1.773.0] - 2026-11-02
+
+ERPNext: TASK-2026-03017 (PRJ-00580, under TASK-2026-02640). Nik went over PRO-0206 *Design Process*
+(v1.0, 2026-05-25) on 2026-10-30 and asked, for now, for just its four stages as the template for new
+Design projects, chosen instead of the old *Design Project Template*. Checked against erpnext 16.52.1
+and frappe 16.53.0, prod's versions.
+
+**What the deploy does.**
+- **One patch runs**, `seed_design_project_template`:
+  - It creates the Project Template **Design Project (PRO-0206)** (type Design) and its four template
+    Tasks. It is insert-only by name, so the template is Nik's to edit afterwards.
+  - Then, and only once that template exists, it ticks **Disabled** on the old *Design Project
+    Template*. That is a field write and nothing else. The old template's 40 template Tasks and the 16
+    projects made from it are not touched.
+- **The Create Project dialog** prefills the new template for deals whose only value stream is Design.
+- Nothing changes on any existing project.
+
+### Added
+- **The Design Project (PRO-0206) template.** It has four tasks, nothing under them, in order. Each
+  stage waits on the one before, and the dates count from the project's start, using Nik's rough
+  lengths:
+
+  | Stage | Days | About |
+  |---|---|---|
+  | Predesign (PD) | 0-13 | 2 weeks |
+  | Schematic Design (SD) | 14-34 | 3 weeks |
+  | Design Development (DD) | 35-62 | 4 weeks |
+  | Construction Documents (CD) | 63-83 | 3 weeks |
+
+  The whole run is about twelve weeks. The template carries no hours, so a new job does not land on the
+  Project Planner as work to staff. `project_enhancements/design_projects.py`.
+  - **The stages are leaf tasks, not groups.** ERPNext refuses a task that ends after its parent group
+    (`validate_parent_expected_end_date`), and `copy_from_template` moves any date that lands on a
+    holiday to the next working day. A group with children could then fail to create the whole project.
+  - **No stage is named like a build phase.** The planner reads `Phase 100`...`Phase 700` as a job's
+    build phases (decision 2026-10-12, `planner_templates.phase_number`), so the stages never start
+    with a three-digit number.
+  - **The planners' Simple mode shows the four stages as the job's items.** That is the "layout for new
+    projects" Nik picked. A job with no phase work lists its top-level tasks with their dates, so this
+    needed no new code.
+  - **Each description is a one-line summary plus "Process: PRO-0206 Design Process."** This repository
+    is public and PRO-0206 is an internal document, so the procedure itself is not copied here.
+- **The Create Project dialog prefills the template for a Design-only deal.** The template field had
+  no default before. Now `design_projects.opportunity_defaults` picks the new template only when Design
+  is the Opportunity's **only** value stream (Nik, 2026-11-02):
+  - A Build + Design deal opens the dialog with the template empty. On prod, 8 of the 118
+    Opportunities with a Design stream have Design alone; most of the rest are Build + Design or
+    Build + Design + Service jobs, which the four design stages do not describe.
+  - It reads both of the Value Stream row's columns, and ignores a blank row.
+  - The project type is unchanged: `create_project_from_opportunity_background` still ranks Design
+    first when it sets it.
+  - The pick stays changeable.
+  - A Fountain Move intake's template still wins.
+  - **A name that is not an Opportunity returns nothing, quietly.** `frappe.has_permission` raises
+    `DoesNotExistError` for a missing name, and the endpoint's catch-all would have written an Error
+    Log row for every junk name any logged-in user sent. It checks `frappe.db.exists` first now; an
+    Opportunity that exists still needs read permission.
+  - It skips a missing or disabled template, and never raises.
+
+### Changed
+- **The old *Design Project Template* is disabled.** Nik chose this on 2026-10-30. Frappe's link
+  search (`search_widget`) leaves disabled records out, so neither the dialog nor the Project form
+  offers it again. The 16 projects that name it still save: ERPNext 16.52.1's
+  `Project.validate_project_template` throws "Project Template {0} is disabled" only when
+  `has_value_changed("project_template")`. A new project with it, or an edit that sets it, is refused.
+  What prod showed about the old template:
+  - **Every row starts on day 0**, with no length, no hours and no dependencies.
+  - **7 of its 40 rows have a parent outside the template.** ERPNext can only re-parent a task whose
+    parent is in the template, so on every project those 7 landed at the top level.
+  - **Its tasks were not being worked.** Apart from one bulk close (40 tasks) and one project with 2
+    done and 33 canceled, none of its 16 projects ever ticked a task.
+
+### Tests
+- `tests/test_design_projects.py`, a bench-free pytest suite in its own CI step (its own frappe stub).
+  It covers:
+  - the four stages in order, with no overlaps or gaps and no build-phase names;
+  - the seed: insert-only, and each stage waiting on the one before;
+  - the old template, disabled only once the new one exists, and only its Disabled box written;
+  - the patch never raising, and rolling back the seed on a failure;
+  - the dialog: Design-only deals prefilled, Build + Design and no value stream left empty, read
+    permission, a missing or disabled template, never raising, and a Fountain Move intake winning;
+  - a name that is not an Opportunity returning nothing without reaching the permission check or the
+    Error Log.
+
 ## [1.772.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03033. This is

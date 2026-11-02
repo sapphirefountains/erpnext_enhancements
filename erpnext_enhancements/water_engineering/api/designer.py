@@ -341,15 +341,22 @@ def _valid_point(lat, lng):
 
 
 def geocode_lookup(address):
-    """``{lat, lng}`` for an address, or None. Google's ZERO_RESULTS is a definite answer."""
+    """``{lat, lng}`` for an address, plus ``jurisdiction`` (the state's code) when it is in the United
+    States, or None. Google's ZERO_RESULTS is a definite answer. Elsewhere there is no state to put the
+    design in, so the site keeps "No jurisdiction data"."""
     def fetch():
         from erpnext_enhancements.workforce.sites import geocode_text
 
         found, problem = geocode_text(address, timeout=LOOKUP_TIMEOUT_S)
         point = {"lat": found.get("lat"), "lng": found.get("lng")} if found else {}
+        state = str((found or {}).get("state") or "").strip().upper()
+        if state and str((found or {}).get("country") or "").strip().upper() == "US":
+            point["jurisdiction"] = state
         return point, bool(found) or str(problem or "").upper().startswith("ZERO_RESULTS")
 
-    return _cached("fountain_designer:geocode:" + hashlib.sha1(address.lower().encode("utf-8")).hexdigest(), fetch)
+    # "v2": an answer cached before v1.774.0 has no state in it.
+    key = "fountain_designer:geocode:v2:" + hashlib.sha1(address.lower().encode("utf-8")).hexdigest()
+    return _cached(key, fetch)
 
 
 def elevation_lookup(lat, lng):
@@ -401,21 +408,27 @@ def seismic_lookup(lat, lng):
 
 def site_lookup(site):
     """What the address tells the derive (``derive.derive_site``): the geocoded point when the site has
-    none, then at that point Google's elevation and the USGS seismic design values, each only where the
-    derive may still fill the field (blank, or filled by the engine before). ``cites`` names each one's
-    source. Every lookup is cached a month (a failure ten minutes) and none raises or logs: a failure
-    leaves the state's default standing. The controller calls this on a save, never the page's
-    per-keystroke derive, so a half-typed address costs nothing."""
+    none and the address's state when it has none, then at that point Google's elevation and the USGS
+    seismic design values, each only where the derive may still fill the field (blank, or filled by the
+    engine before). ``cites`` names each one's source. Every lookup is cached a month (a failure ten
+    minutes) and none raises or logs: a failure leaves the state's default standing. The controller calls
+    this on a save, never the page's per-keystroke derive, so a half-typed address costs nothing. A pick
+    from the page's address suggestions sends the point and the state along, so it geocodes nothing."""
     site = site or {}
     out, cites = {}, {}
     address = str(site.get("address") or "").strip()
     lat, lng = site.get("lat"), site.get("lng")
-    if address and (lat in (None, "") or lng in (None, "")):
-        point = geocode_lookup(address)
-        if point:
-            out.update(point)
+    need_point = lat in (None, "") or lng in (None, "")
+    need_state = not str(site.get("jurisdiction") or "").strip()
+    if address and (need_point or need_state):
+        found = geocode_lookup(address) or {}
+        if need_point and _valid_point(found.get("lat"), found.get("lng")):
+            out.update(lat=found["lat"], lng=found["lng"])
             cites.update(lat=CIT_GEOCODE, lng=CIT_GEOCODE)
-            lat, lng = point.get("lat"), point.get("lng")
+            lat, lng = found["lat"], found["lng"]
+        if found.get("jurisdiction") and _engine_may_fill(site, "jurisdiction"):
+            out["jurisdiction"] = found["jurisdiction"]
+            cites["jurisdiction"] = CIT_GEOCODE
     if _valid_point(lat, lng):
         if _engine_may_fill(site, "elevation_ft"):
             found = elevation_lookup(lat, lng)
@@ -740,8 +753,11 @@ def save_design(name=None, model_json=None, fields_json=None):
     doc.model_json = json.dumps(model)
     doc.mode = "Full" if str(model.get("mode") or "").lower() == "full" else "Quick"
     doc.save()
+    # The site as the save's derive left it: the page's own derive never looks anything up, so this is how
+    # the elevation and seismic values a save found reach the page (model.merge_site).
+    site = (stored_model(doc) or {}).get("site")
     return {"name": doc.name, "status": doc.status, "mode": doc.mode, "modified": str(doc.modified),
-            "design_title": doc.get("design_title")}
+            "design_title": doc.get("design_title"), "site": site if isinstance(site, dict) else None}
 
 
 # ------------------------------------------------------------------- email

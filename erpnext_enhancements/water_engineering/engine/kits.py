@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .families.curtain import DRC_APP as DRC_LINK
-from .model import SETUP_SECTIONS, Model, Setup
+from .model import SETUP_SECTIONS, Model, Setup, new_model
 
 CUSTOM = "custom"
 
@@ -227,7 +227,8 @@ def apply_kit(kit: str | Kit, model: Model | dict[str, Any] | None = None) -> di
     k = get_kit(kit)
     if k is None:
         raise ValueError(f"Unknown kit {kit!r}")
-    base = (model.to_dict() if isinstance(model, Model) else Model.from_dict(model or {}).to_dict())
+    # A new model through new_model, so its default state is tagged as the engine's (model.default_state).
+    base = (model.to_dict() if isinstance(model, Model) else Model.from_dict(model).to_dict() if model else new_model())
     out = copy.deepcopy(base)
     basins = []
     for i, b in enumerate(k.basins):

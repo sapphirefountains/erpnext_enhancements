@@ -32,7 +32,10 @@ Tests:
   - `model.set_mode` switches between them. Going to quick puts every section back on `auto`. When any section was set by hand (custom or a preset), the page asks first, naming the sections, because the next derive replaces them and the autosave keeps that.
 - **The site.**
   - The engine fills the site fields (`model.SITE_LOOKUPS`) the person did not type: from the address lookups (on a save), else the state's row of the jurisdiction table, else the house rates. It records which it filled, and the value it wrote, in `site.sources` (`{key: {src, v}}`, v1.772.0); a field holding any other value counts as typed, whoever changed it; `merge_derived` lets such a field follow the engine (another state's climate replaces the last one's), and `model.edit` drops a field's source when the person types it, so a typed value stays. A design saved before v1.772.0 has no `sources`, so every value in it counts as typed.
-  - The **State** picker (both modes) lists `boot().options.jurisdictions`. The **Codes and jurisdiction** card is drawn from the derive's `results.jurisdiction` and repainted after every derive: the code editions, the health authority, the regulated venues, plan review, licensing, and a "confirm with the AHJ" line when a code is adopted locally, not at all, or has no edition on file.
+  - **The address suggests itself (v1.774.0).** The address field carries the shared Google Places widget (`erpnext_enhancements.address_autocomplete`, `public/js/global_enhancements/address_autocomplete.js`, in the global bundle on every Desk page; `app.mount_address` re-attaches it after every draw). A pick reaches `on_place` as `{address, lat, lng, state, country_code}`, and `model.apply_place` writes the formatted address, the point and, for a United States address, the state, each tagged `{src: "lookup", v}` the way the server tags its lookups. The old address's lookups are blanked as for a typed address. The page then saves at once, and that save's derive looks up the elevation and seismic values at the point without geocoding anything. The pick moves even a state picked by hand, because it is the newer choice; the State select still overrides it afterwards (`model.edit` drops the source). Without the widget (no browser key, Places API (New) refused), the field stays plain text and the save geocodes what was typed, which gives the state too.
+  - **The state is the engine's to fill only from an address (`model.SITE_OWNED`).** A new design's `UT` is tagged `{src: "default"}` (`blank_model`, `model_from_kit`), so a typed address can move it on the save. A design saved before v1.774.0 has an untagged state, which only a pick moves. `clear_site_lookups` keeps the state and its source.
+  - **A save's lookups reach the page.** `save_design` returns the site as the save's derive left it, and `model.merge_site` (the site half of `merge_derived`) takes it when nothing was edited while the save was out.
+  - The **State** picker (both modes) lists `boot().options.jurisdictions`, plus the site's own code when the table has no row for it (Alaska, Hawaii, DC), shown as "(no data)". The **Codes and jurisdiction** card is drawn from the derive's `results.jurisdiction` and repainted after every derive: the code editions, the health authority, the regulated venues, plan review, licensing, and a "confirm with the AHJ" line when a code is adopted locally, not at all, or has no edition on file.
   - In quick mode, where they are never inputs, a new address blanks them, so the next derive looks them up for the new address.
   - In full mode, the Site card's Advanced has **Refresh from the address**, which blanks them all, typed ones too.
 - **A design not made here.** A stored design whose `model` is not schema 2 (an old wizard record, or one started in the form) is never opened as a blank design, whose first autosave would overwrite it. The page says so and offers the form and All designs.
@@ -156,12 +159,13 @@ A chart that breaks a rule is not drawn at all. Read `chart.js` for the full lis
 | `winterization` | `{needed, steps[]}`. `steps[]` are the titles of the winterization module's checklist (`engine.families.winterization`). |
 | `startup[]` | Strings. |
 
-### `save_design(name, model_json, fields_json)` → `{name, status, mode, modified, design_title}`
+### `save_design(name, model_json, fields_json)` → `{name, status, mode, modified, design_title, site}`
 
 - **`name`.** Null creates the design. This is the Create button on Start.
 - **`model_json`.** The schema-2 model as JSON text.
 - **`fields_json`.** The record's own fields: `{design_title, project, opportunity, customer}`.
 - **What the server does.** It re-derives, then writes the rollups, the `bom` rows and the JSON fields (PLAN.md 3.4).
+- **`site`** (v1.774.0). The site as the save's derive left it, with what its lookups found (the state, the point, the elevation, the seismic values). The page's own derive makes no lookup, so this is how they reach the page.
 - **Concurrency.** The page saves one request at a time. The last write wins; there is no optimistic lock yet.
 
 ### `push_quotation(name, quotation=None)` and `push_material_request(name)`
