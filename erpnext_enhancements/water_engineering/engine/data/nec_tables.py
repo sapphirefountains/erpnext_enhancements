@@ -5,9 +5,9 @@ noted where it differs. Every value here is a transcription of a published table
 the electrical modules read them and never restate a number. Where the 2020 and
 2023 editions disagree on something that changes a result, the 2020 value is
 noted beside the table. Which edition a job is reviewed under is the authority
-having jurisdiction's call (Utah adopts the NEC through the State Construction
-Code), so every result built on these tables tells the reader to verify the
-adopted edition.
+having jurisdiction's call (each state's edition and basis are in
+``data/jurisdictions.json``; ``electrical_report`` names the site's), so every
+result built on these tables tells the reader to verify the adopted edition.
 
 Table numbering moved in the 2020 edition: Table 310.15(B)(16) became Table
 310.16, Table 310.15(B)(2)(a) became Table 310.15(B)(1), Table 310.15(B)(3)(a)
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 NEC_EDITION = "NFPA 70 (NEC) 2023"
 VERIFY_EDITION = (
-    "Verify against the NEC edition Utah has adopted and any local amendments; "
-    "the authority having jurisdiction decides."
+    "Verify against the NEC edition the site's state or city has adopted and any local "
+    "amendments; the authority having jurisdiction decides."
 )
 
 # --- conductor sizes --------------------------------------------------------

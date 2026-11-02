@@ -39,8 +39,8 @@ ERPNext tracker: PRJ-00580, group task **TASK-2026-03018 "Fountain Designer rebu
 
 ```
 Start ─ pick a kit (or "blank"), name the design, link Project / Opportunity / Customer
-Site  ─ address → elevation, air/water design temps, frost depth, hardness, utility rates,
-        jurisdiction (regulated? Utah IWF?), venue type
+Site  ─ address → elevation, seismic values, air/water design temps, frost depth, hardness, utility
+        rates; the state (its codes, health rules and climate: section 8), venue type
 Feature(s) ─ family + type, principal dimensions, the desired effect (sheet look / jet height /
         tier look / acres), nozzle or sheet-fall product (or "generic, pick later")
 Basin(s) ─ shape, dims, depth, which features each basin catches; freeboard
@@ -294,3 +294,61 @@ Every phase is merged or in review: D #1390 (1.758.0), C #1393 (1.759.0), A #139
 (1.767.0), E #1399 and #1400 (1.768.0, 1.769.0), G #1401 (1.770.0), and H (1.771.0), which retired the
 nine child DocTypes and the Water Engineering Wizard and moved the AI tools onto `api/designer.py`.
 [ADR 0018](../../decisions/adr/0018-fountain-designer-rebuild.md) records the rebuild.
+
+## 8. Phase J: jurisdictions (2026-11-01)
+
+Nikolas decided 2026-11-01: the designer works in all 48 contiguous states, from a per-state table now and
+metro overrides later; it looks up USGS seismic design values and Google elevations by address; and
+every row it ships is cited. Phase J (v1.772.0, TASK-2026-03033) builds the engine side; a research
+session (TASK-2026-03032, branch `claude/fd-phase-j-data`) fills the table.
+
+**What the table carries.** `engine/data/jurisdictions.json` (the researched source is
+`catalog/jurisdictions.json`; a test holds them equal) has one row per state, keyed by USPS code:
+
+- `codes`: the NEC, IBC, IRC and ISPSC edition, its basis (`statewide`, `local` or `none`) and cite, and
+  the MAHC status (`adopted`, `referenced`, `none`);
+- `regulation`: the agency, the pool rule, whether spas and interactive features are regulated, whether
+  the interactive rule is like Utah's R392-302-41 (`iwf_like_utah`), whether fog must be potable,
+  whether the health department reviews plans, and notes;
+- `climate`: the design city's elevation, design air, heating and water temperatures, frost depth,
+  hardness, whether it freezes (`winterize`) and its default seismic design category;
+- `licensing`: the contractor and electrical licenses and who issues permits.
+
+Any value may be null, and a null is never filled with a guess.
+
+**The rules key on the row, never on "UT".**
+
+| Rule | Reads |
+|---|---|
+| Climate defaults (`derive_site`) | `climate.*`, each cited with its own cite |
+| Regulated venues (`regulated_site`) | pools always; spas unless `spa_regulated` is false; interactive when `iwf_regulated` |
+| Interactive checklist severity | blocker when `iwf_regulated` and `iwf_like_utah`, else warning, cited with `iwf_cite`; an info carrying `notes` when the state's rule is its own |
+| Mist potable supply | `fogger_potable` (blocker), else a warning |
+| Dry-climate nozzle hint | summer RH 40% or less where known, else west of the 100th meridian, else a design city 3,000 ft or higher with a 90 F design day |
+| Winterization | the site's `winterize`, else the state's, else a frost depth over zero; a state that does not freeze gets an info |
+| Electrical and structural reports | the state's NEC, IBC and ISPSC lines; a basis of `local` or `none` asks to confirm with the AHJ |
+
+**The fallback rules.** An unknown or blank code is *no jurisdiction data*: one `JURISDICTION_NO_DATA`
+warning, the climate fields left blank for the designer to type, the interactive checklist as advice. It
+never falls back to Utah. A row that lacks a value warns by name ("Testland has no frost depth on file").
+With nothing known about freezing, winterization stays on.
+
+**Who filled each site value.** `site.sources` records the engine's fills (`lookup`, `default`,
+`house_rule`). A value without a source is the designer's and is never touched; one with a source is
+refreshed, so changing the state replaces the old state's climate, and a lookup made on a save replaces a
+state default. The page drops a field's source when the person types it.
+
+**The lookups** run on a save (the page's per-keystroke derive makes none), each cached a month per
+address or point and ten minutes after a failure, none raising or logging:
+
+- the geocoded point (`workforce.sites.geocode_text`);
+- Google's elevation at it (`workforce.sites.elevation_at`, the same server key; the Elevation API must
+  be enabled on that key);
+- the USGS ASCE 7-22 design values at it (`seismic_lookup`: `sds`, `sd1` and `sdc`, Risk Category II,
+  Site Class D). `seismic_sdc` is a site field; `sds` and `sd1` ride in `site.extra`, where the
+  structural checks read them.
+
+**Next: metro overrides.** A city or county row over the state's, for local code adoption (Arizona,
+Colorado and others adopt codes city by city), local health rules, and climate where one design city
+does not stand for the state (Flagstaff against Phoenix). The lookup would match the geocoded city or
+county, and the same fallback rules apply one level down.

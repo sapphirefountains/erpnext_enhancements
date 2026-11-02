@@ -282,6 +282,7 @@ _PACKET_BANNER = (
 
 _COVER_META = (
     "{% if tb.governing_code %}<div>{{ tb.governing_code|e }}</div>{% endif %}"
+    "{% if p.codes %}<div>{{ p.codes|e }}</div>{% endif %}"
     "<div>Issued {{ ps_date(tb.issue_date) if tb.issue_date else '________' }}</div>"
     "<div>Drawn by {{ (tb.drawn_by or '____')|e }}</div>"
     "{% if tb.preliminary %}"

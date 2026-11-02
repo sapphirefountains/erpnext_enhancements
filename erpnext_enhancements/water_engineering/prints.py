@@ -307,6 +307,11 @@ class Design:
     def regulated(self) -> bool:
         return bool(self.site.get("regulated"))
 
+    @property
+    def jurisdiction(self) -> dict:
+        """The derive's ``jurisdiction`` result value (phase J): codes, agency, venues, licensing."""
+        return _d(_value(self.stored, "jurisdiction"))
+
     def item(self, code: Any) -> dict:
         return _d(self.items.get(code)) if code else {}
 
@@ -384,6 +389,7 @@ def sheet_report(d: Design) -> list:
              if s["range_pct"] else money(s["total"], cents=False), "strong"),
             ("Running cost", f"{money(om.get('total'), cents=False)} a year" if _num(om.get("total")) else None),
         ]),
+        site_and_codes(d),
         {"kind": "break"},
         drawing("How the water moves", d.charts.get("schematic_svg"), "sch", empty="No schematic yet: the design has no features."),
         drawing("Where the pump runs", d.charts.get("duty_svg"), "duty",
@@ -408,6 +414,31 @@ def sheet_report(d: Design) -> list:
         bullets("Notes and assumptions", _assumptions(d, s), empty=""),
     ]
     return blocks
+
+
+def code_editions(j: dict) -> str | None:
+    """``"NEC 2023, IBC 2021, ISPSC 2021 (Utah)"``: the editions the state enforces, for a line of small print."""
+    eds = [str(e) for e in _l(j.get("editions")) if e]
+    if not eds:
+        return None
+    return ", ".join(eds) + (f" ({j['name']})" if j.get("name") else "")
+
+
+def site_and_codes(d: Design) -> dict:
+    """The report's site block: where, the codes the state enforces, who regulates it, and the licensing."""
+    j, site = d.jurisdiction, d.site
+    code = site.get("jurisdiction")
+    venues = _l(j.get("regulated_venues"))
+    plan = j.get("plan_review")
+    return facts("Site and codes", [
+        ("Site", site.get("address")),
+        ("Jurisdiction", f"{j['name']} ({code})" if j.get("name") else (f"{code}: no jurisdiction data" if code else None)),
+        ("Codes", code_editions(j) or ("Not on file: confirm with the authority having jurisdiction" if j else None)),
+        ("Health authority", j.get("agency")),
+        ("Regulated venues", ", ".join(str(v) for v in venues).capitalize() if venues else None),
+        ("Health-department plan review", _label(plan) if plan else None, "open" if d.regulated and plan == "required" else ""),
+        ("Licensing", j.get("licensing")),
+    ], note=str(j.get("ahj_note") or ""))
 
 
 def _assumptions(d: Design, s: dict) -> list:
@@ -450,7 +481,7 @@ def _value_text(value: Any, unit: str) -> str:
 
 # The ladder's sections (PLAN.md 2.2), in its order, and the calculation names each one holds.
 LADDER = (
-    ("Site", ("site_lookups",)),
+    ("Site", ("site_lookups", "jurisdiction")),
     ("Basins", ("basin_volume", "basin_checks", "evaporation_rate")),
     ("Features", ()),
     ("Regulated minimums", ("minimum_flow_rate", "turnover_time")),
@@ -820,6 +851,8 @@ def sheet_winterization(d: Design) -> list:
     return blocks
 
 
+# The interactive family's notes about the state's rule (phase J): the checklist's lead, never a row of it.
+IWF_STATE_NOTES = ("IWF_STATE_RULES", "IWF_NO_JURISDICTION")
 IWF_STATUS = {"pass": ("Pass", "pass"), "blocker": ("Fail", "fail"), "warning": ("Fail", "fail"), "info": ("Open", "open")}
 NEC_STATUS = {"pass": ("Pass", "pass"), "fail": ("Fail", "fail"), "missing": ("Missing", "fail"), "verify": ("Verify", "open"),
               "n/a": ("N/A", "muted")}
@@ -895,7 +928,8 @@ def sheet_calcs(d: Design) -> list:
     blocks.append(table("Circulation system", [("Role", False), ("Equipment", False), ("Rating", False)], loop, empty="No circulation equipment yet."))
 
     pc = _d(d.paper.get("plan_check"))
-    iwf = [x for x in _l(pc.get("iwf")) if isinstance(x, dict)]
+    iwf = [x for x in _l(pc.get("iwf")) if isinstance(x, dict) and x.get("code") not in IWF_STATE_NOTES]
+    state_notes = [x for x in _l(pc.get("iwf")) if isinstance(x, dict) and x.get("code") in IWF_STATE_NOTES]
     if iwf or "interactive" in str(site.get("venue_type") or "").lower():
         rows = []
         for x in iwf:
@@ -904,10 +938,16 @@ def sheet_calcs(d: Design) -> list:
                                          if _num(x.get("value")) is not None else DASH)
             rows.append([cell(x.get("title"), tone="strong"), cell(result), cell(label, tone=tone),
                          cell("Utah R392-302-41" + ("; MAHC" if "MAHC" in str(x.get("citation") or "") else ""), tone="muted")])
-        blocks.append(table("Utah interactive water feature checklist (R392-302-41)", [("Requirement", False), ("Design", False),
-                                                                                        ("Status", False), ("Citation", False)], rows,
+        # a design derived before v1.772.0 has no jurisdiction result: it was Utah's checklist then
+        advice = bool(state_notes) or (bool(d.jurisdiction) and not d.jurisdiction.get("iwf_like_utah"))
+        title = ("Utah interactive water feature checklist (R392-302-41)" if not advice else
+                 "Interactive water feature checklist (Utah R392-302-41, as advice"
+                 + (f" in {d.jurisdiction['name']})" if d.jurisdiction.get("name") else ")"))
+        lead = " ".join(f"{x.get('title')}. {x.get('detail') or ''}".strip() for x in state_notes)
+        blocks.append(table(title, [("Requirement", False), ("Design", False), ("Status", False), ("Citation", False)], rows,
                             empty="List the play features on the interactive feature to run the Utah checklist.",
-                            note="Open means the design does not answer it yet; the inspector decides each line."))
+                            note=(lead + " " if lead else "")
+                            + "Open means the design does not answer it yet; the inspector decides each line."))
     nec = [x for x in _l(pc.get("nec680")) if isinstance(x, dict)]
     blocks.append(table("NEC Article 680 checklist" + (f" ({pc['nec_edition']})" if pc.get("nec_edition") else ""),
                         [("Article", False), ("Requirement", False), ("Design", False), ("Status", False)],
@@ -926,14 +966,18 @@ def sheet_basis(d: Design) -> list:
     return [facts("Site", [
         ("Address", site.get("address")),
         ("Venue", site.get("venue_type")),
-        ("Jurisdiction", site.get("jurisdiction")),
+        ("Jurisdiction", f"{d.jurisdiction['name']} ({site.get('jurisdiction')})" if d.jurisdiction.get("name")
+         else site.get("jurisdiction")),
         ("Governing code", site.get("governing_code")),
+        ("Code editions", code_editions(d.jurisdiction)),
+        ("Health authority", d.jurisdiction.get("agency")),
         ("Elevation", fnum(site.get("elevation_ft"), 0, "ft")),
         ("Design air temperature", fnum(site.get("air_temp_f"), 0, "°F")),
         ("Design water temperature", fnum(site.get("water_temp_f"), 0, "°F")),
         ("Frost depth", fnum(site.get("frost_depth_in"), 0, "in")),
         ("Water hardness", fnum(site.get("hardness_ppm"), 0, "ppm")),
-    ]), facts("Design", [
+        ("Seismic design category", site.get("seismic_sdc")),
+    ], note=str(d.jurisdiction.get("ahj_note") or "")), facts("Design", [
         ("Features", ", ".join(f"{_d(f).get('label') or _d(f).get('id')} ({_d(f).get('type') or _label(_d(f).get('family'))})"
                                for f in _l(d.model.get("features"))) or None),
         ("Design flow", fnum(r.get("design_flow_gpm"), 1, "gpm")),
@@ -1112,5 +1156,7 @@ def build(doc: dict | None, model: dict | None, stored: dict | None, bom: list |
         },
         "regulated": d.regulated,
         "derived": d.derived,
+        # the code editions the site's state enforces, for the packet cover's small print (phase J)
+        "codes": code_editions(d.jurisdiction) or "",
         "sheets": {k: _sheet(d, k) for k in keys},
     }

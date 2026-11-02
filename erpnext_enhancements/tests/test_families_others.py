@@ -74,10 +74,13 @@ def test_utah_tank_is_three_minutes_of_combined_pump_flow():
     assert res.data["tank_required_gal"] == pytest.approx(3 * (80 + 40))
 
 
+UTAH = {"jurisdiction": "UT"}
+
+
 def test_utah_turnover_is_thirty_minutes():
-    ok = codes(interactive.checks(plaza(system_volume_gal=1200, filter_gpm=40)))
+    ok = codes(interactive.checks(plaza(system_volume_gal=1200, filter_gpm=40), site=UTAH))
     assert ok["IWF_TURNOVER"] == PASS
-    bad = codes(interactive.checks(plaza(system_volume_gal=1300, filter_gpm=40)))
+    bad = codes(interactive.checks(plaza(system_volume_gal=1300, filter_gpm=40), site=UTAH))
     assert bad["IWF_TURNOVER"] == BLOCKER
     # With no filter flow entered, the filter is sized to the turnover.
     assert interactive.flow(plaza(system_volume_gal=1200)).data["filter_gpm"] == pytest.approx(40.0)
@@ -107,7 +110,7 @@ def test_outside_utah_failures_are_warnings():
 def test_nozzle_velocity_openings_and_foggers():
     rows = [{"label": "jet", "gpm": 10, "count": 1, "orifice_in": 0.25, "opening_in": 0.75},
             {"label": "fog", "gpm": 1, "count": 1, "fogger": True}]
-    c = codes(interactive.checks({"id": "x", "inputs": {"play_features": rows, "fogger_potable": False}}))
+    c = codes(interactive.checks({"id": "x", "inputs": {"play_features": rows, "fogger_potable": False}}, site=UTAH))
     assert c["IWF_VELOCITY"] == BLOCKER  # 10 gpm through 1/4 in ~ 65 ft/s
     assert c["IWF_OPENINGS"] == BLOCKER
     assert c["IWF_FOGGER"] == BLOCKER
@@ -232,7 +235,8 @@ def test_mist_count_times_gpm_and_potable_supply():
     f = {"id": "m", "inputs": {"nozzle_count": 20, "orifice_in": "0.012"}}
     assert mist.flow(f).value == pytest.approx(0.56)
     assert mist.flow({"id": "m", "inputs": {"nozzle_count": 20, "orifice_in": "0.008"}}).value == pytest.approx(0.40)
-    c = codes(mist.checks({"id": "m", "inputs": {"nozzle_count": 20, "supply": "reservoir", "line_rating_psi": 600}}))
+    c = codes(mist.checks({"id": "m", "inputs": {"nozzle_count": 20, "supply": "reservoir", "line_rating_psi": 600}},
+                          site=UTAH))
     assert c["MIST_NOT_POTABLE"] == BLOCKER
     assert c["MIST_LINE_RATING"] == BLOCKER
 
@@ -290,12 +294,13 @@ def test_lighting_gfci_and_voltage_checks():
 def test_winterization_checklist_and_frost_depth():
     m = model_with(
         [{"id": "s", "family": "interactive", "inputs": {}}],
+        site={"jurisdiction": "UT", "frost_depth_in": 30},  # derive_site fills it from Utah's row
         network={"pumps": [{"id": "p1", "location": "room"}],
                  "segments": [{"id": "s1", "drain": True}, {"id": "s2", "buried_depth_in": 18},
                               {"id": "s3", "buried_depth_in": 36}, {"id": "s4"}]},
     )
     d = winterization.calc(m).data
-    assert d["frost_depth_in"] == 30  # SLC default
+    assert d["frost_depth_in"] == 30 and d["needed"]
     keys = {i["key"] for i in d["winterize"]}
     assert {"autofill", "seg_s1", "seg_s2", "seg_s3", "nozzles_s"} <= keys
     c = codes(winterization.checks(m))

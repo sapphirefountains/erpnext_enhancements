@@ -39,7 +39,7 @@ import math
 
 from ..data.rebar import bar as rebar
 from .building import building_floor_load, deck_beam
-from .defaults import DISCLAIMER
+from .defaults import DISCLAIMER, RULE_SOURCES
 from .fabrications import pedestal_check, veneer_attachment, weir_lip_sag
 from .loads import (
     freeze_thaw_notes,
@@ -131,6 +131,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
             yield row
 
     frost = _num(site.get("frost_depth_in"), float(rules["frost_depth_in"]))
+    if _num(site.get("frost_depth_in")) is None and (basins or struct):
+        check("STRUCT_FROST_DEFAULT", INFO, "site", "site", "No frost depth for the site",
+              f"The footing and freeze-thaw checks use the house rule's {frost:g} in, which is Salt Lake County's; "
+              "the site's state has no frost depth on file.",
+              "Type the frost depth on the Site step (the building department publishes it).", RULE_SOURCES["frost_depth_in"])
     soil_class = site.get("soil_class")
     bearing = _num(site.get("soil_bearing_psf"))
 
@@ -140,9 +145,11 @@ def general_structure(model: dict, basins: list[dict], rules: dict) -> dict:
     sds = sd1 = sdc = None
     if seismic.status == "incomplete":
         if basins or struct:
+            sdc_note = (f"The site is taken as Seismic Design Category {site['seismic_sdc']} (its state's default); "
+                        if site.get("seismic_sdc") else "")
             check("STRUCT_SEISMIC_INPUTS", INFO, "project", "site", "Seismic values not entered",
-                  "The Wasatch Front is normally Seismic Design Category D; the hydrodynamic, anchor and pedestal "
-                  "checks need Ss and S1.", "Look up Ss and S1 for the address in the USGS / ASCE Hazard Tool.",
+                  sdc_note + "the hydrodynamic, anchor and pedestal checks need SDS and SD1 (or Ss and S1).",
+                  "Save the design with its address to look them up from USGS, or enter Ss and S1 from the ASCE Hazard Tool.",
                   seismic.citations[0])
     else:
         sds, sd1, sdc = seismic.value["sds"], seismic.value["sd1"], seismic.value["sdc"]

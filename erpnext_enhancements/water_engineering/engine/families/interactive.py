@@ -6,9 +6,12 @@ Industry report section 1.5. Two jobs:
    sequence is a list of steps, each the labels of the features open at once. The saving
    over "everything on" is where automation pays (Vortex quotes 30-50%).
 2. **Utah R392-302-41 as a pass/fail list.** Every item is a :class:`.base.Check` with
-   severity ``pass`` or, when it fails, ``blocker`` where the venue is regulated (in Utah an
-   interactive feature is) and ``warning`` elsewhere. An item the designer has not answered
-   yet is ``info``, never a silent pass.
+   severity ``pass`` or, when it fails, ``blocker`` where the site's state regulates
+   interactive features with a rule like Utah's (``regulation.iwf_regulated`` and
+   ``iwf_like_utah`` in the jurisdiction table, phase J) and ``warning`` elsewhere, cited with
+   the state's ``iwf_cite``. A state with its own rule gets an ``info`` carrying the table's
+   notes; a site with no jurisdiction data gets one saying so. An item the designer has not
+   answered yet is ``info``, never a silent pass.
 
 ``derived`` keys read by :func:`checks`: ``flow``, ``basin`` (the collector tank, for its
 volume when ``tank_gal`` is blank) and ``tank_gal``.
@@ -19,6 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .. import jurisdiction as juris
 from ..basin import basin_volume
 from ..envelope import make_input
 from .base import (
@@ -31,7 +35,6 @@ from .base import (
     feature_dict,
     flow_data,
     num,
-    site_regulated,
     spec,
     values,
 )
@@ -213,7 +216,39 @@ def checks(feature: Any, derived: dict[str, Any] | None = None, site: dict[str, 
     d = flow_data(flow, feature, derived, site, rules)
     if not d.get("complete"):
         return [Check("IWF_INCOMPLETE", INFO, "List the play features to run the Utah checklist", feature=fid)]
-    fail = BLOCKER if site_regulated(site) or (site or {}).get("jurisdiction", "UT") == "UT" else WARNING
+    entry = juris.entry_for(site)
+    reg = juris.regulation(entry)
+    fail = BLOCKER if juris.iwf_like_utah(entry) else WARNING
+    out = _checklist(v, d, derived, fail, fid)
+    cite = str(reg.get("iwf_cite") or "") if juris.iwf_regulated(entry) else ""
+    if cite:  # the state's own citation for the lines its rule makes
+        for c in out:
+            if c.citation.startswith(CIT_UT):
+                c.citation = cite + c.citation[len(CIT_UT):]
+    return _state_note(site, entry, fid) + out
+
+
+def _state_note(site: dict[str, Any] | None, entry: dict[str, Any] | None, fid: str) -> list[Check]:
+    """An INFO when the Utah checklist is advice here: the state has its own rule, regulates none, or has no row."""
+    if entry is None:
+        return [Check("IWF_NO_JURISDICTION", INFO, "No jurisdiction data: the Utah checklist is shown as advice",
+                      detail=juris.no_data_warning(site), remedy="Pick the site's state on the Site step.",
+                      section="site", citation=CIT_UT, feature=fid)]
+    if juris.iwf_like_utah(entry):
+        return []
+    reg = juris.regulation(entry)
+    state = juris.state_name(site, entry)
+    if juris.iwf_regulated(entry):
+        title = f"{state} regulates interactive features under its own rule" + (f" ({reg['iwf_rule']})" if reg.get("iwf_rule") else "")
+    else:
+        title = f"{state} does not regulate interactive features as pools"
+    return [Check("IWF_STATE_RULES", INFO, title,
+                  detail=(str(reg.get("notes") or "") + " The Utah R392-302-41 lines below are shown as advice.").strip(),
+                  remedy="Check the state's rule and the local health department before plan review.", section="site",
+                  citation=str(reg.get("iwf_cite") or reg.get("pool_cite") or ""), feature=fid)]
+
+
+def _checklist(v: dict[str, Any], d: dict[str, Any], derived: dict[str, Any] | None, fail: str, fid: str) -> list[Check]:
     rows = d["rows"]
     out: list[Check] = []
 

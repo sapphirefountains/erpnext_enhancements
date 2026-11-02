@@ -43,6 +43,11 @@ from frappe.utils import cint, flt
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 GEOCODE_TIMEOUT_S = 10
+# The Fountain Designer's site elevation (phase J): Google's Elevation API at a geocoded point, with
+# the same server key. It lives here because this is the one module that calls Google from the server
+# (tests/test_geocoding_key.py).
+ELEVATION_URL = "https://maps.googleapis.com/maps/api/elevation/json"
+FT_PER_M = 1 / 0.3048
 
 #: Project custom fields this module reads and writes (fixture custom_field.json).
 PROJECT_COORD_FIELDS = (
@@ -281,6 +286,38 @@ def geocode_text(address):
 		if not _valid(lat, lng):
 			return None, "no point"
 		return {"lat": lat, "lng": lng}, None
+	except Exception as exc:
+		return None, type(exc).__name__
+
+
+def elevation_at(lat, lng):
+	"""``(feet, None)`` for the ground elevation at one point, or ``(None, problem)``. Never raises or logs.
+
+	Google's Elevation API answers in metres above mean sea level. Same rules as
+	``geocode_text``: the server key through ``_geocoding_api_key``, and a failure reported as
+	Google's status or an exception's class name, never its text (it would carry the key).
+	"""
+	try:
+		if not _valid(lat, lng):
+			return None, "no point"
+		key = _geocoding_api_key()
+		if not key:
+			return None, "no key"
+		import requests
+
+		response = requests.get(
+			ELEVATION_URL, params={"locations": f"{flt(lat)},{flt(lng)}", "key": key}, timeout=GEOCODE_TIMEOUT_S
+		)
+		try:
+			payload = response.json() if response.content else {}
+		except ValueError:
+			payload = {}
+		status = payload.get("status") if isinstance(payload, dict) else None
+		results = payload.get("results") if isinstance(payload, dict) else None
+		if status != "OK" or not results or results[0].get("elevation") is None:
+			detail = (payload.get("error_message") or "") if isinstance(payload, dict) else ""
+			return None, f"{status or response.status_code} {detail}".strip()
+		return round(flt(results[0]["elevation"]) * FT_PER_M, 1), None
 	except Exception as exc:
 		return None, type(exc).__name__
 

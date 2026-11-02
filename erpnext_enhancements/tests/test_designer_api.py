@@ -144,6 +144,14 @@ def api(monkeypatch):
     frappe.utils = utils
     monkeypatch.setitem(sys.modules, "frappe", frappe)
     monkeypatch.setitem(sys.modules, "frappe.utils", utils)
+    # No test reaches the network: a lookup a test does not stub fails like a timeout (and is cached briefly).
+    offline = types.ModuleType("requests")
+
+    def no_network(*a, **k):
+        raise ConnectionError("offline in tests")
+
+    offline.get = no_network
+    monkeypatch.setitem(sys.modules, "requests", offline)
     for mod in [m for m in sys.modules if m.startswith("erpnext_enhancements.water_engineering.api")]:
         monkeypatch.delitem(sys.modules, mod)
     module = importlib.import_module("erpnext_enhancements.water_engineering.api.designer")
@@ -545,19 +553,144 @@ def test_the_page_derive_never_geocodes(api, monkeypatch):
     assert seen  # a save does
 
 
-def test_a_geocode_failure_is_cached_briefly(api, monkeypatch):
-    stored = []
+def _ttls(api):
+    """A cache that records ``{key: ttl}`` of every write and answers nothing (every lookup runs)."""
+    stored = {}
     api._frappe.cache = lambda: types.SimpleNamespace(
-        get_value=lambda k: None, set_value=lambda k, v, expires_in_sec=None: stored.append(expires_in_sec))
+        get_value=lambda k: None, set_value=lambda k, v, expires_in_sec=None: stored.__setitem__(k, expires_in_sec))
+    return stored
+
+
+def _ttl(stored, kind):
+    return next(v for k, v in stored.items() if k.startswith(f"fountain_designer:{kind}:"))
+
+
+def _sites(monkeypatch, **fns):
     sites = types.ModuleType("erpnext_enhancements.workforce.sites")
+    for name, fn in fns.items():
+        setattr(sites, name, fn)
     monkeypatch.setitem(sys.modules, "erpnext_enhancements.workforce.sites", sites)
+    return sites
+
+
+def _raise(message):
+    def fail(*a, **k):
+        raise AssertionError(message)
+    return fail
+
+
+def test_a_geocode_failure_is_cached_briefly(api, monkeypatch):
+    stored = _ttls(api)
+    sites = _sites(monkeypatch, elevation_at=lambda lat, lng: (None, "REQUEST_DENIED"))
     for problem, ttl in (("OVER_QUERY_LIMIT", api.GEOCODE_RETRY_S), ("ZERO_RESULTS", api.GEOCODE_CACHE_S)):
         sites.geocode_text = lambda address, problem=problem: (None, problem)
         assert api._real_site_lookup({"address": "1 Main St"}) is None
-        assert stored[-1] == ttl
+        assert _ttl(stored, "geocode") == ttl
     sites.geocode_text = lambda address: ({"lat": 40.7, "lng": -111.9}, None)
-    assert api._real_site_lookup({"address": "2 Main St"}) == {"lat": 40.7, "lng": -111.9}
-    assert stored[-1] == api.GEOCODE_CACHE_S
+    found = api._real_site_lookup({"address": "2 Main St"})
+    assert (found["lat"], found["lng"]) == (40.7, -111.9) and found["cites"]["lat"] == api.CIT_GEOCODE
+    assert _ttl(stored, "geocode") == api.GEOCODE_CACHE_S
+    # the elevation and seismic lookups failed (no Elevation API on the key, no network): retried soon
+    assert "elevation_ft" not in found and "seismic_sdc" not in found
+    assert _ttl(stored, "elevation") == api.GEOCODE_RETRY_S
+    assert _ttl(stored, "seismic") == api.GEOCODE_RETRY_S
+
+
+# ------------------------------------------------------------------ phase J: elevation and seismic lookups
+
+USGS_REPLY = {"request": {"status": "success"}, "response": {"data": {
+    "pgam": 0.68, "sms": 1.64, "sm1": 1.25, "sds": 1.09, "sd1": 0.83, "sdc": "D", "ss": 1.67, "s1": 0.58}}}
+
+
+class _Reply:
+    def __init__(self, payload, status=200):
+        self._payload, self.status_code = payload, status
+        self.content = json.dumps(payload).encode()
+
+    def json(self):
+        return self._payload
+
+
+def test_the_seismic_lookup_reads_sds_sd1_and_sdc_from_usgs(api, monkeypatch):
+    stored = _ttls(api)
+    calls = []
+
+    def get(url, params=None, timeout=None):
+        calls.append((url, params, timeout))
+        return _Reply(USGS_REPLY)
+
+    monkeypatch.setattr(sys.modules["requests"], "get", get)
+    assert api.seismic_lookup(40.76, -111.89) == {"seismic_sdc": "D", "sds": 1.09, "sd1": 0.83}
+    url, params, timeout = calls[0]
+    assert url == api.USGS_URL and "/ws/building-codes/asce7-22/" in url
+    assert params["riskCategory"] == "II" and params["siteClass"] == "D"
+    assert (params["latitude"], params["longitude"]) == (40.76, -111.89) and timeout
+    assert _ttl(stored, "seismic") == api.GEOCODE_CACHE_S  # a found value: a month
+
+
+def test_a_seismic_lookup_that_fails_or_answers_junk_is_none_and_retried(api, monkeypatch):
+    stored = _ttls(api)
+    for reply in (_Reply({"response": {"data": {"sdc": "?", "sds": None}}}), _Reply({}, 503), _Reply([])):
+        monkeypatch.setattr(sys.modules["requests"], "get", lambda *a, reply=reply, **k: reply)
+        assert api.seismic_lookup(40.0, -111.0) is None
+        assert _ttl(stored, "seismic") == api.GEOCODE_RETRY_S
+    # an older reply shape (a list of responses) still reads
+    monkeypatch.setattr(sys.modules["requests"], "get", lambda *a, **k: _Reply({"response": [USGS_REPLY["response"]]}))
+    assert api.seismic_lookup(40.0, -111.0)["seismic_sdc"] == "D"
+
+
+def test_a_cached_lookup_is_not_asked_again(api, monkeypatch):
+    api._frappe.cache = lambda: types.SimpleNamespace(
+        get_value=lambda k: {"elevation_ft": 4321.0} if "elevation" in k else {}, set_value=lambda *a, **k: None)
+    _sites(monkeypatch, elevation_at=_raise("asked again"))
+    monkeypatch.setattr(sys.modules["requests"], "get", _raise("asked USGS again"))
+    assert api.elevation_lookup(40.7, -111.9) == {"elevation_ft": 4321.0}
+    assert api.seismic_lookup(40.7, -111.9) is None  # a cached definite "nothing"
+
+
+def test_the_site_lookup_fills_elevation_and_seismic_at_the_point(api, monkeypatch):
+    _ttls(api)
+    _sites(monkeypatch, geocode_text=_raise("the site has its point"), elevation_at=lambda lat, lng: (4226.4, None))
+    monkeypatch.setattr(sys.modules["requests"], "get", lambda *a, **k: _Reply(USGS_REPLY))
+    found = api._real_site_lookup({"address": "451 S State St", "lat": 40.76, "lng": -111.89})
+    assert found["elevation_ft"] == 4226.4 and found["seismic_sdc"] == "D" and found["sds"] == 1.09
+    assert found["cites"]["elevation_ft"] == api.CIT_ELEVATION and found["cites"]["sd1"] == api.CIT_USGS
+
+
+def test_the_site_lookup_skips_what_the_designer_typed(api, monkeypatch):
+    _ttls(api)
+    _sites(monkeypatch, elevation_at=_raise("typed elevation"))
+    monkeypatch.setattr(sys.modules["requests"], "get", _raise("typed SDC"))
+    typed = {"lat": 40.7, "lng": -111.9, "elevation_ft": 5000, "seismic_sdc": "C", "sds": 0.5, "sd1": 0.2}
+    assert api._real_site_lookup(typed) is None
+    # a value the engine filled (site.sources) is the engine's to refresh
+    owned = dict(typed, sources={"elevation_ft": "default"})
+    _sites(monkeypatch, elevation_at=lambda lat, lng: (4300.0, None))
+    assert api._real_site_lookup(owned)["elevation_ft"] == 4300.0
+
+
+def test_a_save_derive_takes_the_lookups_over_the_state_defaults(api, monkeypatch):
+    monkeypatch.setattr(api, "site_lookup", lambda site: {"lat": 40.76, "lng": -111.89, "elevation_ft": 4226.4,
+                                                          "seismic_sdc": "D", "sds": 1.09, "sd1": 0.83,
+                                                          "cites": {"elevation_ft": api.CIT_ELEVATION, "sds": api.CIT_USGS}})
+    model = _boot_fixture()["kits"][0]["model"]
+    page = api.derive(json.dumps(model))["model"]["site"]
+    assert page["sources"]["elevation_ft"] == "default"  # the page's derive makes no lookup
+    saved = api.run_derive(dict(model, site=page), geocode=True)
+    site = saved["model"]["site"]
+    assert site["elevation_ft"] == 4226.4 and site["sources"]["elevation_ft"] == "lookup"
+    assert (site["seismic_sdc"], site["sds"], site["sd1"]) == ("D", 1.09, 0.83)
+    inputs = saved["results"]["site_lookups"]["inputs"]
+    assert inputs["elevation_ft"]["ref"] == api.CIT_ELEVATION and inputs["sds"]["source"] == "lookup"
+
+
+def test_boot_lists_every_jurisdiction_with_utah_first(api):
+    options = api.boot()["options"]["jurisdictions"]
+    assert options[0]["value"] == "UT" and options[0]["label"] == "Utah (UT)"
+    from erpnext_enhancements.water_engineering.engine.data import jurisdictions
+    assert [o["value"] for o in options] == jurisdictions.codes()
+    names = [o["label"] for o in options[1:]]
+    assert names == sorted(names)
 
 
 def test_the_bom_rate_is_the_selling_price_and_valuation_only_for_who_may_see_it(api, monkeypatch):

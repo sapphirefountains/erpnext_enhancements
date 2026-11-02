@@ -223,6 +223,73 @@
    "status": "ok",
    "citations": [],
    "warnings": []
+  },
+  "jurisdiction": {
+   "calc": "jurisdiction",
+   "value": {
+    "code": "UT",
+    "name": "Utah",
+    "known": true,
+    "codes": {
+     "nec": "NEC: edition not on file",
+     "ibc": "IBC: edition not on file",
+     "irc": "IRC: edition not on file",
+     "ispsc": "ISPSC: edition not on file",
+     "mahc": "MAHC: edition not on file"
+    },
+    "editions": [],
+    "agency": "Utah Department of Health and Human Services, enforced by the local health departments",
+    "regulated_venues": [
+     "public pools",
+     "spas",
+     "interactive water features"
+    ],
+    "plan_review": "required",
+    "pool_rule": "Utah Admin. Code R392-302",
+    "iwf_rule": "R392-302-41",
+    "iwf_like_utah": true,
+    "licensing": null,
+    "confirm_ahj": true,
+    "ahj_note": "Confirm the NEC, IBC, IRC and ISPSC editions with the authority having jurisdiction: Utah adopts them locally, not at all, or the table has no edition.",
+    "ahj_local": false,
+    "notes": null,
+    "design_city": "Salt Lake City"
+   },
+   "unit": "",
+   "inputs": {
+    "jurisdiction": {
+     "value": "UT",
+     "unit": "",
+     "source": "user",
+     "ref": "site.jurisdiction"
+    }
+   },
+   "formula": "the state's row of the jurisdiction table (engine/data/jurisdictions.json)",
+   "steps": [
+    "NEC: edition not on file",
+    "IBC: edition not on file",
+    "IRC: edition not on file",
+    "ISPSC: edition not on file",
+    "MAHC: edition not on file",
+    "Health authority: Utah Department of Health and Human Services, enforced by the local health departments",
+    "Regulated: public pools, spas, interactive water features",
+    "Interactive features: R392-302-41 (Utah's R392-302-41 checklist applies as written)",
+    "Health-department plan review: required"
+   ],
+   "citations": [
+    "Utah Code Title 15A, State Construction and Fire Codes Act: the NEC is adopted statewide through the State Construction Code; the edition in force is an open item (docs/fountain-designer/PLAN.md section 6)",
+    "Utah Code Title 15A, State Construction and Fire Codes Act: the IBC is adopted statewide; edition to confirm",
+    "Utah Code Title 15A, State Construction and Fire Codes Act: the IRC is adopted statewide; edition to confirm",
+    "DOC-0119 / Utah R392-302-1 (public pools and spas)",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41",
+    "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41 (foggers fed with potable water)",
+    "Utah Admin. Code R392-302 (plans approved by the local health department before a public pool, spa or interactive feature is built)"
+   ],
+   "warnings": [
+    "Confirm the NEC, IBC, IRC and ISPSC editions with the authority having jurisdiction: Utah adopts them locally, not at all, or the table has no edition."
+   ],
+   "options": [],
+   "status": "Confirm with the AHJ"
   }
  },
  "values": {

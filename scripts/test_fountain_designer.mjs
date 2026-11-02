@@ -599,6 +599,38 @@ await test("clear_site_lookups blanks every looked-up field and keeps the rest",
 	assert.equal(refilled.site.elevation_ft, 4226, "the next derive fills them again");
 });
 
+await test("phase J: an engine-filled site value follows the engine, a typed one stays", () => {
+	let mine = M.model_from_kit(lobby_kit, "full");
+	mine = M.set_in(mine, "site", Object.assign({}, mine.site, { elevation_ft: 4300, frost_depth_in: 30, air_temp_f: 95,
+		sources: { elevation_ft: "default", frost_depth_in: "default", air_temp_f: "default" } }));
+	const typed = M.edit(mine, "site.air_temp_f", 100);
+	assert.equal(typed.site.sources.air_temp_f, undefined, "typing a value takes it off the engine");
+	assert.equal(typed.setup.features, mine.setup.features, "a site edit pins no section");
+	// the reply to that model in another state: the engine's values for it, one it has no figure for
+	// (blanked, its source gone), and the typed value as it was sent
+	const derived = JSON.parse(JSON.stringify(typed));
+	Object.assign(derived.site, { jurisdiction: "AZ", elevation_ft: 1100, frost_depth_in: null, sources: { elevation_ft: "default" } });
+	const out = M.merge_derived(typed, derived);
+	assert.equal(out.site.elevation_ft, 1100, "an engine value follows the new state");
+	assert.equal(out.site.frost_depth_in, null, "one the new state lacks is blanked, not left from the old state");
+	assert.equal(out.site.air_temp_f, 100, "the typed value stays");
+	assert.deepEqual(out.site.sources, { elevation_ft: "default" }, "the reply's record replaces ours");
+	const none = M.merge_derived(out, Object.assign({}, derived, { site: Object.assign({}, derived.site, { sources: undefined }) }));
+	assert.equal(none.site.elevation_ft, 1100);
+	assert.equal(none.site.sources, null, "no record left: no sources");
+	assert.equal(M.clear_site_lookups(out).site.sources, null, "Refresh drops the record too");
+	for (const key of ["seismic_sdc", "sds", "sd1", "winterize"]) assert.ok(M.SITE_LOOKUPS.includes(key), key);
+	// full mode's answer to a new address: only what the lookups filled goes
+	const looked = M.set_in(mine, "site", Object.assign({}, mine.site, { lat: 40.7, lng: -111.9, elevation_ft: 4226, hardness_ppm: 300,
+		sources: { lat: "lookup", lng: "lookup", elevation_ft: "lookup", frost_depth_in: "default" } }));
+	const moved = M.clear_looked_up(looked);
+	assert.equal(moved.site.lat, null);
+	assert.equal(moved.site.elevation_ft, null);
+	assert.equal(moved.site.hardness_ppm, 300, "a typed value stays");
+	assert.equal(moved.site.frost_depth_in, 30, "a state default stays");
+	assert.deepEqual(moved.site.sources, { frost_depth_in: "default" });
+});
+
 console.log("charts");
 
 await test("the fixture's charts pass the sanitizer unchanged", () => {
@@ -707,6 +739,53 @@ await test("every step renders for every demo design, in both modes", () => {
 	}
 	const list = STEPS.start.render(ctx_for(replies["pond-aerator-1ac"], "quick", { design: null }));
 	for (const d of designs.designs) assert.ok(list.includes(`data-fd-open="${d.name}"`), d.name);
+});
+
+await test("phase J: the Site step lists every state and says what the state enforces", () => {
+	const reply = replies["plaza-interactive-24jet"];
+	for (const mode of ["quick", "full"]) {
+		const html = STEPS.site.render(ctx_for(reply, mode));
+		assert.match(html, /data-fd-path="site\.jurisdiction"/, `${mode}: the picker is on the step`);
+		for (const o of boot.options.jurisdictions) assert.ok(html.includes(`value="${o.value}"`), `${mode}: ${o.value}`);
+		assert.match(html, /Codes and jurisdiction/);
+		assert.match(html, /data-fd-codes/);
+		assert.match(html, /Health authority/);
+		assert.match(html, /interactive water features/, "the venues Utah regulates");
+	}
+	const full = STEPS.site.render(ctx_for(reply, "full"));
+	assert.match(full, /data-fd-path="site\.seismic_sdc"/);
+	assert.match(full, /data-fd-path="site\.winterize"/);
+	const v = reply.results.jurisdiction.value;
+	const card = STEPS.site.codes_html(H, reply, null);
+	assert.equal(card.includes("confirm") || card.includes("Confirm"), Boolean(v.confirm_ahj), "the AHJ line when a code needs it");
+	const local = JSON.parse(JSON.stringify(reply));
+	Object.assign(local.results.jurisdiction.value, { editions: ["NEC 2020", "IBC 2018"], confirm_ahj: true,
+		ahj_note: "Confirm the IBC edition with the authority having jurisdiction: Testland adopts it locally.",
+		licensing: "Contractor: <b>pool</b> license.", regulated_venues: ["public pools"], iwf_rule: null });
+	const html = STEPS.site.codes_html(H, local, null);
+	assert.match(html, /NEC 2020, IBC 2018/);
+	assert.match(html, /Testland adopts it locally/);
+	assert.match(html, /fd-hint--warn/);
+	assert.ok(!html.includes("<b>"), "server text is escaped");
+	const unknown = { results: { jurisdiction: { value: { known: false, code: "XX" } } } };
+	assert.match(STEPS.site.codes_html(H, unknown, null), /No jurisdiction data for XX/);
+	assert.match(STEPS.site.codes_html(H, null, null), /Working out/);
+});
+
+await test("phase J: a derive repaints the codes card in place", async () => {
+	const { d } = await controller();
+	const codes = { innerHTML: "" };
+	const found = { innerHTML: "" };
+	d.stage.querySelector = (sel) => (sel === "[data-fd-codes]" ? codes : sel === "[data-fd-site-found]" ? found : null);
+	d.stage.querySelectorAll = () => [];
+	d.root.querySelector = () => null;
+	d.reply = replies["lobby-sheet-wall-8ft"];
+	d.paint();
+	assert.match(codes.innerHTML, /Health authority/);
+	d.reply = { results: { jurisdiction: { value: { known: false, code: "XX" } } } };
+	d.paint();
+	assert.match(codes.innerHTML, /No jurisdiction data for XX/);
+	d.autosave.cancel();
 });
 
 await test("quick Features draws exactly the kit's headline inputs", () => {

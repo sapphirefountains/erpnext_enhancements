@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "generated": "2026-11-01 Utah seed from the engine's own values and citations (phase J); the 48-state table replaces it",
+  "jurisdictions": {
+    "UT": {
+      "name": "Utah",
+      "codes": {
+        "nec": {"edition": null, "basis": "statewide", "effective": null, "amendments": "",
+                "cite": "Utah Code Title 15A, State Construction and Fire Codes Act: the NEC is adopted statewide through the State Construction Code; the edition in force is an open item (docs/fountain-designer/PLAN.md section 6)"},
+        "ibc": {"edition": null, "basis": "statewide",
+                "cite": "Utah Code Title 15A, State Construction and Fire Codes Act: the IBC is adopted statewide; edition to confirm"},
+        "irc": {"edition": null, "basis": "statewide",
+                "cite": "Utah Code Title 15A, State Construction and Fire Codes Act: the IRC is adopted statewide; edition to confirm"},
+        "ispsc": {"adopted": null, "edition": null, "basis": null, "cite": null},
+        "mahc": {"status": null, "cite": null}
+      },
+      "regulation": {
+        "agency": "Utah Department of Health and Human Services, enforced by the local health departments",
+        "pool_rule": "Utah Admin. Code R392-302",
+        "pool_cite": "DOC-0119 / Utah R392-302-1 (public pools and spas)",
+        "spa_regulated": true,
+        "iwf_regulated": true,
+        "iwf_rule": "R392-302-41",
+        "iwf_cite": "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41",
+        "iwf_like_utah": true,
+        "fogger_potable": true,
+        "fogger_cite": "https://www.law.cornell.edu/regulations/utah/Utah-Admin-Code-R392-302-41 (foggers fed with potable water)",
+        "plan_review": "required",
+        "plan_review_cite": "Utah Admin. Code R392-302 (plans approved by the local health department before a public pool, spa or interactive feature is built)",
+        "notes": ""
+      },
+      "climate": {
+        "design_city": "Salt Lake City",
+        "elevation_ft": 4300,
+        "air_temp_f": 95,
+        "heating_design_f": null,
+        "water_temp_f": 70,
+        "frost_depth_in": 30,
+        "hardness_ppm": 250,
+        "winterize": true,
+        "seismic_default": "D",
+        "cites": {
+          "elevation_ft": "Salt Lake City International Airport 4,226 ft, rounded to the valley's 4,300 ft (Utah defaults, Salt Lake City)",
+          "air_temp_f": "Utah defaults (Salt Lake City): design air 95 F (Sapphire standard)",
+          "water_temp_f": "Utah defaults (Salt Lake City): design water 70 F (Sapphire standard)",
+          "frost_depth_in": "https://www.slc.gov/buildingservices/wp-content/uploads/sites/9/2026/07/SLC-Design-Criteria-2024-IBC_IRC.pdf (frost depth 30 in, Salt Lake City)",
+          "hardness_ppm": "SLC public utilities water quality report (hardness 250 ppm)",
+          "winterize": "https://cdn.shopify.com/s/files/1/0566/4492/7571/files/Commercial_Fountain_Winterization_Instructions.pdf (winterize below 32 F; Salt Lake City freezes every winter)",
+          "seismic_default": "ASCE 7 Tables 11.6-1 and 11.6-2: the Wasatch Front is normally Seismic Design Category D (PLAN.md phase S)"
+        }
+      },
+      "licensing": {
+        "contractor": null,
+        "electrical": null,
+        "permits": null,
+        "cites": []
+      }
+    }
+  }
+}

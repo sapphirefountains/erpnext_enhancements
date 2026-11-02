@@ -124,7 +124,17 @@ export function edit(model, path, value) {
 	if (keys[0] === "equipment" && typeof keys[1] === "number" && keys[2] !== "auto" && get_in(next, ["equipment", keys[1]])) {
 		next = set_in(next, ["equipment", keys[1], "auto"], false);
 	}
+	// A site value typed here is the person's: it loses the engine's source, so no later derive replaces it.
+	if (keys[0] === "site" && keys.length === 2 && SITE_LOOKUPS.includes(keys[1])) next = drop_source(next, keys[1]);
 	return next;
+}
+
+function drop_source(model, key) {
+	const sources = get_in(model, "site.sources");
+	if (!sources || typeof sources !== "object" || !Object.prototype.hasOwnProperty.call(sources, key)) return model;
+	const rest = Object.assign({}, sources);
+	delete rest[key];
+	return set_in(model, "site.sources", Object.keys(rest).length ? rest : null);
 }
 
 // A preset is remembered beside the policy (model.presets[section] = key), so the page can show which
@@ -162,8 +172,9 @@ function same(a, b) {
 }
 
 // Fold a derive reply's model into the one on screen: every "auto" section takes the engine's values,
-// "preset" and "custom" sections keep the person's, and the site fills only what is still blank (an
-// address looked up never overwrites an elevation somebody typed).
+// "preset" and "custom" sections keep the person's, and a site field takes the engine's value where it is
+// blank or the engine filled it (site.sources, here or in the reply), so another state's climate replaces
+// the last state's while an elevation somebody typed stays.
 export function merge_derived(local, derived) {
 	if (!derived || typeof derived !== "object") return local;
 	let next = clone(local);
@@ -184,14 +195,21 @@ export function merge_derived(local, derived) {
 		if (is_auto(next, section)) take(section);
 	}
 	const site = derived.site || {};
+	const own = (obj, key) => Boolean(obj) && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
+	const theirs = site.sources;
+	const before = next.site && next.site.sources;
 	for (const [key, value] of Object.entries(site)) {
+		if (key === "sources" || value === undefined) continue;
 		const mine = next.site ? next.site[key] : undefined;
-		if ((mine === undefined || mine === null || mine === "") && value !== undefined) next = set_in(next, ["site", key], value);
+		const blank = mine === undefined || mine === null || mine === "";
+		if (blank || own(theirs, key) || (SITE_LOOKUPS.includes(key) && own(before, key))) next = set_in(next, ["site", key], value);
 	}
+	if (theirs && typeof theirs === "object" && Object.keys(theirs).length) next = set_in(next, "site.sources", clone(theirs));
+	else if (before) next = set_in(next, "site.sources", null);
 	return next;
 }
 
-// The site fields the engine looks up from the address (ladder step 0).
+// The site fields the engine fills from the address and the state (ladder step 0; derive.SITE_LOOKUPS).
 export const SITE_LOOKUPS = [
 	"lat",
 	"lng",
@@ -202,14 +220,29 @@ export const SITE_LOOKUPS = [
 	"hardness_ppm",
 	"kwh_rate",
 	"water_rate_per_ccf",
+	"seismic_sdc",
+	"sds",
+	"sd1",
+	"winterize",
 ];
 
-// Blank every looked-up site field so the next derive fills them from the address on screen. The model
-// does not record which of them a person typed, so this clears those too; the page asks for it only
-// where that is right (quick mode, which never shows them as inputs, or a "Refresh from the address").
+// Blank every looked-up site field so the next derive fills them from the address on screen, typed ones
+// too; the page asks for it only where that is right (quick mode, which never shows them as inputs, or a
+// "Refresh from the address").
 export function clear_site_lookups(model) {
 	let next = model;
 	for (const key of SITE_LOOKUPS) next = set_in(next, ["site", key], null);
+	return set_in(next, "site.sources", null);
+}
+
+// Blank only the site values the address lookups filled (site.sources says "lookup"): they belong to the
+// old address. A typed value and a state default stay. Full mode's answer to a new address.
+export function clear_looked_up(model) {
+	const sources = get_in(model, "site.sources") || {};
+	let next = model;
+	for (const key of SITE_LOOKUPS) {
+		if (sources[key] === "lookup") next = drop_source(set_in(next, ["site", key], null), key);
+	}
 	return next;
 }
 

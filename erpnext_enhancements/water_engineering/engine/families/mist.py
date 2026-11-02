@@ -2,9 +2,11 @@
 
 Industry report section 1.9. Nozzle count x gpm per nozzle sizes the pump; the line must be
 rated for the operating pressure (about 1,000 psi). The sources are patio-cooling suppliers,
-a weak fit for fountains, so the numbers are a starting point. Utah requires fogger water to
-come from a potable source, never the feature's reservoir, so a mist system is its own
-once-through loop and not a terminal on the fountain's network.
+a weak fit for fountains, so the numbers are a starting point. Utah (and any state whose row of
+the jurisdiction table says ``fogger_potable``) requires fogger water to come from a potable
+source, never the feature's reservoir, so a mist system is its own once-through loop and not a
+terminal on the fountain's network. The dry-climate nozzle hint keys on the site's climate
+(:func:`..jurisdiction.dry_climate`), not on the state.
 
 ``derived`` keys read by :func:`checks`: ``flow``.
 """
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import jurisdiction as juris
 from ..envelope import make_input
 from .base import (
     BLOCKER,
@@ -49,8 +52,8 @@ def inputs() -> list[dict[str, Any]]:
         spec("orifice_in", "Orifice", "select", "in", "0.012", False, "0.012 in suits a dry climate.", list(ORIFICE_GPM)),
         spec("gpm_each", "Flow per nozzle", "number", "gpm", None, False, "From the cut sheet; overrides the orifice figure."),
         spec("pressure_psi", "Operating pressure", "number", "psi", DEFAULT_PSI),
-        spec("supply", "Water supply", "select", "", "potable", False, "Utah requires potable water.",
-             ["potable", "reservoir"]),
+        spec("supply", "Water supply", "select", "", "potable", False,
+             "Potable water: required where the state's rules say so (Utah does).", ["potable", "reservoir"]),
         spec("line_rating_psi", "Mist line pressure rating", "number", "psi", None),
     ]
 
@@ -88,13 +91,18 @@ def checks(feature: Any, derived: dict[str, Any] | None = None, site: dict[str, 
     if not d.get("complete"):
         return [Check("MIST_INCOMPLETE", INFO, "Enter the nozzle count", feature=fid)]
     out: list[Check] = []
+    entry = juris.entry_for(site)
     if str(v.get("supply") or "potable") != "potable":
-        utah = (site or {}).get("jurisdiction", "UT") == "UT"
+        required = juris.fogger_potable(entry)
+        state = juris.state_name(site, entry)
         out.append(Check(
-            "MIST_NOT_POTABLE", BLOCKER if utah else WARNING, "Mist is fed from the reservoir, not potable water",
-            detail="Fog drifts onto people; Utah requires a potable supply.",
+            "MIST_NOT_POTABLE", BLOCKER if required else WARNING, "Mist is fed from the reservoir, not potable water",
+            detail=("Fog drifts onto people; " + (f"{state} requires a potable supply." if required else
+                    (f"{state}'s rules on file do not require one, but a potable supply is the safe practice."
+                     if entry else "there is no jurisdiction data, so confirm the rule with the health department."))),
             remedy="Feed the mist pump from the potable supply through a backflow preventer.",
-            citation=CIT_POTABLE, section="treatment", feature=fid,
+            citation=str(juris.regulation(entry).get("fogger_cite") or "") if required else CIT_POTABLE,
+            section="treatment", feature=fid,
         ))
     rating = num(v.get("line_rating_psi"))
     if rating > 0 and rating < d["pressure_psi"]:
@@ -107,9 +115,9 @@ def checks(feature: Any, derived: dict[str, Any] | None = None, site: dict[str, 
     elif rating <= 0:
         out.append(Check("MIST_LINE_RATING_UNSET", INFO, "Enter the mist line's pressure rating",
                          section="piping", feature=fid))
-    if d["orifice_in"] == "0.008" and not num(v.get("gpm_each")):
-        out.append(Check("MIST_DRY_CLIMATE", INFO, "Consider 0.012 in nozzles in Utah's dry climate",
-                         citation=CIT_NOZZLE, feature=fid))
+    if d["orifice_in"] == "0.008" and not num(v.get("gpm_each")) and juris.dry_climate(site, entry):
+        out.append(Check("MIST_DRY_CLIMATE", INFO, "Consider 0.012 in nozzles in this dry climate",
+                         citation=CIT_NOZZLE + "; " + juris.CIT_DRY, feature=fid))
     return out
 
 

@@ -970,12 +970,10 @@
    "Rental"
   ],
   "jurisdictions": [
-   "UT",
-   "ID",
-   "NV",
-   "AZ",
-   "CO",
-   "WY"
+   {
+    "value": "UT",
+    "label": "Utah (UT)"
+   }
   ],
   "basin_shapes": [
    "rectangular",

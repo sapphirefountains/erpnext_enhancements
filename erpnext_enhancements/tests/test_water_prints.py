@@ -649,10 +649,22 @@ def test_schedules_start_each_schedule_on_a_page(spf):
         assert title in text
 
 
+def test_a_design_derived_before_phase_j_keeps_utahs_checklist_title():
+    """v1.772.0: a design whose stored results predate the jurisdiction result is still Utah's checklist."""
+    out, stored = designed("plaza")
+    stored = dict(stored, results={k: v for k, v in stored["results"].items() if k != "jurisdiction"})
+    design = prints.Design({"name": "X"}, out["model"], stored, out["bom"], {}, out["issues"])
+    text = " ".join(json.dumps(b) for b in prints.sheet_calcs(design))
+    assert "Utah interactive water feature checklist (R392-302-41)" in text and "as advice" not in text
+
+
 def test_engineering_calculations_follow_the_ladder(spf):
     text = visible_text(render(spf, "plaza", prints.PF_CALCS))
-    order = [s for s, _n in prints.LADDER if s in text]
-    positions = [text.index(s) for s in order]
+    # whole words only: a citation in a calc's inputs may contain a later section's name
+    # (".../Commercial_Fountain_Winterization_Instructions.pdf", phase J's Site working)
+    found = {s: re.search(r"(?<!\S)" + re.escape(s) + r"(?!\S)", text) for s, _n in prints.LADDER}
+    order = [s for s, _n in prints.LADDER if found[s]]
+    positions = [found[s].start() for s in order]
     assert positions == sorted(positions) and len(order) >= 6, order
     assert text.index("Calculations by section") < text.index("Plan check")
 
