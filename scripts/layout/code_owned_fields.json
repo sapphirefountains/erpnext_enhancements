@@ -338,13 +338,13 @@
   },
   {
    "fieldname": "custom_spec_source_url",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "hidden": 0,
    "reqd": 0
   },
   {
    "fieldname": "custom_spec_revision",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "hidden": 0,
    "reqd": 0
   },

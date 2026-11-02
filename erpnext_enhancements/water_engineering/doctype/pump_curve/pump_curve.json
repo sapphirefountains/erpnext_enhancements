@@ -143,7 +143,7 @@
   },
   {
    "fieldname": "source_document",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Source Document",
    "description": "Title and revision of the brochure or datasheet."
   },
@@ -197,7 +197,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-01 12:00:00.000000",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Pump Curve",
