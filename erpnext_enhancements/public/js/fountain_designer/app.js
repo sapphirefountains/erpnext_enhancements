@@ -467,6 +467,7 @@ class Designer {
 		if (again_note) again_note.value = note_text;
 		this.stage.setAttribute("data-fd-on", step);
 		if (step === "start" && this.meta) this.mount_links();
+		this.mount_address();
 		const moved = this.shown_step !== step;
 		this.shown_step = step;
 		this.signature = this.shape();
@@ -483,6 +484,33 @@ class Designer {
 			const again = this.doc.getElementById(focused);
 			if (again) again.focus();
 		}
+	}
+
+	// The Site step's address suggestions: the shared Places widget (public/js/global_enhancements/
+	// address_autocomplete.js, in the global bundle on every Desk page) on the address input, taking the pick
+	// through on_place. Every draw makes a new input, so the widget follows it; without the widget (no key,
+	// Places refused) the field stays plain text and a save geocodes what was typed.
+	mount_address() {
+		const input = this.stage && this.stage.querySelector('[data-fd-path="site.address"]');
+		if (this.address_ac && this.address_ac.input === input) return;
+		if (this.address_ac) this.address_ac.destroy();
+		this.address_ac = null;
+		const widget = this.win.erpnext_enhancements && this.win.erpnext_enhancements.address_autocomplete;
+		if (!input || !widget || typeof widget.attach !== "function" || !this.can_write()) return;
+		this.address_ac = widget.attach(input, { on_place: (place) => this.address_picked(place) });
+	}
+
+	// A picked suggestion: the address, the point and the state at once, then a save straight away, whose
+	// derive looks up the elevation and the seismic values at the point (api/designer.site_lookup).
+	address_picked(place) {
+		if (!this.model || !this.can_write() || !place || !place.address) return;
+		const input = this.stage && this.stage.querySelector('[data-fd-path="site.address"]');
+		if (input) input.value = place.address;
+		this.lookup_address = place.address;
+		this.model = M.apply_place(this.model, place);
+		this.changed(true);
+		this.autosave.cancel();
+		this.save();
 	}
 
 	// The verdict, the phone strip, the footer, every derived value and every input of an auto section,
@@ -621,6 +649,17 @@ class Designer {
 					if (this.meta && this.meta.name === name) {
 						if (seq === this.edit_seq) this.dirty = false;
 						if (r && r.status) this.meta.status = r.status;
+						// What the save looked up (the elevation and seismic values at the point, a state from a
+						// typed address) comes back on the site: only the page's derive runs here, and it looks
+						// nothing up. Taken only when nothing was edited since the save went out.
+						if (r && r.site && seq === this.edit_seq && this.model) {
+							const state = M.get_in(this.model, "site.jurisdiction");
+							this.model = M.merge_site(this.model, r.site);
+							this.deriver.schedule(this.model);
+							// A new state redraws the step: the select's hint and choices are drawn from it.
+							if (M.get_in(this.model, "site.jurisdiction") !== state && this.place.step === "site") this.draw_stage();
+							this.paint();
+						}
 					}
 					this.paint_footer();
 					return true;

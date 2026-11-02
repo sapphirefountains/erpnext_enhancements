@@ -656,7 +656,7 @@ def test_the_site_lookup_fills_elevation_and_seismic_at_the_point(api, monkeypat
     _sites(monkeypatch, geocode_text=_raise("the site has its point"),
            elevation_at=lambda lat, lng, timeout=None: waits.append(timeout) or (4226.4, None))
     monkeypatch.setattr(sys.modules["requests"], "get", lambda *a, **k: _Reply(USGS_REPLY))
-    found = api._real_site_lookup({"address": "451 S State St", "lat": 40.76, "lng": -111.89})
+    found = api._real_site_lookup({"address": "451 S State St", "lat": 40.76, "lng": -111.89, "jurisdiction": "UT"})
     assert found["elevation_ft"] == 4226.4 and found["seismic_sdc"] == "D" and found["sds"] == 1.09
     assert found["cites"]["elevation_ft"] == api.CIT_ELEVATION and found["cites"]["sd1"] == api.CIT_USGS
     assert waits == [api.LOOKUP_TIMEOUT_S]
@@ -713,6 +713,61 @@ def test_an_elevation_the_ai_tool_changes_is_kept_though_sources_came_along(api,
     assert captured["model"]["site"]["elevation_ft"] == 5000
     assert captured["derived"]["site"]["elevation_ft"] == 5000
     assert "elevation_ft" not in captured["derived"]["site"]["sources"]
+
+
+# ------------------------------------------------------------------ the state from the address (v1.774.0)
+
+
+def _geocoded(state, country="US"):
+    return lambda address, **k: ({"lat": 40.76, "lng": -111.89, "state": state, "country": country}, None)
+
+
+def test_a_typed_address_gives_the_site_its_state(api, monkeypatch):
+    _ttls(api)
+    _sites(monkeypatch, geocode_text=_geocoded("UT"), elevation_at=lambda lat, lng, **k: (None, "x"))
+    found = api._real_site_lookup({"address": "451 S State St"})
+    assert found["jurisdiction"] == "UT" and found["cites"]["jurisdiction"] == api.CIT_GEOCODE
+    assert (found["lat"], found["lng"]) == (40.76, -111.89)
+    # the point already there (typed, or picked from the list): geocoded for the state alone, the point kept
+    found = api._real_site_lookup({"address": "451 S State St.", "lat": 41.0, "lng": -112.0})
+    assert found["jurisdiction"] == "UT" and "lat" not in found
+
+
+def test_only_a_united_states_address_gives_a_state(api, monkeypatch):
+    _ttls(api)
+    _sites(monkeypatch, geocode_text=_geocoded("ON", "CA"), elevation_at=lambda lat, lng, **k: (None, "x"))
+    found = api._real_site_lookup({"address": "100 Queen St W, Toronto"})
+    assert "jurisdiction" not in found and found["lat"] == 40.76
+
+
+def test_a_picked_state_and_point_geocode_nothing(api, monkeypatch):
+    _ttls(api)
+    _sites(monkeypatch, geocode_text=_raise("geocoded a site with its point and state"),
+           elevation_at=lambda lat, lng, **k: (None, "x"))
+    api._real_site_lookup({"address": "451 S State St", "lat": 40.76, "lng": -111.89, "jurisdiction": "NV"})
+    # no point, a state picked by hand: geocoded for the point, the state left alone
+    _sites(monkeypatch, geocode_text=_geocoded("UT"), elevation_at=lambda lat, lng, **k: (None, "x"))
+    found = api._real_site_lookup({"address": "452 S State St", "jurisdiction": "NV"})
+    assert found["lat"] == 40.76 and "jurisdiction" not in found
+    # a state the last address gave (engine-owned) follows the new address
+    owned = {"address": "453 S State St", "jurisdiction": "NV", "sources": {"jurisdiction": {"src": "lookup", "v": "NV"}}}
+    assert api._real_site_lookup(owned)["jurisdiction"] == "UT"
+
+
+def test_a_save_derive_puts_a_typed_address_in_its_state(api, monkeypatch):
+    monkeypatch.setattr(api, "site_lookup", lambda site: {"lat": 36.17, "lng": -115.14, "jurisdiction": "NV",
+                                                          "cites": {"jurisdiction": api.CIT_GEOCODE}})
+    model = _boot_fixture()["kits"][0]["model"]
+    model["site"]["address"] = "495 S Main St, Las Vegas"
+    model["site"]["sources"] = {"jurisdiction": {"src": "default", "v": model["site"]["jurisdiction"]}}
+    site = api.run_derive(model, geocode=True)["model"]["site"]
+    assert site["jurisdiction"] == "NV" and site["sources"]["jurisdiction"] == {"src": "lookup", "v": "NV"}
+
+
+def test_the_save_returns_the_site_its_derive_left(api):
+    model = {"schema": 2, "mode": "quick", "site": {"address": "x", "elevation_ft": 4226.4}}
+    out = api.save_design(None, json.dumps(model), "{}")
+    assert out["site"] == {"address": "x", "elevation_ft": 4226.4}
 
 
 def test_boot_lists_every_jurisdiction_with_utah_first(api):

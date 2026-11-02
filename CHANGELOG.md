@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.774.0] - 2026-11-02
+
+ERPNext: PRJ-00580, under TASK-2026-03034, task TASK-2026-03035. **The Fountain Designer's Site step
+suggests the fountain's address as it is typed, and the state, the point and the lookups follow from the
+pick.** Nikolas asked on 2026-11-02 for an address autocomplete rather than only a list of states. Until
+now the designer typed the address and picked the state separately, and nothing tied the two together.
+(1.773.0 is taken by the open PR #1388, so this is 1.774.0.)
+
+**Why two Google keys.** The browser key does the suggesting. That is `Travel Settings.google_maps_api_key`,
+restricted by HTTP referrer and handed to the browser by design. The Address forms' Places autocomplete
+already uses it, so Places API (New) is enabled on it. The server key does the lookups. That is
+`google_geocoding_api_key`, an IP-restricted Password field that never leaves the server. Google refuses a
+referrer-restricted key on every server-side web-service call (v1.483.2), so neither key can do the other's
+job. A pick hands the page the point and the state directly. The save then geocodes nothing and spends the
+server key only on the elevation, beside the USGS seismic lookup.
+
+### Added
+- **Address suggestions on the Site step.** The shared widget
+  `erpnext_enhancements.address_autocomplete.attach(input, options)` gains an `on_place(details)` option. It
+  serves callers with no Address fields to fill and skips both the field mapping and the Country round trip.
+  `details` is `{address, lat, lng, state, country_code, place_id, label}`; `state` is the
+  `administrative_area_level_1` short code, and it is blank rather than a long name, which would match no
+  jurisdiction. The Address form, the quick-entry dialog and Plan a Trip keep `on_pick` as before. When a
+  caller passes both options, `on_place` runs first. The widget is already in the global bundle on every Desk
+  page, so the designer's `frappe.require` list did not change.
+  - The designer attaches the widget after every draw (`app.mount_address`).
+  - `model.apply_place` writes the formatted address, the point and, for a US address, the state. Each is
+    tagged `{src: "lookup", v}` in `site.sources`, the server's own form, so the page's derive keeps them.
+  - The page then saves at once, and that save's derive looks up the elevation and seismic values at the
+    point.
+  - The pick moves even a state the designer picked by hand, because the pick is the newer choice. The State
+    select still overrides it afterwards.
+  - A code the table has no row for (AK, HI, DC) shows in the select as "(no data)", next to the existing
+    "No jurisdiction data" note.
+- **A typed address gives the design its state too.** This covers the plain-text fallback and the
+  `save_water_design` AI tool. `workforce.sites.geocode_text` now returns the result's state and country
+  codes (`address_region`), and still never logs and never shows the key. `site_lookup` passes a United
+  States state on as `jurisdiction`, geocoding for it even when the site already has its point. A non-US
+  address gives none.
+  - `derive.derive_site` settles the state first, because the state decides every default after it. It
+    fills the state where it is blank or the engine's own (`SITE_OWNED`), tagged `lookup`. A state the
+    designer picked is never replaced.
+  - New designs' `UT` is now tagged `{src: "default"}` (`model.blank_model`, `model_from_kit`), so an address
+    can move it. Designs saved before this release carry an untagged state, which counts as picked by hand.
+    Only a pick from the list moves it.
+- **A save's lookups reach the page.** Before this, the elevation and seismic values a save looked up were
+  stored but never shown until the design was reopened, because the page's own derive looks nothing up.
+  `save_design` now returns the derived `site`, and `model.merge_site` takes it when nothing was edited while
+  the save was out. A value typed in the meantime is not in the reply's sources, so it would otherwise be
+  overwritten.
+
+### Changed
+- `model.clear_site_lookups` (a new address in quick mode, and "Refresh from the address") keeps the
+  state and its source. Before, it dropped every source, so a state the old address gave would have become
+  the designer's and the new address could never move it.
+- The geocode cache key gains a `v2:` segment, because an answer cached before this release has no state
+  in it.
+
+### Tests
+- `scripts/test_address_autocomplete_pick.js` (a new CI step, node) runs the real widget from a typed query
+  to a picked suggestion against a fake DOM and a fake Places library. It covers `on_place`, `on_pick` with
+  its Country lookup, both together, and a destroyed widget.
+- `tests/test_jurisdictions.py` covers the state from a lookup, a picked state that is kept, a new address
+  that replaces the old address's state, a state outside the table, `geocode_text`'s state and country, and
+  `model.apply_place` under node.
+- `tests/test_designer_api.py` covers `site_lookup`'s state (US only, never over a picked one, no geocode
+  for a site with its point and state) and the save's returned site.
+- `scripts/test_fountain_designer.mjs` checks the controller: a pick, the immediate save, the save's site
+  merged into the page, and a reply that edits overtook is left alone.
+
 ## [1.772.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03033. This is

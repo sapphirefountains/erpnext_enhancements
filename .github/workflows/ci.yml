@@ -4385,6 +4385,12 @@ jobs:
       # two-letter form cannot be exercised on this US-only site at all.
       - name: Address component mapping (bench-free, node)
         run: node scripts/test_address_components.js
+      # The same widget driven end to end against a fake DOM and a fake Places library (v1.774.0): a
+      # pick reaches on_place (the Fountain Designer's address, point and state) and on_pick (the
+      # Address forms' fields, through the Country lookup). Both run inside the pick handler, which the
+      # pure-region test above cannot reach, and a regression in either fills nothing, silently.
+      - name: Address autocomplete picks (bench-free, node)
+        run: node scripts/test_address_autocomplete_pick.js
       # The floating Triton widget's streaming re-entrancy rule: every function that
       # clears the transcript, or switches which session it belongs to, must refuse
       # while a stream is in flight. Two of the four were missing it, and the failure is

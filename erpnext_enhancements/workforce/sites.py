@@ -254,9 +254,28 @@ def geocode_project(project, force=False):
 		return None
 
 
+def address_region(components):
+	"""``{"state", "country"}`` from a Geocoding result's ``address_components``: the
+	``administrative_area_level_1`` short name ("UT") and the ISO country code ("US"), each "" when
+	Google gave none. The Fountain Designer puts a design in a state from it (v1.774.0)."""
+	out = {"state": "", "country": ""}
+	for component in components if isinstance(components, list) else []:
+		types = component.get("types") if isinstance(component, dict) else None
+		if not isinstance(types, list):
+			continue
+		short = str(component.get("short_name") or "").strip().upper()
+		if "administrative_area_level_1" in types and not out["state"]:
+			out["state"] = short
+		elif "country" in types and not out["country"]:
+			out["country"] = short
+	return out
+
+
 def geocode_text(address, timeout=GEOCODE_TIMEOUT_S):
-	"""``({"lat", "lng"}, None)`` for one address, or ``(None, problem)``. Never raises or logs.
-	``timeout`` is for a caller that waits on a person (the Fountain Designer's save waits 5 s).
+	"""``({"lat", "lng", "state", "country"}, None)`` for one address, or ``(None, problem)``. Never
+	raises or logs. ``state`` and ``country`` are the result's short codes (``address_region``), ""
+	when Google gave none. ``timeout`` is for a caller that waits on a person (the Fountain Designer's
+	save waits 5 s).
 
 	The single place the server key meets Google's Geocoding API; the Project Planner's
 	routing (``project_enhancements/routing.py``) geocodes the shop and job addresses through
@@ -282,11 +301,12 @@ def geocode_text(address, timeout=GEOCODE_TIMEOUT_S):
 		if status != "OK" or not payload.get("results"):
 			detail = (payload.get("error_message") or "") if isinstance(payload, dict) else ""
 			return None, f"{status or response.status_code} {detail}".strip()
-		location = (payload["results"][0].get("geometry") or {}).get("location") or {}
+		result = payload["results"][0]
+		location = (result.get("geometry") or {}).get("location") or {}
 		lat, lng = flt(location.get("lat")), flt(location.get("lng"))
 		if not _valid(lat, lng):
 			return None, "no point"
-		return {"lat": lat, "lng": lng}, None
+		return dict({"lat": lat, "lng": lng}, **address_region(result.get("address_components"))), None
 	except Exception as exc:
 		return None, type(exc).__name__
 
