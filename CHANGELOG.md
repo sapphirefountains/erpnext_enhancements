@@ -84,6 +84,12 @@ No. The visit itself was going undocumented.
   visit within three days, a past visit or no date. The copied rates are read-only once the call has
   left Requested; Send for Approval refuses a call with no rate (copying one entered since first). After
   Create the empty new form's history entry is replaced, so Back does not reopen the dialog.
+- **A Service Call's deal closes without ranks and without the hand-off gate** (Nikolas, 2026-11-03:
+  "skip ranks"). `validate_ranks_on_won` and `handoff.stamp_handoff_gate` return early for an
+  Opportunity that a Service Call points at (`service_calls.belongs_to_service_call`, which never
+  raises, so a site without the table is unchanged). Without this the approval on the link could not
+  reach Closed Won on prod, where the three ranks are required on every won deal, and a one-off service
+  client would have been put under the PRO-0204 hand-off meeting SLA.
 - `tests/test_service_calls.py` (bench-free pytest, its own CI step): the intake planner (what is
   created, in what order, with what names, status and template), the rate copy and the pairs allowed, the
   dates, the approval state machine (tokens by shape, expiry, the guest endpoints' shape, no `.update(`

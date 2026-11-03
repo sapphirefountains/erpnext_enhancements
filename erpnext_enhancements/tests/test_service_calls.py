@@ -521,6 +521,48 @@ def test_rates_are_fixed_once_sent():
 		assert fields[name]["read_only_depends_on"] == 'eval:doc.status && doc.status != "Requested"'
 
 
+def test_belongs_to_service_call_never_raises(sc):
+	sc.frappe.db.exists = lambda doctype, filters=None: doctype == "Service Call" and filters == {"opportunity": "CRM-OPP-1"}
+	assert sc.belongs_to_service_call("CRM-OPP-1") is True
+	assert sc.belongs_to_service_call("CRM-OPP-2") is False
+	assert sc.belongs_to_service_call(None) is False
+
+	def boom(*a, **k):
+		raise RuntimeError("Table 'tabService Call' doesn't exist")
+
+	sc.frappe.db.exists = boom
+	assert sc.belongs_to_service_call("CRM-OPP-1") is False
+
+
+def test_won_ranks_are_skipped_for_a_service_call_deal(sc):
+	"""Nikolas, 2026-11-03: "skip ranks". validate_ranks_on_won lets a Service Call's deal close
+	with no scope, schedule or budget rank; an ordinary deal is still refused."""
+	sc.frappe.utils.cstr = lambda value: "" if value is None else str(value)
+	for name in list(sys.modules):
+		if name == "erpnext_enhancements.script_migrations.opportunity":
+			del sys.modules[name]
+	hooks = importlib.import_module("erpnext_enhancements.script_migrations.opportunity")
+	hooks.frappe = sc.frappe
+
+	class Opp(_Doc):
+		def is_new(self):
+			return False
+
+	sc.frappe.db.exists = lambda doctype, filters=None: filters == {"opportunity": "CRM-OPP-SVC"}
+	hooks.validate_ranks_on_won(Opp(name="CRM-OPP-SVC", status="Closed Won", custom_scope_rank=None, custom_schedule_rank=None, custom_budget_rank=None))
+	with pytest.raises(Exception, match="Scope Rank"):
+		hooks.validate_ranks_on_won(Opp(name="CRM-OPP-BUILD", status="Closed Won", custom_scope_rank=None, custom_schedule_rank=None, custom_budget_rank=None))
+	hooks.validate_ranks_on_won(Opp(name="CRM-OPP-BUILD", status="Closed Won", custom_scope_rank="1", custom_schedule_rank="2", custom_budget_rank="3"))
+	hooks.validate_ranks_on_won(Opp(name="CRM-OPP-BUILD", status="Qualification"))
+
+	def boom(*a, **k):
+		raise RuntimeError("no table")
+
+	sc.frappe.db.exists = boom
+	with pytest.raises(Exception, match="Scope Rank"):
+		hooks.validate_ranks_on_won(Opp(name="CRM-OPP-SVC", status="Closed Won", custom_scope_rank=None, custom_schedule_rank=None, custom_budget_rank=None))
+
+
 # ---------------------------------------------------------------------- the invoice lines
 
 
