@@ -30937,7 +30937,7 @@
   "columns": 0,
   "default": null,
   "depends_on": null,
-  "description": "Percent of the Opportunity Amount to put on the first invoice",
+  "description": "Percent of the Opportunity Amount due as the down payment (the first invoice)",
   "docstatus": 0,
   "doctype": "Custom Field",
   "dt": "Opportunity",

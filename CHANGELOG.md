@@ -64,8 +64,9 @@ Payment Percentage as the name in the Budget tab instead of First Invoice Percen
 - **"First Invoice Percentage" reads "Down Payment Percentage"** on the Project and Opportunity
   Budget tabs (`fixtures/custom_field.json`, label only; the fieldname is still
   `custom_first_invoice_percentage`), in the step-4 note to Billing ("Down payment: 30% of … =
-  …", "Down Payment Percentage is not set on this project"), the guided entry hint and the
-  README.
+  …", "Down Payment Percentage is not set on this project"), the guided entry hint, the Opportunity
+  field's fixture description (the guided hint must be that description: `test_form_kit` holds the
+  whole help file to it) and the README.
 
 ### Removed
 - **The Contracts tab on Project and Customer** (v1.181.0 / v1.182.0, the Signed copy rows of

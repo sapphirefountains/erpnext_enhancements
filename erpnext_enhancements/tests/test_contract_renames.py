@@ -464,7 +464,10 @@ class TestWording(unittest.TestCase):
 		self.assertNotIn("First Invoice", steps)
 		self.assertNotIn("First invoice", steps)
 		help_text = json.loads(_read("form_kit", "help_text", "opportunity.json"))
-		self.assertIn("down payment", help_text["fields"]["custom_first_invoice_percentage"]["hint"])
+		hint = help_text["fields"]["custom_first_invoice_percentage"]["hint"]
+		self.assertIn("down payment", hint)
+		# The guided hint is the field's fixture description (test_form_kit holds the whole file to it).
+		self.assertEqual(fields["Opportunity-custom_first_invoice_percentage"]["description"], hint)
 
 
 if __name__ == "__main__":
