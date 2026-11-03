@@ -16,6 +16,10 @@ and writes.
   nothing is written.
 * :func:`add_task` is the "Add task" dialog's save: subject, parent, group flag, priority, type, dates,
   hours, assignee and description, through the Task controller as the caller.
+* :func:`move_tasks` (v1.782.0) is the tree's drag-and-drop and *Move under…* save: the rows as the
+  tree holds them after the drop, only the ones whose parent or position changed saved, a leaf
+  dropped on made a group first, and ERPNext's refusal returned (never thrown) so the tree can show
+  it and put itself back. All or nothing.
 * :func:`delete_tasks` deletes the picked tasks and everything under them, deepest first, each under
   a savepoint, and reports the ones it had to keep (linked from a timesheet, locked, not permitted)
   by name and reason instead of failing the lot. :func:`delete_preview` counts first, so the confirm
@@ -548,3 +552,158 @@ def delete_tasks(project, tasks):
 			if flags is not None:
 				flags.mute_messages = muted
 	return {"deleted": deleted, "kept": kept}
+
+
+# ---------------------------------------------------------------------- move (drag-and-drop, Move under...)
+
+
+def _parse_rows(value):
+	if value is None:
+		return []
+	if isinstance(value, str):
+		value = value.strip()
+		if not value:
+			return []
+		try:
+			value = json.loads(value)
+		except ValueError:
+			frappe.throw(_("The task list could not be read. Reload the page and try again."))
+	if not isinstance(value, list | tuple):
+		frappe.throw(_("Expected a list of tasks."))
+	rows = []
+	for item in value:
+		if not isinstance(item, dict) or not _text(item.get("name")):
+			continue
+		order = item.get(ORDER_FIELD)
+		rows.append(
+			{
+				"name": _text(item.get("name")),
+				"parent_task": _text(item.get("parent_task")) or None,
+				ORDER_FIELD: None if order in (None, "") else cint(order),
+			}
+		)
+	return rows
+
+
+def _same_order(stored, wanted):
+	return cint(stored or 0) == cint(wanted or 0)
+
+
+def _descendants(rows, root):
+	"""Names of every task under ``root`` among ``rows`` (dicts with ``name`` and ``parent_task``)."""
+	kids = {}
+	for row in rows:
+		if row.get("parent_task"):
+			kids.setdefault(row["parent_task"], []).append(row["name"])
+	out, queue = set(), list(kids.get(root, []))
+	while queue:
+		name = queue.pop()
+		if name in out:
+			continue
+		out.add(name)
+		queue.extend(kids.get(name, []))
+	return out
+
+
+@frappe.whitelist()
+def move_tasks(project, tasks):
+	"""The Tasks Tree's drag-and-drop and *Move under…* save (v1.782.0): ``tasks`` is a JSON list of
+	``{name, parent_task, custom_subtask_order}``, as the tree holds them after the drop (``parent_task``
+	empty for the top level; ``custom_subtask_order`` missing to be placed after the parent's last
+	subtask). Only a task whose parent or position differs from what is stored is saved, through the
+	Task controller as the caller; a parent that is not yet a group is made one first.
+
+	Returns ``{"moved": [names], "converted": [names], "refused": None | {"name", "subject", "reason"}}``.
+	A refusal rolls back the whole request (nothing is half moved), carries ERPNext's own reason (an
+	open task under a completed parent, a project mismatch) and is not logged; an unexpected failure
+	is logged and reported as such. The message is returned, never thrown, so the tree shows it in its
+	own dialog and puts itself back, instead of a silent revert.
+	"""
+	project = _require_project(project, "write")
+	rows = _parse_rows(tasks)
+	if not rows:
+		frappe.throw(_("Nothing to move."))
+	stored_rows = _project_tasks(project)
+	stored = {row["name"]: row for row in stored_rows}
+	strangers = [row["name"] for row in rows if row["name"] not in stored]
+	if strangers:
+		frappe.throw(_("Not on {0}: {1}.").format(project, ", ".join(strangers)))
+	after = {row["name"]: dict(stored[row["name"]], parent_task=row["parent_task"]) for row in rows}
+	layout = [after.get(row["name"], row) for row in stored_rows]
+	changes = []
+	for row in rows:
+		name, parent = row["name"], row["parent_task"]
+		if parent == name:
+			frappe.throw(_("{0} cannot be its own parent.").format(name))
+		if parent and parent not in stored:
+			frappe.throw(_("Not on {0}: {1}.").format(project, parent))
+		if parent and parent in _descendants(layout, name):
+			frappe.throw(
+				_("{0} cannot be moved under {1}: that task is one of its own subtasks.").format(
+					stored[name].get("subject") or name, stored[parent].get("subject") or parent
+				)
+			)
+		was = stored[name]
+		parent_changed = (was.get("parent_task") or None) != parent
+		order = row[ORDER_FIELD]
+		if order is None:
+			if not parent_changed:
+				continue
+			order = rules.next_position(stored_rows, parent)
+		if not parent_changed and _same_order(was.get(ORDER_FIELD), order):
+			continue
+		changes.append((name, parent, order, parent_changed))
+	moved, converted = [], []
+	if not changes:
+		return {"moved": moved, "converted": converted, "refused": None}
+	savepoint = "scope_move_tasks"
+	flags = getattr(frappe, "flags", None)
+	muted = getattr(flags, "mute_messages", False) if flags is not None else False
+	frappe.db.savepoint(savepoint)
+	if flags is not None:
+		flags.mute_messages = True
+	current = None
+	try:
+		for name, parent, order, parent_changed in changes:
+			current = name
+			if (
+				parent_changed
+				and parent
+				and not cint(stored[parent].get("is_group"))
+				and parent not in converted
+			):
+				if _make_group(parent):
+					converted.append(parent)
+			doc = frappe.get_doc("Task", name)
+			doc.parent_task = parent
+			if _has_order_column():
+				doc.set(ORDER_FIELD, order)
+			doc.save()
+			moved.append(name)
+	except (frappe.ValidationError, frappe.PermissionError, frappe.DocumentLockedError) as e:
+		frappe.db.rollback(save_point=savepoint)
+		return {
+			"moved": [],
+			"converted": [],
+			"refused": {
+				"name": current,
+				"subject": stored.get(current, {}).get("subject") or current,
+				"reason": str(e),
+			},
+		}
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		frappe.log_error(title=LOG_TITLE, message=frappe.get_traceback())
+		return {
+			"moved": [],
+			"converted": [],
+			"refused": {
+				"name": current,
+				"subject": stored.get(current, {}).get("subject") or current,
+				"reason": _("An error was logged."),
+			},
+		}
+	finally:
+		if flags is not None:
+			flags.mute_messages = muted
+	return {"moved": moved, "converted": converted, "refused": None}

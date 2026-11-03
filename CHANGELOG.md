@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.782.0] - 2026-11-03
+
+### Added
+- **Tasks Tree: drag any task under another, and see what the drop will do.** Nikolas, 2026-11-03,
+  from the meeting with James and Clegg: "Make any task a parent by simple drag and drop over on the
+  Tasks Tree view." The Scope tab's tree (`public/js/project_enhancements/task_tree_manager.js`) has
+  nested by drag since it was built, but nothing on screen said so and a drop onto a leaf task was
+  refused every time (see Fixed). Now, while a row is dragged, the row under the pointer says what the
+  drop will do: its middle **half** (it was the middle 40%, 13px on a 32px row) takes a wash and a pill
+  reading *Make subtask of <task>*; its top or bottom quarter draws a line on the edge the task will land
+  on; a hint bar above the grid says the same in words. **Move under…** on every row (the indent icon) is
+  the no-mouse path: a dialog with a Link to a task of the project, or empty for the top level. A leaf
+  task dropped on becomes a group on the spot (the alert says so).
+- **A parent task's dates follow its subtasks.** Nikolas: "for the parent child tasks, make rigid start
+  and end dates based off the child tasks so a child task is always within the range of its parent
+  task." A task with subtasks has the earliest subtask `exp_start_date` and the latest subtask
+  `exp_end_date`, up every ancestor, recomputed whenever a subtask is saved, moved or deleted
+  (`task_enhancements/parent_dates.py`, Task `before_validate` / `on_update` / `after_delete`). Where no
+  subtask has a start (or an end) the parent keeps its own, so dropping an undated task under a dated
+  one does not wipe the dated one's plan; every subtask counts whatever its status, because ERPNext
+  refuses a child ending after its parent whatever the child's status. The parent's two fields are
+  read-only on the Task form while it has subtasks (with a note), and plain text in the tree; the
+  tree's inline editor and the Gantt refuse a parent's dates and walk the parents after a subtask's
+  write (`frappe.db.set_value` fires no hook). The ancestors are written with `db.set_value`, never
+  saved: no hook fires again, and a Planner publish that saves the parent in the same batch is not
+  tripped by a bumped `modified`. ERPNext's Project-window check is untouched. Patch
+  `sync_parent_task_dates` brings every existing parent up to the rule once, bottom-up; it logs
+  instead of raising (a patch that raises aborts `bench migrate`, which is the deploy) and is safe to
+  re-run.
+- `api/scope_tasks.move_tasks`: the tree's save. Only the rows whose parent or position differ from
+  what is stored are saved, through the Task controller as the caller, under one savepoint; a missing
+  position lands after the parent's last subtask; a task under itself or one of its own subtasks is
+  refused. Bench-free suite `tests/test_task_parent_dates.py`, in its own CI step.
+
+### Fixed
+- **Dropping a task onto a leaf task was refused every time, silently.** ERPNext's `Task.validate`
+  (16.52.1) calls `validate_parent_is_group`, which throws `ParentIsGroupError` for a parent whose
+  *Is Parent* box is off, and frappe 16.53.0 runs `before_validate`, then `validate`, then
+  `before_save`. This app promoted the parent to a group in the override controller's `before_save`
+  (`task_enhancements/doctype/task/task.py`): one step too late, so the promotion never got its turn.
+  It is in the controller's `before_validate` now, which also runs before the `before_validate`
+  doc_events in `hooks.py`.
+- **A refused move looked saved.** `update_task_structure` saved **every** visible row on each drag
+  with `ignore_permissions`, caught ERPNext's refusal after the earlier rows had been written (its
+  comment said the transaction would roll back; a caught exception commits what came before it),
+  logged it as an error and returned a message the tree never showed, so the tree sat showing the
+  move until the next reload. The tree calls `move_tasks` now, shows a refusal in a dialog titled
+  *Could not move …* with ERPNext's own reason, and re-fetches whatever comes back (on the promise
+  `frappe.call` returns, since its `error` callback is not called on every failure).
+  `update_task_structure` stays as a thin wrapper with its old `{"status", "message"}` contract.
+- **Because a parent is now widened before its subtask is validated**, `validate_parent_expected_end_date`
+  can no longer refuse a drag or a subtask's date change (the `before_validate` hook is listed before
+  `project_window.before_task_validate`, so the Project's window is widened for the dates it settles).
+
+### Changed
+- **SortableJS is vendored and pinned at 1.15.6** (`public/js/project_enhancements/lib/sortable-1.15.6.min.js`,
+  the UMD build that sets `window.Sortable`, loaded on demand like the Gantt library beside it). It
+  used to load on every Project form from a CDN on its unpinned "latest" tag. The file name carries
+  the version: raw `/assets` paths are served immutable for a year, so a new release must be a new
+  file name to reach a device that cached this one.
+
 ## [1.781.0] - 2026-11-03
 
 ### Changed

@@ -30,8 +30,22 @@
  * so the client only holds the branches the user expanded. Shared branding and
  * the print window live in public/js/export_utils.js.
  *
+ * Drag-to-parent (v1.782.0, Nikolas 2026-11-03: "Make any task a parent by simple
+ * drag and drop"): while a row is dragged, the row under the pointer says what the
+ * drop will do -- a "Make subtask of <task>" wash on its middle half, an insertion
+ * line at its top or bottom edge for a reorder -- and a hint bar above the grid says
+ * the same in words. "Move under..." on each row is the no-mouse path (a dialog).
+ * The save is api/scope_tasks.move_tasks: a leaf task dropped on becomes a group,
+ * only the rows that changed are saved, and ERPNext's refusal comes back as a
+ * message the tree shows in a dialog and then re-fetches, so the tree never sits
+ * showing a move that was not saved. A task with subtasks shows its dates read-only
+ * here: they follow its subtasks (task_enhancements/parent_dates.py).
+ *
  * Assets: styles ship globally in desk_addons.bundle.css (task_tree import);
- * SortableJS is loaded on demand from CDN in loadAssets().
+ * SortableJS 1.15.6 is vendored at public/js/project_enhancements/lib/ (a UMD build
+ * that sets window.Sortable, like frappe-gantt there) and loaded on demand in
+ * loadAssets(). It used to come from a CDN on its unpinned "latest" tag: a
+ * third-party script on every Project form whose version could change under us.
  */
 frappe.provide("erpnext_enhancements");
 
@@ -140,9 +154,15 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		// Styles already ship in desk_addons.bundle.css (global include); the
 		// old frappe.require of a raw task_tree.css path 404'd with a MIME
 		// error since the bundle move. Only SortableJS loads on demand.
+		// SortableJS is vendored and pinned (v1.782.0). The file name carries the
+		// version: raw /assets paths are served immutable for a year, so a new
+		// release must be a new file name to reach a device that cached this one.
 		return new Promise((resolve) => {
-			const script_url = "https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js";
-			frappe.require(script_url, () => resolve());
+			if (window.Sortable) {
+				resolve();
+				return;
+			}
+			frappe.require(erpnext_enhancements.TaskTreeManager.SORTABLE_ASSET, () => resolve());
 		});
 	}
 
@@ -161,6 +181,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                                 </div>
                             </div>
                             <button class="btn btn-sm btn-success mr-2 save-order-btn" style="display: none;">Save Order</button>
+                            <span class="task-drag-hint text-muted small mr-2" style="display: none;" role="status"><i class="fa fa-info-circle mr-1"></i>${__("Drop on the middle of a row to make this a subtask of it; near its top or bottom edge to put it before or after.")}</span>
                             ${
 								this.readonly
 									? ""
@@ -454,11 +475,11 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					<div class="task-grid-cell priority-cell ${this.columnVisibility.priority ? "" : "hidden-column"}" data-column="priority">
 						<span class="priority-badge badge badge-pill badge-${this.getPriorityColor(task.priority)}" style="cursor: pointer; text-transform: uppercase; font-size: 10px; padding: 4px 8px;">${task.priority || "Medium"}</span>
 					</div>
-					<div class="task-grid-cell editable-date ${this.columnVisibility.start_date ? "" : "hidden-column"}" data-field="exp_start_date" data-task-id="${task.name}" data-original-date="${task.exp_start_date || ""}" data-column="start_date"><a href="#">${start_date}</a></div>
-					<div class="task-grid-cell editable-date ${this.columnVisibility.due_date ? "" : "hidden-column"}" data-field="exp_end_date" data-task-id="${task.name}" data-original-date="${task.exp_end_date || ""}" data-column="due_date"><a href="#">${end_date}</a></div>
+					${this.renderDateCell(task, "exp_start_date", "start_date", start_date, hasChildren)}
+					${this.renderDateCell(task, "exp_end_date", "due_date", end_date, hasChildren)}
 					<div class="task-grid-cell ${this.columnVisibility.progress ? "" : "hidden-column"}" data-column="progress"><div class="progress" style="height: 15px; width: 100%;"><div class="progress-bar" role="progressbar" style="width: ${progress}%;" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">${progress}%</div></div></div>
 					<div class="task-grid-cell editable-time ${this.columnVisibility.duration ? "" : "hidden-column"}" data-field="expected_time" data-task-id="${task.name}" data-original-value="${task.expected_time || 0}" data-column="duration"><a href="#">${task.expected_time || 0}</a></div>
-					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button class="btn btn-xs btn-default add-subtask-btn mr-1" title="${__("Add a subtask")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-plus"></i></button><button class="btn btn-xs btn-danger delete-task-btn" title="Delete Task" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-trash"></i></button></div>` : ''}
+					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button class="btn btn-xs btn-default add-subtask-btn mr-1" title="${__("Add a subtask")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-plus"></i></button><button class="btn btn-xs btn-default move-task-btn mr-1" title="${__("Move under another task, or to the top level")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-indent"></i></button><button class="btn btn-xs btn-danger delete-task-btn" title="Delete Task" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-trash"></i></button></div>` : ''}
 				</div>
 				<div class="child-tasks-container" style="${isCollapsed ? "display: none;" : ""}"></div>
 			</div>
@@ -539,6 +560,21 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			args: { project: this.projectName, subject: subject, parent_task: parentTask },
 			callback: (r) => { if (r.message && r.message.status === "success") { frappe.show_alert({ message: __("Task added: {0}", [subject]), indicator: 'green' }); this.fetchData(); } }
 		});
+	}
+
+	/**
+	 * One date cell. A task with subtasks takes its dates from them (v1.782.0:
+	 * earliest start, latest end, kept by the Task hooks), so its cell is plain
+	 * text with a tooltip and no link: the inline editor binds to `.editable-date a`
+	 * and never fires, and the server refuses a direct write anyway.
+	 */
+	renderDateCell(task, field, column, text, derivedFromChildren) {
+		const shown = this.columnVisibility[column] ? "" : "hidden-column";
+		if (derivedFromChildren) {
+			const title = __("Follows its subtasks: the earliest start and the latest end among them.");
+			return `<div class="task-grid-cell derived-date ${shown}" data-field="${field}" data-task-id="${task.name}" data-column="${column}" title="${title}"><span class="text-muted">${text}</span><i class="fa fa-level-down ml-1 text-extra-muted" aria-hidden="true"></i></div>`;
+		}
+		return `<div class="task-grid-cell editable-date ${shown}" data-field="${field}" data-task-id="${task.name}" data-original-date="${task[field] || ""}" data-column="${column}"><a href="#">${text}</a></div>`;
 	}
 
 	getStatusBadge(task) {
@@ -710,6 +746,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		this.wrapper.on("click", ".add-task-btn", () => me.openTaskDialog({}));
 		this.wrapper.on("click", ".add-subtask-btn", function () {
 			me.openTaskDialog({ parent: $(this).data("task-name"), parentSubject: $(this).data("task-subject") });
+		});
+		this.wrapper.on("click", ".move-task-btn", function () {
+			me.openMoveDialog($(this).data("task-name"), $(this).data("task-subject"));
 		});
 		this.wrapper.on("click", ".add-template-btn", () => me.openTemplateDialog());
 		this.wrapper.on("click", ".select-tasks-btn", () => me.setSelectMode(true));
@@ -937,6 +976,43 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		};
 		d.show();
 		setTimeout(() => d.fields_dict.subject.$input.focus(), 200);
+	}
+
+	/**
+	 * "Move under...": the no-mouse path to re-parenting (v1.782.0). A Link to a
+	 * task of this project, or empty for the top level; the task lands after the
+	 * new parent's last subtask, and a parent that is not yet a group becomes one.
+	 * The server refuses the task itself and anything under it, with a message.
+	 */
+	openMoveDialog(taskId, subject) {
+		const me = this;
+		const d = new frappe.ui.Dialog({
+			title: __("Move {0}", [subject || taskId]),
+			fields: [
+				{
+					label: __("Under"),
+					fieldname: "parent_task",
+					fieldtype: "Link",
+					options: "Task",
+					get_query: () => ({
+						filters: { project: me.projectName, is_template: 0, name: ["!=", taskId] },
+					}),
+					description: __(
+						"Leave empty to move it to the top level. A task that is not yet a group becomes one; the task goes after that task's last subtask."
+					),
+				},
+			],
+			primary_action_label: __("Move"),
+			primary_action: (values) => {
+				d.get_primary_btn().prop("disabled", true);
+				me.revealParent(values.parent_task || null);
+				me.saveStructure([{ name: taskId, parent_task: values.parent_task || null }], {
+					always: () => d.get_primary_btn().prop("disabled", false),
+					done: () => d.hide(),
+				});
+			},
+		});
+		d.show();
 	}
 
 	/** "Add from template": pick a Project Template, see its tasks, pick where they go. */
@@ -1187,21 +1263,35 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 				animation: 150,
 				fallbackOnBody: true,
 				swapThreshold: 0.65,
-				onStart: function () { me._dropMode = null; me._dropTargetId = null; },
+				onStart: function () {
+					me._dropMode = null;
+					me._dropTargetId = null;
+					me.wrapper.find(".task-drag-hint").show();
+					me.wrapper.find(".task-tree-manager").addClass("is-dragging");
+				},
 				onMove: function (evt, originalEvent) { return me.handleDragMove(evt, originalEvent); },
-				onEnd: function (evt) { me.handleDragEnd(evt); },
+				onEnd: function (evt) {
+					me.wrapper.find(".task-drag-hint").hide();
+					me.wrapper.find(".task-tree-manager").removeClass("is-dragging");
+					me.handleDragEnd(evt);
+				},
 			});
 			me.sortableInstances.push(sortable);
 		});
 	}
 
 	clearDropIndicators() {
-		this.wrapper.find(".drop-as-child").removeClass("drop-as-child");
+		this.wrapper
+			.find(".drop-as-child, .drop-before, .drop-after")
+			.removeClass("drop-as-child drop-before drop-after")
+			.removeAttr("data-drop-label");
 	}
 
 	// Decide drag intent based on cursor position over the hovered task row:
-	//   middle band  -> nest the dragged task as a child of the hovered task
-	//   top/bottom   -> reorder as a sibling (let SortableJS place it)
+	//   middle half  -> nest the dragged task as a child of the hovered task
+	//                   (the row says so: a wash plus "Make subtask of <task>")
+	//   top/bottom   -> reorder as a sibling (let SortableJS place it; the edge
+	//                   the task will land on is drawn as a line)
 	handleDragMove(evt, originalEvent) {
 		const related = evt.related;
 		// Hovering a non-task element (e.g. the quick-add row) or an empty
@@ -1236,15 +1326,20 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const h = rect.height || 1;
 
 		this.clearDropIndicators();
-		if (relY > h * 0.3 && relY < h * 0.7) {
-			// Nest: highlight the target row and suppress the sibling reorder.
-			$(related).children(".task-grid-row").addClass("drop-as-child");
+		const $row = $(related).children(".task-grid-row").first();
+		if (relY > h * 0.25 && relY < h * 0.75) {
+			// Nest: say so on the target row and suppress the sibling reorder. The
+			// band is the middle HALF of the row (it was 40%, 13px on a 32px row:
+			// too thin to hit on purpose, so nesting looked broken).
+			const subject = $row.find(".task-name-cell-text").first().text() || $(related).data("task-id");
+			$row.addClass("drop-as-child").attr("data-drop-label", __("Make subtask of {0}", [subject]));
 			this._dropMode = "child";
 			this._dropTargetId = $(related).data("task-id");
 			return false;
 		}
 
-		// Reorder as sibling.
+		// Reorder as sibling: draw the edge SortableJS will put the task on.
+		$row.addClass(evt.willInsertAfter ? "drop-after" : "drop-before");
 		this._dropMode = "reorder";
 		this._dropTargetId = null;
 		return true;
@@ -1307,7 +1402,63 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			});
 		};
 		processLevel(this.wrapper.find(".task-grid-body")[0]);
+		this.saveStructure(tasksToUpdate);
+	}
+
+	/**
+	 * Save `rows` ({name, parent_task, custom_subtask_order?}) through
+	 * api/scope_tasks.move_tasks (v1.782.0). Whatever comes back, the tree is
+	 * re-fetched: on success so it re-indents from the saved truth, on a refusal
+	 * so the dropped row goes back where it was. The refusal itself (ERPNext's own
+	 * message: an open task under a completed parent, a project mismatch) is shown
+	 * in a dialog -- it used to be swallowed, so a drop that was not saved looked
+	 * saved until the next reload. `frappe.call` does not call `error` on every
+	 * failure (a query timeout, a deadlock), so the re-fetch rides on the promise.
+	 */
+	saveStructure(rows, { always = null, done = null } = {}) {
+		const me = this;
 		this.wrapper.find(".task-saving-indicator").show();
-		frappe.call({ method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.update_task_structure", args: { project_name: this.projectName, tasks: JSON.stringify(tasksToUpdate) }, callback: (r) => { this.wrapper.find(".task-saving-indicator").hide(); if (r.message && r.message.status === "success") { frappe.show_alert({ message: __("Task order saved successfully"), indicator: "green" }); this.wrapper.find(".save-order-btn").hide(); this.fetchData(); } } });
+		const finish = () => {
+			me.wrapper.find(".task-saving-indicator").hide();
+			if (always) always();
+		};
+		const call = frappe.call({
+			method: "erpnext_enhancements.api.scope_tasks.move_tasks",
+			args: { project: this.projectName, tasks: JSON.stringify(rows) },
+			callback: (r) => {
+				const out = r.message || {};
+				if (out.refused) {
+					// `reason` is the server's own message (ERPNext's refusals carry
+					// `<a>` links to the records involved), never user input.
+					frappe.msgprint({
+						title: __("Could not move {0}", [frappe.utils.escape_html(out.refused.subject || out.refused.name || "")]),
+						indicator: "red",
+						message: `<p>${out.refused.reason || __("The move was refused.")}</p><p class="text-muted small">${__("Nothing was changed; the tree shows the tasks as they are saved.")}</p>`,
+					});
+					return;
+				}
+				if ((out.moved || []).length) {
+					frappe.show_alert({ message: __("Task order saved successfully"), indicator: "green" });
+				}
+				(out.converted || []).forEach((name) =>
+					frappe.show_alert({ message: __("{0} is now a group task.", [name]), indicator: "blue" }, 7)
+				);
+				me.wrapper.find(".save-order-btn").hide();
+				if (done) done();
+			},
+		});
+		const settle = () => {
+			finish();
+			me.fetchData();
+		};
+		if (call && typeof call.then === "function") {
+			call.then(settle, settle);
+		} else {
+			settle();
+		}
 	}
 };
+
+/** The vendored SortableJS build the tree loads on demand (pinned; see loadAssets). */
+erpnext_enhancements.TaskTreeManager.SORTABLE_ASSET =
+	"/assets/erpnext_enhancements/js/project_enhancements/lib/sortable-1.15.6.min.js";

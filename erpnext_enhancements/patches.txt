@@ -1590,3 +1590,7 @@ erpnext_enhancements.patches.seed_design_project_template
 # of raising. The Service Call Rate table is NOT seeded: rates are entered on prod, never in the repo.
 erpnext_enhancements.patches.seed_service_call_project_template
 erpnext_enhancements.patches.seed_small_repair_template
+# Parent task dates (v1.782.0, Nikolas 2026-11-03): a task with subtasks takes the earliest subtask start and the latest
+# subtask end (task_enhancements/parent_dates.py keeps it from now on). One pass over every existing parent, bottom-up,
+# writing only the date columns that differ (set_value, modified untouched). Logs, never raises, safe twice.
+erpnext_enhancements.patches.sync_parent_task_dates

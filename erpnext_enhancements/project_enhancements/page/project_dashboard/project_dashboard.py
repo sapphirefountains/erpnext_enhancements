@@ -974,6 +974,13 @@ def update_task_date(task_name, field, value):
 				"message": "You do not have permission to modify tasks for this project.",
 			}
 
+		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
+		from erpnext_enhancements.task_enhancements import parent_dates
+
+		refusal = parent_dates.refusal(task_name)
+		if refusal:
+			return {"status": "error", "message": refusal}
+
 		task = frappe.get_doc("Task", task_name)
 		new_date = getdate(value) if value else None
 
@@ -988,6 +995,9 @@ def update_task_date(task_name, field, value):
 				return {"status": "error", "message": "End date cannot be before start date."}
 
 		frappe.db.set_value("Task", task_name, field, new_date)
+		# set_value fires no hook: walk the parents here.
+		if task.parent_task:
+			parent_dates.sync_task_ancestors(task.parent_task)
 		return {"status": "success"}
 
 	except Exception:
@@ -1131,75 +1141,31 @@ def update_task_structure(project_name, tasks):
 
 	Returns:
 	    dict: A dictionary indicating the status of the operation.
+
+	Since v1.782.0 a thin wrapper over ``api.scope_tasks.move_tasks``, kept for the
+	old ``{"status", "message"}`` contract. The tree itself calls ``move_tasks`` now.
+	What this used to do, and why it was replaced: it saved EVERY row the tree sent
+	(the whole visible tree, on every drag), with ``ignore_permissions``; a refusal
+	from ERPNext's validate (``ParentIsGroupError`` on a drop onto a leaf task, a
+	child ending after its parent, an open task under a completed parent) was caught
+	after the earlier rows had already been saved, logged as an error, and returned
+	as a message the tree never showed -- while the comment here claimed the
+	transaction would roll back. It did not: a caught exception commits whatever
+	was written before it. ``move_tasks`` saves only the rows that changed, under a
+	savepoint it rolls back on refusal, and returns ERPNext's own reason.
 	"""
+	from erpnext_enhancements.api import scope_tasks
+
 	if not project_name or not tasks:
 		return {"status": "error", "message": "Project name and task data are required."}
-
-	if isinstance(tasks, str):
-		try:
-			tasks = json.loads(tasks)
-		except json.JSONDecodeError:
-			return {"status": "error", "message": "Invalid task data format."}
-
-	# Security check: Ensure the user has write permission for the project.
-	if not frappe.has_permission("Project", ptype="write", doc=project_name):
-		return {
-			"status": "error",
-			"message": "You do not have permission to modify tasks for this project.",
-		}
-
 	try:
-		task_names = [t.get("name") for t in tasks if t.get("name")]
-
-		# Data integrity check: Verify that all tasks belong to the specified project.
-		if task_names:
-			db_task_projects = frappe.get_all(
-				"Task", filters={"name": ("in", task_names)}, fields=["name", "project"]
-			)
-			if len(db_task_projects) != len(task_names):
-				return {"status": "error", "message": "One or more tasks could not be found."}
-
-			for task in db_task_projects:
-				if task.project != project_name:
-					return {
-						"status": "error",
-						"message": f"Task {task.name} does not belong to project {project_name}.",
-					}
-
-		# Atomically update all tasks. Using doc.save() is more robust as it
-		# triggers validation and other controller hooks. This is safer than a
-		# direct `frappe.db.set_value` call, especially for complex updates
-		# involving parent-child relationships.
-		for task_data in tasks:
-			task_name = task_data.get("name")
-			if not task_name:
-				continue
-
-			# Ensure parent_task is None if it's an empty string or not provided.
-			parent_task = task_data.get("parent_task") or None
-			order = task_data.get("custom_subtask_order")
-
-			task_doc = frappe.get_doc("Task", task_name)
-			task_doc.parent_task = parent_task
-			task_doc.custom_subtask_order = order
-			# ignore_permissions is used because we already validated the user has
-			# write access to the parent project.
-			task_doc.save(ignore_permissions=True)
-
-		return {"status": "success"}
-
+		out = scope_tasks.move_tasks(project_name, tasks)
 	except Exception as e:
-		# The whitelisted method runs in a transaction, which will be rolled
-		# back automatically by the Frappe framework on an exception.
-		frappe.log_error(
-			title=f"Error updating task structure for {project_name}", message=frappe.get_traceback()
-		)
-		return {
-			"status": "error",
-			# We return the specific exception to the client to aid debugging,
-			# which is acceptable in this internal tool's context.
-			"message": f"An unexpected error occurred while saving the new task order: {e}",
-		}
+		return {"status": "error", "message": str(e)}
+	refused = out.get("refused")
+	if refused:
+		return {"status": "error", "message": refused.get("reason"), "task": refused.get("name")}
+	return {"status": "success", "moved": out.get("moved", []), "converted": out.get("converted", [])}
 
 
 @frappe.whitelist()
@@ -1216,14 +1182,26 @@ def update_task_dates_from_gantt(task_name, start_date, end_date):
 		if not project or not frappe.has_permission("Project", ptype="write", doc=project):
 			return {"status": "error", "message": "No permission to modify tasks for this project."}
 
+		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
+		from erpnext_enhancements.task_enhancements import parent_dates
+
+		refusal = parent_dates.refusal(task_name)
+		if refusal:
+			return {"status": "error", "message": refusal}
+
 		# Calculate day difference for shifting
-		old_dates = frappe.db.get_value("Task", task_name, ["exp_start_date", "exp_end_date"], as_dict=True)
+		old_dates = frappe.db.get_value(
+			"Task", task_name, ["exp_start_date", "exp_end_date", "parent_task"], as_dict=True
+		)
 		day_diff = 0
 		if old_dates.exp_start_date:
 			day_diff = (getdate(start_date) - getdate(old_dates.exp_start_date)).days
 
 		# Update current task
 		frappe.db.set_value("Task", task_name, {"exp_start_date": start_date, "exp_end_date": end_date})
+		# set_value fires no hook: walk the parents here.
+		if old_dates.parent_task:
+			parent_dates.sync_task_ancestors(old_dates.parent_task)
 
 		# If there's a shift, propagate it to successors
 		if day_diff != 0:
@@ -1570,14 +1548,24 @@ def update_multiple_docs(project_updates, task_updates):
 				return {"status": "error", "message": f"No write permission for Project {doc_name}"}
 			frappe.db.set_value("Project", doc_name, changes)
 
+		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py),
+		# and set_value fires no hook, so the parents are walked here after each write.
+		from erpnext_enhancements.task_enhancements import parent_dates
+
 		for doc_name, changes in task_updates.items():
-			project = frappe.db.get_value("Task", doc_name, "project")
+			project, parent_task = frappe.db.get_value("Task", doc_name, ["project", "parent_task"]) or (None, None)
 			if not project or not frappe.has_permission("Project", ptype="write", doc=project):
 				return {
 					"status": "error",
 					"message": f"No write permission for parent Project of Task {doc_name}",
 				}
+			if any(field in changes for field in parent_dates.DATE_FIELDS):
+				refusal = parent_dates.refusal(doc_name)
+				if refusal:
+					return {"status": "error", "message": refusal}
 			frappe.db.set_value("Task", doc_name, changes)
+			if parent_task and any(field in changes for field in parent_dates.DATE_FIELDS):
+				parent_dates.sync_task_ancestors(parent_task)
 
 		return {"status": "success"}
 	except Exception as e:

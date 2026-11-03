@@ -47,6 +47,42 @@ frappe.ui.form.on("Task", {
     }
 });
 
+/*
+ * Parent dates follow the subtasks (v1.782.0, Nikolas 2026-11-03): a task with
+ * subtasks has the earliest subtask start and the latest subtask end, kept by the
+ * Task hooks (task_enhancements/parent_dates.py). Its two expected-date fields are
+ * read-only here while it has subtasks, with a note saying why; a task that has
+ * none (a group with no children yet, a leaf) keeps the fields as the DocType
+ * defines them. The server re-derives the dates on every save of a parent, so a
+ * stale value this form posts back cannot drift them either.
+ */
+const EE_PARENT_DATE_FIELDS = ["exp_start_date", "exp_end_date"];
+
+frappe.ui.form.on("Task", {
+    refresh(frm) {
+        ee_lock_parent_dates(frm);
+    },
+});
+
+function ee_lock_parent_dates(frm) {
+    const apply = (locked) => {
+        EE_PARENT_DATE_FIELDS.forEach((field) => {
+            const meta = frappe.meta.get_docfield("Task", field, frm.doc.name) || {};
+            frm.set_df_property(field, "read_only", locked ? 1 : meta.read_only ? 1 : 0);
+            frm.set_df_property(
+                field,
+                "description",
+                locked ? __("Follows the subtasks: the earliest start and the latest end among them. Change a subtask's dates instead.") : meta.description || ""
+            );
+        });
+    };
+    if (frm.is_new() || !frm.doc.is_group) {
+        apply(false);
+        return;
+    }
+    frappe.db.count("Task", { filters: { parent_task: frm.doc.name } }).then((n) => apply(n > 0));
+}
+
 function add_toggle_functionality() {
     // We need to target the form, as the custom table ID might not be on the top-level element
     $(".form-layout").on("click", ".toggle-child-tasks", function(e) {

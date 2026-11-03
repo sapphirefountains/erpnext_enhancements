@@ -659,6 +659,12 @@ doc_events = {
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+			# v1.782.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
+			# (earliest start, latest end), up every ancestor. After this save the parent and, after
+			# a move, the previous parent are recomputed from the database. Written with
+			# db.set_value, so no Task hook fires again. Never raises. See
+			# task_enhancements/parent_dates.py.
+			"erpnext_enhancements.task_enhancements.parent_dates.on_task_update",
 			# Project Planner Phase 3B: a change that moves someone's bookings in the next 48 hours
 			# queues one alert per person, sent after commit. Gated by Project Planner Settings
 			# change_alerts (off by default); skipped during a publish, which tells people itself.
@@ -696,12 +702,24 @@ doc_events = {
 		# act_* on every save, a dependent its reschedule pushes included. before_validate, not
 		# validate: frappe runs it before the controller's validate, on insert and save. Widens only,
 		# never raises. See project_enhancements/project_window.py.
-		"before_validate": "erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		"before_validate": [
+			# v1.782.0: parent dates follow the subtasks. FIRST, before the project window: a parent
+			# re-derives its own dates from its subtasks, then the parent and every ancestor are
+			# widened to take in this task's dates, so ERPNext's validate_parent_expected_end_date
+			# (16.52.1, which refuses a child ending after its parent the moment parent_task or
+			# exp_end_date changed) can never refuse a drag on the Tasks Tree. The project window
+			# below then widens for the dates this hook settles on. See task_enhancements/parent_dates.py.
+			"erpnext_enhancements.task_enhancements.parent_dates.before_task_validate",
+			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		],
 		"on_trash": [
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
+		# v1.782.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
+		# not on_trash: the row is gone by then, so the recompute reads the database as it will stay.
+		"after_delete": "erpnext_enhancements.task_enhancements.parent_dates.after_task_delete",
 		"validate": [
 			# training: warn-only certification check when a task is assigned to somebody
 			# lacking a current certification for the task type. Never blocks.

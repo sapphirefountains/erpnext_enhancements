@@ -81,17 +81,25 @@ class Task(BaseTask):
         finally:
             self.depends_on = rows
 
-    def before_save(self):
-        """Promote the parent task to a group before saving.
+    def before_validate(self):
+        """Promote the parent task to a group before ERPNext's validate refuses this task.
 
-        Overrides the core hook. If this task points at a ``parent_task`` that
-        is not yet flagged ``is_group``, load the parent and set ``is_group = 1``
-        (saved with ``ignore_permissions`` so the cascade succeeds regardless
-        of the editing user's rights on the parent). This guarantees parents of
-        sub-tasks are valid tree groups.
+        If this task points at a ``parent_task`` that is not yet flagged ``is_group``,
+        load the parent and set ``is_group = 1`` (saved with ``ignore_permissions`` so
+        the cascade succeeds regardless of the editing user's rights on the parent).
+        This guarantees parents of sub-tasks are valid tree groups.
 
-        Note: the core ``before_save`` does not do meaningful work, so it is not
-        chained here; ``on_update`` is where the parent ``super()`` call lives.
+        ``before_validate``, not ``before_save`` (v1.782.0). frappe 16.53.0's
+        ``Document.run_before_save_methods`` runs ``before_validate``, then ``validate``,
+        then ``before_save``, and ERPNext's ``Task.validate`` (16.52.1) calls
+        ``validate_parent_is_group``, which throws ``ParentIsGroupError`` when the parent's
+        box is off. Promoting in ``before_save`` therefore ran one step too late: dropping a
+        task onto a leaf task on the Scope tab's Tasks Tree was refused with "Parent Task
+        ... must be a Group Task" every time, and the controller's own promotion never got
+        its turn. The controller's ``before_validate`` runs before the ``before_validate``
+        doc_events in hooks.py (``Document.hook`` composes the controller method first), so
+        the parent is a group by the time ``parent_dates.before_task_validate`` widens it.
+        The core controller defines no ``before_validate``, so nothing is chained.
         """
         if self.parent_task:
             if not frappe.db.get_value("Task", self.parent_task, "is_group"):
