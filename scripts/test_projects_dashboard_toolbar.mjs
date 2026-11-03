@@ -33,6 +33,11 @@
  *     with "Reset column widths" in its menu, and no separate Reset widths button is drawn.
  *   - ColumnSelector itself: the icon markup carries title + aria-label, the word button is
  *     still the default, the menu action runs and closes the menu, Escape closes it.
+ *   - Review round 1: a hand-chosen sort survives the Group toggle, direction included (only
+ *     the page's own sort is swapped); a remembered chip the bar does not have is ignored; a
+ *     denial or a failed read keeps its panel under a tile, chip, box or tab press; a group
+ *     header row spans the visible columns and is re-fitted when a column is hidden; the
+ *     Internal tab and the Summary count active the way the tiles do.
  */
 
 import assert from "node:assert/strict";
@@ -225,13 +230,14 @@ async function settle(times = 15) {
 
 const TODAY = "2026-11-03";
 
-// Six projects: four active (one per stream, one internal), one inactive, one completed.
+// Seven projects: four active (one per stream, one internal), one inactive, two completed.
 //   A  Build     ranked 1, 50%, ended 2026-10-01  -> past due
 //   B  Design    unranked, 0%, ends 2026-11-20    -> due in 30 days
 //   C  Service   "Maintenance", 100%, ends 2026-12-31
 //   D  Internal  "Not Assigned", no end           -> unranked
 //   E  Build     inactive (Completed tab)
 //   F  Events    status Completed (never on the Overview)
+//   G  Internal  status Completed, still is_active (off the Internal tab and the Summary too)
 const PROJECTS = [
 	{ name: "PRJ-A", project_name: "Alpha Plaza", project_type: "Build", is_active: "Yes", status: "Active", custom_company_priority: "1", custom_project_priority: "2", percent_complete: 50, expected_end_date: "2026-10-01", custom_project_dollar_amount: 30849 },
 	{ name: "PRJ-B", project_name: "Bravo Water Wall", project_type: "Design", is_active: "Yes", status: "Working", custom_company_priority: "", custom_project_priority: "1", percent_complete: 0, expected_end_date: "2026-11-20", custom_project_dollar_amount: 0 },
@@ -239,6 +245,7 @@ const PROJECTS = [
 	{ name: "PRJ-D", project_name: "Delta Shop Tooling", project_type: "Internal", is_active: "Yes", status: "Active", custom_company_priority: "Not Assigned", custom_project_priority: "", percent_complete: 10, expected_end_date: null, custom_project_dollar_amount: 0 },
 	{ name: "PRJ-E", project_name: "Echo Done", project_type: "Build", is_active: "No", status: "Paid", custom_company_priority: "3", percent_complete: 100, expected_end_date: "2026-01-01", completed_on: "2026-02-01" },
 	{ name: "PRJ-F", project_name: "Foxtrot Gala", project_type: "Events", is_active: "Yes", status: "Completed", custom_company_priority: "4", percent_complete: 100, expected_end_date: "2026-10-20" },
+	{ name: "PRJ-G", project_name: "Golf Shop Reorg", project_type: "Internal", is_active: "Yes", status: "Completed", custom_company_priority: "", percent_complete: 100, expected_end_date: "2026-10-15" },
 ];
 
 async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = false } = {}) {
@@ -252,10 +259,17 @@ async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = fals
 	const calls = [];
 	const intervals = [];
 
+	// The real selector's shape where the block reads it: `columns`, `is_hidden`, and a
+	// `hidden` list a test can set to stand for the Columns menu.
 	class FakeSelector {
-		constructor(key) {
+		constructor(key, columns) {
 			this.key = key;
+			this.columns = columns;
+			this.hidden = [];
 			selectors.push(this);
+		}
+		is_hidden(key) {
+			return this.hidden.includes(key);
 		}
 		render_button(container, onChange, options) {
 			this.rendered = { container, onChange, options };
@@ -362,6 +376,16 @@ function check(run, id, on) {
 	box.prop("checked", on);
 	run.dom.fire(box, "change");
 }
+// A header click as the handler bound by the latest render sees it: every render binds its
+// own onto the stand-in's one `.sortable-header` node, so firing them all would sort N times.
+function clickHeader(run, col) {
+	const th = run.dom.node(`th[data-sort="${col}"]`);
+	th.attr("data-sort", col);
+	const handlers = run.dom.node(".sortable-header")[NODE].handlers.click || [];
+	handlers[handlers.length - 1].call(th, { preventDefault() {}, stopPropagation() {} });
+}
+const sortOf = (run) => JSON.parse(run.storage.get("chb_projects_dashboard_sort_v1"))["priority-overview"];
+const contentText = (run) => run.dom.node("#dashboard-content")[0].textContent;
 const tileCount = (run, key) => run.dom.node(`[data-tile-count="${key}"]`).text();
 const chipCount = (run, stream) => run.dom.node(`[data-stream-count="${stream}"]`).text();
 const isActiveTab = (run, route) => run.dom.node(`.pd-tab[data-route="${route}"]`)[NODE].classes.has("active");
@@ -474,7 +498,7 @@ await test("Group by stream draws header rows in the agreed order and moves the 
 	assert.deepEqual(groups, ["Build", "Design", "Service", "Internal"], "Build, Design, Service, Events, then Internal");
 	assert.match(html, /--pd-group-color: var\(--sf-chip-edge-build\)/, "the group edge is the pillar's themed chip edge");
 	assert.match(html, /1 projects · 1 ranked/, "the Build group's note");
-	assert.equal(JSON.parse(run.storage.get("chb_projects_dashboard_sort_v1"))["priority-overview"].col, "project_priority");
+	assert.deepEqual(sortOf(run), { col: "project_priority", order: "asc", auto: true }, "the page's own sort, direction kept");
 	const from2 = mark(run);
 	check(run, "#pd-group-by-stream", false);
 	assert.doesNotMatch(drawn(run, from2), /pd-group/);
@@ -493,6 +517,76 @@ await test("a remembered stream, Ranked only and grouping are restored on load, 
 	assert.deepEqual(run.writes, [], "restoring a choice is not a new choice");
 });
 
+await test("a remembered chip the bar does not have is ignored, and All stays pressed", async () => {
+	// A typo, or a chip a later release removed: "Delivery" is a stream with no chip.
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Delivery", ranked_only: false, group: false }) },
+	});
+	assert.equal(rowsOf(drawn(run)).length, 4, "every active project, not an empty filter");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+	assert.deepEqual(run.writes, []);
+});
+
+await test("the Group toggle leaves a hand-chosen sort alone, direction included", async () => {
+	const run = await runBlock();
+	clickHeader(run, "project_priority");
+	assert.deepEqual(sortOf(run), { col: "project_priority", order: "asc", auto: false });
+	check(run, "#pd-group-by-stream", true);
+	check(run, "#pd-group-by-stream", false);
+	assert.equal(sortOf(run).col, "project_priority", "a hand-chosen stream rank survives the round trip");
+	clickHeader(run, "company_priority");
+	clickHeader(run, "company_priority");
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false });
+	check(run, "#pd-group-by-stream", true);
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false }, "grouping keeps Company Priority descending");
+	check(run, "#pd-group-by-stream", false);
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false });
+	// the distinction survives a reload
+	const again = await runBlock({ stored: Object.fromEntries(run.storage) });
+	check(again, "#pd-group-by-stream", true);
+	assert.deepEqual(sortOf(again), { col: "company_priority", order: "desc", auto: false });
+});
+
+await test("a group header row spans the visible columns, and follows the Columns menu", async () => {
+	const run = await runBlock();
+	let from = mark(run);
+	check(run, "#pd-group-by-stream", true);
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="8">/, "all eight columns on show");
+	const selector = run.selectors.find((s) => s.key === "chb_priority_overview_columns");
+	selector.hidden = ["project_id", "budget"];
+	selector.rendered.onChange();
+	assert.equal(run.dom.node("tr.pd-group > td").attr("colspan"), "6", "two columns hidden: re-fitted in place");
+	from = mark(run);
+	check(run, "#pd-group-by-stream", false);
+	check(run, "#pd-group-by-stream", true);
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="6">/, "and drawn so on the next render");
+	assert.doesNotMatch(drawn(run, from), /colspan="8"/);
+	const internal = run.selectors.find((s) => s.key === "chb_active_internal_columns");
+	internal.hidden = ["project_id"];
+	from = mark(run);
+	clickTab(run, "active-internal-projects");
+	await settle();
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="5">Independent Projects/);
+});
+
+await test("a denial or a failed read keeps its panel under a tile, a chip, a box or a tab", async () => {
+	const denied = await runBlock({ projects: { error: "You do not have permission to view the Project Dashboard." } });
+	assert.equal(contentText(denied), "No access");
+	assert.equal(tileCount(denied, "active"), "", "no count was written");
+	pressTile(denied, "past-due");
+	pressChip(denied, "Build");
+	check(denied, "#pd-ranked-only", true);
+	check(denied, "#pd-group-by-stream", true);
+	clickTab(denied, "completed-projects");
+	await settle();
+	assert.equal(contentText(denied), "No access", "never 'No active projects' over the denial");
+	assert.ok(!denied.dom.log.created.some((h) => /dashboard-empty-state/.test(h)), "no empty panel was built");
+	const failed = await runBlock({ projects: { error: "Could not fetch project data. Please check the logs." } });
+	assert.equal(contentText(failed), "Could not load the projects.");
+	pressTile(failed, "unranked");
+	assert.equal(contentText(failed), "Could not load the projects.", "the error panel, and its Try again, stay");
+});
+
 console.log("\nprojects_dashboard.js: the tabs");
 
 await test("five tabs; the one clicked is marked and remembered", async () => {
@@ -501,7 +595,7 @@ await test("five tabs; the one clicked is marked and remembered", async () => {
 	clickTab(run, "summary");
 	await settle();
 	assert.ok(isActiveTab(run, "summary"));
-	assert.equal(run.dom.node('.pd-tab[data-route="summary"]').attr("aria-selected"), "true");
+	assert.equal(run.dom.node('.pd-tab[data-route="summary"]').attr("aria-pressed"), "true", "a toggle button, not a tab");
 	assert.ok(!isActiveTab(run, "priority-overview"));
 	assert.equal(run.storage.get("chb_projects_dashboard_tab_v1"), JSON.stringify("summary"));
 });
@@ -579,6 +673,23 @@ await test("the Completed and Internal tabs draw the same table style", async ()
 	assert.match(html, /class="pd-select project-inline-edit"/);
 	assert.match(run.dom.log.created.join("\n"), /<table class="pd-table dashboard-resizable-table">/);
 	assert.doesNotMatch(run.dom.log.created.join("\n"), /table-bordered|thead-light/);
+});
+
+await test("the Internal tab and the Summary count active the way the tiles do", async () => {
+	// Golf is is_active Yes with status Completed: off the tiles, so off these two as well.
+	const run = await runBlock();
+	let from = mark(run);
+	clickTab(run, "active-internal-projects");
+	await settle();
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Delta Shop Tooling"]);
+	assert.equal(chipCount(run, "Internal"), "1", "the Internal chip and the Internal tab are one number");
+	from = mark(run);
+	clickTab(run, "summary");
+	await settle();
+	const html = drawn(run, from);
+	assert.match(html, /pd-card-l">Active Projects<\/div>\s*<div class="pd-card-n">4</, "the Active tile's number");
+	assert.match(html, /pd-card-l">Overdue<\/div>\s*<div class="pd-card-n pd-card-n-bad">1</, "the Past expected end tile's number");
+	assert.match(html, /pd-card-l">Completed<\/div>\s*<div class="pd-card-n">1</);
 });
 
 console.log("\nprojects_dashboard.js: Refresh and Updated");

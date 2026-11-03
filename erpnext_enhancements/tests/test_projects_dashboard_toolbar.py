@@ -49,7 +49,7 @@ JS_CODE = _strip_js(JS)
 SELECTOR_CODE = _strip_js(SELECTOR)
 CSS_CODE = re.sub(r"/\*[\s\S]*?\*/", "", CSS)
 
-TABS = re.findall(r'<button type="button" class="pd-tab[^"]*" role="tab"([^>]*)data-route="([^"]+)"', HTML_CODE)
+TABS = re.findall(r'<button type="button" class="pd-tab[^"]*"([^>]*)data-route="([^"]+)"', HTML_CODE)
 FIVE_TABS = ["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"]
 
 
@@ -108,9 +108,36 @@ class TestTabs(unittest.TestCase):
 		):
 			self.assertIn(f'"{label}"', JS_CODE, label + " was lost with the Dashboard tab")
 
-	def test_the_list_tabs_keep_the_definitions_they_always_had(self):
-		self.assertIn('p.is_active === "Yes" && INTERNAL_PROJECT_TYPES.includes(p.project_type)', JS_CODE)
+	def test_the_page_has_one_definition_of_active(self):
+		# is_active = Yes and status not Completed / Canceled, read by the tiles, the chips, the
+		# Overview's rows, the Internal tab and the Summary's cards; Completed stays is_active = No.
+		self.assertIn('p.is_active === "Yes" &&', JS_CODE)
+		self.assertEqual(JS_CODE.count('p.is_active === "Yes"'), 1, "a second definition of active")
+		self.assertIn("active_pool().filter(p => INTERNAL_PROJECT_TYPES.includes(p.project_type))", JS_CODE)
+		self.assertIn("const active = active_pool();", JS_CODE)
 		self.assertIn('project_data.filter(p => p.is_active === "No")', JS_CODE)
+
+	def test_the_tabs_are_toggle_buttons_not_a_tablist(self):
+		# A tablist promises arrow keys, aria-controls and a tabpanel the bar does not have.
+		self.assertNotIn('role="tablist"', HTML_CODE)
+		self.assertNotIn('role="tab"', HTML_CODE)
+		self.assertNotIn("aria-selected", HTML_CODE)
+		self.assertNotIn("aria-selected", JS_CODE)
+		self.assertRegex(HTML_CODE, r'class="pd-tab active" aria-pressed="true" data-route="priority-overview"')
+		self.assertEqual(len(re.findall(r'class="pd-tab" aria-pressed="false"', HTML_CODE)), 4)
+		self.assertIn("addClass('active').attr('aria-pressed', 'true')", JS_CODE)
+
+	def test_a_panel_stands_until_rows_have_loaded(self):
+		# Loading, no access or a failed read: a tile, chip, box or tab draws the panel again,
+		# never "No active projects" over it, and the error's Try again is kept.
+		self.assertIn("let loaded = false;", JS_CODE)
+		self.assertIn("loaded = true;", JS_CODE)
+		self.assertIn("function show_panel(kind, opts)", JS_CODE)
+		self.assertNotIn('sf.state.render(content_el(), "no-access")', JS_CODE)
+		body = JS_CODE[JS_CODE.index("function render_current_tab()") :]
+		body = body[: body.index("\n    }\n")]
+		self.assertIn("if (!loaded) {", body)
+		self.assertIn("show_panel(panel.kind, panel.opts);", body)
 
 	def test_the_tab_on_screen_is_remembered_per_browser(self):
 		self.assertIn('const TAB_KEY = "chb_projects_dashboard_tab_v1"', JS_CODE)
@@ -151,6 +178,9 @@ class TestHeadBand(unittest.TestCase):
 		for label in ("Active", "Past expected end", "Due in 30 days", "No company rank"):
 			self.assertIn(f'<span class="pd-tile-l">{label}</span>', HTML_CODE)
 		self.assertNotIn("in flight", HTML_CODE)
+
+	def test_due_in_30_days_says_it_counts_finished_projects(self):
+		self.assertIn('title="Expected end within the next 30 days, finished projects included"', HTML_CODE)
 
 	def test_the_tile_rules_are_the_ones_he_stated(self):
 		self.assertIn("date_part(p.expected_end_date) < today_iso() && pct_of(p) < 100", JS_CODE)
@@ -217,6 +247,24 @@ class TestPriorityOverviewFilters(unittest.TestCase):
 		body = JS_CODE[JS_CODE.index("function bind_sortable_headers") :]
 		body = body[: body.index("\n    }\n")]
 		self.assertIn("save_sort_state();", body)
+
+	def test_the_group_toggle_swaps_only_the_pages_own_sort(self):
+		# `auto` is the default or what the toggle set; a header click clears it, and the toggle
+		# then leaves the column and the direction alone.
+		self.assertIn("sort_state['priority-overview'].auto = true;", JS_CODE)
+		self.assertIn("if (tab === 'priority-overview') sort_state[tab].auto = s.auto === true;", JS_CODE)
+		clicked = JS_CODE[JS_CODE.index("function bind_sortable_headers") :]
+		clicked = clicked[: clicked.index("\n    }\n")]
+		self.assertIn("state.auto = false;", clicked)
+		toggle = JS_CODE[JS_CODE.index("$root.find('#pd-group-by-stream').on('change'") :]
+		toggle = toggle[: toggle.index("\n    });\n")]
+		self.assertIn("const own = overview.group ? 'project_priority' : 'company_priority';", toggle)
+		self.assertIn("if (state.auto && state.col !== own) {", toggle)
+		self.assertNotIn("state.order", toggle)
+
+	def test_a_remembered_chip_must_be_one_the_bar_has(self):
+		self.assertIn('if ([""].concat(STREAM_CHIPS).includes(saved.stream)) overview.stream = saved.stream;', JS_CODE)
+		self.assertNotIn('typeof saved.stream === "string"', JS_CODE)
 
 
 class TestSavedView(unittest.TestCase):
@@ -296,6 +344,26 @@ class TestOneTableStyle(unittest.TestCase):
 			'const STREAM_PILLAR = { Design: "design", Build: "build", Products: "build", Delivery: "build", Service: "service", Events: "rent" };',
 			JS_CODE,
 		)
+
+	def test_group_rows_span_the_visible_columns(self):
+		# A fixed colspan wider than the visible columns adds phantom columns under the fixed layout.
+		self.assertNotIn("PRIORITY_COLSPAN", JS_CODE)
+		self.assertNotRegex(JS_CODE, r'"neutral", \d\)')
+		self.assertIn("function visible_column_count(tab)", JS_CODE)
+		self.assertIn("selector.columns.filter((c) => !selector.is_hidden(c.key)).length", JS_CODE)
+		self.assertIn("visible_column_count('priority-overview')", JS_CODE)
+		self.assertIn("visible_column_count('active-internal-projects')", JS_CODE)
+		# and set again from the Columns menu
+		self.assertIn("fit_group_rows(container, current_tab);", JS_CODE)
+		self.assertIn("container.find('tr.pd-group > td').attr('colspan', String(visible_column_count(tab)));", JS_CODE)
+
+	def test_the_search_reads_what_a_person_sees(self):
+		# row.text() carried every option of the hidden rank selects, so "Maintenance", "Not
+		# Assigned" or a digit matched every row.
+		self.assertIn("function row_search_text(row)", JS_CODE)
+		self.assertIn("copy.find('select').each(function() {", JS_CODE)
+		self.assertIn("$(this).find('option:selected').text()", JS_CODE)
+		self.assertNotIn("let row_text = row.text().toLowerCase();", JS_CODE)
 
 	def test_inline_editing_and_the_column_tools_stayed(self):
 		self.assertIn("function bind_editable_priorities(table)", JS_CODE)

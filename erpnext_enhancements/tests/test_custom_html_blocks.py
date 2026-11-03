@@ -393,7 +393,7 @@ class TestProjectsDashboardFiles(unittest.TestCase):
 		self.assertIn("Projects Dashboard", names)
 
 	def test_the_five_tab_routes_are_in_the_markup(self):
-		routes = re.findall(r'class="pd-tab[^"]*" role="tab"[^>]*data-route="([^"]+)"', self.html)
+		routes = re.findall(r'class="pd-tab[^"]*"[^>]*data-route="([^"]+)"', self.html)
 		self.assertEqual(
 			routes,
 			["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"],
