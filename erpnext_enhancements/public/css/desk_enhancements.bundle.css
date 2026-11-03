@@ -1676,3 +1676,30 @@ body.desktop-page .desktop-icon .icon-title,
 .ee-page-sidebar-toggle.active {
     color: var(--text-color) !important;
 }
+
+/* --------------------------------------------------------------------------
+   Attachment preview arrows (v1.780.0, global_enhancements/attachment_preview_nav.js)
+
+   Previous, "3 of 12" and Next at the front of frappe's .attachment-preview-actions
+   (form_sidebar.scss at 16.53.0: a 40px flex header, the title flex: 1 with min-width 0 and an
+   ellipsis, the actions a flex row with a 2px gap, each es-button 28px square). The group never
+   shrinks and nothing in it wraps, so at the pane's minimum width (25% of the page) the file name's
+   ellipsis gives way first. Frappe's own variables, so light and dark are both right; the dark
+   theme needs no rule of its own. */
+body[data-route^="Form"] .attachment-preview .attachment-preview-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-right: 4px;
+    padding-right: 4px;
+    border-right: 1px solid var(--border-color);
+}
+body[data-route^="Form"] .attachment-preview .attachment-preview-count {
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    padding: 0 2px;
+}
