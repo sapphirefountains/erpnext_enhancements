@@ -361,6 +361,42 @@ Frappe's own `_validate_length` rule: a Data, Link or Select field holds `length
 Frappe words it, in a dry run and a write alike. Nothing is truncated. Frappe itself checks lengths only
 on insert, so before this a dry run could not see them.
 
+**Where to buy each Item** (v1.776.0; Nikolas, 2026-11-02). `purchasing.json`, beside the catalog,
+gives each row a seller found on the public web: the seller's name, its own part number, the product
+page and the advertised price for one unit. Its schema, and how to refresh prices, are in the catalog
+README. Once the Item is found or created, and inside the same per-row savepoint, the loader does
+three things:
+
+1. **Supplier.** It finds the Supplier with exactly the seller's name, or creates one (group
+   "Distributor", type Company, country United States unless the entry says `seller_country`). An
+   existing Supplier is never renamed or edited. A seller that matches an existing Supplier only once
+   case and spaces are ignored (`Inyo Pools` against `INYO Pools`) is refused, so Nikolas decides which
+   name is right. That seller is skipped; the Item and the row's other sellers still load.
+2. **Item Supplier row.** It finds the Item's row for that supplier and sets `supplier_part_no` and
+   `purchase_url`, or appends the row. Rows for any other supplier, such as Conely's `PEN022035` on
+   022035, are never touched. `purchase_url` is a Custom Field that exists on prod but is not in this
+   app's fixtures. A site without it gets the part number and a refusal line saying links were not
+   loaded.
+3. **Item Price** on the buying list the file names, `Reference List 2026`. It sets the rate, the
+   currency, `valid_from` (the date the price was seen), the supplier, the Item's stock UOM and a note
+   giving the seller, the date and the link. An existing price is found by item, list and supplier. Its
+   rate is replaced only by a sighting with a later date, so an old file never overwrites a newer price.
+   The list must exist, be enabled, be a buying list and be in USD. If it is not, no price is loaded and
+   the list is never created. Standard Buying and every selling list are never touched.
+
+The summary's `purchasing` block has the same keys in a dry run and in a write:
+
+- `suppliers_created`, `suppliers_used`;
+- `supplier_rows_added` / `_updated`;
+- `prices_added`, `prices_updated` and `prices_kept` (stored on the same day or later);
+- `rows_with_seller` and `rows_without_seller`;
+- `refused` (`{key, error}`);
+- `not_in_catalog` (entries that name no row).
+
+Each row's `changes` lists its own lines too. The block is `None` when there is no `purchasing.json`.
+If a row fails, its rollback also takes the Suppliers it created. The run forgets them, so the next row
+with that seller creates the Supplier again.
+
 **Prod, 2026-11-02.** The loader had never been run on prod, so the designer's pump picker was empty.
 The dry run came back clean, and the first write loaded **260 of the 380 approved rows** (72 pumps, 169
 nozzles, 19 lights) and refused 120: 97 pumps and 7 nozzles whose revision (title, access date and page)

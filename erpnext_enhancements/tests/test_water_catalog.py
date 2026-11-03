@@ -4,7 +4,8 @@ Covers the Pump Curve and Nozzle Profile point checks, the approved-seed loader
 (``water_engineering/catalog_seed.py``: approvals, mapping, provenance, idempotence, one bad row
 not stopping the rest), the read layer (``catalog_reader``) and ``api/designer.pump_curves``
 preferring Pump Curve records over the Item's legacy table, the legacy-curve migration patch,
-and the doctype structure the build relies on (module, controller class name).
+the doctype structure the build relies on (module, controller class name), and the purchasing step
+(``purchasing.json``: Suppliers, Item Supplier rows and Item Prices on the buying list it names).
 
 The loader runs against a small in-memory frappe (``FakeFrappe``) and the INVENTED rows in
 ``tests/fixtures/water_catalog/`` (manufacturer "Fixtureco", models prefixed ``FIXTURE-``).
@@ -18,6 +19,7 @@ Run: python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
 import ast
 import copy
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -37,7 +39,8 @@ CHILD_TABLES = {
     "Pump Curve Point": {"Pump Curve": "points", "Item": "custom_pump_curve"},
     "Nozzle Performance Point": {"Nozzle Profile": "performance"},
 }
-NAME_FIELD = {"Item": "item_code", "Nozzle Profile": "profile_name", "Brand": "brand", "Item Group": "item_group_name"}
+NAME_FIELD = {"Item": "item_code", "Nozzle Profile": "profile_name", "Brand": "brand", "Item Group": "item_group_name",
+              "Supplier": "supplier_name"}
 #: The ERPNext Item fields the loader writes, as erpnext v16.52.1's item.json declares them.
 ITEM_STANDARD_FIELDS = {
     "item_code": ("Data", "Item Code"),
@@ -47,6 +50,32 @@ ITEM_STANDARD_FIELDS = {
     "is_stock_item": ("Check", "Maintain Stock"),
     "brand": ("Link", "Brand"),
     "description": ("Text Editor", "Description"),
+}
+
+#: The fields the purchasing step writes, as erpnext v16.52.1 declares them. ``purchase_url`` is the
+#: site's own Custom Field on Item Supplier (Data, length 0), which this app's fixtures do not manage.
+PURCHASING_FIELDS = {
+    "Supplier": {
+        "supplier_name": {"fieldtype": "Data", "length": 0, "label": "Supplier Name"},
+        "supplier_group": {"fieldtype": "Link", "length": 0, "label": "Supplier Group"},
+        "supplier_type": {"fieldtype": "Select", "length": 0, "label": "Supplier Type"},
+        "country": {"fieldtype": "Link", "length": 0, "label": "Country"},
+    },
+    "Item Supplier": {
+        "supplier": {"fieldtype": "Link", "length": 0, "label": "Supplier"},
+        "supplier_part_no": {"fieldtype": "Data", "length": 0, "label": "Supplier Part Number"},
+        "purchase_url": {"fieldtype": "Data", "length": 0, "label": "Purchase URL"},
+    },
+    "Item Price": {
+        "item_code": {"fieldtype": "Link", "length": 0, "label": "Item Code"},
+        "uom": {"fieldtype": "Link", "length": 0, "label": "UOM"},
+        "price_list": {"fieldtype": "Link", "length": 0, "label": "Price List"},
+        "supplier": {"fieldtype": "Link", "length": 0, "label": "Supplier"},
+        "currency": {"fieldtype": "Link", "length": 0, "label": "Currency"},
+        "price_list_rate": {"fieldtype": "Currency", "length": 0, "label": "Rate"},
+        "valid_from": {"fieldtype": "Date", "length": 0, "label": "Valid From"},
+        "note": {"fieldtype": "Text", "length": 0, "label": "Note"},
+    },
 }
 
 
@@ -67,7 +96,7 @@ def declared_fields():
         if "fieldname" in df and "fieldtype" in df:
             item[df["fieldname"]] = {"fieldtype": df["fieldtype"], "length": df.get("length", 0),
                                      "label": df.get("label")}
-    out = {"Item": item}
+    out = {"Item": item, **PURCHASING_FIELDS}
     for folder in NEW_DOCTYPES:
         data = json.loads((WE / "doctype" / folder / f"{folder}.json").read_text(encoding="utf-8"))
         out[data["name"]] = {f["fieldname"]: {"fieldtype": f["fieldtype"], "length": f.get("length", 0),
@@ -1786,3 +1815,272 @@ def test_a_merge_never_overwrites_sapphires_value_with_the_duplicates_blank(fake
     assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5
     _load(tmp_path, dry_run=False)
     assert fake.store["Item"]["FX-M1"]["custom_pump_hp"] == 1.5
+
+
+# ----------------------------------------------------------------------------- purchasing (v1.776.0)
+# purchasing.json gives each catalog row a seller, its part number, a link and an advertised price.
+# The loader turns that into a Supplier (found by exact name, else created), an Item Supplier row and
+# an Item Price on the buying list the file names, and never touches another supplier's row.
+
+P100 = "FX-100-115"  # FIXTURE-P100's code: its part number
+OFFER = {
+    "seller": "Fixture Pool Supply",
+    "seller_part_no": "FPS-100",
+    "url": "https://fixture-pool-supply.example.invalid/p/fx-100",
+    "price_usd": 1234.5,
+    "price_seen_on": "2026-11-02",
+    "price_kind": "list",
+}
+
+
+def _buying(fake, tmp_path, rows, price_list="Reference List 2026", with_list=True):
+    """The fixture catalog plus a purchasing.json of ``rows``; the site gets the price list and one
+    Supplier (Amazon), as prod has them."""
+    folder = tmp_path / "catalog"
+    if not folder.exists():
+        shutil.copytree(FIXTURES, folder)
+    (folder / "purchasing.json").write_text(
+        json.dumps({"price_list": price_list, "currency": "USD", "rows": rows}), encoding="utf-8"
+    )
+    if with_list:
+        fake.store.setdefault("Price List", {})["Reference List 2026"] = {
+            "name": "Reference List 2026", "buying": 1, "selling": 0, "currency": "USD", "enabled": 1}
+    fake.store.setdefault("Supplier", {}).setdefault(
+        "Amazon", {"doctype": "Supplier", "name": "Amazon", "supplier_name": "Amazon"})
+    return folder
+
+
+def _load_buying(folder, dry_run=False):
+    from erpnext_enhancements.water_engineering import catalog_seed
+
+    return catalog_seed.load_catalog(catalog_dir=folder, dry_run=dry_run)
+
+
+def _prices(fake):
+    return list(fake.store.get("Item Price", {}).values())
+
+
+def _created(summary, kind, key):
+    return next(c for c in summary[kind]["created"] if c["key"] == key)
+
+
+def test_purchasing_entries_are_checked():
+    _install(FakeFrappe())
+    from erpnext_enhancements.water_engineering import catalog_seed as cs
+
+    [offer] = cs.check_offers(OFFER)
+    assert offer == {"seller": "Fixture Pool Supply", "seller_part_no": "FPS-100", "url": OFFER["url"],
+                     "price": 1234.5, "seen_on": "2026-11-02", "kind": "list", "note": None,
+                     "country": "United States"}
+    assert cs.check_offers({"search_note": "only the 1.5 HP model is listed"}) == []
+    # A seller without a price is an Item Supplier row only.
+    assert cs.check_offers({"seller": "Conely Company", "seller_part_no": "PEN022035"})[0]["price"] is None
+    assert len(cs.check_offers([OFFER, {**OFFER, "seller": "Amazon"}])) == 2
+    for bad, why in [
+        ({**OFFER, "prise_usd": 1}, "unknown purchasing field"),
+        ({**OFFER, "price_seen_on": "11/02/2026"}, "YYYY-MM-DD"),
+        ({**OFFER, "price_kind": "msrp"}, "price_kind"),
+        ({**OFFER, "price_usd": 0}, "positive number"),
+        ({**OFFER, "price_usd": "1234.50"}, "positive number"),
+        ({k: v for k, v in OFFER.items() if k != "price_usd"}, "without price_usd"),
+        ({**OFFER, "seller": "Fixture  Pool Supply"}, "stray spaces"),
+        ({**OFFER, "url": "fixture-pool-supply.example.invalid"}, "not a web address"),
+        ({"seller_part_no": "X1", "price_usd": 3}, "without a seller"),
+        ([OFFER, {**OFFER, "seller": "fixture pool supply"}], "listed twice"),
+    ]:
+        with pytest.raises(cs.PurchasingRefusal, match=why):
+            cs.check_offers(bad)
+
+
+def test_real_purchasing_file_is_clean():
+    """Every entry in the repo's purchasing.json passes the checks, names a catalog row, fits its
+    column, and spells each seller one way only, so a load on prod refuses nothing of its own making."""
+    _install(FakeFrappe())
+    from erpnext_enhancements.water_engineering import catalog_seed as cs
+
+    data = json.loads((REAL_CATALOG / "purchasing.json").read_text(encoding="utf-8"))
+    assert data["price_list"] == "Reference List 2026" and data["currency"] == "USD"
+    ids = {row["id"] for kind, name in cs.FILES.items()
+           for row in cs.rows_of(json.loads((REAL_CATALOG / name).read_text(encoding="utf-8")), kind)}
+    assert set(data["rows"]) == ids, "one purchasing entry per catalog row, keyed by its id"
+    spellings = {}
+    for ref, entry in data["rows"].items():
+        offers = cs.check_offers(entry)
+        if not offers:
+            assert (entry.get("search_note") or "").strip(), f"{ref}: no seller and no search_note"
+        for offer in offers:
+            for field in ("seller", "seller_part_no", "url"):
+                assert len(offer[field] or "") <= 140, f"{ref}: {field} over Data's 140 characters"
+            spellings.setdefault(cs._supplier_key(offer["seller"]), set()).add(offer["seller"])
+    assert all(len(names) == 1 for names in spellings.values()), spellings
+
+
+def test_a_row_with_a_seller_gets_supplier_row_and_price_and_one_without_gets_neither(fake, tmp_path):
+    folder = _buying(fake, tmp_path, {
+        "Fixtureco|FIXTURE-P100": OFFER,
+        "Fixtureco|FIXTURE-N10": {"search_note": "no seller lists it"},
+    })
+    summary = _load_buying(folder)
+    buying = summary["purchasing"]
+    assert buying["rows_with_seller"] == 1 and buying["refused"] == []
+    assert buying["suppliers_created"] == ["Fixture Pool Supply"]
+    supplier = fake.store["Supplier"]["Fixture Pool Supply"]
+    assert (supplier["supplier_group"], supplier["supplier_type"], supplier["country"]) == (
+        "Distributor", "Company", "United States")
+    assert fake.store["Item"][P100]["supplier_items"] == [
+        {"supplier": "Fixture Pool Supply", "supplier_part_no": "FPS-100", "purchase_url": OFFER["url"]}]
+    [price] = _prices(fake)
+    assert (price["item_code"], price["price_list"], price["supplier"], price["price_list_rate"],
+            price["valid_from"], price["uom"], price["currency"]) == (
+        P100, "Reference List 2026", "Fixture Pool Supply", 1234.5, "2026-11-02", "Nos", "USD")
+    assert "seen 2026-11-02" in price["note"] and OFFER["url"] in price["note"]
+    assert not fake.store["Item"]["FIXTURE-N10"].get("supplier_items")
+    # Again: nothing to do.
+    saves = len(fake.saves)
+    again = _load_buying(folder)["purchasing"]
+    assert (again["suppliers_created"], again["supplier_rows_added"], again["supplier_rows_updated"],
+            again["prices_added"], again["prices_updated"], again["prices_kept"]) == ([], 0, 0, 0, 0, 1)
+    assert len(fake.saves) == saves and len(_prices(fake)) == 1
+
+
+def test_without_purchasing_json_nothing_changes(fake):
+    assert _seed(dry_run=False)["purchasing"] is None
+    assert "Supplier" not in fake.store and "Item Price" not in fake.store
+
+
+def test_a_new_supplier_is_created_once_and_an_existing_one_reused(fake, tmp_path):
+    folder = _buying(fake, tmp_path, {
+        "Fixtureco|FIXTURE-P100": [OFFER, {"seller": "Amazon", "url": "https://amazon.example.invalid/dp/1"}],
+        "Fixtureco|FIXTURE-N10": {**OFFER, "seller_part_no": "FPS-N10", "price_usd": 40},
+    })
+    buying = _load_buying(folder)["purchasing"]
+    assert buying["suppliers_created"] == ["Fixture Pool Supply"]
+    assert buying["suppliers_used"] == ["Amazon", "Fixture Pool Supply"]
+    assert [i for i in fake.inserts if i[0] == "Supplier"] == [("Supplier", "Fixture Pool Supply")]
+    assert ("Supplier", "Amazon") not in fake.saves, "an existing Supplier is never edited"
+    assert [r["supplier"] for r in fake.store["Item"][P100]["supplier_items"]] == ["Fixture Pool Supply", "Amazon"]
+    assert fake.store["Item"]["FIXTURE-N10"]["supplier_items"][0]["supplier"] == "Fixture Pool Supply"
+    # Amazon gave no price: an Item Supplier row and no Item Price.
+    assert sorted((p["item_code"], p["supplier"]) for p in _prices(fake)) == [
+        ("FIXTURE-N10", "Fixture Pool Supply"), (P100, "Fixture Pool Supply")]
+
+
+def test_item_supplier_row_is_matched_by_supplier_and_other_rows_are_left_alone(fake, tmp_path):
+    fake.store["Item"]["500999"]["supplier_items"] = [
+        {"supplier": "Conely Company", "supplier_part_no": "PEN500999", "purchase_url": None},
+        {"supplier": "Amazon", "supplier_part_no": "OLD-1", "purchase_url": None},
+    ]
+    folder = _buying(fake, tmp_path, {"Fixtureco|FIXTURE-EXISTING": {
+        "seller": "Amazon", "seller_part_no": "B0FIXTURE", "url": "https://amazon.example.invalid/dp/B0FIXTURE"}})
+    buying = _load_buying(folder)["purchasing"]
+    assert (buying["supplier_rows_added"], buying["supplier_rows_updated"]) == (0, 1)
+    rows = fake.store["Item"]["500999"]["supplier_items"]
+    assert rows == [
+        {"supplier": "Conely Company", "supplier_part_no": "PEN500999", "purchase_url": None},
+        {"supplier": "Amazon", "supplier_part_no": "B0FIXTURE",
+         "purchase_url": "https://amazon.example.invalid/dp/B0FIXTURE"},
+    ]
+    # The person's curation of the Item itself is untouched, as before.
+    assert fake.store["Item"]["500999"]["description"] == "Curated by a person."
+
+
+def test_item_price_is_replaced_only_by_a_later_sighting(fake, tmp_path):
+    folder = _buying(fake, tmp_path, {"Fixtureco|FIXTURE-P100": OFFER})
+    assert _load_buying(folder)["purchasing"]["prices_added"] == 1
+    for seen_on, rate in (("2026-11-02", 999.0), ("2026-10-01", 888.0)):
+        _buying(fake, tmp_path, {"Fixtureco|FIXTURE-P100": {**OFFER, "price_usd": rate, "price_seen_on": seen_on}})
+        buying = _load_buying(folder)["purchasing"]
+        assert (buying["prices_updated"], buying["prices_kept"]) == (0, 1)
+        assert _prices(fake)[0]["price_list_rate"] == 1234.5
+    later = {**OFFER, "price_usd": 1300, "price_seen_on": "2027-01-15", "price_kind": "sale",
+             "note": "on sale for 1199"}
+    _buying(fake, tmp_path, {"Fixtureco|FIXTURE-P100": later})
+    dry = _load_buying(folder, dry_run=True)["purchasing"]
+    assert dry["prices_updated"] == 1 and _prices(fake)[0]["price_list_rate"] == 1234.5
+    buying = _load_buying(folder)["purchasing"]
+    assert buying["prices_updated"] == 1 and buying["prices_added"] == 0
+    [price] = _prices(fake)
+    assert (price["price_list_rate"], price["valid_from"]) == (1300, "2027-01-15")
+    assert "sale" in price["note"] and "on sale for 1199" in price["note"]
+
+
+def test_a_supplier_differing_only_by_case_or_spacing_is_refused(fake, tmp_path):
+    fake.store["Supplier"] = {"Fixture Pool Supply": {"doctype": "Supplier", "name": "Fixture Pool Supply"}}
+    folder = _buying(fake, tmp_path, {
+        "Fixtureco|FIXTURE-P100": {**OFFER, "seller": "fixture POOL supply"},
+        "Fixtureco|FIXTURE-N10": {**OFFER, "seller": "FixturePool Supply"},
+    })
+    summary = _load_buying(folder)
+    refused = summary["purchasing"]["refused"]
+    assert sorted(r["key"] for r in refused) == ["fixtureco|fixture-n10", "fixtureco|fixture-p100"]
+    assert all("differs only by case or spacing" in r["error"] for r in refused)
+    assert "'Fixture Pool Supply'" in refused[0]["error"]
+    assert list(fake.store["Supplier"]) == ["Fixture Pool Supply", "Amazon"]
+    assert not fake.store["Item"][P100].get("supplier_items") and not _prices(fake)
+    # The refusal is the seller's, not the row's: the Item still loaded.
+    assert _created(summary, "pumps", "fixtureco|fixture-p100")
+
+
+def test_a_missing_price_list_is_refused_never_created(fake, tmp_path):
+    folder = _buying(fake, tmp_path, {"Fixtureco|FIXTURE-P100": OFFER}, with_list=False)
+    buying = _load_buying(folder)["purchasing"]
+    assert buying["refused"] == [{"key": "purchasing.json", "error": (
+        "Price List 'Reference List 2026' does not exist here. Create it, or name another in "
+        "purchasing.json; no prices were loaded.")}]
+    assert "Price List" not in fake.store and not _prices(fake)
+    # Suppliers and their rows do not need the list.
+    assert fake.store["Item"][P100]["supplier_items"][0]["supplier"] == "Fixture Pool Supply"
+    fake.store["Price List"] = {"Reference List 2026": {"name": "Reference List 2026", "buying": 0,
+                                                        "currency": "USD", "enabled": 1}}
+    assert "not a buying list" in _load_buying(folder)["purchasing"]["refused"][0]["error"]
+    assert not _prices(fake)
+
+
+def test_purchasing_dry_run_writes_nothing_and_counts_what_a_write_would_do(fake, tmp_path):
+    folder = _buying(fake, tmp_path, {
+        "Fixtureco|FIXTURE-P100": OFFER,
+        "Fixtureco|FIXTURE-N10": {**OFFER, "price_usd": 40},
+        "Fixtureco|FIXTURE-EXISTING": {"seller": "Amazon", "seller_part_no": "B0X",
+                                       "url": "https://a.example.invalid/x"},
+        "Fixtureco|FIXTURE-NOT-A-ROW": {"search_note": "stale entry"},
+    })
+    before = copy.deepcopy(fake.store)
+    dry = _load_buying(folder, dry_run=True)
+    assert fake.store == before and fake.inserts == [] and fake.saves == [] and fake.db.commits == 0
+    buying = dry["purchasing"]
+    assert buying["suppliers_created"] == ["Fixture Pool Supply"]
+    assert (buying["supplier_rows_added"], buying["prices_added"]) == (3, 2)
+    assert buying["not_in_catalog"] == ["fixtureco|fixture-not-a-row"]
+    assert "Supplier Fixture Pool Supply would be created" in _created(dry, "pumps", "fixtureco|fixture-p100")["changes"]
+    wrote = _load_buying(folder)["purchasing"]
+    for key in ("suppliers_created", "supplier_rows_added", "prices_added"):
+        assert wrote[key] == buying[key]
+
+
+def test_a_failed_row_takes_its_new_supplier_with_it(fake, tmp_path):
+    """The row's savepoint rolls back the Supplier it created, so the next row with the same seller
+    must create it again rather than link to a Supplier that is no longer there."""
+    no_price = {k: v for k, v in OFFER.items() if k not in ("price_usd", "price_seen_on", "price_kind")}
+    folder = _buying(fake, tmp_path, {"Fixtureco|FIXTURE-P100": OFFER, "Fixtureco|FIXTURE-N10": no_price})
+    fake.fail_insert.add("Item Price")
+    summary = _load_buying(folder)
+    assert "fixtureco|fixture-p100" in [e["key"] for e in summary["pumps"]["errors"]]
+    assert "Fixture Pool Supply" in fake.store["Supplier"]
+    assert fake.store["Item"]["FIXTURE-N10"]["supplier_items"][0]["supplier"] == "Fixture Pool Supply"
+    assert summary["purchasing"]["suppliers_created"] == ["Fixture Pool Supply"]
+
+
+def test_the_real_purchasing_file_on_a_site_shaped_like_prod(fake):
+    """The dry run the PR promises for prod (2026-11-02): the list exists, four of the sellers are
+    Suppliers already, and no catalog Item has a row or a price for any of them, so every seller
+    with a price becomes one Item Supplier row and one Item Price, and nothing is refused."""
+    fake.store["Price List"] = {"Reference List 2026": {"name": "Reference List 2026", "buying": 1,
+                                                        "currency": "USD", "enabled": 1}}
+    fake.store["Supplier"] = {name: {"doctype": "Supplier", "name": name} for name in (
+        "Pool Web Pool & Spa Supplies", "Leslies Pool Supplies", "EZ Pool and Spa Supply",
+        "Webb's Water Gardens", "Pool Web", "Amazon", "Conely Company")}
+    buying = _load(REAL_CATALOG, dry_run=True)["purchasing"]
+    assert buying["refused"] == [] and buying["not_in_catalog"] == []
+    assert len(buying["suppliers_created"]) == 17 and len(buying["suppliers_used"]) == 21
+    assert (buying["rows_with_seller"], buying["rows_without_seller"]) == (151, 229)
+    assert (buying["supplier_rows_added"], buying["prices_added"]) == (151, 151)
