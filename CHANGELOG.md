@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.777.0] - 2026-11-03
+
+**Service Calls: a one-off maintenance visit, startup, winterization or small repair for a client with
+no Maintenance Services Agreement.** Nikolas, 2026-11-03 (vault decision
+`2026-11-03-service-call-one-off-jobs`). On that day prod had 361 Service-type Projects, every one made
+from an Opportunity and carrying the eleven-task build template (every task Overdue on day one), and
+almost none had a Maintenance Record, because a Record required a Maintenance Contract and a Serial
+No. The visit itself was going undocumented.
+
+**Added.**
+
+- **`Service Call`** (Sapphire Maintenance, `SVC-.YYYY.-.#####`): customer, contact, site address, an
+  optional Serial No, the service type (Startup, Winterization, Maintenance Visit, Small Repair), the
+  rate kind and the copied rate, the scope, the planned day, the technician, the visit template, the
+  status (Requested, Sent for Approval, Approved, Declined, Scheduled, Done, Invoiced, Canceled), the
+  approval evidence (typed name, time, IP, browser, link expiry) and links to its Project (required: "we
+  always use a project for jobs"), Opportunity, Maintenance Record and Sales Invoice.
+- **`Service Call Rate`**: one row per service type and rate kind. Startup, Winterization and Maintenance
+  Visit are flat; a Small Repair is time and materials at the As-needed, Emergency or After-hours
+  Emergency hourly rate. **The table ships empty.** The repository is public, so no figure is in it:
+  Nikolas fills the rows on prod. A new call copies its row's rate once, so a later edit to the table
+  never changes a call already quoted (`service_calls.copy_rates`).
+- **`Service Call Approval Request`**: one emailed or texted approval link and its evidence, read-only,
+  made by `service_call_approval.py` only, built like Visit Sign-Off Request (token hash only, Sent /
+  Viewed / Approved / Declined / Expired / Superseded, fourteen days).
+- **One-screen intake** (`public/js/sapphire_maintenance/service_call_intake.js`, opened by a new Service
+  Call form; the Maintenance workspace's **New Service Call** shortcut and the list's **+ Add** land
+  there). Create makes, in order and under one savepoint: the site Address (found or new), the
+  **Opportunity at its first status**, read from the installed meta and its Property Setters
+  (`service_calls.opening_status`; Qualification on prod), never Closed Won on creation; a Service-type
+  **Project** named "<Customer> - <Service type> <date>" on the new three-task **Service Call** Project
+  Template; and the Service Call linked to both. The Project is an ordinary insert, so ERPNext copies the
+  template tasks and every Project hook runs (PRO-0204 steps, the Drive folder path).
+- **The three-task "Service Call" Project Template** (`patches/seed_service_call_project_template.py`):
+  Approval received → Service visit → Invoice sent, leaf tasks each waiting on the one before. The intake
+  re-dates them from the scheduled visit (`service_calls.task_dates`: approval from today to the day
+  before the visit, the visit on its day, the invoice seven days after), so nothing is born Overdue. The
+  eleven-task build template stays for Build and Design. Insert-only by name; logs instead of raising.
+- **The approval link** (`sapphire_maintenance/service_call_approval.py`, page `/service-call-approval`):
+  a plain-language summary, the service type, the rate, the scope and short terms from the 2026-10-13
+  agreement terms (chemicals billed in addition; repairs by the hour at the three rates read from the
+  table at render time; invoices due in 30 days), a typed name and one **Approve** button, plus
+  **Decline** with a reason. No drawn signature or initials. Approve records the name, time, IP and
+  browser, moves the call to Approved and the Opportunity to **Closed Won**, and drafts the visit when
+  the call has a date. Decline marks the Opportunity **Lost** with the reason; a link past fourteen days
+  does the same on the daily sweep. Sent by email through the app's shell, and by text too when the
+  sender ticks it and the Triton gateway is configured (`api/telephony.send_sms`, the app's only SMS
+  path; a failed text never undoes the email).
+- **The visit without a contract.** `Sapphire Maintenance Record` has a `service_call` Link; Contract and
+  Serial No stay optional. **Schedule Visit** (or the approval, when the call has a date) drafts the
+  record with the call's project, technician, date and template, so it shows on the Maintenance Planner
+  like any draft visit and opens in the Visit Wizard. `get_visit_payload` and the wizard's bootstrap
+  resolve the template from the call when there is no contract: Startup → Seasonal Startup,
+  Winterization → Winterization, Maintenance Visit → Standard Fountain Maintenance, Small Repair → the
+  new **Small Repair** template.
+- **The Small Repair template** (`patches/seed_small_repair_template.py`): Safety & Electrical, then
+  *Work Performed* (the work done, mandatory, with a photo before and after), *Labor* (one reading,
+  *Labor hours*) and *Parts Used* (a dosing section with no preset lines; parts are added on site with
+  the wizard's *Add another item*). Insert-only by name; logs instead of raising.
+- **Invoicing from the call's rates** (`service_calls.invoice_for_visit`, called by
+  `api/maintenance_workflow.create_sales_invoice` in place of the Sales Order path): the flat rate as one
+  line on the maintenance fee Item, or the labor hours (the *Labor hours* reading, else the clocked time
+  less the pause) times the hourly rate plus each part at its Standard Selling price, with the chemicals
+  on top through `chemical_billing` as on a contract visit. What cannot be billed is a comment on the
+  visit, never a silent gap. The visit's submit hook marks the call Done and links the visit; the invoice
+  step marks it Invoiced. Gated by the same Settings switch as contract visits.
+- Workspace: Service Call and Service Call Rate in the Maintenance card, a **New Service Call** shortcut.
+- `tests/test_service_calls.py` (bench-free pytest, its own CI step): the intake planner (what is
+  created, in what order, with what names, status and template), the rate copy and the pairs allowed, the
+  dates, the approval state machine (tokens by shape, expiry, the guest endpoints' shape, no `.update(`
+  from a guest), the invoice line builder, and the shape of the doctypes, hooks, patches and workspace.
+
+**Changed.**
+
+- **A Maintenance Record no longer needs a Maintenance Contract.** It never required one in the schema,
+  but every path that made a record (the scheduler, Log a Visit, the wizard's bootstrap) went through a
+  contract or an Active template scoped to the Project or Customer, so a one-off client with neither had
+  no way to file the visit. A record with a `service_call` now instantiates its form from the call's
+  template. Contract visits are untouched: a contract, when one is also given, still wins.
+- `api/maintenance_visit.get_visit_bootstrap` instantiates a draft that has a Service Call and no project
+  or contract, and passes the call to `get_visit_payload`.
+
+**Not done here, by design.** The rates themselves (entered on prod). The Small Repair labor hours are a
+Water Chemistry line on purpose: they ride the existing wizard, print and review surfaces with no new
+section type. The approval page says "plus parts and materials" rather than "parts at cost": the invoice
+bills parts at the Item's selling price, and the page must not promise otherwise.
+
 ## [1.776.0] - 2026-11-02
 
 **The Fountain Designer catalog says where each Item can be bought and for how much.** Nikolas, 2026-11-02:

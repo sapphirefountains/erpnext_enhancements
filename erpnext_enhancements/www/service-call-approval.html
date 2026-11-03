@@ -1,0 +1,133 @@
+{% extends "templates/web.html" %}
+{#
+  Public Service Call approval page (v1.777.0). Controller: www/service_call_approval.py — note
+  the UNDERSCORE: frappe maps this template's basename to a module name by replacing hyphens with
+  underscores, so a controller named service-call-approval.py would never load.
+
+  referrer=no-referrer: the URL carries the link's token, which must not travel in a Referer
+  header anywhere. noindex: a client's job is nobody else's business.
+
+  frappe's Jinja environment does not autoescape, so every value below is |e. The one exception
+  is summary.scope_html, the office's own Text Editor scope passed through sanitize_html by the
+  controller.
+#}
+
+{% block title %}{{ _("Approve your service call") }}{% endblock %}
+
+{% block head_include %}
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/service_call_approval/service_call_approval.css?v={{ deploy_version }}">
+{% endblock %}
+
+{% block page_content %}
+<div class="sa-page">
+
+	{% if state == "open" %}
+	<header class="sa-header">
+		<p class="sa-eyebrow">{{ _("Service call") }}</p>
+		<h1>{{ summary.service | e }} {{ _("at") }} {{ summary.site | e }}</h1>
+		<p class="sa-hint">{{ _("Please read the summary below. Approving tells us to go ahead; we will confirm the day with you.") }}</p>
+	</header>
+
+	<section class="sa-card" aria-label="{{ _('Summary') }}">
+		<dl class="sa-facts">
+			<div><dt>{{ _("Service") }}</dt><dd>{{ summary.service | e }}</dd></div>
+			{% if summary.account and summary.account != summary.site %}<div><dt>{{ _("Account") }}</dt><dd>{{ summary.account | e }}</dd></div>{% endif %}
+			{% if summary.address %}<div><dt>{{ _("Site") }}</dt><dd class="sa-pre">{{ summary.address | e }}</dd></div>{% endif %}
+			{% if summary.scheduled %}<div><dt>{{ _("Planned for") }}</dt><dd>{{ summary.scheduled | e }}</dd></div>{% endif %}
+			<div><dt>{{ _("Rate") }}</dt><dd>{{ summary.rate | e }}</dd></div>
+			<div><dt>{{ _("Reference") }}</dt><dd>{{ summary.number | e }}</dd></div>
+		</dl>
+	</section>
+
+	{% if summary.scope_html %}
+	<section class="sa-card">
+		<h2>{{ _("What we will do") }}</h2>
+		<div class="sa-scope">{{ summary.scope_html }}</div>
+	</section>
+	{% endif %}
+
+	<section class="sa-card">
+		<h2>{{ _("Terms") }}</h2>
+		<ul class="sa-list">
+		{% for line in summary.terms %}<li>{{ line | e }}</li>{% endfor %}
+		</ul>
+		{% if summary.hourly and summary.hourly_rates %}
+		<dl class="sa-facts sa-rates">
+		{% for kind, text in summary.hourly_rates %}<div><dt>{{ kind | e }}</dt><dd>{{ text | e }}</dd></div>{% endfor %}
+		</dl>
+		{% endif %}
+	</section>
+
+	<form class="sa-card sa-form" id="sa-form" novalidate>
+		<h2>{{ _("Approve") }}</h2>
+		<label class="sa-label" for="sa-name">{{ _("Your full name") }}</label>
+		<input class="sa-input" id="sa-name" type="text" maxlength="140" autocomplete="name">
+		<p class="sa-error" id="sa-error" role="alert" hidden></p>
+		<button type="submit" class="sa-submit" id="sa-submit">{{ _("Approve") }}</button>
+		<p class="sa-hint">{{ _("By approving you ask us to do the work described above at the rate shown, on the terms above.") }}</p>
+
+		<details class="sa-decline" id="sa-decline">
+			<summary>{{ _("Not going ahead? Let us know why") }}</summary>
+			<label class="sa-label" for="sa-reason">{{ _("Reason (optional)") }}</label>
+			<textarea class="sa-input" id="sa-reason" rows="3" maxlength="500"></textarea>
+			<button type="button" class="sa-decline-btn" id="sa-decline-btn">{{ _("Decline") }}</button>
+		</details>
+		<p class="sa-hint">{{ _("This link answers once and expires") }} {{ expires_on | e }}. {{ _("Questions? Reply to the email, or call us on") }} {{ contact_phone | e }}.</p>
+	</form>
+
+	<div id="sa-done" class="sa-done" hidden role="status">
+		<h2>{{ _("Approved — thank you.") }}</h2>
+		<p>{{ _("We have your approval and will be in touch to confirm the visit.") }}</p>
+	</div>
+	<div id="sa-declined" class="sa-done" hidden role="status">
+		<h2>{{ _("Thanks for letting us know.") }}</h2>
+		<p>{{ _("We have noted that you are not going ahead. If anything changes, just call us.") }}</p>
+	</div>
+
+	{% elif state == "approved" %}
+	<div class="sa-notice">
+		<h1>{{ _("Already approved") }}</h1>
+		<p>{{ _("This service call has been approved. Thank you — there's nothing more to do.") }}</p>
+	</div>
+
+	{% elif state == "declined" %}
+	<div class="sa-notice">
+		<h1>{{ _("Already answered") }}</h1>
+		<p>{{ _("You told us you were not going ahead with this service call. If that has changed, please call us on") }} {{ contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "replaced" %}
+	<div class="sa-notice">
+		<h1>{{ _("This link has been replaced") }}</h1>
+		<p>{{ _("We sent a newer approval link for this service call. Please use the most recent message from us.") }}</p>
+		<p class="sa-hint">{{ _("Can't find it? Call us on") }} {{ contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "expired" %}
+	<div class="sa-notice">
+		<h1>{{ _("This link has expired") }}</h1>
+		<p>{{ _("Approval links work for two weeks. Reply to the email or call us on") }} {{ contact_phone | e }} {{ _("and we'll send a new one.") }}</p>
+	</div>
+
+	{% else %}
+	{# Unknown, malformed, or a canceled call: rendered identically, so the page never confirms
+	   whether a token exists. #}
+	<div class="sa-notice">
+		<h1>{{ _("This link isn't available") }}</h1>
+		<p>{{ _("It may have expired, been replaced, or already been used.") }}</p>
+		<p class="sa-hint">{{ _("Please call us on") }} {{ contact_phone | e }} {{ _("and we'll sort it out.") }}</p>
+	</div>
+	{% endif %}
+
+	<noscript>
+		<p class="sa-notice">{{ _("Approving needs JavaScript. Please call us on") }} {{ contact_phone | e }}.</p>
+	</noscript>
+</div>
+
+<script>
+	window.SA_BOOT = {{ boot | tojson }};
+</script>
+<script src="/assets/erpnext_enhancements/js/service_call_approval/service_call_approval.js?v={{ deploy_version }}"></script>
+{% endblock %}

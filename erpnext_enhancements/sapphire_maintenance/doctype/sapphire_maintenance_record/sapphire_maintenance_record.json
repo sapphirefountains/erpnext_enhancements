@@ -13,6 +13,7 @@
   "project",
   "legacy_name",
   "maintenance_contract",
+  "service_call",
   "serial_no",
   "template",
   "visit_label",
@@ -84,6 +85,14 @@
    "fieldtype": "Link",
    "label": "Maintenance Contract",
    "options": "Sapphire Maintenance Contract"
+  },
+  {
+   "description": "A one-off job with no agreement (v1.777.0): the visit is filed against the Service Call instead of a Contract and Serial No, and takes its template from the call's service type.",
+   "fieldname": "service_call",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Service Call",
+   "options": "Service Call"
   },
   {
    "fieldname": "serial_no",
@@ -354,7 +363,7 @@
    "no_copy": 1
   }
  ],
- "modified": "2026-10-23 09:00:00.000000",
+ "modified": "2026-11-03 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",

@@ -49,7 +49,8 @@ Sapphire Maintenance Contract (parent)           operational contract: who/what/
                                                    template, target_month, last_generated_year
 
 Sapphire Maintenance Record (parent, submittable, route: maintenance-records)
-│   the on-site visit: Customer/Project/Contract/Serial No/Technician, clock in/out, paused_duration,
+│   the on-site visit: Customer/Project/Contract (or Service Call, v1.777.0)/Serial No/Technician,
+│   clock in/out, paused_duration,
 │   visit_date (the day the work was ACTUALLY done — blank means "the day it was submitted"; set
 │   explicitly by create_visit and what the cadence roll-forward keys on),
 │   safety_acknowledged gate, client_sign_off, warranty_rma_flag, has_out_of_range_readings,
@@ -69,6 +70,22 @@ Visit Sign-Off Request (v1.614.0)     one emailed link for a client to sign a vi
                                       status (Sent/Viewed/Signed/Expired/Superseded), sent/expires/
                                       viewed/signed times, signed name, signature, signer IP + browser,
                                       sent_by, and token_hash (SHA-256 only). Made by sign_off.py only.
+
+Service Call (v1.777.0)               a one-off visit for a client with no agreement (decision 2026-11-03):
+│   SVC-.YYYY.-.#####                  customer, contact, site address, optional Serial No, service_type
+│                                      (Startup | Winterization | Maintenance Visit | Small Repair),
+│                                      rate_kind + flat_rate / hourly_rate (COPIED from Service Call Rate
+│                                      at creation), scope, scheduled_date, technician, template, status
+│                                      (Requested → Sent for Approval → Approved | Declined → Scheduled →
+│                                      Done → Invoiced; Canceled), the approval evidence (typed name,
+│                                      time, IP, browser), and links: project (REQUIRED), opportunity,
+│                                      maintenance_record, sales_invoice
+├── Service Call Rate                  one row per (service_type, rate_kind): the figure a new call copies.
+│                                      Filled on prod, never in the repo (ships empty).
+└── Service Call Approval Request      one emailed or texted approval link and its evidence: status
+                                       (Sent/Viewed/Approved/Declined/Expired/Superseded), channel,
+                                       sent/expires/viewed/decided times, typed name, IP + browser,
+                                       token_hash (SHA-256 only). Made by service_call_approval.py only.
 
 Sapphire Maintenance Profile          one per Project (unique): safety_instructions, access_codes,
                                       google_sites_links + special_instructions (v1.607.0; first
@@ -114,6 +131,12 @@ Configuration lives in **ERPNext Enhancements Settings → Maintenance**: fee it
 | `sign_off.py` | The client's sign-off by email (v1.614.0): mint, hash and email a link; the guest Sign; the status for the form, the wizard and the digest; the daily expiry sweep | `send_sign_off_request` (desk, POST), `get_sign_off_status` (desk), `sign_visit` (**guest**, POST, rate limited), `send_after_finish` (from `finish_visit`), `can_send`, `default_email`, `describe`, `mark_viewed`, `expire_stale` (`daily`) |
 | `doctype/visit_sign_off_request/…` | **Visit Sign-Off Request**: one emailed link and its evidence; read-only, made by `sign_off.py` only | (no custom logic) |
 | `../www/visit-sign-off.html` + `../www/visit_sign_off.py` | The public page the link opens: the service report, a typed name, a signature pad and "I confirm the service described above was performed" (`public/js/visit_sign_off/`, `public/css/visit_sign_off/`) | `get_context` |
+| `service_calls.py` | Service Calls (v1.777.0): the intake planner (`plan_intake`, `task_dates`), the rate copy (`copy_rates`), the intake endpoint that makes the Address, the Opportunity at its first status, the Project on the three-task template and the call (`create_service_call`), the visit draft (`schedule_visit`, `draft_visit`), the record hooks (`on_visit_submit`, `on_visit_cancel`), the invoice line builder (`invoice_lines`, `invoice_for_visit`) and the Opportunity moves (`set_opportunity_status`) | `create_service_call` (POST), `schedule_visit` (POST), `cancel_service_call` (POST), `intake_options`; pure `plan_intake`, `task_dates`, `invoice_lines`, `billable_hours`, `first_status`, `can_transition` |
+| `service_call_approval.py` | The client's approval of a Service Call by emailed or texted link (v1.777.0), built like `sign_off.py`: mint, hash and send a link; the guest Approve and Decline; the daily expiry sweep that marks the Opportunity Lost | `send_approval_request` (desk, POST), `get_approval_status` (desk), `approve_service_call` and `decline_service_call` (**guest**, POST, rate limited), `expire_stale` (`daily`), `page_summary`, `hourly_rates` |
+| `doctype/service_call/…` | **Service Call**: the controller keeps the title, the rate kind, the copied rate, the template and the address in step; the form opens the intake dialog when new and shows Send for Approval / Schedule Visit / Open Visit / Cancel | `validate`, `before_insert` |
+| `doctype/service_call_rate/…` / `doctype/service_call_approval_request/…` | The rate table (one row per service type and rate kind) and the approval link's evidence (read-only, made by `service_call_approval.py` only) | `validate` (the pair allowed) |
+| `../public/js/sapphire_maintenance/service_call_intake.js` | The New Service Call dialog: who and where, the job, when, the scope; Create makes everything and opens the call | `ee_service_call_intake` |
+| `../www/service-call-approval.html` + `../www/service_call_approval.py` | The public page the approval link opens: summary, service, rate, terms, a typed name, Approve, and Decline with a reason (`public/js/service_call_approval/`, `public/css/service_call_approval/`) | `get_context` |
 | `missed_visits.py` | Missed and stale visits (v1.595.0): Not drafted, Not started, Started not sent, for the report and the Visit Review page | `missed_visits`, `late_drafts`, `undrafted_visits` |
 | `report/missed_maintenance_visits/` | **Missed Maintenance Visits** Script Report over `missed_visits` | `execute` |
 | `chemical_usage.py` | What was used, by site and month (v1.731.0, TASK-2026-02480): the Consumables lines of counted visits grouped site x month x item x **dose unit** (units compared without case/spacing, never added or converted; a blank unit is the item's stock unit), the *Visit state* filter (Approved by default), the default window. Groups in Python from one bound query | `get_usage`, `build_rows`, `resolve_months`, `default_months`, `state_counts`, `fetch_lines` |
@@ -495,9 +518,95 @@ With no approved visit to the site before this one, every surface says "First re
 - **Client sign-off by email (v1.614.0).** Nik, 2026-10-13: "will this signature requirement allow the tech to send it via email to the client to sign off? the clients aren't always available to sign in person". On Wrap-up, under the client's pad, *Client not here? Email them a link to sign off* takes an address, prefilled from the last address this client was sent a link at, else the agreement's contact (Project Contract `contact_email`), else the account's email or primary contact. Finish sends it with the visit (`finish_visit`'s `email_sign_off`); the server emails the link **after** the visit has moved on, in the same transaction and inside a savepoint, so a bad address or a failed send comes back as a message beside a visit that went for review anyway, and a Finish kept on the phone without signal carries the address and sends it once when it goes. A signature drawn on the pad wins and nothing is emailed. The visit form shows *Client sign-off: …* and **Email Client to Sign Off** / **Re-send Sign-off Link** to the technician, the crew, Maintenance Reviewer / Supervisor, Projects Manager and System Manager (`sign_off.can_send`; write permission alone is not enough, since every Maintenance User has it), and only once the visit has left Draft: Pending Review or submitted (`sign_off.finished`), since the client confirms the service was performed. The link opens `/visit-sign-off`: the service report, a typed name, a pad and "I confirm the service described above was performed". Signing writes four fields (`client_sign_off`, `client_signed_by`, `client_signed_on`, `client_sign_off_method` = "By email") with `db_set`, so an approved visit takes it without its submit pipeline running again, and a form left open since cannot save over it. They are deliberately **not** `allow_on_submit` (`db_set` does not need it, and a save after submit skips `validate`, so it would have let anyone with write forge or inject a signature) and are `no_copy`. The typed name loses control characters and `<` / `>` before it is stored. A pad signature is stamped "On site" and the time in `validate`. The link is a bearer token (256 bits; only its SHA-256 is stored on the **Visit Sign-Off Request**), expires after 14 days, signs once, and a resend supersedes it; unknown, malformed, expired, superseded and canceled links get the same words from the endpoint. **The client's sign-off never blocks review, approval or billing.** The report prints "Signed on site <time>", "Signed by email by <name> on <time>" or "Sent for sign-off <date>, not yet signed"; the review digest says the same.
 - **Portal:** route `/maintenance-records` is registered for the **Customer** role (`portal_menu_items` in `hooks.py`); `get_context` sets `show_labor` from the Sales Order's `custom_display_labor_hours`.
 
+## Service Calls
+
+One-off maintenance, startup, winterization and small repairs for a client who phones in without a
+Maintenance Services Agreement (Nikolas, 2026-11-03; vault decision
+`2026-11-03-service-call-one-off-jobs`). On that day prod had 361 Service-type Projects, each made from
+an Opportunity and carrying the eleven-task build template (every task Overdue on day one), and almost
+none had a Maintenance Record, because a Record required a Contract and a Serial No. The visit itself
+went undocumented. The code is in [`service_calls.py`](service_calls.py) and
+[`service_call_approval.py`](service_call_approval.py).
+
+**The shape.** A **Service Call** hangs off a Service-type **Project**: a project number is always
+required ("we always use a project for jobs"), so the call links to the Project rather than replacing
+it (the option of the Project *being* the call, with its own series, was rejected: every PRJ-keyed
+feature would need checking). The **Opportunity is created first, at its first status**, read from
+the installed Opportunity meta and its Property Setters (`service_calls.opening_status`; Qualification
+on prod), never Closed Won on creation, so the job is tracked in sales. The Project gets the
+three-task **Service Call** Project Template, Approval received → Service visit → Invoice sent,
+re-dated from the scheduled visit so nothing is born Overdue (`task_dates`: approval runs from today
+to the day before the visit, the visit is on its day, the invoice has seven days after it). The
+eleven-task build template stays for Build and Design.
+
+**Intake.** The workspace's **New Service Call** shortcut (and the list's **+ Add**) opens a new
+Service Call form, which opens the intake dialog over itself
+(`public/js/sapphire_maintenance/service_call_intake.js`): Customer (a Link; a new account is made
+through frappe's own quick entry from the field, so it passes the same naming checks), contact, the
+site Address (one of the customer's, or new lines), an optional Serial No, the service type, the
+rate kind for a Small Repair, the planned day, the technician and the scope in plain words. Create
+calls `service_calls.create_service_call`, which under one savepoint makes the Address, the
+Opportunity, the Project (an ordinary insert: ERPNext copies the template tasks, the PRO-0204 steps
+seed, the Drive folder follows the usual Project path) and the Service Call, in that order, and
+opens the call. Cancel leaves the plain form for a call logged by hand against an existing project.
+
+**Rates.** Startup, Winterization and Maintenance Visit are flat rates; a Small Repair is time and
+materials at the **As-needed**, **Emergency** or **After-hours Emergency** hourly rate. The figures
+live in the **Service Call Rate** table, one row per service type and rate kind, **filled on prod and
+never in the repository** (it ships empty; Nikolas enters the rates in the Desk). A new call copies
+its row's rate once (`copy_rates`), so a later edit to the table never changes a call already quoted,
+the same stamp semantics as a Service Plan. A call made before its rate is entered is created without
+a figure and the dialog says so.
+
+**Approval link.** **Send for Approval** on the form emails the client a link (and texts it too when
+the sender ticks *Also text the link* and the Triton gateway is configured; `api/telephony.send_sms`
+is the app's only SMS path, and a text that fails never undoes the email). The page
+(`/service-call-approval`) shows a plain-language summary, the service type, the rate ("$X flat,
+plus chemicals used" or "$X per hour (Emergency), plus parts and materials"), the scope and short
+terms taken from the 2026-10-13 agreement terms (chemicals billed in addition; repairs by the hour
+with the three hourly rates read from the table at render time; invoices due in 30 days), a typed
+name and one **Approve** button, plus **Decline** with a reason. No drawn signature or initials.
+Approve records the name, time, IP and browser on the **Service Call Approval Request** and the
+call, moves the call to **Approved** and the Opportunity to **Closed Won** (a full save, so the
+won-date, hand-off and tag hooks run as for a deal moved by hand), and, when the call has a date,
+drafts the visit at once. Decline marks the call Declined and the Opportunity **Lost** with the
+reason; a link past its fourteen days does the same on the daily sweep (`expire_stale`). A resend
+supersedes the live link and, after a decline, puts the Opportunity back at its opening status. The
+threat model is the visit sign-off's: a 256-bit bearer token of which only the SHA-256 is stored,
+uniform failure copy, guest endpoints POST-only and rate limited, every field assigned by name.
+
+**The visit.** A **Sapphire Maintenance Record** takes a `service_call` in place of a Contract and
+Serial No (both stay optional). **Schedule Visit** on an approved call (or the approval itself, when
+the call has a date) drafts the record with the call's project, customer, technician, date and
+template, so it shows on the Maintenance Planner like any draft visit and opens in the Visit Wizard.
+The template defaults from the service type (`TEMPLATE_BY_TYPE`): Startup → *Seasonal Startup*,
+Winterization → *Winterization*, Maintenance Visit → *Standard Fountain Maintenance*, Small Repair →
+the new **Small Repair** template (`patches/seed_small_repair_template.py`): the catalog's Safety &
+Electrical, then *Work Performed* (the work done, mandatory, with a photo before and after), *Labor*
+(one reading, *Labor hours*) and *Parts Used* (a dosing section with no preset lines; the technician
+adds parts from stock with the wizard's *Add another item*). `get_visit_payload` resolves the
+template from the call when there is no contract. Review, sign-off, print and portal are unchanged.
+On approval the record's submission job drafts the Sales Invoice from the call's copied rates
+(`invoice_for_visit`): the flat rate as one line on the maintenance fee Item, or the labor hours
+(the *Labor hours* reading, else the clocked time less the pause) times the hourly rate plus each
+part at its Standard Selling price, with the chemicals on top through `chemical_billing` as on a
+contract visit. The submit hook marks the call **Done** and links the visit; the invoice step marks
+it **Invoiced**. The invoicing switch in Settings (`maintenance_invoicing_enabled`) gates this as it
+gates contract visits. A canceled visit sends the call back to Approved.
+
+**Status.** Requested → Sent for Approval → Approved | Declined → Scheduled → Done → Invoiced, and
+Canceled from anything not yet done (`TRANSITIONS`). The status field is read-only on the form: the
+office moves a call with its buttons, the client with the link.
+
+**Permissions.** Service Call: System Manager, Projects Manager and Maintenance Supervisor create and
+write; Maintenance Reviewer writes; Finance Team and Maintenance User read. Service Call Rate: System
+Manager and Projects Manager write; Maintenance Supervisor and Maintenance User read. The approval
+request is read-only evidence (System Manager, Maintenance Reviewer, Maintenance Supervisor, Projects
+Manager, Maintenance User read).
+
 ## Seeding
 
-`patches/seed_maintenance_sections.py` (insert-only, idempotent) creates the four sample Sections (chemicals existence-guarded by item code *at seed time only*), three Draft Templates (Standard Fountain Maintenance, Seasonal Startup, Winterization), the Maintenance Supervisor role, and Settings defaults. `patches/seed_service_plans.py` (same model) seeds the four standard Service Plans (Weekly/Bi-Weekly/Monthly Full Service, Quarterly Inspection Only). `patches/seed_maintenance_catalog.py` (same model, v1.17.0) seeds the **expanded catalog** — nine more Sections (Advanced Water Chemistry, Pump & Filter Service, Lighting Inspection, Auto-Fill & Water Level, Algae & Water Clarity, Spring/Winter step lists, Interior Fountain Care, Safety & Electrical), six Templates (Spray Feature / Pondless / Interior Fountain / Large Display, plus full Spring Startup / Winterization), and five Plans (Weekly Spray Feature, Bi-Weekly Pondless, Monthly Interior Fountain, Monthly Large Display Per-Site, Seasonal Service Only). It seeds **no Chemical Dosing sections** — those need per-row Item links that differ by site, so dosing stays in the item-guarded original seed and the new templates reuse the existing "Chemical Dosing" section. Each new Section also gets example `step_instructions` (edit/replace in the UI and add how-to images via its Instruction Images table). `patches/remove_template_item_doctype.py` drops the superseded flat `Sapphire Template Item` child doctype. `patches/rename_maintenance_templates.py` (v1.17.0) renames legacy hash-named templates to their `template_name` after the doctype switched to `autoname: field:template_name`.
+`patches/seed_maintenance_sections.py` (insert-only, idempotent) creates the four sample Sections (chemicals existence-guarded by item code *at seed time only*), three Draft Templates (Standard Fountain Maintenance, Seasonal Startup, Winterization), the Maintenance Supervisor role, and Settings defaults. `patches/seed_service_plans.py` (same model) seeds the four standard Service Plans (Weekly/Bi-Weekly/Monthly Full Service, Quarterly Inspection Only). `patches/seed_maintenance_catalog.py` (same model, v1.17.0) seeds the **expanded catalog** — nine more Sections (Advanced Water Chemistry, Pump & Filter Service, Lighting Inspection, Auto-Fill & Water Level, Algae & Water Clarity, Spring/Winter step lists, Interior Fountain Care, Safety & Electrical), six Templates (Spray Feature / Pondless / Interior Fountain / Large Display, plus full Spring Startup / Winterization), and five Plans (Weekly Spray Feature, Bi-Weekly Pondless, Monthly Interior Fountain, Monthly Large Display Per-Site, Seasonal Service Only). It seeds **no Chemical Dosing sections** — those need per-row Item links that differ by site, so dosing stays in the item-guarded original seed and the new templates reuse the existing "Chemical Dosing" section. Each new Section also gets example `step_instructions` (edit/replace in the UI and add how-to images via its Instruction Images table). `patches/seed_service_call_project_template.py` (v1.777.0) seeds the three-task **Service Call** Project Template and `patches/seed_small_repair_template.py` the **Small Repair** visit template and its three sections, both insert-only by name and both logging instead of raising; the Service Call Rate table is deliberately **not** seeded. `patches/remove_template_item_doctype.py` drops the superseded flat `Sapphire Template Item` child doctype. `patches/rename_maintenance_templates.py` (v1.17.0) renames legacy hash-named templates to their `template_name` after the doctype switched to `autoname: field:template_name`.
 
 ## Gotchas
 

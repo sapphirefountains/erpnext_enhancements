@@ -1,0 +1,243 @@
+{
+ "actions": [],
+ "autoname": "SCA-.YYYY.-.#####",
+ "creation": "2026-11-03 09:00:00.000000",
+ "description": "One approval link sent to a client for a Service Call (v1.777.0), built like Visit Sign-Off Request: made by sapphire_maintenance/service_call_approval.py, never by hand. Every field is evidence and read-only; only the link's SHA-256 is stored.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "service_call",
+  "status",
+  "channel",
+  "email",
+  "phone",
+  "customer",
+  "column_break_sent",
+  "sent_by",
+  "sent_on",
+  "expires_on",
+  "first_viewed_on",
+  "view_count",
+  "evidence_section",
+  "approved_name",
+  "approved_on",
+  "approver_ip",
+  "user_agent",
+  "column_break_decline",
+  "declined_on",
+  "decline_reason",
+  "token_section",
+  "token_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "service_call",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Service Call",
+   "options": "Service Call",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Sent\nViewed\nApproved\nDeclined\nExpired\nSuperseded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Select",
+   "label": "Sent By",
+   "options": "Email\nSMS\nEmail and SMS",
+   "read_only": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email",
+   "options": "Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone",
+   "options": "Phone",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sent",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_by",
+   "fieldtype": "Link",
+   "label": "Sent By (User)",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Sent On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_viewed_on",
+   "fieldtype": "Datetime",
+   "label": "First Viewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "view_count",
+   "fieldtype": "Int",
+   "label": "Views",
+   "read_only": 1
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Decision"
+  },
+  {
+   "fieldname": "approved_name",
+   "fieldtype": "Data",
+   "label": "Approved By (Typed Name)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approver_ip",
+   "fieldtype": "Data",
+   "label": "IP Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user_agent",
+   "fieldtype": "Small Text",
+   "label": "Browser",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_decline",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "declined_on",
+   "fieldtype": "Datetime",
+   "label": "Declined On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decline_reason",
+   "fieldtype": "Small Text",
+   "label": "Decline Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "token_section",
+   "fieldtype": "Section Break",
+   "label": "Link"
+  },
+  {
+   "description": "SHA-256 of the link's token. The token itself is in the email or text and nowhere else.",
+   "fieldname": "token_hash",
+   "fieldtype": "Data",
+   "label": "Token Hash",
+   "read_only": 1,
+   "unique": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-03 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Service Call Approval Request",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "read": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "search_fields": "service_call,email",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Blue",
+   "title": "Sent"
+  },
+  {
+   "color": "Orange",
+   "title": "Viewed"
+  },
+  {
+   "color": "Green",
+   "title": "Approved"
+  },
+  {
+   "color": "Red",
+   "title": "Declined"
+  },
+  {
+   "color": "Gray",
+   "title": "Expired"
+  },
+  {
+   "color": "Gray",
+   "title": "Superseded"
+  }
+ ],
+ "track_changes": 1
+}

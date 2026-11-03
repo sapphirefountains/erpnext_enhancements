@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "autoname": "format:{service_type} - {rate_kind}",
+ "creation": "2026-11-03 09:00:00.000000",
+ "description": "One rate per service type and rate kind for Service Calls (v1.777.0). Filled on the site, never from the repository: a Service Call copies the matching rate when it is created, so a later edit here never changes a call already quoted.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "service_type",
+  "rate_kind",
+  "rate",
+  "column_break_rate",
+  "disabled",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "service_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Service Type",
+   "options": "Startup\nWinterization\nMaintenance Visit\nSmall Repair",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Flat",
+   "description": "Startup, Winterization and Maintenance Visit are flat rates. Small Repair is billed by the hour: As-needed, Emergency or After-hours Emergency.",
+   "fieldname": "rate_kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Rate Kind",
+   "options": "Flat\nAs-needed\nEmergency\nAfter-hours Emergency",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Per visit for a flat rate; per hour for a Small Repair.",
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Rate",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_rate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "description": "Shown nowhere the client sees. A note for the office, such as what the rate includes.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-03 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Service Call Rate",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

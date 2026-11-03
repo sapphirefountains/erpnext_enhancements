@@ -358,6 +358,22 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		frm.trigger("render_dashboard");
 	},
 
+	// A one-off job with no contract (v1.777.0): the call brings the project, the customer
+	// and the template of its service type.
+	service_call: function (frm) {
+		if (frm.doc.service_call && frm.doc.docstatus === 0) {
+			frappe.db.get_value("Service Call", frm.doc.service_call, ["project", "customer", "serial_no"]).then((r) => {
+				const call = (r && r.message) || {};
+				if (call.project && !frm.doc.project) frm.set_value("project", call.project);
+				if (call.customer && !frm.doc.customer) frm.set_value("customer", call.customer);
+				if (call.serial_no && !frm.doc.serial_no) frm.set_value("serial_no", call.serial_no);
+				frm.trigger("populate_from_template");
+			});
+			return;
+		}
+		frm.trigger("populate_from_template");
+	},
+
 	project: function (frm) {
 		frm.trigger("populate_from_template");
 		frm.trigger("render_dashboard");
@@ -391,7 +407,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 
 	populate_from_template: function (frm) {
 		if (frm.doc.docstatus !== 0) return;
-		if (!frm.doc.project && !frm.doc.maintenance_contract) return;
+		if (!frm.doc.project && !frm.doc.maintenance_contract && !frm.doc.service_call) return;
 
 		const fill = () => {
 			frm._ee_payload_weekday = ee_payload_weekday(frm);
@@ -401,6 +417,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 					project: frm.doc.project,
 					serial_no: frm.doc.serial_no,
 					maintenance_contract: frm.doc.maintenance_contract,
+					// A one-off job's template comes from the call (v1.777.0).
+					service_call: frm.doc.service_call,
 					technician: frm.doc.technician,
 					visit_label: frm.doc.visit_label,
 					// Lines set to other weekdays stay off this visit (v1.619.0).

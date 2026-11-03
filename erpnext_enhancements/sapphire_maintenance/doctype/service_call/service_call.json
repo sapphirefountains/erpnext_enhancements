@@ -1,0 +1,399 @@
+{
+ "actions": [],
+ "autoname": "SVC-.YYYY.-.#####",
+ "creation": "2026-11-03 09:00:00.000000",
+ "description": "A one-off maintenance visit, startup, winterization or small repair for a client with no Maintenance Services Agreement (decision 2026-11-03). It hangs off a Service-type Project (a project number is always required) and its Opportunity, is approved by the client on an emailed or texted link, and is filed as a Maintenance Record against it instead of a Contract and Serial No. See sapphire_maintenance/README.md, Service Calls.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "status",
+  "customer",
+  "contact_name",
+  "contact_phone",
+  "contact_email",
+  "column_break_where",
+  "site_address",
+  "address_display",
+  "serial_no",
+  "section_job",
+  "service_type",
+  "rate_kind",
+  "flat_rate",
+  "hourly_rate",
+  "column_break_when",
+  "scheduled_date",
+  "technician",
+  "template",
+  "scope",
+  "section_links",
+  "project",
+  "opportunity",
+  "column_break_links",
+  "maintenance_record",
+  "sales_invoice",
+  "section_approval",
+  "approval_email",
+  "approval_phone",
+  "approval_sent_on",
+  "expires_on",
+  "column_break_approval",
+  "approved_name",
+  "approved_on",
+  "approver_ip",
+  "approver_user_agent",
+  "declined_on",
+  "decline_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title",
+   "read_only": 1
+  },
+  {
+   "default": "Requested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Requested\nSent for Approval\nApproved\nDeclined\nScheduled\nDone\nInvoiced\nCanceled",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "contact_name",
+   "fieldtype": "Data",
+   "label": "Contact Name"
+  },
+  {
+   "fieldname": "contact_phone",
+   "fieldtype": "Data",
+   "label": "Contact Phone",
+   "options": "Phone"
+  },
+  {
+   "fieldname": "contact_email",
+   "fieldtype": "Data",
+   "label": "Contact Email",
+   "options": "Email"
+  },
+  {
+   "fieldname": "column_break_where",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "site_address",
+   "fieldtype": "Link",
+   "label": "Site Address",
+   "options": "Address"
+  },
+  {
+   "fieldname": "address_display",
+   "fieldtype": "Small Text",
+   "label": "Address",
+   "read_only": 1
+  },
+  {
+   "description": "Optional. The fountain, when it is already a Serial No.",
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Water Feature",
+   "options": "Serial No"
+  },
+  {
+   "fieldname": "section_job",
+   "fieldtype": "Section Break",
+   "label": "Job"
+  },
+  {
+   "fieldname": "service_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Service Type",
+   "options": "Startup\nWinterization\nMaintenance Visit\nSmall Repair",
+   "reqd": 1
+  },
+  {
+   "default": "Flat",
+   "description": "A Small Repair is billed by the hour: As-needed, Emergency or After-hours Emergency. The other three are flat rates.",
+   "fieldname": "rate_kind",
+   "fieldtype": "Select",
+   "label": "Rate Kind",
+   "options": "Flat\nAs-needed\nEmergency\nAfter-hours Emergency",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.service_type && doc.service_type != \"Small Repair\"",
+   "description": "Copied from Service Call Rate when the call is created. Chemicals are billed in addition.",
+   "fieldname": "flat_rate",
+   "fieldtype": "Currency",
+   "label": "Flat Rate"
+  },
+  {
+   "depends_on": "eval:doc.service_type == \"Small Repair\"",
+   "description": "Per hour, copied from Service Call Rate when the call is created. Parts are billed in addition.",
+   "fieldname": "hourly_rate",
+   "fieldtype": "Currency",
+   "label": "Hourly Rate"
+  },
+  {
+   "fieldname": "column_break_when",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scheduled_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled Date"
+  },
+  {
+   "fieldname": "technician",
+   "fieldtype": "Link",
+   "label": "Technician",
+   "options": "User"
+  },
+  {
+   "description": "The visit form the technician fills in. Defaults from the service type.",
+   "fieldname": "template",
+   "fieldtype": "Link",
+   "label": "Visit Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "description": "What the client asked for, in plain words. Shown on the approval page.",
+   "fieldname": "scope",
+   "fieldtype": "Text Editor",
+   "label": "Scope"
+  },
+  {
+   "fieldname": "section_links",
+   "fieldtype": "Section Break",
+   "label": "Project and Opportunity"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1
+  },
+  {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity"
+  },
+  {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "maintenance_record",
+   "fieldtype": "Link",
+   "label": "Maintenance Record",
+   "options": "Sapphire Maintenance Record",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "label": "Sales Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_approval",
+   "fieldtype": "Section Break",
+   "label": "Client Approval"
+  },
+  {
+   "fieldname": "approval_email",
+   "fieldtype": "Data",
+   "label": "Approval Sent To (Email)",
+   "options": "Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_phone",
+   "fieldtype": "Data",
+   "label": "Approval Sent To (Phone)",
+   "options": "Phone",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_sent_on",
+   "fieldtype": "Datetime",
+   "label": "Approval Sent On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Link Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_name",
+   "fieldtype": "Data",
+   "label": "Approved By (Typed Name)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approver_ip",
+   "fieldtype": "Data",
+   "label": "Approver IP",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approver_user_agent",
+   "fieldtype": "Small Text",
+   "label": "Approver Browser",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "declined_on",
+   "fieldtype": "Datetime",
+   "label": "Declined On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "decline_reason",
+   "fieldtype": "Small Text",
+   "label": "Decline Reason",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-03 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Service Call",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Reviewer",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "search_fields": "customer,project,service_type",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Requested"
+  },
+  {
+   "color": "Blue",
+   "title": "Sent for Approval"
+  },
+  {
+   "color": "Green",
+   "title": "Approved"
+  },
+  {
+   "color": "Red",
+   "title": "Declined"
+  },
+  {
+   "color": "Purple",
+   "title": "Scheduled"
+  },
+  {
+   "color": "Cyan",
+   "title": "Done"
+  },
+  {
+   "color": "Green",
+   "title": "Invoiced"
+  },
+  {
+   "color": "Gray",
+   "title": "Canceled"
+  }
+ ],
+ "title_field": "title",
+ "track_changes": 1
+}

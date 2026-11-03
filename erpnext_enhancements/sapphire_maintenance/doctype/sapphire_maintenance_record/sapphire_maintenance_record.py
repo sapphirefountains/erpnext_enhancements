@@ -570,11 +570,22 @@ def _reading_overrides(serial_no):
 
 @frappe.whitelist()
 def get_visit_payload(
-	project=None, serial_no=None, maintenance_contract=None, technician=None, visit_label=None, visit_date=None
+	project=None,
+	serial_no=None,
+	maintenance_contract=None,
+	technician=None,
+	visit_label=None,
+	visit_date=None,
+	service_call=None,
 ):
 	"""Instantiate the visit form's child-table rows from the resolved template.
 
 	Whitelisted; called by the desk form JS (``populate_from_template``).
+
+	``service_call`` (v1.777.0): a one-off job with no contract. The one feature is the record's
+	Serial No, else the call's (or none), and its template is the call's **Visit Template**, which
+	defaults from the service type (``service_calls.TEMPLATE_BY_TYPE``). A contract, when one is
+	also given, still wins.
 	Resolves the covered features (one, or all of a Per Site Visit contract's),
 	resolves each feature's template, and walks the template's sections in
 	order, emitting rows typed by section:
@@ -635,6 +646,11 @@ def get_visit_payload(
 				if row.serial_no == serial_no:
 					feature.update({"template": row.template, "default_warehouse": row.default_warehouse})
 					break
+		elif not contract and service_call:
+			call = frappe.db.get_value("Service Call", service_call, ["template", "serial_no", "project"], as_dict=True)
+			if call:
+				feature.update({"serial_no": serial_no or call.serial_no, "template": call.template})
+				project = project or call.project
 		features = [feature]
 
 	customer = contract.customer if contract else None
