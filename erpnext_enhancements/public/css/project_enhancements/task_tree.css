@@ -251,3 +251,46 @@ td.project-id-cell {
 	font-family: var(--font-stack-mono, monospace);
 	font-size: 0.85em;
 }
+
+/* --- Scope-tab flows (v1.777.0): select mode, the per-row "+", the template preview --- */
+/* The checkbox is in every row but shows only while "Select" is on. */
+.task-tree-manager .task-select-cb {
+	display: none;
+	flex-shrink: 0;
+	margin-top: 0;
+}
+
+.task-tree-manager.select-mode .task-select-cb {
+	display: inline-block;
+}
+
+.task-tree-manager.select-mode .task-drag-handle {
+	display: none;
+}
+
+.task-tree-manager .task-select-controls {
+	display: inline-flex;
+	align-items: center;
+}
+
+.scope-template-preview {
+	max-height: 50vh;
+	overflow: auto;
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	padding: 8px 12px;
+	background: var(--card-bg);
+}
+
+.scope-template-row {
+	padding-top: 3px;
+	padding-bottom: 3px;
+	border-bottom: 1px solid var(--border-color);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.scope-template-row:last-child {
+	border-bottom: none;
+}

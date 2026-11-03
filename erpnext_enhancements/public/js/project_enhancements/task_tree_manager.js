@@ -15,6 +15,16 @@
  * handleDragMove). All mutations round-trip through the project_dashboard.py
  * whitelisted methods. Expanded-state and column choices persist in localStorage.
  *
+ * Scope-tab flows (v1.777.0, api/scope_tasks.py), each an in-page dialog so the
+ * browser's Back and Forward are never touched: "Add task" (the full dialog:
+ * subject, parent, group, priority, type, assignee, dates, hours, description;
+ * "Add and add another" keeps it open) and the per-row "+" that preselects the
+ * row as parent; "Add from template" (every task of a Project Template, with a
+ * preview of its tree and dependencies, under a chosen task or the top level,
+ * tasks already there skipped and listed); and "Select", which shows a checkbox
+ * per row for "Delete selected" (subtasks under a picked group go too; a task
+ * ERPNext refuses to delete is listed with its reason).
+ *
  * Export / print (exportTasks, printTasks) re-fetch the WHOLE tree server-side
  * rather than reading `this.tasks` — the grid loads children lazily per level,
  * so the client only holds the branches the user expanded. Shared branding and
@@ -151,7 +161,20 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                                 </div>
                             </div>
                             <button class="btn btn-sm btn-success mr-2 save-order-btn" style="display: none;">Save Order</button>
-                            <button class="btn btn-sm btn-primary add-task-btn">Add Task</button>
+                            ${
+								this.readonly
+									? ""
+									: `<button class="btn btn-sm btn-primary mr-2 add-task-btn" title="${__("Add a task without leaving this page")}">${__("Add task")}</button>
+                            <button class="btn btn-sm btn-default mr-2 add-template-btn" title="${__("Add every task of a Project Template, under a task or at the top")}"><i class="fa fa-clone mr-1"></i> ${__("Add from template")}</button>
+                            <button class="btn btn-sm btn-default select-tasks-btn" title="${__("Pick tasks to delete")}">${__("Select")}</button>
+                            <div class="task-select-controls ml-2" style="display: none;">
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-danger delete-selected-btn" disabled>${__("Delete selected")}</button>
+                                    <button type="button" class="btn btn-default select-all-btn">${__("Select all")}</button>
+                                    <button type="button" class="btn btn-default cancel-select-btn">${__("Cancel")}</button>
+                                </div>
+                            </div>`
+							}
                         </div>
                         <div class="d-flex align-items-center">
                             <div class="dropdown mr-2">
@@ -420,6 +443,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 				<div class="task-grid-row ${task.is_direct_match ? 'task-search-match' : ''}">
 					<div class="task-grid-cell">
 						<div style="padding-left: ${level * 20}px; display: flex; align-items: center; width: 100%;">
+							${this.readonly ? "" : `<input type="checkbox" class="task-select-cb mr-2" data-task-id="${task.name}" title="${__("Select")}">`}
 							<i class="fa fa-bars task-drag-handle mr-2 text-muted" style="cursor: grab; flex-shrink: 0;"></i>
 							<i class="fa fa-fw ${iconClass}" style="cursor: pointer; flex-shrink: 0; font-size: 10px;"></i>
 							${milestoneIcon}${recurringIcon}<a href="/desk/task/${encodeURIComponent(task.name)}" class="task-name-cell-text" title="${frappe.utils.escape_html(task.subject || "")}">${frappe.utils.escape_html(task.subject || "")}</a>
@@ -434,7 +458,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					<div class="task-grid-cell editable-date ${this.columnVisibility.due_date ? "" : "hidden-column"}" data-field="exp_end_date" data-task-id="${task.name}" data-original-date="${task.exp_end_date || ""}" data-column="due_date"><a href="#">${end_date}</a></div>
 					<div class="task-grid-cell ${this.columnVisibility.progress ? "" : "hidden-column"}" data-column="progress"><div class="progress" style="height: 15px; width: 100%;"><div class="progress-bar" role="progressbar" style="width: ${progress}%;" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">${progress}%</div></div></div>
 					<div class="task-grid-cell editable-time ${this.columnVisibility.duration ? "" : "hidden-column"}" data-field="expected_time" data-task-id="${task.name}" data-original-value="${task.expected_time || 0}" data-column="duration"><a href="#">${task.expected_time || 0}</a></div>
-					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button class="btn btn-xs btn-danger delete-task-btn" title="Delete Task" data-task-name="${task.name}" data-task-subject="${task.subject}"><i class="fa fa-trash"></i></button></div>` : ''}
+					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button class="btn btn-xs btn-default add-subtask-btn mr-1" title="${__("Add a subtask")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-plus"></i></button><button class="btn btn-xs btn-danger delete-task-btn" title="Delete Task" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-trash"></i></button></div>` : ''}
 				</div>
 				<div class="child-tasks-container" style="${isCollapsed ? "display: none;" : ""}"></div>
 			</div>
@@ -681,14 +705,21 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 		this.wrapper.on("click", ".save-changes-btn", () => me.savePendingChanges());
 		this.wrapper.on("click", ".discard-changes-btn", () => { me.pendingChanges = {}; me.renderGrid(me.tasks); me.hidePendingControls(); });
-		this.wrapper.on("click", ".add-task-btn", () => {
-			const d = new frappe.ui.Dialog({
-				title: __("New Task"),
-				fields: [{ label: __("Subject"), fieldname: "subject", fieldtype: "Data", reqd: 1 }, { label: __("Parent Task"), fieldname: "parent_task", fieldtype: "Link", options: "Task", get_query: () => { return { filters: { project: me.projectName } }; } }],
-				primary_action(values) { me.saveInlineTask(values.subject, values.parent_task); d.hide(); },
-			});
-			d.show();
+		// The three Scope-tab flows (v1.777.0). Every one is a frappe.ui.Dialog: no route
+		// change, no history entry, so the browser's Back and Forward keep working.
+		this.wrapper.on("click", ".add-task-btn", () => me.openTaskDialog({}));
+		this.wrapper.on("click", ".add-subtask-btn", function () {
+			me.openTaskDialog({ parent: $(this).data("task-name"), parentSubject: $(this).data("task-subject") });
 		});
+		this.wrapper.on("click", ".add-template-btn", () => me.openTemplateDialog());
+		this.wrapper.on("click", ".select-tasks-btn", () => me.setSelectMode(true));
+		this.wrapper.on("click", ".cancel-select-btn", () => me.setSelectMode(false));
+		this.wrapper.on("click", ".select-all-btn", () => {
+			me.wrapper.find(".task-select-cb:visible").prop("checked", true);
+			me.updateSelection();
+		});
+		this.wrapper.on("change", ".task-select-cb", () => me.updateSelection());
+		this.wrapper.on("click", ".delete-selected-btn", () => me.deleteSelected());
 
 		this.wrapper.on("click", ".delete-task-btn", function () {
 			const taskId = $(this).data("task-name"); const subject = $(this).data("task-subject");
@@ -808,6 +839,313 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			});
 
 		d.show();
+	}
+
+	// ------------------------------------------------------------------
+	// Scope-tab flows (v1.777.0): add a task, add a template, delete many.
+	// Server: api/scope_tasks.py. None of these leaves the Project page.
+	// ------------------------------------------------------------------
+
+	/** Expand `parent` so a task just added under it is on screen after the refresh. */
+	revealParent(parent) {
+		if (!parent) return;
+		this.expandedTasks.add(parent);
+		localStorage.setItem(`expandedTasks_${this.projectName}`, JSON.stringify(Array.from(this.expandedTasks)));
+	}
+
+	/** The full in-page "Add task" dialog. `parent` preselects the node the user clicked. */
+	openTaskDialog({ parent = null, parentSubject = "" } = {}) {
+		const me = this;
+		const taskQuery = () => ({ filters: { project: me.projectName, is_template: 0 } });
+		const d = new frappe.ui.Dialog({
+			title: parent ? __("Add a subtask of {0}", [parentSubject || parent]) : __("Add a task"),
+			size: "large",
+			fields: [
+				{ label: __("Subject"), fieldname: "subject", fieldtype: "Data", reqd: 1 },
+				{
+					label: __("Parent task"),
+					fieldname: "parent_task",
+					fieldtype: "Link",
+					options: "Task",
+					default: parent || "",
+					get_query: taskQuery,
+					description: __("Leave empty for a top-level task. A parent that is not yet a group becomes one."),
+				},
+				{ label: __("This task holds subtasks (group)"), fieldname: "is_group", fieldtype: "Check" },
+				{ fieldtype: "Column Break" },
+				{
+					label: __("Priority"),
+					fieldname: "priority",
+					fieldtype: "Select",
+					options: ["Low", "Medium", "High", "Urgent"],
+					default: "Medium",
+				},
+				{ label: __("Type"), fieldname: "type", fieldtype: "Link", options: "Task Type" },
+				{ label: __("Assign to"), fieldname: "assign_to", fieldtype: "Link", options: "User", get_query: () => ({ filters: { user_type: "System User", enabled: 1 } }) },
+				{ fieldtype: "Section Break", label: __("Dates and hours") },
+				{ label: __("Expected start"), fieldname: "exp_start_date", fieldtype: "Date" },
+				{ fieldtype: "Column Break" },
+				{ label: __("Expected end"), fieldname: "exp_end_date", fieldtype: "Date" },
+				{ fieldtype: "Column Break" },
+				{ label: __("Expected hours"), fieldname: "expected_time", fieldtype: "Float" },
+				{ fieldtype: "Section Break" },
+				{ label: __("Description"), fieldname: "description", fieldtype: "Text Editor" },
+			],
+			primary_action_label: __("Add task"),
+			primary_action: (values) => save(values, true),
+			secondary_action_label: __("Add and add another"),
+			secondary_action: () => {
+				const values = d.get_values();
+				if (values) save(values, false);
+			},
+		});
+
+		const save = (values, close) => {
+			const start = values.exp_start_date;
+			const end = values.exp_end_date;
+			if (start && end && start > end) {
+				frappe.msgprint({ message: __("The expected end is before the expected start."), indicator: "orange" });
+				return;
+			}
+			// Both footer buttons: a double click on "Add and add another" would post twice.
+			const buttons = d.$wrapper.find(".modal-footer button");
+			buttons.prop("disabled", true);
+			frappe.call({
+				method: "erpnext_enhancements.api.scope_tasks.add_task",
+				args: { project: me.projectName, values: JSON.stringify(values) },
+				always: () => buttons.prop("disabled", false),
+				callback: (r) => {
+					const made = r.message;
+					if (!made || !made.name) return;
+					const link = `<a href="/desk/task/${encodeURIComponent(made.name)}">${frappe.utils.escape_html(made.subject)}</a>`;
+					frappe.show_alert({ message: __("Added {0}", [link]), indicator: "green" }, 7);
+					(made.converted || []).forEach((name) =>
+						frappe.show_alert({ message: __("{0} is now a group task.", [name]), indicator: "blue" }, 7)
+					);
+					(made.warnings || []).forEach((text) => frappe.show_alert({ message: text, indicator: "orange" }, 10));
+					me.revealParent(made.parent_task);
+					me.fetchData();
+					if (close) {
+						d.hide();
+					} else {
+						d.set_value("subject", "");
+						d.set_value("description", "");
+						d.fields_dict.subject.$input.focus();
+					}
+				},
+			});
+		};
+		d.show();
+		setTimeout(() => d.fields_dict.subject.$input.focus(), 200);
+	}
+
+	/** "Add from template": pick a Project Template, see its tasks, pick where they go. */
+	openTemplateDialog() {
+		const me = this;
+		frappe.call({
+			method: "erpnext_enhancements.api.scope_tasks.get_template_catalog",
+			args: { project: me.projectName },
+			callback: (r) => {
+				const catalog = r.message;
+				if (!catalog || !catalog.templates || !catalog.templates.length) {
+					frappe.msgprint(__("There are no enabled Project Templates to add from."));
+					return;
+				}
+				me.showTemplateDialog(catalog);
+			},
+		});
+	}
+
+	showTemplateDialog(catalog) {
+		const me = this;
+		const byName = {};
+		catalog.templates.forEach((t) => (byName[t.name] = t));
+		const options = catalog.templates.map((t) => ({
+			label: t.project_type ? `${t.name} (${t.project_type}, ${t.count})` : `${t.name} (${t.count})`,
+			value: t.name,
+		}));
+		const today = catalog.today || frappe.datetime.get_today();
+		// Default start: the project's expected start when it is still ahead, else today.
+		const defaultStart =
+			catalog.expected_start_date && catalog.expected_start_date >= today ? catalog.expected_start_date : today;
+		const d = new frappe.ui.Dialog({
+			title: __("Add tasks from a template"),
+			size: "large",
+			fields: [
+				{
+					label: __("Project Template"),
+					fieldname: "template",
+					fieldtype: "Select",
+					options: options,
+					reqd: 1,
+					default: options[0].value,
+					onchange: () => render(),
+				},
+				{ fieldtype: "Column Break" },
+				{
+					label: __("Put them under"),
+					fieldname: "parent_task",
+					fieldtype: "Link",
+					options: "Task",
+					get_query: () => ({ filters: { project: me.projectName, is_template: 0 } }),
+					description: __("Leave empty to add them at the top level."),
+				},
+				{ fieldtype: "Column Break" },
+				{
+					label: __("Start on"),
+					fieldname: "start_date",
+					fieldtype: "Date",
+					reqd: 1,
+					default: defaultStart,
+					description: __("Each task is dated from here by the template's days."),
+				},
+				{ fieldtype: "Section Break" },
+				{ fieldname: "preview", fieldtype: "HTML" },
+			],
+			primary_action_label: __("Add tasks"),
+			primary_action: (values) => {
+				d.get_primary_btn().prop("disabled", true);
+				frappe.call({
+					method: "erpnext_enhancements.api.scope_tasks.import_template",
+					args: {
+						project: me.projectName,
+						template: values.template,
+						parent_task: values.parent_task || null,
+						start_date: values.start_date,
+					},
+					always: () => d.get_primary_btn().prop("disabled", false),
+					callback: (r) => {
+						const out = r.message;
+						if (!out) return;
+						d.hide();
+						if (out.count) {
+							frappe.show_alert({ message: __("Added {0} tasks from {1}.", [out.count, values.template]), indicator: "green" }, 7);
+						}
+						(out.converted || []).forEach((name) =>
+							frappe.show_alert({ message: __("{0} is now a group task.", [name]), indicator: "blue" }, 7)
+						);
+						if (out.skipped && out.skipped.length) {
+							const rows = out.skipped
+								.map((s) => `<li>${frappe.utils.escape_html(s.subject)} <span class="text-muted">(${frappe.utils.escape_html(s.existing)})</span></li>`)
+								.join("");
+							frappe.msgprint({
+								title: out.count ? __("Already there, left alone") : __("Nothing to add"),
+								indicator: out.count ? "blue" : "orange",
+								message: `<p>${__("These template tasks already exist under the same parent:")}</p><ul>${rows}</ul>`,
+							});
+						}
+						me.revealParent(values.parent_task);
+						me.fetchData();
+					},
+				});
+			},
+		});
+
+		const render = () => {
+			const picked = byName[d.get_value("template")];
+			const $preview = d.fields_dict.preview.$wrapper;
+			if (!picked) {
+				$preview.empty();
+				return;
+			}
+			const esc = frappe.utils.escape_html;
+			const rows = picked.rows
+				.map((row) => {
+					const icon = row.is_group ? "fa-folder-o" : "fa-circle-o";
+					const bits = [];
+					if (row.start || row.duration) bits.push(__("day {0}, {1} d", [row.start, row.duration]));
+					if (row.hours) bits.push(__("{0} h", [row.hours]));
+					if (row.waits.length) bits.push(__("after {0}", [row.waits.map(esc).join(", ")]));
+					return (
+						`<div class="scope-template-row" style="padding-left: ${row.level * 18}px;">` +
+						`<i class="fa fa-fw ${icon} text-muted mr-1"></i>${esc(row.subject)}` +
+						(bits.length ? `<span class="text-muted small ml-2">${bits.join(" · ")}</span>` : "") +
+						`</div>`
+					);
+				})
+				.join("");
+			$preview.html(
+				`<div class="scope-template-preview"><div class="text-muted small mb-2">${__(
+					"{0} tasks. A task that already exists under the same parent with the same subject is skipped.",
+					[picked.count]
+				)}</div>${rows || `<div class="text-muted">${__("This template has no tasks.")}</div>`}</div>`
+			);
+		};
+		d.show();
+		render();
+	}
+
+	setSelectMode(on) {
+		this.wrapper.find(".task-tree-manager").toggleClass("select-mode", !!on);
+		this.wrapper.find(".task-select-controls").toggle(!!on);
+		this.wrapper.find(".select-tasks-btn, .add-task-btn, .add-template-btn").toggle(!on);
+		if (!on) this.wrapper.find(".task-select-cb").prop("checked", false);
+		this.updateSelection();
+	}
+
+	selectedTaskIds() {
+		return this.wrapper
+			.find(".task-select-cb:checked")
+			.map(function () {
+				return $(this).data("task-id");
+			})
+			.get();
+	}
+
+	updateSelection() {
+		const n = this.selectedTaskIds().length;
+		const $btn = this.wrapper.find(".delete-selected-btn");
+		$btn.prop("disabled", n === 0).text(n ? __("Delete selected ({0})", [n]) : __("Delete selected"));
+	}
+
+	/** Count first (subtasks under a picked group count too), confirm, then delete in one request. */
+	deleteSelected() {
+		const me = this;
+		const ids = this.selectedTaskIds();
+		if (!ids.length) return;
+		frappe.call({
+			method: "erpnext_enhancements.api.scope_tasks.delete_preview",
+			args: { project: me.projectName, tasks: JSON.stringify(ids) },
+			callback: (r) => {
+				const p = r.message;
+				if (!p) return;
+				const esc = frappe.utils.escape_html;
+				let message = `<p>${__("Delete {0} tasks from {1}?", [p.total, esc(me.projectName)])}</p>`;
+				if (p.under) {
+					message += `<p class="text-muted">${__("{0} of them are subtasks under the ones you picked.", [p.under])}</p>`;
+				}
+				message += `<ul>${p.subjects.map((s) => `<li>${esc(s)}</li>`).join("")}${p.picked > p.subjects.length ? `<li>…</li>` : ""}</ul>`;
+				frappe.confirm(message, () => {
+					me.wrapper.find(".task-saving-indicator").show();
+					frappe.call({
+						method: "erpnext_enhancements.api.scope_tasks.delete_tasks",
+						args: { project: me.projectName, tasks: JSON.stringify(ids) },
+						always: () => me.wrapper.find(".task-saving-indicator").hide(),
+						callback: (r2) => {
+							const out = r2.message || { deleted: [], kept: [] };
+							if (out.deleted.length) {
+								frappe.show_alert({ message: __("Deleted {0} tasks.", [out.deleted.length]), indicator: "green" }, 7);
+							}
+							if (out.kept.length) {
+								// `reason` is left unescaped on purpose: it is the server's own message
+								// (Frappe's link refusals carry `<a>` markup to the blocking record),
+								// never user input.
+								const rows = out.kept
+									.map((k) => `<li><b>${esc(k.subject)}</b> <span class="text-muted">(${esc(k.name)})</span><br><span class="small">${k.reason}</span></li>`)
+									.join("");
+								frappe.msgprint({
+									title: __("{0} tasks were kept", [out.kept.length]),
+									indicator: "orange",
+									message: `<ul>${rows}</ul>`,
+								});
+							}
+							me.setSelectMode(false);
+							me.fetchData();
+						},
+					});
+				});
+			},
+		});
 	}
 
 	updatePendingChange(taskId, field, value) { if (!this.pendingChanges[taskId]) this.pendingChanges[taskId] = {}; this.pendingChanges[taskId][field] = value; }

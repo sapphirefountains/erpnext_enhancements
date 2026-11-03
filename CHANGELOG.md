@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.777.0] - 2026-11-03
+## [1.778.0] - 2026-11-03
 
 **Service Calls: a one-off maintenance visit, startup, winterization or small repair for a client with
 no Maintenance Services Agreement.** Nikolas, 2026-11-03 (vault decision
@@ -109,6 +109,82 @@ No. The visit itself was going undocumented.
 Water Chemistry line on purpose: they ride the existing wizard, print and review surfaces with no new
 section type. The approval page says "plus parts and materials" rather than "parts at cost": the invoice
 bills parts at the Item's selling price, and the page must not promise otherwise.
+## [1.777.0] - 2026-11-03
+
+**The Project form's Scope tab, rethought around the Tasks Tree.** Nikolas, 2026-11-03: "I need the
+Scope tab to be rethought. The Tasks Tree should probably be at the top, and I'd like a way to import
+entire templates of tasks via the Tasks Tree. Make the Add a new task button have a good flow without
+leaving the project page." And later that day: "Also a way to mass delete tasks from the Project page
+of the Scope tab." Tracked as TASK-2026-03067.
+
+**Changed.**
+
+- **The Tasks Tree is the first thing on the Scope tab.** The *Tasks Tree* section and its grid now
+  follow the tab break directly; the Scope Description section (hidden, as before) and the four
+  value-stream scope sections (Design, Build, Service, Events: customer requests and deliverables)
+  come after it. The order is the `Project-main-field_order` Property Setter plus each Custom Field's
+  `insert_after`, both in the fixtures, so `bench migrate` applies it and no patch is needed. On prod
+  that tab held the tree **last**, below four sections of tables.
+- **The four scope sections collapse when they hold no rows** (`collapsible` with a
+  `collapsible_depends_on` on their two tables), and open by themselves on a job that has any. They
+  were already shown only for their own project type; now an empty one is a heading, not a page of
+  empty grids between the tree and the Schedule tab.
+- **The tree's "Add Task" is a full in-page dialog**, where it was a two-field one (subject and
+  parent). Subject, parent task (preselected by the new per-row **+** button), *holds subtasks*,
+  priority, type, assignee, expected start and end, expected hours and a description; **Add and add
+  another** keeps the dialog open. A parent that is not yet a group becomes one, and the alert says
+  so. The task saves through the Task controller as the user (`api/scope_tasks.add_task`) and is
+  placed after its siblings (`custom_subtask_order`); the tree refreshes in place and opens the
+  parent. The new task's name in the tree is, as before, a link to its full form in the same tab.
+  Nothing here routes away or pushes browser history, so Back and Forward keep working.
+- **`project_form_script.js` loads the tree class from the bundle first** and requires the raw
+  `/assets/.../task_tree_manager.js` path only when the bundle lacks it. The raw path is served
+  immutable for a year with no content hash, and an unconditional `frappe.require` of it let a
+  stale cached copy redefine `TaskTreeManager` over the bundle's fresh one on any device that had
+  cached it, which is exactly the "fix works on desktop, phones still broken" shape `CLAUDE.md`
+  warns about.
+
+**Added.**
+
+- **"Add from template" on the tree's toolbar.** A dialog lists every enabled Project Template (the
+  project's own type first, with its task count), previews the picked one's tasks as a tree with
+  each task's day offset, duration, hours and what it waits on, and asks where they go (a task of
+  this project, or the top level) and the date to count from (the project's expected start when it
+  is still ahead, else today). `api/scope_tasks.import_template` then creates them in ONE request:
+  - **ERPNext's own template code is called, not copied.** Each Task is built by
+    `Project.create_task_from_template` (erpnext 16.52.1, the tag prod runs), so subject,
+    description, weight, type, group flag, color, priority, `template_task` and the holiday-adjusted
+    dates are ERPNext's doing, and the app's existing `Task.before_insert` hook carries the
+    template's hours, crew size and qualifications across. The chosen start date is set on an
+    in-memory copy of the Project that is never saved: the project's own dates do not move.
+  - **The template's structure is kept**: parent/child, `depends_on` chains and row order. The
+    template's roots go under the picked node (made a group first if it is not one).
+  - **A task that already exists under the same parent with the same subject is skipped**, compared
+    by its words (capitals and spacing aside), and the dialog lists the skips. A skipped group is
+    still a parent: a second import adds only the children missing under the group already there
+    instead of a second group. A canceled task never blocks. A dependency on a skipped task points
+    at the task that was already there.
+  - **All or nothing.** A Task ERPNext refuses (a date past the project's Scheduled End Date, a
+    child ending after its parent) fails the request with ERPNext's own message and nothing is
+    written.
+  - The rules are the pure `project_enhancements/scope_tasks.py` (`plan_import`, `preview_rows`);
+    `get_template_catalog` is the dialog's read.
+- **Mass delete from the tree.** A **Select** button shows a checkbox on every row (the drag
+  handles step aside); **Delete selected (n)**, **Select all** and **Cancel** sit beside it. The
+  confirm first asks the server how many tasks the pick really covers (`delete_preview`): a picked
+  group takes everything under it. `delete_tasks` then deletes deepest first, each task under its
+  own savepoint, with `frappe.flags.mute_messages` on so a refusal's queued message cannot pop a
+  modal over the summary; a task Frappe or ERPNext refuses (linked from a timesheet, locked, not
+  permitted, a child that could not go) is **kept and listed with its reason** while the rest go,
+  and an expected refusal is not logged. At most 200 tasks per request. A dependency between two
+  picked tasks is unlinked before the delete (Frappe counts a `Task Depends On` row in another Task
+  as a link, and ERPNext's `on_trash` clears only the parent's rows, so an imported chain would
+  otherwise refuse every task another picked one waits on); a task outside the pick that waits on
+  one keeps its link, and that one is kept with Frappe's reason.
+- **`tests/test_scope_tasks.py`** (pytest, its own CI step): the plan's structure, skips, parent
+  resolution and dependency mapping; the delete order; the dialog's value allowlist; the mass
+  delete's savepoints and reasons; the fixtures keeping the tree first and `insert_after` in step
+  with `field_order`; and that no tree flow pushes history or routes away.
 
 ## [1.776.0] - 2026-11-02
 

@@ -622,7 +622,7 @@ class TestGateStamping(unittest.TestCase):
 
 
 class TestServiceCallDeals(unittest.TestCase):
-	"""A Service Call's deal (v1.777.0; Nik, 2026-11-03: "skip ranks") is not put under the
+	"""A Service Call's deal (v1.778.0; Nik, 2026-11-03: "skip ranks") is not put under the
 	hand-off requirements when the client's approval wins it; every other deal still is."""
 
 	MODULE = "erpnext_enhancements.sapphire_maintenance.service_calls"

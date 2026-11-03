@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Service Calls: one-off maintenance, startup, winterization and small repairs (v1.777.0).
+"""Service Calls: one-off maintenance, startup, winterization and small repairs (v1.778.0).
 
 Nikolas, 2026-11-03 (vault decision ``2026-11-03-service-call-one-off-jobs``): on that day prod had
 361 Service-type Projects, every one made from an Opportunity and carrying the eleven-task build
@@ -738,7 +738,7 @@ def set_opportunity_status(opportunity, status, reason=None, lost_reason=None, s
 
 	A move to Lost carries a ``lost_reasons`` row (``lost_reason``, one of the three masters this
 	module makes on first use, :func:`ensure_lost_reason`): the Opportunity's own
-	``validate_close_reason`` refuses a fresh transition to Lost without one, and until v1.777.0's
+	``validate_close_reason`` refuses a fresh transition to Lost without one, and until v1.778.0's
 	review the move was refused and the refusal swallowed, so a declined call's deal stayed open.
 	``reason`` is the detail (the client's words) and goes to ``order_lost_reason``.
 

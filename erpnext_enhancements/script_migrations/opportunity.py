@@ -44,7 +44,7 @@ def validate_ranks_on_won(doc, method=None):
 
 	When status is 'Closed Won', Scope/Schedule/Budget rank must each be 1, 2 or 3.
 
-	Not for a Service Call's deal (v1.777.0; Nikolas, 2026-11-03: "skip ranks"): a one-off
+	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03: "skip ranks"): a one-off
 	service client approves on a link and nobody ranks a pump swap. The guard never raises
 	(``service_calls.belongs_to_service_call``), so a site without the table is unchanged.
 	"""

@@ -2,7 +2,7 @@
  "actions": [],
  "autoname": "SCA-.YYYY.-.#####",
  "creation": "2026-11-03 09:00:00.000000",
- "description": "One approval link sent to a client for a Service Call (v1.777.0), built like Visit Sign-Off Request: made by sapphire_maintenance/service_call_approval.py, never by hand. Every field is evidence and read-only; only the link's SHA-256 is stored.",
+ "description": "One approval link sent to a client for a Service Call (v1.778.0), built like Visit Sign-Off Request: made by sapphire_maintenance/service_call_approval.py, never by hand. Every field is evidence and read-only; only the link's SHA-256 is stored.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [

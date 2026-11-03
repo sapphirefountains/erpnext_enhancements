@@ -1,4 +1,4 @@
-/* Public Service Call approval page (/service-call-approval, v1.777.0).
+/* Public Service Call approval page (/service-call-approval, v1.778.0).
  *
  * Boot data arrives as window.SA_BOOT, an allowlist the controller (www/service_call_approval.py)
  * builds: the state, the link's ref and the session's CSRF token. The token is the only authority

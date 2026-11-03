@@ -87,7 +87,7 @@
    "options": "Sapphire Maintenance Contract"
   },
   {
-   "description": "A one-off job with no agreement (v1.777.0): the visit is filed against the Service Call instead of a Contract and Serial No, and takes its template from the call's service type.",
+   "description": "A one-off job with no agreement (v1.778.0): the visit is filed against the Service Call instead of a Contract and Serial No, and takes its template from the call's service type.",
    "fieldname": "service_call",
    "fieldtype": "Link",
    "in_standard_filter": 1,

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Service Call controller (v1.777.0). The rules live in ``sapphire_maintenance/service_calls.py``;
+"""The Service Call controller (v1.778.0). The rules live in ``sapphire_maintenance/service_calls.py``;
 this keeps the record consistent on every save: the title, the rate kind for the service type,
 the copied rate, the visit template and the address as shown."""
 

@@ -582,7 +582,7 @@ def get_visit_payload(
 
 	Whitelisted; called by the desk form JS (``populate_from_template``).
 
-	``service_call`` (v1.777.0): a one-off job with no contract. The one feature is the record's
+	``service_call`` (v1.778.0): a one-off job with no contract. The one feature is the record's
 	Serial No, else the call's (or none), and its template is the call's **Visit Template**, which
 	defaults from the service type (``service_calls.TEMPLATE_BY_TYPE``). A contract, when one is
 	also given, still wins.

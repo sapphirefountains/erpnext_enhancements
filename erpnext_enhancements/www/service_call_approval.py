@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for the public Service Call approval page (``/service-call-approval``, v1.777.0).
+"""Controller for the public Service Call approval page (``/service-call-approval``, v1.778.0).
 
 **The filename matters.** Frappe imports a page's controller by the template's basename with
 hyphens turned into underscores, so ``service-call-approval.html`` needs

@@ -223,6 +223,10 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
+		# The Scope tab's Tasks Tree (custom_tasks_html): mounts the TaskTreeManager
+		# class that erpnext_enhancements.bundle.js ships, and falls back to the raw
+		# /assets path only when the bundle lacks it (v1.777.0). The tree's own
+		# dialogs (Add task, Add from template, Delete selected) call api/scope_tasks.py.
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
@@ -274,7 +278,7 @@ doctype_js = {
 	# the Project form gets it in its own list above.
 	"Project Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	"Sapphire Maintenance Contract": ["public/js/project_enhancements/contract_viewer.js"],
-	# sapphire_maintenance (v1.777.0): the New Service Call intake dialog, which the Service Call
+	# sapphire_maintenance (v1.778.0): the New Service Call intake dialog, which the Service Call
 	# form opens over itself when it is new and empty (the workspace's "New Service Call" shortcut
 	# and the list's "+ Add" both land there). One screen that makes the Address, the Opportunity at
 	# its first status, the Service project on the three-task template and the Service Call. The
@@ -846,7 +850,7 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
 			# Calendar sync (C2): a canceled visit's event is removed.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
-			# Service Calls (v1.777.0): a canceled visit sends its call back to Approved, so another
+			# Service Calls (v1.778.0): a canceled visit sends its call back to Approved, so another
 			# can be drafted. Never raises.
 			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_cancel",
 		],
@@ -865,7 +869,7 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_submit",
 			# Calendar sync (C2): a done visit keeps its event, with a check mark.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
-			# Service Calls (v1.777.0): a visit filed against a Service Call marks the call Done and
+			# Service Calls (v1.778.0): a visit filed against a Service Call marks the call Done and
 			# links the visit; the invoice step of the submission job then marks it Invoiced. Never
 			# raises. See sapphire_maintenance/service_calls.py.
 			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_submit",
@@ -1942,7 +1946,7 @@ scheduler_events = {
 		# fourteen days, so the list says what the page already does (the page and the sign
 		# endpoint read expiry from expires_on and never wait for this).
 		"erpnext_enhancements.sapphire_maintenance.sign_off.expire_stale",
-		# Service Call approval links (v1.777.0): a live link past its fourteen days is Expired, its
+		# Service Call approval links (v1.778.0): a live link past its fourteen days is Expired, its
 		# call Declined with the reason, and the Opportunity Lost (decision 2026-11-03: an expired
 		# link marks it Lost). The page and the endpoints read expiry from expires_on themselves.
 		"erpnext_enhancements.sapphire_maintenance.service_call_approval.expire_stale",

@@ -389,7 +389,7 @@ def get_visit_bootstrap(record):
             visit_label=doc.visit_label,
             # The day the work is done decides which weekday lines it gets (v1.619.0).
             visit_date=doc.get("visit_date") or doc.get("scheduled_visit_date"),
-            # A one-off job with no contract takes its template from the call (v1.777.0).
+            # A one-off job with no contract takes its template from the call (v1.778.0).
             service_call=doc.get("service_call"),
         )
         appended = 0

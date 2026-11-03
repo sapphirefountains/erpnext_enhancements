@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The client's approval of a Service Call, by emailed or texted link (v1.777.0).
+"""The client's approval of a Service Call, by emailed or texted link (v1.778.0).
 
 Nikolas, 2026-11-03: a one-off client approves on a link that shows a plain-language summary,
 the service type, the rate and short terms, with one **Approve** button and a typed name; the

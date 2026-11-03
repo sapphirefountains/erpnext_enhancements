@@ -1387,7 +1387,7 @@ def stamp_handoff_gate(doc, method=None):
 	v1.629.0) — the deadlines are measured from the transition itself, so both
 	stamps describe the same moment.
 
-	Not for a Service Call's deal (v1.777.0; Nikolas, 2026-11-03): a one-off service client's
+	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03): a one-off service client's
 	approval on the link wins the deal, and there is no hand-off meeting to hold for a pump swap.
 	The guard never raises (:func:`_is_service_call_deal`).
 	"""

@@ -370,7 +370,7 @@ def create_sales_invoice(doc):
     if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_invoicing_enabled")):
         return
 
-    # A Service Call visit (v1.777.0) has no Sales Order and no contract: it bills the call's own
+    # A Service Call visit (v1.778.0) has no Sales Order and no contract: it bills the call's own
     # copied rates (the flat rate as one line, or hours x the hourly rate plus parts at the Item's
     # price), with the chemicals on top as below. See sapphire_maintenance/service_calls.py.
     if doc.get("service_call"):

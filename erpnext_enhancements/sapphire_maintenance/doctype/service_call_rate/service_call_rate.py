@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The rate table Service Calls copy from (v1.777.0).
+"""The rate table Service Calls copy from (v1.778.0).
 
 One row per service type and rate kind. Nikolas fills it on prod (decision 2026-11-03: "rates are
 entered on prod, never in the repo"), so this doctype ships empty and no fixture or patch writes a

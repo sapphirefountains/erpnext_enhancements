@@ -358,7 +358,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		frm.trigger("render_dashboard");
 	},
 
-	// A one-off job with no contract (v1.777.0): the call brings the project, the customer
+	// A one-off job with no contract (v1.778.0): the call brings the project, the customer
 	// and the template of its service type.
 	service_call: function (frm) {
 		if (frm.doc.service_call && frm.doc.docstatus === 0) {
@@ -417,7 +417,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 					project: frm.doc.project,
 					serial_no: frm.doc.serial_no,
 					maintenance_contract: frm.doc.maintenance_contract,
-					// A one-off job's template comes from the call (v1.777.0).
+					// A one-off job's template comes from the call (v1.778.0).
 					service_call: frm.doc.service_call,
 					technician: frm.doc.technician,
 					visit_label: frm.doc.visit_label,

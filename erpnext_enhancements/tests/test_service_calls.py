@@ -1,5 +1,5 @@
 """Bench-free pytest suite for Service Calls (``sapphire_maintenance/service_calls.py`` and
-``service_call_approval.py``, v1.777.0).
+``service_call_approval.py``, v1.778.0).
 
 Nikolas, 2026-11-03: a one-off client without an agreement gets a Service Call that hangs off a
 Service project, an Opportunity created at its FIRST status (never Closed Won on creation), a

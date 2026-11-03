@@ -2,7 +2,7 @@
  "actions": [],
  "autoname": "format:{service_type} - {rate_kind}",
  "creation": "2026-11-03 09:00:00.000000",
- "description": "One rate per service type and rate kind for Service Calls (v1.777.0). Filled on the site, never from the repository: a Service Call copies the matching rate when it is created, so a later edit here never changes a call already quoted.",
+ "description": "One rate per service type and rate kind for Service Calls (v1.778.0). Filled on the site, never from the repository: a Service Call copies the matching rate when it is created, so a later edit here never changes a call already quoted.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
