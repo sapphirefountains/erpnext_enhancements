@@ -107,6 +107,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     device holding the old block in memory needs a hard reload. **Unverified:** nothing here ran in a
     browser or against a bench — the render, the dark theme, the Gantt tab alongside the new chrome, the
     phone layout and the inline select are checked on prod after the migrate.
+## [1.780.0] - 2026-11-03
+
+**Previous / next arrows in the form sidebar's attachment preview.** Nikolas, 2026-11-03: "when
+clicking an attachment in a doctype the side preview opens just great. I'd like to be able to
+navigate from here too, so two arrows, pointing left and right, to toggle between file previews and
+all attachments of the document." Picked with him the same day: every file of the document in the
+sidebar's order, the ones behind "Show all" included; wrap at the ends; Left and Right arrow keys
+while the pane is open; and a "3 of 12" counter in the pane's header.
+
+**Added.**
+
+- **`public/js/global_enhancements/attachment_preview_nav.js`** (the global Desk bundle). Wraps
+  frappe 16.53.0's `frappe.ui.form.Attachments` (`frappe/public/js/frappe/form/sidebar/attachments.js`,
+  the tag prod runs): `show_attachment_preview(attachment, file_url)`, which draws the pane's header
+  (`.attachment-preview-title`, and `.attachment-preview-actions` holding the open-in-new-tab link,
+  the copy button and the close button) and its body, `hide_attachment_preview()`, which empties
+  it, and `setup_preview_area()`, which the constructor runs once per instance. After the original
+  has drawn, a Previous button, a `.attachment-preview-count` reading `__("{0} of {1}")` and a Next
+  button go at the front of `.attachment-preview-actions`, made with `frappe.ui.button.html` (ghost,
+  icon-only, `chevron-left` / `chevron-right`, titled and labeled for a screen reader) so they match
+  the three already there. One file in the list: nothing is added. Installed once on the prototype,
+  and only when the five methods it relies on, `frappe.ui.button.html` and
+  `frappe.utils.escape_html` are functions, so an older or newer frappe is left exactly as it is.
+- **The order is the rows as the sidebar has drawn them, read from the rows.** Every
+  `.attachment-row` under the attachments section, top to bottom, resolved to its File by the id in
+  the pill's `/desk/file/<id>` icon link (`add_attachment`), else by the label's file URL; then the
+  files that have no row yet, the ones behind "Show all", in the order "Show all" draws them.
+  That order: `render_attachments()` keeps one row per `file_name` and inserts each row directly
+  under the Attachments heading (`.insertAfter(this.add_attachment_wrapper)`), so the rows read in
+  reverse of `get_docinfo().attachments`, and that array is `File`'s default sort, creation
+  descending (`frappe/desk/form/load.py get_attachments`, `db_query.py set_order_by`). So **the top
+  row is the oldest File record and "Show all" reveals the newer ones below it**: checked on prod's
+  PRJ-00754 (41 files) on 2026-11-03, the opposite of the "newest first" the sidebar reads as. "3 of
+  41" beside ten rows is the third row on screen; 11 to 41 are reached by stepping while they have
+  no row to point at (Nik's pick, "Show all included"), and "Show all" draws them in that same order.
+  Reading the rows rather than recomputing them keeps the counter on the row where frappe's order
+  differs from the array's: `render_attachments` slices the last ten *before* it de-duplicates, and
+  an upload (`add_to_attachments` pushes onto the array's end) sits at the top row until
+  `reload_docinfo` re-sorts it. With no rows to read, the array order above is used. The list is
+  read afresh on every step: a file deleted while the pane shows it goes to the first row on Next,
+  an upload is in the count (the counter redraws on `refresh()`), and an emptied list closes the
+  pane.
+- **Keys.** Left is previous and Right is next, bound as `keydown.attachment_preview_nav` on
+  `document` while the pane is open (beside frappe's own `keydown.attachment_preview`, which is
+  Escape) and unbound when it closes. "Open" means **visible** (jQuery `:visible` on the pane):
+  leaving a form for a list, a report or a workspace hides the form's page div and leaves the pane
+  element exactly as it was, so a handler that only checked the element would take every Left and
+  Right on every page until the next form render. Ignored with a modifier key held, inside an input,
+  textarea, select or contenteditable, when something earlier already called `preventDefault` (a
+  grid, a dropdown, an editor), while a `.modal.show` dialog is open, and on a held key's repeats
+  (each step mounts an iframe). A PDF's iframe keeps the keys while it has focus.
+- **Release without a hide.** Two things end a pane without `hide_attachment_preview()` running,
+  and each releases the keys and forgets the instance: a **route change** (`formview.show_doc`
+  removes the pane element on every form render; a list merely hides the page), handled on
+  `frappe.router`'s `change` (bound once, on the first open), which closes a pane that is still
+  attached through the original hide and otherwise just unbinds; and a **sidebar rebuild** (Save,
+  `frm.refresh()`, `reload_doc`, a realtime update all reach `form.js render_form`, whose new
+  `Sidebar.make()` empties `page.sidebar`, deleting the old pane, and constructs a new
+  `Attachments`), handled in the new instance's `setup_preview_area()`: an open instance whose pane
+  is no longer in the document is released before the new one is set up.
+- **No history entry, on purpose.** Nik's rule: custom UI never breaks the browser's Back and
+  Forward. The first draft of this release pushed one URL-less history entry per open pane so that
+  Back closed it. Review round 1 showed, from the 16.53.0 source, that this cannot be made clean on
+  the Desk: `router.js:18-22` registers a `popstate` listener that calls `frappe.router.route()` on
+  **every** popstate with no same-path check, and `route()` reaches `FormFactory.show_doc()` ->
+  `render()` -> `frm.refresh(name)` (`views/formview.js`), which rebuilds the whole form: a new
+  `Sidebar` (so "Show all" and the sidebar scroll reset), the `refresh` handlers again, and
+  `form.js:447` removes the dirty form's `beforeunload` prompt, which only `dirty()` puts back. The
+  repo had already paid for this once: `capture/panel.js:36-37` refuses a Desk history entry
+  because "frappe's router re-routes on every popstate, so the panel's own Back would re-render the
+  form underneath". So the pane takes no entry: Escape and the close button close it, as in frappe;
+  Back leaves the form, as frappe does; the arrows, the counter and the keys remain. Nothing in the
+  module touches `window.history`, and `tests/test_attachment_preview_nav.py` fails the build on a
+  `pushState`, `replaceState`, `history.back` or `popstate` in it.
+- **Styles** in `desk_enhancements.bundle.css` ("Attachment preview arrows"): the group keeps
+  frappe's 40px header and 28px ghost buttons, the counter is 12px `--text-muted` text with 4px gaps
+  that never wraps, and a `--border-color` rule separates the group from the three frappe buttons.
+  Frappe's own variables, so both themes are right; at the pane's minimum width (25% of the page)
+  the file name's ellipsis gives way first.
+- **`tests/test_attachment_preview_nav.py`** (its own CI step) runs
+  `scripts/test_attachment_preview_nav.js` under node against a stubbed frappe
+  (`frappe.ui.form.Attachments` with the five methods and a `refresh()` that draws the rows the way
+  `render_attachments` does, slice and de-duplication included; `frappe.ui.button.html`,
+  `frappe.utils.icon`, `__`; a `frappe.router` whose `popstate` listener re-renders the route as
+  frappe's does, with a `show_doc`-style teardown and a sidebar rebuild), a minimal DOM, jQuery for
+  document events and `:visible`, and a browser history that records every write: the drawn order
+  read from the pills (behind "Show all", after an upload, with no rows), the wrap both ways, the
+  counter, one file showing no arrows, the keys and every place they are ignored (a hidden form page
+  included), no history write and no popstate listener, the release on a route change, on the
+  user's Back and on a sidebar rebuild, the list re-read after a delete and an upload, and an older
+  frappe (no preview, no `setup_preview_area`, no `button.html`, no `escape_html`) left untouched.
+  The Python half holds the bundle import, the stylesheet's classes, the icon names against
+  `tests/data/desk_icon_names.txt`, the absence of any history write and the CI step.
+
+**Not verified.** No bench here: not exercised against a real form. The DOM, jQuery,
+`frappe.ui.button.html`, the router and the sidebar rows are stubs written from frappe's 16.53.0
+source. What only a real form will tell: that the six-button header fits the pane's 25% minimum
+width on a narrow laptop, and that the `/desk/file/<id>` icon link resolves every row on prod (a row
+it cannot resolve falls back to the label's URL, then to the array order). To test on prod: open a
+Project with several attachments (PRJ-00754 has 41), click one, use the arrows and the Left and
+Right keys, click through to a list and press Left (nothing should move), come Back, Save with the
+pane open and press Right (nothing should move), and open a dialog with the pane open.
 ## [1.779.0] - 2026-11-03
 
 **Desk navigation, round one of the 2026-11-03 route audit: form breadcrumbs that lead to this app's pages,

@@ -462,6 +462,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sidebar_memory -v
       - name: Sidebar memory (executed, not grepped)
         run: node scripts/test_sidebar_memory.js
+      # Previous / next arrows in the form sidebar's attachment preview (v1.780.0, Nik
+      # 2026-11-03). The suite runs scripts/test_attachment_preview_nav.js under node against a
+      # stubbed frappe, DOM, router and browser history (the rows as drawn, the wrap, the
+      # counter, the keys and a hidden form page, no history entry, the release on a route
+      # change, the user's Back and a sidebar rebuild) and holds the seams the harness cannot
+      # see: the bundle import, the stylesheet's classes, the icon names against the pinned
+      # inventory, no history write at all. Own step so its node run and output stay apart from
+      # the other desk suites.
+      - name: Attachment preview arrows (executed under node, plus the wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_attachment_preview_nav -v
       # Form breadcrumbs that lead to this app's pages (v1.779.0, Nik 2026-11-03): the Project
       # form's crumb to the Projects Dashboard, Opportunity's to the Kanban, a Task's trail through
       # its Project. The node step runs breadcrumb_targets.js against a stub of frappe 16.53's

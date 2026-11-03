@@ -190,6 +190,12 @@ import "./guided_default.js";
 // Retired Desk pages sent on to their replacements through frappe.re_route (v1.771.0: the Water
 // Engineering Wizard to the Fountain Designer). See the file.
 import "./global_enhancements/retired_routes.js";
+// Previous / next arrows and a "3 of 12" counter in the form sidebar's attachment preview, and
+// Left / Right keys while it is open and visible (v1.780.0). Wraps frappe 16.53's
+// frappe.ui.form.Attachments; installs nothing on a frappe without its preview. The rows are
+// stepped in the order the sidebar has drawn them. No history entry: frappe's router re-renders
+// the form on every popstate. See the file.
+import "./global_enhancements/attachment_preview_nav.js";
 // Form breadcrumbs that lead to this app's pages (v1.779.0): the Project form's "Project" crumb
 // goes to the Projects Dashboard, Opportunity's to the Opportunity Kanban, and a Task's trail reads
 // Projects > its project > the task. Wraps frappe 16.53's frappe.ui.form.get_breadcrumbs. See the file.
