@@ -1,24 +1,43 @@
 #!/usr/bin/env node
 /**
- * The Projects Dashboard's tab bar and toolbar (v1.719.0): View More, the "+" menu, the
- * Columns icon button and where "Reset widths" went.
+ * The Projects Dashboard's head band, tabs and Priority Overview filters (Mock B, v1.781.0):
+ * the live tiles, the stream chips, Ranked only, Group by stream, the remembered tab and
+ * sort, Refresh with "Updated N min ago", the "+" menu, the Columns icon button and where
+ * "Reset widths" went.
  *
  * Runs the REAL custom_html_blocks/projects_dashboard.js, and the real column_selector.js,
  * in a vm against a recording stand-in for jQuery (no jsdom: the repo's JS guards run on
  * plain node). The stand-in keeps one node per selector, so a click handler the script bound
- * to `$root.find("#btn-view-more")` is the one the test fires, and what the script set on a
- * node (`prop("hidden")`, `attr("aria-expanded")`, `text()`) reads back.
+ * to `$root.find(".pd-tile")` is the one the test fires, and what the script set on a node
+ * (`attr("aria-pressed")`, `text()`, `prop("checked")`) reads back. Rows the script appends
+ * to a table body are recorded as markup, so what a filter leaves on the page is what the
+ * test reads.
  *
  * What this holds:
- *   - View More shows the three extra tabs, flips aria-expanded and its label, remembers
- *     the choice in localStorage (never frappe user_settings), and collapsing while one of
- *     those tabs is on screen lands on Priority Overview rather than stranding the user.
+ *   - The four tiles are tallied from get_project_data's rows (active, past expected end,
+ *     due in 30 days, no company rank); pressing one narrows the Priority Overview and marks
+ *     itself pressed; Active clears it; pressing one from another tab lands on the Overview.
+ *   - The stream chips carry counts and narrow the rows; Ranked only keeps the numbered
+ *     company ranks; Group by stream draws header rows in the agreed order (Build, Design,
+ *     Service, Events, then Internal) and moves the sort to the stream rank. All three are
+ *     remembered per browser, in the dashboard's own keys, never frappe user_settings.
+ *   - The tab chosen is remembered and restored; an unknown saved tab falls back to Priority
+ *     Overview; nothing reads the retired View More key.
+ *   - Ranks are pills, named values muted text, no hue scale; Budget replaced Spend %;
+ *     a past-due row carries the Past due pill.
+ *   - Refresh asks the server again and the band says "Updated just now".
+ *   - A browser with storage blocked still draws.
  *   - The "+" opens a menu; New Project and New Master Project each do exactly what the old
  *     buttons did (frappe.new_doc), and close the menu; Escape closes it.
  *   - The list tabs' Columns control is an icon button (tooltip and aria-label "Columns")
  *     with "Reset column widths" in its menu, and no separate Reset widths button is drawn.
  *   - ColumnSelector itself: the icon markup carries title + aria-label, the word button is
  *     still the default, the menu action runs and closes the menu, Escape closes it.
+ *   - Review round 1: a hand-chosen sort survives the Group toggle, direction included (only
+ *     the page's own sort is swapped); a remembered chip the bar does not have is ignored; a
+ *     denial or a failed read keeps its panel under a tile, chip, box or tab press; a group
+ *     header row spans the visible columns and is re-fitted when a column is hidden; the
+ *     Internal tab and the Summary count active the way the tiles do.
  */
 
 import assert from "node:assert/strict";
@@ -66,7 +85,7 @@ function makeDom() {
 			display: null,
 		};
 		// what the shell's markup says before any script runs
-		if (key === "#pg-new-list" || key === ".pg-more-tab") s.props.hidden = true;
+		if (key === "#pg-new-list") s.props.hidden = true;
 		const impl = {
 			[NODE]: s,
 			attr(k, v) {
@@ -82,6 +101,11 @@ function makeDom() {
 			text(v) {
 				if (v === undefined) return s.text;
 				s.text = v;
+				return proxy;
+			},
+			val(v) {
+				if (v === undefined) return s.props.value === undefined ? "" : s.props.value;
+				s.props.value = v;
 				return proxy;
 			},
 			data(k, v) {
@@ -121,13 +145,16 @@ function makeDom() {
 			},
 			removeClass(c) {
 				String(c).split(/\s+/).forEach((x) => s.classes.delete(x));
-				// removing "active" from every .nav-link clears each tab's own node too
-				if (key === ".nav-link") {
+				// removing "active" from every .pd-tab clears each tab's own node too
+				if (key === ".pd-tab") {
 					for (const [k, other] of registry) {
-						if (k.startsWith(".nav-link[")) other[NODE].classes.clear();
+						if (k.startsWith(".pd-tab[")) other[NODE].classes.clear();
 					}
 				}
 				return proxy;
+			},
+			hasClass(c) {
+				return s.classes.has(c);
 			},
 			toggle(on) {
 				s.display = on ? "shown" : "none";
@@ -142,7 +169,9 @@ function makeDom() {
 				return proxy;
 			},
 			is(sel) {
-				return sel === ":visible" ? s.display === "shown" : false;
+				if (sel === ":visible") return s.display === "shown";
+				if (sel === ":checked") return !!s.props.checked;
+				return false;
 			},
 			not() {
 				return node("not-result");
@@ -199,18 +228,48 @@ async function settle(times = 15) {
 
 // ------------------------------------------------------------------ run the real block
 
-async function runBlock({ stored = {}, projects = [] } = {}) {
+const TODAY = "2026-11-03";
+
+// Seven projects: four active (one per stream, one internal), one inactive, two completed.
+//   A  Build     ranked 1, 50%, ended 2026-10-01  -> past due
+//   B  Design    unranked, 0%, ends 2026-11-20    -> due in 30 days
+//   C  Service   "Maintenance", 100%, ends 2026-12-31
+//   D  Internal  "Not Assigned", no end           -> unranked
+//   E  Build     inactive (Completed tab)
+//   F  Events    status Completed (never on the Overview)
+//   G  Internal  status Completed, still is_active (off the Internal tab and the Summary too)
+const PROJECTS = [
+	{ name: "PRJ-A", project_name: "Alpha Plaza", project_type: "Build", is_active: "Yes", status: "Active", custom_company_priority: "1", custom_project_priority: "2", percent_complete: 50, expected_end_date: "2026-10-01", custom_project_dollar_amount: 30849 },
+	{ name: "PRJ-B", project_name: "Bravo Water Wall", project_type: "Design", is_active: "Yes", status: "Working", custom_company_priority: "", custom_project_priority: "1", percent_complete: 0, expected_end_date: "2026-11-20", custom_project_dollar_amount: 0 },
+	{ name: "PRJ-C", project_name: "Charlie Maintenance", project_type: "Service", is_active: "Yes", status: "Active", custom_company_priority: "Maintenance", custom_project_priority: "", percent_complete: 100, expected_end_date: "2026-12-31", custom_project_dollar_amount: 0 },
+	{ name: "PRJ-D", project_name: "Delta Shop Tooling", project_type: "Internal", is_active: "Yes", status: "Active", custom_company_priority: "Not Assigned", custom_project_priority: "", percent_complete: 10, expected_end_date: null, custom_project_dollar_amount: 0 },
+	{ name: "PRJ-E", project_name: "Echo Done", project_type: "Build", is_active: "No", status: "Paid", custom_company_priority: "3", percent_complete: 100, expected_end_date: "2026-01-01", completed_on: "2026-02-01" },
+	{ name: "PRJ-F", project_name: "Foxtrot Gala", project_type: "Events", is_active: "Yes", status: "Completed", custom_company_priority: "4", percent_complete: 100, expected_end_date: "2026-10-20" },
+	{ name: "PRJ-G", project_name: "Golf Shop Reorg", project_type: "Internal", is_active: "Yes", status: "Completed", custom_company_priority: "", percent_complete: 100, expected_end_date: "2026-10-15" },
+];
+
+async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = false } = {}) {
 	const dom = makeDom();
 	const storage = new Map(Object.entries(stored));
 	const writes = [];
+	const reads = [];
 	const newDocs = [];
 	const selectors = [];
 	const resets = [];
+	const calls = [];
+	const intervals = [];
 
+	// The real selector's shape where the block reads it: `columns`, `is_hidden`, and a
+	// `hidden` list a test can set to stand for the Columns menu.
 	class FakeSelector {
-		constructor(key) {
+		constructor(key, columns) {
 			this.key = key;
+			this.columns = columns;
+			this.hidden = [];
 			selectors.push(this);
+		}
+		is_hidden(key) {
+			return this.hidden.includes(key);
 		}
 		render_button(container, onChange, options) {
 			this.rendered = { container, onChange, options };
@@ -230,13 +289,25 @@ async function runBlock({ stored = {}, projects = [] } = {}) {
 		console,
 		setTimeout,
 		clearTimeout,
+		setInterval: (fn, ms) => {
+			intervals.push({ fn, ms });
+			return intervals.length;
+		},
+		clearInterval() {},
 		Promise,
-		__: (t) => t,
+		Date,
+		// frappe's __ fills {0}, {1} from its second argument
+		__: (t, args) => String(t).replace(/\{(\d+)\}/g, (m, i) => (args && args[i] !== undefined ? String(args[i]) : m)),
 		$: dom.$,
 		document: dom.documentNode,
 		localStorage: {
-			getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+			getItem: (k) => {
+				reads.push(k);
+				if (storageThrows) throw new Error("storage blocked");
+				return storage.has(k) ? storage.get(k) : null;
+			},
 			setItem: (k, v) => {
+				if (storageThrows) throw new Error("storage blocked");
 				storage.set(k, v);
 				writes.push(k);
 			},
@@ -245,10 +316,17 @@ async function runBlock({ stored = {}, projects = [] } = {}) {
 		frappe: {
 			provide() {},
 			require: (assets, cb) => cb(),
-			call: () => Promise.resolve({ message: projects }),
+			call: (opts) => {
+				calls.push(opts.method);
+				if (/get_priority_options$/.test(opts.method)) {
+					return Promise.resolve({ message: { project_priority: ["1", "2", "3"], company_priority: ["1", "2", "3"] } });
+				}
+				if (/get_status_options$/.test(opts.method)) return Promise.resolve({ message: ["Active", "Working"] });
+				return Promise.resolve({ message: projects });
+			},
 			new_doc: (doctype) => newDocs.push(doctype),
 			utils: { escape_html: (v) => String(v) },
-			datetime: { get_today: () => "2026-10-22", str_to_user: (v) => String(v) },
+			datetime: { get_today: () => TODAY, str_to_user: (v) => String(v) },
 			show_alert() {},
 			set_route() {},
 		},
@@ -264,82 +342,367 @@ async function runBlock({ stored = {}, projects = [] } = {}) {
 		sandbox
 	)({});
 	await settle();
-	return { dom, storage, writes, newDocs, selectors, resets };
+	return { dom, storage, writes, reads, newDocs, selectors, resets, calls, intervals };
 }
 
-function navClick(run, route) {
-	const links = run.dom.node(".nav-link");
-	links[NODE].data.route = route;
-	run.dom.fire(links, "click");
+/** Everything the script appended to a table body or built as markup since `from`. */
+function drawn(run, from = 0) {
+	return run.dom.log.appended
+		.slice(from)
+		.flatMap((a) => a.items)
+		.filter((i) => typeof i === "string")
+		.join("\n");
 }
+const mark = (run) => run.dom.log.appended.length;
+const rowsOf = (html) => (html.match(/class="pd-pname">([^<]+)</g) || []).map((m) => m.replace(/.*>([^<]+)</, "$1"));
 
-console.log("\nprojects_dashboard.js: View More");
+function clickTab(run, route) {
+	const tabs = run.dom.node(".pd-tab");
+	tabs.attr("data-route", route);
+	run.dom.fire(tabs, "click");
+}
+function pressTile(run, key) {
+	const tile = run.dom.node(".pd-tile");
+	tile.attr("data-tile", key);
+	run.dom.fire(tile, "click");
+}
+function pressChip(run, stream) {
+	const chip = run.dom.node(".pd-fchip");
+	chip.attr("data-stream", stream);
+	run.dom.fire(chip, "click");
+}
+function check(run, id, on) {
+	const box = run.dom.node(id);
+	box.prop("checked", on);
+	run.dom.fire(box, "change");
+}
+// A header click as the handler bound by the latest render sees it: every render binds its
+// own onto the stand-in's one `.sortable-header` node, so firing them all would sort N times.
+function clickHeader(run, col) {
+	const th = run.dom.node(`th[data-sort="${col}"]`);
+	th.attr("data-sort", col);
+	const handlers = run.dom.node(".sortable-header")[NODE].handlers.click || [];
+	handlers[handlers.length - 1].call(th, { preventDefault() {}, stopPropagation() {} });
+}
+const sortOf = (run) => JSON.parse(run.storage.get("chb_projects_dashboard_sort_v1"))["priority-overview"];
+const contentText = (run) => run.dom.node("#dashboard-content")[0].textContent;
+const tileCount = (run, key) => run.dom.node(`[data-tile-count="${key}"]`).text();
+const chipCount = (run, stream) => run.dom.node(`[data-stream-count="${stream}"]`).text();
+const isActiveTab = (run, route) => run.dom.node(`.pd-tab[data-route="${route}"]`)[NODE].classes.has("active");
 
-await test("View More starts collapsed: the extra tabs are hidden and the button says View More", async () => {
+console.log("\nprojects_dashboard.js: the head band's tiles");
+
+await test("the four tiles are tallied from the rows the block already fetched", async () => {
 	const run = await runBlock();
-	assert.equal(run.dom.node(".pg-more-tab").prop("hidden"), true);
-	const btn = run.dom.node("#btn-view-more");
-	assert.equal(btn.attr("aria-expanded"), "false");
-	assert.equal(btn.text(), "View More");
+	assert.equal(tileCount(run, "active"), "4", "active: four live projects (not the inactive one, not the completed one)");
+	assert.equal(tileCount(run, "past-due"), "1", "past expected end: Alpha, ended and 50%");
+	assert.equal(tileCount(run, "due-30"), "1", "due in 30 days: Bravo, ends in 17 days");
+	assert.equal(tileCount(run, "unranked"), "2", "no company rank: Bravo (blank) and Delta (Not Assigned)");
+	assert.equal(run.dom.node('.pd-tile[data-tile="active"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-tile[data-tile="past-due"]').attr("aria-pressed"), "false");
 });
 
-await test("pressing View More shows the extra tabs, says View Less, and remembers it", async () => {
+await test("the Priority Overview lists every active project by default, by company rank", async () => {
 	const run = await runBlock();
-	const btn = run.dom.node("#btn-view-more");
-	run.dom.fire(btn, "click");
-	assert.equal(run.dom.node(".pg-more-tab").prop("hidden"), false);
-	assert.equal(btn.attr("aria-expanded"), "true");
-	assert.equal(btn.text(), "View Less");
-	assert.equal(run.storage.get("chb_projects_dashboard_more_v1"), "1");
+	const rows = rowsOf(drawn(run));
+	assert.deepEqual(rows, ["Alpha Plaza", "Bravo Water Wall", "Delta Shop Tooling", "Charlie Maintenance"]);
+	assert.doesNotMatch(drawn(run), /Echo Done|Foxtrot Gala/, "inactive and completed projects stay off the Overview");
+	assert.doesNotMatch(drawn(run), /pd-group/, "flat by default: no group rows");
 });
 
-await test("pressing it again collapses, and the collapsed choice is remembered too", async () => {
+await test("pressing Past expected end narrows the Overview and marks the tile pressed", async () => {
 	const run = await runBlock();
-	const btn = run.dom.node("#btn-view-more");
-	run.dom.fire(btn, "click");
-	run.dom.fire(btn, "click");
-	assert.equal(run.dom.node(".pg-more-tab").prop("hidden"), true);
-	assert.equal(btn.attr("aria-expanded"), "false");
-	assert.equal(run.storage.get("chb_projects_dashboard_more_v1"), "0");
+	const from = mark(run);
+	pressTile(run, "past-due");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"]);
+	assert.equal(run.dom.node('.pd-tile[data-tile="past-due"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-tile[data-tile="active"]').attr("aria-pressed"), "false");
+	assert.equal(chipCount(run, ""), "1", "the All chip counts what the tile left");
 });
 
-await test("a remembered open state is restored on load, without writing anything back", async () => {
-	const run = await runBlock({ stored: { chb_projects_dashboard_more_v1: "1" } });
-	assert.equal(run.dom.node(".pg-more-tab").prop("hidden"), false);
-	assert.equal(run.dom.node("#btn-view-more").text(), "View Less");
+await test("Due in 30 days and No company rank narrow the same way; Active clears it", async () => {
+	const run = await runBlock();
+	let from = mark(run);
+	pressTile(run, "due-30");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Bravo Water Wall"]);
+	from = mark(run);
+	pressTile(run, "unranked");
+	assert.deepEqual(rowsOf(drawn(run, from)).sort(), ["Bravo Water Wall", "Delta Shop Tooling"]);
+	from = mark(run);
+	pressTile(run, "active");
+	assert.equal(rowsOf(drawn(run, from)).length, 4);
+	assert.equal(run.dom.node('.pd-tile[data-tile="active"]').attr("aria-pressed"), "true");
+});
+
+await test("a tile pressed from another tab lands on the Priority Overview", async () => {
+	const run = await runBlock();
+	clickTab(run, "completed-projects");
+	await settle();
+	assert.ok(isActiveTab(run, "completed-projects"));
+	const from = mark(run);
+	pressTile(run, "past-due");
+	assert.ok(isActiveTab(run, "priority-overview"), "went to the Overview");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"]);
+});
+
+await test("the pressed tile is not remembered; the stream chip, Ranked only and grouping are", async () => {
+	const run = await runBlock();
+	pressTile(run, "past-due");
+	assert.ok(!run.writes.some((k) => /tile/.test(k)), "no key for the tile");
+	pressChip(run, "Build");
+	check(run, "#pd-ranked-only", true);
+	check(run, "#pd-group-by-stream", true);
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), {
+		stream: "Build",
+		ranked_only: true,
+		group: true,
+	});
+});
+
+console.log("\nprojects_dashboard.js: stream chips, Ranked only, Group by stream");
+
+await test("the chips carry counts per stream, Internal being the internal project types", async () => {
+	const run = await runBlock();
+	assert.equal(chipCount(run, ""), "4");
+	assert.equal(chipCount(run, "Build"), "1");
+	assert.equal(chipCount(run, "Design"), "1");
+	assert.equal(chipCount(run, "Service"), "1");
+	assert.equal(chipCount(run, "Events"), "0");
+	assert.equal(chipCount(run, "Internal"), "1");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+});
+
+await test("a chip narrows the rows to its stream and is marked pressed", async () => {
+	const run = await runBlock();
+	const from = mark(run);
+	pressChip(run, "Design");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Bravo Water Wall"]);
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "false");
+});
+
+await test("Ranked only keeps the numbered company ranks: not a word, not a blank", async () => {
+	const run = await runBlock();
+	const from = mark(run);
+	check(run, "#pd-ranked-only", true);
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"], "Maintenance and Not Assigned are not ranks");
+	assert.equal(chipCount(run, ""), "1");
+});
+
+await test("Group by stream draws header rows in the agreed order and moves the sort to the stream rank", async () => {
+	const run = await runBlock();
+	const from = mark(run);
+	check(run, "#pd-group-by-stream", true);
+	const html = drawn(run, from);
+	const groups = (html.match(/class="pd-group"[^>]*><td colspan="8">([A-Za-z]+)/g) || []).map((m) => m.replace(/.*>/, ""));
+	assert.deepEqual(groups, ["Build", "Design", "Service", "Internal"], "Build, Design, Service, Events, then Internal");
+	assert.match(html, /--pd-group-color: var\(--sf-chip-edge-build\)/, "the group edge is the pillar's themed chip edge");
+	assert.match(html, /1 projects · 1 ranked/, "the Build group's note");
+	assert.deepEqual(sortOf(run), { col: "project_priority", order: "asc", auto: true }, "the page's own sort, direction kept");
+	const from2 = mark(run);
+	check(run, "#pd-group-by-stream", false);
+	assert.doesNotMatch(drawn(run, from2), /pd-group/);
+	assert.equal(JSON.parse(run.storage.get("chb_projects_dashboard_sort_v1"))["priority-overview"].col, "company_priority");
+});
+
+await test("a remembered stream, Ranked only and grouping are restored on load, without writing back", async () => {
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: false, group: true }) },
+	});
+	const html = drawn(run);
+	assert.deepEqual(rowsOf(html), ["Bravo Water Wall"]);
+	assert.match(html, /pd-group/);
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node("#pd-group-by-stream").prop("checked"), true);
 	assert.deepEqual(run.writes, [], "restoring a choice is not a new choice");
 });
 
-await test("collapsing while a hidden tab is showing lands on Priority Overview", async () => {
-	const run = await runBlock({ stored: { chb_projects_dashboard_more_v1: "1" } });
-	navClick(run, "completed-projects");
-	await settle();
-	const active = run.dom.node('.nav-link[data-route="completed-projects"]');
-	assert.ok(active[NODE].classes.has("active"), "the Completed tab is the active one");
-	run.dom.fire(run.dom.node("#btn-view-more"), "click");
-	await settle();
-	assert.ok(
-		run.dom.node('.nav-link[data-route="priority-overview"]')[NODE].classes.has("active"),
-		"fell back to Priority Overview"
-	);
+await test("a remembered chip the bar does not have is ignored, and All stays pressed", async () => {
+	// A typo, or a chip a later release removed: "Delivery" is a stream with no chip.
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Delivery", ranked_only: false, group: false }) },
+	});
+	assert.equal(rowsOf(drawn(run)).length, 4, "every active project, not an empty filter");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+	assert.deepEqual(run.writes, []);
 });
 
-await test("collapsing while Priority Overview or the Gantt is showing leaves the tab alone", async () => {
-	const run = await runBlock({ stored: { chb_projects_dashboard_more_v1: "1" } });
-	navClick(run, "priority-overview");
-	await settle();
-	const before = run.dom.node('.nav-link[data-route="priority-overview"]')[NODE].classes.has("active");
-	assert.ok(before);
-	run.dom.fire(run.dom.node("#btn-view-more"), "click");
-	assert.ok(run.dom.node('.nav-link[data-route="priority-overview"]')[NODE].classes.has("active"));
+await test("the Group toggle leaves a hand-chosen sort alone, direction included", async () => {
+	const run = await runBlock();
+	clickHeader(run, "project_priority");
+	assert.deepEqual(sortOf(run), { col: "project_priority", order: "asc", auto: false });
+	check(run, "#pd-group-by-stream", true);
+	check(run, "#pd-group-by-stream", false);
+	assert.equal(sortOf(run).col, "project_priority", "a hand-chosen stream rank survives the round trip");
+	clickHeader(run, "company_priority");
+	clickHeader(run, "company_priority");
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false });
+	check(run, "#pd-group-by-stream", true);
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false }, "grouping keeps Company Priority descending");
+	check(run, "#pd-group-by-stream", false);
+	assert.deepEqual(sortOf(run), { col: "company_priority", order: "desc", auto: false });
+	// the distinction survives a reload
+	const again = await runBlock({ stored: Object.fromEntries(run.storage) });
+	check(again, "#pd-group-by-stream", true);
+	assert.deepEqual(sortOf(again), { col: "company_priority", order: "desc", auto: false });
 });
 
-await test("nothing is kept in frappe user_settings (Redis only, flushed on every deploy)", () => {
-	// comments stripped: the block's own header names user_settings to say it is not used
+await test("a group header row spans the visible columns, and follows the Columns menu", async () => {
+	const run = await runBlock();
+	let from = mark(run);
+	check(run, "#pd-group-by-stream", true);
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="8">/, "all eight columns on show");
+	const selector = run.selectors.find((s) => s.key === "chb_priority_overview_columns");
+	selector.hidden = ["project_id", "budget"];
+	selector.rendered.onChange();
+	assert.equal(run.dom.node("tr.pd-group > td").attr("colspan"), "6", "two columns hidden: re-fitted in place");
+	from = mark(run);
+	check(run, "#pd-group-by-stream", false);
+	check(run, "#pd-group-by-stream", true);
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="6">/, "and drawn so on the next render");
+	assert.doesNotMatch(drawn(run, from), /colspan="8"/);
+	const internal = run.selectors.find((s) => s.key === "chb_active_internal_columns");
+	internal.hidden = ["project_id"];
+	from = mark(run);
+	clickTab(run, "active-internal-projects");
+	await settle();
+	assert.match(drawn(run, from), /class="pd-group"[^>]*><td colspan="5">Independent Projects/);
+});
+
+await test("a denial or a failed read keeps its panel under a tile, a chip, a box or a tab", async () => {
+	const denied = await runBlock({ projects: { error: "You do not have permission to view the Project Dashboard." } });
+	assert.equal(contentText(denied), "No access");
+	assert.equal(tileCount(denied, "active"), "", "no count was written");
+	pressTile(denied, "past-due");
+	pressChip(denied, "Build");
+	check(denied, "#pd-ranked-only", true);
+	check(denied, "#pd-group-by-stream", true);
+	clickTab(denied, "completed-projects");
+	await settle();
+	assert.equal(contentText(denied), "No access", "never 'No active projects' over the denial");
+	assert.ok(!denied.dom.log.created.some((h) => /dashboard-empty-state/.test(h)), "no empty panel was built");
+	const failed = await runBlock({ projects: { error: "Could not fetch project data. Please check the logs." } });
+	assert.equal(contentText(failed), "Could not load the projects.");
+	pressTile(failed, "unranked");
+	assert.equal(contentText(failed), "Could not load the projects.", "the error panel, and its Try again, stay");
+});
+
+console.log("\nprojects_dashboard.js: the tabs");
+
+await test("five tabs; the one clicked is marked and remembered", async () => {
+	const run = await runBlock();
+	assert.ok(isActiveTab(run, "priority-overview"));
+	clickTab(run, "summary");
+	await settle();
+	assert.ok(isActiveTab(run, "summary"));
+	assert.equal(run.dom.node('.pd-tab[data-route="summary"]').attr("aria-pressed"), "true", "a toggle button, not a tab");
+	assert.ok(!isActiveTab(run, "priority-overview"));
+	assert.equal(run.storage.get("chb_projects_dashboard_tab_v1"), JSON.stringify("summary"));
+});
+
+await test("a remembered tab is restored on load; an unknown one falls back to Priority Overview", async () => {
+	const run = await runBlock({ stored: { chb_projects_dashboard_tab_v1: JSON.stringify("completed-projects") } });
+	assert.ok(isActiveTab(run, "completed-projects"));
+	assert.match(drawn(run), /Echo Done/, "the Completed tab drew its rows");
+	const odd = await runBlock({ stored: { chb_projects_dashboard_tab_v1: JSON.stringify("dashboard") } });
+	assert.ok(isActiveTab(odd, "priority-overview"));
+});
+
+await test("nothing reads the retired View More key, and nothing is kept in frappe user_settings", async () => {
+	const run = await runBlock();
+	assert.ok(!run.reads.includes("chb_projects_dashboard_more_v1"));
+	assert.equal(run.dom.node("#btn-view-more")[NODE].handlers.click, undefined, "no View More handler");
 	const code = (source) =>
 		source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/[^\n]*/g, "$1");
 	assert.ok(!/user_settings/.test(code(BLOCK_JS)), "the block must not use user_settings");
 	assert.ok(!/user_settings/.test(code(SELECTOR_JS)));
+});
+
+await test("a browser with storage blocked still draws", async () => {
+	const run = await runBlock({ storageThrows: true });
+	assert.equal(tileCount(run, "active"), "4");
+	assert.equal(rowsOf(drawn(run)).length, 4);
+	clickTab(run, "summary");
+	await settle();
+	assert.ok(isActiveTab(run, "summary"));
+});
+
+console.log("\nprojects_dashboard.js: the one table");
+
+await test("ranks are pills, named values muted text, and there is no hue scale", async () => {
+	const run = await runBlock();
+	const html = drawn(run);
+	assert.match(html, /<span class="pd-rank">1<\/span>/, "Alpha's company rank, filled");
+	assert.match(html, /<span class="pd-rank pd-rank-outline">2<\/span>/, "Alpha's stream rank, an outline");
+	assert.match(html, /<span class="pd-named">Maintenance<\/span>/);
+	assert.match(html, /<span class="pd-named">Not Assigned<\/span>/);
+	assert.doesNotMatch(html, /hsl\(|badge/);
+});
+
+await test("Budget replaced Spend %: whole dollars, right-aligned, a dash when 0", async () => {
+	const run = await runBlock();
+	const html = drawn(run);
+	assert.match(html, /dashcol-budget pd-num">\$30,849</);
+	assert.match(html, /dashcol-budget pd-num"><span class="pd-dash">—<\/span>/);
+	assert.doesNotMatch(html, /spend/i);
+});
+
+await test("a past-due row carries the Past due pill; the others do not", async () => {
+	const run = await runBlock();
+	const html = drawn(run);
+	const alpha = html.slice(html.indexOf("Alpha Plaza"), html.indexOf("Bravo Water Wall"));
+	assert.match(alpha, /<span class="pd-late">Past due<\/span>/);
+	assert.equal((html.match(/pd-late/g) || []).length, 1);
+	assert.match(html, /class="pd-bar" aria-hidden="true"><i style="width: 50%">/, "completion as a bar");
+});
+
+await test("the Completed and Internal tabs draw the same table style", async () => {
+	const run = await runBlock();
+	let from = mark(run);
+	clickTab(run, "completed-projects");
+	await settle();
+	let html = drawn(run, from);
+	assert.deepEqual(rowsOf(html), ["Echo Done"]);
+	assert.match(html, /dashcol-project_type">Build</, "the type as a chip (the stand-in draws its word)");
+	from = mark(run);
+	clickTab(run, "active-internal-projects");
+	await settle();
+	html = drawn(run, from);
+	assert.deepEqual(rowsOf(html), ["Delta Shop Tooling"]);
+	assert.match(html, /class="pd-group"[^>]*><td colspan="6">Independent Projects/, "a header row per master project");
+	assert.match(html, /class="pd-select project-inline-edit"/);
+	assert.match(run.dom.log.created.join("\n"), /<table class="pd-table dashboard-resizable-table">/);
+	assert.doesNotMatch(run.dom.log.created.join("\n"), /table-bordered|thead-light/);
+});
+
+await test("the Internal tab and the Summary count active the way the tiles do", async () => {
+	// Golf is is_active Yes with status Completed: off the tiles, so off these two as well.
+	const run = await runBlock();
+	let from = mark(run);
+	clickTab(run, "active-internal-projects");
+	await settle();
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Delta Shop Tooling"]);
+	assert.equal(chipCount(run, "Internal"), "1", "the Internal chip and the Internal tab are one number");
+	from = mark(run);
+	clickTab(run, "summary");
+	await settle();
+	const html = drawn(run, from);
+	assert.match(html, /pd-card-l">Active Projects<\/div>\s*<div class="pd-card-n">4</, "the Active tile's number");
+	assert.match(html, /pd-card-l">Overdue<\/div>\s*<div class="pd-card-n pd-card-n-bad">1</, "the Past expected end tile's number");
+	assert.match(html, /pd-card-l">Completed<\/div>\s*<div class="pd-card-n">1</);
+});
+
+console.log("\nprojects_dashboard.js: Refresh and Updated");
+
+await test("Refresh asks the server again and the band says Updated just now", async () => {
+	const run = await runBlock();
+	assert.equal(run.dom.node("#pd-updated").text(), "Updated just now");
+	const before = run.calls.length;
+	run.dom.fire(run.dom.node("#btn-refresh"), "click");
+	await settle();
+	assert.equal(run.calls.length, before + 3);
+	assert.equal(run.dom.node("#btn-refresh").prop("disabled"), false, "re-enabled once the answer landed");
+	assert.deepEqual(run.intervals.map((i) => i.ms), [60000], "one tick a minute for the relative time");
 });
 
 console.log("\nprojects_dashboard.js: the + menu");
@@ -394,9 +757,7 @@ await test("a click outside closes the + menu; a click inside its own wrapper le
 console.log("\nprojects_dashboard.js: the Columns button");
 
 await test("each list tab hands its ColumnSelector the icon option and a Reset column widths action", async () => {
-	const run = await runBlock({
-		projects: [{ name: "PROJ-1", project_name: "P", project_type: "Build", is_active: "Yes", status: "Active" }],
-	});
+	const run = await runBlock();
 	const rendered = run.selectors.map((s) => s.rendered).filter(Boolean);
 	assert.ok(rendered.length >= 1, "the Priority Overview drew its toolbar");
 	for (const r of rendered) {
@@ -415,10 +776,10 @@ await test("the Reset column widths action resets the widths", async () => {
 
 await test("no separate Reset widths button is drawn into the toolbar", async () => {
 	const run = await runBlock();
-	const drawn = run.dom.log.created.concat(
+	const all = run.dom.log.created.concat(
 		run.dom.log.appended.flatMap((a) => a.items.map((i) => (typeof i === "string" ? i : "")))
 	);
-	assert.ok(!drawn.some((h) => /Reset widths|dashboard-reset-widths/.test(h)), "found: " + drawn.filter((h) => /Reset/.test(h)));
+	assert.ok(!all.some((h) => /Reset widths|dashboard-reset-widths/.test(h)), "found: " + all.filter((h) => /Reset/.test(h)));
 });
 
 // ------------------------------------------------------------------ the real ColumnSelector

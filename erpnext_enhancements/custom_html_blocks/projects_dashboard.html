@@ -2,182 +2,220 @@
   Projects Dashboard — markup for the "Projects Dashboard" Custom HTML Block.
 
   This is the exported source of a Frappe "Custom HTML Block": a dashboard widget
-  whose HTML / CSS / JS are authored and stored in the Frappe UI (Custom HTML Block
-  doctype) and embedded on a Workspace/dashboard. The three projects_dashboard.*
-  files in this directory are a checked-in copy kept as the source of truth / backup
-  — edit them here and paste back into the Custom HTML Block in the UI to deploy.
+  whose HTML / CSS / JS are stored in the Custom HTML Block doctype and embedded on a
+  Workspace. The three projects_dashboard.* files in this directory are the source of
+  truth: setup/custom_html_blocks.py upserts them into the block on every bench migrate.
 
-  This file is the static shell: a tabbed container (Priority Overview, Portfolio Gantt,
-  and — behind the "View More" button — Active Internal Projects, Completed Projects and
-  Summary), a search box, one "+" button whose menu holds "New Project" / "New Master
-  Project", the Gantt-only filter
-  controls (project / status dropdowns, "Show Tasks", view-mode buttons, Today), and
-  an empty #dashboard-content target. projects_dashboard.js
-  fetches data via the project_dashboard page's whitelisted methods and renders the
-  tables / Gantt into #dashboard-content; projects_dashboard.css styles it.
+  This file is the static shell (Mock B, v1.781.0):
+    - a navy head band carrying the eyebrow and title, the search field, a Refresh
+      button with "Updated N min ago" beside it, the "+" menu (New Project / New
+      Master Project) and four live tiles (Active, Past expected end, Due in 30 days,
+      No company rank). Each tile is a button that filters the Priority Overview;
+    - five tabs, always visible: Priority Overview, Portfolio Gantt, Internal,
+      Completed, Summary;
+    - the Priority Overview's filter row (stream chips, Ranked only, Group by stream),
+      the Gantt-only toolbar (project / status / type / customer dropdowns, date window,
+      at-risk, view-mode buttons, Today, Columns, Export), and an empty
+      #dashboard-content target.
+  projects_dashboard.js fetches data via the project_dashboard page's whitelisted
+  methods and renders the tables / Gantt into #dashboard-content; projects_dashboard.css
+  styles it from the --sf-* design tokens.
 -->
-<div class="project-dashboard-container">
-    <div class="dashboard-tabs p-3 pb-0 border-bottom">
-        <ul class="nav nav-tabs" role="tablist">
-            <li class="nav-item">
-                <a class="nav-link active" href="javascript:void(0)" data-route="priority-overview">Priority Overview</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="javascript:void(0)" data-route="portfolio-gantt">Portfolio Gantt</a>
-            </li>
-            <!-- Revealed by "View More"; hidden until then (see pg-more-tab in the CSS) -->
-            <li class="nav-item pg-more-tab" hidden>
-                <a class="nav-link" href="javascript:void(0)" data-route="active-internal-projects">Active Internal Projects</a>
-            </li>
-            <li class="nav-item pg-more-tab" hidden>
-                <a class="nav-link" href="javascript:void(0)" data-route="completed-projects">Completed Projects</a>
-            </li>
-            <li class="nav-item pg-more-tab" hidden>
-                <a class="nav-link" href="javascript:void(0)" data-route="summary">Summary</a>
-            </li>
-            <li class="nav-item pg-view-more-item">
-                <button type="button" class="btn btn-sm btn-link pg-view-more" id="btn-view-more" aria-expanded="false">View More</button>
-            </li>
-        </ul>
-    </div>
-
-    <div class="dashboard-controls p-2 border-bottom" style="background: var(--subtle-fg);">
-        <div class="row align-items-center m-0">
-            
-            <div class="col-12 col-md-4 p-0 mb-2 mb-md-0" id="standard-controls">
-                <div class="input-group input-group-sm" style="max-width: 300px;">
-                    <div class="input-group-prepend">
-                        <span class="input-group-text"><i class="fa fa-search"></i></span>
-                    </div>
-                    <input type="text" class="form-control" id="global-project-search" placeholder="Search projects...">
-                </div>
+<div class="project-dashboard-container pd">
+    <div class="pd-band">
+        <div class="pd-band-row">
+            <div class="pd-band-title">
+                <span class="pd-eyebrow">PROJECTS</span>
+                <h2 class="pd-title">Projects Dashboard</h2>
             </div>
-
-            <div class="col-12 col-md-8 p-0 mb-2 mb-md-0 text-md-right" id="dashboard-actions">
+            <div class="pd-band-actions" id="dashboard-actions">
+                <label class="pd-search" id="standard-controls">
+                    <span class="pd-sr">Search projects</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+                    <input type="search" id="global-project-search" placeholder="Search projects…" autocomplete="off">
+                </label>
+                <span class="pd-refresh-wrap">
+                    <button type="button" class="pd-icon-btn" id="btn-refresh" title="Refresh" aria-label="Refresh">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+                    </button>
+                    <span class="pd-updated" id="pd-updated" aria-live="polite"></span>
+                </span>
                 <div class="pg-new-menu" id="pg-new-menu">
-                    <button type="button" class="btn btn-sm btn-primary pg-new-toggle" id="btn-new" title="New" aria-label="New" aria-haspopup="menu" aria-expanded="false">+</button>
+                    <button type="button" class="pd-btn pd-btn-primary pg-new-toggle" id="btn-new" title="New" aria-label="New" aria-haspopup="menu" aria-expanded="false">+</button>
                     <div class="pg-new-list" id="pg-new-list" role="menu" hidden>
                         <button type="button" class="pg-new-item" role="menuitem" id="btn-new-project">New Project</button>
                         <button type="button" class="pg-new-item" role="menuitem" id="btn-new-master-project">New Master Project</button>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <div class="col-12 p-0" id="gantt-controls" style="display: none;">
-
-                <!-- Row 1 — what is shown -->
-                <div class="pg-toolbar">
-                    <div class="pg-toolbar-group pg-toolbar-search">
-                        <div class="input-group input-group-sm">
-                            <div class="input-group-prepend">
-                                <span class="input-group-text"><i class="fa fa-search"></i></span>
-                            </div>
-                            <input type="text" class="form-control" id="gantt-search" placeholder="Find a project...">
-                            <div class="input-group-append">
-                                <button class="btn btn-default border" type="button" id="gantt-search-clear" title="Clear search">&times;</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttProjectDropdown">All Projects</button>
-                        <div class="dropdown-menu p-2 shadow-sm" id="gantt-project-menu">
-                            <input type="text" class="form-control form-control-sm mb-2" id="gantt-project-search" placeholder="Search projects...">
-                            <label class="pg-check font-weight-bold border-bottom pb-2 mb-2">
-                                <input type="checkbox" id="gantt-select-all-projects" checked>
-                                <span>Select All</span>
-                            </label>
-                            <div id="gantt-project-checkboxes"></div>
-                            <div class="dropdown-divider"></div>
-                            <button class="btn btn-sm btn-primary w-100" id="apply-gantt-project-filters">Apply</button>
-                        </div>
-                    </div>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttStatusDropdown">All Statuses</button>
-                        <div class="dropdown-menu p-2 shadow-sm" id="gantt-status-menu">
-                            <div id="gantt-status-checkboxes"></div>
-                            <div class="dropdown-divider"></div>
-                            <button class="btn btn-sm btn-primary w-100" id="apply-gantt-status-filters">Apply</button>
-                        </div>
-                    </div>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttTypeDropdown">All Types</button>
-                        <div class="dropdown-menu p-2 shadow-sm" id="gantt-type-menu">
-                            <div id="gantt-type-checkboxes"></div>
-                            <div class="dropdown-divider"></div>
-                            <button class="btn btn-sm btn-primary w-100" id="apply-gantt-type-filters">Apply</button>
-                        </div>
-                    </div>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttCustomerDropdown">All Customers</button>
-                        <div class="dropdown-menu p-2 shadow-sm pg-menu-scroll" id="gantt-customer-menu">
-                            <input type="text" class="form-control form-control-sm mb-2" id="gantt-customer-search" placeholder="Search customers...">
-                            <div id="gantt-customer-checkboxes"></div>
-                            <div class="dropdown-divider"></div>
-                            <button class="btn btn-sm btn-primary w-100" id="apply-gantt-customer-filters">Apply</button>
-                        </div>
-                    </div>
-
-                    <select id="gantt-date-window" class="form-control form-control-sm pg-date-window" title="Show only projects overlapping this window">
-                        <option value="">Any dates</option>
-                        <option value="30">Next 30 days</option>
-                        <option value="90">Next 90 days</option>
-                        <option value="180">Next 6 months</option>
-                        <option value="365">Next 12 months</option>
-                    </select>
-
-                    <label class="pg-check pg-inline-check mb-0" title="Past its expected end date and not yet complete">
-                        <input type="checkbox" id="gantt-at-risk">
-                        <span>At risk only</span>
-                    </label>
-                </div>
-
-                <!-- Row 2 — how it is shown -->
-                <div class="pg-toolbar pg-toolbar-view">
-                    <div class="btn-group btn-group-sm view-mode-group" role="group">
-                        <button type="button" class="btn btn-outline-secondary" data-view="Quarter Day">Qtr Day</button>
-                        <button type="button" class="btn btn-outline-secondary" data-view="Half Day">Half Day</button>
-                        <button type="button" class="btn btn-outline-secondary" data-view="Day">Day</button>
-                        <button type="button" class="btn btn-secondary active" data-view="Week">Week</button>
-                        <button type="button" class="btn btn-outline-secondary" data-view="Month">Month</button>
-                    </div>
-
-                    <button type="button" class="btn btn-sm btn-outline-primary" id="gantt-today-btn">Today</button>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttColumnsDropdown">Columns</button>
-                        <div class="dropdown-menu p-2 shadow-sm" id="gantt-columns-menu">
-                            <div id="gantt-column-checkboxes"></div>
-                        </div>
-                    </div>
-
-                    <div class="dropdown check-dropdown">
-                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttExportDropdown" title="Export or print the portfolio chart">Export</button>
-                        <div class="dropdown-menu p-1 shadow-sm" id="gantt-export-menu">
-                            <button type="button" class="dropdown-item pg-export-item" data-export="print">Print / Save as PDF</button>
-                            <button type="button" class="dropdown-item pg-export-item" data-export="png">PNG image</button>
-                            <button type="button" class="dropdown-item pg-export-item" data-export="svg">SVG (vector)</button>
-                            <div class="dropdown-divider"></div>
-                            <button type="button" class="dropdown-item pg-export-item" data-export="csv">CSV data</button>
-                            <button type="button" class="dropdown-item pg-export-item" data-export="xlsx">Excel data</button>
-                            <div class="dropdown-divider"></div>
-                            <button type="button" class="dropdown-item pg-export-item" data-export="range" title="Export a slice of the calendar rather than the whole portfolio">Date range&hellip;</button>
-                        </div>
-                    </div>
-
-                    <button type="button" class="btn btn-sm btn-link text-muted" id="gantt-reset-view" title="Clear saved filters, columns, zoom and expanded projects">Reset view</button>
-
-                    <!-- colour key; populated by render_gantt_legend() -->
-                    <div class="pg-legend" id="gantt-legend"></div>
-                </div>
-            </div>
-
+        <!-- Live tiles: counts from get_project_data, tallied in the script. Each is a filter
+             on the Priority Overview; "Active" clears it. -->
+        <div class="pd-tiles" id="pd-tiles" role="group" aria-label="Project counts">
+            <button type="button" class="pd-tile" data-tile="active" aria-pressed="true" title="Every active project">
+                <span class="pd-tile-n" data-tile-count="active">–</span>
+                <span class="pd-tile-l">Active</span>
+            </button>
+            <button type="button" class="pd-tile" data-tile="past-due" aria-pressed="false" title="Past its expected end date and not complete">
+                <span class="pd-tile-n pd-tile-n-bad" data-tile-count="past-due">–</span>
+                <span class="pd-tile-l">Past expected end</span>
+            </button>
+            <button type="button" class="pd-tile" data-tile="due-30" aria-pressed="false" title="Expected end within the next 30 days, finished projects included">
+                <span class="pd-tile-n" data-tile-count="due-30">–</span>
+                <span class="pd-tile-l">Due in 30 days</span>
+            </button>
+            <button type="button" class="pd-tile" data-tile="unranked" aria-pressed="false" title="No company priority set">
+                <span class="pd-tile-n" data-tile-count="unranked">–</span>
+                <span class="pd-tile-l">No company rank</span>
+            </button>
         </div>
     </div>
 
-    <div class="dashboard-content p-3" id="dashboard-content">
+    <!-- A group of toggle buttons, not a WAI-ARIA tablist: a tablist promises arrow-key
+         navigation, aria-controls and a tabpanel, none of which this bar has. -->
+    <div class="pd-tabs dashboard-tabs" role="group" aria-label="Projects Dashboard tabs">
+        <button type="button" class="pd-tab active" aria-pressed="true" data-route="priority-overview">Priority Overview</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="portfolio-gantt">Portfolio Gantt</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="active-internal-projects">Internal</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="completed-projects">Completed</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="summary">Summary</button>
+    </div>
+
+    <div class="pd-controls dashboard-controls">
+
+        <!-- Priority Overview only: stream chips (counts filled by the script), Ranked only,
+             Group by stream. -->
+        <div class="pd-filters" id="overview-controls">
+            <div class="pd-chips" id="pd-stream-chips" role="group" aria-label="Filter by stream">
+                <button type="button" class="pd-fchip" data-stream="" aria-pressed="true">All <b data-stream-count=""></b></button>
+                <button type="button" class="pd-fchip" data-stream="Design" aria-pressed="false">Design <b data-stream-count="Design"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Build" aria-pressed="false">Build <b data-stream-count="Build"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Service" aria-pressed="false">Service <b data-stream-count="Service"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Events" aria-pressed="false">Events <b data-stream-count="Events"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Internal" aria-pressed="false">Internal <b data-stream-count="Internal"></b></button>
+            </div>
+            <label class="pd-check" title="Only projects whose company priority is a number">
+                <input type="checkbox" id="pd-ranked-only">
+                <span>Ranked only</span>
+            </label>
+            <label class="pd-check" title="Group the rows by value stream, each ordered by Value Stream Priority">
+                <input type="checkbox" id="pd-group-by-stream">
+                <span>Group by stream</span>
+            </label>
+        </div>
+
+        <div id="gantt-controls" style="display: none;">
+
+            <!-- Row 1 — what is shown -->
+            <div class="pg-toolbar">
+                <div class="pg-toolbar-group pg-toolbar-search">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" id="gantt-search" placeholder="Find a project...">
+                        <div class="input-group-append">
+                            <button class="btn btn-default border" type="button" id="gantt-search-clear" title="Clear search">&times;</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttProjectDropdown">All Projects</button>
+                    <div class="dropdown-menu p-2" id="gantt-project-menu">
+                        <input type="text" class="form-control form-control-sm mb-2" id="gantt-project-search" placeholder="Search projects...">
+                        <label class="pg-check font-weight-bold border-bottom pb-2 mb-2">
+                            <input type="checkbox" id="gantt-select-all-projects" checked>
+                            <span>Select All</span>
+                        </label>
+                        <div id="gantt-project-checkboxes"></div>
+                        <div class="dropdown-divider"></div>
+                        <button class="btn btn-sm btn-primary w-100" id="apply-gantt-project-filters">Apply</button>
+                    </div>
+                </div>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttStatusDropdown">All Statuses</button>
+                    <div class="dropdown-menu p-2" id="gantt-status-menu">
+                        <div id="gantt-status-checkboxes"></div>
+                        <div class="dropdown-divider"></div>
+                        <button class="btn btn-sm btn-primary w-100" id="apply-gantt-status-filters">Apply</button>
+                    </div>
+                </div>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttTypeDropdown">All Types</button>
+                    <div class="dropdown-menu p-2" id="gantt-type-menu">
+                        <div id="gantt-type-checkboxes"></div>
+                        <div class="dropdown-divider"></div>
+                        <button class="btn btn-sm btn-primary w-100" id="apply-gantt-type-filters">Apply</button>
+                    </div>
+                </div>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttCustomerDropdown">All Customers</button>
+                    <div class="dropdown-menu p-2 pg-menu-scroll" id="gantt-customer-menu">
+                        <input type="text" class="form-control form-control-sm mb-2" id="gantt-customer-search" placeholder="Search customers...">
+                        <div id="gantt-customer-checkboxes"></div>
+                        <div class="dropdown-divider"></div>
+                        <button class="btn btn-sm btn-primary w-100" id="apply-gantt-customer-filters">Apply</button>
+                    </div>
+                </div>
+
+                <select id="gantt-date-window" class="form-control form-control-sm pg-date-window" title="Show only projects overlapping this window">
+                    <option value="">Any dates</option>
+                    <option value="30">Next 30 days</option>
+                    <option value="90">Next 90 days</option>
+                    <option value="180">Next 6 months</option>
+                    <option value="365">Next 12 months</option>
+                </select>
+
+                <label class="pg-check pg-inline-check mb-0" title="Past its expected end date and not yet complete">
+                    <input type="checkbox" id="gantt-at-risk">
+                    <span>At risk only</span>
+                </label>
+            </div>
+
+            <!-- Row 2 — how it is shown -->
+            <div class="pg-toolbar pg-toolbar-view">
+                <div class="btn-group btn-group-sm view-mode-group" role="group">
+                    <button type="button" class="btn btn-outline-secondary" data-view="Quarter Day">Qtr Day</button>
+                    <button type="button" class="btn btn-outline-secondary" data-view="Half Day">Half Day</button>
+                    <button type="button" class="btn btn-outline-secondary" data-view="Day">Day</button>
+                    <button type="button" class="btn btn-secondary active" data-view="Week">Week</button>
+                    <button type="button" class="btn btn-outline-secondary" data-view="Month">Month</button>
+                </div>
+
+                <button type="button" class="btn btn-sm btn-outline-primary" id="gantt-today-btn">Today</button>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttColumnsDropdown">Columns</button>
+                    <div class="dropdown-menu p-2" id="gantt-columns-menu">
+                        <div id="gantt-column-checkboxes"></div>
+                    </div>
+                </div>
+
+                <div class="dropdown check-dropdown">
+                    <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttExportDropdown" title="Export or print the portfolio chart">Export</button>
+                    <div class="dropdown-menu p-1" id="gantt-export-menu">
+                        <button type="button" class="dropdown-item pg-export-item" data-export="print">Print / Save as PDF</button>
+                        <button type="button" class="dropdown-item pg-export-item" data-export="png">PNG image</button>
+                        <button type="button" class="dropdown-item pg-export-item" data-export="svg">SVG (vector)</button>
+                        <div class="dropdown-divider"></div>
+                        <button type="button" class="dropdown-item pg-export-item" data-export="csv">CSV data</button>
+                        <button type="button" class="dropdown-item pg-export-item" data-export="xlsx">Excel data</button>
+                        <div class="dropdown-divider"></div>
+                        <button type="button" class="dropdown-item pg-export-item" data-export="range" title="Export a slice of the calendar rather than the whole portfolio">Date range&hellip;</button>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-sm btn-link text-muted" id="gantt-reset-view" title="Clear saved filters, columns, zoom and expanded projects">Reset view</button>
+
+                <!-- colour key; populated by render_gantt_legend() -->
+                <div class="pg-legend" id="gantt-legend"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="dashboard-content pd-content" id="dashboard-content">
     </div>
 </div>

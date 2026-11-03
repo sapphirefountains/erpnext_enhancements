@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.781.0] - 2026-11-03
+
+### Changed
+- **Projects Dashboard: navy head band, live tiles, stream chips, one table style (Mock B).** Nikolas,
+  2026-11-03: the tabs' contents had "variable styles, difficult to read"; he asked for designs on the
+  brand colours and picked **Mock B** from the canvas (`claude.ai/artifact/RYRLkRpP86Eeu1sKQ4Lbeh`,
+  `B-light` / `B-dark`). This is the one page 12 of 14 Desk users open — 734 visits in 90 days — so the
+  restyle keeps every behaviour it had and changes how it reads. Block files only
+  (`custom_html_blocks/projects_dashboard.{html,js,css}`); no endpoint, schema, fixture or data change.
+  - **The head band** (`--sf-band`, navy in both themes): the eyebrow, "Projects Dashboard" in the display
+    face, the search field (white, and white in dark: `--sf-field-bg`), a **Refresh** icon button with
+    **"Updated N min ago"** beside it (relative to the last successful fetch, re-read each minute while the
+    block is in the document), the "+" menu (New Project / New Master Project, unchanged), and **four live
+    tiles** — **Active**, **Past expected end**, **Due in 30 days**, **No company rank** — tallied on the
+    client from the rows `get_project_data` already returns. Nikolas declined a "value in flight" tile.
+    Each tile is a real `<button>` that filters the Priority Overview: Past expected end is
+    `expected_end_date` before today and `percent_complete` < 100; Due in 30 days is `expected_end_date`
+    within the next 30 days; No company rank is `custom_company_priority` empty or "Not Assigned"; Active
+    clears it. Pressing a tile from another tab lands on the Overview. The pressed tile is not remembered.
+  - **Five tabs, always visible:** Priority Overview, Portfolio Gantt, **Internal** (was "Active Internal
+    Projects"), **Completed** (was "Completed Projects"), Summary. "View More" and its hiding (v1.719.0)
+    are retired; `chb_projects_dashboard_more_v1` is no longer read and nothing is deleted from storage.
+    The tab chosen is remembered (`chb_projects_dashboard_tab_v1`).
+  - **Priority Overview** now lists every active project (status not Completed or Canceled), client streams
+    and Internal alike, so the Active tile, the All chip and the rows are one number. **That is the page's
+    one definition of active** (`active_pool`: `is_active` = Yes and status not Completed or Canceled —
+    `is_active` is unreliable on its own): the Internal tab and the Summary's Active Projects and Overdue
+    cards read it too, where before they took `is_active` alone and could disagree with the tiles by every
+    project that is active with status Completed. Above the table:
+    stream chips **All / Design / Build / Service / Events / Internal** with counts (Internal is the
+    `INTERNAL_PROJECT_TYPES` list), a **Ranked only** box (off by default; ranked = the company priority is
+    a number, so Maintenance and Repair Visit are neither ranked nor unranked) and a **Group by stream**
+    toggle. **Default is the flat list by company rank**, today's sort. Grouped, each stream is a header
+    row — Build, Design, Service, Events, then Internal — ordered by Value Stream Priority: switching
+    grouping on moves the sort from company rank to stream rank and switching it off moves it back, while
+    the sort is the page's own (the saved sort carries an `auto` flag; a header click clears it, and the
+    toggle then leaves the column and the direction alone — review round 1 found it undoing a hand-chosen
+    Company Priority descending). A remembered chip must be one the bar has, or All stands, as a remembered
+    tab must be one of the five. The chip, the box and the toggle are remembered per browser
+    (`chb_projects_dashboard_overview_v1`), as is each tab's sort (`chb_projects_dashboard_sort_v1`); his
+    audience answer was "mixed, per-person defaults", so columns, widths, sort, tab, grouping and filters
+    are each person's own, in `localStorage`, never frappe `user_settings` (Redis only, flushed on every
+    deploy). Every read and write is wrapped, so a browser with storage blocked still draws.
+  - **One table style on every list tab:** 13px Lato (`--sf-font-sans`), 11px uppercase letter-spaced
+    headers in `--sf-text-muted`, 40px rows, a hover tint, `--sf-rule` hairlines, no Bootstrap
+    `.table-bordered` / `.thead-light`. The project type is a pillar chip (sf_kit tones: Design, Build,
+    Service; Events the Rent teal; Internal neutral). The **company rank is a navy pill**
+    (`--sf-pillar-neutral` with `--sf-on-pillar`; in dark `--sf-sky-200` with `--sf-navy-900`), the **stream
+    rank an outline pill**, and Maintenance / Repair Visit / Not Assigned muted text; the red-to-green
+    `hsl()` hue scale on priority badges is gone, so a 1 and a 30 read by their number. Completion is a bar
+    (`--sf-rule` track, `--sf-primary` fill) with the percentage. **Expected End** is a new column with a
+    `--sf-danger` **Past due** pill when the date has gone by and the work is not done. **Budget**
+    (`custom_project_dollar_amount`, right-aligned, a dash when 0) **replaces Spend %**: Spend % was
+    `estimated_costing` over the budget, and `estimated_costing` is 0 on all 68 active projects on prod, so
+    the column had only ever rendered a dash. Clicking a rank still opens the select in place and saves.
+    **Internal** is one table with a header row per master project (the same group row); **Completed**
+    keeps its status chip and gains a type chip; **Summary** keeps its six cards and three breakdowns, on
+    the tokens (only Overdue is coloured, in `--sf-danger`). The sort arrows are plain characters, one
+    FontAwesome glyph fewer.
+  - **Light and dark.** The block reads the `--sf-*` tokens, which cross the shadow boundary and flip with
+    the Desk's `data-theme`, so it has no theme selector of its own. Two places lean on a token that flips
+    exactly the right way and say so in the CSS: the company-rank pill and the pressed stream chip are
+    `--sf-chip-edge-neutral` (deep-sea-blue in light, sky-200 in dark) with text in `--sf-bg` (off-white in
+    light, navy-900 in dark). No drop shadows off the Gantt canvas; structure square, controls rounded,
+    pills pills. The Portfolio Gantt's canvas rules are byte-for-byte what they were: the DHTMLX canvas
+    stays light in both themes, so its bars, group rows and placeholder text keep their literal colours.
+  - **What stayed:** the Gantt tab and its whole toolbar (find-a-project, the project / status / type /
+    customer / date-window / at-risk filters, zoom, Today, Columns, Export with Date range…, Reset view,
+    the legend, the saved view), inline priority editing, the Columns icon menu with Reset column widths,
+    drag-resized widths per tab, sortable headers, the permission handling (no access on the page-role
+    denial, Try again on a failed read), the plain-text stand-in when `sf_kit` is missing, the
+    `/desk/project/<name>` links, the search box (it now also hides a group header whose rows are all
+    hidden), and the reload on a return to the workspace through `workspace_blocks.onWorkspaceReturn`.
+  - **Review round 1** (`#1415`), fixed before merge: a tile, chip, box or tab pressed while the no-access
+    or error panel is up draws that panel again (a `loaded` flag, set by the first fetch that answers with
+    rows) instead of "No active projects" over it, so the denial reads as a denial and Try again stays; the
+    group header rows (Group by stream, the Internal tab's master projects) take their `colspan` from the
+    columns on show and are re-fitted when the Columns menu hides one, where a fixed 8 or 6 added phantom
+    columns under the fixed table layout; the band's search reads a select as its chosen option rather than
+    every option of the hidden rank selects, which had matched "Maintenance", "Not Assigned" or any digit on
+    every row; the Due in 30 days tooltip says it counts finished projects; and the tab bar is a group of
+    toggle buttons (`aria-pressed`), not a `tablist` with no arrow keys, `aria-controls` or `tabpanel`.
+  - **Tests.** `scripts/test_projects_dashboard_toolbar.mjs` runs the block's real script against seven
+    projects and drives the tiles (the four counts, pressing each, Active clearing, a press from another
+    tab), the chips, Ranked only, Group by stream (the group order, the edge token, the sort move, a
+    hand-chosen sort kept with its direction, across a reload), a remembered chip the bar does not have, the
+    remembered and restored view, a blocked storage, the rank pills, Budget, the Past due pill, the
+    Completed and Internal tables, the group row's `colspan` after two columns are hidden, the Internal tab
+    and the Summary on a project that is active with status Completed, the no-access and error panels
+    under a tile, chip, box and tab, Refresh and "Updated just now", the "+" menu and the Columns button;
+    `tests/test_projects_dashboard_toolbar.py` holds the shell, script and stylesheet in agreement (the five
+    routes, the tile keys, the chip streams, the storage keys, the measurements, no theme selector, every
+    literal colour on the Gantt canvas, no shadow off it); `tests/test_custom_html_blocks.py` checks the
+    seeded files for the five routes, no View More, the try/catch reads and no `hsl(`.
+    `test_block_status_tokens` drops the `#28a745` allowance the old Summary card needed, and the return
+    harness's empty-panel sentence is "No active projects".
+  - **Deploy.** `bench migrate` overwrites the block's `html`, `script` and `style` from these files; a
+    device holding the old block in memory needs a hard reload. **Unverified:** nothing here ran in a
+    browser or against a bench — the render, the dark theme, the Gantt tab alongside the new chrome, the
+    phone layout and the inline select are checked on prod after the migrate.
 ## [1.780.0] - 2026-11-03
 
 **Previous / next arrows in the form sidebar's attachment preview.** Nikolas, 2026-11-03: "when

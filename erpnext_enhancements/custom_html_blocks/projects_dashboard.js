@@ -1,19 +1,32 @@
 /*
  * Projects Dashboard — behaviour for the "Projects Dashboard" Custom HTML Block.
  *
- * Exported source of a Frappe Custom HTML Block (authored/stored in the Frappe UI);
- * this repo copy is the source of truth / backup — edit here, paste back into the
- * UI to deploy. Pairs with projects_dashboard.html (shell) + projects_dashboard.css.
+ * Exported source of a Frappe Custom HTML Block; this repo copy is the source of truth
+ * (setup/custom_html_blocks.py upserts it on migrate). Pairs with projects_dashboard.html
+ * (shell) + projects_dashboard.css.
  *
  * Runs inside the Custom HTML Block sandbox, where `root_element` is the block's
  * root node. It loads the shared ColumnSelector asset, then fetches data through
  * the project_dashboard page's whitelisted methods
  * (erpnext_enhancements.project_enhancements.page.project_dashboard.*) and renders:
- *   - Priority Overview   — client-facing value streams (Build/Design/Events/Service),
- *                           with inline-editable company/project priority cells;
- *   - Active Internal Projects — active projects whose project_type is internal
- *                           (INTERNAL_PROJECT_TYPES), grouped by master project;
- *   - Completed Projects  — read-only list of inactive projects;
+ *   - the head band's four live tiles — Active, Past expected end, Due in 30 days, No
+ *                           company rank — tallied here from get_project_data. Each is
+ *                           a button that filters the Priority Overview (Active clears
+ *                           it), and "Updated N min ago" beside the Refresh button;
+ *   - Priority Overview   — every active project (client streams and internal), with
+ *                           stream chips (All / Design / Build / Service / Events /
+ *                           Internal, with counts), a Ranked-only box (company priority
+ *                           is a number; off by default) and a Group-by-stream toggle.
+ *                           Flat by company rank by default; grouped, each stream is a
+ *                           header row (Build, Design, Service, Events, then Internal)
+ *                           ordered by Value Stream Priority. Inline-editable company /
+ *                           stream rank cells; Budget (custom_project_dollar_amount)
+ *                           in place of Spend %, which was always a dash because
+ *                           estimated_costing is 0 on every active project;
+ *   - Internal            — active projects whose project_type is internal
+ *                           (INTERNAL_PROJECT_TYPES), one table with a header row per
+ *                           master project;
+ *   - Completed           — read-only list of inactive projects;
  *   - Portfolio Gantt     — the embeddable Gantt widget
  *                           (erpnext_enhancements.gantt.mount) in composite mode:
  *                           Project Type (or Master Project) groups -> Project
@@ -31,10 +44,13 @@
  *                           fetched project_data: headline number cards + CSS-bar
  *                           breakdowns (status / type / completion). It is what the
  *                           "Dashboard" tab used to show; that tab is gone.
- * The tab bar leads with Priority Overview and Portfolio Gantt. A "View More" button
- * reveals Active Internal Projects, Completed Projects and Summary as further tabs (and
- * hides them again); the choice is kept in localStorage (chb_projects_dashboard_more_v1).
- * The toolbar carries one "+" button whose menu holds "New Project" / "New Master Project".
+ * The five tabs are always visible (Mock B, v1.781.0; "View More" is retired). What a
+ * person chooses is kept per browser in localStorage, never in frappe user_settings
+ * (Redis only, flushed on every deploy): the tab (chb_projects_dashboard_tab_v1), each
+ * tab's sort (chb_projects_dashboard_sort_v1), the stream chip, Ranked only and Group by
+ * stream (chb_projects_dashboard_overview_v1), plus the columns and widths the shared
+ * ColumnSelector / ColumnResizer already keep. The pressed tile is not kept.
+ * The band carries one "+" button whose menu holds "New Project" / "New Master Project".
  * The list tabs' Columns control is an icon button (tooltip "Columns"); "Reset widths"
  * is an item in its menu. Table edits persist back via the same whitelisted methods.
  *
@@ -88,29 +104,104 @@
     function startApp(container, sf, ticket) {
     const $root = $(container);
 
-    let current_tab = "priority-overview";
+    // ----- SAVED VIEW (per browser) -----
+    //
+    // What a person chooses is kept in localStorage under chb_projects_dashboard_*_v1,
+    // never in frappe user_settings (Redis only, flushed on every deploy). Every read and
+    // write is wrapped: a browser with storage blocked still draws, it just forgets.
+    const TAB_KEY = "chb_projects_dashboard_tab_v1";
+    const SORT_KEY = "chb_projects_dashboard_sort_v1";
+    const OVERVIEW_KEY = "chb_projects_dashboard_overview_v1";
+    const TAB_ROUTES = ["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"];
+
+    function read_saved(key) {
+        try {
+            return JSON.parse(localStorage.getItem(key) || "null");
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function write_saved(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+            // storage disabled/full — the choice just won't persist
+        }
+    }
+
+    function load_tab() {
+        const saved = read_saved(TAB_KEY);
+        return TAB_ROUTES.includes(saved) ? saved : "priority-overview";
+    }
+
+    let current_tab = load_tab();
     let project_data = [];
     let priority_options = { project_priority: [], company_priority: [] };
     let status_options = [];
 
-    // Client-facing value streams shown on Priority Overview and scoping the
-    // Portfolio Gantt (gantt_root_filters). Kept in one place so this Custom
-    // HTML Block stays in sync with the page dashboard (priority_overview.js),
-    // which filters to exactly these project types.
+    // The Priority Overview's filters: the stream chip ("" is All), Ranked only (off by
+    // default: ranked = the company priority is a number) and Group by stream (off by
+    // default: the flat list by company rank). The pressed tile is session state only.
+    const DEFAULT_OVERVIEW = { stream: "", ranked_only: false, group: false };
+    let overview = Object.assign({}, DEFAULT_OVERVIEW);
+    let tile_filter = "active";
+    let last_fetch_at = null;
+
+    // Set by the first fetch that answers with rows. Until then, and after a denial or a
+    // failed read, the panel on #dashboard-content (loading; no access; the error with Try
+    // again) is the page: a tile, a chip, a box or a tab draws that panel again, never
+    // "No active projects" over it.
+    let loaded = false;
+    let panel = { kind: "loading" };
+
+    // A remembered chip must be one the bar has (a typo, or a chip a later release removed,
+    // would leave the rows narrowed with nothing pressed, not even All), as load_tab does.
+    function load_overview() {
+        const saved = read_saved(OVERVIEW_KEY);
+        if (!saved || typeof saved !== "object") return;
+        if ([""].concat(STREAM_CHIPS).includes(saved.stream)) overview.stream = saved.stream;
+        overview.ranked_only = !!saved.ranked_only;
+        overview.group = !!saved.group;
+    }
+
+    function save_overview() {
+        write_saved(OVERVIEW_KEY, overview);
+    }
+
+    // Client-facing value streams scoping the Portfolio Gantt (gantt_root_filters) and
+    // the Gantt's type filter. Kept in one place so this block stays in sync with the
+    // server side (project_dashboard.py).
     const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Events", "Service", "Delivery"];
 
-    // Internal (non client-facing) project types shown on the Active Internal
-    // Projects tab. Everything else — the client-facing streams above and untyped
-    // projects — is excluded. Mirrors INTERNAL_PROJECT_TYPES in the page dashboard
-    // (project_dashboard.py / active_internal_projects.js); keep the lists in sync.
+    // Internal (non client-facing) project types: the Internal tab, the Internal stream
+    // chip and the Internal group on Priority Overview. Mirrors INTERNAL_PROJECT_TYPES in
+    // the page dashboard (project_dashboard.py); keep the lists in sync.
     const INTERNAL_PROJECT_TYPES = ["Internal", "Organizational Projects", "Group Projects", "Other"];
 
-    // Business-preferred ordering for the value-stream groups on Priority
-    // Overview (when sorted by Project Priority). Streams not listed (e.g.
-    // Delivery, Uncategorized) fall after these, alphabetically. Kept in sync
-    // with priority_overview.js's VALUE_STREAM_ORDER.
-    const VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Events"];
+    // The stream a project is filed under: an internal type is "Internal", a client
+    // type is itself, no type is "Uncategorized". The stream chips name the first five.
+    const INTERNAL_STREAM = "Internal";
+    const STREAM_CHIPS = ["Design", "Build", "Service", "Events", "Internal"];
+    function stream_of(p) {
+        if (INTERNAL_PROJECT_TYPES.includes(p.project_type)) return INTERNAL_STREAM;
+        return p.project_type || "Uncategorized";
+    }
+
+    // Value streams to pillars (docs/app-design-system.md "Pillars and value streams";
+    // print_style.STREAM_PILLAR is the record): Design violet, Build / Products / Delivery
+    // navy, Service fresh-blue, Events the Rent teal; everything else, Internal included,
+    // neutral. The chip tone AND the group header's edge colour come from this.
+    const STREAM_PILLAR = { Design: "design", Build: "build", Products: "build", Delivery: "build", Service: "service", Events: "rent" };
+    const pillar_of = (stream) => STREAM_PILLAR[stream] || "neutral";
+
+    // Group order on Priority Overview (Nikolas, 2026-11-03): Build, Design, Service,
+    // Events, then any other client stream alphabetically, and Internal last.
+    const VALUE_STREAM_ORDER = ["Build", "Design", "Service", "Events"];
     const compare_value_streams = (a, b) => {
+        if (a === b) return 0;
+        if (a === INTERNAL_STREAM) return 1;
+        if (b === INTERNAL_STREAM) return -1;
         let ia = VALUE_STREAM_ORDER.indexOf(a);
         let ib = VALUE_STREAM_ORDER.indexOf(b);
         if (ia === -1) ia = VALUE_STREAM_ORDER.length;
@@ -118,6 +209,44 @@
         if (ia !== ib) return ia - ib;
         return String(a).localeCompare(String(b));
     };
+
+    // ----- DATES AND MONEY -----
+
+    // Dates compare as ISO strings (get_project_data returns YYYY-MM-DD), so "within the
+    // next 30 days" is a string range and never a time-zone question.
+    const today_iso = () => frappe.datetime.get_today();
+    function iso_plus_days(iso, days) {
+        const d = new Date(iso + "T00:00:00Z");
+        if (isNaN(d)) return iso;
+        d.setUTCDate(d.getUTCDate() + days);
+        return d.toISOString().slice(0, 10);
+    }
+    const date_part = (value) => (value ? String(value).slice(0, 10) : "");
+    const pct_of = (p) => parseFloat(p.percent_complete) || 0;
+    const is_past_due = (p) => Boolean(date_part(p.expected_end_date) && date_part(p.expected_end_date) < today_iso() && pct_of(p) < 100);
+    const is_due_soon = (p) => {
+        const end = date_part(p.expected_end_date);
+        return Boolean(end && end >= today_iso() && end <= iso_plus_days(today_iso(), 30));
+    };
+    // "Ranked": the company priority is a number. "Unranked": it is empty or Not Assigned.
+    // The named values (Maintenance, Repair Visit) are neither.
+    const rank_number = (value) => parseInt(String(value === null || value === undefined ? "" : value).trim(), 10);
+    const is_ranked = (p) => !isNaN(rank_number(p.custom_company_priority));
+    const is_unranked = (p) => {
+        const v = String(p.custom_company_priority || "").trim();
+        return !v || v.toLowerCase() === "not assigned";
+    };
+
+    // Budget: whole dollars in the company currency, a dash when it is 0 or missing.
+    const budget_of = (p) => parseFloat(p.custom_project_dollar_amount) || 0;
+    function fmt_money(amount) {
+        const currency = (frappe.boot && frappe.boot.sysdefaults && frappe.boot.sysdefaults.currency) || "USD";
+        try {
+            return Number(amount).toLocaleString("en-US", { style: "currency", currency, maximumFractionDigits: 0 });
+        } catch (e) {
+            return String(Math.round(amount));
+        }
+    }
 
     // Gantt State tracking. The Portfolio Gantt renders through the embeddable
     // Gantt widget (erpnext_enhancements.gantt.mount — public/js/gantt_widget/)
@@ -152,21 +281,56 @@
     let gantt_expanded_projects = new Set();
     const gantt_loaded_projects = new Set();
 
-    let sort_state = {
+    // Each list tab's sort, remembered per browser. A saved column must be one the tab
+    // has, or the default stands.
+    const DEFAULT_SORT = {
         'priority-overview': { col: 'company_priority', order: 'asc' },
         'active-internal-projects': { col: 'project_name', order: 'asc' },
         'completed-projects': { col: 'completed_on', order: 'desc' }
     };
+    const SORTABLE_COLUMNS = {
+        'priority-overview': ['project_name', 'project_type', 'company_priority', 'project_priority', 'percent_complete', 'expected_end', 'budget'],
+        'active-internal-projects': ['project_name', 'status', 'custom_project_priority', 'percent_complete', 'project_user'],
+        'completed-projects': ['project_name', 'status', 'project_type', 'project_user', 'completed_on']
+    };
+    let sort_state = {};
+    Object.keys(DEFAULT_SORT).forEach((tab) => { sort_state[tab] = Object.assign({}, DEFAULT_SORT[tab]); });
+    // The Priority Overview's sort is `auto` while it is the page's own: the default, or what
+    // Group by stream set. A clicked header clears it, and the toggle swaps only an auto sort.
+    // Saved with the sort, so a reload keeps the distinction; a saved sort without the flag
+    // counts as the person's.
+    sort_state['priority-overview'].auto = true;
+
+    function load_sort_state() {
+        const saved = read_saved(SORT_KEY);
+        if (!saved || typeof saved !== "object") return;
+        Object.keys(DEFAULT_SORT).forEach((tab) => {
+            const s = saved[tab];
+            if (!s || typeof s !== "object") return;
+            if (SORTABLE_COLUMNS[tab].includes(s.col)) sort_state[tab].col = s.col;
+            if (s.order === 'asc' || s.order === 'desc') sort_state[tab].order = s.order;
+            if (tab === 'priority-overview') sort_state[tab].auto = s.auto === true;
+        });
+    }
+
+    function save_sort_state() {
+        write_saved(SORT_KEY, sort_state);
+    }
+
+    load_sort_state();
+    load_overview();
 
     const ColumnSelector = erpnext_enhancements.dashboard_components.ColumnSelector;
     const column_selectors = {
         'priority-overview': new ColumnSelector('chb_priority_overview_columns', [
             { key: 'project_name', label: 'Project Name', locked: true },
             { key: 'project_id', label: 'Project ID' },
+            { key: 'project_type', label: 'Type' },
             { key: 'company_priority', label: 'Company Priority' },
             { key: 'project_priority', label: 'Value Stream Priority' },
             { key: 'percent_complete', label: 'Completion' },
-            { key: 'spend_percent', label: 'Spend %' }
+            { key: 'expected_end', label: 'Expected End' },
+            { key: 'budget', label: 'Budget' }
         ]),
         'active-internal-projects': new ColumnSelector('chb_active_internal_columns', [
             { key: 'project_name', label: 'Project Name', locked: true },
@@ -203,12 +367,14 @@
         });
     const column_resizers = {
         'priority-overview': make_table_resizer('chb_priority_overview_widths', [
-            { key: 'project_name', defaultWidth: 220, minWidth: 140, maxWidth: 520 },
-            { key: 'project_id', defaultWidth: 130, minWidth: 90, maxWidth: 320 },
-            { key: 'company_priority', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
-            { key: 'project_priority', defaultWidth: 170, minWidth: 120, maxWidth: 340 },
-            { key: 'percent_complete', defaultWidth: 160, minWidth: 120, maxWidth: 320 },
-            { key: 'spend_percent', defaultWidth: 140, minWidth: 90, maxWidth: 300 }
+            { key: 'project_name', defaultWidth: 240, minWidth: 140, maxWidth: 520 },
+            { key: 'project_id', defaultWidth: 110, minWidth: 90, maxWidth: 320 },
+            { key: 'project_type', defaultWidth: 110, minWidth: 90, maxWidth: 240 },
+            { key: 'company_priority', defaultWidth: 140, minWidth: 110, maxWidth: 320 },
+            { key: 'project_priority', defaultWidth: 150, minWidth: 120, maxWidth: 340 },
+            { key: 'percent_complete', defaultWidth: 170, minWidth: 120, maxWidth: 320 },
+            { key: 'expected_end', defaultWidth: 170, minWidth: 120, maxWidth: 300 },
+            { key: 'budget', defaultWidth: 120, minWidth: 90, maxWidth: 300 }
         ]),
         'active-internal-projects': make_table_resizer('chb_active_internal_widths', [
             { key: 'project_name', defaultWidth: 220, minWidth: 140, maxWidth: 520 },
@@ -259,11 +425,33 @@
                 },
             });
         }
-        selector.render_button(toolbar, () => selector.apply(container), { icon: true, actions });
+        selector.render_button(toolbar, () => {
+            selector.apply(container);
+            fit_group_rows(container, current_tab);
+        }, { icon: true, actions });
     }
 
     // Project ID header is non-sortable; built inline to sit beside Project Name.
-    const project_id_th = '<th class="dashcol dashcol-project_id" style="min-width: 120px; white-space: nowrap;">Project ID</th>';
+    const project_id_th = '<th class="dashcol dashcol-project_id">Project ID</th>';
+
+    // The two cells every list tab starts with: the name (bold, a link to the project)
+    // and the ID (muted, the same link).
+    const project_link = (p) => `/desk/project/${encodeURIComponent(p.name)}`;
+    const name_cells = (p) =>
+        `<td class="dashcol dashcol-project_name project-name-cell"><a href="${project_link(p)}" class="pd-pname">${sf.esc(p.project_name || "")}</a></td>` +
+        `<td class="dashcol dashcol-project_id project-id-cell pd-pid"><a href="${project_link(p)}">${sf.esc(p.name)}</a></td>`;
+
+    // Completion as a bar on the rule colour, filled in the primary, then the number.
+    const completion_cell = (p, col_key) => `
+        <td class="dashcol dashcol-${col_key}">
+            <div class="pd-prog">
+                <div class="pd-bar" aria-hidden="true"><i style="width: ${Math.max(0, Math.min(100, pct_of(p)))}%"></i></div>
+                <span class="pd-pct">${Math.round(pct_of(p))}%</span>
+            </div>
+        </td>`;
+
+    // The project type as a pillar chip (sf_kit tones; the kit's stand-in draws the word).
+    const type_chip = (p) => (p.project_type ? sf.chip(p.project_type, pillar_of(stream_of(p))) : '<span class="pd-muted">Uncategorized</span>');
 
     // frappe.call's own promise, not its callback / error options: v16 calls `error` with
     // no arguments on a 403 (request.js statusCode[403]) and not at all on some failures,
@@ -288,6 +476,13 @@
         return $root.find('#dashboard-content')[0];
     }
 
+    // The loading, no-access or error panel, remembered so render_current_tab can draw it
+    // again while nothing has loaded.
+    function show_panel(kind, opts) {
+        panel = { kind, opts };
+        sf.state.render(content_el(), kind, opts);
+    }
+
     // A tab with nothing to list: the kit's empty panel, under whatever the tab has
     // already drawn (its column toolbar, the Dashboard's zero cards).
     function empty_panel($container, title) {
@@ -303,7 +498,7 @@
     }
 
     async function fetch_initial_data() {
-        sf.state.render(content_el(), "loading");
+        show_panel("loading");
         init_gantt_filters();
         await fetch_data();
     }
@@ -315,6 +510,7 @@
     // one draws.
     async function fetch_data() {
         const current = ticket(container);
+        const $refresh = $root.find('#btn-refresh').prop('disabled', true);
         try {
             const [projectsRes, priorityRes, statusRes] = await Promise.all([
                 api_call('get_project_data'),
@@ -331,22 +527,100 @@
             }
             if (projectsRes.message && !projectsRes.message.error) {
                 project_data = projectsRes.message;
+                loaded = true;
+                last_fetch_at = Date.now();
+                render_updated();
+                render_tiles();
                 render_current_tab();
             } else if (is_denial(projectsRes.message)) {
                 // No page role: get_project_data answers 200 with {"error": "You do not have
                 // permission ..."} rather than a 403. Asking again cannot help, so no Try again.
-                sf.state.render(content_el(), "no-access");
+                show_panel("no-access");
             } else {
                 const title = __("Could not load the projects.");
-                sf.state.render(content_el(), "error", { title, on_action: fetch_data });
+                show_panel("error", { title, on_action: fetch_data });
             }
         } catch (err) {
             if (!current()) return;
             const title = __("Could not load the projects: the request failed.");
-            if (err && err.status === 403) sf.state.render(content_el(), "no-access");
-            else sf.state.render(content_el(), "error", { title, on_action: fetch_data });
+            if (err && err.status === 403) show_panel("no-access");
+            else show_panel("error", { title, on_action: fetch_data });
+        } finally {
+            if (current()) $refresh.prop('disabled', false);
         }
     }
+
+    // ----- HEAD BAND: tiles, Refresh, "Updated N min ago" -----
+
+    // Every active project: is_active = Yes and status not Completed / Canceled (is_active
+    // is unreliable on its own). The page's one definition of active: the Active tile, the
+    // All chip, the Priority Overview's rows, the Internal tab and the Summary's cards all
+    // read it, so no two numbers on the page disagree.
+    function active_pool() {
+        return project_data.filter(p =>
+            p.is_active === "Yes" &&
+            p.status !== "Completed" &&
+            p.status !== "Canceled"
+        );
+    }
+
+    const TILE_TESTS = {
+        "active": () => true,
+        "past-due": is_past_due,
+        "due-30": is_due_soon,
+        "unranked": is_unranked,
+    };
+
+    function render_tiles() {
+        const pool = active_pool();
+        Object.keys(TILE_TESTS).forEach((key) => {
+            $root.find(`[data-tile-count="${key}"]`).text(String(pool.filter(TILE_TESTS[key]).length));
+        });
+        paint_tiles();
+    }
+
+    function paint_tiles() {
+        Object.keys(TILE_TESTS).forEach((key) => {
+            $root.find(`.pd-tile[data-tile="${key}"]`).attr('aria-pressed', key === tile_filter ? 'true' : 'false');
+        });
+    }
+
+    // A tile narrows the Priority Overview; pressing it from another tab goes there.
+    $root.find('.pd-tile').on('click', function() {
+        const key = $(this).attr('data-tile');
+        tile_filter = TILE_TESTS[key] ? key : "active";
+        paint_tiles();
+        if (current_tab !== "priority-overview") show_tab("priority-overview");
+        else render_current_tab();
+    });
+
+    // Relative time since the last successful fetch, refreshed each minute while the
+    // block is still in the document (the timer retires itself once it has left).
+    function render_updated() {
+        const $out = $root.find('#pd-updated');
+        if (!last_fetch_at) { $out.text(""); return; }
+        const minutes = Math.floor((Date.now() - last_fetch_at) / 60000);
+        let text;
+        if (minutes < 1) text = __("Updated just now");
+        else if (minutes < 60) text = __("Updated {0} min ago", [minutes]);
+        else text = __("Updated {0} h ago", [Math.floor(minutes / 60)]);
+        $out.text(text);
+    }
+
+    if (typeof setInterval === "function") {
+        const updated_timer = setInterval(() => {
+            const host = container && container.host;
+            if (host && host.isConnected === false) {
+                clearInterval(updated_timer);
+                return;
+            }
+            render_updated();
+        }, 60000);
+    }
+
+    $root.find('#btn-refresh').on('click', function() {
+        fetch_data();
+    });
 
     // ----- GANTT TOOLBAR CONTROLS -----
 
@@ -1094,31 +1368,27 @@
         return 200; 
     }
 
-    function get_priority_badge(priority) {
-        if (!priority) return '<span class="badge badge-secondary">Not Assigned</span>';
-        let p = String(priority).trim();
-        if (p.toLowerCase() === "not assigned") return '<span class="badge badge-secondary">Not Assigned</span>';
-        if (p.toLowerCase() === "repair visit") return '<span class="badge" style="background-color: #6f42c1; color: white;">Repair Visit</span>';
-        if (p.toLowerCase() === "maintenance") return '<span class="badge" style="background-color: #007bff; color: white;">Maintenance</span>';
-        
-        let num = parseInt(p, 10);
-        if (!isNaN(num)) {
-            let hue = ((Math.max(1, Math.min(30, num)) - 1) / 29) * 120;
-            return `<span class="badge" style="background-color: hsl(${hue}, 100%, 45%); color: white;">${sf.esc(p)}</span>`;
-        }
-        return `<span class="badge badge-secondary">${sf.esc(p)}</span>`;
+    // A rank as a pill: the company rank filled (navy in light, sky in dark), the stream
+    // rank an outline. Named values (Maintenance, Repair Visit, Not Assigned) are muted
+    // text: a rank is a number, and a word is not a rank. No colour scale, so a 1 and a
+    // 30 read the same way: by the number.
+    function rank_html(priority, kind) {
+        const p = String(priority === null || priority === undefined ? "" : priority).trim();
+        if (!p || p.toLowerCase() === "not assigned") return '<span class="pd-named">Not Assigned</span>';
+        if (isNaN(parseInt(p, 10))) return `<span class="pd-named">${sf.esc(p)}</span>`;
+        return `<span class="pd-rank${kind === "stream" ? " pd-rank-outline" : ""}">${sf.esc(p)}</span>`;
     }
 
-    function build_editable_priority_cell(project_name, field, current_val, options_array, col_key) {
+    function build_editable_priority_cell(project_name, field, current_val, options_array, col_key, kind) {
         let opts_html = '<option value="">Not Assigned</option>' +
             options_array.map(opt => `<option value="${sf.esc(opt)}" ${opt === current_val ? 'selected' : ''}>${sf.esc(opt)}</option>`).join('');
 
         return `
-            <td class="editable-priority dashcol dashcol-${col_key}" data-project="${sf.esc(project_name)}" data-field="${field}" style="min-width: 140px;">
-                <div class="static-view" style="cursor: pointer;" title="Click to edit">
-                    ${get_priority_badge(current_val)}
+            <td class="editable-priority dashcol dashcol-${col_key}" data-project="${sf.esc(project_name)}" data-field="${field}" data-kind="${kind}">
+                <div class="static-view" title="Click to edit">
+                    ${rank_html(current_val, kind)}
                 </div>
-                <select class="form-control form-control-sm edit-view" style="display: none;">
+                <select class="edit-view" style="display: none;" aria-label="${kind === "stream" ? "Value Stream Priority" : "Company Priority"}">
                     ${opts_html}
                 </select>
             </td>
@@ -1144,13 +1414,40 @@
         }
     }
 
-    function th(col_name, label, title="") {
+    function th(col_name, label, title="", extra_cls="") {
         let state = sort_state[current_tab];
         let cls = "sortable-header dashcol dashcol-" + col_name;
         if (state && state.col === col_name) {
             cls += " active-sort sort-" + state.order;
         }
-        return `<th class="${cls}" data-sort="${col_name}" title="${title}" style="min-width: 130px; white-space: nowrap;">${label}</th>`;
+        if (extra_cls) cls += " " + extra_cls;
+        return `<th class="${cls}" data-sort="${col_name}" title="${sf.esc(title)}">${label}</th>`;
+    }
+
+    // One table for every list tab: the shared style, fixed layout for the resizer.
+    const table_shell = (head_html) => $(`
+        <table class="pd-table dashboard-resizable-table">
+            <thead><tr>${head_html}</tr></thead>
+            <tbody></tbody>
+        </table>
+    `);
+    const table_wrap = () => $('<div class="pd-table-wrap table-responsive"></div>');
+
+    // A group header row inside the table (Group by stream; the Internal tab's master
+    // projects): the stream's pillar edge down its left side, a muted note after it.
+    // The edge is the pillar's themed chip edge (sky-200 for Build and Neutral in dark,
+    // where their opening stops sink into the navy card). Spelled out per tone so each
+    // token the block reads is one sf_tokens.bundle.css defines.
+    const GROUP_EDGE = {
+        design: "var(--sf-chip-edge-design)",
+        build: "var(--sf-chip-edge-build)",
+        service: "var(--sf-chip-edge-service)",
+        rent: "var(--sf-chip-edge-rent)",
+        neutral: "var(--sf-chip-edge-neutral)",
+    };
+    function group_row(label, note, pillar, colspan) {
+        const edge = `--pd-group-color: ${GROUP_EDGE[pillar] || GROUP_EDGE.neutral}`;
+        return `<tr class="pd-group" style="${edge}"><td colspan="${colspan}">${sf.esc(label)}${note ? `<span>${sf.esc(note)}</span>` : ""}</td></tr>`;
     }
 
     function bind_sortable_headers(table) {
@@ -1168,55 +1465,62 @@
                 // Dates read best newest-first; text columns A->Z
                 state.order = sort_col === 'completed_on' ? 'desc' : 'asc';
             }
-            
+            // The person's own choice now: the Group toggle leaves it alone.
+            state.auto = false;
+            save_sort_state();
             render_current_tab();
         });
     }
 
-    function build_priority_table(projects) {
-        let wrapper = $('<div class="table-responsive mb-4"></div>');
-        let table = $(`
-            <table class="table table-bordered mb-0 dashboard-resizable-table">
-                <thead class="thead-light">
-                    <tr>
-                        ${th('project_name', 'Project Name')}
-                        ${project_id_th}
-                        ${th('company_priority', 'Company Priority')}
-                        ${th('project_priority', 'Value Stream Priority', 'Groups by Value Stream')}
-                        ${th('percent_complete', 'Completion')}
-                        ${th('spend_percent', 'Spend %', 'Spend as % of total project budget')}
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        `);
+    // The group header rows (Group by stream; the Internal tab's master projects) span the
+    // columns on show. The Columns menu hides cells by class, and a colspan wider than the
+    // visible columns adds phantom columns, which take a share of the width under the fixed
+    // table layout. Counted from the tab's selector, and set again when a column is toggled.
+    function visible_column_count(tab) {
+        const selector = column_selectors[tab];
+        if (!selector || !Array.isArray(selector.columns) || typeof selector.is_hidden !== "function") return 1;
+        return Math.max(1, selector.columns.filter((c) => !selector.is_hidden(c.key)).length);
+    }
+    function fit_group_rows(container, tab) {
+        container.find('tr.pd-group > td').attr('colspan', String(visible_column_count(tab)));
+    }
 
-        projects.forEach(p => {
-            let total_budget = parseFloat(p.custom_project_dollar_amount) || 0;
-            let spend = parseFloat(p.estimated_costing) || 0;
-            let spend_percent = total_budget ? (spend / total_budget) * 100 : 0;
-            let spend_color = spend_percent > 100 ? "text-danger" : "text-success";
+    // The Priority Overview's columns. Budget replaced Spend % (v1.781.0): Spend % was
+    // estimated_costing over custom_project_dollar_amount, and estimated_costing is 0 on
+    // every active project on prod, so the column had only ever shown a dash.
+    function priority_head() {
+        return [
+            th('project_name', 'Project Name'),
+            project_id_th,
+            th('project_type', 'Type'),
+            th('company_priority', 'Company Priority', 'Click a rank to change it'),
+            th('project_priority', 'Value Stream Priority', 'Rank within the stream; click to change it'),
+            th('percent_complete', 'Completion'),
+            th('expected_end', 'Expected End'),
+            th('budget', 'Budget', 'The project dollar amount', 'pd-num'),
+        ].join('');
+    }
 
-            let row = $(`
-                <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
-                    ${build_editable_priority_cell(p.name, 'custom_company_priority', p.custom_company_priority, priority_options.company_priority || [], 'company_priority')}
-                    ${build_editable_priority_cell(p.name, 'custom_project_priority', p.custom_project_priority, priority_options.project_priority || [], 'project_priority')}
-                    <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
-                        <div class="d-flex align-items-center">
-                            <div class="progress flex-grow-1 mr-2" style="height: 10px;">
-                                <div class="progress-bar bg-primary" style="width: ${p.percent_complete || 0}%"></div>
-                            </div>
-                            <span class="small font-weight-bold">${Math.round(p.percent_complete || 0)}%</span>
-                        </div>
-                    </td>
-                    <td class="dashcol dashcol-spend_percent font-weight-bold ${spend_color}" style="min-width: 140px;">${total_budget ? Math.round(spend_percent) + '%' : '—'}</td>
-                </tr>
-            `);
-            table.find('tbody').append(row);
-        });
+    function priority_row(p) {
+        const end = date_part(p.expected_end_date);
+        const late = is_past_due(p) ? '<span class="pd-late">Past due</span>' : '';
+        const end_html = end ? `${sf.esc(fmt_date(end))}${late}` : '<span class="pd-dash">—</span>';
+        const budget = budget_of(p);
+        return `
+            <tr class="pd-row">
+                ${name_cells(p)}
+                <td class="dashcol dashcol-project_type">${type_chip(p)}</td>
+                ${build_editable_priority_cell(p.name, 'custom_company_priority', p.custom_company_priority, priority_options.company_priority || [], 'company_priority', 'company')}
+                ${build_editable_priority_cell(p.name, 'custom_project_priority', p.custom_project_priority, priority_options.project_priority || [], 'project_priority', 'stream')}
+                ${completion_cell(p, 'percent_complete')}
+                <td class="dashcol dashcol-expected_end pd-due">${end_html}</td>
+                <td class="dashcol dashcol-budget pd-num">${budget ? sf.esc(fmt_money(budget)) : '<span class="pd-dash">—</span>'}</td>
+            </tr>
+        `;
+    }
 
+    // Click a rank to change it: the select takes the cell's place, saves on change.
+    function bind_editable_priorities(table) {
         table.find(".editable-priority").each((_, cellEl) => {
             const cell = $(cellEl);
             const select = cell.find("select.edit-view");
@@ -1239,16 +1543,79 @@
 
             select.on("change", () => {
                 const val = select.val();
-                staticView.html(get_priority_badge(val));
+                staticView.html(rank_html(val, cell.data('kind')));
                 select.hide();
                 staticView.show();
                 auto_save_field(cell.data('project'), cell.data('field'), val, cell);
             });
         });
+    }
 
+    // One table: flat, or with a header row per stream when `groups` is given
+    // ([{ stream, projects }], already ordered).
+    function build_priority_table(projects, groups) {
+        const wrapper = table_wrap();
+        const table = table_shell(priority_head());
+        const tbody = table.find('tbody');
+        if (groups) {
+            groups.forEach((g) => {
+                const ranked = g.projects.filter(is_ranked).length;
+                const note = __("{0} projects · {1} ranked", [g.projects.length, ranked]);
+                tbody.append(group_row(g.stream, note, pillar_of(g.stream), visible_column_count('priority-overview')));
+                g.projects.forEach((p) => tbody.append(priority_row(p)));
+            });
+        } else {
+            projects.forEach((p) => tbody.append(priority_row(p)));
+        }
+        bind_editable_priorities(table);
         bind_sortable_headers(table);
         wrapper.append(table);
         return wrapper;
+    }
+
+    // The sort for the Priority Overview's columns. Blank dates sink either way.
+    function compare_priority_rows(a, b, state) {
+        let diff = 0;
+        if (state.col === 'project_name') {
+            diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
+        } else if (state.col === 'project_type') {
+            diff = compare_value_streams(stream_of(a), stream_of(b));
+        } else if (state.col === 'company_priority') {
+            diff = get_priority_weight(a.custom_company_priority) - get_priority_weight(b.custom_company_priority);
+        } else if (state.col === 'project_priority') {
+            diff = get_priority_weight(a.custom_project_priority) - get_priority_weight(b.custom_project_priority);
+        } else if (state.col === 'percent_complete') {
+            diff = pct_of(a) - pct_of(b);
+        } else if (state.col === 'expected_end') {
+            const ea = date_part(a.expected_end_date), eb = date_part(b.expected_end_date);
+            if (!ea && eb) return 1;
+            if (ea && !eb) return -1;
+            diff = ea.localeCompare(eb);
+        } else if (state.col === 'budget') {
+            diff = budget_of(a) - budget_of(b);
+        }
+        if (diff === 0 && state.col !== 'project_name') {
+            diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
+        }
+        return state.order === 'asc' ? diff : -diff;
+    }
+
+    // The rows the tile and the Ranked-only box leave; the stream chips count these.
+    function overview_candidates() {
+        const tile = TILE_TESTS[tile_filter] || TILE_TESTS.active;
+        return active_pool().filter((p) => tile(p) && (!overview.ranked_only || is_ranked(p)));
+    }
+
+    function render_stream_chips(candidates) {
+        $root.find('[data-stream-count=""]').text(String(candidates.length));
+        STREAM_CHIPS.forEach((stream) => {
+            $root.find(`[data-stream-count="${stream}"]`).text(String(candidates.filter((p) => stream_of(p) === stream).length));
+        });
+        [""].concat(STREAM_CHIPS).forEach((stream) => {
+            $root.find(`.pd-fchip[data-stream="${stream}"]`).attr('aria-pressed', stream === overview.stream ? 'true' : 'false');
+        });
+        $root.find('#pd-ranked-only').prop('checked', overview.ranked_only);
+        $root.find('#pd-group-by-stream').prop('checked', overview.group);
     }
 
     function render_priority_overview() {
@@ -1256,65 +1623,34 @@
         container.empty();
         render_column_toolbar(container);
 
-        let state = sort_state['priority-overview'];
+        const state = sort_state['priority-overview'];
+        const candidates = overview_candidates();
+        render_stream_chips(candidates);
 
-        // Match the page dashboard: only client-facing value streams (Build,
-        // Design, Events, Service) that are still active and in progress. The
-        // is_active flag is unreliable on its own, so we gate on project_type +
-        // is_active + a live status rather than denylisting internal types.
-        let projects_to_show = project_data.filter(p =>
-            PRIORITY_PROJECT_TYPES.includes(p.project_type) &&
-            p.is_active === "Yes" &&
-            p.status !== "Completed" &&
-            p.status !== "Canceled"
-        );
+        if (!active_pool().length) {
+            empty_panel(container, __("No active projects."));
+            return;
+        }
+        const projects_to_show = overview.stream
+            ? candidates.filter((p) => stream_of(p) === overview.stream)
+            : candidates.slice();
         if (!projects_to_show.length) {
-            empty_panel(container, __("No active client projects."));
+            empty_panel(container, __("No projects match these filters."));
             return;
         }
 
-        if (state.col === "project_priority") {
-            let groups = {};
-            projects_to_show.forEach(p => {
-                let stream = p.project_type || "Uncategorized";
-                if (!groups[stream]) groups[stream] = [];
-                groups[stream].push(p);
-            });
+        projects_to_show.sort((a, b) => compare_priority_rows(a, b, state));
 
-            let sorted_streams = Object.keys(groups).sort(compare_value_streams);
-            sorted_streams.forEach(stream => {
-                let stream_projects = groups[stream].sort((a, b) => {
-                    let weightA = get_priority_weight(a.custom_project_priority);
-                    let weightB = get_priority_weight(b.custom_project_priority);
-                    let diff = weightA - weightB;
-                    if (diff === 0) diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
-                    return state.order === 'asc' ? diff : -diff;
-                });
-                container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${sf.esc(stream)}</h5>`);
-                container.append(build_priority_table(stream_projects));
+        if (overview.group) {
+            const by_stream = {};
+            projects_to_show.forEach((p) => {
+                const stream = stream_of(p);
+                if (!by_stream[stream]) by_stream[stream] = [];
+                by_stream[stream].push(p);
             });
+            const groups = Object.keys(by_stream).sort(compare_value_streams).map((stream) => ({ stream, projects: by_stream[stream] }));
+            container.append(build_priority_table(projects_to_show, groups));
         } else {
-            projects_to_show.sort((a, b) => {
-                let diff = 0;
-                if (state.col === 'project_name') {
-                    diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
-                } else if (state.col === 'company_priority') {
-                    diff = get_priority_weight(a.custom_company_priority) - get_priority_weight(b.custom_company_priority);
-                } else if (state.col === 'percent_complete') {
-                    diff = (parseFloat(a.percent_complete) || 0) - (parseFloat(b.percent_complete) || 0);
-                } else if (state.col === 'spend_percent') {
-                    let budgetA = parseFloat(a.custom_project_dollar_amount) || 0;
-                    let budgetB = parseFloat(b.custom_project_dollar_amount) || 0;
-                    let pctA = budgetA ? ((parseFloat(a.estimated_costing) || 0) / budgetA) * 100 : 0;
-                    let pctB = budgetB ? ((parseFloat(b.estimated_costing) || 0) / budgetB) * 100 : 0;
-                    diff = pctA - pctB;
-                }
-                
-                if (diff === 0 && state.col !== 'project_name') {
-                    diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
-                }
-                return state.order === 'asc' ? diff : -diff;
-            });
             container.append(build_priority_table(projects_to_show));
         }
 
@@ -1322,52 +1658,76 @@
         apply_column_resizing(container);
     }
 
-    function build_internal_table(projects) {
-        let wrapper = $('<div class="table-responsive mb-4"></div>');
-        let table = $(`
-            <table class="table table-bordered mb-0 dashboard-resizable-table">
-                <thead class="thead-light">
-                    <tr>
-                        ${th('project_name', 'Project Name')}
-                        ${project_id_th}
-                        ${th('status', 'Status')}
-                        ${th('custom_project_priority', 'Priority')}
-                        ${th('percent_complete', '% Complete')}
-                        ${th('project_user', 'Assigned To')}
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        `);
+    // ----- PRIORITY OVERVIEW FILTERS: stream chips, Ranked only, Group by stream -----
 
-        projects.forEach(p => {
-            let status_html = `<select class="form-control form-control-sm project-inline-edit" data-field="status" data-project="${sf.esc(p.name)}">
-                ${status_options.map(s => `<option value="${sf.esc(s)}" ${p.status === s ? 'selected' : ''}>${sf.esc(s)}</option>`).join('')}
-            </select>`;
+    $root.find('.pd-fchip').on('click', function() {
+        overview.stream = $(this).attr('data-stream') || "";
+        save_overview();
+        if (current_tab === "priority-overview") render_current_tab();
+    });
 
-            let priority_opts = priority_options.project_priority || [];
-            let priority_html = `<select class="form-control form-control-sm project-inline-edit" data-field="custom_project_priority" data-project="${sf.esc(p.name)}">
-                <option value="">Not Assigned</option>
-                ${priority_opts.map(opt => `<option value="${sf.esc(opt)}" ${p.custom_project_priority === opt ? 'selected' : ''}>${sf.esc(opt)}</option>`).join('')}
-            </select>`;
+    $root.find('#pd-ranked-only').on('change', function() {
+        overview.ranked_only = $(this).is(':checked');
+        save_overview();
+        if (current_tab === "priority-overview") render_current_tab();
+    });
 
-            table.find('tbody').append(`
-                <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
-                    <td class="dashcol dashcol-status" style="min-width: 140px;">${status_html}</td>
-                    <td class="dashcol dashcol-custom_project_priority" style="min-width: 140px;">${priority_html}</td>
-                    <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
-                        <div class="d-flex align-items-center">
-                            <div class="progress flex-grow-1 mr-2" style="height: 10px;">
-                                <div class="progress-bar bg-primary" style="width: ${p.percent_complete || 0}%"></div>
-                            </div>
-                            <span class="small font-weight-bold">${Math.round(p.percent_complete || 0)}%</span>
-                        </div>
-                    </td>
-                    <td class="dashcol dashcol-project_user" style="min-width: 150px;">${sf.esc(p.project_user || "Unassigned")}</td>
-                </tr>
-            `);
+    // Grouping orders each stream by its Value Stream Priority (the pick), so switching it
+    // on moves the sort from the flat default (company rank) to the stream rank, and
+    // switching it off moves it back — while the sort is the page's own (`auto`). A column
+    // a person clicked, Company Priority or Value Stream Priority included, is left alone,
+    // in the direction they chose; the swap itself never touches the direction either.
+    $root.find('#pd-group-by-stream').on('change', function() {
+        overview.group = $(this).is(':checked');
+        const state = sort_state['priority-overview'];
+        const own = overview.group ? 'project_priority' : 'company_priority';
+        if (state.auto && state.col !== own) {
+            state.col = own;
+            save_sort_state();
+        }
+        save_overview();
+        if (current_tab === "priority-overview") render_current_tab();
+    });
+
+    // The Internal tab: one table, a header row per master project (the same group row
+    // the Priority Overview draws), status and priority as selects that save on change.
+    function internal_row(p) {
+        const status_html = `<select class="pd-select project-inline-edit" data-field="status" data-project="${sf.esc(p.name)}" aria-label="Status">
+            ${status_options.map(s => `<option value="${sf.esc(s)}" ${p.status === s ? 'selected' : ''}>${sf.esc(s)}</option>`).join('')}
+        </select>`;
+
+        const priority_opts = priority_options.project_priority || [];
+        const priority_html = `<select class="pd-select project-inline-edit" data-field="custom_project_priority" data-project="${sf.esc(p.name)}" aria-label="Priority">
+            <option value="">Not Assigned</option>
+            ${priority_opts.map(opt => `<option value="${sf.esc(opt)}" ${p.custom_project_priority === opt ? 'selected' : ''}>${sf.esc(opt)}</option>`).join('')}
+        </select>`;
+
+        return `
+            <tr class="pd-row">
+                ${name_cells(p)}
+                <td class="dashcol dashcol-status">${status_html}</td>
+                <td class="dashcol dashcol-custom_project_priority">${priority_html}</td>
+                ${completion_cell(p, 'percent_complete')}
+                <td class="dashcol dashcol-project_user">${p.project_user ? sf.esc(p.project_user) : '<span class="pd-muted">Unassigned</span>'}</td>
+            </tr>
+        `;
+    }
+
+    function build_internal_table(groups) {
+        const wrapper = table_wrap();
+        const table = table_shell([
+            th('project_name', 'Project Name'),
+            project_id_th,
+            th('status', 'Status'),
+            th('custom_project_priority', 'Priority'),
+            th('percent_complete', '% Complete'),
+            th('project_user', 'Assigned To'),
+        ].join(''));
+        const tbody = table.find('tbody');
+
+        groups.forEach((g) => {
+            tbody.append(group_row(g.master, __("{0} projects", [g.projects.length]), "neutral", visible_column_count('active-internal-projects')));
+            g.projects.forEach((p) => tbody.append(internal_row(p)));
         });
 
         table.find('.project-inline-edit').on('change', function() {
@@ -1386,9 +1746,8 @@
         render_column_toolbar(container);
 
         let state = sort_state['active-internal-projects'];
-        let internal_projects = project_data.filter(
-            p => p.is_active === "Yes" && INTERNAL_PROJECT_TYPES.includes(p.project_type)
-        );
+        // active_pool(), so this tab and the Internal chip count the same projects.
+        let internal_projects = active_pool().filter(p => INTERNAL_PROJECT_TYPES.includes(p.project_type));
         if (!internal_projects.length) {
             empty_panel(container, __("No active internal projects."));
             return;
@@ -1407,22 +1766,20 @@
             return a.localeCompare(b);
         });
 
-        sorted_masters.forEach(master => {
-            let master_projects = groups[master].sort((a, b) => {
+        const ordered = sorted_masters.map((master) => ({
+            master,
+            projects: groups[master].sort((a, b) => {
                 let diff = 0;
                 if (state.col === 'project_name') diff = String(a.project_name||"").localeCompare(String(b.project_name||""));
                 else if (state.col === 'status') diff = String(a.status||"").localeCompare(String(b.status||""));
                 else if (state.col === 'custom_project_priority') diff = get_priority_weight(a.custom_project_priority) - get_priority_weight(b.custom_project_priority);
-                else if (state.col === 'percent_complete') diff = (parseFloat(a.percent_complete)||0) - (parseFloat(b.percent_complete)||0);
+                else if (state.col === 'percent_complete') diff = pct_of(a) - pct_of(b);
                 else if (state.col === 'project_user') diff = String(a.project_user||"").localeCompare(String(b.project_user||""));
-                
                 if (diff === 0 && state.col !== 'project_name') diff = String(a.project_name||"").localeCompare(String(b.project_name||""));
                 return state.order === 'asc' ? diff : -diff;
-            });
-            
-            container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${sf.esc(master)}</h5>`);
-            container.append(build_internal_table(master_projects));
-        });
+            }),
+        }));
+        container.append(build_internal_table(ordered));
 
         column_selectors['active-internal-projects'].apply(container);
         apply_column_resizing(container);
@@ -1453,35 +1810,27 @@
             return state.order === 'asc' ? diff : -diff;
         });
 
-        let wrapper = $('<div class="table-responsive mb-4"></div>');
-        let table = $(`
-            <table class="table table-bordered table-hover mb-0 dashboard-resizable-table">
-                <thead class="thead-light">
-                    <tr>
-                        ${th('project_name', 'Project Name')}
-                        ${project_id_th}
-                        ${th('status', 'Status')}
-                        ${th('project_type', 'Type')}
-                        ${th('project_user', 'Assigned To')}
-                        ${th('completed_on', 'Completed On', 'When the project was marked inactive')}
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        `);
+        const wrapper = table_wrap();
+        const table = table_shell([
+            th('project_name', 'Project Name'),
+            project_id_th,
+            th('status', 'Status'),
+            th('project_type', 'Type'),
+            th('project_user', 'Assigned To'),
+            th('completed_on', 'Completed On', 'When the project was marked inactive'),
+        ].join(''));
 
         completed_projects.forEach(p => {
             // The status word in a kit chip: finished and paid is good, the rest neutral.
             const status_tone = p.status === 'Completed' || p.status === 'Paid' ? 'good' : 'neutral';
 
             table.find('tbody').append(`
-                <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
-                    <td class="dashcol dashcol-status" style="min-width: 120px;">${sf.chip(p.status, status_tone)}</td>
-                    <td class="dashcol dashcol-project_type" style="min-width: 150px;">${sf.esc(p.project_type || "Uncategorized")}</td>
-                    <td class="dashcol dashcol-project_user text-muted" style="min-width: 150px;">${sf.esc(p.project_user || "Unassigned")}</td>
-                    <td class="dashcol dashcol-completed_on" style="min-width: 130px;">${p.completed_on ? frappe.datetime.str_to_user(p.completed_on) : '<span class="text-muted">—</span>'}</td>
+                <tr class="pd-row">
+                    ${name_cells(p)}
+                    <td class="dashcol dashcol-status">${sf.chip(p.status, status_tone)}</td>
+                    <td class="dashcol dashcol-project_type">${type_chip(p)}</td>
+                    <td class="dashcol dashcol-project_user pd-muted">${sf.esc(p.project_user || "Unassigned")}</td>
+                    <td class="dashcol dashcol-completed_on">${p.completed_on ? sf.esc(frappe.datetime.str_to_user(p.completed_on)) : '<span class="pd-dash">—</span>'}</td>
                 </tr>
             `);
         });
@@ -1497,10 +1846,10 @@
         }
     }
 
-    // Dashboard tab — a native Projects-module overview computed client-side from
+    // Summary tab — a native Projects-module overview computed client-side from
     // the already-fetched project_data (no extra server call). Number cards + CSS
     // bar breakdowns; deliberately no frappe.Chart, whose JS-injected styles don't
-    // cross into this block's shadow root.
+    // cross into this block's shadow root. Styled from the tokens like the tables.
     function build_breakdown(title, obj, full) {
         const labels = Object.keys(obj);
         const max = Math.max(1, ...labels.map(l => obj[l]));
@@ -1509,24 +1858,20 @@
             const v = obj[l];
             const pct = Math.round((v / max) * 100);
             rows += `
-                <div class="mb-2">
-                    <div class="d-flex justify-content-between" style="font-size: 0.85rem;">
+                <div class="pd-brow">
+                    <div class="pd-brow-l">
                         <span>${sf.esc(l)}</span>
-                        <span class="text-muted">${v}</span>
+                        <span>${v}</span>
                     </div>
-                    <div style="height: 8px; background: var(--control-bg, #f0f4f7); border-radius: 4px; overflow: hidden;">
-                        <div style="height: 100%; width: ${pct}%; background: var(--blue-500, #2490ef);"></div>
-                    </div>
+                    <div class="pd-brow-bar" aria-hidden="true"><i style="width: ${pct}%"></i></div>
                 </div>`;
         });
-        if (!labels.length) rows = '<div class="text-muted text-center py-3">No data</div>';
+        if (!labels.length) rows = '<div class="pd-muted">No data</div>';
         return `
-            <div class="${full ? 'col-12' : 'col-12 col-lg-6'} mb-4 px-2">
-                <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
-                    <h6 class="text-muted mb-3">${sf.esc(title)}</h6>
-                    ${rows}
-                </div>
-            </div>`;
+            <section class="pd-breakdown${full ? ' pd-breakdown-full' : ''}">
+                <h3>${sf.esc(title)}</h3>
+                ${rows}
+            </section>`;
     }
 
     function render_dashboard() {
@@ -1534,7 +1879,8 @@
         container.empty();
 
         const today = frappe.datetime.get_today();
-        const active = project_data.filter(p => p.is_active === "Yes");
+        // active_pool(), so Active Projects and Overdue agree with the tiles.
+        const active = active_pool();
         const total_active = active.length;
 
         let overdue = 0, pct_sum = 0, open_tasks = 0;
@@ -1559,29 +1905,29 @@
         const completed = project_data.filter(p => p.is_active === "No").length;
         const masters = new Set(project_data.map(p => p.custom_master_project).filter(Boolean));
 
+        // The numbers in the display face, the strong ink; only Overdue is coloured, in
+        // the danger red, and it carries its word.
         const cards = [
-            { label: "Active Projects", value: total_active, color: "var(--blue-500, #2490ef)" },
-            { label: "Overdue", value: overdue, color: "var(--sf-danger)" },
-            { label: "Avg % Complete", value: avg_complete + "%", color: "var(--green-500, #28a745)" },
-            { label: "Open Tasks", value: open_tasks, color: "var(--orange-500, #f5a623)" },
-            { label: "Master Projects", value: masters.size, color: "var(--purple-500, #7574d6)" },
-            { label: "Completed", value: completed, color: "var(--gray-600, #6c757d)" }
+            { label: "Active Projects", value: total_active },
+            { label: "Overdue", value: overdue, bad: true },
+            { label: "Avg % Complete", value: avg_complete + "%" },
+            { label: "Open Tasks", value: open_tasks },
+            { label: "Master Projects", value: masters.size },
+            { label: "Completed", value: completed }
         ];
 
-        let cardRow = $('<div class="row m-0 mb-2"></div>');
+        let cardRow = $('<div class="pd-cards"></div>');
         cards.forEach(c => {
             cardRow.append(`
-                <div class="col-6 col-md-4 col-lg-2 mb-3 px-2">
-                    <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
-                        <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #6c757d);">${sf.esc(c.label)}</div>
-                        <div style="font-size: 1.7rem; font-weight: 700; line-height: 1.3; color: ${c.color};">${c.value}</div>
-                    </div>
-                </div>
+                <section class="pd-card">
+                    <div class="pd-card-l">${sf.esc(c.label)}</div>
+                    <div class="pd-card-n${c.bad ? ' pd-card-n-bad' : ''}">${sf.esc(c.value)}</div>
+                </section>
             `);
         });
         container.append(cardRow);
 
-        let chartRow = $('<div class="row m-0"></div>');
+        let chartRow = $('<div class="pd-breakdowns"></div>');
         chartRow.append(build_breakdown("Active Projects by Status", by_status, false));
         chartRow.append(build_breakdown("Active Projects by Type", by_type, false));
         chartRow.append(build_breakdown("Active Projects by Completion", buckets, true));
@@ -1592,10 +1938,19 @@
         }
     }
 
+    // Which controls belong to the tab on screen: the band's search box and the stream
+    // filter row are for the list tabs (the filter row for Priority Overview only); the
+    // Gantt has its own toolbar.
+    function show_tab_controls() {
+        const on_gantt = current_tab === "portfolio-gantt";
+        $root.find('#gantt-controls').toggle(on_gantt);
+        $root.find('#standard-controls').toggle(!on_gantt);
+        $root.find('#overview-controls').toggle(current_tab === "priority-overview");
+    }
+
     function render_current_tab() {
+        show_tab_controls();
         if (current_tab === "portfolio-gantt") {
-            $root.find('#gantt-controls').show();
-            $root.find('#standard-controls').hide();
             fetch_and_render_portfolio_gantt();
         } else {
             // Leaving the Gantt tab: the renderers below empty
@@ -1605,9 +1960,14 @@
                 portfolio_gantt_widget.destroy();
                 portfolio_gantt_widget = null;
             }
-            $root.find('#gantt-controls').hide();
-            $root.find('#standard-controls').show();
-            
+
+            // Nothing has loaded (still loading, no access, or a failed read): the panel
+            // stands, with its Try again, until a fetch answers with rows.
+            if (!loaded) {
+                show_panel(panel.kind, panel.opts);
+                return;
+            }
+
             if (current_tab === "priority-overview") render_priority_overview();
             else if (current_tab === "active-internal-projects") render_active_internal();
             else if (current_tab === "completed-projects") render_completed_projects();
@@ -1617,77 +1977,68 @@
         }
     }
 
+    // The text a person sees in a row. A rank or status select carries every option, so
+    // row.text() matched "Maintenance", "Not Assigned" or any digit on every row; here a
+    // select counts as its chosen option only.
+    function row_search_text(row) {
+        const copy = row.clone();
+        copy.find('select').each(function() {
+            $(this).replaceWith($('<span></span>').text($(this).find('option:selected').text()));
+        });
+        return copy.text().toLowerCase();
+    }
+
+    // The band's search narrows the rows of the list tab on screen by their text. A group
+    // header row stays while any row under it is showing, and goes when none is.
     function apply_search_filter() {
-        let search_term = $root.find('#global-project-search').val().toLowerCase();
+        let search_term = $root.find('#global-project-search').val();
+        search_term = (search_term || "").toLowerCase();
         let rows = $root.find('#dashboard-content table tbody tr');
 
+        let group = null;
+        let group_has_rows = false;
+        const close_group = () => { if (group) group.toggle(group_has_rows); };
         rows.each(function() {
             let row = $(this);
-            let row_text = row.text().toLowerCase();
-            
-            if (row_text.indexOf(search_term) !== -1) row.show();
-            else row.hide();
+            if (row.hasClass('pd-group')) {
+                close_group();
+                group = row;
+                group_has_rows = false;
+                return;
+            }
+            const shown = row_search_text(row).indexOf(search_term) !== -1;
+            row.toggle(shown);
+            if (shown) group_has_rows = true;
         });
+        close_group();
     }
 
     $root.find('#global-project-search').on('input', function() {
         apply_search_filter();
     });
 
-    $root.find('.nav-link').click(function(e) {
+    $root.find('.pd-tab').on('click', function(e) {
         e.preventDefault();
-        show_tab($(this).data('route'));
+        show_tab($(this).attr('data-route'));
     });
 
-    // ----- VIEW MORE -----
+    // ----- TABS -----
     //
-    // Active Internal Projects, Completed Projects and the Summary are tabs that stay out of
-    // the bar until "View More" is pressed; pressing it again hides them. The choice is kept
-    // per browser with the rest of this block's saved view (localStorage, like the Gantt's
-    // filters), never in frappe user_settings, which sit in Redis only. If a hidden tab is
-    // the one on screen when it is collapsed, the block falls back to Priority Overview.
-    const MORE_TABS = ["active-internal-projects", "completed-projects", "summary"];
-    const VIEW_MORE_KEY = "chb_projects_dashboard_more_v1";
-
-    function load_view_more() {
-        try {
-            return localStorage.getItem(VIEW_MORE_KEY) === "1";
-        } catch (e) {
-            return false;
-        }
-    }
-
-    function save_view_more(open) {
-        try {
-            localStorage.setItem(VIEW_MORE_KEY, open ? "1" : "0");
-        } catch (e) {
-            // storage disabled/full — the choice just won't persist
-        }
-    }
-
+    // Five tabs, always in the bar. The one chosen is kept per browser (TAB_KEY), so the
+    // dashboard opens where it was left.
     function show_tab(route) {
-        $root.find('.nav-link').removeClass('active');
-        $root.find(`.nav-link[data-route="${route}"]`).addClass('active');
+        if (!TAB_ROUTES.includes(route)) route = "priority-overview";
+        $root.find('.pd-tab').removeClass('active').attr('aria-pressed', 'false');
+        $root.find(`.pd-tab[data-route="${route}"]`).addClass('active').attr('aria-pressed', 'true');
         current_tab = route;
-        const on_gantt = route === "portfolio-gantt";
-        $root.find('#gantt-controls').toggle(on_gantt);
-        $root.find('#standard-controls').toggle(!on_gantt);
+        write_saved(TAB_KEY, route);
         render_current_tab();
     }
 
-    function set_view_more(open, persist) {
-        const $btn = $root.find('#btn-view-more');
-        $root.find('.pg-more-tab').prop('hidden', !open);
-        $btn.attr('aria-expanded', open ? 'true' : 'false').text(open ? __("View Less") : __("View More"));
-        if (persist) save_view_more(open);
-        // collapsing while a hidden tab is showing would strand the user on a tab with no tab
-        if (!open && MORE_TABS.includes(current_tab)) show_tab("priority-overview");
-    }
-
-    $root.find('#btn-view-more').on('click', function() {
-        set_view_more($(this).attr('aria-expanded') !== 'true', true);
-    });
-    set_view_more(load_view_more(), false);
+    // Mark the remembered tab in the bar before the first fetch draws it.
+    $root.find('.pd-tab').removeClass('active').attr('aria-pressed', 'false');
+    $root.find(`.pd-tab[data-route="${current_tab}"]`).addClass('active').attr('aria-pressed', 'true');
+    show_tab_controls();
 
     // ----- HEADER ACTIONS: one "+" button -----
     //
