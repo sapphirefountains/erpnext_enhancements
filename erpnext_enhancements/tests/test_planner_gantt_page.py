@@ -16,7 +16,7 @@ quietly:
 * **The hooks into the class are one line each**, so P7 (which merges after this) and the other
   parallel PRs editing ``project_planner.js`` meet this block only at those lines.
 * **A project is a screen**: ``/gantt/<project>`` is a route, so Back and Forward step through the
-  projects opened, and the Project form's "Open in Project Planner" lands on it.
+  projects opened, and the Project form's "Open in Planner" lands on it.
 
 Bench-free: reads files and runs node, no ``frappe`` stub.
 
