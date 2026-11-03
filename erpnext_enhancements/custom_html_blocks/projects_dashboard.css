@@ -1,47 +1,145 @@
 /*
  * Projects Dashboard — styles for the "Projects Dashboard" Custom HTML Block.
  *
- * Exported source of a Frappe Custom HTML Block (authored/stored in the Frappe UI);
- * this repo copy is the source of truth / backup — edit here, paste back into the
- * UI to deploy. Pairs with projects_dashboard.html (shell) + projects_dashboard.js.
+ * Exported source of a Frappe Custom HTML Block; this repo copy is the source of
+ * truth (setup/custom_html_blocks.py upserts it on migrate). Pairs with
+ * projects_dashboard.html (shell) + projects_dashboard.js.
  *
- * Covers: the tab bar, priority badges, inline-editable cells,
- * sortable table headers, the column-selector dropdown, and the level styling for
- * the Portfolio Gantt tab (rendered by the embeddable Gantt widget — DHTMLX — via
+ * Mock B (v1.781.0): the navy head band with its tiles, the five tabs, the stream
+ * chips, and ONE table style for every list tab (13px Lato, 11px uppercase headers,
+ * 40px rows, hover tint, --sf-rule hairlines); rank pills, completion bars, the
+ * "Past due" pill, the inline-editable cells, the sortable headers, the column
+ * selector menu, the Summary cards, and the level styling for the Portfolio Gantt
+ * tab (rendered by the embeddable Gantt widget — DHTMLX — via
  * erpnext_enhancements.gantt.mount; the widget lazy-loads its own skin CSS).
  *
- * THEME: all chrome colours (tabs, tables, toolbar, dropdowns, legend) use
- * Frappe desk variables so the block tracks the active theme automatically —
- * Frappe Light (data-theme="light") and Timeless Night (data-theme="dark").
- * Like the widget itself, the Gantt CANVAS stays on the light DHTMLX skin in
- * both themes, so anything drawn on it — `.pg-widget-host .gantt_*` bar fills,
- * grid rows and grid text — uses LITERAL light-safe colours, never desk
- * variables that flip under Timeless Night (a var(--control-bg) grid row goes
- * dark and clashes with the skin's dark grid text). Chrome = desk vars;
- * canvas = literals.
+ * THEME: all chrome reads the app design tokens (--sf-*, public/css/sf_tokens.bundle.css,
+ * docs/app-design-system.md). They are custom properties, so they cross the shadow
+ * boundary and flip with the Desk's data-theme on <html>: light and dark need no rule
+ * of their own here. Two places lean on a token that happens to flip the right way,
+ * and say so where they do: the company-rank pill and the pressed stream chip
+ * (--sf-chip-edge-neutral is deep-sea-blue in light and sky-200 in dark; --sf-bg is
+ * off-white in light and navy-900 in dark, so one pair draws the pill in both).
+ * The band is navy in both themes and its search field stays white (--sf-field-bg).
+ * Structure is square (--sf-radius-none), controls round (--sf-radius-control),
+ * pills are pills (--sf-radius-pill); the brand has no drop shadows.
+ *
+ * Like the widget itself, the Gantt CANVAS stays on the light DHTMLX skin in both
+ * themes, so anything drawn on it — `.pg-widget-host .gantt_*` bar fills, grid rows
+ * and grid text — uses LITERAL light-safe colours, never variables that flip under
+ * the dark theme (a var(--control-bg) grid row goes dark and clashes with the skin's
+ * dark grid text). Chrome = tokens; canvas = literals.
  */
 .project-dashboard-container {
-    background: var(--card-bg);
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+    line-height: var(--sf-leading-body);
+    color: var(--sf-text);
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
 }
-
-.dashboard-tabs .nav-link { font-weight: 600; color: var(--text-muted); }
-.dashboard-tabs .nav-link.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
-
-/* "View More": the extra tabs stay out of the bar until it is pressed. The
-   attribute alone is not enough, a later display rule would win, so say it. */
-.dashboard-tabs [hidden],
+.pd [hidden],
 .pg-new-menu [hidden] { display: none !important; }
-.pg-view-more-item { margin-left: auto; display: flex; align-items: center; }
-.pg-view-more { font-weight: 600; color: var(--text-muted); text-decoration: none; }
-.pg-view-more:hover, .pg-view-more:focus { color: var(--text-color); text-decoration: none; }
-.pg-view-more::after { content: " \25BE"; }
-.pg-view-more[aria-expanded="true"]::after { content: " \25B4"; }
+.pd-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- head band ------------------------------------------------------------- */
+.pd-band {
+    background: var(--sf-band);
+    color: var(--sf-on-band);
+    padding: var(--sf-space-20);
+}
+.pd-band-row { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sf-space-15); flex-wrap: wrap; }
+.pd-band-title { display: flex; flex-direction: column; gap: var(--sf-space-5); min-width: 0; }
+.pd-eyebrow { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.06em; color: var(--sf-on-band-muted); }
+/* The display face sets the title only; its leading is 1 and it takes no letter-spacing. */
+.pd-title {
+    margin: 0;
+    font-family: var(--sf-font-display);
+    font-weight: var(--sf-weight-bold);
+    font-size: var(--sf-display-lg);
+    line-height: var(--sf-leading-display);
+    letter-spacing: 0;
+    color: var(--sf-on-band);
+}
+.pd-band-actions { display: flex; align-items: center; gap: var(--sf-space-10); flex-wrap: wrap; }
+
+/* The search field: white in both themes (fields stay white), rounded like a control. */
+.pd-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    min-width: 240px;
+    margin: 0;
+    padding: 0 12px;
+    border: var(--sf-border-hairline) solid var(--sf-on-band-muted);
+    border-radius: var(--sf-radius-control);
+    background: var(--sf-field-bg);
+    color: var(--sf-field-text);
+    font-weight: var(--sf-weight-regular);
+    cursor: text;
+}
+.pd-search:focus-within { outline: var(--sf-border-control) solid var(--sf-primary); outline-offset: 2px; }
+.pd-search svg { flex: 0 0 auto; }
+.pd-search input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    padding: 0;
+    background: transparent;
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-input);   /* 16px: iOS zooms into anything smaller */
+    color: var(--sf-field-text);
+}
+.pd-search input::placeholder { color: var(--sf-field-text); opacity: 0.6; }
+.pd-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+.pd-refresh-wrap { display: inline-flex; align-items: center; gap: var(--sf-space-5); }
+.pd-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: var(--sf-border-control) solid var(--sf-on-band-muted);
+    border-radius: var(--sf-radius-control);
+    background: transparent;
+    color: var(--sf-on-band);
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease);
+}
+.pd-icon-btn:hover { background: color-mix(in srgb, var(--sf-on-band) 12%, transparent); color: var(--sf-on-band); }
+.pd-icon-btn:focus-visible { outline: var(--sf-border-control) solid var(--sf-primary); outline-offset: 2px; }
+.pd-icon-btn:disabled { opacity: 0.5; cursor: progress; }
+.pd-updated { font-size: var(--sf-text-xs); color: var(--sf-on-band-muted); white-space: nowrap; }
+.pd-updated:empty { display: none; }
+
+.pd-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    padding: 0 var(--sf-space-15);
+    border: var(--sf-border-control) solid transparent;
+    border-radius: var(--sf-radius-control);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+    font-weight: var(--sf-weight-bold);
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease);
+}
+.pd-btn-primary { background: var(--sf-primary); border-color: var(--sf-primary); color: var(--sf-on-primary); }
+.pd-btn-primary:hover, .pd-btn-primary:focus { color: var(--sf-on-primary); }
+.pd-btn-primary:hover { background: color-mix(in srgb, var(--sf-primary) 85%, var(--sf-text-strong)); border-color: color-mix(in srgb, var(--sf-primary) 85%, var(--sf-text-strong)); }
+.pd-btn:focus-visible { outline: var(--sf-border-control) solid var(--sf-primary); outline-offset: 2px; }
 
 /* The one "+" button: New Project / New Master Project. */
 .pg-new-menu { position: relative; display: inline-block; }
-.pg-new-toggle { min-width: 32px; font-size: 18px; line-height: 1; font-weight: 600; padding-top: 3px; padding-bottom: 5px; }
+.pg-new-toggle { width: 36px; min-width: 36px; padding: 0; font-size: 22px; }
 .pg-new-list {
     position: absolute;
     right: 0;
@@ -50,10 +148,10 @@
     min-width: 190px;
     padding: 6px 0;
     text-align: left;
-    background: var(--popover-bg, var(--card-bg));
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    color: var(--sf-text);
 }
 .pg-new-item {
     display: block;
@@ -61,34 +159,316 @@
     padding: 8px 14px;
     border: 0;
     background: transparent;
-    color: var(--text-color);
+    color: var(--sf-text);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
     text-align: left;
     white-space: nowrap;
     cursor: pointer;
 }
-.pg-new-item:hover, .pg-new-item:focus { background-color: var(--fg-hover-color); outline: none; }
+.pg-new-item:hover, .pg-new-item:focus { background: color-mix(in srgb, var(--sf-text) 8%, transparent); color: var(--sf-text); outline: none; }
 
-/* Status Badges — saturated brand colours read on both themes; text colour is
-   chosen for contrast against each fill. Success, danger and warning are the
-   app's --sf-* status fills with their own label colours; the rest stay literal. */
-.badge-primary { background-color: #007bff; color: #fff; }
-.badge-success { background-color: var(--sf-good); color: var(--sf-on-good); }
-.badge-danger { background-color: var(--sf-danger); color: var(--sf-on-danger); }
-.badge-warning { background-color: var(--sf-warn); color: var(--sf-on-warn); }
-.badge-info { background-color: #17a2b8; color: #fff; }
-.badge-secondary { background-color: #6c757d; color: #fff; }
+/* Live tiles: four buttons on the band. The pressed one is the Priority Overview's filter. */
+.pd-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sf-space-10); margin-top: var(--sf-space-20); }
+.pd-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: var(--sf-space-10) var(--sf-space-15);
+    border: var(--sf-border-hairline) solid var(--sf-bahama-blue);   /* the band's own palette */
+    border-radius: var(--sf-radius-none);
+    background: transparent;
+    color: var(--sf-on-band);
+    font-family: var(--sf-font-sans);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease), border-color var(--sf-duration) var(--sf-ease);
+}
+.pd-tile:hover { background: color-mix(in srgb, var(--sf-on-band) 8%, transparent); }
+.pd-tile[aria-pressed="true"] { background: color-mix(in srgb, var(--sf-on-band) 14%, transparent); border-color: var(--sf-primary); }
+.pd-tile:focus-visible { outline: var(--sf-border-control) solid var(--sf-primary); outline-offset: 2px; }
+.pd-tile-n { font-family: var(--sf-font-display); font-size: var(--sf-display-md); line-height: 1; color: var(--sf-on-band); }
+/* The warn yellow as text, only here: on the navy band it is 9.5:1 (it is never text on white). */
+.pd-tile-n-bad { color: var(--sf-warn); }
+.pd-tile-l { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sf-on-band-muted); }
 
-/* Editable Cells & Hover Effects */
-.editable-cell { position: relative; min-width: 140px; transition: background-color 0.2s; }
-.editable-cell:hover { background-color: var(--fg-hover-color); }
-.editable-cell .static-view { padding: 4px; display: block; }
+/* ---- tabs ------------------------------------------------------------------ */
+.pd-tabs { display: flex; gap: 4px; padding: 0 var(--sf-space-20); border-bottom: var(--sf-border-hairline) solid var(--sf-rule); overflow-x: auto; }
+.pd-tab {
+    appearance: none;
+    margin-bottom: -1px;
+    padding: 12px 14px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.02em;
+    color: var(--sf-text-muted);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.pd-tab:hover { color: var(--sf-text-strong); }
+.pd-tab.active { color: var(--sf-text-strong); border-bottom-color: var(--sf-primary); }
+.pd-tab:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: -2px; }
 
-/* Clickable Table Headers */
-.sortable-header { cursor: pointer; user-select: none; transition: background-color 0.2s; }
-.sortable-header:hover { background-color: var(--fg-hover-color) !important; }
-.sortable-header.active-sort { background-color: var(--control-bg) !important; color: var(--primary); }
-.sortable-header.active-sort.sort-asc::after { content: " \f0de"; font-family: "FontAwesome"; margin-left: 6px; }
-.sortable-header.active-sort.sort-desc::after { content: " \f0dd"; font-family: "FontAwesome"; margin-left: 6px; }
+/* ---- controls under the tabs ----------------------------------------------- */
+.pd-controls { padding: var(--sf-space-10) var(--sf-space-20) 0; }
+.pd-filters { display: flex; align-items: center; gap: var(--sf-space-10); flex-wrap: wrap; padding: var(--sf-space-5) 0 var(--sf-space-10); }
+.pd-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pd-fchip {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    border-radius: var(--sf-radius-pill);
+    background: transparent;
+    color: var(--sf-text-strong);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-xs);
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease), color var(--sf-duration) var(--sf-ease);
+}
+.pd-fchip b { font-weight: var(--sf-weight-regular); color: var(--sf-text-muted); }
+.pd-fchip b:empty { display: none; }
+.pd-fchip:hover { background: color-mix(in srgb, var(--sf-text) 8%, transparent); }
+.pd-fchip:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+/* Pressed: the navy pill in light, sky-200 in dark (the themed neutral edge), text in the
+   page colour, which is off-white in light and navy-900 in dark. */
+.pd-fchip[aria-pressed="true"] { background: var(--sf-chip-edge-neutral); border-color: var(--sf-chip-edge-neutral); color: var(--sf-bg); }
+.pd-fchip[aria-pressed="true"] b { color: inherit; opacity: 0.8; }
+.pd-chips + .pd-check { margin-left: auto; }
+.pd-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: var(--sf-text-xs);
+    font-weight: var(--sf-weight-regular);
+    color: var(--sf-text-muted);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.pd-check input { margin: 0; width: 14px; height: 14px; accent-color: var(--sf-primary); }
+.pd-check:hover { color: var(--sf-text); }
+
+.pd-content { padding: var(--sf-space-15) var(--sf-space-20) var(--sf-space-20); }
+
+/* ---- the one table ----------------------------------------------------------
+   Every list tab draws this: 13px Lato, 11px uppercase headers in the muted ink,
+   40px rows, a hover tint, --sf-rule hairlines; no Bootstrap .table-bordered. */
+.pd-table-wrap { overflow-x: auto; border: var(--sf-border-hairline) solid var(--sf-rule); background: var(--sf-surface); margin-bottom: var(--sf-space-15); }
+.pd-table { width: 100%; margin: 0; border-collapse: collapse; font-family: var(--sf-font-sans); font-size: var(--sf-text-sm); color: var(--sf-text); background: transparent; }
+.pd-table th {
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--sf-text-muted) 10%, var(--sf-surface));
+    border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+    text-align: left;
+    font-size: 11px;
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sf-text-muted);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.pd-table td { height: 40px; padding: 8px 12px; border-bottom: var(--sf-border-hairline) solid var(--sf-rule); vertical-align: middle; }
+.pd-table tbody tr:last-child td { border-bottom: 0; }
+.pd-table tbody tr.pd-row:hover td { background: color-mix(in srgb, var(--sf-text) 6%, transparent); }
+.pd-table a { color: var(--sf-link); text-decoration: none; }
+.pd-table a:hover, .pd-table a:focus { color: var(--sf-link); text-decoration: underline; }
+.pd-table a:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.pd-pname { font-weight: var(--sf-weight-bold); }
+.pd-pid { font-size: var(--sf-text-xs); color: var(--sf-text-muted); white-space: nowrap; }
+.pd-table td.pd-pid a { color: var(--sf-text-muted); }
+.pd-muted { color: var(--sf-text-muted); }
+.pd-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pd-dash { color: var(--sf-text-muted); }
+
+/* Group header rows (Group by stream; the Internal tab's master projects): one table, a
+   heading row with the pillar's edge colour down its left side. */
+.pd-table tr.pd-group td {
+    height: auto;
+    padding: 7px 12px;
+    background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+    border-left: 4px solid var(--pd-group-color, var(--sf-chip-edge-neutral));
+    font-size: 11px;
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sf-text-strong);
+}
+.pd-table tr.pd-group td span { margin-left: 10px; font-weight: var(--sf-weight-regular); letter-spacing: 0; text-transform: none; color: var(--sf-text-muted); }
+
+/* Rank pills: the company rank filled (deep-sea-blue with off-white in light; sky-200 with
+   navy-900 in dark, through the two tokens that flip exactly that way), the stream rank an
+   outline; the named values (Maintenance, Repair Visit, Not Assigned) muted text. */
+.pd-rank {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: var(--sf-radius-pill);
+    background: var(--sf-chip-edge-neutral);
+    color: var(--sf-bg);
+    font-size: var(--sf-text-xs);
+    font-weight: var(--sf-weight-bold);
+    line-height: 1;
+}
+.pd-rank-outline { background: transparent; border: var(--sf-border-hairline) solid var(--sf-field-border); color: var(--sf-text-strong); }
+.pd-named { font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
+
+/* Completion: a bar on the rule colour, filled in the primary, then the number. */
+.pd-prog { display: flex; align-items: center; gap: 8px; }
+.pd-bar { flex: 1 1 60px; max-width: 110px; height: 8px; border-radius: var(--sf-radius-pill); background: var(--sf-rule); overflow: hidden; }
+.pd-bar i { display: block; height: 100%; background: var(--sf-primary); }
+.pd-pct { min-width: 34px; font-weight: var(--sf-weight-bold); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Expected end, with the Past due pill when it has gone by and the work is not done. */
+.pd-due { white-space: nowrap; }
+.pd-late {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: var(--sf-radius-pill);
+    background: var(--sf-danger);
+    color: var(--sf-on-danger);
+    font-size: 10px;
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+/* Editable cells: click the rank to change it; the select takes the cell's place. */
+.editable-cell, .editable-priority { position: relative; }
+.editable-priority .static-view { display: block; padding: 2px 0; cursor: pointer; }
+.editable-priority:hover .static-view { background: color-mix(in srgb, var(--sf-text) 6%, transparent); }
+.pd-select, .edit-view {
+    display: block;
+    width: 100%;
+    max-width: 180px;
+    height: 28px;
+    padding: 0 8px;
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    border-radius: var(--sf-radius-none);
+    background: var(--sf-field-bg);
+    color: var(--sf-field-text);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+}
+.pd-select:focus, .edit-view:focus { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 1px; }
+
+/* Sortable headers: the sorted column reads in the strong ink with a plain arrow. */
+.sortable-header { cursor: pointer; user-select: none; }
+.sortable-header:hover { color: var(--sf-text-strong); }
+.sortable-header.active-sort { color: var(--sf-text-strong); }
+.sortable-header.active-sort.sort-asc::after { content: " ▴"; }
+.sortable-header.active-sort.sort-desc::after { content: " ▾"; }
+
+/* Resizable tables — fixed layout makes the per-column widths the drag handles set
+   authoritative (content no longer stretches a column); the wrapper scrolls horizontally
+   when the columns outgrow it. */
+.dashboard-resizable-table { table-layout: fixed; width: 100%; }
+.dashboard-resizable-table th { position: relative; }
+.dashboard-resizable-table th,
+.dashboard-resizable-table td { overflow: hidden; text-overflow: ellipsis; }
+/* Project Name may wrap to two lines; don't let a max-width cap the column the user widened. */
+.dashboard-resizable-table td.project-name-cell { max-width: none; white-space: normal; }
+.dashboard-resizable-table tr.pd-group td { overflow: visible; white-space: nowrap; }
+
+/* Column resize handle (also injected into <head> by ColumnResizer; duplicated here so the
+   block styles it even where the injected sheet is unavailable). */
+.ee-col-resize-handle { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; z-index: 5; touch-action: none; }
+.ee-col-resize-handle::after { content: ""; position: absolute; top: 15%; right: 2px; width: 2px; height: 70%; border-radius: 2px; background: var(--sf-rule); opacity: 0; transition: opacity var(--sf-duration) var(--sf-ease); }
+.ee-col-resize-handle:hover::after { opacity: 1; background: var(--sf-primary); }
+body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; user-select: none !important; }
+
+/* Column selector (the three-dot icon button and its menu). The selector injects its own
+   styles into the page <head>, which this shadow root never sees, so they live here. */
+.dashboard-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: var(--sf-space-10); }
+.dashboard-column-selector { position: relative; display: inline-block; }
+.column-selector-toggle {
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    border-radius: var(--sf-radius-control);
+    background: transparent;
+    color: var(--sf-text);
+    font-family: var(--sf-font-sans);
+    cursor: pointer;
+}
+.column-selector-toggle:hover, .column-selector-toggle:focus { background: color-mix(in srgb, var(--sf-text) 8%, transparent); color: var(--sf-text); }
+.column-selector-toggle:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.column-selector-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 1050;
+    min-width: 180px;
+    padding: 6px 0;
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    color: var(--sf-text);
+}
+.column-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    margin: 0;
+    font-weight: var(--sf-weight-regular);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.column-selector-item:hover { background: color-mix(in srgb, var(--sf-text) 8%, transparent); }
+.column-selector-item input { margin: 0; accent-color: var(--sf-primary); }
+.column-selector-divider { height: 1px; margin: 6px 0; background: var(--sf-rule); }
+.column-selector-action {
+    display: block;
+    width: 100%;
+    padding: 6px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--sf-text);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.column-selector-action:hover, .column-selector-action:focus { background: color-mix(in srgb, var(--sf-text) 8%, transparent); outline: none; }
+/* The Columns button as an icon: a square, the three dots drawn in currentColor. */
+.column-selector-toggle.column-selector-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 32px; padding: 0; }
+.column-selector-toggle.column-selector-icon svg { display: block; width: 16px; height: 16px; }
+.hidden-column { display: none !important; }
+
+/* ---- Summary tab: number cards and bar breakdowns, computed client-side ---- */
+.pd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sf-space-10); margin-bottom: var(--sf-space-15); }
+.pd-card { padding: var(--sf-space-15); border: var(--sf-border-hairline) solid var(--sf-rule); border-radius: var(--sf-radius-none); background: var(--sf-surface); }
+.pd-card-l { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sf-text-muted); }
+.pd-card-n { margin-top: var(--sf-space-5); font-family: var(--sf-font-display); font-size: var(--sf-display-md); line-height: 1; color: var(--sf-text-strong); }
+.pd-card-n-bad { color: var(--sf-danger); }
+.pd-breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sf-space-10); }
+.pd-breakdown { padding: var(--sf-space-15); border: var(--sf-border-hairline) solid var(--sf-rule); background: var(--sf-surface); }
+.pd-breakdown-full { grid-column: 1 / -1; }
+.pd-breakdown h3 { margin: 0 0 var(--sf-space-10); font-family: var(--sf-font-sans); font-size: var(--sf-text-md); font-weight: var(--sf-weight-bold); color: var(--sf-heading); }
+.pd-brow { margin-bottom: 8px; }
+.pd-brow-l { display: flex; justify-content: space-between; gap: var(--sf-space-10); font-size: var(--sf-text-xs); }
+.pd-brow-l span:last-child { color: var(--sf-text-muted); }
+.pd-brow-bar { height: 8px; border-radius: var(--sf-radius-pill); background: var(--sf-rule); overflow: hidden; }
+.pd-brow-bar i { display: block; height: 100%; background: var(--sf-primary); }
+.dashboard-empty-state { padding: var(--sf-space-10) 0; }
 
 
 /* ========================================================================= */
@@ -157,17 +537,18 @@
     width: 100%;
 }
 .pg-toolbar + .pg-toolbar { margin-top: 8px; }
-.pg-toolbar-view { padding-top: 8px; border-top: 1px solid var(--border-color); }
+.pg-toolbar-view { padding-top: 8px; border-top: var(--sf-border-hairline) solid var(--sf-rule); }
+#gantt-controls { padding-bottom: var(--sf-space-10); }
 .pg-toolbar-search { flex: 1 1 220px; max-width: 320px; min-width: 180px; }
 .pg-toolbar .custom-dropdown-toggle { font-weight: 600; text-align: left; min-width: 120px; }
 .pg-toolbar .pg-date-window { width: auto; min-width: 120px; }
 .pg-inline-check { align-items: center; white-space: nowrap; }
-.pg-toolbar .dropdown-menu { min-width: 220px; margin-top: 4px; }
+.pg-toolbar .dropdown-menu { min-width: 220px; margin-top: 4px; background: var(--sf-surface); border: var(--sf-border-hairline) solid var(--sf-rule); border-radius: var(--sf-radius-none); color: var(--sf-text); }
 .pg-menu-scroll { max-height: 320px; overflow-y: auto; }
 #gantt-project-menu { max-height: 360px; overflow-y: auto; }
 
 /* --- colour key --- */
-.pg-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-muted); margin-left: auto; }
+.pg-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--sf-text-muted); margin-left: auto; }
 .pg-legend-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .pg-legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .pg-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
@@ -201,7 +582,7 @@
     min-width: 0;
     overflow-wrap: anywhere;   /* long customer names wrap inside the menu */
 }
-.pg-check:hover { color: var(--text-color); }
+.pg-check:hover { color: var(--sf-text); }
 
 /* the loading stand-in that gives an unexpanded project its caret.
    LITERAL muted grey — grid text on the always-light canvas; var(--text-muted)
@@ -210,10 +591,19 @@
 .pg-widget-host .gantt_row.pg-placeholder .gantt_tree_content { font-style: italic; color: #8d99a6; }
 
 /* ---- small screens -------------------------------------------------------
-   The toolbar controls go full-width so they stack cleanly instead of
-   half-wrapping, the legend drops below them, and the chart gets more of
-   the viewport (the grid narrows itself in JS via gantt_grid_width). */
+   The band stacks, the tiles go two across, the toolbar controls go
+   full-width so they stack cleanly instead of half-wrapping, the legend
+   drops below them, and the chart gets more of the viewport (the grid
+   narrows itself in JS via gantt_grid_width). */
 @media (max-width: 767px) {
+    .pd-band { padding: var(--sf-space-15); }
+    .pd-title { font-size: var(--sf-display-md); }
+    .pd-band-actions { width: 100%; }
+    .pd-search { flex: 1 1 100%; min-width: 0; }
+    .pd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pd-tabs, .pd-controls { padding-left: var(--sf-space-10); padding-right: var(--sf-space-10); }
+    .pd-content { padding: var(--sf-space-10); }
+    .pd-chips + .pd-check { margin-left: 0; }
     .pg-toolbar-search { flex: 1 1 100%; max-width: none; }
     .pg-toolbar > .dropdown,
     .pg-toolbar > .dropdown > .custom-dropdown-toggle,
@@ -222,7 +612,7 @@
     .pg-toolbar .view-mode-group { width: 100%; display: flex; }
     .pg-toolbar .view-mode-group .btn { flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
     .pg-legend { margin-left: 0; width: 100%; gap: 10px; }
-    /* the + sits at the left edge here (the actions cell is only right-aligned from md up) */
+    /* the + sits at the left edge here when the actions wrap */
     .pg-new-list { left: 0; right: auto; }
     .pg-widget-host { height: 60vh; min-height: 320px; }
     /* touch targets */
@@ -230,66 +620,7 @@
     .pg-check input[type="checkbox"] { width: 16px; height: 16px; }
 }
 
-/* Resizable dashboard tables — fixed layout makes the per-column widths the
-   drag handles set authoritative (content no longer stretches a column); the
-   parent .table-responsive scrolls horizontally when the columns outgrow it. */
-.dashboard-resizable-table { table-layout: fixed; width: 100%; }
-.dashboard-resizable-table th { position: relative; }
-.dashboard-resizable-table th,
-.dashboard-resizable-table td { overflow: hidden; text-overflow: ellipsis; }
-/* Project Name may wrap to two lines; don't let the desk's max-width cap the
-   column the user widened. */
-.dashboard-resizable-table td.project-name-cell { max-width: none; white-space: normal; }
-
-/* Column resize handle (also injected into <head> by ColumnResizer; duplicated
-   here so the block styles it even where the injected sheet is unavailable). */
-.ee-col-resize-handle { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; z-index: 5; touch-action: none; }
-.ee-col-resize-handle::after { content: ""; position: absolute; top: 15%; right: 2px; width: 2px; height: 70%; border-radius: 2px; background: var(--border-color); opacity: 0; transition: opacity 0.15s; }
-.ee-col-resize-handle:hover::after { opacity: 1; background: var(--primary); }
-body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; user-select: none !important; }
-
-/* Column Selector Dropdown */
-.dashboard-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 0.5rem; }
-.dashboard-column-selector { position: relative; display: inline-block; }
-.column-selector-menu {
-    display: none;
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    z-index: 1050;
-    background: var(--popover-bg, var(--card-bg));
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 6px 0;
-    min-width: 160px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+/* ---- Reduced motion: nothing fades. ---- */
+@media (prefers-reduced-motion: reduce) {
+    .pd-icon-btn, .pd-btn, .pd-tile, .pd-fchip, .ee-col-resize-handle::after { transition: none; }
 }
-.column-selector-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    margin: 0;
-    font-weight: normal;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.column-selector-item:hover { background-color: var(--fg-hover-color); }
-.column-selector-item input { margin: 0; }
-.column-selector-divider { height: 1px; margin: 6px 0; background: var(--border-color); }
-.column-selector-action {
-    display: block;
-    width: 100%;
-    padding: 6px 14px;
-    border: 0;
-    background: transparent;
-    color: var(--text-color);
-    text-align: left;
-    white-space: nowrap;
-    cursor: pointer;
-}
-.column-selector-action:hover, .column-selector-action:focus { background-color: var(--fg-hover-color); outline: none; }
-/* The Columns button as an icon: a square, the three dots drawn in currentColor. */
-.column-selector-toggle.column-selector-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 28px; padding: 0; }
-.column-selector-toggle.column-selector-icon svg { display: block; width: 16px; height: 16px; }
-.hidden-column { display: none !important; }
