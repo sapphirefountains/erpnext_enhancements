@@ -61,7 +61,7 @@
                 <span class="pd-tile-n pd-tile-n-bad" data-tile-count="past-due">–</span>
                 <span class="pd-tile-l">Past expected end</span>
             </button>
-            <button type="button" class="pd-tile" data-tile="due-30" aria-pressed="false" title="Expected end within the next 30 days">
+            <button type="button" class="pd-tile" data-tile="due-30" aria-pressed="false" title="Expected end within the next 30 days, finished projects included">
                 <span class="pd-tile-n" data-tile-count="due-30">–</span>
                 <span class="pd-tile-l">Due in 30 days</span>
             </button>
@@ -72,12 +72,14 @@
         </div>
     </div>
 
-    <div class="pd-tabs dashboard-tabs" role="tablist" aria-label="Projects Dashboard tabs">
-        <button type="button" class="pd-tab active" role="tab" aria-selected="true" data-route="priority-overview">Priority Overview</button>
-        <button type="button" class="pd-tab" role="tab" aria-selected="false" data-route="portfolio-gantt">Portfolio Gantt</button>
-        <button type="button" class="pd-tab" role="tab" aria-selected="false" data-route="active-internal-projects">Internal</button>
-        <button type="button" class="pd-tab" role="tab" aria-selected="false" data-route="completed-projects">Completed</button>
-        <button type="button" class="pd-tab" role="tab" aria-selected="false" data-route="summary">Summary</button>
+    <!-- A group of toggle buttons, not a WAI-ARIA tablist: a tablist promises arrow-key
+         navigation, aria-controls and a tabpanel, none of which this bar has. -->
+    <div class="pd-tabs dashboard-tabs" role="group" aria-label="Projects Dashboard tabs">
+        <button type="button" class="pd-tab active" aria-pressed="true" data-route="priority-overview">Priority Overview</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="portfolio-gantt">Portfolio Gantt</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="active-internal-projects">Internal</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="completed-projects">Completed</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="summary">Summary</button>
     </div>
 
     <div class="pd-controls dashboard-controls">

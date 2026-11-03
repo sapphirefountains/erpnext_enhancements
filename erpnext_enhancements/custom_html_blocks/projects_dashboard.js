@@ -148,10 +148,19 @@
     let tile_filter = "active";
     let last_fetch_at = null;
 
+    // Set by the first fetch that answers with rows. Until then, and after a denial or a
+    // failed read, the panel on #dashboard-content (loading; no access; the error with Try
+    // again) is the page: a tile, a chip, a box or a tab draws that panel again, never
+    // "No active projects" over it.
+    let loaded = false;
+    let panel = { kind: "loading" };
+
+    // A remembered chip must be one the bar has (a typo, or a chip a later release removed,
+    // would leave the rows narrowed with nothing pressed, not even All), as load_tab does.
     function load_overview() {
         const saved = read_saved(OVERVIEW_KEY);
         if (!saved || typeof saved !== "object") return;
-        if (typeof saved.stream === "string") overview.stream = saved.stream;
+        if ([""].concat(STREAM_CHIPS).includes(saved.stream)) overview.stream = saved.stream;
         overview.ranked_only = !!saved.ranked_only;
         overview.group = !!saved.group;
     }
@@ -286,6 +295,11 @@
     };
     let sort_state = {};
     Object.keys(DEFAULT_SORT).forEach((tab) => { sort_state[tab] = Object.assign({}, DEFAULT_SORT[tab]); });
+    // The Priority Overview's sort is `auto` while it is the page's own: the default, or what
+    // Group by stream set. A clicked header clears it, and the toggle swaps only an auto sort.
+    // Saved with the sort, so a reload keeps the distinction; a saved sort without the flag
+    // counts as the person's.
+    sort_state['priority-overview'].auto = true;
 
     function load_sort_state() {
         const saved = read_saved(SORT_KEY);
@@ -295,6 +309,7 @@
             if (!s || typeof s !== "object") return;
             if (SORTABLE_COLUMNS[tab].includes(s.col)) sort_state[tab].col = s.col;
             if (s.order === 'asc' || s.order === 'desc') sort_state[tab].order = s.order;
+            if (tab === 'priority-overview') sort_state[tab].auto = s.auto === true;
         });
     }
 
@@ -410,7 +425,10 @@
                 },
             });
         }
-        selector.render_button(toolbar, () => selector.apply(container), { icon: true, actions });
+        selector.render_button(toolbar, () => {
+            selector.apply(container);
+            fit_group_rows(container, current_tab);
+        }, { icon: true, actions });
     }
 
     // Project ID header is non-sortable; built inline to sit beside Project Name.
@@ -458,6 +476,13 @@
         return $root.find('#dashboard-content')[0];
     }
 
+    // The loading, no-access or error panel, remembered so render_current_tab can draw it
+    // again while nothing has loaded.
+    function show_panel(kind, opts) {
+        panel = { kind, opts };
+        sf.state.render(content_el(), kind, opts);
+    }
+
     // A tab with nothing to list: the kit's empty panel, under whatever the tab has
     // already drawn (its column toolbar, the Dashboard's zero cards).
     function empty_panel($container, title) {
@@ -473,7 +498,7 @@
     }
 
     async function fetch_initial_data() {
-        sf.state.render(content_el(), "loading");
+        show_panel("loading");
         init_gantt_filters();
         await fetch_data();
     }
@@ -502,6 +527,7 @@
             }
             if (projectsRes.message && !projectsRes.message.error) {
                 project_data = projectsRes.message;
+                loaded = true;
                 last_fetch_at = Date.now();
                 render_updated();
                 render_tiles();
@@ -509,16 +535,16 @@
             } else if (is_denial(projectsRes.message)) {
                 // No page role: get_project_data answers 200 with {"error": "You do not have
                 // permission ..."} rather than a 403. Asking again cannot help, so no Try again.
-                sf.state.render(content_el(), "no-access");
+                show_panel("no-access");
             } else {
                 const title = __("Could not load the projects.");
-                sf.state.render(content_el(), "error", { title, on_action: fetch_data });
+                show_panel("error", { title, on_action: fetch_data });
             }
         } catch (err) {
             if (!current()) return;
             const title = __("Could not load the projects: the request failed.");
-            if (err && err.status === 403) sf.state.render(content_el(), "no-access");
-            else sf.state.render(content_el(), "error", { title, on_action: fetch_data });
+            if (err && err.status === 403) show_panel("no-access");
+            else show_panel("error", { title, on_action: fetch_data });
         } finally {
             if (current()) $refresh.prop('disabled', false);
         }
@@ -526,8 +552,10 @@
 
     // ----- HEAD BAND: tiles, Refresh, "Updated N min ago" -----
 
-    // Every active project: the Active tile, the All chip and the Priority Overview's
-    // rows are the same set, so the three numbers agree.
+    // Every active project: is_active = Yes and status not Completed / Canceled (is_active
+    // is unreliable on its own). The page's one definition of active: the Active tile, the
+    // All chip, the Priority Overview's rows, the Internal tab and the Summary's cards all
+    // read it, so no two numbers on the page disagree.
     function active_pool() {
         return project_data.filter(p =>
             p.is_active === "Yes" &&
@@ -1437,16 +1465,29 @@
                 // Dates read best newest-first; text columns A->Z
                 state.order = sort_col === 'completed_on' ? 'desc' : 'asc';
             }
+            // The person's own choice now: the Group toggle leaves it alone.
+            state.auto = false;
             save_sort_state();
             render_current_tab();
         });
     }
 
+    // The group header rows (Group by stream; the Internal tab's master projects) span the
+    // columns on show. The Columns menu hides cells by class, and a colspan wider than the
+    // visible columns adds phantom columns, which take a share of the width under the fixed
+    // table layout. Counted from the tab's selector, and set again when a column is toggled.
+    function visible_column_count(tab) {
+        const selector = column_selectors[tab];
+        if (!selector || !Array.isArray(selector.columns) || typeof selector.is_hidden !== "function") return 1;
+        return Math.max(1, selector.columns.filter((c) => !selector.is_hidden(c.key)).length);
+    }
+    function fit_group_rows(container, tab) {
+        container.find('tr.pd-group > td').attr('colspan', String(visible_column_count(tab)));
+    }
+
     // The Priority Overview's columns. Budget replaced Spend % (v1.781.0): Spend % was
     // estimated_costing over custom_project_dollar_amount, and estimated_costing is 0 on
     // every active project on prod, so the column had only ever shown a dash.
-    const PRIORITY_COLSPAN = 8;
-
     function priority_head() {
         return [
             th('project_name', 'Project Name'),
@@ -1520,7 +1561,7 @@
             groups.forEach((g) => {
                 const ranked = g.projects.filter(is_ranked).length;
                 const note = __("{0} projects · {1} ranked", [g.projects.length, ranked]);
-                tbody.append(group_row(g.stream, note, pillar_of(g.stream), PRIORITY_COLSPAN));
+                tbody.append(group_row(g.stream, note, pillar_of(g.stream), visible_column_count('priority-overview')));
                 g.projects.forEach((p) => tbody.append(priority_row(p)));
             });
         } else {
@@ -1633,15 +1674,15 @@
 
     // Grouping orders each stream by its Value Stream Priority (the pick), so switching it
     // on moves the sort from the flat default (company rank) to the stream rank, and
-    // switching it off moves it back; any other column a person chose is left alone.
+    // switching it off moves it back — while the sort is the page's own (`auto`). A column
+    // a person clicked, Company Priority or Value Stream Priority included, is left alone,
+    // in the direction they chose; the swap itself never touches the direction either.
     $root.find('#pd-group-by-stream').on('change', function() {
         overview.group = $(this).is(':checked');
         const state = sort_state['priority-overview'];
-        if (overview.group && state.col === 'company_priority') {
-            state.col = 'project_priority'; state.order = 'asc';
-            save_sort_state();
-        } else if (!overview.group && state.col === 'project_priority') {
-            state.col = 'company_priority'; state.order = 'asc';
+        const own = overview.group ? 'project_priority' : 'company_priority';
+        if (state.auto && state.col !== own) {
+            state.col = own;
             save_sort_state();
         }
         save_overview();
@@ -1685,7 +1726,7 @@
         const tbody = table.find('tbody');
 
         groups.forEach((g) => {
-            tbody.append(group_row(g.master, __("{0} projects", [g.projects.length]), "neutral", 6));
+            tbody.append(group_row(g.master, __("{0} projects", [g.projects.length]), "neutral", visible_column_count('active-internal-projects')));
             g.projects.forEach((p) => tbody.append(internal_row(p)));
         });
 
@@ -1705,9 +1746,8 @@
         render_column_toolbar(container);
 
         let state = sort_state['active-internal-projects'];
-        let internal_projects = project_data.filter(
-            p => p.is_active === "Yes" && INTERNAL_PROJECT_TYPES.includes(p.project_type)
-        );
+        // active_pool(), so this tab and the Internal chip count the same projects.
+        let internal_projects = active_pool().filter(p => INTERNAL_PROJECT_TYPES.includes(p.project_type));
         if (!internal_projects.length) {
             empty_panel(container, __("No active internal projects."));
             return;
@@ -1839,7 +1879,8 @@
         container.empty();
 
         const today = frappe.datetime.get_today();
-        const active = project_data.filter(p => p.is_active === "Yes");
+        // active_pool(), so Active Projects and Overdue agree with the tiles.
+        const active = active_pool();
         const total_active = active.length;
 
         let overdue = 0, pct_sum = 0, open_tasks = 0;
@@ -1920,6 +1961,13 @@
                 portfolio_gantt_widget = null;
             }
 
+            // Nothing has loaded (still loading, no access, or a failed read): the panel
+            // stands, with its Try again, until a fetch answers with rows.
+            if (!loaded) {
+                show_panel(panel.kind, panel.opts);
+                return;
+            }
+
             if (current_tab === "priority-overview") render_priority_overview();
             else if (current_tab === "active-internal-projects") render_active_internal();
             else if (current_tab === "completed-projects") render_completed_projects();
@@ -1927,6 +1975,17 @@
 
             setTimeout(apply_search_filter, 50);
         }
+    }
+
+    // The text a person sees in a row. A rank or status select carries every option, so
+    // row.text() matched "Maintenance", "Not Assigned" or any digit on every row; here a
+    // select counts as its chosen option only.
+    function row_search_text(row) {
+        const copy = row.clone();
+        copy.find('select').each(function() {
+            $(this).replaceWith($('<span></span>').text($(this).find('option:selected').text()));
+        });
+        return copy.text().toLowerCase();
     }
 
     // The band's search narrows the rows of the list tab on screen by their text. A group
@@ -1947,8 +2006,7 @@
                 group_has_rows = false;
                 return;
             }
-            let row_text = row.text().toLowerCase();
-            const shown = row_text.indexOf(search_term) !== -1;
+            const shown = row_search_text(row).indexOf(search_term) !== -1;
             row.toggle(shown);
             if (shown) group_has_rows = true;
         });
@@ -1970,16 +2028,16 @@
     // dashboard opens where it was left.
     function show_tab(route) {
         if (!TAB_ROUTES.includes(route)) route = "priority-overview";
-        $root.find('.pd-tab').removeClass('active').attr('aria-selected', 'false');
-        $root.find(`.pd-tab[data-route="${route}"]`).addClass('active').attr('aria-selected', 'true');
+        $root.find('.pd-tab').removeClass('active').attr('aria-pressed', 'false');
+        $root.find(`.pd-tab[data-route="${route}"]`).addClass('active').attr('aria-pressed', 'true');
         current_tab = route;
         write_saved(TAB_KEY, route);
         render_current_tab();
     }
 
     // Mark the remembered tab in the bar before the first fetch draws it.
-    $root.find('.pd-tab').removeClass('active').attr('aria-selected', 'false');
-    $root.find(`.pd-tab[data-route="${current_tab}"]`).addClass('active').attr('aria-selected', 'true');
+    $root.find('.pd-tab').removeClass('active').attr('aria-pressed', 'false');
+    $root.find(`.pd-tab[data-route="${current_tab}"]`).addClass('active').attr('aria-pressed', 'true');
     show_tab_controls();
 
     // ----- HEADER ACTIONS: one "+" button -----
