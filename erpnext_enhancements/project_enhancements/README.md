@@ -47,6 +47,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `design_projects.py` | Design projects (Nik, 2026-10-30): the **Design Project (PRO-0206)** Project Template, PRO-0206's four design stages as four template Tasks (Predesign, Schematic Design, Design Development, Construction Documents), in order, each waiting on the one before, dated from the project's start (about twelve weeks) and with no hours. Leaf tasks, not groups, and never named `Phase NNN`, so the planner never reads a stage as a build phase; the planners' Simple mode lists them as the job's top-level items. The Create Project dialog prefills the template only for a deal whose only value stream is Design (`opportunity_defaults`, Nik 2026-11-02; a Build + Design deal opens it empty, and a Fountain Move intake's template wins). Seeds the template insert-only and then disables the old *Design Project Template* (its projects untouched, and still saveable: ERPNext refuses a disabled template only when `project_template` changes). Descriptions are one-line summaries pointing at PRO-0206: the repo is public and PRO-0206 is internal | `STAGES`, `opportunity_defaults`, `seed_template`, `disable_old_template`; pure `template_task_values`, `is_design_only_deal` | `create_project_prompt.js`; `patches/seed_design_project_template.py` |
+| `scope_tasks.py` | The Scope tab's task actions, pure (no frappe; v1.777.0, Nik 2026-11-03): a Project Template's tasks as a plan for one project (`plan_import`: which become new Tasks, under which parent, which are skipped because a Task with the same subject already sits under that parent, what each waits on, with a dependency on a skipped task pointing at the Task already there), the mass delete's order (`delete_order`: the picked tasks plus everything under them, deepest first), the "Add from template" preview (`preview_rows`) and where a new task lands among its siblings (`next_position`). See [The Scope tab's Tasks Tree](#the-scope-tabs-tasks-tree-v17770) | `plan_import`, `delete_order`, `preview_rows`, `next_position`, `template_order`, `subject_key` | `api/scope_tasks.py`; `tests/test_scope_tasks.py` |
 | `fountain_move_jobs.py` | Fountain Move jobs (Nik, 2026-10-21): a **Service** project with `custom_is_fountain_move` ticked. A new ticked project gets the **Fountain Move** template when none was chosen (and that template ticks the box; an Opportunity from the /fountain-move intake ticks it and preselects the template in Create Project); its task cards are moved on the **Maintenance Planner** and are read-only on the Project Planner (`mark_read_only`, and `_load` refuses a single-task edit there). Which tasks get a card is one SQL condition, `OPEN_MOVE_TASKS_SQL`, shared by the calendar (`planner_cards`) and that planner's search box (`search_cards`, v1.741.0: also matches the project's number, name, customer and address city, and has no date range). Seeds the template (Confirm move date 0 h; Move day 4 h, crew 2, Outdoor; Invoice 0 h) and converts PRJ-00775 | `apply_on_insert`, `insert_defaults`, `opportunity_defaults`, `planner_cards`, `search_cards`, `move_task`, `mark_read_only`, `refuse_on_project_planner`, `seed_template`, `make_move_job` | `doc_events["Project"]["before_insert"]`; `api/project_planner` (`get_planner`, `_load`); `api/maintenance_planner` (`get_planner`, `move_fountain_move`); `patches/seed_fountain_move_template.py`, `patches/make_prj_00775_a_move_job.py` |
 | `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own, except on a project whose schedule is still Draft, where they are the project's and every scheduler shares them (P3) | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
@@ -90,6 +91,74 @@ Related code outside this folder:
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
 - The dashboard UI is the **"Projects Dashboard" Custom HTML Block** (`custom_html_blocks/projects_dashboard.{js,html,css}`); the only front-end helpers left under `public/js/project_enhancements/dashboard_components/` are the shared `column_selector.js` / `column_resizer.js` — see the [public README](../public/README.md#project-dashboard-components).
+
+## The Scope tab's Tasks Tree (v1.777.0)
+
+Nik, 2026-11-03: "I need the Scope tab to be rethought. The Tasks Tree should probably be at the
+top, and I'd like a way to import entire templates of tasks via the Tasks Tree. Make the Add a new
+task button have a good flow without leaving the project page." And later that day: "Also a way to
+mass delete tasks from the Project page of the Scope tab." TASK-2026-03067.
+
+**The layout.** The Scope tab (`custom_scope`) now opens with the *Tasks Tree* section
+(`custom_tasks_section`, `custom_tasks_html`: the `TaskTreeManager` grid from
+`public/js/project_enhancements/task_tree_manager.js`), then the hidden Scope Description section,
+then the four value-stream scope sections (Design, Build, Service, Events: customer requests and
+deliverables), each shown for its own project type as before and now **collapsible, collapsed when
+it holds no rows** (`collapsible_depends_on` on its two tables). The order is the
+`Project-main-field_order` Property Setter and each Custom Field's `insert_after`, both in
+`fixtures/`; v16 places by the array, so `tests/test_scope_tasks.py` fails the build when the two
+disagree. No patch: the fixture import on `bench migrate` updates the existing Property Setter.
+
+**Three flows on the tree, every one a `frappe.ui.Dialog`** (server: [`api/scope_tasks.py`](../api/scope_tasks.py);
+rules: [`scope_tasks.py`](scope_tasks.py) here, pure). No route change and no history entry, so
+Back and Forward keep working (Nik's rule).
+
+- **Add task** (toolbar, and the per-row **+** that preselects the row as parent): subject, parent,
+  *holds subtasks*, priority, type, assignee, expected start and end, expected hours, description;
+  *Add and add another* keeps the dialog open. `add_task` accepts only those fields
+  (`clean_add_values`), makes a non-group parent a group first (and says so), places the task after
+  its siblings (`custom_subtask_order`) and inserts it through the Task controller **as the caller**;
+  the assignee goes through Frappe's own `assign_to.add`, and a failure there is a warning on the
+  alert, not a lost task. The tree refreshes and opens the parent; the task's name in the tree is a
+  same-tab link to its full form.
+- **Add from template**: `get_template_catalog` lists every enabled Project Template (the project's
+  own type first) with a preview of its tasks (`preview_rows`: hierarchy, day offset, duration,
+  hours, what each waits on); the dialog asks where the roots go (a task of this project, or the top
+  level) and the date to count from. `import_template` creates them in **one request**:
+  - **ERPNext's own code builds each Task.** `Project.create_task_from_template` (erpnext 16.52.1,
+    the tag prod runs) sets subject, description, weight, type, group flag, color, priority,
+    `template_task` and the holiday-adjusted dates from the template's *Begin On* / *Duration* days.
+    It dates them off the Project it is called on, so the chosen start is set on an **in-memory**
+    Project that is never saved. `task_templates.copy_template_planning` (`Task.before_insert`)
+    then carries the template's hours, crew size and qualifications across.
+  - **Linking is a second save, as ERPNext's `dependency_mapping` does it**, except a parent or a
+    dependency may be a Task that was already on the project: the picked node, or a skipped task.
+  - **Skips.** A template task whose subject (by its words: capitals and spacing aside) already
+    exists under the same parent is skipped and listed; a skipped group is still a parent, so a
+    second import adds only the children missing under the existing group; a canceled task never
+    blocks; a dependency on a skipped task points at the existing task.
+  - **All or nothing.** A Task ERPNext refuses (a date past the project's Scheduled End Date, a child
+    ending after its parent, an open task under a completed parent) fails the request with ERPNext's
+    message and the whole import rolls back.
+- **Select → Delete selected**: a checkbox per row (the drag handles step aside), *Select all*,
+  *Cancel*. The confirm asks `delete_preview` first, so it can say how many subtasks a picked group
+  takes with it. `delete_tasks` deletes deepest first (ERPNext refuses a Task with children), each
+  under its own savepoint, with `frappe.flags.mute_messages` on so a refusal's queued message
+  cannot pop a modal over the summary (see the `frappe.throw` note in `CLAUDE.md`'s memory); a
+  task Frappe or ERPNext refuses (linked from a timesheet, locked, not permitted) is **kept and
+  listed with its reason** while the rest go, and an expected refusal is not logged. At most 200
+  tasks per request.
+
+**The gate.** Reads (`get_template_catalog`, `delete_preview`) and every write need *write* on the
+Project; Project Templates and template Tasks are then read with `get_all`, because Projects User
+holds only *select* on Project Template. Each Task is inserted, saved and deleted as the caller, so
+a role that may not create or delete Tasks is refused by Frappe itself.
+
+**The raw asset path is only a fallback.** `project_form_script.js` used to `frappe.require` the raw
+`/assets/.../task_tree_manager.js` on every render, although the class ships in the global
+`erpnext_enhancements.bundle.js`. The raw path is served immutable for a year, so a device that had
+cached it kept redefining `TaskTreeManager` with the stale copy over the bundle's fresh one. It now
+requires the raw path only when the bundle lacks the class.
 
 ## Scope of Work (WI-075, v1.447.0)
 
