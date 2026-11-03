@@ -158,6 +158,10 @@
                 method: "frappe.client.get_list",
                 args: {
                     doctype: child_doctype(),
+                    // The parent names the permission to check: without it, 16.53's
+                    // db_query._set_permission_map checks the child doctype itself and
+                    // has_child_permission refuses everyone but Administrator (review round 2).
+                    parent: "Opportunity",
                     filters: { parent: ["in", names] },
                     fields: ["parent", "value_stream"],
                     limit_page_length: 1000,
@@ -181,7 +185,16 @@
                     });
                 });
             },
-            (error) => warn("value stream fetch failed", error)
+            (error) => {
+                warn("value stream fetch failed", error);
+                // Mark the rows as tried, so a redraw (scroll virtualization re-draws a card
+                // many times) does not ask again and again; no dots until a reload.
+                names.forEach((name) => {
+                    waiting[name].forEach(({ doc }) => {
+                        if (doc.custom_value_stream === undefined) doc.custom_value_stream = [];
+                    });
+                });
+            }
         );
     }
 

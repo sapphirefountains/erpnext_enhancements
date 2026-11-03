@@ -295,6 +295,7 @@ async function render(desk, board_name, data) {
 		];
 		const view = await render(desk, "Opportunity", data);
 		check(desk.calls.length === 1 && same(desk.calls[0].args.filters, { parent: ["in", ["OPP-1", "OPP-2", "OPP-3"]] }), "value streams are fetched once, in one call, for every card drawn in the tick");
+		check(desk.calls[0].args.parent === "Opportunity" && desk.calls[0].method === "frappe.client.get_list", "the fetch names the parent doctype, so the permission checked is Opportunity's, not the child table's");
 		check(same(data[0].custom_value_stream.map((r) => r.value_stream), ["Build", "Build", "Design"]) && same(data[1].custom_value_stream, []), "the rows are hung on the data");
 		check(view.rendered === 1, "the board rendered once");
 
@@ -368,6 +369,10 @@ async function render(desk, board_name, data) {
 		const desk = makeDesk({ fetch_fails: true });
 		const view = await render(desk, "Opportunity", [{ name: "OPP-7", customer_name: "Acme", party_name: "Acme", opportunity_from: "Customer", opportunity_amount: 5000 }]);
 		check(view.rendered === 1 && view.cards[0].$card.find(".kanban-card-body").els[0].has("opportunity-high-value") && view.cards[0].$card.find(".value-stream-dot").length === 0, "a failed stream fetch still draws the card, without dots");
+		desk.calls.length = 0;
+		view.draw(view.data[0]);
+		await tick();
+		check(desk.calls.length === 0 && same(view.data[0].custom_value_stream, []), "a failed fetch is marked tried, so a redraw does not ask again");
 	}
 
 	// 9. no engine hooks: nothing patched, nothing thrown

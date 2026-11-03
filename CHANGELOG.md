@@ -93,7 +93,10 @@ was reachable from a form only through the View menu.
   are fetched per card, batched per tick, rather than once in `render_kanban_board`: a realtime redraw
   (`process_document_refreshes`) and the scroll pages (`kanban_pagination.js`, 50 cards a page) draw cards
   without passing that method, so they would have had no dots. A card whose row already carries its streams
-  draws at once with no fetch; a failed fetch draws it without dots.
+  draws at once with no fetch; a failed fetch draws it without dots and marks the row tried, so scroll
+  virtualization's redraws do not ask again. Review round 2: the fetch names `parent: "Opportunity"`,
+  because 16.53's `db_query._set_permission_map` otherwise checks the child doctype itself and
+  `has_child_permission` refuses everyone but Administrator, which the catch would have hidden.
 - **The customer's name on an Opportunity Kanban card opens the Customer** (or the Lead, from
   `opportunity_from`): the card's "Customer Name" field, found by the label the engine writes on its icon (or
   its first span with "Show Labels" on), read from the docfield rather than by position, becomes
