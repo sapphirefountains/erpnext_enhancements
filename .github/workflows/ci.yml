@@ -1504,6 +1504,14 @@ jobs:
       # reader's own (partial) readable set, so a hidden article takes no slot,
       # no draft or retired text ever returned, the Version doctype never read, and static checks
       # that neither module names that doctype or passes a SQL function string as a field.
+      # Service Calls (v1.778.0, Nikolas 2026-11-03): a one-off job without an agreement. The intake
+      # planner (what is created, in what order, with what names, status and template), the rate copy,
+      # the three-task dates, the approval state machine (tokens by shape, expiry, guest endpoints
+      # POST-only and rate limited, no .update( from a guest), the invoice line builder, and the shape
+      # of the doctypes, hooks and patches. Plain pytest functions with their own frappe stub, so a
+      # pytest step of its own: `python -m unittest` collects none of them.
+      - name: Service Calls (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_service_calls.py -q
       - name: Knowledge base search (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_search.py -q
       # v1.569.0: an article as the company register's template (POL-0002/0003/0004), printed, in a

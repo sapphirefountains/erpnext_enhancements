@@ -375,7 +375,7 @@ def get_visit_bootstrap(record):
     dirty = False
     can_write = (
         doc.docstatus == 0
-        and (doc.project or doc.maintenance_contract)
+        and (doc.project or doc.maintenance_contract or doc.get("service_call"))
         and frappe.has_permission(doc.doctype, ptype="write", doc=doc)
     )
 
@@ -389,6 +389,8 @@ def get_visit_bootstrap(record):
             visit_label=doc.visit_label,
             # The day the work is done decides which weekday lines it gets (v1.619.0).
             visit_date=doc.get("visit_date") or doc.get("scheduled_visit_date"),
+            # A one-off job with no contract takes its template from the call (v1.778.0).
+            service_call=doc.get("service_call"),
         )
         appended = 0
         for table, payload_key in PAYLOAD_TABLE_MAP.items():

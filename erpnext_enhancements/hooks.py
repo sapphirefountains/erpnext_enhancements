@@ -278,6 +278,12 @@ doctype_js = {
 	# the Project form gets it in its own list above.
 	"Project Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	"Sapphire Maintenance Contract": ["public/js/project_enhancements/contract_viewer.js"],
+	# sapphire_maintenance (v1.778.0): the New Service Call intake dialog, which the Service Call
+	# form opens over itself when it is new and empty (the workspace's "New Service Call" shortcut
+	# and the list's "+ Add" both land there). One screen that makes the Address, the Opportunity at
+	# its first status, the Service project on the three-task template and the Service Call. The
+	# form's own buttons are in the doctype folder's service_call.js.
+	"Service Call": ["public/js/sapphire_maintenance/service_call_intake.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
 	# (see app_include_js + COMMENT_APP_DOCTYPES). Doctypes that only needed the
 	# comments tab no longer require a doctype_js entry; the entries below keep
@@ -844,6 +850,9 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
 			# Calendar sync (C2): a canceled visit's event is removed.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+			# Service Calls (v1.778.0): a canceled visit sends its call back to Approved, so another
+			# can be drafted. Never raises.
+			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_cancel",
 		],
 		# Calendar sync (C2): a deleted visit's event is removed; a change after submit re-syncs it.
 		"on_trash": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
@@ -860,6 +869,10 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_submit",
 			# Calendar sync (C2): a done visit keeps its event, with a check mark.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+			# Service Calls (v1.778.0): a visit filed against a Service Call marks the call Done and
+			# links the visit; the invoice step of the submission job then marks it Invoiced. Never
+			# raises. See sapphire_maintenance/service_calls.py.
+			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_submit",
 		],
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
 		# throws -- by the time this runs a truck is usually already at the site, and
@@ -1933,6 +1946,10 @@ scheduler_events = {
 		# fourteen days, so the list says what the page already does (the page and the sign
 		# endpoint read expiry from expires_on and never wait for this).
 		"erpnext_enhancements.sapphire_maintenance.sign_off.expire_stale",
+		# Service Call approval links (v1.778.0): a live link past its fourteen days is Expired, its
+		# call Declined with the reason, and the Opportunity Lost (decision 2026-11-03: an expired
+		# link marks it Lost). The page and the endpoints read expiry from expires_on themselves.
+		"erpnext_enhancements.sapphire_maintenance.service_call_approval.expire_stale",
 		# declined-card dunning: retry failed Stripe auto-charges on a schedule,
 		# email the customer, and on exhaustion disable autopay + service hold.
 		"erpnext_enhancements.stripe_payments.core.dunning.run_dunning_cycle",

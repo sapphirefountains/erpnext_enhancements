@@ -621,6 +621,58 @@ class TestGateStamping(unittest.TestCase):
 		self.assertEqual(doc.custom_launch_deadline, existing)
 
 
+class TestServiceCallDeals(unittest.TestCase):
+	"""A Service Call's deal (v1.778.0; Nik, 2026-11-03: "skip ranks") is not put under the
+	hand-off requirements when the client's approval wins it; every other deal still is."""
+
+	MODULE = "erpnext_enhancements.sapphire_maintenance.service_calls"
+
+	def setUp(self):
+		_reset()
+		self.saved = sys.modules.get(self.MODULE)
+		self.stub = types.ModuleType(self.MODULE)
+		sys.modules[self.MODULE] = self.stub
+
+	def tearDown(self):
+		if self.saved is not None:
+			sys.modules[self.MODULE] = self.saved
+		else:
+			sys.modules.pop(self.MODULE, None)
+
+	def _doc(self):
+		doc = _StubDoc("CRM-OPP-0002", status="Closed Won")
+		doc.status = "Closed Won"
+		doc.name = "CRM-OPP-0002"
+		doc.is_new = lambda: False
+		doc.meta = types.SimpleNamespace(get_field=lambda f: object())
+		doc.get_doc_before_save = lambda: None
+		return doc
+
+	def test_a_service_call_deal_is_not_stamped(self):
+		asked = []
+		self.stub.belongs_to_service_call = lambda name: asked.append(name) or True
+		doc = self._doc()
+		handoff.stamp_handoff_gate(doc)
+		self.assertEqual(asked, ["CRM-OPP-0002"])
+		self.assertIsNone(doc.get("custom_handoff_gate_applies"))
+		self.assertIsNone(doc.get("custom_handoff_due_by"))
+
+	def test_an_ordinary_deal_is_still_stamped(self):
+		self.stub.belongs_to_service_call = lambda name: False
+		doc = self._doc()
+		handoff.stamp_handoff_gate(doc)
+		self.assertEqual(doc.custom_handoff_gate_applies, 1)
+
+	def test_a_guard_that_raises_never_blocks_the_save(self):
+		def boom(name):
+			raise RuntimeError("no such table")
+
+		self.stub.belongs_to_service_call = boom
+		doc = self._doc()
+		handoff.stamp_handoff_gate(doc)
+		self.assertEqual(doc.custom_handoff_gate_applies, 1)
+
+
 # ---------------------------------------------------------------------------
 # Attendee resolution
 # ---------------------------------------------------------------------------

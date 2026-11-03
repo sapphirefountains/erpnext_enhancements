@@ -1,0 +1,236 @@
+/* Public Service Call approval page (/service-call-approval, v1.778.0). A copy of the visit
+   sign-off page's sheet (visit_sign_off.css) without the signature pad. Mobile-first: the client usually
+   opens the email on a phone. The look follows the contract signing page
+   (public/css/contract_sign/contract_sign.css): white cards, grey rules, one strong button. */
+
+.sa-page {
+	max-width: 720px;
+	margin: 0 auto;
+	padding: 16px 16px 64px;
+}
+
+.sa-header h1 {
+	font-size: 1.5rem;
+	margin: 0 0 4px;
+}
+.sa-eyebrow {
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #6b7280;
+	margin: 0 0 4px;
+}
+.sa-hint {
+	color: #6b7280;
+	font-size: 0.875rem;
+	margin: 4px 0;
+}
+
+.sa-card {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 16px;
+	margin: 16px 0;
+	background: #fff;
+}
+.sa-card h2 {
+	font-size: 1rem;
+	margin: 0 0 10px;
+}
+
+.sa-facts {
+	margin: 0;
+}
+.sa-facts div {
+	display: flex;
+	gap: 12px;
+	padding: 4px 0;
+	border-bottom: 1px solid #f3f4f6;
+}
+.sa-facts div:last-child {
+	border-bottom: 0;
+}
+.sa-facts dt {
+	flex: 0 0 120px;
+	color: #6b7280;
+	font-size: 0.875rem;
+}
+.sa-facts dd {
+	margin: 0;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+/* Scrolls inside its card on a narrow phone rather than widening the page. */
+.sa-table {
+	display: block;
+	overflow-x: auto;
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9375rem;
+}
+.sa-table th {
+	text-align: left;
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #6b7280;
+	border-bottom: 1px solid #d1d5db;
+	padding: 6px 8px 6px 0;
+}
+.sa-table td {
+	padding: 8px 8px 8px 0;
+	border-bottom: 1px solid #f3f4f6;
+	vertical-align: top;
+}
+.sa-out td {
+	color: #b91c1c;
+}
+.sa-badge {
+	display: inline-block;
+	font-size: 0.75rem;
+	font-weight: 600;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: #fef2f2;
+	color: #b91c1c;
+}
+.sa-flag {
+	margin: 0 0 8px;
+	font-size: 0.875rem;
+	color: #92400e;
+}
+
+.sa-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.sa-list li {
+	padding: 8px 0;
+	border-bottom: 1px solid #f3f4f6;
+}
+.sa-list li:last-child {
+	border-bottom: 0;
+}
+.sa-status {
+	display: inline-block;
+	min-width: 64px;
+	margin-right: 6px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #374151;
+}
+.sa-status-done {
+	color: #15803d;
+}
+.sa-status-not-done {
+	color: #b45309;
+}
+.sa-feature {
+	color: #6b7280;
+}
+.sa-note {
+	color: #4b5563;
+	font-size: 0.875rem;
+	margin-top: 2px;
+}
+.sa-pre {
+	white-space: pre-wrap;
+	margin: 0;
+}
+
+.sa-label {
+	display: block;
+	font-size: 0.875rem;
+	font-weight: 600;
+	margin: 12px 0 4px;
+}
+.sa-input {
+	width: 100%;
+	padding: 12px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	font: inherit;
+	/* 16px minimum stops iOS zooming the page on focus. */
+	font-size: 16px;
+}
+
+
+
+.sa-error {
+	color: #b91c1c;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+	padding: 10px 12px;
+	margin: 12px 0;
+}
+
+.sa-submit {
+	display: block;
+	width: 100%;
+	padding: 14px;
+	border: 0;
+	border-radius: 8px;
+	background: #00263e;
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+.sa-submit:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.sa-done,
+.sa-notice {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 24px;
+	margin: 24px 0;
+	background: #fff;
+	text-align: center;
+}
+.sa-done h2,
+.sa-notice h1 {
+	margin-top: 0;
+	font-size: 1.25rem;
+}
+
+.sa-scope p {
+	margin: 0 0 8px;
+}
+.sa-rates {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid #e5e7eb;
+}
+.sa-decline {
+	margin-top: 16px;
+	padding-top: 12px;
+	border-top: 1px solid #e5e7eb;
+}
+.sa-decline summary {
+	cursor: pointer;
+	color: #6b7280;
+	font-size: 0.875rem;
+}
+.sa-decline-btn {
+	margin-top: 8px;
+	padding: 10px 14px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	color: #374151;
+	font-size: 0.95rem;
+	cursor: pointer;
+}
+.sa-decline-btn:disabled {
+	opacity: 0.6;
+}
+textarea.sa-input {
+	resize: vertical;
+}

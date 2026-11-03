@@ -43,8 +43,14 @@ def validate_ranks_on_won(doc, method=None):
 	(Opportunity, Before Save).
 
 	When status is 'Closed Won', Scope/Schedule/Budget rank must each be 1, 2 or 3.
+
+	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03: "skip ranks"): a one-off
+	service client approves on a link and nobody ranks a pump swap. The guard never raises
+	(``service_calls.belongs_to_service_call``), so a site without the table is unchanged.
 	"""
 	if doc.status != "Closed Won":
+		return
+	if _is_service_call_deal(doc):
 		return
 
 	validation_errors = []
@@ -64,6 +70,16 @@ def validate_ranks_on_won(doc, method=None):
 			"<br>".join(validation_errors),
 			title="Invalid Ranks for 'Closed Won' Status",
 		)
+
+
+def _is_service_call_deal(doc):
+	"""A Service Call's Opportunity, or False; never raises (a before_save hook on every deal)."""
+	try:
+		from erpnext_enhancements.sapphire_maintenance.service_calls import belongs_to_service_call
+
+		return belongs_to_service_call(getattr(doc, "name", None) if not doc.is_new() else None)
+	except Exception:
+		return False
 
 
 def validate_close_reason(doc, method=None):

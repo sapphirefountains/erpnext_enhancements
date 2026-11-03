@@ -1386,10 +1386,16 @@ def stamp_handoff_gate(doc, method=None):
 	empty ``custom_date_closed_won`` on the same transition (transition-only since
 	v1.629.0) — the deadlines are measured from the transition itself, so both
 	stamps describe the same moment.
+
+	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03): a one-off service client's
+	approval on the link wins the deal, and there is no hand-off meeting to hold for a pump swap.
+	The guard never raises (:func:`_is_service_call_deal`).
 	"""
 	if doc.status != WON_STATUS:
 		return
 	if not doc.meta.get_field("custom_handoff_gate_applies"):
+		return
+	if _is_service_call_deal(doc):
 		return
 
 	before = doc.get_doc_before_save()
@@ -1410,6 +1416,16 @@ def stamp_handoff_gate(doc, method=None):
 		doc.custom_launch_deadline = add_working_days(
 			now, LAUNCH_GOAL_BUSINESS_DAYS, holiday_list=holiday_list
 		)
+
+
+def _is_service_call_deal(doc):
+	"""A Service Call's Opportunity, or False; never raises (a before_save hook on every deal)."""
+	try:
+		from erpnext_enhancements.sapphire_maintenance.service_calls import belongs_to_service_call
+
+		return belongs_to_service_call(getattr(doc, "name", None) if not doc.is_new() else None)
+	except Exception:
+		return False
 
 
 def launch_deadline_for_project(project_row):

@@ -1584,3 +1584,9 @@ erpnext_enhancements.patches.retire_water_engineering_wizard
 # savepoint. Then, only once the new template exists, tick Disabled on the old "Design Project Template" (a field write;
 # its tasks and its 16 projects are untouched). Cannot raise.
 erpnext_enhancements.patches.seed_design_project_template
+# Service Calls (v1.778.0, Nikolas 2026-11-03): the three-task "Service Call" Project Template (Approval received,
+# Service visit, Invoice sent; leaf tasks, each waiting on the one before; re-dated from the scheduled visit by the
+# intake) and the "Small Repair" visit template with its three sections. Both insert-only by name, both log instead
+# of raising. The Service Call Rate table is NOT seeded: rates are entered on prod, never in the repo.
+erpnext_enhancements.patches.seed_service_call_project_template
+erpnext_enhancements.patches.seed_small_repair_template
