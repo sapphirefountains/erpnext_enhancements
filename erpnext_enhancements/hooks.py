@@ -266,7 +266,7 @@ doctype_js = {
 		# (due, and nobody has written the checklist) and `unknown` (the build status is not a
 		# recognised option, so due-ness is not knowable). Generates nothing.
 		"public/js/quality/project_inspections.js",
-		# custom pages S5b (v1.667.0): View > Open in Project Planner, the planner filtered to
+		# custom pages S5b (v1.667.0): Open in Planner (its own button since v1.779.0), the planner filtered to
 		# this project (it reads `project` from frappe.route_options). Only for those whose
 		# roles open the page.
 		"public/js/project_enhancements/project_planner_link.js",

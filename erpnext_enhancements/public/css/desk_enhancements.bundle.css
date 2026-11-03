@@ -1552,6 +1552,25 @@ body.desktop-page .desktop-icon .icon-title,
     box-shadow: 0 0 2px rgba(0,0,0,0.2);
 }
 
+/* The customer's name on a card is a link to the Customer or Lead (v1.779.0,
+   kanban_customization.js link_party). Underlined on hover only, so the card's
+   fields keep reading as fields; the high-value navy card keeps the link white. */
+.kanban-doc-field a.kanban-card-party-link {
+    color: var(--text-color);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-muted);
+}
+.kanban-doc-field a.kanban-card-party-link:hover,
+.kanban-doc-field a.kanban-card-party-link:focus {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    text-decoration: none;
+}
+.kanban-card-body.opportunity-high-value .kanban-doc-field a.kanban-card-party-link {
+    color: #ffffff !important;
+    border-bottom-color: rgba(255, 255, 255, 0.6);
+}
+
 /* ==========================================================================
    LIST ROW CONTAINER Z-INDEX FIX
    ========================================================================== */

@@ -471,7 +471,7 @@ frappe.provide("erpnext_enhancements.crm");
 			});
 	}
 
-	// set_route with an options object, as the Project form's Open in Project Planner does: on v16 it
+	// set_route with an options object, as the Project form's Open in Planner does: on v16 it
 	// fills route_options and writes the query, and it is a history entry of its own, so Back comes
 	// back here. The planner takes build_out off the address as it lands (ppg_take_build_out), so
 	// Back, Forward and a reload of that entry show the Gantt and never open the dialog again.

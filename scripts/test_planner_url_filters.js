@@ -1140,7 +1140,7 @@ test("Build out link: the Gantt opens on Start from template once, and the addre
 	const seen = buildOutRecorder(pp);
 	desk.go("project-planner", "gantt", "PRJ-00001", { project: "PRJ-00001", build_out: "template" });
 	check("the Gantt of the new project", [pp.view, desk.route], ["gantt", ["project-planner", "gantt", "PRJ-00001"]]);
-	check("the project filter, as the form's own Open in Project Planner gives it", f3(pp).project, "PRJ-00001");
+	check("the project filter, as the form's own Open in Planner gives it", f3(pp).project, "PRJ-00001");
 	check("route_options consumed: nothing for the next route to write", desk.frappe.route_options, null);
 	check("one entry, the address without the request", desk.urls(), [GUIDED, "/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001"]);
 	check("asked, for the Gantt's own project", pp.ppg_state().build_out, "PRJ-00001");
