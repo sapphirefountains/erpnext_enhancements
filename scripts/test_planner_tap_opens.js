@@ -786,7 +786,13 @@ test("Project Planner: the menu starts with Quick edit, and a project's name has
 	const target = pp.p6b_target(name);
 	check("a project's name off a card is a project target", [target.kind, target.project], ["project", "PRJ-1"]);
 	check("titled by the project", pp.p6b_menu_title(target), "Riverwalk");
-	check("its items", labels(pp.p6b_menu_items(target)), ["Open project", "Project at a glance", "Show only this project", "Open in Gantt"]);
+	check("its items (v1.784.0: a new tab after Open project)", labels(pp.p6b_menu_items(target)), [
+		"Open project",
+		"Open project in new tab",
+		"Project at a glance",
+		"Show only this project",
+		"Open in Gantt",
+	]);
 	check("and 6C's highlight", labels(pp.p6c_menu_items(target)), ["Highlight this project"]);
 	const label = pp.p6b_target(new El("span.ppl-task-name", { "data-ppr-task": "T1" }, root));
 	check("a task's name has its card's menu", [label.kind, label.card.name], ["card", "T1"]);

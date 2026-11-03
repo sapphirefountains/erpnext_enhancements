@@ -76,6 +76,7 @@
 	color: var(--sf-text-strong);
 }
 
+/* The view tabs sit at the bar's right end, after the tools (v1.784.0). */
 .pp-seg {
 	display: inline-flex;
 	border: var(--sf-border-hairline) solid var(--sf-field-border);
@@ -3534,9 +3535,38 @@ body.p6b-resizing * {
 	overflow: hidden;
 }
 
-.ppl-heads {
+/* The month band (v1.784.0): one cell a month across its days, sticky at the top; the day headings
+ * stick just under it. Its row is 20px, which is the headings' offset. */
+.ppl-months {
 	position: sticky;
 	top: 0;
+	z-index: 4;
+	grid-auto-rows: 20px;
+	border-top: 0;
+	background: var(--sf-surface);
+}
+
+.ppl-month {
+	grid-row: 1;
+	min-width: 0;
+	padding: 0 6px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 20px;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
+}
+
+.ppl-month-first {
+	border-left: 0;
+}
+
+.ppl-heads {
+	position: sticky;
+	top: 20px;
 	z-index: 4;
 	background: var(--sf-surface);
 }
@@ -3588,6 +3618,11 @@ body.p6b-resizing * {
 
 .ppl-week-start {
 	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+/* The first of a month, under the band's own edge: a firmer rule than a week start's. */
+.ppl-month-start {
+	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
 }
 
 .ppl-day.ppl-today,

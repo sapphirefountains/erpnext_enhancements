@@ -262,6 +262,82 @@
 	outline-offset: -4px;
 }
 
+/* The hover card (v1.784.0): a chip's details while the mouse rests on it, in place of the browser's
+ * tooltip. Square, on the surface, a field edge for a shadow, just under the right-click menu. */
+.pk-pop {
+	position: fixed;
+	z-index: 1046;
+	min-width: 200px;
+	max-width: min(340px, calc(100vw - 16px));
+	padding: 8px 12px 10px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	line-height: 1.4;
+	pointer-events: none;
+}
+
+.pk-pop-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+	overflow-wrap: anywhere;
+}
+
+.pk-pop-sub {
+	color: var(--sf-text-muted);
+	overflow-wrap: anywhere;
+}
+
+.pk-pop-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+
+.pk-pop-tag {
+	padding: 0 6px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pk-pop-rows {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 2px 10px;
+	margin: 6px 0 0;
+}
+
+.pk-pop-rows dt {
+	font-weight: 400;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+}
+
+.pk-pop-rows dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.pk-pop-warnings,
+.pk-pop-notes {
+	margin: 6px 0 0;
+	padding: 0 0 0 14px;
+}
+
+.pk-pop-warnings li {
+	color: var(--sf-danger);
+}
+
+.pk-pop-notes li {
+	color: var(--sf-text-muted);
+}
+
 /* The right-click menu: square, on the surface, with a field edge instead of a drop shadow. */
 .pk-menu {
 	position: fixed;

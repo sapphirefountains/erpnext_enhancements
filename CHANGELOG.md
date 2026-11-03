@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.784.0] - 2026-11-03
+
+### Added
+- **Lookahead: a month band over the day headings** (both planners asked for; the Maintenance Planner
+  has no Lookahead, see below). Nikolas, 2026-11-03: "In Lookahead don't just show the weeks, but also
+  the month." One cell a month across its days ("November"; the short name where fewer than four of its
+  days are on screen, the full name on hover; the year said only when the window holds two), sticky at
+  the top with the day headings sticking just under it, the way the Gantt's timeline reads. A week start
+  keeps its left rule; the first of a month gets a firmer one (`ppl-month-start`). `PPL_PURE.month_bands`,
+  `ppl_monthband_html`. **The Maintenance Planner has no Lookahead** (its views are month, week and crew;
+  each day heading there already carries its month and the month view's title is the month), so there
+  was nothing to mirror.
+- **"Open task in new tab" / "Open project in new tab" on the Project Planner's right-click menu, and
+  Ctrl+Enter (⌘Enter) on a focused card, task name or project name.** Nikolas: "Open Link in New Tab for
+  right click of the project planner." The items sit after *Open task* and *Open project* (a card's menu,
+  a project name's menu on the Lookahead, the Overview's rows); the Maintenance Planner has *Open visit in
+  new tab* / *Open contract in new tab* and the same key. The kit does the opening
+  (`planner_kit.records.url(record)` and `open_new_tab(record)`, `planner_kit/records.js`): `window.open`
+  on the Desk address a tap would route to (`/desk/<slug>/<name>`, the router's own `frappe.router.slug`
+  where it is loaded), with `noopener`, so the planner, its history and its held drafts stay as they are.
+  A drafted new task has no record to open, so neither item nor key does anything for it. A Ctrl-click
+  stays the multi-select. The "?" help lists the key.
+- **A hover card on every chip, shared by both planners** (`planner_kit.popover`,
+  `planner_kit/popover.js`, `.pk-pop` in the kit's stylesheet). Nikolas: "on the popup when hovering have
+  times and other details." After a short delay with the mouse at rest on a task's card (Calendar, Crew
+  board, a Lookahead bar), another planner's booking, or a Maintenance Planner card, a styled card says
+  the task and its project (the site and the visit there), its days, the time slot when one is set or
+  the hours, the hours booked that day and the hours planned, the crew with the lead marked and how many
+  more it needs, pencil / draft / overdue marks, then its conflicts, dependency and qualification warnings
+  in red, and the hours-actual and equipment notes. It closes when the mouse leaves the chip, on Esc, on a
+  press (a drag or a menu is starting), a scroll or a route change. Mouse and pen only, so a phone's
+  hold-to-open quick look is unchanged. The chip's `title=` stays as the accessible fallback: the kit
+  holds it aside only while the card is up (so the browser's own tooltip does not show under the card)
+  and the chip says `aria-describedby` to the card meanwhile. Every value is set as text.
+
+### Changed
+- **Expanding or collapsing a project or a phase keeps the scroll position.** Nikolas: "When expanding
+  an arrow of the Phase or Project in the Project Planner, it refreshes the view bringing you to the
+  top." `render()` empties the grid and builds it again: the board's own pane started over at 0, and
+  while the page was short the browser clamped the window's scroll, which the redraw did not undo. The
+  Lookahead's arrows, Expand all / Collapse all, the Needs crew chip and "+N more", and the Overview's
+  Expand all and its lines now redraw inside `ppl_keep_scroll`, which takes the board's pane
+  (`.pp-scroll`), every scrolling ancestor and the window before the redraw and puts them back after it,
+  in a `finally`.
+- **The view tabs (Lookahead, Gantt, Crew, Calendar, Overview) sit at the toolbar's right end**, after
+  + Add, More, Undo, ? and refresh; ‹ Today › and the range stay left. Nikolas: "Float right for the side
+  for the Lookahead, Gantt, Crew, Calendar, and Overview tabs." The Calendar tab's Week/Month switch
+  follows the tabs. The Maintenance Planner's Month/Week/Crew tabs and its My day button move the same
+  way. It is DOM order, not a CSS `order`, so the tablist, the keyboard order and the phone's compact row
+  (whose "Filters and tools" button is appended after the tabs, so it still ends the row) all follow.
+- **The Crew board orders a person's day by project name, then task name**, as the Calendar's cards
+  already were (`compare`); Nikolas: "On Crew calendar the events should go in order of Project Name,
+  Task Name." A drive and a personal block come first (the day's padding and the person's own time), then
+  every booking, another planner's among them by the names it came with (`booking_order`). The Calendar's
+  foreign items take the same order. Before this the chips came in the engine's insertion order.
+- **The pencil is the only hours shown when it covers the free hours.** Nikolas: "Pencil should be the
+  only hours displayed when something is tentative." A day that read "8h free · +8h pencil" reads
+  "8h pencil"; one whose pencil is under its free hours reads "4h free · 2h pencil", without the old
+  plus sign. Full, Over, Off and a holiday keep the pencil after them ("Full · 2h pencil"). The same
+  rule on the Capacity heatmap (an all-pencil week reads "8h pencil" alone; otherwise "36h of 40h ·
+  4h pencil"), on the Maintenance Planner's cells, which said the pencil only in their tooltip until now,
+  and in the kit's quick looks (`day_state`). `pp_hours_text`, the Maintenance Planner's `hours_text`.
+
+### Tests
+- `scripts/test_planner_six_picks.js` under node against the real kit and both real page scripts, and
+  `tests/test_planner_six_picks.py` for the wiring, each with its own CI step: the month band, the Desk
+  address and the new tab, the menu items and Ctrl+Enter's target on both pages, the scroll keeper, the
+  Crew board's order, the hover card (escaping, placement, the delay, the title held aside, Esc, a press,
+  a finger ignored) and what each page's card says, and the pencil rule in four places. Three older
+  harnesses and two older suites now expect the new menu items and the pencil text.
+
 ## [1.781.0] - 2026-11-03
 
 ### Changed

@@ -512,6 +512,11 @@ class MaintenancePlanner {
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
+		// v1.784.0: the tabs (and My day beside them) go last, after the tools, at the bar's right end, as
+		// the Project Planner's do (Nikolas, 2026-11-03). The phone's "Filters and tools" button is appended
+		// after them by init_toolbar.
+		$seg.appendTo($bar);
+		this.$myday.appendTo($bar);
 		this.update_undo_button();
 
 		// The key of the visit kinds is in the "?" help only (legend_sections); it was a row of its own
@@ -682,12 +687,26 @@ class MaintenancePlanner {
 		return __("Not a work day");
 	}
 
+	// The hours a free day shows beside its pencilled hours: the Project Planner's pp_hours_text (Nikolas,
+	// 2026-11-03: "Pencil should be the only hours displayed when something is tentative"). When the pencil
+	// covers the free hours only the pencil is said ("8h pencil"); otherwise both, with no plus sign.
+	hours_text(free, soft, free_text) {
+		const pencil = Math.max(0, Number(soft) || 0);
+		const open = Math.max(0, Number(free) || 0);
+		if (pencil <= 0.01) return free_text;
+		const pencil_text = __("{0}h pencil", [this.fmt_hours(pencil)]);
+		if (open > 0.01 && pencil + 0.01 >= open) return pencil_text;
+		return `${free_text} · ${pencil_text}`;
+	}
+
 	// The availability of one technician on one day, as a class and a short text. `kind` is one of
 	// off, over, full and free. `ratio` fills the capacity bar.
 	avail_state(cell) {
 		if (!cell) return { kind: "none", cls: "mp-idle", text: "", ratio: 0 };
 		const capacity = Number(cell.capacity) || 0;
 		const booked = Number(cell.booked) || 0;
+		// C1's soft hours (pencilled visits and tasks), said on the cell since v1.784.0, not only in its tooltip.
+		const soft = Math.max(0, Number(cell.soft_booked) || 0);
 		const over = booked - capacity;
 		let state;
 		if (capacity <= 0) {
@@ -704,12 +723,13 @@ class MaintenancePlanner {
 			state = {
 				kind: free > 0.01 ? "free" : "full",
 				cls: ratio <= 0.75 ? "mp-green" : "mp-amber",
-				text: free > 0.01 ? __("{0}h free", [this.fmt_hours(free)]) : __("Full"),
+				text: this.hours_text(free, soft, free > 0.01 ? __("{0}h free", [this.fmt_hours(free)]) : __("Full")),
 				ratio,
 			};
 			if (cell.off) state.text += ` · ${__("½ day off")}`;
 		}
 		if ((cell.conflicts || []).length) state.cls += " mp-conflict";
+		state.soft = soft;
 		return state;
 	}
 
@@ -1393,8 +1413,16 @@ class MaintenancePlanner {
 			if (e.key !== "Enter" && e.key !== " ") return;
 			const card_el = e.target.closest && e.target.closest(".mp-card");
 			if (!card_el) return;
-			e.preventDefault();
 			const card = this.by_key[card_el.getAttribute("data-key")];
+			// Ctrl+Enter (⌘Enter): the card's record in a new tab (v1.784.0).
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (card && this.mpr_open_new_tab(card)) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+				return;
+			}
+			e.preventDefault();
 			if (card) this.mpr_open_card(card);
 		});
 	}
@@ -2407,6 +2435,7 @@ const MP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.mps_kit_ready(); // Simple mode draws with the kit
+		this.mph_ready(); // v1.784.0: the hover card on a card
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -3295,6 +3324,13 @@ const MP6B_METHODS = {
 		const items = [
 			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
 			record ? { label: record, on_click: () => this.mpr_open_card(card) } : null,
+			record
+				? {
+						label: visit ? __("Open visit in new tab") : __("Open contract in new tab"),
+						hint: __("Ctrl+Enter"),
+						on_click: () => this.mpr_open_new_tab(card),
+				  }
+				: null,
 			{ label: __("Assign to…"), hint: movable ? "" : why, disabled: !movable, on_click: () => this.p6b_assign(card) },
 			this.p6b_next_free_item(card, movable, why),
 		].filter(Boolean);
@@ -4189,6 +4225,7 @@ const MP6B_METHODS = {
 					item(key("←") + key("→"), "The previous or next month or week."),
 					item(key("1") + key("2") + key("3"), "Month, week or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("Ctrl") + key("Enter"), "Open the focused visit or contract in a new tab (⌘Enter on a Mac)."),
 					item(key("/"), "Search visits, moves, sites and technicians."),
 					item(key("?"), "This help."),
 					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
@@ -8254,6 +8291,28 @@ const MPR_METHODS = {
 		this.open_card(card);
 	},
 
+	// The record behind a card (mpr_open_card's kinds), as records.record_of needs it. Null for a card
+	// with none (a projected visit's contract counts; a booking this person may not open does not).
+	mpr_record_of(card) {
+		const kit = this.mpr_kit();
+		if (!kit || !card) return null;
+		if (card.kind === "visit") return kit.records.record_of("visit", { name: card.name });
+		if (card.kind === "projected") return kit.records.record_of("projected", card);
+		if (card.kind === "move") return kit.records.record_of("move", { name: card.name });
+		if (card.kind === "booking") {
+			return kit.records.record_of(card.booking_kind === "travel" ? "travel" : "task", { ref: card.ref, open: card.open });
+		}
+		return null;
+	},
+
+	// The card's record in a new tab: the "Open … in new tab" menu item and Ctrl+Enter on a focused card
+	// (Nikolas, 2026-11-03). Through the kit's window.open on the record's Desk address, so this page, its
+	// history and its drafts stay as they are. False with nothing to open, and nothing happens then.
+	mpr_open_new_tab(card) {
+		const kit = this.mpr_kit();
+		return !!(kit && kit.records.open_new_tab(this.mpr_record_of(card)));
+	},
+
 	// Their Employee record, or their Planner Resource; their week when the server said neither opens
 	// for this person (`open_as`, api/planner_open.py: most planner users may open no Employee but
 	// their own).
@@ -8303,6 +8362,76 @@ const MPR_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MPR_METHODS);
+
+// ====================================================================== MPH: the hover card (v1.784.0)
+//
+// The Project Planner's hover card (PPH there), on this planner's cards: a visit, a projected visit, a
+// Fountain Move and a technician's project work. Drawn by the kit's popover (planner_kit/popover.js)
+// after a short delay from mph_card, which says what the card's title= lists, as rows: the site, the
+// visit, its day, time and hours, who goes, and what is wrong with it. Mouse and pen only.
+
+const MPH_METHODS = {
+	mph_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.popover || this.mph) return;
+		this.mph = kit.popover.attach(this.$body[0], { selector: ".mp-card[data-key]", describe: (el) => this.mph_describe(el) });
+	},
+
+	mph_describe(el) {
+		const card_el = el.closest(".mp-card[data-key]");
+		const card = card_el && this.by_key ? this.by_key[card_el.getAttribute("data-key")] : null;
+		return card ? this.mph_card(card) : null;
+	},
+
+	mph_card(card) {
+		const booking = card.kind === "booking";
+		const people = booking ? (card.technician ? [card.technician] : []) : this.visit_people(card);
+		const names = people.map((user) => this.tech_name(user));
+		const time = card.slot && card.slot.length === 2 ? card.slot.join("–") : "";
+		const hours = card.full_day
+			? __("Full day")
+			: Number(card.planned_hours) > 0
+			? __("{0}h each", [mp_hours(card.planned_hours)])
+			: Number(card.hours) > 0
+			? __("{0}h", [mp_hours(card.hours)])
+			: "";
+		const tags = [];
+		if (card.kind === "projected") tags.push(card.movable ? __("Next visit") : __("Projected"));
+		if (card.tentative) tags.push(__("Pencil (tentative)"));
+		if (card.drafted && this.draft_on) tags.push(__("Draft: not published yet"));
+		if (card.status === "pending") tags.push(__("Pending review"));
+		if (card.status === "done") tags.push(__("Done"));
+		if (booking) tags.push(__(MP.booking_kinds[card.booking_kind in MP.booking_kinds ? card.booking_kind : "task"]));
+		const what = booking
+			? ""
+			: card.label
+			? __(card.label)
+			: card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
+		const warnings = [];
+		if (card.overdue) warnings.push(__("Overdue"));
+		if (card.on_hold) warnings.push(__("On hold"));
+		if (card.flagged) warnings.push(__("Chemistry flagged"));
+		const day_cell = card.technician && card.date ? this.cell_of(card.technician, card.date) : null;
+		if (day_cell && this.is_off(day_cell)) warnings.push(`${__("Day off")}: ${this.off_label(day_cell)}`);
+		return {
+			title: booking ? card.label || card.ref || "" : this.site_of(card),
+			subtitle: booking ? card.project || "" : card.site_full && card.site_full !== card.site ? card.site_full : card.project || "",
+			tags,
+			rows: [
+				[__("Visit"), what],
+				[__("When"), card.date ? mp_when(card.date) : __("Not scheduled")],
+				[__("Time"), time],
+				[__("Hours"), hours],
+				[people.length > 1 ? __("Crew") : __("Who"), names.length ? names.join(", ") : __("Unassigned")],
+				[__("Record"), booking ? card.ref || "" : card.name || ""],
+			],
+			warnings,
+			notes: booking ? [__("Read-only. Move it on the Project Planner.")] : [],
+		};
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPH_METHODS);
 
 // ====================================================================== P12: the first-visit tour, and "?" for the views
 //

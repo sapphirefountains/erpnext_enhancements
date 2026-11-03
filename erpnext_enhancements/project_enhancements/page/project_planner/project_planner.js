@@ -153,6 +153,19 @@ const PP_ROUTE_COLORS = () => ({
 	line: pp_token_color("--sf-fresh-blue", "#00a0df"),
 });
 const pp_when = (ymd) => moment(ymd, "YYYY-MM-DD").format("ddd, MMM D");
+
+// The hours a free day shows beside its pencilled (tentative) hours. Nikolas, 2026-11-03: "Pencil should be
+// the only hours displayed when something is tentative" — when the pencil covers the free hours, the free
+// figure says nothing a scheduler can use, so only the pencil is shown ("8h pencil"); otherwise both,
+// without the old plus sign ("4h free · 4h pencil"). `free_text` is what the day reads with no pencil.
+function pp_hours_text(free, soft, free_text) {
+	const pencil = Math.max(0, Number(soft) || 0);
+	const open = Math.max(0, Number(free) || 0);
+	if (pencil <= 0.01) return free_text;
+	const pencil_text = __("{0}h pencil", [pp_hours(pencil)]);
+	if (open > 0.01 && pencil + 0.01 >= open) return pencil_text;
+	return `${free_text} · ${pencil_text}`;
+}
 // 70 -> "1h 10m", 25 -> "25m", 120 -> "2h": drive time as people say it.
 const pp_drive = (minutes) => {
 	const total = Math.max(0, Math.round(Number(minutes) || 0));
@@ -776,6 +789,13 @@ class ProjectPlanner {
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
+		// Nikolas, 2026-11-03: "Float right for the side for the Lookahead, Gantt, Crew, Calendar, and Overview
+		// tabs." The tabs and the Calendar's Week/Month switch go last, after the tools, so they sit at the
+		// bar's right end (‹ Today › and the range stay left); the phone's "Filters and tools" button is
+		// appended after them by init_toolbar, so its compact row still ends on that button. The tablist
+		// (kit.toolbar.tabs, tb_ready) is wired on the element, wherever it sits.
+		$seg.appendTo($bar);
+		this.$cal_seg.appendTo($bar);
 		this.update_undo_button();
 
 		this.$panel = $('<div class="pp-section pp-res"></div>').appendTo(this.$body);
@@ -1021,8 +1041,9 @@ class ProjectPlanner {
 			const free = Math.max(0, Number(day.free != null ? day.free : capacity - booked));
 			state = {
 				cls: ratio <= 0.75 ? "pp-green" : "pp-amber",
-				text: free > 0.01 ? __("{0}h free", [pp_hours(free)]) : __("Full"),
+				text: pp_hours_text(free, soft, free > 0.01 ? __("{0}h free", [pp_hours(free)]) : __("Full")),
 				ratio,
+				pencil_said: soft > 0.01,
 			};
 			if (day.off) state.text += ` · ${__("½ day off")}`;
 		}
@@ -1031,7 +1052,9 @@ class ProjectPlanner {
 		state.soft = soft;
 		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
 		if (soft > 0.01) {
-			state.text += ` · ${__("+{0}h pencil", [pp_hours(soft)])}`;
+			// Over, Off and a day off keep the pencil after them (v1.784.0: no plus sign; a free day said it above).
+			if (!state.pencil_said) state.text += ` · ${__("{0}h pencil", [pp_hours(soft)])}`;
+			delete state.pencil_said;
 			if (capacity > 0 && booked + soft - capacity > 0.01) state.cls += " pp-softover";
 		}
 		return state;
@@ -1303,7 +1326,10 @@ class ProjectPlanner {
 					</div>
 					${this.p6d_day_html(ymd, resources)}
 					${cards.map((card) => this.card_html(card, ymd)).join("")}
-					${(foreign_by_day[ymd] || []).map((item) => this.foreign_html(item)).join("")}
+					${(foreign_by_day[ymd] || [])
+						.sort((a, b) => this.booking_order(a, b))
+						.map((item) => this.foreign_html(item))
+						.join("")}
 				</div>`);
 		});
 		const $grid = $('<div class="pp-grid"></div>').html(html.join(""));
@@ -1331,6 +1357,8 @@ class ProjectPlanner {
 				const day = this.day_of(resource.name, ymd);
 				const state = this.avail_state(day);
 				const chips = ((day && day.bookings) || [])
+					.slice()
+					.sort((a, b) => this.booking_order(a, b))
 					.map((booking) =>
 						this.booking_html(resource.name, ymd, booking, this.crew_span_ctx(booked_on, resource.name, days, ymd, booking))
 					)
@@ -1557,6 +1585,27 @@ class ProjectPlanner {
 			String(a.project_title || a.project || "").localeCompare(String(b.project_title || b.project || "")) ||
 			String(a.subject || "").localeCompare(String(b.subject || ""))
 		);
+	}
+
+	// The order of the chips in a person's day on the Crew board, and of another planner's items in a
+	// Calendar day (Nikolas, 2026-11-03: "events should go in order of Project Name, Task Name"). A drive
+	// and a personal block come first (the day's own padding and the person's own time), then every
+	// booking by its project's name and then its own, as compare() orders the Calendar's cards: a task's
+	// names from its card, another planner's from the booking it came with.
+	booking_order(a, b) {
+		const rank = (booking) => (booking.kind === "drive" ? 0 : booking.kind === "block" ? 1 : 2);
+		const names = (booking) => {
+			const card = booking.ref && this.by_task[booking.ref];
+			return card
+				? [card.project_title || card.project || "", card.subject || card.name || ""]
+				: [booking.project_title || booking.project || "", booking.label || booking.ref || ""];
+		};
+		if (rank(a) !== rank(b)) return rank(a) - rank(b);
+		const [pa, ta] = names(a);
+		const [pb, tb] = names(b);
+		// A booking with no project name goes after those with one.
+		if (!pa !== !pb) return pa ? -1 : 1;
+		return String(pa).localeCompare(String(pb)) || String(ta).localeCompare(String(tb));
 	}
 
 	// What is wrong on the days this task is booked: "Austin, Tue Oct 13: Over by 2h".
@@ -1794,7 +1843,17 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard, [data-ppr-task]")) return;
+			if (!e.target.closest) return;
+			// Ctrl+Enter (⌘Enter) on a focused card or project name: its record in a new tab (v1.784.0). A
+			// Ctrl-click stays the multi-select (p6b_modifier_click).
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (this.ppr_new_tab_for(e.target)) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+				return;
+			}
+			if (!e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard, [data-ppr-task]")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -3061,14 +3120,16 @@ class ProjectPlanner {
 		const over_days = Number(cell.over_days) || 0;
 		const off_days = Number(cell.off_days) || 0;
 		if (capacity <= 0 && booked <= 0) {
-			return { cls: "pp-idle pp-offday", pct: "", sub: soft > 0 ? __("+{0}h pencil", [pp_hours(soft)]) : __("Off"), ratio: 0, soft_ratio: 0, capacity, booked, soft, over_days, off_days };
+			return { cls: "pp-idle pp-offday", pct: "", sub: soft > 0 ? __("{0}h pencil", [pp_hours(soft)]) : __("Off"), ratio: 0, soft_ratio: 0, capacity, booked, soft, over_days, off_days };
 		}
 		const ratio = capacity > 0 ? booked / capacity : 2;
 		// The server's band (get_heatmap `level`) decides the color; the same rule is the fallback.
 		const level = ["green", "amber", "red"].includes(cell.level) ? cell.level : null;
 		const cls = level ? `pp-${level}` : ratio > 1.0001 ? "pp-red" : ratio <= 0.75 ? "pp-green" : "pp-amber";
-		const sub = [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
-		if (soft > 0.01) sub.push(__("+{0}h pencil", [pp_hours(soft)]));
+		// v1.784.0: a week with nothing firm on it reads as its pencil alone ("8h pencil"), the pencil-only rule
+		// of avail_state; with firm hours both are said, without the old plus sign.
+		const sub = booked <= 0.01 && soft > 0.01 ? [] : [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
+		if (soft > 0.01) sub.push(__("{0}h pencil", [pp_hours(soft)]));
 		if (over_days > 0) sub.push(over_days === 1 ? __("1 day over") : __("{0} days over", [over_days]));
 		return {
 			cls,
@@ -5328,6 +5389,7 @@ const PP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.pps_kit_ready(); // Simple mode draws with the kit
+		this.pph_ready(); // v1.784.0: the hover card on a chip
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -6474,6 +6536,7 @@ const PP6B_METHODS = {
 		const items = [
 			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
 			fresh ? null : { label: __("Open task"), on_click: () => this.ppr_open_task(card.name) },
+			fresh ? null : { label: __("Open task in new tab"), hint: __("Ctrl+Enter"), on_click: () => this.ppr_open_new_tab("task", card) },
 			{
 				label: __("Assign to…"),
 				hint: editable ? "" : why,
@@ -6512,7 +6575,8 @@ const PP6B_METHODS = {
 					on_click: () =>
 						this.ppr_open("project", { project: card.project }) ||
 						this.ppr_leave(() => frappe.set_route("Form", "Project", card.project)),
-				}
+				},
+				{ label: __("Open project in new tab"), on_click: () => this.ppr_open_new_tab("project", { project: card.project }) }
 			);
 		}
 		return items;
@@ -7860,6 +7924,7 @@ const PP6B_METHODS = {
 					item(key("←") + key("→"), "The previous or next week (month, or four weeks on Capacity)."),
 					item(key("1") + key("2") + key("3"), "Week, month or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("Ctrl") + key("Enter"), "Open the focused task or project in a new tab (⌘Enter on a Mac)."),
 					item(key("/"), "Search tasks, projects and people."),
 					item(key("?"), "This help."),
 					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
@@ -12244,6 +12309,25 @@ const PPL_PURE = {
 		const start = PPL_PURE.week_start(ymd, first);
 		return { start, end: PP6B_PURE.ymd_add(start, 7 * PPL_PURE.weeks(weeks) - 1) };
 	},
+	// The months the window's days fall in, for the band over the day headings (Nikolas, 2026-11-03:
+	// "don't just show the weeks, but also the month"): each with its first day, its 0-based column and
+	// its days on screen. The year is said only when the window holds two.
+	month_bands(days) {
+		const out = [];
+		(days || []).forEach((ymd, index) => {
+			const key = String(ymd).slice(0, 7);
+			const last = out[out.length - 1];
+			if (last && last.key === key) last.span += 1;
+			else out.push({ key, ymd, at: index, span: 1 });
+		});
+		const years = new Set(out.map((month) => month.key.slice(0, 4)));
+		out.forEach((month) => {
+			const date = moment(month.ymd, "YYYY-MM-DD");
+			month.label = date.format(years.size > 1 ? "MMMM YYYY" : "MMMM");
+			month.short = date.format(years.size > 1 ? "MMM YYYY" : "MMM");
+		});
+		return out;
+	},
 	// Where a span sits in the window: 1-based day columns, and whether it runs on past either end.
 	// Null when it misses the window or has no days.
 	columns(start, end, first, last) {
@@ -12469,7 +12553,7 @@ const PPL_METHODS = {
 		if (state.collapsed.has(key)) state.collapsed.delete(key);
 		else state.collapsed.add(key);
 		this.ppl_save_collapsed();
-		this.render();
+		this.ppl_keep_scroll(() => this.render());
 	},
 
 	ppl_set_all(collapsed) {
@@ -12483,7 +12567,56 @@ const PPL_METHODS = {
 			(project.phases || []).forEach((phase) => state.collapsed.delete(`f:${project.name}|${phase.name || ""}`));
 		});
 		this.ppl_save_collapsed();
-		this.render();
+		this.ppl_keep_scroll(() => this.render());
+	},
+
+	// ------------------------------------------------------------------ keeping the scroll
+	//
+	// Nikolas, 2026-11-03: expanding a phase or a project "refreshes the view bringing you to the top".
+	// render() empties the grid and builds it again, so the board's own pane (.pp-scroll, the Lookahead's
+	// and the Crew board's) starts over at 0, and while the page is short the browser clamps the window's
+	// scroll, which the redraw does not undo. So the positions are taken before and put back after.
+
+	// The board's pane, every scrolling ancestor up to the document, and the window.
+	ppl_scroll_save() {
+		const wrap = this.$grid_wrap && this.$grid_wrap[0];
+		const pane = wrap && typeof wrap.querySelector === "function" ? wrap.querySelector(".pp-scroll") : null;
+		const ancestors = [];
+		for (let node = wrap ? wrap.parentNode : null; node && node.nodeType === 1; node = node.parentNode) {
+			if (node.scrollTop || node.scrollLeft) ancestors.push({ el: node, top: node.scrollTop, left: node.scrollLeft });
+		}
+		const win = typeof window !== "undefined" && typeof window.scrollTo === "function" ? window : null;
+		return {
+			pane: pane ? { top: pane.scrollTop || 0, left: pane.scrollLeft || 0 } : null,
+			ancestors,
+			win: win ? { x: win.pageXOffset || 0, y: win.pageYOffset || 0 } : null,
+		};
+	},
+
+	ppl_scroll_restore(saved) {
+		if (!saved) return;
+		const wrap = this.$grid_wrap && this.$grid_wrap[0];
+		const pane = saved.pane && wrap && typeof wrap.querySelector === "function" ? wrap.querySelector(".pp-scroll") : null;
+		if (pane) {
+			pane.scrollTop = saved.pane.top;
+			pane.scrollLeft = saved.pane.left;
+		}
+		(saved.ancestors || []).forEach(({ el, top, left }) => {
+			el.scrollTop = top;
+			el.scrollLeft = left;
+		});
+		if (saved.win && (saved.win.x || saved.win.y)) window.scrollTo(saved.win.x, saved.win.y);
+	},
+
+	// A redraw that leaves the reader where they were: collapsing or expanding a row, the Needs crew chip,
+	// "+N more", and the Overview's Expand all and its lines.
+	ppl_keep_scroll(fn) {
+		const saved = this.ppl_scroll_save();
+		try {
+			fn();
+		} finally {
+			this.ppl_scroll_restore(saved);
+		}
 	},
 
 	ppl_save_collapsed() {
@@ -12555,7 +12688,27 @@ const PPL_METHODS = {
 		if (ymd === this.today()) out.push("ppl-today");
 		if (weekday === 0 || weekday === 6) out.push("ppl-weekend");
 		if (weekday === this.first_weekday()) out.push("ppl-week-start");
+		if (ymd.slice(8, 10) === "01") out.push("ppl-month-start");
 		return out;
+	},
+
+	// The month band over the day headings (v1.784.0): one cell a month across its days, "November" (the
+	// short name where fewer than four of its days are on screen), sticky with the headings under it, the way
+	// the Gantt's timeline reads. A week start keeps its rule; the first of a month gets a firmer one.
+	ppl_monthband_html(days) {
+		const cells = PPL_PURE.month_bands(days)
+			.map(
+				(month) =>
+					`<div class="ppl-month${month.at ? "" : " ppl-month-first"}" role="columnheader" style="grid-column: ${
+						month.at + 2
+					} / span ${month.span}" title="${pp_esc(month.label)}"><span>${pp_esc(
+						month.span < 4 ? month.short : month.label
+					)}</span></div>`
+			)
+			.join("");
+		return `<div class="ppl-row ppl-months" role="row"><div class="ppl-label ppl-corner" role="columnheader" aria-label="${pp_esc(
+			__("Month")
+		)}"></div>${cells}</div>`;
 	},
 
 	// The day headings: a day note shows as a dot, and the heading opens the day peek, which reads it.
@@ -12597,6 +12750,7 @@ const PPL_METHODS = {
 			  )}</div>`;
 		return `<div class="ppl-scroll pp-scroll">
 			<div class="ppl-grid" role="grid" aria-label="${pp_esc(__("Lookahead"))}" style="--ppl-days: ${days.length}">
+				${this.ppl_monthband_html(days)}
 				<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
 					__("Project · phase · task")
 				)}</div>${this.ppl_dayheads_html(days)}</div>
@@ -12891,13 +13045,13 @@ const PPL_METHODS = {
 		on("[data-ppl-weeks]", (el) => this.ppl_pick_weeks(el.getAttribute("data-ppl-weeks")));
 		on("[data-ppl-needs]", () => {
 			state.needs_only = !state.needs_only;
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppl-all]", (el) => this.ppl_set_all(el.getAttribute("data-ppl-all") === "collapse"));
 		on("[data-ppl-toggle]", (el) => this.ppl_toggle(el.getAttribute("data-ppl-toggle")));
 		on("[data-ppl-more]", (el) => {
 			state.shown_all.add(el.getAttribute("data-ppl-more"));
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppl-build]", (el) => this.t1_open_build_out(el.getAttribute("data-ppl-build")));
 		on("[data-ppl-publish]", (el) => this.ppl_publish(el.getAttribute("data-ppl-publish")));
@@ -14397,14 +14551,15 @@ const PPO_METHODS = {
 		const on = (selector, fn) => root.querySelectorAll(selector).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
 		const state = this.ppo_state();
 		on("[data-ppo-months]", (el) => this.ppo_pick_months(el.getAttribute("data-ppo-months")));
+		// v1.784.0: both redraw in place (ppl_keep_scroll), so Expand all does not bring the reader to the top.
 		on("[data-ppo-expand]", (el) => {
 			state.expanded = el.getAttribute("data-ppo-expand") === "1";
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppo-print]", () => this.ppo_print_summary());
 		on("[data-ppo-lines]", () => {
 			state.lines_all = !state.lines_all;
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppo-line]", (el) => {
 			const line = this.ppo_lines()[Number(el.getAttribute("data-ppo-line"))];
@@ -15379,6 +15534,19 @@ const PPR_METHODS = {
 		if (card && !this.ppr_open("task", card)) this.open_card(card);
 	},
 
+	// What Ctrl+Enter opens in a new tab for the element under focus: a card's or a Lookahead name's task,
+	// else a project name's project. False when there is nothing of ours there.
+	ppr_new_tab_for(el) {
+		const card_el = el.closest(".pp-card[data-task], [data-ppr-task]");
+		if (card_el) {
+			const card = this.by_task[card_el.getAttribute("data-task") || card_el.getAttribute("data-ppr-task")];
+			return !!card && this.ppr_open_new_tab("task", card);
+		}
+		const project_el = el.closest("[data-pk-project]");
+		if (project_el) return this.ppr_open_new_tab("project", { project: decodeURIComponent(project_el.getAttribute("data-pk-project")) });
+		return false;
+	},
+
 	// A task by name: its card when the board has it, else the Task (a group Task, one off the board),
 	// through the drawer either way, so an open drawer's history entry is replaced.
 	ppr_open_task(name) {
@@ -15398,6 +15566,15 @@ const PPR_METHODS = {
 
 	ppr_open_project(project) {
 		if (project && !this.ppr_open("project", { project })) this.p6a_open_project(project);
+	},
+
+	// The record in a new tab: the "Open … in new tab" menu items and Ctrl+Enter on a focused card or
+	// project name (Nikolas, 2026-11-03). The kit's window.open on the Desk address records.open would
+	// route to, so this page, its history and its held drafts stay as they are. False with nothing to
+	// open (a drafted new task, a record this person cannot read, no kit yet), and nothing happens then.
+	ppr_open_new_tab(kind, item) {
+		const kit = this.ppr_kit();
+		return !!(kit && kit.records.open_new_tab(kit.records.record_of(kind, item)));
 	},
 
 	// Who a resource is, from whichever answer is on screen: the planner's, Capacity's or the route's.
@@ -15457,6 +15634,7 @@ const PPR_METHODS = {
 	ppr_project_items(project) {
 		const items = [
 			{ label: __("Open project"), on_click: () => this.ppr_open_project(project) },
+			{ label: __("Open project in new tab"), hint: __("Ctrl+Enter"), on_click: () => this.ppr_open_new_tab("project", { project }) },
 			{ label: __("Project at a glance"), on_click: () => this.p6a_open_project(project) },
 		];
 		if (this.by_project[project] && PP.views.includes(this.view)) {
@@ -15468,6 +15646,120 @@ const PPR_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPR_METHODS);
+
+// ====================================================================== PPH: the hover card (v1.784.0)
+//
+// Nikolas, 2026-11-03: "on the popup when hovering have times and other details". The kit's popover
+// (planner_kit/popover.js) draws a card after a short delay over any chip of this page — a task's card on
+// the Calendar, the Crew board and the Lookahead (each is a .pp-card[data-task]) and another planner's
+// booking (.pp-fcard) — from pph_describe, which says what the chip's title= lists and more, as rows:
+// the task and its project, its days, its time slot or hours, the crew, its conflicts and warnings. The
+// title= stays as the accessible fallback (the kit holds it aside only while the card is up). Mouse and
+// pen only: a phone's hold-to-open quick look is unchanged.
+
+const PPH_METHODS = {
+	// From p6a_ready, once the kit is here.
+	pph_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.popover || this.pph) return;
+		this.pph = kit.popover.attach(this.$body[0], {
+			selector: ".pp-card[data-task], .pp-fcard",
+			describe: (el) => this.pph_describe(el),
+		});
+	},
+
+	// What the card says for the chip `el`, or null for one that is not ours.
+	pph_describe(el) {
+		const card_el = el.closest(".pp-card[data-task]");
+		if (card_el) {
+			const card = this.by_task[card_el.getAttribute("data-task")];
+			return card ? this.pph_task(card, card_el.getAttribute("data-date") || "", card_el.getAttribute("data-resource") || "") : null;
+		}
+		const foreign_el = el.closest(".pp-fcard");
+		return foreign_el ? this.pph_foreign(foreign_el) : null;
+	},
+
+	// The booking of `card` on this person's day, when the chip is one of the Crew board's.
+	pph_booking(card, ymd, resource) {
+		if (!ymd || !resource) return null;
+		const day = this.day_of(resource, ymd);
+		return ((day && day.bookings) || []).find((booking) => booking.ref === card.name && booking.kind !== "drive") || null;
+	},
+
+	pph_task(card, ymd, resource) {
+		const booking = this.pph_booking(card, ymd, resource);
+		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
+		const when = !card.start ? __("Not scheduled") : end > card.start ? `${pp_when(card.start)} – ${pp_when(end)}` : pp_when(card.start);
+		const slot = (booking && booking.slot) || card.slot;
+		const time = slot && slot.length === 2 ? slot.join("–") : Number(card.expected_time) > 0 ? "" : card.start ? __("Full day") : "";
+		const hours = [
+			booking && ymd ? __("{0}h on {1}", [pp_hours(booking.hours), pp_when(ymd)]) : "",
+			Number(card.expected_time) > 0 ? __("{0}h planned", [pp_hours(card.expected_time)]) : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		const crew = (card.crew || []).map((member) => {
+			const name = this.resource_label(member.resource, member.label);
+			return member.is_lead ? __("{0} (lead)", [name]) : name;
+		});
+		if (Number(card.short) > 0) crew.push(__("needs {0} more", [card.short]));
+		const tags = [];
+		if (card.tentative || (booking && booking.tentative)) tags.push(__("Pencil (tentative)"));
+		if (card.new_task) tags.push(__("Draft: not published yet"));
+		if (card.overdue) tags.push(__("Overdue"));
+		if (card.rental_kind) tags.push(__(card.rental_kind));
+		return {
+			title: card.subject || card.name,
+			subtitle: card.project_title || card.project || "",
+			tags,
+			rows: [
+				[__("When"), when],
+				[__("Time"), time],
+				[__("Hours"), hours],
+				[__("Crew"), crew.length ? crew.join(", ") : __("Nobody yet")],
+				[__("Task"), card.new_task ? "" : card.name],
+			],
+			warnings: [...this.task_conflicts(card), ...this.dependency_lines(card), ...this.gap_lines(card)],
+			notes: [...this.p4_tip_lines(card), ...(typeof this.weather_lines === "function" ? this.weather_lines(card) : [])],
+		};
+	},
+
+	// Another planner's booking: a Calendar day's item (data-fkey, from the answer's `foreign`) or a Crew
+	// board chip (its ref and kind, in the person-day's bookings).
+	pph_foreign(el) {
+		const kinds = { visit: __("Maintenance visit"), rental: __("Rental"), travel: __("Travel"), task: __("Task") };
+		const key = el.getAttribute("data-fkey");
+		let item = null;
+		if (key) item = ((this.data && this.data.foreign) || []).find((entry) => entry.key === key) || null;
+		else {
+			const cell = el.closest(".pp-cell[data-resource]");
+			const ref = el.getAttribute("data-ref") || "";
+			const kind = el.getAttribute("data-kind") || "";
+			const ymd = el.getAttribute("data-date") || "";
+			const resource = cell ? cell.getAttribute("data-resource") : "";
+			const day = resource ? this.day_of(resource, ymd) : null;
+			const booking = ((day && day.bookings) || []).find((entry) => entry.ref === ref && (entry.kind || "") === kind) || null;
+			if (booking) item = Object.assign({ resource, date: ymd }, booking);
+		}
+		if (!item) return null;
+		const time = item.slot && item.slot.length === 2 ? item.slot.join("–") : "";
+		return {
+			title: item.label || item.ref || "",
+			subtitle: kinds[item.kind] || item.kind || "",
+			tags: [item.tentative ? __("Pencil (tentative)") : "", item.projected ? __("Projected") : "", item.estimated ? __("Estimated") : ""].filter(Boolean),
+			rows: [
+				[__("When"), item.date ? pp_when(item.date) : ""],
+				[__("Time"), time],
+				[__("Hours"), Number(item.hours) > 0 ? __("{0}h", [pp_hours(item.hours)]) : ""],
+				[__("Who"), item.resource ? this.resource_label(item.resource) : ""],
+				[__("Project"), item.project_title || item.project || ""],
+			],
+			notes: [__("Read-only here: another planner's booking.")],
+		};
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPH_METHODS);
 
 // ====================================================================== P12: the first-visit tour, and "?" for the new tabs
 //
