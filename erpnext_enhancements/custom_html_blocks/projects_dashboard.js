@@ -612,9 +612,18 @@
     // A tile narrows the Priority Overview; pressing it from another tab (the Summary, where
     // the tiles live) goes there. The tiles are static markup outside #dashboard-content, so
     // this one binding outlives every re-render of the Summary and the Overview.
+    // The stream chip and Ranked only are cleared first (review round 1 of #1416): they are
+    // the remembered values from the last Overview visit, a tab away from the tile, and a
+    // "Past expected end 3" that lands on Design + Ranked only shows fewer than 3 rows. The
+    // rows then equal the tile's number. Group by stream is a layout, so it stays.
     $root.find('.pd-tile').on('click', function() {
         const key = $(this).attr('data-tile');
         tile_filter = TILE_TESTS[key] ? key : "active";
+        if (overview.stream || overview.ranked_only) {
+            overview.stream = "";
+            overview.ranked_only = false;
+            save_overview();
+        }
         paint_tiles();
         if (current_tab !== "priority-overview") show_tab("priority-overview");
         else render_current_tab();

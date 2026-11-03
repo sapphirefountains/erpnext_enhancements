@@ -503,6 +503,36 @@ await test("a tile pressed on the Summary lands on the Overview, which shows it 
 	assert.equal(run.dom.node("#pd-tile-filter").prop("hidden"), true);
 });
 
+await test("a tile pressed on the Summary clears the remembered chip and Ranked only, so the rows equal its number", async () => {
+	// Review round 1 of #1416: the Overview was left on Design with Ranked only ticked (and
+	// grouped); from the Summary, "Past expected end" must show every past-due project.
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: true, group: true }) },
+	});
+	assert.deepEqual(rowsOf(drawn(run)), [], "Design + Ranked only leaves nothing on the Overview (Bravo is unranked)");
+	clickTab(run, "summary");
+	await settle();
+	let from = mark(run);
+	pressTile(run, "past-due");
+	assert.ok(isActiveTab(run, "priority-overview"));
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"], "the tile's one project, not Design's none");
+	assert.equal(chipCount(run, ""), tileCount(run, "past-due"), "the All chip equals the tile");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true", "All is the pressed chip");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "false");
+	assert.equal(run.dom.node("#pd-ranked-only").prop("checked"), false, "Ranked only is off");
+	assert.equal(run.dom.node("#pd-group-by-stream").prop("checked"), true, "grouping is a layout and stays");
+	assert.match(drawn(run, from), /pd-group/, "still grouped");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), { stream: "", ranked_only: false, group: true }, "the reset is remembered");
+	// Active from the Summary: the tile's number and the All chip are one number
+	clickTab(run, "summary");
+	await settle();
+	pressChip(run, "Build"); // a chip pressed while on another tab still saves
+	from = mark(run);
+	pressTile(run, "active");
+	assert.equal(rowsOf(drawn(run, from)).length, 4);
+	assert.equal(chipCount(run, ""), tileCount(run, "active"));
+});
+
 await test("the tiles' click binding survives the Summary's re-render", async () => {
 	// The Summary empties #dashboard-content on every draw; the tiles are outside it, bound
 	// once. Draw the Summary three times (tab, Refresh, tab), then press a tile.

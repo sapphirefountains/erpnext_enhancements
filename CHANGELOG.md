@@ -33,9 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     say it is narrowed now that the tiles are a tab away:** the pressed tile shows as a chip with an
     x beside the stream chips ("Past expected end ×"), in the tile's own words; the x is the way back
     to every active project without visiting the Summary. The pressed tile is still not remembered.
+    A press also clears the remembered stream chip and Ranked only (review round 1): they are the
+    values from the last Overview visit, a tab away now, and "Past expected end 3" landing on
+    Design + Ranked only showed fewer than 3 rows; the rows now equal the tile's number. Group by
+    stream is a layout and stays.
   - **The Columns "…" button sits on the stream-chips row,** at its right end, for the Priority
     Overview, and on a slim right-aligned strip of its own for Internal and Completed (which have no
-    chips row); it no longer takes a row of its own above the table on any tab. Its menu, Reset
+    chips row); it no longer takes a row of its own above the table on any tab. The auto margin
+    sits on the button's slot, not on the checkboxes (review round 1), so when the chips row wraps
+    at 768 to 1000px the boxes stay beside the chips and only the "…" goes right instead of
+    orphaning on the left of a line of its own; the strip's bottom padding is `--sf-space-5`, the
+    height of its one button plus a hair. Its menu, Reset
     column widths, the per-tab widths, the sortable headers, inline priority editing and the
     per-browser `localStorage` state are as they were.
   - Guarded: `scripts/test_projects_dashboard_toolbar.mjs` (the tiles shown on the Summary only and

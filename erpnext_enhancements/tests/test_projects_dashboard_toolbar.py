@@ -586,7 +586,23 @@ class TestColumnsButton(unittest.TestCase):
 		controls_fn = controls_fn[: controls_fn.index("\n    }\n")]
 		self.assertIn("""$root.find('#list-controls').toggle(current_tab === "active-internal-projects" || current_tab === "completed-projects");""", controls_fn)
 		self.assertRegex(CSS_CODE, r"\.pd-filters-slim\s*\{\s*justify-content:\s*flex-end")
-		self.assertRegex(CSS_CODE, r"\.pd-filters-slim \.pd-list-tools\s*\{\s*margin-left:\s*auto")
+		# Review round 1: the auto margin is on the slot itself, at every width, so a wrapped
+		# chips row leaves the boxes beside the chips and sends only the "..." to the right.
+		self.assertRegex(CSS_CODE, r"\.pd-list-tools\s*\{[^}]*margin-left:\s*auto")
+		self.assertNotRegex(CSS_CODE, r"\.pd-check\s*\{\s*margin-left:\s*auto")
+		phone = CSS_CODE[CSS_CODE.index("@media (max-width: 767px)") :]
+		self.assertNotIn(".pd-check", phone, "no phone override is needed once the slot carries the margin")
+		self.assertNotIn(".pd-list-tools", phone)
+
+	def test_a_tile_press_clears_the_stream_chip_and_ranked_only(self):
+		# Review round 1 of #1416: pressed from the Summary, a tile would land on the remembered
+		# chip and box and show fewer rows than its number. Group by stream is a layout and stays.
+		handler = JS_CODE[JS_CODE.index("$root.find('.pd-tile').on('click'") :]
+		handler = handler[: handler.index("\n    });\n")]
+		self.assertIn('overview.stream = "";', handler)
+		self.assertIn("overview.ranked_only = false;", handler)
+		self.assertIn("save_overview();", handler)
+		self.assertNotIn("overview.group", handler)
 
 
 class TestWidgetUntouched(unittest.TestCase):

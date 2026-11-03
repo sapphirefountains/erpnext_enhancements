@@ -252,7 +252,6 @@
    page colour, which is off-white in light and navy-900 in dark. */
 .pd-fchip[aria-pressed="true"] { background: var(--sf-chip-edge-neutral); border-color: var(--sf-chip-edge-neutral); color: var(--sf-bg); }
 .pd-fchip[aria-pressed="true"] b { color: inherit; opacity: 0.8; }
-.pd-chips + .pd-check, .pd-tile-filter + .pd-check { margin-left: auto; }
 /* The pressed tile's filter, as a chip with an x beside the stream chips: the tiles live on
    the Summary tab, so this is how the Overview says it is narrowed, and how to clear it. */
 .pd-tile-filter {
@@ -279,10 +278,12 @@
 .pd-tile-filter:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
 .pd-tile-filter-x { font-size: var(--sf-text-md); font-weight: var(--sf-weight-regular); line-height: 1; }
 /* The Columns "..." button's slot: the right end of the chips row on the Priority Overview,
-   or the slim strip Internal and Completed share (no chips there, so no row of its own). */
-.pd-list-tools { display: inline-flex; align-items: center; }
-.pd-filters-slim { justify-content: flex-end; padding-top: 0; }
-.pd-filters-slim .pd-list-tools { margin-left: auto; }
+   or the slim strip Internal and Completed share (no chips there, so no row of its own).
+   The auto margin is on the slot, not the checkboxes, so when the row wraps (768-1000px)
+   the two boxes stay beside the chips and only the "..." goes right; it never orphans on
+   the left of a line of its own (review round 1 of #1416). */
+.pd-list-tools { display: inline-flex; align-items: center; margin-left: auto; }
+.pd-filters-slim { justify-content: flex-end; padding-top: 0; padding-bottom: var(--sf-space-5); }
 .pd-check {
     display: inline-flex;
     align-items: center;
@@ -638,8 +639,6 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
     .pd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pd-tabs, .pd-controls { padding-left: var(--sf-space-10); padding-right: var(--sf-space-10); }
     .pd-content { padding: var(--sf-space-10); }
-    .pd-chips + .pd-check, .pd-tile-filter + .pd-check { margin-left: 0; }
-    .pd-list-tools { margin-left: auto; }
     .pg-toolbar-search { flex: 1 1 100%; max-width: none; }
     .pg-toolbar > .dropdown,
     .pg-toolbar > .dropdown > .custom-dropdown-toggle,
