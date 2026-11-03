@@ -31,14 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     are retired; `chb_projects_dashboard_more_v1` is no longer read and nothing is deleted from storage.
     The tab chosen is remembered (`chb_projects_dashboard_tab_v1`).
   - **Priority Overview** now lists every active project (status not Completed or Canceled), client streams
-    and Internal alike, so the Active tile, the All chip and the rows are one number. Above the table:
+    and Internal alike, so the Active tile, the All chip and the rows are one number. **That is the page's
+    one definition of active** (`active_pool`: `is_active` = Yes and status not Completed or Canceled —
+    `is_active` is unreliable on its own): the Internal tab and the Summary's Active Projects and Overdue
+    cards read it too, where before they took `is_active` alone and could disagree with the tiles by every
+    project that is active with status Completed. Above the table:
     stream chips **All / Design / Build / Service / Events / Internal** with counts (Internal is the
     `INTERNAL_PROJECT_TYPES` list), a **Ranked only** box (off by default; ranked = the company priority is
     a number, so Maintenance and Repair Visit are neither ranked nor unranked) and a **Group by stream**
     toggle. **Default is the flat list by company rank**, today's sort. Grouped, each stream is a header
     row — Build, Design, Service, Events, then Internal — ordered by Value Stream Priority: switching
-    grouping on moves the sort from company rank to stream rank and switching it off moves it back (a column
-    the person chose by hand is left alone). The chip, the box and the toggle are remembered per browser
+    grouping on moves the sort from company rank to stream rank and switching it off moves it back, while
+    the sort is the page's own (the saved sort carries an `auto` flag; a header click clears it, and the
+    toggle then leaves the column and the direction alone — review round 1 found it undoing a hand-chosen
+    Company Priority descending). A remembered chip must be one the bar has, or All stands, as a remembered
+    tab must be one of the five. The chip, the box and the toggle are remembered per browser
     (`chb_projects_dashboard_overview_v1`), as is each tab's sort (`chb_projects_dashboard_sort_v1`); his
     audience answer was "mixed, per-person defaults", so columns, widths, sort, tab, grouping and filters
     are each person's own, in `localStorage`, never frappe `user_settings` (Redis only, flushed on every
@@ -73,11 +80,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     denial, Try again on a failed read), the plain-text stand-in when `sf_kit` is missing, the
     `/desk/project/<name>` links, the search box (it now also hides a group header whose rows are all
     hidden), and the reload on a return to the workspace through `workspace_blocks.onWorkspaceReturn`.
-  - **Tests.** `scripts/test_projects_dashboard_toolbar.mjs` runs the block's real script against six
+  - **Review round 1** (`#1415`), fixed before merge: a tile, chip, box or tab pressed while the no-access
+    or error panel is up draws that panel again (a `loaded` flag, set by the first fetch that answers with
+    rows) instead of "No active projects" over it, so the denial reads as a denial and Try again stays; the
+    group header rows (Group by stream, the Internal tab's master projects) take their `colspan` from the
+    columns on show and are re-fitted when the Columns menu hides one, where a fixed 8 or 6 added phantom
+    columns under the fixed table layout; the band's search reads a select as its chosen option rather than
+    every option of the hidden rank selects, which had matched "Maintenance", "Not Assigned" or any digit on
+    every row; the Due in 30 days tooltip says it counts finished projects; and the tab bar is a group of
+    toggle buttons (`aria-pressed`), not a `tablist` with no arrow keys, `aria-controls` or `tabpanel`.
+  - **Tests.** `scripts/test_projects_dashboard_toolbar.mjs` runs the block's real script against seven
     projects and drives the tiles (the four counts, pressing each, Active clearing, a press from another
-    tab), the chips, Ranked only, Group by stream (the group order, the edge token, the sort move), the
+    tab), the chips, Ranked only, Group by stream (the group order, the edge token, the sort move, a
+    hand-chosen sort kept with its direction, across a reload), a remembered chip the bar does not have, the
     remembered and restored view, a blocked storage, the rank pills, Budget, the Past due pill, the
-    Completed and Internal tables, Refresh and "Updated just now", the "+" menu and the Columns button;
+    Completed and Internal tables, the group row's `colspan` after two columns are hidden, the Internal tab
+    and the Summary on a project that is active with status Completed, the no-access and error panels
+    under a tile, chip, box and tab, Refresh and "Updated just now", the "+" menu and the Columns button;
     `tests/test_projects_dashboard_toolbar.py` holds the shell, script and stylesheet in agreement (the five
     routes, the tile keys, the chip streams, the storage keys, the measurements, no theme selector, every
     literal colour on the Gantt canvas, no shadow off it); `tests/test_custom_html_blocks.py` checks the
