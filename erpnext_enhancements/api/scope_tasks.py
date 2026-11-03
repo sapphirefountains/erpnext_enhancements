@@ -230,9 +230,11 @@ def get_template_catalog(project):
 	tasks. Read-only; needs *write* on the project, since that is what the import needs.
 	"""
 	project = _require_project(project, "write")
+	# `or (...)`: get_value answers None, not a row of Nones, for a row that vanished between the
+	# permission check and this read (tests/test_get_value_unpacking.py guards the spelling).
 	project_type, start, end = frappe.db.get_value(
 		"Project", project, ["project_type", "expected_start_date", "expected_end_date"]
-	)
+	) or (None, None, None)
 	templates = frappe.get_all(
 		TEMPLATE_DOCTYPE,
 		filters={"disabled": 0},
