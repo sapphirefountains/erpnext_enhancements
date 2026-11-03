@@ -213,6 +213,7 @@ def send_approval_request(service_call, email=None, phone=None, via_sms=0):
 	call.check_permission("write")
 	if call.status not in service_calls.SENDABLE:
 		frappe.throw(_("A {0} service call cannot be sent for approval.").format(_(call.status)), title=_("Cannot send"))
+	_require_rate(call)
 	recipient = clean_email(email if email is not None else call.get("contact_email"))
 	number = clean_phone(phone if phone is not None else call.get("contact_phone")) if cint(via_sms) else ""
 	if not recipient:
@@ -268,6 +269,27 @@ def send_approval_request(service_call, email=None, phone=None, via_sms=0):
 	if sms_error:
 		result["sms_error"] = sms_error
 	return result
+
+
+def _require_rate(call):
+	"""A link quotes a rate, so a call with none cannot be sent. A rate entered in the table after
+	the call was made is copied now (the call was created before its row existed); a call that
+	still has none is refused with the row to fill in."""
+	from frappe.utils import flt
+
+	field = service_calls.rate_field(call.get("service_type"))
+	if flt(call.get(field)) > 0:
+		return
+	service_calls.copy_rates(call)
+	if flt(call.get(field)) > 0:
+		call.db_set(field, call.get(field))
+		return
+	frappe.throw(
+		_(
+			"This call has no rate to quote. Enter the {0} ({1}) rate in Service Call Rate, then send again."
+		).format(call.get("service_type"), call.get("rate_kind") or service_calls.default_rate_kind(call.get("service_type"))),
+		title=_("No rate on file"),
+	)
 
 
 def retire_live(service_call, keep=None):
@@ -568,7 +590,9 @@ def record_decline(request, reason):
 	call.db_set({"status": "Declined", "declined_on": when, "decline_reason": reason})
 	call.add_comment("Comment", _("Declined on the link: {0}").format(escape_html(reason)))
 	retire_live(call.name, keep=request.name)
-	service_calls.set_opportunity_status(call.get("opportunity"), "Lost", reason)
+	service_calls.set_opportunity_status(
+		call.get("opportunity"), "Lost", reason, lost_reason=service_calls.LOST_DECLINED, service_call=call.name
+	)
 
 
 def expire_stale():
@@ -583,7 +607,9 @@ def expire_stale():
 			row = frappe.db.get_value(CALL, service_call, ["status", "opportunity"], as_dict=True)
 			if row and row.status == "Sent for Approval":
 				frappe.db.set_value(CALL, service_call, {"status": "Declined", "declined_on": now_datetime(), "decline_reason": EXPIRED_REASON})
-				service_calls.set_opportunity_status(row.opportunity, "Lost", EXPIRED_REASON)
+				service_calls.set_opportunity_status(
+					row.opportunity, "Lost", EXPIRED_REASON, lost_reason=service_calls.LOST_EXPIRED, service_call=service_call
+				)
 		except Exception:
 			frappe.log_error(title="Service call approval: expiry failed", message=frappe.get_traceback())
 

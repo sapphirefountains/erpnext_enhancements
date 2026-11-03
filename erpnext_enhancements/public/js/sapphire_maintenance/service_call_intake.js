@@ -120,7 +120,9 @@
 							message: __("Created {0}, project {1} and opportunity {2}", [made.service_call, made.project, made.opportunity]),
 							indicator: "green",
 						});
-						// The new, unsaved form is replaced by the call that was made.
+						// The empty new form's history entry is replaced by the call that was made, so
+						// Back does not land on the empty form and open this dialog again.
+						frappe.route_flags.replace_route = true;
 						frappe.set_route("Form", "Service Call", made.service_call);
 					},
 					always: () => dialog.get_primary_btn().prop("disabled", false),

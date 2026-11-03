@@ -104,8 +104,19 @@ TASKS = (
 	{"subject": "Invoice sent", "start": 4, "duration": 7, "description": "The draft Sales Invoice from the visit, checked and sent."},
 )
 INVOICE_DAYS = 7
+#: How far past the planned end the Project is inserted with (:func:`project_window`). ERPNext's
+#: ``copy_from_template`` inserts each template Task at the project's expected start plus the
+#: template's offsets (day 11 for Invoice sent), shifted off holidays, and Task's
+#: ``validate_parent_project_dates`` (16.52.1) refuses a new task ending after the project's
+#: Expected End Date. A visit within a few days, a past visit or no date at all would end before
+#: day 11, so the Project goes in wide and takes its real end after the tasks are re-dated.
+PROJECT_WINDOW_DAYS = 30
 #: ``project_name`` and ``custom_opportunity_name`` are Data fields.
 NAME_MAX = 140
+#: Opportunity Lost Reason masters a Service Call's Lost moves use (made on first use).
+LOST_DECLINED = "Client declined"
+LOST_EXPIRED = "Approval link expired"
+LOST_CANCELED = "Service call canceled"
 
 #: Short terms the approval page and email show, taken from the 2026-10-13 agreement terms. No
 #: figures here (the repository is public): the rates come from the Service Call Rate table at
@@ -205,6 +216,22 @@ def task_dates(today, scheduled=None):
 	]
 
 
+def project_window(today, scheduled=None):
+	"""``(start, insert_end, planned_end)`` for the Project.
+
+	``start`` is today, or the visit's day when it is already past. ``insert_end`` is what the Project
+	is inserted with: the planned end or :data:`PROJECT_WINDOW_DAYS` after today, whichever is later,
+	so every template Task ERPNext copies (the last ends ``start + 11`` days, holidays aside) fits
+	inside it. ``planned_end`` is the real end, written once the tasks are re-dated.
+	"""
+	today = getdate(today)
+	rows = task_dates(today, scheduled)
+	start = min([today] + [row["start"] for row in rows])
+	planned_end = max(row["end"] for row in rows)
+	insert_end = max(planned_end, add_days(today, PROJECT_WINDOW_DAYS))
+	return start, insert_end, planned_end
+
+
 def can_transition(current, new):
 	return new in TRANSITIONS.get(current or "Requested", set())
 
@@ -237,6 +264,7 @@ def plan_intake(values, today, customer_name, opening_status, owner):
 		"contact_mobile": values.get("contact_phone") or None,
 		"custom_general_scope_description": values.get("scope") or None,
 	}
+	start, insert_end, _planned_end = project_window(today, scheduled)
 	project = {
 		"doctype": "Project",
 		"project_name": name,
@@ -244,8 +272,10 @@ def plan_intake(values, today, customer_name, opening_status, owner):
 		"project_type": PROJECT_TYPE,
 		"project_template": PROJECT_TEMPLATE,
 		"status": "Active",
-		"expected_start_date": getdate(today),
-		"expected_end_date": task_dates(today, scheduled)[-1]["end"],
+		"expected_start_date": start,
+		# Wide on purpose: the real end lands after the template tasks are re-dated
+		# (:func:`project_window`, :func:`_make_project`).
+		"expected_end_date": insert_end,
 	}
 	service_call = {
 		"doctype": DOCTYPE,
@@ -518,7 +548,11 @@ def _make_project(values, opportunity, scheduled):
 		values["custom_opportunity"] = opportunity
 	doc = frappe.get_doc(values)
 	doc.insert(ignore_permissions=True)
+	# ERPNext's after_insert has copied the template tasks inside the wide window; now the real dates.
 	redate_tasks(doc.name, nowdate(), scheduled)
+	_start, _insert_end, planned_end = project_window(nowdate(), scheduled)
+	frappe.db.set_value("Project", doc.name, "expected_end_date", planned_end, update_modified=False)
+	doc.expected_end_date = planned_end
 	return doc
 
 
@@ -693,14 +727,24 @@ def cancel_service_call(service_call, reason=None):
 		frappe.throw(_("A {0} service call cannot be canceled.").format(_(call.status)), title=_("Cannot cancel"))
 	call.db_set("status", "Canceled")
 	call.add_comment("Comment", _("Canceled: {0}").format(frappe.utils.escape_html(reason or _("no reason given"))))
-	set_opportunity_status(call.get("opportunity"), "Lost", reason or "Service call canceled")
+	set_opportunity_status(call.get("opportunity"), "Lost", reason or LOST_CANCELED, lost_reason=LOST_CANCELED, service_call=call.name)
 	return {"status": "Canceled"}
 
 
-def set_opportunity_status(opportunity, status, reason=None):
+def set_opportunity_status(opportunity, status, reason=None, lost_reason=None, service_call=None):
 	"""Move the call's Opportunity: ``"Closed Won"`` on approval, ``"Lost"`` on a decline, expiry
 	or cancel, or its opening status on a resend after a decline. A full save, so the won-date,
-	hand-off and tag hooks run as they do for a deal moved by hand. Never raises."""
+	hand-off and tag hooks run as they do for a deal moved by hand.
+
+	A move to Lost carries a ``lost_reasons`` row (``lost_reason``, one of the three masters this
+	module makes on first use, :func:`ensure_lost_reason`): the Opportunity's own
+	``validate_close_reason`` refuses a fresh transition to Lost without one, and until v1.777.0's
+	review the move was refused and the refusal swallowed, so a declined call's deal stayed open.
+	``reason`` is the detail (the client's words) and goes to ``order_lost_reason``.
+
+	Never raises; a failure is an Error Log **and a Comment on the Service Call** saying the deal
+	was not moved and why, so nobody reads a Declined call as a Lost deal.
+	"""
 	if not opportunity:
 		return
 	try:
@@ -710,10 +754,46 @@ def set_opportunity_status(opportunity, status, reason=None):
 		if doc.status == status:
 			return
 		doc.status = status
-		if status == "Lost" and reason and doc.meta.get_field("order_lost_reason"):
-			doc.order_lost_reason = str(reason)[:500]
+		if status == "Lost":
+			if reason and doc.meta.get_field("order_lost_reason"):
+				doc.order_lost_reason = str(reason)[:500]
+			label = ensure_lost_reason(lost_reason or LOST_DECLINED)
+			if label and doc.meta.get_field("lost_reasons") and not any(
+				row.get("lost_reason") == label for row in doc.get("lost_reasons") or []
+			):
+				doc.append("lost_reasons", {"lost_reason": label})
 		doc.flags.ignore_permissions = True
 		doc.save(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(title=LOG_TITLE, message=frappe.get_traceback())
+		_note_opportunity_not_moved(service_call, opportunity, status)
+
+
+def ensure_lost_reason(label):
+	"""The Opportunity Lost Reason master ``label``, made if missing. ``None`` when it cannot be."""
+	if not label:
+		return None
+	try:
+		if frappe.db.exists("Opportunity Lost Reason", label):
+			return label
+		frappe.get_doc({"doctype": "Opportunity Lost Reason", "lost_reason": label}).insert(ignore_permissions=True)
+		return label
+	except Exception:
+		frappe.log_error(title=LOG_TITLE, message=frappe.get_traceback())
+		return None
+
+
+def _note_opportunity_not_moved(service_call, opportunity, status):
+	if not service_call:
+		return
+	try:
+		call = frappe.get_doc(DOCTYPE, service_call)
+		call.add_comment(
+			"Comment",
+			_("Opportunity {0} was NOT moved to {1}: its save was refused. See the Error Log ({2}) and move it by hand.").format(
+				frappe.get_link_to_form("Opportunity", opportunity), _(status), LOG_TITLE
+			),
+		)
 	except Exception:
 		frappe.log_error(title=LOG_TITLE, message=frappe.get_traceback())
 

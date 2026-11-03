@@ -138,17 +138,19 @@
   },
   {
    "depends_on": "eval:doc.service_type && doc.service_type != \"Small Repair\"",
-   "description": "Copied from Service Call Rate when the call is created. Chemicals are billed in addition.",
+   "description": "Copied from Service Call Rate when the call is created. Chemicals are billed in addition. Fixed once the call has been sent for approval.",
    "fieldname": "flat_rate",
    "fieldtype": "Currency",
-   "label": "Flat Rate"
+   "label": "Flat Rate",
+   "read_only_depends_on": "eval:doc.status && doc.status != \"Requested\""
   },
   {
    "depends_on": "eval:doc.service_type == \"Small Repair\"",
-   "description": "Per hour, copied from Service Call Rate when the call is created. Parts are billed in addition.",
+   "description": "Per hour, copied from Service Call Rate when the call is created. Parts are billed in addition. Fixed once the call has been sent for approval.",
    "fieldname": "hourly_rate",
    "fieldtype": "Currency",
-   "label": "Hourly Rate"
+   "label": "Hourly Rate",
+   "read_only_depends_on": "eval:doc.status && doc.status != \"Requested\""
   },
   {
    "fieldname": "column_break_when",

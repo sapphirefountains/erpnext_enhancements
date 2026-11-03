@@ -548,7 +548,10 @@ rate kind for a Small Repair, the planned day, the technician and the scope in p
 calls `service_calls.create_service_call`, which under one savepoint makes the Address, the
 Opportunity, the Project (an ordinary insert: ERPNext copies the template tasks, the PRO-0204 steps
 seed, the Drive folder follows the usual Project path) and the Service Call, in that order, and
-opens the call. Cancel leaves the plain form for a call logged by hand against an existing project.
+opens the call. The Project goes in with a wide Expected End Date (`project_window`, thirty days
+out) and takes its real end once the tasks are re-dated: ERPNext copies "Invoice sent" to day 11 and
+Task's `validate_parent_project_dates` (16.52.1) refuses a new task ending after the project's end,
+so a visit within three days, a past visit or no date would otherwise fail the whole intake. Cancel leaves the plain form for a call logged by hand against an existing project.
 
 **Rates.** Startup, Winterization and Maintenance Visit are flat rates; a Small Repair is time and
 materials at the **As-needed**, **Emergency** or **After-hours Emergency** hourly rate. The figures
@@ -570,7 +573,12 @@ Approve records the name, time, IP and browser on the **Service Call Approval Re
 call, moves the call to **Approved** and the Opportunity to **Closed Won** (a full save, so the
 won-date, hand-off and tag hooks run as for a deal moved by hand), and, when the call has a date,
 drafts the visit at once. Decline marks the call Declined and the Opportunity **Lost** with the
-reason; a link past its fourteen days does the same on the daily sweep (`expire_stale`). A resend
+reason; a link past its fourteen days does the same on the daily sweep (`expire_stale`). Every move
+to Lost carries a `lost_reasons` row ("Client declined", "Approval link expired" or "Service call
+canceled", masters made on first use), because the Opportunity's own `validate_close_reason` refuses a
+fresh Lost without one; a refused Opportunity move is a Comment on the call as well as an Error Log.
+Send for Approval refuses a call with no rate on it (copying one entered in the table since the call
+was made first), and the copied rates are read-only once the call has left Requested. A resend
 supersedes the live link and, after a decline, puts the Opportunity back at its opening status. The
 threat model is the visit sign-off's: a 256-bit bearer token of which only the SHA-256 is stored,
 uniform failure copy, guest endpoints POST-only and rate limited, every field assigned by name.

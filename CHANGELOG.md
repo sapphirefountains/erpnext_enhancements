@@ -74,6 +74,16 @@ No. The visit itself was going undocumented.
   visit, never a silent gap. The visit's submit hook marks the call Done and links the visit; the invoice
   step marks it Invoiced. Gated by the same Settings switch as contract visits.
 - Workspace: Service Call and Service Call Rate in the Maintenance card, a **New Service Call** shortcut.
+- Review of the first cut (same release): a move to **Lost** carries a `lost_reasons` row (the masters
+  "Client declined", "Approval link expired" and "Service call canceled" are made on first use), since
+  the Opportunity's own `validate_close_reason` refuses a fresh Lost without one; a refused Opportunity
+  move is a Comment on the Service Call as well as an Error Log, never silent. The Project is inserted
+  with a wide Expected End Date (thirty days out) and takes its real end after the template tasks are
+  re-dated: ERPNext copies "Invoice sent" to day 11 and Task's `validate_parent_project_dates`
+  (16.52.1) refuses a new task ending after the project's end, which failed the whole intake for a
+  visit within three days, a past visit or no date. The copied rates are read-only once the call has
+  left Requested; Send for Approval refuses a call with no rate (copying one entered since first). After
+  Create the empty new form's history entry is replaced, so Back does not reopen the dialog.
 - `tests/test_service_calls.py` (bench-free pytest, its own CI step): the intake planner (what is
   created, in what order, with what names, status and template), the rate copy and the pairs allowed, the
   dates, the approval state machine (tokens by shape, expiry, the guest endpoints' shape, no `.update(`

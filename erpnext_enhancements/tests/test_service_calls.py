@@ -117,6 +117,12 @@ def install_frappe_stub():
 	frappe.local = types.SimpleNamespace(request_ip="203.0.113.9")
 	frappe.get_request_header = lambda name: "TestBrowser/1.0"
 	frappe.get_app_path = lambda *parts: str(APP.joinpath(*parts[1:]))
+	frappe.get_link_to_form = lambda doctype, name: name
+
+	def throw(message, exc=Exception, title=None):
+		raise exc(message)
+
+	frappe.throw = throw
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
 	sys.modules["frappe.rate_limiter"] = limiter
@@ -179,6 +185,9 @@ class _Doc(dict):
 			return self[key]
 		except KeyError:
 			raise AttributeError(key) from None
+
+	def __setattr__(self, key, value):
+		self[key] = value
 
 	def get(self, key, default=None):
 		return dict.get(self, key, default)
@@ -262,6 +271,58 @@ def test_task_dates_visit_today_and_no_date_and_past(sc):
 	assert past[2]["start"] == TODAY
 
 
+@pytest.mark.parametrize(
+	("scheduled", "planned_end"),
+	[
+		(datetime.date(2026, 11, 4), datetime.date(2026, 11, 11)),  # visit tomorrow
+		(datetime.date(2026, 11, 2), datetime.date(2026, 11, 10)),  # visit yesterday
+		(None, datetime.date(2026, 11, 14)),  # no date
+		(datetime.date(2027, 1, 20), datetime.date(2027, 1, 27)),  # far ahead
+	],
+)
+def test_project_window_fits_every_template_task(sc, scheduled, planned_end):
+	"""ERPNext copies each template Task at expected start + its offsets and Task's
+	validate_parent_project_dates (16.52.1) refuses a new task ending after the project's end, so
+	the Project is inserted wide and takes its real end after the tasks are re-dated."""
+	start, insert_end, real_end = sc.project_window(TODAY, scheduled)
+	assert real_end == planned_end
+	assert start <= TODAY
+	if scheduled:
+		assert start <= sc.getdate(scheduled)
+	for task in sc.TASKS:
+		copied_end = sc.add_days(start, task["start"] + task["duration"])
+		assert insert_end >= copied_end + datetime.timedelta(days=7), task["subject"]  # holiday shifts too
+	assert insert_end >= real_end
+
+
+def test_intake_writes_the_real_end_after_the_tasks(sc):
+	writes = []
+	made = []
+
+	class Doc(dict):
+		def __getattr__(self, key):
+			try:
+				return self[key]
+			except KeyError:
+				raise AttributeError(key) from None
+
+		def insert(self, ignore_permissions=False):
+			self["name"] = "PRJ-01000"
+			made.append(dict(self))
+			return self
+
+	sc.frappe.get_doc = lambda values: Doc(values)
+	sc.frappe.db.exists = lambda *a, **k: True
+	sc.frappe.db.set_value = lambda doctype, name, field, value=None, **k: writes.append((doctype, name, field, value))
+	sc.frappe.get_all = lambda *a, **k: [types.SimpleNamespace(name="TASK-3", subject="Invoice sent")]
+	plan = dict(sc.plan_intake(_values(scheduled_date="2026-11-04"), TODAY, "Example Residence", "Qualification", "u"))
+	project = sc._make_project(plan["project"], "CRM-OPP-1", "2026-11-04")
+	assert made[0]["expected_end_date"] == datetime.date(2026, 12, 3)
+	assert writes[-1] == ("Project", "PRJ-01000", "expected_end_date", datetime.date(2026, 11, 11))
+	assert project.expected_end_date == datetime.date(2026, 11, 11)
+	assert ("Task", "TASK-3") == writes[0][:2] and writes[0][2] == {"exp_start_date": datetime.date(2026, 11, 4), "exp_end_date": datetime.date(2026, 11, 11)}
+
+
 def test_template_task_offsets_chain_without_overlap(sc):
 	ends = -1
 	for task in sc.TASKS:
@@ -308,7 +369,8 @@ def test_plan_creates_opportunity_then_project_then_call(sc):
 	assert project["project_template"] == "Service Call"
 	assert project["status"] == "Active"
 	assert project["expected_start_date"] == TODAY
-	assert project["expected_end_date"] == datetime.date(2026, 11, 17)
+	# Inserted wide (today + 30), so ERPNext's copied template tasks fit; the real end lands after.
+	assert project["expected_end_date"] == datetime.date(2026, 12, 3)
 
 	assert call["doctype"] == "Service Call"
 	assert call["status"] == "Requested"
@@ -369,6 +431,94 @@ def test_every_transition_names_a_real_status(sc):
 		assert current in sc.STATUSES
 		assert targets <= set(sc.STATUSES)
 	assert set(sc.SENDABLE) <= set(sc.STATUSES)
+
+
+# ---------------------------------------------------------------------- the Opportunity
+
+
+class _Opp(_Doc):
+	def __init__(self, **values):
+		super().__init__(values)
+		self["lost_reasons"] = []
+		self["flags"] = types.SimpleNamespace()
+		self["meta"] = types.SimpleNamespace(get_field=lambda f: f in ("order_lost_reason", "lost_reasons"))
+		self["saved"] = 0
+
+	def append(self, table, row):
+		self[table].append(row)
+
+	def save(self, ignore_permissions=False):
+		if self["status"] == "Lost" and not self["lost_reasons"]:
+			raise RuntimeError("Please set at least one Lost Reason")
+		self["saved"] += 1
+
+
+def test_lost_carries_a_lost_reason_row_and_makes_the_master(sc):
+	opp = _Opp(status="Qualification")
+	masters = []
+	sc.frappe.db.exists = lambda doctype, name=None: doctype == "Opportunity"
+	sc.frappe.get_doc = lambda *a, **k: opp if a and a[0] == "Opportunity" else _Master(a[0], masters)
+	sc.set_opportunity_status("CRM-OPP-1", "Lost", "Too expensive", lost_reason=sc.LOST_DECLINED, service_call="SVC-1")
+	assert opp["status"] == "Lost" and opp["saved"] == 1
+	assert opp["lost_reasons"] == [{"lost_reason": "Client declined"}]
+	assert opp["order_lost_reason"] == "Too expensive"
+	assert masters == [{"doctype": "Opportunity Lost Reason", "lost_reason": "Client declined"}]
+	# Again, with the master present and the row already there: nothing duplicated.
+	opp["status"] = "Sent"
+	sc.frappe.db.exists = lambda doctype, name=None: True
+	sc.set_opportunity_status("CRM-OPP-1", "Lost", None, lost_reason=sc.LOST_DECLINED)
+	assert opp["lost_reasons"] == [{"lost_reason": "Client declined"}] and len(masters) == 1
+
+
+class _Master(dict):
+	def __init__(self, values, made):
+		super().__init__(values)
+		self.made = made
+
+	def insert(self, ignore_permissions=False):
+		self.made.append(dict(self))
+		return self
+
+
+def test_a_refused_opportunity_move_is_a_comment_on_the_call(sc):
+	comments = []
+	logged = []
+
+	class Refusing(_Opp):
+		def save(self, ignore_permissions=False):
+			raise RuntimeError("Please set the three ranks before marking this Opportunity Closed Won")
+
+	call = _Doc(name="SVC-1")
+	call.add_comment = lambda kind, text: comments.append(text)
+	sc.frappe.db.exists = lambda *a, **k: True
+	sc.frappe.get_doc = lambda doctype, name=None, **k: Refusing(status="Sent for Approval") if doctype == "Opportunity" else call
+	sc.frappe.get_link_to_form = lambda doctype, name: name
+	sc.frappe.log_error = lambda **k: logged.append(k)
+	sc.set_opportunity_status("CRM-OPP-1", "Closed Won", service_call="SVC-1")
+	assert logged and comments and "NOT moved to Closed Won" in comments[0]
+
+
+def test_sending_needs_a_rate(approval):
+	stamped = []
+	call = _Doc(service_type="Startup", rate_kind="Flat", flat_rate=0)
+	call.db_set = lambda field, value=None: stamped.append((field, value))
+	approval.frappe.db.get_value = lambda *a, **k: None
+	with pytest.raises(Exception):
+		approval._require_rate(call)
+	approval.frappe.db.get_value = lambda *a, **k: 425.0
+	approval._require_rate(call)
+	assert stamped == [("flat_rate", 425.0)]
+	assert call["flat_rate"] == 425.0
+	stamped.clear()
+	approval._require_rate(call)  # already quoted: nothing copied again
+	assert stamped == []
+
+
+def test_rates_are_fixed_once_sent():
+	call = json.loads((MAINT / "doctype" / "service_call" / "service_call.json").read_text(encoding="utf-8"))
+	fields = {f["fieldname"]: f for f in call["fields"]}
+	for name in ("flat_rate", "hourly_rate"):
+		assert fields[name]["read_only_depends_on"] == 'eval:doc.status && doc.status != "Requested"'
 
 
 # ---------------------------------------------------------------------- the invoice lines
@@ -518,11 +668,11 @@ def test_expire_stale_declines_the_call_and_loses_the_opportunity(approval):
 	approval.frappe.get_all = lambda doctype, filters=None, pluck=None, **k: ["SCA-9"]
 	approval.frappe.db.get_value = lambda doctype, name, field, **k: ("SVC-9" if field == "service_call" else types.SimpleNamespace(status="Sent for Approval", opportunity="CRM-OPP-9"))
 	approval.frappe.db.set_value = lambda doctype, name, field, value=None, **k: writes.append((doctype, name, field if isinstance(field, dict) else {field: value}))
-	approval.service_calls.set_opportunity_status = lambda opp, status, reason=None: moved.append((opp, status, reason))
+	approval.service_calls.set_opportunity_status = lambda opp, status, reason=None, **kw: moved.append((opp, status, reason, kw))
 	approval.expire_stale()
 	assert writes[0] == ("Service Call Approval Request", "SCA-9", {"status": "Expired"})
 	assert writes[1][1] == "SVC-9" and writes[1][2]["status"] == "Declined"
-	assert moved == [("CRM-OPP-9", "Lost", approval.EXPIRED_REASON)]
+	assert moved == [("CRM-OPP-9", "Lost", approval.EXPIRED_REASON, {"lost_reason": "Approval link expired", "service_call": "SVC-9"})]
 
 
 def test_describe_approval(approval):
