@@ -862,7 +862,7 @@ the core **Projects** module sidebar right after Task, with Crew Utilization amo
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
-**Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
+**Opened from a Project** (v1.667.0). The Project form's *Open in Planner* button (its own button in the page head since v1.779.0; it was *View > Open in Project Planner*)
 (`public/js/project_enhancements/project_planner_link.js`) routes to that project's Gantt,
 `/desk/project-planner/gantt/<name>?project=<name>` (P6, v1.709.0; before it, the planner's default view, or
 the Lookahead on the week a project that had not started yet starts). The button is only on
@@ -1699,7 +1699,7 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
   opens a kit drawer with `get_conflicts(start, end, planner)` for the dates on screen, grouped by
   day: each conflict's icon, the person (or vehicle, or task for a qualification), the sentence, the
   block's note when `block_notes` has it, and its records. The page's own record opens in its side
-  panel; anything else is a read-only link (*Open in Maintenance Planner* / *Open in Project Planner*
+  panel; anything else is a read-only link (*Open in Maintenance Planner* / *Open in Planner*
   / *Open trip* / *Open task*). Kept conflicts hide behind **Show kept (N)**, which shows who kept
   each and why. The count is the same call, read once after each load (debounced, `silent`), never on
   a plain re-render; an open drawer reads it again after every change.
@@ -1778,7 +1778,7 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
     landing never reads one (an old row's is ignored), so `planner_views_prefs.SCHEMA["project"]["view"]`
     is unchanged (named views from *Save view as…* still carry their view). The redirect uses
     `replace_route`, so Back leaves the planner. A link that names a filter (`?project=`, the Project
-    form's *Open in Project Planner*) opens the device's calendar tab with it, and never Today (it has no
+    form's *Open in Planner*) opens the device's calendar tab with it, and never Today (it has no
     filters to show). Someone the planner
     does not list, sent to Today by the landing, gets the planner (`p8_landed`, `render_today`).
   - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
@@ -2345,7 +2345,7 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
   opens the Project filter's project, else the one this device opened last (localStorage
   `ee_project_planner_gantt_project:<user>`). Each project opened is a route, so Back and Forward step
   through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
-  routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
+  routes. The Project form's *Open in Planner* lands here. ‹ › scroll the chart a step of its
   zoom, and Today scrolls to today.
 - **`?build_out=template`** (v1.749.0, TASK-2026-02984). The Opportunity hand-off's "Build out from a
   planner template", offered once its Project is made (`crm_enhancements/create_project_prompt.js`),

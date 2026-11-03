@@ -1,5 +1,10 @@
 /**
- * Project form: View > Open in Project Planner (custom pages S5b, v1.667.0).
+ * Project form: the "Open in Planner" button (custom pages S5b, v1.667.0; its own button since
+ * v1.779.0).
+ *
+ * Nik, 2026-11-03, from the route audit: the planner had 190 visits from six people in 90 days
+ * and was reachable from a form only through the View menu. The button now stands on its own in
+ * the page head, beside the trail, rather than under View, so it is one click and visible.
  *
  * Opens the Project Planner's Gantt for this project (P6 of the planner UX redesign:
  * /project-planner/gantt/<project>), the project from its first task to its last, with this
@@ -28,10 +33,9 @@ frappe.ui.form.on("Project", {
 		// "Canceled" is this site's spelling (a Property Setter); "Cancelled" is ERPNext's own.
 		const closed = ["Completed", "Canceled", "Cancelled"];
 		if (!planned.includes(frm.doc.project_type) || closed.includes(frm.doc.status)) return;
-		frm.add_custom_button(
-			__("Open in Project Planner"),
-			() => frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name }),
-			__("View")
+		// No group: a grouped button is a menu entry, a bare one is a button in the page head.
+		frm.add_custom_button(__("Open in Planner"), () =>
+			frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name })
 		);
 	},
 });

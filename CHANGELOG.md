@@ -107,6 +107,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     device holding the old block in memory needs a hard reload. **Unverified:** nothing here ran in a
     browser or against a bench — the render, the dark theme, the Gantt tab alongside the new chrome, the
     phone layout and the inline select are checked on prod after the migrate.
+## [1.779.0] - 2026-11-03
+
+**Desk navigation, round one of the 2026-11-03 route audit: form breadcrumbs that lead to this app's pages,
+two dead ends in the Projects sidebar, and three shortcuts the paths asked for.** Nikolas, 2026-11-03: "being
+in the Project document, when I click Project in the top right corner it takes me to the Project DocType List
+view. I'd like it to go to our custom Projects Dashboard we have instead", then "let's look at usability and
+ease of navigation", with a research round over 90 days of `tabRoute History` (8,996 rows, 14 users,
+2026-08-06 to 2026-11-03; frappe's `router_history.js` skips Form routes, so form opens are invisible and
+lists, workspaces, pages and reports are what it records) and a canvas of three mocks. The picks are the
+vault decision `2026-11-03-desk-navigation-and-projects-dashboard`; the attachment preview arrows and the
+Projects Dashboard restyle (Mock B) are the two PRs beside this one.
+
+What the data said, in short: the Projects Dashboard (the Projects workspace) is the one page 12 of 14 people
+open, 734 visits (Clegg 291, Nikolas 134, James 118, Parker 78, Logan 60); the Project list had 184 from
+four people, and thirteen of those were a dashboard-to-list-and-straight-back bounce within a minute; the
+Opportunity Kanban was the busiest route of all, 868 visits from six people, and the Kanban-to-Customer-list
+hop ran 47 times one way and 42 back, eleven of them within a minute; ERPNext's stock Project dashboard
+(`dashboard-view/Project`) had 25 visits and five immediate bounces; the AI Governance workspace went to its
+Pending Confirmations list 80 times, eleven bounces; the Project Planner had 190 visits from six people and
+was reachable from a form only through the View menu.
+
+### Changed
+
+- **The Project form's "Project" breadcrumb goes to the Projects Dashboard; Opportunity's to the Opportunity
+  Kanban; a Task's trail reads Projects > its project > the task** (`public/js/global_enhancements/
+  breadcrumb_targets.js`, in the global bundle). frappe 16.53 paints a form's trail from
+  `frappe.ui.form.get_breadcrumbs(frm)` (form/form.js, line 36 at v16.53.0: the list crumb, then the title
+  with no link) through `Form.refresh_header()` on every refresh, and the print view calls the same function
+  with a plain object; `frappe.breadcrumbs.*` is the deprecated compatibility layer, marked for removal in
+  v17, and no longer the path a form takes. So the file wraps the function once (typeof-guarded: an older
+  frappe is left alone) and replaces every crumb before the document's own with the doctype's target. The
+  Projects workspace is `/desk/projects`, by the slug of its title (v16's router reads an unknown first
+  segment against `frappe.workspaces`); the Kanban is `/desk/opportunity/view/kanban/Opportunity`, the URL the
+  CRM sidebar already opens on. Every href is a `/desk/` path, so the Desk's link delegate routes it in place
+  and Back returns to the form. ERPNext 16.52.1's Task has no `project_name`, and the trail is built
+  synchronously, so a Task's project crumb shows the project's id first and swaps in its title once
+  `frappe.db.get_value` answers (a Project already in locals is titled at once); the repaint goes through
+  `frm.page.set_breadcrumbs` only while the same document is still on that form, titles are cached per page
+  load, one fetch per project. Nikolas's picks: Project and Opportunity and Task, the Task trail with both
+  links. Review round 1: the Projects crumb is substituted only when the person's boot carries the Projects
+  workspace (`frappe.workspaces.projects`; the route falls through to "page not found" otherwise), else the
+  stock list crumb stays; and the Opportunity crumb names no board (`/desk/opportunity/view/kanban`, which
+  `KanbanView.load_last_view` resolves to the person's last board, else the first), so a renamed board
+  cannot strand it. `scripts/test_breadcrumb_targets.js` runs the file against a stub of 16.53's builder;
+  `tests/test_breadcrumb_targets.py` holds the seams.
+- **The Projects sidebar's "Dashboard" row is hidden** (`setup/workspace_tweaks.py`, `_HIDDEN_SIDEBAR_ITEMS`):
+  ERPNext's stock Project dashboard, `dashboard-view/Project`, matched on all three of
+  (`Dashboard`, `Project`, `Dashboard`), flagged `hidden` on ERPNext's own `Sidebar Item` row with
+  `db.set_value`, the way the "Project" row has been since v1.576.1 (a Custom Sidebar layer would reorder the
+  module). The "Project" row itself was already hidden on prod (idx 3, `hidden` = 1 on 2026-11-03) and stays
+  so; the list is still reachable through search and the dashboard's own search.
+- **AI Governance opens on Pending Confirmations** (`_FIRST_SIDEBAR_ITEMS`, applied by
+  `arrange_core_sidebar_items`): frappe 16.50 opens a module on its first sidebar row that leads anywhere and
+  has no landing setting, so the `AI Pending Action` row moves above Home, by `idx` only, in place, without a
+  new `modified`; a second migrate writes nothing, a re-import is put back, a sidebar without the row is left
+  alone. Production's rows on 2026-11-03 (Home, Pending Confirmations, Action Log, Triton Settings) are in
+  `tests/test_workspace_tweaks.py`.
+- **"Open in Planner" is its own button on the Project form** (`project_planner_link.js`), beside the trail in
+  the page head, where it was a *View > Open in Project Planner* menu entry: a grouped `add_custom_button` is a
+  dropdown item, an ungrouped one a button. Same route (`/desk/project-planner/gantt/<project>?project=`), same
+  gates (a planner project type, not Completed or Canceled, the page in `frappe.boot.page_info`).
+  `scripts/test_form_page_links.js` and its unittest follow the label and the missing group; the Gantt tab's
+  help chip and the comments that named the old menu entry (project_planner.js, hooks.py,
+  docs/planner-ux-redesign.md) say "Open in Planner" too (review round 1).
+
+### Fixed
+
+- **The Opportunity Kanban's high-value cards and value-stream dots were silently gone since the 2026-10-06
+  upgrade to frappe 16.50, and come back with the customer link** (`public/js/kanban_customization.js`). The
+  file patched `frappe.views.KanbanView.prototype.render_card` and `.get_data`; 16.50 moved the cards to
+  `kanban_board.bundle.js` (`frappe.views.KanbanBoardCard`, loaded on demand) and a ListView has no `get_data`,
+  so both patches defined methods nothing ever called. Nothing threw, nothing logged, the cards were simply
+  plain. The file now hooks what v16.53.0 has (read at the tag): `KanbanView.prototype.set_fields`, after
+  which `party_name`, `opportunity_from` and `opportunity_amount` join the board's query (`_add_field`
+  de-duplicates); `render_kanban_board`, before which the `custom_value_stream` rows are fetched for the page's
+  names and hung on the data rows; and `frappe.views.KanbanBoardCard`, wrapped once after `load_lib`
+  resolves, to add the navy class on a deal over 4000, the dots in `.kanban-card-meta`, and the link. Only
+  the "Opportunity" board, which is a classic one (`use_kanban_v2` = 0 on prod); a v2 board draws its own
+  cards and gets none of this.
+  Review round 1 (the first cut was as dead as the code it replaced): `KanbanBoardCard` ends with a bare
+  `init();` and returns nothing, so reading its result for `$card` decorated nothing; the wrapper now finds
+  the card in `wrapper` by its `data-name` (`encodeURIComponent(name)`, from kanban_card.html), falling back
+  to the last appended card, and the harness's stub returns undefined like the real function. And the dots
+  are fetched per card, batched per tick, rather than once in `render_kanban_board`: a realtime redraw
+  (`process_document_refreshes`) and the scroll pages (`kanban_pagination.js`, 50 cards a page) draw cards
+  without passing that method, so they would have had no dots. A card whose row already carries its streams
+  draws at once with no fetch; a failed fetch draws it without dots and marks the row tried, so scroll
+  virtualization's redraws do not ask again. Review round 2: the fetch names `parent: "Opportunity"`,
+  because 16.53's `db_query._set_permission_map` otherwise checks the child doctype itself and
+  `has_child_permission` refuses everyone but Administrator, which the catch would have hidden.
+- **The customer's name on an Opportunity Kanban card opens the Customer** (or the Lead, from
+  `opportunity_from`): the card's "Customer Name" field, found by the label the engine writes on its icon (or
+  its first span with "Show Labels" on), read from the docfield rather than by position, becomes
+  `<a class="kanban-card-party-link" href="/desk/customer/<party_name>">`. The click is handled by the
+  file (`frappe.set_route("Form", ...)`, a history entry, Back returns to the board) and stopped from
+  bubbling (in 16.53 only the title link opens a card, so this keeps the board's other delegated handlers
+  out of an already-routed click; a bare href would never reach the Desk's body-level delegate once
+  propagation stops). A modified click (Ctrl, Shift, middle button) is left to the browser. Styles in
+  `desk_enhancements.bundle.css`, both themes, white on the navy high-value card.
+  `scripts/test_kanban_customization.js` runs the file against the engine's real shapes;
+  `tests/test_kanban_customization.py` holds that the dead patches stay gone.
+
+### Not verified
+
+- No bench here: none of this was exercised in a browser. First checks on prod after the migrate (a hard
+  reload for the new bundle): the Project form's crumb lands on the Projects workspace and Back returns; a
+  Task's crumb retitles once; the Opportunity Kanban shows navy cards, dots and underlined customer names, and
+  a click on a name opens the Customer without opening the deal; the Projects module sidebar has no Dashboard
+  row; the AI Governance dock entry opens the Pending Confirmations list.
+- The Kanban's `_add_field` call assumes the three fields exist on Opportunity (they are standard ERPNext
+  fields); `frappe.meta.has_field` inside `_add_field` drops a missing one quietly.
 
 ## [1.778.0] - 2026-11-03
 
