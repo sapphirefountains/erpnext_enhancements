@@ -914,7 +914,7 @@ const KIT_SPECS = {
 		jquery: true,
 		empties: [[]],
 		offMessage: [],
-		off: /No active client projects/,
+		off: /No active projects/,
 	},
 	// My Priority Tasks (v1.681.0): the viewer's own tasks, so an empty answer is "none for you".
 	"my_priority_tasks.js": { off: /No open tasks/ },

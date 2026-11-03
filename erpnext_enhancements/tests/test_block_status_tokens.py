@@ -58,15 +58,15 @@ BANNED_HEXES = {
 
 # The sites where a banned green is a CATEGORY colour, not a status, and stays literal: exactly
 # this many uses of that hex in that file, and nowhere else. A status use of the same green (a
-# fourth #16a34a in the Task Dashboard, or #28a745 anywhere else) still fails.
+# fourth #16a34a in the Task Dashboard, or #28a745 anywhere) still fails.
 #   - task_dashboard.css, #16a34a x3: the Projects panel's accent, its rank circles and its
 #     progress bars. The panels are told apart by colour (overdue red, today blue, events purple,
 #     projects green); green here names the panel, not a state.
-#   - projects_dashboard.js, #28a745 x1: the "Avg % Complete" summary card, one of a categorical
-#     row of six (blue, red, green, orange, purple, grey). It is the fallback of --green-500.
+# The Projects Dashboard's "Avg % Complete" summary card was the other site (#28a745 as the
+# fallback of --green-500) until v1.781.0 restyled the Summary cards on the tokens; only the
+# Overdue card is coloured now, in --sf-danger.
 CATEGORICAL = {
 	("task_dashboard.css", "16a34a"): 3,
-	("projects_dashboard.js", "28a745"): 1,
 }
 
 # The same colours written as rgba() tints: now color-mix(in srgb, var(--sf-...) N%, transparent).
