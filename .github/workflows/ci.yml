@@ -462,6 +462,25 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sidebar_memory -v
       - name: Sidebar memory (executed, not grepped)
         run: node scripts/test_sidebar_memory.js
+      # Form breadcrumbs that lead to this app's pages (v1.779.0, Nik 2026-11-03): the Project
+      # form's crumb to the Projects Dashboard, Opportunity's to the Kanban, a Task's trail through
+      # its Project. The node step runs breadcrumb_targets.js against a stub of frappe 16.53's
+      # frappe.ui.form.get_breadcrumbs; the unittest step holds the seams (the global bundle
+      # imports it, every target is a /desk/ path, it wraps the form builder and not the
+      # deprecated frappe.breadcrumbs layer).
+      - name: Breadcrumb targets (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_breadcrumb_targets -v
+      - name: Breadcrumb targets (executed, not grepped)
+        run: node scripts/test_breadcrumb_targets.js
+      # The Opportunity Kanban customization on frappe 16.53's classic engine (v1.779.0). Its old
+      # hooks (KanbanView.render_card / get_data) do not exist on 16.50+, so the high-value cards
+      # and value-stream dots had been silently gone since 2026-10-06; the node step runs the file
+      # against the engine's real shapes (set_fields, render_kanban_board, KanbanBoardCard), the
+      # customer link included, so it cannot go quiet again.
+      - name: Opportunity Kanban customization (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_kanban_customization -v
+      - name: Opportunity Kanban customization (executed, not grepped)
+        run: node scripts/test_kanban_customization.js
       # An icon name no sprite has draws nothing and raises nothing: on frappe v16.50.0 five
       # slots on our Dock rail were blank, from workspace icons (money, service, water,
       # assistant, mobile) that no v16 sprite ever had, plus book-marked, which 16.50's lucide

@@ -190,6 +190,10 @@ import "./guided_default.js";
 // Retired Desk pages sent on to their replacements through frappe.re_route (v1.771.0: the Water
 // Engineering Wizard to the Fountain Designer). See the file.
 import "./global_enhancements/retired_routes.js";
+// Form breadcrumbs that lead to this app's pages (v1.779.0): the Project form's "Project" crumb
+// goes to the Projects Dashboard, Opportunity's to the Opportunity Kanban, and a Task's trail reads
+// Projects > its project > the task. Wraps frappe 16.53's frappe.ui.form.get_breadcrumbs. See the file.
+import "./global_enhancements/breadcrumb_targets.js";
 
 // v1.686.0: installed for the form scripts (see record_actions / party_sources above). Plain objects
 // copied from the module namespaces: erpnext_enhancements.record_actions.open_reminder and so on.

@@ -17,9 +17,18 @@ import frappe
 _HIDDEN_SIDEBAR_ITEMS = {
 	# Hide the "Project" DocType link in the default Projects module sidebar
 	# (user request, "for now"). The Workspace Sidebar Item child has no `hidden`
-	# field, so the row is removed. Kept surgical — the Dashboard link (also
-	# link_to=Project but link_type=Dashboard) and every other item stay.
-	"Projects": [("DocType", "Project", "Project")],
+	# field, so the row is removed. Kept surgical — every other item stays.
+	#
+	# Since v1.779.0 the module's "Dashboard" row (ERPNext's stock Project dashboard,
+	# `dashboard-view/Project`) goes too, on the 90 days of Route History to 2026-11-03: 25
+	# visits from four people, five of them a bounce straight back to the Projects Dashboard
+	# within a minute, against 734 visits to the dashboard this app puts on the workspace. The
+	# row is matched on all three of (link_type, link_to, label), so the Workspace "Home" row and
+	# the hidden Project row are untouched.
+	"Projects": [
+		("DocType", "Project", "Project"),
+		("Dashboard", "Project", "Dashboard"),
+	],
 }
 
 
@@ -285,6 +294,19 @@ _RELABELED_SIDEBAR_ITEMS = {
 	"CRM": [(("Dashboard", "CRM"), "Home", "Dashboard")],
 }
 
+# (sidebar name, [row, ...]) rows that go FIRST, ahead of everything the sidebar had, in this
+# order. frappe 16.50 opens a module on its first sidebar row that leads anywhere
+# (`sidebar.module_landing_route`; there is no landing setting), so this is how a module opens on
+# a list instead of its workspace. Nik, 2026-11-03, from the route audit: AI Governance to its
+# Pending Confirmations list 80 times in 90 days, eleven of them a bounce straight back, so the
+# module opens on the list. The row is ERPNext-style (`type` Link, a DocType), not a URL row, so
+# frappe's own permission filter applies to it. The sidebar is this app's, written on prod by
+# frappe's workspace-to-sidebar conversion (`app` is empty), so `db.set_value` is the only way
+# that neither reorders a site layer nor trips `Sidebar.validate_app_content`.
+_FIRST_SIDEBAR_ITEMS = {
+	"AI Governance": [("DocType", "AI Pending Action")],
+}
+
 
 def arrange_core_sidebar_items():
 	"""``after_migrate`` entry point: reorder and relabel rows of frappe 16.50's core ``Sidebar`` documents.
@@ -296,7 +318,9 @@ def arrange_core_sidebar_items():
 	Idempotent: a promoted row's place and a label are only written while they differ, so a second
 	migrate writes nothing. After an ERPNext re-import, which brings back ERPNext's order and labels,
 	this runs in the same migrate and puts ours back. A sidebar whose anchor row is gone is left as
-	it is. Never raises.
+	it is. Since v1.779.0 it also puts ``_FIRST_SIDEBAR_ITEMS`` ahead of everything else in their
+	sidebar (the module then opens on the first of them); a sidebar without the row is left alone.
+	Never raises.
 	"""
 	try:
 		_arrange_sidebar_items()
@@ -326,6 +350,24 @@ def _arrange_sidebar_items():
 			continue
 		# Renumbered 1..n rather than shuffled, so no two rows tie on idx.
 		for idx, row in enumerate(rest[: at + 1] + moved + rest[at + 1 :], start=1):
+			if int(row.get("idx") or 0) != idx:
+				frappe.db.set_value("Sidebar Item", row["name"], "idx", idx, update_modified=False)
+				changed = True
+
+	for sidebar_name, first in _FIRST_SIDEBAR_ITEMS.items():
+		if not frappe.db.exists("Sidebar", sidebar_name):
+			continue
+		rows = frappe.get_all(
+			"Sidebar Item",
+			filters={"parenttype": "Sidebar", "parent": sidebar_name},
+			fields=["name", "idx", "link_type", "link_to", "url"],
+			order_by="idx asc",
+		)
+		ahead = [row for key in first for row in rows if _key(row) == key]
+		if not ahead:
+			continue
+		rest = [row for row in rows if row not in ahead]
+		for idx, row in enumerate(ahead + rest, start=1):
 			if int(row.get("idx") or 0) != idx:
 				frappe.db.set_value("Sidebar Item", row["name"], "idx", idx, update_modified=False)
 				changed = True
