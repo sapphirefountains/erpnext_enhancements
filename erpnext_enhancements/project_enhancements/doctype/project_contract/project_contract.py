@@ -10,10 +10,12 @@ Reading it: :func:`get_contract_html` returns that same rendered agreement —
 the full legal language with this contract's data filled in — for the
 **Preview** button on the form (which renders the values on screen, unsaved
 edits included, so the finished document can be read while it is being written)
-and for the **Contracts tab** on the Project and Customer forms, which lists
-every contract belonging to that record (:func:`get_contracts` — agreements
-*and* the operational maintenance contracts beside them) and opens any of them
-in place.
+and, until v1.783.0, for the Contracts tab on the Project and Customer forms.
+:func:`get_contracts` still lists every contract belonging to a record
+(agreements *and* the operational maintenance contracts beside them); since
+v1.783.0 the **Contract** button on the Project's Scope tab and in the Customer
+page head reads it on the press and opens the one contract in the Contract
+Builder, or offers the list first.
 
 Revision model (the meeting's estimate-revision convention, natively):
 the doctype is **submittable** — Draft = editable working copy; Submit =
@@ -836,7 +838,11 @@ CONTRACT_SOURCES = {
 
 @frappe.whitelist()
 def get_contracts(source_doctype, source_name):
-	"""Every contract belonging to a Project or a Customer — the Contracts tab.
+	"""Every contract belonging to a Project or a Customer — the Contract button's picker.
+
+	(The Contracts tab this fed from v1.181.0 is gone since v1.783.0; the button at the top of the
+	Project's Scope tab and in the Customer page head asks this on the press and opens the one
+	contract, or offers the list.)
 
 	Two kinds of document, deliberately in one list, because "my contracts" is
 	one question:

@@ -168,7 +168,7 @@
    "help": "Anything about the money that the numbers alone don't say. It is copied onto the Project when the Project is created; after that the two are kept separately."
   },
   "custom_first_invoice_percentage": {
-   "hint": "Percent of the Opportunity Amount to put on the first invoice",
+   "hint": "Percent of the Opportunity Amount due as the down payment (the first invoice)",
    "help": "Named in the hand-off note to Billing with the dollar figure it works out to. Copied onto the Project, where the PM can change it. Left blank, the note asks Billing to confirm the amount with Sales."
   },
   "custom_billing_email": {
