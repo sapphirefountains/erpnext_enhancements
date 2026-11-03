@@ -74,7 +74,11 @@ of the Scope tab." Tracked as TASK-2026-03067.
   own savepoint, with `frappe.flags.mute_messages` on so a refusal's queued message cannot pop a
   modal over the summary; a task Frappe or ERPNext refuses (linked from a timesheet, locked, not
   permitted, a child that could not go) is **kept and listed with its reason** while the rest go,
-  and an expected refusal is not logged. At most 200 tasks per request.
+  and an expected refusal is not logged. At most 200 tasks per request. A dependency between two
+  picked tasks is unlinked before the delete (Frappe counts a `Task Depends On` row in another Task
+  as a link, and ERPNext's `on_trash` clears only the parent's rows, so an imported chain would
+  otherwise refuse every task another picked one waits on); a task outside the pick that waits on
+  one keeps its link, and that one is kept with Frappe's reason.
 - **`tests/test_scope_tasks.py`** (pytest, its own CI step): the plan's structure, skips, parent
   resolution and dependency mapping; the delete order; the dialog's value allowlist; the mass
   delete's savepoints and reasons; the fixtures keeping the tree first and `insert_after` in step

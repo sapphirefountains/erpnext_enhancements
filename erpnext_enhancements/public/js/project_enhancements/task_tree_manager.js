@@ -907,11 +907,13 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 				frappe.msgprint({ message: __("The expected end is before the expected start."), indicator: "orange" });
 				return;
 			}
-			d.get_primary_btn().prop("disabled", true);
+			// Both footer buttons: a double click on "Add and add another" would post twice.
+			const buttons = d.$wrapper.find(".modal-footer button");
+			buttons.prop("disabled", true);
 			frappe.call({
 				method: "erpnext_enhancements.api.scope_tasks.add_task",
 				args: { project: me.projectName, values: JSON.stringify(values) },
-				always: () => d.get_primary_btn().prop("disabled", false),
+				always: () => buttons.prop("disabled", false),
 				callback: (r) => {
 					const made = r.message;
 					if (!made || !made.name) return;
@@ -1125,6 +1127,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 								frappe.show_alert({ message: __("Deleted {0} tasks.", [out.deleted.length]), indicator: "green" }, 7);
 							}
 							if (out.kept.length) {
+								// `reason` is left unescaped on purpose: it is the server's own message
+								// (Frappe's link refusals carry `<a>` markup to the blocking record),
+								// never user input.
 								const rows = out.kept
 									.map((k) => `<li><b>${esc(k.subject)}</b> <span class="text-muted">(${esc(k.name)})</span><br><span class="small">${k.reason}</span></li>`)
 									.join("");

@@ -50,6 +50,11 @@ Things this module is careful about, some of which look like bugs:
 * **Deepest first, each under a savepoint.** ERPNext refuses to delete a Task with children, so a
   picked group is deleted after its subtree; a refusal rolls back only that one task, and the parent
   of a kept task is then kept too, with the child's reason in its own.
+* **A dependency between two picked tasks is unlinked first.** Frappe's link check counts a ``Task
+  Depends On`` row in another Task as a link, and ERPNext's ``on_trash`` clears only the parent's
+  rows, so an imported chain would refuse every task another picked task waits on. Inside each task's
+  savepoint the rows of the *other picked* tasks that name it are deleted before the Task is; a task
+  outside the pick that waits on it keeps its row, and the delete is refused with Frappe's reason.
 """
 
 import json
@@ -319,6 +324,8 @@ def import_template(project, template, parent_task=None, start_date=None):
 	existing_by_name = {row["name"]: row for row in existing}
 	has_order = _has_order_column()
 	converted, made, created = [], {}, []
+	savepoint = "scope_import_template"
+	frappe.db.savepoint(savepoint)
 	try:
 		# Every parent that is about to hold children must be a group: the picked node and any
 		# skipped task whose template children are new.
@@ -357,7 +364,8 @@ def import_template(project, template, parent_task=None, start_date=None):
 			doc.save()
 			created.append({"name": doc.name, "subject": doc.subject, "parent_task": parent_name})
 	except Exception:
-		frappe.db.rollback()
+		# Back to before the first write of this import, and nothing earlier in the request.
+		frappe.db.rollback(save_point=savepoint)
 		raise
 
 	return {
@@ -515,6 +523,11 @@ def delete_tasks(project, tasks):
 		try:
 			if not frappe.has_permission("Task", "delete", doc=name):
 				raise frappe.PermissionError(_("You are not permitted to delete it."))
+			# A `Task Depends On` row in another Task is a link, and ERPNext's `on_trash` (16.52.1)
+			# clears only the parent's depends_on, so an imported chain (SD waits on PD) would refuse
+			# PD while SD still lists it. Unlink the dependents that are themselves being deleted,
+			# and only those: a task outside the pick that waits on this one still blocks it.
+			frappe.db.delete("Task Depends On", {"parenttype": "Task", "parent": ["in", order], "task": name})
 			frappe.delete_doc("Task", name)
 			deleted.append(name)
 		except (

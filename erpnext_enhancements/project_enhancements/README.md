@@ -147,7 +147,9 @@ Back and Forward keep working (Nik's rule).
   cannot pop a modal over the summary (see the `frappe.throw` note in `CLAUDE.md`'s memory); a
   task Frappe or ERPNext refuses (linked from a timesheet, locked, not permitted) is **kept and
   listed with its reason** while the rest go, and an expected refusal is not logged. At most 200
-  tasks per request.
+  tasks per request. A dependency between two picked tasks is unlinked inside the savepoint first
+  (Frappe counts a `Task Depends On` row in another Task as a link; ERPNext's `on_trash` clears only
+  the parent's rows), and only between picked tasks: one outside the pick still blocks.
 
 **The gate.** Reads (`get_template_catalog`, `delete_preview`) and every write need *write* on the
 Project; Project Templates and template Tasks are then read with `get_all`, because Projects User

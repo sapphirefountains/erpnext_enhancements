@@ -103,6 +103,7 @@ def install_frappe_stub():
 		set_value=lambda *a, **k: None,
 		savepoint=lambda *a, **k: None,
 		rollback=lambda *a, **k: None,
+		delete=lambda *a, **k: None,
 	)
 	frappe.get_all = lambda *a, **k: []
 	frappe.get_doc = lambda *a, **k: None
@@ -368,15 +369,18 @@ def test_clean_add_values_keeps_the_dialogs_fields_and_nothing_else(api):
 class Site:
 	"""One project of tasks; records every delete, savepoint and rollback."""
 
-	def __init__(self, api, tasks, refuse=None):
+	def __init__(self, api, tasks, refuse=None, depends=None):
 		self.api = api
 		self.tasks = {row["name"]: row for row in tasks}
 		self.refuse = refuse or {}
-		self.deleted, self.savepoints, self.rollbacks, self.logged = [], [], [], []
+		#: ``Task Depends On`` rows as (parent task, the task it waits on).
+		self.depends = list(depends or [])
+		self.deleted, self.savepoints, self.rollbacks, self.logged, self.unlinked = [], [], [], [], []
 		frappe = api.frappe
 		frappe.db.exists = lambda doctype, name=None, *a, **k: name if doctype == "Project" else None
 		frappe.db.savepoint = lambda name: self.savepoints.append(name)
 		frappe.db.rollback = lambda save_point=None, *a, **k: self.rollbacks.append(save_point)
+		frappe.db.delete = self.db_delete
 		frappe.get_all = self.get_all
 		frappe.delete_doc = self.delete_doc
 		frappe.log_error = lambda *a, **k: self.logged.append(k.get("title"))
@@ -386,10 +390,30 @@ class Site:
 			return [dict(row) for row in self.tasks.values() if row.get("project") == filters.get("project")]
 		return []
 
+	def db_delete(self, doctype, filters=None, *a, **k):
+		"""``frappe.db.delete("Task Depends On", {parent: [in, ...], task: name})``, as the fake holds it."""
+		assert doctype == "Task Depends On"
+		assert filters["parent"][0] == "in"
+		parents = set(filters["parent"][1])
+		keep = []
+		for parent, task in self.depends:
+			if parent in parents and task == filters["task"]:
+				self.unlinked.append((parent, task))
+			else:
+				keep.append((parent, task))
+		self.depends = keep
+
 	def delete_doc(self, doctype, name, *a, **k):
 		assert self.api.frappe.flags.mute_messages is True, "deletes run with messages muted"
 		if name in self.refuse:
 			self.api.frappe.throw(self.refuse[name], self.api.frappe.LinkExistsError)
+		# Frappe's link check: a Task Depends On row in another Task is a link to this one.
+		for parent, task in self.depends:
+			if task == name:
+				self.api.frappe.throw(
+					f"Cannot delete or cancel because Task {name} is linked with Task {parent}",
+					self.api.frappe.LinkExistsError,
+				)
 		if any(row.get("parent_task") == name for row in self.tasks.values()):
 			self.api.frappe.throw(
 				"Child Task exists for this Task. You can not delete this Task.",
@@ -421,6 +445,38 @@ def test_delete_tasks_goes_deepest_first_and_reports_a_refusal_with_its_reason(a
 	assert site.rollbacks == ["scope_delete_task", "scope_delete_task"]
 	assert site.logged == []
 	assert api.frappe.flags.mute_messages is False
+
+
+def test_delete_tasks_unlinks_a_dependency_between_two_picked_tasks(api):
+	"""An imported chain (SD waits on PD): deleting PD while SD still lists it would be refused as a
+	link, and ERPNext's on_trash clears only the parent's depends_on. Both picked, both go."""
+	tasks = [
+		T("PD", "Predesign (PD)", project="PRJ-1"),
+		T("SD", "Schematic Design (SD)", project="PRJ-1"),
+		T("DD", "Design Development (DD)", project="PRJ-1"),
+	]
+	site = Site(api, tasks, depends=[("SD", "PD"), ("DD", "SD")])
+	out = api.delete_tasks("PRJ-1", ["PD", "SD", "DD"])
+	assert sorted(out["deleted"]) == ["DD", "PD", "SD"]
+	assert out["kept"] == []
+	assert sorted(site.unlinked) == [("DD", "SD"), ("SD", "PD")]
+
+
+def test_delete_tasks_still_refuses_a_task_that_an_unpicked_task_waits_on(api):
+	"""Only dependents that are themselves going are unlinked; one outside the pick keeps its link
+	and the task it waits on is kept with Frappe's reason."""
+	tasks = [
+		T("PD", "Predesign (PD)", project="PRJ-1"),
+		T("SD", "Schematic Design (SD)", project="PRJ-1"),
+		T("B", "Billing", project="PRJ-1"),
+	]
+	site = Site(api, tasks, depends=[("SD", "PD")])
+	out = api.delete_tasks("PRJ-1", ["PD", "B"])
+	assert out["deleted"] == ["B"]
+	assert [row["name"] for row in out["kept"]] == ["PD"]
+	assert "linked with Task SD" in out["kept"][0]["reason"]
+	assert site.unlinked == []
+	assert site.depends == [("SD", "PD")]
 
 
 def test_delete_tasks_refuses_a_task_of_another_project_before_touching_anything(api):
