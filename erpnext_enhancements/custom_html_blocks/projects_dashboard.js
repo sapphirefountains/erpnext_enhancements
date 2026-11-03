@@ -9,10 +9,14 @@
  * root node. It loads the shared ColumnSelector asset, then fetches data through
  * the project_dashboard page's whitelisted methods
  * (erpnext_enhancements.project_enhancements.page.project_dashboard.*) and renders:
- *   - the head band's four live tiles — Active, Past expected end, Due in 30 days, No
- *                           company rank — tallied here from get_project_data. Each is
- *                           a button that filters the Priority Overview (Active clears
- *                           it), and "Updated N min ago" beside the Refresh button;
+ *   - the Summary tab's four live tiles — Active, Past expected end, Due in 30 days,
+ *                           No company rank — tallied here from get_project_data. Each
+ *                           is a button that filters the Priority Overview, where a
+ *                           press lands (Active clears it); the Overview shows the
+ *                           pressed tile as a chip with an x beside the stream chips.
+ *                           They sat on the head band until v1.785.0 (Nikolas: "a lot
+ *                           of header space before you even see the projects");
+ *                           "Updated N min ago" stays beside the Refresh button;
  *   - Priority Overview   — every active project (client streams and internal), with
  *                           stream chips (All / Design / Build / Service / Events /
  *                           Internal, with counts), a Ranked-only box (company priority
@@ -50,9 +54,12 @@
  * tab's sort (chb_projects_dashboard_sort_v1), the stream chip, Ranked only and Group by
  * stream (chb_projects_dashboard_overview_v1), plus the columns and widths the shared
  * ColumnSelector / ColumnResizer already keep. The pressed tile is not kept.
- * The band carries one "+" button whose menu holds "New Project" / "New Master Project".
- * The list tabs' Columns control is an icon button (tooltip "Columns"); "Reset widths"
- * is an item in its menu. Table edits persist back via the same whitelisted methods.
+ * The band — one slim row since v1.785.0: title, search, Refresh, "+" — carries one "+"
+ * button whose menu holds "New Project" / "New Master Project". The list tabs' Columns
+ * control is an icon button (tooltip "Columns") with "Reset widths" an item in its menu;
+ * since v1.785.0 it sits at the right end of the Priority Overview's chips row, and on a
+ * slim strip of its own for Internal and Completed, instead of on a row above the table.
+ * Table edits persist back via the same whitelisted methods.
  *
  * The workspace runs this script again, with a fresh root, only when it renders the
  * page: the first visit, and coming back from a different workspace. Coming back
@@ -408,11 +415,17 @@
         resizer.attach_handles(container, container.find('table thead th'), resizer_key_of);
     }
 
+    // Where the Columns button is drawn: the right end of the Priority Overview's chips row,
+    // or the slim strip Internal and Completed share. Neither takes a row above the table
+    // (v1.785.0). The slot is emptied first: every render draws its own button.
+    function tools_slot() {
+        return $root.find(current_tab === "priority-overview" ? '#pd-overview-tools' : '#pd-list-tools');
+    }
+
     function render_column_toolbar(container) {
         let selector = column_selectors[current_tab];
+        const toolbar = tools_slot().empty();
         if (!selector) return;
-        let toolbar = $('<div class="dashboard-list-toolbar"></div>');
-        container.append(toolbar);
         // The Columns button is an icon (three dots, tooltip "Columns"). "Reset widths" lives in
         // its menu rather than as a button of its own: dragging a column edge is still undoable.
         const actions = [];
@@ -550,7 +563,7 @@
         }
     }
 
-    // ----- HEAD BAND: tiles, Refresh, "Updated N min ago" -----
+    // ----- THE TILES (Summary tab), Refresh, "Updated N min ago" -----
 
     // Every active project: is_active = Yes and status not Completed / Canceled (is_active
     // is unreliable on its own). The page's one definition of active: the Active tile, the
@@ -579,19 +592,39 @@
         paint_tiles();
     }
 
+    // The tiles' words, for the Overview's filter chip (the tiles themselves are on the
+    // Summary tab). Active has no chip: it is the whole list.
+    const TILE_LABELS = {
+        "past-due": __("Past expected end"),
+        "due-30": __("Due in 30 days"),
+        "unranked": __("No company rank"),
+    };
+
+    // The pressed tile, and the Overview's chip for it: hidden while the tile is Active.
     function paint_tiles() {
         Object.keys(TILE_TESTS).forEach((key) => {
             $root.find(`.pd-tile[data-tile="${key}"]`).attr('aria-pressed', key === tile_filter ? 'true' : 'false');
         });
+        $root.find('#pd-tile-filter-label').text(TILE_LABELS[tile_filter] || "");
+        $root.find('#pd-tile-filter').prop('hidden', !TILE_LABELS[tile_filter]);
     }
 
-    // A tile narrows the Priority Overview; pressing it from another tab goes there.
+    // A tile narrows the Priority Overview; pressing it from another tab (the Summary, where
+    // the tiles live) goes there. The tiles are static markup outside #dashboard-content, so
+    // this one binding outlives every re-render of the Summary and the Overview.
     $root.find('.pd-tile').on('click', function() {
         const key = $(this).attr('data-tile');
         tile_filter = TILE_TESTS[key] ? key : "active";
         paint_tiles();
         if (current_tab !== "priority-overview") show_tab("priority-overview");
         else render_current_tab();
+    });
+
+    // The x on the Overview's filter chip: back to every active project.
+    $root.find('#pd-tile-filter').on('click', function() {
+        tile_filter = "active";
+        paint_tiles();
+        render_current_tab();
     });
 
     // Relative time since the last successful fetch, refreshed each minute while the
@@ -1850,6 +1883,9 @@
     // the already-fetched project_data (no extra server call). Number cards + CSS
     // bar breakdowns; deliberately no frappe.Chart, whose JS-injected styles don't
     // cross into this block's shadow root. Styled from the tokens like the tables.
+    // The four tiles sit above the cards: they are the static #pd-tiles in the shell,
+    // shown by show_tab_controls on this tab, never drawn into #dashboard-content, so
+    // their click binding survives this render and a panel is never drawn over them.
     function build_breakdown(title, obj, full) {
         const labels = Object.keys(obj);
         const max = Math.max(1, ...labels.map(l => obj[l]));
@@ -1939,13 +1975,17 @@
     }
 
     // Which controls belong to the tab on screen: the band's search box and the stream
-    // filter row are for the list tabs (the filter row for Priority Overview only); the
-    // Gantt has its own toolbar.
+    // filter row are for the list tabs (the filter row, with the Columns button at its end,
+    // for Priority Overview only; the slim strip with that button for Internal and
+    // Completed); the tiles for the Summary, once rows have loaded, so a no-access or error
+    // panel never has four dashes above it; the Gantt has its own toolbar.
     function show_tab_controls() {
         const on_gantt = current_tab === "portfolio-gantt";
         $root.find('#gantt-controls').toggle(on_gantt);
         $root.find('#standard-controls').toggle(!on_gantt);
         $root.find('#overview-controls').toggle(current_tab === "priority-overview");
+        $root.find('#list-controls').toggle(current_tab === "active-internal-projects" || current_tab === "completed-projects");
+        $root.find('#pd-tiles').toggle(current_tab === "summary" && loaded);
     }
 
     function render_current_tab() {

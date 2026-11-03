@@ -6,17 +6,20 @@
   Workspace. The three projects_dashboard.* files in this directory are the source of
   truth: setup/custom_html_blocks.py upserts them into the block on every bench migrate.
 
-  This file is the static shell (Mock B, v1.781.0):
-    - a navy head band carrying the eyebrow and title, the search field, a Refresh
-      button with "Updated N min ago" beside it, the "+" menu (New Project / New
-      Master Project) and four live tiles (Active, Past expected end, Due in 30 days,
-      No company rank). Each tile is a button that filters the Priority Overview;
+  This file is the static shell (Mock B, v1.781.0; slimmed in v1.785.0):
+    - a navy head band, ONE slim row: the title in the display face, the search field,
+      a Refresh button with "Updated N min ago" beside it, and the "+" menu (New Project /
+      New Master Project). The PROJECTS eyebrow is gone (v1.785.0);
     - five tabs, always visible: Priority Overview, Portfolio Gantt, Internal,
       Completed, Summary;
-    - the Priority Overview's filter row (stream chips, Ranked only, Group by stream),
-      the Gantt-only toolbar (project / status / type / customer dropdowns, date window,
-      at-risk, view-mode buttons, Today, Columns, Export), and an empty
-      #dashboard-content target.
+    - the Priority Overview's filter row (stream chips, the pressed tile's filter chip,
+      Ranked only, Group by stream, and the Columns "..." button at its right end), the
+      slim tools strip that carries the same button for Internal and Completed, the four
+      live tiles (Active, Past expected end, Due in 30 days, No company rank) that the
+      Summary tab shows above its cards (each a button that filters the Priority
+      Overview; they sat on the band until v1.785.0), the Gantt-only toolbar (project /
+      status / type / customer dropdowns, date window, at-risk, view-mode buttons, Today,
+      Columns, Export), and an empty #dashboard-content target.
   projects_dashboard.js fetches data via the project_dashboard page's whitelisted
   methods and renders the tables / Gantt into #dashboard-content; projects_dashboard.css
   styles it from the --sf-* design tokens.
@@ -24,10 +27,7 @@
 <div class="project-dashboard-container pd">
     <div class="pd-band">
         <div class="pd-band-row">
-            <div class="pd-band-title">
-                <span class="pd-eyebrow">PROJECTS</span>
-                <h2 class="pd-title">Projects Dashboard</h2>
-            </div>
+            <h2 class="pd-title">Projects Dashboard</h2>
             <div class="pd-band-actions" id="dashboard-actions">
                 <label class="pd-search" id="standard-controls">
                     <span class="pd-sr">Search projects</span>
@@ -49,10 +49,60 @@
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Live tiles: counts from get_project_data, tallied in the script. Each is a filter
-             on the Priority Overview; "Active" clears it. -->
-        <div class="pd-tiles" id="pd-tiles" role="group" aria-label="Project counts">
+    <!-- A group of toggle buttons, not a WAI-ARIA tablist: a tablist promises arrow-key
+         navigation, aria-controls and a tabpanel, none of which this bar has. -->
+    <div class="pd-tabs dashboard-tabs" role="group" aria-label="Projects Dashboard tabs">
+        <button type="button" class="pd-tab active" aria-pressed="true" data-route="priority-overview">Priority Overview</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="portfolio-gantt">Portfolio Gantt</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="active-internal-projects">Internal</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="completed-projects">Completed</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="summary">Summary</button>
+    </div>
+
+    <div class="pd-controls dashboard-controls">
+
+        <!-- Priority Overview only: stream chips (counts filled by the script), the pressed
+             tile's filter as a chip with an x (hidden while the tile is Active), Ranked only,
+             Group by stream, and the Columns "..." button at the right end (drawn by the
+             script into #pd-overview-tools). -->
+        <div class="pd-filters" id="overview-controls">
+            <div class="pd-chips" id="pd-stream-chips" role="group" aria-label="Filter by stream">
+                <button type="button" class="pd-fchip" data-stream="" aria-pressed="true">All <b data-stream-count=""></b></button>
+                <button type="button" class="pd-fchip" data-stream="Design" aria-pressed="false">Design <b data-stream-count="Design"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Build" aria-pressed="false">Build <b data-stream-count="Build"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Service" aria-pressed="false">Service <b data-stream-count="Service"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Events" aria-pressed="false">Events <b data-stream-count="Events"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Internal" aria-pressed="false">Internal <b data-stream-count="Internal"></b></button>
+            </div>
+            <button type="button" class="pd-tile-filter" id="pd-tile-filter" title="Clear this filter" hidden>
+                <span id="pd-tile-filter-label"></span>
+                <span class="pd-tile-filter-x" aria-hidden="true">×</span>
+                <span class="pd-sr">Clear</span>
+            </button>
+            <label class="pd-check" title="Only projects whose company priority is a number">
+                <input type="checkbox" id="pd-ranked-only">
+                <span>Ranked only</span>
+            </label>
+            <label class="pd-check" title="Group the rows by value stream, each ordered by Value Stream Priority">
+                <input type="checkbox" id="pd-group-by-stream">
+                <span>Group by stream</span>
+            </label>
+            <div class="pd-list-tools" id="pd-overview-tools"></div>
+        </div>
+
+        <!-- Internal and Completed: no chips, so the Columns button sits on a slim strip of
+             its own, right-aligned (drawn by the script into #pd-list-tools). -->
+        <div class="pd-filters pd-filters-slim" id="list-controls" style="display: none;">
+            <div class="pd-list-tools" id="pd-list-tools"></div>
+        </div>
+
+        <!-- Summary only: the four live tiles, counts from get_project_data tallied in the
+             script. Each is a filter on the Priority Overview, where a press lands;
+             "Active" clears it. Shown once rows have loaded, so a no-access or error panel
+             never has four dashes above it. -->
+        <div class="pd-tiles" id="pd-tiles" role="group" aria-label="Project counts" style="display: none;">
             <button type="button" class="pd-tile" data-tile="active" aria-pressed="true" title="Every active project">
                 <span class="pd-tile-n" data-tile-count="active">–</span>
                 <span class="pd-tile-l">Active</span>
@@ -69,40 +119,6 @@
                 <span class="pd-tile-n" data-tile-count="unranked">–</span>
                 <span class="pd-tile-l">No company rank</span>
             </button>
-        </div>
-    </div>
-
-    <!-- A group of toggle buttons, not a WAI-ARIA tablist: a tablist promises arrow-key
-         navigation, aria-controls and a tabpanel, none of which this bar has. -->
-    <div class="pd-tabs dashboard-tabs" role="group" aria-label="Projects Dashboard tabs">
-        <button type="button" class="pd-tab active" aria-pressed="true" data-route="priority-overview">Priority Overview</button>
-        <button type="button" class="pd-tab" aria-pressed="false" data-route="portfolio-gantt">Portfolio Gantt</button>
-        <button type="button" class="pd-tab" aria-pressed="false" data-route="active-internal-projects">Internal</button>
-        <button type="button" class="pd-tab" aria-pressed="false" data-route="completed-projects">Completed</button>
-        <button type="button" class="pd-tab" aria-pressed="false" data-route="summary">Summary</button>
-    </div>
-
-    <div class="pd-controls dashboard-controls">
-
-        <!-- Priority Overview only: stream chips (counts filled by the script), Ranked only,
-             Group by stream. -->
-        <div class="pd-filters" id="overview-controls">
-            <div class="pd-chips" id="pd-stream-chips" role="group" aria-label="Filter by stream">
-                <button type="button" class="pd-fchip" data-stream="" aria-pressed="true">All <b data-stream-count=""></b></button>
-                <button type="button" class="pd-fchip" data-stream="Design" aria-pressed="false">Design <b data-stream-count="Design"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Build" aria-pressed="false">Build <b data-stream-count="Build"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Service" aria-pressed="false">Service <b data-stream-count="Service"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Events" aria-pressed="false">Events <b data-stream-count="Events"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Internal" aria-pressed="false">Internal <b data-stream-count="Internal"></b></button>
-            </div>
-            <label class="pd-check" title="Only projects whose company priority is a number">
-                <input type="checkbox" id="pd-ranked-only">
-                <span>Ranked only</span>
-            </label>
-            <label class="pd-check" title="Group the rows by value stream, each ordered by Value Stream Priority">
-                <input type="checkbox" id="pd-group-by-stream">
-                <span>Group by stream</span>
-            </label>
         </div>
 
         <div id="gantt-controls" style="display: none;">
