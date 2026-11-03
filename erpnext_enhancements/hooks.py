@@ -223,6 +223,10 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
+		# The Scope tab's Tasks Tree (custom_tasks_html): mounts the TaskTreeManager
+		# class that erpnext_enhancements.bundle.js ships, and falls back to the raw
+		# /assets path only when the bundle lacks it (v1.777.0). The tree's own
+		# dialogs (Add task, Add from template, Delete selected) call api/scope_tasks.py.
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
