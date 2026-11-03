@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.776.0] - 2026-11-02
+
+**The Fountain Designer catalog says where each Item can be bought and for how much.** Nikolas, 2026-11-02:
+prices and purchase links come from public sellers that list the item online, the prices go on the buying
+list "Reference List 2026" (his list prices, not Standard Buying), a seller that is not yet a Supplier
+becomes one, and all of it lives in the repo and loads with the seed loader, so it can be reviewed and run
+again.
+
+**Added.**
+
+- **`docs/fountain-designer/catalog/purchasing.json`**: one entry per catalog row, keyed by row id. An
+  entry gives the seller, the seller's part number, the product page, the advertised one-unit price, the
+  date it was read and whether the page showed a sale. A row with no seller has a `search_note` instead,
+  saying what was searched. It is a separate file, not a block on each row, for two reasons. The rows are
+  cited manufacturer data, while a price is a seller's and goes stale on its own clock. And a refresh
+  should be a diff of prices and nothing else.
+  - **Coverage: 151 of the 380 rows have a price, from 21 sellers.** Four of those sellers are already
+    Suppliers on prod (Pool Web Pool & Spa Supplies, Leslies Pool Supplies, EZ Pool and Spa Supply,
+    Webb's Water Gardens), so 17 are new.
+  - **Every price was read off the seller's own product page for the row's exact part number**, never a
+    search snippet.
+  - **Rows deliberately left without a price:**
+    - The 115 Safe Rain nozzles: the only online seller prices them in EUR.
+    - The 8 WIBRE lights.
+    - Every Pentair and Sta-Rite `-INT` export model.
+    - The Goulds 3656LH hydraulic sizes: call for price, or a price only after log-in.
+    - Three IntelliBrite lights, which Leslie's lists at a different wattage than the row.
+    - NBS 015-090, whose page states no HP.
+  - The catalog README has the schema, the research rules and how to refresh prices.
+- **The loader's purchasing step** (`catalog_seed.apply_purchasing`). It runs after the Item is found or
+  created, inside the row's savepoint, and does three things:
+  - **Supplier.** Found by its exact name, or created with group Distributor, type Company and country
+    United States. An existing Supplier is never edited.
+  - **Item Supplier row.** Found by supplier, then `supplier_part_no` and `purchase_url` are set, or the
+    row is appended. Every other supplier's row is left alone, so Conely's `PEN022035` stays as it is.
+  - **Item Price** on the file's list. It is found by item, list and supplier. Its rate, `valid_from` and
+    note are replaced only when the new sighting is dated later than the stored `valid_from`.
+
+  A dry run reports the same counts a write would make, and the summary gains a `purchasing` block. Each
+  value is checked against its column's length, as the loader already did for every other field.
+
+**Refusals, so Nikolas decides rather than the loader.**
+
+- **A seller name that matches an existing Supplier once case and spaces are ignored** (`Inyo Pools`
+  against `INYO Pools`) is refused, never adopted or duplicated. Prod has many such near-duplicates
+  (`Pool Web` / `Pool Web Pool & Spa Supplies`, `McMaster Carr` / `McMaster-Carr`), so the research names
+  the exact existing Supplier wherever one fits.
+- **The price list must already exist.** It must also be enabled, be a buying list and be in USD. If not,
+  no price is loaded and the list is never created.
+- **Neither refusal stops the row.** The Item, its curves and the row's other sellers still load.
+- **A row that fails for any other reason rolls back with the Suppliers it created**, and the run forgets
+  them, so the next row with that seller creates the Supplier again rather than linking to one that is
+  not there.
+
+**Notes.**
+
+- **`purchase_url` is not managed by this app.** It is a Custom Field on Item Supplier that exists on
+  prod, so this release uses it but does not add it to the fixtures. On a site without it, the loader
+  says links were not loaded and writes the rest.
+- **Item Supplier's `purchase_url` is Data, 140 characters.** Seven product pages had longer addresses.
+  Their records use the store's own short link to the same page instead: Shopify's `/variants/<id>`
+  redirect, or BigCommerce's `products.php?productId=`.
+- **Not touched:** Standard Buying, every selling list, and the 165 existing rows of "Reference List 2026".
+  None of those 165 is a catalog Item, and all have no supplier.
+- **Tests: 12 more bench-free tests in `tests/test_water_catalog.py`.** They cover:
+  - the entry checks;
+  - the real file: one entry per row, nothing over 140 characters, each seller spelled one way;
+  - a row with a seller and a row without one;
+  - a Supplier created once and then reused;
+  - the Item Supplier row matched by supplier, with other rows untouched;
+  - a price replaced only by a later date;
+  - the case-variant refusal and the missing-list refusal;
+  - the dry run writing nothing;
+  - a failed row taking its new Supplier with it;
+  - the whole real file on a site shaped like prod: 17 Suppliers, 151 rows and 151 prices, nothing refused.
+
 ## [1.775.0] - 2026-11-02
 
 **The Fountain Designer catalog's Items are coded by the manufacturer's part number, and a new endpoint

@@ -1,0 +1,2053 @@
+{
+ "_comment": "Where each catalog row can be bought online and the price seen there, keyed by row id. Public seller pages only, read on price_seen_on. Schema and refresh steps: README.md, Purchasing.",
+ "price_list": "Reference List 2026",
+ "currency": "USD",
+ "rows": {
+  "pentair-eq-eq500": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "340030",
+   "url": "https://poolplaza.com/products/pentair-eq-series-commercial-pump-eq500-50-hp-230v-1-phase-wpot-340030",
+   "price_usd": 8985.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $6,911.00; in stock; 1-phase 230 V 5 HP EQ500."
+  },
+  "pentair-eq-eq750": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "340032",
+   "url": "https://poolplaza.com/products/pentair-eq-series-commercial-pump-eq750-75-hp-230v-1-phase-wpot-340032",
+   "price_usd": 9266.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $7,127.00; in stock; 1-phase 230 V 7.5 HP."
+  },
+  "pentair-eq-eq1000": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "340238",
+   "url": "https://poolplaza.com/products/pentair-eq-series-commercial-pump-eq-1000-10-hp-230v-single-phase-wstrainer-340238",
+   "price_usd": 9091.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $6,993.00; page shows OUT OF STOCK. ePoolSupply also lists 340238 at $6,499.95 regular / $6,299.95 sale."
+  },
+  "pentair-eq-eq1500": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "340035",
+   "url": "https://poolplaza.com/products/pentair-eq-series-commercial-pump-eqk1500-150-hp-230460v-3-phase-340035",
+   "price_usd": 11091.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $8,531.00; in stock; ships LTL freight; 3-phase 208-230/460 V."
+  },
+  "pentair-eq-eqw300": {
+   "seller": "Aqua Terra Backyard",
+   "seller_part_no": "340026",
+   "url": "https://www.aquaterrabackyard.com/products/pentair-pump-eqw-300-3hp-1-phase-208-230v",
+   "price_usd": 14906.29,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $12,421.91; page shows SOLD OUT. Part number 340026 appears only in the title/image alt text, not a separate SKU field. Only priced listing found for this pump."
+  },
+  "pentair-eq-eqw500": {
+   "seller": "EZ Pool and Spa Supply",
+   "seller_part_no": "340028",
+   "url": "https://www.eztestpools.com/pentair-eq-series-1-phase-premium-efficient-waterfall-pump-commercial-pump-with-strainer-5-hp-208-230-v-340028/",
+   "price_usd": 8149.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Currently Out of Stock (and also 'ships in 1-2 days'); ePoolSupply lists 340028 sold out with no price."
+  },
+  "pentair-whisperfloxf-022034": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "022034",
+   "url": "https://www.epoolsupply.com/products/pentair-whisperflo-xf-high-performance-pool-pump-with-super-duty-tefc-motor",
+   "price_usd": 3495.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2,695.95. 1-phase 208-230 V 5 HP TEFC. ePoolSupply page text shows 'no fulfillment methods available / email wholesale@epoolsupply.com to order' next to an Add to cart button; confirm it can be ordered."
+  },
+  "pentair-whisperfloxf-022032-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperfloxf-022033-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperfloxf-022017": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "022017",
+   "url": "https://poolplaza.com/products/pentair-whisperfloxf-pump-xfk-8-3-phase-2-hp-208-230460v-022017",
+   "price_usd": 2807.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2,159.00; in stock (limited); listed as XFK-8 3-phase 2 HP."
+  },
+  "pentair-whisperfloxf-022018": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "22018",
+   "url": "https://poolplaza.com/products/pentair-whisperfloxf-pump-xfk-12-3-phase-3-hp-208-230460v-022018",
+   "price_usd": 2807.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2,159.00; in stock; seller SKU drops the leading zero; listed as XFK-12 3-phase 3 HP."
+  },
+  "pentair-whisperfloxf-022019": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "22019",
+   "url": "https://poolplaza.com/products/pentair-whisperfloxf-pump-xfk-20-3-phase-50-hp-208-230-460v-022019",
+   "price_usd": 4394.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $3,380.00; in stock; seller SKU drops the leading zero; listed as XFK-20 3-phase 5 HP."
+  },
+  "starite-maxeproxf-023034": {
+   "search_note": "Searched 023034 on retailers. Only ePoolSupply lists it ('Export Only', sale $2,599.95 vs $2,999.95) and that page says no fulfillment methods are available; Pentair/other dealers call it an export model. No US seller sells it."
+  },
+  "starite-maxeproxf-023032-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists 023032-INT (US 023032 is a different, non-INT part)"
+  },
+  "starite-maxeproxf-023033-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists 023033-INT"
+  },
+  "starite-maxeproxf-023017": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "23017",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-xf-2-hp-3-phase-pump-023017",
+   "price_usd": 684.8,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page. Price looks low next to the 3 HP sibling; confirm before ordering."
+  },
+  "starite-maxeproxf-023018": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "23018",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-proxf-3-hp-3-phase-pump-023018",
+   "price_usd": 1344.8,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page."
+  },
+  "starite-maxeproxf-023019": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "23019",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-xf-5-hp-3-phase-pump-023019",
+   "price_usd": 2023.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page."
+  },
+  "pentair-whisperflo-015583": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "EC-015583",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-pool-pump-1hp-ec-015583-energy-efficient-015583",
+   "price_usd": 1250.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $961.00; in stock. Seller SKU is the EC- (e-commerce) twin of 015583; page cites model 015583 WFE-4, 115/208-230 V. ePoolSupply lists plain 015583 at $969.00 regular / $879.95 sale (page says no fulfillment methods)."
+  },
+  "pentair-whisperflo-011511-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011512-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011527-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011528-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011529-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011530-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperflo-011641": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "11641",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-pump-10-hp-standard-208-230460v-3-phase-wfk-4-011568-use-011641",
+   "price_usd": 1684.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,295.00; in stock; page title reads 'WFK-4 (011568) Use (011641)' (011641 supersedes 011568)."
+  },
+  "pentair-whisperflo-011642": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "011642",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-pump-15-hp-standard-208-230460v-3-phase-wfk-6-011642",
+   "price_usd": 1824.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,403.00; in stock; 3-phase."
+  },
+  "pentair-whisperflo-011643": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "011643",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-pump-20-hp-standard-208-230460v-3-phase-wfk-8-011643",
+   "price_usd": 2030.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,561.00; in stock; 3-phase; page says cannot be sold in CA."
+  },
+  "pentair-whisperflo-011644": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "11644",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-pump-30-hp-standard-208-230460v-3-phase-wfk-12-011644",
+   "price_usd": 2386.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,835.00; in stock; 3-phase; seller SKU drops the leading zero."
+  },
+  "pentair-superflo-348190": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "EC-348190",
+   "url": "https://www.epoolsupply.com/products/pentair-superflo-high-performance-pump-1hp",
+   "price_usd": 975.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $819.00. Seller SKU is the EC- (e-commerce) twin of 348190; 1.1 THP 115/208-230 V. ePoolSupply page text shows 'no fulfillment methods available / email wholesale@epoolsupply.com to order' next to an Add to cart button; confirm it can be ordered."
+  },
+  "pentair-superflo-348021-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-superflo-348022-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-superflo-348144-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-superflo-348145-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-superflo-348146-int": {
+   "search_note": "export (-INT) model, not sold in the USA; no US seller lists it (Pool360 and dkhardware show it as export only or obsolete, no price)"
+  },
+  "pentair-whisperfloxf-vs-022035": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "022035",
+   "url": "https://www.epoolsupply.com/products/pentair-whisperflo-xf-5hp-variable-speed-pump",
+   "price_usd": 3395.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2,999.95; 5 HP variable speed, single or three phase. ePoolSupply page text shows 'no fulfillment methods available / email wholesale@epoolsupply.com to order' next to an Add to cart button; confirm it can be ordered."
+  },
+  "starite-maxeproxf-vs-023035": {
+   "seller": "EZ Pool and Spa Supply",
+   "seller_part_no": "023035",
+   "url": "https://www.eztestpools.com/pentair-whisperfloxf-vs-pump-5-hp-023035",
+   "price_usd": 3656.6,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page titles it 'WhisperFloXF VS Pump 5 HP' but Mfg # is 023035 (same pump); page says Currently Out of Stock, typically ships 1 to 2 business days."
+  },
+  "pentair-superflo-vst-342002": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "342002",
+   "url": "https://poolplaza.com/variants/55259981217960",
+   "price_usd": 1709.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,179.00; in stock; 2.2 THP 115/230 V 1-phase."
+  },
+  "pentair-intelliflo3-vsf-3hp": {
+   "search_note": "011075 (IntelliFlo3 VSF 3 HP) is discontinued/obsolete: ePoolSupply page shows Sold out with no price; Pool Plaza carries only 011076 (with I/O board); other sellers call 011075 obsolete. Snippet prices of $1,599-$1,899 elsewhere could not be confirmed on a fetchable product page."
+  },
+  "pentair-intelliflo3-vsf-1_5hp": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "011065",
+   "url": "https://www.epoolsupply.com/products/pentair-intelliflo-vsf-1-5hp",
+   "price_usd": 1495.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,249.95. ePoolSupply page text shows 'no fulfillment methods available / email wholesale@epoolsupply.com to order' next to an Add to cart button; confirm it can be ordered."
+  },
+  "starite-maxepro-348185": {
+   "seller": "Pool Goods",
+   "seller_part_no": "348185",
+   "url": "https://poolgoods.com/products/sta-rite-max-e-pro-high-performance-pump-single-speed-1-1-thp-348185",
+   "price_usd": 851.59,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Sold Out; Pentair/other dealers mark 348185 discontinued, so may not be reorderable."
+  },
+  "starite-maxepro-p6e6c-204l-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists P6E6C-204L-INT"
+  },
+  "starite-maxepro-p6e6d-205l-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists P6E6D-205L-INT"
+  },
+  "starite-maxepro-348150-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348150-INT"
+  },
+  "starite-maxepro-348151-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348151-INT"
+  },
+  "starite-maxepro-348152-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348152-INT"
+  },
+  "starite-maxepro-348153-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348153-INT"
+  },
+  "starite-maxepro-345076": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "345076",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-1-hp-3-phase-pump-345076",
+   "price_usd": 847.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page."
+  },
+  "starite-maxepro-345077": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "345077",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-1-1-2-hp-3-phase-pump-345077",
+   "price_usd": 887.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page."
+  },
+  "starite-maxepro-345078": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "345078",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-2-hp-3-phase-pump-345078",
+   "price_usd": 999.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page. A search snippet suggested a lower marked-down price, not seen on the page."
+  },
+  "starite-maxepro-345079": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "345079",
+   "url": "https://poolsupplydelivery.com/sta-rite-max-e-pro-3-hp-3-phase-pump-345079",
+   "price_usd": 1055.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Listed as out of stock, 'contact us for special order'; price is the regular price shown on the page."
+  },
+  "starite-maxepro-p6ea6d36-204": {
+   "search_note": "575 V 3/4 HP. ePoolSupply lists it as sold out / request a quote (no price); Pool360 marks it obsolete; Leslie's has 575 V 1, 1.5, 2 and 3 HP but no 3/4 HP page found. No seller with a visible price."
+  },
+  "starite-maxepro-p6ea6e36-205": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "318141 (mfr P6EA6E36-205)",
+   "url": "https://lesliespool.com/318141.html",
+   "price_usd": 1179.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Out of Stock (delivery unavailable for Utah ZIP); price is Leslie's listed price; page says available to AccuBlue members only. 575 V 3-phase."
+  },
+  "starite-maxepro-p6ea6f36-206": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "318142 (mfr P6EA6F36-206)",
+   "url": "https://lesliespool.com/318142.html",
+   "price_usd": 1449.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Out of Stock (delivery unavailable for Utah ZIP); price is Leslie's listed price; page says available to AccuBlue members only. 575 V 3-phase."
+  },
+  "starite-maxepro-p6ea6g36-207": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "318143 (mfr P6EA6G36-207)",
+   "url": "https://lesliespool.com/318143.html",
+   "price_usd": 1899.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Out of Stock (delivery unavailable for Utah ZIP); price is Leslie's listed price; page says available to AccuBlue members only. 575 V 3-phase."
+  },
+  "starite-maxepro-p6e6h36-209": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "318144 (mfr P6E6H36-209)",
+   "url": "https://lesliespool.com/318144.html",
+   "price_usd": 1799.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Out of Stock (delivery unavailable for Utah ZIP); price is Leslie's listed price; page says available to AccuBlue members only. 575 V 3-phase."
+  },
+  "pentair-cseries-ch-50": {
+   "search_note": "011656 (CH-50 1-ph 230 V): Pool360 marks it obsolete; Poolweb ($8,546.95) and Pool Plaza ($8,599) were seen in search snippets only; the product pages 404ed or redirected to a collection, so no price was confirmed."
+  },
+  "pentair-cseries-ch-75": {
+   "search_note": "347916 (CH-75): seen at Pool Supply Unlimited (about $9,184, page returned 403), Active Pool Supply (about $9,519, page did not load) and Vita Filters (403); no product page with a price could be opened. Pool360 marks it obsolete."
+  },
+  "pentair-cseries-ch-100": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "317285",
+   "url": "https://lesliespool.com/pentair-c-series-10hp-single-phase-commercial-pool-pump-with-hair-and-lint-strainer-230v/317285.html",
+   "price_usd": 16999.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Leslie's item 317285 = manufacturer SKU 347963 (10 HP 230 V 1-phase). Page shows Out of Stock / members-only delivery. Same price at In The Swim (intheswim.com, item 317285)."
+  },
+  "pentair-cseries-chk-150": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "11660",
+   "url": "https://poolplaza.com/products/pentair-c-series-pump-high-head-150-hp-220440v-3-phase-011660",
+   "price_usd": 14741.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $11,339.00; only 3 left in stock; 220/440 V 3-phase 15 HP. EZ Test Pools lists it at $12,478.53 (1 left)."
+  },
+  "pentair-cseries-chk-200": {
+   "seller": "Aqua Terra Backyard",
+   "seller_part_no": "347948",
+   "url": "https://www.aquaterrabackyard.com/products/pentair-347948-pump-chk-200-20hp-3-phase-200-208v",
+   "price_usd": 19976.47,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $16,647.06; page shows SOLD OUT. 20 HP 3-phase 200-208 V."
+  },
+  "pentair-cseries-cm-50": {
+   "seller": "EZ Pool and Spa Supply",
+   "seller_part_no": "011651",
+   "url": "https://www.eztestpools.com/products.php?productId=56144",
+   "price_usd": 9327.14,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page shows Currently Out of Stock. Doheny lists MPN 11651 at $9,103.49 sale / $10,114.99 list (stock unclear); Aqua Terra $11,018.31 sold out."
+  },
+  "pentair-cseries-cm-75": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "347917",
+   "url": "https://poolplaza.com/products/pentair-c-series-pump-whair-lint-trap-75-hp-cm-75-single-phase-230v-347917",
+   "price_usd": 7899.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Only 1 left in stock; 7.5 HP CM-75 1-phase 230 V; no strikethrough price shown."
+  },
+  "pentair-cseries-cm-100": {
+   "search_note": "347964 (CM-100 1-ph 230 V): Pool360 marks it obsolete; no seller found listing the complete pump with a price (only the 357249S motor package)."
+  },
+  "pentair-superflo-vs": {
+   "search_note": "Discontinued; Pentair's page names SuperFlo VST (342002) as the replacement. The row is the old 230 V-only SuperFlo VS; current EC-342001 listings are 115/208-230 V and not an exact match. No exact seller found."
+  },
+  "starite-cspk-75": {
+   "search_note": "CSPHK-142 (7.5 HP, 230 V 1-ph, cast iron) is discontinued: Pool Supply Unlimited says discontinued (page blocks fetch), Pool360 obsolete; Poolweb and INYO have no CSPHK-142 page (only the epoxy CCSPHK-142 and 3-phase CSPHK3-142). ProPools lists it (id 64532) but its page would not open. No verified price."
+  },
+  "starite-cspl-10": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CSPHL-143",
+   "url": "https://www.poolweb.com/products/csp-series-10-hp-pump-230-volts-1-phase-6-x-4-inch",
+   "price_usd": 6810.83,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230 V single phase."
+  },
+  "starite-cspm-15": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CSPHM3-144",
+   "url": "https://www.poolweb.com/products/csp-series-model-csphm3-144-cast-iron-15-hp-230-460-volts-3-phase-pump-6-x-4-inch",
+   "price_usd": 6715.66,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230/460 V three phase."
+  },
+  "starite-cspn-20": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CSPHN3-145",
+   "url": "https://www.poolweb.com/products/csp-series-20-hp-pump-230-460-volts-3-phase-6-x-4-inch",
+   "price_usd": 9146.03,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230/460 V three phase."
+  },
+  "starite-ccspk-75": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CCSPHK-142",
+   "url": "https://www.poolweb.com/products/ccsp-series-7-1-2-hp-pump-230-volts-1-phase-6-x-4-inch-epoxy-coated",
+   "price_usd": 8092.58,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230 V single phase."
+  },
+  "starite-ccspl-10": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CCSPHL-143",
+   "url": "https://www.poolweb.com/products/ccsp-series-10-hp-pump-230-volts-1-phase-6-x-4-inch-epoxy-coated",
+   "price_usd": 8727.42,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230 V single phase (page browser title says 3 Phase, body and title say 1-Phase)."
+  },
+  "starite-ccspm-15": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CCSPHM3-144",
+   "url": "https://www.poolweb.com/products/ccsp-series-15-hp-pump-230-460-volts-3-phase-6-x-4-inch-epoxy-coated",
+   "price_usd": 8131.27,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230/460 V three phase."
+  },
+  "starite-ccspn-20": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "CCSPHN3-145",
+   "url": "https://www.poolweb.com/products/ccsp-series-20-hp-pump-230-460-volts-3-phase-6-x-4-inch-epoxy-coated",
+   "price_usd": 10273.96,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page says 'Allow 3-5 Months to Ship'; freight shipping $25; no stock count shown. Strainer sold separately. 230/460 V three phase."
+  },
+  "pentair-dseries-dhh3-169": {
+   "seller": "KG Power Systems",
+   "seller_part_no": "DHH3-169",
+   "url": "https://store.kgpowersystems.com/variants/49681280336185",
+   "price_usd": 4637.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2349.41; page shows SOLD OUT (stock subject to change). Sta-Rite D Series 3-phase."
+  },
+  "pentair-dseries-dhj3-170": {
+   "seller": "KG Power Systems",
+   "seller_part_no": "DHJ3-170",
+   "url": "https://store.kgpowersystems.com/variants/49681304518969",
+   "price_usd": 4596.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2328.64; page shows SOLD OUT (stock subject to change). Sta-Rite D Series 3-phase."
+  },
+  "pentair-dseries-dmh3-171": {
+   "seller": "KG Power Systems",
+   "seller_part_no": "DMH3-171",
+   "url": "https://store.kgpowersystems.com/variants/49681313595705",
+   "price_usd": 4783.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2550.35; page shows SOLD OUT (stock subject to change). Sta-Rite D Series 3-phase."
+  },
+  "pentair-dseries-dmj3-172": {
+   "seller": "KG Power Systems",
+   "seller_part_no": "DMJ3-172",
+   "url": "https://store.kgpowersystems.com/variants/49681337483577",
+   "price_usd": 4811.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2437.57; page shows SOLD OUT (stock subject to change). Sta-Rite D Series 3-phase."
+  },
+  "starite-supermax-348191": {
+   "seller": "Water Works Pools",
+   "seller_part_no": "348191",
+   "url": "https://waterworks-pools.com/products/sta-rite-super-max-pool-pumps-115-230v",
+   "price_usd": 869.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Page labels $869.99 'Sale price' with no regular price shown, so recorded as list. Michigan retailer (Water Works Pools, Hot Tubs & More). Returns carry a 25% restocking fee."
+  },
+  "starite-supermax-phk2e6c-100l-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists PHK2E6C-100L-INT"
+  },
+  "starite-supermax-phk2e6d-101l-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists PHK2E6D-101L-INT"
+  },
+  "starite-supermax-348147-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348147-INT"
+  },
+  "starite-supermax-348148-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348148-INT"
+  },
+  "starite-supermax-348149-int": {
+   "search_note": "export (-INT) model, not sold in the USA (Pentair catalog 'not for sale in the USA'; Pool360 lists the -INT variants as export only/obsolete); no US seller lists 348149-INT"
+  },
+  "pentair-whisperflo-vst-011533": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "EC-011533",
+   "url": "https://poolplaza.com/products/pentair-whisperflo-vst-26-thp-variable-speed-pool-pump-115-208-230v-011533-ec-011533",
+   "price_usd": 2526.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $1,595.00; in stock. Seller SKU is the EC- (e-commerce) twin of 011533. ePoolSupply lists EC-011533 at $2,199.99 / $2,059.00 sale."
+  },
+  "pentair-intelliflo-vs-svrs-011057": {
+   "seller": "Pool Plaza",
+   "seller_part_no": "011057",
+   "url": "https://poolplaza.com/products/pentair-intelliflo-variable-speed-pump-vssvrs-vacuum-release-011057",
+   "price_usd": 3088.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Sale price $2,299.00; in stock; 230 V."
+  },
+  "hayward-hcp3000-hcp30203": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP30203",
+   "url": "https://www.poolweb.com/products/hcp-3000-commercial-pump-2-hp-3-phase-208-230-460-volts-2-1-2-x-3-inch",
+   "price_usd": 1910.28,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "2 HP 3-phase 208-230/460 V; ships 14-21 days; freight $25"
+  },
+  "hayward-hcp3000-hcp30303": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP30303",
+   "url": "https://www.poolweb.com/products/hcp-3000-commercial-pump-3-hp-3-phase-208-230-460-volts-2-1-2-x-3-inch",
+   "price_usd": 2088.23,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "3 HP 3-phase 208-230/460 V; 1 in stock; freight $25"
+  },
+  "hayward-hcp3000-hcp30503": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP30503",
+   "url": "https://www.poolweb.com/products/hcp-3000-commercial-pump-5-hp-3-phase-208-230-460-volts-2-1-2-x-3-inch",
+   "price_usd": 3343.57,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "5 HP 3-phase variant (HCP30503); ships 14-21 days; freight $25"
+  },
+  "hayward-hcp3000-hcp30703": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP30703",
+   "url": "https://www.poolweb.com/products/hcp-3000-commercial-pump-7-hp-3-phase-208-230-460-volts-2-1-2-x-3-inch",
+   "price_usd": 4326.44,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "7 HP 3-phase; ships 14-21 days; freight $25"
+  },
+  "hayward-hcp3000-hcp3020vsp": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "HCP3020VSP",
+   "url": "https://poolsupplydelivery.com/products/hayward-hcp-3000-2-7-horsepower-pump-hcp3020vsp",
+   "price_usd": 2379.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "2.7 HP 230 V single phase variable speed, 3 in union (not the OmniX HCP3020VSPX1); in stock"
+  },
+  "hayward-hcp2500-hcp2500vsp": {
+   "seller": "INYO Pools",
+   "seller_part_no": "HCP2500VSP",
+   "url": "https://www.inyopools.com/Products/02201358090164.htm",
+   "price_usd": 2099.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "2.7 HP 230 V single phase; in stock (9); free shipping"
+  },
+  "hayward-hcp4000-hcp40553": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP40553",
+   "url": "https://www.poolweb.com/products/hcp-4000-commercial-pump-5-5-hp-3-phase-230-460-volts-4-x-4-inch",
+   "price_usd": 6671.08,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "5.5 HP 3-phase 230/460 V; ships 14-21 days; freight $25"
+  },
+  "hayward-hcp4000-hcp40753": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP40753",
+   "url": "https://www.poolweb.com/products/hcp-4000-commercial-pump-7-5-hp-3-phase-230-460-volts-4-x-4-inch",
+   "price_usd": 6838.25,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "On sale at $6,275.00 (list $6,838.25); 2 in stock; freight $25"
+  },
+  "hayward-hcp4000-hcp401003": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP401003",
+   "url": "https://www.poolweb.com/products/hcp-4000-commercial-pump-10-hp-3-phase-230-460-volts-4-x-4-inch",
+   "price_usd": 7642.05,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "10 HP 3-phase 230/460 V; ships 14-21 days; freight $25"
+  },
+  "hayward-hcp4000-hcp401253": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP401253",
+   "url": "https://www.poolweb.com/products/hcp-4000-commercial-pump-12-5-hp-3-phase-230-460-volts-4-x-4-inch",
+   "price_usd": 8004.55,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "12.5 HP 3-phase 230/460 V; ships 14-21 days; freight $25"
+  },
+  "hayward-hcp2000-hcp20053": {
+   "search_note": "HCP20053 (1/2 HP 3-phase). Searched Poolweb, INYO, Pool Supply Delivery and the web: no seller page I could open shows it with a price. Pool Warehouse and Pool Supply Unlimited list it in search results but block automated fetches (HTTP 403), so no price was read off a page."
+  },
+  "hayward-hcp2000-hcp20073": {
+   "seller": "INYO Pools",
+   "seller_part_no": "HCP20073",
+   "url": "https://www.inyopools.com/Products/02201358090156.htm",
+   "price_usd": 1031.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "0.75 HP 3-phase 208-230/460 V; page shows OUT OF STOCK. Poolweb's page for it now returns 404."
+  },
+  "hayward-hcp2000-hcp20103": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP20103",
+   "url": "https://www.poolweb.com/products/hcp-2000-commercial-tristar-pump-1-hp-3-phase-208-230-460-volts-2-x-2-1-2-inch",
+   "price_usd": 1060.43,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "1 HP 3-phase 208-230/460 V; ships 14-21 days"
+  },
+  "hayward-hcp2000-hcp20153": {
+   "search_note": "HCP20153 (1.5 HP 3-phase) is discontinued (listed on Hayward's discontinued pumps page). Poolweb and Pool Supply Delivery do not list it; INYO's page returns 404; Pool Warehouse lists it as out of stock but blocks automated fetches (HTTP 403), so no price was read."
+  },
+  "hayward-hcp2000-hcp20203": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP20203",
+   "url": "https://www.poolweb.com/products/hcp-2000-commercial-tristar-pump-2-hp-3-phase-208-230-460-volts-2-x-2-1-2-inch",
+   "price_usd": 1354.37,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "2 HP 3-phase 208-230/460 V; 2 in stock; free shipping"
+  },
+  "hayward-hcp2000-hcp20303": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP20303",
+   "url": "https://www.poolweb.com/products/hcp-2000-commercial-tristar-pump-3-hp-3-phase-208-230-460-volts-2-x-2-1-2-inch",
+   "price_usd": 1673.86,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "3 HP 3-phase 208-230/460 V; ships 14-21 days; free shipping"
+  },
+  "hayward-hcp2000-hcp20503": {
+   "seller": "Pool Web Pool & Spa Supplies",
+   "seller_part_no": "HCP20503",
+   "url": "https://www.poolweb.com/products/hcp-2000-commercial-tristar-pump-5-hp-3-phase-208-230-460-volts-2-x-2-1-2-inch",
+   "price_usd": 2772.73,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "5 HP 3-phase 208-230/460 V; ships 14-21 days; free shipping"
+  },
+  "hayward-tristar-vs-sp3202vsp": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP3202VSP",
+   "url": "https://poolsupplydelivery.com/products/hayward-tristar-1-85-hp-variable-speed-pool-pump-sp3202vsp",
+   "price_usd": 2199.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "1.85 THP 230 V; page shows OUT OF STOCK, special order. Leslie's lists the replacement number W3SP3202VSP at the same $2,199.00 (also out of stock)."
+  },
+  "hayward-tristar-vs-sp32950vsp": {
+   "seller": "Absolute Pool Supplies",
+   "seller_part_no": "SP32950VSP",
+   "url": "https://www.absolutepoolsupplies.com/product/hayward-tristar-vs-950-sp32950vsp/",
+   "price_usd": 1999.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Title 'Hayward Tristar VS 950 Sp32950VSP'; page states no stock status and no separate SKU field"
+  },
+  "hayward-super-pump-vs-700-sp2670020vsp": {
+   "search_note": "SP2670020VSP is a Hayward Expert Line (pro-only) pump. Poolweb, Leslie's and Pool Supply Delivery do not list it. The only US prices I saw (reach.dog store pages at $1,729.29 and $1,785.00, an eBay listing) could not be opened (reach.dog returns HTTP 410) or are not an eligible seller page."
+  },
+  "hayward-super-pump-vs-w3sp2603vsp": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "341110",
+   "url": "https://lesliespool.com/hayward-w3sp2603vsp-super-pump-variable-speed-pool-pump-1.65hp-230v/341110.html",
+   "price_usd": 1749.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Manufacturer part no. W3SP2603VSP, 1.65 HP 230 V; online shows Out of Stock, 1 in stock for pickup at Salt Lake City store #474; page also says AccuBlue members only. Pool Supply Delivery lists it at the same $1,749.00, out of stock."
+  },
+  "hayward-super-pump-vs-sp26115vsp": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP26115VSP",
+   "url": "https://poolsupplydelivery.com/hayward-super-pump-vs-variable-speed-pool-pump-115v-85hp",
+   "price_usd": 879.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "0.85 HP 115 V VS; page shows OUT OF STOCK, special order; model is obsolete at Hayward"
+  },
+  "hayward-super-pump-sp2600x5": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP2600X5",
+   "url": "https://poolsupplydelivery.com/hayward-super-pump-0-50-hp-single-speed-pool-pump-sp2600x5",
+   "price_usd": 699.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "1/2 HP single speed; page shows OUT OF STOCK, special order; price looks high versus other dealers' old listings"
+  },
+  "hayward-super-pump-sp2605x7": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP2605X7",
+   "url": "https://poolsupplydelivery.com/hayward-super-pump-75-hp-single-speed-pool-pump-sp2605x7",
+   "price_usd": 792.03,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "0.75 HP 115/230 V; in stock. Leslie's lists SP2605X7 at $799.00 but out of stock online."
+  },
+  "hayward-super-pump-sp2607x10": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP2607X10",
+   "url": "https://poolsupplydelivery.com/hayward-super-pump-1-hp-single-speed-pool-pump",
+   "price_usd": 861.28,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "1 HP single speed; in stock"
+  },
+  "hayward-super-pump-sp2607x102s": {
+   "seller": "Pool Supply Delivery",
+   "seller_part_no": "SP2607X102S",
+   "url": "https://poolsupplydelivery.com/hayward-super-pump-1-hp-dual-speed-pool-pump-sp2607x102s",
+   "price_usd": 1028.33,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "1 HP two-speed 230 V; page shows OUT OF STOCK, special order; reported discontinued/NLA elsewhere"
+  },
+  "jandy-stealth-shpf050-shpm075": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "SHPF.50",
+   "url": "https://poolsupplydepot.net/products/jandy-stealth-0-5-hp-single-speed-pool-pump-shpf-50",
+   "price_usd": 1449.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced the first part number, SHPF.50 (0.5 HP, 208-230/115 V, 1-phase); SHPM.75 not priced. Add to cart present. ePoolSupply shows $920.95 regular / $864.95 sale for the same SHPF.50 but with no shipping or pickup available."
+  },
+  "jandy-stealth-shpf075-shpm100": {
+   "search_note": "SHPF.75: no seller found with a visible price. Pool Supply Unlimited has a page for it but returned HTTP 403 to the fetch tool, so no price could be read; INYO has no SHPF.75 pump page (parts only); ePoolSupply and Pool Supply Depot do not list it; Pool Supply World was offline. Likely discontinued."
+  },
+  "jandy-stealth-shpf100-shpm150": {
+   "seller": "INYO Pools",
+   "seller_part_no": "SHPF10",
+   "url": "https://www.inyopools.com/Products/02600001005609.htm",
+   "price_usd": 740.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). Priced SHPF1.0 (Stealth 1.0 HP full rate, single-phase). Leslie's (item 84600) shows $699.99 for SHPF1.0 but out of stock and AccuBlue-members-only."
+  },
+  "jandy-stealth-shpf150-shpm200": {
+   "seller": "INYO Pools",
+   "seller_part_no": "SHPF15",
+   "url": "https://www.inyopools.com/Products/02600001005610.htm",
+   "price_usd": 822.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). Stealth 1.5 HP full rate, SHPF1.5."
+  },
+  "jandy-stealth-shpf200-shpm250": {
+   "seller": "INYO Pools",
+   "seller_part_no": "SHPF20",
+   "url": "https://www.inyopools.com/Products/02600001005611.htm",
+   "price_usd": 955.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). Stealth 2.0 HP full rate, SHPF2.0."
+  },
+  "jandy-stealth-shpf300": {
+   "seller": "INYO Pools",
+   "seller_part_no": "SHPF30",
+   "url": "https://www.inyopools.com/Products/02600001005612.htm",
+   "price_usd": 876.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK (quantity 0), no Add to Cart button on the page; price is a reference only and looks stale (below the 2.0 HP price). Page lists SHPF30 with alternate part SHPF3.0."
+  },
+  "jandy-stealth-shpf500": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "SHPF5.0",
+   "url": "https://www.epoolsupply.com/products/jandy-stealth-pump-5hp-230v-shpf5-0",
+   "price_usd": 4096.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Priced SHPF5.0 (5 HP, 230 V, single-phase), first of the pair. Sale price $3,646.95 (regular $4,096.99); the page text drops the decimal point, so cents are inferred. Page says no fulfillment methods available; order by emailing wholesale@epoolsupply.com. The page description text mentions a different model (PHPM.75), but title and SKU are SHPF5.0."
+  },
+  "jandy-flopro-fhpm075": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "FHPM.75",
+   "url": "https://poolsupplydepot.net/products/jandy-flopro%c2%ae-medium-head-pump-0-75-hp-115-230-v-single-phase-with-strainer-fhpm-75",
+   "price_usd": 799.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "FloPro 0.75 HP, 115/230 V single-phase, with strainer. Distributor number TLD-10-2060. Stock not confirmed on the page."
+  },
+  "jandy-flopro-fhpm100": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "FHPM1.0",
+   "url": "https://poolsupplydepot.net/products/jandy-flopro-1-hp-single-speed-pool-pump-115-230v-fhpm1-0",
+   "price_usd": 849.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "FloPro 1 HP, 115/230 V, single-speed (not the -2 two-speed). Collection page showed low stock (5 left)."
+  },
+  "jandy-flopro-fhpm150": {
+   "seller": "INYO Pools",
+   "seller_part_no": "FHPM15",
+   "url": "https://www.inyopools.com/Products/02600018059370.htm",
+   "price_usd": 812.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). FloPro 1.5 HP single speed, FHPM15."
+  },
+  "jandy-flopro-fhpm200": {
+   "seller": "INYO Pools",
+   "seller_part_no": "FHPM20",
+   "url": "https://www.inyopools.com/Products/02600018059372.htm",
+   "price_usd": 545.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only and looks stale (below the 1.5 HP price). FloPro 2 HP single speed, 115/230 V, FHPM20."
+  },
+  "jandy-flopro-fhpm250": {
+   "seller": "INYO Pools",
+   "seller_part_no": "FHPM25",
+   "url": "https://www.inyopools.com/Products/02600018059374.htm",
+   "price_usd": 611.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only and looks stale (below the 1.5 HP price). FloPro 2.5 HP single speed, FHPM25."
+  },
+  "jandy-vs-flopro-vsfhp165": {
+   "search_note": "VSFHP165JEP (1.65 HP, 230 V, JEP-R controller) is discontinued. Pool360 marks it obsolete, Sunplay shows no price and is pickup-only in Ogden UT / Las Vegas NV, Aqua Pool Supply page showed no price (local pickup only), ePoolSupply has only the R0571000 motor-and-drive part, INYO says not sold online. Pool Supply Depot sells the VSFHP165DVSP (a different SKU) with no price shown."
+  },
+  "jandy-vs-flopro-vsfhp085": {
+   "search_note": "VSFHP085JEP (0.85 HP, 115 V, JEP-R controller): ePoolSupply page (/products/jandy-vs-flopro-0-85-hp-and-1-65-hp) shows no price, sold out, no fulfillment. No other seller found listing it with a price."
+  },
+  "jandy-vs-flopro-vsfhp130dv": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "VSFHP130DV",
+   "url": "https://www.epoolsupply.com/products/jandy-vs-flopro-1-30hp-pump-115-230-vac-no-controller-j383_vsfhp130dv",
+   "price_usd": 1299.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "VS FloPro 1.3 HP, 115/230 V, no controller (VSFHP130DV; the VSFHP130DVS with SpeedSet controller is a different SKU). Sale $999.95 vs regular $1,299.95; the page text drops decimal points, so cents are inferred. Page says no fulfillment methods available; order by emailing wholesale@epoolsupply.com."
+  },
+  "jandy-vs-flopro-vsfhp270dv2a": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "VSFHP270DV2A",
+   "url": "https://poolsupplydepot.net/products/jandy-vs-flopro-variable-speed-pump-2-7-hp-230-115-v-2-aux-vsfhp270dv2a",
+   "price_usd": 1899.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "VS FloPro 2.7 HP, 230/115 V, 2 AUX relays, no controller. Sale price $1,699.00 (was $1,899.00). Stock not confirmed on the page. ePoolSupply lists the same SKU at $1,595.95 regular / $1,499.95 sale (no fulfillment available)."
+  },
+  "jandy-vs-flopro-vsfhp3802a": {
+   "search_note": "VSFHP3802A (3.8 HP, 230 V, no controller): ePoolSupply page shows quote only and sold out; Pool Supply Depot lists only the VSFHP3802AS (with SpeedSet controller, a different SKU) with no price. No seller with a visible price for the exact SKU."
+  },
+  "jandy-epump-vsshp220dv2a": {
+   "search_note": "VSSHP220DV2A (2.2 HP): ePoolSupply page shows quote only and sold out; Aqua Pool Supply page shows no price (local pickup only); Pool360 marks it obsolete; Pool Products Canada says call. Only the SpeedSet version (VSSHP220DV2AS, different SKU) shows a price ($1,611.95 at ePoolSupply)."
+  },
+  "jandy-epump-vsshp270dv2a": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "VSSHP270DV2A",
+   "url": "https://www.epoolsupply.com/variants/40644046291029",
+   "price_usd": 2199.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "ePump 2.7 HP, 115/230 V, 2 aux relays, without controller. Sale $1,729.95 vs regular $2,199.99; the page text is garbled so cents are inferred (a mirror of the site showed $1,599.00 at another time). No fulfillment methods available on the page; order by emailing wholesale@epoolsupply.com. Pool Supply Depot lists this SKU with no price."
+  },
+  "jandy-epump-vsshp3802a": {
+   "seller": "ePoolSupply",
+   "seller_part_no": "VSSHP3802A",
+   "url": "https://www.epoolsupply.com/products/jandy-epump-variable-speed-pool-pump-3-8hp-230v",
+   "price_usd": 1829.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "ePump 3.8 HP, 230 V, no controller (VSSHP3802A). Regular price only; the page text drops the decimal point, so cents are inferred. Page has Add to cart and Get a Quote but says no fulfillment methods available; order by emailing wholesale@epoolsupply.com. Pool Supply Depot lists this SKU with no price (VSSHP3802AS with controller is $2,149.99 there)."
+  },
+  "hayward-super-pump-700-sp2670007x10c": {
+   "search_note": "SP2670007X10C (Super Pump 700 TEFC, 1.1 THP). Searched Poolweb, Leslie's, Pool Supply Delivery and the web: only the non-C numbers (SP2670007X10, W3SP2670007X10) are sold with prices, which are a different part number; the C model is Hayward Expert Line."
+  },
+  "hayward-super-pump-700-sp2670010x15c": {
+   "search_note": "SP2670010X15C (Super Pump 700 TEFC, 1.5 HP). No seller page with a price for the C part number. Pool Supply Delivery sells SP2670010X15 (no C) at $360.00, out of stock; Pool360 marks the C model obsolete. Not the same part number, so not recorded."
+  },
+  "jandy-plushp-phpf050-phpm075": {
+   "search_note": "PHPF.50: ePoolSupply page (/products/jandy-plushp-pump-5hp-115-230v-phpf-50) shows no price and is sold out; Pool Supply Depot has only PHPM.75 (no price); INYO has no PHPF.50 page that loads. No seller with a visible price."
+  },
+  "jandy-plushp-phpf075-phpm100": {
+   "search_note": "PHPF.75: Amazon listing shows currently unavailable with no price; ePoolSupply has only PHPM.75 (quote only, sold out) and PHPF.75 impeller kits; INYO page for PHPF.75 does not load. No seller with a visible price."
+  },
+  "jandy-plushp-phpf100-phpm150": {
+   "seller": "INYO Pools",
+   "seller_part_no": "PHPF10",
+   "url": "https://www.inyopools.com/Products/02600001005620.htm",
+   "price_usd": 810.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). PlusHP 1.0 HP full rate, PHPF10. Sunplay lists PHPF1.0 with no price (pickup only, Ogden UT / Las Vegas NV)."
+  },
+  "jandy-plushp-phpf150-phpm200": {
+   "seller": "INYO Pools",
+   "seller_part_no": "PHPF15",
+   "url": "https://www.inyopools.com/Products/02600001005621.htm",
+   "price_usd": 810.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "OUT OF STOCK, no Add to Cart button on the page; price is a reference only (the pump looks discontinued). PlusHP 1.5 HP full rate, PHPF15. Same price as the PHPF10 page, so it may be stale."
+  },
+  "jandy-plushp-phpf200-phpm250": {
+   "search_note": "PHPF2.0: INYO page (PHPF20) returned 404 on fetch; ePoolSupply and Pool Supply Depot list only motors/parts for it; no seller found with a visible price."
+  },
+  "grundfos-nbs-015-090-4pole-9p84": {
+   "search_note": "Pump-Stop lists NBS 015-090 with a 9.84 in impeller as SKU 92559475 at $8,333.40, but the page prints neither HP nor rpm, so it is not counted as this row (5 HP, 4-pole). NBS 015-090/9.84 (9.84 in impeller) AASG7SAESDQQEKX4; page does not print HP or rpm, 5 HP 4-pole inferred from the type code KX4; a second listing 92559473 shows $8,090.88; price varies by motor/seal code"
+  },
+  "grundfos-nbs-015-095-4pole-9p84": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92726363",
+   "url": "https://pump-stop.com/products/nbs-015-095984-92726363",
+   "price_usd": 9577.78,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 015-095/9.84 AGASG6S2ESBQQELX4; page: 7.5 HP, 230/460 V 3 ph, 1770 rpm, TEFC; other listings of the same hydraulic exist at other prices (92707543 $9,173.61, 92559507 $4,776.44)"
+  },
+  "grundfos-nbs-020-095-4pole-9p45": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92754390",
+   "url": "https://pump-stop.com/products/nbs-020-095945-92754390",
+   "price_usd": 9620.83,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 020-095/9.45 AGASG6S2ESBQQELX4; page: 7.5 HP, 230/460 V 3 ph, 1770 rpm, TEFC; a second listing 92673089 shows $9,215.28"
+  },
+  "grundfos-nbs-020-110-4pole-10p31": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92857786",
+   "url": "https://pump-stop.com/products/nbs-020-1101031-92857786",
+   "price_usd": 11897.22,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 020-110/10.31 AGASG6S2ESBQQENX4; page: 15 HP, 230/460 V 3 ph, 1765 rpm"
+  },
+  "grundfos-nbs-025-095-4pole-9p53": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92777936",
+   "url": "https://pump-stop.com/products/nbs-025-095953-92777936",
+   "price_usd": 10125.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 025-095/9.53 AGASG6S2ESBQQEMX4; page: 10 HP, 230/460 V 3 ph, 1770 rpm; a second listing 92666114 shows $9,615.28"
+  },
+  "grundfos-nbs-025-110-4pole-11p02": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92726377",
+   "url": "https://pump-stop.com/products/nbs-025-1101102-92726377",
+   "price_usd": 12716.67,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 025-110/11.02 AGASG6S2ESBQQENX4; page: 15 HP, 230/460 V 3 ph, 1765 rpm; a second listing 92673093 shows $12,177.78"
+  },
+  "grundfos-nbs-030-110-4pole-10p94-10p63": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92756519",
+   "url": "https://pump-stop.com/products/nbs-030-1101094-1063-92756519",
+   "price_usd": 13306.94,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 030-110/10.94-10.63 AGASG6S2ESBQQEOX4; page: 20 HP, 230/460 V 3 ph, 1765 rpm; a second listing 92673095 shows $12,501.39"
+  },
+  "grundfos-nbs-030-135-4pole-12p91": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92726385",
+   "url": "https://pump-stop.com/products/nbs-030-1351291-92726385",
+   "price_usd": 21773.61,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 030-135/12.91 AGASG6S5ESBQQERX4; page: 40 HP, 230/460 V 3 ph, 1770 rpm"
+  },
+  "grundfos-nbs-040-110-4pole-10p08": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92781697",
+   "url": "https://pump-stop.com/products/nbs-040-1101008-92781697",
+   "price_usd": 16715.28,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 040-110/10.08 AGASG6S2ESBQQEQX4; page: 30 HP, 230/460 V 3 ph, 1775 rpm; a second listing 92710503 shows $15,461.11"
+  },
+  "grundfos-nbs-040-135-4pole-12p83": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92559816",
+   "url": "https://pump-stop.com/products/nbs-040-1351283-92559816",
+   "price_usd": 13676.58,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 040-135/12.83 AASG6S5ESBQQESX4; page: 50 HP, 230/460 V 3 ph, 1775 rpm, TEFC; the ODP version 92559814 shows $12,192.22"
+  },
+  "grundfos-nbs-050-095-4pole-9p13": {
+   "seller": "Pump-Stop",
+   "seller_part_no": "92767749",
+   "url": "https://pump-stop.com/products/nbs-050-095913-92767749",
+   "price_usd": 16584.72,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "NBS 050-095/9.13 AGASG6S2ESBQQEQX4; page: 30 HP, 230/460 V 3 ph, 1775 rpm"
+  },
+  "grundfos-nbs-050-110-4pole-10p63": {
+   "search_note": "Pump-Stop lists NBS 050-110/10.63 only as 6-pole 1180 rpm 15 HP units (Y6 codes), not the 4-pole 40 HP row; no other seller with a visible price found"
+  },
+  "goulds-e-shx-01shx06h7h42": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "01SHX06H7H42",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/01shx06h7h42/",
+   "price_usd": 7049.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 7.5 HP."
+  },
+  "goulds-e-shx-01shx08h1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "01SHX08H1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/01shx08h1542/",
+   "price_usd": 8688.4,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 15 HP."
+  },
+  "goulds-e-shx-01shx10m1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "01SHX10M1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/01shx10m1542/",
+   "price_usd": 9020.9,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 15 HP."
+  },
+  "goulds-e-shx-15shx08j1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "15SHX08J1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/15shx08j1542/",
+   "price_usd": 9809.1,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 15 HP."
+  },
+  "goulds-e-shx-15shx08l1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "15SHX08L1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/15shx08l1542/",
+   "price_usd": 9622.2,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 15 HP."
+  },
+  "goulds-e-shx-02shx06c1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "02SHX06C1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/02shx06c1542/",
+   "price_usd": 9631.3,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; page states 15 HP."
+  },
+  "goulds-e-shx-02shx06e1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "02SHX06E1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/02shx06e1542/",
+   "price_usd": 10768.8,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; HP/voltage not read on the page (Cloudflare check blocked a re-read), part number and price match the title."
+  },
+  "goulds-e-shx-02shx08l1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "02SHX08L1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/02shx08l1542/",
+   "price_usd": 10341.8,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; HP/voltage not read on the page (Cloudflare check blocked a re-read), part number and price match the title."
+  },
+  "goulds-e-shx-25shx06f1542": {
+   "seller": "PumpCatalog",
+   "seller_part_no": "25SHX06F1542",
+   "url": "https://www.pumpcatalog.com/goulds/e-shx-smart-pump-integrated-motor-variable-speed-drive-hydrovar/25shx06f1542/",
+   "price_usd": 16355.5,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Retail Price shown; page says a lower price appears only after Add to Cart (MAP policy). Complete pump with Hydrovar X drive, 460 V 3 ph 60 Hz TEFC; HP/voltage not read on the page (Cloudflare check blocked a re-read), part number and price match the title."
+  },
+  "goulds-3656lh-2x2-5-3450": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-2x2-5-1725": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-2p5x2p5-5-3450": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-2p5x2p5-5-1725": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-3x3-5-3450": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-3x3-5-1725": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-4x4-5-3450": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-4x4-5-1725": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-5x5-6-3450": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "goulds-3656lh-5x5-6-1725": {
+   "search_note": "no seller page for a complete 3656LH unit matching this size, speed and trim with a visible price: PumpProducts lists 3656LH as call for price (and its pages returned 403/not found), PumpCatalog hides the price behind add-to-cart and its pages were blocked by a bot check, Pace Supply shows price on login only, USA Blue Book blocked"
+  },
+  "oase-geyser-20t": {
+   "search_note": "Geyser nozzles (89023-89027) are not listed with a price by any US seller found. Coastal Pond Supply has product pages for the Geyser 20T-100T but they show $0.00 and use OASE article 50991-style INT codes, i.e. no visible price. Other US pond stores carry Comet/Frothy/Vulcan but not Geyser."
+  },
+  "oase-geyser-40t": {
+   "search_note": "Geyser nozzles (89023-89027) are not listed with a price by any US seller found. Coastal Pond Supply has product pages for the Geyser 20T-100T but they show $0.00 and use OASE article 50991-style INT codes, i.e. no visible price. Other US pond stores carry Comet/Frothy/Vulcan but not Geyser."
+  },
+  "oase-geyser-60t": {
+   "search_note": "Geyser nozzles (89023-89027) are not listed with a price by any US seller found. Coastal Pond Supply has product pages for the Geyser 20T-100T but they show $0.00 and use OASE article 50991-style INT codes, i.e. no visible price. Other US pond stores carry Comet/Frothy/Vulcan but not Geyser."
+  },
+  "oase-geyser-80t": {
+   "search_note": "Geyser nozzles (89023-89027) are not listed with a price by any US seller found. Coastal Pond Supply has product pages for the Geyser 20T-100T but they show $0.00 and use OASE article 50991-style INT codes, i.e. no visible price. Other US pond stores carry Comet/Frothy/Vulcan but not Geyser."
+  },
+  "oase-geyser-100t": {
+   "search_note": "Geyser nozzles (89023-89027) are not listed with a price by any US seller found. Coastal Pond Supply has product pages for the Geyser 20T-100T but they show $0.00 and use OASE article 50991-style INT codes, i.e. no visible price. Other US pond stores carry Comet/Frothy/Vulcan but not Geyser."
+  },
+  "oase-cascade-50t": {
+   "search_note": "No US seller found for Cascade T nozzles with a visible price; only UK sellers (1 in BSP, GBP) list them."
+  },
+  "oase-cascade-70t": {
+   "search_note": "No US seller found for Cascade T nozzles with a visible price; only UK sellers (1 in BSP, GBP) list them."
+  },
+  "oase-cascade-90t": {
+   "search_note": "No US seller found for Cascade T nozzles with a visible price; only UK sellers (1 in BSP, GBP) list them."
+  },
+  "oase-cascade-110t": {
+   "search_note": "No US seller found for Cascade T nozzles with a visible price; only UK sellers (1 in BSP, GBP) list them."
+  },
+  "oase-cascade-130t": {
+   "search_note": "No US seller found for Cascade T nozzles with a visible price; only UK sellers (1 in BSP, GBP) list them."
+  },
+  "oase-frothy-35-10e": {
+   "search_note": "US sellers (Underwater Warehouse, Pondscape, Pond Outlet) sell Frothy nozzles under OASE article numbers 50986/50987/53224/50768, not 88154; no page shows 88154, so no exact match."
+  },
+  "oase-frothy-55-10e": {
+   "search_note": "US sellers (Underwater Warehouse, Pondscape, Pond Outlet) sell Frothy nozzles under OASE article numbers 50986/50987/53224/50768, not 89057; no page shows 89057, so no exact match."
+  },
+  "oase-frothy-55-15e": {
+   "search_note": "US sellers (Underwater Warehouse, Pondscape, Pond Outlet) sell Frothy nozzles under OASE article numbers 50986/50987/53224/50768, not 89058; no page shows 89058, so no exact match."
+  },
+  "oase-frothy-50-10t": {
+   "search_note": "US sellers (Underwater Warehouse, Pondscape, Pond Outlet) sell Frothy nozzles under OASE article numbers 50986/50987/53224/50768, not 89059; no page shows 89059, so no exact match."
+  },
+  "oase-frothy-75-20t": {
+   "search_note": "US sellers (Underwater Warehouse, Pondscape, Pond Outlet) sell Frothy nozzles under OASE article numbers 50986/50987/53224/50768, not 89060; no page shows 89060, so no exact match."
+  },
+  "oase-comet-3-5t": {
+   "search_note": "Comet 3-5T: OASE US/NPT range starts at 3-6T; no seller lists 89011."
+  },
+  "oase-comet-3-6t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89012",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522826944824",
+   "price_usd": 10.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89012"
+  },
+  "oase-comet-5-8t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89013",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522826977592",
+   "price_usd": 21.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89013"
+  },
+  "oase-comet-5-10t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89014",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522827010360",
+   "price_usd": 20.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89014"
+  },
+  "oase-comet-10-12t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89015",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522827043128",
+   "price_usd": 43.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89015"
+  },
+  "oase-comet-10-14t": {
+   "seller": "Pondscape",
+   "seller_part_no": "OA-89016",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522827075896",
+   "price_usd": 40.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89016"
+  },
+  "oase-comet-15-17t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89017",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522827108664",
+   "price_usd": 80.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89017"
+  },
+  "oase-comet-15-20t": {
+   "seller": "Pondscape",
+   "seller_part_no": "89018",
+   "url": "https://pondscape.com/products/oase-comet-nozzles?variant=47522827141432",
+   "price_usd": 100.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Size dropdown variant for this model, NPT version; OASE order no. NPT 89018"
+  },
+  "oase-fanjet-10-6e": {
+   "seller": "Pondscape",
+   "seller_part_no": "53056",
+   "url": "https://pondscape.com/products/oase-fan-jet-nozzles?variant=47522949398840",
+   "price_usd": 86.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Variant 10 - 6 E. Seller SKU 53056 is the OASE product ID printed for this Fan Jet on the OASE spec sheet (Sapphire's item_code 89042/89043 does not appear on the page); seller says it needs a G-to-NPT adapter (51026 / 51027), sold separately. Verify the match before ordering."
+  },
+  "oase-fanjet-15-8e": {
+   "seller": "Pondscape",
+   "seller_part_no": "53047",
+   "url": "https://pondscape.com/products/oase-fan-jet-nozzles?variant=47522949431608",
+   "price_usd": 96.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Variant 15 - 8 E. Seller SKU 53047 is the OASE product ID printed for this Fan Jet on the OASE spec sheet (Sapphire's item_code 89042/89043 does not appear on the page); seller says it needs a G-to-NPT adapter (51026 / 51027), sold separately. Verify the match before ordering."
+  },
+  "oase-fanjet-20-6e": {
+   "search_note": "Pondscape lists only Fan Jet 10-6 E and 15-8 E; no seller found for the 20-6 E."
+  },
+  "oase-vulcan-37-2-5k": {
+   "search_note": "No US seller page lists article 88153; US stores sell Vulkan/Vulcan under different article numbers (55882, 50766, 50977)."
+  },
+  "oase-vulcan-19-3t": {
+   "search_note": "No US seller page lists article 89005; US stores sell Vulkan/Vulcan under different article numbers (55882, 50766, 50977)."
+  },
+  "oase-vulcan-43-3t": {
+   "search_note": "No US seller page lists article 89006; US stores sell Vulkan/Vulcan under different article numbers (55882, 50766, 50977)."
+  },
+  "oase-vulcan-200-19-6t": {
+   "search_note": "No US seller page lists article 89007; US stores sell Vulkan/Vulcan under different article numbers (55882, 50766, 50977)."
+  },
+  "oase-vulcan-300-19-8t": {
+   "search_note": "No US seller page lists article 89008; US stores sell Vulkan/Vulcan under different article numbers (55882, 50766, 50977)."
+  },
+  "oase-finger-jets-13-4t": {
+   "search_note": "No US seller found listing article 89001 with a price (US stores carry only a different Finger nozzle 7-15 E, 51110)."
+  },
+  "oase-finger-jets-25-4t": {
+   "search_note": "No US seller found listing article 89002 with a price (US stores carry only a different Finger nozzle 7-15 E, 51110)."
+  },
+  "safe-rain-cascade-f2451205": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 65.47 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-m-35mm-b; tax status not stated; no USD seller found."
+  },
+  "safe-rain-cascade-f2451003": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 153.00 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-m-50mm-b; tax status not stated; no USD seller found."
+  },
+  "safe-rain-cascade-f2451508": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 363.37 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-f-82mm-b; tax status not stated; no USD seller found."
+  },
+  "safe-rain-joint-cascade-f2462038": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 344.14 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-m-100mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-joint-cascade-f2462534": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 642.99 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-m-125mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-joint-cascade-f2463038": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 749.91 EUR, page .../fountains-nozzles/fountain-nozzle-cascade-f-150mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-snowy-jet-f2391208": {
+   "search_note": "No online listing found for Safe Rain F2391208: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-jet-f2401018": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 116.15 EUR, page .../fountains-nozzles/fountain-nozzle-snowy-m-32mm-aisi-316; tax status not stated; no USD seller found."
+  },
+  "safe-rain-snowy-jet-f2391006": {
+   "search_note": "No online listing found for Safe Rain F2391006: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-jet-f2401503": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 327.95 EUR, page .../fountains-nozzles/fountain-nozzle-snowy-m-50mm-aisi-316; tax status not stated; no USD seller found."
+  },
+  "safe-rain-snowy-jet-f2402008": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 666.90 EUR, page .../fountains-nozzles/fountain-nozzle-snowy-m-75mm-aisi-316; tax status not stated; no USD seller found."
+  },
+  "safe-rain-snowy-fir-f2491209": {
+   "search_note": "No online listing found for Safe Rain F2491209: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-fir-f2491007": {
+   "search_note": "No online listing found for Safe Rain F2491007: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-fir-f2491503": {
+   "search_note": "No online listing found for Safe Rain F2491503: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-fir-f2492008": {
+   "search_note": "No online listing found for Safe Rain F2492008: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-snowy-fir-f2492504": {
+   "search_note": "No online listing found for Safe Rain F2492504: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-foamy-column-f2431001": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 236.23 EUR, page .../fountains-nozzles/fountain-nozzle-foamy-column-24; tax status not stated; no USD seller found."
+  },
+  "safe-rain-foamy-column-f2431315": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 348.30 EUR, page .../fountains-nozzles/fountain-nozzle-foamy-column-30; tax status not stated; no USD seller found."
+  },
+  "safe-rain-foamy-column-f2432518": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1200.48 EUR, page .../fountains-nozzles/fountain-nozzle-foamy-column-72; tax status not stated; no USD seller found."
+  },
+  "safe-rain-foamy-column-f2433003": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1833.67 EUR, page .../fountains-nozzles/fountain-nozzle-foamy-column-90; tax status not stated; no USD seller found."
+  },
+  "safe-rain-bubbler-f2501267": {
+   "search_note": "No online listing found for Safe Rain F2501267: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-bubbler-f2501065-water-level-5-cm": {
+   "search_note": "No online listing found for Safe Rain F2501065: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-bubbler-f2501065-water-level-30-cm": {
+   "search_note": "No online listing found for Safe Rain F2501065: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-bubbler-f2501561-water-level-5-cm": {
+   "search_note": "No online listing found for Safe Rain F2501561: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-bubbler-f2501561-water-level-30-cm": {
+   "search_note": "No online listing found for Safe Rain F2501561: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-palm-tree-f2441024": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 227.74 EUR, page .../fountains-nozzles/fountain-nozzle-palm-tree-16; tax status not stated; no USD seller found."
+  },
+  "safe-rain-palm-tree-f2441305": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 331.93 EUR, page .../fountains-nozzles/fountain-nozzle-palm-tree-20; tax status not stated; no USD seller found."
+  },
+  "safe-rain-palm-tree-f2442508": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1180.76 EUR, page .../fountains-nozzles/fountain-nozzle-palm-tree-50; tax status not stated; no USD seller found."
+  },
+  "safe-rain-palm-tree-f2443004": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1578.70 EUR, page .../fountains-nozzles/fountain-nozzle-palm-tree-59; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-f2421009": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 233.49 EUR, page .../fountains-nozzles/fountain-nozzle-willow-tree-16; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-f2421303": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 326.61 EUR, page .../fountains-nozzles/fountain-nozzle-willow-tree-20; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-f2422506": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1125.56 EUR, page .../fountains-nozzles/fountain-nozzle-willow-tree-50; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-f2423002": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1810.55 EUR, page .../fountains-nozzles/fountain-nozzle-willow-tree-59; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-palm-f2412505": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1270.53 EUR, page .../fountains-nozzles/fountain-nozzle-willow-palm-tree-80; tax status not stated; no USD seller found."
+  },
+  "safe-rain-willow-palm-f2413001": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 2161.42 EUR, page .../fountains-nozzles/fountain-nozzle-willow-palm-tree-104; tax status not stated; no USD seller found."
+  },
+  "safe-rain-lance-jet-i-f2313832": {
+   "search_note": "No online listing found for Safe Rain F2313832: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2313865": {
+   "search_note": "No online listing found for Safe Rain F2313865: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311233": {
+   "search_note": "No online listing found for Safe Rain F2311233: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311266": {
+   "search_note": "No online listing found for Safe Rain F2311266: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311031": {
+   "search_note": "No online listing found for Safe Rain F2311031: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311064": {
+   "search_note": "No online listing found for Safe Rain F2311064: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311536": {
+   "search_note": "No online listing found for Safe Rain F2311536: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-f2311569": {
+   "search_note": "No online listing found for Safe Rain F2311569: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-ii-f2322538": {
+   "search_note": "No online listing found for Safe Rain F2322538: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-ii-f2322562": {
+   "search_note": "No online listing found for Safe Rain F2322562: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-ii-f2324035": {
+   "search_note": "No online listing found for Safe Rain F2324035: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-ii-f2324068": {
+   "search_note": "No online listing found for Safe Rain F2324068: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-compact-crystal-jet-f4321001": {
+   "search_note": "No online listing found for Safe Rain F4321001: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "roman-rpj-375": {
+   "seller": "AZ Pool Supplies",
+   "seller_part_no": "RPJ-375",
+   "url": "https://www.azpoolsupplies.com/75mpt-precision-jet-assy-3-8-orfice/",
+   "price_usd": 244.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Struck-through list $244.95, sale price $109.95; in stock, 3/4 in MPT, 3/8 in orifice. List price looks inflated (Pool Supply Unlimited showed $168.60 in search results but its page returned 403 to me, so not used)."
+  },
+  "roman-rpj-500": {
+   "seller": "AZ Pool Supplies",
+   "seller_part_no": "RPJ-500",
+   "url": "https://www.azpoolsupplies.com/75mpt-precision-jet-assy/",
+   "price_usd": 244.95,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Struck-through list $244.95, sale price $109.95; in stock. Page shows SKU RPJ-500 and a 3/4 in MPT precision jet but does not state the orifice. List price looks inflated."
+  },
+  "atlantic-fncc15": {
+   "search_note": "Atlantic stainless nozzle line is being discontinued/replaced by OASE nozzles; checked Webb's Water Gardens (page now redirects to the Fountain Heads category, no FNCC15), Underwater Warehouse, PondUSA, Pondliner, 123ponds and Kinetic Water Features: no live priced page for FNCC15. Only Sheerwater Pond Supply lists it (about $123.98, bot-protected page, far above Atlantic's $88.99 list), not recorded."
+  },
+  "atlantic-fnmj15": {
+   "search_note": "Atlantic stainless nozzle line is being discontinued/replaced by OASE nozzles; Webb's, Underwater Warehouse, 123ponds, Kinetic and Aeration Destination no longer carry a live FNMJ15 page; Amazon shows no offers; Walmart Business listing is a marketplace; Sheerwater Pond Supply lists it at about $199.98 (bot-protected page, well above Atlantic's $126.99 list), not recorded."
+  },
+  "atlantic-fnaf10": {
+   "search_note": "Atlantic stainless nozzle line is being discontinued/replaced by OASE nozzles; 123ponds marks FNAF10 out of stock/discontinued (replaced by OASE Frothy Nozzle); Walmart shows out of stock; Webb's and Kinetic do not carry it; Sheerwater Pond Supply lists it at about $249.98 (bot-protected page, about 3x Atlantic's $88.99 list), not recorded."
+  },
+  "atlantic-fnas15": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "FNAS15",
+   "url": "https://kineticwaterfeatures.com/products/atlantic-arching-spray-nozzle",
+   "price_usd": 77.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Atlantic Arching Spray Nozzle, in stock. Atlantic's own list price is $88.99."
+  },
+  "atlantic-fnhc15": {
+   "search_note": "Atlantic stainless nozzle line is being discontinued/replaced by OASE nozzles; Webb's FNHC15 page is a 404; Pond Universe lists ATFNHC15 at $60.99 but it is out of stock; Sheerwater lists it out of stock; Kinetic does not carry it. No in-stock seller with a price."
+  },
+  "atlantic-fndf10": {
+   "seller": "Webb's Water Gardens",
+   "seller_part_no": "FNDF10",
+   "url": "https://webbsonline.com/Item/FNDF10",
+   "price_usd": 77.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "Struck-through list $77.99, sale price $68.99; page shows In Stock. Atlantic's own list price is $88.99."
+  },
+  "atlantic-fndj10": {
+   "search_note": "Atlantic stainless nozzle line is being discontinued/replaced by OASE nozzles; Webb's FNDJ10 page now redirects to a category page (a search snippet showed $36.99 but the page is gone); Underwater Warehouse page 404; Sheerwater lists FNDJ10 out of stock; Kinetic does not carry it. No live priced page."
+  },
+  "otterbine-gemini-1hp-60hz": {
+   "seller": "Living Water Aeration",
+   "seller_part_no": "OBG-1-115-1P-NL-050",
+   "url": "https://www.livingwateraeration.com/products/otterbine-gemni-floating-fountains",
+   "price_usd": 6936.62,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Option 1 HP 115V single-phase / Standard (not Light Ready) / 50 ft cord (shortest). Same page: 1 HP 230V Standard 50 ft is OBG-1-230-1P-NL-050 at $6,927.19. Longer cords cost more."
+  },
+  "otterbine-gemini-2hp-60hz": {
+   "seller": "Living Water Aeration",
+   "seller_part_no": "OBG-2-230-1P-NL-050",
+   "url": "https://www.livingwateraeration.com/products/otterbine-gemni-floating-fountains",
+   "price_usd": 7633.21,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Option 2 HP 230V single-phase / Standard (not Light Ready) / 50 ft cord (shortest). Longer cords cost more."
+  },
+  "otterbine-gemini-3hp-60hz": {
+   "seller": "Living Water Aeration",
+   "seller_part_no": "OBG-3-230-1P-NL-050",
+   "url": "https://www.livingwateraeration.com/products/otterbine-gemni-floating-fountains",
+   "price_usd": 9015.6,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row lists 230/1, 230/3 and 460/3 and does not pin one: priced 230V single-phase / Standard (not Light Ready) / 50 ft cord. The 230V and 460V 3-phase units are the same $9,015.60 at 50 ft (OBG-3-230-3P-NL-050, OBG-3-460-3P-NL-050)."
+  },
+  "otterbine-gemini-5hp-60hz": {
+   "seller": "Living Water Aeration",
+   "seller_part_no": "OBG-5-230-1P-NL-050",
+   "url": "https://www.livingwateraeration.com/products/otterbine-gemni-floating-fountains",
+   "price_usd": 10638.53,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row lists 230/1, 230/3 and 460/3 and does not pin one: priced 230V single-phase / Standard (not Light Ready) / 50 ft cord. 3-phase 50 ft is $10,386.01 (OBG-5-230-3P-NL-050 and OBG-5-460-3P-NL-050)."
+  },
+  "kasco-7-3jf-linden": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "7.3JF100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-7-3jf-decorative-fountain",
+   "price_usd": 12254.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced the 100 ft cord (shortest offered), 208/240 V 3-phase, includes float and nozzles; the same unit serves the three pattern rows (Linden/Sequoia/Birch), there is no pattern-specific price. Cord options 100-400 ft."
+  },
+  "kasco-7-3jf-sequoia": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "7.3JF100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-7-3jf-decorative-fountain",
+   "price_usd": 12254.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced the 100 ft cord (shortest offered), 208/240 V 3-phase, includes float and nozzles; the same unit serves the three pattern rows (Linden/Sequoia/Birch), there is no pattern-specific price. Cord options 100-400 ft."
+  },
+  "kasco-7-3jf-birch": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "7.3JF100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-7-3jf-decorative-fountain",
+   "price_usd": 12254.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced the 100 ft cord (shortest offered), 208/240 V 3-phase, includes float and nozzles; the same unit serves the three pattern rows (Linden/Sequoia/Birch), there is no pattern-specific price. Cord options 100-400 ft."
+  },
+  "safe-rain-geyser-f2371206": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 85.45 EUR, page .../fountains-nozzles/fountain-nozzle-geyser-m-16mm; tax status not stated; no USD seller found."
+  },
+  "safe-rain-geyser-f2371004": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 205.64 EUR, page .../fountains-nozzles/fountain-nozzle-geyser-m-24mm; tax status not stated; no USD seller found."
+  },
+  "safe-rain-geyser-f2381501": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 323.10 EUR, page .../fountains-nozzles/fountain-nozzle-geyser-f-48mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-geyser-f2382006": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 536.30 EUR, page .../fountains-nozzles/fountain-nozzle-geyser-f-60mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-geyser-f2382502": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1091.10 EUR, page .../fountains-nozzles/fountain-nozzle-geyser-f-80mm-b-s; tax status not stated; no USD seller found."
+  },
+  "safe-rain-crown-of-jets-f2803419": {
+   "search_note": "No online listing found for Safe Rain F2803419: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2803421": {
+   "search_note": "No online listing found for Safe Rain F2803421: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2803432": {
+   "search_note": "No online listing found for Safe Rain F2803432: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2803443": {
+   "search_note": "No online listing found for Safe Rain F2803443: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2803454": {
+   "search_note": "No online listing found for Safe Rain F2803454: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2803465": {
+   "search_note": "No online listing found for Safe Rain F2803465: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2801079": {
+   "search_note": "No online listing found for Safe Rain F2801079: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-crown-of-jets-f2801081": {
+   "search_note": "No online listing found for Safe Rain F2801081: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-fan-of-jets-f2751006-30deg": {
+   "search_note": "No online listing found for Safe Rain F2751006: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-fan-of-jets-f2751006-40deg": {
+   "search_note": "No online listing found for Safe Rain F2751006: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-fan-of-jets-f2751017-30deg": {
+   "search_note": "No online listing found for Safe Rain F2751017: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-fan-of-jets-f2751017-40deg": {
+   "search_note": "No online listing found for Safe Rain F2751017: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2772011": {
+   "search_note": "No online listing found for Safe Rain F2772011: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2772022": {
+   "search_note": "No online listing found for Safe Rain F2772022: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2772033": {
+   "search_note": "No online listing found for Safe Rain F2772033: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2773012": {
+   "search_note": "No online listing found for Safe Rain F2773012: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2773023": {
+   "search_note": "No online listing found for Safe Rain F2773023: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-large-fan-of-jets-f2773034": {
+   "search_note": "No online listing found for Safe Rain F2773034: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-laminar-fan-f2693406": {
+   "search_note": "No online listing found for Safe Rain F2693406: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-laminar-fan-f2691009": {
+   "search_note": "No online listing found for Safe Rain F2691009: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-laminar-fan-f2691505": {
+   "search_note": "No online listing found for Safe Rain F2691505: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-iii-f2342002": {
+   "search_note": "No online listing found for Safe Rain F2342002: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-iii-f2342013": {
+   "search_note": "No online listing found for Safe Rain F2342013: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-iii-f2343003": {
+   "search_note": "No online listing found for Safe Rain F2343003: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-iii-f2343014": {
+   "search_note": "No online listing found for Safe Rain F2343014: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-iii-f2343025": {
+   "search_note": "No online listing found for Safe Rain F2343025: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-hollow-jet-f2333002": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 916.57 EUR, page .../fountains-nozzles/fountain-nozzle-hollow-f-48mm; tax status not stated; no USD seller found."
+  },
+  "safe-rain-hollow-jet-f2333013": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 941.35 EUR, page .../fountains-nozzles/fountain-nozzle-hollow-f-70mm; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-f2801305": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 428.08 EUR, page .../fountains-nozzles/fountain-nozzle-special-crown-1x8-6x6; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-f2802508": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1366.07 EUR, page .../fountains-nozzles/fountain-nozzle-special-crown-1x12-6x8-12x8; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-f2803004": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 2525.54 EUR, page .../fountains-nozzles/fountain-nozzle-special-1x16-6x10-12x8-12x8; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-fixed-f2802519": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1103.20 EUR, page .../fountains-nozzles/fountain-nozzle-volga; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-fixed-f2802532": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1139.96 EUR, page .../fountains-nozzles/fountain-nozzle-danube; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-fixed-f2802521": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1181.14 EUR, page .../fountains-nozzles/fountain-nozzle-mississippi; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-fixed-f2802543": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1162.86 EUR, page .../fountains-nozzles/fountain-nozzle-seine; tax status not stated; no USD seller found."
+  },
+  "safe-rain-special-crown-fixed-f2802554": {
+   "search_note": "EUR only: Palvitana UAB (palvitana.com, Lithuania) 1337.52 EUR, page .../fountains-nozzles/fountain-nozzle-thames; tax status not stated; no USD seller found."
+  },
+  "safe-rain-spraying-jet-f2523802": {
+   "search_note": "No online listing found for Safe Rain F2523802: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-jet-f2521203": {
+   "search_note": "No online listing found for Safe Rain F2521203: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-jet-f2523407": {
+   "search_note": "No online listing found for Safe Rain F2523407: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-jet-f2521001": {
+   "search_note": "No online listing found for Safe Rain F2521001: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-jet-f2521405": {
+   "search_note": "No online listing found for Safe Rain F2521405: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-clouds-f3621047": {
+   "search_note": "No online listing found for Safe Rain F3621047: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-spraying-clouds-f3621341": {
+   "search_note": "No online listing found for Safe Rain F3621341: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-hibiscus-f2813411": {
+   "search_note": "No online listing found for Safe Rain F2813411: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-hibiscus-f2811014": {
+   "search_note": "No online listing found for Safe Rain F2811014: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-hibiscus-f2811519": {
+   "search_note": "No online listing found for Safe Rain F2811519: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-dancing-f2823412": {
+   "search_note": "No online listing found for Safe Rain F2823412: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-dancing-f2821511": {
+   "search_note": "No online listing found for Safe Rain F2821511: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-dancing-f2822016": {
+   "search_note": "No online listing found for Safe Rain F2822016: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-twister-f2833042": {
+   "search_note": "No online listing found for Safe Rain F2833042: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-twister-f2833053": {
+   "search_note": "No online listing found for Safe Rain F2833053: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-cyclone-f2863045": {
+   "search_note": "No online listing found for Safe Rain F2863045: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop. Palvitana lists Cyclone F2863001 (5x8mm) at 1712.25 EUR, a different code."
+  },
+  "safe-rain-double-big-fan-f2851514": {
+   "search_note": "No online listing found for Safe Rain F2851514: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-double-big-fan-f2851525": {
+   "search_note": "No online listing found for Safe Rain F2851525: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2353825": {
+   "search_note": "No online listing found for Safe Rain F2353825: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2353847": {
+   "search_note": "No online listing found for Safe Rain F2353847: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351226": {
+   "search_note": "No online listing found for Safe Rain F2351226: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351248": {
+   "search_note": "No online listing found for Safe Rain F2351248: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351024": {
+   "search_note": "No online listing found for Safe Rain F2351024: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351046": {
+   "search_note": "No online listing found for Safe Rain F2351046: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351529": {
+   "search_note": "No online listing found for Safe Rain F2351529: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "safe-rain-lance-jet-i-ss-f2351542": {
+   "search_note": "No online listing found for Safe Rain F2351542: no US shop, no EUR shop (checked palvitana.com, 41 Safe Rain items), saferain.com has no shop."
+  },
+  "kasco-2-3jf": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "2.3JF050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-8400jf-2-3jf-decorative-fountains",
+   "price_usd": 10767.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest, 50 ft cord, 208/240 V 3-phase. Longer cords cost more (100 ft $11,062 up to 400 ft $13,849)."
+  },
+  "kasco-3-1jf": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "3.1JF050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-3-1jf-3-3jf-decorative-fountains",
+   "price_usd": 7422.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest, 50 ft cord, single-phase 208/240 V (the page also sells 3.3JF, the 3-phase unit, which is not this part). Up to 400 ft at $12,782."
+  },
+  "kasco-5-1jf": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "5.1JF100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-5-1jf-5-3jf-decorative-fountains",
+   "price_usd": 9285.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest offered, 100 ft cord, single-phase 208/240 V (3-phase is the separate 5.3JF). Up to 400 ft at $16,402."
+  },
+  "kasco-3400jf": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "3400JF050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-3400jf-decorative-fountain",
+   "price_usd": 2116.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced 120 V, 50 ft cord (shortest). Page also sells 240 V (3400HJF) and 120 V cords to 200 ft ($2,309 / $2,910 / $3,179), without light kit."
+  },
+  "kasco-4400jf": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "4400JF050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-4400jf-decorative-fountain",
+   "price_usd": 2550.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced 120 V, 50 ft cord (shortest). Page also sells 240 V (4400HJF) and 120 V cords to 200 ft ($3,147 / $3,733 / $4,086), without light kit."
+  },
+  "kasco-2.3vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "2.3VFX050",
+   "url": "https://kineticwaterfeatures.com/products/8400vfx-2-3vfx-aerating-fountains",
+   "price_usd": 10502.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest, 50 ft cord, 240 V 3-phase. Up to 400 ft at $13,777."
+  },
+  "kasco-5.1vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "5.1VFX100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-5-1-vfx-5hp-aerating-fountain",
+   "price_usd": 9361.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest offered, 100 ft cord, single-phase 240 V. Up to 400 ft at $16,718."
+  },
+  "kasco-5.3vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "5.3VFX100",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-5-3-vfx-5hp-aerating-fountain",
+   "price_usd": 11731.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest offered, 100 ft cord, 208/240 V 3-phase. Up to 400 ft at $19,034."
+  },
+  "kasco-2400vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "2400VFX050",
+   "url": "https://kineticwaterfeatures.com/products/2400vfx-1-2hp-lake-and-pond-aerating-fountain",
+   "price_usd": 1762.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest, 50 ft cord, 120 V. Up to 200 ft at $2,792."
+  },
+  "kasco-8400vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "8400VFX050",
+   "url": "https://kineticwaterfeatures.com/products/8400vfx-2-3vfx-aerating-fountains",
+   "price_usd": 6633.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Row does not pin cord length: priced the shortest, 50 ft cord, 240 V single-phase (page also sells 2.3VFX, the 3-phase unit). Up to 400 ft at $12,730."
+  },
+  "kasco-3400vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "3400VFX050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-3400vfx-aerating-fountain",
+   "price_usd": 1957.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced 120 V, 50 ft cord (shortest). Page also sells 240 V (3400HVFX, from $3,912) and 120 V cords to 200 ft ($2,151 / $2,776 / $3,059)."
+  },
+  "kasco-4400vfx": {
+   "seller": "Kinetic Water Features",
+   "seller_part_no": "4400VFX050",
+   "url": "https://kineticwaterfeatures.com/products/kasco-marine-4400vfx-aerating-fountains",
+   "price_usd": 2240.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Priced 120 V, 50 ft cord (shortest). Page also sells 240 V (4400HVFX, from $4,196) and 120 V cords to 200 ft ($2,864 / $3,445 / $3,897)."
+  },
+  "oase-profilux-led-1100-01": {
+   "seller": "Pool Supply Unlimited",
+   "seller_part_no": "51296",
+   "url": "https://www.poolsupplyunlimited.com/pool/oase-living-water-51296-profilux-led-light-neutral-white/154737p1",
+   "price_usd": 647.78,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Title says ProfiLux LED 1100-01, neutral white, 24 V DC, 4 m cable"
+  },
+  "jandy-commercial-wphv3ls": {
+   "search_note": "WPHV3LS (120 V, 42 W, 5000K): only ePoolSupply lists it (WPHV3LS50/100/150), all quote only ('Get a Quote') and sold out; Pool360 and Appaetech show no price; Baystate Pools hides the price and says not for sale on the internet. No visible price found."
+  },
+  "jandy-commercial-wphv5ls": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "WPHV5LS100",
+   "url": "https://poolsupplydepot.net/products/jandy-100-white-daylight-led-pool-light-120v-500w-wphv5ls100",
+   "price_usd": 899.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "The row has no cord length; this is the 100 ft cord version, WPHV5LS100 (120 V, 65 W, 5000K). Sale price $824.99 (was $899.99). Add to cart and Request a quote both present. Other cord lengths (50/150/250) have no visible price (ePoolSupply is quote only)."
+  },
+  "jandy-commercial-wplv3ls": {
+   "search_note": "WPLV3LS (12 V, 42 W, 5000K): only ePoolSupply lists WPLV3LS50/100, both call-for-price/quote only; Pool360 shows no price; Pool Supply Depot does not list it. No visible price found."
+  },
+  "jandy-commercial-wplv5ls": {
+   "search_note": "WPLV5LS (12 V, 65 W, 5000K): ePoolSupply WPLV5LS100/150 are quote only and sold out; Pool360 shows no price; Pool Supply Depot does not list any WPLV. No visible price found."
+  },
+  "jandy-commercial-wshv1ls": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "WSHV1LS100",
+   "url": "https://poolsupplydepot.net/products/jandy-100-white-daylight-led-spa-light-120v-100w-wshv1ls100",
+   "price_usd": 799.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "sale",
+   "note": "The row has no cord length; this is the 100 ft cord version, WSHV1LS100 (120 V, 18 W LED, 5000K; title says '100W' meaning incandescent equivalent). Sale price $698.00 (was $799.00). Collection page showed low stock (1 left)."
+  },
+  "jandy-commercial-wslv1ls": {
+   "search_note": "WSLV1LS (12 V, 18 W, 5000K): ePoolSupply WSLV1LS50/100 are quote only and sold out; Pool360 shows no price; Pool Supply Depot does not list it. No visible price found."
+  },
+  "jandy-commercial-wwphv3ls150": {
+   "search_note": "WWPHV3LS150 (120 V, 42 W, 2700K, 150 ft): ePoolSupply is quote only and sold out; Appaetech Pool Supply says call for a quote (in stock, in-store); Pool360 shows no price. No visible price found."
+  },
+  "jandy-commercial-wwphv5ls150": {
+   "search_note": "WWPHV5LS150 (120 V, 65 W, 2700K, 150 ft): ePoolSupply page exists but is quote only; no other seller with a visible price found."
+  },
+  "jandy-commercial-wwplv3ls150": {
+   "search_note": "WWPLV3LS150 (12 V, 42 W, 2700K, 150 ft): ePoolSupply is quote only and sold out; no other seller with a visible price found."
+  },
+  "jandy-commercial-wwplv5ls150": {
+   "search_note": "WWPLV5LS150 (12 V, 65 W, 2700K, 150 ft): ePoolSupply is quote only and sold out; no other seller with a visible price found."
+  },
+  "jandy-commercial-wwshv1ls150": {
+   "search_note": "WWSHV1LS150 (120 V, 18 W, 2700K, 150 ft): ePoolSupply lists it under call-for-price (quote only); no other seller with a visible price found."
+  },
+  "jandy-commercial-wwslv1ls150": {
+   "search_note": "WWSLV1LS150 (12 V, 18 W, 2700K, 150 ft): ePoolSupply is quote only and sold out; no other seller with a visible price found."
+  },
+  "jandy-infinite-watercolors-iwc15w100": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "IWC15W100",
+   "url": "https://poolsupplydepot.net/products/jandy-rgbw-infinite-watercolors-nicheless-led-light-14v-15w-iwc15w100",
+   "price_usd": 589.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "100 ft cord. Needs the IWCLC300W controller (sold separately). Stock not confirmed on the page."
+  },
+  "jandy-infinite-watercolors-iwc25w100": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "IWC25W100",
+   "url": "https://poolsupplydepot.net/products/jandy-watercolors-rgbw-infinite-nicheless-led-pool-light-14v-25w-w-100-cord-iwc25w100",
+   "price_usd": 695.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "100 ft cord. Needs the IWCLC300W controller (sold separately). ePoolSupply shows $899.99 regular / $655.95 sale for the same SKU but no fulfillment available."
+  },
+  "jandy-infinite-watercolors-iwcp50w100": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "IWCP50W100",
+   "url": "https://poolsupplydepot.net/products/jandy-infinite-watercolors-niched-pool-led-lights-rgbw-infinite-iwcp50w100",
+   "price_usd": 1090.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Niched pool light, 14 V, 50 W, 100 ft cord, stainless steel face ring. Needs the IWCLC300W controller (sold separately). Stock not confirmed on the page."
+  },
+  "jandy-infinite-watercolors-iwcs25w100": {
+   "seller": "Pool Supply Depot",
+   "seller_part_no": "IWCS25W100",
+   "url": "https://poolsupplydepot.net/products/jandy-infinite-rgbw-watercolors-niched-spa-led-light-14v-25w-100-iwcs25w100",
+   "price_usd": 1145.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Niched spa light, 14 V, 25 W, 100 ft cord. The store has a second listing for the same SKU at $1,149.99. Needs the IWCLC300W controller (sold separately)."
+  },
+  "hayward-colorlogic-sp0524led": {
+   "search_note": "SP0524LED is sold only by cord length: Pool Supply Delivery lists SP0524LED50 (12 V, 50 ft, plastic rim) at $390.40, out of stock. No page lists the bare SP0524LED, so no exact match without picking a cord length."
+  },
+  "hayward-colorlogic-sp0525led": {
+   "search_note": "SP0525LED is sold only by cord length (SP0525LED30/50/100); no seller page found for the bare SP0525LED, and the variants I found are not the row's part number (cord length is not stated on the row)."
+  },
+  "hayward-colorlogic-4-0-w3sp0527led": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "340110",
+   "url": "https://lesliespool.com/hayward-w3sp0527led100-colorlogic-4.0-led-pool-light-120v-100-cord-for-in-ground-pools/340110.html",
+   "price_usd": 1469.0,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Manufacturer SKU W3SP0527LED100, 120 V, 100 ft cord, plastic ring; page shows Out of Stock (also out at Salt Lake City store); AccuBlue members only. Pool Supply Delivery lists it at the same $1,469.00, out of stock."
+  },
+  "hayward-colorlogic-spa-sp0535led": {
+   "search_note": "SP0535LED / W3SP0535LED is sold only by cord length. Pool Supply Delivery lists SP0535LED30 ($384.00), SP0535LED50 ($396.80) and W3SP0535LED100 ($1,189.00), all out of stock. No page lists the bare SP0535LED, so no exact match without picking a cord length."
+  },
+  "pentair-intellibrite-5g-color-pool-120v": {
+   "seller": "Leslies Pool Supplies",
+   "seller_part_no": "54039",
+   "url": "https://lesliespool.com/intellibrite-601000-5g-color-led-pool-light-120v-26w-30-cord/54039.html",
+   "price_usd": 1349.99,
+   "price_seen_on": "2026-11-02",
+   "price_kind": "list",
+   "note": "Leslie's item 54039 = mfr SKU 601000 (30 ft cord, 26 W). The row's range 601000-601004 covers several cord lengths; the first (30 ft) was priced. Page shows Out of Stock / AccuBlue members only."
+  },
+  "pentair-intellibrite-5g-color-spa-120v": {
+   "search_note": "Leslie's item 54172 (640120, 30 ft cord, $1,049.99, out of stock) is listed at 40 W, the row at 18 W; not counted as the same light. No other seller with a price."
+  },
+  "pentair-intellibrite-5g-white-pool-120v-26w": {
+   "search_note": "Leslie's item 300103 (601100, 30 ft cord, $749.99, out of stock) is listed at 40 W, the row at 26 W; not counted as the same light. No other seller with a price."
+  },
+  "pentair-intellibrite-5g-white-pool-120v-31w": {
+   "search_note": "Leslie's item 318180 (601200, 30 ft cord, $799.99, out of stock) is listed at 48 W, the row at 31 W; not counted as the same light. Pool360 marks 601200 obsolete."
+  },
+  "wibre-4-0050-30-11": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0050.30.11: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0100-30-11": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0100.30.11: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0083-00-11": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0083.00.11: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0273-00-11": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0273.00.11: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0273-00-12": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0273.00.12: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0273-00-13": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0273.00.13: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0273-00-01": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0273.00.01: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "wibre-4-0275-00-11": {
+   "search_note": "WIBRE (Germany, Edmund Breuninger) 4.0275.00.11: no US online seller with a USD price found; only catalog pages (viva-interiors, archiexpo) with no price, and a German dealer (ks-licht.de) listing a different variant (4.0100.30.41) in EUR. Catalog footers say newer replacements exist (4.0291/4.0292 for the 4.027x range)."
+  },
+  "kasco-led-lighting-kit-led3125": {
+   "search_note": "Searched LED3125050/LED3125100 and Kasco LED 3 light kit: no seller lists the 3-fixture 9 W kit by part number LED3125xxx. Kasco's current line is the 11 W composite kit LED3C11-050..500 (3 fixtures, 120 V), sold by Kinetic Water Features, Practical Garden Ponds and The Pond Shop; it is a different part number and wattage, so not recorded as a match."
+  },
+  "kasco-halogen-lighting-kit-lr375": {
+   "search_note": "Searched LR375100 and the Kasco bronze halogen kit: only Kasco's own quick-spec sheet and owner's manual turned up; no seller lists LR375xxx (the 12 V MR-16 halogen kit appears discontinued; sellers now carry only the LED3C11/LED3S19/RGB3C5 LED kits)."
+  }
+ }
+}

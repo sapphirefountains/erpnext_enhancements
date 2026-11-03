@@ -13,6 +13,7 @@ was changed. Each row carries the document it came from, so you can check any nu
 | [`pumps.json`](pumps.json) | Pump models with a head-flow curve (usually 8 to 12 points), electrical data, ports and listings |
 | [`nozzles.json`](nozzles.json) | Nozzle, jet and floating-aerator performance tables (pressure or head → flow → display height) |
 | [`lights.json`](lights.json) | Underwater fixtures: watts, voltage, lumens, beam, listing |
+| [`purchasing.json`](purchasing.json) | Where each row can be bought online and the price seen there; see [Purchasing](#purchasing-purchasingjson) |
 | [`jurisdictions.json`](jurisdictions.json) | Adopted codes, pool and interactive-feature regulation, design-city climate and licensing for the 48 contiguous states; see [Jurisdiction table](#jurisdiction-table-jurisdictionsjson). Checked by [`jurisdictions-validate.py`](jurisdictions-validate.py) |
 
 **At a glance:** 169 pump records, every one with a curve. 155 were read from vector charts, 7 from published tables and 7 visually from raster charts, and 166 of them have 6 or more points. There are 176 nozzle and aerator records, 152 of them with a table of 4 or more rows, and 35 underwater light records.
@@ -196,6 +197,120 @@ a row some other way, or to attach it to an Item Sapphire already has, give its 
 Item into Sapphire's. Three rows are attached this way: `pentair-whisperfloxf-vs-022035`,
 `pentair-superflo-vst-342002` and `pentair-superflo-348190`, to Items `022035`, `342002` and `348190`.
 The full rule is in `erpnext_enhancements/water_engineering/README.md`, Seeding the catalog.
+
+## Purchasing (`purchasing.json`)
+
+Where each row can be bought online, and the price that seller advertised. Nikolas asked for this on
+2026-11-02: public sellers only, prices on the buying list "Reference List 2026", and each new seller
+created as a Supplier. The seed loader writes it as one Supplier per seller, an Item Supplier row and an
+Item Price; `erpnext_enhancements/water_engineering/README.md` says exactly how.
+
+It is a separate file keyed by row `id`, not a block inside each row, for three reasons:
+
+- **The rows are manufacturer data and the prices are not.** A row's numbers are cited to the maker's
+  document. A price is cited to a seller's page.
+- **Prices go stale on their own clock.** A refresh then touches one small file, and its diff is
+  nothing but prices.
+- **It follows `approved.json`,** the other file keyed by row id that sits beside the data.
+
+```json
+{
+  "price_list": "Reference List 2026",
+  "currency": "USD",
+  "rows": {
+    "pentair-eq-eq500": {"seller": "...", "seller_part_no": "...", "url": "https://...",
+                         "price_usd": 1234.56, "price_seen_on": "2026-11-02", "price_kind": "list",
+                         "note": ""},
+    "pentair-whisperflo-011511-int": {"search_note": "export model; no US seller lists it"}
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `seller` | The business as its Supplier is (or will be) named. Use an existing Supplier's name exactly. A name that differs from one only by case or spacing is refused. |
+| `seller_part_no` | The seller's own SKU or item number, as printed on its page; the manufacturer part number when the seller uses that |
+| `url` | The product page, without tracking parameters, at most 140 characters (Item Supplier's `purchase_url` is Data) |
+| `price_usd` | The advertised price for one unit, before tax and shipping, read off the page itself |
+| `price_seen_on` | The date the price was read, `YYYY-MM-DD`. It becomes the Item Price's `valid_from` |
+| `price_kind` | `list`, or `sale` when the page showed a struck-through list price. The list price is recorded either way, and the sale price goes in `note` |
+| `note` | Anything a buyer should know (which variant, a sale price). It goes into the Item Price's note |
+| `seller_country` | Only for a seller outside the United States |
+| `search_note` | When there is no seller: what was searched and what was found instead |
+
+An entry may also be a list of such objects, for a second seller. A seller without a price gives an
+Item Supplier row and no Item Price.
+
+**The rules the research followed:**
+
+- An exact match only. The page is for the row's own part number (its Item code). Where the row has
+  none, it is the same model with the same HP, voltage, phase, pattern and cord length. Never a
+  different horsepower, a "motor only" page, or a kit.
+- A real price on the page. "Call for price", log-in prices and search-result snippets do not count.
+  Neither do prices in another currency: Safe Rain is sold online only in EUR, and the search notes say
+  where.
+- Few sellers, so the Supplier list stays short. One store that carries a whole brand is checked first.
+
+**Coverage on 2026-11-02.** 151 of 380 rows have a price, from 21 sellers:
+
+| Manufacturer | Rows | With a price | Without | Sellers (rows) |
+|---|---:|---:|---:|---|
+| Pentair | 52 | 31 | 21 | Pool Plaza (17), ePoolSupply (4), KG Power Systems (4), Aqua Terra Backyard (2), EZ Pool and Spa Supply (2), Leslies Pool Supplies (2) |
+| Sta-Rite (Pentair) | 37 | 21 | 16 | Pool Supply Delivery (7), Pool Web Pool & Spa Supplies (7), Leslies Pool Supplies (4), EZ Pool and Spa Supply (1), Pool Goods (1), Water Works Pools (1) |
+| Hayward | 32 | 24 | 8 | Pool Web Pool & Spa Supplies (12), Pool Supply Delivery (7), INYO Pools (2), Leslies Pool Supplies (2), Absolute Pool Supplies (1) |
+| Jandy pumps | 25 | 17 | 8 | INYO Pools (9), Pool Supply Depot (4), ePoolSupply (4) |
+| Jandy lights | 16 | 6 | 10 | Pool Supply Depot (6) |
+| Grundfos | 12 | 10 | 2 | Pump-Stop (10) |
+| Goulds (Xylem) | 19 | 9 | 10 | PumpCatalog (9) |
+| OASE | 34 | 10 | 24 | Pondscape (9), Pool Supply Unlimited (1) |
+| Safe Rain | 115 | 0 | 115 | none in USD |
+| Kasco | 17 | 15 | 2 | Kinetic Water Features (15) |
+| Otterbine | 4 | 4 | 0 | Living Water Aeration (4) |
+| Atlantic Water Gardens | 7 | 2 | 5 | Kinetic Water Features (1), Webb's Water Gardens (1) |
+| Roman Fountains | 2 | 2 | 0 | AZ Pool Supplies (2) |
+| WIBRE | 8 | 0 | 8 | none |
+| **Total** | **380** | **151** | **229** | |
+
+What the gaps are (each row's `search_note` has the detail):
+
+- **Safe Rain.** No US seller exists. Palvitana (Lithuania) lists 38 of the codes, in EUR only, and the
+  search notes quote those prices.
+- **`-INT` export models.** They are not sold in the USA.
+- **Goulds 3656LH.** The rows are hydraulic sizes, and every seller shows "call for price" or prices only
+  after log-in.
+- **Discontinued parts.** Examples are SuperFlo VS, IntelliFlo3 3 HP and Atlantic's stainless nozzles.
+- **Parts sold only by cord length,** where no page lists the bare number. These are the Hayward
+  ColorLogic lights and most Jandy white lights.
+
+Several priced pages showed the item out of stock or special-order, and each such entry's `note` says so.
+These are reference list prices, not quotes. In particular:
+
+- **ePoolSupply** shows a price but says to email to order.
+- **INYO Pools'** Jandy pages are all out of stock, and some of those prices are out of order across sizes.
+
+**Refreshing prices.**
+
+1. Open each `url` and read the price again.
+2. Change `price_usd`, `price_kind` and `note`, and set `price_seen_on` to that day.
+3. Run the seed: a dry run first (`seed_catalog`), then the write.
+
+The loader replaces a stored price only when `price_seen_on` is later than the stored `valid_from`.
+So re-running an old file changes nothing, and a price someone entered by hand on a later date stands.
+
+For a new year's list:
+
+1. Create the list in ERPNext as a buying list in USD.
+2. Change `price_list` here.
+
+The loader never creates a Price List. It refuses to load prices onto one that is missing, disabled,
+selling-only or in another currency.
+
+`tests/test_water_catalog.py` checks the file on every build:
+
+- one entry per catalog row;
+- every entry passes the loader's checks;
+- no value over 140 characters;
+- every seller spelled one way.
 
 ## Approval checklist
 

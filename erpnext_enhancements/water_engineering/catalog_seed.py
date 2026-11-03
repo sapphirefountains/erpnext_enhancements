@@ -8,6 +8,7 @@ data, cited per row and approved by him before it reaches the site. The data liv
 repo, in ``docs/fountain-designer/catalog/``:
 
 * ``pumps.json``, ``nozzles.json``, ``lights.json`` — the digitized rows, each with its source.
+* ``purchasing.json`` — where each row can be bought and for how much, by row id (optional).
 * ``approved.json`` — the rows Nikolas approved, by ``"Manufacturer|Model"`` key::
 
 	{
@@ -73,11 +74,17 @@ What it is careful about:
   checked against the target field's type and ``length`` (``_check_lengths``, Frappe's own
   ``_validate_length`` rule) in both modes, and an overlong one is the row's error. Nothing
   is truncated.
+* **Where to buy it** (v1.776.0): ``purchasing.json`` gives a row its seller, the seller's part number,
+  a link and an advertised price. The loader makes the seller a Supplier (exact name, else created;
+  never edited, and a name differing only by case or spacing from an existing one is refused), sets
+  that supplier's Item Supplier row and leaves every other row alone, and keeps one Item Price per
+  seller on the file's buying list, replaced only by a later sighting (:func:`apply_purchasing`).
 * **The Item naming guard is bypassed on purpose** (``flags.ignore_naming_guard``), as for the
   other in-request callers whose user cannot choose the code: the code is generated here, or
   set in ``approved.json``.
 """
 
+import datetime
 import json
 import re
 import time
@@ -97,6 +104,7 @@ from erpnext_enhancements.water_engineering.engine.constants import FT_PER_PSI
 CATALOG_DIR = Path(__file__).resolve().parents[2] / "docs" / "fountain-designer" / "catalog"
 FILES = {"pumps": "pumps.json", "nozzles": "nozzles.json", "lights": "lights.json"}
 APPROVAL_FILE = "approved.json"
+PURCHASING_FILE = "purchasing.json"
 KW_PER_HP = 0.745699872
 #: ``Item.item_code`` is a Data field: Frappe's 140 characters.
 ITEM_CODE_LENGTH = 140
@@ -1207,6 +1215,347 @@ def apply_profile(item_code, plan, verified_by, dry_run):
 	return [f"Nozzle Profile {name}: {', '.join(changed)}"] if changed else []
 
 
+# ----------------------------------------------------------------------------- purchasing
+# Nikolas, 2026-11-02: each catalog Item says where to buy it and what that seller asks. The data
+# is ``purchasing.json`` beside the catalog (one entry per row id, from public seller pages), and
+# reaches the site as a Supplier per seller, an Item Supplier row and an Item Price on the buying
+# list the file names ("Reference List 2026").
+
+#: The fields one seller's entry may carry. Anything else is a typo, refused rather than ignored.
+OFFER_FIELDS = {
+	"seller",
+	"seller_part_no",
+	"url",
+	"price_usd",
+	"price_seen_on",
+	"price_kind",
+	"note",
+	"seller_country",
+	"search_note",
+}
+PRICE_KINDS = ("list", "sale")
+#: A Supplier the loader creates. An existing Supplier is never edited.
+NEW_SUPPLIER = {"supplier_group": "Distributor", "supplier_type": "Company", "country": "United States"}
+
+
+class PurchasingRefusal(CatalogRowError):
+	"""One seller of one row that is not loaded; the Item and the row's other sellers still are."""
+
+
+def read_purchasing(data):
+	"""``(meta, {ref: entry})`` from ``purchasing.json``.
+
+	``meta`` is ``{price_list, currency}``. ``rows`` maps a row ``id`` (or a ``"Manufacturer|Model"``
+	key, for a row without one) to its entry: one seller object, a list of them, or an object with
+	only a ``search_note`` (what was searched when nothing was found).
+	"""
+	data = data or {}
+	meta = {
+		"price_list": str(data.get("price_list") or "").strip(),
+		"currency": data.get("currency") or "USD",
+	}
+	rows = {}
+	for ref, entry in (data.get("rows") or {}).items():
+		if "|" in ref:
+			manufacturer, _sep, model = ref.partition("|")
+			ref = catalog_key(manufacturer, model)
+		rows[ref.strip()] = entry
+	return meta, rows
+
+
+def check_offers(entry):
+	"""The sellers in one row's purchasing entry, checked: ``[{seller, seller_part_no, url, price,
+	seen_on, kind, note, country}]``. An entry with only a ``search_note`` has none.
+
+	Raises :class:`PurchasingRefusal` naming what is wrong. Pure, so the bench-free suite checks the
+	real file with it.
+	"""
+	offers = entry if isinstance(entry, list) else [entry]
+	out = []
+	for offer in offers:
+		if not isinstance(offer, dict):
+			raise PurchasingRefusal(f"a purchasing entry is {type(offer).__name__}, not an object")
+		unknown = sorted(set(offer) - OFFER_FIELDS)
+		if unknown:
+			raise PurchasingRefusal(f"unknown purchasing field(s): {', '.join(unknown)}")
+		seller = offer.get("seller")
+		if seller in (None, ""):
+			if any(offer.get(f) not in (None, "") for f in OFFER_FIELDS - {"search_note", "note"}):
+				raise PurchasingRefusal("a purchasing entry without a seller")
+			continue
+		if not isinstance(seller, str) or seller != " ".join(seller.split()):
+			raise PurchasingRefusal(f"seller {seller!r} has stray spaces")
+		url = str(offer.get("url") or "").strip()
+		if url and not url.startswith(("https://", "http://")):
+			raise PurchasingRefusal(f"{seller}: url {url!r} is not a web address")
+		price = offer.get("price_usd")
+		seen_on = str(offer.get("price_seen_on") or "").strip()
+		kind = str(offer.get("price_kind") or "").strip()
+		if price in (None, ""):
+			if seen_on or kind:
+				raise PurchasingRefusal(f"{seller}: price_seen_on or price_kind without price_usd")
+			price = None
+		else:
+			if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+				raise PurchasingRefusal(f"{seller}: price_usd {price!r} is not a positive number")
+			try:
+				datetime.date.fromisoformat(seen_on)
+			except ValueError:
+				raise PurchasingRefusal(
+					f"{seller}: price_seen_on {seen_on!r} is not a YYYY-MM-DD date"
+				) from None
+			if kind not in PRICE_KINDS:
+				raise PurchasingRefusal(
+					f"{seller}: price_kind {kind!r} is not one of {', '.join(PRICE_KINDS)}"
+				)
+			price = float(price)
+		if any(seller.casefold() == o["seller"].casefold() for o in out):
+			raise PurchasingRefusal(f"{seller} is listed twice")
+		out.append(
+			{
+				"seller": seller,
+				"seller_part_no": _text(offer.get("seller_part_no")),
+				"url": url or None,
+				"price": price,
+				"seen_on": seen_on or None,
+				"kind": kind or None,
+				"note": _text(offer.get("note")),
+				"country": _text(offer.get("seller_country")) or NEW_SUPPLIER["country"],
+			}
+		)
+	return out
+
+
+def _supplier_key(name):
+	"""A Supplier name with case and spaces ignored: two names equal here and not as written are
+	the "differs only by case or spacing" refusal ("INYO Pools", "Inyo  pools", "InyoPools")."""
+	return "".join(str(name or "").split()).casefold()
+
+
+def supplier_book():
+	"""``{"names": {name}, "keys": {key: name}}`` for every Supplier on the site."""
+	names = set(frappe.get_all("Supplier", pluck="name"))
+	keys = {}
+	for name in sorted(names):
+		keys.setdefault(_supplier_key(name), name)
+	return {"names": names, "keys": keys}
+
+
+def check_price_list(name, currency):
+	"""None when Item Prices can go on the Price List ``name``, else the refusal. Never creates it."""
+	if not name:
+		return "purchasing.json names no price_list"
+	found = frappe.get_all(
+		"Price List", filters={"name": name}, fields=["name", "buying", "currency", "enabled"]
+	)
+	if not found or found[0].get("name") != name:
+		return f"Price List {name!r} does not exist here. Create it, or name another in purchasing.json; no prices were loaded."
+	row = found[0]
+	if not row.get("enabled"):
+		return f"Price List {name!r} is disabled; no prices were loaded."
+	if not row.get("buying"):
+		return f"Price List {name!r} is not a buying list; no prices were loaded."
+	if row.get("currency") != currency:
+		return f"Price List {name!r} is in {row.get('currency')}, not {currency}; no prices were loaded."
+	return None
+
+
+def ensure_supplier(offer, book, dry_run):
+	"""The Supplier for a seller, found by its exact name or created. Returns ``(name, created)``.
+
+	A name that matches an existing Supplier only once case and spacing are ignored ("Inyo pools"
+	against "INYO Pools") is refused, never adopted or created alongside: which one is right is
+	Nikolas's call.
+	"""
+	seller = offer["seller"]
+	if seller in book["names"]:
+		return seller, False
+	near = book["keys"].get(_supplier_key(seller))
+	if near:
+		raise PurchasingRefusal(
+			f"Supplier {seller!r} differs only by case or spacing from the existing Supplier {near!r}. "
+			"Use the existing name in purchasing.json, or rename one of them, and run again."
+		)
+	values = {"supplier_name": seller, **NEW_SUPPLIER, "country": offer["country"]}
+	_check_lengths("Supplier", values, f"Supplier {seller}")
+	name = seller
+	if not dry_run:
+		doc = frappe.get_doc({"doctype": "Supplier", **values})
+		doc.insert(ignore_permissions=True)
+		name = doc.name
+	book["names"].add(name)
+	book["keys"][_supplier_key(name)] = name
+	return name, True
+
+
+def _price_note(offer, supplier):
+	"""The Item Price's note: whose price it is, when it was seen, and where."""
+	kind = "List price" if offer["kind"] == "list" else "List price (the page showed a sale)"
+	parts = [f"{kind} advertised by {supplier}, seen {offer['seen_on']}."]
+	if offer["note"]:
+		parts.append(offer["note"])
+	if offer["url"]:
+		parts.append(offer["url"])
+	return " ".join(parts)
+
+
+def new_tally():
+	return {
+		"suppliers_created": [],
+		"suppliers_used": [],
+		"supplier_rows_added": 0,
+		"supplier_rows_updated": 0,
+		"prices_added": 0,
+		"prices_updated": 0,
+		"prices_kept": 0,
+		"refused": [],
+	}
+
+
+def apply_purchasing(item_code, offers, ctx, dry_run, item_exists, stock_uom, tally):
+	"""Suppliers, Item Supplier rows and Item Prices for one Item. Returns the change lines.
+
+	``ctx`` is ``{book, price_list, currency, price_list_error, has_url}``. ``tally`` (:func:`new_tally`)
+	counts what was (or would be) done and collects the refusals and the Suppliers created, for the
+	run's summary. A refused seller is skipped and the rest of the row loads; anything else raises,
+	and the caller rolls the whole row back, Suppliers created for it included.
+	"""
+	changes = []
+	doc = frappe.get_doc("Item", item_code) if item_exists else None
+	uom = (doc.get("stock_uom") if doc else None) or stock_uom
+	doc_changed = False
+	for offer in offers:
+		try:
+			supplier, created = ensure_supplier(offer, ctx["book"], dry_run)
+		except PurchasingRefusal as exc:
+			tally["refused"].append(str(exc))
+			continue
+		if created:
+			tally["suppliers_created"].append(supplier)
+			changes.append(f"Supplier {supplier} {'would be ' if dry_run else ''}created")
+		tally["suppliers_used"].append(supplier)
+
+		# The Item Supplier row: found by supplier, so the rows for other suppliers (Conely's
+		# PEN022035, a person's own) are never touched.
+		values = {"supplier_part_no": offer["seller_part_no"]}
+		if ctx["has_url"]:
+			values["purchase_url"] = offer["url"]
+		_check_lengths("Item Supplier", {"supplier": supplier, **values}, f"Item Supplier {supplier}")
+		row = (
+			next((r for r in (doc.get("supplier_items") or []) if r.get("supplier") == supplier), None)
+			if doc
+			else None
+		)
+		if row is None:
+			if doc is not None:
+				doc.append("supplier_items", {"supplier": supplier, **{k: v for k, v in values.items() if v}})
+				doc_changed = True
+			tally["supplier_rows_added"] += 1
+			changes.append(f"Item Supplier {supplier} {'would be ' if dry_run else ''}added")
+		else:
+			changed = []
+			for field, value in values.items():
+				if value is not None and not _same(row.get(field), value):
+					setattr(row, field, value)
+					changed.append(field)
+			if changed:
+				doc_changed = True
+				tally["supplier_rows_updated"] += 1
+				changes.append(f"Item Supplier {supplier}: {', '.join(changed)}")
+
+		if offer["price"] is None:
+			continue
+		if ctx["price_list_error"]:
+			continue
+		changes += _apply_price(item_code, supplier, offer, ctx, uom, dry_run, item_exists, tally)
+
+	if doc is not None and doc_changed and not dry_run:
+		doc.save(ignore_permissions=True)
+	return changes
+
+
+def _apply_price(item_code, supplier, offer, ctx, uom, dry_run, item_exists, tally):
+	"""Add or update the seller's Item Price; a stored price is replaced only by a later sighting."""
+	price_list = ctx["price_list"]
+	found = []
+	if item_exists:
+		found = frappe.get_all(
+			"Item Price",
+			filters={"item_code": item_code, "price_list": price_list, "supplier": supplier},
+			fields=["name", "price_list_rate", "valid_from"],
+			order_by="valid_from desc",
+		)
+	note = _price_note(offer, supplier)
+	if not found:
+		new = {
+			"item_code": item_code,
+			"price_list": price_list,
+			"supplier": supplier,
+			"uom": uom,
+			"currency": ctx["currency"],
+			"price_list_rate": offer["price"],
+			"valid_from": offer["seen_on"],
+			"note": note,
+		}
+		_check_lengths("Item Price", new, f"Item Price {supplier}")
+		if not dry_run:
+			frappe.get_doc({"doctype": "Item Price", **new}).insert(ignore_permissions=True)
+		tally["prices_added"] += 1
+		return [
+			f"Item Price {price_list} {supplier} {offer['price']:g} {'would be ' if dry_run else ''}added"
+		]
+	current = found[0]
+	stored_on = current.get("valid_from")
+	stored_on = stored_on.isoformat() if hasattr(stored_on, "isoformat") else str(stored_on or "")
+	# ISO dates compare as text. Same day or earlier: the stored price stands, even when it differs,
+	# so an old file never overwrites a newer price someone entered.
+	if stored_on and stored_on >= offer["seen_on"]:
+		tally["prices_kept"] += 1
+		return []
+	if not dry_run:
+		doc = frappe.get_doc("Item Price", current["name"])
+		doc.price_list_rate = offer["price"]
+		doc.valid_from = offer["seen_on"]
+		doc.note = note
+		doc.save(ignore_permissions=True)
+	tally["prices_updated"] += 1
+	return [
+		f"Item Price {current['name']}: {_fmt(current.get('price_list_rate'))} -> {offer['price']:g} "
+		f"(seen {offer['seen_on']})"
+	]
+
+
+def _empty_purchasing(price_list=None):
+	return {
+		"price_list": price_list,
+		"suppliers_created": [],
+		"suppliers_used": [],
+		"supplier_rows_added": 0,
+		"supplier_rows_updated": 0,
+		"prices_added": 0,
+		"prices_updated": 0,
+		"prices_kept": 0,
+		"rows_with_seller": 0,
+		"rows_without_seller": 0,
+		"refused": [],
+		"not_in_catalog": [],
+	}
+
+
+def _add_tally(total, label, tally):
+	for key in (
+		"supplier_rows_added",
+		"supplier_rows_updated",
+		"prices_added",
+		"prices_updated",
+		"prices_kept",
+	):
+		total[key] += tally[key]
+	total["suppliers_created"] += tally["suppliers_created"]
+	total["suppliers_used"] = sorted(set(total["suppliers_used"]) | set(tally["suppliers_used"]))
+	total["refused"] += [{"key": label, "error": error} for error in tally["refused"]]
+
+
 def _empty_summary():
 	return {
 		"created": [],
@@ -1263,6 +1612,35 @@ def read_catalog(folder):
 	return meta, approvals, entries
 
 
+def _purchasing_context(folder):
+	"""``(summary, ctx)`` for the run's purchasing step; both None without the file."""
+	data = _read_json(folder / PURCHASING_FILE)
+	if data is None:
+		return None, None
+	meta, rows = read_purchasing(data)
+	buying = _empty_purchasing(meta["price_list"])
+	ctx = {
+		"rows": rows,
+		"book": supplier_book(),
+		"price_list": meta["price_list"],
+		"currency": meta["currency"],
+		"price_list_error": check_price_list(meta["price_list"], meta["currency"]),
+		# A site field (Item Supplier, "Purchase URL"), not in this app's fixtures: without it a
+		# link is reported, never written into nothing.
+		"has_url": bool(frappe.get_meta("Item Supplier").get_field("purchase_url")),
+	}
+	if ctx["price_list_error"]:
+		buying["refused"].append({"key": PURCHASING_FILE, "error": ctx["price_list_error"]})
+	if not ctx["has_url"]:
+		buying["refused"].append(
+			{
+				"key": PURCHASING_FILE,
+				"error": "Item Supplier has no purchase_url field here; links not loaded",
+			}
+		)
+	return buying, ctx
+
+
 def load_catalog(catalog_dir=None, dry_run=True):
 	"""Load the approved catalog rows. ``dry_run`` (the default) writes nothing.
 
@@ -1287,6 +1665,8 @@ def load_catalog(catalog_dir=None, dry_run=True):
 	if meta["approved_by"] and not verified_by:
 		summary["note"] = f"approved_by {meta['approved_by']} is not a User here; verified_by left blank"
 	taken = site_codes()
+	buying, ctx = _purchasing_context(folder)
+	summary["purchasing"] = buying
 
 	for kind in FILES:
 		out = summary[kind] = _empty_summary()
@@ -1313,6 +1693,13 @@ def load_catalog(catalog_dir=None, dry_run=True):
 				out["errors"].append({"key": label, "error": str(exc)})
 				continue
 			out["warnings"] += [f"{label}: {w}" for w in plan["warnings"]]
+			offers, tally = [], new_tally()
+			if ctx is not None:
+				ref = label if label in ctx["rows"] else key
+				try:
+					offers = check_offers(ctx["rows"][ref]) if ref in ctx["rows"] else []
+				except PurchasingRefusal as exc:
+					buying["refused"].append({"key": label, "error": str(exc)})
 			try:
 				if not dry_run:
 					frappe.db.savepoint("catalog_seed_row")
@@ -1338,11 +1725,29 @@ def load_catalog(catalog_dir=None, dry_run=True):
 						)
 				elif kind == "nozzles" and plan.get("profile"):
 					changes += apply_profile(item_code, plan, verified_by, dry_run)
+				if offers:
+					# A dry run that would create the Item has no Item to read; a write has just made it.
+					changes += apply_purchasing(
+						item_code,
+						offers,
+						ctx,
+						dry_run,
+						item_exists=not (created and dry_run),
+						stock_uom=plan["item"]["fill"]["stock_uom"],
+						tally=tally,
+					)
 			except Exception as exc:
 				if not dry_run:
 					frappe.db.rollback(save_point="catalog_seed_row")
+				# The row's Suppliers went with the rollback, so the next row must not count them as there.
+				for name in tally["suppliers_created"]:
+					ctx["book"]["names"].discard(name)
+					ctx["book"]["keys"].pop(_supplier_key(name), None)
 				out["errors"].append({"key": label, "error": str(exc) or exc.__class__.__name__})
 				continue
+			if ctx is not None:
+				_add_tally(buying, label, tally)
+				buying["rows_with_seller" if offers else "rows_without_seller"] += 1
 			entry_out = {"key": label, "item_code": item_code, "changes": changes}
 			if created:
 				out["created"].append(entry_out)
@@ -1354,6 +1759,9 @@ def load_catalog(catalog_dir=None, dry_run=True):
 			if item_code.casefold() != plan["item"]["item_code"].casefold() and not plan["item"]["match_existing_code"]:
 				out["renames_pending"].append({"key": label, "item_code": item_code, "code": plan["item"]["item_code"]})
 		out["approved_not_found"] = sorted(set(by_key) - seen_keys) + sorted(set(by_id) - seen_ids)
+	if ctx is not None:
+		all_refs = {e["label"] for e in entries} | {e["key"] for e in entries}
+		buying["not_in_catalog"] = sorted(set(ctx["rows"]) - all_refs)
 
 	if not dry_run:
 		frappe.db.commit()
