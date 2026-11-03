@@ -2419,10 +2419,11 @@ class TestTheTaskHookWidensEverySave(_P4):
 			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
 		)
 		task = ast.literal_eval(events)["Task"]
-		self.assertEqual(
-			task["before_validate"],
-			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
-		)
+		# A list since v1.782.0: parent_dates.before_task_validate settles a parent's dates first,
+		# then the Project window is widened for them (tests/test_task_parent_dates.py pins the order).
+		hooks = task["before_validate"]
+		self.assertIsInstance(hooks, list)
+		self.assertIn("erpnext_enhancements.project_enhancements.project_window.before_task_validate", hooks)
 
 
 class TestPublishOrder(unittest.TestCase):
