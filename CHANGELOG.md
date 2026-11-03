@@ -46,7 +46,11 @@ was reachable from a form only through the View menu.
   `frappe.db.get_value` answers (a Project already in locals is titled at once); the repaint goes through
   `frm.page.set_breadcrumbs` only while the same document is still on that form, titles are cached per page
   load, one fetch per project. Nikolas's picks: Project and Opportunity and Task, the Task trail with both
-  links. `scripts/test_breadcrumb_targets.js` runs the file against a stub of 16.53's builder;
+  links. Review round 1: the Projects crumb is substituted only when the person's boot carries the Projects
+  workspace (`frappe.workspaces.projects`; the route falls through to "page not found" otherwise), else the
+  stock list crumb stays; and the Opportunity crumb names no board (`/desk/opportunity/view/kanban`, which
+  `KanbanView.load_last_view` resolves to the person's last board, else the first), so a renamed board
+  cannot strand it. `scripts/test_breadcrumb_targets.js` runs the file against a stub of 16.53's builder;
   `tests/test_breadcrumb_targets.py` holds the seams.
 - **The Projects sidebar's "Dashboard" row is hidden** (`setup/workspace_tweaks.py`, `_HIDDEN_SIDEBAR_ITEMS`):
   ERPNext's stock Project dashboard, `dashboard-view/Project`, matched on all three of
@@ -64,7 +68,9 @@ was reachable from a form only through the View menu.
   the page head, where it was a *View > Open in Project Planner* menu entry: a grouped `add_custom_button` is a
   dropdown item, an ungrouped one a button. Same route (`/desk/project-planner/gantt/<project>?project=`), same
   gates (a planner project type, not Completed or Canceled, the page in `frappe.boot.page_info`).
-  `scripts/test_form_page_links.js` and its unittest follow the label and the missing group.
+  `scripts/test_form_page_links.js` and its unittest follow the label and the missing group; the Gantt tab's
+  help chip and the comments that named the old menu entry (project_planner.js, hooks.py,
+  docs/planner-ux-redesign.md) say "Open in Planner" too (review round 1).
 
 ### Fixed
 
@@ -76,18 +82,26 @@ was reachable from a form only through the View menu.
   plain. The file now hooks what v16.53.0 has (read at the tag): `KanbanView.prototype.set_fields`, after
   which `party_name`, `opportunity_from` and `opportunity_amount` join the board's query (`_add_field`
   de-duplicates); `render_kanban_board`, before which the `custom_value_stream` rows are fetched for the page's
-  names and hung on the data rows (a failed fetch still draws the board, without dots); and
-  `frappe.views.KanbanBoardCard`, wrapped once after `load_lib` resolves, to add the navy class on a deal over
-  4000, the dots in `.kanban-card-meta`, and the link. Only the "Opportunity" board, which is a classic one
-  (`use_kanban_v2` = 0 on prod); a v2 board draws its own cards and gets none of this.
+  names and hung on the data rows; and `frappe.views.KanbanBoardCard`, wrapped once after `load_lib`
+  resolves, to add the navy class on a deal over 4000, the dots in `.kanban-card-meta`, and the link. Only
+  the "Opportunity" board, which is a classic one (`use_kanban_v2` = 0 on prod); a v2 board draws its own
+  cards and gets none of this.
+  Review round 1 (the first cut was as dead as the code it replaced): `KanbanBoardCard` ends with a bare
+  `init();` and returns nothing, so reading its result for `$card` decorated nothing; the wrapper now finds
+  the card in `wrapper` by its `data-name` (`encodeURIComponent(name)`, from kanban_card.html), falling back
+  to the last appended card, and the harness's stub returns undefined like the real function. And the dots
+  are fetched per card, batched per tick, rather than once in `render_kanban_board`: a realtime redraw
+  (`process_document_refreshes`) and the scroll pages (`kanban_pagination.js`, 50 cards a page) draw cards
+  without passing that method, so they would have had no dots. A card whose row already carries its streams
+  draws at once with no fetch; a failed fetch draws it without dots.
 - **The customer's name on an Opportunity Kanban card opens the Customer** (or the Lead, from
   `opportunity_from`): the card's "Customer Name" field, found by the label the engine writes on its icon (or
   its first span with "Show Labels" on), read from the docfield rather than by position, becomes
   `<a class="kanban-card-party-link" href="/desk/customer/<party_name>">`. The click is handled by the
   file (`frappe.set_route("Form", ...)`, a history entry, Back returns to the board) and stopped from
-  bubbling, because the card wrapper's own click would open the Opportunity on top, and a bare href would
-  never reach the Desk's body-level delegate once propagation stops; a press on the link does not start the
-  card's hold-to-drag. A modified click (Ctrl, Shift, middle button) is left to the browser. Styles in
+  bubbling (in 16.53 only the title link opens a card, so this keeps the board's other delegated handlers
+  out of an already-routed click; a bare href would never reach the Desk's body-level delegate once
+  propagation stops). A modified click (Ctrl, Shift, middle button) is left to the browser. Styles in
   `desk_enhancements.bundle.css`, both themes, white on the navy high-value card.
   `scripts/test_kanban_customization.js` runs the file against the engine's real shapes;
   `tests/test_kanban_customization.py` holds that the dead patches stay gone.

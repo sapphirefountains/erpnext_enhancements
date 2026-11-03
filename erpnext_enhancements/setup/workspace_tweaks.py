@@ -41,6 +41,8 @@ def hide_core_sidebar_items():
 	re-add) the item on later migrates; if a core upgrade ever does bump its file
 	and re-add the link, this hook (running after that sync) drops it again.
 	"""
+	# Before frappe 16.50 only: the Workspace Sidebar doctype is gone on 16.50+, so this loop
+	# skips every sidebar there and the Dashboard tuple is handled by _hide_sidebar_items below.
 	for sidebar_name, targets in _HIDDEN_SIDEBAR_ITEMS.items():
 		if not frappe.db.exists("Workspace Sidebar", sidebar_name):
 			continue

@@ -51,14 +51,19 @@ class TestShips(unittest.TestCase):
 	def test_the_targets(self):
 		src = code(MODULE)
 		self.assertIn('href: "/desk/projects"', src)
-		self.assertIn('href: "/desk/opportunity/view/kanban/Opportunity"', src)
+		self.assertIn('href: "/desk/opportunity/view/kanban"', src)
+		# only when this person's boot has the workspace; else the stock list crumb
+		self.assertIn("if (!workspaces || !workspaces.projects) return fallback;", src)
 		self.assertIn('Task: task_crumbs,', src)
 		# every link is a /desk/ path, so the Desk routes it in place and Back works
 		for href in re.findall(r'href: "([^"]+)"', src):
 			self.assertTrue(href.startswith("/desk/"), href)
 		self.assertIn('return "/desk/" + slug + "/" + encodeURIComponent(name);', src)
 
-	def test_the_kanban_url_is_the_one_the_crm_sidebar_opens_on(self):
+	def test_the_kanban_url_is_the_crm_sidebar_landing_without_the_board(self):
+		"""The sidebar row names the board; the crumb lets KanbanView.load_last_view pick the
+		person's last board (the same one, for anyone whose last board it is), so a renamed board
+		cannot strand the crumb."""
 		tweaks = read(APP / "setup" / "workspace_tweaks.py")
 		self.assertIn('"url": "/desk/opportunity/view/kanban/Opportunity"', tweaks)
 

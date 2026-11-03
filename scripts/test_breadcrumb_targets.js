@@ -17,6 +17,8 @@
  *   7. Every href is a /desk/ path (routed in place; a history entry; Back works).
  *   8. The wrapper installs once, and not at all when the function is missing.
  *   9. A target that throws falls back to the stock trail.
+ *  10. A person whose boot has no Projects workspace keeps the stock list crumb (the workspace
+ *      route would show "page not found"); a Task still gets its project crumb after it.
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
  */
@@ -51,6 +53,8 @@ function makeDesk(options) {
 	const fetched = [];
 	const frappe = {
 		ui: { form: {} },
+		// boot's workspaces, keyed by slug (router.js:222-224 reads frappe.workspaces[route[0]])
+		workspaces: options.no_workspace ? {} : { projects: { name: "Projects", title: "Projects" } },
 		router: { slug: (dt) => String(dt).toLowerCase().replace(/ /g, "-") },
 		get_doc: (dt, name) => locals[dt + "/" + name] || null,
 		db: {
@@ -118,8 +122,8 @@ const tick = () => new Promise((resolve) => setImmediate(() => setImmediate(reso
 		const { frappe } = makeDesk();
 		const items = frappe.ui.form.get_breadcrumbs(form("Opportunity", { name: "CRM-OPP-2026-00182", title: "Acme deal" }));
 		check(
-			same(items, [{ label: "Opportunity", href: "/desk/opportunity/view/kanban/Opportunity" }, { label: "Acme deal" }]),
-			"Opportunity: the Kanban, then the title"
+			same(items, [{ label: "Opportunity", href: "/desk/opportunity/view/kanban" }, { label: "Acme deal" }]),
+			"Opportunity: the Kanban (the person's last board, no board named), then the title"
 		);
 	}
 
@@ -208,6 +212,22 @@ const tick = () => new Promise((resolve) => setImmediate(() => setImmediate(reso
 		check(typeof installed.original === "function" && installed.ee_breadcrumb_targets === true, "the wrapper keeps the original");
 		const { frappe: none } = makeDesk({ missing: true });
 		check(none.ui.form.get_breadcrumbs === undefined, "an older frappe without get_breadcrumbs is left alone");
+	}
+
+	// 10. no Projects workspace in boot: the stock list crumb stays
+	{
+		const { frappe } = makeDesk({ no_workspace: true });
+		const project = frappe.ui.form.get_breadcrumbs(form("Project", { name: "PRJ-1", title: "P" }));
+		check(same(project, [{ label: "Project", href: "/desk/project" }, { label: "P" }]), "without the Projects workspace a Project keeps the stock list crumb");
+		const task = frappe.ui.form.get_breadcrumbs(form("Task", { name: "T-1", title: "T", project: "PRJ-2" }));
+		check(
+			same(task, [{ label: "Task", href: "/desk/task" }, { label: "PRJ-2", href: "/desk/project/PRJ-2" }, { label: "T" }]),
+			"a Task keeps the Task list crumb and still gets its project crumb"
+		);
+		const single = frappe.ui.form.get_breadcrumbs(form("Task", { name: "S", title: "S" }, { meta: { issingle: 1 } }));
+		check(same(single, [{ label: "S" }]), "a trail with no list crumb and no workspace is just the document");
+		const opp = frappe.ui.form.get_breadcrumbs(form("Opportunity", { name: "O", title: "O" }));
+		check(opp[0].href === "/desk/opportunity/view/kanban", "the Opportunity crumb needs no workspace");
 	}
 
 	// 9. a throwing target falls back to the stock trail

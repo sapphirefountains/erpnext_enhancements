@@ -11,13 +11,17 @@
  *   - `frappe.views.KanbanView.prototype.set_fields` builds `this.fields` through `_add_field`;
  *   - `.render_kanban_board()` waits for `this.load_lib`, then builds `frappe.views.KanbanBoard`
  *     with `cards: this.data`;
- *   - `frappe.views.KanbanBoardCard(card, wrapper)`, defined by the bundle when it loads, draws a
- *     card: a `.kanban-doc-field` per board field with an icon titled by the field's label, and
- *     a `.kanban-card-meta`; the card wrapper's click opens the document.
+ *   - `frappe.views.KanbanBoardCard(card, wrapper)`, defined by the bundle when it loads, appends
+ *     `.kanban-card-wrapper[data-name]` to `wrapper` with a `.kanban-doc-field` per board field (an
+ *     icon titled by the field's label) and a `.kanban-card-meta`, and RETURNS UNDEFINED (a bare
+ *     `init();`); only the title link opens the document. The first cut of v1.779.0 read its return
+ *     value and decorated nothing (review of PR #1413): the stub returns undefined for that reason.
  *
  * Checks:
  *   1. The party fields are added to the query on the Opportunity board only.
- *   2. Value streams are fetched once per render for the page's names and hung on the data rows.
+ *   2. Value streams are fetched once per tick for every card drawn without them, hung on the data
+ *      rows, and drawn on cards that arrive after the first render (a realtime redraw, a scrolled
+ *      page); a row that already has them draws at once without a fetch.
  *   3. A card over 4000 gets the navy class; one under does not.
  *   4. Dots: one per distinct stream colour, titled with the stream.
  *   5. The customer's name becomes a link to the Customer; a Lead to the Lead; no party, or a
@@ -79,6 +83,7 @@ class El {
 
 function $(arg) {
 	if (arg instanceof El) return wrap([arg]);
+	if (arg && Array.isArray(arg.els)) return arg;
 	if (Array.isArray(arg)) return wrap(arg);
 	if (typeof arg === "string" && arg.startsWith("<")) {
 		const m = arg.match(/^<(\w+)([^>]*)>/);
@@ -98,8 +103,11 @@ function wrap(els) {
 			return wrap(els.flatMap((e) => e.all()).filter((e) => e.has(cls) && (!tag || e.tag === tag)));
 		},
 		children(sel) {
-			const tag = sel;
-			return wrap(els.flatMap((e) => e.children).filter((e) => !tag || e.tag === tag));
+			const by_class = sel && sel.startsWith(".") ? sel.slice(1) : null;
+			const tag = by_class ? null : sel;
+			return wrap(
+				els.flatMap((e) => e.children).filter((e) => (by_class ? e.has(by_class) : !tag || e.tag === tag))
+			);
 		},
 		first: () => wrap(els.slice(0, 1)),
 		last: () => wrap(els.slice(-1)),
@@ -151,6 +159,7 @@ function wrap(els) {
 // a card the way kanban_board.bundle.js draws it (labels off unless show_labels)
 function makeCard(doc, show_labels) {
 	const wrapper = new El("kanban-card-wrapper");
+	wrapper.attrs["data-name"] = encodeURIComponent(doc.name);
 	const body = new El("kanban-card-body");
 	wrapper.append(body);
 	const fields = [
@@ -170,8 +179,6 @@ function makeCard(doc, show_labels) {
 		body.append(field);
 	});
 	body.append(new El("kanban-card-meta"));
-	wrapper.clicks = 0;
-	wrapper.handlers.click = () => (wrapper.clicks += 1);
 	return wrapper;
 }
 
@@ -213,6 +220,8 @@ function makeDesk(options) {
 					if (!frappe.views.KanbanBoardCard) frappe.views.KanbanBoardCard = cardFn;
 				});
 				this.rendered = 0;
+				// the column every card is appended to, as kanban_board.bundle.js's $kanban_cards
+				this.$column = $(new El("kanban-cards"));
 			}
 			_add_field(f) {
 				if (!this.fields.includes(f)) this.fields.push(f);
@@ -220,31 +229,42 @@ function makeDesk(options) {
 			set_fields() {
 				this.fields = ["name", "status", "customer_name"];
 			}
+			// append_kanban_card: the result of KanbanBoardCard is ignored; the card is in the column
+			draw(doc) {
+				const card = { doctype: this.doctype, name: doc.name, doc };
+				const returned = frappe.views.KanbanBoardCard(card, this.$column);
+				if (returned !== undefined) throw new Error("the wrapper must return what the original returns: undefined");
+				const $card = this.$column.children(".kanban-card-wrapper").els.filter((e) => e.attrs["data-name"] === encodeURIComponent(doc.name));
+				return { card, $card: $($card) };
+			}
 			render_kanban_board() {
 				return Promise.resolve(this.load_lib).then(() => {
 					this.rendered += 1;
-					this.cards = this.data.map((doc) => frappe.views.KanbanBoardCard({ doctype: this.doctype, name: doc.name, doc }, null));
+					this.cards = this.data.map((doc) => this.draw(doc));
 				});
 			}
 		}
 		frappe.views.KanbanView = KanbanView;
 	}
-	const cardFn = function (card) {
-		const $card = $(makeCard(card.doc, options.show_labels));
-		return { $card, card };
+	// kanban_board.bundle.js: appends the card to the wrapper and returns nothing
+	const cardFn = function (card, wrapper) {
+		$(makeCard(card.doc, options.show_labels)).appendTo(wrapper);
 	};
-	const sandbox = { frappe, console, window: null, __: (t, args) => (args ? t.replace("{0}", args[0]) : t), $, Set, parseFloat, Promise, setImmediate, encodeURIComponent };
+	const sandbox = { frappe, console, window: null, __: (t, args) => (args ? t.replace("{0}", args[0]) : t), $, Set, parseFloat, Promise, setImmediate, setTimeout, encodeURIComponent };
 	sandbox.window = sandbox;
 	vm.createContext(sandbox);
 	vm.runInContext(SOURCE, sandbox, { filename: "kanban_customization.js" });
 	return { frappe, calls, routes, sandbox };
 }
 
+const tick = () => new Promise((resolve) => setTimeout(() => setImmediate(resolve), 1));
+
 async function render(desk, board_name, data) {
 	const view = new desk.frappe.views.KanbanView("Opportunity", board_name, data);
 	desk.sandbox.cur_list = view;
 	view.set_fields();
 	await view.render_kanban_board();
+	await tick(); // the per-tick value-stream fetch
 	return view;
 }
 
@@ -274,7 +294,7 @@ async function render(desk, board_name, data) {
 			{ name: "OPP-3", customer_name: "", party_name: "", opportunity_from: "Customer", opportunity_amount: 0 },
 		];
 		const view = await render(desk, "Opportunity", data);
-		check(desk.calls.length === 1 && same(desk.calls[0].args.filters, { parent: ["in", ["OPP-1", "OPP-2", "OPP-3"]] }), "value streams are fetched once for the page's names");
+		check(desk.calls.length === 1 && same(desk.calls[0].args.filters, { parent: ["in", ["OPP-1", "OPP-2", "OPP-3"]] }), "value streams are fetched once, in one call, for every card drawn in the tick");
 		check(same(data[0].custom_value_stream.map((r) => r.value_stream), ["Build", "Build", "Design"]) && same(data[1].custom_value_stream, []), "the rows are hung on the data");
 		check(view.rendered === 1, "the board rendered once");
 
@@ -282,7 +302,7 @@ async function render(desk, board_name, data) {
 		check(c1.find(".kanban-card-body").els[0].has("opportunity-high-value") && c1.els[0].has("opportunity-high-value-parent"), "a deal over 4000 is a high-value card");
 		check(!c2.find(".kanban-card-body").els[0].has("opportunity-high-value"), "a deal under 4000 is not");
 		const dots = c1.find(".value-stream-dot").els;
-		check(dots.length === 2 && same(dots.map((d) => d.attrs.title), ["Build", "Design"]) && dots[0].css_["background-color"] === "#00609C", "one dot per distinct stream, titled, coloured");
+		check(dots.length === 2 && same(dots.map((d) => d.attrs.title), ["Build", "Design"]) && dots[0].css_["background-color"] === "#00609C", "one dot per distinct stream, titled, colored");
 		check(c2.find(".value-stream-dot").length === 0, "no streams, no dots");
 
 		const link1 = c1.find("a.kanban-card-party-link");
@@ -294,6 +314,24 @@ async function render(desk, board_name, data) {
 		check(amountField.all().every((e) => e.tag !== "a"), "only the customer field is linked");
 
 		// 6. the click
+		// a card drawn later (a realtime redraw, a scrolled page) gets its dots too, from one more call
+		desk.calls.length = 0;
+		const late_doc = { name: "OPP-4", customer_name: "Late Co", party_name: "Late Co", opportunity_from: "Customer", opportunity_amount: 10 };
+		desk.frappe.call = (args) => {
+			desk.calls.push(args);
+			return Promise.resolve({ message: [{ parent: "OPP-4", value_stream: "Service" }] });
+		};
+		const late = view.draw(late_doc);
+		check(late.$card.find(".value-stream-dot").length === 0 && desk.calls.length === 0, "a card drawn after the first render has no dots yet and nothing was fetched synchronously");
+		await tick();
+		check(desk.calls.length === 1 && same(desk.calls[0].args.filters, { parent: ["in", ["OPP-4"]] }), "its rows are fetched on the next tick, for that card alone");
+		check(late.$card.find(".value-stream-dot").els.map((d) => d.attrs.title).join() === "Service", "and its dots are drawn when they arrive");
+		check(late.$card.find("a.kanban-card-party-link").length === 1, "the link and styling never waited for the fetch");
+		desk.calls.length = 0;
+		const redrawn = view.draw(late_doc);
+		await tick();
+		check(desk.calls.length === 0 && redrawn.$card.find(".value-stream-dot").length === 1, "a row that already carries its streams draws at once, with no fetch");
+
 		const stopped = { prevented: 0, stopped: 0 };
 		const event = { preventDefault: () => (stopped.prevented += 1), stopPropagation: () => (stopped.stopped += 1), button: 0 };
 		link1.els[0].handlers.click(event);
@@ -329,7 +367,7 @@ async function render(desk, board_name, data) {
 	{
 		const desk = makeDesk({ fetch_fails: true });
 		const view = await render(desk, "Opportunity", [{ name: "OPP-7", customer_name: "Acme", party_name: "Acme", opportunity_from: "Customer", opportunity_amount: 5000 }]);
-		check(view.rendered === 1 && view.cards[0].$card.find(".kanban-card-body").els[0].has("opportunity-high-value"), "a failed stream fetch still draws the board, without dots");
+		check(view.rendered === 1 && view.cards[0].$card.find(".kanban-card-body").els[0].has("opportunity-high-value") && view.cards[0].$card.find(".value-stream-dot").length === 0, "a failed stream fetch still draws the card, without dots");
 	}
 
 	// 9. no engine hooks: nothing patched, nothing thrown

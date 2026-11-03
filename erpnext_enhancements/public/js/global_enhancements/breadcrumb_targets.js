@@ -27,7 +27,14 @@
  * Every href is a `/desk/` path, so the Desk's own link delegate (router.js) routes it in place:
  * a history entry of its own, Back returns to the form. The Projects workspace is reached by the
  * slug of its title: v16's router reads an unknown first segment against `frappe.workspaces`
- * (convert_to_standard_route), so `/desk/projects` is `Workspaces/Projects`.
+ * (convert_to_standard_route, router.js:222-224), so `/desk/projects` is `Workspaces/Projects` —
+ * for a person whose boot carries that workspace. For one who can open a Project but not the
+ * workspace the route falls through to "page not found", so the crumb is only substituted when
+ * `frappe.workspaces.projects` exists; otherwise the stock list crumb stays. The Opportunity
+ * crumb names no board: `/desk/opportunity/view/kanban` goes through `KanbanView.load_last_view`
+ * and opens the person's last board, else the first, so a renamed or deleted board cannot
+ * strand it (the CRM sidebar's landing row names the "Opportunity" board; same place for
+ * everyone whose last board that is).
  *
  * THE TASK'S PROJECT CRUMB. ERPNext 16.52.1's Task carries `project` but no `project_name`, and
  * the trail is built synchronously, so the crumb first shows the project's id and swaps in its
@@ -53,10 +60,15 @@
 		return "/desk/" + slug + "/" + encodeURIComponent(name);
 	}
 
-	const projects_crumb = () => ({ label: translate("Projects"), href: "/desk/projects" });
+	// The Projects workspace, when this person's boot has it; else `fallback` (the stock list crumb).
+	function projects_crumb(fallback) {
+		const workspaces = frappe.workspaces;
+		if (!workspaces || !workspaces.projects) return fallback;
+		return { label: translate("Projects"), href: "/desk/projects" };
+	}
 	const kanban_crumb = () => ({
 		label: translate("Opportunity"),
-		href: "/desk/opportunity/view/kanban/Opportunity",
+		href: "/desk/opportunity/view/kanban",
 	});
 
 	// Project titles, by name: a title fetched once is kept for the page load.
@@ -107,8 +119,10 @@
 		);
 	}
 
-	function task_crumbs(frm) {
-		const items = [projects_crumb()];
+	function task_crumbs(frm, list_crumb) {
+		const items = [];
+		const first = projects_crumb(list_crumb);
+		if (first) items.push(first);
 		const project = frm.doc && frm.doc.project;
 		if (!project) return items;
 		const title = known_title(project);
@@ -117,9 +131,13 @@
 		return items;
 	}
 
-	// doctype -> the crumbs that stand before the document's own.
+	// doctype -> the crumbs that stand before the document's own, given the stock list crumb (or
+	// null when the stock trail has none).
 	const TARGETS = {
-		Project: () => [projects_crumb()],
+		Project: (frm, list_crumb) => {
+			const first = projects_crumb(list_crumb);
+			return first ? [first] : [];
+		},
 		Opportunity: () => [kanban_crumb()],
 		Task: task_crumbs,
 	};
@@ -131,7 +149,8 @@
 			if (!target || !Array.isArray(items) || !items.length) return items;
 			// The last item is always the document itself (form.js builds it last); everything
 			// before it is the list crumb this file replaces.
-			return target(frm).concat([items[items.length - 1]]);
+			const list_crumb = items.length > 1 ? items[0] : null;
+			return target(frm, list_crumb).concat([items[items.length - 1]]);
 		} catch (e) {
 			try {
 				console.warn("breadcrumb_targets: fell back to the stock trail", e);

@@ -380,7 +380,7 @@ class ProjectPlanner {
 	// ?group=, on every planner screen. The rules, in one place:
 	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
 	//     address wins over it. An address that names any of them is the whole filter: one it does not
-	//     name is All, so a link shows exactly what its sender saw. A form's "Open in Project Planner"
+	//     name is All, so a link shows exactly what its sender saw. A form's "Open in Planner"
 	//     (S5b) is such a link: ?project= alone, which also leaves the PM filter at All, where it
 	//     cannot hide the project's cards. An address that names none of them (the sidebar, another
 	//     page's path-only link) keeps the filters on screen.
@@ -4190,7 +4190,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // (ee_project_planner_gantt:<user>). A bare address with the Gantt remembered is replaced by
 // /gantt/<that project>. With no project stored, or one the server will not open (gone, or not the
 // person's to read), the device forgets it and the address is replaced by the Lookahead: never a dead
-// end, never an extra entry. The Project form's "Open in Project Planner" names /gantt/<project> itself,
+// end, never an extra entry. The Project form's "Open in Planner" names /gantt/<project> itself,
 // so none of this applies to it.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
@@ -13055,7 +13055,7 @@ Object.assign(ProjectPlanner.prototype, PPL_METHODS);
 // export menu (print, PNG, SVG, CSV, Excel, a date range) stays.
 //
 // A project is a screen: /gantt/<project> is a route, so Back and Forward step through the projects
-// opened, and the Project form's "Open in Project Planner" lands here. Collapsing a phase and the zoom
+// opened, and the Project form's "Open in Planner" lands here. Collapsing a phase and the zoom
 // are not screens. The project this device opened last is remembered (per signed-in user), so the Gantt
 // tab reopens it; the toolbar's Project filter, when set, wins. A bare /project-planner on a device whose
 // tab is the Gantt reopens that project (ppg_land; the rule is in the P8 block's comment). Leaving the
@@ -15951,7 +15951,7 @@ const PPTOUR_METHODS = {
 				note: __("Four views of one schedule, and a fifth for managers. Today is the phone's."),
 				items: [
 					chip(__("Lookahead"), __("Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published.")),
-					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, right-click a job in the Overview (Open in Gantt), or use the Project form's Open in Project Planner.")),
+					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, right-click a job in the Overview (Open in Gantt), or use the Project form's Open in Planner.")),
 					chip(__("Crew"), __("Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it.")),
 					chip(__("Calendar"), __("The week and month grids you know: cards, double-click to add, drag to move.")),
 					chip(__("Overview"), __("Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print.")),
