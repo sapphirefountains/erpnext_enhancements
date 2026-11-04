@@ -85,6 +85,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tests/test_workspace_tweaks.py` carries the new CRM order; both in CI. Nothing was exercised in
     a browser: the prod checks are in the PR body.
 
+## [1.792.0] - 2026-11-03
+
+### Changed
+- **The planners' view tabs stay at the toolbar's right end when the bar wraps.** v1.788.0 put the
+  Lookahead, Gantt, Crew, Calendar and Overview tabs last in the bar, after the tools, so they sit at its
+  right end, and they do on a wide window. On a laptop-width window (about 1470px) the toolbar's
+  `flex-wrap` moves them onto a second line, and a wrapped line has no spacer, so there they sat at the
+  LEFT, under ‹ Today › (seen on prod: row 1 = Simple ‹ Today › the range, search, the three filters, the
+  chips, Add, More, ?, ↻; row 2 = the tabs, left-aligned). An auto left margin on the tab segment
+  (`.pp-toolbar > .pp-seg`, `.mp-toolbar > .mp-seg`) takes a wrapped line's slack: while the bar fits
+  on one line the spacer grows into the slack first (flexible lengths resolve before auto margins), so
+  nothing moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
+  (`.pp-toolbar > .pp-seg + .pp-seg`) keeps no margin, so it stays beside the tabs rather than sharing the slack with them; the Maintenance
+  Planner's My day button is after its tabs and keeps its place the same way. The phone's compact row
+  resets the margin, so nothing changes under 768px. Checked on prod (1.788.0) with the rule injected,
+  in Chrome at 1280, 1470 and 1920px: the tabs ended flush with the bar's right edge on every wrapped
+  line (at 1280 the chips, Add, More, ? and ↻ share that line with them; at 1470 Add, More, ? and ↻ do;
+  with the Calendar tab's Week/Month on screen and both alert chips the bar wraps even at 1920, and the
+  tabs sit right there too), and the Maintenance Planner, which wraps at 1280 and fits at 1470 and
+  1920, did the same. CSS only; the DOM order, the tablist and Back/Forward are untouched
+  (`tests/test_planner_six_picks.py` pins the two rules and the phone reset).
+
 ## [1.791.0] - 2026-11-03
 
 Nikolas, 2026-11-03, on the live Tasks Tree right after #1418 (v1.787.0) deployed: "I think we need
@@ -1634,7 +1656,6 @@ Utah designs no longer carry the confirm-the-codes issue.
   upper bound, for scaling conservatism, and its cite says so. Utah's design air stays at the engine's
   95 °F against ASHRAE 2025's 96.4 °F, an open question the research lists.
 
-
 ## [1.771.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03029. This is
@@ -2548,7 +2569,6 @@ only, never imports frappe): no migration, fixture, patch or hook. Nothing runs 
 - No `inf` reaches a result. Where a footing or plinth would tip, or no beam size works, the result
   says so.
 
-
 ## [1.765.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on
@@ -2625,7 +2645,6 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
 - Step risers take the membrane and the curing compound.
 - The shell and the thickness pick use one rim-above-grade rule.
 - The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
-
 
 ## [1.764.0] - 2026-11-01
 
@@ -24853,7 +24872,6 @@ Helpdesk doctypes this site does not have, which Frappe 16.35.0 began to trip ov
   - a failed read, delete or cache clear is logged and never raised;
   - the patch is registered under `[post_model_sync]`.
 
-
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,
@@ -30787,7 +30805,6 @@ was not in the repo, not reproducible on a rebuilt VM, and nothing would notice 
   current `_shadow_display_name` could not have produced), scoped to shadows, idempotent, and
   guarded on the Custom Field so it cannot abort a fresh-database migrate.
 
-
 ## [1.485.0] - 2026-09-18
 
 ### Added
@@ -33205,7 +33222,6 @@ subscription alerts, which stopped on their own when that module was deleted on 
   captures the hold points as they stood that day and no later scope edit can change what was
   signed.
 
-
 ## [1.460.0] - 2026-09-14
 
 ### Added
@@ -33409,7 +33425,6 @@ subscription alerts, which stopped on their own when that module was deleted on 
   Days-to-close could otherwise only be guessed from `modified`, which any later edit moves — so
   the metric would drift quietly upward for every action somebody reopened to add a note.
 
-
 ## [1.457.0] - 2026-09-14
 
 ### Added
@@ -33459,7 +33474,6 @@ subscription alerts, which stopped on their own when that module was deleted on 
   will not reset a template somebody has already corrected and set Active.
 - **Nothing changes on prod when this deploys.** `quality_enabled` ships off, and every template
   here is inert until a person adopts it.
-
 
 ## [1.456.0] - 2026-09-14
 
@@ -33701,7 +33715,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - **Nothing changes on prod when this deploys.** `quality_enabled` and
   `advisory_inspector_qualification` both ship off.
 
-
 ## [1.453.0] - 2026-09-14
 
 ### Added
@@ -33761,7 +33774,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - **Nothing changes on prod when this deploys.** `Quality Settings.quality_enabled` and
   `notifications_enabled` both ship off, and every entry point checks them first.
 
-
 ## [1.452.3] - 2026-09-14
 
 ### Fixed
@@ -33799,7 +33811,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   target that did not exist. Verified inert throughout: Project meta loaded all 227 fields and
   projects opened normally.
 
-
 ## [1.452.2] - 2026-09-14
 
 ### Fixed
@@ -33832,7 +33843,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   `override_doctype_class` entries are skipped by the sweep, which is the only reason
   `Quality Action` was never at risk.
 
-
 ## [1.452.1] - 2026-09-14
 
 ### Changed
@@ -33847,7 +33857,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   every historical citation in these files — the v1.280.3 backfill that logged a success while
   matching nothing, the v1.395.0 half-installed deploy, the v1.277.3 unsaveable settings page —
   points at a real release and would have become fiction if shifted with the rest.
-
 
 ## [1.452.0] - 2026-09-14
 
@@ -33892,7 +33901,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - The claim query carries **no date comparison**. A `<` on a nullable datetime silently matches
   every NULL row through Frappe's coalesce sentinel - and "resolved a while ago" is not the rule
   anyway. The rule is "resolved and not yet re-checked".
-
 
 ## [1.451.0] - 2026-09-14
 
@@ -33943,7 +33951,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   in both tables on 2026-09-14, so they remap nothing today; they log their counts anyway,
   because a patch that matched nothing commits and writes its `tabPatch Log` row
   indistinguishably from one that did the work. Neither raises.
-
 
 ## [1.450.0] - 2026-09-14
 
@@ -34003,7 +34010,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   fixes forward, which is F. `Carried Action` is already in the `source` vocabulary because
   adding a Select option once rows exist is a data migration, not an edit.
 
-
 ## [1.449.0] - 2026-09-14
 
 ### Added
@@ -34049,7 +34055,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - Nothing generates an inspection yet; that is sub-phase D. A milestone is a declaration of
   intent that a person acts on, and `trigger_basis` is read by nothing.
 
-
 ## [1.448.1] - 2026-09-14
 
 ### Changed
@@ -34057,7 +34062,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - WI-075's work item records what actually shipped: A, B1 and B2 (v1.444.0 → v1.446.0), B
   split into schema and wiring, and the decision to leave the hand-off step out for now.
   Docs only; no executable behaviour changes.
-
 
 ## [1.448.0] - 2026-09-14
 
@@ -34088,7 +34092,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - The guard is `frappe.db.has_column("Project", ...)` — a **DocType** name, not `"tabProject"`.
   It prefixes `tab` itself and raises `TableMissingError` on an unknown table rather than
   returning False, so the table-name form is a guaranteed crash dressed up as a guard.
-
 
 ## [1.447.0] - 2026-09-14
 
@@ -34127,7 +34130,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - At most one locked scope per project is enforced in `before_submit` and not by a unique
   index: a cancelled or amended row keeps its name and its `project`, so a database constraint
   would refuse the legitimate re-lock after an amendment. `docstatus = 1` is the real predicate.
-
 
 ## [1.446.0] - 2026-09-14
 
@@ -34185,7 +34187,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   project, no milestone, no pass/fail and no photo. See
   [ADR-0012](decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md). The
   other seven core Quality DocTypes are reused and are linked from the new workspace.
-
 
 ## [1.445.0] - 2026-09-14
 
@@ -34355,7 +34356,6 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   PRJ-00759 carries three. The section uses status **and** `per_received`, the same rule
   `get_receivable_purchase_orders` uses. The Products section deliberately does not filter:
   it asks what was bought for the job, and a delivered order is the best answer to that.
-
 
 ## [1.443.0] - 2026-09-14
 
@@ -43456,7 +43456,6 @@ for the standing items (GSC grant, Finance calendar share, MDM credentials).
   a caller that does not exist. Verified by removing the new wiring and confirming all
   six reappear as orphans.
 
-
 ## [1.333.0] - 2026-08-19
 
 ### Fixed
@@ -43512,7 +43511,6 @@ for the standing items (GSC grant, Finance calendar share, MDM credentials).
   flag is read, only a submitted `Competent` counts, the lookup is course-scoped not
   version-scoped, an unmigrated site can still finish) to a specific file, and the move made
   them fail loudly rather than silently stop checking anything.
-
 
 ## [1.332.0] - 2026-08-19
 
@@ -44184,7 +44182,6 @@ was already satisfied by `backfill_po_order_stage` in v1.289.0.
   `_call_as` now impersonates **only when the target differs from the session user**. The
   drafter is already running as the requester and needs no impersonation at all; the breakdown
   still gets it, and still runs in a job where it is harmless.
-
 
 ## [1.325.0] - 2026-08-17
 
@@ -47589,7 +47586,6 @@ from that.
   hits, so it is recorded in the exemption block rather than smuggled in here.
 - The staleness check is worth naming on its own: it refuses a waiver that matches no query,
   because one covering nothing today silently covers whatever later takes the name.
-
 
 ## [1.289.4] - 2026-08-14
 

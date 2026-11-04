@@ -87,6 +87,21 @@ class TestTheTabs(unittest.TestCase):
 		self.assertLess(tabs, myday)
 		self.assertNotRegex(MP_CSS.read_text(encoding="utf-8"), r"\.mp-seg\s*\{[^}]*\border:")
 
+	def test_the_tabs_keep_the_right_end_when_the_bar_wraps(self):
+		# v1.792.0: on a laptop-width window the bar wraps and a wrapped line has no spacer, so the tabs
+		# sat at its left. An auto left margin on the segment takes the slack; the phone's compact row
+		# resets it, and the Calendar's Week/Month switch (and My day) keep none, so they stay beside
+		# the tabs instead of sharing the slack.
+		for css, seg in ((PP_CSS, "pp"), (MP_CSS, "mp")):
+			with self.subTest(planner=seg):
+				text = css.read_text(encoding="utf-8")
+				rules = re.findall(r"\.%s-toolbar > \.%s-seg\s*\{([^}]*)\}" % (seg, seg), text)
+				self.assertEqual(len(rules), 2, "one desktop rule and one phone reset")
+				self.assertIn("margin-left: auto;", rules[0])
+				self.assertIn("margin-left: 0;", rules[1])
+				self.assertLess(text.index("margin-left: auto;"), text.index("@media (max-width: 767px)"))
+		self.assertRegex(PP_CSS.read_text(encoding="utf-8"), r"\.pp-toolbar > \.pp-seg \+ \.pp-seg\s*\{\s*margin-left: 0;")
+
 	def test_the_phones_filters_and_tools_button_still_comes_last(self):
 		# init_toolbar appends it to the bar after build_shell has placed the tabs.
 		self.assertIn('class="btn btn-default btn-sm pp-tb-more"', _code(PP_JS))
