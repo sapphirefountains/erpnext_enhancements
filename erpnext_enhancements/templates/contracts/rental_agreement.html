@@ -1,4 +1,4 @@
-<h3><b>RENTAL AGREEMENT</b></h3>
+<h3><b>EVENTS AGREEMENT</b></h3>
 <p><b>Water Feature &amp; Fountain Equipment Rental</b></p>
 <p><b>Sapphire Fountains, LLC</b></p>
 <p>85 W 300 S, Bountiful, UT 84010</p>
@@ -9,7 +9,7 @@
 <h1>EQUIPMENT DESCRIPTION</h1>
 <table class="ct-table">{% for item in doc.equipment_items %}<tr><td><b>Item {{ loop.index }} – Description:</b></td><td>{{ fill(item.description, 45) }}</td></tr><tr><td><b>Item {{ loop.index }} – Serial / ID #:</b></td><td>{{ fill(item.serial_id, 45) }}</td></tr>{% endfor %}{% if not doc.equipment_items %}{% for i in [1, 2, 3] %}<tr><td><b>Item {{ i }} – Description:</b></td><td>{{ blank(45) }}</td></tr><tr><td><b>Item {{ i }} – Serial / ID #:</b></td><td>{{ blank(45) }}</td></tr>{% endfor %}{% endif %}<tr><td><b>Additional Equipment:</b></td><td>(see attached equipment list if needed)</td></tr></table>
 <h1>1. PARTIES</h1>
-<p>This Rental Agreement (&quot;Agreement&quot;) is entered into between Sapphire Fountains, LLC (&quot;Owner&quot;) and the Renter identified above (&quot;Renter&quot;). Owner agrees to rent the equipment described above (collectively, the &quot;Equipment&quot;) to Renter under the terms and conditions set forth herein.</p>
+<p>This Events Agreement (&quot;Agreement&quot;) is entered into between Sapphire Fountains, LLC (&quot;Owner&quot;) and the Renter identified above (&quot;Renter&quot;). Owner agrees to rent the equipment described above (collectively, the &quot;Equipment&quot;) to Renter under the terms and conditions set forth herein.</p>
 <h1>2. RENTAL PERIOD</h1>
 <p class="ct-clause"><span class="ct-num">2.1</span>The rental period begins on the Rental Start Date and ends on the Rental End Date identified above (&quot;Rental Period&quot;). Equipment must be returned or made available for pickup by 5:00 PM on the Rental End Date unless a written extension is agreed upon in advance.</p>
 <p class="ct-clause"><span class="ct-num">2.2</span>If Renter retains the Equipment beyond the Rental End Date without a written extension, Renter shall be charged the applicable daily rental rate for each day (or part thereof) of overholding, in addition to any other remedies available to Owner. {{ initial('overholding', 'Daily charges for keeping the Equipment past the Rental End Date') }}</p>
@@ -94,7 +94,7 @@
 <p>Owner Representative: {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
 <p>Renter (or Authorized Agent): {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
 <h1>SIGNATURES</h1>
-<p>By signing below, the Parties agree to be bound by the terms of this Rental Agreement.</p>
+<p>By signing below, the Parties agree to be bound by the terms of this Events Agreement.</p>
 <p><b>Sapphire Fountains, LLC (Owner)</b></p>
 <p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.countersigned_on, 30) }}</p>
 <p>Print Name: {{ fill(signature.countersigned_by) }}</p>

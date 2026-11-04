@@ -300,7 +300,7 @@ def _maintenance_payment(doc):
 
 
 # ---------------------------------------------------------------------------
-# Rental Agreement
+# Events Agreement (template_key rental; "Rental Agreement" until v1.783.0)
 # ---------------------------------------------------------------------------
 
 
@@ -468,7 +468,7 @@ def _owner(doc):
 
 
 # ---------------------------------------------------------------------------
-# Mutual Non-Disclosure Agreement
+# Mutual Non-Disclosure Agreement (hidden from the pickers since v1.783.0)
 # ---------------------------------------------------------------------------
 
 
@@ -516,7 +516,7 @@ def _nda(doc):
 
 
 # ---------------------------------------------------------------------------
-# Architect Agreement
+# Design Agreement (template_key architect; "Architect Agreement" until v1.783.0)
 # ---------------------------------------------------------------------------
 
 
@@ -591,7 +591,7 @@ def _architect(doc):
 
 
 # ---------------------------------------------------------------------------
-# Employee-Contractor Agreement
+# Employee-Contractor Agreement (hidden from the pickers since v1.783.0)
 # ---------------------------------------------------------------------------
 
 
