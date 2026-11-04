@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emails and Files mixed in, her Account at row 31. The index itself held all of her records; the
   box was the problem.
   Nik picked the features and record types on 2026-11-04:
-  - **Records first, as you type.** `api/desk_search.search` (GET, read-only, runs as the person
+  - **Records first, as you type.** `api/desk_search.search` (POST, read-only, runs as the person
     typing) reads the name, phone and email columns of Contact and Lead, Customer, Project,
     Opportunity, Quotation, Sales Order, Sales Invoice, Serial No, Sapphire Maintenance Contract and
     Record, Supplier and Item, two characters up, 120 ms after the last key. The same queries take
@@ -72,15 +72,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list take clicks on the chips and links before Awesomplete selects the row. Every step falls back
   to frappe's own list or row on an error. The request is a plain `fetch`; an answer for older text
   never replaces a newer one.
-  **Enter** opens the highlighted row: once records have arrived that is the best record. Until then
-  (the first ~150 ms) it is still "Search for …", so a fast Enter opens the full results as before;
-  "Search everything for …" stays in the list, and Ctrl+G opens the full results at any time.
+  **Enter** opens the highlighted row: once the answer for the text in the box has arrived, that is the
+  best record. Until then (about 150 ms after the last key) "Search for …" leads, so a fast Enter
+  opens the full results as before, and the last answer's records stay in view below it rather than
+  blinking out. An answer for older text never sits on top, where Enter would open a match for what
+  the person typed a moment ago. A row picked with the arrow keys stays picked when a later reply
+  redraws the list (Awesomplete's `evaluate()` puts the highlight back on row 0 at every assignment),
+  and the box forgets its answer when it closes or opens (frappe clears the input with
+  `$input.val("")`, which fires no input event). "Search everything for …" stays in the list, and
+  Ctrl+G opens the full results at any time.
+  **Changed in review, before merge** (independent review of PR #1425):
+  - **POST, not GET.** The text is names, phone numbers and emails, and prod's web tier logs every
+    request line; the request carries it in the body with the CSRF token. It still writes nothing.
+  - **The Error Log survives.** frappe 16.53's `sync_database` rolls back every GET (`app.py`), so
+    the once-an-hour "Desk search: <doctype> not searched" row was never kept while the Redis key
+    that silences it was; `log_error(..., defer_insert=True)` queues it for the scheduler instead.
+  - **Restricted readers find their rows.** The 25-row cap is applied before the permission filter,
+    so someone limited by User Permissions or a permission-query hook saw nothing when the 25 best
+    matches were others'. It now reads up to four pages of 25 while permissions keep fewer than
+    25; for anyone unrestricted the first page is kept whole and it is one query, as before.
+  - **Canceled maintenance visits are left out** (Sapphire Maintenance Record is submittable).
+  - **"See all" on a capped group** opens the list filtered by the text on its title column and says
+    no number, where it said "See all 25+" and listed only the 25 names read.
+  - **New tabs keep their filters.** Related and see-all links carry their filters in the href, the
+    way frappe's router writes them, and a Ctrl/Cmd/Shift click is left to the browser: frappe's own
+    new-tab path kept the filters through localStorage but left `frappe.route_options` set in the
+    current tab for the next list it opened, and a middle click got the bare list.
+  - **Titles are escaped** on the path where frappe's renderer would draw a row (a fallback).
+  - **Rate-limited** to 600 requests a minute per IP (frappe's limiter keys by IP or a form field,
+    not by user, and the office shares one address).
   **Checked:** the generated SQL ran read-only on prod for that first name, her phone number,
   "PRJ-707" and "58"; the endpoint ran locally over her real candidate rows (kept out of the repo);
   and the script ran in the real 16.53 box
   on prod (injected into one tab, its answer replayed from that run): records first, chips, related
   links, "See all", Enter opening her Contact, "4 projects" opening the filtered list, Back, recents,
-  and the phone layout. Not run on a bench: no Frappe integration job exists (see CLAUDE.md).
+  and the phone layout; after the review, the same way: "Search for …" leading while an answer was
+  pending, an arrowed pick kept through a redraw, POST only, filtered hrefs, and a reopened box with
+  no stale rows. Not run on a bench: no Frappe integration job exists (see CLAUDE.md).
 
 ### Removed
 - **The awesomebar patch in `erpnext_enhancements.js`** that injected `api/search.search_global_docs`

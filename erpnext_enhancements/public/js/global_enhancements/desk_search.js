@@ -21,10 +21,12 @@
  *   - Opening the box empty lists the records you opened last, on this browser.
  *   - Phones get the same rows, wrapped for a narrow screen.
  *
- * Enter opens the highlighted row. Once records have arrived that is the best record; until then
- * (the first ~150 ms) it is frappe's "Search for ..." row as before, so a fast Enter still opens
- * the full results. "Search everything for ..." stays in the list below the records, and Ctrl+G
- * opens the full results at any time.
+ * Enter opens the highlighted row. Once the answer for the text in the box has arrived that is the
+ * best record. Until then frappe's "Search for ..." row is first, so a fast Enter opens the full
+ * results, and the last answer's records stay in view below it rather than blinking out; an answer
+ * for older text never sits at the top where Enter would open it. A row picked with the arrow keys
+ * stays picked when the list is redrawn. "Search everything for ..." stays in the list below the
+ * records, and Ctrl+G opens the full results at any time.
  *
  * How it hooks in, and why it cannot break search: frappe 16.53 has no client extension point for
  * the box's rows. This wraps AwesomeBar.prototype.setup_event_listeners and, once frappe has made
@@ -33,7 +35,8 @@
  * callback, our own fetch), its `item` renderer draws our rows, and capture-phase listeners on the
  * list take clicks on our buttons before Awesomplete selects the row. Every step falls back to
  * frappe's own list or row if anything throws. The request is a plain fetch, never frappe.call,
- * so a failed search can never pop a dialog while someone is typing.
+ * so a failed search can never pop a dialog while someone is typing; it is a POST with the CSRF
+ * token, so the names, phones and emails typed never reach a logged URL.
  *
  * Routing goes through frappe.set_route, which pushes a history entry (never break Back).
  *
@@ -171,7 +174,8 @@
 		((results && results.groups) || []).forEach((group) => {
 			(group.rows || []).forEach((row, i) => {
 				out.push({
-					label: row.title,
+					// escaped: frappe's renderer draws `label` as HTML if ours ever falls back to it
+					label: escape_html(row.title),
 					value: (row.type || row.doctype) + ": " + row.title + " · " + row.name,
 					route: row.route,
 					match: row.title,
@@ -197,7 +201,7 @@
 
 	function recent_options(recents) {
 		return (recents || []).slice(0, RECENT_SHOW).map((entry, i) => ({
-			label: entry.t || entry.n,
+			label: escape_html(entry.t || entry.n),
 			value: t("Recent") + ": " + (entry.t || entry.n) + " · " + entry.d + " " + entry.n,
 			route: ["Form", entry.d, entry.n],
 			match: entry.t || entry.n,
@@ -214,6 +218,10 @@
 				heading: i === 0 ? { label: t("Recent") } : null,
 			},
 		}));
+	}
+
+	function same_text(a, b) {
+		return normalize(a).toLowerCase() === normalize(b).toLowerCase();
 	}
 
 	function copy_of(option, extra) {
@@ -265,7 +273,12 @@
 				const help_rows = help.map((o, i) =>
 					i === 0 ? copy_of(o, { _ee_heading: { label: t("Knowledge base") } }) : o
 				);
-				const search_all = search_row
+				// The answer is for this text, or for text the person has typed past (kept so the
+				// list does not blink while the next answer loads). Only a fresh answer may lead:
+				// otherwise "Search for ..." stays first, where autoFirst puts Enter.
+				const fresh = same_text(ctx.results.txt, txt);
+				const lead = !fresh && search_row ? [search_row] : [];
+				const search_all = fresh && search_row
 					? [
 							copy_of(search_row, {
 								label:
@@ -277,8 +290,8 @@
 					  ]
 					: [];
 				ordered = names_a_screen(screens, txt)
-					? top_screens.concat(records, help_rows, tools, search_all)
-					: records.concat(help_rows, tools, search_all, top_screens);
+					? lead.concat(top_screens, records, help_rows, tools, search_all)
+					: lead.concat(records, help_rows, tools, search_all, top_screens);
 			}
 		}
 		return ordered.map((o, i) => {
@@ -385,6 +398,23 @@
 		}
 	}
 
+	/** A link's href with its filters as frappe's router writes them (router.js), so a new tab opened
+	 * by Ctrl/Cmd/Shift or the middle button arrives filtered: frappe reads the query string into
+	 * route_options and the list view parses a JSON array value. */
+	function link_href(link) {
+		const base = desk_href(link.route);
+		const opts = link.route_options || {};
+		const query = Object.keys(opts)
+			.map(
+				(key) =>
+					key +
+					"=" +
+					encodeURIComponent(opts[key] !== null && typeof opts[key] === "object" ? JSON.stringify(opts[key]) : String(opts[key]))
+			)
+			.join("&");
+		return query && base !== "#" ? base + "?" + query : base;
+	}
+
 	function el(tag, cls, html) {
 		const node = root.document.createElement(tag);
 		if (cls) node.className = cls;
@@ -397,12 +427,11 @@
 		head.appendChild(el("span", "ee-ds-head-label", escape_html(heading.label)));
 		const more = heading.total > (heading.shown || 0);
 		if (more) {
-			const label = heading.more
-				? t("See all {0}+", [heading.total])
-				: t("See all {0}", [heading.total]);
+			// a capped group's count is only what was read, so it says no number (finding 7a)
+			const label = heading.more ? t("See all") : t("See all {0}", [heading.total]);
 			const a = el("a", "ee-ds-action ee-ds-seeall", escape_html(label));
 			if (heading.see_all) {
-				a.href = desk_href(heading.see_all.route);
+				a.href = link_href(heading.see_all);
 				a._ee_link = heading.see_all;
 			} else {
 				a.href = "#";
@@ -458,7 +487,7 @@
 				a.innerHTML =
 					(link.kind ? '<span class="ee-ds-rel-kind">' + escape_html(link.kind) + "</span> " : "") +
 					escape_html(link.label);
-				a.href = desk_href(link.route);
+				a.href = link_href(link);
 				a._ee_link = link;
 				rel.appendChild(a);
 			});
@@ -479,15 +508,16 @@
 		}
 	}
 
-	function follow(bar, link, event) {
+	function follow(bar, link) {
 		const fr = root.frappe;
 		if (link.search_all != null) {
 			close_box(bar);
 			fr.searchdialog.search.init_search(link.search_all, "global_search");
 			return;
 		}
+		// A new tab is the browser's job (the href carries the filters); frappe's own new-tab path
+		// would leave route_options set in this tab for the next list it opens.
 		if (link.route_options) fr.route_options = link.route_options;
-		if (event && (event.ctrlKey || event.metaKey)) fr.open_in_new_tab = true;
 		close_box(bar);
 		fr.set_route(link.route);
 	}
@@ -522,6 +552,17 @@
 			},
 			set(value) {
 				let out = value;
+				let keep = null;
+				try {
+					// Every assignment re-evaluates, which puts the highlight back on row 0. A row the
+					// person arrowed to (index > 0) for the same text is found again after it.
+					const sug = this.suggestions || [];
+					if (this.index > 0 && sug[this.index] && state.list_txt === current_text(this)) {
+						keep = sug[this.index].value;
+					}
+				} catch (e) {
+					keep = null;
+				}
 				try {
 					const txt = current_text(this);
 					if (!txt) state.recents = read_recents();
@@ -538,6 +579,15 @@
 					out = value;
 				}
 				desc.set.call(this, out);
+				state.list_txt = current_text(this);
+				if (keep != null) {
+					try {
+						const i = (this.suggestions || []).findIndex((x) => x.value === keep);
+						if (i > 0 && typeof this.goto === "function") this.goto(i);
+					} catch (e) {
+						/* the highlight stays on row 0 */
+					}
+				}
 			},
 		});
 
@@ -591,8 +641,13 @@
 					if (node.classList.contains("ee-ds-call") || node.classList.contains("ee-ds-mail")) {
 						return; // the browser opens the phone or mail app
 					}
+					const link = node._ee_link;
+					const new_tab = event.ctrlKey || event.metaKey || event.shiftKey;
+					if (new_tab && link && link.search_all == null) {
+						return; // the browser opens the href, filters and all, in a new tab
+					}
 					event.preventDefault();
-					if (node._ee_link) follow(bar, node._ee_link, event);
+					if (link) follow(bar, link);
 				},
 				true
 			);
@@ -603,11 +658,18 @@
 			const seq = state.seq;
 			if (state.controller) state.controller.abort();
 			state.controller = typeof root.AbortController === "function" ? new root.AbortController() : null;
-			const url = "/api/method/" + METHOD + "?txt=" + encodeURIComponent(txt);
-			root.fetch(url, {
-				method: "GET",
+			const fr = root.frappe || {};
+			const body = new root.URLSearchParams();
+			body.set("txt", txt);
+			root.fetch("/api/method/" + METHOD, {
+				method: "POST",
 				credentials: "same-origin",
-				headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+				headers: {
+					Accept: "application/json",
+					"X-Requested-With": "XMLHttpRequest",
+					"X-Frappe-CSRF-Token": fr.csrf_token || "",
+				},
+				body: body,
 				signal: state.controller ? state.controller.signal : undefined,
 			})
 				.then((r) => (r.ok ? r.json() : null))
@@ -621,6 +683,19 @@
 					/* aborted or offline: frappe's own rows stand */
 				});
 		};
+
+		const forget = () => {
+			clearTimeout(state.timer);
+			state.seq += 1;
+			state.results = null;
+			state.list_txt = null;
+			if (state.controller) state.controller.abort();
+		};
+		// frappe clears the input with $input.val("") on a pick, which fires no input event; the box
+		// closes right after, and opens again empty.
+		if (bar.search_modal && typeof bar.search_modal.on === "function") {
+			bar.search_modal.on("hide.bs.modal show.bs.modal", forget);
+		}
 
 		const input = aw.input;
 		if (input) {
@@ -682,6 +757,8 @@
 		compose,
 		push_recent,
 		results_for,
+		same_text,
+		link_href,
 		install,
 		decorate,
 		remember,

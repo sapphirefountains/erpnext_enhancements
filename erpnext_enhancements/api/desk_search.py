@@ -48,12 +48,22 @@ import re
 
 import frappe
 from frappe import _
+from frappe.rate_limiter import rate_limit
 from frappe.utils import cstr, flt, fmt_money, formatdate
 
 MIN_CHARS = 2
 MAX_CHARS = 140
 # Candidate rows read per doctype before ranking; a group that hit it says "25+".
 CANDIDATES = 25
+# Pages of CANDIDATES read for one doctype while the person's permissions keep fewer than
+# CANDIDATES of them: the cap is applied before the permission filter, so someone restricted by
+# User Permissions or a permission-query hook would otherwise see nothing whenever the 25 best
+# matches belong to others (review of PR #1425).
+CANDIDATE_PAGES = 4
+# Requests per IP per minute. Keyed by IP because frappe's limiter keys by IP or by a form field,
+# not by user; the office shares one address, so this is generous for people and still a ceiling
+# for a script.
+RATE_LIMIT = 600
 # Rows shown: the first group gets one more than the rest.
 FIRST_GROUP_ROWS = 4
 GROUP_ROWS = 3
@@ -249,6 +259,7 @@ SPECS = (
 		"title": ("visit_label", "customer"),
 		"match": ("name", "customer", "legacy_name", "visit_label", "serial_no", "project"),
 		"extra": ("customer", "visit_date", "scheduled_visit_date", "workflow_state"),
+		"submittable": True,  # is_submittable: a canceled visit is docstatus 2
 	},
 	{
 		"doctype": "Supplier",
@@ -378,7 +389,7 @@ def _q(column):
 def build_query(spec, parsed, child_tables=()):
 	"""(sql, values) for one doctype's candidates. ``spec`` is already cut to real columns
 	(``_available``); ``child_tables`` names the child doctypes that exist."""
-	values = {"limit": CANDIDATES}
+	values = {"limit": CANDIDATES, "offset": 0}
 	table = "`tab" + spec["doctype"] + "`"
 	text_cols = spec["match"] + spec["email"]
 	child_email = spec.get("child_email") if spec.get("child_email", (None,))[0] in child_tables else None
@@ -441,7 +452,7 @@ def build_query(spec, parsed, child_tables=()):
 		f" from {table} where {where}"
 		f" order by _number_hit desc, case when {_q(title)} like %(phrase_start)s then 0"
 		f" when {_q(title)} like %(phrase_word)s then 1 else 2 end, modified desc"
-		" limit %(limit)s"
+		" limit %(limit)s offset %(offset)s"
 	)
 	return sql, values
 
@@ -601,8 +612,18 @@ def rank_rows(rows):
 	return sorted(rows, key=lambda r: r["score"], reverse=True)
 
 
-def build_groups(rows, capped=()):
-	"""Group, order and cut the rows. ``capped`` names doctypes that returned CANDIDATES rows."""
+def _see_all(doctype, every, capped, text):
+	"""The list a group's "See all" opens. Everything that matched, by name, when we read it all;
+	when the read was capped, the list filtered by the text on the title column, since a list of
+	the names we happened to read would stop at the cap and call itself "all"."""
+	if not capped or not text:
+		return {"route": ["List", doctype], "route_options": {"name": ["in", [r["name"] for r in every]]}}
+	titles = every[0]["_spec"].get("title") or ("name",)
+	return {"route": ["List", doctype], "route_options": {titles[0]: ["like", "%" + text + "%"]}}
+
+
+def build_groups(rows, capped=(), text=""):
+	"""Group, order and cut the rows. ``capped`` names doctypes with more matches than were read."""
 	by_group = {}
 	for row in rows:
 		by_group.setdefault(row["_spec"]["group"], []).append(row)
@@ -634,10 +655,7 @@ def build_groups(rows, capped=()):
 		group["see_all"] = None
 		if len(every) > shown and len(group["doctypes"]) == 1:
 			(doctype,) = group["doctypes"]
-			group["see_all"] = {
-				"route": ["List", doctype],
-				"route_options": {"name": ["in", [r["name"] for r in every]]},
-			}
+			group["see_all"] = _see_all(doctype, every, doctype in set(capped), text)
 		del group["doctypes"]
 	return groups
 
@@ -725,7 +743,12 @@ def _report_once(doctype):
 		frappe.cache.set_value(key, 1, expires_in_sec=3600)
 	except Exception:
 		pass
-	frappe.log_error(title="Desk search: " + doctype + " not searched", message=frappe.get_traceback())
+	# defer_insert: the row is queued in Redis and written by the scheduler, so it survives a request
+	# whose transaction rolls back (frappe 16.53's sync_database rolls back every GET, and this
+	# endpoint was GET until the PR #1425 review moved it to POST).
+	frappe.log_error(
+		title="Desk search: " + doctype + " not searched", message=frappe.get_traceback(), defer_insert=True
+	)
 
 
 def _contact_children(names, child_tables):
@@ -761,23 +784,32 @@ def search_doctype(spec, parsed, child_tables):
 	sql, values = build_query(spec, parsed, child_tables)
 	if not sql:
 		return [], False
-	candidates = frappe.db.sql(sql, values, as_dict=True)
-	if not candidates:
-		return [], False
-	allowed = set(
-		frappe.get_list(
-			spec["doctype"],
-			filters={"name": ["in", [c["name"] for c in candidates]]},
-			pluck="name",
-			limit_page_length=0,
+	# The cap applies before the permission filter, so read further pages while the person's
+	# permissions leave fewer than CANDIDATES: for anyone unrestricted the first page is kept whole
+	# and this is one query, as before.
+	kept, capped = [], False
+	for page in range(CANDIDATE_PAGES):
+		values["offset"] = page * CANDIDATES
+		candidates = frappe.db.sql(sql, values, as_dict=True)
+		if not candidates:
+			break
+		allowed = set(
+			frappe.get_list(
+				spec["doctype"],
+				filters={"name": ["in", [c["name"] for c in candidates]]},
+				pluck="name",
+				limit_page_length=0,
+			)
 		)
-	)
-	candidates = [c for c in candidates if c["name"] in allowed]
+		kept.extend(c for c in candidates if c["name"] in allowed)
+		capped = len(candidates) >= CANDIDATES  # a full page: there may be more beyond it
+		if not capped or len(kept) >= CANDIDATES:
+			break
 	children = {}
 	if spec["doctype"] == "Contact":
-		children = _contact_children([c["name"] for c in candidates], child_tables)
-	rows = [make_row(spec, c, parsed, children.get(c["name"])) for c in candidates]
-	return rows, len(candidates) >= CANDIDATES
+		children = _contact_children([c["name"] for c in kept], child_tables)
+	rows = [make_row(spec, c, parsed, children.get(c["name"])) for c in kept]
+	return rows, capped
 
 
 def _child_tables():
@@ -795,9 +827,14 @@ def _public(row):
 	return {k: v for k, v in row.items() if not k.startswith("_") and k != "modified"}
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=RATE_LIMIT, seconds=60)
 def search(txt=None):
-	"""Grouped record matches for the Desk search box. Read-only; runs as the person typing."""
+	"""Grouped record matches for the Desk search box. Read-only; runs as the person typing.
+
+	POST, though it writes nothing: the text is names, phone numbers and emails, and a GET would
+	put it in the query string of every request line prod's web tier logs (review of PR #1425).
+	"""
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError
 	parsed = parse_query(txt)
@@ -814,7 +851,7 @@ def search(txt=None):
 		rows.extend(found)
 		if hit_cap:
 			capped.append(spec["doctype"])
-	groups = build_groups(rows, capped)
+	groups = build_groups(rows, capped, parsed["text"])
 	for group in groups:
 		if group["key"] not in ("people", "accounts"):
 			continue

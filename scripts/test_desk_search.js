@@ -28,6 +28,11 @@
  *  12. A fetch answer for older text never replaces the newer one.
  *  13. install() is idempotent and leaves a box without a list accessor alone.
  *  14. remember() records a saved form under the person's key, never a new or child document.
+ *  15. Review of PR #1425: an answer for older text never leads the list (Enter would open it); an
+ *      arrowed pick survives a redraw; the box forgets its answer when it closes or opens; titles
+ *      are escaped for frappe's renderer; the request is a POST with the CSRF token and no text in
+ *      the URL; related and see-all hrefs carry their filters, and a Ctrl/Cmd/Shift click is left
+ *      to the browser; a capped group's see-all says no number.
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
  */
@@ -193,6 +198,7 @@ function makeWorld(opts) {
 	});
 	const frappe = {
 		session: { user: opts.user || "pat@x" },
+		csrf_token: "csrf-123",
 		route_options: null,
 		open_in_new_tab: false,
 		datetime: { now_datetime: () => "2026-11-04 10:00:00", prettyDate: () => "2 hours ago" },
@@ -222,6 +228,7 @@ function makeWorld(opts) {
 		clearTimeout: () => {},
 		_timers: [],
 		encodeURIComponent,
+		URLSearchParams,
 		document,
 		jQuery: jq,
 		frappe,
@@ -245,12 +252,18 @@ function makeAwesomplete(world) {
 		set list(v) {
 			this._list = v;
 			this.evaluated = (this.evaluated || 0) + 1;
-			this.rendered = v.slice().sort((a, b) => b.index - a.index).map((o) => this.item({ label: o.index, value: o.value }, this.input.value, 0));
+			const sorted = v.slice().sort((a, b) => b.index - a.index);
+			this.suggestions = sorted.map((o) => ({ label: o.index, value: o.value }));
+			this.index = this.suggestions.length ? 0 : -1;
+			this.rendered = sorted.map((o) => this.item({ label: o.index, value: o.value }, this.input.value, 0));
 			this.ul.children = [];
 			this.rendered.forEach((li) => this.ul.appendChild(li));
 		}
 		get list() {
 			return this._list;
+		}
+		goto(i) {
+			this.index = i;
 		}
 		get_item(value) {
 			return this._list.find((o) => o.value === value);
@@ -449,7 +462,14 @@ console.log("11-12. decorate: the setter, the renderer, the clicks, a stale fetc
 		awesomplete: aw,
 		options: frappeOptions(),
 		deduplicate: (o) => o.slice(),
-		search_modal: { modal: (what) => (what === "hide" ? (hidden += 1) : null) },
+		search_modal: {
+			modal: (what) => (what === "hide" ? (hidden += 1) : null),
+			handlers: [],
+			on(events, fn) {
+				this.handlers.push([events, fn]);
+				return this;
+			},
+		},
 	};
 	api.decorate(bar);
 	check(aw._ee_desk_search === true && aw.ul.classList.contains("ee-ds-list"), "decorated once, list marked for the stylesheet");
@@ -464,7 +484,8 @@ console.log("11-12. decorate: the setter, the renderer, the clicks, a stale fetc
 	check(aw._list[0].value === "Search for Dana", "before the answer: frappe's list, Search first");
 
 	ctx._timers.shift()();
-	check(fetches.length === 1 && /desk_search\.search\?txt=Dana$/.test(fetches[0].url) && fetches[0].init.method === "GET", "a GET for the text");
+	check(fetches.length === 1 && /desk_search\.search$/.test(fetches[0].url) && fetches[0].init.method === "POST", "a POST, nothing typed in the URL");
+	check(fetches[0].init.body.get("txt") === "Dana" && fetches[0].init.headers["X-Frappe-CSRF-Token"] === "csrf-123", "the text in the body, with the CSRF token");
 	// The person types on before the first answer arrives.
 	aw.input.value = "Dana W";
 	input_listeners.forEach((l) => l.fn({}));
@@ -492,6 +513,25 @@ console.log("11-12. decorate: the setter, the renderer, the clicks, a stale fetc
 			const project = aw.rendered.find((r) => r.find("ee-ds-head") && r.find("ee-ds-head").innerHTML.includes("Projects"));
 			check(project.find("ee-ds-seeall").innerHTML === "See all 5", "see-all counts the group");
 
+			// an arrowed pick survives a redraw for the same text (the hook's reply, say)
+			aw.goto(2);
+			const picked = aw.suggestions[2].value;
+			aw.list = bar.options;
+			check(aw.index === 2 && aw.suggestions[aw.index].value === picked, "an arrowed pick stays picked when the list is redrawn");
+			aw.goto(0);
+			aw.list = bar.options;
+			check(aw.index === 0, "row 0 stays row 0");
+
+			// filters ride in the href, so a new tab keeps them; a Ctrl/Cmd/Shift click is the browser's
+			const rel_project = li.findAll("ee-ds-rel")[1];
+			check(rel_project.href === "/desk/list/project?customer=Example%20Residence", "a related link's href carries its filter: " + rel_project.href);
+			check(project.find("ee-ds-seeall").href === "/desk/list/project?name=" + encodeURIComponent(JSON.stringify(["in", ["PRJ-00433", "PRJ-00440"]])), "and so does see-all's");
+			const n_before = routes.length;
+			const ctrl = dispatch(aw.ul, "click", rel_project, { ctrlKey: true });
+			check(ctrl.stopped && !ctrl.prevented && routes.length === n_before && frappe.route_options === null, "a Ctrl-click opens the href in a new tab and leaves this tab's route_options alone");
+			const shift = dispatch(aw.ul, "click", rel_project, { shiftKey: true });
+			check(!shift.prevented && routes.length === n_before, "so does a Shift-click");
+
 			// a related link: routes with its filters, closes the box, never selects the row
 			const before = aw.selected.length;
 			dispatch(aw.ul, "mousedown", rels[1]);
@@ -518,6 +558,15 @@ console.log("11-12. decorate: the setter, the renderer, the clicks, a stale fetc
 			const row_click = dispatch(aw.ul, "click", main);
 			check(!row_click.stopped && aw.selected[aw.selected.length - 1] === main, "a click on the row is Awesomplete's to select");
 
+			// the box forgets its answer when it closes (frappe clears the input without an input event)
+			const forget = bar.search_modal.handlers.find((h) => /hide\.bs\.modal/.test(h[0]) && /show\.bs\.modal/.test(h[0]));
+			check(!!forget, "the box listens for its own close and open");
+			forget[1]();
+			check(bar._ee_desk_search.results === null, "and drops the answer");
+			aw.input.value = "Da";
+			aw.list = frappeOptions();
+			check(!aw._list.some((o) => o._ee), "so two letters typed into the reopened box never show the old answer");
+
 			// a mixed group's see-all opens the full results
 			const mixed = { awesomplete: makeAwesomplete(world), options: [], deduplicate: (o) => o, search_modal: { modal() {} } };
 			api.decorate(mixed);
@@ -535,7 +584,37 @@ console.log("11-12. decorate: the setter, the renderer, the clicks, a stale fetc
 	});
 }
 
+function review_checks() {
+	console.log("15. review of PR #1425");
+	const { api } = makeWorld();
+	const stale = api.compose(frappeOptions(), { txt: "Dana W", results: results() });
+	check(stale[0].value === "Search for Dana" && /kbd/.test(stale[0].label), "an answer for older text: frappe's own Search row leads, Enter hint and all");
+	check(stale[1]._ee && stale[1]._ee.kind === "record", "the older records stay in view below it");
+	check(stale.filter((o) => o.value === "Search for Dana").length === 1, "and no second search row");
+	check(api.compose(frappeOptions(), { txt: "dana", results: results() })[0]._ee.kind === "record", "the same text in another case is the same answer");
+	const r = results();
+	r.groups[0].rows[0].title = "<img src=x onerror=a()>";
+	check(api.record_options(r)[0].label === "&lt;img src=x onerror=a()&gt;", "a record's label is escaped for frappe's renderer");
+	check(api.recent_options([{ d: "Project", n: "P-1", t: "<b>x</b>" }])[0].label === "&lt;b&gt;x&lt;/b&gt;", "and a recent one's");
+	check(api.link_href({ route: ["List", "Project"] }) === "/desk/list/project", "no filters, no query string");
+	check(api.link_href({ route: ["List", "Project"], route_options: { project_name: ["like", "%dana%"] } }) === "/desk/list/project?project_name=" + encodeURIComponent('["like","%dana%"]'), "a JSON filter is written the way frappe's router writes it");
+	const world = makeWorld();
+	const aw = makeAwesomplete(world);
+	const bar = { awesomplete: aw, options: [], deduplicate: (o) => o, search_modal: { modal() {} } };
+	world.api.decorate(bar);
+	aw.input.value = "Dana";
+	const capped = results();
+	capped.groups[1].more = true;
+	capped.groups[1].see_all = { route: ["List", "Project"], route_options: { project_name: ["like", "%Dana%"] } };
+	bar._ee_desk_search.results = capped;
+	aw.list = [];
+	const head = aw.rendered.find((x) => x.find("ee-ds-head") && x.find("ee-ds-head").innerHTML.includes("Projects"));
+	check(head.find("ee-ds-seeall").innerHTML === "See all", "a capped group's see-all says no number");
+}
+
 function finish() {
+	review_checks();
+
 	// ------------------------------------------------------------------ 13: install
 
 	console.log("13. install");

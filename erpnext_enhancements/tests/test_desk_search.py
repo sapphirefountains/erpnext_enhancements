@@ -81,14 +81,17 @@ class _Db:
 		return doctype in ("Contact Phone", "Contact Email")
 
 	def sql(self, query, values=None, as_dict=False):
-		self.queries.append((query, values))
+		self.queries.append((query, dict(values or {})))  # a copy: the paging loop reuses the dict
 		table = re.search(r"from `tab([^`]+)`", query).group(1)
 		if table in self.fail:
 			raise RuntimeError("boom")
 		if table in ("Contact Phone", "Contact Email"):
 			names = set(values["names"])
 			return [r for r in self.children.get(table, []) if r["parent"] in names]
-		return [dict(r) for r in self.rows.get(table, [])]
+		rows = self.rows.get(table, [])
+		offset = (values or {}).get("offset", 0)
+		limit = (values or {}).get("limit", len(rows))
+		return [dict(r) for r in rows[offset : offset + limit]]
 
 
 class _Frappe:
@@ -103,6 +106,7 @@ class _Frappe:
 		self.links = links or {}
 		self.counts = counts or {}
 		self.errors = []
+		self.deferred = []
 		self.get_list_calls = []
 
 	def has_permission(self, doctype, ptype="read"):
@@ -120,8 +124,9 @@ class _Frappe:
 	def get_all(self, doctype, filters=None, pluck=None, limit=None):
 		return list(self.links.get(filters.get("parent"), []))
 
-	def log_error(self, title=None, message=None):
+	def log_error(self, title=None, message=None, defer_insert=False):
 		self.errors.append(title)
+		self.deferred.append(defer_insert)
 
 	@staticmethod
 	def get_traceback():
@@ -152,6 +157,7 @@ def _module(fake=None):
 		"flt": lambda v: float(v or 0),
 		"fmt_money": lambda v, currency=None: f"${v:,.2f}",
 		"formatdate": lambda d: str(d),
+		"rate_limit": lambda **kw: (lambda fn: fn),
 	}
 	exec(compile(ast.Module(body=body, type_ignores=[]), str(API), "exec"), ns)
 	return ns
@@ -357,6 +363,10 @@ class TestQuery(unittest.TestCase):
 		self.assertIn("and docstatus < 2", sql)
 		sql, _values = self.build("Project", "dana")
 		self.assertNotIn("docstatus", sql)
+		sql, _values = self.build("Sapphire Maintenance Record", "dana")
+		self.assertIn(
+			"and docstatus < 2", sql, "a canceled maintenance visit is docstatus 2 (is_submittable)"
+		)
 
 	def test_best_title_first_in_the_candidates(self):
 		sql, values = self.build("Project", "dana whit")
@@ -428,19 +438,29 @@ class TestRowsAndGroups(unittest.TestCase):
 		rows = (
 			self.rows("Contact", CONTACTS) + self.rows("Customer", CUSTOMERS) + self.rows("Project", PROJECTS)
 		)
-		groups = NS["build_groups"](rows, capped=["Project"])
+		groups = NS["build_groups"](rows)
 		self.assertEqual([g["key"] for g in groups], ["people", "accounts", "projects"])
 		people, accounts, projects = groups
 		self.assertEqual([r["name"] for r in people["rows"]], ["Dana Whitfield", "Danae Corp"])
 		self.assertEqual(len(projects["rows"]), NS["GROUP_ROWS"])
 		self.assertEqual(projects["rows"][0]["name"], "PRJ-00744", "the open one first, then the newest")
 		self.assertEqual(projects["total"], 5)
-		self.assertTrue(projects["more"])
+		self.assertFalse(projects["more"])
 		self.assertEqual(projects["see_all"]["route"], ["List", "Project"])
 		self.assertEqual(
 			sorted(projects["see_all"]["route_options"]["name"][1]), sorted(p["name"] for p in PROJECTS)
 		)
 		self.assertIsNone(people["see_all"], "nothing hidden, no see-all")
+
+	def test_a_capped_group_sees_all_by_the_text(self):
+		"""Review of PR #1425: "See all 25+" opened a list of just the 25 names read."""
+		rows = self.rows("Project", PROJECTS)
+		(projects,) = NS["build_groups"](rows, capped=["Project"], text="Dana")
+		self.assertTrue(projects["more"])
+		self.assertEqual(
+			projects["see_all"],
+			{"route": ["List", "Project"], "route_options": {"project_name": ["like", "%Dana%"]}},
+		)
 
 	def test_the_first_group_gets_one_more_row(self):
 		rows = self.rows("Project", PROJECTS)
@@ -513,9 +533,15 @@ class TestEndpoint(unittest.TestCase):
 		fake = _Frappe(db, **kw)
 		return _module(fake)["search"](txt), fake, db
 
-	def test_it_is_a_read_only_get(self):
+	def test_it_is_a_read_only_post(self):
+		"""POST so the names, phones and emails typed never reach a logged request line; it writes
+		nothing all the same. Rate-limited per IP."""
 		src = read(API)
-		self.assertIn('@frappe.whitelist(methods=["GET"])\ndef search(txt=None):', src)
+		self.assertIn(
+			'@frappe.whitelist(methods=["POST"])\n@rate_limit(limit=RATE_LIMIT, seconds=60)\ndef search(txt=None):',
+			src,
+		)
+		self.assertIn("from frappe.rate_limiter import rate_limit", src)
 		for forbidden in (
 			"set_value(",
 			".save(",
@@ -564,6 +590,41 @@ class TestEndpoint(unittest.TestCase):
 		(call,) = [c for c in fake.get_list_calls if c[0] == "Project" and "name" in (c[1] or {})]
 		self.assertEqual(call[2], 0, "the permission read is not paged")
 
+	def test_a_restricted_reader_still_finds_their_rows_past_the_cap(self):
+		"""Review of PR #1425: the cap applied before the permission filter, so someone restricted by
+		User Permissions saw nothing when the 25 best matches were others'."""
+		many = [
+			{
+				"name": f"PRJ-{i:05d}",
+				"modified": f"2026-10-{1 + i % 28:02d}",
+				"project_name": f"Dana job {i}",
+				"status": "Active",
+			}
+			for i in range(60)
+		]
+		db = _Db(rows={"Project": many})
+		fake = _Frappe(db, allowed={"Project"}, readable={"Project": {"PRJ-00050", "PRJ-00055"}})
+		answer = _module(fake)["search"]("Dana")
+		(projects,) = answer["groups"]
+		self.assertEqual(sorted(r["name"] for r in projects["rows"]), ["PRJ-00050", "PRJ-00055"])
+		self.assertEqual(
+			[v["offset"] for _q, v in db.queries], [0, 25, 50], "three pages, the last one short"
+		)
+		self.assertFalse(projects["more"], "the last page was short: nothing more to see")
+
+	def test_an_unrestricted_reader_reads_one_page(self):
+		many = [
+			{"name": f"PRJ-{i:05d}", "modified": "2026-10-01", "project_name": f"Dana job {i}"}
+			for i in range(30)
+		]
+		db = _Db(rows={"Project": many})
+		answer = _module(_Frappe(db, allowed={"Project"}))["search"]("Dana")
+		(projects,) = answer["groups"]
+		self.assertEqual(len(db.queries), 1, "one query when the first page is all readable")
+		self.assertEqual(projects["total"], NS["CANDIDATES"])
+		self.assertTrue(projects["more"])
+		self.assertEqual(projects["see_all"]["route_options"], {"project_name": ["like", "%Dana%"]})
+
 	def test_one_failure_never_stops_the_rest_and_is_logged_once(self):
 		db = _Db(rows={"Contact": CONTACTS, "Project": PROJECTS}, fail={"Project"})
 		fake = _Frappe(db)
@@ -573,6 +634,9 @@ class TestEndpoint(unittest.TestCase):
 		ns["search"]("Dana W")
 		self.assertEqual(
 			fake.errors, ["Desk search: Project not searched"], "once per doctype per hour, not per keystroke"
+		)
+		self.assertEqual(
+			fake.deferred, [True], "deferred, so a rolled-back request cannot take the row with it"
 		)
 
 	def test_related_links(self):
@@ -682,9 +746,11 @@ class TestWiring(unittest.TestCase):
 	def test_it_asks_the_endpoint_quietly(self):
 		src = code(MODULE)
 		self.assertIn('"erpnext_enhancements.api.desk_search.search"', src)
-		self.assertIn("root.fetch(url", src)
+		self.assertIn('root.fetch("/api/method/" + METHOD, {', src)
 		self.assertNotIn("frappe.call(", src, "frappe.call pops a dialog on a server error")
-		self.assertIn('method: "GET"', src)
+		self.assertIn('method: "POST"', src)
+		self.assertIn('"X-Frappe-CSRF-Token": fr.csrf_token', src)
+		self.assertNotIn("?txt=", src, "nothing typed goes in a URL")
 
 	def test_it_wraps_the_box_frappe_builds(self):
 		src = code(MODULE)
