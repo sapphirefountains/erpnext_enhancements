@@ -1,5 +1,5 @@
 /**
- * The Desk module sidebar as an icon rail (v1.788.0; Nik, 2026-11-03, Mock C of the sidebar round).
+ * The Desk module sidebar as an icon rail (v1.790.0; Nik, 2026-11-03, Mock C of the sidebar round).
  *
  * Targets: the left Desk sidebar (the module's rows beside the dock) on every desk page, and a
  * bottom bar on phones. Loaded via: erpnext_enhancements.bundle.js (global), after

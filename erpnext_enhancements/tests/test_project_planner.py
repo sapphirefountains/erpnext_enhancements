@@ -1632,6 +1632,11 @@ class TestGetPlanner(unittest.TestCase):
 		# v1.753.0: what a tap opens for this caller (api/planner_open): Austin's Employee, the visit.
 		self.assertEqual([(r["name"], r["open_as"]) for r in data["resources"]], [("RES-1", "Employee")])
 		self.assertEqual({f["ref"]: (f.get("open"), f.get("projected")) for f in data["foreign"]}["SMR-1"], (True, False))
+		# v1.788.0: each foreign item carries its project (an ID) and its time slot, for the Calendar's
+		# order by project and the hover card's Time row.
+		for item in data["foreign"]:
+			self.assertIn("project", item)
+			self.assertIn("slot", item)
 		# P3: with the schedule columns present, each project says whether its schedule is published
 		# (this row has no value stored, which reads Draft).
 		self.assertEqual(

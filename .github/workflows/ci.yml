@@ -482,7 +482,7 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_breadcrumb_targets -v
       - name: Breadcrumb targets (executed, not grepped)
         run: node scripts/test_breadcrumb_targets.js
-      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.788.0, Nik
+      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.790.0, Nik
       # 2026-11-03, Mock C): one wrapped method (Sidebar.hides_when_collapsed) stops a collapse
       # from hiding the panel; the rows this person uses most come first, badges sit on the icons,
       # a Recent row and a phone bottom bar are added. The node step runs sidebar_rail.js against
@@ -4373,6 +4373,14 @@ jobs:
       # node is on PATH in this job, so the harness cannot skip here.
       - name: Planner taps open the record (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens -v
+      # Nikolas's six planner picks of 2026-11-03 (v1.788.0): the Lookahead's month band, "Open … in new tab"
+      # and Ctrl+Enter, the scroll kept over a redraw, the view tabs at the bar's right end, the Crew board's
+      # order and the hover card, and the pencil-only hours rule. Runs scripts/test_planner_six_picks.js
+      # against the real kit (records, popover) and both real page scripts, and pins the wiring (every
+      # redraw an arrow causes goes through the scroll keeper; the kit's one window.open is open_new_tab).
+      # node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner six picks of 2026-11-03 (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_six_picks -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

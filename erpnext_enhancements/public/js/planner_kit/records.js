@@ -8,6 +8,11 @@
  *   planner_kit.records.record_of(kind, item)   -> {doctype, name} | null
  *   planner_kit.records.open(record)            -> true when it is going there
  *   planner_kit.records.open_item(kind, item)   -> both at once
+ *   planner_kit.records.url(record)             -> "/desk/task/TASK-2026-00001": the Desk address `open`
+ *                                                  would route to, for a link or a new tab
+ *   planner_kit.records.open_new_tab(record)    -> the record in a new tab (Nikolas, 2026-11-03: "Open
+ *                                                  Link in New Tab for right click"); the planner, its
+ *                                                  history and its drafts stay as they are
  *
  * `kind` is what the planners already call their things:
  *
@@ -59,6 +64,16 @@ const text = (value) => (value == null ? "" : String(value));
 
 export function is_draft_name(name) {
 	return DRAFT_NEW.test(text(name));
+}
+
+// The Desk address of a record: what frappe.set_route("Form", doctype, name) opens, so a new tab lands
+// where a tap would. `slug` is frappe.router.slug where the router is loaded; without it the same
+// spelling (lower case, spaces to hyphens: "Sapphire Maintenance Record" → "sapphire-maintenance-record").
+export function desk_url(record, slug) {
+	if (!record || !record.doctype || !record.name) return "";
+	const doctype = text(record.doctype);
+	const part = typeof slug === "function" ? slug(doctype) : doctype.toLowerCase().replace(/ /g, "-");
+	return `/desk/${part}/${encodeURIComponent(text(record.name))}`;
 }
 
 // The contract of a projected visit: a Maintenance Planner card has `contract`; a booking in the Project
@@ -132,10 +147,33 @@ export function create_records(env) {
 		return true;
 	}
 
+	const slug = (doctype) => {
+		const router = env.frappe && env.frappe.router;
+		if (router && typeof router.slug === "function") {
+			try {
+				return router.slug(doctype);
+			} catch (e) {
+				// The plain spelling below.
+			}
+		}
+		return doctype.toLowerCase().replace(/ /g, "-");
+	};
+
+	// A new tab on the record. Nothing here changes: no drawer closes, no history entry moves, and an
+	// unsaved side panel is left alone (it is still on screen). False with no record to open.
+	function open_new_tab(record) {
+		const url = desk_url(record, slug);
+		if (!url) return false;
+		env.win.open(url, "_blank", "noopener");
+		return true;
+	}
+
 	return {
 		DOCTYPES,
 		record_of: (kind, item) => record_of(kind, item, can_read),
 		open,
 		open_item: (kind, item) => open(record_of(kind, item, can_read)),
+		url: (record) => desk_url(record, slug),
+		open_new_tab,
 	};
 }

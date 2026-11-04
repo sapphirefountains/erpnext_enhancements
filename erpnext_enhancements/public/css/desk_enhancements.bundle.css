@@ -1705,7 +1705,7 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
 }
 
 /* --------------------------------------------------------------------------
-   Sidebar rail (v1.788.0, global_enhancements/sidebar_rail.js; Nik 2026-11-03, Mock C)
+   Sidebar rail (v1.790.0, global_enhancements/sidebar_rail.js; Nik 2026-11-03, Mock C)
 
    The 48px rail itself is frappe 16.53's own (sidebar.scss, `.body-sidebar-container:not(.expanded)`);
    the script only stops a collapse beside the pinned Dock from hiding the panel. What is ours: the

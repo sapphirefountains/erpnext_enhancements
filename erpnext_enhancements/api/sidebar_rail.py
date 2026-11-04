@@ -1,4 +1,4 @@
-"""The icon rail's data (v1.788.0; Nik, 2026-11-03): what this person opens most, and the counts the
+"""The icon rail's data (v1.790.0; Nik, 2026-11-03): what this person opens most, and the counts the
 sidebar badges show.
 
 Serves ``public/js/global_enhancements/sidebar_rail.js``, which puts the rows a person uses most at

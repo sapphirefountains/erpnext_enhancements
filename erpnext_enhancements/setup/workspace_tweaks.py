@@ -298,7 +298,7 @@ _PROMOTED_SIDEBAR_ITEMS = {
 # (sidebar name, [(row, ERPNext's label, ours), ...]). CRM's "Home" is its dashboard, and once the
 # module opens on the Opportunity Kanban a second row called Home is wrong. Buying already calls its
 # own dashboard row "Dashboard". Customer reads "Accounts" everywhere else on this site (the doctype
-# is relabelled; the dock row says "Accounts (Customers)"), so its CRM row says so too (v1.788.0).
+# is relabelled; the dock row says "Accounts (Customers)"), so its CRM row says so too (v1.790.0).
 _RELABELED_SIDEBAR_ITEMS = {
 	"CRM": [
 		(("Dashboard", "CRM"), "Home", "Dashboard"),
