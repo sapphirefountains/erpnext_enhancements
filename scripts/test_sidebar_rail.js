@@ -28,7 +28,8 @@
  *  12. A redraw whose setup() throws puts the module back; a good one draws it.
  *  13. A Recent href is a Desk path or nothing.
  *  14. The phone bar stays off a page that hides the sidebar, off one frappe says has no sidebar,
- *      and off nothing else.
+ *      off one with its own bar on screen, and not off a page whose own bar is merely in the DOM
+ *      (a wizard once opened, the board's close bar, the planner's move bar).
  *  15. A missing-anchor canary warns once per key.
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
@@ -78,10 +79,23 @@ function makeJQuery(world) {
 				return set;
 			},
 		};
-		["find", "each", "attr", "removeAttr", "text", "remove", "addClass", "removeClass", "toggleClass", "append", "prepend", "closest", "css", "first", "empty", "appendTo", "off", "is", "hasClass", "toggle"].forEach((m) => {
+		["find", "each", "attr", "removeAttr", "text", "remove", "addClass", "removeClass", "toggleClass", "append", "prepend", "closest", "css", "first", "empty", "appendTo", "off", "is", "hasClass", "toggle", "filter"].forEach((m) => {
 			set[m] = () => set;
 		});
+		// The one DOM question the harness answers: how many own bottom bars the page holds, and
+		// how many of them are on screen (world.bars_in_dom / world.bars_visible).
+		set.find = (selector) => (typeof selector === "string" && selector.indexOf(".vz-nav") !== -1 ? bars() : set);
 		return set;
+	};
+	const bars = () => {
+		const found = empty();
+		found.length = world.bars_in_dom || 0;
+		found.filter = (what) => {
+			const shown = empty();
+			shown.length = what === ":visible" ? world.bars_visible || 0 : found.length;
+			return shown;
+		};
+		return found;
 	};
 	const $ = () => empty();
 	return $;
@@ -397,6 +411,20 @@ async function asyncChecks() {
 		check(api.bar_suppressed(sb({}, false)) === true, "a page frappe says has no sidebar gets no bar");
 		check(api.bar_suppressed(sb(null, true)) === true, "no page yet: no bar");
 		check(api.bar_suppressed(sb({ title: "Projects" }, true)) === false, "an ordinary page keeps it");
+		// A bar of the page's own: only one on screen, inside the page on screen, counts.
+		const world = makeWorld();
+		world.frappe.container = { page: { page: { title: "Visit Wizard" } } };
+		const page = sb({ title: "Visit Wizard" }, true);
+		world.bars_in_dom = 1;
+		world.bars_visible = 0;
+		check(world.api.bar_suppressed(page) === false, "a hidden leftover bar (a wizard once opened, the board's close bar, the planner's move bar) does not suppress it");
+		world.bars_visible = 1;
+		check(world.api.bar_suppressed(page) === true, "a bar on screen in this page does");
+		world.bars_visible = 0;
+		check(world.api.bar_suppressed(page) === false, "...and once it is hidden again the bar comes back");
+		delete world.frappe.container;
+		world.bars_visible = 1;
+		check(world.api.bar_suppressed(page) === false, "no page container to look in: nothing is counted");
 	}
 	// ------------------------------------------------------------ 15. the canary
 	{

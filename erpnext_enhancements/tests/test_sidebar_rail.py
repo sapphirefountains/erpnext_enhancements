@@ -105,6 +105,9 @@ class TestShips(unittest.TestCase):
 		self.assertIn("bar_suppressed(sb)", src)
 		self.assertIn('"page-change.ee-quick-bar"', src)
 		self.assertIn(".vz-nav", src, "the visit wizard's own bottom bar")
+		# visible, inside the page on screen: frappe keeps a left page in the DOM, hidden
+		self.assertIn('$(page_el).find(OWN_BOTTOM_BARS).filter(":visible").length > 0', src)
+		self.assertNotIn("$(OWN_BOTTOM_BARS)", src)
 
 	def test_recent_hrefs_are_desk_paths(self):
 		src = code(MODULE)

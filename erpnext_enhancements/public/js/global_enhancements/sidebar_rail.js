@@ -68,8 +68,8 @@
  *    change, so there is nothing to configure. It stays off a page that hides the sidebar
  *    (`page.hide_sidebar`, read directly: on a phone frappe's `page_allows_sidebar()` is always
  *    true because the drawer "can close"), off a page that draws its own bar at the foot of the
- *    screen (`OWN_BOTTOM_BARS`: the visit wizard's Next button sits at z-index 5), under a dialog,
- *    and while an input has focus.
+ *    screen (`OWN_BOTTOM_BARS`, counted visible and inside the page on screen: the visit wizard's
+ *    Next button sits at z-index 5), under a dialog, and while an input has focus.
  *
  * 9. TRAINING OPENS ON THE COURSE LIST. The dock's Training tile is a Workspace row, and a
  *    Workspace row opens its workspace; the Training hub to Training Course list hop happened 33
@@ -110,7 +110,9 @@
 	// site-wide Custom Sidebar layer's unlabelled Task row matches too).
 	const BADGED = { "DocType|Task|": "tasks", "DocType|AI Pending Action|": "pending_actions" };
 	// Pages that draw a bar of their own at the foot of a phone screen; the quick bar stays out of
-	// their way (the visit wizard's Next button sits at z-index 5, under anything of ours).
+	// their way (the visit wizard's Next button sits at z-index 5, under anything of ours). Only
+	// a visible one inside the page on screen counts: frappe's container hides the page it leaves
+	// and keeps it in the DOM, and the board's close bar and the planner's move bar exist hidden.
 	const OWN_BOTTOM_BARS = ".vz-nav, .qw-nav, .tp-nav, .isa-finbar.show, .ob-closebar, .mp-p6c-movebar";
 
 	// Inline, so no icon sprite is needed (a name the sprite lacks draws nothing and raises nothing).
@@ -789,7 +791,11 @@
 					: window.frappe && frappe.container && frappe.container.page && frappe.container.page.page;
 			if (!page || page.hide_sidebar) return true;
 			if (sb && typeof sb.page_allows_sidebar === "function" && !sb.page_allows_sidebar()) return true;
-			return $(OWN_BOTTOM_BARS).length > 0;
+			// Visible bars inside the page on screen only (see OWN_BOTTOM_BARS); page-change
+			// re-runs build_bar, so a bar shown or hidden later is seen on the next page.
+			const page_el = window.frappe && frappe.container && frappe.container.page;
+			if (!page_el) return false;
+			return $(page_el).find(OWN_BOTTOM_BARS).filter(":visible").length > 0;
 		} catch (e) {
 			return false;
 		}
