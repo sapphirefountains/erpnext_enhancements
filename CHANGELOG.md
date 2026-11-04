@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.791.0] - 2026-11-03
+
+Nikolas, 2026-11-03, on the live Tasks Tree right after #1418 (v1.787.0) deployed: "I think we need
+to rethink this layout for Tasks Tree. Perhaps an Actions button that displays all three options.
+Also perhaps a good horizontal scroll would help with smaller screens and what not. Also the column
+headers should allow us to sort the table by ascending or descending their columns and sorting that
+way. I'd also like to be able to make any task a parent, not just already parent ones. This moving a
+task to under another task should automatically make the top level task a parent when someone tries
+to move it via drag and drop, right now it just moves the order of the tasks and doesn't let me nest
+them via drag and drop."
+
+### Fixed
+- **Nesting by drag and drop did not work on prod after #1418, and this is why.** #1418 fixed the
+  server (the parent is promoted before ERPNext's `validate_parent_is_group` runs; verified on prod,
+  every parent now spans its subtasks) and widened the nest band to the middle half of the row, and
+  the review called the drag "not yet proven" for want of a browser. It was not fixed. Reproduced on
+  prod at v1.787.0 (Chrome, PRJ-00754, the drop save instrumented to a dry run): a slow drag entered
+  the next row at 8 px below its top, inside the band where SortableJS (`swapThreshold: 0.65`) calls
+  `onMove`; the tree answered "reorder", SortableJS **swapped the two rows at once**, the target slid
+  up out from under the pointer, and the pointer then sat over the dragged row itself, where
+  SortableJS fires nothing, all the way down the list. Every row passed was swapped the same way, and
+  the drop saved the last intent recorded: a reorder. The "Make subtask of" band was reachable only
+  by backing into a row from the far side. A fast drag that jumped straight into a row's middle did
+  nest, which is why neither the harness nor a quick try caught it. **Now nothing moves during a
+  drag.** SortableJS supplies the handle, the ghost row, touch and the auto-scroll, and is refused on
+  every move (`onMove` returns false); the drop target is read from the pointer
+  (`document.elementFromPoint`) on each `dragover`, and the zones are what Nikolas asked for: the
+  whole body of a row nests (a wash and a *Nest under <task>* pill), only a thin band at each edge
+  (a quarter of the row, 6 to 10 px) reorders, drawn as a 3 px line. A line always means "before the
+  lower row": under an open parent it is the first subtask, under the last subtask of a group it is
+  the next row's level, and only the last row on screen has an "after". The row itself, its own
+  subtasks, its own parent and the place it already is draw nothing. A native drag that ends without
+  a drop (Escape) saves nothing. A leaf dropped on becomes a group on the spot, as before (server
+  `move_tasks`). *Move under…* stays as the no-mouse path. The rules are pure
+  (`erpnext_enhancements.task_tree_rules`) and run under node (`scripts/test_task_tree_manager.js`,
+  its own CI step), so a drop's outcome is pinned as a function of the rows on screen, the dragged
+  row, the hovered row and the zone, not of what SortableJS happened to do.
+
+### Added
+- **One Actions menu per row** (⋯) holding *Add subtask*, *Move under…* and *Delete* instead of three
+  icon buttons, so the column is narrow and reads the same on a phone. A real menu for the keyboard:
+  the button opens it (ArrowDown opens on the first item, ArrowUp on the last), arrows move and wrap,
+  Home/End jump, Escape closes and puts the focus back on the button, a click outside closes. A delete
+  the server refuses (a task with subtasks) now shows ERPNext's reason instead of doing nothing.
+- **Sortable column headers.** Click Task, Assigned To, Status, Priority, Start Date, Due Date,
+  % Complete or Expected Time to sort ascending, again for descending, a third time for the manual
+  order (`custom_subtask_order`); Enter and Space do the same from the keyboard; the header shows an
+  arrow and `aria-sort`. Sorting applies **within each parent** (children stay under their parent),
+  on a copy of the rows already loaded, so it writes nothing to the server and needs no fetch;
+  priority and status sort by rank (Low→Urgent; Open, Working, Pending Review, Overdue, Completed,
+  Canceled), dates and numbers by value, names case aside, a missing value last either way. The
+  choice is remembered **per browser** in `localStorage` (`taskTreeSort_<user>`, read and written in
+  try/catch; never frappe's `user_settings`). While a sort is on, **drag is off**: the handles dim with
+  a tooltip, the hint line says "Sorted by Status (ascending). Drag is off until the manual order is
+  back: click the Status header again", and no SortableJS instance exists, so a sorted order can never
+  be saved as the manual one.
+- **Horizontal scroll on smaller screens.** The grid scrolls sideways inside its own box
+  (`overflow-x: auto`); the header and body keep a 960 px floor, so dates and pills are never
+  squeezed; the Task column (name, handle, caret) is sticky on the left so a row can be read while
+  scrolled, and the nest pill lives in that sticky cell so it is on screen however far the grid is
+  scrolled. The Add task / Add from template / Select toolbar and the filter row wrap at phone width.
+
+### Changed
+- `tests/test_task_parent_dates.py` pins the v1.791.0 drop (SortableJS refused on every move, a nest
+  saved as one row with no position) in place of the v1.787.0 handler; `tests/test_scope_tasks.py`
+  gains the round's promises (no `user_settings`, the sort in try/catch, the three icon buttons gone,
+  the sticky column, the CI step) and runs the node harness when node is on PATH.
+
+### Not verified
+- The new drag was exercised on prod at v1.787.0 by loading this file's source and styles into the
+  live Project form (the save a dry run, then one real drop and its undo): see the PR. The esbuild
+  bundle itself, the touch fallback on a phone, and the sticky column on Safari were not.
+
 ## [1.788.0] - 2026-11-03
 
 ### Added

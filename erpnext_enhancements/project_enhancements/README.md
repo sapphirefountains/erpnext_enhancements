@@ -201,6 +201,59 @@ screen said so. The promotion is in the controller's `before_validate` now
   carries the version because raw `/assets` paths are served immutable for a year: a new release
   must be a new file name.
 
+### Round two: nest by drop for real, one Actions menu, sortable headers, sideways scroll (v1.791.0)
+
+Nikolas, 2026-11-03, on the live tree right after #1418 deployed: "Perhaps an Actions button that
+displays all three options. Also perhaps a good horizontal scroll would help with smaller screens.
+Also the column headers should allow us to sort the table by ascending or descending their columns.
+I'd also like to be able to make any task a parent, not just already parent ones ... right now it
+just moves the order of the tasks and doesn't let me nest them via drag and drop."
+
+**Why #1418's drop still only reordered.** The server side was right (the promotion runs before
+ERPNext's `validate_parent_is_group`; every parent on prod spans its subtasks). The drag was not,
+and no harness could see it because the fault was SortableJS's own behaviour: with
+`swapThreshold: 0.65` it calls `onMove` once the pointer is 17.5% into a row, the tree answered
+"reorder" on that edge band and returned true, and SortableJS **swapped the two rows at once**. The
+target slid out from under the pointer, the pointer then sat over the dragged row itself (where
+SortableJS fires nothing) all the way down the list, and the drop saved the last intent recorded, a
+reorder. The nest band was reachable only by backing into a row from the far side. Reproduced on
+prod in Chrome (PRJ-00754, the save a dry run) before anything was changed: a slow drag logged one
+`onMove` at 8 px below the next row's top, a swap, silence, a swap on the row after, and a reorder
+on release. A fast drag that jumped straight into a row's middle nested, which is why a quick try
+passed.
+
+**What the tree does now** (`task_tree_manager.js`, `task_tree.css`):
+
+- **Nothing moves during a drag.** SortableJS supplies the handle, the ghost row, touch and the
+  auto-scroll, and is refused on every move (`onMove` returns false, `swapThreshold: 1` so it asks
+  over the whole row, `animation: 0`). The drop target is read from the pointer
+  (`document.elementFromPoint`) on each `dragover` (a document listener bound for the drag) and from
+  `onMove`'s own event on the touch fallback. The zones are the ones Nikolas asked for: the **body
+  of a row nests** (a wash and a *Nest under <task>* pill), only a **thin band at each edge**
+  reorders (a quarter of the row, held between 6 and 10 px; 10 px on the 45 px rows the Desk draws),
+  drawn as a 3 px line. A line always means "before the lower row": under an open parent it is the
+  first subtask, under the last subtask of a group it is the next row's level, and only the last row
+  on screen has an "after". The row itself, its own subtasks, its own parent and the place it already
+  is draw nothing. A native drag that ends in `dragend` without a `drop` (Escape, let go off the
+  page) saves nothing. A nest saves one row with no position (the server appends it); a reorder
+  sends every sibling of the new parent with its position. The rules are pure functions on
+  `erpnext_enhancements.task_tree_rules` (`dropZone`, `dropPlan`, `reorderRows`), run under node by
+  `scripts/test_task_tree_manager.js` in its own CI step.
+- **One Actions menu per row** (⋯): *Add subtask*, *Move under…*, *Delete* (`rowActions`), a
+  `role="menu"` with arrow keys that wrap, Home/End, Escape back to the button (`menuMove`), closed
+  by a click outside. A refused delete shows ERPNext's reason.
+- **Sortable headers**, within each parent: ascending, descending, then the manual order
+  (`nextSort`, `sortTree`); priority and status by rank, dates and numbers by value, a missing value
+  last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order),
+  so nothing is fetched or written; remembered per browser in `localStorage`
+  (`taskTreeSort_<user>`, try/catch, never `user_settings`). While a sort is on there is no
+  SortableJS instance at all: the handles dim with a tooltip and the hint line says how to get the
+  manual order back, so a sorted order can never be saved as the manual one.
+- **Sideways scroll**: `.task-grid` is `overflow-x: auto`, header and body keep a 960 px floor, the
+  Task cell is `position: sticky` (it inherits the row's explicit background so it covers what scrolls
+  under it; the nest wash is opaque through `color-mix` for the same reason) and the nest pill lives
+  in it. The toolbar and the filter row wrap at phone width.
+
 **A parent's dates follow its subtasks** (`task_enhancements/parent_dates.py`): a task with subtasks
 has the earliest subtask `exp_start_date` and the latest subtask `exp_end_date`, up every ancestor.
 Where no subtask has a start (or an end) the parent keeps its own, so dropping an undated task under

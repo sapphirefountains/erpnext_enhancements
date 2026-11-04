@@ -680,30 +680,34 @@ def test_sortablejs_is_pinned_and_vendored():
 
 
 def test_the_tree_shows_the_drop_target_offers_move_under_and_surfaces_a_refusal():
+	"""v1.791.0 redid the drop (scripts/test_task_tree_manager.js runs its rules); what stays pinned
+	here is the contract #1418 set: the drop target named on the row, a nest drop saved as ONE row
+	with no position, *Move under…* as a dialog, the refusal shown and the tree re-fetched."""
 	js = TREE_JS.read_text(encoding="utf-8")
 	css = TREE_CSS.read_text(encoding="utf-8")
-	# The nest band is the middle half, named on the row.
-	assert "relY > h * 0.25 && relY < h * 0.75" in js
-	assert '"Make subtask of {0}"' in js and 'attr("data-drop-label"' in js
+	# The nest target is named on the row; the body of the row nests, a thin band at each edge
+	# reorders (the zones are task_tree_rules.dropZone, pinned under node).
+	assert '"Nest under {0}"' in js and 'attr("data-drop-label"' in js
 	assert "content: attr(data-drop-label)" in css
-	# ... overlaid, not a flex item that would slide the columns and change the row height
-	# handleDragMove measures.
-	pill = css.split(".task-grid-row.drop-as-child::after {")[1].split("}")[0]
+	assert "dropZone(relY, height)" in js and "EDGE_BAND_MAX: 10" in js
+	# ... overlaid, not a flex item that would slide the columns and change the row height.
+	pill = css.split(".task-grid-row.drop-as-child > .task-grid-cell:first-child::after {")[1].split("}")[0]
 	assert "position: absolute;" in pill
 	# A nest drop saves ONE row with no position (the server puts it last): a collapsed target's
 	# container is empty, so an order read off the DOM would be 1.
-	nest = js.split('if (mode === "child" && targetId) {')[1].split("return;")[0]
-	assert "me.saveStructure([{ name: draggedId, parent_task: targetId }])" in nest
-	assert "me.revealParent(targetId)" in nest
+	nest = js.split("applyDropPlan(plan, draggedId, rows) {")[1].split("return;")[0]
+	assert "this.saveStructure([{ name: draggedId, parent_task: plan.target }])" in nest
+	assert "this.revealParent(plan.target)" in nest
 	assert "saveTaskOrder" not in nest, "the DOM's order is not read for a nest drop"
-	# The reorder edge is drawn where SortableJS will insert.
-	assert 'evt.willInsertAfter ? "drop-after" : "drop-before"' in js
+	# SortableJS never moves a row itself (what let v1.787.0 swap on the edge band).
+	on_move = js.split("onMove: function (evt, originalEvent) {")[1].split("},")[0]
+	assert "return false;" in on_move and "return true" not in on_move
 	assert ".task-grid-row.drop-before" in css and ".task-grid-row.drop-after" in css
 	# A hint while dragging.
-	assert 'find(".task-drag-hint").show()' in js and 'find(".task-drag-hint").hide()' in js
-	# Move under... per row, a dialog, no route change.
-	assert 'class="btn btn-xs btn-default move-task-btn' in js
-	assert 'this.wrapper.on("click", ".move-task-btn"' in js
+	assert "this.showHint(" in js and 'find(".task-drag-hint").hide()' in js
+	# Move under... per row (from the row's Actions menu), a dialog, no route change.
+	assert '{ action: "move", label: "Move under…"' in js
+	assert 'else if (action === "move") this.openMoveDialog(taskId, subject);' in js
 	move = js.split("openMoveDialog(taskId, subject) {")[1].split("openTemplateDialog() {")[0]
 	assert "new frappe.ui.Dialog" in move and "set_route" not in move and "pushState" not in js
 	# The save goes through move_tasks; a refusal is a dialog and the tree is re-fetched either way.

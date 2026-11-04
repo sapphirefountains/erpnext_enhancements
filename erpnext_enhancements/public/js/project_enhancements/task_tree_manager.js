@@ -31,15 +31,33 @@
  * the print window live in public/js/export_utils.js.
  *
  * Drag-to-parent (v1.787.0, Nikolas 2026-11-03: "Make any task a parent by simple
- * drag and drop"): while a row is dragged, the row under the pointer says what the
- * drop will do -- a "Make subtask of <task>" wash on its middle half, an insertion
- * line at its top or bottom edge for a reorder -- and a hint bar above the grid says
- * the same in words. "Move under..." on each row is the no-mouse path (a dialog).
- * The save is api/scope_tasks.move_tasks: a leaf task dropped on becomes a group,
- * only the rows that changed are saved, and ERPNext's refusal comes back as a
- * message the tree shows in a dialog and then re-fetches, so the tree never sits
+ * drag and drop"; redone in v1.791.0 after it still only reordered on prod): while
+ * a row is dragged NOTHING on screen moves. The row under the pointer says what the
+ * drop will do -- a "Nest under <task>" wash over its body, a line on the thin band
+ * at its top or bottom edge for a reorder -- and a hint line above the grid says
+ * the same in words. SortableJS only starts and ends the drag (handle, ghost, the
+ * auto-scroll); its own swap is refused on every move (onMove returns false), and
+ * the drop target is read from the pointer (document.elementFromPoint) on each
+ * dragover. v1.787.0 let SortableJS swap rows the moment the pointer crossed a row's
+ * edge band: the target slid out from under the pointer, the pointer then sat over
+ * the dragged row itself (where SortableJS fires nothing), and the drop saved the
+ * last intent recorded, a reorder. The nest band was reachable only by backing into
+ * a row from the far side. "Move under..." on each row is the no-mouse path (a
+ * dialog). The save is api/scope_tasks.move_tasks: a leaf task dropped on becomes a
+ * group, only the rows that changed are saved, and ERPNext's refusal comes back as
+ * a message the tree shows in a dialog and then re-fetches, so the tree never sits
  * showing a move that was not saved. A task with subtasks shows its dates read-only
  * here: they follow its subtasks (task_enhancements/parent_dates.py).
+ *
+ * v1.791.0 also: one Actions menu per row (add subtask, move under, delete; a
+ * button with a menu, arrow keys and Escape) instead of three icon buttons; the
+ * column headers sort (ascending, descending, then back to the manual order kept in
+ * custom_subtask_order), within each parent, remembered per browser in
+ * localStorage and never written to the server, with drag switched off while a
+ * sort is on; and the grid scrolls sideways inside its own box on a narrow screen,
+ * the Task column staying put. The rules of all three (what a drop does, the sort,
+ * the menu) are pure functions on erpnext_enhancements.task_tree_rules, run under
+ * node by scripts/test_task_tree_manager.js.
  *
  * Assets: styles ship globally in desk_addons.bundle.css (task_tree import);
  * SortableJS 1.15.6 is vendored at public/js/project_enhancements/lib/ (a UMD build
@@ -48,6 +66,177 @@
  * third-party script on every Project form whose version could change under us.
  */
 frappe.provide("erpnext_enhancements");
+
+/**
+ * The grid's rules, pure (no DOM, no jQuery, no frappe), so scripts/test_task_tree_manager.js
+ * can run them under node: what a drop does, how a column sorts, what the row menu holds.
+ */
+erpnext_enhancements.task_tree_rules = {
+	// ---- drop zones -------------------------------------------------------------------
+	// Nikolas, 2026-11-03: the whole row body nests; only a thin band between rows reorders.
+	// The band is a quarter of the row, held between 6 and 10 px: on the 45 px rows the Desk
+	// draws it is 10 px, so 25 px of every row nest, and the 20 px straddling a border reorder.
+	EDGE_BAND_MAX: 10,
+	EDGE_BAND_MIN: 6,
+
+	edgeBand(height) {
+		const quarter = Math.round((height || 0) * 0.25);
+		return Math.min(this.EDGE_BAND_MAX, Math.max(this.EDGE_BAND_MIN, quarter));
+	},
+
+	/** "before" | "nest" | "after" for a pointer `relY` px below the top of a row `height` px tall. */
+	dropZone(relY, height) {
+		const band = this.edgeBand(height);
+		if (relY < band) return "before";
+		if (relY > height - band) return "after";
+		return "nest";
+	},
+
+	/** The row's ancestors, nearest first, from a visible-row list. */
+	ancestors(rows, id) {
+		const byId = {};
+		rows.forEach((row) => (byId[row.id] = row));
+		const out = [];
+		let cur = byId[id];
+		while (cur && cur.parent && byId[cur.parent] && out.length < rows.length) {
+			out.push(cur.parent);
+			cur = byId[cur.parent];
+		}
+		return out;
+	},
+
+	/**
+	 * What dropping `draggedId` on the row `hoverId` in `zone` does. `rows` are the rows on
+	 * screen, top to bottom, each {id, parent} (parent null at the top level; a collapsed
+	 * task's subtasks are not on screen and so not listed).
+	 *
+	 * Returns null when the drop would do nothing or must not happen (the row itself, one of
+	 * its own subtasks, its own parent, the place it already is), {mode: "nest", target} to
+	 * make it the last subtask of `target`, or {mode: "before" | "after", target, parent} to
+	 * put it beside `target` under `parent`. A line between two rows always means "before the
+	 * lower row": so the band under an open parent is "first subtask of it", the band under
+	 * the last subtask of a group is "before the next row, at that row's level", and only the
+	 * band under the last row on screen means "after it".
+	 */
+	dropPlan(rows, draggedId, hoverId, zone) {
+		const at = {};
+		rows.forEach((row, i) => (at[row.id] = i));
+		if (!(hoverId in at) || !(draggedId in at) || hoverId === draggedId) return null;
+		const hover = rows[at[hoverId]];
+		if (this.ancestors(rows, hoverId).includes(draggedId)) return null;
+		const dragged = rows[at[draggedId]];
+		if (zone === "nest") {
+			return hoverId === (dragged.parent || null) ? null : { mode: "nest", target: hoverId };
+		}
+		let target = hover;
+		if (zone === "after") {
+			const next = rows[at[hoverId] + 1];
+			if (!next) return { mode: "after", target: hoverId, parent: hover.parent || null };
+			target = next;
+		}
+		if (target.id === draggedId) return null;
+		// Already directly above it, as its sibling: nothing to do.
+		const above = rows[at[target.id] - 1];
+		if (above && above.id === draggedId && (dragged.parent || null) === (target.parent || null)) return null;
+		return { mode: "before", target: target.id, parent: target.parent || null };
+	},
+
+	/**
+	 * The rows to save for a "before" / "after" drop: `siblings` are the ids under the new
+	 * parent in their order on screen (the dragged one among them when it was already there).
+	 * Every sibling is sent with its position; the server saves only what changed.
+	 */
+	reorderRows(siblings, draggedId, targetId, mode, parent) {
+		const rest = siblings.filter((id) => id !== draggedId);
+		let i = rest.indexOf(targetId);
+		if (i < 0) i = mode === "after" ? rest.length - 1 : rest.length;
+		rest.splice(mode === "after" ? i + 1 : i, 0, draggedId);
+		return rest.map((id, n) => ({ name: id, parent_task: parent || null, custom_subtask_order: n + 1 }));
+	},
+
+	// ---- column sort -------------------------------------------------------------------
+	SORT_LABELS: {
+		subject: "Task",
+		assigned_to: "Assigned To",
+		status: "Status",
+		priority: "Priority",
+		exp_start_date: "Start Date",
+		exp_end_date: "Due Date",
+		progress: "% Complete",
+		expected_time: "Expected Time",
+	},
+	PRIORITY_RANK: { Low: 0, Medium: 1, High: 2, Urgent: 3 },
+	STATUS_RANK: { Open: 0, Working: 1, "Pending Review": 2, Overdue: 3, Template: 4, Completed: 5, Canceled: 6, Cancelled: 6 },
+
+	/** Ascending, then descending, then back to the manual order; another column starts ascending. */
+	nextSort(current, key) {
+		if (!key || !(key in this.SORT_LABELS)) return current || null;
+		if (!current || current.key !== key) return { key, dir: "asc" };
+		if (current.dir === "asc") return { key, dir: "desc" };
+		return null;
+	},
+
+	sortValue(task, key) {
+		const v = task ? task[key] : null;
+		if (key === "priority") return v in this.PRIORITY_RANK ? this.PRIORITY_RANK[v] : null;
+		if (key === "status") return v in this.STATUS_RANK ? this.STATUS_RANK[v] : null;
+		if (key === "progress" || key === "expected_time") return v == null || v === "" ? null : Number(v);
+		if (v == null || v === "") return null;
+		return String(v).toLowerCase();
+	},
+
+	/** Compare two tasks on `key` in `dir`; a task without a value goes last either way. */
+	compare(a, b, key, dir) {
+		const va = this.sortValue(a, key);
+		const vb = this.sortValue(b, key);
+		if (va == null && vb == null) return 0;
+		if (va == null) return 1;
+		if (vb == null) return -1;
+		let c = 0;
+		if (typeof va === "number" && typeof vb === "number") c = va - vb;
+		else c = va < vb ? -1 : va > vb ? 1 : 0;
+		return dir === "desc" ? -c : c;
+	},
+
+	/**
+	 * A copy of the tree with every list of siblings sorted by `sort` ({key, dir}), each child
+	 * staying under its parent; `sort` null (the manual order) returns the rows as given.
+	 */
+	sortTree(tasks, sort) {
+		const list = Array.isArray(tasks) ? tasks : [];
+		if (!sort || !sort.key || !(sort.key in this.SORT_LABELS)) return list;
+		const sorted = list
+			.map((task, i) => ({ task, i }))
+			.sort((x, y) => this.compare(x.task, y.task, sort.key, sort.dir) || x.i - y.i)
+			.map((x) => x.task);
+		return sorted.map((task) =>
+			task && Array.isArray(task.children) && task.children.length
+				? Object.assign({}, task, { children: this.sortTree(task.children, sort) })
+				: task
+		);
+	},
+
+	// ---- the row's Actions menu ----------------------------------------------------------
+	rowActions(task) {
+		if (!task) return [];
+		return [
+			{ action: "add-subtask", label: "Add subtask", icon: "fa-plus" },
+			{ action: "move", label: "Move under…", icon: "fa-indent" },
+			{ action: "delete", label: "Delete", icon: "fa-trash", danger: true },
+		];
+	},
+
+	/** Where a key press takes the focus in a menu of `count` items; "close" for Escape or Tab. */
+	menuMove(key, index, count) {
+		if (key === "Escape" || key === "Tab") return "close";
+		if (!count) return null;
+		if (key === "ArrowDown") return (index + 1) % count;
+		if (key === "ArrowUp") return (index - 1 + count) % count;
+		if (key === "Home") return 0;
+		if (key === "End") return count - 1;
+		return null;
+	},
+};
 
 erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	constructor({
@@ -90,6 +279,23 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		if (savedColumns) {
 			this.columnVisibility = JSON.parse(savedColumns);
 		}
+
+		// The column sort (v1.791.0): {key, dir} or null for the manual order. Per browser, in
+		// localStorage (never frappe's user_settings: those live in Redis and follow the user
+		// to every device); read and written in try/catch, a private window has neither.
+		this.sort = null;
+		try {
+			const savedSort = JSON.parse(localStorage.getItem(TaskTreeManager.SORT_STORAGE_KEY()) || "null");
+			if (savedSort && savedSort.key in erpnext_enhancements.task_tree_rules.SORT_LABELS) {
+				this.sort = { key: savedSort.key, dir: savedSort.dir === "desc" ? "desc" : "asc" };
+			}
+		} catch (e) {
+			this.sort = null;
+		}
+		this._dropPlan = null;
+		this._dragRows = null;
+		this._draggedId = null;
+		this._onDocDragOver = (e) => this.trackPointer(e);
 
 		// Drag-to-resize column widths (per user). The first (Task) column stays
 		// elastic and the tiny Actions column is left alone; the rest get a right-
@@ -168,10 +374,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	renderStructure() {
 		this.wrapper.html(`
-            <div class="task-tree-manager p-3 border rounded" style="background: var(--card-bg);">
+            <div class="task-tree-manager p-3 border rounded ${this.sort ? "sort-active" : ""}" style="background: var(--card-bg);">
                 <div class="task-tree-header mb-3">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center">
+                    <div class="d-flex justify-content-between align-items-center mb-2 task-toolbar-row">
+                        <div class="d-flex align-items-center task-toolbar-actions">
                             <h5 class="mb-0 mr-3">Tasks</h5>
                             <span class="task-saving-indicator text-muted mr-3" style="display: none;"><i class="fa fa-spinner fa-spin"></i> Saving...</span>
                             <div class="task-pending-changes-controls mr-2" style="display: none;">
@@ -181,7 +387,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                                 </div>
                             </div>
                             <button class="btn btn-sm btn-success mr-2 save-order-btn" style="display: none;">Save Order</button>
-                            <span class="task-drag-hint text-muted small mr-2" style="display: none;" role="status"><i class="fa fa-info-circle mr-1"></i>${__("Drop on the middle of a row to make this a subtask of it; near its top or bottom edge to put it before or after.")}</span>
                             ${
 								this.readonly
 									? ""
@@ -262,19 +467,20 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                         </div>
                         <button class="btn btn-sm btn-default clear-filters-btn">Clear</button>
                     </div>
+                    <div class="task-drag-hint text-muted small" style="display: none;" role="status" aria-live="polite"><i class="fa fa-info-circle mr-1"></i><span class="task-drag-hint-text"></span></div>
                 </div>
 
                 <div class="task-grid">
                     <div class="task-grid-header d-flex font-weight-bold border-bottom py-2" style="background: var(--subtle-fg);">
-                        <div class="task-grid-cell" style="flex: 5;">Task</div>
-                        <div class="task-grid-cell assignee-cell ${this.columnVisibility.owner ? "" : "hidden-column"}" data-column="owner" style="flex: 1.5;">Assigned To</div>
-                        <div class="task-grid-cell status-cell ${this.columnVisibility.status ? "" : "hidden-column"}" data-column="status" style="flex: 1.5;">Status</div>
-                        <div class="task-grid-cell priority-cell ${this.columnVisibility.priority ? "" : "hidden-column"}" data-column="priority" style="flex: 1;">Priority</div>
-                        <div class="task-grid-cell date-cell ${this.columnVisibility.start_date ? "" : "hidden-column"}" data-column="start_date" style="flex: 1;">Start Date</div>
-                        <div class="task-grid-cell date-cell ${this.columnVisibility.due_date ? "" : "hidden-column"}" data-column="due_date" style="flex: 1;">Due Date</div>
-                        <div class="task-grid-cell progress-cell ${this.columnVisibility.progress ? "" : "hidden-column"}" data-column="progress" style="flex: 1;">% Complete</div>
-                        <div class="task-grid-cell duration-cell ${this.columnVisibility.duration ? "" : "hidden-column"}" data-column="duration" style="flex: 1;">Expected Time</div>
-                        ${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions" style="flex: 0.5;">Actions</div>` : ''}
+                        ${this.headerCell("subject", "Task", "", "flex: 5;")}
+                        ${this.headerCell("assigned_to", "Assigned To", "assignee-cell", "flex: 1.5;", "owner")}
+                        ${this.headerCell("status", "Status", "status-cell", "flex: 1.5;", "status")}
+                        ${this.headerCell("priority", "Priority", "priority-cell", "flex: 1;", "priority")}
+                        ${this.headerCell("exp_start_date", "Start Date", "date-cell", "flex: 1;", "start_date")}
+                        ${this.headerCell("exp_end_date", "Due Date", "date-cell", "flex: 1;", "due_date")}
+                        ${this.headerCell("progress", "% Complete", "progress-cell", "flex: 1;", "progress")}
+                        ${this.headerCell("expected_time", "Expected Time", "duration-cell", "flex: 1;", "duration")}
+                        ${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions" style="flex: 0.5;"><span class="sr-only">${__("Actions")}</span></div>` : ''}
                     </div>
                     <div class="task-grid-body">
                         <div class="p-4 text-center text-muted">Loading tasks...</div>
@@ -283,6 +489,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
             </div>
         `);
 		this.bindEvents();
+		this.renderSortState();
 
 		// Attach resize handles to the (persistent) header cells and apply any
 		// saved widths. The header is built once here; renderGrid/fetchChildren
@@ -295,6 +502,64 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			);
 			this.applyColumnWidths();
 		}
+	}
+
+	/**
+	 * One sortable header cell (v1.791.0). A click sorts ascending, a second descending, a
+	 * third returns to the manual order; Enter and Space do the same from the keyboard. The
+	 * column resizer's handle sits inside the cell and swallows its own clicks.
+	 */
+	headerCell(sortKey, label, cls, style, column) {
+		const shown = column && !this.columnVisibility[column] ? "hidden-column" : "";
+		const data = column ? `data-column="${column}"` : "";
+		return `<div class="task-grid-cell sortable-header ${cls} ${shown}" ${data} data-sort-key="${sortKey}" style="${style}" role="button" tabindex="0" aria-sort="none" title="${__("Sort by {0}", [__(label)])}"><span class="sortable-header-label">${__(label)}</span><span class="sort-arrow" aria-hidden="true"></span></div>`;
+	}
+
+	/** Draw the arrow on the sorted header, the drag-off note, and the dimmed handles. */
+	renderSortState() {
+		const rules = erpnext_enhancements.task_tree_rules;
+		const sort = this.sort;
+		this.wrapper.find(".sortable-header").each(function () {
+			const $cell = $(this);
+			const on = sort && $cell.data("sort-key") === sort.key;
+			$cell.toggleClass("sorted-asc", !!on && sort.dir === "asc").toggleClass("sorted-desc", !!on && sort.dir === "desc");
+			$cell.attr("aria-sort", on ? (sort.dir === "asc" ? "ascending" : "descending") : "none");
+			$cell.find(".sort-arrow").text(on ? (sort.dir === "asc" ? "▲" : "▼") : "");
+		});
+		this.wrapper.find(".task-tree-manager").toggleClass("sort-active", !!sort);
+		if (sort) {
+			const label = __(rules.SORT_LABELS[sort.key] || sort.key);
+			this.showHint(
+				__("Sorted by {0} ({1}). Drag is off until the manual order is back: click the {0} header again.", [
+					label,
+					sort.dir === "asc" ? __("ascending") : __("descending"),
+				])
+			);
+		} else {
+			this.hideHint();
+		}
+	}
+
+	showHint(text) {
+		this.wrapper.find(".task-drag-hint-text").text(text);
+		this.wrapper.find(".task-drag-hint").show();
+	}
+
+	hideHint() {
+		this.wrapper.find(".task-drag-hint").hide();
+	}
+
+	/** Set (or clear) the column sort, remember it for this browser, and redraw. */
+	setSort(sort) {
+		this.sort = sort || null;
+		try {
+			if (this.sort) localStorage.setItem(TaskTreeManager.SORT_STORAGE_KEY(), JSON.stringify(this.sort));
+			else localStorage.removeItem(TaskTreeManager.SORT_STORAGE_KEY());
+		} catch (e) {
+			// A private window or a full store: the sort still applies for this page.
+		}
+		this.renderSortState();
+		this.applyFilters();
 	}
 
 	updateStatusFilterOptions() {
@@ -434,6 +699,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	renderGrid(tasks) {
 		const gridBody = this.wrapper.find(".task-grid-body");
 		gridBody.empty();
+		// The column sort is applied here, within each parent, on a copy: `this.tasks` keeps
+		// the manual order so returning to it needs no fetch.
+		tasks = erpnext_enhancements.task_tree_rules.sortTree(tasks, this.sort);
 		if (!tasks || tasks.length === 0) {
 			gridBody.html('<div class="p-4 text-center text-muted">No tasks match filters.</div>');
 			gridBody.append(this.createQuickAddRow(null, 0));
@@ -479,7 +747,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					${this.renderDateCell(task, "exp_end_date", "due_date", end_date, hasChildren)}
 					<div class="task-grid-cell ${this.columnVisibility.progress ? "" : "hidden-column"}" data-column="progress"><div class="progress" style="height: 15px; width: 100%;"><div class="progress-bar" role="progressbar" style="width: ${progress}%;" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">${progress}%</div></div></div>
 					<div class="task-grid-cell editable-time ${this.columnVisibility.duration ? "" : "hidden-column"}" data-field="expected_time" data-task-id="${task.name}" data-original-value="${task.expected_time || 0}" data-column="duration"><a href="#">${task.expected_time || 0}</a></div>
-					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button class="btn btn-xs btn-default add-subtask-btn mr-1" title="${__("Add a subtask")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-plus"></i></button><button class="btn btn-xs btn-default move-task-btn mr-1" title="${__("Move under another task, or to the top level")}" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-indent"></i></button><button class="btn btn-xs btn-danger delete-task-btn" title="Delete Task" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-trash"></i></button></div>` : ''}
+					${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"><button type="button" class="btn btn-xs btn-default task-actions-btn" title="${__("Actions")}" aria-haspopup="menu" aria-expanded="false" data-task-name="${task.name}" data-task-subject="${frappe.utils.escape_html(task.subject || "")}"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span class="sr-only">${__("Actions for {0}", [frappe.utils.escape_html(task.subject || task.name)])}</span></button></div>` : ''}
 				</div>
 				<div class="child-tasks-container" style="${isCollapsed ? "display: none;" : ""}"></div>
 			</div>
@@ -516,7 +784,8 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			callback: (r) => {
 				container.empty();
 				if (r.message && r.message.length > 0) {
-					r.message.forEach(child => { this.renderTaskNode(child, container, level); });
+					const children = erpnext_enhancements.task_tree_rules.sortTree(r.message, this.sort);
+					children.forEach(child => { this.renderTaskNode(child, container, level); });
 					container.append(this.createQuickAddRow(parentTaskId, level));
 				} else {
 					container.html('<div class="p-2 text-muted small">No subtasks.</div>');
@@ -744,11 +1013,29 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		// The three Scope-tab flows (v1.777.0). Every one is a frappe.ui.Dialog: no route
 		// change, no history entry, so the browser's Back and Forward keep working.
 		this.wrapper.on("click", ".add-task-btn", () => me.openTaskDialog({}));
-		this.wrapper.on("click", ".add-subtask-btn", function () {
-			me.openTaskDialog({ parent: $(this).data("task-name"), parentSubject: $(this).data("task-subject") });
+		// One Actions menu per row (v1.791.0): add subtask, move under, delete.
+		this.wrapper.on("click", ".task-actions-btn", function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			me.openRowMenu($(this));
 		});
-		this.wrapper.on("click", ".move-task-btn", function () {
-			me.openMoveDialog($(this).data("task-name"), $(this).data("task-subject"));
+		this.wrapper.on("keydown", ".task-actions-btn", function (e) {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				me.openRowMenu($(this), e.key === "ArrowUp" ? "last" : "first");
+			}
+		});
+		// Column sort (v1.791.0): click or Enter/Space on a header. The resizer's handle stops
+		// its own clicks, and a click that lands on it is ignored here too.
+		this.wrapper.on("click", ".sortable-header", function (e) {
+			if ($(e.target).closest(".ee-col-resize-handle").length) return;
+			me.setSort(erpnext_enhancements.task_tree_rules.nextSort(me.sort, $(this).data("sort-key")));
+		});
+		this.wrapper.on("keydown", ".sortable-header", function (e) {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				me.setSort(erpnext_enhancements.task_tree_rules.nextSort(me.sort, $(this).data("sort-key")));
+			}
 		});
 		this.wrapper.on("click", ".add-template-btn", () => me.openTemplateDialog());
 		this.wrapper.on("click", ".select-tasks-btn", () => me.setSelectMode(true));
@@ -760,12 +1047,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		this.wrapper.on("change", ".task-select-cb", () => me.updateSelection());
 		this.wrapper.on("click", ".delete-selected-btn", () => me.deleteSelected());
 
-		this.wrapper.on("click", ".delete-task-btn", function () {
-			const taskId = $(this).data("task-name"); const subject = $(this).data("task-subject");
-			frappe.confirm(__("Delete task {0}: {1}?", [taskId, subject]), () => {
-				frappe.call({ method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.delete_task", args: { task_name: taskId }, callback: (r) => { if (r.message && r.message.status === "success") { frappe.show_alert({ message: __("Task deleted successfully"), indicator: "green" }); me.fetchData(); } } });
-			});
-		});
 		this.wrapper.on("click", ".save-order-btn", () => me.saveTaskOrder());
 
 		this.wrapper.on("click", ".assignee-link", function (e) {
@@ -773,6 +1054,99 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			if (me.readonly) return;
 			const taskId = $(this).closest(".task-node").data("task-id");
 			me.showAssigneePicker(taskId);
+		});
+	}
+
+	/**
+	 * The row's Actions menu (v1.791.0). A floating menu under the button: Add subtask, Move
+	 * under…, Delete. Arrow keys move, Home/End jump, Escape or Tab close and put the focus
+	 * back on the button, a click outside closes. `focus` "first" | "last" picks the item
+	 * focused on open (the arrow key that opened it).
+	 */
+	openRowMenu($btn, focus = "first") {
+		const me = this;
+		const rules = erpnext_enhancements.task_tree_rules;
+		this.closeRowMenu();
+		const taskId = $btn.data("task-name");
+		const subject = $btn.data("task-subject");
+		const items = rules.rowActions({ name: taskId, subject });
+		const $menu = $(`<div class="dropdown-menu show task-row-menu" role="menu" aria-label="${__("Actions for {0}", [frappe.utils.escape_html(subject || taskId)])}"></div>`);
+		items.forEach((item) => {
+			$(
+				`<button type="button" class="dropdown-item ${item.danger ? "text-danger" : ""}" role="menuitem" data-action="${item.action}"><i class="fa fa-fw ${item.icon} mr-1" aria-hidden="true"></i>${__(item.label)}</button>`
+			).appendTo($menu);
+		});
+		$("body").append($menu);
+		const rect = $btn[0].getBoundingClientRect();
+		const w = $menu.outerWidth();
+		const h = $menu.outerHeight();
+		let top = rect.bottom + 2;
+		let left = rect.right - w;
+		if (top + h > window.innerHeight) top = Math.max(0, rect.top - h - 2);
+		if (left < 4) left = 4;
+		$menu.css({ position: "fixed", top, left, zIndex: 2000 });
+		$btn.attr("aria-expanded", "true");
+		this._rowMenu = { $menu, $btn };
+
+		const $items = $menu.find("[role=menuitem]");
+		const focusAt = (i) => $items.eq(i).trigger("focus");
+		$items.on("click", function (e) {
+			e.preventDefault();
+			const action = $(this).data("action");
+			me.closeRowMenu();
+			me.runRowAction(action, taskId, subject);
+		});
+		$menu.on("keydown", function (e) {
+			const index = $items.index(document.activeElement);
+			const next = rules.menuMove(e.key, index < 0 ? 0 : index, $items.length);
+			if (next === "close") {
+				if (e.key === "Escape") e.preventDefault();
+				me.closeRowMenu(e.key === "Escape");
+				return;
+			}
+			if (next === null) return;
+			e.preventDefault();
+			focusAt(next);
+		});
+		setTimeout(() => {
+			$(document).on("mousedown.taskRowMenu", (e) => {
+				if (!$(e.target).closest(".task-row-menu").length) me.closeRowMenu();
+			});
+		}, 0);
+		focusAt(focus === "last" ? $items.length - 1 : 0);
+	}
+
+	closeRowMenu(refocus = false) {
+		$(document).off("mousedown.taskRowMenu");
+		const open = this._rowMenu;
+		this._rowMenu = null;
+		if (!open) return;
+		open.$menu.remove();
+		open.$btn.attr("aria-expanded", "false");
+		if (refocus) open.$btn.trigger("focus");
+	}
+
+	runRowAction(action, taskId, subject) {
+		if (action === "add-subtask") this.openTaskDialog({ parent: taskId, parentSubject: subject });
+		else if (action === "move") this.openMoveDialog(taskId, subject);
+		else if (action === "delete") this.deleteOne(taskId, subject);
+	}
+
+	deleteOne(taskId, subject) {
+		const me = this;
+		frappe.confirm(__("Delete task {0}: {1}?", [taskId, frappe.utils.escape_html(subject || "")]), () => {
+			frappe.call({
+				method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.delete_task",
+				args: { task_name: taskId },
+				callback: (r) => {
+					if (r.message && r.message.status === "success") {
+						frappe.show_alert({ message: __("Task deleted successfully"), indicator: "green" });
+						me.fetchData();
+					} else if (r.message && r.message.message) {
+						frappe.msgprint({ title: __("Could not delete {0}", [frappe.utils.escape_html(subject || taskId)]), indicator: "red", message: r.message.message });
+					}
+				},
+			});
 		});
 	}
 
@@ -1251,31 +1625,109 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		});
 	}
 
+	/**
+	 * Drag-and-drop (v1.791.0). SortableJS supplies the drag itself: the handle, the ghost
+	 * row, touch support and the auto-scroll. It is never allowed to move a row (onMove
+	 * returns false on every call), so the tree stays still under the pointer and the drop
+	 * target is whatever row the pointer is over, read with elementFromPoint on each
+	 * dragover (native drag) and from onMove's own event (the touch fallback). While a
+	 * column sort is on there is no drag: the order on screen is not the manual order a
+	 * drop would be saved against, and the hint line says so.
+	 */
 	initializeTaskSorting() {
 		const me = this; if (this.readonly) return;
 		this.sortableInstances.forEach((s) => s.destroy()); this.sortableInstances = [];
+		if (this.sort) {
+			this.wrapper.find(".task-drag-handle").attr("title", __("Drag is off while the tree is sorted. Click the sorted header again for the manual order."));
+			return;
+		}
+		this.wrapper.find(".task-drag-handle").attr("title", __("Drag onto a task to nest under it; onto the line between two tasks to put it there."));
 		const containers = this.wrapper.find(".task-grid-body, .child-tasks-container");
 		containers.each(function () {
 			const sortable = new Sortable(this, {
 				group: "task-tree",
 				handle: ".task-drag-handle",
 				draggable: ".task-node",
-				animation: 150,
+				animation: 0,
 				fallbackOnBody: true,
-				swapThreshold: 0.65,
-				onStart: function () {
-					me._dropMode = null;
-					me._dropTargetId = null;
-					me.wrapper.find(".task-drag-hint").show();
+				swapThreshold: 1,
+				onStart: function (evt) { me.handleDragStart(evt); },
+				onMove: function (evt, originalEvent) {
+					// The touch fallback has no dragover: read the pointer from this event.
+					// A native drag is tracked by the document listener; either way, refuse
+					// SortableJS's own move so nothing slides away from under the pointer.
+					if (originalEvent) me.trackPointer(originalEvent);
+					return false;
 				},
-				onMove: function (evt, originalEvent) { return me.handleDragMove(evt, originalEvent); },
-				onEnd: function (evt) {
-					me.wrapper.find(".task-drag-hint").hide();
-					me.handleDragEnd(evt);
-				},
+				onEnd: function (evt) { me.handleDragEnd(evt); },
 			});
 			me.sortableInstances.push(sortable);
 		});
+	}
+
+	/** The rows on screen, top to bottom, as the drop rules read them: {id, parent}. */
+	visibleRows() {
+		const rows = [];
+		const walk = (container, parent) => {
+			$(container).children(".task-node").each(function () {
+				const id = $(this).data("task-id");
+				rows.push({ id, parent });
+				const $children = $(this).children(".child-tasks-container");
+				if ($children.length && $children[0].style.display !== "none") walk($children[0], id);
+			});
+		};
+		walk(this.wrapper.find(".task-grid-body")[0], null);
+		return rows;
+	}
+
+	handleDragStart(evt) {
+		this._draggedId = $(evt.item).data("task-id");
+		this._dragRows = this.visibleRows();
+		this._dropPlan = null;
+		this.showHint(__("Drop onto a task to nest it under that task (it becomes a group). Drop on the line between two tasks to put it there."));
+		document.addEventListener("dragover", this._onDocDragOver);
+		document.addEventListener("pointermove", this._onDocDragOver);
+	}
+
+	/** Where the pointer is during a drag, from a dragover, pointer or touch event. */
+	trackPointer(e) {
+		if (!this._draggedId) return;
+		const point = e.touches && e.touches[0] ? e.touches[0] : e;
+		if (point.clientX == null || point.clientY == null) return;
+		this.updateDropIntent(point.clientX, point.clientY);
+	}
+
+	/** Read the row under (x, y), decide the drop, and draw it. */
+	updateDropIntent(x, y) {
+		const rules = erpnext_enhancements.task_tree_rules;
+		const under = document.elementFromPoint(x, y);
+		const row = under && under.closest ? under.closest(".task-grid-row") : null;
+		const node = row && !row.classList.contains("quick-add-row") ? row.closest(".task-node") : null;
+		let plan = null;
+		if (node && $.contains(this.wrapper[0], node)) {
+			const rect = row.getBoundingClientRect();
+			const zone = rules.dropZone(y - rect.top, rect.height);
+			plan = rules.dropPlan(this._dragRows || [], this._draggedId, node.getAttribute("data-task-id"), zone);
+		}
+		this.drawDropPlan(plan);
+	}
+
+	drawDropPlan(plan) {
+		const same =
+			(!plan && !this._dropPlan) ||
+			(plan && this._dropPlan && plan.mode === this._dropPlan.mode && plan.target === this._dropPlan.target);
+		this._dropPlan = plan;
+		if (same) return;
+		this.clearDropIndicators();
+		if (!plan) return;
+		const $node = this.wrapper.find(`.task-node[data-task-id="${plan.target}"]`);
+		const $row = $node.children(".task-grid-row").first();
+		if (plan.mode === "nest") {
+			const subject = $row.find(".task-name-cell-text").first().text() || plan.target;
+			$row.addClass("drop-as-child").attr("data-drop-label", __("Nest under {0}", [subject]));
+		} else {
+			$row.addClass(plan.mode === "after" ? "drop-after" : "drop-before");
+		}
 	}
 
 	clearDropIndicators() {
@@ -1285,102 +1737,45 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			.removeAttr("data-drop-label");
 	}
 
-	// Decide drag intent based on cursor position over the hovered task row:
-	//   middle half  -> nest the dragged task as a child of the hovered task
-	//                   (the row says so: a wash plus "Make subtask of <task>")
-	//   top/bottom   -> reorder as a sibling (let SortableJS place it; the edge
-	//                   the task will land on is drawn as a line)
-	handleDragMove(evt, originalEvent) {
-		const related = evt.related;
-		// Hovering a non-task element (e.g. the quick-add row) or an empty
-		// container: fall back to SortableJS's default placement.
-		if (!related || !$(related).hasClass("task-node")) {
-			this.clearDropIndicators();
-			this._dropMode = null;
-			this._dropTargetId = null;
-			return true;
-		}
-
-		const dragged = evt.dragged;
-		// Never allow a task to be dropped into itself or one of its own descendants.
-		if (related === dragged || $.contains(dragged, related)) {
-			this.clearDropIndicators();
-			this._dropMode = null;
-			this._dropTargetId = null;
-			return false;
-		}
-
-		// Measure intent against the hovered node's OWN row, not the whole
-		// .task-node. An expanded parent's .task-node spans its entire subtree, so
-		// using its bounding box would stretch the "nest" band far below the parent
-		// row and nesting under an expanded parent would never trigger (only leaves
-		// would nest). The first .task-grid-row is the node's own row.
-		const rowEl = related.querySelector(".task-grid-row");
-		const rect = (rowEl || related).getBoundingClientRect();
-		const clientY = originalEvent.clientY != null
-			? originalEvent.clientY
-			: (originalEvent.touches && originalEvent.touches[0] ? originalEvent.touches[0].clientY : rect.top);
-		const relY = clientY - rect.top;
-		const h = rect.height || 1;
-
+	handleDragEnd(evt) {
+		const me = this;
+		const plan = this._dropPlan;
+		const draggedId = this._draggedId;
+		const rows = this._dragRows || [];
+		this._dropPlan = null;
+		this._draggedId = null;
+		this._dragRows = null;
+		document.removeEventListener("dragover", this._onDocDragOver);
+		document.removeEventListener("pointermove", this._onDocDragOver);
 		this.clearDropIndicators();
-		const $row = $(related).children(".task-grid-row").first();
-		if (relY > h * 0.25 && relY < h * 0.75) {
-			// Nest: say so on the target row and suppress the sibling reorder. The
-			// band is the middle HALF of the row (it was 40%, 13px on a 32px row:
-			// too thin to hit on purpose, so nesting looked broken).
-			const subject = $row.find(".task-name-cell-text").first().text() || $(related).data("task-id");
-			$row.addClass("drop-as-child").attr("data-drop-label", __("Make subtask of {0}", [subject]));
-			this._dropMode = "child";
-			this._dropTargetId = $(related).data("task-id");
-			return false;
-		}
+		this.renderSortState();
+		// A native drag that ends in `dragend` without a `drop` was canceled: Escape, or
+		// let go outside the page. (A drop fires `drop` first, and SortableJS nulls itself
+		// then, so the later `dragend` never reaches here.)
+		const original = evt.originalEvent;
+		if (!plan || !draggedId || (original && original.type === "dragend")) return;
 
-		// Reorder as sibling: draw the edge SortableJS will put the task on.
-		$row.addClass(evt.willInsertAfter ? "drop-after" : "drop-before");
-		this._dropMode = "reorder";
-		this._dropTargetId = null;
-		return true;
+		// Never touch the DOM inside onEnd: SortableJS is still in its own drop cleanup
+		// and a re-parented node leaves its internals pointing at a detached element
+		// ("Cannot read properties of null (reading 'removeEventListener')" in _onDrop).
+		setTimeout(() => me.applyDropPlan(plan, draggedId, rows), 0);
 	}
 
-	handleDragEnd(evt) {
-		this.clearDropIndicators();
-		const me = this;
-		const draggedNode = evt.item;
-		const mode = this._dropMode;
-		const targetId = this._dropTargetId;
-		const reordered = evt.from !== evt.to || evt.oldIndex !== evt.newIndex;
-
-		this._dropMode = null;
-		this._dropTargetId = null;
-
-		// CRITICAL: never mutate the DOM synchronously inside onEnd. SortableJS is
-		// still in the middle of its own drop cleanup when this fires; re-parenting
-		// the dragged node here leaves its internals pointing at a detached element
-		// and throws inside Sortable.min.js _onDrop:
-		//   "Cannot read properties of null (reading 'removeEventListener')".
-		// Deferring to the next tick lets Sortable finish first, then we re-parent
-		// on a clean DOM and persist.
-		setTimeout(() => {
-			if (mode === "child" && targetId) {
-				// Nest: save the ONE row with no position, so the server puts it after the
-				// target's last subtask (rules.next_position), and open the target so the
-				// re-fetch shows it there. Nothing in the DOM is moved: the tree loads
-				// children lazily, so a collapsed target's container is empty, and reading
-				// the order off it sent custom_subtask_order 1 for the dropped task,
-				// colliding with the real first child (review of #1418). The dragged
-				// node was not moved by SortableJS either (handleDragMove returned false).
-				const draggedId = $(draggedNode).data("task-id");
-				if (draggedId && draggedId !== targetId && !$.contains(draggedNode, me.wrapper.find(`.task-node[data-task-id="${targetId}"]`)[0])) {
-					me.revealParent(targetId);
-					me.saveStructure([{ name: draggedId, parent_task: targetId }]);
-				}
-				return;
-			}
-
-			// Reorder: persist the sibling order as the DOM now holds it (re-fetches).
-			if (reordered) me.saveTaskOrder();
-		}, 0);
+	/**
+	 * Save what the drop decided. A nest saves the one row with no position, so the server
+	 * puts it after the target's last subtask (rules.next_position; the target's subtasks may
+	 * not be loaded here) and the target is opened for the re-fetch. A reorder sends the
+	 * target's siblings with their new positions (and the new parent on the moved row).
+	 */
+	applyDropPlan(plan, draggedId, rows) {
+		const rules = erpnext_enhancements.task_tree_rules;
+		if (plan.mode === "nest") {
+			this.revealParent(plan.target);
+			this.saveStructure([{ name: draggedId, parent_task: plan.target }]);
+			return;
+		}
+		const siblings = rows.filter((row) => (row.parent || null) === (plan.parent || null)).map((row) => row.id);
+		this.saveStructure(rules.reorderRows(siblings, draggedId, plan.target, plan.mode, plan.parent));
 	}
 
 	saveTaskOrder() {
@@ -1454,3 +1849,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 /** The vendored SortableJS build the tree loads on demand (pinned; see loadAssets). */
 erpnext_enhancements.TaskTreeManager.SORTABLE_ASSET =
 	"/assets/erpnext_enhancements/js/project_enhancements/lib/sortable-1.15.6.min.js";
+
+/** Where this browser keeps the column sort (localStorage, per user; v1.791.0). */
+erpnext_enhancements.TaskTreeManager.SORT_STORAGE_KEY = () => `taskTreeSort_${frappe.session.user}`;
