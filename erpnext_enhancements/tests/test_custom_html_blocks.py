@@ -375,11 +375,13 @@ def _strip_comments(text):
 
 
 class TestProjectsDashboardFiles(unittest.TestCase):
-	"""The three files the seeder upserts for the Projects Dashboard (Mock B, v1.781.0).
+	"""The three files the seeder upserts for the Projects Dashboard (Mock B, v1.781.0; slimmed
+	in v1.785.0).
 
 	The seeder copies them whole, so what matters is that the shell, the script and the
 	stylesheet it ships still say what they should: five tabs always in the bar, no "View
-	More", the saved view read through try/catch, and no hue-scale priority colour.
+	More", the saved view read through try/catch, no hue-scale priority colour, a one-row
+	band with the tiles on the Summary tab and the Columns button on the chips row.
 	"""
 
 	@classmethod
@@ -437,6 +439,21 @@ class TestProjectsDashboardFiles(unittest.TestCase):
 			self.assertIn(f'<button type="button" class="pd-tile" data-tile="{key}"', self.html, key)
 		for stream in ("", "Design", "Build", "Service", "Events", "Internal"):
 			self.assertIn(f'data-stream-count="{stream}"', self.html, stream or "All")
+
+	def test_the_band_is_one_row_and_the_tiles_and_columns_button_left_it(self):
+		# v1.785.0: the eyebrow is gone, the tiles are in the controls (shown on the Summary
+		# tab), and the Columns button has a slot on the chips row and on a slim strip.
+		band = self.html[self.html.index('class="pd-band"') : self.html.index('class="pd-tabs')]
+		self.assertNotIn("pd-eyebrow", band)
+		self.assertNotIn("pd-tile", band)
+		self.assertIn('<h2 class="pd-title">Projects Dashboard</h2>', band)
+		controls = self.html[self.html.index('class="pd-controls') : self.html.index('id="dashboard-content"')]
+		self.assertIn('id="pd-tiles"', controls)
+		self.assertIn('id="pd-overview-tools"', controls)
+		self.assertIn('id="pd-list-tools"', controls)
+		self.assertIn('id="pd-tile-filter"', controls)
+		self.assertNotIn("dashboard-list-toolbar", self.js)
+		self.assertIn("function tools_slot()", self.js)
 
 
 if __name__ == "__main__":
