@@ -1502,45 +1502,17 @@ body.desktop-page .desktop-icon .icon-title,
    OPPORTUNITY KANBAN CUSTOMIZATION
    ========================================================================== */
 
-/* High-value card styling */
-.kanban-card-body.opportunity-high-value {
-    background-color: #00263E !important;
-    color: #ffffff !important;
-    border-radius: var(--border-radius-md, 8px);
-}
-
-.kanban-card-body.opportunity-high-value .kanban-card-title,
-.kanban-card-body.opportunity-high-value .kanban-card-content,
-.kanban-card-body.opportunity-high-value .kanban-card-docname,
-.kanban-card-body.opportunity-high-value .text-muted,
-.kanban-card-body.opportunity-high-value .small,
-.kanban-card-body.opportunity-high-value .frappe-timestamp,
-.kanban-card-body.opportunity-high-value .kanban-card-meta,
-.kanban-card-body.opportunity-high-value .kanban-card-footer {
-    color: #ffffff !important;
-}
-
-/* Timeless Night: the deep-navy high-value card sits too close to the near-black
-   desk background, so lift the navy slightly and add an edge to keep it distinct. */
-[data-theme="dark"] .kanban-card-body.opportunity-high-value {
-    background-color: #013a5e !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-}
-
-/* Ensure tags and other elements also look good on dark background */
-.kanban-card-body.opportunity-high-value .tag-label {
-    border-color: rgba(255, 255, 255, 0.4) !important;
-    color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* Value stream dots container */
+/* The value-stream dots: one per distinct stream, drawn into .kanban-card-meta
+   by kanban_customization.js. That row is a flex row (frappe 16.53 kanban.scss),
+   so order: -1 puts the dots at the left, where the like heart sat, and the
+   assignees keep their margin-left: auto on the right. The navy fill that
+   .opportunity-high-value gave deals over 4000 (v1.779.0) was withdrawn in
+   v1.794.0 - Nikolas: it made the cards difficult to read. */
 .kanban-card-value-stream {
     display: flex;
     gap: 5px;
-    margin-top: 8px;
-    padding-top: 4px;
     align-items: center;
+    order: -1;
 }
 
 /* Individual dots */
@@ -1554,7 +1526,7 @@ body.desktop-page .desktop-icon .icon-title,
 
 /* The customer's name on a card is a link to the Customer or Lead (v1.779.0,
    kanban_customization.js link_party). Underlined on hover only, so the card's
-   fields keep reading as fields; the high-value navy card keeps the link white. */
+   fields keep reading as fields. */
 .kanban-doc-field a.kanban-card-party-link {
     color: var(--text-color);
     text-decoration: none;
@@ -1566,9 +1538,14 @@ body.desktop-page .desktop-icon .icon-title,
     border-bottom-color: var(--primary);
     text-decoration: none;
 }
-.kanban-card-body.opportunity-high-value .kanban-doc-field a.kanban-card-party-link {
-    color: #ffffff !important;
-    border-bottom-color: rgba(255, 255, 255, 0.6);
+
+/* The contact's mobile after the Full Name on the same row (v1.794.0,
+   kanban_customization.js merge_contact_row): muted, so the name reads first. */
+.kanban-doc-field .kanban-card-contact-phone {
+    color: var(--text-muted);
+    /* beside the name's .truncate span (flex: 1 1 auto): the name shortens, the number stays whole */
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 /* ==========================================================================

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.794.0] - 2026-11-03
+
+### Changed
+- **Opportunity Kanban card: no navy fill, no tag pills, no comment count, no heart; the contact's
+  name and phone on one row.** Nikolas, 2026-11-03, on the live board: "there is dark blue cards.
+  I'd like to redo these cards too. So I want the dark blue removed since it makes it difficult to
+  read. It seems like some info is duplicated. So the pills for Build Design etc from the tags is
+  showing, but also is a little dot showing which value streams. So we need to pick the little dots
+  instead of just the tags. We can hide the tags actually. Then we want the Full Name of the
+  contact to have their phone number next to their name instead of just a new line for the phone.
+  Don't show how many comments are on there and get rid of the heart." The board is the busiest
+  Desk route (868 visits in 90 days, 6 users). `public/js/kanban_customization.js`, on frappe
+  16.53's classic engine as rebuilt in v1.779.0; its styles in `desk_enhancements.bundle.css`.
+  - **The navy fill on deals over 4000 is withdrawn.** v1.779.0 (#1413) had restored it when it
+    rebuilt the customization on the 16.53 hooks (it had been silently dead since the 16.50
+    upgrade); on the live board — 12 cards of 92, white on `#00263E` — it was the one thing
+    Nikolas asked to lose. `.opportunity-high-value`, its dark-theme lift and its tag and link
+    overrides are deleted, and `opportunity_amount` is no longer added to the board's query by this
+    file (the board's own field list draws the amount). No replacement marker for now; if one is
+    wanted later it will be a small accent, not a fill.
+  - **Tag pills hidden at the source: `_user_tags` and `_liked_by` are taken out of the board's
+    query** after `set_fields`. `render_card_meta` (kanban_board.bundle.js) draws `.kanban-tags`
+    only when the row carries `_user_tags`, so a card fetched without it has no pills and no "+1",
+    and the query is lighter. 177 of 401 open deals are tagged (Build / Design / Service / Events /
+    Products), and the same streams were already on the card as the value-stream dots from
+    `custom_value_stream`. The dots stay, and each dot now carries a tooltip naming all the
+    streams ("Value streams: Build, Design"), since they are the card's only mark of them; the
+    list is on every dot and not only on their container, because an inner `title` wins and the
+    8px dots cover the container (review). The phone span is a sibling of the engine's
+    `.truncate` span, so a long name is what gets the ellipsis and the number stays whole. They sit
+    at the left of the meta row (`order: -1`, where the heart was); the assignees keep the right.
+  - **No comment count:** `KanbanView.prototype.get_args` sets `with_comment_count = 0` on the
+    board. The ListView sets it to 1 unless the doctype's List View Settings disable it
+    (list_view.js ~785), and that setting would change the Opportunity list too. The Kanban's own
+    endpoints (`get_kanban_board_data`, `get_kanban_column_page`; kanban_pagination.js) send
+    `get_call_args().args`, so the switch reaches every page of cards and the realtime refresh,
+    and the server computes no `_comment_count` at all.
+  - **No heart:** `KanbanView.prototype.get_like_html` returns "" on the board. The engine has no
+    setting for it (`cur_list.get_like_html(card)` is unconditional in `render_card_meta`); the
+    method is shadowed on the Kanban view's prototype, so the list view's rows keep theirs.
+  - **One contact row.** The board's fields on prod are `customer_name`, `primary_contact` ("Full
+    Name", a Link to Contact; TASK-2026-01075 put it there in place of `contact_person`),
+    `custom_contact_mobile_number` and `opportunity_amount`, so the engine drew a phone row and a
+    name row. The phone row is removed and the number — from the data row, which the query now
+    carries — is appended to the name row's value: "Jane Contact · (801) 555-0100". The name stays
+    as the engine formatted it, a link to the Contact showing the Contact's title. No phone: the
+    name alone. No contact: no row, and a phone without a contact (8 of 401 open deals) is dropped
+    with it. The rows are found by their labels (read from the docfields), like the customer link,
+    and the board's own field list still decides what is drawn: take `primary_contact` off the
+    board and nothing is merged or invented. The customer link of v1.779.0 is unchanged.
+  - Nothing here touches the "Opportunity Pipeline" board, a v2 board that draws its own cards.
+  - Tests: `scripts/test_kanban_customization.js` now mirrors `render_card_meta` (pills from
+    `card.tags`, the count from `comment_count`, `cur_list.get_like_html`) and the ListView's
+    `get_args`, and checks each of the four points, a board without the contact fields, the
+    other-board controls, and that the ListView's own `get_args` / `get_like_html` are untouched;
+    `tests/test_kanban_customization.py` fails the build on any trace of `.opportunity-high-value`.
+
+
 ## [1.792.0] - 2026-11-03
 
 ### Changed
