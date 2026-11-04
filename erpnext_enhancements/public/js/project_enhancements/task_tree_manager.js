@@ -1126,11 +1126,13 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	closeRowMenu(refocus = false) {
 		$(document).off("mousedown.taskRowMenu");
+		// Every row menu on the page, not only this instance's: there is only ever one
+		// meant to be open, and one left by a tree that was rebuilt under it must go too.
+		$(".task-row-menu").remove();
+		$(".task-actions-btn[aria-expanded=true]").attr("aria-expanded", "false");
 		const open = this._rowMenu;
 		this._rowMenu = null;
 		if (!open) return;
-		open.$menu.remove();
-		open.$btn.attr("aria-expanded", "false");
 		if (refocus) open.$btn.trigger("focus");
 	}
 
@@ -1644,7 +1646,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	 */
 	initializeTaskSorting() {
 		const me = this; if (this.readonly) return;
-		this.sortableInstances.forEach((s) => s.destroy()); this.sortableInstances = [];
+		// A destroyed Sortable has no `el`; destroying it again throws (the form script
+		// destroys them on a refresh too) and would stop the grid from rendering.
+		this.sortableInstances.forEach((s) => { if (s.el) s.destroy(); });
+		this.sortableInstances = [];
 		if (this.sort) {
 			this.wrapper.find(".task-drag-handle").attr("title", __("Drag is off while the tree is sorted. Click the sorted header again for the manual order."));
 			return;
