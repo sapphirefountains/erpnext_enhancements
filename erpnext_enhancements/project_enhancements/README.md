@@ -1383,8 +1383,15 @@ so it had grown into one long flat row. v1.687.0 made it **one bar** with four m
 approved 2026-10-21) folds those four into two, and gives both planners the same structure:
 
 ```
-‹ Today ›  title   [Lookahead] Gantt Crew Calendar   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+‹ Today ›  title   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻   [Lookahead] Gantt Crew Calendar Overview
 ```
+
+- **The tabs sit at the bar's right end** (v1.788.0; Nikolas, 2026-11-03: "Float right for the side for
+  the Lookahead, Gantt, Crew, Calendar, and Overview tabs"), after the tools, with the Calendar's
+  Week/Month switch beside them; ‹ Today › and the range stay left. It is DOM order (`build_shell`
+  appends `$seg` and `$cal_seg` after the refresh button), not a CSS `order`, so the tablist, the keyboard
+  order and the phone's compact row (its "Filters and tools" button is appended after them) follow. The
+  Maintenance Planner's Month/Week/Crew tabs and My day move the same way.
 
 - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
   roving tabindex, ArrowLeft/Right/Home/End move focus (choosing one is a route change with its own
@@ -1450,7 +1457,20 @@ in a header of their own, each its own history entry:
   *Show hours* (a browser preference, off) adds the hours or the time slot beside the days. A task with no
   hours still books a full day (the engine's rule, `crew_availability.full_day_hours`), so the day cell
   says *Full*, *3h free* or *Off* as before. The tray (*Not scheduled*, *Needs crew*) sits beside the board
-  on a laptop and above it on a phone. *Day n of N* counts the **task's** working days from its own dates,
+  on a laptop and above it on a phone. **A person's day is ordered by project name, then task name**
+  (v1.788.0, `booking_order`; Nikolas, 2026-11-03: "events should go in order of Project Name, Task
+  Name"), a drive and a personal block first, another planner's bookings among the rest by the names they
+  came with; the Calendar's foreign items take the same order. **Resting the mouse on a chip** (any
+  `.pp-card` or `.pp-fcard`, on every tab) draws the kit's hover card after a short delay (`PPH` block,
+  `pph_task` / `pph_foreign`; `planner_kit.popover`): the task and its project, its days, the time slot
+  or the hours, the hours booked that day and planned, the crew with the lead marked, pencil / draft /
+  overdue marks, conflicts and warnings in red, the hours-actual and equipment notes. Gone when the mouse
+  leaves, on Esc, a press, a scroll or a route change; mouse and pen only, so a phone's hold-to-open quick
+  look is unchanged; the chip's `title=` stays as the accessible fallback. **A day's free hours read
+  "8h pencil" alone when the pencil covers them** (v1.788.0, `pp_hours_text`; Nikolas: "Pencil should be
+  the only hours displayed when something is tentative"), else "4h free · 2h pencil" with no plus sign;
+  Full, Over and Off keep the pencil after them. The Capacity heatmap reads the same way (an all-pencil
+  week is "8h pencil"; otherwise "36h of 40h · 4h pencil"). *Day n of N* counts the **task's** working days from its own dates,
   the same count as the calendar card's *5 days* (`duration_text`), not how many of those days this person is
   booked: someone on a Monday to Wednesday pattern has chips on three days of a task both views call five.
   **It is not yet one true bar:** a multi-day task is still one chip per day, drawn joined, because the chip
@@ -1506,6 +1526,8 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide`, `add_values(fn)` (a page's own controls in the panel, for `unsaved()`) | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog. `panel.unsaved()` (v1.753.0): the open panel's values differ from what they were at the person's first pointer or key inside it (a page's own `set_value` never counts) |
 | `records.record_of(kind, item)` / `records.open(record)` / `records.open_item(kind, item)` | A tap opens the item's record (v1.753.0): `task`, `move`, `rental` → Task; `visit` → Sapphire Maintenance Record, or with `projected` its Sapphire Maintenance Contract; `projected` → the contract; `travel` → Travel Trip; `project` → Project; `person` → as its `open_as` says (Employee or Planner Resource; none without it); `asset` → Asset | `record_of` is null for a drafted new task, for driving, a block or a note, for a row the server marked `open: false` (`api/planner_open.py`), and for a doctype `frappe.model.can_read` refuses, so the page keeps its old answer. `open` routes `("Form", doctype, name)` through `drawer.navigate`, in the same tab, after a `frappe.confirm` when `panel.unsaved()`, and closes the Undo toast first |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
+| `popover.attach(root, {selector, describe, delay})` | The hover card on a chip (v1.788.0): after `delay` ms (350) with the mouse at rest on an element matching `selector`, the card `describe(el)` returns — `{title, subtitle, tags, rows: [[label, value]], warnings, notes}`, or null for nothing — drawn under the chip (above it near the bottom), inside the viewport | Mouse and pen only, so a finger's hold-to-open quick look is untouched. Closes on leave, Esc, a press, a scroll, a route change, and while a `*-drag-active` class is on the body nothing shows. Holds the chip's `title` aside while up (the browser's tooltip would show under it) and sets `aria-describedby`; gives the title back on close. One card at a time; everything set as text (`popover_html`, pure). Returns `{close, destroy}` |
+| `records.url(record)` / `records.open_new_tab(record)` | The record's Desk address (`/desk/<slug>/<name>`, the router's `slug` where it is loaded, the same spelling without it) and a new tab on it with `noopener` (v1.788.0): the planners' *Open … in new tab* items and Ctrl+Enter | Nothing on this page changes: no drawer closes, no history entry moves, an unsaved side panel is left alone. False with no record |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
 | `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
 | `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, named by `title` through `aria-label` alone, or by the step's heading when there is none, and described by the step's sentence; the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
@@ -1623,7 +1645,13 @@ do to a drag.
   lifts at 0.3 s as before, and is only dropped back where it was). On a task card: *Edit* (the 6A side
   panel), *Assign to…*, *Move to next free day*, *Pencil* or *Firm up*, *Duplicate*, *Duplicate to…*,
   *Split across days…* (one-day task: *Split in two…*), *Project at a glance*, *Open project*. On an empty
-  spot: *Add task here…* and *Everyone's day*. On a name: *See their week*.
+  spot: *Add task here…* and *Everyone's day*. On a name: *See their week*. Since v1.788.0 (Nikolas,
+  2026-11-03: "Open Link in New Tab for right click") *Open task in new tab* follows *Open task* and *Open
+  project in new tab* follows *Open project*, on a card's menu, a project name's and the Overview's rows,
+  and **Ctrl+Enter** (⌘Enter) on a focused card, task name or project name does the same
+  (`ppr_open_new_tab`, `ppr_new_tab_for`): the kit's `records.open_new_tab`, a `window.open` on the Desk
+  address a tap would route to, so the planner, its history and its held drafts stay put. A drafted new
+  task has no record yet, so neither does anything for it; a Ctrl-click stays the multi-select.
   - *Assign to…* opens a drawer listing who has the hours free on that day (`who_is_free`, the hours
     being the task's estimate shared by the crew over its working days, a full day with no estimate)
     and who does not, with the reason. Click one to add them (`add_crew`), or pick "Replace <person>"
@@ -2432,6 +2460,19 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   cards did. A **Needs crew** chip in the board's own bar narrows it to the tasks short of crew,
   which replaces the Needs crew tray. The Overdue tray stays. The Resources panel is not on this tab.
 - **Collapsing** a project or a phase draws its work as plain runs, and is remembered in this browser.
+  Since v1.788.0 the arrows, Expand all / Collapse all, the Needs crew chip, "+N more" and the Overview's
+  Expand all redraw inside `ppl_keep_scroll` (Nikolas, 2026-11-03: expanding "refreshes the view bringing
+  you to the top"): the board's pane, every scrolling ancestor and the window are taken before the redraw
+  and put back after it, in a `finally`.
+- **A month band** (v1.788.0; Nikolas: "don't just show the weeks, but also the month") sits over the day
+  headings: one cell a month across its days ("November"; the short name where fewer than four of its days
+  are on screen, the full name on hover; the year said only when the window holds two), sticky at the top
+  with the headings sticking just under it, as the Gantt's timeline reads. A week start keeps its left
+  rule; the first of a month gets a firmer one (`ppl-month-start`). `PPL_PURE.month_bands`,
+  `ppl_monthband_html`; the phone's list by day has no band. The band and the headings are one sticky
+  block (`.ppl-sticky`), so no offset is hard-coded between them (a tablet's rows are 40px), and the
+  month's name is sticky inside its cell (`overflow: clip`, not `hidden`, so the cell is no scroll
+  container), so it stays in view as the board scrolls sideways.
 - The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
 - **Drop targets.** Every row's days take a drop, a project's and a phase's too, so a project with no
   dated work yet still has days to drop its Not scheduled chips on.

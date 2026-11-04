@@ -2597,6 +2597,7 @@ class TestMethodsUnderNode(unittest.TestCase):
 			[
 				"Quick edit",
 				"Open task",
+				"Open task in new tab (Ctrl+Enter)",  # v1.788.0
 				"Assign to…",
 				"Move to next free day (Looking…)",
 				"Pencil (Make it tentative)",
@@ -2606,6 +2607,7 @@ class TestMethodsUnderNode(unittest.TestCase):
 				"--",
 				"Project at a glance",
 				"Open project",
+				"Open project in new tab",  # v1.788.0
 			],
 		)
 		# v1.603.0: a new task can be a draft, a split cannot.
@@ -2614,7 +2616,7 @@ class TestMethodsUnderNode(unittest.TestCase):
 		self.assertIn("Assign to…", out["pp_items_draft"])  # drafting an existing task is fine
 		rental = out["pp_items_rental"]
 		self.assertEqual(rental[:2], ["Quick edit", "Open task"])
-		self.assertTrue(all("[off]" in item for item in rental[2:]), rental)
+		self.assertTrue(all("[off]" in item for item in rental[3:]), rental)  # v1.788.0: the new-tab item is third
 		self.assertIn("Assign to… [off] (Follows its Rental Booking)", rental)
 		one_day = out["pp_items_one_day"]
 		self.assertIn("Firm up", one_day)
@@ -2772,6 +2774,7 @@ class TestMethodsUnderNode(unittest.TestCase):
 			[
 				"Quick edit",
 				"Open visit",
+				"Open visit in new tab (Ctrl+Enter)",  # v1.788.0
 				"Assign to…",
 				"Move to next free day (Looking…)",
 				"--",

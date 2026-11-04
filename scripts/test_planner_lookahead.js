@@ -49,6 +49,7 @@ function check(label, actual, expected) {
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const LONG_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function moment(value) {
 	const text = String(value == null ? "" : value).slice(0, 10);
@@ -60,9 +61,15 @@ function moment(value) {
 		day: () => date().getUTCDay(),
 		format(f) {
 			const d = date();
-			const parts = { ddd: DAYS[d.getUTCDay()], MMM: MONTHS[d.getUTCMonth()], D: String(d.getUTCDate()) };
+			const parts = {
+				ddd: DAYS[d.getUTCDay()],
+				MMMM: LONG_MONTHS[d.getUTCMonth()],
+				MMM: MONTHS[d.getUTCMonth()],
+				D: String(d.getUTCDate()),
+				YYYY: String(d.getUTCFullYear()),
+			};
 			if (f === "YYYY-MM-DD") return m.text;
-			return f.replace(/ddd|MMM|D/g, (token) => parts[token]);
+			return f.replace(/YYYY|MMMM|MMM|ddd|D/g, (token) => parts[token]);
 		},
 		// What range_days walks with: whole days only.
 		clone: () => moment(m.text),

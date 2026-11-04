@@ -167,9 +167,14 @@ class TestTheKit(unittest.TestCase):
 		self.assertIn("if (it.open_as === DOCTYPES.employee) return pick(DOCTYPES.employee, it.employee);", records)
 		# An Undo toast belongs to the planner: closed before the Form opens.
 		self.assertIn('if (env.toast && typeof env.toast.close === "function") env.toast.close();', records)
-		# Same tab, always: nothing opens a window.
+		# A tap: the same tab, always. The one window.open in the file is open_new_tab (v1.788.0), the
+		# "Open … in new tab" menu items' and Ctrl+Enter's, and never on the tap's path.
 		self.assertNotIn("window.open", records)
-		self.assertNotIn("_blank", records)
+		tap = records[records.index("function open(record) {") : records.index("const slug = ")]
+		self.assertNotIn("_blank", tap)
+		self.assertNotIn("win.open", tap)
+		self.assertEqual(records.count("_blank"), 1)
+		self.assertIn('env.win.open(url, "_blank", "noopener");', records)
 
 	def test_the_panel_counts_only_the_persons_own_edits(self):
 		panel = _strip_comments(_read(KIT / "panel.js"))

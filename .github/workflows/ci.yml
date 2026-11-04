@@ -4359,6 +4359,14 @@ jobs:
       # node is on PATH in this job, so the harness cannot skip here.
       - name: Planner taps open the record (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens -v
+      # Nikolas's six planner picks of 2026-11-03 (v1.788.0): the Lookahead's month band, "Open … in new tab"
+      # and Ctrl+Enter, the scroll kept over a redraw, the view tabs at the bar's right end, the Crew board's
+      # order and the hover card, and the pencil-only hours rule. Runs scripts/test_planner_six_picks.js
+      # against the real kit (records, popover) and both real page scripts, and pins the wiring (every
+      # redraw an arrow causes goes through the scroll keeper; the kit's one window.open is open_new_tab).
+      # node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner six picks of 2026-11-03 (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_six_picks -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
