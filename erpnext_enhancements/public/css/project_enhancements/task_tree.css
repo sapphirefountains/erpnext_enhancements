@@ -203,18 +203,20 @@
 /* --- Drag & drop feedback (v1.791.0) --- */
 /* The body of a row (all but a thin band at each edge): the dragged task will nest
    under it. The row takes a wash and a pill reading "Nest under <task>" (the JS sets
-   data-drop-label). The wash is opaque (color-mix; the rgba line is the fallback for a
-   browser without it) because the sticky Task cell inherits it and must cover the cells
-   that scroll under it. */
+   data-drop-label on the Task cell). The wash is an explicit blue, not the theme's
+   --primary (near black on the Desk's default theme, which made it read as a grey hover),
+   and opaque (color-mix; the rgba line is the fallback for a browser without it) because
+   the sticky Task cell inherits it and must cover the cells that scroll under it. */
 .task-grid-row.drop-as-child {
 	background-color: rgba(37, 99, 235, 0.14) !important;
-	background-color: color-mix(in srgb, var(--primary) 14%, var(--card-bg)) !important;
-	box-shadow: inset 3px 0 0 var(--primary);
+	background-color: color-mix(in srgb, #2563eb 16%, var(--card-bg)) !important;
+	box-shadow: inset 3px 0 0 #2563eb;
 }
 
-/* The pill sits in the sticky Task cell, so it is on screen however far the grid is
-   scrolled sideways. Overlaid, not a flex item: as a flex item it took width from the
-   cells and slid the columns out of line with the header (review of #1418). */
+/* The pill sits in the sticky Task cell (so it is on screen however far the grid is
+   scrolled sideways) and reads that cell's data-drop-label: attr() looks at the element
+   the pseudo-element belongs to. Overlaid, not a flex item: as a flex item it took width
+   from the cells and slid the columns out of line with the header (review of #1418). */
 .task-grid-row.drop-as-child > .task-grid-cell:first-child::after {
 	content: attr(data-drop-label);
 	position: absolute;
@@ -226,7 +228,7 @@
 	text-overflow: ellipsis;
 	padding: 2px 10px;
 	border-radius: 999px;
-	background-color: var(--primary);
+	background-color: #2563eb;
 	color: #fff;
 	font-size: 11px;
 	font-weight: 600;
@@ -249,7 +251,7 @@
 	left: 0;
 	right: 0;
 	height: 3px;
-	background-color: var(--primary);
+	background-color: #2563eb;
 	z-index: 3;
 	pointer-events: none;
 }

@@ -1732,7 +1732,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const $row = $node.children(".task-grid-row").first();
 		if (plan.mode === "nest") {
 			const subject = $row.find(".task-name-cell-text").first().text() || plan.target;
-			$row.addClass("drop-as-child").attr("data-drop-label", __("Nest under {0}", [subject]));
+			// The label sits on the sticky Task cell: CSS attr() reads the element the
+			// pseudo-element belongs to, so the attribute must be on that cell, not the row.
+			$row.addClass("drop-as-child");
+			$row.children(".task-grid-cell").first().attr("data-drop-label", __("Nest under {0}", [subject]));
 		} else {
 			$row.addClass(plan.mode === "after" ? "drop-after" : "drop-before");
 		}
@@ -1741,8 +1744,8 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	clearDropIndicators() {
 		this.wrapper
 			.find(".drop-as-child, .drop-before, .drop-after")
-			.removeClass("drop-as-child drop-before drop-after")
-			.removeAttr("data-drop-label");
+			.removeClass("drop-as-child drop-before drop-after");
+		this.wrapper.find("[data-drop-label]").removeAttr("data-drop-label");
 	}
 
 	handleDragEnd(evt) {
