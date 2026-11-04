@@ -133,7 +133,7 @@ export function open_reminder(opts) {
 
 // ------------------------------------------------------------------ Generate Contract
 
-// Customer agreements (Owner / Design / Events / Maintenance) generate from Opportunity or Project;
+// Customer agreements (Owner / Events / Maintenance) generate from Opportunity or Project;
 // subcontractor agreements (MSA / SOW) generate from Supplier. An SOW can also be generated from a
 // Project/Opportunity by picking the subcontractor in the dialog, which prefills the scope of work
 // from the source's request/deliverable tables.
@@ -144,7 +144,9 @@ export function open_reminder(opts) {
 // (contract_builder.get_contract_types — the Builder's start screen reads the same list). This
 // static list is the order and the hints; the server's answer decides which of it is offered, and
 // the labels here are only the fallback for a tab whose call failed. The template_key is the
-// contract: the keys (architect, rental) did not change with the titles.
+// contract: the keys (architect, rental) did not change with the titles. The Design Agreement is
+// deliberately NOT here: create_contract prefills the party from the project's customer, and the
+// other side of a Design Agreement is the architect, which only the Builder's start dialog asks for.
 const CONTRACT_SOURCES = { Opportunity: "customer", Project: "customer", Supplier: "supplier" };
 const CB_API = "erpnext_enhancements.project_enhancements.contract_builder";
 
@@ -153,7 +155,6 @@ export function contract_types(doctype) {
 	if (kind === "customer") {
 		return [
 			{ value: "owner", label: __("Owner Contract"), hint: __("Design / Build / Maintain") },
-			{ value: "architect", label: __("Design Agreement"), hint: __("the architect engages Sapphire") },
 			{ value: "rental", label: __("Events Agreement") },
 			{ value: "maintenance", label: __("Maintenance Services Agreement") },
 			{ value: "sow", label: __("Statement of Work"), hint: __("subcontractor — requires signed MSA") },

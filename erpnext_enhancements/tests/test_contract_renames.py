@@ -46,6 +46,7 @@ if str(REPO_ROOT) not in sys.path:
 TEMPLATES = APP / "templates" / "contracts"
 PATCH_MODULES = (
 	"erpnext_enhancements.patches.rename_agreement_templates",
+	"erpnext_enhancements.patches.update_maintenance_agreement_terms",
 	"erpnext_enhancements.patches.remove_contracts_tabs",
 	"erpnext_enhancements.patches.seed_contract_templates",
 )
@@ -72,6 +73,10 @@ class Site:
 		self.errors = []
 		self.fail_get_doc = set()
 		self.fail_delete = set()
+		self.signed = {}
+		self.frozen = []
+		self.events = []
+		self.fail_freeze = set()
 
 
 SITE = Site()
@@ -87,13 +92,32 @@ def _install_stub():
 			return name in SITE.custom_fields
 		return False
 
+	class _Contract:
+		def __init__(self, name):
+			self.name = name
+
+		def freeze_executed_copy(self):
+			if self.name in SITE.fail_freeze:
+				raise RuntimeError(f"cannot freeze {self.name}")
+			SITE.frozen.append(self.name)
+
 	def get_doc(doctype, name):
+		if doctype == "Project Contract":
+			return _Contract(name)
 		if name in SITE.fail_get_doc:
 			raise RuntimeError(f"boom {name}")
-		return _Doc(SITE.templates[name])
+		return _Doc(dict(SITE.templates[name], name=name))
+
+	def get_all(doctype, filters=None, pluck=None, **kwargs):
+		# freeze_contract_copies: every Signed, submitted contract of the template's kind.
+		if doctype == "Project Contract" and (filters or {}).get("status") == "Signed":
+			SITE.events.append(("freeze", filters["template_key"]))
+			return list(SITE.signed.get(filters["template_key"], []))
+		return []
 
 	def set_value(doctype, name, fieldname, value, update_modified=True):
 		SITE.writes.append((doctype, name, fieldname, value, update_modified))
+		SITE.events.append(("write", name, fieldname))
 		SITE.templates[name][fieldname] = value
 
 	def delete_doc(doctype, name, **kwargs):
@@ -109,6 +133,7 @@ def _install_stub():
 		rollback=lambda save_point=None: SITE.rollbacks.append(save_point),
 	)
 	frappe.get_doc = get_doc
+	frappe.get_all = get_all
 	frappe.delete_doc = delete_doc
 	frappe.clear_cache = lambda doctype=None: SITE.cleared.append(doctype)
 	frappe.log_error = lambda title=None, message=None, **k: SITE.errors.append(title)
@@ -219,10 +244,39 @@ class TestRenamePatch(unittest.TestCase):
 		self.assertEqual(
 			SITE.templates["rental"]["body"], "<h3><b>EVENTS AGREEMENT</b></h3><p>edited on the site</p>"
 		)
+		self.assertEqual(SITE.errors, [])
+
+	def test_a_body_edited_past_recognition_is_logged_not_rewritten(self):
 		SITE.templates["architect"]["body"] = "<p>rewritten entirely</p>"
-		SITE.writes.clear()
 		self.patch.execute()
-		self.assertNotIn(("Contract Template", "architect", "body"), [w[:3] for w in SITE.writes])
+		self.assertEqual(SITE.templates["architect"]["title"], "Design Agreement")
+		self.assertEqual(SITE.templates["architect"]["body"], "<p>rewritten entirely</p>")
+		self.assertEqual(SITE.errors, ["rename_agreement_templates: architect body not renamed"])
+		# Logged once: the second run changes no title, so it says nothing.
+		self.patch.execute()
+		self.assertEqual(len(SITE.errors), 1)
+
+	def test_paper_signed_contracts_are_frozen_before_the_body_changes(self):
+		SITE.signed = {"rental": ["SF-RA-2026-0001", "SF-RA-2026-0002"], "architect": ["SF-ARCH-2026-0001"]}
+		self.patch.execute()
+		# Every Signed contract of a type whose body is rewritten, frozen before the body write.
+		self.assertEqual(sorted(SITE.frozen), ["SF-ARCH-2026-0001", "SF-RA-2026-0001", "SF-RA-2026-0002"])
+		for key in ("rental", "architect"):
+			self.assertLess(
+				SITE.events.index(("freeze", key)), SITE.events.index(("write", key, "body")), key
+			)
+		# A title-only change (the body already reads the new words) freezes nothing.
+		SITE.frozen.clear()
+		SITE.templates["rental"]["title"] = "Rental Agreement"
+		self.patch.execute()
+		self.assertEqual(SITE.frozen, [])
+
+	def test_a_freeze_that_fails_is_logged_and_the_rename_still_lands(self):
+		SITE.signed = {"rental": ["SF-RA-2026-0001"]}
+		SITE.fail_freeze = {"SF-RA-2026-0001"}
+		self.patch.execute()
+		self.assertEqual(SITE.errors, ["Contract terms patch: could not freeze SF-RA-2026-0001"])
+		self.assertEqual(SITE.templates["rental"]["title"], "Events Agreement")
 
 	def test_a_missing_template_is_skipped(self):
 		del SITE.templates["nda"]
@@ -375,6 +429,10 @@ class TestContractButton(unittest.TestCase):
 		for own in ("window.open", "location.reload", "location.href"):
 			self.assertNotIn(own, code)
 
+	def test_the_contract_type_link_offers_enabled_templates_only(self):
+		js = _code_only(_read("project_enhancements", "doctype", "project_contract", "project_contract.js"))
+		self.assertIn('frm.set_query("contract_template", () => ({ filters: { enabled: 1 } }))', js)
+
 	def test_the_builder_start_screen_takes_the_record_it_was_sent(self):
 		js = _read("project_enhancements", "page", "contract_builder", "contract_builder.js")
 		self.assertIn('.on("click", () => this.start_dialog(type, options))', js)
@@ -389,12 +447,14 @@ class TestGenerateContractList(unittest.TestCase):
 			code.index("export function contract_types(") : code.index("function enabled_contract_types(")
 		]
 		values = re.findall(r'value: "([a-z_]+)"', block)
-		self.assertEqual(values, ["owner", "architect", "rental", "maintenance", "sow", "msa", "sow"])
+		self.assertEqual(values, ["owner", "rental", "maintenance", "sow", "msa", "sow"])
 		self.assertIn('label: __("Events Agreement")', block)
-		self.assertIn('label: __("Design Agreement")', block)
+		# No Design Agreement here: create_contract prefills the party from the project's customer,
+		# and the other side of a Design Agreement is the architect (the Builder's start dialog asks).
 		for gone in (
 			"nda",
 			"employee_contractor",
+			"architect",
 			"Rental Agreement",
 			"Architect Agreement",
 			"Non-Disclosure",
@@ -463,6 +523,14 @@ class TestWording(unittest.TestCase):
 		self.assertIn('__("Down payment: {0}% of {1} = {2}."', steps)
 		self.assertNotIn("First Invoice", steps)
 		self.assertNotIn("First invoice", steps)
+		for name in (
+			"Project-custom_first_invoice_percentage",
+			"Opportunity-custom_first_invoice_percentage",
+		):
+			self.assertIn("down payment", fields[name]["description"], name)
+		readme = _read("project_enhancements", "README.md")
+		self.assertIn("names the **Down Payment Percentage**", readme)
+		self.assertNotIn("names the **First Invoice Percentage**", readme)
 		help_text = json.loads(_read("form_kit", "help_text", "opportunity.json"))
 		hint = help_text["fields"]["custom_first_invoice_percentage"]["hint"]
 		self.assertIn("down payment", hint)

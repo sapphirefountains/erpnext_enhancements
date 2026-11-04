@@ -31169,7 +31169,7 @@
   "columns": 0,
   "default": null,
   "depends_on": null,
-  "description": "How much of the project amount goes on the first invoice to the customer. Named in the hand-off note to Billing (Hand-Off Process step 4), together with the money it works out to. Blank means the note asks Billing to confirm the amount with Sales rather than inventing one.",
+  "description": "How much of the project amount is due as the down payment (the first invoice to the customer). Named in the hand-off note to Billing (Hand-Off Process step 4), together with the money it works out to. Blank means the note asks Billing to confirm the amount with Sales rather than inventing one.",
   "docstatus": 0,
   "doctype": "Custom Field",
   "dt": "Project",

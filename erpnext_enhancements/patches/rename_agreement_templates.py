@@ -16,12 +16,25 @@ already has the records. This patch, on each existing Contract Template by ``tem
   Builder's start screen list enabled templates only, and ``create_contract`` refuses a disabled
   one; the contracts already issued on them are untouched and keep working.
 
+**Signed contracts keep their wording.** A contract marked signed on paper has no executed copy
+of its own and re-renders from the live template on every print (``freeze_executed_copy``), so
+before a body is rewritten every Signed contract of that type is frozen as it reads today
+(``update_maintenance_agreement_terms.freeze_contract_copies``, the same call the layout patches
+make), and a reprint of a signed Rental Agreement still says RENTAL AGREEMENT. An e-signed
+contract already holds its instrument on its signature request. A signing link that is still out
+when this runs shows the signer the new heading — accepted: the words changed, not the terms.
+
+A body whose heading was edited on the site gets the new title but no body change; that is
+logged (never raised), so the mismatch between the picker and the printed heading is visible.
+
 Idempotent (a second run finds nothing to change) and it **cannot raise**: a patch that raises
 aborts ``bench migrate``, which on this repo is the deploy. Each template is its own savepoint;
 one that fails is logged by key and the others still change.
 """
 
 import frappe
+
+from erpnext_enhancements.patches.update_maintenance_agreement_terms import freeze_contract_copies
 
 #: template_key -> (new title, [(old wording, new wording), ...] applied to the live body)
 RENAMES = {
@@ -60,7 +73,7 @@ def rename_body(body, replacements):
 
 def execute():
 	for key, (title, replacements) in RENAMES.items():
-		_apply(key, lambda doc: _rename(doc, title, replacements))
+		_apply(key, lambda doc, title=title, replacements=replacements: _rename(doc, title, replacements))
 	for key in DISABLE:
 		_apply(key, _disable)
 
@@ -72,6 +85,17 @@ def _rename(doc, title, replacements):
 	body = rename_body(doc.body, replacements)
 	if body != doc.body:
 		changed["body"] = body
+	elif changed and not any(new in (doc.body or "") for _old, new in replacements):
+		# The title moves, the printed heading does not: the body on this site reads neither the
+		# old wording nor the new, so the picker and the paper will disagree until it is edited.
+		frappe.log_error(
+			title=f"rename_agreement_templates: {doc.name} body not renamed",
+			message=(
+				f"Contract Template '{doc.name}' is titled '{title}' now, but its body carries none of the "
+				"shipped heading or defining sentences, so no wording was changed. Edit the title block "
+				"on the site by hand."
+			),
+		)
 	return changed
 
 
@@ -89,6 +113,9 @@ def _apply(key, decide):
 		changed = decide(doc)
 		if not changed:
 			return
+		if "body" in changed:
+			# What paper-signed contracts say, stored before the template says something else.
+			freeze_contract_copies(key)
 		# Field writes, as refresh_rental_owner_agreement_layout does: no controller run for a
 		# change of wording that touches no tag and no binding.
 		for fieldname, value in changed.items():

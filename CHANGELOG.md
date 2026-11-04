@@ -41,8 +41,16 @@ Payment Percentage as the name in the Budget tab instead of First Invoice Percen
   insert-only, so the new words never reach a site that already has the records: the new patch
   `rename_agreement_templates` retitles both on an existing site and swaps the live bodies'
   heading and the two sentences that name the agreement (exact strings, each only where the old
-  wording is still there, so a body edited on the site keeps its edits). The `template_key`, the
-  record name and the naming series `SF-RA-` are unchanged: code keys on them, not on the title.
+  wording is still there, so a body edited on the site keeps its edits; a body that carries
+  neither wording gets the title and an Error Log saying the printed heading was not changed).
+  **Signed contracts keep their wording:** before a body is rewritten, every Signed contract of
+  that type is frozen as it reads today (`freeze_contract_copies`, the call the layout patches
+  make), because a contract marked signed on paper has no executed copy of its own and
+  re-renders from the live template on every print. A signing link still out when the patch
+  runs shows the signer the new heading, accepted: the words changed, not the terms. The
+  `template_key`, the record name and the naming series `SF-RA-` are unchanged: code keys on
+  them, not on the title. The Project Contract form's **Contract Type** Link lists enabled
+  templates only (`set_query`), so a hand-made contract cannot pick a hidden one either.
   The seed and the template files (`templates/contracts/architect_agreement.html`,
   `rental_agreement.html`) carry the same words for a fresh site.
 - **Events Agreement everywhere it is read**: the Rental Booking's *View* and *Create* buttons
@@ -58,15 +66,17 @@ Payment Percentage as the name in the Budget tab instead of First Invoice Percen
   `get_contract_types`: a template switched off in the Desk disappears from it without a code
   change, and the Builder's start screen reads the same list. The static list in
   `record_actions.contract_types` is now the order and the hints (and the fallback labels for a
-  tab whose call failed): Owner Contract, **Design Agreement** (new to this dialog; it was only on
-  the Builder's start screen), **Events Agreement**, Maintenance Services Agreement and the SOW
-  for a Project or Opportunity; MSA and SOW for a Supplier. The NDA is no longer in it.
+  tab whose call failed): Owner Contract, **Events Agreement**, Maintenance Services Agreement
+  and the SOW for a Project or Opportunity; MSA and SOW for a Supplier. The NDA is no longer in
+  it. The Design Agreement is deliberately not added: `create_contract` prefills the party from
+  the project's customer, and the other side of a Design Agreement is the architect, which only
+  the Builder's start dialog asks for.
 - **"First Invoice Percentage" reads "Down Payment Percentage"** on the Project and Opportunity
   Budget tabs (`fixtures/custom_field.json`, label only; the fieldname is still
   `custom_first_invoice_percentage`), in the step-4 note to Billing ("Down payment: 30% of … =
-  …", "Down Payment Percentage is not set on this project"), the guided entry hint, the Opportunity
-  field's fixture description (the guided hint must be that description: `test_form_kit` holds the
-  whole help file to it) and the README.
+  …", "Down Payment Percentage is not set on this project"), the guided entry hint, both fields'
+  fixture descriptions (the Opportunity one is the guided hint: `test_form_kit` holds the whole
+  help file to it) and the README.
 
 ### Removed
 - **The Contracts tab on Project and Customer** (v1.181.0 / v1.182.0, the Signed copy rows of

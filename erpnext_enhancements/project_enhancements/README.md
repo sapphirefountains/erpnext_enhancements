@@ -379,7 +379,8 @@ module [`process_steps.py`](../process_steps.py):
   Step 4's email is prefilled by `crm_enhancements.handoff.billing_notice_context`
   (v1.327.0): it goes to the **Billing Email** on the Project, else the one on its
   Opportunity, else the configured Billing route (`billing@sapphirefountains.com`), and it
-  names the **First Invoice Percentage** and the money that works out to against the
+  names the **Down Payment Percentage** ("First Invoice Percentage" until v1.783.0; the field
+  is still `custom_first_invoice_percentage`) and the money that works out to against the
   project amount. Both fields are Custom Fields on Opportunity *and* Project — Sales
   agrees them on the deal, the PM can revise them on the project. Blank percentage prints
   "confirm the amount with Sales" rather than a figure nobody set.
@@ -435,7 +436,13 @@ insert-only) and retitles the live bodies' heading and defining sentences too; t
 the template files carry the same words for a fresh site. The Generate Contract dialog
 (`record_actions.open_generate_contract`) and the Builder's start screen both read
 `contract_builder.get_contract_types`, the enabled templates under their live titles, so a
-template switched on or off in the Desk is offered or not without a code change.
+template switched on or off in the Desk is offered or not without a code change. The Design
+Agreement is on the Builder's start screen only: the Generate Contract dialog has no party field
+and `create_contract` would make the project's customer the party, where a Design Agreement's
+other side is the architect. The Project Contract form's Contract Type Link lists enabled
+templates only. Before `rename_agreement_templates` rewrites a body it freezes every Signed
+contract of that type (`freeze_contract_copies`), so a paper-signed Rental Agreement reprints as
+it was signed.
 
 - **`Contract Template`** (`doctype/contract_template/`) — the Jinja HTML bodies,
   seeded insert-only from `templates/contracts/` (regeneration pipeline:
