@@ -1,5 +1,5 @@
 """Bench-free pytest suite for drag-to-parent on the Tasks Tree and parent dates that follow the
-subtasks (v1.782.0; Nikolas, 2026-11-03: "Make any task a parent by simple drag and drop ... make
+subtasks (v1.784.0; Nikolas, 2026-11-03: "Make any task a parent by simple drag and drop ... make
 rigid start and end dates based off the child tasks so a child task is always within the range of its
 parent task").
 

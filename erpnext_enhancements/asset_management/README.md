@@ -16,7 +16,7 @@ what went out with each one and what came back.
 | `rental_rules.py` | Every rental judgement, **no Frappe**; tested bench-free (`tests/test_rental_rules.py`) |
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
-| `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Rental Agreement, deposit/balance invoices, Submit & Send (v1.564.0) |
+| `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Events Agreement ("Rental Agreement" until v1.783.0), deposit/balance invoices, Submit & Send (v1.564.0) |
 | `rental_kpis.py`, `rental_calendar.py`, `../assistant_tools/rental_*.py` | Fleet KPIs, calendar feeds, assistant tools (v1.567.0) |
 | `rental_logistics.py`, `rental_deposit.py`, `rental_reminders.py`, `doctype/rental_booking_crew/` | Crew tasks + 6am digest + checklists, deposit release, customer reminders (v1.566.0) |
 | `rental_portal.py`, `rental_requests.py`, `../www/rentals.*`, `../www/rent*a*fountain.*`, `../portal_login.py` | Customer portal, public request form, email-link sign-in and its staff guard (v1.565.0) |
@@ -252,8 +252,11 @@ applies on existing sites; read it with `get_cached_doc`).
   - It is a sweep rather than a job per hold, because the deploy's Redis flush kills queued jobs.
   - Optional customer notice, `email_customer_on_hold`, off by default: it lists what is held and
     until when.
-- **The Rental Agreement** is the existing Project Contract, `template_key = "rental"`.
-  - **Create > Rental Agreement** on a booking (`rental_sales.make_rental_agreement`) fills it from
+- **The Events Agreement** is the existing Project Contract, `template_key = "rental"` (titled
+  "Rental Agreement" until v1.783.0, when Nikolas renamed it everywhere it is read: the Contract
+  Template, the booking's buttons and field label, the public rentals page, the hold email. The
+  key, the series `SF-RA-` and the `rental_agreement` fieldname stay).
+  - **Create > Events Agreement** on a booking (`rental_sales.make_rental_agreement`) fills it from
     the booking: dates, one equipment row per fountain and accessory, the rental fee, fees and the
     security deposit.
   - It is sent through the existing e-sign flow.
@@ -301,7 +304,7 @@ applies on existing sites; read it with `get_cached_doc`).
     lines, status or money.
   - "Not yours" and "does not exist" give the same answer.
 - **Accounts.** Sign-up stays off.
-  - Signing a Rental Agreement creates a portal account for the signer's confirmed email, in its own
+  - Signing an Events Agreement creates a portal account for the signer's confirmed email, in its own
     savepoint inside the signing hook. The account is a Website User with only the Customer role,
     no welcome email, and a Contact linked to the Customer. The signer then gets an email saying
     where the rental lives.

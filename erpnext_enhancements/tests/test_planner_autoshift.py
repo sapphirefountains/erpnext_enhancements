@@ -1563,7 +1563,7 @@ class _BothReleases:
 		)
 
 	def test_a_drafted_follower_past_its_parent_tasks_end_is_not_a_refusal(self):
-		# v1.782.0: the Task before_validate hook widens the parent to the follower's end at Publish
+		# v1.784.0: the Task before_validate hook widens the parent to the follower's end at Publish
 		# (task_enhancements/parent_dates.py), so ERPNext's parent-end check cannot refuse it and the
 		# draft check, shown the parent as the hook leaves it, says nothing.
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
@@ -1590,7 +1590,7 @@ class _BothReleases:
 
 	def test_a_stale_parent_draft_changes_nothing(self):
 		# P's draft is out of date (P changed since), so Publish skips it; the follower is still fine,
-		# because the hook widens P itself when the follower is saved (v1.782.0).
+		# because the hook widens P itself when the follower is saved (v1.784.0).
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
 		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"}, base="2026-10-01 00:00:00")
 		self._follower("TASK-B", "2026-10-27", "2026-10-28")
@@ -1599,7 +1599,7 @@ class _BothReleases:
 
 	def test_a_new_task_past_a_shortened_parent_is_not_a_refusal_either(self):
 		# New tasks are created after every drafted change is saved, so the shortened phase is what
-		# is stored by then; the hook widens it again for the new task (v1.782.0): no warning.
+		# is stored by then; the hook widens it again for the new task (v1.784.0): no warning.
 		h._task("TASK-P", start="2026-10-01", end="2026-11-30", crew=(), project="PRJ-2")
 		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-10"})
 		values = {"subject": "Pump", "project": "PRJ-2", "parent_task": "TASK-P"}
@@ -1640,7 +1640,7 @@ class _BothReleases:
 				"exp_end_date": "2026-10-20",
 			}
 		}
-		# Judged as a new task (the copy is __islocal) and, since v1.782.0, not refused: the hook
+		# Judged as a new task (the copy is __islocal) and, since v1.784.0, not refused: the hook
 		# widens the parent for the new task's end before ERPNext's check reads it.
 		self.assertEqual(
 			self.api.erpnext_date_problems(h._Doc(_actions_spec["values"], name="draft-new:X"), new=True), []
@@ -1728,7 +1728,7 @@ class _BothReleases:
 
 	def test_a_batch_never_reads_the_drafts(self):
 		# v1.743.0 read a batch's drafts once to model the parent's own draft at Publish; since
-		# v1.782.0 the parent's end is answered as the hook widens it, so the drafts are not read.
+		# v1.784.0 the parent's end is answered as the hook widens it, so the drafts are not read.
 		self._parent(end="2026-10-01")
 		h._draft_row("TASK-P", {"start": "2026-09-01", "end": "2026-10-30"})
 		self.frappe.docs[("Task", "TASK-A")].update(exp_end_date="2026-10-20")
@@ -1782,7 +1782,7 @@ class TestNativeChecksOnERPNext16_50(_BothReleases, _NativeChecks):
 	version = "16.50.0"
 
 	def test_a_crew_size_draft_of_a_task_already_past_its_parent_is_not_judged_against_it(self):
-		# 16.50.0 judged every set date on every save; since v1.782.0 the parent is widened to the
+		# 16.50.0 judged every set date on every save; since v1.784.0 the parent is widened to the
 		# task's end before the check reads it, so a parent-end refusal cannot happen here either.
 		self._parent(end="2026-10-01")
 		self.frappe.docs[("Task", "TASK-P")]["exp_end_date"] = "2026-09-30"
@@ -2427,7 +2427,7 @@ class TestTheTaskHookWidensEverySave(_P4):
 			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
 		)
 		task = ast.literal_eval(events)["Task"]
-		# A list since v1.782.0: parent_dates.before_task_validate settles a parent's dates first,
+		# A list since v1.784.0: parent_dates.before_task_validate settles a parent's dates first,
 		# then the Project window is widened for them (tests/test_task_parent_dates.py pins the order).
 		hooks = task["before_validate"]
 		self.assertIsInstance(hooks, list)

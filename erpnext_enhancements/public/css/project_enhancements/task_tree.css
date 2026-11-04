@@ -145,7 +145,7 @@
 
 /* --- Drag & drop feedback --- */
 /* Hovering the middle half of a row: the dragged task will nest as its child.
-   The row says so in words (v1.782.0): the JS sets data-drop-label to
+   The row says so in words (v1.784.0): the JS sets data-drop-label to
    "Make subtask of <task>" and the pill below draws it at the row's end. */
 .task-grid-row.drop-as-child {
 	/* Translucent primary wash so the nest target reads on light and dark. */

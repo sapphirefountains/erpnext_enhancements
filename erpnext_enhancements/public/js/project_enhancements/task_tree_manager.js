@@ -30,7 +30,7 @@
  * so the client only holds the branches the user expanded. Shared branding and
  * the print window live in public/js/export_utils.js.
  *
- * Drag-to-parent (v1.782.0, Nikolas 2026-11-03: "Make any task a parent by simple
+ * Drag-to-parent (v1.784.0, Nikolas 2026-11-03: "Make any task a parent by simple
  * drag and drop"): while a row is dragged, the row under the pointer says what the
  * drop will do -- a "Make subtask of <task>" wash on its middle half, an insertion
  * line at its top or bottom edge for a reorder -- and a hint bar above the grid says
@@ -154,7 +154,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		// Styles already ship in desk_addons.bundle.css (global include); the
 		// old frappe.require of a raw task_tree.css path 404'd with a MIME
 		// error since the bundle move. Only SortableJS loads on demand.
-		// SortableJS is vendored and pinned (v1.782.0). The file name carries the
+		// SortableJS is vendored and pinned (v1.784.0). The file name carries the
 		// version: raw /assets paths are served immutable for a year, so a new
 		// release must be a new file name to reach a device that cached this one.
 		return new Promise((resolve) => {
@@ -563,7 +563,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	}
 
 	/**
-	 * One date cell. A task with subtasks takes its dates from them (v1.782.0:
+	 * One date cell. A task with subtasks takes its dates from them (v1.784.0:
 	 * earliest start, latest end, kept by the Task hooks), so its cell is plain
 	 * text with a tooltip and no link: the inline editor binds to `.editable-date a`
 	 * and never fires, and the server refuses a direct write anyway.
@@ -979,7 +979,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	}
 
 	/**
-	 * "Move under...": the no-mouse path to re-parenting (v1.782.0). A Link to a
+	 * "Move under...": the no-mouse path to re-parenting (v1.784.0). A Link to a
 	 * task of this project, or empty for the top level; the task lands after the
 	 * new parent's last subtask, and a parent that is not yet a group becomes one.
 	 * The server refuses the task itself and anything under it, with a message.
@@ -1399,7 +1399,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	/**
 	 * Save `rows` ({name, parent_task, custom_subtask_order?}) through
-	 * api/scope_tasks.move_tasks (v1.782.0). Whatever comes back, the tree is
+	 * api/scope_tasks.move_tasks (v1.784.0). Whatever comes back, the tree is
 	 * re-fetched: on success so it re-indents from the saved truth, on a refusal
 	 * so the dropped row goes back where it was. The refusal itself (ERPNext's own
 	 * message: an open task under a completed parent, a project mismatch) is shown

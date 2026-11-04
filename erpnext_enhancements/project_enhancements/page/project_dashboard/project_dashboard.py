@@ -974,7 +974,7 @@ def update_task_date(task_name, field, value):
 				"message": "You do not have permission to modify tasks for this project.",
 			}
 
-		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
+		# v1.784.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
 		from erpnext_enhancements.task_enhancements import parent_dates
 
 		refusal = parent_dates.refusal(task_name)
@@ -1142,7 +1142,7 @@ def update_task_structure(project_name, tasks):
 	Returns:
 	    dict: A dictionary indicating the status of the operation.
 
-	Since v1.782.0 a thin wrapper over ``api.scope_tasks.move_tasks``, kept for the
+	Since v1.784.0 a thin wrapper over ``api.scope_tasks.move_tasks``, kept for the
 	old ``{"status", "message"}`` contract. The tree itself calls ``move_tasks`` now.
 	What this used to do, and why it was replaced: it saved EVERY row the tree sent
 	(the whole visible tree, on every drag), with ``ignore_permissions``; a refusal
@@ -1182,7 +1182,7 @@ def update_task_dates_from_gantt(task_name, start_date, end_date):
 		if not project or not frappe.has_permission("Project", ptype="write", doc=project):
 			return {"status": "error", "message": "No permission to modify tasks for this project."}
 
-		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
+		# v1.784.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py).
 		from erpnext_enhancements.task_enhancements import parent_dates
 
 		refusal = parent_dates.refusal(task_name)
@@ -1548,7 +1548,7 @@ def update_multiple_docs(project_updates, task_updates):
 				return {"status": "error", "message": f"No write permission for Project {doc_name}"}
 			frappe.db.set_value("Project", doc_name, changes)
 
-		# v1.782.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py),
+		# v1.784.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py),
 		# and set_value fires no hook, so the parents are walked here after each write.
 		from erpnext_enhancements.task_enhancements import parent_dates
 

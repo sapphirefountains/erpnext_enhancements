@@ -235,14 +235,12 @@ doctype_js = {
 		# Opportunity entry above.
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
-		# Contracts tab (custom_contracts_html): every contract on the job —
-		# agreements and the operational maintenance contracts beside them —
-		# each openable in place to its full legal text, and a Signed one
-		# (or a maintenance contract's Signed agreement) to its signed copy
-		# (v1.745.0). The viewer is the shared renderer and Signed copy
-		# opener, and must load first.
-		"public/js/project_enhancements/contract_viewer.js",
-		"public/js/project_enhancements/contracts_tab.js",
+		# The Contract button at the top of the Scope tab (v1.783.0, Nikolas
+		# 2026-11-03): one contract opens the Contract Builder's review step, several
+		# a picker, none a confirm and the Builder's start screen with this project
+		# filled in. It replaced the Contracts tab (v1.181.0–v1.782.x), whose two
+		# Custom Fields patches/remove_contracts_tabs deletes.
+		"public/js/project_enhancements/contract_button.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		# Schedule tab Gantt (custom_gantt_chart_html): read-only embed of the
 		# reusable Gantt widget (erpnext_enhancements.gantt.mount — see
@@ -274,8 +272,7 @@ doctype_js = {
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
 	# filled in. Loaded on the two forms that offer it (Preview Contract on the
-	# agreement itself, View Agreement on the operational maintenance contract);
-	# the Project form gets it in its own list above.
+	# agreement itself, View Agreement on the operational maintenance contract).
 	"Project Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	"Sapphire Maintenance Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	# sapphire_maintenance (v1.778.0): the New Service Call intake dialog, which the Service Call
@@ -337,11 +334,10 @@ doctype_js = {
 		"public/js/global_enhancements/primary_contact.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		"public/js/stripe_payments/customer_autopay.js",
-		# Contracts tab — the same list the Project form carries, scoped to the
-		# agreements this customer is a party to. Viewer first (shared renderer
-		# and Signed copy opener).
-		"public/js/project_enhancements/contract_viewer.js",
-		"public/js/project_enhancements/contracts_tab.js",
+		# The Contract button in the page head (v1.783.0): the agreements this
+		# customer is a party to, through the same picker and Builder route as the
+		# Project form's. Replaced the Contracts tab of v1.182.0.
+		"public/js/project_enhancements/contract_button.js",
 		# training: "are the people who operate this client's fountain trained?" --
 		# completions with expiry computed against today. The endpoint answering it
 		# had no caller until v1.334.0.
@@ -658,7 +654,7 @@ doc_events = {
 		"on_update": [
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
-			# v1.782.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
+			# v1.784.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
 			# (earliest start, latest end), up every ancestor. After this save the parent and, after
 			# a move, the previous parent are recomputed from the database. Written with
 			# db.set_value, so no Task hook fires again. Never raises. See
@@ -705,7 +701,7 @@ doc_events = {
 		# validate: frappe runs it before the controller's validate, on insert and save. Widens only,
 		# never raises. See project_enhancements/project_window.py.
 		"before_validate": [
-			# v1.782.0: parent dates follow the subtasks. FIRST, before the project window: a parent
+			# v1.784.0: parent dates follow the subtasks. FIRST, before the project window: a parent
 			# re-derives its own dates from its subtasks, then the parent and every ancestor are
 			# widened to take in this task's dates, so ERPNext's validate_parent_expected_end_date
 			# (16.52.1, which refuses a child ending after its parent the moment parent_task or
@@ -719,7 +715,7 @@ doc_events = {
 			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
-		# v1.782.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
+		# v1.784.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
 		# not on_trash: the row is gone by then, so the recompute reads the database as it will stay.
 		"after_delete": "erpnext_enhancements.task_enhancements.parent_dates.after_task_delete",
 		"validate": [
@@ -989,7 +985,8 @@ doc_events = {
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
 		# the post-submit "Mark as Signed" button (on_update_after_submit).
 		#
-		# event rentals (v1.564.0): a Rental Agreement that becomes Signed confirms its Rental
+		# event rentals (v1.564.0): an Events Agreement (template_key rental; "Rental Agreement"
+		# until v1.783.0) that becomes Signed confirms its Rental
 		# Booking (firming the fountains' calendars) and drafts the deposit invoice. Same two
 		# signing paths. Runs in the signer's transaction -- usually a Guest on /contract-sign --
 		# so it never raises: a booking that cannot be confirmed (its fountains were taken while

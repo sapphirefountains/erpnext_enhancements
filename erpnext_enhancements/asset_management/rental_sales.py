@@ -3,7 +3,7 @@
 
 """The sales side of an event rental: agreement, signing, invoices (v1.564.0).
 
-1. **The Rental Agreement** is the existing Project Contract with ``template_key = "rental"``
+1. **The Events Agreement** ("Rental Agreement" until v1.783.0) is the existing Project Contract with ``template_key = "rental"``
    (``SF-RA-``). :func:`make_rental_agreement` builds one from a Rental Booking — dates, one
    equipment row per fountain and accessory, the fees and the security deposit — so nobody retypes
    the booking into the agreement. It is signed through the existing e-sign flow (``/contract-sign``).
@@ -39,7 +39,7 @@ def settings():
 
 @frappe.whitelist()
 def make_rental_agreement(booking):
-	"""Create (or return) the Rental Agreement for a booking, filled from it. Returns its name."""
+	"""Create (or return) the Events Agreement for a booking, filled from it. Returns its name."""
 	from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
 		create_contract,
 	)
@@ -61,12 +61,12 @@ def make_rental_agreement(booking):
 	fill_agreement(contract, doc)
 	contract.save()
 	doc.db_set("rental_agreement", contract.name)
-	doc.add_comment("Comment", _("Rental Agreement {0} created from this booking.").format(contract.name))
+	doc.add_comment("Comment", _("Events Agreement {0} created from this booking.").format(contract.name))
 	return contract.name
 
 
 def fill_agreement(contract, booking):
-	"""Copy the booking's dates, equipment and money onto a draft Rental Agreement."""
+	"""Copy the booking's dates, equipment and money onto a draft Events Agreement."""
 	contract.rental_start_date = getdate(booking.delivery_datetime)
 	contract.rental_end_date = getdate(booking.takedown_datetime)
 	contract.set("equipment_items", [])
@@ -99,7 +99,7 @@ def fill_agreement(contract, booking):
 
 
 def on_rental_agreement_signed(doc, method=None):
-	"""Project Contract hook: a Rental Agreement that became Signed confirms its booking.
+	"""Project Contract hook: an Events Agreement that became Signed confirms its booking.
 
 	Never raises (see the module docstring). Detects the transition the way the maintenance
 	sibling does: Signed now, and not already Signed before this save.
@@ -122,7 +122,7 @@ def on_rental_agreement_signed(doc, method=None):
 		confirm_booking(frappe.get_doc("Rental Booking", booking_name), reason=doc.name)
 	except Exception as exc:
 		frappe.db.rollback(save_point=savepoint)
-		frappe.log_error(title=f"Rental Agreement {doc.name} signed; booking not confirmed", message=frappe.get_traceback())
+		frappe.log_error(title=f"Events Agreement {doc.name} signed; booking not confirmed", message=frappe.get_traceback())
 		_flag_unconfirmed(booking_name, doc, exc)
 	finally:
 		frappe.flags.mute_messages = muted
@@ -137,7 +137,7 @@ def on_rental_agreement_signed(doc, method=None):
 		open_portal_for_signer(doc.name, booking_name)
 	except Exception:
 		frappe.db.rollback(save_point=savepoint)
-		frappe.log_error(title=f"Rental Agreement {doc.name}: portal account not created", message=frappe.get_traceback())
+		frappe.log_error(title=f"Events Agreement {doc.name}: portal account not created", message=frappe.get_traceback())
 	finally:
 		frappe.flags.mute_messages = muted
 
@@ -155,13 +155,13 @@ def confirm_booking(booking, reason=None):
 		booking.save()
 		booking.add_comment(
 			"Comment",
-			_("Confirmed by the signed Rental Agreement {0}.").format(reason) if reason else _("Confirmed."),
+			_("Confirmed by the signed Events Agreement {0}.").format(reason) if reason else _("Confirmed."),
 		)
 
 
 def _flag_unconfirmed(booking_name, contract, exc):
 	message = _(
-		"Rental Agreement {0} was signed, but this booking could not be confirmed: {1} "
+		"Events Agreement {0} was signed, but this booking could not be confirmed: {1} "
 		"The signature stands. Free the dates or swap fountains, then press Confirm."
 	).format(contract.name, frappe.utils.strip_html(str(exc))[:300])
 	try:

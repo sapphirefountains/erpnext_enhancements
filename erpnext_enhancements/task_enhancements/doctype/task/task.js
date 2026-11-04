@@ -48,7 +48,7 @@ frappe.ui.form.on("Task", {
 });
 
 /*
- * Parent dates follow the subtasks (v1.782.0, Nikolas 2026-11-03): a task with
+ * Parent dates follow the subtasks (v1.784.0, Nikolas 2026-11-03): a task with
  * subtasks has the earliest subtask start and the latest subtask end, kept by the
  * Task hooks (task_enhancements/parent_dates.py). Its two expected-date fields are
  * read-only here while it has subtasks, with a note saying why; a task that has

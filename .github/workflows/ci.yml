@@ -2429,6 +2429,15 @@ jobs:
       # another record, an e-signed contract, or anyone who cannot mark a contract signed.
       - name: Signed copy (which file, private-file access, filing a scan)
         run: python -m unittest erpnext_enhancements.tests.test_signed_copy -v
+      # Own step: it stubs frappe and a fake site for the two v1.783.0 contract patches. The
+      # rename patch and the fields' delete both run inside `bench migrate`, which is the deploy,
+      # so each is held to "never raises", idempotent, and touching exactly the named records;
+      # the seed, the template files and the patch must name the same titles, so a fresh site
+      # reads as a migrated one; and the Contract button's routes, the Generate Contract list
+      # (enabled templates from the server, no hidden one) and the Events Agreement / Down
+      # Payment Percentage wording are pinned where the brief named them.
+      - name: Contracts v1.783.0 (Contract button, tab removal, template renames)
+        run: python -m unittest erpnext_enhancements.tests.test_contract_renames -v
       # test_kpi_departments: the seven places a KPI department is named must agree
       # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
       # test_kpi_metrics also pins combine_store_runs (v1.536.0): a store run recorded on the
@@ -3783,7 +3792,7 @@ jobs:
       - name: Scope tab task actions (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_scope_tasks.py -q
       # Drag-to-parent on the Tasks Tree + parent dates that follow the subtasks (Nikolas, 2026-11-03;
-      # v1.782.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
+      # v1.784.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
       # validate_parent_is_group has thrown (the before_save bug that refused every drop onto a leaf),
       # the parent widened after validate_parent_expected_end_date has read it (hook order), a hook or
       # the patch raising out of a save or a migrate, a parent's date wiped by an undated subtask, a

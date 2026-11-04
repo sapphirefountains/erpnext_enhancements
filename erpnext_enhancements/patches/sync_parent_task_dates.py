@@ -1,4 +1,4 @@
-"""Make every existing parent task's expected dates follow its subtasks (v1.782.0, Nikolas 2026-11-03).
+"""Make every existing parent task's expected dates follow its subtasks (v1.784.0, Nikolas 2026-11-03).
 
 The rule is ``task_enhancements/parent_dates.py``: a task with subtasks has the earliest subtask
 start and the latest subtask end, kept by Task hooks from now on. This patch brings the tasks that

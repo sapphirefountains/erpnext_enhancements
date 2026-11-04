@@ -16,7 +16,7 @@ and writes.
   nothing is written.
 * :func:`add_task` is the "Add task" dialog's save: subject, parent, group flag, priority, type, dates,
   hours, assignee and description, through the Task controller as the caller.
-* :func:`move_tasks` (v1.782.0) is the tree's drag-and-drop and *Move under…* save: the rows as the
+* :func:`move_tasks` (v1.784.0) is the tree's drag-and-drop and *Move under…* save: the rows as the
   tree holds them after the drop, only the ones whose parent or position changed saved, a leaf
   dropped on made a group first, and ERPNext's refusal returned (never thrown) so the tree can show
   it and put itself back. All or nothing.
@@ -607,7 +607,7 @@ def _descendants(rows, root):
 
 @frappe.whitelist()
 def move_tasks(project, tasks):
-	"""The Tasks Tree's drag-and-drop and *Move under…* save (v1.782.0): ``tasks`` is a JSON list of
+	"""The Tasks Tree's drag-and-drop and *Move under…* save (v1.784.0): ``tasks`` is a JSON list of
 	``{name, parent_task, custom_subtask_order}``, as the tree holds them after the drop (``parent_task``
 	empty for the top level; ``custom_subtask_order`` missing to be placed after the parent's last
 	subtask). Only a task whose parent or position differs from what is stored is saved, through the

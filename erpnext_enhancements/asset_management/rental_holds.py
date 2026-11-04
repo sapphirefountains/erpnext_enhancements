@@ -139,7 +139,7 @@ def send_hold_notice(booking):
 		body = (
 			email_style.p(_("Hello,"))
 			+ email_style.p(
-				_("We are holding the following for {0} until {1}. Sign the rental agreement before then to keep them.").format(
+				_("We are holding the following for {0} until {1}. Sign the events agreement before then to keep them.").format(
 					event, frappe.utils.formatdate(booking.hold_expires_on)
 				)
 			)

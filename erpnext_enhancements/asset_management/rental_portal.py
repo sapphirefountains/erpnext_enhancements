@@ -198,7 +198,7 @@ def request_change(booking, message):
 
 
 def open_portal_for_signer(contract_name, booking_name):
-	"""After a Rental Agreement is signed: a portal account for the signer, and an email saying where.
+	"""After an Events Agreement is signed: a portal account for the signer, and an email saying where.
 
 	Called from ``rental_sales.on_rental_agreement_signed`` inside its own savepoint; it may raise.
 	The signer's address is the one the e-sign flow confirmed (``Contract Signature Request``), so

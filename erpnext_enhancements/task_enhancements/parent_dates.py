@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""A parent task's expected dates follow its subtasks (v1.782.0).
+"""A parent task's expected dates follow its subtasks (v1.784.0).
 
 Nikolas, 2026-11-03, after the meeting with James and Clegg: "for the parent child tasks, make rigid
 start and end dates based off the child tasks so a child task is always within the range of its
