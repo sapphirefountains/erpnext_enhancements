@@ -8,6 +8,10 @@
  * Loaded via: desk_addons.bundle.scss (extension-less @import, inlined by
  *   sass into desk_addons.bundle.css — see hooks.py `app_include_css`).
  */
+/* The grid scrolls sideways inside its own box on a narrow screen (v1.791.0, Nikolas:
+   "a good horizontal scroll would help with smaller screens"): the header and the body
+   keep a floor width, so dates and pills are never squeezed, and the box scrolls instead.
+   The Task column stays put (sticky) so a row can still be read while scrolled. */
 .task-grid {
 	display: flex;
 	flex-direction: column;
@@ -15,7 +19,14 @@
 	border: 1px solid var(--border-color);
 	border-radius: 4px;
 	background-color: var(--card-bg);
-	overflow: hidden;
+	overflow-x: auto;
+	overflow-y: hidden;
+	-webkit-overflow-scrolling: touch;
+}
+
+.task-grid-header,
+.task-grid-body {
+	min-width: 960px;
 }
 
 .task-grid-header {
@@ -31,15 +42,61 @@
 	position: relative;
 }
 
+/* Sortable headers (v1.791.0): a click sorts ascending, again descending, again manual. */
+.task-grid-header > .task-grid-cell.sortable-header {
+	cursor: pointer;
+	user-select: none;
+}
+
+.task-grid-header > .task-grid-cell.sortable-header:hover,
+.task-grid-header > .task-grid-cell.sortable-header:focus-visible {
+	color: var(--text-color);
+	outline: none;
+}
+
+.task-grid-header > .task-grid-cell.sortable-header:focus-visible .sortable-header-label {
+	text-decoration: underline;
+}
+
+.task-grid-header > .task-grid-cell.sorted-asc,
+.task-grid-header > .task-grid-cell.sorted-desc {
+	color: var(--primary);
+}
+
+.task-grid-header .sort-arrow {
+	font-size: 9px;
+	margin-left: 4px;
+	flex-shrink: 0;
+}
+
+/* The row carries an explicit background so the sticky Task cell can inherit it and
+   cover the cells that scroll under it. */
 .task-grid-row {
+	position: relative;
 	display: flex;
 	align-items: center;
 	border-bottom: 1px solid var(--border-color);
 	padding: 8px 0;
+	background-color: var(--card-bg);
 }
 
 .task-grid-row:hover {
 	background-color: var(--fg-hover-color);
+}
+
+.task-grid-header > .task-grid-cell:first-child,
+.task-grid-row > .task-grid-cell:first-child {
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	background-color: inherit;
+}
+
+/* While a column sort is on, drag is off (the order on screen is not the manual order a
+   drop would be saved against); the handles say so. */
+.task-tree-manager.sort-active .task-drag-handle {
+	cursor: not-allowed;
+	opacity: 0.35;
 }
 
 .task-grid-body .task-node:last-child > .task-grid-row {
@@ -143,44 +200,68 @@
 	cursor: grabbing;
 }
 
-/* --- Drag & drop feedback --- */
-/* Hovering the middle half of a row: the dragged task will nest as its child.
-   The row says so in words (v1.787.0): the JS sets data-drop-label to
-   "Make subtask of <task>" and the pill below draws it at the row's end. */
+/* --- Drag & drop feedback (v1.791.0) --- */
+/* The body of a row (all but a thin band at each edge): the dragged task will nest
+   under it. The row takes a wash and a pill reading "Nest under <task>" (the JS sets
+   data-drop-label on the Task cell). The wash is an explicit blue, not the theme's
+   --primary (near black on the Desk's default theme, which made it read as a grey hover),
+   and opaque (color-mix; the rgba line is the fallback for a browser without it) because
+   the sticky Task cell inherits it and must cover the cells that scroll under it. */
 .task-grid-row.drop-as-child {
-	/* Translucent primary wash so the nest target reads on light and dark. */
-	background-color: rgba(37, 99, 235, 0.12) !important;
-	box-shadow: inset 3px 0 0 var(--primary);
-	position: relative;
+	background-color: rgba(37, 99, 235, 0.14) !important;
+	background-color: color-mix(in srgb, #2563eb 16%, var(--card-bg)) !important;
+	box-shadow: inset 3px 0 0 #2563eb;
 }
 
-/* Overlaid, not a flex item: as a flex item the pill took width from the cells,
-   slid the columns out of line with the header, and changed the row's height,
-   which handleDragMove measures to tell nest from reorder (review of #1418). */
-.task-grid-row.drop-as-child::after {
+/* The pill sits in the sticky Task cell (so it is on screen however far the grid is
+   scrolled sideways) and reads that cell's data-drop-label: attr() looks at the element
+   the pseudo-element belongs to. Overlaid, not a flex item: as a flex item it took width
+   from the cells and slid the columns out of line with the header (review of #1418). */
+.task-grid-row.drop-as-child > .task-grid-cell:first-child::after {
 	content: attr(data-drop-label);
 	position: absolute;
-	right: 12px;
+	right: 8px;
 	top: 50%;
 	transform: translateY(-50%);
+	max-width: 55%;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	padding: 2px 10px;
 	border-radius: 999px;
-	background-color: var(--primary);
+	background-color: #2563eb;
 	color: #fff;
 	font-size: 11px;
 	font-weight: 600;
 	white-space: nowrap;
 	pointer-events: none;
+	z-index: 3;
 }
 
-/* Hovering a row's top or bottom edge: the task will be put before or after it.
-   A 2px line on that edge, drawn where SortableJS will insert. */
-.task-grid-row.drop-before {
-	box-shadow: inset 0 2px 0 var(--primary);
+.task-grid-row.drop-as-child > .task-grid-cell:first-child {
+	overflow: visible;
 }
 
-.task-grid-row.drop-after {
-	box-shadow: inset 0 -2px 0 var(--primary);
+/* The thin band at a row's top or bottom edge: the task will be put on that line, before
+   or after the row. A 3px line drawn above the cells (the sticky Task cell would cover an
+   inset box-shadow). */
+.task-grid-row.drop-before::before,
+.task-grid-row.drop-after::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 3px;
+	background-color: #2563eb;
+	z-index: 3;
+	pointer-events: none;
+}
+
+.task-grid-row.drop-before::before {
+	top: -1px;
+}
+
+.task-grid-row.drop-after::before {
+	bottom: -1px;
 }
 
 /* A task with subtasks takes its dates from them: plain text, no link, a tooltip. */
@@ -312,6 +393,50 @@ td.project-id-cell {
 .task-tree-manager .task-select-controls {
 	display: inline-flex;
 	align-items: center;
+}
+
+/* --- The row's Actions menu and the toolbar at phone width (v1.791.0) --- */
+.task-grid-cell.actions-cell .task-actions-btn {
+	padding: 1px 7px;
+	line-height: 1.4;
+}
+
+.task-row-menu {
+	min-width: 170px;
+}
+
+.task-row-menu .dropdown-item:focus {
+	background-color: var(--fg-hover-color);
+	outline: none;
+}
+
+/* The toolbar and the filter row wrap instead of overflowing on a narrow screen. */
+.task-tree-manager .task-toolbar-row,
+.task-tree-manager .task-toolbar-actions,
+.task-tree-manager .task-filters-row {
+	flex-wrap: wrap;
+	row-gap: 6px;
+}
+
+.task-tree-manager .task-filters-row .form-control {
+	flex: 1 1 160px;
+	min-width: 140px;
+	width: auto;
+}
+
+.task-tree-manager .task-drag-hint {
+	margin-bottom: 6px;
+}
+
+@media (max-width: 767px) {
+	.task-tree-manager.p-3 {
+		padding: 10px !important;
+	}
+
+	.task-tree-manager .task-toolbar-actions > h5 {
+		flex-basis: 100%;
+		margin-bottom: 4px;
+	}
 }
 
 .scope-template-preview {
