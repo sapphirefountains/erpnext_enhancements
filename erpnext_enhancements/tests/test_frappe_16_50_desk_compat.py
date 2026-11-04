@@ -37,7 +37,7 @@ SCSS_ENTRY = APP / "public" / "css" / "desk_addons.bundle.scss"
 DESK_CSS = APP / "public" / "css" / "desk_enhancements.bundle.css"
 JS_ENTRY = PUBLIC_JS / "erpnext_enhancements.bundle.js"
 HEAL = PUBLIC_JS / "global_enhancements" / "sidebar_collapse_heal.js"
-# The one file allowed to fold the DESK sidebar on purpose (v1.790.0): see
+# The one file allowed to fold the DESK sidebar on purpose (v1.793.0): see
 # TestNothingDrivesTheDeskSidebarToggle.test_the_rail_is_the_one_allowance.
 RAIL = PUBLIC_JS / "global_enhancements" / "sidebar_rail.js"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -215,7 +215,7 @@ class TestNothingDrivesTheDeskSidebarToggle(unittest.TestCase):
         self.assertIn("node scripts/test_sidebar_collapse_heal.js", read(CI))
 
     def test_the_rail_is_the_one_allowance(self):
-        """Since v1.790.0 a collapse beside the pinned Dock is frappe's 48px icon rail, not a hidden
+        """Since v1.793.0 a collapse beside the pinned Dock is frappe's 48px icon rail, not a hidden
         sidebar: sidebar_rail.js wraps Sidebar.hides_when_collapsed to say so, and its pin calls
         frappe's own open()/close() so the choice is saved the way frappe saves it (and, through
         sidebar_memory.js, per person). The premise of the rule above, that folding means losing

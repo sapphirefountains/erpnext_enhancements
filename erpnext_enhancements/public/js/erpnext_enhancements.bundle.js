@@ -130,7 +130,7 @@ import "./global_enhancements/sidebar_collapse_heal.js";
 // sidebar across tabs, the record sidebar and the Training rail on every form and page), kept in
 // this browser. tests/test_sidebar_memory.py + scripts/test_sidebar_memory.js hold it.
 import "./global_enhancements/sidebar_memory.js";
-// v1.790.0 (Nik 2026-11-03, Mock C of the sidebar round): the module sidebar folds to frappe's own
+// v1.793.0 (Nik 2026-11-03, Mock C of the sidebar round): the module sidebar folds to frappe's own
 // 48px icon rail beside the pinned Dock instead of hiding (one wrapped method,
 // Sidebar.hides_when_collapsed), with the dock tiles' tooltip on each row, a pin, the rows this
 // person uses most first, count badges on Task / Pending Confirmations / My Work, a Recent row, and

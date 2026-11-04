@@ -108,7 +108,7 @@ directories Frappe imports from are `permission_type`, `doctype`, `page`, `repor
 the list is read from the installed Frappe rather than hard-coded, so it keeps up when Frappe
 adds another.
 
-## The sidebar as an icon rail (v1.790.0)
+## The sidebar as an icon rail (v1.793.0)
 
 Beside a pinned dock, frappe 16.53 turns a collapsed sidebar into a **hidden** one:
 `Sidebar.hides_when_collapsed()` answers `dock.is_pinned`, and `apply_expanded_state` then adds
