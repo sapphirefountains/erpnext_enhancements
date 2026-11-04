@@ -112,8 +112,10 @@
 	// Pages that draw a bar of their own at the foot of a phone screen; the quick bar stays out of
 	// their way (the visit wizard's Next button sits at z-index 5, under anything of ours). Only
 	// a visible one inside the page on screen counts: frappe's container hides the page it leaves
-	// and keeps it in the DOM, and the board's close bar and the planner's move bar exist hidden.
-	const OWN_BOTTOM_BARS = ".vz-nav, .qw-nav, .tp-nav, .isa-finbar.show, .ob-closebar, .mp-p6c-movebar";
+	// and keeps it in the DOM, and the board's close bar exists hidden until used. The maintenance
+	// planner's move bar is not listed: its prefix is that page's alone (test_s3_page_css), and at
+	// z-index 1024, 16px up, it draws over this bar for the moment a card is picked up.
+	const OWN_BOTTOM_BARS = ".vz-nav, .qw-nav, .tp-nav, .isa-finbar.show, .ob-closebar";
 
 	// Inline, so no icon sprite is needed (a name the sprite lacks draws nothing and raises nothing).
 	const ICON_PIN =
