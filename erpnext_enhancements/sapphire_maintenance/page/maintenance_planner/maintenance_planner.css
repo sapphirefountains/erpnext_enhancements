@@ -91,6 +91,14 @@
 	overflow: hidden;
 }
 
+/* The tabs sit at the bar's right end, after the tools (v1.788.0), and stay there when the bar wraps
+ * (v1.792.0): a wrapped line has no spacer, so an auto margin takes its slack on the tabs' left. While
+ * the bar fits on one line the spacer grows into the slack first, so nothing moves. My day keeps no
+ * margin, so it stays beside the tabs. */
+.mp-toolbar > .mp-seg {
+	margin-left: auto;
+}
+
 .mp-seg button {
 	border: none;
 	background: var(--sf-surface);
@@ -1171,6 +1179,11 @@ body.mp-drag-active * {
 
 	.mp-title {
 		min-width: 0;
+	}
+
+	/* The tabs keep their place in the compact row (no auto margin, v1.792.0). */
+	.mp-toolbar > .mp-seg {
+		margin-left: 0;
 	}
 
 	/* One compact bar: ‹ Today ›, the title, the view switcher and "Filters and tools". The rest is
