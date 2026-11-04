@@ -1191,6 +1191,13 @@ def _move(doc, start, end):
 		return
 	if new[1] < new[0]:
 		frappe.throw(_("The end date is before the start date."))
+	# v1.787.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py);
+	# the Task hooks would re-derive them on save and the move would silently not stick. The planner
+	# lists leaf tasks (is_group = 0) and skips group rows on copy, so this is a backstop for a task
+	# that gained subtasks since the grid was drawn.
+	refusal = _subtask_refusal(doc)
+	if refusal:
+		frappe.throw(refusal)
 	if doc.get("custom_rental_booking"):
 		frappe.throw(
 			_("This task's dates follow Rental Booking {0}. Change them on the booking.").format(
@@ -1214,6 +1221,20 @@ def _move(doc, start, end):
 		for field in ("custom_start_datetime", "custom_end_datetime"):
 			if doc.get(field):
 				doc.set(field, shift_datetime(doc.get(field), shift))
+
+
+def _subtask_refusal(doc):
+	"""Why ``doc``'s dates cannot be moved here, or None: a task with subtasks follows them
+	(``parent_dates.refusal``). A draft-to-be has no subtasks; a lookup that fails refuses nothing."""
+	name = doc.get("name")
+	if not name or is_draft_ref(name):
+		return None
+	try:
+		from erpnext_enhancements.task_enhancements import parent_dates
+
+		return parent_dates.refusal(name)
+	except Exception:
+		return None
 
 
 def _take_messages(log, mark):
@@ -2260,8 +2281,9 @@ def erpnext_date_problems(doc, new=False, drafts=None):
 	  is ``__islocal``, as ``insert`` makes it;
 	* ERPNext reads the project's window and the parent's end through ``frappe.db.get_value``, and
 	  :func:`_as_published` answers those two reads as Publish will meet them: the window widened by the
-	  Task ``before_validate`` hook (``project_window.widened_window``, so it never warns about what
-	  that hook fixes) and a drafted parent at its drafted end (Publish saves it first);
+	  Task ``before_validate`` hooks (``project_window.widened_window``) and the parent's end widened by
+	  the same hooks to take in the copy's own end (v1.787.0, ``parent_dates``), so it never warns about
+	  what those hooks fix;
 	* the copy is never saved, and what the check says through ``msgprint`` (a reschedule's warning
 	  included) is taken off the response and kept as a warning too.
 
@@ -2269,9 +2291,9 @@ def erpnext_date_problems(doc, new=False, drafts=None):
 	becomes the sentence; anything else is logged and gives no warning, so the check never blocks a
 	draft. A controller without ``validate_dates`` checks nothing.
 
-	``drafts`` (v1.743.0 round 2): a dict a batch shares between its checks, in which the caller's
-	visible Draft rows are kept once read (:func:`_parent_end_at_publish` reads them only when a
-	parent's draft can change the answer)."""
+	``drafts`` (v1.743.0 round 2): a dict a batch shares between its checks. Since v1.787.0 nothing
+	reads it (the parent's end is answered as the Task hook will widen it, whatever the parent's own
+	draft says); the parameter stays for the callers that pass it."""
 	try:
 		copy = _date_check_copy(doc, new)
 		check = getattr(copy, "validate_dates", None) if copy is not None else None
@@ -2366,8 +2388,9 @@ _CHECKED_DATES = ("exp_start_date", "exp_end_date", "act_start_date", "act_end_d
 def _as_published(copy, drafts):
 	"""For the length of one check, answer the two reads ERPNext's date checks make as Publish will
 	meet them: the copy's project window as the Task ``before_validate`` hook will have widened it, and
-	its parent task's end as it will be when the copy is saved (:func:`_parent_end_at_publish`). Every
-	other read goes through.
+	its parent task's end as it will be when the copy is saved (:func:`_parent_end_widened`: never
+	earlier than the copy's own end, since v1.787.0's Task hook widens it first). Every other read
+	goes through.
 
 	Done by shadowing ``get_value`` on the request's own database object, ``frappe.local.db`` (not
 	``frappe.db``, which is a ``LocalProxy`` in front of it), and putting it back in ``finally``: the
@@ -2394,11 +2417,7 @@ def _as_published(copy, drafts):
 			return window()
 		if doctype == "Task" and parent and filters == parent and fields == ("exp_end_date",):
 			stored = real(doctype, filters, fieldname, *args, **kwargs)
-			if is_draft_ref(parent):
-				return stored
-			if "parent" not in answers:
-				answers["parent"] = _parent_end_at_publish(copy, parent, stored, real, drafts)
-			return answers["parent"]
+			return _parent_end_widened(copy, stored)
 		return real(doctype, filters, fieldname, *args, **kwargs)
 
 	db.get_value = get_value
@@ -2414,37 +2433,19 @@ def _as_published(copy, drafts):
 _WINDOW_FIELDS = project_window.WINDOW_FIELDS
 
 
-def _parent_end_at_publish(copy, parent, stored_end, real, drafts):
-	"""The end ``parent`` will have when ``copy`` (one of its tasks, drafted) is saved at Publish.
-
-	:func:`_publish_order` saves the drafts furthest last day first, a parent before its tasks on a
-	tie. So the parent's draft is already saved when the task is, and is what ERPNext reads, only if
-	the parent is drafted to end on or after the task's drafted end; otherwise the task is saved first,
-	against the parent's end as stored. A drafted **new** task (``copy`` is ``__islocal``) is created
-	only after every drafted change is saved (``publish_drafts``: ``_apply_plans``, then
-	``_create_new_tasks``), so it always meets the parent's draft. A parent draft that is out of date
-	(its task changed since) is skipped by Publish, so it never counts.
-
-	For a task that exists, when it ends on or before the parent's stored end either answer passes,
-	so the drafts are not read at all: only a task drafted past its parent's stored end costs the read,
-	once per ``drafts`` (a batch shares it)."""
+def _parent_end_widened(copy, stored_end):
+	"""The end ``copy``'s parent will have when ``copy`` is saved at Publish: its stored end, or the
+	copy's own end where that is later. Since v1.787.0 a parent's dates follow its subtasks
+	(``task_enhancements/parent_dates.py``): the Task ``before_validate`` hook widens the parent and
+	every ancestor to take in the dates the save carries, before ERPNext's
+	``validate_parent_expected_end_date`` reads the parent, so that check cannot refuse a Publish. The
+	draft check is shown the same, so it never warns about what the hook fixes. (v1.743.0 modelled the
+	parent's own Draft row and Publish's save order here; a widened parent makes both moot.)"""
 	end = engine._as_date(copy.get("exp_end_date"))
 	stored = engine._as_date(stored_end)
-	new = bool(copy.get("__islocal"))
-	if not end or not stored or (end <= stored and not new):
+	if not end or (stored and stored >= end):
 		return stored_end
-	if "rows" not in drafts:
-		try:
-			drafts["rows"], _duplicates = _draft_rows()
-		except Exception:
-			drafts["rows"] = []
-	row = next((r for r in drafts["rows"] if r.get("task") == parent), None)
-	if not row or not same_moment(row.get("base_modified"), real("Task", parent, "modified")):
-		return stored_end
-	drafted = engine._as_date(load_payload(row.get("payload")).get("end"))
-	if not drafted:
-		return stored_end
-	return drafted if new or drafted >= end else stored_end
+	return copy.get("exp_end_date")
 
 
 def erpnext_date_lines(doc, new=False, drafts=None):

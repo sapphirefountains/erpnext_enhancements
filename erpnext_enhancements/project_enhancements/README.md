@@ -162,6 +162,68 @@ a role that may not create or delete Tasks is refused by Frappe itself.
 cached it kept redefining `TaskTreeManager` with the stale copy over the bundle's fresh one. It now
 requires the raw path only when the bundle lacks the class.
 
+### Drag any task under another; a parent's dates follow its subtasks (v1.787.0)
+
+Nikolas, 2026-11-03, from the meeting with James and Clegg: "Make any task a parent by simple drag and
+drop over on the Tasks Tree view. So for the parent child tasks, make rigid start and end dates based
+off the child tasks so a child task is always within the range of its parent task."
+
+**Why dragging onto a task did not work.** The tree has nested by drag since it was built: the
+middle band of the hovered row meant "make it a subtask", the edges meant "reorder". Three things
+hid that and one broke it. The band was 40% of a 32px row, too thin to hit on purpose. The save
+(`project_dashboard.update_task_structure`) saved **every** visible row on each drag, with
+`ignore_permissions`, and swallowed the refusal: the tree showed the move until the next reload. And
+the refusal was certain on a leaf target: ERPNext's `Task.validate` (16.52.1) calls
+`validate_parent_is_group`, which throws for a parent whose *Is Parent* box is off, while this app
+promoted the parent in the override controller's `before_save`, which frappe runs **after**
+`validate`. So a drop onto a task that had no subtasks yet was refused every time, and nothing on
+screen said so. The promotion is in the controller's `before_validate` now
+(`task_enhancements/doctype/task/task.py`).
+
+**What the tree does now** (`task_tree_manager.js`, `task_tree.css`):
+
+- While a row is dragged, the row under the pointer says what the drop will do: its middle **half**
+  takes a wash plus a pill reading *Make subtask of <task>*; its top or bottom quarter draws a 2px
+  line on the edge SortableJS will insert at (`evt.willInsertAfter`). A hint bar above the grid says
+  the same in words for as long as the drag lasts.
+- **Move under…** on every row (the indent icon) is the no-mouse path: a dialog with a Link to a task
+  of the project, empty for the top level; the task goes after the new parent's last subtask.
+- The save is `api/scope_tasks.move_tasks`: only the rows whose parent or position changed are saved,
+  through the Task controller as the caller, under one savepoint; a leaf dropped on becomes a group
+  first (the alert says so). ERPNext's refusal (an open task under a completed parent, a project
+  mismatch) comes back as `refused` and the tree shows it in a dialog titled *Could not move …* and
+  **re-fetches**, so it never sits showing a move that was not saved. The re-fetch rides on the
+  promise `frappe.call` returns, not on its `error` callback, which Frappe does not call on every
+  failure.
+- SortableJS is **vendored and pinned**: `public/js/project_enhancements/lib/sortable-1.15.6.min.js`
+  (the UMD build that sets `window.Sortable`, loaded on demand with `frappe.require`, like the
+  Gantt library beside it). It used to load from a CDN on its unpinned "latest" tag. The file name
+  carries the version because raw `/assets` paths are served immutable for a year: a new release
+  must be a new file name.
+
+**A parent's dates follow its subtasks** (`task_enhancements/parent_dates.py`): a task with subtasks
+has the earliest subtask `exp_start_date` and the latest subtask `exp_end_date`, up every ancestor.
+Where no subtask has a start (or an end) the parent keeps its own, so dropping an undated task under
+a dated one does not wipe the dated one's plan. Every subtask counts whatever its status: ERPNext
+refuses a child ending after its parent whatever the child's status. It is kept by Task hooks:
+`before_validate` (a parent re-derives its own dates; then the parent and its ancestors are widened
+for the dates this save carries, **before** ERPNext's `validate_parent_expected_end_date` reads the
+parent, so that check can never refuse a drag), `on_update` (the new parent and, after a move, the
+old one recomputed from the database, which also shrinks a range a subtask left) and `after_delete`.
+The ancestors are written with `db.set_value`, never saved, so no hook fires again and a Planner
+publish that saves the parent in the same batch is not tripped by a bumped `modified`. The direct
+writers in `project_dashboard.py` (the tree's inline editor through `update_multiple_docs` and
+`update_task_date`, the Gantt) refuse a parent's dates and walk the parents themselves after a
+subtask's write. On the Task form the two fields are read-only while the task has subtasks, with a
+note saying why; in the tree a parent's dates are plain text with a tooltip. The Project Planner's
+`_move` refuses a task with subtasks with the same message (it lists leaf tasks only, so a backstop),
+and its draft-time parent-end warning is gone: Publish can no longer be refused on it
+(`api/project_planner._parent_end_widened`). The Project's own derived window
+(`sync_project_dates_from_tasks`) is untouched except in order: it reads MIN/MAX over the project,
+parents included, after every save, and runs **after** the roll-up so an old parent has shrunk first. The one-shot `patches/sync_parent_task_dates` brings every existing parent up to
+the rule, bottom-up, logs instead of raising, and is safe to re-run. `tests/test_task_parent_dates.py`
+holds all of it.
+
 ## Scope of Work (WI-075, v1.447.0)
 
 `Project Scope of Work` is the scope authored once and locked — one submitted record per

@@ -144,11 +144,52 @@
 }
 
 /* --- Drag & drop feedback --- */
-/* Hovering the middle of a row: the dragged task will nest as its child. */
+/* Hovering the middle half of a row: the dragged task will nest as its child.
+   The row says so in words (v1.787.0): the JS sets data-drop-label to
+   "Make subtask of <task>" and the pill below draws it at the row's end. */
 .task-grid-row.drop-as-child {
 	/* Translucent primary wash so the nest target reads on light and dark. */
 	background-color: rgba(37, 99, 235, 0.12) !important;
 	box-shadow: inset 3px 0 0 var(--primary);
+	position: relative;
+}
+
+/* Overlaid, not a flex item: as a flex item the pill took width from the cells,
+   slid the columns out of line with the header, and changed the row's height,
+   which handleDragMove measures to tell nest from reorder (review of #1418). */
+.task-grid-row.drop-as-child::after {
+	content: attr(data-drop-label);
+	position: absolute;
+	right: 12px;
+	top: 50%;
+	transform: translateY(-50%);
+	padding: 2px 10px;
+	border-radius: 999px;
+	background-color: var(--primary);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* Hovering a row's top or bottom edge: the task will be put before or after it.
+   A 2px line on that edge, drawn where SortableJS will insert. */
+.task-grid-row.drop-before {
+	box-shadow: inset 0 2px 0 var(--primary);
+}
+
+.task-grid-row.drop-after {
+	box-shadow: inset 0 -2px 0 var(--primary);
+}
+
+/* A task with subtasks takes its dates from them: plain text, no link, a tooltip. */
+.task-grid-cell.derived-date {
+	cursor: help;
+}
+
+.task-grid-cell.derived-date .fa-level-down {
+	font-size: 10px;
 }
 
 /* SortableJS placeholder shown when reordering as a sibling. */
