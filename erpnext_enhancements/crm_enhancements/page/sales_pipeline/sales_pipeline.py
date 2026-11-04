@@ -252,8 +252,8 @@ def _handoff_strip():
 		# Imported here, not at module level: ``process_steps`` pulls in
 		# ``status_alerts``, ``email_style`` and the rest of the notification
 		# stack, and the bench-free Opportunity-board suites import this page
-		# under a ``frappe`` stub that cannot satisfy that chain. A top-level
-		# import broke 38 of their tests on names they never call (v1.795.1).
+		# under a ``frappe`` stub that cannot satisfy that chain. Kept out of
+		# module scope so those stubs never load the engine.
 		from erpnext_enhancements.process_steps import CLOSEOUT_STEP_NUMBERS
 
 		rows = frappe.get_all(
@@ -283,12 +283,16 @@ def _handoff_strip():
 		for parent, steps in by_parent.items():
 			if parent not in active:
 				continue
-			current = next(
-				(s for s in steps if s.status == "Pending" and cint(s.step_number) not in CLOSEOUT_STEP_NUMBERS),
-				None,
-			)
-			if not current:
+			open_steps = [
+				s for s in steps if s.status == "Pending" and cint(s.step_number) not in CLOSEOUT_STEP_NUMBERS
+			]
+			if not open_steps:
 				continue
+			# The chip names the chain's current step; the light goes red for
+			# any open step that is late, because step 8 (Schedule of Values)
+			# runs beside the chain with its own clock and would otherwise never
+			# show here while the chain sits at 3 or 4.
+			current = open_steps[0]
 			items.append(
 				{
 					"project": parent,
@@ -296,7 +300,7 @@ def _handoff_strip():
 					"step_number": current.step_number,
 					"step_title": current.step_title,
 					"total": len(steps),
-					"overdue": bool(current.due_by and get_datetime(current.due_by) < now),
+					"overdue": any(s.due_by and get_datetime(s.due_by) < now for s in open_steps),
 				}
 			)
 

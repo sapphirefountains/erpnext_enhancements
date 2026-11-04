@@ -145,11 +145,11 @@ MAINTENANCE_OFFER_STEP_NUMBER = 9
 PARALLEL_STEP_NUMBERS = frozenset({SOV_STEP_NUMBER})
 
 #: Steps recorded when the project wraps up, not during the hand-off. They keep
-#: the process open (the "process complete" comment waits for them) but the
-#: Sales Pipeline's "Hand-off in progress" rail drops a project once these are
-#: the only Pending steps left, because a build that runs for months is not a
-#: hand-off in progress. Seeded with ``sla_business_days = 0``: no due date, no
-#: escalation.
+#: the process open (the "process complete" comment waits for them) but get no
+#: "your step is up" notice when they open, and the Sales Pipeline's "Hand-off
+#: in progress" rail drops a project once these are the only Pending steps left,
+#: because a build that runs for months is not a hand-off in progress. Seeded
+#: with ``sla_business_days = 0``: no due date, no escalation.
 CLOSEOUT_STEP_NUMBERS = frozenset({MAINTENANCE_OFFER_STEP_NUMBER})
 
 #: How far out :func:`schedule_payment_followup` puts the next chase, in business
@@ -529,6 +529,13 @@ def notify_step_transitions(doc, method=None):
 	newly_actionable = [row for row in after_actionable if row.name not in before_actionable]
 
 	for row in newly_actionable:
+		if cint(row.step_number) in CLOSEOUT_STEP_NUMBERS:
+			# Step 9 opens the moment the launch meeting is held, months before
+			# the project wraps up. The form shows it as the open closeout so the
+			# PM can record the answer whenever the conversation happens; a
+			# "your step is up" text that day would be noise, like the
+			# escalation and the pipeline rail, which already leave it alone.
+			continue
 		_enqueue_step_notice(doc.name, "up", step_name=row.name)
 
 	if not after_actionable:

@@ -473,6 +473,23 @@ class TestParallelAndCloseoutSteps(FrappeTestCase):
 		notified = {call.kwargs.get("step_name") for call in enqueue.call_args_list}
 		self.assertEqual(notified, {by_no[3].name, by_no[8].name})
 
+	def test_closeout_gets_no_up_notice_when_launch_completes(self):
+		project = _seeded_project_nine()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		for n in (3, 4, 5, 6, 8):
+			by_no[n].status = "Completed"
+		sync_process_steps(project)
+		before = _snapshot(project)
+		by_no[7].status = "Completed"
+		sync_process_steps(project)
+		project._before = before
+		with patch.object(frappe, "enqueue") as enqueue:
+			notify_step_transitions(project)
+		# 9 is now actionable (the form shows it as the open closeout) but nobody
+		# is texted about a step that is months away from being answerable.
+		self.assertEqual({r.step_number for r in _actionable_steps(project.get("custom_process_steps"))}, {9})
+		self.assertEqual(enqueue.call_args_list, [])
+
 	def test_process_is_not_complete_until_the_closeout_is_answered(self):
 		project = _seeded_project_nine()
 		by_no = {s.step_number: s for s in project.get("custom_process_steps")}

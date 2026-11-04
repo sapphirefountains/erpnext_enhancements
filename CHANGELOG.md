@@ -7,20 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.795.1] - 2026-11-04
-
-### Fixed
-- **The Sales Pipeline page imports `CLOSEOUT_STEP_NUMBERS` inside `_handoff_strip`, not at module
-  level.** v1.795.0 added a top-level `from erpnext_enhancements.process_steps import …` to
-  `sales_pipeline.py`, and the Opportunity board page imports the pipeline. The three bench-free
-  Opportunity-board suites import that page under a `frappe` stub, so they now imported
-  `process_steps` too — which pulls in `status_alerts`, `email_style`, `feature_flags` and the
-  working-days helper, a chain the stubs cannot satisfy. 38 tests across the three suites failed
-  on `ImportError`, first on `frappe.utils.get_url_to_form`, then on `add_to_date`, for names
-  they never call. Making one name lazy only moved the failure to the next, so the import moves
-  into the one function that needs it, which already runs best-effort inside a `try`. Main was
-  green only because the pipeline never imported the engine before.
-
 ## [1.795.0] - 2026-11-04
 
 ### Added
@@ -69,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bench-free wiring test `tests/test_handoff_sov_and_maintenance_wire.py` (own CI step) pins the
   patch registration, the insert-only shape, the py/js agreement on the parallel set, and the
   dialog's path through `complete_step`; `tests/test_process_steps.py` (bench) covers the engine.
+- Step 9 opens the moment the launch meeting is held, months before the project wraps up. The form
+  shows it as the open closeout so the PM can record the answer whenever the conversation happens,
+  but it gets no "your step is up" text on that day (`notify_step_transitions` skips
+  `CLOSEOUT_STEP_NUMBERS`), matching the escalation job and the pipeline rail, which already leave
+  it alone. The rail's overdue light now goes red for *any* open non-closeout step that is late,
+  not just the chain's current one, because step 8 runs beside the chain with its own clock and
+  would otherwise never show as late while the chain sat at 3 or 4.
+- `sales_pipeline.py` imports `CLOSEOUT_STEP_NUMBERS` inside `_handoff_strip`, not at module level.
+  The Opportunity board page imports the pipeline, and the three bench-free Opportunity-board
+  suites import that page under a `frappe` stub; `process_steps` pulls in `status_alerts`,
+  `email_style`, `feature_flags` and the working-days helper, a chain the stubs cannot satisfy
+  (first `get_url_to_form`, then `add_to_date`, 38 errors in the three suites during this PR's
+  review). Kept out of module scope so those stubs never load the engine.
 - Requires `bench migrate` (the patch) and `bench build` (`process_steps.js`).
 
 ## [1.794.0] - 2026-11-03
