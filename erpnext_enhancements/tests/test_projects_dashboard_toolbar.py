@@ -1,5 +1,5 @@
-"""The Projects Dashboard's head band, tabs and Priority Overview filters (Mock B, v1.781.0),
-read as files.
+"""The Projects Dashboard's head band, tabs and Priority Overview filters (Mock B, v1.781.0;
+slimmed in v1.785.0), read as files.
 
 Nikolas, 2026-11-03: the tabs' contents had "variable styles, difficult to read"; he picked Mock B
 from the canvas. The shell gained a navy head band (title in the display face, the search field,
@@ -7,6 +7,12 @@ Refresh with "Updated N min ago", the "+" menu, four live tiles), the five tabs 
 visible ("View More" is retired), and the Priority Overview has stream chips, a Ranked-only box
 and a Group-by-stream toggle. Spend % became Budget. The red-to-green hue scale on priority
 badges went.
+
+Then, seeing it live the same day: "there is a lot of header space before you even see the
+projects". v1.785.0: the band is one slim row (the PROJECTS eyebrow is gone), the four tiles moved
+to the Summary tab above its cards (still filters that land on the Priority Overview, which shows
+the pressed tile as a chip with an x), and the Columns "..." button sits at the right end of the
+chips row, or on a slim strip for Internal and Completed, instead of on a row of its own.
 
 ``scripts/test_projects_dashboard_toolbar.mjs`` runs the block's real script and drives the
 buttons. This holds what a run cannot: that the shell, the script and the stylesheet still agree
@@ -144,15 +150,41 @@ class TestTabs(unittest.TestCase):
 		self.assertIn("write_saved(TAB_KEY, route)", JS_CODE)
 
 
+BAND = HTML_CODE[HTML_CODE.index('class="pd-band"') : HTML_CODE.index('class="pd-tabs')]
+
+
 class TestHeadBand(unittest.TestCase):
-	def test_the_band_carries_eyebrow_title_search_refresh_and_the_plus(self):
-		band = HTML_CODE[HTML_CODE.index('class="pd-band"') : HTML_CODE.index('class="pd-tabs')]
-		self.assertIn('<span class="pd-eyebrow">PROJECTS</span>', band)
-		self.assertIn('<h2 class="pd-title">Projects Dashboard</h2>', band)
-		self.assertIn('id="global-project-search"', band)
-		self.assertRegex(band, r'id="btn-refresh"[^>]*aria-label="Refresh"')
-		self.assertRegex(band, r'id="pd-updated"[^>]*aria-live="polite"')
-		self.assertIn('id="btn-new"', band)
+	def test_the_band_carries_title_search_refresh_and_the_plus(self):
+		self.assertIn('<h2 class="pd-title">Projects Dashboard</h2>', BAND)
+		self.assertIn('id="global-project-search"', BAND)
+		self.assertRegex(BAND, r'id="btn-refresh"[^>]*aria-label="Refresh"')
+		self.assertRegex(BAND, r'id="pd-updated"[^>]*aria-live="polite"')
+		self.assertIn('id="btn-new"', BAND)
+
+	def test_the_band_is_one_row_with_no_eyebrow_and_no_tiles(self):
+		# v1.785.0: "a lot of header space before you even see the projects".
+		for text in (HTML_CODE, CSS_CODE, JS_CODE):
+			self.assertNotIn("pd-eyebrow", text)
+			self.assertNotIn("pd-band-title", text)
+		self.assertNotIn("PROJECTS</span>", HTML_CODE)
+		self.assertNotIn("pd-tile", BAND, "the tiles left the band for the Summary tab")
+		self.assertEqual(BAND.count('class="pd-band-row"'), 1, "one row")
+		# the title is the row's first child, on one line
+		self.assertRegex(BAND, r'<div class="pd-band-row">\s*<h2 class="pd-title">')
+		row = re.search(r"\.pd-band-row\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("align-items: center", row)
+		title = re.search(r"\.pd-title\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("white-space: nowrap", title)
+		self.assertIn("var(--sf-display-sm)", title)
+		self.assertNotIn("var(--sf-display-lg)", CSS_CODE)
+		band = re.search(r"\.pd-band\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("padding: var(--sf-space-10) var(--sf-space-20)", band)
+
+	def test_on_a_phone_the_title_sits_above_and_the_search_spans_the_row(self):
+		phone = CSS_CODE[CSS_CODE.index("@media (max-width: 767px)") :]
+		self.assertRegex(phone, r"\.pd-band-actions\s*\{\s*width:\s*100%")
+		self.assertRegex(phone, r"\.pd-search\s*\{\s*flex:\s*1 1 100%")
+		self.assertRegex(phone, r"\.pd-tiles\s*\{\s*grid-template-columns:\s*repeat\(2,")
 
 	def test_the_title_is_in_the_display_face_and_the_band_in_the_band_tokens(self):
 		title = re.search(r"\.pd-title\s*\{([^}]*)\}", CSS_CODE).group(1)
@@ -178,6 +210,65 @@ class TestHeadBand(unittest.TestCase):
 		for label in ("Active", "Past expected end", "Due in 30 days", "No company rank"):
 			self.assertIn(f'<span class="pd-tile-l">{label}</span>', HTML_CODE)
 		self.assertNotIn("in flight", HTML_CODE)
+
+	def test_the_tiles_are_static_markup_in_the_controls_shown_on_the_summary_tab(self):
+		# Outside #dashboard-content, which every tab empties: the one click binding survives
+		# every re-render of the Summary, and no panel is ever drawn over the tiles.
+		controls = HTML_CODE[HTML_CODE.index('id="overview-controls"') : HTML_CODE.index('id="gantt-controls"')]
+		self.assertIn('<div class="pd-tiles" id="pd-tiles"', controls)
+		self.assertNotIn("pd-tiles", HTML_CODE[HTML_CODE.index('id="dashboard-content"') :])
+		self.assertRegex(HTML_CODE, r'id="pd-tiles"[^>]*style="display: none;"', "hidden until the Summary shows it")
+		controls_fn = JS_CODE[JS_CODE.index("function show_tab_controls()") :]
+		controls_fn = controls_fn[: controls_fn.index("\n    }\n")]
+		self.assertIn("""$root.find('#pd-tiles').toggle(current_tab === "summary" && loaded);""", controls_fn)
+		# and never built by the Summary's renderer
+		summary = JS_CODE[JS_CODE.index("function render_dashboard()") :]
+		summary = summary[: summary.index("\n    }\n")]
+		self.assertNotIn("pd-tile", summary)
+		self.assertIn("$root.find('.pd-tile').on('click', function() {", JS_CODE)
+		self.assertEqual(JS_CODE.count("$root.find('.pd-tile').on('click'"), 1, "bound once")
+
+	def test_the_tiles_are_drawn_on_the_surface_tokens_not_the_band(self):
+		tile = re.search(r"\.pd-tile\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("background: var(--sf-surface)", tile)
+		self.assertIn("border: var(--sf-border-hairline) solid var(--sf-rule)", tile)
+		self.assertNotIn("on-band", tile)
+		number = re.search(r"\.pd-tile-n\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("color: var(--sf-text-strong)", number)
+		self.assertRegex(CSS_CODE, r"\.pd-tile-n-bad\s*\{\s*color:\s*var\(--sf-danger\)")
+		label = re.search(r"\.pd-tile-l\s*\{([^}]*)\}", CSS_CODE).group(1)
+		self.assertIn("color: var(--sf-text-muted)", label)
+		self.assertNotIn("--sf-bahama-blue", CSS_CODE)
+		self.assertNotIn("--sf-warn", CSS_CODE)
+
+	def test_a_tile_press_lands_on_the_priority_overview(self):
+		handler = JS_CODE[JS_CODE.index("$root.find('.pd-tile').on('click'") :]
+		handler = handler[: handler.index("\n    });\n")]
+		self.assertIn('if (current_tab !== "priority-overview") show_tab("priority-overview");', handler)
+		self.assertIn("else render_current_tab();", handler)
+
+	def test_the_overview_shows_the_pressed_tile_as_a_chip_with_an_x(self):
+		# The tiles are on the Summary tab, so the Overview needs to say it is narrowed and
+		# offer the way back; the chip's words are the tiles' own, and Active has no chip.
+		overview = HTML_CODE[HTML_CODE.index('id="overview-controls"') : HTML_CODE.index('id="list-controls"')]
+		self.assertRegex(overview, r'<button type="button" class="pd-tile-filter" id="pd-tile-filter"[^>]*hidden>')
+		self.assertIn('<span id="pd-tile-filter-label"></span>', overview)
+		labels = re.search(r"const TILE_LABELS = \{([^}]*)\}", JS_CODE).group(1)
+		self.assertEqual(
+			re.findall(r'"([a-z0-9-]+)": __\("([^"]+)"\)', labels),
+			[("past-due", "Past expected end"), ("due-30", "Due in 30 days"), ("unranked", "No company rank")],
+		)
+		for _key, label in re.findall(r'"([a-z0-9-]+)": __\("([^"]+)"\)', labels):
+			self.assertIn(f'<span class="pd-tile-l">{label}</span>', HTML_CODE, label + " is not a tile's word")
+		paint = JS_CODE[JS_CODE.index("function paint_tiles()") :]
+		paint = paint[: paint.index("\n    }\n")]
+		self.assertIn("$root.find('#pd-tile-filter-label').text(TILE_LABELS[tile_filter] || \"\");", paint)
+		self.assertIn("$root.find('#pd-tile-filter').prop('hidden', !TILE_LABELS[tile_filter]);", paint)
+		clear = JS_CODE[JS_CODE.index("$root.find('#pd-tile-filter').on('click'") :]
+		clear = clear[: clear.index("\n    });\n")]
+		self.assertIn('tile_filter = "active";', clear)
+		self.assertIn("paint_tiles();", clear)
+		self.assertIn("render_current_tab();", clear)
 
 	def test_due_in_30_days_says_it_counts_finished_projects(self):
 		self.assertIn('title="Expected end within the next 30 days, finished projects included"', HTML_CODE)
@@ -472,6 +563,46 @@ class TestColumnsButton(unittest.TestCase):
 
 	def test_the_gantts_own_columns_picker_is_untouched(self):
 		self.assertIn('id="ganttColumnsDropdown">Columns</button>', HTML_CODE)
+
+	def test_the_button_sits_on_the_chips_row_or_the_slim_strip_never_on_a_row_of_its_own(self):
+		# v1.785.0: "move the ... button above the table, to that top row so it's not taking up
+		# a row by itself wasting screen real estate".
+		for text in (HTML_CODE, JS_CODE, CSS_CODE):
+			self.assertNotIn("dashboard-list-toolbar", text)
+		overview = HTML_CODE[HTML_CODE.index('id="overview-controls"') : HTML_CODE.index('id="list-controls"')]
+		self.assertIn('<div class="pd-list-tools" id="pd-overview-tools"></div>\n        </div>', overview, "the slot is the chips row's last child")
+		strip = HTML_CODE[HTML_CODE.index('id="list-controls"') : HTML_CODE.index('id="pd-tiles"')]
+		self.assertIn('<div class="pd-list-tools" id="pd-list-tools"></div>', strip)
+		self.assertRegex(HTML_CODE, r'class="pd-filters pd-filters-slim" id="list-controls" style="display: none;"')
+		slot = JS_CODE[JS_CODE.index("function tools_slot()") :]
+		slot = slot[: slot.index("\n    }\n")]
+		self.assertIn("""current_tab === "priority-overview" ? '#pd-overview-tools' : '#pd-list-tools'""", slot)
+		toolbar = JS_CODE[JS_CODE.index("function render_column_toolbar(container)") :]
+		toolbar = toolbar[: toolbar.index("\n    }\n")]
+		self.assertIn("const toolbar = tools_slot().empty();", toolbar)
+		self.assertNotIn("container.append(toolbar)", toolbar)
+		self.assertIn("selector.render_button(toolbar,", toolbar)
+		controls_fn = JS_CODE[JS_CODE.index("function show_tab_controls()") :]
+		controls_fn = controls_fn[: controls_fn.index("\n    }\n")]
+		self.assertIn("""$root.find('#list-controls').toggle(current_tab === "active-internal-projects" || current_tab === "completed-projects");""", controls_fn)
+		self.assertRegex(CSS_CODE, r"\.pd-filters-slim\s*\{\s*justify-content:\s*flex-end")
+		# Review round 1: the auto margin is on the slot itself, at every width, so a wrapped
+		# chips row leaves the boxes beside the chips and sends only the "..." to the right.
+		self.assertRegex(CSS_CODE, r"\.pd-list-tools\s*\{[^}]*margin-left:\s*auto")
+		self.assertNotRegex(CSS_CODE, r"\.pd-check\s*\{\s*margin-left:\s*auto")
+		phone = CSS_CODE[CSS_CODE.index("@media (max-width: 767px)") :]
+		self.assertNotIn(".pd-check", phone, "no phone override is needed once the slot carries the margin")
+		self.assertNotIn(".pd-list-tools", phone)
+
+	def test_a_tile_press_clears_the_stream_chip_and_ranked_only(self):
+		# Review round 1 of #1416: pressed from the Summary, a tile would land on the remembered
+		# chip and box and show fewer rows than its number. Group by stream is a layout and stays.
+		handler = JS_CODE[JS_CODE.index("$root.find('.pd-tile').on('click'") :]
+		handler = handler[: handler.index("\n    });\n")]
+		self.assertIn('overview.stream = "";', handler)
+		self.assertIn("overview.ranked_only = false;", handler)
+		self.assertIn("save_overview();", handler)
+		self.assertNotIn("overview.group", handler)
 
 
 class TestWidgetUntouched(unittest.TestCase):

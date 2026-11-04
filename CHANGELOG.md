@@ -85,6 +85,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tests/test_workspace_tweaks.py` carries the new CRM order; both in CI. Nothing was exercised in
     a browser: the prod checks are in the PR body.
 
+## [1.785.0] - 2026-11-03
+
+### Changed
+- **Projects Dashboard: one slim band, the tiles on the Summary tab, the Columns button on the chips
+  row.** Nikolas, 2026-11-03, after seeing v1.781.0 (Mock B, #1415) live: "I dig the design and what
+  not, but there is a lot of header space before you even see the projects. Perhaps we move the 4
+  cards at the top to Summary and move the ... button above the table, to that top row so it's not
+  taking up a row by itself wasting screen real estate." His three picks, block files only
+  (`custom_html_blocks/projects_dashboard.{html,js,css}`, seeded on migrate by
+  `setup/custom_html_blocks.py`); no endpoint, schema, fixture or data change.
+  - **The navy band is one row:** "Projects Dashboard" in the display face at `--sf-display-sm` on
+    one line, the search field, Refresh with its "Updated N min ago" stamp, and the "+" menu, centred
+    on the row, with `--sf-space-10` of padding above and below. The PROJECTS eyebrow is gone. On a
+    phone the title sits above and the search spans the row, as before. Light and dark are still the
+    `--sf-*` tokens alone.
+  - **The four tiles — Active, Past expected end, Due in 30 days, No company rank — moved to the
+    Summary tab, above its six cards,** drawn like the cards (`--sf-surface`, a `--sf-rule` hairline,
+    the number in the display face; Past expected end in `--sf-danger` as the Overdue card is; the
+    pressed one edged in `--sf-primary`). They are still filters: a press lands on the Priority
+    Overview with that filter applied, Active clears it. They are the shell's static `#pd-tiles`,
+    outside `#dashboard-content` and shown by `show_tab_controls` on the Summary once rows have
+    loaded, so their one click binding outlives every re-render of the Summary, and a no-access or
+    error panel (review item 3 of #1415) never has four dashes above it. **New, so the Overview can
+    say it is narrowed now that the tiles are a tab away:** the pressed tile shows as a chip with an
+    x beside the stream chips ("Past expected end ×"), in the tile's own words; the x is the way back
+    to every active project without visiting the Summary. The pressed tile is still not remembered.
+    A press also clears the remembered stream chip and Ranked only (review round 1): they are the
+    values from the last Overview visit, a tab away now, and "Past expected end 3" landing on
+    Design + Ranked only showed fewer than 3 rows; the rows now equal the tile's number. Group by
+    stream is a layout and stays.
+  - **The Columns "…" button sits on the stream-chips row,** at its right end, for the Priority
+    Overview, and on a slim right-aligned strip of its own for Internal and Completed (which have no
+    chips row); it no longer takes a row of its own above the table on any tab. The auto margin
+    sits on the button's slot, not on the checkboxes (review round 1), so when the chips row wraps
+    at 768 to 1000px the boxes stay beside the chips and only the "…" goes right instead of
+    orphaning on the left of a line of its own; the strip's bottom padding is `--sf-space-5`, the
+    height of its one button plus a hair. Its menu, Reset
+    column widths, the per-tab widths, the sortable headers, inline priority editing and the
+    per-browser `localStorage` state are as they were.
+  - Guarded: `scripts/test_projects_dashboard_toolbar.mjs` (the tiles shown on the Summary only and
+    not over a denial; a press from the Summary landing on the Overview with the chip, and the x
+    clearing it; the tiles' binding surviving three Summary draws; the button's slot per tab, and
+    nothing tool-shaped in the content), `tests/test_projects_dashboard_toolbar.py` (the one-row
+    band with no eyebrow and no tiles, the phone rules, the tiles as static controls markup on the
+    surface tokens, the chip's words equal to the tiles', the slots and the strip) and
+    `tests/test_custom_html_blocks.py` (the seeded shell: tiles and slots in the controls, nothing on
+    the band). Nothing here ran in a browser; the look is the prod pass.
+
 ## [1.783.0] - 2026-11-03
 
 Nikolas, from the meeting with James and Clegg on 2026-11-03: "Add Contract button to Scope to
