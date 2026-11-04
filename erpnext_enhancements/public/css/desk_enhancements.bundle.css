@@ -1764,8 +1764,9 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
     height: 1px;
     background: var(--outline-gray-2, #dadbdd);
 }
-.body-sidebar-container.expanded .ee-rail-top-first::before {
-    content: "Used most";
+/* The caption's words come from the script (`__("Used most")`), so they are translated. */
+.body-sidebar-container.expanded .ee-rail-top-first[data-ee-caption]::before {
+    content: attr(data-ee-caption);
     display: block;
     padding: 4px 8px 2px;
     font-size: 10px;
@@ -1843,7 +1844,9 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
 }
 
 /* The phone bottom bar: the module's first four rows plus More. Below md only; the script builds
-   it only there too, so the desktop rule is a belt for a browser that lies about its width. */
+   it only there too, so the desktop rule is a belt for a browser that lies about its width. The
+   script also keeps it off a page that hides the sidebar and off a page with a bottom bar of its
+   own (the visit wizard's .vz-nav, for one), so nothing here needs to know those pages. */
 .ee-quick-bar {
     display: none;
 }

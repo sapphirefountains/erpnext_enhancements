@@ -27,7 +27,8 @@
  *    aria-label stays. Expanded, the tooltips are destroyed and the titles are frappe's business.
  *
  * 3. THE PIN. One button at the top of the standard-items band: in the rail it pins the panel open
- *    (`sidebar.open()`), expanded it folds it back (`sidebar.close()`). Both are frappe's own
+ *    (`sidebar.open()`), expanded it folds it back (`sidebar.close()`). One name and one state
+ *    (`aria-expanded`), sidebar_memory's rule. Both are frappe's own
  *    methods, which save the choice in `desk-sidebar-collapsed` and, through sidebar_memory's
  *    wrapper, in this person's copy (`ee-nav-collapsed@<user>`). tests/test_frappe_16_50_desk_compat.py
  *    forbids every other file of ours from calling them, because until this file a collapse meant a
@@ -52,15 +53,23 @@
  *    the Pending Confirmations row the pending AI actions, and the My Work row its own count
  *    (`erpnext_enhancements.my_work.refresh_count`), drawn on the icon so the rail shows them too
  *    (frappe folds `.sidebar-item-suffix` to width 0 there). Read with My Work's own cadence: once
- *    on load, then at most once a minute on navigation. A failed read shows nothing.
+ *    on load, then at most once a minute on navigation, a gap that holds whether or not the day's
+ *    seed succeeded (a failing endpoint must not be asked on every route change). Once seeded,
+ *    the poll asks for badges only (`usage=0`). A failed read shows nothing. frappe's
+ *    `label_rail_rows` rewrites every aria-label on each fold, so the counts are painted again
+ *    after `apply_expanded_state`.
  *
  * 7. RECENT. A row after My Work that opens the last six pages and records opened in this module,
  *    kept per person per browser, forms included (the one thing Route History cannot tell).
  *
  * 8. PHONE BOTTOM BAR. Below 768px the module's first four rows, in the used-most order, sit in a
  *    bar at the foot of the screen with their badges, and a fifth slot opens the drawer. It is
- *    rebuilt from `sidebar.sidebar_items` on every sidebar draw, so there is nothing to configure,
- *    and it hides on pages that hide the sidebar, under a dialog, and while an input has focus.
+ *    rebuilt from `sidebar.sidebar_items` on every sidebar draw and re-checked on every page
+ *    change, so there is nothing to configure. It stays off a page that hides the sidebar
+ *    (`page.hide_sidebar`, read directly: on a phone frappe's `page_allows_sidebar()` is always
+ *    true because the drawer "can close"), off a page that draws its own bar at the foot of the
+ *    screen (`OWN_BOTTOM_BARS`: the visit wizard's Next button sits at z-index 5), under a dialog,
+ *    and while an input has focus.
  *
  * 9. TRAINING OPENS ON THE COURSE LIST. The dock's Training tile is a Workspace row, and a
  *    Workspace row opens its workspace; the Training hub to Training Course list hop happened 33
@@ -69,7 +78,10 @@
  *    dock's layers changes, so nobody's own arrangement is touched.
  *
  * Every wrapper runs frappe's original first (or around it) and acts only on a desktop unless
- * said otherwise; every DOM step is idempotent and never throws past a console warning.
+ * said otherwise; every DOM step is idempotent and never throws past a console warning. A missing
+ * anchor in frappe's markup (`.standard-items-band`, `.item-anchor`, `.sidebar-item-icon`) is
+ * warned once per page load as `sidebar_rail: ...`, so an upstream rename shows on the prod
+ * checklist instead of silently dropping the pin, the tooltips or a badge.
  */
 (function () {
 	if (typeof window === "undefined") return;
@@ -87,14 +99,19 @@
 	const BAR_ROWS = 4;
 	const BADGE_MIN_GAP = 60 * 1000;
 	const API = "erpnext_enhancements.api.sidebar_rail.get_rail_data";
+	const BADGE_POLL = API + "?usage=0"; // once seeded: the badges only, no Route History tally
 	const PIN_CLASS = "ee-rail-pin";
 	const RECENT_CLASS = "ee-rail-recent-item";
 	const BADGE_CLASS = "ee-rail-badge";
 	const BAR_CLASS = "ee-quick-bar";
 	// Dock entries that open somewhere other than their own page, keyed like `dock_entry_key`.
 	const LANDINGS = { "Workspace|Training|": "/desk/training-course" };
-	// The rows that carry a count, by what they open.
+	// The rows that carry a count, by what they open (link_type|link_to|url; never a label, so the
+	// site-wide Custom Sidebar layer's unlabelled Task row matches too).
 	const BADGED = { "DocType|Task|": "tasks", "DocType|AI Pending Action|": "pending_actions" };
+	// Pages that draw a bar of their own at the foot of a phone screen; the quick bar stays out of
+	// their way (the visit wizard's Next button sits at z-index 5, under anything of ours).
+	const OWN_BOTTOM_BARS = ".vz-nav, .qw-nav, .tp-nav, .isa-finbar.show, .ob-closebar, .mp-p6c-movebar";
 
 	// Inline, so no icon sprite is needed (a name the sprite lacks draws nothing and raises nothing).
 	const ICON_PIN =
@@ -117,6 +134,7 @@
 		tooltips: [],
 		band: [], // the items drawn first
 		popover: null,
+		warned: {}, // canaries already raised this page load
 	};
 
 	// ------------------------------------------------------------------ storage
@@ -175,6 +193,20 @@
 	function esc(value) {
 		if (window.frappe && frappe.utils && frappe.utils.escape_html) return frappe.utils.escape_html(value == null ? "" : String(value));
 		return String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+	}
+
+	// One warning per missing anchor per page load: an upstream markup rename must show in the
+	// console (prod checklist item 8) without spamming it on every draw.
+	function warn_once(key, message) {
+		if (state.warned[key]) return;
+		state.warned[key] = true;
+		console.warn("sidebar_rail: " + message);
+	}
+
+	// A Recent entry's href comes back out of localStorage, so only a Desk path is ever drawn.
+	function safe_route(route) {
+		if (typeof route !== "string") return null;
+		return route === "/desk" || route === "/app" || route.startsWith("/desk/") || route.startsWith("/app/") ? route : null;
 	}
 
 	function is_phone() {
@@ -369,16 +401,17 @@
 	}
 
 	// Seeds the counts from the server once per browser day and refreshes the badges, at most once
-	// a minute unless forced. Both come from one request.
+	// a minute unless forced. The gap holds whether or not the seed succeeded: a failing endpoint
+	// is not asked again on every route change. Once seeded, the request is the badges only.
 	function refresh_data(force) {
 		if (!current_user()) return Promise.resolve(null);
 		const now = Date.now();
-		const seeded_today = read(user_key(SEED_KEY)) === today_stamp();
-		if (!force && seeded_today && now - state.last_badges_at < BADGE_MIN_GAP) {
+		if (!force && now - state.last_badges_at < BADGE_MIN_GAP) {
 			return state.badges_inflight || Promise.resolve(state.badges);
 		}
 		state.last_badges_at = now;
-		state.badges_inflight = quiet_get(API)
+		const seeded_today = read(user_key(SEED_KEY)) === today_stamp();
+		state.badges_inflight = quiet_get(seeded_today ? BADGE_POLL : API)
 			.then((data) => {
 				if (!data) return null;
 				if (data.usage && !seeded_today) {
@@ -420,7 +453,7 @@
 	}
 
 	function remember_recent(module, entry) {
-		if (!module || !entry) return;
+		if (!module || !entry || !safe_route(entry.route)) return;
 		const all = recents();
 		all[module] = push_recent(all[module], entry);
 		write(user_key(RECENT_KEY), JSON.stringify(all));
@@ -461,7 +494,7 @@
 			setTimeout(() => {
 				try {
 					remember_recent(module, { route: window.location.pathname + window.location.search, label: current_label(route), at: Date.now() });
-					paint_bar_active();
+					build_bar();
 				} catch (e) {
 					console.warn("sidebar_rail:", e);
 				}
@@ -514,8 +547,13 @@
 	function label_rows(sb) {
 		drop_tooltips();
 		if (!sb || !sb.wrapper || !is_rail(sb) || !(frappe.ui && frappe.ui.Tooltip)) return;
-		sb.wrapper.find(".body-sidebar .item-anchor, .body-sidebar ." + PIN_CLASS + " button, .body-sidebar ." + RECENT_CLASS + " .item-anchor").each(function () {
-			const label = $(this).attr("aria-label") || $(this).find(".sidebar-item-label").first().text().trim();
+		const $anchors = sb.wrapper.find(".body-sidebar .item-anchor, .body-sidebar ." + PIN_CLASS + " button, .body-sidebar ." + RECENT_CLASS + " .item-anchor");
+		if (!$anchors.length && Array.isArray(sb.items) && sb.items.length) {
+			warn_once("anchor", "no .item-anchor in the rail: frappe's sidebar_item.html changed, so the hover labels are off");
+		}
+		$anchors.each(function () {
+			// The row's name, not its badge sentence: the tooltip is the dock tiles' plain one.
+			const label = $(this).find(".sidebar-item-label").first().text().trim() || $(this).attr("aria-label");
 			if (!label) return;
 			this.removeAttribute("title");
 			state.tooltips.push(new frappe.ui.Tooltip(this, { text: label, side: "right", delay: 0, offset: 10, class: "es-tooltip--plain" }));
@@ -526,9 +564,9 @@
 		const $pin = sb && sb.wrapper ? sb.wrapper.find("." + PIN_CLASS + " button") : $();
 		if (!$pin.length) return;
 		const expanded = !!sb.sidebar_expanded;
-		const label = expanded ? text("Fold sidebar to icons") : text("Pin sidebar open");
-		$pin.attr({ "aria-label": label, "aria-pressed": expanded ? "true" : "false" });
-		sb.wrapper.find("." + PIN_CLASS + " .sidebar-item-label").text(expanded ? text("Fold to icons") : text("Pin open"));
+		// One name, one state (sidebar_memory's rule): a label that changed with the state was read
+		// twice by a screen reader, once as the name and once as the state.
+		$pin.attr({ "aria-label": text("Pin sidebar"), "aria-expanded": expanded ? "true" : "false" });
 	}
 
 	function standard_row(cls, icon, label, href) {
@@ -552,9 +590,14 @@
 	function ensure_rows(sb) {
 		if (!sb || !sb.wrapper) return;
 		const $band = sb.wrapper.find(".standard-items-band");
-		if (!$band.length) return;
+		if (!$band.length) {
+			if (Array.isArray(sb.items) && sb.items.length) {
+				warn_once("band", "no .standard-items-band: frappe's sidebar.html changed, so the pin and Recent rows are off");
+			}
+			return;
+		}
 		if (!$band.find("." + PIN_CLASS).length) {
-			const $pin = standard_row(PIN_CLASS, ICON_PIN, text("Pin open"));
+			const $pin = standard_row(PIN_CLASS, ICON_PIN, text("Pin sidebar"));
 			$pin.find("button").on("click", function () {
 				try {
 					const current = sidebar();
@@ -591,13 +634,13 @@
 		const sb = sidebar();
 		if (!sb || !sb.wrapper) return;
 		const module = sb && sb.current_module;
-		const list = (recents()[module] || []).filter((e) => e && e.route);
+		const list = (recents()[module] || []).filter((e) => e && safe_route(e.route));
 		const $pop = $('<div class="ee-rail-popover" role="menu"></div>');
 		$pop.append('<div class="ee-rail-popover-title">' + esc(text("Recent in {0}", [module || ""])) + "</div>");
 		if (!list.length) $pop.append('<div class="ee-rail-popover-empty">' + esc(text("Nothing opened here yet")) + "</div>");
 		list.forEach((entry) => {
 			const $a = $('<a role="menuitem" class="ee-rail-popover-row"></a>')
-				.attr("href", entry.route)
+				.attr("href", safe_route(entry.route))
 				.append($('<span class="ee-rail-popover-label"></span>').text(entry.label || entry.route))
 				.append($('<span class="ee-rail-popover-when"></span>').text(ago(entry.at)));
 			$a.on("click", () => {
@@ -656,20 +699,30 @@
 	// Marks the drawn rows of the used-most band so the stylesheet can draw the hairline after it.
 	function mark_band(sb) {
 		if (!sb || !sb.wrapper) return;
-		sb.wrapper.find(".ee-rail-top, .ee-rail-top-first, .ee-rail-top-last").removeClass("ee-rail-top ee-rail-top-first ee-rail-top-last");
+		sb.wrapper
+			.find(".ee-rail-top, .ee-rail-top-first, .ee-rail-top-last")
+			.removeClass("ee-rail-top ee-rail-top-first ee-rail-top-last")
+			.removeAttr("data-ee-caption");
 		const band = state.band || [];
 		if (!band.length || !Array.isArray(sb.items)) return;
 		const drawn = sb.items.filter((row) => row && row.wrapper && band.includes(row.item));
 		drawn.forEach((row, i) => {
 			row.wrapper.addClass("ee-rail-top");
-			if (i === 0) row.wrapper.addClass("ee-rail-top-first");
+			// The expanded panel's caption, drawn by the stylesheet from this attribute so it is
+			// translated here rather than hard-coded in CSS.
+			if (i === 0) row.wrapper.addClass("ee-rail-top-first").attr("data-ee-caption", text("Used most"));
 			if (i === drawn.length - 1) row.wrapper.addClass("ee-rail-top-last");
 		});
 	}
 
-	function paint_badge($anchor, badge, label) {
+	function paint_badge($anchor, badge, label, key) {
 		const $icon = $anchor.find(".sidebar-item-icon").first();
-		if (!$icon.length) return;
+		if (!$icon.length) {
+			// frappe omits the icon span for a row without an icon (or with show_arrow), and a
+			// row the rail draws blank cannot carry a count either.
+			if (badge && $anchor.length) warn_once("icon:" + key, "a badged row has no .sidebar-item-icon, so its count is not drawn: " + key);
+			return;
+		}
 		let $badge = $icon.find("." + BADGE_CLASS);
 		if (!badge) {
 			$badge.remove();
@@ -695,13 +748,13 @@
 				if (!row || !row.wrapper || !row.item) return;
 				if (!BADGED[item_key(row.item)]) return;
 				const badge = badge_for(row.item, state.badges);
-				paint_badge(row.wrapper.find(".item-anchor").first(), badge, badge_label(row.item, badge));
+				paint_badge(row.wrapper.find(".item-anchor").first(), badge, badge_label(row.item, badge), item_key(row.item));
 			});
 			const my_work = state.badges && state.badges.my_work;
 			const $mine = sb.wrapper.find(".ee-my-work-item .item-anchor").first();
 			if ($mine.length) {
 				const count = my_work && Number(my_work.count) ? { count: Number(my_work.count), overdue: Number(my_work.overdue) || 0 } : null;
-				paint_badge($mine, count, null);
+				paint_badge($mine, count, null, "my-work");
 			}
 			paint_bar_badges();
 		} catch (e) {
@@ -725,11 +778,28 @@
 		}
 	}
 
+	// The bar stays off a page that hides the sidebar (it opted out of the module shell; the flag is
+	// read directly because on a phone frappe's page_allows_sidebar() is always true, the drawer
+	// "can close") and off a page that draws its own bar at the foot of the screen.
+	function bar_suppressed(sb) {
+		try {
+			const page =
+				sb && typeof sb.current_page === "function"
+					? sb.current_page()
+					: window.frappe && frappe.container && frappe.container.page && frappe.container.page.page;
+			if (!page || page.hide_sidebar) return true;
+			if (sb && typeof sb.page_allows_sidebar === "function" && !sb.page_allows_sidebar()) return true;
+			return $(OWN_BOTTOM_BARS).length > 0;
+		} catch (e) {
+			return false;
+		}
+	}
+
 	function build_bar() {
 		try {
 			const sb = sidebar();
 			let $bar = $("." + BAR_CLASS);
-			if (!is_phone() || !sb || !sb.current_module) {
+			if (!is_phone() || !sb || !sb.current_module || bar_suppressed(sb)) {
 				$bar.remove();
 				$("body").removeClass("ee-quick-bar-on");
 				return;
@@ -805,6 +875,10 @@
 				}, 50);
 			});
 		$(window).on("resize.ee-quick-bar", () => build_bar());
+		// After frappe shows a page: its hide_sidebar flag and its own bottom bar exist by now.
+		$(document).on("page-change.ee-quick-bar", () => {
+			if (is_phone()) build_bar();
+		});
 	}
 
 	// ------------------------------------------------------------------ install
@@ -872,6 +946,9 @@
 				const result = apply.apply(this, arguments);
 				try {
 					paint_pin(this);
+					// frappe's label_rail_rows (inside the original) rewrote every aria-label to the
+					// bare row name, so the badge sentences are painted back before the tooltips read them.
+					paint_badges();
 					label_rows(this);
 					close_popover();
 				} catch (e) {
@@ -905,14 +982,15 @@
 	// Redraws the module's rows (frappe's `setup` skips a module already on screen, so it is
 	// cleared first), after the order switch changes.
 	function redraw_sidebar() {
+		const current = sidebar();
+		if (!current || !current.current_module || typeof current.setup !== "function") return;
+		const module = current.current_module;
 		try {
-			const current = sidebar();
-			if (current && current.current_module && typeof current.setup === "function") {
-				const module = current.current_module;
-				current.current_module = null;
-				current.setup(module);
-			}
+			current.current_module = null;
+			current.setup(module);
 		} catch (e) {
+			// A failed redraw must not leave the sidebar without a module.
+			if (!current.current_module) current.current_module = module;
 			console.warn("sidebar_rail:", e);
 		}
 	}
@@ -954,6 +1032,11 @@
 		apply_intro,
 		patch_sidebar,
 		refresh: () => refresh_data(true),
+		refresh_data,
+		redraw_sidebar,
+		safe_route,
+		bar_suppressed,
+		warn_once,
 		LANDINGS,
 		USAGE_FLOOR,
 		TOP_BAND_MAX,

@@ -78,6 +78,45 @@ class TestShips(unittest.TestCase):
 			self.assertIn(f'"{name}"', memory)
 			self.assertIn(f'"{name}"', src)
 
+	def test_the_wrappers_repaint_the_badges_after_a_fold(self):
+		"""frappe's label_rail_rows runs inside apply_expanded_state and rewrites every aria-label,
+		so the counts must be painted back there, not only on the next poll."""
+		src = code(MODULE)
+		start = src.index("proto.apply_expanded_state = function")
+		end = src.index("proto.dock_entry_route", start)
+		self.assertIn("paint_badges();", src[start:end])
+
+	def test_the_pin_has_one_name_and_one_state(self):
+		src = code(MODULE)
+		self.assertIn('"aria-expanded": expanded ? "true" : "false"', src)
+		self.assertNotIn("aria-pressed", src)
+		self.assertNotIn("Fold to icons", src)
+
+	def test_the_canaries(self):
+		"""An upstream markup rename must reach the console (prod checklist item 8)."""
+		src = code(MODULE)
+		self.assertIn('console.warn("sidebar_rail: " + message)', src)
+		for key in ('warn_once("band"', 'warn_once("anchor"', 'warn_once("icon:" + key'):
+			self.assertIn(key, src)
+
+	def test_the_phone_bar_reads_the_page(self):
+		src = code(MODULE)
+		self.assertIn("page.hide_sidebar", src)
+		self.assertIn("bar_suppressed(sb)", src)
+		self.assertIn('"page-change.ee-quick-bar"', src)
+		self.assertIn(".vz-nav", src, "the visit wizard's own bottom bar")
+
+	def test_recent_hrefs_are_desk_paths(self):
+		src = code(MODULE)
+		self.assertIn("safe_route(entry.route)", src)
+		self.assertIn('.attr("href", safe_route(entry.route))', src)
+
+	def test_the_badge_poll_is_throttled_whatever_the_seed_did(self):
+		src = code(MODULE)
+		self.assertIn("if (!force && now - state.last_badges_at < BADGE_MIN_GAP) {", src)
+		self.assertNotIn("seeded_today && now - state.last_badges_at", src)
+		self.assertIn('const BADGE_POLL = API + "?usage=0"', src)
+
 	def test_the_compat_suite_names_this_file_as_its_one_allowance(self):
 		compat = read(COMPAT)
 		self.assertIn('RAIL = PUBLIC_JS / "global_enhancements" / "sidebar_rail.js"', compat)
@@ -107,6 +146,12 @@ class TestStylesheetMatchesScript(unittest.TestCase):
 		before = css[: css.index("@media (max-width: 767.98px)")]
 		rail = before[before.index("Sidebar rail (v1.793.0") :]
 		self.assertIn(".ee-quick-bar {\n    display: none;\n}", rail)
+
+	def test_the_caption_is_translated_from_the_script(self):
+		css = read(CSS)
+		self.assertIn("content: attr(data-ee-caption);", css)
+		self.assertNotIn('content: "Used most"', css)
+		self.assertIn('attr("data-ee-caption", text("Used most"))', code(MODULE))
 
 	def test_the_badge_rides_the_icon_not_the_suffix(self):
 		"""frappe folds .sidebar-item-suffix to width 0 in the rail (sidebar.scss 321), so a count
@@ -149,6 +194,15 @@ class _Frappe:
 		self.db, self.allowed = db, set(allowed)
 		self.session = type("S", (), {"user": user})()
 		self.errors = []
+		self.get_list_calls = []
+
+	def get_list(self, doctype, filters=None, pluck=None, limit_page_length=None):
+		"""The permission-aware read: answers as many names as the fake count says, one page."""
+		self.get_list_calls.append((doctype, filters, pluck, limit_page_length))
+		n = self.db.counts.get((doctype, "all"), 0)
+		if limit_page_length:
+			n = min(n, limit_page_length)
+		return [f"{doctype}-{i}" for i in range(n)]
 
 	def has_permission(self, doctype, ptype="read"):
 		return doctype in self.allowed
@@ -179,7 +233,13 @@ class _Frappe:
 def _module(fake):
 	tree = ast.parse(read(API))
 	body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
-	ns = {"frappe": fake, "add_days": lambda d, n: f"{d}{n:+d}", "nowdate": lambda: "2026-11-03", "today": lambda: "2026-11-03"}
+	ns = {
+		"frappe": fake,
+		"add_days": lambda d, n: f"{d}{n:+d}",
+		"cint": lambda v: int(v or 0),
+		"nowdate": lambda: "2026-11-03",
+		"today": lambda: "2026-11-03",
+	}
 	exec(compile(ast.Module(body=body, type_ignores=[]), str(API), "exec"), ns)
 	return ns
 
@@ -187,7 +247,7 @@ def _module(fake):
 class TestEndpoint(unittest.TestCase):
 	def test_it_is_a_read_only_get(self):
 		src = read(API)
-		self.assertIn('@frappe.whitelist(methods=["GET"])\ndef get_rail_data():', src)
+		self.assertIn('@frappe.whitelist(methods=["GET"])\ndef get_rail_data(usage=1):', src)
 		for forbidden in ("set_value(", ".save(", ".insert(", "db.delete", "delete_doc", "frappe.db.commit"):
 			self.assertNotIn(forbidden, src)
 		# tab-indented code (the docstring's wrapped bullets may start with two spaces)
@@ -208,8 +268,31 @@ class TestEndpoint(unittest.TestCase):
 		self.assertIn("where user = %(user)s and creation >= %(since)s", query)
 		self.assertEqual(values, {"user": "clegg@x", "since": "2026-11-03-90", "limit": 500})
 		# the overdue count is only asked when there is something assigned
-		self.assertEqual([c[0] for c in db.count_calls], ["Task", "Task", "AI Pending Action"])
+		self.assertEqual([c[0] for c in db.count_calls], ["Task", "Task"])
 		self.assertEqual(db.count_calls[0][1]["_assign"], ["like", "%clegg@x%"])
+		# and the pending actions through the permission layer, one page past the cap
+		self.assertEqual(fake.get_list_calls, [("AI Pending Action", {"status": "Pending"}, "name", 100)])
+
+	def test_pending_actions_are_counted_through_permissions(self):
+		"""ai_pending_action.json grants role All read with if_owner, which db.count ignores: it
+		handed every person the whole site's pending actions while their list showed their own."""
+		src = read(API)
+		self.assertNotIn('db.count("AI Pending Action"', src)
+		self.assertIn('frappe.get_list(\n\t\t\t\t"AI Pending Action", filters={"status": "Pending"}, pluck="name"', src)
+		db = _Db(counts={("AI Pending Action", "all"): 150})
+		ns = _module(_Frappe(db, allowed=("AI Pending Action",)))
+		self.assertEqual(ns["badges"]("clegg@x"), {"pending_actions": 100}, "one page past 99, which the badge reads as 99+")
+		self.assertNotIn("AI Pending Action", [c[0] for c in db.count_calls])
+
+	def test_the_badge_poll_skips_route_history(self):
+		db = _Db(rows=[("List/Task/List", 16)], counts={("Task", "all"): 1})
+		ns = _module(_Frappe(db))
+		answer = ns["get_rail_data"](usage="0")
+		self.assertIsNone(answer["usage"])
+		self.assertEqual(db.queries, [], "the 90-day GROUP BY is not run for a badge poll")
+		self.assertEqual(answer["badges"]["tasks"]["count"], 1)
+		self.assertEqual(ns["get_rail_data"](usage=1)["usage"], {"List/Task/List": 16})
+		self.assertEqual(ns["get_rail_data"]()["usage"], {"List/Task/List": 16}, "the default still seeds")
 
 	def test_permission_decides_each_badge(self):
 		db = _Db(counts={("Task", "all"): 3, ("AI Pending Action", "all"): 12})

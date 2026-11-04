@@ -23,6 +23,13 @@
  *   8. badge_for reads the Task and Pending Confirmations rows and nothing else; zero is no badge.
  *   9. push_recent keeps one entry per route, newest first, at most six.
  *  10. dock_entry_route answers the Course list for the Training tile and frappe's own otherwise.
+ *  11. The badge poll is throttled to one request a minute whether or not the day's seed succeeded,
+ *      and once seeded it asks for the badges only (usage=0).
+ *  12. A redraw whose setup() throws puts the module back; a good one draws it.
+ *  13. A Recent href is a Desk path or nothing.
+ *  14. The phone bar stays off a page that hides the sidebar, off one frappe says has no sidebar,
+ *      and off nothing else.
+ *  15. A missing-anchor canary warns once per key.
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
  */
@@ -71,7 +78,7 @@ function makeJQuery(world) {
 				return set;
 			},
 		};
-		["find", "each", "attr", "text", "remove", "addClass", "removeClass", "toggleClass", "append", "prepend", "closest", "css", "first", "empty", "appendTo", "off", "is", "hasClass"].forEach((m) => {
+		["find", "each", "attr", "removeAttr", "text", "remove", "addClass", "removeClass", "toggleClass", "append", "prepend", "closest", "css", "first", "empty", "appendTo", "off", "is", "hasClass", "toggle"].forEach((m) => {
 			set[m] = () => set;
 		});
 		return set;
@@ -106,7 +113,7 @@ function makeSidebarClass(options) {
 
 function makeWorld(options) {
 	options = options || {};
-	const world = { handlers: [], storage: makeStorage(options.storage), mobile: !!options.mobile };
+	const world = { handlers: [], storage: makeStorage(options.storage), mobile: !!options.mobile, fetches: [], warnings: [], fetch_impl: null };
 	const Sidebar = options.no_sidebar ? null : makeSidebarClass(options);
 	const frappe = {
 		session: { user: options.user === undefined ? "clegg@sapphirefountains.com" : options.user },
@@ -121,7 +128,7 @@ function makeWorld(options) {
 		utils: { escape_html: (s) => String(s) },
 	};
 	const sandbox = {
-		console,
+		console: { log: console.log, error: console.error, warn: (...args) => world.warnings.push(args.join(" ")) },
 		frappe,
 		document: { cookie: "" },
 		localStorage: world.storage,
@@ -135,7 +142,10 @@ function makeWorld(options) {
 		Array,
 		Set,
 		Promise,
-		fetch: () => Promise.reject(new Error("no network in the harness")),
+		fetch: (url) => {
+			world.fetches.push(url);
+			return world.fetch_impl ? world.fetch_impl(url) : Promise.reject(new Error("no network in the harness"));
+		},
 	};
 	sandbox.window = sandbox;
 	sandbox.$ = makeJQuery(world);
@@ -333,8 +343,81 @@ const USER = "clegg@sapphirefountains.com";
 	check(world.api.item_key({ link_type: "URL", url: "/desk/x" }) === "URL||/desk/x", "item_key is link_type|link_to|url");
 }
 
-if (failures) {
-	console.error("\n" + failures + " check(s) failed");
-	process.exit(1);
+// ---------------------------------------------------------------- 11. the badge poll
+async function asyncChecks() {
+	{
+		const world = makeWorld();
+		const api = world.api;
+		await api.refresh_data(true);
+		check(world.fetches.length === 1 && world.fetches[0].endsWith("get_rail_data"), "the first read asks for usage and badges in one request");
+		await api.refresh_data(false);
+		check(world.fetches.length === 1, "a failed seed does not make the next route change ask again within the minute");
+		await api.refresh_data(true);
+		check(world.fetches.length === 2 && world.fetches[1].endsWith("get_rail_data"), "unseeded, a forced read still asks for usage");
+		world.fetch_impl = () =>
+			Promise.resolve({ ok: true, json: () => Promise.resolve({ message: { usage: { "List/Task": 4 }, badges: { tasks: { count: 2, overdue: 0 } } } }) });
+		await api.refresh_data(true);
+		const today = new Date().toISOString().slice(0, 10);
+		check(world.storage.getItem("ee-rail-seed@" + USER) === today, "a good answer marks the seed as today's");
+		check(JSON.parse(world.storage.getItem("ee-rail-use@" + USER) || "{}")["List/Task"] === 4, "...and keeps the server's counts");
+		await api.refresh_data(true);
+		check(world.fetches[world.fetches.length - 1].endsWith("get_rail_data?usage=0"), "seeded, the poll asks for the badges only");
+	}
+	// ------------------------------------------------------------ 12. redraw never strands the sidebar
+	{
+		const world = makeWorld();
+		const sb = new world.Sidebar();
+		sb.current_module = "Projects";
+		sb.setup = () => {
+			throw new Error("boom");
+		};
+		world.frappe.app = { sidebar: sb };
+		world.api.redraw_sidebar();
+		check(sb.current_module === "Projects", "a redraw whose setup() throws puts the module back");
+		check(world.warnings.some((w) => w.startsWith("sidebar_rail:")), "...and says so in the console");
+		sb.setup = (module) => {
+			sb.set_up = module;
+			sb.current_module = module;
+		};
+		world.api.redraw_sidebar();
+		check(sb.set_up === "Projects" && sb.current_module === "Projects", "a good redraw draws the module again");
+	}
+	// ------------------------------------------------------------ 13. a Recent href is a Desk path
+	{
+		const api = makeWorld().api;
+		check(api.safe_route("/desk/task/TASK-0001") === "/desk/task/TASK-0001" && api.safe_route("/app/task") === "/app/task", "a Desk path is kept");
+		check(api.safe_route("javascript:alert(1)") === null && api.safe_route("https://example.com/desk/x") === null && api.safe_route("//evil") === null, "anything else is dropped");
+		check(api.safe_route("/kiosk") === null && api.safe_route(null) === null && api.safe_route("/deskx") === null, "a path outside the Desk is dropped too");
+	}
+	// ------------------------------------------------------------ 14. the bar and the page
+	{
+		const api = makeWorld().api;
+		const sb = (page, allows) => ({ current_page: () => page, page_allows_sidebar: () => allows });
+		check(api.bar_suppressed(sb({ hide_sidebar: 1 }, true)) === true, "a page that hides the sidebar gets no bar");
+		check(api.bar_suppressed(sb({}, false)) === true, "a page frappe says has no sidebar gets no bar");
+		check(api.bar_suppressed(sb(null, true)) === true, "no page yet: no bar");
+		check(api.bar_suppressed(sb({ title: "Projects" }, true)) === false, "an ordinary page keeps it");
+	}
+	// ------------------------------------------------------------ 15. the canary
+	{
+		const world = makeWorld();
+		world.api.warn_once("band", "x");
+		world.api.warn_once("band", "x again");
+		world.api.warn_once("icon:DocType|Task|", "y");
+		const ours = world.warnings.filter((w) => w.startsWith("sidebar_rail: "));
+		check(ours.length === 2 && ours[0] === "sidebar_rail: x", "one warning per key, prefixed sidebar_rail:");
+	}
 }
-console.log("\nall checks passed");
+
+asyncChecks()
+	.catch((e) => {
+		failures += 1;
+		console.error("  FAIL  async checks threw: " + (e && e.stack ? e.stack : e));
+	})
+	.then(() => {
+		if (failures) {
+			console.error("\n" + failures + " check(s) failed");
+			process.exit(1);
+		}
+		console.log("\nall checks passed");
+	});

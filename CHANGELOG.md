@@ -35,10 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     has forbidden every file of ours from calling those since the v1.574.2 incident, because a
     collapse used to mean a hidden sidebar and a lost Help menu; this file is now named there as the
     one allowance, with the reason, and it still may not touch `.sidebar-toggle-btn`.
-  - **Rail by default, once.** The first time a person's browser loads this release
-    (`ee-rail-intro-v1@<user>`) the panel starts folded whatever frappe's key says: frappe writes
-    `0` into that key on every `open()`, including the one every dock click used to make, so an
-    existing `0` was never a choice. After that their own toggles are the only thing that moves it.
+  - **Rail by default, once per browser.** The first time a person's browser loads this release
+    (`ee-rail-intro-v1@<user>`, so once more on a new browser or a cleared profile, since the flag
+    is localStorage) the panel starts folded whatever frappe's key says: frappe writes `0` into
+    that key on every `open()`, including the one every dock click used to make, so an existing
+    `0` was never a choice. After that their own toggles are the only thing that moves it.
   - **Used most first.** The module's top-level rows are redrawn with the ones this person opens
     most first (at most four, each with at least three visits), then a hairline, then the rest in
     frappe's order; groups and their children never move and nothing is removed. The counts are
@@ -54,19 +55,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Task shows the open tasks assigned to you (red when one is past its expected end), Pending
     Confirmations the AI actions still Pending, My Work its own count (through
     `erpnext_enhancements.my_work.refresh_count`; expanded, its suffix shows and the badge hides).
-    Read with My Work's cadence: on load, then at most once a minute on navigation; a failed read
-    shows nothing. The endpoint is a read-only GET scoped to the session user, each count only where
-    the person may read the doctype.
+    Read with My Work's cadence: on load, then at most once a minute on navigation, a gap that holds
+    whether or not the day's seed succeeded; a failed read shows nothing. The endpoint is a read-only
+    GET scoped to the session user, each count only where the person may read the doctype, and the
+    Pending Confirmations count goes through `frappe.get_list` because the doctype grants everyone
+    read `if_owner`, which `db.count` ignores. The minute poll asks for badges only (`usage=0`); the
+    90-day Route History tally runs once a day. frappe's `label_rail_rows` rewrites every aria-label
+    on each fold, so the counts are painted back after `apply_expanded_state`.
   - **Recent.** A row after My Work opens the last six pages and records opened in this module, kept
     per person per browser, forms included: the one thing Route History cannot tell (frappe's
     `router_history.js` skips `Form/` routes). The popover mounts on the sidebar container, beside
     the panel, because `.body-sidebar` clips what overhangs it and a 48px rail overhangs by design.
   - **The phone bottom bar.** Below 768px the module's first four rows, in the used-most order and
     with their badges, sit in a bar at the foot of the screen; a fifth slot, More, opens the drawer.
-    Built from `sidebar.sidebar_items` on every sidebar draw, so there is nothing to configure; it
-    hides on pages that hide the sidebar, under a dialog, and while an input has focus, and the
-    page gets room under it so a list's last row is never behind it. Austin opened the visit wizard
-    193 times in 90 days from a phone, every hop to another page through the hamburger.
+    Built from `sidebar.sidebar_items` on every sidebar draw and re-checked on every page change,
+    so there is nothing to configure; it stays off a page that hides the sidebar (`hide_sidebar`,
+    read directly, since on a phone frappe's `page_allows_sidebar()` is always true) and off a page
+    with a bottom bar of its own (the visit wizard's Next button sits at z-index 5), hides under a
+    dialog and while an input has focus, and the page gets room under it so a list's last row is
+    never behind it. Austin opened the visit wizard 193 times in 90 days from a phone, every hop to
+    another page through the hamburger.
   - **Two sidebar rows from the route audit** (`setup/workspace_tweaks.py`): the Customer row moves
     up under the Opportunity Kanban in CRM, relabelled **Accounts** as the doctype is on this site
     (Kanban to Customer list and back was the busiest two-step on the Desk: 47 + 42 hops, eleven
@@ -106,7 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tabs sit right there too), and the Maintenance Planner, which wraps at 1280 and fits at 1470 and
   1920, did the same. CSS only; the DOM order, the tablist and Back/Forward are untouched
   (`tests/test_planner_six_picks.py` pins the two rules and the phone reset).
-
 ## [1.791.0] - 2026-11-03
 
 Nikolas, 2026-11-03, on the live Tasks Tree right after #1418 (v1.787.0) deployed: "I think we need
@@ -300,7 +307,6 @@ them via drag and drop."
   Crew board's order, the hover card (escaping, placement, the delay, the title held aside, Esc, a press,
   a finger ignored) and what each page's card says, and the pencil rule in four places. Three older
   harnesses and two older suites now expect the new menu items and the pencil text.
-
 ## [1.787.0] - 2026-11-03
 
 ### Added
@@ -1656,6 +1662,7 @@ Utah designs no longer carry the confirm-the-codes issue.
   upper bound, for scaling conservatism, and its cite says so. Utah's design air stays at the engine's
   95 °F against ASHRAE 2025's 96.4 °F, an open question the research lists.
 
+
 ## [1.771.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), task TASK-2026-03029. This is
@@ -2569,6 +2576,7 @@ only, never imports frappe): no migration, fixture, patch or hook. Nothing runs 
 - No `inf` reaches a result. Where a footing or plinth would tip, or no beam size works, the result
   says so.
 
+
 ## [1.765.0] - 2026-11-01
 
 ERPNext: PRJ-00580, under TASK-2026-03018 (Fountain Designer rebuild), phase S. Nikolas asked on
@@ -2645,6 +2653,7 @@ The change is pure engine code (stdlib only, never imports frappe) and its tests
 - Step risers take the membrane and the curing compound.
 - The shell and the thickness pick use one rim-above-grade rule.
 - The load-factor citation says what ACI 318 actually gives (H 1.6, F 1.4).
+
 
 ## [1.764.0] - 2026-11-01
 
@@ -24872,6 +24881,7 @@ Helpdesk doctypes this site does not have, which Frappe 16.35.0 began to trip ov
   - a failed read, delete or cache clear is logged and never raised;
   - the patch is registered under `[post_model_sync]`.
 
+
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,
@@ -30805,6 +30815,7 @@ was not in the repo, not reproducible on a rebuilt VM, and nothing would notice 
   current `_shadow_display_name` could not have produced), scoped to shadows, idempotent, and
   guarded on the Custom Field so it cannot abort a fresh-database migrate.
 
+
 ## [1.485.0] - 2026-09-18
 
 ### Added
@@ -33222,6 +33233,7 @@ subscription alerts, which stopped on their own when that module was deleted on 
   captures the hold points as they stood that day and no later scope edit can change what was
   signed.
 
+
 ## [1.460.0] - 2026-09-14
 
 ### Added
@@ -33425,6 +33437,7 @@ subscription alerts, which stopped on their own when that module was deleted on 
   Days-to-close could otherwise only be guessed from `modified`, which any later edit moves — so
   the metric would drift quietly upward for every action somebody reopened to add a note.
 
+
 ## [1.457.0] - 2026-09-14
 
 ### Added
@@ -33474,6 +33487,7 @@ subscription alerts, which stopped on their own when that module was deleted on 
   will not reset a template somebody has already corrected and set Active.
 - **Nothing changes on prod when this deploys.** `quality_enabled` ships off, and every template
   here is inert until a person adopts it.
+
 
 ## [1.456.0] - 2026-09-14
 
@@ -33715,6 +33729,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - **Nothing changes on prod when this deploys.** `quality_enabled` and
   `advisory_inspector_qualification` both ship off.
 
+
 ## [1.453.0] - 2026-09-14
 
 ### Added
@@ -33774,6 +33789,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - **Nothing changes on prod when this deploys.** `Quality Settings.quality_enabled` and
   `notifications_enabled` both ship off, and every entry point checks them first.
 
+
 ## [1.452.3] - 2026-09-14
 
 ### Fixed
@@ -33811,6 +33827,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   target that did not exist. Verified inert throughout: Project meta loaded all 227 fields and
   projects opened normally.
 
+
 ## [1.452.2] - 2026-09-14
 
 ### Fixed
@@ -33843,6 +33860,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   `override_doctype_class` entries are skipped by the sweep, which is the only reason
   `Quality Action` was never at risk.
 
+
 ## [1.452.1] - 2026-09-14
 
 ### Changed
@@ -33857,6 +33875,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   every historical citation in these files — the v1.280.3 backfill that logged a success while
   matching nothing, the v1.395.0 half-installed deploy, the v1.277.3 unsaveable settings page —
   points at a real release and would have become fiction if shifted with the rest.
+
 
 ## [1.452.0] - 2026-09-14
 
@@ -33901,6 +33920,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - The claim query carries **no date comparison**. A `<` on a nullable datetime silently matches
   every NULL row through Frappe's coalesce sentinel - and "resolved a while ago" is not the rule
   anyway. The rule is "resolved and not yet re-checked".
+
 
 ## [1.451.0] - 2026-09-14
 
@@ -33951,6 +33971,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   in both tables on 2026-09-14, so they remap nothing today; they log their counts anyway,
   because a patch that matched nothing commits and writes its `tabPatch Log` row
   indistinguishably from one that did the work. Neither raises.
+
 
 ## [1.450.0] - 2026-09-14
 
@@ -34010,6 +34031,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   fixes forward, which is F. `Carried Action` is already in the `source` vocabulary because
   adding a Select option once rows exist is a data migration, not an edit.
 
+
 ## [1.449.0] - 2026-09-14
 
 ### Added
@@ -34055,6 +34077,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - Nothing generates an inspection yet; that is sub-phase D. A milestone is a declaration of
   intent that a person acts on, and `trigger_basis` is read by nothing.
 
+
 ## [1.448.1] - 2026-09-14
 
 ### Changed
@@ -34062,6 +34085,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - WI-075's work item records what actually shipped: A, B1 and B2 (v1.444.0 → v1.446.0), B
   split into schema and wiring, and the decision to leave the hand-off step out for now.
   Docs only; no executable behaviour changes.
+
 
 ## [1.448.0] - 2026-09-14
 
@@ -34092,6 +34116,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - The guard is `frappe.db.has_column("Project", ...)` — a **DocType** name, not `"tabProject"`.
   It prefixes `tab` itself and raises `TableMissingError` on an unknown table rather than
   returning False, so the table-name form is a guaranteed crash dressed up as a guard.
+
 
 ## [1.447.0] - 2026-09-14
 
@@ -34130,6 +34155,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
 - At most one locked scope per project is enforced in `before_submit` and not by a unique
   index: a cancelled or amended row keeps its name and its `project`, so a database constraint
   would refuse the legitimate re-lock after an amendment. `docstatus = 1` is the real predicate.
+
 
 ## [1.446.0] - 2026-09-14
 
@@ -34187,6 +34213,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   project, no milestone, no pass/fail and no photo. See
   [ADR-0012](decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md). The
   other seven core Quality DocTypes are reused and are linked from the new workspace.
+
 
 ## [1.445.0] - 2026-09-14
 
@@ -34356,6 +34383,7 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   PRJ-00759 carries three. The section uses status **and** `per_received`, the same rule
   `get_receivable_purchase_orders` uses. The Products section deliberately does not filter:
   it asks what was bought for the job, and a delivered order is the best answer to that.
+
 
 ## [1.443.0] - 2026-09-14
 
@@ -43456,6 +43484,7 @@ for the standing items (GSC grant, Finance calendar share, MDM credentials).
   a caller that does not exist. Verified by removing the new wiring and confirming all
   six reappear as orphans.
 
+
 ## [1.333.0] - 2026-08-19
 
 ### Fixed
@@ -43511,6 +43540,7 @@ for the standing items (GSC grant, Finance calendar share, MDM credentials).
   flag is read, only a submitted `Competent` counts, the lookup is course-scoped not
   version-scoped, an unmigrated site can still finish) to a specific file, and the move made
   them fail loudly rather than silently stop checking anything.
+
 
 ## [1.332.0] - 2026-08-19
 
@@ -44182,6 +44212,7 @@ was already satisfied by `backfill_po_order_stage` in v1.289.0.
   `_call_as` now impersonates **only when the target differs from the session user**. The
   drafter is already running as the requester and needs no impersonation at all; the breakdown
   still gets it, and still runs in a job where it is harmless.
+
 
 ## [1.325.0] - 2026-08-17
 
@@ -47586,6 +47617,7 @@ from that.
   hits, so it is recorded in the exemption block rather than smuggled in here.
 - The staleness check is worth naming on its own: it refuses a waiver that matches no query,
   because one covering nothing today silently covers whatever later takes the name.
+
 
 ## [1.289.4] - 2026-08-14
 
