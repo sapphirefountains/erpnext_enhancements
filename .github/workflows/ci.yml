@@ -3791,6 +3791,14 @@ jobs:
       # flow that pushes browser history.
       - name: Scope tab task actions (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_scope_tasks.py -q
+      # The Tasks Tree's rules executed under node (v1.791.0): what a drop does (the thin edge band
+      # reorders, the row body nests, a line is always "before the lower row"), the column sort
+      # within each parent and its way back to the manual order, the row menu's keys. #1418 shipped
+      # a drop-to-nest that read as fixed and still only reordered on prod: SortableJS swapped the
+      # rows on the edge band and the drop saved the last intent seen. The tree now refuses every
+      # SortableJS move and decides from the pointer alone, which these rules pin.
+      - name: Tasks Tree rules (executed under node)
+        run: node scripts/test_task_tree_manager.js
       # Drag-to-parent on the Tasks Tree + parent dates that follow the subtasks (Nikolas, 2026-11-03;
       # v1.787.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
       # validate_parent_is_group has thrown (the before_save bug that refused every drop onto a leaf),

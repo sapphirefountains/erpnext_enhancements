@@ -17,7 +17,11 @@ What fails expensively and quietly here, and so is pinned:
 * the fixtures putting the tree **anywhere but first** on the Scope tab, or a Section Break's
   ``insert_after`` disagreeing with the ``field_order`` Property Setter (v16 places by the array,
   so the two drift apart in silence);
-* a dialog flow that pushes browser history (Nik: never break Back and Forward).
+* a dialog flow that pushes browser history (Nik: never break Back and Forward);
+* (v1.791.0) the Tasks Tree letting SortableJS move a row during a drag again (what made every
+  slow drop a reorder on prod after #1418), the column sort written to the server or to frappe's
+  user_settings, the row's three icon buttons coming back, and the node harness for the tree's
+  rules (``scripts/test_task_tree_manager.js``) dropping out of CI.
 
 A plain pytest module with its own ``frappe`` stub, so CI runs it in a ``python -m pytest`` step of
 its own (``python -m unittest`` cannot collect function tests).
@@ -27,6 +31,8 @@ import datetime
 import importlib
 import json
 import re
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -36,7 +42,11 @@ import pytest
 APP = Path(__file__).resolve().parents[1]
 FIXTURES = APP / "fixtures"
 TREE_JS = APP / "public/js/project_enhancements/task_tree_manager.js"
+TREE_CSS = APP / "public/css/project_enhancements/task_tree.css"
 FORM_JS = APP / "public/js/project_enhancements/project_form_script.js"
+REPO = APP.parent
+HARNESS = REPO / "scripts/test_task_tree_manager.js"
+CI = REPO / ".github/workflows/ci.yml"
 
 
 def _getdate(value=None):
@@ -606,3 +616,99 @@ def test_the_raw_asset_path_is_only_a_fallback():
 	text = FORM_JS.read_text(encoding="utf-8")
 	assert re.search(r"erpnext_enhancements\.TaskTreeManager\s*\?\s*Promise\.resolve\(\)", text)
 	assert text.count("frappe.require(") == 1
+
+
+# ------------------------------------------------------- the tree's second round (v1.791.0)
+
+
+def _code(text):
+	"""The JS without its comments, so a promise is checked against code, not prose."""
+	text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+	return re.sub(r"^\s*//.*$", "", text, flags=re.M)
+
+
+def test_sortablejs_never_moves_a_row_during_a_drag():
+	"""#1418 let SortableJS swap rows the moment the pointer crossed a row's edge band; the target
+	slid away, the pointer sat over the dragged row (where SortableJS fires nothing) and every
+	slow drop saved a reorder. Now onMove refuses every move and the target is read from the
+	pointer; a native drag that ends without a drop (Escape) saves nothing."""
+	js = _code(TREE_JS.read_text(encoding="utf-8"))
+	on_move = js.split("onMove: function (evt, originalEvent) {")[1].split("},")[0]
+	assert "return false;" in on_move and "return true" not in on_move
+	assert "handleDragMove" not in js
+	assert "document.elementFromPoint(" in js
+	assert "TaskTreeManager.CANCEL_EVENTS.includes(original.type)" in js
+	assert 'CANCEL_EVENTS = ["dragend", "pointercancel", "touchcancel"]' in js
+	assert "swapThreshold: 1," in js and "animation: 0," in js
+	# The drag is tracked on the document only while it lasts, in the capture phase:
+	# SortableJS stops a dragover before it bubbles (review of #1423).
+	assert "_dragListenerOptions = { capture: true, passive: true }" in js
+	assert 'document.addEventListener("dragover", this._onDocDragOver, this._dragListenerOptions)' in js
+	assert 'document.removeEventListener("dragover", this._onDocDragOver, this._dragListenerOptions)' in js
+
+
+def test_the_column_sort_lives_in_this_browser_only():
+	"""Nik: per-browser state in localStorage, never frappe user_settings; a sort writes nothing
+	to the server and switches drag off (the order on screen is not the manual order)."""
+	js = _code(TREE_JS.read_text(encoding="utf-8"))
+	assert "user_settings" not in js
+	assert "localStorage.setItem(TaskTreeManager.SORT_STORAGE_KEY()" in js
+	assert "localStorage.removeItem(TaskTreeManager.SORT_STORAGE_KEY()" in js
+	read = js.split("this.sort = null;")[1].split("this._dropPlan = null;")[0]
+	assert read.strip().startswith("try {") and "catch (e)" in read
+	# Sorting re-renders from the rows already held: no call to the server.
+	set_sort = js.split("setSort(sort) {")[1].split("\n\t}\n")[0]
+	assert "frappe.call" not in set_sort and "this.applyFilters()" in set_sort
+	init = js.split("initializeTaskSorting() {")[1].split("\n\t}\n")[0]
+	assert "const locked = this.dragLockReason();" in init and init.index("if (locked) {") < init.index("new Sortable(")
+	# ... and while a name, owner or status filter hides rows (their positions could collide).
+	lock = js.split("dragLockReason() {")[1].split("\n\t}\n")[0]
+	assert "if (this.sort) {" in lock and "if (this.filtersActive()) {" in lock
+	# The eight headers sort, each a button for the keyboard, the direction in its name.
+	for key in ("subject", "assigned_to", "status", "priority", "exp_start_date", "exp_end_date", "progress", "expected_time"):
+		assert f'this.headerCell("{key}"' in js, key
+	assert 'role="button" tabindex="0" aria-label=' in js and "aria-sort" not in js
+
+
+def test_one_actions_menu_per_row():
+	js = _code(TREE_JS.read_text(encoding="utf-8"))
+	for gone in ("add-subtask-btn", "move-task-btn", "delete-task-btn"):
+		assert gone not in js, gone
+	assert 'class="btn btn-xs btn-default task-actions-btn"' in js
+	assert 'aria-haspopup="menu"' in js and 'role="menu"' in js and 'role="menuitem"' in js
+	menu = js.split("openRowMenu($btn, focus = \"first\") {")[1].split("closeRowMenu(refocus = false) {")[0]
+	assert "rules.menuMove(e.key" in menu and "new frappe.ui.Dialog" not in menu
+	assert "set_route" not in menu and "pushState" not in js
+
+
+def test_the_inline_add_rows_are_gone():
+	"""Nikolas, 2026-11-03: "Get rid of the Add root task and Add subtask lines in the Tasks tree."
+	Add task, a row's Actions → Add subtask and Add from template are the ways to add."""
+	js = _code(TREE_JS.read_text(encoding="utf-8"))
+	for gone in ("quick-add", "createQuickAddRow", "create_inline_task", "Add root task", "Add subtask..."):
+		assert gone not in js, gone
+	assert ".add-task-btn" in js and 'action === "add-subtask"' in js and ".add-template-btn" in js
+
+
+def test_the_grid_scrolls_sideways_and_the_task_column_stays():
+	css = TREE_CSS.read_text(encoding="utf-8")
+	grid = css.split(".task-grid {")[1].split("}")[0]
+	assert "overflow-x: auto;" in grid
+	assert "min-width: 960px;" in css.split(".task-grid-body {")[1].split("}")[0]
+	sticky = css.split(".task-grid-row > .task-grid-cell:first-child {")[1].split("}")[0]
+	assert "position: sticky;" in sticky and "left: 0;" in sticky
+	# The toolbar and the filters wrap at phone width instead of overflowing.
+	assert "flex-wrap: wrap;" in css.split(".task-filters-row {")[1].split("}")[0]
+
+
+def test_ci_runs_the_tree_harness():
+	assert "node scripts/test_task_tree_manager.js" in CI.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node is not on PATH")
+def test_the_tree_harness_passes():
+	result = subprocess.run(
+		[shutil.which("node"), str(HARNESS)], cwd=str(REPO), capture_output=True, text=True, timeout=120
+	)
+	assert result.returncode == 0, result.stdout + result.stderr
+	assert "all checks passed" in result.stdout
