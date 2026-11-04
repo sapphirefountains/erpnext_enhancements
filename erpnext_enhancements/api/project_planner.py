@@ -724,6 +724,10 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 							"date": day,
 							"resource": resource,
 							"hours": booking["hours"],
+							# v1.784.0: the project (an ID; the page knows the title) and the time slot, for the
+							# Calendar's order by project and the hover card's Time row.
+							"project": booking.get("project"),
+							"slot": booking.get("slot"),
 							# v1.601.0: a pencilled maintenance visit is drawn as a pencil here too.
 							"tentative": bool(booking.get("tentative")),
 							# A projected visit has no record yet: a tap opens the contract, and only
@@ -824,6 +828,9 @@ def _crewless_rental(task, start, end):
 			"date": str(day),
 			"resource": None,
 			"hours": None,
+			# v1.784.0: the same keys as every other foreign item (the Calendar's order, the hover card).
+			"project": task.get("project"),
+			"slot": None,
 		}
 		for day in engine.daterange(max(span[0], start), min(span[1], end))
 	]

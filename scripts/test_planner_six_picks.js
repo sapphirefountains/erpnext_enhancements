@@ -366,9 +366,11 @@ test("The band over the headings: a cell a month across its days, the short name
 		["ppl-weekend", "ppl-week-start"],
 	]);
 	const grid = pp.ppl_grid_html([], days);
+	const at_sticky = grid.indexOf('<div class="ppl-sticky">');
 	const at_band = grid.indexOf('class="ppl-row ppl-months"');
 	const at_heads = grid.indexOf('class="ppl-row ppl-heads"');
-	check("the board draws the band, then the day headings", [at_band > 0, at_heads > at_band], [true, true]);
+	check("the board draws one sticky block: the band, then the day headings", [at_sticky > 0, at_band > at_sticky, at_heads > at_band], [true, true, true]);
+	check("the block closes after the headings' row, before the first body row", grid.indexOf("</div></div>", at_heads) < grid.indexOf("ppl-empty"), true);
 	check("the day headings still read the day", grid.includes("<span>Sun 18</span>"), true);
 });
 
@@ -417,12 +419,13 @@ test("Project Planner: Open task / Open project in new tab on the menus, Ctrl+En
 	const name = new Node(".ppl-project-name", { "data-pk-project": "PRJ-1" }, new Node(".ppl-label", {}, root));
 	const label = new Node(".ppl-task-name", { "data-ppr-task": "T1" }, new Node(".ppl-label", {}, root));
 	const draft = new Node(".pp-card", { "data-task": "draft-new:PDC-1" }, root);
+	const phase = new Node(".ppl-phase-name", { "data-ppr-task": "PH-300" }, new Node(".ppl-label", {}, root));
 	check(
-		"a card (from inside it), a Lookahead task name, a project name; a drafted task and a bare spot are nothing",
-		[pp.ppr_new_tab_for(title), pp.ppr_new_tab_for(label), pp.ppr_new_tab_for(name), pp.ppr_new_tab_for(draft), pp.ppr_new_tab_for(root)],
-		[true, true, true, false, false]
+		"a card (from inside it), a Lookahead task name, a project name, a phase name off the board; a drafted task and a bare spot are nothing",
+		[pp.ppr_new_tab_for(title), pp.ppr_new_tab_for(label), pp.ppr_new_tab_for(name), pp.ppr_new_tab_for(phase), pp.ppr_new_tab_for(draft), pp.ppr_new_tab_for(root)],
+		[true, true, true, true, false, false]
 	);
-	check("three tabs", d.opened.slice(2).map((a) => a[0]), ["/desk/task/T1", "/desk/task/T1", "/desk/project/PRJ-1"]);
+	check("four tabs", d.opened.slice(2).map((a) => a[0]), ["/desk/task/T1", "/desk/task/T1", "/desk/project/PRJ-1", "/desk/task/PH-300"]);
 });
 
 test("Maintenance Planner: Open visit / Open contract in new tab, Ctrl+Enter's record of each card kind", () => {
@@ -537,6 +540,17 @@ test("booking_order: a drive and a block first, then by project name and task na
 		["drive", "PB-1", "T3", "T2", "T1", "TRIP-1", "SMR-1"]
 	);
 	check("the Calendar's foreign items take the same order", [{ label: "B", kind: "visit" }, { label: "A", kind: "rental" }].sort((a, b) => pp.booking_order(a, b)).map((i) => i.label), ["A", "B"]);
+	// Review of #1419: a trip's booking carries the project ID only; the page's own project list gives
+	// its title, so it sorts among that project's tasks and never as "PRJ-…" between titles.
+	pp.by_project = { "PRJ-1": { title: "Alpha" }, "PRJ-2": { title: "Beta" } };
+	const mixed = [
+		{ kind: "task", ref: "T1" },
+		{ kind: "travel", ref: "TRIP-2", label: "Zion trip", project: "PRJ-1" },
+		{ kind: "task", ref: "T3" },
+		{ kind: "visit", ref: "SMR-9", label: "Plaza", project: "PRJ-9" },
+	].sort((a, b) => pp.booking_order(a, b));
+	check("an ID resolves to its title; an unknown ID stays an ID and sorts by it", mixed.map((b) => b.ref), ["T3", "TRIP-2", "T1", "SMR-9"]);
+	check("project_name: the title, the known title for an ID, the ID, nothing", [pp.project_name({ project_title: "X", project: "PRJ-1" }), pp.project_name({ project: "PRJ-2" }), pp.project_name({ project: "PRJ-9" }), pp.project_name({}), pp.project_name(null)], ["X", "Beta", "PRJ-9", "", ""]);
 	check("the sort is stable for equals", [{ ref: "T2", kind: "task", tag: 1 }, { ref: "T2", kind: "task", tag: 2 }].sort((a, b) => pp.booking_order(a, b)).map((b) => b.tag), [1, 2]);
 });
 
@@ -567,7 +581,8 @@ test("place: under the chip, inside the viewport, above it when there is no room
 	check("under, aligned left", kit.place({ left: 100, top: 200, bottom: 230 }, { width: 240, height: 100 }, view), { x: 100, y: 236 });
 	check("kept off the right edge", kit.place({ left: 900, top: 200, bottom: 230 }, { width: 240, height: 100 }, view), { x: 752, y: 236 });
 	check("flipped above near the bottom", kit.place({ left: 100, top: 560, bottom: 590 }, { width: 240, height: 100 }, view), { x: 100, y: 454 });
-	check("no room either way: stays below", kit.place({ left: 100, top: 60, bottom: 590 }, { width: 240, height: 100 }, view), { x: 100, y: 596 });
+	check("no room either way: as high as it must be, never above the top", kit.place({ left: 100, top: 60, bottom: 590 }, { width: 240, height: 100 }, view), { x: 100, y: 492 });
+	check("a card taller than the window starts at the top", kit.place({ left: 100, top: 60, bottom: 90 }, { width: 240, height: 900 }, view), { x: 100, y: 8 });
 });
 
 function hoverEnv() {
@@ -628,6 +643,24 @@ test("popover.attach: shows after the delay for a mouse, holds the title aside, 
 	fire_timers();
 	root.fire("pointerdown", { target: inner });
 	check("a press closes it (a drag or a menu is starting)", pop.current(), null);
+	root.fire("pointerover", { target: inner, pointerType: "mouse" });
+	fire_timers();
+	check("and no card comes back for that chip while the mouse is still on it", [timers.length, pop.current()], [0, null]);
+	root.fire("pointerout", { target: inner, relatedTarget: root });
+	root.fire("pointerover", { target: inner, pointerType: "mouse" });
+	fire_timers();
+	check("once the mouse has left and come back, it does", pop.current() !== null, true);
+	// The board is redrawn: the chip leaves the document and its card must not stay.
+	chip.isConnected = false;
+	root.fire("pointerover", { target: root, pointerType: "mouse" });
+	check("the next move over anything takes a card whose chip is gone", pop.current(), null);
+	chip.isConnected = true;
+	root.fire("pointerover", { target: inner, pointerType: "mouse" });
+	chip.isConnected = false;
+	fire_timers();
+	check("a timer that fires after the redraw draws nothing for a detached chip", pop.current(), null);
+	chip.isConnected = true;
+	root.fire("pointerout", { target: inner, relatedTarget: root });
 	root.fire("pointerover", { target: inner, pointerType: "mouse" });
 	fire_timers();
 	routes.forEach((fn) => fn());
@@ -730,7 +763,7 @@ test("Project Planner: the card for a task chip says its days, time, hours, crew
 
 test("Project Planner: the card for another planner's booking, on the Calendar and on the Crew board", () => {
 	const { pp } = planner();
-	pp.data.foreign = [{ kind: "visit", key: "visit|SMR-1|RES-1|2026-11-03", ref: "SMR-1", label: "Plaza fountain", date: "2026-11-03", resource: "RES-1", hours: 3, tentative: true }];
+	pp.data.foreign = [{ kind: "visit", key: "visit|SMR-1|RES-1|2026-11-03", ref: "SMR-1", label: "Plaza fountain", date: "2026-11-03", resource: "RES-1", hours: 3, tentative: true, project: "PRJ-1", slot: ["8:00", "11:00"] }];
 	pp.data.days = { "RES-2": { "2026-11-04": { bookings: [{ kind: "travel", ref: "TRIP-1", label: "Denver trip", hours: 8, estimated: true, project: "PRJ-7" }] } } };
 	const root = new Node(".pp-wrap");
 	const cal = new Node(".pp-fcard", { "data-fkey": "visit|SMR-1|RES-1|2026-11-03" }, root);
@@ -741,13 +774,15 @@ test("Project Planner: the card for another planner's booking, on the Calendar a
 		["Pencil (tentative)"],
 		[
 			["When", "Tue, Nov 3"],
-			["Time", ""],
+			["Time", "8:00–11:00"],
 			["Hours", "3h"],
 			["Who", "Kyle Jones"],
-			["Project", ""],
+			["Project", "Riverwalk"],
 		],
 		["Read-only here: another planner's booking."],
 	]);
+	const chip_html = pp.foreign_html(pp.data.foreign[0]);
+	check("the Calendar chip says the project and the time slot too", chip_html.includes("Maintenance · Riverwalk · Kyle Jones · 8:00–11:00 · Pencil"), true);
 	const cell = new Node(".pp-cell", { "data-date": "2026-11-04", "data-resource": "RES-2" }, root);
 	const crew = new Node(".pp-fcard", { "data-ref": "TRIP-1", "data-kind": "travel", "data-date": "2026-11-04" }, cell);
 	const trip = pp.pph_describe(crew);

@@ -2361,7 +2361,10 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   are on screen, the full name on hover; the year said only when the window holds two), sticky at the top
   with the headings sticking just under it, as the Gantt's timeline reads. A week start keeps its left
   rule; the first of a month gets a firmer one (`ppl-month-start`). `PPL_PURE.month_bands`,
-  `ppl_monthband_html`; the phone's list by day has no band.
+  `ppl_monthband_html`; the phone's list by day has no band. The band and the headings are one sticky
+  block (`.ppl-sticky`), so no offset is hard-coded between them (a tablet's rows are 40px), and the
+  month's name is sticky inside its cell (`overflow: clip`, not `hidden`, so the cell is no scroll
+  container), so it stays in view as the board scrolls sideways.
 - The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
 - **Drop targets.** Every row's days take a drop, a project's and a phase's too, so a project with no
   dated work yet still has days to drop its Not scheduled chips on.

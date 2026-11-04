@@ -70,6 +70,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   4h pencil"), on the Maintenance Planner's cells, which said the pencil only in their tooltip until now,
   and in the kit's quick looks (`day_state`). `pp_hours_text`, the Maintenance Planner's `hours_text`.
 
+### Fixed (review round 1 of #1419)
+- **The month band and the day headings stick as one block** (`.ppl-sticky`), so no offset between
+  them is hard-coded: on a tablet the coarse-pointer rule makes every row 40px and the headings sat over
+  the band. The band keeps its own 22px (`.ppl-row.ppl-months` outranks the row rule).
+- **The month name stays in view while the board scrolls sideways**: the cell clips with
+  `overflow: clip` (which makes no scroll container, unlike `hidden`) and its name is `position: sticky`
+  past the label column, so a month that began off-screen still says its name over its days.
+- **The hover card goes with the chip a redraw replaces.** Both pages close it when they render; the
+  kit closes it when a MutationObserver sees the chip detached, on the next mouse move over anything
+  while its chip is gone, and never draws one for a detached chip. After a press on a chip (a drag, a
+  menu, a tap) no card comes back for that chip until the mouse has left it. A card that fits neither
+  below nor above is clamped to the window rather than clipped.
+- **One project name for every sort and the card** (`project_name`): the title, else the title the
+  planner's own project list knows for the ID (a trip's or a visit's booking carries the ID only), else
+  the ID, so a person's day no longer interleaves "Riverwalk" with "PRO-0007". `compare`,
+  `booking_order`, the Crew chip's card and the Calendar chip all read it.
+- **The Calendar's foreign items say their project and time slot**: `get_planner`'s `foreign` carries
+  `project` and `slot` now, the chip's second line says both, the hover card's Time and Project rows
+  fill in, and the order by project applies to them. On the Calendar tab they are still drawn after that
+  day's cards (a card is the drop target), ordered by project and label among themselves.
+- **Ctrl+Enter on a focused phase name opens the phase's Task** (a group Task off the board, opened by
+  name as *Open task* does), and a held key opens one tab, not one a repeat (`e.repeat`), on both pages.
+
 ### Tests
 - `scripts/test_planner_six_picks.js` under node against the real kit and both real page scripts, and
   `tests/test_planner_six_picks.py` for the wiring, each with its own CI step: the month band, the Desk

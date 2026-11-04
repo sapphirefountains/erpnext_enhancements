@@ -18,6 +18,12 @@
  *   });
  *   hover.close();  hover.destroy();
  *
+ * A chip that leaves the document (the board is redrawn by innerHTML after a load, a drop, an undo)
+ * takes its card with it: the pages close the card when they render, the kit closes it when a
+ * MutationObserver sees the chip detached, the next mouse move over anything closes a card whose chip
+ * is gone, and a card is never drawn for a detached chip. After a press on a chip (a drag, a menu, a
+ * tap) no card is drawn for that chip until the mouse has left it.
+ *
  * Mouse and pen only: on a touch screen the planners' hold-to-open quick look stays as it is. While the
  * card is up the chip's `title` is held aside (so the browser's tooltip does not show under the card)
  * and the chip says `aria-describedby` to the card; on close the title comes back, so the chip's
@@ -70,6 +76,9 @@ export function place(rect, box, view) {
 	let y = rect.bottom + gap;
 	x = Math.max(8, Math.min(x, view.w - width - 8));
 	if (y + height > view.h - 8 && rect.top - height - gap >= 8) y = rect.top - height - gap;
+	// Room neither below nor above (a tall card on a short window): as high as it must be, and never
+	// above the top edge.
+	if (y + height > view.h - 8) y = Math.max(8, view.h - height - 8);
 	return { x: Math.round(x), y: Math.round(y) };
 }
 
@@ -102,7 +111,7 @@ export function create_popover(env) {
 
 	function show(el, desc) {
 		close();
-		if (!desc || dragging()) return;
+		if (!desc || dragging() || el.isConnected === false) return;
 		const card = doc.createElement("div");
 		card.className = "pk-pop";
 		card.id = ID;
@@ -128,10 +137,13 @@ export function create_popover(env) {
 		const chip_of = (node) => (node && typeof node.closest === "function" ? node.closest(selector) : null);
 		const mouse = (e) => !e.pointerType || e.pointerType === "mouse" || e.pointerType === "pen";
 
+		let suppressed = null; // a chip pressed on: no card until the mouse has left it
 		const over = (e) => {
 			if (!mouse(e)) return;
+			// A card whose chip the last redraw took away goes on the next move over anything.
+			if (current && current.el.isConnected === false) close();
 			const el = chip_of(e.target);
-			if (!el) return;
+			if (!el || el === suppressed) return;
 			if (current && current.el === el) return;
 			cancel();
 			timer = env.set_timeout(() => {
@@ -151,9 +163,13 @@ export function create_popover(env) {
 			// Moving between a chip's own parts is not leaving it.
 			if (e.relatedTarget && typeof el.contains === "function" && el.contains(e.relatedTarget)) return;
 			cancel();
+			if (el === suppressed) suppressed = null;
 			if (current && current.el === el) close();
 		};
-		const down = () => close();
+		const down = (e) => {
+			suppressed = chip_of(e.target);
+			close();
+		};
 		const key = (e) => {
 			if (e.key === "Escape" && current) close();
 		};
@@ -164,10 +180,19 @@ export function create_popover(env) {
 		doc.addEventListener("keydown", key, true);
 		doc.addEventListener("scroll", scroll, true);
 		if (typeof env.on_route_change === "function") env.on_route_change(close);
+		// The chip under the card leaving the document (a redraw) takes the card with it.
+		let observer = null;
+		if (typeof win.MutationObserver === "function" && typeof root.contains === "function") {
+			observer = new win.MutationObserver(() => {
+				if (current && current.el.isConnected === false) close();
+			});
+			observer.observe(root, { childList: true, subtree: true });
+		}
 		return {
 			close,
 			destroy() {
 				close();
+				if (observer) observer.disconnect();
 				root.removeEventListener("pointerover", over);
 				root.removeEventListener("pointerout", out);
 				root.removeEventListener("pointerdown", down, true);

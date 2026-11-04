@@ -76,9 +76,7 @@ class TestTheTabs(unittest.TestCase):
 		# The tablist is still wired on the element, wherever it sits.
 		self.assertIn("kit.toolbar.tabs(this.$seg[0]", _code(PP_JS))
 		# No CSS order moves them: the phone's compact row relies on the DOM order too.
-		self.assertNotRegex(
-			_code(PP_CSS) if False else PP_CSS.read_text(encoding="utf-8"), r"\.pp-seg\s*\{[^}]*\border:"
-		)
+		self.assertNotRegex(PP_CSS.read_text(encoding="utf-8"), r"\.pp-seg\s*\{[^}]*\border:")
 
 	def test_the_maintenance_planner_does_the_same_with_my_day_beside_them(self):
 		shell = _method(_code(MP_JS), "\tbuild_shell() {")
@@ -140,16 +138,34 @@ class TestTheMonthBand(unittest.TestCase):
 		)
 		self.assertEqual(_code(PP_JS).count("ppl_monthband_html(days)"), 2)
 
-	def test_the_css_stacks_the_band_over_the_headings(self):
+	def test_the_band_and_the_headings_stick_as_one_block(self):
+		# Review of #1419: a hard-coded offset for the headings broke on a tablet, where the coarse-pointer
+		# rule makes every row 40px. One sticky block holds both rows, so no offset is needed.
 		css = PP_CSS.read_text(encoding="utf-8")
-		band = re.search(r"\.ppl-months \{(.*?)\n\}", css, flags=re.S).group(1)
+		block = re.search(r"\.ppl-sticky \{(.*?)\n\}", css, flags=re.S).group(1)
+		self.assertIn("position: sticky;", block)
+		self.assertIn("top: 0;", block)
 		heads = re.search(r"\.ppl-heads \{(.*?)\n\}", css, flags=re.S).group(1)
-		self.assertIn("position: sticky;", band)
-		self.assertIn("top: 0;", band)
-		self.assertIn("grid-auto-rows: 20px;", band)
-		self.assertIn("top: 20px;", heads)
+		self.assertNotIn("sticky", heads)
+		self.assertNotIn("top:", heads)
+		# The band keeps its own height on a tablet: its rule outranks the coarse-pointer row rule.
+		band = re.search(r"\.ppl-row\.ppl-months \{(.*?)\n\}", css, flags=re.S).group(1)
+		self.assertIn("grid-auto-rows: 22px;", band)
+		self.assertNotIn("sticky", band)
+		# The month name stays in view while the board scrolls sideways: sticky inside a cell that clips
+		# without scrolling (overflow: clip makes no scroll container; hidden would).
+		cell = re.search(r"\.ppl-month \{(.*?)\n\}", css, flags=re.S).group(1)
+		self.assertIn("overflow: clip;", cell)
+		self.assertNotIn("overflow: hidden", cell)
+		name = re.search(r"\.ppl-month > span \{(.*?)\n\}", css, flags=re.S).group(1)
+		self.assertIn("position: sticky;", name)
+		self.assertIn("left: 266px;", name)
 		self.assertIn(".ppl-month-start {", css)
 		self.assertIn(".ppl-month-first {", css)
+		grid = _obj_method(_code(PP_JS), "\tppl_grid_html(projects, days) {")
+		self.assertIn(
+			'<div class="ppl-sticky">${this.ppl_monthband_html(days)}<div class="ppl-row ppl-heads"', grid
+		)
 
 
 class TestTheNewTab(unittest.TestCase):
@@ -180,6 +196,14 @@ class TestTheNewTab(unittest.TestCase):
 		drag = _method(pp, "\tbind_drag() {")
 		self.assertIn('if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {', drag)
 		self.assertIn("this.ppr_new_tab_for(e.target)", drag)
+		# A held key is one tab (review of #1419), on both pages.
+		self.assertIn("if (e.repeat) return;", drag)
+		self.assertIn("if (e.repeat) return;", _method(_code(MP_JS), "\tbind_drag() {"))
+		# A phase name is a group Task off the board: opened by name, as ppr_open_task does.
+		self.assertIn(
+			'this.ppr_open_new_tab("task", this.by_task[name] || { name })',
+			_obj_method(pp, "\tppr_new_tab_for(el) {"),
+		)
 		self.assertIn(
 			"if (!(e.shiftKey || e.ctrlKey || e.metaKey) || e.button > 0",
 			_obj_method(pp, "\tp6b_modifier_click(e) {"),
@@ -222,6 +246,15 @@ class TestTheHoverCard(unittest.TestCase):
 			'tabindex="0" title="${mp_esc(tip)}"', _method(_code(MP_JS), "\tcard_row_html(card, row_user) {")
 		)
 
+	def test_the_card_goes_with_the_chip_a_redraw_replaces(self):
+		# Review of #1419: a chip detached by innerHTML never fires pointerout, so the card stayed.
+		pop = _code(KIT / "popover.js")
+		self.assertIn("if (current && current.el.isConnected === false) close();", pop)
+		self.assertIn("el.isConnected === false) return;", _method(pop, "\tfunction show(el, desc) {"))
+		self.assertIn("new win.MutationObserver(", pop)
+		self.assertIn("if (this.pph) this.pph.close();", _method(_code(PP_JS), "\trender() {"))
+		self.assertIn("if (this.mph) this.mph.close();", _method(_code(MP_JS), "\trender() {"))
+
 	def test_the_card_is_mouse_only_and_escapes(self):
 		pop = _code(KIT / "popover.js")
 		self.assertIn('e.pointerType === "mouse" || e.pointerType === "pen"', pop)
@@ -242,6 +275,15 @@ class TestTheHoverCard(unittest.TestCase):
 		pp = _code(PP_JS)
 		self.assertIn(".sort((a, b) => this.booking_order(a, b))", _method(pp, "\trender_crew() {"))
 		self.assertIn(".sort((a, b) => this.booking_order(a, b))", _method(pp, "\trender_calendar() {"))
+		# One name for a project everywhere a sort or the hover card reads one (review of #1419).
+		for method in ("\tcompare(a, b) {", "\tbooking_order(a, b) {", "\tforeign_html(item) {"):
+			with self.subTest(method=method.strip()):
+				self.assertIn("this.project_name(", _method(pp, method))
+		self.assertIn("this.project_name(item)", _obj_method(pp, "\tpph_foreign(el) {"))
+		# get_planner's foreign items carry what the Calendar's order and the card need.
+		api = (APP / "api" / "project_planner.py").read_text(encoding="utf-8")
+		self.assertIn('"project": booking.get("project"),', api)
+		self.assertIn('"slot": booking.get("slot"),', api)
 
 
 class TestThePencilRule(unittest.TestCase):

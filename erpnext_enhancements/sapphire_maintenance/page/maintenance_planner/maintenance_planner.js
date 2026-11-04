@@ -872,6 +872,7 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.mph) this.mph.close(); // the hover card belongs to cards a redraw replaces (v1.784.0)
 		if (!this.data) return;
 		this.by_key = {};
 		this.day_cards = {};
@@ -1416,6 +1417,7 @@ class MaintenancePlanner {
 			const card = this.by_key[card_el.getAttribute("data-key")];
 			// Ctrl+Enter (⌘Enter): the card's record in a new tab (v1.784.0).
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (e.repeat) return;
 				if (card && this.mpr_open_new_tab(card)) {
 					e.preventDefault();
 					e.stopPropagation();

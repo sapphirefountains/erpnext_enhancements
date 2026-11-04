@@ -3535,29 +3535,46 @@ body.p6b-resizing * {
 	overflow: hidden;
 }
 
-/* The month band (v1.784.0): one cell a month across its days, sticky at the top; the day headings
- * stick just under it. Its row is 20px, which is the headings' offset. */
-.ppl-months {
+/* The month band and the day headings (v1.784.0) stick to the top as ONE block, so neither needs the
+ * other's height as an offset: on a tablet the coarse-pointer rule below makes every row 40px, and a
+ * hard-coded offset put the headings over the band (review of #1419). */
+.ppl-sticky {
 	position: sticky;
 	top: 0;
 	z-index: 4;
-	grid-auto-rows: 20px;
-	border-top: 0;
 	background: var(--sf-surface);
 }
 
+/* The band: one cell a month across its days. Its own height, whatever the rows' is. */
+.ppl-row.ppl-months {
+	grid-auto-rows: 22px;
+	border-top: 0;
+}
+
+/* A month cell clips (never scrolls: `clip` makes no scroll container, so the name inside can stick
+ * to the board's left edge while the board is scrolled sideways). */
 .ppl-month {
 	grid-row: 1;
+	display: flex;
+	align-items: center;
 	min-width: 0;
 	padding: 0 6px;
 	font-size: 11px;
 	font-weight: 600;
-	line-height: 20px;
+	line-height: 22px;
 	color: var(--sf-text-strong);
 	white-space: nowrap;
+	overflow: clip;
+	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
+}
+
+/* The name stays in view past the sticky label column (260px and its edge) as the board scrolls. */
+.ppl-month > span {
+	position: sticky;
+	left: 266px;
+	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
 }
 
 .ppl-month-first {
@@ -3565,8 +3582,7 @@ body.p6b-resizing * {
 }
 
 .ppl-heads {
-	position: sticky;
-	top: 20px;
+	position: relative;
 	z-index: 4;
 	background: var(--sf-surface);
 }

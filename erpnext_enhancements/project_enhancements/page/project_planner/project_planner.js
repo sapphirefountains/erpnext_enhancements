@@ -973,6 +973,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.pph) this.pph.close(); // the hover card belongs to chips a redraw replaces (v1.784.0)
 		if (this.view === PPG.view) return this.ppg_render(); // P6: the chart
 		if (this.view === PPO.view) return this.ppo_render(); // P9: the Overview
 		if (this.view === PP.capacity_view) {
@@ -1580,9 +1581,19 @@ class ProjectPlanner {
 			</div>`;
 	}
 
+	// A project's name for sorting and the hover card: its title, else the title the planner's own
+	// project list knows for that ID, else the ID (review of #1419: a trip's booking carries the ID only,
+	// and a day must not interleave "Riverwalk" with "PRO-0007").
+	project_name(item) {
+		const id = (item && item.project) || "";
+		if (item && item.project_title) return item.project_title;
+		const known = id && this.by_project ? this.by_project[id] : null;
+		return (known && known.title) || id;
+	}
+
 	compare(a, b) {
 		return (
-			String(a.project_title || a.project || "").localeCompare(String(b.project_title || b.project || "")) ||
+			String(this.project_name(a)).localeCompare(String(this.project_name(b))) ||
 			String(a.subject || "").localeCompare(String(b.subject || ""))
 		);
 	}
@@ -1596,9 +1607,7 @@ class ProjectPlanner {
 		const rank = (booking) => (booking.kind === "drive" ? 0 : booking.kind === "block" ? 1 : 2);
 		const names = (booking) => {
 			const card = booking.ref && this.by_task[booking.ref];
-			return card
-				? [card.project_title || card.project || "", card.subject || card.name || ""]
-				: [booking.project_title || booking.project || "", booking.label || booking.ref || ""];
+			return card ? [this.project_name(card), card.subject || card.name || ""] : [this.project_name(booking), booking.label || booking.ref || ""];
 		};
 		if (rank(a) !== rank(b)) return rank(a) - rank(b);
 		const [pa, ta] = names(a);
@@ -1776,10 +1785,12 @@ class ProjectPlanner {
 		const kinds = { visit: __("Maintenance"), rental: __("Rental"), travel: __("Travel") };
 		const who = item.resource ? this.resource_label(item.resource) : "";
 		// v1.601.0: a pencilled maintenance visit is hatched and says so, like a pencil task.
+		// v1.784.0: the project and the time slot (get_planner's `foreign` carries them since the review of #1419).
 		const sub = [
 			kinds[item.kind] || item.kind,
+			this.project_name(item),
 			who,
-			item.hours ? `${pp_hours(item.hours)}h` : "",
+			item.slot && item.slot.length === 2 ? item.slot.join("–") : item.hours ? `${pp_hours(item.hours)}h` : "",
 			item.tentative ? __("Pencil") : "",
 		]
 			.filter(Boolean)
@@ -1847,6 +1858,7 @@ class ProjectPlanner {
 			// Ctrl+Enter (⌘Enter) on a focused card or project name: its record in a new tab (v1.784.0). A
 			// Ctrl-click stays the multi-select (p6b_modifier_click).
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (e.repeat) return; // a held key is one tab, not one a repeat
 				if (this.ppr_new_tab_for(e.target)) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -12750,10 +12762,9 @@ const PPL_METHODS = {
 			  )}</div>`;
 		return `<div class="ppl-scroll pp-scroll">
 			<div class="ppl-grid" role="grid" aria-label="${pp_esc(__("Lookahead"))}" style="--ppl-days: ${days.length}">
-				${this.ppl_monthband_html(days)}
-				<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
-					__("Project · phase · task")
-				)}</div>${this.ppl_dayheads_html(days)}</div>
+				<div class="ppl-sticky">${this.ppl_monthband_html(days)}<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
+		__("Project · phase · task")
+	)}</div>${this.ppl_dayheads_html(days)}</div></div>
 				${rows.join("")}
 				<svg class="ppl-links" aria-hidden="true"></svg>
 			</div>
@@ -15539,8 +15550,9 @@ const PPR_METHODS = {
 	ppr_new_tab_for(el) {
 		const card_el = el.closest(".pp-card[data-task], [data-ppr-task]");
 		if (card_el) {
-			const card = this.by_task[card_el.getAttribute("data-task") || card_el.getAttribute("data-ppr-task")];
-			return !!card && this.ppr_open_new_tab("task", card);
+			const name = card_el.getAttribute("data-task") || card_el.getAttribute("data-ppr-task");
+			// A phase's name is a group Task off the board (ppr_open_task opens it by name the same way).
+			return this.ppr_open_new_tab("task", this.by_task[name] || { name });
 		}
 		const project_el = el.closest("[data-pk-project]");
 		if (project_el) return this.ppr_open_new_tab("project", { project: decodeURIComponent(project_el.getAttribute("data-pk-project")) });
@@ -15752,7 +15764,7 @@ const PPH_METHODS = {
 				[__("Time"), time],
 				[__("Hours"), Number(item.hours) > 0 ? __("{0}h", [pp_hours(item.hours)]) : ""],
 				[__("Who"), item.resource ? this.resource_label(item.resource) : ""],
-				[__("Project"), item.project_title || item.project || ""],
+				[__("Project"), this.project_name(item)],
 			],
 			notes: [__("Read-only here: another planner's booking.")],
 		};
