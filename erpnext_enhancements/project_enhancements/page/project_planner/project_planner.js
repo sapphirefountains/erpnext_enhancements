@@ -1003,6 +1003,7 @@ class ProjectPlanner {
 				.text(__("No work for {0} in this range.", [(named && named.title) || this.project]))
 				.prependTo(this.$grid_wrap);
 		}
+		this.ppdw_note(); // v1.795.0: Show done work drew only the first of them
 		this.$hint.text(
 			lookahead
 				? __(
@@ -13933,6 +13934,11 @@ const PPG_METHODS = {
 			frappe.show_alert({ message: __("A task that is still a draft cannot be linked yet. Publish the schedule first."), indicator: "orange" }, 7);
 			return Promise.resolve(null);
 		}
+		// v1.795.0 (review of #1427): a done bar moves for a manager by its dates only; a link is a schedule gesture.
+		if (card.finished || pred.finished) {
+			frappe.show_alert({ message: __("A finished task cannot be linked."), indicator: "orange" }, 7);
+			return Promise.resolve(null);
+		}
 		if ((card.depends_on || []).includes(pred.name)) return Promise.resolve(null);
 		if (this.ppg_held()) return Promise.resolve(null);
 		const subject = card.subject || card.name;
@@ -15868,6 +15874,14 @@ const PPDW_METHODS = {
 		};
 	},
 
+	// Past planner_history.DONE_LIMIT the server draws only the first done tasks (`done_truncated`): say so.
+	ppdw_note() {
+		if (!this.show_done || !this.data || !this.data.done_truncated) return;
+		$('<div class="pp-section pp-empty-note" role="status"></div>')
+			.text(__("This range has more done tasks than the planner draws at once, so some are not shown. Pick a project or a shorter range to see them all."))
+			.prependTo(this.$grid_wrap);
+	},
+
 	// Display ▸ Show done work: remembered in this browser; the server reads the done tasks, so it loads again.
 	set_show_done(on) {
 		this.show_done = !!on;
@@ -15965,6 +15979,9 @@ const PPDW_METHODS = {
 		card.saving = true;
 		this.render();
 		const subject = card.subject || card.name;
+		// Held changes or a Draft schedule hold back schedule edits; this is history, so it saves now and
+		// says so, as the Maintenance Planner does (review of #1427).
+		if (this.draft_args(card.project).draft) message += ` (${__("saved now: done work is never drafted")})`;
 		return Promise.resolve(
 			frappe.call({
 				method: `${PPDW.api}.move_done_task`,
@@ -15975,7 +15992,7 @@ const PPDW_METHODS = {
 				const result = (r && r.message) || null;
 				if (!result || result.unchanged) return result;
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
-				const toasted = this.push_undo({ ppdw: true, task: card.name, subject, before: result.before || {} }, message);
+				const toasted = this.push_undo({ ppdw: true, task: card.name, subject }, message);
 				if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) => frappe.show_alert({ message: warning, indicator: "orange" }, 10));
 				return result;
@@ -15987,7 +16004,8 @@ const PPDW_METHODS = {
 			});
 	},
 
-	// Undo of a move of done work: exactly the dates it had, blanks included. True when the snapshot was one.
+	// Undo of a move of done work: exactly the dates it had, blanks included, which the server kept when it
+	// moved (it takes none from here). True when the snapshot was one.
 	ppdw_undo(snap) {
 		if (!snap || !snap.ppdw) return false;
 		const card = this.by_task[snap.task];
@@ -15998,11 +16016,7 @@ const PPDW_METHODS = {
 		Promise.resolve(
 			frappe.call({
 				method: `${PPDW.api}.restore_done_task`,
-				args: {
-					task: snap.task,
-					modified: this.modified[snap.task] || (card && card.modified) || "",
-					before: JSON.stringify(snap.before || {}),
-				},
+				args: { task: snap.task, modified: this.modified[snap.task] || (card && card.modified) || "" },
 			})
 		)
 			.then((r) => {

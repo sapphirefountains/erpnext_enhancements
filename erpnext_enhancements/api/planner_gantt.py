@@ -229,12 +229,19 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 	labels = {p.get("name"): p.get("resource_name") or p.get("name") for p in resources}
 	stored = [name for name in work if not pp.is_draft_ref(name)]
 	crew_rows, todo_users = engine.read_crews(stored)
-	# v1.795.0: ERPNext closes a task's assignments when it is completed, so a done task's crew is who
-	# it was assigned to, closed or open (planner_history._done_assignees): who did it.
-	done_users = planner_history._done_assignees(
-		[name for name in stored if planner_history.is_done_task(work[name])]
-	)
-	todo_users = dict(todo_users, **done_users)
+	# v1.795.0: a finished job's chart is its history, so every task of it shows (the D6 rule is for
+	# live schedules: the 565 finished jobs predate the phase templates, and it would hide nearly all).
+	whole_job = frappe.db.get_value("Project", project, "status") == COMPLETED_PROJECT
+	backdate = planner_history.can_backdate()
+	# ERPNext closes a task's assignments when it is completed, so a done task's crew is who it was
+	# assigned to, closed or open (planner_history._done_assignees): who did it. Only where done work is
+	# what the chart is for (a finished job, or a manager who may move it): elsewhere a closed assignee
+	# would change what the D6 rule shows everyone else (review of #1427).
+	if whole_job or backdate:
+		done_users = planner_history._done_assignees(
+			[name for name in stored if planner_history.is_done_task(work[name])]
+		)
+		todo_users = dict(todo_users, **done_users)
 
 	def crew_of(name):
 		crew = (
@@ -245,10 +252,6 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		return [dict(m, label=m.get("label") or labels.get(m.get("resource")) or m.get("resource")) for m in crew]
 
 	crews = {name: crew_of(name) for name in work}
-	# v1.795.0: a finished job's chart is its history, so every task of it shows (the D6 rule is for
-	# live schedules: the 565 finished jobs predate the phase templates, and it would hide nearly all).
-	whole_job = frappe.db.get_value("Project", project, "status") == COMPLETED_PROJECT
-	backdate = planner_history.can_backdate()
 	if all_tasks or whole_job:
 		hidden = set()
 	else:

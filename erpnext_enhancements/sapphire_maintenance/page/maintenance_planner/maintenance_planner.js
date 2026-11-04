@@ -8599,7 +8599,7 @@ const MPDW_METHODS = {
 				const result = (r && r.message) || null;
 				if (!result || result.unchanged) return result;
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
-				const toasted = this.push_undo({ kind: "mpdw", site, record: card.name, before: result.before || {} }, message);
+				const toasted = this.push_undo({ kind: "mpdw", site, record: card.name }, message);
 				if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) => frappe.show_alert({ message: warning, indicator: "orange" }, 10));
 				return result;
@@ -8611,7 +8611,8 @@ const MPDW_METHODS = {
 			});
 	},
 
-	// Undo of a move onto a past day: exactly the dates the visit had, blanks included.
+	// Undo of a move onto a past day: exactly the dates the visit had, blanks included, which the server
+	// kept when it moved (it takes none from here).
 	mpdw_undo(snap) {
 		if (!snap || snap.kind !== "mpdw") return false;
 		const card = this.by_key[snap.record];
@@ -8622,11 +8623,7 @@ const MPDW_METHODS = {
 		Promise.resolve(
 			frappe.call({
 				method: MP.methods.restore_done_visit,
-				args: {
-					record: snap.record,
-					modified: this.modified[snap.record] || (card && card.modified) || "",
-					before: JSON.stringify(snap.before || {}),
-				},
+				args: { record: snap.record, modified: this.modified[snap.record] || (card && card.modified) || "" },
 			})
 		)
 			.then((r) => {

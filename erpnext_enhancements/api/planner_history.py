@@ -35,9 +35,11 @@ planners' schedule rules do not apply to a record of what already happened:
   ``Task.reschedule_dependent_tasks``, which ``flags.ignore_reschedule`` turns off for the save;
 * done work stays in the past: the new last day is today or earlier (:data:`PAST_ONLY`).
 
-Undo puts back exactly what was there (``restore_done_task`` / ``restore_done_visit``), from the
-``before`` every answer carries; it is how a done task taken out of the Gantt's Not scheduled list goes
-back to having no dates, which ``save_task`` cannot do (it reads a blank date as "unchanged").
+Undo puts back exactly what was there (``restore_done_task`` / ``restore_done_visit``); it is how a done
+task taken out of the Gantt's Not scheduled list goes back to having no dates, which ``save_task`` cannot
+do (it reads a blank date as "unchanged"). The dates it puts back are the server's own record of the
+move, kept in the cache by the record and the ``modified`` the move left (:data:`UNDO_KEY`), never dates
+the browser sends (review of #1427): a record changed since, or a cache flushed by a deploy, has no Undo.
 
 A submitted visit (and one waiting in review) is written with ``frappe.db.set_value`` after the checks
 here, not saved: its date fields are not ``allow_on_submit``, making them so would let anyone with
@@ -50,7 +52,6 @@ The pure pieces take plain values, so ``tests/test_planner_history.py`` runs the
 
 import datetime
 import html
-import json
 
 import frappe
 from frappe import _
@@ -72,8 +73,17 @@ TASK_FIELDS = (
 #: A visit's dates that move, in the order the note lists them.
 VISIT_FIELDS = ("visit_date", "scheduled_visit_date", "clock_in_time", "clock_out_time")
 VISIT = "Sapphire Maintenance Record"
-#: The most done tasks one range draws (a month of finished jobs is a few hundred).
+#: The most done tasks one range draws (a month of finished jobs is a few hundred); past it the answer
+#: says ``done_truncated`` and the page says so.
 DONE_LIMIT = 1000
+#: How long a move can be undone (review of #1427): the dates it replaced are kept on the server, keyed
+#: by the record and the ``modified`` the move left, never taken back from the browser. A deploy
+#: flushes Redis, so an Undo after one is refused with a message, which is the safe direction.
+UNDO_SECONDS = 12 * 60 * 60
+UNDO_KEY = "planner_history:undo:{doctype}:{name}:{modified}"
+#: Mirrors ``sapphire_maintenance_record.TECHNICIAN_SIGNATURE_FROM`` (tests hold them equal): a blank
+#: visit made before this day and dated before it would pass the signature gate (``_signature_exempt``).
+SIGNATURE_FROM = datetime.date(2026, 10, 13)
 
 PROJECT_PLANNER = "Project Planner"
 MAINTENANCE_PLANNER = "Maintenance Planner"
@@ -82,6 +92,14 @@ MANAGERS_ONLY = "Only Projects Managers, Maintenance Supervisors and System Mana
 PAST_ONLY = "Done work goes on today or an earlier day."
 NOT_DONE = "{0} is not done: move it as usual."
 CANCELED_VISIT = "{0} was canceled, so it has no day to move."
+NO_UNDO = (
+	"This move can no longer be undone from the planner: the record changed since, or the planner was "
+	"restarted. Change its dates on the record."
+)
+BLANK_BEFORE_SIGNATURES = (
+	"{0} was never filled in, and a blank visit made before {1} cannot be dated before that day: it would "
+	"skip the technician's signature. Fill it in from the Visit Wizard with its date."
+)
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -142,7 +160,8 @@ def done_task_dates(old_span, new_span, values, today):
 	measured from its own done dates instead (Completed On, else the actual end; the actual start,
 	else that). A done task with no Completed On is given the new last day: it is done, and now it says
 	when. Completed On never goes past ``today``, which ERPNext refuses (``validate_completed_on``),
-	and an actual start never after the actual end (``validate_from_to_dates``).
+	and neither do the actual dates (review of #1427); an actual start never goes after the actual end
+	(``validate_from_to_dates``).
 	"""
 	new_first, new_last = as_date(new_span[0]), as_date(new_span[1])
 	act_start, act_end = as_date(values.get("act_start_date")), as_date(values.get("act_end_date"))
@@ -165,8 +184,10 @@ def done_task_dates(old_span, new_span, values, today):
 	elif not completed:
 		out["completed_on"] = new_last
 	today = as_date(today)
-	if out.get("completed_on") and today and out["completed_on"] > today:
-		out["completed_on"] = today
+	# Nothing done is dated after today: Completed On (which ERPNext refuses), and the actual dates too.
+	for field in ("act_start_date", "act_end_date", "completed_on"):
+		if out.get(field) and today and out[field] > today:
+			out[field] = today
 	first, last = out.get("act_start_date", act_start), out.get("act_end_date", act_end)
 	if first and last and first > last:
 		out["act_start_date"] = last
@@ -194,6 +215,38 @@ def visit_dates(values, target):
 		if values.get(field) and days:
 			out[field] = shift_datetime(values.get(field), days)
 	return {field: value for field, value in out.items() if _text(value) != _text(values.get(field))}
+
+
+def restore_problem(values, today):
+	"""Why dates put back by an Undo cannot be written, or None: nothing done after ``today`` (Completed
+	On, the actual dates, the day of a visit), an actual start never after its end and a clock-in never
+	after its clock-out. The values come from the server's own record of the move (:data:`UNDO_KEY`),
+	so this is defence in depth, not trust in the browser."""
+	today = as_date(today)
+	for field in ("completed_on", "act_start_date", "act_end_date", "visit_date"):
+		day = as_date(values.get(field))
+		if day and today and day > today:
+			return PAST_ONLY
+	first, last = as_date(values.get("act_start_date")), as_date(values.get("act_end_date"))
+	if first and last and first > last:
+		return "The actual start is after the actual end."
+	clock_in, clock_out = as_datetime(values.get("clock_in_time")), as_datetime(values.get("clock_out_time"))
+	if clock_in and clock_out and clock_in > clock_out:
+		return "The clock-in is after the clock-out."
+	return None
+
+
+def blank_visit_refusal(values, created, target, name, gate=SIGNATURE_FROM):
+	"""The refusal for a never-started visit (no day of visit) made before ``gate`` and moved to a day
+	before it, or None (review of #1427). Such a visit would count as done before signatures existed
+	(``SapphireMaintenanceRecord._signature_exempt``: dated **and** made before the gate) and slip past
+	the signature check that refused the bulk Request Review of thirteen blank drafts on 2026-10-13."""
+	if values.get("visit_date"):
+		return None
+	created, target = as_date(created), as_date(target)
+	if created and target and created < gate and target < gate:
+		return BLANK_BEFORE_SIGNATURES.format(name, gate.isoformat())
+	return None
 
 
 def _text(value):
@@ -281,27 +334,6 @@ def done_bookings(days, cards, start, end):
 	return added
 
 
-def parse_values(value, fields):
-	"""``before`` as an Undo sends it back: a JSON object (or a dict) limited to ``fields``, each value
-	a date or time text or blank (None). Anything else is refused."""
-	if isinstance(value, str):
-		value = json.loads(value or "{}")
-	if not isinstance(value, dict):
-		raise ValueError("Expected an object of dates.")
-	out = {}
-	for field in fields:
-		if field not in value:
-			continue
-		raw = value.get(field)
-		if raw in (None, ""):
-			out[field] = None
-			continue
-		text = str(raw).strip()
-		as_datetime(text)  # raises ValueError on anything that is not a date or time
-		out[field] = text
-	return out
-
-
 def serialized(values):
 	"""``values`` with every date and time as ISO text, for the answer's ``before``."""
 	out = {}
@@ -350,6 +382,38 @@ def _labels(doc, fields):
 	return out
 
 
+def _undo_key(doctype, name, modified):
+	return UNDO_KEY.format(doctype=doctype, name=name, modified=modified)
+
+
+def _remember(doc, before):
+	"""Keep the dates a move replaced, for its Undo, keyed by the ``modified`` the move left."""
+	try:
+		frappe.cache.set_value(
+			_undo_key(doc.doctype, doc.name, str(doc.modified)),
+			serialized(before),
+			expires_in_sec=UNDO_SECONDS,
+		)
+	except Exception:
+		frappe.log_error(title="Planner: a move's Undo could not be kept", message=frappe.get_traceback())
+
+
+def _recall(doctype, name, modified):
+	"""The dates the move that left ``modified`` replaced, or None (changed since, expired, flushed)."""
+	try:
+		values = frappe.cache.get_value(_undo_key(doctype, name, modified))
+	except Exception:
+		values = None
+	return values if isinstance(values, dict) else None
+
+
+def _forget(doctype, name, modified):
+	try:
+		frappe.cache.delete_value(_undo_key(doctype, name, modified))
+	except Exception:
+		pass
+
+
 # ---------------------------------------------------------------------- Project Planner
 
 
@@ -363,7 +427,8 @@ def _require_done_task(doc):
 
 
 def _save_task(doc, before, undone=False):
-	"""Save a done task moved on the planner, note it, and answer. Nothing that follows it moves."""
+	"""Save a done task moved on the planner, note it, keep what it replaced for its Undo, and answer.
+	Nothing that follows it moves."""
 	from erpnext_enhancements.api import project_planner as pp
 
 	doc.flags.ignore_reschedule = True  # ERPNext's own push of the tasks that depend on it
@@ -375,13 +440,9 @@ def _save_task(doc, before, undone=False):
 			"Comment",
 			history_note(PROJECT_PLANNER, _who(), changes, _labels(doc, TASK_FIELDS), undone=undone),
 		)
-	return {
-		"name": doc.name,
-		"modified": str(doc.modified),
-		"warnings": warnings,
-		"historical": True,
-		"before": serialized(before),
-	}
+	if not undone:
+		_remember(doc, before)
+	return {"name": doc.name, "modified": str(doc.modified), "warnings": warnings, "historical": True}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -393,8 +454,8 @@ def move_done_task(task, modified, start=None, end=None):
 	with it (:func:`done_task_dates`). Managers only; the new last day is today or earlier; no conflict
 	check, no notice, never drafted, nothing that follows moves; a note goes on its timeline.
 
-	Returns ``{"name", "modified", "warnings", "historical": True, "before"}``; ``before`` is what an
-	Undo sends back to :func:`restore_done_task`. ``unchanged: True`` when the days are the same.
+	Returns ``{"name", "modified", "warnings", "historical": True}``, with ``unchanged: True`` when the
+	days are the same. The dates it replaced stay on the server for :func:`restore_done_task`.
 	"""
 	from erpnext_enhancements.api import project_planner as pp
 	from erpnext_enhancements.project_enhancements import crew_availability as engine
@@ -413,7 +474,6 @@ def move_done_task(task, modified, start=None, end=None):
 			"warnings": [],
 			"historical": True,
 			"unchanged": True,
-			"before": serialized(before),
 		}
 	today = _today()
 	if new[1] > today:
@@ -424,29 +484,34 @@ def move_done_task(task, modified, start=None, end=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def restore_done_task(task, modified, before):
-	"""Undo :func:`move_done_task`: put back exactly the dates ``before`` holds (blank clears one), so a
-	done task that had no dates has none again. The same gates and note as a move."""
+def restore_done_task(task, modified):
+	"""Undo :func:`move_done_task`: put back exactly the dates that move replaced (a blank clears one),
+	so a done task that had no dates has none again. ``modified`` is what the move left: the dates come
+	from the server's record of that move (:data:`UNDO_KEY`), never from the browser, and a task changed
+	since has no Undo here (:data:`NO_UNDO`). The same gates and note as a move."""
 	from erpnext_enhancements.api import project_planner as pp
 
-	try:
-		values = parse_values(before, TASK_FIELDS)
-	except ValueError:
-		frappe.throw(_("The dates to put back could not be read."))
 	_require_backdate()
 	doc = pp._load(task, modified)
 	_require_done_task(doc)
+	values = _recall(doc.doctype, doc.name, str(modified))
+	if values is None:
+		frappe.throw(_(NO_UNDO))
 	refusal = pp._subtask_refusal(doc)
 	if refusal:
 		frappe.throw(refusal)
 	if doc.get("custom_rental_booking"):
 		frappe.throw(_("This task's dates follow Rental Booking {0}.").format(doc.custom_rental_booking))
-	if values.get("completed_on") and as_date(values["completed_on"]) > _today():
-		frappe.throw(_(PAST_ONLY))
+	problem = restore_problem(values, _today())
+	if problem:
+		frappe.throw(_(problem))
 	was = _task_values(doc)
-	for field, value in values.items():
-		doc.set(field, value)
-	return _save_task(doc, was, undone=True)
+	for field in TASK_FIELDS:
+		if field in values:
+			doc.set(field, values[field] or None)
+	answer = _save_task(doc, was, undone=True)
+	_forget(doc.doctype, doc.name, str(modified))
+	return answer
 
 
 def _done_assignees(names):
@@ -472,10 +537,11 @@ def _done_assignees(names):
 
 
 def read_done_tasks(start, end):
-	"""Done leaf Tasks on customer jobs whose planned days overlap ``start``..``end``, finished jobs
-	included (the engine's ``read_tasks`` leaves both out). Rental crew tasks are not here: their days
-	follow the booking. Raw SQL after the planner's role gate, for the COALESCE over nullable dates, as
-	``read_tasks``; re-checked against ``task_span`` and ``is_planner_job``, which are the definitions."""
+	"""``(rows, truncated)``: done leaf Tasks on customer jobs whose planned days overlap
+	``start``..``end``, finished jobs included (the engine's ``read_tasks`` leaves both out), at most
+	:data:`DONE_LIMIT` of them; ``truncated`` says there were more. Rental crew tasks are not here: their
+	days follow the booking. Raw SQL after the planner's role gate, for the COALESCE over nullable dates,
+	as ``read_tasks``; re-checked against ``task_span`` and ``is_planner_job``, which are the definitions."""
 	from erpnext_enhancements.project_enhancements import crew_availability as engine
 
 	cols = engine._task_columns()
@@ -512,21 +578,23 @@ def read_done_tasks(start, end):
 			"start": start,
 			"end": end,
 			"done": DONE_TASK_STATUSES,
-			"limit": DONE_LIMIT,
+			"limit": DONE_LIMIT + 1,  # one more than is drawn, to know whether there were more
 			**engine.PLANNER_SQL_VALUES,
 		},
 		as_dict=True,
 	)
+	truncated = len(rows) > DONE_LIMIT
 	out = []
-	for row in rows:
+	for row in rows[:DONE_LIMIT]:
 		span = engine.task_span(row)
 		if span and engine.is_planner_job(row) and span[0] <= as_date(end) and span[1] >= as_date(start):
 			out.append(row)
-	return out
+	return out, truncated
 
 
 def done_cards(start, end, data, all_tasks=False, may=False):
-	"""The done tasks of ``start``..``end`` as Project Planner cards: ``finished``, never ``movable``,
+	"""``(cards, truncated)``: the done tasks of ``start``..``end`` as Project Planner cards (``truncated``
+	from :func:`read_done_tasks`): ``finished``, never ``movable``,
 	and ``backdate`` (a manager may move them by their dates, here and on the Gantt). The display rule
 	is the schedule's (D6): phase and crew work, unless ``all_tasks``. The crew is the task's crew rows,
 	else who it was assigned to (:func:`_done_assignees`)."""
@@ -534,9 +602,9 @@ def done_cards(start, end, data, all_tasks=False, may=False):
 	from erpnext_enhancements.project_enhancements import crew_availability as engine
 	from erpnext_enhancements.project_enhancements import fountain_move_jobs
 
-	rows = read_done_tasks(start, end)
+	rows, truncated = read_done_tasks(start, end)
 	if not rows:
-		return []
+		return [], truncated
 	names = [row.get("name") for row in rows]
 	crew_rows, _open = engine.read_crews(names)
 	assignees = _done_assignees(names)
@@ -573,20 +641,22 @@ def done_cards(start, end, data, all_tasks=False, may=False):
 	for card in cards:
 		if card.get("fountain_move"):
 			card["backdate"] = False
-	return cards
+	return cards, truncated
 
 
 def add_done_work(result, start, end, data, all_tasks=False):
 	"""``get_planner(done=1)``: the range's done tasks join ``tasks`` (``finished`` cards), sit on their
 	crew's days in the Crew view (:func:`done_bookings`), and their projects join the Project filter.
-	``can_backdate`` says whether this person may move them. Nothing the engine computed changes."""
+	``can_backdate`` says whether this person may move them, and ``done_truncated`` that the range held
+	more than :data:`DONE_LIMIT` (the page says so). Nothing the engine computed changes."""
 	from erpnext_enhancements.api import project_planner as pp
 
 	may = can_backdate()
-	cards = done_cards(start, end, data, all_tasks=all_tasks, may=may)
+	cards, truncated = done_cards(start, end, data, all_tasks=all_tasks, may=may)
 	result["done"] = True
 	result["can_backdate"] = may
 	result["done_tasks"] = len(cards)
+	result["done_truncated"] = bool(truncated)
 	if not cards:
 		return result
 	shown = {card.get("name") for card in result.get("tasks") or []}
@@ -615,21 +685,26 @@ def _visit_values(doc):
 
 
 def _visit_access(doc):
-	"""The caller may read this visit (the planner's roles read every one) and it is not canceled."""
-	doc.check_permission("read")
+	"""The caller may change this visit and it is not canceled.
+
+	``write``, not ``submit`` (review of #1427): frappe 16.53.0's ``has_permission`` applies no docstatus
+	rule, so ``write`` on a submitted visit is the role's write right, which all three managers hold;
+	Maintenance Supervisors hold no ``submit`` on visits, and Nik named them. A submitted or in-review
+	visit is then written straight to its row, past the save's own check (:func:`_write_visit`), so this
+	is that write's permission check."""
+	doc.check_permission("write")
 	if doc.docstatus == 2:
 		frappe.throw(_(CANCELED_VISIT).format(doc.name))
 
 
 def _write_visit(doc, before, changes, undone=False):
-	"""Write a visit's moved dates and note it. An open draft is saved under the caller's permissions,
-	so its hooks run; a visit in review or submitted is written straight to its row (see the module
-	docstring) and its calendar event re-synced."""
+	"""Write a visit's moved dates, note it, keep what it replaced for its Undo, and answer. An open
+	draft is saved under the caller's permissions, so its hooks run; a visit in review or submitted is
+	written straight to its row (see the module docstring) and its calendar event re-synced."""
 	from erpnext_enhancements.api import maintenance_planner as mp
 
 	warnings = []
 	if doc.docstatus == 0 and (doc.get("workflow_state") or "") != mp.PENDING_STATE:
-		doc.check_permission("write")
 		for field, value in changes.items():
 			doc.set(field, value)
 		warnings = mp._save_with_warnings(doc)
@@ -651,13 +726,14 @@ def _write_visit(doc, before, changes, undone=False):
 			"Comment",
 			history_note(MAINTENANCE_PLANNER, _who(), moved, _labels(doc, VISIT_FIELDS), undone=undone),
 		)
+	if not undone:
+		_remember(doc, before)
 	return {
 		"name": doc.name,
 		"modified": str(doc.modified),
 		"date": str(as_date(doc.get("visit_date"))) if doc.get("visit_date") else None,
 		"warnings": warnings,
 		"historical": True,
-		"before": serialized(before),
 	}
 
 
@@ -666,10 +742,11 @@ def move_done_visit(record, modified=None, date=None):
 	"""Move a visit onto a past day, as the Maintenance Planner drags it: a submitted or in-review
 	visit, a started draft, or an unstarted draft (which is then recorded as done that day). Its day of
 	visit, scheduled day and clock times move together (:func:`visit_dates`). Managers only; ``date`` is
-	today or earlier; nothing else about the visit changes; a note goes on its timeline.
+	today or earlier; a blank visit made before signatures is not dated before them
+	(:func:`blank_visit_refusal`); nothing else about the visit changes; a note goes on its timeline.
 
-	Returns ``{"name", "modified", "date", "warnings", "historical": True, "before"}``, with
-	``unchanged: True`` when nothing moved; ``before`` is what :func:`restore_done_visit` takes back.
+	Returns ``{"name", "modified", "date", "warnings", "historical": True}``, with ``unchanged: True``
+	when nothing moved. The dates it replaced stay on the server for :func:`restore_done_visit`.
 	"""
 	from erpnext_enhancements.api import maintenance_planner as mp
 
@@ -684,6 +761,9 @@ def move_done_visit(record, modified=None, date=None):
 	_visit_access(doc)
 	mp._check_fresh(doc, modified)
 	before = _visit_values(doc)
+	refusal = blank_visit_refusal(before, doc.get("creation"), target, doc.name)
+	if refusal:
+		frappe.throw(_(refusal))
 	changes = visit_dates(before, target)
 	if not changes:
 		return {
@@ -693,29 +773,36 @@ def move_done_visit(record, modified=None, date=None):
 			"warnings": [],
 			"historical": True,
 			"unchanged": True,
-			"before": serialized(before),
 		}
 	return _write_visit(doc, before, changes)
 
 
 @frappe.whitelist(methods=["POST"])
-def restore_done_visit(record, modified, before):
-	"""Undo :func:`move_done_visit`: put back exactly the dates ``before`` holds (blank clears one).
-	The same gates and note as a move."""
+def restore_done_visit(record, modified):
+	"""Undo :func:`move_done_visit`: put back exactly the dates that move replaced (a blank clears one).
+	``modified`` is what the move left: the dates come from the server's record of that move
+	(:data:`UNDO_KEY`), never from the browser, and a visit changed since has no Undo here. The same
+	gates and note as a move."""
 	from erpnext_enhancements.api import maintenance_planner as mp
 
-	try:
-		values = parse_values(before, VISIT_FIELDS)
-	except ValueError:
-		frappe.throw(_("The dates to put back could not be read."))
 	mp._require_planner()
 	_require_backdate()
 	doc = frappe.get_doc(VISIT, record)
 	_visit_access(doc)
 	mp._check_fresh(doc, modified)
+	values = _recall(doc.doctype, doc.name, str(modified))
+	if values is None:
+		frappe.throw(_(NO_UNDO))
 	was = _visit_values(doc)
-	changes = {field: value for field, value in values.items() if _text(value) != _text(was.get(field))}
+	restored = {field: values.get(field) for field in VISIT_FIELDS if field in values}
+	problem = restore_problem(restored, _today())
+	if problem:
+		frappe.throw(_(problem))
+	changes = {
+		field: value or None for field, value in restored.items() if _text(value) != _text(was.get(field))
+	}
 	if not changes:
+		_forget(doc.doctype, doc.name, str(modified))
 		return {
 			"name": doc.name,
 			"modified": str(doc.modified),
@@ -723,6 +810,7 @@ def restore_done_visit(record, modified, before):
 			"warnings": [],
 			"historical": True,
 			"unchanged": True,
-			"before": serialized(was),
 		}
-	return _write_visit(doc, was, changes, undone=True)
+	answer = _write_visit(doc, was, changes, undone=True)
+	_forget(doc.doctype, doc.name, str(modified))
+	return answer

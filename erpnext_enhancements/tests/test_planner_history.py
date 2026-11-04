@@ -33,6 +33,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_planner_history
 import ast
 import datetime
 import importlib
+import inspect
 import json
 import re
 import shutil
@@ -94,6 +95,15 @@ def setUpModule():
 	frappe.get_all = lambda *a, **k: []
 	frappe.log_error = lambda *a, **k: frappe.errors.append(k)
 	frappe.get_traceback = lambda: "traceback"
+	# Redis as the module uses it for Undo: set_value / get_value / delete_value (TTL recorded, not kept).
+	frappe.store = {}
+	frappe.cache = types.SimpleNamespace(
+		set_value=lambda key, value, expires_in_sec=None: frappe.store.__setitem__(
+			key, (value, expires_in_sec)
+		),
+		get_value=lambda key: (frappe.store.get(key) or (None, None))[0],
+		delete_value=lambda key: frappe.store.pop(key, None),
+	)
 	sys.modules["frappe"] = frappe
 	history = importlib.import_module("erpnext_enhancements.api.planner_history")
 
@@ -188,6 +198,20 @@ class TestDoneTaskDates(unittest.TestCase):
 			(D(2026, 10, 1), D(2026, 10, 3)), (D(2026, 10, 31), D(2026, 11, 2)), values, TODAY
 		)
 		self.assertEqual(out["completed_on"], TODAY)
+
+	def test_the_actual_dates_are_never_after_today_either(self):
+		"""Review of #1427: the actual dates are capped like Completed On."""
+		values = {
+			"act_start_date": D(2026, 10, 5),
+			"act_end_date": D(2026, 10, 25),
+			"completed_on": D(2026, 10, 25),
+		}
+		out = history.done_task_dates(
+			(D(2026, 10, 1), D(2026, 10, 3)), (D(2026, 10, 30), D(2026, 11, 1)), values, TODAY
+		)
+		self.assertEqual(out["act_end_date"], TODAY)
+		self.assertEqual(out["completed_on"], TODAY)
+		self.assertLessEqual(out["act_start_date"], TODAY)
 
 	def test_the_actual_start_is_never_after_the_actual_end(self):
 		values = {"act_start_date": D(2026, 3, 5), "act_end_date": D(2026, 3, 6)}
@@ -290,22 +314,54 @@ class TestNoteAndValues(unittest.TestCase):
 		self.assertIn("Pat undid a move of this done work on the Maintenance Planner.", undone)
 		self.assertIn("visit_date: none → 2026-10-01", undone)
 
-	def test_before_round_trips_and_junk_is_refused(self):
+	def test_serialized_keeps_dates_and_times_as_text(self):
 		values = {"exp_start_date": DT(2026, 3, 2, 8, 0), "completed_on": D(2026, 3, 4), "act_end_date": None}
-		sent = json.dumps(history.serialized(values))
-		back = history.parse_values(sent, history.TASK_FIELDS)
 		self.assertEqual(
-			back,
+			history.serialized(values),
 			{"exp_start_date": "2026-03-02 08:00:00", "completed_on": "2026-03-04", "act_end_date": None},
 		)
-		# Only the allowed fields come back; anything that is not a date is refused.
-		self.assertEqual(
-			history.parse_values({"status": "Open", "completed_on": ""}, history.TASK_FIELDS),
-			{"completed_on": None},
+
+	def test_what_an_undo_may_put_back(self):
+		"""Defence in depth on the server's own record of a move (review of #1427)."""
+		self.assertIsNone(
+			history.restore_problem({"completed_on": "2026-03-04", "act_start_date": None}, TODAY)
 		)
-		for junk in ('{"completed_on": "soon"}', "[]", '{"completed_on": "2026-13-01"}'):
-			with self.assertRaises(ValueError):
-				history.parse_values(junk, history.TASK_FIELDS)
+		self.assertIsNone(history.restore_problem({"scheduled_visit_date": "2026-11-09"}, TODAY))
+		self.assertEqual(history.restore_problem({"completed_on": "2026-11-05"}, TODAY), history.PAST_ONLY)
+		self.assertEqual(history.restore_problem({"visit_date": "2026-12-01"}, TODAY), history.PAST_ONLY)
+		self.assertEqual(history.restore_problem({"act_end_date": "2026-11-05"}, TODAY), history.PAST_ONLY)
+		self.assertIn(
+			"actual start",
+			history.restore_problem({"act_start_date": "2026-03-05", "act_end_date": "2026-03-04"}, TODAY),
+		)
+		self.assertIn(
+			"clock-in",
+			history.restore_problem(
+				{"clock_in_time": "2026-10-27 10:00:00", "clock_out_time": "2026-10-27 09:00:00"}, TODAY
+			),
+		)
+
+	def test_a_blank_visit_made_before_signatures_is_not_dated_before_them(self):
+		"""Review of #1427: dated and made before 2026-10-13, a blank draft would be signature-exempt."""
+		early, late = D(2026, 10, 1), D(2026, 10, 20)
+		refused = history.blank_visit_refusal({}, early, D(2026, 10, 10), "SMR-9")
+		self.assertIn("SMR-9 was never filled in", refused)
+		self.assertIn("2026-10-13", refused)
+		# Made after the gate, dated on or after it, or already started: nothing to refuse.
+		self.assertIsNone(history.blank_visit_refusal({}, late, D(2026, 10, 10), "SMR-9"))
+		self.assertIsNone(history.blank_visit_refusal({}, early, D(2026, 10, 13), "SMR-9"))
+		self.assertIsNone(
+			history.blank_visit_refusal({"visit_date": D(2026, 10, 2)}, early, D(2026, 10, 1), "SMR-9")
+		)
+
+	def test_the_signature_gate_matches_the_visit_controller(self):
+		controller = _text(
+			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.py"
+		)
+		year, month, day = re.search(
+			r"^TECHNICIAN_SIGNATURE_FROM = datetime\.date\((\d+), (\d+), (\d+)\)", controller, re.MULTILINE
+		).groups()
+		self.assertEqual(history.SIGNATURE_FROM, D(int(year), int(month), int(day)))
 
 
 class TestDoneBookings(unittest.TestCase):
@@ -505,9 +561,13 @@ class TestMoveDoneTask(unittest.TestCase):
 		self.assertEqual(kind, "Comment")
 		self.assertIn("Pat Manager moved this done work on the Project Planner", note)
 		self.assertIn("Completed On: 2026-03-05 → 2025-03-05", note)
-		# What an Undo sends back.
-		self.assertEqual(answer["before"]["completed_on"], "2026-03-05")
-		self.assertEqual(answer["before"]["exp_start_date"], "2026-03-02 00:00:00")
+		# What the Undo will put back stays on the server, keyed by the modified the move left; the
+		# browser is never handed the dates (review of #1427).
+		self.assertNotIn("before", answer)
+		stored, ttl = _frappe().store["planner_history:undo:Task:TASK-1:2026-11-04 12:00:00"]
+		self.assertEqual(stored["completed_on"], "2026-03-05")
+		self.assertEqual(stored["exp_start_date"], "2026-03-02 00:00:00")
+		self.assertEqual(ttl, history.UNDO_SECONDS)
 
 	def test_not_a_manager(self):
 		_frappe().roles = ["Projects User"]
@@ -538,17 +598,88 @@ class TestMoveDoneTask(unittest.TestCase):
 		self.pp._load = lambda task, modified: undated
 		moved = history.move_done_task("TASK-1", "x", start="2024-05-01", end="2024-05-02")
 		self.assertEqual(undated.values["completed_on"], D(2024, 5, 2))
-		history.restore_done_task("TASK-1", "y", json.dumps(moved["before"]))
+		history.restore_done_task("TASK-1", moved["modified"])
 		self.assertIsNone(undated.values["exp_start_date"])
 		self.assertIsNone(undated.values["exp_end_date"])
 		self.assertEqual(undated.values["completed_on"], "2026-09-04")
 		self.assertIn("undid a move of this done work", undated.comments[-1][1])
+		# Once only: the record of the move is gone with it.
+		with self.assertRaises(_Thrown) as raised:
+			history.restore_done_task("TASK-1", moved["modified"])
+		self.assertEqual(str(raised.exception), history.NO_UNDO)
+
+	def test_undo_takes_no_dates_from_the_browser(self):
+		"""Review of #1427: a restore names the record and the modified the move left, nothing else."""
+		self.assertEqual(list(inspect.signature(history.restore_done_task).parameters), ["task", "modified"])
+		self.assertEqual(
+			list(inspect.signature(history.restore_done_visit).parameters), ["record", "modified"]
+		)
+		# No move left that modified (changed since, expired, flushed by a deploy): no Undo.
+		with self.assertRaises(_Thrown) as raised:
+			history.restore_done_task("TASK-1", "2026-11-04 09:00:00")
+		self.assertEqual(str(raised.exception), history.NO_UNDO)
+		self.assertEqual(self.calls, [])
+
+	def test_a_record_of_a_move_that_breaks_the_rules_is_refused(self):
+		_frappe().store["planner_history:undo:Task:TASK-1:m9"] = ({"completed_on": "2026-12-01"}, 60)
+		with self.assertRaises(_Thrown):
+			history.restore_done_task("TASK-1", "m9")
+		self.assertEqual(self.calls, [])
+
+
+class TestDoneLimit(unittest.TestCase):
+	"""Review of #1427: past DONE_LIMIT rows the read says so, instead of stopping silently."""
+
+	def setUp(self):
+		self.engine, self.restore_engine = _install(
+			"erpnext_enhancements.project_enhancements.crew_availability",
+			{
+				"_task_columns": lambda: {
+					"custom_start_datetime": "NULL",
+					"custom_end_datetime": "NULL",
+					"custom_rental_booking": "NULL",
+				},
+				"planner_job_sql": lambda alias: ("p.project_type", "0"),
+				"planner_job_condition": lambda alias, rental: "1 = 1",
+				"PLANNER_SQL_VALUES": {},
+				"task_span": lambda row: (D(2026, 10, 5), D(2026, 10, 5)),
+				"is_planner_job": lambda row: True,
+			},
+		)
+		self.old_db = _frappe().db
+		self.asked = []
+
+	def tearDown(self):
+		_frappe().db = self.old_db
+		self.restore_engine()
+
+	def _rows(self, count):
+		def sql(query, values, as_dict=False):
+			self.asked.append(values["limit"])
+			return [{"name": f"T-{n}"} for n in range(min(count, values["limit"]))]
+
+		_frappe().db = types.SimpleNamespace(sql=sql)
+
+	def test_within_the_limit(self):
+		self._rows(history.DONE_LIMIT)
+		rows, truncated = history.read_done_tasks(D(2026, 10, 1), D(2026, 10, 31))
+		self.assertEqual((len(rows), truncated), (history.DONE_LIMIT, False))
+		self.assertEqual(self.asked, [history.DONE_LIMIT + 1])
+
+	def test_past_the_limit(self):
+		self._rows(history.DONE_LIMIT + 50)
+		rows, truncated = history.read_done_tasks(D(2026, 10, 1), D(2026, 10, 31))
+		self.assertEqual((len(rows), truncated), (history.DONE_LIMIT, True))
+		self.assertIn(
+			'result["done_truncated"] = bool(truncated)', _pyfunc(_text(HISTORY_API), "add_done_work")
+		)
 
 
 class TestMoveDoneVisit(unittest.TestCase):
 	def setUp(self):
 		_frappe().roles = ["Maintenance Supervisor"]
 		_frappe().writes = []
+		_frappe().store.clear()
 		self.doc = _Doc(
 			name="SMR-1",
 			docstatus=1,
@@ -604,7 +735,9 @@ class TestMoveDoneVisit(unittest.TestCase):
 		self.assertEqual(args[0], "Sapphire Maintenance Record")
 		self.assertEqual(args[2]["clock_in_time"], DT(2026, 10, 20, 7, 30))
 		self.assertEqual(args[2]["visit_date"], D(2026, 10, 20))
-		self.assertEqual(self.doc.checked, "read")
+		# The direct write is checked as a write (review of #1427): every manager role holds write on
+		# visits; Maintenance Supervisors hold no submit.
+		self.assertEqual(self.doc.checked, "write")
 		self.assertIn("on the Maintenance Planner", self.doc.comments[-1][1])
 		# Its calendar event follows, as an update after submit would re-sync it.
 		self.assertEqual(self.synced, [("SMR-1", "on_update_after_submit")])
@@ -638,10 +771,22 @@ class TestMoveDoneVisit(unittest.TestCase):
 
 	def test_undo_restores_the_visit(self):
 		moved = history.move_done_visit("SMR-1", "m", "2026-10-20")
-		history.restore_done_visit("SMR-1", "m2", json.dumps(moved["before"]))
+		self.assertNotIn("before", moved)
+		history.restore_done_visit("SMR-1", moved["modified"])
 		restored = _frappe().writes[-1][1][2]
 		self.assertEqual(restored["visit_date"], "2026-10-27")
 		self.assertEqual(restored["clock_in_time"], "2026-10-27 07:30:00")
+		with self.assertRaises(_Thrown):
+			history.restore_done_visit("SMR-1", moved["modified"])  # once only
+
+	def test_a_blank_visit_made_before_signatures_stays_after_them(self):
+		blank = _Doc(name="SMR-3", docstatus=0, workflow_state="Draft", creation=DT(2026, 10, 1, 6, 0))
+		_frappe().get_doc = lambda doctype, name: blank
+		with self.assertRaises(_Thrown) as raised:
+			history.move_done_visit("SMR-3", "m", "2026-10-10")
+		self.assertIn("never filled in", str(raised.exception))
+		history.move_done_visit("SMR-3", "m", "2026-10-14")
+		self.assertEqual(self.saves[-1]["visit_date"], D(2026, 10, 14))
 
 
 # ---------------------------------------------------------------------- wiring
@@ -720,10 +865,27 @@ class TestServerWiring(unittest.TestCase):
 		self.assertIn("backdate = planner_history.can_backdate()", gantt)
 		self.assertIn('card["backdate"] = bool(', gantt)
 		self.assertIn("planner_history._done_assignees(", gantt)
+		# Closed assignees count as crew only where done work is the point (review of #1427): a finished
+		# job, or a manager; for everyone else the D6 rule on a live job is what it was.
+		self.assertLess(
+			gantt.index("if whole_job or backdate:"), gantt.index("planner_history._done_assignees(")
+		)
 		self.assertIn("if all_tasks or whole_job:", gantt)
 		self.assertIn('"can_backdate": backdate,', gantt)
 		# A Fountain Move task is never moved here, done or not.
 		self.assertIn('if card.get("fountain_move"):\n\t\t\tcard["backdate"] = False', gantt)
+
+	def test_links_never_touch_finished_tasks(self):
+		"""Review of #1427: a done bar now moves on the Gantt, so a link from or to one is refused."""
+		add = _pyfunc(_text(APP / "api" / "planner_actions.py"), "add_dependency")
+		self.assertIn("if status in engine.FINISHED_STATUSES:", add)
+		self.assertIn('frappe.db.get_value("Task", depends_on, "status")', add)
+		self.assertLess(add.index("FINISHED_STATUSES"), add.index('doc.append("depends_on"'))
+
+	def test_the_direct_write_is_checked_as_a_write(self):
+		access = _pyfunc(_text(HISTORY_API), "_visit_access")
+		self.assertIn('doc.check_permission("write")', access)
+		self.assertNotIn('check_permission("read")', access)
 
 	def test_the_maintenance_planner_marks_who_may_backdate(self):
 		mp = _text(MP_API)
@@ -771,10 +933,24 @@ class TestPageWiring(unittest.TestCase):
 		self.assertIn('api: "erpnext_enhancements.api.planner_history",', block)
 		self.assertIn("method: `${PPDW.api}.move_done_task`", block)
 		self.assertIn("method: `${PPDW.api}.restore_done_task`", block)
+		# Undo names the task and its modified; the server keeps the dates (review of #1427).
+		self.assertIn("this.push_undo({ ppdw: true, task: card.name, subject }, message)", block)
 		self.assertIn(
-			"this.push_undo({ ppdw: true, task: card.name, subject, before: result.before || {} }, message)",
+			'args: { task: snap.task, modified: this.modified[snap.task] || (card && card.modified) || "" },',
 			block,
 		)
+		for word in ("snap.before", "result.before", "before:"):
+			self.assertNotIn(word, _code(block), word)
+		# Held changes or a Draft schedule: it saves now, and says so.
+		self.assertIn(
+			'if (this.draft_args(card.project).draft) message += ` (${__("saved now: done work is never drafted")})`;',
+			block,
+		)
+		# Past the server's limit, the page says some done tasks are not shown.
+		self.assertIn("if (!this.show_done || !this.data || !this.data.done_truncated) return;", block)
+		self.assertIn("this.ppdw_note(); // v1.795.0", _method(pp, "\trender() {"))
+		# A link to or from a done bar is refused on the page as on the server.
+		self.assertIn("if (card.finished || pred.finished) {", _method(pp, "\tppg_link(source, target) {"))
 		# Never through save_task or commit(): no reason, no "Notify crew?", no draft.
 		for word in ("save_task", "this.commit(", "as4_prepare", "with_draft", "notify"):
 			self.assertNotIn(word, _code(block), word)
@@ -793,6 +969,11 @@ class TestPageWiring(unittest.TestCase):
 			'restore_done_visit: "erpnext_enhancements.api.planner_history.restore_done_visit",', mp
 		)
 		self.assertIn("this.init_phase6e();\n\t\tthis.init_done_work();", mp)
+		self.assertIn('this.push_undo({ kind: "mpdw", site, record: card.name }, message)', mp)
+		self.assertIn(
+			'args: { record: snap.record, modified: this.modified[snap.record] || (card && card.modified) || "" },',
+			mp,
+		)
 		self.assertIn("!(card.movable || this.mpdw_can_move(card))", _method(mp, "\tdrag_source(el) {"))
 		drop = _method(mp, "\tdrop(source, target) {")
 		self.assertLess(
