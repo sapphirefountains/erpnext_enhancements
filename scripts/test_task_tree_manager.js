@@ -182,6 +182,11 @@ check(same(names(rules.sortTree(tree, { key: "priority", dir: "asc" })), ["P2", 
 check(same(names(find(rules.sortTree(tree, { key: "priority", dir: "desc" }), "P2").children), ["P2b", "P2c", "P2a"]), "priority descending: Urgent, High, Medium");
 check(same(names(find(rules.sortTree(tree, { key: "status", dir: "asc" }), "P2").children), ["P2a", "P2c", "P2b"]), "status by workflow rank: Open, Working, Completed");
 check(same(names(rules.sortTree(tree, { key: "status", dir: "asc" })), ["P2", "P1", "P3"]), "Open, Working, Overdue");
+check(
+	same(names(rules.sortTree([{ name: "late", status: "Open", is_overdue: 1 }, { name: "open", status: "Open" }, { name: "done", status: "Completed" }], { key: "status", dir: "asc" })), ["open", "late", "done"]),
+	"an Open task past its end date sorts as the OVERDUE the column shows (review of #1423)"
+);
+check(same(names(rules.sortTree([{ name: "p10", subject: "Phase 10" }, { name: "p9", subject: "Phase 9" }], { key: "subject", dir: "asc" })), ["p9", "p10"]), "names compare numerically: Phase 9 before Phase 10");
 check(same(names(rules.sortTree(tree, { key: "exp_end_date", dir: "asc" })), ["P1", "P2", "P3"]), "dates ascending, a missing date last");
 check(same(names(rules.sortTree(tree, { key: "exp_end_date", dir: "desc" })), ["P2", "P1", "P3"]), "dates descending, a missing date still last");
 check(same(names(find(rules.sortTree(tree, { key: "exp_end_date", dir: "asc" }), "P2").children), ["P2c", "P2a", "P2b"]), "an empty date among children goes last too");
@@ -207,16 +212,23 @@ console.log("source promises");
 const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 check(/onMove:\s*function\s*\(evt,\s*originalEvent\)\s*\{[\s\S]*?return false;\s*\}/.test(code), "SortableJS's own move is refused on every onMove");
 check(!/handleDragMove/.test(code), "the v1.787.0 handler that let SortableJS swap on the edge band is gone");
-check(/original\.type === "dragend"/.test(code), "a native drag that ends without a drop (Escape) saves nothing");
+check(/TaskTreeManager\.CANCEL_EVENTS\.includes\(original\.type\)/.test(code), "a drag that ends in a cancel event saves nothing");
+check(same(sandbox.erpnext_enhancements.TaskTreeManager.CANCEL_EVENTS, ["dragend", "pointercancel", "touchcancel"]), "cancel = dragend (Escape on a native drag), pointercancel and touchcancel (the browser taking a touch gesture over)");
 check(/swapThreshold:\s*1\b/.test(code) && /animation:\s*0\b/.test(code), "SortableJS asked to call onMove over the whole row and to animate nothing");
 check(/document\.elementFromPoint\(/.test(code), "the drop target is read from the pointer, not from SortableJS");
-check(/addEventListener\("dragover"/.test(code) && /removeEventListener\("dragover"/.test(code), "the document dragover listener is bound for the drag and unbound after it");
+check(/addEventListener\("dragover", this\._onDocDragOver, this\._dragListenerOptions\)/.test(code) && /removeEventListener\("dragover", this\._onDocDragOver, this\._dragListenerOptions\)/.test(code), "the document dragover listener is bound for the drag and unbound after it, with the same options");
+check(/_dragListenerOptions = \{ capture: true, passive: true \}/.test(code), "...in the CAPTURE phase: SortableJS stops a dragover before it bubbles to the document (review of #1423)");
+check(/if \(this\._draggedId\) this\.resetDragState\(\);/.test(code), "a drag whose instances are destroyed mid-flight is forgotten (listeners off)");
 check(/localStorage\.setItem\(TaskTreeManager\.SORT_STORAGE_KEY\(\)/.test(code), "the sort is remembered in localStorage");
 check(!/user_settings/.test(code) && !/frappe\.model\.user_settings/.test(code), "never in frappe's user_settings");
 check(/try \{[\s\S]{0,400}localStorage\.getItem\(TaskTreeManager\.SORT_STORAGE_KEY\(\)/.test(code), "read inside try/catch (a private window throws)");
 check(!/pushState/.test(code) && !/frappe\.set_route/.test(code) && !/frappe\.new_doc/.test(code), "no route change, no history write (Back and Forward are never broken)");
 check(/aria-haspopup="menu"/.test(code) && /role="menuitem"/.test(code) && /aria-expanded/.test(code), "the row menu is a real menu for the keyboard");
 check(!/add-subtask-btn/.test(code) && !/move-task-btn/.test(code) && !/delete-task-btn/.test(code), "the three icon buttons are gone");
+check(!/saveTaskOrder/.test(code) && !/save-order-btn/.test(code), "the dead Save Order path is gone");
+check(!/aria-sort/.test(code) && /aria-label/.test(code), "the sort direction is in the header's accessible name, not aria-sort (not valid on a button)");
+check(/me\.closeRowMenu\(true\);/.test(code) && /addEventListener\("scroll", me\._onMenuScroll, true\)/.test(code), "Escape and Tab both return the focus to the button; a scroll closes the menu");
+check(/dragLockReason\(\)/.test(code) && /filtersActive\(\)/.test(code), "drag is off while a sort or a filter is on");
 check(/Nest under \{0\}/.test(code), "the pill says Nest under <task>");
 check(!/quick-add/.test(code) && !/createQuickAddRow/.test(code) && !/create_inline_task/.test(code), "the inline Add root task / Add subtask rows are gone (Nikolas, 2026-11-03)");
 check(/\.add-task-btn/.test(code) && /action === "add-subtask"/.test(code) && /\.add-template-btn/.test(code), "the three ways left to add: Add task, a row's Actions → Add subtask, Add from template");

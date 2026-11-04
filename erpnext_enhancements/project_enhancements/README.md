@@ -227,15 +227,20 @@ passed.
 - **Nothing moves during a drag.** SortableJS supplies the handle, the ghost row, touch and the
   auto-scroll, and is refused on every move (`onMove` returns false, `swapThreshold: 1` so it asks
   over the whole row, `animation: 0`). The drop target is read from the pointer
-  (`document.elementFromPoint`) on each `dragover` (a document listener bound for the drag) and from
-  `onMove`'s own event on the touch fallback. The zones are the ones Nikolas asked for: the **body
+  (`document.elementFromPoint`) on each `dragover` (a document listener bound for the drag **in the
+  capture phase**: SortableJS stops every dragover it finishes handling, so a bubble listener hears
+  none of them during a native drag; review of #1423), from `onMove`'s own event on the touch
+  fallback, and once more from the drop event's point. The zones are the ones Nikolas asked for: the **body
   of a row nests** (a wash and a *Nest under <task>* pill), only a **thin band at each edge**
   reorders (a quarter of the row, held between 6 and 10 px; 10 px on the 45 px rows the Desk draws),
   drawn as a 3 px line. A line always means "before the lower row": under an open parent it is the
   first subtask, under the last subtask of a group it is the next row's level, and only the last row
   on screen has an "after". The row itself, its own subtasks, its own parent and the place it already
   is draw nothing. A native drag that ends in `dragend` without a `drop` (Escape, let go off the
-  page) saves nothing. A nest saves one row with no position (the server appends it); a reorder
+  page) saves nothing, and so does a touch gesture the browser takes over (`pointercancel`,
+  `touchcancel`; `TaskTreeManager.CANCEL_EVENTS`). No drag makes a subtask the last of its own
+  group (its parent's body does nothing; the line under the group's last row outdents it): that is
+  *Move under…*, as the handle's tooltip says. A nest saves one row with no position (the server appends it); a reorder
   sends every sibling of the new parent with its position. The rules are pure functions on
   `erpnext_enhancements.task_tree_rules` (`dropZone`, `dropPlan`, `reorderRows`), run under node by
   `scripts/test_task_tree_manager.js` in its own CI step.
@@ -243,13 +248,15 @@ passed.
   `role="menu"` with arrow keys that wrap, Home/End, Escape back to the button (`menuMove`), closed
   by a click outside. A refused delete shows ERPNext's reason.
 - **Sortable headers**, within each parent: ascending, descending, then the manual order
-  (`nextSort`, `sortTree`); priority and status by rank, dates and numbers by value, a missing value
-  last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order, and
+  (`nextSort`, `sortTree`); priority and status by rank (a row shown as OVERDUE from `is_overdue`
+  sorts as Overdue), dates and numbers by value, names numerically, a missing value last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order, and
   `rememberChildren` hangs fetched subtasks on their parent's row so a re-render draws them from
   memory), so nothing is written; remembered per browser in `localStorage`
   (`taskTreeSort_<user>`, try/catch, never `user_settings`). While a sort is on there is no
   SortableJS instance at all: the handles dim with a tooltip and the hint line says how to get the
-  manual order back, so a sorted order can never be saved as the manual one.
+  manual order back, so a sorted order can never be saved as the manual one. The same lock holds
+  while a name, owner or status filter is on (`dragLockReason`): hidden siblings keep their
+  positions and the visible ones' would collide.
 - **The inline "Add root task…" / "Add subtask…" rows are gone** (Nikolas, 2026-11-03: "Get rid of the
   Add root task and Add subtask lines in the Tasks tree"): *Add task*, a row's *Actions → Add subtask*
   and *Add from template* are the ways to add. `create_inline_task` stays on the server for the

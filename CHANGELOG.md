@@ -33,13 +33,19 @@ them via drag and drop."
   nest, which is why neither the harness nor a quick try caught it. **Now nothing moves during a
   drag.** SortableJS supplies the handle, the ghost row, touch and the auto-scroll, and is refused on
   every move (`onMove` returns false); the drop target is read from the pointer
-  (`document.elementFromPoint`) on each `dragover`, and the zones are what Nikolas asked for: the
+  (`document.elementFromPoint`) on each `dragover` (a document listener in the **capture** phase:
+  SortableJS calls `stopPropagation` on every dragover it finishes handling, so a bubble-phase
+  listener hears nothing during a native drag and the pill would have followed the pointer only
+  where `onMove` happened to fire; the review of #1423 caught it), and the zones are what Nikolas asked for: the
   whole body of a row nests (a wash and a *Nest under <task>* pill), only a thin band at each edge
   (a quarter of the row, 6 to 10 px) reorders, drawn as a 3 px line. A line always means "before the
   lower row": under an open parent it is the first subtask, under the last subtask of a group it is
   the next row's level, and only the last row on screen has an "after". The row itself, its own
   subtasks, its own parent and the place it already is draw nothing. A native drag that ends without
-  a drop (Escape) saves nothing. A leaf dropped on becomes a group on the spot, as before (server
+  a drop (Escape), and a touch gesture the browser takes over (`pointercancel`, `touchcancel`), save
+  nothing. There is no drag that makes a subtask the **last** of its own group (its parent's body does
+  nothing, the line under the group's last row outdents it): that is a *Move under…* job, and the
+  handle's tooltip says so. A leaf dropped on becomes a group on the spot, as before (server
   `move_tasks`). *Move under…* stays as the no-mouse path. The rules are pure
   (`erpnext_enhancements.task_tree_rules`) and run under node (`scripts/test_task_tree_manager.js`,
   its own CI step), so a drop's outcome is pinned as a function of the rows on screen, the dragged
@@ -49,7 +55,8 @@ them via drag and drop."
 - **One Actions menu per row** (⋯) holding *Add subtask*, *Move under…* and *Delete* instead of three
   icon buttons, so the column is narrow and reads the same on a phone. A real menu for the keyboard:
   the button opens it (ArrowDown opens on the first item, ArrowUp on the last), arrows move and wrap,
-  Home/End jump, Escape closes and puts the focus back on the button, a click outside closes. A delete
+  Home/End jump, Escape or Tab closes and puts the focus back on the button (Tab then moves on from
+  it), a click outside or a scroll closes (the menu is fixed on the page and would stay behind). A delete
   the server refuses (a task with subtasks) now shows ERPNext's reason instead of doing nothing.
 - **Sortable column headers.** Click Task, Assigned To, Status, Priority, Start Date, Due Date,
   % Complete or Expected Time to sort ascending, again for descending, a third time for the manual
@@ -57,12 +64,16 @@ them via drag and drop."
   arrow and `aria-sort`. Sorting applies **within each parent** (children stay under their parent),
   on a copy of the rows already loaded (subtasks fetched for an open branch are kept on their parent's row now, so a re-render no longer asks the server for them), so it writes nothing to the server;
   priority and status sort by rank (Low→Urgent; Open, Working, Pending Review, Overdue, Completed,
-  Canceled), dates and numbers by value, names case aside, a missing value last either way. The
+  Canceled; a task the column shows as OVERDUE from `is_overdue` sorts as Overdue whatever its
+  stored status), dates and numbers by value, names case aside and numerically ("Phase 9" before
+  "Phase 10"), a missing value last either way. The
   choice is remembered **per browser** in `localStorage` (`taskTreeSort_<user>`, read and written in
   try/catch; never frappe's `user_settings`). While a sort is on, **drag is off**: the handles dim with
   a tooltip, the hint line says "Sorted by Status (ascending). Drag is off until the manual order is
   back: click the Status header again", and no SortableJS instance exists, so a sorted order can never
-  be saved as the manual one.
+  be saved as the manual one. **Drag is off while a name, owner or status filter is on, too**: a
+  reorder sends the visible siblings' positions, and the rows a filter hides keep theirs, so the two
+  could collide (the same limit #1418 had from the DOM, now closed rather than left).
 - **Horizontal scroll on smaller screens.** The grid scrolls sideways inside its own box
   (`overflow-x: auto`); the header and body keep a 960 px floor, so dates and pills are never
   squeezed; the Task column (name, handle, caret) is sticky on the left so a row can be read while
@@ -78,6 +89,10 @@ them via drag and drop."
   uses it).
 
 ### Changed
+- The dead *Save Order* button and `saveTaskOrder` are gone (nothing showed the button since the
+  drop started saving itself). The sorted header carries its direction in its accessible name
+  (`aria-sort` is not valid on a button). A drag whose SortableJS instances are rebuilt under it
+  (a branch finished loading) is forgotten with them, listeners included.
 - `tests/test_task_parent_dates.py` pins the v1.791.0 drop (SortableJS refused on every move, a nest
   saved as one row with no position) in place of the v1.787.0 handler; `tests/test_scope_tasks.py`
   gains the round's promises (no `user_settings`, the sort in try/catch, the three icon buttons gone,

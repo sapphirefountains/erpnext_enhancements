@@ -179,7 +179,12 @@ erpnext_enhancements.task_tree_rules = {
 	sortValue(task, key) {
 		const v = task ? task[key] : null;
 		if (key === "priority") return v in this.PRIORITY_RANK ? this.PRIORITY_RANK[v] : null;
-		if (key === "status") return v in this.STATUS_RANK ? this.STATUS_RANK[v] : null;
+		// The column shows OVERDUE from the server's is_overdue flag whatever the stored
+		// status says: sort by what is shown (review of #1423).
+		if (key === "status") {
+			const shown = task && task.is_overdue ? "Overdue" : v;
+			return shown in this.STATUS_RANK ? this.STATUS_RANK[shown] : null;
+		}
 		if (key === "progress" || key === "expected_time") return v == null || v === "" ? null : Number(v);
 		if (v == null || v === "") return null;
 		return String(v).toLowerCase();
@@ -194,7 +199,8 @@ erpnext_enhancements.task_tree_rules = {
 		if (vb == null) return -1;
 		let c = 0;
 		if (typeof va === "number" && typeof vb === "number") c = va - vb;
-		else c = va < vb ? -1 : va > vb ? 1 : 0;
+		// numeric: "Phase 9" before "Phase 10" (review of #1423).
+		else c = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
 		return dir === "desc" ? -c : c;
 	},
 
@@ -296,6 +302,14 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		this._dragRows = null;
 		this._draggedId = null;
 		this._onDocDragOver = (e) => this.trackPointer(e);
+		// Bound in the CAPTURE phase: SortableJS's dragover handler calls stopPropagation on
+		// every path that ends in its completed() (dragoverBubble is off by default), so a
+		// bubble-phase listener on the document never hears a dragover during a native drag
+		// and the pill and line would follow the pointer only where onMove happens to fire
+		// (review of #1423). pointermove is for the touch fallback, which Sortable does not
+		// stop; it never fires during a native HTML5 drag.
+		this._dragListenerOptions = { capture: true, passive: true };
+		this._onMenuScroll = () => this.closeRowMenu();
 
 		// Drag-to-resize column widths (per user). The first (Task) column stays
 		// elastic and the tiny Actions column is left alone; the rest get a right-
@@ -386,7 +400,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                                     <button type="button" class="btn btn-danger discard-changes-btn">Discard Changes</button>
                                 </div>
                             </div>
-                            <button class="btn btn-sm btn-success mr-2 save-order-btn" style="display: none;">Save Order</button>
                             ${
 								this.readonly
 									? ""
@@ -512,32 +525,60 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	headerCell(sortKey, label, cls, style, column) {
 		const shown = column && !this.columnVisibility[column] ? "hidden-column" : "";
 		const data = column ? `data-column="${column}"` : "";
-		return `<div class="task-grid-cell sortable-header ${cls} ${shown}" ${data} data-sort-key="${sortKey}" style="${style}" role="button" tabindex="0" aria-sort="none" title="${__("Sort by {0}", [__(label)])}"><span class="sortable-header-label">${__(label)}</span><span class="sort-arrow" aria-hidden="true"></span></div>`;
+		return `<div class="task-grid-cell sortable-header ${cls} ${shown}" ${data} data-sort-key="${sortKey}" style="${style}" role="button" tabindex="0" aria-label="${__("Sort by {0}", [__(label)])}" title="${__("Sort by {0}", [__(label)])}"><span class="sortable-header-label">${__(label)}</span><span class="sort-arrow" aria-hidden="true"></span></div>`;
 	}
 
-	/** Draw the arrow on the sorted header, the drag-off note, and the dimmed handles. */
-	renderSortState() {
+	/**
+	 * Why drag is off right now, in words, or "" when it is on. A sort: the order on screen is
+	 * not the manual order a drop would be saved against. A name, owner or status filter: the
+	 * rows hidden by it keep their positions, so positions sent for the visible siblings alone
+	 * could collide with them (review of #1423).
+	 */
+	dragLockReason() {
 		const rules = erpnext_enhancements.task_tree_rules;
+		if (this.sort) {
+			const label = __(rules.SORT_LABELS[this.sort.key] || this.sort.key);
+			return __("Sorted by {0} ({1}). Drag is off until the manual order is back: click the {0} header again.", [
+				label,
+				this.sort.dir === "asc" ? __("ascending") : __("descending"),
+			]);
+		}
+		if (this.filtersActive()) {
+			return __("Drag is off while a filter is on: clear the filters to move tasks.");
+		}
+		return "";
+	}
+
+	filtersActive() {
+		return !!(
+			(this.wrapper.find(".task-name-filter").val() || "").trim() ||
+			(this.wrapper.find(".task-owner-filter").val() || "").trim() ||
+			this.wrapper.find(".task-status-cb:checked").length
+		);
+	}
+
+	/** Draw the sorted header's arrow and name, the dimmed handles, and the hint line. */
+	renderSortState() {
 		const sort = this.sort;
 		this.wrapper.find(".sortable-header").each(function () {
 			const $cell = $(this);
 			const on = sort && $cell.data("sort-key") === sort.key;
+			const label = $cell.find(".sortable-header-label").text();
 			$cell.toggleClass("sorted-asc", !!on && sort.dir === "asc").toggleClass("sorted-desc", !!on && sort.dir === "desc");
-			$cell.attr("aria-sort", on ? (sort.dir === "asc" ? "ascending" : "descending") : "none");
+			// The direction goes in the accessible name: aria-sort is only valid on a
+			// columnheader, and these cells are buttons (review of #1423).
+			$cell.attr(
+				"aria-label",
+				on
+					? __("{0}, sorted {1}", [label, sort.dir === "asc" ? __("ascending") : __("descending")])
+					: __("Sort by {0}", [label])
+			);
 			$cell.find(".sort-arrow").text(on ? (sort.dir === "asc" ? "▲" : "▼") : "");
 		});
-		this.wrapper.find(".task-tree-manager").toggleClass("sort-active", !!sort);
-		if (sort) {
-			const label = __(rules.SORT_LABELS[sort.key] || sort.key);
-			this.showHint(
-				__("Sorted by {0} ({1}). Drag is off until the manual order is back: click the {0} header again.", [
-					label,
-					sort.dir === "asc" ? __("ascending") : __("descending"),
-				])
-			);
-		} else {
-			this.hideHint();
-		}
+		const locked = this.dragLockReason();
+		this.wrapper.find(".task-tree-manager").toggleClass("sort-active", !!locked);
+		if (locked) this.showHint(locked);
+		else this.hideHint();
 	}
 
 	/**
@@ -702,6 +743,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		};
 		filteredTasks = filteredTasks.map(filterNode).filter(Boolean);
 		this.renderGrid(filteredTasks);
+		this.renderSortState();
 	}
 
 	renderGrid(tasks) {
@@ -1039,7 +1081,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		this.wrapper.on("change", ".task-select-cb", () => me.updateSelection());
 		this.wrapper.on("click", ".delete-selected-btn", () => me.deleteSelected());
 
-		this.wrapper.on("click", ".save-order-btn", () => me.saveTaskOrder());
 
 		this.wrapper.on("click", ".assignee-link", function (e) {
 			e.preventDefault();
@@ -1052,8 +1093,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	/**
 	 * The row's Actions menu (v1.791.0). A floating menu under the button: Add subtask, Move
 	 * under…, Delete. Arrow keys move, Home/End jump, Escape or Tab close and put the focus
-	 * back on the button, a click outside closes. `focus` "first" | "last" picks the item
-	 * focused on open (the arrow key that opened it).
+	 * back on the button (Tab then moves on from there, as its default is kept), a click
+	 * outside or a scroll closes (the menu is fixed on body and would stay behind). `focus`
+	 * "first" | "last" picks the item focused on open (the arrow key that opened it).
 	 */
 	openRowMenu($btn, focus = "first") {
 		const me = this;
@@ -1093,7 +1135,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			const next = rules.menuMove(e.key, index < 0 ? 0 : index, $items.length);
 			if (next === "close") {
 				if (e.key === "Escape") e.preventDefault();
-				me.closeRowMenu(e.key === "Escape");
+				me.closeRowMenu(true);
 				return;
 			}
 			if (next === null) return;
@@ -1104,12 +1146,14 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			$(document).on("mousedown.taskRowMenu", (e) => {
 				if (!$(e.target).closest(".task-row-menu").length) me.closeRowMenu();
 			});
+			document.addEventListener("scroll", me._onMenuScroll, true);
 		}, 0);
 		focusAt(focus === "last" ? $items.length - 1 : 0);
 	}
 
 	closeRowMenu(refocus = false) {
 		$(document).off("mousedown.taskRowMenu");
+		document.removeEventListener("scroll", this._onMenuScroll, true);
 		// Every row menu on the page, not only this instance's: there is only ever one
 		// meant to be open, and one left by a tree that was rebuilt under it must go too.
 		$(".task-row-menu").remove();
@@ -1631,14 +1675,17 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	initializeTaskSorting() {
 		const me = this; if (this.readonly) return;
 		// A destroyed Sortable has no `el`; destroying it again throws (the form script
-		// destroys them on a refresh too) and would stop the grid from rendering.
+		// destroys them on a refresh too) and would stop the grid from rendering. A drag in
+		// flight dies with its instance (no onEnd), so its state goes too.
 		this.sortableInstances.forEach((s) => { if (s.el) s.destroy(); });
 		this.sortableInstances = [];
-		if (this.sort) {
-			this.wrapper.find(".task-drag-handle").attr("title", __("Drag is off while the tree is sorted. Click the sorted header again for the manual order."));
+		if (this._draggedId) this.resetDragState();
+		const locked = this.dragLockReason();
+		if (locked) {
+			this.wrapper.find(".task-drag-handle").attr("title", locked);
 			return;
 		}
-		this.wrapper.find(".task-drag-handle").attr("title", __("Drag onto a task to nest under it; onto the line between two tasks to put it there."));
+		this.wrapper.find(".task-drag-handle").attr("title", __("Drag onto a task to nest under it; onto the line between two tasks to put it there. To make a subtask the last of its own group, use Move under…"));
 		const containers = this.wrapper.find(".task-grid-body, .child-tasks-container");
 		containers.each(function () {
 			const sortable = new Sortable(this, {
@@ -1682,8 +1729,18 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		this._dragRows = this.visibleRows();
 		this._dropPlan = null;
 		this.showHint(__("Drop onto a task to nest it under that task (it becomes a group). Drop on the line between two tasks to put it there."));
-		document.addEventListener("dragover", this._onDocDragOver);
-		document.addEventListener("pointermove", this._onDocDragOver);
+		document.addEventListener("dragover", this._onDocDragOver, this._dragListenerOptions);
+		document.addEventListener("pointermove", this._onDocDragOver, this._dragListenerOptions);
+	}
+
+	/** Forget the drag in flight: its listeners, its rows, its indicators. */
+	resetDragState() {
+		document.removeEventListener("dragover", this._onDocDragOver, this._dragListenerOptions);
+		document.removeEventListener("pointermove", this._onDocDragOver, this._dragListenerOptions);
+		this._dropPlan = null;
+		this._draggedId = null;
+		this._dragRows = null;
+		this.clearDropIndicators();
 	}
 
 	/** Where the pointer is during a drag, from a dragover, pointer or touch event. */
@@ -1742,8 +1799,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const original = evt.originalEvent;
 		// A native drag that ends in `dragend` without a `drop` was canceled: Escape, or
 		// let go outside the page. (A drop fires `drop` first, and SortableJS nulls itself
-		// then, so the later `dragend` never reaches here.)
-		const canceled = !!(original && original.type === "dragend");
+		// then, so the later `dragend` never reaches here.) On the touch fallback the browser
+		// taking the gesture over (a scroll, a call) ends in pointercancel / touchcancel.
+		const canceled = !!(original && TaskTreeManager.CANCEL_EVENTS.includes(original.type));
 		// Decide from where the pointer let go, not only from the last dragover seen: a
 		// quick drop can land with no dragover reported at its own point (seen with a
 		// driven mouse on prod; a hand moves through many more). The touch fallback ends
@@ -1755,12 +1813,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const plan = this._dropPlan;
 		const draggedId = this._draggedId;
 		const rows = this._dragRows || [];
-		this._dropPlan = null;
-		this._draggedId = null;
-		this._dragRows = null;
-		document.removeEventListener("dragover", this._onDocDragOver);
-		document.removeEventListener("pointermove", this._onDocDragOver);
-		this.clearDropIndicators();
+		this.resetDragState();
 		this.renderSortState();
 		if (!plan || !draggedId || canceled) return;
 
@@ -1785,20 +1838,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		}
 		const siblings = rows.filter((row) => (row.parent || null) === (plan.parent || null)).map((row) => row.id);
 		this.saveStructure(rules.reorderRows(siblings, draggedId, plan.target, plan.mode, plan.parent));
-	}
-
-	saveTaskOrder() {
-		const me = this; const tasksToUpdate = [];
-		const processLevel = (container, parentTaskId = null) => {
-			$(container).children(".task-node").each(function (index) {
-				const taskId = $(this).data("task-id");
-				tasksToUpdate.push({ name: taskId, parent_task: parentTaskId, custom_subtask_order: index + 1 });
-				const childContainer = $(this).children(".child-tasks-container");
-				if (childContainer.length > 0) processLevel(childContainer[0], taskId);
-			});
-		};
-		processLevel(this.wrapper.find(".task-grid-body")[0]);
-		this.saveStructure(tasksToUpdate);
 	}
 
 	/**
@@ -1839,7 +1878,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 				(out.converted || []).forEach((name) =>
 					frappe.show_alert({ message: __("{0} is now a group task.", [name]), indicator: "blue" }, 7)
 				);
-				me.wrapper.find(".save-order-btn").hide();
 				if (done) done();
 			},
 		});
@@ -1858,6 +1896,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 /** The vendored SortableJS build the tree loads on demand (pinned; see loadAssets). */
 erpnext_enhancements.TaskTreeManager.SORTABLE_ASSET =
 	"/assets/erpnext_enhancements/js/project_enhancements/lib/sortable-1.15.6.min.js";
+
+/** The end-of-drag events that mean "canceled, save nothing" (native and touch fallback). */
+erpnext_enhancements.TaskTreeManager.CANCEL_EVENTS = ["dragend", "pointercancel", "touchcancel"];
 
 /** Where this browser keeps the column sort (localStorage, per user; v1.791.0). */
 erpnext_enhancements.TaskTreeManager.SORT_STORAGE_KEY = () => `taskTreeSort_${frappe.session.user}`;

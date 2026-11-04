@@ -637,11 +637,14 @@ def test_sortablejs_never_moves_a_row_during_a_drag():
 	assert "return false;" in on_move and "return true" not in on_move
 	assert "handleDragMove" not in js
 	assert "document.elementFromPoint(" in js
-	assert 'original.type === "dragend"' in js
+	assert "TaskTreeManager.CANCEL_EVENTS.includes(original.type)" in js
+	assert 'CANCEL_EVENTS = ["dragend", "pointercancel", "touchcancel"]' in js
 	assert "swapThreshold: 1," in js and "animation: 0," in js
-	# The drag is tracked on the document only while it lasts.
-	assert 'document.addEventListener("dragover", this._onDocDragOver)' in js
-	assert 'document.removeEventListener("dragover", this._onDocDragOver)' in js
+	# The drag is tracked on the document only while it lasts, in the capture phase:
+	# SortableJS stops a dragover before it bubbles (review of #1423).
+	assert "_dragListenerOptions = { capture: true, passive: true }" in js
+	assert 'document.addEventListener("dragover", this._onDocDragOver, this._dragListenerOptions)' in js
+	assert 'document.removeEventListener("dragover", this._onDocDragOver, this._dragListenerOptions)' in js
 
 
 def test_the_column_sort_lives_in_this_browser_only():
@@ -657,11 +660,14 @@ def test_the_column_sort_lives_in_this_browser_only():
 	set_sort = js.split("setSort(sort) {")[1].split("\n\t}\n")[0]
 	assert "frappe.call" not in set_sort and "this.applyFilters()" in set_sort
 	init = js.split("initializeTaskSorting() {")[1].split("\n\t}\n")[0]
-	assert "if (this.sort) {" in init and init.index("if (this.sort) {") < init.index("new Sortable(")
-	# The eight headers sort, each a button for the keyboard.
+	assert "const locked = this.dragLockReason();" in init and init.index("if (locked) {") < init.index("new Sortable(")
+	# ... and while a name, owner or status filter hides rows (their positions could collide).
+	lock = js.split("dragLockReason() {")[1].split("\n\t}\n")[0]
+	assert "if (this.sort) {" in lock and "if (this.filtersActive()) {" in lock
+	# The eight headers sort, each a button for the keyboard, the direction in its name.
 	for key in ("subject", "assigned_to", "status", "priority", "exp_start_date", "exp_end_date", "progress", "expected_time"):
 		assert f'this.headerCell("{key}"' in js, key
-	assert 'role="button" tabindex="0" aria-sort="none"' in js
+	assert 'role="button" tabindex="0" aria-label=' in js and "aria-sort" not in js
 
 
 def test_one_actions_menu_per_row():
