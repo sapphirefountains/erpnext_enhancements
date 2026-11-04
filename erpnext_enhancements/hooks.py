@@ -129,9 +129,12 @@ standard_help_items = [
 # hook, so people see it after their next page load). So "PO", "SOP" and "SOP-06-0001" find published
 # articles from two letters, where v16's global search never would (ft_min_word_len=4). It searches
 # the published Knowledge Article only, as the person typing, and never raises (a hook's exception
-# goes to the "awesomebar" logger, not the Error Log). Nothing in public/js or api/search.py changes:
-# this app's live global search keeps its 3-character floor, and cannot return the same rows, since
-# neither KB doctype is in global search. See knowledge_base/search_service.py and its README.
+# goes to the "awesomebar" logger, not the Error Log). This app's live record search
+# (public/js/global_enhancements/desk_search.js + api/desk_search.py, v1.795.0) is not a hook: the hook
+# normalizes each result to label/value/index/route/description, which drops the phone, email,
+# related links and group headings those rows carry. It searches no KB doctype, so the two never
+# return the same rows; desk_search.js puts these hits under a "Knowledge base" heading below the
+# records. See knowledge_base/search_service.py and its README.
 awesomebar_search = ["erpnext_enhancements.knowledge_base.search_service.awesomebar_hits"]
 
 doctype_js = {

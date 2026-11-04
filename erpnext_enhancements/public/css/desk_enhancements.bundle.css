@@ -1902,3 +1902,184 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
         display: none;
     }
 }
+
+/* ==========================================================================
+   DESK SEARCH (global_enhancements/desk_search.js, v1.795.0)
+
+   The search box (Ctrl+K) lists records first, grouped under headings, each
+   with a preview line, call/email chips and related-record links. Frappe's
+   list is 300px tall, which held seven one-line rows; grouped two-line rows
+   need more. A heading sits inside its group's first row (an Awesomplete row
+   is the only thing it can hold), so the selection highlight starts below it.
+   ========================================================================== */
+.awesomplete > ul.ee-ds-list {
+    max-height: min(62vh, 560px);
+}
+
+.ee-ds-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    height: 22px;
+    margin: -2px 0 4px;
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-light);
+}
+
+.awesomplete > ul > li.ee-ds-headed {
+    margin-top: 4px;
+}
+
+.awesomplete > ul > li.ee-ds-headed:first-child {
+    margin-top: 0;
+}
+
+.awesomplete > ul > li.ee-ds-headed:hover,
+.awesomplete > ul > li.ee-ds-headed[aria-selected="true"] {
+    background: linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 28px,
+        var(--sapphire-dropdown-hover-bg, var(--control-bg)) 28px
+    ) !important;
+}
+
+.ee-ds-head .ee-ds-seeall {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-muted);
+}
+
+.ee-ds-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ee-ds-main,
+.ee-ds-main:hover,
+.ee-ds-main:focus {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+}
+
+.ee-ds-top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ee-ds-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.ee-ds-type {
+    flex: none;
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.ee-ds-sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ee-ds-actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+.ee-ds-action.ee-ds-call,
+.ee-ds-action.ee-ds-mail {
+    display: inline-block;
+    max-width: 190px;
+    padding: 2px 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.ee-ds-action.ee-ds-call:hover,
+.ee-ds-action.ee-ds-mail:hover,
+.ee-ds-rel:hover {
+    border-color: var(--text-light);
+    text-decoration: none;
+}
+
+.ee-ds-related {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    margin-top: 4px;
+}
+
+.ee-ds-rel {
+    padding: 1px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--control-bg);
+    font-size: 12px;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.ee-ds-rel-kind {
+    color: var(--text-light);
+}
+
+/* Phones: the chips drop under the title and grow to a finger's size. */
+@media (max-width: 767px) {
+    .awesomplete > ul.ee-ds-list {
+        max-height: calc(100vh - 170px);
+    }
+
+    .ee-ds-line {
+        flex-wrap: wrap;
+    }
+
+    .ee-ds-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .ee-ds-action.ee-ds-call,
+    .ee-ds-action.ee-ds-mail {
+        max-width: 100%;
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    .ee-ds-rel {
+        padding: 5px 10px;
+        font-size: 13px;
+    }
+}

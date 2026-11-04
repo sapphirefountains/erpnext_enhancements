@@ -6,9 +6,8 @@
  *
  * Bundles several independent desk-wide behaviours, mostly wired up under an
  * `app_ready` handler and via prototype monkey-patches:
- *   - Awesomebar live global search: augments frappe.search.AwesomeBar with a
- *     debounced server search (erpnext_enhancements.api.search.search_global_docs)
- *     and pins the "Search for…" item to the top.
+ *   - (The awesomebar live record search that lived here moved to
+ *     global_enhancements/desk_search.js in v1.795.0.)
  *   - Map placeholder: renders a Google Maps iframe in a `custom_map_placeholder`
  *     field from the form's single Address link (patches Controller.refresh).
  *   - Safe auto-save / "User Form Drafts": persists dirty form state to
@@ -57,75 +56,10 @@ erpnext_enhancements.utils.waitFor = function(check, callback, max_attempts=20, 
 };
 
 $(document).on("app_ready", function () {
-	if (frappe.search.AwesomeBar) {
-		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
-
-		// Add debounced search method to prototype
-		frappe.search.AwesomeBar.prototype.global_search_debounced = frappe.utils.debounce(function (txt) {
-			const me = this;
-			if (!txt || txt.length < 3) return;
-
-            // Record the search string to handle race conditions
-            this._last_search_txt = txt;
-
-			frappe.call({
-				method: "erpnext_enhancements.api.search.search_global_docs",
-				args: { txt: txt },
-				callback: function (r) {
-                    // Abort if user has typed a different string in the meantime
-                    if (me._last_search_txt !== txt) return;
-
-					if (r.message && r.message.length) {
-						const new_options = r.message.map((d) => ({
-							label: d.label,
-							value: d.value,
-							route: d.route,
-							index: d.index || 50,
-							match: d.match || d.value,
-							description: d.description,
-						}));
-
-						if (!me.options) me.options = [];
-
-						// Deduplicate based on route or value
-						const existing_values = new Set(me.options.map((o) => o.value));
-
-						new_options.forEach((opt) => {
-							if (!existing_values.has(opt.value)) {
-								me.options.push(opt);
-							}
-						});
-
-						// Re-sort (descending index)
-						me.options.sort((a, b) => (b.index || 0) - (a.index || 0));
-
-						// Refresh Awesomplete
-						if (me.awesomplete) {
-							me.awesomplete.list = me.options;
-							me.awesomplete.evaluate();
-						}
-					}
-				},
-			});
-		}, 300);
-
-		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
-			// Call the original method to populate options
-			original_make_global_search.call(this, txt);
-
-			// Find the "Search for [text]" option and boost its index
-			if (this.options && this.options.length > 0) {
-				const searchItem = this.options.find((opt) => opt.default === "Search");
-				if (searchItem) {
-					// Set a very high index to ensure it is always at the top
-					searchItem.index = 100000;
-				}
-			}
-
-			// Trigger Live Search
-			this.global_search_debounced(txt);
-		};
-	}
+	// The awesomebar's live record search moved to global_enhancements/desk_search.js (v1.795.0):
+	// records first, grouped, with a preview, from api/desk_search.py. The patch that stood here
+	// gave every record a flat index of 150, under frappe's fuzzy DocType scores (up to 200), so
+	// a customer's first name listed sixteen screen names above their Contact.
 
 	// Global Map Placeholder Logic
 	if (frappe.ui && frappe.ui.form && frappe.ui.form.Controller) {
