@@ -624,7 +624,7 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 
 	def test_production_on_2026_10_23(self):
 		db, fake = self._migrate()
-		# Since v1.786.0 the Customer row sits right under the Kanban, relabelled Accounts.
+		# Since v1.788.0 the Customer row sits right under the Kanban, relabelled Accounts.
 		self.assertEqual(
 			_labels(db, "CRM")[:8],
 			[
@@ -668,7 +668,7 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 		self.assertIn((row["name"], "label", "Dashboard"), db.writes)
 
 	def test_the_customer_row_moves_under_the_kanban_as_accounts(self):
-		"""v1.786.0: Kanban to Customer list and back was the busiest two-step on the Desk."""
+		"""v1.788.0: Kanban to Customer list and back was the busiest two-step on the Desk."""
 		db, _ = self._migrate()
 		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("DocType", "Customer"))
 		self.assertEqual((row["label"], row["idx"]), ("Accounts", 2))

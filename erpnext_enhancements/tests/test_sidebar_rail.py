@@ -1,4 +1,4 @@
-"""The Desk module sidebar as an icon rail (v1.786.0; Nik, 2026-11-03, Mock C).
+"""The Desk module sidebar as an icon rail (v1.788.0; Nik, 2026-11-03, Mock C).
 
 Bench-free: reads files only, and runs the endpoint against a fake frappe. The sidebar behaviour is
 executed, not grepped, in ``scripts/test_sidebar_rail.js``; this suite holds the seams that harness
@@ -105,7 +105,7 @@ class TestStylesheetMatchesScript(unittest.TestCase):
 		self.assertIn("position: fixed;", block)
 		# and nothing at desktop widths
 		before = css[: css.index("@media (max-width: 767.98px)")]
-		rail = before[before.index("Sidebar rail (v1.786.0") :]
+		rail = before[before.index("Sidebar rail (v1.788.0") :]
 		self.assertIn(".ee-quick-bar {\n    display: none;\n}", rail)
 
 	def test_the_badge_rides_the_icon_not_the_suffix(self):

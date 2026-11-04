@@ -482,7 +482,7 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_breadcrumb_targets -v
       - name: Breadcrumb targets (executed, not grepped)
         run: node scripts/test_breadcrumb_targets.js
-      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.786.0, Nik
+      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.788.0, Nik
       # 2026-11-03, Mock C): one wrapped method (Sidebar.hides_when_collapsed) stops a collapse
       # from hiding the panel; the rows this person uses most come first, badges sit on the icons,
       # a Recent row and a phone bottom bar are added. The node step runs sidebar_rail.js against
@@ -3805,6 +3805,15 @@ jobs:
       # flow that pushes browser history.
       - name: Scope tab task actions (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_scope_tasks.py -q
+      # Drag-to-parent on the Tasks Tree + parent dates that follow the subtasks (Nikolas, 2026-11-03;
+      # v1.787.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
+      # validate_parent_is_group has thrown (the before_save bug that refused every drop onto a leaf),
+      # the parent widened after validate_parent_expected_end_date has read it (hook order), a hook or
+      # the patch raising out of a save or a migrate, a parent's date wiped by an undated subtask, a
+      # move saved half-way or a refusal the tree swallows, SortableJS back on @latest from a CDN, and
+      # the inline editor or Gantt writing a parent's dates past the hooks.
+      - name: Tasks Tree drag-to-parent + parent dates (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_task_parent_dates.py -q
       # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
       # sys.modules — sharing a process with another stub-installing suite is how
       # they cross-talk. Guards two things that fail expensively and quietly: a

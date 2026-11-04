@@ -1562,17 +1562,16 @@ class _BothReleases:
 			],
 		)
 
-	def test_a_drafted_follower_past_its_parent_tasks_end(self):
+	def test_a_drafted_follower_past_its_parent_tasks_end_is_not_a_refusal(self):
+		# v1.787.0: the Task before_validate hook widens the parent to the follower's end at Publish
+		# (task_enhancements/parent_dates.py), so ERPNext's parent-end check cannot refuse it and the
+		# draft check, shown the parent as the hook leaves it, says nothing.
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
 		self._follower("TASK-B", "2026-10-27", "2026-10-28")
 		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
 		result = self._reschedule()
 		self.assertEqual(self._drafted()["TASK-B"], ("2026-10-28", "2026-10-29"))
-		self.assertIn(
-			"Publish will be refused for Subject TASK-B: Expected End Date should be less than or equal to "
-			"parent task's Expected End Date 2026-10-28",
-			" ".join(result["warnings"]),
-		)
+		self.assertNotIn("parent task", " ".join(result["warnings"]))
 
 	def test_a_parent_drafted_later_too_is_judged_where_it_is_drafted(self):
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
@@ -1589,24 +1588,23 @@ class _BothReleases:
 		self.frappe.docs[("Task", "TASK-A")]["parent_task"] = "TASK-P"
 		self.assertEqual(self._refused(self.api.save_task("TASK-A", BASE, start="2026-11-19")), [])
 
-	def test_a_stale_parent_draft_does_not_count(self):
-		# P's draft is out of date (P changed since), so Publish skips it: C is judged against P's end.
+	def test_a_stale_parent_draft_changes_nothing(self):
+		# P's draft is out of date (P changed since), so Publish skips it; the follower is still fine,
+		# because the hook widens P itself when the follower is saved (v1.787.0).
 		h._task("TASK-P", start="2026-10-01", end="2026-10-28", crew=(), project="PRJ-2")
 		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-06"}, base="2026-10-01 00:00:00")
 		self._follower("TASK-B", "2026-10-27", "2026-10-28")
 		self.frappe.docs[("Task", "TASK-B")]["parent_task"] = "TASK-P"
-		self.assertIn("parent task's Expected End Date 2026-10-28", " ".join(self._reschedule()["warnings"]))
+		self.assertNotIn("parent task", " ".join(self._reschedule()["warnings"]))
 
-	def test_a_new_task_meets_its_parents_draft_whatever_the_order(self):
-		# New tasks are created after every drafted change is saved, so a shortened phase does count.
+	def test_a_new_task_past_a_shortened_parent_is_not_a_refusal_either(self):
+		# New tasks are created after every drafted change is saved, so the shortened phase is what
+		# is stored by then; the hook widens it again for the new task (v1.787.0): no warning.
 		h._task("TASK-P", start="2026-10-01", end="2026-11-30", crew=(), project="PRJ-2")
 		h._draft_row("TASK-P", {"start": "2026-10-01", "end": "2026-11-10"})
 		values = {"subject": "Pump", "project": "PRJ-2", "parent_task": "TASK-P"}
 		late = h._Doc(values, name="draft-new:X", exp_start_date="2026-11-19", exp_end_date="2026-11-20")
-		self.assertIn(
-			"parent task's Expected End Date 2026-11-10",
-			" ".join(self.api.erpnext_date_problems(late, new=True)),
-		)
+		self.assertEqual(self.api.erpnext_date_problems(late, new=True), [])
 		inside = h._Doc(values, name="draft-new:Y", exp_start_date="2026-11-02", exp_end_date="2026-11-03")
 		self.assertEqual(self.api.erpnext_date_problems(inside, new=True), [])
 
@@ -1642,8 +1640,10 @@ class _BothReleases:
 				"exp_end_date": "2026-10-20",
 			}
 		}
-		self.assertTrue(
-			self.api.erpnext_date_problems(h._Doc(_actions_spec["values"], name="draft-new:X"), new=True)
+		# Judged as a new task (the copy is __islocal) and, since v1.787.0, not refused: the hook
+		# widens the parent for the new task's end before ERPNext's check reads it.
+		self.assertEqual(
+			self.api.erpnext_date_problems(h._Doc(_actions_spec["values"], name="draft-new:X"), new=True), []
 		)
 		self.assertTrue(self.checked[-1].get("__islocal"))
 
@@ -1695,6 +1695,8 @@ class _BothReleases:
 			self._parent(end="2026-10-01")
 			result = self._reschedule()
 		self.assertNotIn("get_value", vars(db))
+		# The simulated check reads the stub's own frappe.db, not the shadowed Database object, so
+		# here (and only here) the parent's stored end is what it sees and the warning appears.
 		self.assertIn("parent task's Expected End Date", " ".join(result["warnings"]))
 
 	def test_a_missing_record_is_not_a_date_refusal(self):
@@ -1724,7 +1726,9 @@ class _BothReleases:
 			self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")])
 		self.assertEqual(len(reads) - before, checks)
 
-	def test_a_batch_reads_the_drafts_once(self):
+	def test_a_batch_never_reads_the_drafts(self):
+		# v1.743.0 read a batch's drafts once to model the parent's own draft at Publish; since
+		# v1.787.0 the parent's end is answered as the hook widens it, so the drafts are not read.
 		self._parent(end="2026-10-01")
 		h._draft_row("TASK-P", {"start": "2026-09-01", "end": "2026-10-30"})
 		self.frappe.docs[("Task", "TASK-A")].update(exp_end_date="2026-10-20")
@@ -1733,8 +1737,10 @@ class _BothReleases:
 		shared = {}
 		with mock.patch.object(self.api, "_draft_rows", lambda *a: reads.append(1) or real(*a)):
 			for _i in range(3):
-				self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")], drafts=shared)
-		self.assertEqual(len(reads), 1)
+				self.assertEqual(
+					self.api.erpnext_date_problems(self.frappe.docs[("Task", "TASK-A")], drafts=shared), []
+				)
+		self.assertEqual(len(reads), 0)
 
 	def test_the_stored_task_is_loaded_once_per_check(self):
 		loads = []
@@ -1775,12 +1781,14 @@ class TestNativeChecksOnERPNext16_50(_BothReleases, _NativeChecks):
 
 	version = "16.50.0"
 
-	def test_a_crew_size_draft_of_a_task_already_past_its_parent_is_judged(self):
+	def test_a_crew_size_draft_of_a_task_already_past_its_parent_is_not_judged_against_it(self):
+		# 16.50.0 judged every set date on every save; since v1.787.0 the parent is widened to the
+		# task's end before the check reads it, so a parent-end refusal cannot happen here either.
 		self._parent(end="2026-10-01")
 		self.frappe.docs[("Task", "TASK-P")]["exp_end_date"] = "2026-09-30"
 		sized = self.api.save_task("TASK-A", BASE, crew_size=3)
 		self.assertTrue(sized["drafted"])
-		self.assertIn("parent task's Expected End Date 2026-09-30", " ".join(self._refused(sized)))
+		self.assertNotIn("parent task", " ".join(self._refused(sized)))
 
 
 class _ERPNextsProjectWindow:
@@ -2419,10 +2427,11 @@ class TestTheTaskHookWidensEverySave(_P4):
 			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
 		)
 		task = ast.literal_eval(events)["Task"]
-		self.assertEqual(
-			task["before_validate"],
-			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
-		)
+		# A list since v1.787.0: parent_dates.before_task_validate settles a parent's dates first,
+		# then the Project window is widened for them (tests/test_task_parent_dates.py pins the order).
+		hooks = task["before_validate"]
+		self.assertIsInstance(hooks, list)
+		self.assertIn("erpnext_enhancements.project_enhancements.project_window.before_task_validate", hooks)
 
 
 class TestPublishOrder(unittest.TestCase):

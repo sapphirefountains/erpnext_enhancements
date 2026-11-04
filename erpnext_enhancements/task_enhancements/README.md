@@ -17,7 +17,8 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 | `auto_close.py` | Closes a record's open assignments when the record moves into a finished state (doc_events `on_change`), and cancels them when it is cancelled (`"*"` `on_cancel`). Never raises | `on_change`, `on_cancel`, `close_todo`, `close_open_assignments` |
 | `backlog_triage.py` | The one-time backlog clean-up behind My Work's **Tidy the backlog**: dry run, apply (background job, each ToDo stamped `custom_triage_batch`), undo | `preview`, `apply`, `undo`, `batches` |
 | `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/calendar`, `/team`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
-| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`validate`, `validate_status`, `before_save`, `on_update`, `update_status`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
+| `parent_dates.py` | A task with subtasks takes its expected dates from them (v1.787.0, Nikolas 2026-11-03): earliest subtask start, latest subtask end, up every ancestor; a parent keeps its own date where no subtask has one. Task `before_validate` (a parent re-derives its own dates, then the ancestors are widened for the dates this save carries, **before** ERPNext's `validate_parent_expected_end_date` reads them), `on_update` (new and old parent recomputed) and `after_delete`; the ancestors are written with `db.set_value`, so no hook fires again. Never raises out of a hook. `refusal` is what the tree's inline editor and the Gantt ask before a direct write; `sync_all` + `derive_all` (pure) are the one-shot patch | `before_task_validate`, `on_task_update`, `after_task_delete`, `sync_task_ancestors`, `children_window`, `derive_all`, `sync_all`, `refusal` |
+| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`validate`, `validate_status`, `before_validate`, `on_update`, `update_status`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
 | `doctype/task/task.js` | Form script: render the child-task tree on refresh | `frappe.ui.form.on("Task", {refresh})`, `add_toggle_functionality` |
 
 ## The Task override
@@ -29,7 +30,7 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 ```
 
 - `validate` — when the Task is being saved into a finished status, marks it as finishing for the request (`recurrence.mark_finishing`) **before** calling `super().validate()`. ERPNext's `validate_status` closes every open assignment on a Task becoming Completed, before the Task's row says so; the mark stops a repeating assignment closed that way from making a next one (v1.699.0).
-- `before_save` — promotes the task's `parent_task` to a **group** (`is_group=1`, saved with `ignore_permissions`) so the NestedSet tree stays valid. It does **not** chain `super()`.
+- `before_validate` — promotes the task's `parent_task` to a **group** (`is_group=1`, saved with `ignore_permissions`) so the NestedSet tree stays valid. It does **not** chain `super()` (the core controller has none). It was `before_save` until v1.787.0, which ran one step too late: frappe runs `before_validate`, `validate`, `before_save`, and ERPNext's `Task.validate` (16.52.1) throws `ParentIsGroupError` for a parent whose box is off, so every drop onto a leaf task on the Scope tab's Tasks Tree was refused. The controller's `before_validate` runs before the `before_validate` doc_events in `hooks.py`, so `parent_dates.before_task_validate` finds the parent a group already.
 - `on_update` — simply calls `super().on_update()`.
 - `validate_status` — lets a dependency this site marked **"Canceled"** stop blocking completion. ERPNext's check accepts only "Completed" and "Cancelled" (its spelling), so a Task depending on a canceled one could never be completed. The override hides those rows from the core check for that one call and puts them back (`DEPENDENCY_DONE`, v1.699.0).
 - `update_status` — never flips a finished Task (Completed, Canceled, Cancelled, Invoiced, Template) to Overdue.
@@ -42,7 +43,7 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 
 - `override_doctype_class` — Task (above).
 - `doctype_js["Task"]` includes `task_enhancements/doctype/task/task.js` (alongside the comments + gantt scripts).
-- `doc_events["Task"]` adds before_save/after_insert/on_update/on_trash handlers from `script_migrations.task` and `tasks.generate_next_task` (separate from the override).
+- `doc_events["Task"]` adds before_save/after_insert/on_update/on_trash handlers from `script_migrations.task` and `tasks.generate_next_task` (separate from the override), and since v1.787.0 the `before_validate` / `on_update` / `after_delete` handlers of `parent_dates.py` (a parent's dates follow its subtasks).
 - `fixtures`: `Task-custom_comments_tab`/`field` and `Task-custom_create_child_task_btn` Custom Fields.
 
 ## Gotchas

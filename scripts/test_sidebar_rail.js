@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The sidebar rail (sidebar_rail.js, v1.786.0), executed against a stub of frappe 16.53's Sidebar
+ * The sidebar rail (sidebar_rail.js, v1.788.0), executed against a stub of frappe 16.53's Sidebar
  * prototype, storage and jQuery rather than grepped.
  *
  * Nik, 2026-11-03: the module sidebar beside the dock should be an icon rail with hover labels and
