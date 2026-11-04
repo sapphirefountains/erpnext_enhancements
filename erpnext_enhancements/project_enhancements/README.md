@@ -215,9 +215,12 @@ publish that saves the parent in the same batch is not tripped by a bumped `modi
 writers in `project_dashboard.py` (the tree's inline editor through `update_multiple_docs` and
 `update_task_date`, the Gantt) refuse a parent's dates and walk the parents themselves after a
 subtask's write. On the Task form the two fields are read-only while the task has subtasks, with a
-note saying why; in the tree a parent's dates are plain text with a tooltip. The Project's own
-derived window (`sync_project_dates_from_tasks`) is untouched: it reads MIN/MAX over the project
-after every save. The one-shot `patches/sync_parent_task_dates` brings every existing parent up to
+note saying why; in the tree a parent's dates are plain text with a tooltip. The Project Planner's
+`_move` refuses a task with subtasks with the same message (it lists leaf tasks only, so a backstop),
+and its draft-time parent-end warning is gone: Publish can no longer be refused on it
+(`api/project_planner._parent_end_widened`). The Project's own derived window
+(`sync_project_dates_from_tasks`) is untouched except in order: it reads MIN/MAX over the project,
+parents included, after every save, and runs **after** the roll-up so an old parent has shrunk first. The one-shot `patches/sync_parent_task_dates` brings every existing parent up to
 the rule, bottom-up, logs instead of raising, and is safe to re-run. `tests/test_task_parent_dates.py`
 holds all of it.
 

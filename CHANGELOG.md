@@ -67,6 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used to load on every Project form from a CDN on its unpinned "latest" tag. The file name carries
   the version: raw `/assets` paths are served immutable for a year, so a new release must be a new
   file name to reach a device that cached this one.
+- **Review round 1** (the Sonnet review of #1418, four should-fix items): the parent roll-up now runs
+  **before** `sync_project_dates_from_tasks` in the Task `on_update` list, so the Project's MIN/MAX (which
+  counts parents) sees the old parent already shrunk; a nest drop saves the one dropped row with no
+  position (the server puts it after the target's last subtask) instead of reading the order off a
+  collapsed target's empty, lazily loaded container, which sent position 1 and collided with the real
+  first child; the Project Planner's `_move` refuses a task with subtasks with the same message the tree
+  gives (the planner lists leaf tasks only, so this is a backstop), and its draft-time "Publish will be
+  refused … parent task's Expected End Date" warning is gone, because the hook widens the parent at
+  Publish and that refusal can no longer happen (`_parent_end_widened` replaces v1.743.0's model of the
+  parent's own draft; `test_planner_autoshift` updated); the drop pill is overlaid (`position: absolute`)
+  rather than a flex item that slid the columns and changed the row height the drag measures.
 
 ## [1.781.0] - 2026-11-03
 

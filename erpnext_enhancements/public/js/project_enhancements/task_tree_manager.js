@@ -998,7 +998,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 						filters: { project: me.projectName, is_template: 0, name: ["!=", taskId] },
 					}),
 					description: __(
-						"Leave empty to move it to the top level. A task that is not yet a group becomes one; the task goes after that task's last subtask."
+						"Leave empty to move it to the top level. A task that is not yet a group becomes one; the task goes after that task's last subtask. Its own subtasks are listed but refused."
 					),
 				},
 			],
@@ -1267,12 +1267,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					me._dropMode = null;
 					me._dropTargetId = null;
 					me.wrapper.find(".task-drag-hint").show();
-					me.wrapper.find(".task-tree-manager").addClass("is-dragging");
 				},
 				onMove: function (evt, originalEvent) { return me.handleDragMove(evt, originalEvent); },
 				onEnd: function (evt) {
 					me.wrapper.find(".task-drag-hint").hide();
-					me.wrapper.find(".task-tree-manager").removeClass("is-dragging");
 					me.handleDragEnd(evt);
 				},
 			});
@@ -1364,30 +1362,24 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		// Deferring to the next tick lets Sortable finish first, then we re-parent
 		// on a clean DOM and persist.
 		setTimeout(() => {
-			let changed = reordered;
-
 			if (mode === "child" && targetId) {
-				const $target = me.wrapper.find(`.task-node[data-task-id="${targetId}"]`).first();
-				if ($target.length && !$.contains(draggedNode, $target[0]) && $target[0] !== draggedNode) {
-					let $childContainer = $target.children(".child-tasks-container");
-					if (!$childContainer.length) {
-						$childContainer = $('<div class="child-tasks-container"></div>').appendTo($target);
-					}
-					// Drop a placeholder/"No subtasks." message if present, then nest.
-					$childContainer.children(".text-muted").remove();
-					$childContainer.show().append(draggedNode);
-					// Reflect the now-expanded parent so the re-render keeps it open.
-					const $icon = $target.children(".task-grid-row").find(".fa-circle, .toggle-child-tasks").first();
-					$icon.removeClass("fa-circle text-extra-muted fa-caret-right").addClass("fa-caret-down toggle-child-tasks");
-					$target.attr("data-loaded", "true").data("loaded", "true");
-					me.expandedTasks.add(targetId);
-					localStorage.setItem(`expandedTasks_${me.projectName}`, JSON.stringify(Array.from(me.expandedTasks)));
-					changed = true;
+				// Nest: save the ONE row with no position, so the server puts it after the
+				// target's last subtask (rules.next_position), and open the target so the
+				// re-fetch shows it there. Nothing in the DOM is moved: the tree loads
+				// children lazily, so a collapsed target's container is empty, and reading
+				// the order off it sent custom_subtask_order 1 for the dropped task,
+				// colliding with the real first child (review of #1418). The dragged
+				// node was not moved by SortableJS either (handleDragMove returned false).
+				const draggedId = $(draggedNode).data("task-id");
+				if (draggedId && draggedId !== targetId && !$.contains(draggedNode, me.wrapper.find(`.task-node[data-task-id="${targetId}"]`)[0])) {
+					me.revealParent(targetId);
+					me.saveStructure([{ name: draggedId, parent_task: targetId }]);
 				}
+				return;
 			}
 
-			// Persist so the tree re-indents itself (saveTaskOrder re-fetches).
-			if (changed) me.saveTaskOrder();
+			// Reorder: persist the sibling order as the DOM now holds it (re-fetches).
+			if (reordered) me.saveTaskOrder();
 		}, 0);
 	}
 

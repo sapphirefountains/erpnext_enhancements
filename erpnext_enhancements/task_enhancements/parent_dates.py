@@ -34,7 +34,12 @@ parent in the same batch. Two columns change; the Scope tab's tree and the Proje
 window (``script_migrations.task.sync_project_dates_from_tasks``, which runs on the subtask's
 ``on_update`` and reads MIN/MAX over the project) read them back from the database. The direct
 writers in ``project_dashboard.py`` (the tree's inline date editor, the Gantt) call
-:func:`sync_task_ancestors` themselves, because ``frappe.db.set_value`` fires no hook.
+:func:`sync_task_ancestors` themselves, because ``frappe.db.set_value`` fires no hook. It is listed
+before ``sync_project_dates_from_tasks`` in the ``on_update`` hooks, so the Project's MIN/MAX (which
+counts parents too) sees the old parent already shrunk. For the same reason a parent whose end moves
+later does **not** push the tasks that depend on it: ERPNext's ``reschedule_dependent_tasks`` runs
+only in a Task's own ``on_update``, and a parent is written, not saved. A parent is a container, not
+a predecessor; the subtask whose end moved pushes its own dependents when it is saved.
 
 **What it never does.** It never raises out of a hook (a hook that raises refuses the save; a failure
 is logged and ERPNext judges the task as it always did), except a failure of the database itself,
@@ -188,7 +193,10 @@ def has_children(task):
 	"""Whether ``task`` has at least one subtask in the database."""
 	if not task:
 		return False
-	return bool(frappe.db.exists("Task", {"parent_task": task}))
+	# One row through get_all rather than db.exists with a filter: the bench-free planner suites
+	# stub exists(doctype, dict) as True for any filter, which made every planner move look like a
+	# parent's; get_all is answered from data by the framework and every stub alike.
+	return bool(frappe.get_all("Task", filters={"parent_task": task}, pluck="name", limit_page_length=1))
 
 
 def sync_task_ancestors(parent, override=None, exclude=None):

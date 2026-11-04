@@ -658,13 +658,15 @@ doc_events = {
 		"on_update": [
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
-			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# v1.782.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
 			# (earliest start, latest end), up every ancestor. After this save the parent and, after
 			# a move, the previous parent are recomputed from the database. Written with
 			# db.set_value, so no Task hook fires again. Never raises. See
-			# task_enhancements/parent_dates.py.
+			# task_enhancements/parent_dates.py. BEFORE sync_project_dates_from_tasks, which takes
+			# MIN/MAX over every task of the project, parents included: the old parent must have
+			# shrunk by then, or the Project's window keeps a stale wide range (review of #1418).
 			"erpnext_enhancements.task_enhancements.parent_dates.on_task_update",
+			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# Project Planner Phase 3B: a change that moves someone's bookings in the next 48 hours
 			# queues one alert per person, sent after commit. Gated by Project Planner Settings
 			# change_alerts (off by default); skipped during a publish, which tells people itself.

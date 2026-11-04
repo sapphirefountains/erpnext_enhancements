@@ -129,11 +129,15 @@ class Site:
 				return False
 		return True
 
-	def get_all(self, doctype, filters=None, fields=None, **kw):
+	def get_all(self, doctype, filters=None, fields=None, pluck=None, limit_page_length=None, **kw):
 		if self.fail_reads:
 			raise self.fail_reads
 		assert doctype == "Task", doctype
 		rows = [row for row in self.tasks.values() if self._match(row, filters)]
+		if limit_page_length:
+			rows = rows[:limit_page_length]
+		if pluck:
+			return [row.get(pluck) for row in rows]
 		if fields:
 			return [{f: row.get(f) for f in fields} for row in rows]
 		return [dict(row) for row in rows]
@@ -593,8 +597,21 @@ def test_the_hooks_are_wired_in_the_order_the_validation_needs():
 	) < before.index(
 		"erpnext_enhancements.project_enhancements.project_window.before_task_validate"
 	), "the parent is settled before the Project window is widened for it"
-	assert "erpnext_enhancements.task_enhancements.parent_dates.on_task_update" in events["on_update"]
+	after = events["on_update"]
+	assert after.index("erpnext_enhancements.task_enhancements.parent_dates.on_task_update") < after.index(
+		"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks"
+	), "the old parent has shrunk before the Project's MIN/MAX over every task counts it"
 	assert events["after_delete"] == "erpnext_enhancements.task_enhancements.parent_dates.after_task_delete"
+
+
+def test_the_planner_refuses_to_move_a_task_with_subtasks():
+	"""The Planner's _move saves exp_* through doc.save(); the hooks would re-derive a parent's
+	dates and the move would silently not stick."""
+	source = (APP / "api/project_planner.py").read_text(encoding="utf-8")
+	body = source.split("def _move(doc, start, end):")[1].split("\ndef ")[0]
+	assert "_subtask_refusal(doc)" in body and "frappe.throw(refusal)" in body
+	helper = source.split("def _subtask_refusal(doc):")[1].split("\ndef ")[0]
+	assert "parent_dates.refusal(name)" in helper and "is_draft_ref(name)" in helper
 
 
 def test_the_override_promotes_the_parent_in_before_validate_not_before_save(site):
@@ -669,6 +686,16 @@ def test_the_tree_shows_the_drop_target_offers_move_under_and_surfaces_a_refusal
 	assert "relY > h * 0.25 && relY < h * 0.75" in js
 	assert '"Make subtask of {0}"' in js and 'attr("data-drop-label"' in js
 	assert "content: attr(data-drop-label)" in css
+	# ... overlaid, not a flex item that would slide the columns and change the row height
+	# handleDragMove measures.
+	pill = css.split(".task-grid-row.drop-as-child::after {")[1].split("}")[0]
+	assert "position: absolute;" in pill
+	# A nest drop saves ONE row with no position (the server puts it last): a collapsed target's
+	# container is empty, so an order read off the DOM would be 1.
+	nest = js.split('if (mode === "child" && targetId) {')[1].split("return;")[0]
+	assert "me.saveStructure([{ name: draggedId, parent_task: targetId }])" in nest
+	assert "me.revealParent(targetId)" in nest
+	assert "saveTaskOrder" not in nest, "the DOM's order is not read for a nest drop"
 	# The reorder edge is drawn where SortableJS will insert.
 	assert 'evt.willInsertAfter ? "drop-after" : "drop-before"' in js
 	assert ".task-grid-row.drop-before" in css and ".task-grid-row.drop-after" in css
