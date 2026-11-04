@@ -792,6 +792,9 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			callback: (r) => {
 				container.empty();
 				if (r.message && r.message.length > 0) {
+					// Keep them on the row in `this.tasks` too, so a re-render (a filter, a
+					// sort) draws them from memory instead of asking the server again.
+					this.rememberChildren(parentTaskId, r.message);
 					const children = erpnext_enhancements.task_tree_rules.sortTree(r.message, this.sort);
 					children.forEach(child => { this.renderTaskNode(child, container, level); });
 					container.append(this.createQuickAddRow(parentTaskId, level));
@@ -802,6 +805,21 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 				this.applyColumnWidths();
 			}
 		});
+	}
+
+	/** Hang fetched subtasks on their parent's row in `this.tasks` (the manual order). */
+	rememberChildren(parentTaskId, children) {
+		const visit = (list) => {
+			for (const task of list || []) {
+				if (task.name === parentTaskId) {
+					task.children = children;
+					return true;
+				}
+				if (task.children && visit(task.children)) return true;
+			}
+			return false;
+		};
+		visit(this.tasks);
 	}
 
 	createQuickAddRow(parentTask, level) {

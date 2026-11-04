@@ -244,8 +244,9 @@ passed.
   by a click outside. A refused delete shows ERPNext's reason.
 - **Sortable headers**, within each parent: ascending, descending, then the manual order
   (`nextSort`, `sortTree`); priority and status by rank, dates and numbers by value, a missing value
-  last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order),
-  so nothing is fetched or written; remembered per browser in `localStorage`
+  last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order, and
+  `rememberChildren` hangs fetched subtasks on their parent's row so a re-render draws them from
+  memory), so nothing is written; remembered per browser in `localStorage`
   (`taskTreeSort_<user>`, try/catch, never `user_settings`). While a sort is on there is no
   SortableJS instance at all: the handles dim with a tooltip and the hint line says how to get the
   manual order back, so a sorted order can never be saved as the manual one.

@@ -55,7 +55,7 @@ them via drag and drop."
   % Complete or Expected Time to sort ascending, again for descending, a third time for the manual
   order (`custom_subtask_order`); Enter and Space do the same from the keyboard; the header shows an
   arrow and `aria-sort`. Sorting applies **within each parent** (children stay under their parent),
-  on a copy of the rows already loaded, so it writes nothing to the server and needs no fetch;
+  on a copy of the rows already loaded (subtasks fetched for an open branch are kept on their parent's row now, so a re-render no longer asks the server for them), so it writes nothing to the server;
   priority and status sort by rank (Low→Urgent; Open, Working, Pending Review, Overdue, Completed,
   Canceled), dates and numbers by value, names case aside, a missing value last either way. The
   choice is remembered **per browser** in `localStorage` (`taskTreeSort_<user>`, read and written in
