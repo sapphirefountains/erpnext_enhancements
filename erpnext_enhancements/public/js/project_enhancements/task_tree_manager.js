@@ -9,7 +9,7 @@
  *
  * Renders an Asana-style tree of Tasks for one Project with: expand/collapse with
  * lazy child loading, inline editing of dates / expected time / status / priority,
- * quick-add rows, name/owner/status filtering, per-user column visibility, and
+ * name/owner/status filtering, per-user column visibility, and
  * SortableJS drag-and-drop that both reorders siblings AND re-parents (nest) tasks
  * — drop intent is decided by where in the target row you release (see
  * handleDragMove). All mutations round-trip through the project_dashboard.py
@@ -712,12 +712,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		tasks = erpnext_enhancements.task_tree_rules.sortTree(tasks, this.sort);
 		if (!tasks || tasks.length === 0) {
 			gridBody.html('<div class="p-4 text-center text-muted">No tasks match filters.</div>');
-			gridBody.append(this.createQuickAddRow(null, 0));
 			this.applyColumnWidths();
 			return;
 		}
 		tasks.forEach((task) => this.renderTaskNode(task, gridBody, 0));
-		gridBody.prepend(this.createQuickAddRow(null, 0));
 		this.initializeTaskSorting();
 		this.applyColumnWidths();
 	}
@@ -776,7 +774,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		if (task.children && task.children.length > 0) {
 			const childContainer = node.find(".child-tasks-container");
 			task.children.forEach((child) => this.renderTaskNode(child, childContainer, level + 1));
-			if (isExpanded) childContainer.append(this.createQuickAddRow(task.name, level + 1));
 		} else if (hasChildren && isExpanded) {
 			node.find(".child-tasks-container").html('<div class="p-2 text-muted small"><i class="fa fa-spinner fa-spin mr-1"></i> Loading children...</div>');
 			this.fetchChildren(task.name, node.find(".child-tasks-container"), level + 1);
@@ -797,7 +794,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					this.rememberChildren(parentTaskId, r.message);
 					const children = erpnext_enhancements.task_tree_rules.sortTree(r.message, this.sort);
 					children.forEach(child => { this.renderTaskNode(child, container, level); });
-					container.append(this.createQuickAddRow(parentTaskId, level));
 				} else {
 					container.html('<div class="p-2 text-muted small">No subtasks.</div>');
 				}
@@ -822,40 +818,10 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		visit(this.tasks);
 	}
 
-	createQuickAddRow(parentTask, level) {
-		const indent = level * 20;
-		const row = $(`
-			<div class="task-grid-row quick-add-row" style="background-color: var(--control-bg);">
-				<div class="task-grid-cell" style="flex: 5;">
-					<div style="padding-left: ${indent}px; display: flex; align-items: center; width: 100%;">
-						<i class="fa fa-plus-circle text-muted mr-2" style="flex-shrink: 0;"></i>
-						<input type="text" class="form-control input-xs quick-add-input" 
-							placeholder="${parentTask ? 'Add subtask...' : 'Add root task...'}" 
-							style="border: none; background: transparent; box-shadow: none; font-size: 12px; height: 24px; padding: 0;">
-					</div>
-				</div>
-				<div class="task-grid-cell assignee-cell ${this.columnVisibility.owner ? "" : "hidden-column"}" data-column="owner"></div>
-				<div class="task-grid-cell status-cell ${this.columnVisibility.status ? "" : "hidden-column"}" data-column="status"></div>
-				<div class="task-grid-cell ${this.columnVisibility.priority ? "" : "hidden-column"}" data-column="priority"></div>
-				<div class="task-grid-cell ${this.columnVisibility.start_date ? "" : "hidden-column"}" data-column="start_date"></div>
-				<div class="task-grid-cell ${this.columnVisibility.due_date ? "" : "hidden-column"}" data-column="due_date"></div>
-				<div class="task-grid-cell ${this.columnVisibility.progress ? "" : "hidden-column"}" data-column="progress"></div>
-				<div class="task-grid-cell ${this.columnVisibility.duration ? "" : "hidden-column"}" data-column="duration"></div>
-				${!this.readonly ? `<div class="task-grid-cell actions-cell" data-column="actions"></div>` : ''}
-			</div>
-		`);
-		const input = row.find('.quick-add-input');
-		input.on('keypress', (e) => { if (e.which === 13 && input.val().trim()) { this.saveInlineTask(input.val().trim(), parentTask); input.val(''); } });
-		return row;
-	}
-
-	saveInlineTask(subject, parentTask) {
-		frappe.call({
-			method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.create_inline_task",
-			args: { project: this.projectName, subject: subject, parent_task: parentTask },
-			callback: (r) => { if (r.message && r.message.status === "success") { frappe.show_alert({ message: __("Task added: {0}", [subject]), indicator: 'green' }); this.fetchData(); } }
-		});
-	}
+	// The inline "Add root task…" / "Add subtask…" rows are gone (v1.791.0, Nikolas: "Get rid of
+	// the Add root task and Add subtask lines in the Tasks tree"). A task is added with the
+	// toolbar's Add task, a row's Actions → Add subtask, or Add from template, each a dialog
+	// that asks for the fields a bare subject could not carry.
 
 	/**
 	 * One date cell. A task with subtasks takes its dates from them (v1.787.0:
@@ -1733,7 +1699,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const rules = erpnext_enhancements.task_tree_rules;
 		const under = document.elementFromPoint(x, y);
 		const row = under && under.closest ? under.closest(".task-grid-row") : null;
-		const node = row && !row.classList.contains("quick-add-row") ? row.closest(".task-node") : null;
+		const node = row ? row.closest(".task-node") : null;
 		let plan = null;
 		if (node && $.contains(this.wrapper[0], node)) {
 			const rect = row.getBoundingClientRect();

@@ -675,6 +675,15 @@ def test_one_actions_menu_per_row():
 	assert "set_route" not in menu and "pushState" not in js
 
 
+def test_the_inline_add_rows_are_gone():
+	"""Nikolas, 2026-11-03: "Get rid of the Add root task and Add subtask lines in the Tasks tree."
+	Add task, a row's Actions → Add subtask and Add from template are the ways to add."""
+	js = _code(TREE_JS.read_text(encoding="utf-8"))
+	for gone in ("quick-add", "createQuickAddRow", "create_inline_task", "Add root task", "Add subtask..."):
+		assert gone not in js, gone
+	assert ".add-task-btn" in js and 'action === "add-subtask"' in js and ".add-template-btn" in js
+
+
 def test_the_grid_scrolls_sideways_and_the_task_column_stays():
 	css = TREE_CSS.read_text(encoding="utf-8")
 	grid = css.split(".task-grid {")[1].split("}")[0]

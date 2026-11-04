@@ -25,7 +25,8 @@
  *   6. The row menu: three actions in order; arrow keys wrap, Home/End jump, Escape and Tab close.
  *   7. What the file promises the browser: SortableJS refused on every move, a canceled native
  *      drag (dragend without drop) saves nothing, the sort lives in localStorage inside try/catch
- *      and never in frappe's user_settings, no route change and no history write.
+ *      and never in frappe's user_settings, no route change and no history write, and the inline
+ *      "Add root task…" / "Add subtask…" rows gone (Nikolas, 2026-11-03).
  */
 
 const fs = require("fs");
@@ -217,6 +218,8 @@ check(!/pushState/.test(code) && !/frappe\.set_route/.test(code) && !/frappe\.ne
 check(/aria-haspopup="menu"/.test(code) && /role="menuitem"/.test(code) && /aria-expanded/.test(code), "the row menu is a real menu for the keyboard");
 check(!/add-subtask-btn/.test(code) && !/move-task-btn/.test(code) && !/delete-task-btn/.test(code), "the three icon buttons are gone");
 check(/Nest under \{0\}/.test(code), "the pill says Nest under <task>");
+check(!/quick-add/.test(code) && !/createQuickAddRow/.test(code) && !/create_inline_task/.test(code), "the inline Add root task / Add subtask rows are gone (Nikolas, 2026-11-03)");
+check(/\.add-task-btn/.test(code) && /action === "add-subtask"/.test(code) && /\.add-template-btn/.test(code), "the three ways left to add: Add task, a row's Actions → Add subtask, Add from template");
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

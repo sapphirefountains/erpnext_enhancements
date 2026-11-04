@@ -69,6 +69,14 @@ them via drag and drop."
   scrolled, and the nest pill lives in that sticky cell so it is on screen however far the grid is
   scrolled. The Add task / Add from template / Select toolbar and the filter row wrap at phone width.
 
+### Removed
+- **The inline "Add root task…" and "Add subtask…" rows.** Nikolas, 2026-11-03: "Get rid of the Add
+  root task and Add subtask lines in the Tasks tree." The row under the header and the placeholder row
+  inside every open parent are gone, with the `create_inline_task` call they made; a task is added with
+  the toolbar's *Add task*, a row's *Actions → Add subtask*, or *Add from template*, each a dialog that
+  asks for what a bare subject could not carry. The server endpoint stays (the feedback task writer
+  uses it).
+
 ### Changed
 - `tests/test_task_parent_dates.py` pins the v1.791.0 drop (SortableJS refused on every move, a nest
   saved as one row with no position) in place of the v1.787.0 handler; `tests/test_scope_tasks.py`

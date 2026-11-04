@@ -250,6 +250,10 @@ passed.
   (`taskTreeSort_<user>`, try/catch, never `user_settings`). While a sort is on there is no
   SortableJS instance at all: the handles dim with a tooltip and the hint line says how to get the
   manual order back, so a sorted order can never be saved as the manual one.
+- **The inline "Add root task…" / "Add subtask…" rows are gone** (Nikolas, 2026-11-03: "Get rid of the
+  Add root task and Add subtask lines in the Tasks tree"): *Add task*, a row's *Actions → Add subtask*
+  and *Add from template* are the ways to add. `create_inline_task` stays on the server for the
+  feedback task writer.
 - **Sideways scroll**: `.task-grid` is `overflow-x: auto`, header and body keep a 960 px floor, the
   Task cell is `position: sticky` (it inherits the row's explicit background so it covers what scrolls
   under it; the nest wash is opaque through `color-mix` for the same reason) and the nest pill lives
