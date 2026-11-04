@@ -287,13 +287,23 @@ def _add_sidebar_items():
 # six people).
 _PROMOTED_SIDEBAR_ITEMS = {
 	"Buying": (("Workspace", "Buying"), [("DocType", "Purchase Order"), ("DocType", "Material Request")]),
+	# Nik, 2026-11-03 (the sidebar rail round): the Opportunity Kanban to the Customer list and back
+	# is the busiest two-step on the Desk in the 90 days to that day (47 + 42 hops, eleven of them a
+	# bounce inside a minute, four people), and Customer sat seventh in CRM, under Guided Entry and
+	# the Opportunity Board. It goes right under the Kanban, which the add step above has already
+	# put at the top; the anchor is the Kanban's identity (a URL row keys on its url).
+	"CRM": (("URL", "/desk/opportunity/view/kanban/Opportunity"), [("DocType", "Customer")]),
 }
 
 # (sidebar name, [(row, ERPNext's label, ours), ...]). CRM's "Home" is its dashboard, and once the
 # module opens on the Opportunity Kanban a second row called Home is wrong. Buying already calls its
-# own dashboard row "Dashboard".
+# own dashboard row "Dashboard". Customer reads "Accounts" everywhere else on this site (the doctype
+# is relabelled; the dock row says "Accounts (Customers)"), so its CRM row says so too (v1.793.0).
 _RELABELED_SIDEBAR_ITEMS = {
-	"CRM": [(("Dashboard", "CRM"), "Home", "Dashboard")],
+	"CRM": [
+		(("Dashboard", "CRM"), "Home", "Dashboard"),
+		(("DocType", "Customer"), "Customer", "Accounts"),
+	],
 }
 
 # (sidebar name, [row, ...]) rows that go FIRST, ahead of everything the sidebar had, in this

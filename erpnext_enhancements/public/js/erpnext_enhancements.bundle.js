@@ -130,6 +130,13 @@ import "./global_enhancements/sidebar_collapse_heal.js";
 // sidebar across tabs, the record sidebar and the Training rail on every form and page), kept in
 // this browser. tests/test_sidebar_memory.py + scripts/test_sidebar_memory.js hold it.
 import "./global_enhancements/sidebar_memory.js";
+// v1.793.0 (Nik 2026-11-03, Mock C of the sidebar round): the module sidebar folds to frappe's own
+// 48px icon rail beside the pinned Dock instead of hiding (one wrapped method,
+// Sidebar.hides_when_collapsed), with the dock tiles' tooltip on each row, a pin, the rows this
+// person uses most first, count badges on Task / Pending Confirmations / My Work, a Recent row, and
+// a bottom bar on phones. After sidebar_memory.js: it reads that file's per-user copy of the
+// collapse key. tests/test_sidebar_rail.py + scripts/test_sidebar_rail.js hold it.
+import "./global_enhancements/sidebar_rail.js";
 // erpnext_enhancements.workspace_blocks.onWorkspaceReturn: reloads a workspace's data
 // blocks when you come back to it. v16's Workspace.show() returns early on the
 // workspace already shown, so a return from a form re-runs no block script, and every
