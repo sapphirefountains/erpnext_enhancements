@@ -654,7 +654,7 @@ doc_events = {
 		"on_update": [
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
-			# v1.784.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
+			# v1.787.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
 			# (earliest start, latest end), up every ancestor. After this save the parent and, after
 			# a move, the previous parent are recomputed from the database. Written with
 			# db.set_value, so no Task hook fires again. Never raises. See
@@ -701,7 +701,7 @@ doc_events = {
 		# validate: frappe runs it before the controller's validate, on insert and save. Widens only,
 		# never raises. See project_enhancements/project_window.py.
 		"before_validate": [
-			# v1.784.0: parent dates follow the subtasks. FIRST, before the project window: a parent
+			# v1.787.0: parent dates follow the subtasks. FIRST, before the project window: a parent
 			# re-derives its own dates from its subtasks, then the parent and every ancestor are
 			# widened to take in this task's dates, so ERPNext's validate_parent_expected_end_date
 			# (16.52.1, which refuses a child ending after its parent the moment parent_task or
@@ -715,7 +715,7 @@ doc_events = {
 			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
-		# v1.784.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
+		# v1.787.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
 		# not on_trash: the row is gone by then, so the recompute reads the database as it will stay.
 		"after_delete": "erpnext_enhancements.task_enhancements.parent_dates.after_task_delete",
 		"validate": [

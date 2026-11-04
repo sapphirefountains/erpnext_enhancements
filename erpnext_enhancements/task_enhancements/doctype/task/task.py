@@ -89,7 +89,7 @@ class Task(BaseTask):
         the cascade succeeds regardless of the editing user's rights on the parent).
         This guarantees parents of sub-tasks are valid tree groups.
 
-        ``before_validate``, not ``before_save`` (v1.784.0). frappe 16.53.0's
+        ``before_validate``, not ``before_save`` (v1.787.0). frappe 16.53.0's
         ``Document.run_before_save_methods`` runs ``before_validate``, then ``validate``,
         then ``before_save``, and ERPNext's ``Task.validate`` (16.52.1) calls
         ``validate_parent_is_group``, which throws ``ParentIsGroupError`` when the parent's

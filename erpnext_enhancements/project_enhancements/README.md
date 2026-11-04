@@ -162,7 +162,7 @@ a role that may not create or delete Tasks is refused by Frappe itself.
 cached it kept redefining `TaskTreeManager` with the stale copy over the bundle's fresh one. It now
 requires the raw path only when the bundle lacks the class.
 
-### Drag any task under another; a parent's dates follow its subtasks (v1.784.0)
+### Drag any task under another; a parent's dates follow its subtasks (v1.787.0)
 
 Nikolas, 2026-11-03, from the meeting with James and Clegg: "Make any task a parent by simple drag and
 drop over on the Tasks Tree view. So for the parent child tasks, make rigid start and end dates based

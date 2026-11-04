@@ -3792,7 +3792,7 @@ jobs:
       - name: Scope tab task actions (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_scope_tasks.py -q
       # Drag-to-parent on the Tasks Tree + parent dates that follow the subtasks (Nikolas, 2026-11-03;
-      # v1.784.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
+      # v1.787.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
       # validate_parent_is_group has thrown (the before_save bug that refused every drop onto a leaf),
       # the parent widened after validate_parent_expected_end_date has read it (hook order), a hook or
       # the patch raising out of a save or a migrate, a parent's date wiped by an undated subtask, a

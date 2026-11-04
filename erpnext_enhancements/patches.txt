@@ -1600,7 +1600,7 @@ erpnext_enhancements.patches.remove_contracts_tabs
 # them; Employee-Contractor Agreement and the NDA set enabled = 0 (hidden from the pickers, issued contracts
 # untouched). Keys, record names and the SF-RA- series stay. One savepoint per template, logs, never raises.
 erpnext_enhancements.patches.rename_agreement_templates
-# Parent task dates (v1.784.0, Nikolas 2026-11-03): a task with subtasks takes the earliest subtask start and the latest
+# Parent task dates (v1.787.0, Nikolas 2026-11-03): a task with subtasks takes the earliest subtask start and the latest
 # subtask end (task_enhancements/parent_dates.py keeps it from now on). One pass over every existing parent, bottom-up,
 # writing only the date columns that differ (set_value, modified untouched). Logs, never raises, safe twice.
 erpnext_enhancements.patches.sync_parent_task_dates

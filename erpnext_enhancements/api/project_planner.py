@@ -1184,7 +1184,7 @@ def _move(doc, start, end):
 		return
 	if new[1] < new[0]:
 		frappe.throw(_("The end date is before the start date."))
-	# v1.784.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py);
+	# v1.787.0: a task with subtasks takes its dates from them (task_enhancements/parent_dates.py);
 	# the Task hooks would re-derive them on save and the move would silently not stick. The planner
 	# lists leaf tasks (is_group = 0) and skips group rows on copy, so this is a backstop for a task
 	# that gained subtasks since the grid was drawn.
@@ -2275,7 +2275,7 @@ def erpnext_date_problems(doc, new=False, drafts=None):
 	* ERPNext reads the project's window and the parent's end through ``frappe.db.get_value``, and
 	  :func:`_as_published` answers those two reads as Publish will meet them: the window widened by the
 	  Task ``before_validate`` hooks (``project_window.widened_window``) and the parent's end widened by
-	  the same hooks to take in the copy's own end (v1.784.0, ``parent_dates``), so it never warns about
+	  the same hooks to take in the copy's own end (v1.787.0, ``parent_dates``), so it never warns about
 	  what those hooks fix;
 	* the copy is never saved, and what the check says through ``msgprint`` (a reschedule's warning
 	  included) is taken off the response and kept as a warning too.
@@ -2284,7 +2284,7 @@ def erpnext_date_problems(doc, new=False, drafts=None):
 	becomes the sentence; anything else is logged and gives no warning, so the check never blocks a
 	draft. A controller without ``validate_dates`` checks nothing.
 
-	``drafts`` (v1.743.0 round 2): a dict a batch shares between its checks. Since v1.784.0 nothing
+	``drafts`` (v1.743.0 round 2): a dict a batch shares between its checks. Since v1.787.0 nothing
 	reads it (the parent's end is answered as the Task hook will widen it, whatever the parent's own
 	draft says); the parameter stays for the callers that pass it."""
 	try:
@@ -2382,7 +2382,7 @@ def _as_published(copy, drafts):
 	"""For the length of one check, answer the two reads ERPNext's date checks make as Publish will
 	meet them: the copy's project window as the Task ``before_validate`` hook will have widened it, and
 	its parent task's end as it will be when the copy is saved (:func:`_parent_end_widened`: never
-	earlier than the copy's own end, since v1.784.0's Task hook widens it first). Every other read
+	earlier than the copy's own end, since v1.787.0's Task hook widens it first). Every other read
 	goes through.
 
 	Done by shadowing ``get_value`` on the request's own database object, ``frappe.local.db`` (not
@@ -2428,7 +2428,7 @@ _WINDOW_FIELDS = project_window.WINDOW_FIELDS
 
 def _parent_end_widened(copy, stored_end):
 	"""The end ``copy``'s parent will have when ``copy`` is saved at Publish: its stored end, or the
-	copy's own end where that is later. Since v1.784.0 a parent's dates follow its subtasks
+	copy's own end where that is later. Since v1.787.0 a parent's dates follow its subtasks
 	(``task_enhancements/parent_dates.py``): the Task ``before_validate`` hook widens the parent and
 	every ancestor to take in the dates the save carries, before ERPNext's
 	``validate_parent_expected_end_date`` reads the parent, so that check cannot refuse a Publish. The
