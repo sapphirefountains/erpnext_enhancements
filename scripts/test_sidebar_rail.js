@@ -399,7 +399,8 @@ async function asyncChecks() {
 	// ------------------------------------------------------------ 13. a Recent href is a Desk path
 	{
 		const api = makeWorld().api;
-		check(api.safe_route("/desk/task/TASK-0001") === "/desk/task/TASK-0001" && api.safe_route("/app/task") === "/app/task", "a Desk path is kept");
+		check(api.safe_route("/desk/task/TASK-0001") === "/desk/task/TASK-0001" && api.safe_route("/desk") === "/desk", "a Desk path is kept");
+		check(api.safe_route("/app/task") === null, "/app is not this Desk (the desk-links guard forbids a hard-coded /app path)");
 		check(api.safe_route("javascript:alert(1)") === null && api.safe_route("https://example.com/desk/x") === null && api.safe_route("//evil") === null, "anything else is dropped");
 		check(api.safe_route("/kiosk") === null && api.safe_route(null) === null && api.safe_route("/deskx") === null, "a path outside the Desk is dropped too");
 	}

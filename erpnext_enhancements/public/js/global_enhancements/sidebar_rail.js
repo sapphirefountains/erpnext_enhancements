@@ -208,7 +208,8 @@
 	// A Recent entry's href comes back out of localStorage, so only a Desk path is ever drawn.
 	function safe_route(route) {
 		if (typeof route !== "string") return null;
-		return route === "/desk" || route === "/app" || route.startsWith("/desk/") || route.startsWith("/app/") ? route : null;
+		// The Desk here is /desk (the repo's desk-links guard forbids a hard-coded /app path).
+		return route === "/desk" || route.startsWith("/desk/") ? route : null;
 	}
 
 	function is_phone() {
