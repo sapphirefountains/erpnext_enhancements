@@ -89,12 +89,13 @@
  * sat at its left. An auto margin takes a line's slack on the tabs' left: while the bar fits on one
  * line the spacer grows into the slack first (flexible lengths before auto margins), so nothing
  * moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
- * keeps no margin, so it stays beside the tabs rather than sharing the slack with them. */
+ * (the segment right after the tabs, .ppl-cal-seg; this section names only pp- classes) keeps no
+ * margin, so it stays beside the tabs rather than sharing the slack with them. */
 .pp-toolbar > .pp-seg {
 	margin-left: auto;
 }
 
-.pp-toolbar > .ppl-cal-seg {
+.pp-toolbar > .pp-seg + .pp-seg {
 	margin-left: 0;
 }
 

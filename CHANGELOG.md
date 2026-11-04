@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`.pp-toolbar > .pp-seg`, `.mp-toolbar > .mp-seg`) takes a wrapped line's slack: while the bar fits
   on one line the spacer grows into the slack first (flexible lengths resolve before auto margins), so
   nothing moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
-  keeps no margin, so it stays beside the tabs rather than sharing the slack with them; the Maintenance
+  (`.pp-toolbar > .pp-seg + .pp-seg`) keeps no margin, so it stays beside the tabs rather than sharing the slack with them; the Maintenance
   Planner's My day button is after its tabs and keeps its place the same way. The phone's compact row
   resets the margin, so nothing changes under 768px. Checked on prod (1.788.0) with the rule injected,
   in Chrome at 1280, 1470 and 1920px: the tabs ended flush with the bar's right edge on every wrapped

@@ -100,7 +100,7 @@ class TestTheTabs(unittest.TestCase):
 				self.assertIn("margin-left: auto;", rules[0])
 				self.assertIn("margin-left: 0;", rules[1])
 				self.assertLess(text.index("margin-left: auto;"), text.index("@media (max-width: 767px)"))
-		self.assertRegex(PP_CSS.read_text(encoding="utf-8"), r"\.pp-toolbar > \.ppl-cal-seg\s*\{\s*margin-left: 0;")
+		self.assertRegex(PP_CSS.read_text(encoding="utf-8"), r"\.pp-toolbar > \.pp-seg \+ \.pp-seg\s*\{\s*margin-left: 0;")
 
 	def test_the_phones_filters_and_tools_button_still_comes_last(self):
 		# init_toolbar appends it to the bar after build_shell has placed the tabs.
