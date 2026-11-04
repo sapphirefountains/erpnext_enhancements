@@ -77,8 +77,12 @@ them via drag and drop."
 
 ### Not verified
 - The new drag was exercised on prod at v1.787.0 by loading this file's source and styles into the
-  live Project form (the save a dry run, then one real drop and its undo): see the PR. The esbuild
-  bundle itself, the touch fallback on a phone, and the sticky column on Safari were not.
+  live Project form with the save made a dry run (real mouse drags and slow synthetic ones; the
+  plan and the rows that would be sent were read off the page): see the PR. A drop with the real
+  save was not run from this session (the session's sandbox refused a write to prod), so the one
+  thing not seen end to end is `move_tasks` answering the new client, whose request is the same
+  shape #1418 sends. The esbuild bundle itself, the touch fallback on a phone, and the sticky
+  column on Safari were not exercised either.
 
 ## [1.788.0] - 2026-11-03
 
