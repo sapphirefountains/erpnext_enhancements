@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.792.0] - 2026-11-03
+
+### Changed
+- **The planners' view tabs stay at the toolbar's right end when the bar wraps.** v1.788.0 put the
+  Lookahead, Gantt, Crew, Calendar and Overview tabs last in the bar, after the tools, so they sit at its
+  right end, and they do on a wide window. On a laptop-width window (about 1470px) the toolbar's
+  `flex-wrap` moves them onto a second line, and a wrapped line has no spacer, so there they sat at the
+  LEFT, under ‹ Today › (seen on prod: row 1 = Simple ‹ Today › the range, search, the three filters, the
+  chips, Add, More, ?, ↻; row 2 = the tabs, left-aligned). An auto left margin on the tab segment
+  (`.pp-toolbar > .pp-seg`, `.mp-toolbar > .mp-seg`) takes a wrapped line's slack: while the bar fits
+  on one line the spacer grows into the slack first (flexible lengths resolve before auto margins), so
+  nothing moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
+  keeps no margin, so it stays beside the tabs rather than sharing the slack with them; the Maintenance
+  Planner's My day button is after its tabs and keeps its place the same way. The phone's compact row
+  resets the margin, so nothing changes under 768px. Checked on prod (1.788.0) with the rule injected,
+  in Chrome at 1280, 1470 and 1920px: the tabs ended flush with the bar's right edge on every wrapped
+  line (at 1280 the chips, Add, More, ? and ↻ share that line with them; at 1470 Add, More, ? and ↻ do;
+  with the Calendar tab's Week/Month on screen and both alert chips the bar wraps even at 1920, and the
+  tabs sit right there too), and the Maintenance Planner, which wraps at 1280 and fits at 1470 and
+  1920, did the same. CSS only; the DOM order, the tablist and Back/Forward are untouched
+  (`tests/test_planner_six_picks.py` pins the two rules and the phone reset).
+
 ## [1.788.0] - 2026-11-03
 
 ### Added

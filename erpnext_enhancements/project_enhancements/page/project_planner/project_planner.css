@@ -84,6 +84,20 @@
 	overflow: hidden;
 }
 
+/* And they stay there when the bar wraps (v1.792.0). On a laptop-width window (about 1470px) the
+ * toolbar's flex-wrap puts the tabs on a second line, and a wrapped line has no spacer, so the tabs
+ * sat at its left. An auto margin takes a line's slack on the tabs' left: while the bar fits on one
+ * line the spacer grows into the slack first (flexible lengths before auto margins), so nothing
+ * moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
+ * keeps no margin, so it stays beside the tabs rather than sharing the slack with them. */
+.pp-toolbar > .pp-seg {
+	margin-left: auto;
+}
+
+.pp-toolbar > .ppl-cal-seg {
+	margin-left: 0;
+}
+
 .pp-seg button {
 	border: none;
 	background: var(--sf-surface);
@@ -1751,10 +1765,12 @@ body.pp-drag-active * {
 		align-items: center;
 	}
 
-	/* Five views on a narrow screen: the switcher scrolls sideways rather than wrapping. */
-	.pp-seg {
+	/* Five views on a narrow screen: the switcher scrolls sideways rather than wrapping. It keeps
+	 * its place in the compact row (no auto margin, v1.792.0). */
+	.pp-toolbar > .pp-seg {
 		max-width: 100%;
 		overflow-x: auto;
+		margin-left: 0;
 	}
 
 	.pp-seg button {
