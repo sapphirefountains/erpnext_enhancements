@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.793.0] - 2026-11-03
+
+### Added
+- **The Desk module sidebar folds to an icon rail beside the dock, the rows you use first (Mock C).**
+  Nikolas, 2026-11-03: "make it useful and adaptive ... visible but not taking up large screen real
+  estate ... just the icon being visible and then when you hover over the icon it displays the name".
+  He picked, from the canvas at `claude.ai/artifact/QUt39tdosD4nAyJuogtfbW`, the icon rail with hover
+  labels and a pin (A) plus the adaptive extras (C): the rows a person opens most first, count
+  badges, a Recent list, the rail by default, and a phone bottom bar. The design rows and the
+  research are in the ClaudeBrain decision `2026-11-03-desk-sidebar-rail`.
+  - **Why there was no rail.** frappe 16.53.0 already draws a 48px rail (`sidebar.scss`,
+    `.body-sidebar-container:not(.expanded)`: the glyphs stay, the words fold, `label_rail_rows`
+    names each row for assistive tech) and folds it with the panel edge, the arrow at its foot and
+    Ctrl+/. One method stopped it here: `Sidebar.hides_when_collapsed()` (`sidebar.js` 721) answers
+    `dock.is_pinned`, every user on this site has the dock pinned, and `apply_expanded_state` then
+    adds `.sidebar-hidden` (`dock.scss` 385: width 0, inert). `global_enhancements/sidebar_rail.js`
+    wraps that one method to answer false on a desktop; a phone keeps frappe's drawer. A frappe
+    without the method is left alone, and the rail's look is frappe's own CSS, so it moves with
+    frappe rather than against it.
+  - **Hover labels** are the dock tiles' own tooltip (`frappe.ui.Tooltip`, side right,
+    `es-tooltip--plain`), attached to every row while the panel is a rail and destroyed when it is
+    not; the `title` frappe sets on each rail row is removed so the browser does not draw a second.
+  - **A pin** at the top of the standard band folds and unfolds the panel through frappe's own
+    `open()` / `close()`, so the choice lands in `desk-sidebar-collapsed` and, through
+    `sidebar_memory.js` (v1.717.0), in this person's own copy. `tests/test_frappe_16_50_desk_compat.py`
+    has forbidden every file of ours from calling those since the v1.574.2 incident, because a
+    collapse used to mean a hidden sidebar and a lost Help menu; this file is now named there as the
+    one allowance, with the reason, and it still may not touch `.sidebar-toggle-btn`.
+  - **Rail by default, once per browser.** The first time a person's browser loads this release
+    (`ee-rail-intro-v1@<user>`, so once more on a new browser or a cleared profile, since the flag
+    is localStorage) the panel starts folded whatever frappe's key says: frappe writes `0` into
+    that key on every `open()`, including the one every dock click used to make, so an existing
+    `0` was never a choice. After that their own toggles are the only thing that moves it.
+  - **Used most first.** The module's top-level rows are redrawn with the ones this person opens
+    most first (at most four, each with at least three visits), then a hairline, then the rest in
+    frappe's order; groups and their children never move and nothing is removed. The counts are
+    this person's own 90 days of `tabRoute History` (`api/sidebar_rail.py`, seeded once per browser
+    day) plus a client tally on every route change, matched to a row by what it opens
+    (`route_key`: a Workspace is `Workspaces/<name>`, a DocType `List/<name>` and every view under
+    it, a Report Builder report `List/<ref>/Report/<name>`, a URL row through `frappe.router.routes`),
+    never its label. The module's landing page is unaffected: `module_landing_route` reads the boot
+    order. "Put the rows I use first" / "Keep the standard order instead" at the foot of the Recent
+    list is each person's own switch. For Clegg in Projects that is Home (291), Project Planner (37),
+    Task (16) and Timesheet (6) ahead of Reports and Setup.
+  - **Badges on the icons**, because frappe folds `.sidebar-item-suffix` to width 0 in the rail:
+    Task shows the open tasks assigned to you (red when one is past its expected end), Pending
+    Confirmations the AI actions still Pending, My Work its own count (through
+    `erpnext_enhancements.my_work.refresh_count`; expanded, its suffix shows and the badge hides).
+    Read with My Work's cadence: on load, then at most once a minute on navigation, a gap that holds
+    whether or not the day's seed succeeded; a failed read shows nothing. The endpoint is a read-only
+    GET scoped to the session user, each count only where the person may read the doctype, and the
+    Pending Confirmations count goes through `frappe.get_list` because the doctype grants everyone
+    read `if_owner`, which `db.count` ignores. The minute poll asks for badges only (`usage=0`); the
+    90-day Route History tally runs once a day. frappe's `label_rail_rows` rewrites every aria-label
+    on each fold, so the counts are painted back after `apply_expanded_state`.
+  - **Recent.** A row after My Work opens the last six pages and records opened in this module, kept
+    per person per browser, forms included: the one thing Route History cannot tell (frappe's
+    `router_history.js` skips `Form/` routes). The popover mounts on the sidebar container, beside
+    the panel, because `.body-sidebar` clips what overhangs it and a 48px rail overhangs by design.
+  - **The phone bottom bar.** Below 768px the module's first four rows, in the used-most order and
+    with their badges, sit in a bar at the foot of the screen; a fifth slot, More, opens the drawer.
+    Built from `sidebar.sidebar_items` on every sidebar draw and re-checked on every page change,
+    so there is nothing to configure; it stays off a page that hides the sidebar (`hide_sidebar`,
+    read directly, since on a phone frappe's `page_allows_sidebar()` is always true) and off a page
+    with a bottom bar of its own (the visit wizard's Next button sits at z-index 5), hides under a
+    dialog and while an input has focus, and the page gets room under it so a list's last row is
+    never behind it. Austin opened the visit wizard 193 times in 90 days from a phone, every hop to
+    another page through the hamburger.
+  - **Two sidebar rows from the route audit** (`setup/workspace_tweaks.py`): the Customer row moves
+    up under the Opportunity Kanban in CRM, relabelled **Accounts** as the doctype is on this site
+    (Kanban to Customer list and back was the busiest two-step on the Desk: 47 + 42 hops, eleven
+    bounces inside a minute, four people, and Customer sat seventh); and the dock's **Training**
+    tile opens the Training Course list instead of the hub (33 hub-to-list hops, ten bounces),
+    through a wrapped `dock_entry_route` for that one entry, so no dock layer and nobody's own
+    arrangement changes, and the hub stays one row away in the HR sidebar.
+  - **Declined this round** (listed so they are not re-proposed): Mock B, a rail that flies out to
+    full width on hover; Alt+1 to Alt+9 row shortcuts; per-dock-profile sidebar rows; Buying opening
+    on the Purchase Order list (declined 2026-11-03 in the Desk navigation round).
+  - Tests: `scripts/test_sidebar_rail.js` runs the module against a stub of frappe 16.53's Sidebar
+    prototype (the wrapper's two answers, the once-only intro, `route_key` for every link type and
+    null for a form, `count_for` never counting a sibling prefix, `arrange` never moving a group or
+    a hidden row, the bar's rows, the badges, the Recent list, the Training landing);
+    `tests/test_sidebar_rail.py` holds the seams and runs the endpoint against a fake frappe;
+    `tests/test_workspace_tweaks.py` carries the new CRM order; both in CI. Nothing was exercised in
+    a browser: the prod checks are in the PR body.
+
 ## [1.792.0] - 2026-11-03
 
 ### Changed

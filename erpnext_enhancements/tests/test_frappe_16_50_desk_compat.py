@@ -37,6 +37,9 @@ SCSS_ENTRY = APP / "public" / "css" / "desk_addons.bundle.scss"
 DESK_CSS = APP / "public" / "css" / "desk_enhancements.bundle.css"
 JS_ENTRY = PUBLIC_JS / "erpnext_enhancements.bundle.js"
 HEAL = PUBLIC_JS / "global_enhancements" / "sidebar_collapse_heal.js"
+# The one file allowed to fold the DESK sidebar on purpose (v1.793.0): see
+# TestNothingDrivesTheDeskSidebarToggle.test_the_rail_is_the_one_allowance.
+RAIL = PUBLIC_JS / "global_enhancements" / "sidebar_rail.js"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 # Exactly the line frappe v16.36.1 had at desk.bundle.scss:1. The path still exists at
@@ -194,6 +197,8 @@ class TestNothingDrivesTheDeskSidebarToggle(unittest.TestCase):
         for path in desk_sources():
             if path.suffix not in (".js", ".html"):
                 continue
+            if path == RAIL:
+                continue  # the one allowance, held by test_the_rail_is_the_one_allowance below
             for number, line in enumerate(strip_comments(read(path)).splitlines(), start=1):
                 if self.DRIVES_TOGGLE.search(line):
                     offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}: {line.strip()}")
@@ -208,6 +213,18 @@ class TestNothingDrivesTheDeskSidebarToggle(unittest.TestCase):
         self.assertTrue(HEAL.is_file())
         self.assertIn('import "./global_enhancements/sidebar_collapse_heal.js";', read(JS_ENTRY))
         self.assertIn("node scripts/test_sidebar_collapse_heal.js", read(CI))
+
+    def test_the_rail_is_the_one_allowance(self):
+        """Since v1.793.0 a collapse beside the pinned Dock is frappe's 48px icon rail, not a hidden
+        sidebar: sidebar_rail.js wraps Sidebar.hides_when_collapsed to say so, and its pin calls
+        frappe's own open()/close() so the choice is saved the way frappe saves it (and, through
+        sidebar_memory.js, per person). The premise of the rule above, that folding means losing
+        the sidebar and the Help menu, no longer holds for that one file. It still may not touch
+        the page-head toggle, which would fold the sidebar on every form as the deleted script did."""
+        src = strip_comments(read(RAIL))
+        self.assertIn("proto.hides_when_collapsed = function", src)
+        self.assertNotIn("sidebar-toggle", src)
+        self.assertNotRegex(src, r"\.toggle_width\s*\(")
 
 
 class TestDeskTileNamesOutrankFrappe(unittest.TestCase):
