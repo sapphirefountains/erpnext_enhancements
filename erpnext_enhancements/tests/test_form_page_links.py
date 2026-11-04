@@ -110,6 +110,18 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn("planned.includes(frm.doc.project_type)", code)
 		self.assertIn('const closed = ["Completed", "Canceled", "Cancelled"];', code)
 		self.assertIn("closed.includes(frm.doc.status)", code)
+		# v1.795.0: a Completed job keeps the button for the managers who may move its done work onto old
+		# dates (planner_history.BACKDATE_ROLES, the same three roles); a Canceled one never has it.
+		self.assertIn(
+			'const history = frm.doc.status === "Completed" && frappe.user.has_role(["System Manager", "Projects Manager", "Maintenance Supervisor"]);',
+			code,
+		)
+		self.assertIn("(closed.includes(frm.doc.status) && !history)", code)
+		history_api = (APP / "api" / "planner_history.py").read_text(encoding="utf-8")
+		roles = re.search(r"BACKDATE_ROLES = frozenset\(\{([^}]*)\}\)", history_api).group(1)
+		self.assertEqual(
+			sorted(re.findall(r'"([^"]+)"', roles)), ["Maintenance Supervisor", "Projects Manager", "System Manager"]
+		)
 
 	def test_project_script_is_loaded_and_declares_nothing_at_the_top_level(self):
 		"""doctype_js concatenates every Project script into one: a top-level const or function

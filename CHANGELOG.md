@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.795.0] - 2026-11-04
+
+### Added
+- **Planners: managers can move done work onto old dates, as a historical record.** Nik, 2026-11-04:
+  "In the Maintenance Planner and Project Planner and such I need to be able to move previously done
+  tasks and such to old dates for historical reasons." He picked every place offered and the
+  recommended answer to the rest: the Project Planner's Gantt, its Calendar and Crew grids, and the
+  Maintenance Planner's visits; all of a task's dates moving together; Projects Managers, Maintenance
+  Supervisors and System Managers only; and an automatic note on the record. New module
+  `api/planner_history.py`.
+  - **What stopped it (v1.794.0, erpnext 16.52.1).** The engine's `read_tasks` leaves finished tasks and
+    closed projects out, so the grids never drew a Completed task. The Gantt drew them with
+    `movable=False`. The Maintenance Planner's `_edit_visit` refused any day before today ("Pick today or
+    a later day.") and any started visit, `_refuse_finished` any visit in review or submitted, and
+    `move_fountain_move` any past day. ERPNext's own refusal of a Task outside its Project's window
+    (`validate_parent_project_dates`) was not a blocker: `project_window.before_task_validate` (v1.742.0)
+    already widens the window first on every Task save.
+  - **Project Planner.** A Completed task a manager may move carries `backdate`. On the **Gantt** its bar
+    drags and stretches; a done task with no dates (4,529 of 5,854 done leaf tasks on production) sits in
+    Not scheduled and is dated from its menu, **Move done work…**, which works on every view. A done
+    task's crew is now who it was assigned to, closed assignments included (ERPNext closes them on
+    completion), and a **Completed job's chart shows every task**, whatever the D6 "phases and crew only"
+    rule: the 565 finished jobs predate the phase templates, so the rule would have hidden nearly all of
+    their history. The Project form's **Open in Planner** button now shows on a Completed job for those
+    three roles, which is how a finished job's Gantt is reached. On the **Calendar and Crew** grids,
+    **Display ▸ Show done work** (remembered in this browser) asks `get_planner(done=1)`, which adds the
+    range's done tasks as faded cards with a Done chip and puts them on their crew's days in the Crew
+    view as hour-less bookings; the engine's capacity, bookings and conflicts are computed exactly as
+    without it, and the done cards are added last, after the drafts, notes and display rule.
+  - **Maintenance Planner.** A manager drags a submitted, in-review or started visit to another day up to
+    today, or picks it from the visit's menu (**Move to a past day…**): its day of visit, scheduled day and
+    clock-in and clock-out move together, and nothing else about it changes. An unstarted draft dropped on
+    a day before today asks first, then is recorded as done that day (its day of visit is set, so the Visit
+    Wizard treats it as a backfill and the kiosk's clock autofill leaves it alone). A Fountain Move job may
+    go on a past day after a yes, through its usual write.
+  - **History, not schedule.** The moves go to their own endpoints (`move_done_task`, `move_done_visit`),
+    never `save_task` or `move_visit`: no conflict check and no reason, no "Notify crew?" and no notice,
+    never drafted (Draft mode says so in the toast), and nothing that follows moves, neither the planner's
+    auto-shift nor ERPNext's own `Task.reschedule_dependent_tasks`, which `flags.ignore_reschedule` turns
+    off for the save. A done card stays not `movable`, so every schedule gesture (crew drops, Tap to move,
+    multi-select, the side panel, Split, Copy week) stays locked for it. The new last day is today or
+    earlier.
+  - **All the dates, kept valid for ERPNext.** A task's actual start moves with its first day, its actual
+    end and Completed On with its last; a task that had no dates is measured from its own done dates; a
+    done task with no Completed On is given the new last day. Completed On is never put after today
+    (`validate_completed_on` refuses it) and the actual start never after the actual end
+    (`validate_from_to_dates`).
+  - **The note and Undo.** Every move adds a timeline comment naming who moved it, on which planner, and
+    each date from what to what. Undo puts back exactly the dates the record had, blanks included
+    (`restore_done_task` / `restore_done_visit`), so a done task dated out of Not scheduled has none again,
+    which `save_task` cannot do (it reads a blank date as "unchanged").
+  - **A submitted visit is written to its row, not saved.** Its date fields are not `allow_on_submit`;
+    making them so would let anyone with submit edit a finished visit's dates on the form, and an
+    in-review save runs the workflow. So after the role and read checks, `frappe.db.set_value` writes the
+    dates and its Calendar Sync event is re-synced as `on_update_after_submit` would. The Timesheet, Stock
+    Entry and invoice a submitted visit already made stay as they are, and its contract's next visit date
+    is not rolled again. An open draft is saved normally, under the caller's permissions.
+  - Tests: `tests/test_planner_history.py` (its own CI step) runs the date rules, the endpoints against
+    stubbed planner modules, the wiring and the pages' pure rules under node. Five existing suites pinned
+    exact lines this touched (`get_planner`'s argument list, the pages' `drop`/`load` lines, the tour
+    block last); they are updated, not loosened.
+
 ## [1.794.0] - 2026-11-03
 
 ### Changed

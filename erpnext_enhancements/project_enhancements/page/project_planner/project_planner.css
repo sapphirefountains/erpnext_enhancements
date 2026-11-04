@@ -764,6 +764,23 @@
 	font-style: italic;
 }
 
+/* v1.795.0: done work (Display ▸ Show done work): faded like the Gantt's finished bars, with a Done chip.
+   A manager may drag it to an earlier day (pp-movable), so it fades less while it is picked up. */
+.pp-card.pp-done {
+	opacity: 0.6;
+}
+
+.pp-card.pp-done.pp-dragging,
+.pp-card.pp-done:hover,
+.pp-card.pp-done:focus-visible {
+	opacity: 0.85;
+}
+
+.pp-chip.pp-done-chip {
+	background: color-mix(in srgb, var(--sf-green) 16%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-green) 55%, var(--sf-text-strong));
+}
+
 /* A pencilled (tentative) task: dashed and hatched, its chip says "Pencil". */
 .pp-card.pp-tentative {
 	border-top-style: dashed;

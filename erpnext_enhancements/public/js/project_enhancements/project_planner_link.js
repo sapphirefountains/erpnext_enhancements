@@ -22,6 +22,10 @@
  * to) that is not Completed or Canceled. And only for those whose roles open the page:
  * frappe.boot.page_info lists the Pages a person's roles reach.
  *
+ * v1.795.0 (Nik, 2026-11-04): a Completed job gets the button too, for the managers who may move done
+ * work onto old dates (api/planner_history.py BACKDATE_ROLES): its Gantt is where they correct when the
+ * work was done. A Canceled job never does.
+ *
  * Loaded through doctype_js["Project"], which concatenates every Project script into one: so
  * nothing here is declared at the top level.
  */
@@ -32,7 +36,8 @@ frappe.ui.form.on("Project", {
 		if (frm.is_new() || !pages["project-planner"]) return;
 		// "Canceled" is this site's spelling (a Property Setter); "Cancelled" is ERPNext's own.
 		const closed = ["Completed", "Canceled", "Cancelled"];
-		if (!planned.includes(frm.doc.project_type) || closed.includes(frm.doc.status)) return;
+		const history = frm.doc.status === "Completed" && frappe.user.has_role(["System Manager", "Projects Manager", "Maintenance Supervisor"]);
+		if (!planned.includes(frm.doc.project_type) || (closed.includes(frm.doc.status) && !history)) return;
 		// No group: a grouped button is a menu entry, a bare one is a button in the page head.
 		frm.add_custom_button(__("Open in Planner"), () =>
 			frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name })
