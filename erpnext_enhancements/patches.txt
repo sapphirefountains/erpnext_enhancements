@@ -1590,3 +1590,13 @@ erpnext_enhancements.patches.seed_design_project_template
 # of raising. The Service Call Rate table is NOT seeded: rates are entered on prod, never in the repo.
 erpnext_enhancements.patches.seed_service_call_project_template
 erpnext_enhancements.patches.seed_small_repair_template
+# Contracts (v1.783.0, Nikolas 2026-11-03). The Contracts tab leaves Project and Customer: its four Custom Fields
+# (two per form, created by add_project_contracts_tab and add_customer_contracts_tab, never in the fixtures) are
+# deleted one by one; a field that will not delete is logged and the rest still go. The Contract button on the
+# Scope tab and in the Customer page head takes over. Cannot raise.
+erpnext_enhancements.patches.remove_contracts_tabs
+# Contract Template titles on existing sites (seed_contract_templates is insert-only): Architect Agreement ->
+# Design Agreement, Rental Agreement -> Events Agreement, the live bodies' heading and defining sentences with
+# them; Employee-Contractor Agreement and the NDA set enabled = 0 (hidden from the pickers, issued contracts
+# untouched). Keys, record names and the SF-RA- series stay. One savepoint per template, logs, never raises.
+erpnext_enhancements.patches.rename_agreement_templates

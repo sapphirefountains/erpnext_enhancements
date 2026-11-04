@@ -112,7 +112,8 @@
 	 *
 	 * `billing_notice_context` resolves both halves server-side in one call —
 	 * who it goes to (the Project's or the Opportunity's Billing Email, else the
-	 * configured Billing route) and what to invoice (First Invoice Percentage,
+	 * configured Billing route) and what to invoice (Down Payment Percentage — the field is still
+	 * custom_first_invoice_percentage; "First Invoice Percentage" until v1.783.0 —
 	 * and the money it works out to against the project amount). Billing used to
 	 * get a note that named neither, and had to go and ask.
 	 */
@@ -136,18 +137,18 @@
 				if (notice.first_invoice_percentage) {
 					if (notice.first_invoice_amount) {
 						lines.push(
-							__("First invoice: {0}% of {1} = {2}.", [
+							__("Down payment: {0}% of {1} = {2}.", [
 								notice.first_invoice_percentage,
 								format_currency(notice.project_amount),
 								format_currency(notice.first_invoice_amount),
 							])
 						);
 					} else {
-						lines.push(__("First invoice: {0}% of the project amount.", [notice.first_invoice_percentage]));
+						lines.push(__("Down payment: {0}% of the project amount.", [notice.first_invoice_percentage]));
 					}
 				} else {
 					lines.push(
-						__("First Invoice Percentage is not set on this project — confirm the amount with Sales.")
+						__("Down Payment Percentage is not set on this project — confirm the amount with Sales.")
 					);
 				}
 				new frappe.views.CommunicationComposer({

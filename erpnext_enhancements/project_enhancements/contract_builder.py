@@ -176,7 +176,9 @@ SIGN_ROLES = {"System Manager", "Contract Manager"}
 CONTRACT_MANAGER = "Contract Manager"
 
 #: What each agreement calls the other side, for the walk's wording ("With the subcontractor",
-#: "the architect's signature"). Anything not listed is a client agreement.
+#: "the architect's signature"). Anything not listed is a client agreement. Keyed on template_key,
+#: so the v1.783.0 titles (Design Agreement, Events Agreement) change nothing here: the other side
+#: of a Design Agreement is still the architect.
 PARTY_NOUNS = {
 	"msa": "subcontractor",
 	"sow": "subcontractor",
@@ -539,15 +541,29 @@ def agreement_sections(body):
 
 
 @frappe.whitelist()
-def get_builder_start():
-	"""The start screen: the contract types on offer and the caller's open drafts."""
+def get_contract_types():
+	"""The contract types on offer: every **enabled** Contract Template, by title.
+
+	The one list behind both pickers — the Builder's start screen and the Generate Contract
+	dialog (``record_actions.open_generate_contract``) — so a template switched off on the
+	site (``enabled = 0``: the Employee-Contractor Agreement and the NDA since v1.783.0)
+	disappears from both without a code change, and a title changed there (Design Agreement,
+	Events Agreement) is the title shown. Contracts already issued on a disabled template are
+	untouched; ``create_contract`` refuses a new one.
+	"""
 	frappe.has_permission(DOCTYPE, "create", throw=True)
-	types = frappe.get_all(
+	return frappe.get_all(
 		"Contract Template",
 		filters={"enabled": 1},
 		fields=["name", "template_key", "title", "party_type", "description", "requires_msa"],
 		order_by="title asc",
 	)
+
+
+@frappe.whitelist()
+def get_builder_start():
+	"""The start screen: the contract types on offer and the caller's open drafts."""
+	types = get_contract_types()
 	drafts = frappe.get_list(
 		DOCTYPE,
 		filters={"docstatus": 0},

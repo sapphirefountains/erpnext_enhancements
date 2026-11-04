@@ -325,7 +325,7 @@
   {
    "fieldname": "rental_agreement",
    "fieldtype": "Link",
-   "label": "Rental Agreement",
+   "label": "Events Agreement",
    "options": "Project Contract",
    "read_only": 1,
    "no_copy": 1,
