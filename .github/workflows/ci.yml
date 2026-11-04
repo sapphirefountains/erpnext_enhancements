@@ -529,6 +529,11 @@ jobs:
       # lives in three places at once (seed patch, migration, prose).
       - name: Initial-payment follow-up wiring + step rename
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
+      # Same shape, for the two 2026-11-04 hand-off steps: the seed patch is registered and
+      # insert-only, the engine and the JS agree on which step runs beside the chain, and the
+      # closeout dialog writes its answer through complete_step's notes.
+      - name: Hand-off steps 8 and 9 wiring
+        run: python -m unittest erpnext_enhancements.tests.test_handoff_sov_and_maintenance_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Pure filesystem, like the step above. A Link field whose target is a child table can be

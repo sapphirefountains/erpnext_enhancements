@@ -16,6 +16,13 @@
  *    money-dependent — so 5 and 6 (and, once 6 is done, 7) can all be
  *    actionable at once, each with its own highlight and button. Mirrors
  *    `_actionable_steps` in `process_steps.py`; keep the two in sync.
+ *  - Step 8 (Create the Schedule of Values, 2026-11-04 meeting) runs beside
+ *    the chain: actionable from the day the project exists, blocking nothing
+ *    (`PARALLEL_STEPS`, mirroring `PARALLEL_STEP_NUMBERS` server-side).
+ *  - Step 9 (Offer a Maintenance Contract, same meeting) is the closeout: its
+ *    "Mark Complete" asks whether a maintenance agreement was offered and
+ *    writes the Yes/No and a note onto the step's own `notes` through
+ *    `complete_step`, so the answer is on the record the report reads.
  *  - Overdue actionable steps glow red (matches the Sales Pipeline lights).
  *  - The "Outline Tasks" step shows a soft signal — the project's open task
  *    count — per the meeting: visibility, never a blocker.
@@ -79,22 +86,35 @@
 	const STEP_TASKS = 6;
 	const STEP_LAUNCH = 7;
 	const STEP_PAYMENT = 5;
+	const STEP_SOV = 8;
+	const STEP_MAINTENANCE_OFFER = 9;
+
+	// Steps that run beside the chain: actionable whenever Pending, blocking
+	// nothing. Mirrors PARALLEL_STEP_NUMBERS in process_steps.py.
+	const PARALLEL_STEPS = new Set([STEP_SOV]);
 
 	/**
 	 * Every Pending step whose predecessors are all resolved — not just the
 	 * single lowest-numbered one. Mirrors `_actionable_steps` in
 	 * process_steps.py: a step blocks later ones only while it is itself
 	 * Pending AND isn't STEP_PAYMENT, so 6 and 7 don't stall behind payment
-	 * while 6 still has to finish before 7 opens up.
+	 * while 6 still has to finish before 7 opens up. A PARALLEL_STEPS member
+	 * is actionable the moment it is Pending and never blocks anything.
 	 */
 	function actionable_steps(steps) {
 		const blocking_pending = new Set(
 			steps
-				.filter((s) => s.status === "Pending" && Number(s.step_number) !== STEP_PAYMENT)
+				.filter(
+					(s) =>
+						s.status === "Pending" &&
+						Number(s.step_number) !== STEP_PAYMENT &&
+						!PARALLEL_STEPS.has(Number(s.step_number))
+				)
 				.map((s) => Number(s.step_number))
 		);
 		return steps.filter((s) => {
 			if (s.status !== "Pending") return false;
+			if (PARALLEL_STEPS.has(Number(s.step_number))) return true;
 			for (const n of blocking_pending) {
 				if (n < Number(s.step_number)) return false;
 			}
@@ -318,6 +338,53 @@
 	}
 
 	/**
+	 * Step 9's completion: was a maintenance agreement offered?
+	 *
+	 * The 2026-11-04 meeting wanted the question *asked*, not a box ticked, so
+	 * the closeout step's Mark Complete is this dialog rather than the bare
+	 * call. The answer goes onto the step's own `notes` (the per-step note
+	 * field the report already shows) as "Maintenance agreement offered: Yes"
+	 * or "...: No", with whatever was typed after it — no new column.
+	 */
+	function complete_maintenance_offer(frm, step_name) {
+		const d = new frappe.ui.Dialog({
+			title: __("Offer a Maintenance Contract"),
+			fields: [
+				{
+					label: __("Was a maintenance agreement offered to the client?"),
+					fieldname: "offered",
+					fieldtype: "Select",
+					options: ["", __("Yes"), __("No")],
+					reqd: 1,
+				},
+				{
+					label: __("Notes"),
+					fieldname: "notes",
+					fieldtype: "Small Text",
+					description: __("Who was asked, what was offered, their answer — or why it was not offered."),
+				},
+			],
+			primary_action_label: __("Mark Complete"),
+			primary_action(values) {
+				const answer = values.offered === __("No") ? "No" : "Yes";
+				const note = (values.notes || "").trim();
+				const notes = `Maintenance agreement offered: ${answer}${note ? ` — ${note}` : ""}`;
+				frappe
+					.xcall("erpnext_enhancements.process_steps.complete_step", {
+						project: frm.doc.name,
+						step_name: step_name,
+						notes: notes,
+					})
+					.then(() => {
+						d.hide();
+						frm.reload_doc();
+					});
+			},
+		});
+		d.show();
+	}
+
+	/**
 	 * The buttons for one actionable step, rendered inside its own box: the
 	 * action that starts the work (where the step has one) and the one that
 	 * records it. "Mark Complete" rather than "Mark Step N Complete" — the
@@ -472,6 +539,11 @@
 		// possibly several actionable steps a click belongs to.
 		field.$wrapper.find(".ee-complete-step").on("click", function () {
 			const step_name = $(this).data("step");
+			const step = actionable.find((s) => s.name === step_name);
+			if (step && Number(step.step_number) === STEP_MAINTENANCE_OFFER) {
+				complete_maintenance_offer(frm, step_name);
+				return;
+			}
 			frappe
 				.xcall("erpnext_enhancements.process_steps.complete_step", {
 					project: frm.doc.name,

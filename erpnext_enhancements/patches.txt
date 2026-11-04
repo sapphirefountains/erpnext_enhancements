@@ -1604,3 +1604,7 @@ erpnext_enhancements.patches.rename_agreement_templates
 # subtask end (task_enhancements/parent_dates.py keeps it from now on). One pass over every existing parent, bottom-up,
 # writing only the date columns that differ (set_value, modified untouched). Logs, never raises, safe twice.
 erpnext_enhancements.patches.sync_parent_task_dates
+# Hand-off steps 8 and 9 (v1.795.0, meeting 2026-11-04): "Create the Schedule of Values" (parallel from project
+# creation, PM, 2 business days) and "Offer a Maintenance Contract" (closeout, PM, no clock). Insert-only by
+# step_number like seed_process_step_templates; in-flight projects are not back-filled. Logs, never raises.
+erpnext_enhancements.patches.seed_handoff_sov_and_maintenance_steps

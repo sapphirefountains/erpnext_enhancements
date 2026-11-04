@@ -32,6 +32,7 @@ from frappe.utils import cint, date_diff, flt, get_datetime, getdate, now_dateti
 
 from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, has_field
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
+from erpnext_enhancements.process_steps import CLOSEOUT_STEP_NUMBERS
 
 # Statuses that never appear on the board.
 TERMINAL_STATUSES = {"Lost", "Closed Lost", "Closed", "Converted"}
@@ -240,9 +241,12 @@ def _handoff_strip():
 	"""Active projects with an unfinished PRO-0204 hand-off, overdue first.
 
 	The post-won extension of the funnel: once an opportunity converts, its
-	project appears here as "Step N/total — current step" until the process
-	completes. Best-effort by design — any failure logs and returns an empty
-	rail rather than taking the whole board down.
+	project appears here as "Step N/total — current step" until the hand-off
+	is done. A project whose only Pending steps are closeout steps
+	(``CLOSEOUT_STEP_NUMBERS``: the maintenance offer, recorded when the
+	project wraps up) is left out — a build that runs for months is not a
+	hand-off in progress. Best-effort by design — any failure logs and returns
+	an empty rail rather than taking the whole board down.
 	"""
 	empty = {"projects": [], "overflow": 0}
 	try:
@@ -273,7 +277,10 @@ def _handoff_strip():
 		for parent, steps in by_parent.items():
 			if parent not in active:
 				continue
-			current = next((s for s in steps if s.status == "Pending"), None)
+			current = next(
+				(s for s in steps if s.status == "Pending" and cint(s.step_number) not in CLOSEOUT_STEP_NUMBERS),
+				None,
+			)
 			if not current:
 				continue
 			items.append(

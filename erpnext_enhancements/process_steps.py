@@ -1,8 +1,10 @@
 """The PRO-0204 "Won Opportunity Hand-Off" process engine.
 
-Drives the 7-step hand-off tracker on Projects (the ``custom_process_steps``
-child table, rows of **Project Process Step**, definition in **Process Step
-Template** records):
+Drives the hand-off tracker on Projects (the ``custom_process_steps`` child
+table, rows of **Project Process Step**, definition in **Process Step Template**
+records): the seven steps of PRO-0204 v1.0 plus the two the 2026-11-04 process
+meeting added, 8 *Create the Schedule of Values* and 9 *Offer a Maintenance
+Contract* (``patches.seed_handoff_sov_and_maintenance_steps``):
 
 * :func:`enforce_handoff_gate` (Project ``before_insert``, registered FIRST) —
   refuses to create a Project from a Closed-Won Opportunity whose hand-off
@@ -34,7 +36,12 @@ Template** records):
   and 7 can become actionable — and get notified, due-dated and escalated —
   while payment is still outstanding (2026-08-07 decision: customer payment
   can take weeks, and neither step is money-dependent). See
-  ``NON_BLOCKING_STEP_NUMBERS``.
+  ``NON_BLOCKING_STEP_NUMBERS``. Step 8 (Schedule of Values) is *parallel*:
+  actionable from the moment the project is seeded, never waiting on the chain
+  and never holding it up (``PARALLEL_STEP_NUMBERS``). Step 9 (the maintenance
+  offer) is the closeout: it opens after the launch meeting, carries no clock,
+  and the Sales Pipeline rail stops showing a project once only closeout steps
+  remain (``CLOSEOUT_STEP_NUMBERS``).
 * :func:`sync_process_steps` (Project ``before_save``, after the payment
   stamp from ``status_alerts``) — auto-completes *Payment Received*-anchored
   steps when the Payment Received box is ticked, stamps
@@ -114,6 +121,37 @@ PAYMENT_STEP_NUMBER = 5
 #: while still Pending themselves. Currently just the payment step; see above.
 NON_BLOCKING_STEP_NUMBERS = frozenset({PAYMENT_STEP_NUMBER})
 
+#: "Create the Schedule of Values" (2026-11-04 meeting). The contract breakdown
+#: by phase that billing draws against; the AIA G702/G703 workbook holds it until
+#: ERPNext does (WI-078). Numbered after the launch meeting because the seed is
+#: insert-only and the seven existing numbers are stored on every project row, so
+#: renumbering would mean migrating them all for a step that belongs beside the
+#: chain anyway.
+SOV_STEP_NUMBER = 8
+
+#: "Offer a Maintenance Contract" (2026-11-04 meeting). The closeout question:
+#: was a maintenance agreement offered? Its answer lives on the row's ``notes``
+#: ("Maintenance agreement offered: Yes/No ..."), written by the Mark Complete
+#: dialog in ``process_steps.js`` through :func:`complete_step`.
+MAINTENANCE_OFFER_STEP_NUMBER = 9
+
+#: Steps that run *beside* the chain rather than in it: actionable the moment
+#: they are Pending, whatever is still open before them, and never blocking a
+#: later step. The tracker is otherwise strictly sequential, which is right for
+#: steps that hand work to the next owner, but the Schedule of Values is due
+#: shortly after the project exists and is nobody's prerequisite -- numbered 8,
+#: it would otherwise open only once the launch meeting (7) was held. Mirrored by
+#: ``PARALLEL_STEPS`` in ``process_steps.js``; keep the two in sync.
+PARALLEL_STEP_NUMBERS = frozenset({SOV_STEP_NUMBER})
+
+#: Steps recorded when the project wraps up, not during the hand-off. They keep
+#: the process open (the "process complete" comment waits for them) but the
+#: Sales Pipeline's "Hand-off in progress" rail drops a project once these are
+#: the only Pending steps left, because a build that runs for months is not a
+#: hand-off in progress. Seeded with ``sla_business_days = 0``: no due date, no
+#: escalation.
+CLOSEOUT_STEP_NUMBERS = frozenset({MAINTENANCE_OFFER_STEP_NUMBER})
+
 #: How far out :func:`schedule_payment_followup` puts the next chase, in business
 #: days. The payment step has ``sla_business_days = 0`` — no due date, no
 #: escalation, deliberately, because the customer's cheque is not ours to hurry.
@@ -159,19 +197,27 @@ def _actionable_steps(steps):
 	A step blocks later ones only while it is itself Pending *and* not in
 	``NON_BLOCKING_STEP_NUMBERS``. That lets step 5 (payment) sit Pending
 	indefinitely without stalling 6 and 7, while still requiring, e.g., step 6
-	to finish before step 7 opens up. Always non-empty when ``steps`` has any
-	Pending row at all: the lowest-numbered Pending step can never be blocked
-	by anything smaller than itself.
+	to finish before step 7 opens up. A step in ``PARALLEL_STEP_NUMBERS`` is
+	actionable whenever it is Pending and blocks nothing: step 8 (Schedule of
+	Values) opens at seed time beside whatever the chain is on. Always non-empty
+	when ``steps`` has any Pending row at all: the lowest-numbered Pending step
+	can never be blocked by anything smaller than itself.
 	"""
 	blocking_pending = {
 		cint(row.step_number)
 		for row in steps
-		if row.status == "Pending" and cint(row.step_number) not in NON_BLOCKING_STEP_NUMBERS
+		if row.status == "Pending"
+		and cint(row.step_number) not in NON_BLOCKING_STEP_NUMBERS
+		and cint(row.step_number) not in PARALLEL_STEP_NUMBERS
 	}
 	actionable = [
 		row
 		for row in steps
-		if row.status == "Pending" and not any(n < cint(row.step_number) for n in blocking_pending)
+		if row.status == "Pending"
+		and (
+			cint(row.step_number) in PARALLEL_STEP_NUMBERS
+			or not any(n < cint(row.step_number) for n in blocking_pending)
+		)
 	]
 	return sorted(actionable, key=lambda row: cint(row.step_number))
 
@@ -411,12 +457,16 @@ def seed_process_steps(doc, method=None):
 
 
 def announce_seeded_steps(doc, method=None):
-	"""Project ``after_insert`` — tell the first pending step's owner it's up."""
+	"""Project ``after_insert`` — tell every actionable step's owner it's up.
+
+	Was the first pending step only. Since step 8 (Schedule of Values) is
+	actionable from seed time beside the chain's first step, its owner needs the
+	same notice, by row name so each is addressed to its own step.
+	"""
 	if not _has_steps_field(doc) or not process_automation_enabled():
 		return
-	current = _first_pending(doc.get(STEPS_FIELD) or [])
-	if current:
-		_enqueue_step_notice(doc.name, "up")
+	for row in _actionable_steps(doc.get(STEPS_FIELD) or []):
+		_enqueue_step_notice(doc.name, "up", step_name=row.name)
 
 
 def sync_process_steps(doc, method=None):

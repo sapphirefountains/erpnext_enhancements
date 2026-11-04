@@ -453,9 +453,11 @@ not create a line the project does not have yet.
 
 ## Hand-Off Process engine (PRO-0204, v1.3.0)
 
-The 7-step "Won Opportunity Hand-Off" tracker. Definition lives in **Process Step
-Template** records (`doctype/process_step_template/`, seeded insert-only by the
-`seed_process_step_templates` patch — site edits survive); per-project state lives in
+The "Won Opportunity Hand-Off" tracker: the seven steps of PRO-0204 v1.0 plus the two
+the 2026-11-04 process meeting added (nine in all; see *The two 2026-11-04 steps* below).
+Definition lives in **Process Step Template** records (`doctype/process_step_template/`,
+seeded insert-only by the `seed_process_step_templates` patch and, for steps 8 and 9,
+`seed_handoff_sov_and_maintenance_steps` — site edits survive); per-project state lives in
 the **Project Process Step** child table (`Project.custom_process_steps`, fixtures, on
 the "Hand-Off Process" tab with a progress bar rendered by
 `public/js/project_enhancements/process_steps.js`). The engine itself is the top-level
@@ -529,9 +531,33 @@ module [`process_steps.py`](../process_steps.py):
   of launching within 7 business days of Closed Won, shown alongside step 7's own SLA
   because a step can be on time and still miss the launch goal. Steps 4 and 6 keep the
   chain rule (the clock starts when the prior step completes).
+- **The two 2026-11-04 steps** (Clegg Mabey, James Harris, Lisa Symanski, Nikolas
+  Bradshaw; v1.795.0). Both Project Manager, both seeded insert-only by step number, both
+  on every Opportunity-born project because the template has no applicability field:
+  - **8 — Create the Schedule of Values.** The contract breakdown by phase (100–700) that
+    billing draws against; the company's AIA G702/G703 pay-application workbook is the
+    interim home until ERPNext holds it (WI-078). **Parallel**, not sequential:
+    `PARALLEL_STEP_NUMBERS` makes it actionable from the moment the project is seeded,
+    with its own 2-business-day clock from creation, and it never blocks a later step.
+    Numbered 8 rather than slotted in at 4 because the seven numbers are stored on every
+    project row and renumbering them all for a step that belongs beside the chain anyway
+    bought nothing. `announce_seeded_steps` now notifies every actionable step's owner at
+    seed time (it was the first pending only), so the PM hears about it on day one. A
+    Design-only or service project completes it with a note saying no SOV applies.
+  - **9 — Offer a Maintenance Contract.** The closeout question. Its "Mark Complete" in
+    `process_steps.js` is a dialog — *was a maintenance agreement offered?* Yes/No plus a
+    note — written onto the row's existing `notes` through `complete_step`
+    ("Maintenance agreement offered: Yes — …"); no new column, and the compliance report
+    already shows `notes`. `sla_business_days = 0`: no due date, no escalation. It keeps
+    the process open until it is answered, so `CLOSEOUT_STEP_NUMBERS` tells the Sales
+    Pipeline rail to drop a project once closeout steps are the only Pending ones left.
+  - **In-flight projects do not get them.** `sync_process_steps` never appends templates;
+    only `_append_steps` (seeding and the "Start Hand-Off Process" button on a project
+    with no tracker) reads them. Projects created before v1.795.0 keep their seven rows.
 - **Visibility** — the Sales Pipeline board (`crm_enhancements/page/sales_pipeline/`)
   shows a "Hand-off in progress" rail of active projects with their current step,
-  overdue ones glowing first. The **Hand-Off SLA Compliance** Script Report
+  overdue ones glowing first; a project whose only Pending steps are closeout steps
+  (`CLOSEOUT_STEP_NUMBERS`) is left out. The **Hand-Off SLA Compliance** Script Report
   (`report/hand_off_sla_compliance/` — the directory is `scrub()` of the report name,
   hyphen included) reports on-time % per role and per step, the overdue
   list, steps blocked upstream, and the 7-business-day launch metric; it is emailed

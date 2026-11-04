@@ -16,6 +16,7 @@ from frappe.utils import get_datetime, getdate
 from erpnext_enhancements.process_steps import (
 	_actionable_steps,
 	_first_pending,
+	announce_seeded_steps,
 	notify_step_transitions,
 	seed_process_steps,
 	sync_process_steps,
@@ -34,6 +35,13 @@ TEMPLATES = [
 TEMPLATES_WITH_TASKS_AND_LAUNCH = TEMPLATES + [
 	frappe._dict(step_number=6, step_title="Outline Tasks & Responsibilities in PM System", responsible_role="Project Manager", auto_anchor="", sla_hours=48, sla_business_days=2, description=""),
 	frappe._dict(step_number=7, step_title="Hold Project Launch Meeting", responsible_role="Project Manager", auto_anchor="", sla_hours=48, sla_business_days=2, description=""),
+]
+
+#: The full nine: the above plus the two 2026-11-04 steps -- the Schedule of
+#: Values (8, parallel) and the maintenance offer (9, closeout, no clock).
+TEMPLATES_NINE = TEMPLATES_WITH_TASKS_AND_LAUNCH + [
+	frappe._dict(step_number=8, step_title="Create the Schedule of Values", responsible_role="Project Manager", auto_anchor="", sla_hours=48, sla_business_days=2, description=""),
+	frappe._dict(step_number=9, step_title="Offer a Maintenance Contract", responsible_role="Project Manager", auto_anchor="", sla_hours=0, sla_business_days=0, description=""),
 ]
 
 
@@ -101,6 +109,18 @@ def _seeded_project_full(**overrides):
 	project = _FakeProject(custom_opportunity="OPP-0001", **overrides)
 	with (
 		patch("erpnext_enhancements.process_steps._templates", return_value=TEMPLATES_WITH_TASKS_AND_LAUNCH),
+		patch.object(frappe.db, "get_value", return_value="2026-06-01"),
+		patch.object(frappe.db, "get_single_value", return_value=None),
+	):
+		seed_process_steps(project)
+	return project
+
+
+def _seeded_project_nine(**overrides):
+	"""Like ``_seeded_project`` but seeded from ``TEMPLATES_NINE``."""
+	project = _FakeProject(custom_opportunity="OPP-0001", **overrides)
+	with (
+		patch("erpnext_enhancements.process_steps._templates", return_value=TEMPLATES_NINE),
 		patch.object(frappe.db, "get_value", return_value="2026-06-01"),
 		patch.object(frappe.db, "get_single_value", return_value=None),
 	):
@@ -395,6 +415,78 @@ class TestPaymentDoesNotBlockLater(FrappeTestCase):
 		self.assertIsNotNone(by_no[7].due_by)
 		notified = {call.kwargs.get("step_name") for call in enqueue.call_args_list}
 		self.assertEqual(notified, {by_no[7].name})  # not 5 -- already notified earlier
+
+
+class TestParallelAndCloseoutSteps(FrappeTestCase):
+	"""2026-11-04 meeting: step 8 (Schedule of Values) runs beside the chain from
+	seed time and blocks nothing; step 9 (maintenance offer) is the closeout, with
+	no clock, that keeps the process open until it is answered."""
+
+	def setUp(self):
+		super().setUp()
+		_force_flag(self)
+
+	def test_sov_is_actionable_at_seed_time_with_its_own_clock(self):
+		project = _seeded_project_nine()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		self.assertEqual(by_no[8].status, "Pending")
+		self.assertIsNotNone(by_no[8].due_by)  # 2 business days from creation
+		self.assertIsNotNone(by_no[3].due_by)  # the chain's own first step, unchanged
+		self.assertIsNone(by_no[9].due_by)  # closeout: no clock, and blocked by 6/7 anyway
+
+	def test_sov_never_blocks_the_chain(self):
+		rows = [
+			frappe._dict(step_number=n, status="Completed") for n in (1, 2, 3, 4, 5, 6)
+		] + [
+			frappe._dict(step_number=7, status="Pending"),
+			frappe._dict(step_number=8, status="Pending"),  # SOV still open
+			frappe._dict(step_number=9, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {7, 8})  # 9 waits on 7, not on 8
+
+	def test_closeout_opens_after_launch_even_with_sov_open(self):
+		rows = [frappe._dict(step_number=n, status="Completed") for n in (1, 2, 3, 4, 5, 6, 7)] + [
+			frappe._dict(step_number=8, status="Pending"),
+			frappe._dict(step_number=9, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {8, 9})
+
+	def test_sov_is_actionable_while_the_chain_is_stuck(self):
+		rows = [
+			frappe._dict(step_number=1, status="Completed"),
+			frappe._dict(step_number=2, status="Pending"),  # hand-off meeting not yet held
+			frappe._dict(step_number=3, status="Completed"),
+			frappe._dict(step_number=4, status="Pending"),
+			frappe._dict(step_number=8, status="Pending"),
+			frappe._dict(step_number=9, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {2, 8})
+
+	def test_seed_announces_sov_owner_as_well_as_the_chain(self):
+		project = _seeded_project_nine()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		with patch.object(frappe, "enqueue") as enqueue:
+			announce_seeded_steps(project)
+		notified = {call.kwargs.get("step_name") for call in enqueue.call_args_list}
+		self.assertEqual(notified, {by_no[3].name, by_no[8].name})
+
+	def test_process_is_not_complete_until_the_closeout_is_answered(self):
+		project = _seeded_project_nine()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		for n in (3, 4, 5, 6, 7, 8):
+			by_no[n].status = "Completed"
+		sync_process_steps(project)
+		before = _snapshot(project)
+		by_no[9].status = "Completed"
+		by_no[9].notes = "Maintenance agreement offered: Yes"
+		sync_process_steps(project)
+		project._before = before
+		with patch.object(frappe, "enqueue"):
+			notify_step_transitions(project)
+		self.assertTrue(any("process complete" in (text or "") for _, text in project.comments))
 
 
 class TestWorkingDays(FrappeTestCase):

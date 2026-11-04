@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.795.0] - 2026-11-04
+
+### Added
+- **Two new default hand-off steps for every new project: "Create the Schedule of Values" (8) and
+  "Offer a Maintenance Contract" (9).** The 2026-11-04 process meeting (Clegg Mabey, James Harris,
+  Lisa Symanski, Nikolas Bradshaw) aligned on both; Nikolas owns the first as a meeting action
+  item. Seeded by `patches/seed_handoff_sov_and_maintenance_steps`, insert-only by step number
+  like the original seven, so site edits to any template survive. Both Project Manager. The
+  Process Step Template has no applicability field, so both land on every Opportunity-born
+  project; the SOV step's description tells a Design-only or service project to complete it with
+  a note saying no SOV applies.
+  - **8 — Create the Schedule of Values** is the contract breakdown by phase (100–700) that
+    billing draws against; the company's AIA G702/G703 pay-application workbook is its interim
+    home until ERPNext holds it (WI-078). Two business days, like steps 6 and 7.
+  - **9 — Offer a Maintenance Contract** asks whether a maintenance agreement was offered to the
+    client. Its "Mark Complete" on the Project's Hand-Off Process tab is now a dialog (Yes/No plus
+    a note) whose answer is written onto the step's existing `notes` through `complete_step` —
+    "Maintenance agreement offered: Yes — …" — so the Hand-Off SLA Compliance report, which
+    already shows `notes`, carries it. No new column. `sla_business_days = 0`: no due date and
+    no escalation, because a closeout is not a clock.
+
+### Changed
+- **The tracker now has a parallel lane.** It was strictly sequential: a step opens when every
+  lower-numbered step is resolved (payment excepted). Numbered 8, the Schedule of Values would
+  have opened only after the launch meeting (7) was held — weeks after the meeting wanted it,
+  which was shortly after the project exists. `process_steps.PARALLEL_STEP_NUMBERS` (mirrored by
+  `PARALLEL_STEPS` in `process_steps.js`) makes step 8 actionable from the moment the project is
+  seeded, with its own clock from creation, and it never blocks a later step: 9 waits on 7, not
+  on 8. Slotting it in at 4 instead was considered and rejected — the seven numbers are stored on
+  every project's child rows and in four files' constants, and a renumber migration (the v1.66.0
+  shape) buys nothing for a step that belongs beside the chain anyway.
+- **`announce_seeded_steps` notifies every actionable step's owner at seed time**, each by row
+  name, instead of only the first pending step. On the seven-step tracker that is the same single
+  notice as before; with step 8 it also tells the Project Manager the SOV is up on day one.
+- **The Sales Pipeline's "Hand-off in progress" rail drops a project once closeout steps are the
+  only Pending ones left** (`CLOSEOUT_STEP_NUMBERS`). Step 9 keeps the process open — the
+  "process complete" comment waits for it — but a build that runs for months with only the
+  maintenance offer outstanding is not a hand-off in progress.
+
+### Notes
+- **Projects already in flight do not get the new steps.** `sync_process_steps` never appends
+  templates; only seeding and the "Start Hand-Off Process" button read them. The 32 active
+  projects with pending steps keep their seven rows (Jun 9 decision: never back-fill in-flight
+  projects). If the maintenance question should be asked on those too, that is a separate,
+  deliberate backfill.
+- Bench-free wiring test `tests/test_handoff_sov_and_maintenance_wire.py` (own CI step) pins the
+  patch registration, the insert-only shape, the py/js agreement on the parallel set, and the
+  dialog's path through `complete_step`; `tests/test_process_steps.py` (bench) covers the engine.
+- Requires `bench migrate` (the patch) and `bench build` (`process_steps.js`).
+
 ## [1.794.0] - 2026-11-03
 
 ### Changed
