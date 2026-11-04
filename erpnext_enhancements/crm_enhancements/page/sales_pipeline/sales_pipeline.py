@@ -32,7 +32,6 @@ from frappe.utils import cint, date_diff, flt, get_datetime, getdate, now_dateti
 
 from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, has_field
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
-from erpnext_enhancements.process_steps import CLOSEOUT_STEP_NUMBERS
 
 # Statuses that never appear on the board.
 TERMINAL_STATUSES = {"Lost", "Closed Lost", "Closed", "Converted"}
@@ -250,6 +249,13 @@ def _handoff_strip():
 	"""
 	empty = {"projects": [], "overflow": 0}
 	try:
+		# Imported here, not at module level: ``process_steps`` pulls in
+		# ``status_alerts``, ``email_style`` and the rest of the notification
+		# stack, and the bench-free Opportunity-board suites import this page
+		# under a ``frappe`` stub that cannot satisfy that chain. A top-level
+		# import broke 38 of their tests on names they never call (v1.795.1).
+		from erpnext_enhancements.process_steps import CLOSEOUT_STEP_NUMBERS
+
 		rows = frappe.get_all(
 			"Project Process Step",
 			filters={"parenttype": "Project"},
