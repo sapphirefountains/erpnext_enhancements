@@ -16,7 +16,7 @@
  *   menu({anchor, items})               an anchored menu (6B's right-click menu)
  *   popover.attach(root, {selector, describe, delay})
  *                                       the hover card on a chip, in place of the browser's tooltip
- *                                       (v1.784.0; planner_kit/popover.js): mouse and pen only, so a
+ *                                       (v1.788.0; planner_kit/popover.js): mouse and pen only, so a
  *                                       phone's hold-to-open quick look stays
  *   legend(sections, opts)              the help drawer, from a description of what is drawn
  *   hint(key, text, {container})        a first-time tip, dismissed once per user
@@ -45,7 +45,7 @@
  *                                       edits (planner_kit/records.js)
  *   records.url(record) / open_new_tab(record)
  *                                       the record's Desk address, and a new tab on it (the planners'
- *                                       "Open … in new tab" menu items and Ctrl+Enter, v1.784.0)
+ *                                       "Open … in new tab" menu items and Ctrl+Enter, v1.788.0)
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -174,7 +174,7 @@ function install() {
 		records: env.records,
 		toast: env.toast,
 		menu: create_menu(env),
-		// The hover card (v1.784.0): what a chip says when the mouse rests on it.
+		// The hover card (v1.788.0): what a chip says when the mouse rests on it.
 		popover: create_popover(env),
 		legend: create_legend(env),
 		legend_html,

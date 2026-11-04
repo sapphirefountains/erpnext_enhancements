@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Nikolas's six planner picks of 2026-11-03 (v1.784.0), page side.
+"""Nikolas's six planner picks of 2026-11-03 (v1.788.0), page side.
 
 The behaviour runs in ``scripts/test_planner_six_picks.js`` against the real kit modules (records.js,
 popover.js) and both real page scripts: the Lookahead's month band, "Open … in new tab" and Ctrl+Enter,

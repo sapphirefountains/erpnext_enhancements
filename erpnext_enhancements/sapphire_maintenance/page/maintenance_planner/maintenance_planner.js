@@ -512,7 +512,7 @@ class MaintenancePlanner {
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
-		// v1.784.0: the tabs (and My day beside them) go last, after the tools, at the bar's right end, as
+		// v1.788.0: the tabs (and My day beside them) go last, after the tools, at the bar's right end, as
 		// the Project Planner's do (Nikolas, 2026-11-03). The phone's "Filters and tools" button is appended
 		// after them by init_toolbar.
 		$seg.appendTo($bar);
@@ -705,7 +705,7 @@ class MaintenancePlanner {
 		if (!cell) return { kind: "none", cls: "mp-idle", text: "", ratio: 0 };
 		const capacity = Number(cell.capacity) || 0;
 		const booked = Number(cell.booked) || 0;
-		// C1's soft hours (pencilled visits and tasks), said on the cell since v1.784.0, not only in its tooltip.
+		// C1's soft hours (pencilled visits and tasks), said on the cell since v1.788.0, not only in its tooltip.
 		const soft = Math.max(0, Number(cell.soft_booked) || 0);
 		const over = booked - capacity;
 		let state;
@@ -872,7 +872,7 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
-		if (this.mph) this.mph.close(); // the hover card belongs to cards a redraw replaces (v1.784.0)
+		if (this.mph) this.mph.close(); // the hover card belongs to cards a redraw replaces (v1.788.0)
 		if (!this.data) return;
 		this.by_key = {};
 		this.day_cards = {};
@@ -1415,7 +1415,7 @@ class MaintenancePlanner {
 			const card_el = e.target.closest && e.target.closest(".mp-card");
 			if (!card_el) return;
 			const card = this.by_key[card_el.getAttribute("data-key")];
-			// Ctrl+Enter (⌘Enter): the card's record in a new tab (v1.784.0).
+			// Ctrl+Enter (⌘Enter): the card's record in a new tab (v1.788.0).
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
 				if (e.repeat) return;
 				if (card && this.mpr_open_new_tab(card)) {
@@ -2437,7 +2437,7 @@ const MP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.mps_kit_ready(); // Simple mode draws with the kit
-		this.mph_ready(); // v1.784.0: the hover card on a card
+		this.mph_ready(); // v1.788.0: the hover card on a card
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -8365,7 +8365,7 @@ const MPR_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MPR_METHODS);
 
-// ====================================================================== MPH: the hover card (v1.784.0)
+// ====================================================================== MPH: the hover card (v1.788.0)
 //
 // The Project Planner's hover card (PPH there), on this planner's cards: a visit, a projected visit, a
 // Fountain Move and a technician's project work. Drawn by the kit's popover (planner_kit/popover.js)

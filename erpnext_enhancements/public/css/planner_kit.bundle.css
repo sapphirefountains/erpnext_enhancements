@@ -262,7 +262,7 @@
 	outline-offset: -4px;
 }
 
-/* The hover card (v1.784.0): a chip's details while the mouse rests on it, in place of the browser's
+/* The hover card (v1.788.0): a chip's details while the mouse rests on it, in place of the browser's
  * tooltip. Square, on the surface, a field edge for a shadow, just under the right-click menu. */
 .pk-pop {
 	position: fixed;

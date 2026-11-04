@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * The Projects Dashboard's head band, tabs and Priority Overview filters (Mock B, v1.781.0):
- * the live tiles, the stream chips, Ranked only, Group by stream, the remembered tab and
- * sort, Refresh with "Updated N min ago", the "+" menu, the Columns icon button and where
- * "Reset widths" went.
+ * The Projects Dashboard's head band, tabs and Priority Overview filters (Mock B, v1.781.0;
+ * slimmed in v1.785.0): the live tiles, the stream chips, Ranked only, Group by stream, the
+ * remembered tab and sort, Refresh with "Updated N min ago", the "+" menu, the Columns icon
+ * button and where "Reset widths" went.
  *
  * Runs the REAL custom_html_blocks/projects_dashboard.js, and the real column_selector.js,
  * in a vm against a recording stand-in for jQuery (no jsdom: the repo's JS guards run on
@@ -17,6 +17,11 @@
  *   - The four tiles are tallied from get_project_data's rows (active, past expected end,
  *     due in 30 days, no company rank); pressing one narrows the Priority Overview and marks
  *     itself pressed; Active clears it; pressing one from another tab lands on the Overview.
+ *   - v1.785.0: the tiles are shown on the Summary tab only, and only once rows have loaded;
+ *     a press from the Summary lands on the Overview, which shows the pressed tile as a chip
+ *     with an x; the x clears it; the tiles' one click binding survives the Summary's
+ *     re-render. The Columns button is drawn into the chips row's slot on the Overview and
+ *     into the slim strip's slot on Internal and Completed, never into #dashboard-content.
  *   - The stream chips carry counts and narrow the rows; Ranked only keeps the numbered
  *     company ranks; Group by stream draws header rows in the agreed order (Build, Design,
  *     Service, Events, then Internal) and moves the sort to the stream rank. All three are
@@ -445,6 +450,109 @@ await test("a tile pressed from another tab lands on the Priority Overview", asy
 	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"]);
 });
 
+await test("the tiles are shown on the Summary tab only, once rows have loaded", async () => {
+	const run = await runBlock();
+	const tiles = run.dom.node("#pd-tiles");
+	assert.equal(tiles[NODE].display, "none", "hidden on the Priority Overview");
+	clickTab(run, "summary");
+	await settle();
+	assert.equal(tiles[NODE].display, "shown", "shown on the Summary");
+	assert.equal(tileCount(run, "active"), "4", "with their counts");
+	clickTab(run, "completed-projects");
+	await settle();
+	assert.equal(tiles[NODE].display, "none");
+	clickTab(run, "portfolio-gantt");
+	await settle();
+	assert.equal(tiles[NODE].display, "none");
+	// a remembered Summary tab draws them on load
+	const again = await runBlock({ stored: { chb_projects_dashboard_tab_v1: JSON.stringify("summary") } });
+	assert.equal(again.dom.node("#pd-tiles")[NODE].display, "shown");
+	// but not over a denial: nothing has loaded, the panel stands alone
+	const denied = await runBlock({
+		stored: { chb_projects_dashboard_tab_v1: JSON.stringify("summary") },
+		projects: { error: "You do not have permission to view the Project Dashboard." },
+	});
+	assert.equal(denied.dom.node("#pd-tiles")[NODE].display, "none", "no four dashes above No access");
+	assert.equal(contentText(denied), "No access");
+});
+
+await test("a tile pressed on the Summary lands on the Overview, which shows it as a chip with an x", async () => {
+	const run = await runBlock();
+	clickTab(run, "summary");
+	await settle();
+	assert.equal(run.dom.node("#pd-tile-filter").prop("hidden"), true, "hidden while the tile is Active");
+	let from = mark(run);
+	pressTile(run, "past-due");
+	await settle();
+	assert.ok(isActiveTab(run, "priority-overview"), "went to the Overview");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"]);
+	assert.equal(run.dom.node("#pd-tile-filter").prop("hidden"), false, "the chip is shown");
+	assert.equal(run.dom.node("#pd-tile-filter-label").text(), "Past expected end", "in the tile's words");
+	assert.equal(run.dom.node("#pd-tiles")[NODE].display, "none", "the tiles stayed on the Summary");
+	// the x clears it
+	from = mark(run);
+	run.dom.fire(run.dom.node("#pd-tile-filter"), "click");
+	assert.equal(rowsOf(drawn(run, from)).length, 4, "every active project again");
+	assert.equal(run.dom.node("#pd-tile-filter").prop("hidden"), true, "the chip is gone");
+	assert.equal(run.dom.node('.pd-tile[data-tile="active"]').attr("aria-pressed"), "true", "and the Summary's Active tile is the pressed one");
+	// Active pressed on the Summary: the Overview, no chip
+	clickTab(run, "summary");
+	await settle();
+	pressTile(run, "active");
+	assert.ok(isActiveTab(run, "priority-overview"));
+	assert.equal(run.dom.node("#pd-tile-filter").prop("hidden"), true);
+});
+
+await test("a tile pressed on the Summary clears the remembered chip and Ranked only, so the rows equal its number", async () => {
+	// Review round 1 of #1416: the Overview was left on Design with Ranked only ticked (and
+	// grouped); from the Summary, "Past expected end" must show every past-due project.
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: true, group: true }) },
+	});
+	assert.deepEqual(rowsOf(drawn(run)), [], "Design + Ranked only leaves nothing on the Overview (Bravo is unranked)");
+	clickTab(run, "summary");
+	await settle();
+	let from = mark(run);
+	pressTile(run, "past-due");
+	assert.ok(isActiveTab(run, "priority-overview"));
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza"], "the tile's one project, not Design's none");
+	assert.equal(chipCount(run, ""), tileCount(run, "past-due"), "the All chip equals the tile");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true", "All is the pressed chip");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "false");
+	assert.equal(run.dom.node("#pd-ranked-only").prop("checked"), false, "Ranked only is off");
+	assert.equal(run.dom.node("#pd-group-by-stream").prop("checked"), true, "grouping is a layout and stays");
+	assert.match(drawn(run, from), /pd-group/, "still grouped");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), { stream: "", ranked_only: false, group: true }, "the reset is remembered");
+	// Active from the Summary: the tile's number and the All chip are one number
+	clickTab(run, "summary");
+	await settle();
+	pressChip(run, "Build"); // a chip pressed while on another tab still saves
+	from = mark(run);
+	pressTile(run, "active");
+	assert.equal(rowsOf(drawn(run, from)).length, 4);
+	assert.equal(chipCount(run, ""), tileCount(run, "active"));
+});
+
+await test("the tiles' click binding survives the Summary's re-render", async () => {
+	// The Summary empties #dashboard-content on every draw; the tiles are outside it, bound
+	// once. Draw the Summary three times (tab, Refresh, tab), then press a tile.
+	const run = await runBlock();
+	clickTab(run, "summary");
+	await settle();
+	run.dom.fire(run.dom.node("#btn-refresh"), "click");
+	await settle();
+	clickTab(run, "priority-overview");
+	await settle();
+	clickTab(run, "summary");
+	await settle();
+	assert.equal(run.dom.node(".pd-tile")[NODE].handlers.click.length, 1, "bound once, not once per render");
+	const from = mark(run);
+	pressTile(run, "unranked");
+	assert.ok(isActiveTab(run, "priority-overview"));
+	assert.deepEqual(rowsOf(drawn(run, from)).sort(), ["Bravo Water Wall", "Delta Shop Tooling"]);
+	assert.ok(!run.dom.log.created.some((h) => /pd-tile/.test(h)), "the Summary never builds tiles of its own");
+});
+
 await test("the pressed tile is not remembered; the stream chip, Ranked only and grouping are", async () => {
 	const run = await runBlock();
 	pressTile(run, "past-due");
@@ -764,6 +872,30 @@ await test("each list tab hands its ColumnSelector the icon option and a Reset c
 		assert.equal(r.options.icon, true, "Columns is an icon button");
 		assert.deepEqual(Array.from(r.options.actions, (a) => a.label), ["Reset column widths"]);
 	}
+});
+
+await test("the Columns button is drawn into the chips row on the Overview and the slim strip on Internal and Completed", async () => {
+	const run = await runBlock();
+	const slotOf = (key) => run.selectors.find((s) => s.key === key).rendered.container[NODE].key;
+	assert.equal(slotOf("chb_priority_overview_columns"), "#pd-overview-tools", "the chips row's right end");
+	assert.equal(run.dom.node("#list-controls")[NODE].display, "none", "no strip on the Overview");
+	clickTab(run, "active-internal-projects");
+	await settle();
+	assert.equal(slotOf("chb_active_internal_columns"), "#pd-list-tools", "the slim strip");
+	assert.equal(run.dom.node("#list-controls")[NODE].display, "shown");
+	assert.equal(run.dom.node("#overview-controls")[NODE].display, "none");
+	clickTab(run, "completed-projects");
+	await settle();
+	assert.equal(slotOf("chb_completed_columns"), "#pd-list-tools");
+	assert.equal(run.dom.node("#list-controls")[NODE].display, "shown");
+	clickTab(run, "summary");
+	await settle();
+	assert.equal(run.dom.node("#list-controls")[NODE].display, "none", "the Summary has no columns");
+	assert.equal(run.dom.node("#overview-controls")[NODE].display, "none");
+	// and never a row of its own inside the content
+	const all = run.dom.log.created.concat(run.dom.log.appended.flatMap((a) => a.items.map((i) => (typeof i === "string" ? i : ""))));
+	assert.ok(!all.some((h) => /dashboard-list-toolbar/.test(h)), "no toolbar row above the table");
+	assert.ok(!run.dom.log.appended.some((a) => a.to === "#dashboard-content" && a.items.some((i) => i && i[NODE] && /tools/.test(i[NODE].key))), "nothing tool-shaped appended to the content");
 });
 
 await test("the Reset column widths action resets the widths", async () => {

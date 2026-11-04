@@ -5,8 +5,10 @@
  * truth (setup/custom_html_blocks.py upserts it on migrate). Pairs with
  * projects_dashboard.html (shell) + projects_dashboard.js.
  *
- * Mock B (v1.781.0): the navy head band with its tiles, the five tabs, the stream
- * chips, and ONE table style for every list tab (13px Lato, 11px uppercase headers,
+ * Mock B (v1.781.0; slimmed in v1.785.0): the navy head band — one slim row since
+ * v1.785.0 — the five tabs, the stream chips with the Columns button at their right
+ * end, the four tiles the Summary tab shows (off the band since v1.785.0, on the
+ * surface tokens), and ONE table style for every list tab (13px Lato, 11px uppercase headers,
  * 40px rows, hover tint, --sf-rule hairlines); rank pills, completion bars, the
  * "Past due" pill, the inline-editable cells, the sortable headers, the column
  * selector menu, the Summary cards, and the level styling for the Portfolio Gantt
@@ -43,24 +45,27 @@
 .pg-new-menu [hidden] { display: none !important; }
 .pd-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* ---- head band ------------------------------------------------------------- */
+/* ---- head band: ONE slim row (v1.785.0) ------------------------------------
+   The title on one line in the display face, then the search field, Refresh with its
+   stamp and the "+", centred on the row. No eyebrow, no tiles: Nikolas, 2026-11-03,
+   "there is a lot of header space before you even see the projects". */
 .pd-band {
     background: var(--sf-band);
     color: var(--sf-on-band);
-    padding: var(--sf-space-20);
+    padding: var(--sf-space-10) var(--sf-space-20);
 }
-.pd-band-row { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sf-space-15); flex-wrap: wrap; }
-.pd-band-title { display: flex; flex-direction: column; gap: var(--sf-space-5); min-width: 0; }
-.pd-eyebrow { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.06em; color: var(--sf-on-band-muted); }
+.pd-band-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sf-space-15); flex-wrap: wrap; }
 /* The display face sets the title only; its leading is 1 and it takes no letter-spacing. */
 .pd-title {
     margin: 0;
+    min-width: 0;
     font-family: var(--sf-font-display);
     font-weight: var(--sf-weight-bold);
-    font-size: var(--sf-display-lg);
+    font-size: var(--sf-display-sm);
     line-height: var(--sf-leading-display);
     letter-spacing: 0;
     color: var(--sf-on-band);
+    white-space: nowrap;
 }
 .pd-band-actions { display: flex; align-items: center; gap: var(--sf-space-10); flex-wrap: wrap; }
 
@@ -168,30 +173,32 @@
 }
 .pg-new-item:hover, .pg-new-item:focus { background: color-mix(in srgb, var(--sf-text) 8%, transparent); color: var(--sf-text); outline: none; }
 
-/* Live tiles: four buttons on the band. The pressed one is the Priority Overview's filter. */
-.pd-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sf-space-10); margin-top: var(--sf-space-20); }
+/* Live tiles: four buttons the Summary tab shows above its cards (on the band until
+   v1.785.0), drawn like the cards — surface, hairline, the number in the display face —
+   with the pressed one (the Priority Overview's filter) edged in the primary. */
+.pd-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sf-space-10); padding: var(--sf-space-5) 0 var(--sf-space-5); }
 .pd-tile {
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
     padding: var(--sf-space-10) var(--sf-space-15);
-    border: var(--sf-border-hairline) solid var(--sf-bahama-blue);   /* the band's own palette */
+    border: var(--sf-border-hairline) solid var(--sf-rule);
     border-radius: var(--sf-radius-none);
-    background: transparent;
-    color: var(--sf-on-band);
+    background: var(--sf-surface);
+    color: var(--sf-text);
     font-family: var(--sf-font-sans);
     text-align: left;
     cursor: pointer;
     transition: background-color var(--sf-duration) var(--sf-ease), border-color var(--sf-duration) var(--sf-ease);
 }
-.pd-tile:hover { background: color-mix(in srgb, var(--sf-on-band) 8%, transparent); }
-.pd-tile[aria-pressed="true"] { background: color-mix(in srgb, var(--sf-on-band) 14%, transparent); border-color: var(--sf-primary); }
-.pd-tile:focus-visible { outline: var(--sf-border-control) solid var(--sf-primary); outline-offset: 2px; }
-.pd-tile-n { font-family: var(--sf-font-display); font-size: var(--sf-display-md); line-height: 1; color: var(--sf-on-band); }
-/* The warn yellow as text, only here: on the navy band it is 9.5:1 (it is never text on white). */
-.pd-tile-n-bad { color: var(--sf-warn); }
-.pd-tile-l { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sf-on-band-muted); }
+.pd-tile:hover { background: color-mix(in srgb, var(--sf-text) 6%, var(--sf-surface)); }
+.pd-tile[aria-pressed="true"] { background: color-mix(in srgb, var(--sf-primary) 10%, var(--sf-surface)); border-color: var(--sf-primary); }
+.pd-tile:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.pd-tile-n { font-family: var(--sf-font-display); font-size: var(--sf-display-md); line-height: 1; color: var(--sf-text-strong); }
+/* Past expected end in the danger red, as the Summary's Overdue card is. */
+.pd-tile-n-bad { color: var(--sf-danger); }
+.pd-tile-l { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sf-text-muted); }
 
 /* ---- tabs ------------------------------------------------------------------ */
 .pd-tabs { display: flex; gap: 4px; padding: 0 var(--sf-space-20); border-bottom: var(--sf-border-hairline) solid var(--sf-rule); overflow-x: auto; }
@@ -245,7 +252,38 @@
    page colour, which is off-white in light and navy-900 in dark. */
 .pd-fchip[aria-pressed="true"] { background: var(--sf-chip-edge-neutral); border-color: var(--sf-chip-edge-neutral); color: var(--sf-bg); }
 .pd-fchip[aria-pressed="true"] b { color: inherit; opacity: 0.8; }
-.pd-chips + .pd-check { margin-left: auto; }
+/* The pressed tile's filter, as a chip with an x beside the stream chips: the tiles live on
+   the Summary tab, so this is how the Overview says it is narrowed, and how to clear it. */
+.pd-tile-filter {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px 0 12px;
+    border: var(--sf-border-hairline) solid var(--sf-primary);
+    border-radius: var(--sf-radius-pill);
+    background: color-mix(in srgb, var(--sf-primary) 10%, transparent);
+    color: var(--sf-text-strong);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-xs);
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease);
+}
+.pd-tile-filter:hover { background: color-mix(in srgb, var(--sf-primary) 18%, transparent); }
+.pd-tile-filter:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.pd-tile-filter-x { font-size: var(--sf-text-md); font-weight: var(--sf-weight-regular); line-height: 1; }
+/* The Columns "..." button's slot: the right end of the chips row on the Priority Overview,
+   or the slim strip Internal and Completed share (no chips there, so no row of its own).
+   The auto margin is on the slot, not the checkboxes, so when the row wraps (768-1000px)
+   the two boxes stay beside the chips and only the "..." goes right; it never orphans on
+   the left of a line of its own (review round 1 of #1416). */
+.pd-list-tools { display: inline-flex; align-items: center; margin-left: auto; }
+.pd-filters-slim { justify-content: flex-end; padding-top: 0; padding-bottom: var(--sf-space-5); }
 .pd-check {
     display: inline-flex;
     align-items: center;
@@ -396,7 +434,6 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 
 /* Column selector (the three-dot icon button and its menu). The selector injects its own
    styles into the page <head>, which this shadow root never sees, so they live here. */
-.dashboard-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: var(--sf-space-10); }
 .dashboard-column-selector { position: relative; display: inline-block; }
 .column-selector-toggle {
     border: var(--sf-border-hairline) solid var(--sf-field-border);
@@ -448,8 +485,8 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
     cursor: pointer;
 }
 .column-selector-action:hover, .column-selector-action:focus { background: color-mix(in srgb, var(--sf-text) 8%, transparent); outline: none; }
-/* The Columns button as an icon: a square, the three dots drawn in currentColor. */
-.column-selector-toggle.column-selector-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 32px; padding: 0; }
+/* The Columns button as an icon: the three dots drawn in currentColor, the chips' height. */
+.column-selector-toggle.column-selector-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 28px; padding: 0; }
 .column-selector-toggle.column-selector-icon svg { display: block; width: 16px; height: 16px; }
 .hidden-column { display: none !important; }
 
@@ -591,19 +628,17 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 .pg-widget-host .gantt_row.pg-placeholder .gantt_tree_content { font-style: italic; color: #8d99a6; }
 
 /* ---- small screens -------------------------------------------------------
-   The band stacks, the tiles go two across, the toolbar controls go
-   full-width so they stack cleanly instead of half-wrapping, the legend
-   drops below them, and the chart gets more of the viewport (the grid
-   narrows itself in JS via gantt_grid_width). */
+   The band stacks (the title above, the search spanning the row), the tiles go
+   two across, the toolbar controls go full-width so they stack cleanly instead of
+   half-wrapping, the legend drops below them, and the chart gets more of the
+   viewport (the grid narrows itself in JS via gantt_grid_width). */
 @media (max-width: 767px) {
-    .pd-band { padding: var(--sf-space-15); }
-    .pd-title { font-size: var(--sf-display-md); }
+    .pd-band { padding: var(--sf-space-10); }
     .pd-band-actions { width: 100%; }
     .pd-search { flex: 1 1 100%; min-width: 0; }
     .pd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pd-tabs, .pd-controls { padding-left: var(--sf-space-10); padding-right: var(--sf-space-10); }
     .pd-content { padding: var(--sf-space-10); }
-    .pd-chips + .pd-check { margin-left: 0; }
     .pg-toolbar-search { flex: 1 1 100%; max-width: none; }
     .pg-toolbar > .dropdown,
     .pg-toolbar > .dropdown > .custom-dropdown-toggle,
@@ -622,5 +657,5 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 
 /* ---- Reduced motion: nothing fades. ---- */
 @media (prefers-reduced-motion: reduce) {
-    .pd-icon-btn, .pd-btn, .pd-tile, .pd-fchip, .ee-col-resize-handle::after { transition: none; }
+    .pd-icon-btn, .pd-btn, .pd-tile, .pd-fchip, .pd-tile-filter, .ee-col-resize-handle::after { transition: none; }
 }

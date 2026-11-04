@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Nikolas's six planner picks of 2026-11-03 (v1.784.0), run under node against the REAL kit modules
+ * Nikolas's six planner picks of 2026-11-03 (v1.788.0), run under node against the REAL kit modules
  * (records.js, popover.js) and the REAL Project and Maintenance Planner page scripts:
  *
  *   1. The Lookahead's month band: PPL_PURE.month_bands, the band's cells over the day headings, the

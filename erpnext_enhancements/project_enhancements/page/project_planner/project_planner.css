@@ -76,7 +76,7 @@
 	color: var(--sf-text-strong);
 }
 
-/* The view tabs sit at the bar's right end, after the tools (v1.784.0). */
+/* The view tabs sit at the bar's right end, after the tools (v1.788.0). */
 .pp-seg {
 	display: inline-flex;
 	border: var(--sf-border-hairline) solid var(--sf-field-border);
@@ -3535,7 +3535,7 @@ body.p6b-resizing * {
 	overflow: hidden;
 }
 
-/* The month band and the day headings (v1.784.0) stick to the top as ONE block, so neither needs the
+/* The month band and the day headings (v1.788.0) stick to the top as ONE block, so neither needs the
  * other's height as an offset: on a tablet the coarse-pointer rule below makes every row 40px, and a
  * hard-coded offset put the headings over the band (review of #1419). */
 .ppl-sticky {

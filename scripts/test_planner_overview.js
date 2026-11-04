@@ -632,7 +632,7 @@ test("The chart: rows come from the live answer and the live filters, and a clic
 	pp.p6a.kit.menu = (opts) => (menu = opts);
 	let prevented = false;
 	widget.config.on_task_context("ms:M1", { ee_project: "PRJ-1", ee_task: "M1", text: "Hand-off" }, { clientX: 5, clientY: 6, preventDefault: () => (prevented = true) });
-	check("the row's menu (v1.784.0: a new tab after Open project)", [menu.items.map((item) => item.label), menu.title, menu.anchor, prevented], [
+	check("the row's menu (v1.788.0: a new tab after Open project)", [menu.items.map((item) => item.label), menu.title, menu.anchor, prevented], [
 		["Open task", "Open project", "Open project in new tab", "Project at a glance", "Open in Gantt"],
 		"Hand-off",
 		{ x: 5, y: 6 },

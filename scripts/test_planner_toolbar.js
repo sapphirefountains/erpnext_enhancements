@@ -2085,7 +2085,7 @@ test("Project Planner: Capacity loads the heatmap and the Utilization table toge
 	const grid = heat.querySelector(".pp-hm").innerHTML;
 	check("both sections drew: the heatmap's grid and the table", [grid.includes("pp-hm-cell"), util.querySelector(".pp-util-scroll").innerHTML.includes('class="pp-util"')], [true, true]);
 	check("every heatmap figure survives: the percentage and the hours of each week", [grid.includes("110%"), grid.includes("44h of 40h"), grid.includes("1 day over")], [true, true, true]);
-	check("pencilled hours too, without the old plus sign (v1.784.0)", [grid.includes("4h pencil"), grid.includes("+4h pencil")], [true, false]);
+	check("pencilled hours too, without the old plus sign (v1.788.0)", [grid.includes("4h pencil"), grid.includes("+4h pencil")], [true, false]);
 	check("the heatmap's cell still opens its week", grid.includes('data-hm-week="2026-10-11"'), true);
 	check("the table's Planned % is flagged Over", util.querySelector(".pp-util-scroll").innerHTML.includes("110% · Over"), true);
 	check("both are in the one grid, the heatmap above the table", [pp.$grid_wrap.nodes[0].childNodes.length, pp.$grid_wrap.nodes[0].childNodes[0] === heat], [2, true]);

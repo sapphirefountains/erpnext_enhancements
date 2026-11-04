@@ -973,7 +973,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
-		if (this.pph) this.pph.close(); // the hover card belongs to chips a redraw replaces (v1.784.0)
+		if (this.pph) this.pph.close(); // the hover card belongs to chips a redraw replaces (v1.788.0)
 		if (this.view === PPG.view) return this.ppg_render(); // P6: the chart
 		if (this.view === PPO.view) return this.ppo_render(); // P9: the Overview
 		if (this.view === PP.capacity_view) {
@@ -1053,7 +1053,7 @@ class ProjectPlanner {
 		state.soft = soft;
 		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
 		if (soft > 0.01) {
-			// Over, Off and a day off keep the pencil after them (v1.784.0: no plus sign; a free day said it above).
+			// Over, Off and a day off keep the pencil after them (v1.788.0: no plus sign; a free day said it above).
 			if (!state.pencil_said) state.text += ` · ${__("{0}h pencil", [pp_hours(soft)])}`;
 			delete state.pencil_said;
 			if (capacity > 0 && booked + soft - capacity > 0.01) state.cls += " pp-softover";
@@ -1785,7 +1785,7 @@ class ProjectPlanner {
 		const kinds = { visit: __("Maintenance"), rental: __("Rental"), travel: __("Travel") };
 		const who = item.resource ? this.resource_label(item.resource) : "";
 		// v1.601.0: a pencilled maintenance visit is hatched and says so, like a pencil task.
-		// v1.784.0: the project and the time slot (get_planner's `foreign` carries them since the review of #1419).
+		// v1.788.0: the project and the time slot (get_planner's `foreign` carries them since the review of #1419).
 		const sub = [
 			kinds[item.kind] || item.kind,
 			this.project_name(item),
@@ -1855,7 +1855,7 @@ class ProjectPlanner {
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
 			if (!e.target.closest) return;
-			// Ctrl+Enter (⌘Enter) on a focused card or project name: its record in a new tab (v1.784.0). A
+			// Ctrl+Enter (⌘Enter) on a focused card or project name: its record in a new tab (v1.788.0). A
 			// Ctrl-click stays the multi-select (p6b_modifier_click).
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
 				if (e.repeat) return; // a held key is one tab, not one a repeat
@@ -3138,7 +3138,7 @@ class ProjectPlanner {
 		// The server's band (get_heatmap `level`) decides the color; the same rule is the fallback.
 		const level = ["green", "amber", "red"].includes(cell.level) ? cell.level : null;
 		const cls = level ? `pp-${level}` : ratio > 1.0001 ? "pp-red" : ratio <= 0.75 ? "pp-green" : "pp-amber";
-		// v1.784.0: a week with nothing firm on it reads as its pencil alone ("8h pencil"), the pencil-only rule
+		// v1.788.0: a week with nothing firm on it reads as its pencil alone ("8h pencil"), the pencil-only rule
 		// of avail_state; with firm hours both are said, without the old plus sign.
 		const sub = booked <= 0.01 && soft > 0.01 ? [] : [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
 		if (soft > 0.01) sub.push(__("{0}h pencil", [pp_hours(soft)]));
@@ -5401,7 +5401,7 @@ const PP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.pps_kit_ready(); // Simple mode draws with the kit
-		this.pph_ready(); // v1.784.0: the hover card on a chip
+		this.pph_ready(); // v1.788.0: the hover card on a chip
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -12704,7 +12704,7 @@ const PPL_METHODS = {
 		return out;
 	},
 
-	// The month band over the day headings (v1.784.0): one cell a month across its days, "November" (the
+	// The month band over the day headings (v1.788.0): one cell a month across its days, "November" (the
 	// short name where fewer than four of its days are on screen), sticky with the headings under it, the way
 	// the Gantt's timeline reads. A week start keeps its rule; the first of a month gets a firmer one.
 	ppl_monthband_html(days) {
@@ -14562,7 +14562,7 @@ const PPO_METHODS = {
 		const on = (selector, fn) => root.querySelectorAll(selector).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
 		const state = this.ppo_state();
 		on("[data-ppo-months]", (el) => this.ppo_pick_months(el.getAttribute("data-ppo-months")));
-		// v1.784.0: both redraw in place (ppl_keep_scroll), so Expand all does not bring the reader to the top.
+		// v1.788.0: both redraw in place (ppl_keep_scroll), so Expand all does not bring the reader to the top.
 		on("[data-ppo-expand]", (el) => {
 			state.expanded = el.getAttribute("data-ppo-expand") === "1";
 			this.ppl_keep_scroll(() => this.render());
@@ -15659,7 +15659,7 @@ const PPR_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPR_METHODS);
 
-// ====================================================================== PPH: the hover card (v1.784.0)
+// ====================================================================== PPH: the hover card (v1.788.0)
 //
 // Nikolas, 2026-11-03: "on the popup when hovering have times and other details". The kit's popover
 // (planner_kit/popover.js) draws a card after a short delay over any chip of this page — a task's card on

@@ -786,7 +786,7 @@ test("Project Planner: the menu starts with Quick edit, and a project's name has
 	const target = pp.p6b_target(name);
 	check("a project's name off a card is a project target", [target.kind, target.project], ["project", "PRJ-1"]);
 	check("titled by the project", pp.p6b_menu_title(target), "Riverwalk");
-	check("its items (v1.784.0: a new tab after Open project)", labels(pp.p6b_menu_items(target)), [
+	check("its items (v1.788.0: a new tab after Open project)", labels(pp.p6b_menu_items(target)), [
 		"Open project",
 		"Open project in new tab",
 		"Project at a glance",

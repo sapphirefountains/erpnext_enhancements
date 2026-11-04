@@ -724,7 +724,7 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 							"date": day,
 							"resource": resource,
 							"hours": booking["hours"],
-							# v1.784.0: the project (an ID; the page knows the title) and the time slot, for the
+							# v1.788.0: the project (an ID; the page knows the title) and the time slot, for the
 							# Calendar's order by project and the hover card's Time row.
 							"project": booking.get("project"),
 							"slot": booking.get("slot"),
@@ -828,7 +828,7 @@ def _crewless_rental(task, start, end):
 			"date": str(day),
 			"resource": None,
 			"hours": None,
-			# v1.784.0: the same keys as every other foreign item (the Calendar's order, the hover card).
+			# v1.788.0: the same keys as every other foreign item (the Calendar's order, the hover card).
 			"project": task.get("project"),
 			"slot": None,
 		}
