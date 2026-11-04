@@ -704,7 +704,7 @@ def test_the_tree_shows_the_drop_target_offers_move_under_and_surfaces_a_refusal
 	assert "return false;" in on_move and "return true" not in on_move
 	assert ".task-grid-row.drop-before" in css and ".task-grid-row.drop-after" in css
 	# A hint while dragging.
-	assert "this.showHint(" in js and 'find(".task-drag-hint").hide()' in js
+	assert "this.showHint(" in js and "hideHint() {" in js
 	# Move under... per row (from the row's Actions menu), a dialog, no route change.
 	assert '{ action: "move", label: "Move under…"' in js
 	assert 'else if (action === "move") this.openMoveDialog(taskId, subject);' in js

@@ -467,7 +467,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                         </div>
                         <button class="btn btn-sm btn-default clear-filters-btn">Clear</button>
                     </div>
-                    <div class="task-drag-hint text-muted small" style="display: none;" role="status" aria-live="polite"><i class="fa fa-info-circle mr-1"></i><span class="task-drag-hint-text"></span></div>
+                    <div class="task-drag-hint text-muted small" role="status" aria-live="polite"><i class="fa fa-info-circle mr-1"></i><span class="task-drag-hint-text"></span></div>
                 </div>
 
                 <div class="task-grid">
@@ -540,13 +540,21 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		}
 	}
 
+	/**
+	 * The hint line always holds a line of text (the idle tip, the drag's words, or the
+	 * sorted note), so the grid never jumps when a drag starts; showing it only during the
+	 * drag pushed every row down by a line under the pointer the moment the drag began.
+	 */
 	showHint(text) {
 		this.wrapper.find(".task-drag-hint-text").text(text);
-		this.wrapper.find(".task-drag-hint").show();
 	}
 
 	hideHint() {
-		this.wrapper.find(".task-drag-hint").hide();
+		this.showHint(
+			this.readonly
+				? ""
+				: __("Drag a task by its handle onto another task to nest it there, or onto the line between two tasks to reorder.")
+		);
 	}
 
 	/** Set (or clear) the column sort, remember it for this browser, and redraw. */
@@ -1739,6 +1747,19 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	handleDragEnd(evt) {
 		const me = this;
+		const original = evt.originalEvent;
+		// A native drag that ends in `dragend` without a `drop` was canceled: Escape, or
+		// let go outside the page. (A drop fires `drop` first, and SortableJS nulls itself
+		// then, so the later `dragend` never reaches here.)
+		const canceled = !!(original && original.type === "dragend");
+		// Decide from where the pointer let go, not only from the last dragover seen: a
+		// quick drop can land with no dragover reported at its own point (seen with a
+		// driven mouse on prod; a hand moves through many more). The touch fallback ends
+		// in touchend, whose point is in changedTouches.
+		const point = original && original.changedTouches && original.changedTouches[0] ? original.changedTouches[0] : original;
+		if (!canceled && this._draggedId && point && point.clientX != null && point.clientY != null) {
+			this.updateDropIntent(point.clientX, point.clientY);
+		}
 		const plan = this._dropPlan;
 		const draggedId = this._draggedId;
 		const rows = this._dragRows || [];
@@ -1749,11 +1770,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		document.removeEventListener("pointermove", this._onDocDragOver);
 		this.clearDropIndicators();
 		this.renderSortState();
-		// A native drag that ends in `dragend` without a `drop` was canceled: Escape, or
-		// let go outside the page. (A drop fires `drop` first, and SortableJS nulls itself
-		// then, so the later `dragend` never reaches here.)
-		const original = evt.originalEvent;
-		if (!plan || !draggedId || (original && original.type === "dragend")) return;
+		if (!plan || !draggedId || canceled) return;
 
 		// Never touch the DOM inside onEnd: SortableJS is still in its own drop cleanup
 		// and a re-parented node leaves its internals pointing at a detached element
