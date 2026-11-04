@@ -663,7 +663,9 @@ class ContractBuilder {
 							.append($("<h4></h4>").text(type.title))
 							.append($("<p></p>").text(type.description || ""))
 					)
-					.on("click", () => this.start_dialog(type, {}))
+					// A visit from a Project's or Customer's Contract button carries that record in
+					// route_options (contract_button.js); the picked type's dialog opens with it filled in.
+					.on("click", () => this.start_dialog(type, options))
 					.appendTo($types);
 			});
 			this.append_list($wrap, __("Drafts in progress"), start.drafts, start.types);

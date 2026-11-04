@@ -74,6 +74,9 @@ function ee_maybe_autofill_scope(frm) {
 
 frappe.ui.form.on("Project Contract", {
 	setup(frm) {
+		// v1.783.0: a hidden template (enabled = 0) is not offered here either; create_contract
+		// refuses one anyway, and a contract already issued on it still opens.
+		frm.set_query("contract_template", () => ({ filters: { enabled: 1 } }));
 		frm.set_query("msa_contract", () => ({
 			filters: {
 				template_key: "msa",

@@ -1,4 +1,4 @@
-"""Seed the five Contract Template records from templates/contracts/*.html.
+"""Seed the eight Contract Template records from templates/contracts/*.html.
 
 The Jinja bodies are faithful conversions of Brian's revised agreement suite
 (Apr 2026, see scripts/contract_templates/README.md for the regeneration
@@ -6,7 +6,10 @@ pipeline). **Insert-only**: an existing template (by ``template_key``) is left
 untouched, so legal-text edits made on the site survive re-migrations and
 fresh installs still get the full set. To push a *repo-side* template change
 to the site after first creation, paste the new body into the Contract
-Template record (or write a deliberate patch).
+Template record (or write a deliberate patch). v1.783.0 (Nikolas, 2026-11-03) is one: Architect
+Agreement became **Design Agreement**, Rental Agreement **Events Agreement**, and the
+Employee-Contractor Agreement and the NDA are hidden (``enabled = 0``, here for a fresh site and
+in ``rename_agreement_templates`` for an existing one). Keys, names and series are unchanged.
 """
 
 import os
@@ -40,7 +43,7 @@ TEMPLATES = [
 	},
 	{
 		"template_key": "rental",
-		"title": "Rental Agreement",
+		"title": "Events Agreement",
 		"party_type": "Customer",
 		"requires_msa": 0,
 		"file": "rental_agreement.html",
@@ -55,18 +58,21 @@ TEMPLATES = [
 		"description": "Ongoing maintenance plan agreement: base rate per visit plus chemicals, emergency rates, an annual increase at renewal, any payment method on file, client initials on key clauses. Card data is never stored in ERPNext.",
 	},
 	# Retained originals — the Contract Comparison Report keeps these three in
-	# active use with no replacement in the revised suite.
+	# active use with no replacement in the revised suite. Two are hidden for now
+	# (Nikolas, 2026-11-03): seeded so a contract of that kind can still be read and
+	# the record is there to switch on, but offered by no picker.
 	{
 		"template_key": "nda",
 		"title": "Mutual Non-Disclosure Agreement",
 		"party_type": "Any Party",
 		"requires_msa": 0,
+		"enabled": 0,
 		"file": "nondisclosure_agreement.html",
 		"description": "General mutual NDA (DOC-0033, retained). Counterparty can be a Customer, Supplier, or Employee record.",
 	},
 	{
 		"template_key": "architect",
-		"title": "Architect Agreement",
+		"title": "Design Agreement",
 		"party_type": "Customer",
 		"requires_msa": 0,
 		"file": "architect_agreement.html",
@@ -77,6 +83,7 @@ TEMPLATES = [
 		"title": "Employee-Contractor Agreement",
 		"party_type": "Any Party",
 		"requires_msa": 0,
+		"enabled": 0,
 		"file": "employee_contractor_agreement.html",
 		"description": "Expectations / confidentiality / IP assignment / non-compete for employees and individual contractors (DOC-0137, retained; comparison report recommends a legal review pass).",
 	},
@@ -105,5 +112,5 @@ def execute():
 		doc.requires_msa = spec["requires_msa"]
 		doc.description = spec["description"]
 		doc.body = body
-		doc.enabled = 1
+		doc.enabled = spec.get("enabled", 1)
 		doc.insert(ignore_permissions=True)
