@@ -107,3 +107,20 @@ directories Frappe imports from are `permission_type`, `doctype`, `page`, `repor
 `custom_field` and `property_setter`. `scripts/check_import_dirs.py` enforces it in CI, and
 the list is read from the installed Frappe rather than hard-coded, so it keeps up when Frappe
 adds another.
+
+## The sidebar as an icon rail (v1.786.0)
+
+Beside a pinned dock, frappe 16.53 turns a collapsed sidebar into a **hidden** one:
+`Sidebar.hides_when_collapsed()` answers `dock.is_pinned`, and `apply_expanded_state` then adds
+`.sidebar-hidden` (width 0, inert). The 48px rail frappe draws otherwise, with the glyphs kept and
+the words folded, never appeared here because every user has the dock pinned.
+`public/js/global_enhancements/sidebar_rail.js` wraps that one method to answer false on a desktop,
+so a collapse is the rail; everything that draws the rail is frappe's own. On top of it the file adds
+the dock tiles' tooltip to each rail row, a pin, the rows the person opens most first (their own 90
+days of Route History through `api/sidebar_rail.py`; groups never move; the module's landing page is
+unaffected because `module_landing_route` reads the boot order, not the drawn one), count badges on
+the Task, Pending Confirmations and My Work icons, a Recent row, and a phone bottom bar. The pin
+calls frappe's `open()`/`close()`, which `tests/test_frappe_16_50_desk_compat.py` forbids every other
+file from doing; that test names the allowance and its reason. Phones keep frappe's drawer. Per-person
+memory of the fold is `sidebar_memory.js`'s (v1.717.0); the rail is the default once per person per
+browser. The mocks Nik picked from: `claude.ai/artifact/QUt39tdosD4nAyJuogtfbW`.

@@ -624,16 +624,17 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 
 	def test_production_on_2026_10_23(self):
 		db, fake = self._migrate()
+		# Since v1.786.0 the Customer row sits right under the Kanban, relabelled Accounts.
 		self.assertEqual(
 			_labels(db, "CRM")[:8],
 			[
 				"Opportunity Kanban",
+				"Accounts",
 				"Dashboard",
 				"Lead",
 				"Opportunity",
 				"Guided Entry",
 				"Opportunity Board",
-				"Customer",
 				"Reports",
 			],
 		)
@@ -663,8 +664,29 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 	def test_the_dashboard_row_is_renamed_not_moved_or_lost(self):
 		db, _ = self._migrate()
 		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("Dashboard", "CRM"))
-		self.assertEqual((row["label"], row["idx"]), ("Dashboard", 2))
+		self.assertEqual((row["label"], row["idx"]), ("Dashboard", 3))
 		self.assertIn((row["name"], "label", "Dashboard"), db.writes)
+
+	def test_the_customer_row_moves_under_the_kanban_as_accounts(self):
+		"""v1.786.0: Kanban to Customer list and back was the busiest two-step on the Desk."""
+		db, _ = self._migrate()
+		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("DocType", "Customer"))
+		self.assertEqual((row["label"], row["idx"]), ("Accounts", 2))
+		self.assertIn((row["name"], "label", "Accounts"), db.writes)
+		# Moved, not copied: one Customer row, and the rows after it only shifted.
+		self.assertEqual(sum(1 for r in db.rows if r["link_to"] == "Customer"), 1)
+		self.assertEqual(_labels(db, "CRM")[7:], [label for *_, label in _CRM_2026_10_23[6:]])
+		_contiguous(self, db, "CRM")
+
+	def test_a_crm_without_the_customer_row_keeps_its_order(self):
+		rows = [r for r in _crm_rows() if r["link_to"] != "Customer"]
+		for idx, row in enumerate(rows, start=1):
+			row["idx"] = idx
+		db = _AddDb(rows, sidebars=("CRM",))
+		fake = _run_migrate(db)
+		self.assertEqual(_labels(db, "CRM")[:3], ["Opportunity Kanban", "Dashboard", "Lead"])
+		self.assertEqual(fake.errors, [])
+		_contiguous(self, db, "CRM")
 
 	def test_second_migrate_changes_nothing(self):
 		db, _ = self._migrate()
@@ -679,7 +701,7 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 		db.inserted.clear()
 		_run_migrate(db)
 		self.assertEqual([r["url"] for r in db.inserted], [KANBAN])
-		self.assertEqual(_labels(db, "CRM")[:2], ["Opportunity Kanban", "Dashboard"])
+		self.assertEqual(_labels(db, "CRM")[:3], ["Opportunity Kanban", "Accounts", "Dashboard"])
 
 	def test_a_kanban_row_already_there_is_left_alone(self):
 		# A Workspace Manager moved it down and hid it in the base; it is still the same link.
@@ -725,8 +747,9 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 		rows[0]["label"] = "Sales Dashboard"
 		db = _AddDb(rows, sidebars=("CRM",))
 		_run_migrate(db)
-		self.assertEqual(_labels(db, "CRM")[1], "Sales Dashboard")
-		self.assertFalse([w for w in db.writes if len(w) == 3])
+		self.assertEqual(_labels(db, "CRM")[2], "Sales Dashboard")
+		# No label write for the dashboard row; the Customer row's own relabel still happens.
+		self.assertFalse([w for w in db.writes if len(w) == 3 and w[0] == rows[0]["name"]])
 
 
 class TestBuyingOrder(unittest.TestCase):

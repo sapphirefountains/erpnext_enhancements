@@ -1703,3 +1703,222 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
     font-variant-numeric: tabular-nums;
     padding: 0 2px;
 }
+
+/* --------------------------------------------------------------------------
+   Sidebar rail (v1.786.0, global_enhancements/sidebar_rail.js; Nik 2026-11-03, Mock C)
+
+   The 48px rail itself is frappe 16.53's own (sidebar.scss, `.body-sidebar-container:not(.expanded)`);
+   the script only stops a collapse beside the pinned Dock from hiding the panel. What is ours: the
+   pin and Recent rows in the standard band, the count badges on an icon (frappe folds
+   `.sidebar-item-suffix` to width 0 in the rail, so a suffix count vanishes there), the hairline
+   after the used-most band, the Recent popover (mounted on the container, beside the panel, because
+   `.body-sidebar` clips what overhangs it), and the phone bottom bar. Frappe's own variables, so
+   light and dark are both right. */
+.body-sidebar .ee-rail-pin button.item-anchor,
+.body-sidebar .ee-rail-recent-item button.item-anchor {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: inherit;
+}
+.body-sidebar .sidebar-item-icon {
+    position: relative;
+}
+.ee-rail-badge {
+    position: absolute;
+    top: -7px;
+    right: -9px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 150px;
+    background: var(--blue-500, #00609c);
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--desk-sidebar-bg, var(--surface-gray-1, #f8f8f8));
+    pointer-events: none;
+}
+.ee-rail-badge--overdue {
+    background: var(--red-500, #bd2e2b);
+}
+/* Expanded, the My Work row already shows its number as a suffix. */
+.body-sidebar-container.expanded .ee-my-work-item .ee-rail-badge {
+    display: none;
+}
+/* The used-most band: a caption above it when expanded, a hairline after it in both states. */
+.body-sidebar .ee-rail-top-last {
+    position: relative;
+    margin-bottom: 10px;
+}
+.body-sidebar .ee-rail-top-last::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: -6px;
+    height: 1px;
+    background: var(--outline-gray-2, #dadbdd);
+}
+.body-sidebar-container.expanded .ee-rail-top-first::before {
+    content: "Used most";
+    display: block;
+    padding: 4px 8px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover {
+    position: absolute;
+    z-index: 1025;
+    width: 272px;
+    padding: 6px;
+    background: var(--surface-elevation-3, var(--surface-base, #ffffff));
+    border: 1px solid var(--outline-gray-2, #dadbdd);
+    border-radius: 8px;
+    box-shadow: var(--shadow-md, 0 6px 24px rgba(0, 0, 0, 0.14));
+}
+.ee-rail-popover-title {
+    margin: 4px 8px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-empty {
+    padding: 6px 8px 10px;
+    font-size: 12px;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--ink-gray-8, #171717);
+    font-size: 12.5px;
+    text-decoration: none;
+}
+.ee-rail-popover-row:hover,
+.ee-rail-popover-row:focus-visible {
+    background: var(--surface-gray-2, #ededed);
+    color: var(--ink-gray-8, #171717);
+    text-decoration: none;
+}
+.ee-rail-popover-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ee-rail-popover-when {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-order {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 7px 8px;
+    border-top: 1px solid var(--outline-gray-1, #ededed);
+    text-align: left;
+    font-size: 11.5px;
+    color: var(--ink-gray-6, #525252);
+    background: transparent;
+    cursor: pointer;
+}
+.ee-rail-popover-order:hover {
+    color: var(--ink-gray-8, #171717);
+}
+
+/* The phone bottom bar: the module's first four rows plus More. Below md only; the script builds
+   it only there too, so the desktop rule is a belt for a browser that lies about its width. */
+.ee-quick-bar {
+    display: none;
+}
+@media (max-width: 767.98px) {
+    .ee-quick-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1019;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        height: calc(56px + env(safe-area-inset-bottom, 0px));
+        padding: 4px 4px env(safe-area-inset-bottom, 0px);
+        background: var(--desk-sidebar-bg, var(--surface-gray-1, #f8f8f8));
+        border-top: 1px solid var(--outline-gray-1, #ededed);
+    }
+    .ee-quick-bar-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink-gray-6, #525252);
+        font-size: 10px;
+        font-weight: 500;
+        text-decoration: none;
+    }
+    .ee-quick-bar-item:hover,
+    .ee-quick-bar-item:focus-visible {
+        color: var(--ink-gray-8, #171717);
+        text-decoration: none;
+    }
+    .ee-quick-bar-item.active {
+        color: var(--blue-500, #00609c);
+    }
+    .ee-quick-bar-icon {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 28px;
+        border-radius: 14px;
+    }
+    .ee-quick-bar-item.active .ee-quick-bar-icon {
+        background: var(--blue-100, #e2eef6);
+    }
+    .ee-quick-bar-icon .icon {
+        width: 22px;
+        height: 22px;
+    }
+    .ee-quick-bar-icon .ee-rail-badge {
+        top: -3px;
+        right: 4px;
+    }
+    .ee-quick-bar-label {
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Room under the page for the bar, so the last row of a list is never behind it. */
+    body.ee-quick-bar-on .page-container,
+    body.ee-quick-bar-on .main-section > .page-container {
+        padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    }
+    body.ee-quick-bar-hidden .ee-quick-bar,
+    body.modal-open .ee-quick-bar,
+    body:has(.modal.show) .ee-quick-bar {
+        display: none;
+    }
+}

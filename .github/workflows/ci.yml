@@ -482,6 +482,20 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_breadcrumb_targets -v
       - name: Breadcrumb targets (executed, not grepped)
         run: node scripts/test_breadcrumb_targets.js
+      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.786.0, Nik
+      # 2026-11-03, Mock C): one wrapped method (Sidebar.hides_when_collapsed) stops a collapse
+      # from hiding the panel; the rows this person uses most come first, badges sit on the icons,
+      # a Recent row and a phone bottom bar are added. The node step runs sidebar_rail.js against
+      # a stub of frappe 16.53's Sidebar prototype (the wrapper answers false on a desktop and
+      # frappe's own on a phone, the rail-by-default runs once per person, the Route History
+      # spelling of each row, the used-most order never moves a group, the Training tile opens the
+      # Course list); the unittest step holds the seams (the bundle imports it after
+      # sidebar_memory.js, the stylesheet has the classes the script sets, the bar is below 768px
+      # only, the endpoint is a read-only GET, the compat test names the one allowance).
+      - name: Sidebar rail (wiring and the endpoint)
+        run: python -m unittest erpnext_enhancements.tests.test_sidebar_rail -v
+      - name: Sidebar rail (executed, not grepped)
+        run: node scripts/test_sidebar_rail.js
       # The Opportunity Kanban customization on frappe 16.53's classic engine (v1.779.0). Its old
       # hooks (KanbanView.render_card / get_data) do not exist on 16.50+, so the high-value cards
       # and value-stream dots had been silently gone since 2026-10-06; the node step runs the file
