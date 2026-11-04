@@ -133,30 +133,57 @@ export function open_reminder(opts) {
 
 // ------------------------------------------------------------------ Generate Contract
 
-// Customer agreements (Owner / Rental / Maintenance) generate from Opportunity or Project;
-// subcontractor agreements (MSA / SOW / NDA) generate from Supplier. An SOW can also be generated from
-// a Project/Opportunity by picking the subcontractor in the dialog, which prefills the scope of work
+// Customer agreements (Owner / Events / Maintenance) generate from Opportunity or Project;
+// subcontractor agreements (MSA / SOW) generate from Supplier. An SOW can also be generated from a
+// Project/Opportunity by picking the subcontractor in the dialog, which prefills the scope of work
 // from the source's request/deliverable tables.
+//
+// v1.783.0 (Nikolas, 2026-11-03: "Architect Agreement" is now "Design Agreement", "Rental Agreement"
+// is "Events Agreement", and the Employee-Contractor Agreement and the NDA are hidden): the dialog
+// offers only the Contract Templates that are *enabled* on the site, under the title each has there
+// (contract_builder.get_contract_types — the Builder's start screen reads the same list). This
+// static list is the order and the hints; the server's answer decides which of it is offered, and
+// the labels here are only the fallback for a tab whose call failed. The template_key is the
+// contract: the keys (architect, rental) did not change with the titles. The Design Agreement is
+// deliberately NOT here: create_contract prefills the party from the project's customer, and the
+// other side of a Design Agreement is the architect, which only the Builder's start dialog asks for.
 const CONTRACT_SOURCES = { Opportunity: "customer", Project: "customer", Supplier: "supplier" };
+const CB_API = "erpnext_enhancements.project_enhancements.contract_builder";
 
 export function contract_types(doctype) {
 	const kind = CONTRACT_SOURCES[doctype];
 	if (kind === "customer") {
 		return [
-			{ value: "owner", label: __("Owner Contract (Design / Build / Maintain)") },
-			{ value: "rental", label: __("Rental Agreement") },
+			{ value: "owner", label: __("Owner Contract"), hint: __("Design / Build / Maintain") },
+			{ value: "rental", label: __("Events Agreement") },
 			{ value: "maintenance", label: __("Maintenance Services Agreement") },
-			{ value: "sow", label: __("Statement of Work (subcontractor — requires signed MSA)") },
+			{ value: "sow", label: __("Statement of Work"), hint: __("subcontractor — requires signed MSA") },
 		];
 	}
 	if (kind === "supplier") {
 		return [
 			{ value: "msa", label: __("Master Subcontractor Agreement") },
-			{ value: "sow", label: __("Statement of Work (requires signed MSA)") },
-			{ value: "nda", label: __("Mutual Non-Disclosure Agreement") },
+			{ value: "sow", label: __("Statement of Work"), hint: __("requires signed MSA") },
 		];
 	}
 	return [];
+}
+
+// The dialog's options: the static list narrowed to the templates enabled on the site, each under
+// its live title. A failed call keeps the static list, so the button still works on a bad day.
+function enabled_contract_types(doctype) {
+	const types = contract_types(doctype);
+	const label = (t, title) => (t.hint ? `${title || t.label} (${t.hint})` : title || t.label);
+	return frappe
+		.xcall(`${CB_API}.get_contract_types`)
+		.then((rows) => {
+			const live = {};
+			(rows || []).forEach((row) => {
+				live[row.template_key] = row.title;
+			});
+			return types.filter((t) => t.value in live).map((t) => ({ value: t.value, label: label(t, live[t.value]) }));
+		})
+		.catch(() => types.map((t) => ({ value: t.value, label: label(t) })));
 }
 
 // Master switch: the suite is dormant until enabled in ERPNext Enhancements Settings (a boot flag;
@@ -197,8 +224,17 @@ export function create_sow_with_gate(supplier, source_doctype, source_name) {
 }
 
 export function open_generate_contract(source_doctype, source_name) {
-	const types = contract_types(source_doctype);
-	if (!types.length || !source_name) return null;
+	if (!contract_types(source_doctype).length || !source_name) return null;
+	return enabled_contract_types(source_doctype).then((types) => {
+		if (!types.length) {
+			frappe.msgprint(__("No contract type is enabled for a {0}.", [__(source_doctype)]));
+			return null;
+		}
+		return generate_contract_dialog(source_doctype, source_name, types);
+	});
+}
+
+function generate_contract_dialog(source_doctype, source_name, types) {
 	const d = new frappe.ui.Dialog({
 		title: __("Generate Contract"),
 		fields: [

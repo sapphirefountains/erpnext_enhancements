@@ -39,8 +39,8 @@
 			</ul>
 			{% if detail.agreement %}
 				<p class="mt-2 mb-0 text-muted">
-					{% if detail.agreement.status == "Signed" %}{{ _("Rental agreement signed on {0}.").format(frappe.format(detail.agreement.signed_on, {"fieldtype": "Date"})) }}
-					{% else %}{{ _("Your rental agreement is waiting for your signature. Check your email for the signing link.") }}{% endif %}
+					{% if detail.agreement.status == "Signed" %}{{ _("Events agreement signed on {0}.").format(frappe.format(detail.agreement.signed_on, {"fieldtype": "Date"})) }}
+					{% else %}{{ _("Your events agreement is waiting for your signature. Check your email for the signing link.") }}{% endif %}
 				</p>
 			{% endif %}
 		</div></div>

@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.783.0] - 2026-11-03
+
+Nikolas, from the meeting with James and Clegg on 2026-11-03: "Add Contract button to Scope to
+view contract. If no contract is listed, then it asks and opens the Contract Builder. Remove the
+contract tab in Project DocType and just make that button the new primary way to view and create
+contracts. Change Architect Agreement to Design Agreement. Rental Agreement change to Events
+Agreement. For now hide Employee Contractor Agreement and Mutual Non-disclosure agreements. Down
+Payment Percentage as the name in the Budget tab instead of First Invoice Percentage."
+
+### Added
+- **The Contract button** (`public/js/project_enhancements/contract_button.js`, loaded on Project
+  and Customer). On a Project it is a bar at the top of the **Scope** tab, above the Tasks Tree;
+  on a Customer, a **Contract** button in the page head. A press asks `get_contracts` then and
+  there (nothing is queried on refresh): **one** contract opens the **Contract Builder's review
+  step** (`/desk/contract-builder/<contract>/review`, the whole agreement, its signature, sign or
+  send); **several** open a picker first (type, status, party, date), where a Sapphire Maintenance
+  Contract row opens its own form read-only, since it carries no legal text; **none** asks *"No
+  contract on this project yet. Create one?"* and, on yes, opens the Builder's start screen with
+  this project (or this customer) already in the start dialog. Someone who cannot create a Project
+  Contract, or a site with the suite switched off, gets the plain statement instead. Routes only,
+  so Back and Forward keep working.
+- `contract_builder.get_contract_types`: the enabled Contract Templates under their live titles,
+  the one list behind both pickers (below).
+- `tests/test_contract_renames` (bench-free, its own CI step): the two patches (what they change,
+  idempotent, never raise), the seed and the template files naming the same titles as the patch,
+  the button's routes and hook entries, the Generate Contract list, and the Events Agreement /
+  Down Payment Percentage wording where the brief named it.
+
+### Changed
+- **Contract Template titles**: `architect` is **Design Agreement** (was Architect Agreement) and
+  `rental` is **Events Agreement** (was Rental Agreement). `seed_contract_templates` is
+  insert-only, so the new words never reach a site that already has the records: the new patch
+  `rename_agreement_templates` retitles both on an existing site and swaps the live bodies'
+  heading and the two sentences that name the agreement (exact strings, each only where the old
+  wording is still there, so a body edited on the site keeps its edits; a body that carries
+  neither wording gets the title and an Error Log saying the printed heading was not changed).
+  **Signed contracts keep their wording:** before a body is rewritten, every Signed contract of
+  that type is frozen as it reads today (`freeze_contract_copies`, the call the layout patches
+  make), because a contract marked signed on paper has no executed copy of its own and
+  re-renders from the live template on every print. A signing link still out when the patch
+  runs shows the signer the new heading, accepted: the words changed, not the terms. The
+  `template_key`, the record name and the naming series `SF-RA-` are unchanged: code keys on
+  them, not on the title. The Project Contract form's **Contract Type** Link lists enabled
+  templates only (`set_query`), so a hand-made contract cannot pick a hidden one either.
+  The seed and the template files (`templates/contracts/architect_agreement.html`,
+  `rental_agreement.html`) carry the same words for a fresh site.
+- **Events Agreement everywhere it is read**: the Rental Booking's *View* and *Create* buttons
+  and its `rental_agreement` field label, the booking's confirmation and hold comments and the
+  Error Log titles in `asset_management/rental_sales.py`, the hold email in `rental_holds.py`, the
+  customer's `/rentals` page ("Events agreement signed on …", "Your events agreement is waiting
+  for your signature"), `hooks.py`'s note, the asset_management and project_enhancements READMEs.
+  `travel_management` (car rentals) is untouched. The already-run layout patches
+  (`refresh_rental_owner_agreement_layout`, `refresh_general_agreement_layout`) keep the old
+  names in their log titles: they are history, and their tests pin those strings.
+- **The Generate Contract dialog** (`record_actions.open_generate_contract`) offers only the
+  templates **enabled** on the site, under each one's live title, read from
+  `get_contract_types`: a template switched off in the Desk disappears from it without a code
+  change, and the Builder's start screen reads the same list. The static list in
+  `record_actions.contract_types` is now the order and the hints (and the fallback labels for a
+  tab whose call failed): Owner Contract, **Events Agreement**, Maintenance Services Agreement
+  and the SOW for a Project or Opportunity; MSA and SOW for a Supplier. The NDA is no longer in
+  it. The Design Agreement is deliberately not added: `create_contract` prefills the party from
+  the project's customer, and the other side of a Design Agreement is the architect, which only
+  the Builder's start dialog asks for.
+- **"First Invoice Percentage" reads "Down Payment Percentage"** on the Project and Opportunity
+  Budget tabs (`fixtures/custom_field.json`, label only; the fieldname is still
+  `custom_first_invoice_percentage`), in the step-4 note to Billing ("Down payment: 30% of … =
+  …", "Down Payment Percentage is not set on this project"), the guided entry hint, both fields'
+  fixture descriptions (the Opportunity one is the guided hint: `test_form_kit` holds the whole
+  help file to it) and the README.
+
+### Removed
+- **The Contracts tab on Project and Customer** (v1.181.0 / v1.182.0, the Signed copy rows of
+  v1.745.0). The Contract button is the way in now. The tab was two Custom Fields on each form
+  (`custom_contracts_tab`, `custom_contracts_html`), created by `add_project_contracts_tab` and
+  `add_customer_contracts_tab` with `create_custom_fields`, which marks them
+  `is_system_generated`, so they were **never in `fixtures/custom_field.json`** and there is
+  nothing to stop managing; the only way they leave a site is a delete. Deletion is therefore
+  the one-shot patch `remove_contracts_tabs`, which deletes the four by name, skips one already
+  gone, logs one that will not delete and goes on with the rest, and cannot raise (a patch that
+  raises aborts `bench migrate`, which is the deploy). The two source patches stay in
+  `patches.txt` because a patch never runs twice; the new one is listed after them.
+  `contracts_tab.js` and its two `doctype_js` entries are deleted; `contract_viewer.js` is no
+  longer loaded on Project or Customer (it stays on Project Contract, Sapphire Maintenance
+  Contract and the Project Contract list, which read contracts). `get_contracts` is unchanged
+  and now feeds the button's picker; `tests/test_signed_copy` keeps its server cases and drops
+  the two that read the tab's script.
+- **Employee-Contractor Agreement and Mutual Non-Disclosure Agreement are hidden** for now:
+  `enabled = 0` on both Contract Templates (`rename_agreement_templates` on an existing site; the
+  seed inserts them disabled on a fresh one), so neither picker offers them and `create_contract`
+  refuses a new one. The contracts already issued on them keep working: they render, sign and
+  print as before, and only the pickers hide them. The records are there to switch back on.
+
 ## [1.781.0] - 2026-11-03
 
 ### Changed

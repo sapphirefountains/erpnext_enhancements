@@ -46,7 +46,8 @@ explicit address or a Role whose holders are invited.
 routes is the "Create Accounting Project & Send Invoice" note, composed from the
 Project's step-4 button. It used to take the configured Billing list and say
 nothing about money, which left Billing to go and find out how much of the deal
-to invoice — so the deal now carries the answer. **First Invoice Percentage** and
+to invoice — so the deal now carries the answer. **Down Payment Percentage** (the field
+is still ``custom_first_invoice_percentage``; labelled "First Invoice Percentage" until v1.783.0) and
 **Billing Email** are Custom Fields on *both* Opportunity and Project;
 :func:`billing_terms` resolves them field by field, Project over Opportunity, and
 :func:`billing_notice_context` hands the composer the recipients, the percentage
