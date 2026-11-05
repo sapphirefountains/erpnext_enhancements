@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.794.1] - 2026-11-04
+## [1.794.2] - 2026-11-04
 
 ### Added
 - **WI-082: receipt, bill and PO capture, scoped.** Nikolas, 2026-11-04, after the Salt Air reality check
@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Four phases (foundations S, Lisa's inbox M, technician receipts M, matching and reporting M), twelve
     open questions for Lisa, the CPA, Nikolas and James, acceptance criteria as queries, and the risk
     list. No QuickBooks integration of any kind; nothing is ever auto-submitted.
+
+## [1.794.1] - 2026-11-04
+
+### Fixed
+- **On a phone, the Triton button no longer covers the bottom bar's More.** Nikolas, 2026-11-04,
+  from a Project form on his phone: "The Triton button covers the more button on mobile, please
+  fix". The button is fixed at the bottom right (`triton_widget.css`: `bottom: 16px` below 480px,
+  `24px` up to it, z-index 1040), and v1.793.0's phone bottom bar (`.ee-quick-bar`, below 768px,
+  56px plus the home-indicator inset, z-index 1019) puts More in that same corner, so the button sat
+  on top of it. While the bar shows (`body.ee-quick-bar-on`), the button now floats 16px above it
+  (`bottom: calc(72px + env(safe-area-inset-bottom))`). It drops back to its old place when the bar
+  hides, which `sidebar_rail.js` does while an input has focus (`ee-quick-bar-hidden`) and under a
+  dialog (`modal-open`), and on a page with no bar. The guided page is left out (`:not(.ge-page-active)`)
+  because it already lifts the button 88px above its own footer (`guided_entry.bundle.css`). The
+  rule sits with the bar's own styles in `desk_enhancements.bundle.css`, since the bar is what took
+  the corner. Checked at 375px with the rules from both stylesheets. With the bar showing, the button
+  sits clear of More, and with the bar hidden or absent it is back at 16px.
 
 ## [1.794.0] - 2026-11-03
 
