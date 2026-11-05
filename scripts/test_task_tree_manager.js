@@ -232,6 +232,11 @@ check(/dragLockReason\(\)/.test(code) && /filtersActive\(\)/.test(code), "drag i
 check(/Nest under \{0\}/.test(code), "the pill says Nest under <task>");
 check(!/quick-add/.test(code) && !/createQuickAddRow/.test(code) && !/create_inline_task/.test(code), "the inline Add root task / Add subtask rows are gone (Nikolas, 2026-11-03)");
 check(/\.add-task-btn/.test(code) && /action === "add-subtask"/.test(code) && /\.add-template-btn/.test(code), "the three ways left to add: Add task, a row's Actions → Add subtask, Add from template");
+// v1.797.1: staff outside System Manager hold only Desk User's Select on User, and 16.x lets Select
+// return `name` and the search field `full_name`, nothing else. Asking for `email` refuses the whole
+// call, so the Assign dialog's current-assignee list never rendered for them.
+const userLists = [...code.matchAll(/get_list\("User",\s*\{([\s\S]*?)\}\)/g)].map((m) => m[1]);
+check(userLists.length > 0 && userLists.every((args) => /fields:\s*\["name", "full_name"\]/.test(args) && !/"email"/.test(args) && !/\bemail\s*:/.test(args)),"every browser list of User asks only for name and full_name, and filters on name, never email (Select allows nothing else)");
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

@@ -356,6 +356,14 @@ jobs:
       # an unreadable tabDocType must delete nothing, and no failure may raise out of the patch.
       - name: Orphan DocPerm cleanup (deletes only rows for DocTypes that do not exist)
         run: python -m unittest erpnext_enhancements.tests.test_orphan_docperm_cleanup -v
+      # v1.797.1: who may change User records. The remove_production_team_user_docperm patch deletes a
+      # Desk-added row that gave Production Team write on User, and must leave every other role's row on
+      # User (System Manager's above all) and Production Team's rows on other doctypes alone, delete the
+      # way Role Permissions Manager does (delete_doc, force), and never raise. The same suite fails the
+      # build if custom_docperm.json ever grants a non-System-Manager role more than Select/Export on User.
+      # Own step: it installs its own frappe stub.
+      - name: User permission guard (patch removes Production Team's User row; fixture never grants User)
+        run: python -m unittest erpnext_enhancements.tests.test_user_docperm_guard -v
       # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.

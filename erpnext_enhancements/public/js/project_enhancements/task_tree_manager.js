@@ -1280,13 +1280,23 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					renderCurrentAssignees([]);
 					return;
 				}
+				// Ask for `name`, never `email`. Outside System Manager, staff hold only Desk User's
+				// Select on User, and from 16.x Select returns just `name` and the search field
+				// (`full_name`): asking for `email` raises "You do not have permission to access
+				// field: User.email" and the list never renders. This is the shape frappe's own
+				// user_query uses. A User's name is its email (User.validate sets email = name),
+				// so the remove button still gets the address it needs.
 				frappe.db
 					.get_list("User", {
-						filters: { email: ["in", emails] },
-						fields: ["email", "full_name"],
+						filters: { name: ["in", emails] },
+						fields: ["name", "full_name"],
 						limit: 0,
 					})
-					.then((users) => renderCurrentAssignees(users));
+					.then((users) =>
+						renderCurrentAssignees(
+							(users || []).map((u) => ({ email: u.name, full_name: u.full_name }))
+						)
+					);
 			});
 
 		d.show();
