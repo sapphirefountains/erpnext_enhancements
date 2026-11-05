@@ -7,8 +7,14 @@ imports it. The two workspace files are edited, and Workspaces are **timestamp-g
 ``import_file``: a file is imported only when it reads newer than the stored row. Both now carry
 2026-11-05 10:00, past the rows on production (2026-10-23 12:00 and 2026-10-20 15:00), and this
 patch is the belt to those suspenders, the same shape as ``count_desk_hub_links``:
-``import_file_by_path(force=True)`` rebuilds each row past the age check. Idempotent; never raises
-(each step logs its own failure).
+``import_file_by_path(force=True)`` rebuilds each row past the age check.
+
+**Each import runs in its own savepoint.** frappe 16.53's ``import_doc`` deletes the stored row
+(``delete_old_doc``) before it calls ``insert()``. If the insert raised and the patch only logged
+it, migrate would commit the delete and the workspace would be gone. So a failure rolls back to the
+savepoint, which puts the old row back. ``import_doc`` also sets ``frappe.flags.in_import`` and
+clears it only after a successful insert, so the flag is restored in a ``finally``. Idempotent;
+never raises (each step logs its own failure).
 """
 
 import os
@@ -34,14 +40,25 @@ def execute():
 			frappe.log_error(title=TITLE, message=f"File missing: {path}")
 			failed.append(slug)
 			continue
+		savepoint = f"wh_txn_ws_{slug}"
+		in_import = frappe.flags.in_import
 		try:
+			frappe.db.savepoint(savepoint)
 			import_file_by_path(path, force=True, reset_permissions=False)
 			done.append(slug)
 		except Exception:
+			try:
+				frappe.db.rollback(save_point=savepoint)
+			except Exception:
+				frappe.log_error(
+					title=TITLE, message=f"Could not roll back workspace {slug}\n{frappe.get_traceback()}"
+				)
 			frappe.log_error(
 				title=TITLE, message=f"Could not import workspace {slug}\n{frappe.get_traceback()}"
 			)
 			failed.append(slug)
+		finally:
+			frappe.flags.in_import = in_import
 	try:
 		frappe.clear_cache()
 	except Exception:

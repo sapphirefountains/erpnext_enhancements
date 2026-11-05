@@ -915,27 +915,39 @@ Count Session form.
 
 ## Warehouse Transactions (v1.797.0)
 
-A report of every Stock Ledger Entry: item, quantity (positive added, negative taken out),
-warehouse, date and time, voucher, and the person, with their full name. Filter by From/To date
-(the last 30 days by default), Item, Warehouse and User. Pick a person and it is their history of
-additions and removals. Pick a store and it includes every bin under it. TASK-2026-03136 and -03137.
+A report of every Stock Ledger Entry: item, Qty Change (positive added, negative taken out),
+Balance After, warehouse, date and time, voucher, and the person, with their full name. Filter by
+From/To date (the last 30 days by default), Item, Warehouse and User. Pick a person and it is their
+history of additions and removals. Pick a store and it includes every bin under it.
+TASK-2026-03136 and -03137.
 
+- **A count's change is derived.** ERPNext 16.52.1 stores a Stock Reconciliation's entries with
+  `actual_qty = 0` and the counted balance in `qty_after_transaction`. So, as ERPNext's own Stock
+  Ledger report does, the change is the count's balance minus the previous live entry's, for the
+  same item and warehouse, in `posting_datetime`, `creation` order (0 before a first count). That
+  previous entry can sit before From Date or belong to someone the User filter hides, so
+  `count_changes` reads the earlier ledger of the counted items and warehouses in one `get_list`.
+  On 2026-11-05, reconciliations were 667 of the 819 live entries.
 - **A Script Report, though the task asked for a Query Report.** Frappe 16.53's report view sends
   only the filters that hold a value. A Query Report passes that dict straight to
   `frappe.db.sql`, so a `%(item_code)s` placeholder with Item left blank is a missing key and the
   run fails. Item, Warehouse and User are optional, so the conditions are built in Python.
-- **The person is the entry's `owner`.** ERPNext writes the entry when the voucher is submitted.
-  On production on 2026-11-05, all 819 entries had the same owner as their voucher. The Stock Scan
-  and the Count Desk submit as the signed-in user.
+- **The person is the entry's `owner`**, the user who submitted the voucher. On production on
+  2026-11-05, every live entry's owner was also the voucher's creator. The Stock Scan and the Count
+  Desk submit as the signed-in user.
 - **Canceled entries are left out**, both the original rows and their reversals, as in ERPNext's
   Stock Ledger.
-- **Who.** Rows come through `frappe.get_list`, so Stock Ledger Entry permissions and User
-  Permissions apply. The roles are Stock User and Accounts Manager, as on ERPNext's Stock Ledger
-  report.
+- **Lines, not movements.** A transfer or a repack is two entries, one out and one in, so the cards
+  count ledger lines.
+- **Who.** Every ledger read goes through `frappe.get_list`, so Stock Ledger Entry permissions and
+  User Permissions apply. The roles are Stock User and Accounts Manager, as on ERPNext's Stock
+  Ledger report. The User column is plain text: Desk User holds only `select` on User, so a link
+  would open onto a permission error.
 - **Where.** A shortcut and a Reports-card link on the Inventory Enhancements workspace (the
   Inventory hub's landing page), and the Operations Hub's Inventory card. Both are linked by
-  `patches/warehouse_transactions_hub_links`. The site-made Inventory Enhancements sidebar is not
-  in the repo and is unchanged.
+  `patches/warehouse_transactions_hub_links`, which imports each workspace in its own savepoint
+  (frappe's `import_doc` deletes the stored row before it inserts) and rolls back a failure. The
+  site-made Inventory Enhancements sidebar is not in the repo and is unchanged.
 - **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
 
 ## Item naming
