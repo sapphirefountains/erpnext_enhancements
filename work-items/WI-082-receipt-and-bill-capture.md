@@ -1,12 +1,13 @@
 # WI-082: Receipt, bill and PO capture — one door for every purchasing document
 
-**Status:** scoping, for Nikolas to accept or amend (2026-11-04). No feature code is authorized by this
-file; each phase below becomes its own PR once the open questions have answers.
+**Status:** scoped 2026-11-04; the twelve open questions were answered by Nikolas on 2026-11-05 (see
+[Decisions](#decisions-nikolas-2026-11-05)). No feature code is authorized by this file; each phase below
+becomes its own PR when Nikolas says to start building.
 **Phase:** 2   **Type:** APP_CODE + CONFIG   **Size:** L (four phases: 0 = S, 1 = M, 2 = M, 3 = M)
 **Blocked by:** nothing for Phase 0; Phase 1 needs the Document AI processors provisioned in Triton
-and an inbound Email Account on prod; Phase 2 needs the phase-number field on purchasing lines
-(Phase 0 here) and the kiosk in daily use by the build crew (Nikolas, 2026-11-04: the kiosk tracks
-build-crew hours once Sapphire is off QuickBooks Time)
+(approved, decision 12), an inbound Email Account on prod and Lisa's card list (decision 2); Phase 2
+needs the phase-number field on purchasing lines (Phase 0 here). It no longer waits for the crew to use
+the kiosk for hours, because the Receipt button works without a clock-in (decision 11)
 **Blocks:** WI-078 actual cost per phase (the SOV and pay-application design assumes it exists); the
 job-cost side of WI-077
 
@@ -76,10 +77,11 @@ Verified against the live instance on 2026-11-04 (frappe 16.53, erpnext 16.52) a
 
 ### A. A technician buys parts at a counter on a company card
 
-1. Clocked in on the kiosk against a project (Phase 2 makes this the normal case). At the register they
-   tap **Receipt** on the kiosk, photograph the paper receipt, and answer two things: *paid with* (company
-   card, default; or own money) and *which job* (defaulted from the open Job Interval, one tap to change
-   to another project or to Overhead). Nothing else: no amounts, no items.
+1. At the register they open the kiosk, tap **Receipt**, photograph the paper receipt, and answer two
+   things: *paid with* (company card, default; or own money) and *which job*. Clocked in, the job is
+   defaulted from the open Job Interval, one tap to change it to another project or to Overhead; not
+   clocked in, they pick it from their recent projects (decision 11: the button works either way).
+   Nothing else: no amounts, no items.
 2. The kiosk uploads the photo as a private File, calls one endpoint, and the technician is done in under
    30 seconds, offline-tolerant the same way kiosk photos already are (a queued upload survives loss of
    signal; the row is registered first).
@@ -131,7 +133,7 @@ to *Processed*. Same review as B.
 
 | Channel | Who | Exists? | Decision |
 |---|---|---|---|
-| **Kiosk Receipt button** (`/kiosk`, Clock tab, beside *Take photo*) | technicians, PMs on site | No. `channels.ingest_mobile_photo` exists but is role-gated to Accounts, and the kiosk has no door to it | **Build (Phase 2).** The endpoint takes the employee from the session like every kiosk call, accepts only the caller's own File, and writes project, payer and payment method onto the queue row |
+| **Kiosk Receipt button** (`/kiosk`, Clock tab, beside *Take photo*) | technicians, PMs on site | No. `channels.ingest_mobile_photo` exists but is role-gated to Accounts, and the kiosk has no door to it | **Build (Phase 2).** The endpoint takes the employee from the session like every kiosk call, accepts only the caller's own File, and writes project, payer and payment method onto the queue row. Works whether or not the person is clocked in (decision 11) |
 | **Desk upload** (Document Intake list, *Upload Document*) | Lisa, purchasing | Yes | **Keep.** Add *Attach a bill* on the Purchase Order form (pre-fills supplier and PO) and on the Project form (pre-fills project) |
 | **Email inbox** | Lisa, suppliers who email invoices | Code yes; **no inbound Email Account on prod** (1 account, outgoing only) | **Configure (Phase 1).** A dedicated mailbox in the company's Google Workspace, incoming enabled, pointed at by `Accounting Intake Settings.email_account`. Credentials live in the Email Account record on prod, never in the repo |
 | **Drive folder watch** | Lisa (scans), anyone with Drive | Code yes; no folder configured | **Configure (Phase 1).** A *Receipts Inbox* and *Processed* pair in the Shared Drive |
@@ -209,10 +211,10 @@ Three roles, three questions, in this order:
 | Posting | Accounts Manager (8); in practice Lisa | Is this a bill we owe, or a card purchase we made, at these figures? | `Needs Review` → `Approved` → `Posted` (existing) |
 
 Nothing posts without the last gate; nothing is ever submitted by the pipeline. At about 220 documents a
-month the posting gate is roughly ten approvals per working day for one person, which is why the queue
-must show the image beside the fields, pre-select the obvious, and let a High-confidence card receipt
-under a threshold Lisa sets be approved in one click from the list. **Auto-approval of anything is not
-in this item**; it is the first thing to revisit after a month of pilot numbers.
+month the posting gate is roughly ten approvals per working day for one person. **Every document is
+opened and approved in full** (decision 4: no one-click approval from the list, at any amount), so the
+review form carries the speed instead: the image beside the fields, the obvious pre-selected, the
+keyboard path from one document to the next. Auto-approval of anything is not in this item.
 
 Rejection and reprocessing stay as built: `Rejected` rows do not block a re-upload of the same file;
 `Failed` rows are retried up to three times, then skipped and listed.
@@ -241,6 +243,11 @@ receipts and invoices belong in the project's *Accounting & Legal* subfolder. Th
   Invoice links the queue row (`custom_source_document_intake`, existing).
 - **Failure:** filing runs after posting and never fails it (existing rule). A document that posted but
   did not file shows on the exceptions list and is re-driven by the retry job.
+- **Retention: permanent** (decision 10). Nothing in this item deletes a source document from Drive or
+  from ERPNext. One trap follows from it: Frappe deletes a document's attached Files when the document is
+  deleted, so journey C (rebuild a standalone draft from its PO) re-attaches the source File to the
+  rebuilt invoice **before** it deletes the standalone draft, and a rejected queue row keeps its File.
+  `purge_old_intake_logs` deletes only Accounting Intake Log rows, never Files.
 
 ## Card purchases with no PO
 
@@ -261,57 +268,49 @@ Two thirds of the volume. The rule:
    Tool's exception once Plaid is live (WI-056). What this item guarantees is that every receipt that was
    captured is a paid invoice the tool can match on amount and date.
 5. **Sales tax on receipts** is captured as the extracted tax total and posted as an item-inclusive amount
-   on the line by default (job cost includes the tax paid), with the per-line split kept on the queue row.
-   Whether use tax or an input tax account is wanted instead is a CPA question (below).
+   on the line (job cost includes the tax paid), with the per-line split kept on the queue row. When an
+   out-of-state seller charged no tax, the reviewer flags the document for a use-tax accrual (decision 7).
+   How the accrual is booked (a monthly Journal Entry from a report of flagged documents is the simplest
+   shape) is settled with the CPA in Phase 1; it is not automated in this item.
 
-## Open questions
+## Decisions (Nikolas, 2026-11-05)
 
-For **Lisa**:
+The twelve questions this item opened with were put to Nikolas on the plan page, each with a
+recommendation; he answered all twelve on 2026-11-05. Three differ from the recommendation and are marked.
 
-1. How do supplier invoices arrive today, by count: emailed PDFs, paper, supplier portals (Amazon,
-   Grainger)? This sets whether the email inbox or the Drive inbox is the first channel to turn on.
-2. Which company cards exist and who carries them? One Mode of Payment and one liability account per
-   card is the proposal. Should the card's last four digits be stamped on the invoice for reconciliation?
-3. Who should answer *which job?* when the system cannot tell: the PM, the technician who bought it, or
-   you? The plan says the PM.
-4. Is one-click approval from the list acceptable for a High-confidence card receipt under a threshold,
-   and what is the threshold? (The plan ships without auto-approval either way.)
-5. The 36 near-duplicate Supplier groups (Crystal Fountains ×3, IFM Efector ×3, Digi-Key ×2, Lowe's ×2,
-   and so on): merge them before the pilot (a DATA task, `frappe.rename_doc` with merge), or let the
-   alias table absorb them? The plan proposes aliases first and a merge list for you to approve later.
-6. Amazon is the busiest supplier (74 POs in 2026, 45 of them at $0) and ships one order as several
-   invoices. Should an Amazon invoice always be matched to a PO, or posted standalone against the
-   project when no PO exists?
+| # | Question | Decision | vs. recommendation |
+|---|---|---|---|
+| 1 | Which inbound channel first: the mailbox or the Drive scan folder? | **Both at once**, in Phase 1 | differs (recommended mailbox first) |
+| 2 | Company cards | **One Mode of Payment per card**, each tied to that card's liability account, **last four digits stamped** on the invoice | as recommended |
+| 3 | Who answers "which job?" when the system cannot tell | **The project manager** (the `Needs Attribution` gate) | as recommended |
+| 4 | One-click approval for clean card receipts under a threshold | **No. Every document is opened and approved in full**, at any amount | differs (recommended yes under $250) |
+| 5 | The 36 near-duplicate Supplier groups | **Aliases first**; a merge later, from a list Lisa approves | as recommended |
+| 6 | Amazon invoices | **Match a PO when one exists, otherwise post against the project** | as recommended |
+| 7 | Sales tax on receipts | **Job cost**; accrue **use tax** when an out-of-state seller charged none | as recommended |
+| 8 | Card purchases | **Paid invoices straight against each card's liability account**, cleared by the statement payment; no clearing account | as recommended |
+| 9 | Employee reimbursements | **Keep the per-person Supplier bills** | as recommended |
+| 10 | Is the Drive copy plus the ERPNext attachment the record, and for how long? | **Sufficient; kept permanently** | differs (recommended 7 years) |
+| 11 | Home of the technician's Receipt button | **The kiosk, working whether or not the person is clocked in**: the job fills itself when clocked in and is picked otherwise | as recommended |
+| 12 | Provision the Document AI processors (billed per page) | **Approved** | as recommended |
 
-For the **CPA**:
+What the decisions leave open:
 
-7. Sales tax paid on receipts: include in job cost (default), or separate it to an input-tax or use-tax
-   account? Does the answer differ for materials bought in Utah versus out of state?
-8. Card purchases as paid Purchase Invoices against the card liability account, settled by the statement
-   payment: acceptable, or do you want a clearing account between purchase and statement?
-9. Employee reimbursements as bills to a per-person Supplier (the QuickBooks practice, kept): any payroll
-   or 1099 implication you want handled differently in ERPNext?
-10. Retention of source images: is the Drive copy plus the ERPNext attachment sufficient as the record,
-    and for how many years?
-
-For **Nikolas and James**:
-
-11. Is the kiosk the right place for the technician's Receipt button, given it has recorded 15 Job
-    Intervals since August? The plan assumes the kiosk becomes the crew's daily tool at the QuickBooks
-    Time cutover; if that slips, the button needs a home that does not depend on being clocked in.
-12. Document AI processors cost money per page (Google's published pricing; a few cents per page at this
-    volume, so on the order of tens of dollars a month). Approve provisioning the four processors in the
-    Triton deployment?
+- **The card list itself** (decision 2): which cards exist and who carries each, names only. Lisa supplies
+  it when the Modes of Payment are created in Phase 0. Card numbers never go in this repository.
+- **CPA confirmation of 7 and 9.** Nikolas answered the questions written for the CPA. The sales-tax and
+  reimbursement treatment should still be confirmed by the CPA before go-live, the same sign-off gate the
+  sales-tax matrix already carries (OD-2: direction resolved is not the same as free to ship). It does not
+  block Phases 0 to 2.
 
 ## Phased build order
 
 | Phase | Size | What ships | Done when |
 |---|---|---|---|
 | **0. Foundations** | S | `custom_phase_number` on Purchase Order Item and Purchase Invoice Item (fixture) with header-to-line cascade like project, validated 100 to 800; a patch backfilling `Task.custom_phase_number` from "Phase N00" subjects; `Document Intake` gains `project`, `phase_number`, `payment_method`, `job_interval`, `Needs Attribution`; the stranded-row sweep; Modes of Payment for the cards (CONFIG, Lisa); Document AI processors provisioned in Triton's deployment (CONFIG, Triton repo); an inbound Email Account and the two Drive inbox folders (CONFIG, prod) | `SELECT COUNT(*) FROM \`tabTask\` WHERE is_group=1 AND subject LIKE 'Phase %' AND custom_phase_number=0` = 0; a test upload reaches `Needs Review` with fields filled instead of `Failed` |
-| **1. Lisa's inbox** | M | Email and Drive channels live; Supplier normalization and aliases; PO matching narrowed by project and date; project and phase proposed from the PO; card-paid posting shape; Drive filing into the project folder with the Supplier shortcut and the links back; *Attach a bill* on PO and Project forms; the queue list shows image, supplier, total, project, phase and the one-click path | Ten real supplier invoices and ten card receipts flow inbox → draft Purchase Invoice with project and phase and no re-keyed header; each has a Drive link that opens |
-| **2. Technician receipts** | M | Kiosk Receipt button and endpoint (session employee, own File only, offline-tolerant); the `Needs Attribution` gate for PMs with a phone-friendly page; store-run Purchase Receipt matching; the Overhead rule | A technician photographs a receipt at a counter and it is in the queue with project and payer within two minutes; the PM answers an attribution from a phone |
+| **1. Lisa's inbox** | M | Email and Drive channels live; Supplier normalization and aliases; PO matching narrowed by project and date; project and phase proposed from the PO; card-paid posting shape; Drive filing into the project folder with the Supplier shortcut and the links back; *Attach a bill* on PO and Project forms; the review form shows the image beside supplier, total, project and phase, with a keyboard path to the next document | Ten real supplier invoices and ten card receipts flow inbox → draft Purchase Invoice with project and phase and no re-keyed header; each has a Drive link that opens |
+| **2. Technician receipts** | M | Kiosk Receipt button and endpoint (session employee, own File only, offline-tolerant, with or without a clock-in); the `Needs Attribution` gate for PMs with a phone-friendly page; store-run Purchase Receipt matching; the Overhead rule | A technician photographs a receipt at a counter and it is in the queue with project and payer within two minutes; the PM answers an attribution from a phone |
 | **3. Matching and reporting** | M | Match-later from the queue (journey C); a *Job cost by phase* query report over submitted Purchase Invoice lines plus kiosk labor (`Job Interval.labor_cost`), the figure WI-078 reads; an exceptions report: queue rows older than 7 days by gate, posted but unfiled, projects with spend and no open phase; the capture count as a KPI on the Operations dashboard | WI-078's SOV page shows actual cost per phase for Salt Air from these records; the exceptions report is empty or every row has an owner |
-| **4. Later, optional** | S each | MMS channel through Triton; Gemini fallback for low-confidence extractions; one-click approval under a threshold | only if the pilot numbers ask for them |
+| **4. Later, optional** | S each | MMS channel through Triton; Gemini fallback for low-confidence extractions | only if the pilot numbers ask for them |
 
 Phase 0 and Phase 1 are two PRs each (fixtures and patches first, behavior second). The pilot is Salt
 Air (PRJ-00604) and the Overhead projects, for one month after Phase 1, measured against the QuickBooks
@@ -353,7 +352,7 @@ left alone.
   queue shows the image, the technician's two taps supply what OCR cannot (job, payer), and the amounts a
   human approves are the only amounts that reach a draft.
 - **The posting gate bottlenecks on one person.** Ten approvals a day is fine; a backlog after a vacation
-  is not. Mitigation: the exceptions report, a second Accounts Manager trained, and the one-click path.
+  is not. Mitigation: the exceptions report, a second Accounts Manager trained, and a fast review form (one-click approval was declined, decision 4).
 - **A deploy destroys queued jobs** (both Redis instances are flushed on every merge to `main`).
   Mitigation: the stranded-row sweep in Phase 0; the design must never assume an enqueued job ran.
 - **Phase on tasks is 0 on prod** for every phase group checked (Salt Air, 2026-11-04). Until the
@@ -367,8 +366,10 @@ left alone.
   attachments on the configured account, so a misrouted email creates nothing.
 - **Privacy:** a personal-card receipt can show a card number's last digits and a name. Files are
   private; the kiosk endpoint accepts only the caller's own File; thumbnails never go under `public/`.
-- **The kiosk is barely used today.** Phase 2 is sequenced after the crew's move to the kiosk; if that
-  move does not happen, the technician channel needs a different home (question 11).
+- **The kiosk is barely used today** (15 Job Intervals since August). Decision 11 softens this: the
+  Receipt button works without a clock-in, so receipts can flow before the crew has moved to the kiosk
+  for hours. A technician who never opens the kiosk at all still sends nothing; the exceptions report
+  compares captured receipts with card statements once Plaid is live.
 - **Frappe `File` traps already met in this app:** a `/` in a file name is stripped on save; the
   duplicate-entry check reads other rows' names during an insert; `content_hash` is empty for link-only
   rows. Filing code must follow the shadow-sync conventions (`SHADOW_PATH_SEPARATOR`,
@@ -380,12 +381,13 @@ left alone.
 
 - Any QuickBooks integration, write-back, or import of QuickBooks attachments (one `Attachable` mapping
   exists; there is nothing to import).
-- Auto-submission of any created document, or auto-approval of any queue row.
+- Auto-submission of any created document, auto-approval of any queue row, or one-click approval from the
+  list (decision 4).
 - Bank and card statement reconciliation (native Bank Reconciliation Tool; Plaid link is WI-056).
 - Supplier payment runs, AP aging, 1099 reporting.
 - Customer remittances (the `customer_remittance` handler exists and is left as is) and packing slips
   beyond the 3-way match the module already performs.
-- Executing the Supplier merge (a DATA task for Lisa to approve, listed here as a question).
+- Executing the Supplier merge (a later DATA task, from a list Lisa approves; decision 5).
 - The estimate, SOV and pay-application records themselves (WI-077, WI-078); this item supplies their
   actual-cost side only.
 - Expense Claims, hrms, per diem and the Travel Trip money flow.

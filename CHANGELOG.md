@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.796.1] - 2026-11-04
+## [1.796.1] - 2026-11-05
 
 ### Added
 - **WI-082: receipt, bill and PO capture, scoped.** Nikolas, 2026-11-04, after the Salt Air reality check
@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Four phases (foundations S, Lisa's inbox M, technician receipts M, matching and reporting M), twelve
     open questions for Lisa, the CPA, Nikolas and James, acceptance criteria as queries, and the risk
     list. No QuickBooks integration of any kind; nothing is ever auto-submitted.
+  - **Nikolas answered all twelve questions on 2026-11-05**, on the plan page where each carried a
+    recommendation; the work item now records them as decisions. Nine follow the recommendation. Three
+    do not: both inbound channels (the mailbox and the Drive scan folder) go live together in Phase 1;
+    every document is opened and approved in full, with no one-click approval at any amount; and source
+    documents are kept permanently. That last one adds a rule to the plan: Frappe deletes a document's
+    attached Files with the document, so rebuilding a standalone draft invoice from its PO re-attaches
+    the source File before the draft is deleted. The kiosk Receipt button works with or without a
+    clock-in, so Phase 2 no longer waits for the crew to use the kiosk for hours. Still open: Lisa's list
+    of company cards, and the CPA's confirmation of the sales-tax and reimbursement answers before
+    go-live.
 
 ## [1.796.0] - 2026-11-04
 
