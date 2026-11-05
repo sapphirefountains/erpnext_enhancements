@@ -1608,3 +1608,8 @@ erpnext_enhancements.patches.sync_parent_task_dates
 # Operations Hub, which now link the new report (a shortcut and a Reports-card link on the first, an Inventory-card
 # link on the second). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.warehouse_transactions_hub_links
+# v1.797.1 (Nik, 2026-11-05): a Desk-added Custom DocPerm row (2026-05-28) gave Production Team read, write, create
+# and delete on User, which is System Manager's job alone. Never a fixture. Deletes every Production Team row on User
+# the way Role Permissions Manager's Remove does (delete_doc, force), then clears User's cache. Other roles' rows on
+# User and Production Team's rows elsewhere stay. Cannot raise, safe twice.
+erpnext_enhancements.patches.remove_production_team_user_docperm
