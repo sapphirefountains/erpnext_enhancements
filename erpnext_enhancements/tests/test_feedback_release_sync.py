@@ -344,7 +344,10 @@ class TestChangelogVersions(unittest.TestCase):
 #: Releases whose CHANGELOG section deliberately moves feedback Tasks: version -> the exact
 #: normalized Refs lines ``refs_in`` finds in it. Empty until the first release that ships
 #: Enhancement Request work. See the test below for why a real Refs line must be listed here.
-SHIPPED_REFS: dict[str, list[str]] = {}
+SHIPPED_REFS: dict[str, list[str]] = {
+	# Warehouse Transactions report and its hub links (ER-2026-1330007).
+	"1.797.0": ["Refs: ER-2026-1330007, TASK-2026-03136, TASK-2026-03137"],
+}
 
 
 class TestTheRealChangelogCannotMoveATaskByAccident(unittest.TestCase):
