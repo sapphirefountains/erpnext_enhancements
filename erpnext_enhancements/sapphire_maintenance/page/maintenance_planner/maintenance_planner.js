@@ -114,7 +114,7 @@ MP.methods = {
 	add_crew: `${MP.api}.add_crew`,
 	// A Fountain Move task's day and crew (MPFM below): the Project Planner's write, on this page.
 	move_fountain_move: `${MP.api}.move_fountain_move`,
-	// v1.795.0 (MPDW below): a manager moves a visit onto a past day as a historical record, and Undo.
+	// v1.796.0 (MPDW below): a manager moves a visit onto a past day as a historical record, and Undo.
 	move_done_visit: "erpnext_enhancements.api.planner_history.move_done_visit",
 	restore_done_visit: "erpnext_enhancements.api.planner_history.restore_done_visit",
 };
@@ -205,7 +205,7 @@ class MaintenancePlanner {
 		this.init_phase6c();
 		this.init_phase6d();
 		this.init_phase6e();
-		this.init_done_work(); // v1.795.0: visits onto past days (MPDW)
+		this.init_done_work(); // v1.796.0: visits onto past days (MPDW)
 		this.init_phase_c1();
 		this.init_toolbar();
 		this.init_tour();
@@ -1243,7 +1243,7 @@ class MaintenancePlanner {
 		const classes = [card.kind === "projected" ? "mp-projected" : `mp-${card.status}`];
 		if (card.label) classes.push(MP.extra_labels.includes(card.label) ? "mp-extra" : "mp-seasonal");
 		if (card.overdue && card.kind === "visit") classes.push("mp-overdue");
-		if (card.movable || this.mpdw_can_move(card)) classes.push("mp-movable"); // v1.795.0: MPDW
+		if (card.movable || this.mpdw_can_move(card)) classes.push("mp-movable"); // v1.796.0: MPDW
 		if (card.saving) classes.push("mp-saving");
 		// C1 (v1.601.0): a pencilled visit is hatched like the Project Planner's pencil cards, and an
 		// unpublished draft gets the dashed outline Draft mode uses there.
@@ -1456,7 +1456,7 @@ class MaintenancePlanner {
 		const card_el = el.closest(".mp-card");
 		if (!card_el) return null;
 		const card = this.by_key[card_el.getAttribute("data-key")];
-		// v1.795.0: a manager also picks up a finished or started visit, to move it to a past day (MPDW).
+		// v1.796.0: a manager also picks up a finished or started visit, to move it to a past day (MPDW).
 		if (!card || !(card.movable || this.mpdw_can_move(card)) || card.saving) return null;
 		// In the crew view the same visit sits in each crew member's row: remember whose chip it is.
 		const row = card_el.getAttribute("data-row-user");
@@ -1576,7 +1576,7 @@ class MaintenancePlanner {
 		}
 		drag.target_el = target ? target.el : null;
 		if (!target) return;
-		// v1.795.0: which days refuse depends on the card and on who drags it (MPDW).
+		// v1.796.0: which days refuse depends on the card and on who drags it (MPDW).
 		target.el.classList.add(this.mpdw_no_drop(drag.source && drag.source.card, target.date) ? "mp-over-no" : "mp-over");
 	}
 
@@ -1669,7 +1669,7 @@ class MaintenancePlanner {
 
 	drop(source, target) {
 		if (this.p6b_drop(source, target)) return;
-		if (this.mpdw_drop(source, target)) return; // v1.795.0: a visit onto a past day (MPDW)
+		if (this.mpdw_drop(source, target)) return; // v1.796.0: a visit onto a past day (MPDW)
 		const plan = this.plan_drop(source, target);
 		if (!plan) return;
 		if (plan.refuse) {
@@ -1682,7 +1682,7 @@ class MaintenancePlanner {
 		}
 		if (plan.fm) {
 			const run = () => this.fm_apply(plan.card, plan.fm);
-			// v1.795.0: a manager may record a move job on a past day; it only asks first (MPDW).
+			// v1.796.0: a manager may record a move job on a past day; it only asks first (MPDW).
 			if (plan.past) frappe.confirm(__("{0} is before today. Record the move job on a past day?", [mp_when(plan.past)]), run);
 			else run();
 			return;
@@ -1944,7 +1944,7 @@ class MaintenancePlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
-		if (this.mpdw_undo(snap)) return; // v1.795.0: exactly the dates the visit had (MPDW)
+		if (this.mpdw_undo(snap)) return; // v1.796.0: exactly the dates the visit had (MPDW)
 		if (this.p6b_undo(snap)) return;
 		if (this.p6e_undo(snap)) return;
 		if (this.fm_undo(snap)) return;
@@ -6654,7 +6654,7 @@ const MPFM_METHODS = {
 	fm_plan_move(source, target) {
 		const card = source.card;
 		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
-		// v1.795.0: a manager may put a move job on a past day (a record of when it was done), after a yes.
+		// v1.796.0: a manager may put a move job on a past day (a record of when it was done), after a yes.
 		const past = !!(target.date && target.date !== card.date && target.date < this.today());
 		if (past && !(this.data && this.data.can_backdate)) {
 			return { refuse: __("Move jobs can only be moved to today or a later day.") };
@@ -8448,7 +8448,7 @@ const MPH_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MPH_METHODS);
 
-// ====================================================================== MPDW: visits onto past days (v1.795.0)
+// ====================================================================== MPDW: visits onto past days (v1.796.0)
 //
 // Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
 // previously done tasks and such to old dates for historical reasons." His picks for this planner: a

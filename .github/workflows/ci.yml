@@ -496,6 +496,19 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sidebar_rail -v
       - name: Sidebar rail (executed, not grepped)
         run: node scripts/test_sidebar_rail.js
+      # The Desk search box lists records first, grouped, with a preview (v1.796.0; Nik, 2026-11-04:
+      # a customer's first name listed sixteen screen names above their Contact). The unittest step runs
+      # api/desk_search.py against a fake frappe: what the typed text means (words, a phone, a
+      # document number), the ranking ladder, the SQL it builds (text bound, never inlined; columns
+      # only from the spec and the table), grouping, permissions, related links, one failing doctype
+      # never stopping the rest; plus the bundle, stylesheet and CI wiring. The node step runs
+      # desk_search.js against a stub of frappe 16.53's AwesomeBar and Awesomplete and a small fake
+      # DOM: the composed order, headings, chips, clicks that never select their row, a stale answer
+      # never replacing a newer one, recent records. Each installs its own stubs, so its own steps.
+      - name: Desk search (endpoint and wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_search -v
+      - name: Desk search (executed, not grepped)
+        run: node scripts/test_desk_search.js
       # The Opportunity Kanban customization on frappe 16.53's classic engine (v1.779.0). Its old
       # hooks (KanbanView.render_card / get_data) do not exist on 16.50+, so the high-value cards
       # and value-stream dots had been silently gone since 2026-10-06; the node step runs the file
@@ -4381,7 +4394,7 @@ jobs:
       # node is on PATH in this job, so the harness cannot skip here.
       - name: Planner taps open the record (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens -v
-      # Done work onto old dates (Nik, 2026-11-04, v1.795.0): a manager moves a Completed task on the Project
+      # Done work onto old dates (Nik, 2026-11-04, v1.796.0): a manager moves a Completed task on the Project
       # Planner's Gantt or grids, or a finished visit on the Maintenance Planner, as a historical record. Pins
       # that every date moves together and stays valid for ERPNext (Completed On never after today), that the
       # endpoints are managers only, never draft, ask no reason, tell nobody and switch off ERPNext's dependent

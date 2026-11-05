@@ -292,7 +292,7 @@ class TestThePages(unittest.TestCase):
 		self.assertIn("this.ppr_drop_stale_undo();", _method(self.pp, "\tindex() {"))
 		self.assertIn("this.mpr_stamp_undo(snapshot);", _method(self.mp, "\tpush_undo(snapshot, message) {"))
 		self.assertIn("this.mpr_drop_stale_undo(fresh);", _method(self.mp, "\tindex() {"))
-		# send() is the one write path that stamps it, plus v1.795.0's MPDW (a visit onto a past day), whose
+		# send() is the one write path that stamps it, plus v1.796.0's MPDW (a visit onto a past day), whose
 		# move and Undo go to planner_history and stamp it the same way, before push_undo.
 		mpdw_start = self.mp_code.index("const MPDW_METHODS = {")
 		mpdw = self.mp_code[mpdw_start : self.mp_code.index("Object.assign(MaintenancePlanner.prototype, MPDW_METHODS);")]

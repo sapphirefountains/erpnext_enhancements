@@ -99,7 +99,7 @@ const PP = {
 		group: "ee_project_planner_group",
 		foreign: "ee_project_planner_foreign",
 		panel: "ee_project_planner_panel",
-		// v1.795.0: Display ▸ Show done work, remembered in this browser like the foreign toggle.
+		// v1.796.0: Display ▸ Show done work, remembered in this browser like the foreign toggle.
 		done: "ee_project_planner_done",
 	},
 	// The filters the address carries (S5c), in the order they are written: ?project=&pm=&group=.
@@ -205,7 +205,7 @@ class ProjectPlanner {
 		this.pm = this.load_pref(PP.prefs.pm, "");
 		this.group = this.load_pref(PP.prefs.group, "");
 		this.show_foreign = this.load_pref(PP.prefs.foreign, "1") !== "0";
-		this.show_done = this.load_pref(PP.prefs.done, "0") === "1"; // v1.795.0, PPDW below
+		this.show_done = this.load_pref(PP.prefs.done, "0") === "1"; // v1.796.0, PPDW below
 		// "Show all tasks" (P2): a saved view's, not the browser's, so it follows the person to any device.
 		this.all_tasks = "";
 		this.panel_open = this.load_pref(PP.prefs.panel, "1") !== "0";
@@ -260,7 +260,7 @@ class ProjectPlanner {
 		this.init_phase8();
 		this.init_phase4();
 		this.init_phase5();
-		this.init_done_work(); // v1.795.0: done work onto old dates (PPDW)
+		this.init_done_work(); // v1.796.0: done work onto old dates (PPDW)
 		this.init_phase6a();
 		this.init_phase6b();
 		this.init_phase6c();
@@ -853,7 +853,7 @@ class ProjectPlanner {
 				this.ppl_call(start) || {
 					method: `${PP.api}.get_planner`,
 					// P4: always with the drafts, so a Draft schedule's (anyone's) and held changes show.
-					// v1.795.0: Display ▸ Show done work adds done=1 (PPDW).
+					// v1.796.0: Display ▸ Show done work adds done=1 (PPDW).
 					args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks ? { all_tasks: 1 } : {}, this.show_done ? { done: 1 } : {}),
 				}
 			)
@@ -1003,7 +1003,7 @@ class ProjectPlanner {
 				.text(__("No work for {0} in this range.", [(named && named.title) || this.project]))
 				.prependTo(this.$grid_wrap);
 		}
-		this.ppdw_note(); // v1.795.0: Show done work drew only the first of them
+		this.ppdw_note(); // v1.796.0: Show done work drew only the first of them
 		this.$hint.text(
 			lookahead
 				? __(
@@ -1097,7 +1097,7 @@ class ProjectPlanner {
 		(day.bookings || []).forEach((booking) => {
 			// The drive is summarized above; it is only listed when the day carries no figure for it.
 			if (booking.kind === "drive" && Number(day.drive_minutes) > 0) return;
-			// v1.795.0: done work drawn on the day holds no hours of it (PPDW).
+			// v1.796.0: done work drawn on the day holds no hours of it (PPDW).
 			if (booking.done) {
 				lines.push(`• ${booking.label || booking.ref} (${__("done")})`);
 				return;
@@ -1543,7 +1543,7 @@ class ProjectPlanner {
 				if (span.next) classes.push("pp-span-next");
 			}
 			if (card.movable && this.data.can_edit) classes.push("pp-movable");
-			classes.push(...this.ppdw_classes(card)); // v1.795.0: done work (faded; a manager may drag it)
+			classes.push(...this.ppdw_classes(card)); // v1.796.0: done work (faded; a manager may drag it)
 			if (card.saving) classes.push("pp-saving");
 			if (!this.task_visible(card)) classes.push("pp-dim");
 			if (card.overdue) classes.push("pp-overdue");
@@ -1718,7 +1718,7 @@ class ProjectPlanner {
 		else if (!(card.crew || []).length && this.needs_crew.has(card.name)) {
 			chips.push(`<span class="pp-chip pp-amber">${pp_esc(__("No crew"))}</span>`);
 		}
-		// v1.795.0: done work has no conflicts to show; it is history (PPDW).
+		// v1.796.0: done work has no conflicts to show; it is history (PPDW).
 		const conflicts = card.finished ? [] : this.task_conflicts(card);
 		if (card.finished) chips.push(this.ppdw_chip(card));
 		if (conflicts.length) chips.push(red(__("Conflict")));
@@ -1749,7 +1749,7 @@ class ProjectPlanner {
 
 		const classes = ["pp-card"];
 		if (card.movable && this.data.can_edit) classes.push("pp-movable");
-		classes.push(...this.ppdw_classes(card)); // v1.795.0: done work (PPDW)
+		classes.push(...this.ppdw_classes(card)); // v1.796.0: done work (PPDW)
 		if (card.overdue) classes.push("pp-overdue");
 		if (card.tentative) classes.push("pp-tentative");
 		if (card.saving) classes.push("pp-saving");
@@ -1964,7 +1964,7 @@ class ProjectPlanner {
 		const card_el = el.closest(".pp-card[data-task]");
 		if (!card_el) return null;
 		const card = this.by_task[card_el.getAttribute("data-task")];
-		// v1.795.0: done work a manager may move onto old dates is picked up too (ppdw_drop takes the drop).
+		// v1.796.0: done work a manager may move onto old dates is picked up too (ppdw_drop takes the drop).
 		if (!card || !(card.movable || this.ppdw_can_move(card)) || card.saving) return null;
 		return {
 			kind: "card",
@@ -2195,7 +2195,7 @@ class ProjectPlanner {
 
 	drop(source, target) {
 		if (this.p6b_drop(source, target)) return;
-		if (this.ppdw_drop(source, target)) return; // v1.795.0: done work onto an old date (PPDW)
+		if (this.ppdw_drop(source, target)) return; // v1.796.0: done work onto an old date (PPDW)
 		if (source.kind === "overdue") {
 			this.drop_overdue(source.row, target);
 			return;
@@ -2359,7 +2359,7 @@ class ProjectPlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
-		if (this.ppdw_undo(snap)) return; // v1.795.0: a move of done work puts back exactly what was there
+		if (this.ppdw_undo(snap)) return; // v1.796.0: a move of done work puts back exactly what was there
 		if (this.t1_undo(snap)) return;
 		if (this.p6b_undo(snap)) return;
 		if (this.ppg_undo(snap)) return; // P6: a link drawn or removed
@@ -11794,7 +11794,7 @@ const PPTB_METHODS = {
 				on_click: () => this.set_show_foreign(!this.show_foreign),
 			},
 			this.tb_all_tasks_item(),
-			this.ppdw_display_item(), // v1.795.0: Show done work
+			this.ppdw_display_item(), // v1.796.0: Show done work
 		]);
 	},
 
@@ -13316,7 +13316,7 @@ const PPG_PURE = {
 		if (card.tentative) out.push("ppg-pencil");
 		if (card.finished) out.push("ppg-finished");
 		else if (card.overdue) out.push("ppg-overdue");
-		// v1.795.0: done work a manager may move onto old dates is not locked (PPDW).
+		// v1.796.0: done work a manager may move onto old dates is not locked (PPDW).
 		if (!card.movable && !card.backdate) out.push("ppg-locked");
 		return out.join(" ");
 	},
@@ -13330,7 +13330,7 @@ const PPG_PURE = {
 			ref_doctype: "Task",
 			ref_name: card.name,
 			ee_modified: card.modified,
-			// v1.795.0: a done task moves for a manager (`backdate`), by its dates, through PPDW.
+			// v1.796.0: a done task moves for a manager (`backdate`), by its dates, through PPDW.
 			ee_readonly: !(card.backdate || (card.movable && !card.finished)),
 			ee_days: card.start ? Number(card.span_days) || 1 : "",
 			ee_crew: initials ? initials(card) : "",
@@ -13877,7 +13877,7 @@ const PPG_METHODS = {
 	// dropped while the planner asks (reason, "Notify crew?"); the reload after the write is the truth.
 	ppg_write(task, changes, info) {
 		const card = task && this.by_task[task.ref_name];
-		if (card && card.backdate && !card.movable) return this.ppdw_gantt_write(card, changes); // v1.795.0
+		if (card && card.backdate && !card.movable) return this.ppdw_gantt_write(card, changes); // v1.796.0
 		if (!card || !card.movable || card.finished) {
 			return Promise.resolve({
 				status: "refused",
@@ -13934,7 +13934,7 @@ const PPG_METHODS = {
 			frappe.show_alert({ message: __("A task that is still a draft cannot be linked yet. Publish the schedule first."), indicator: "orange" }, 7);
 			return Promise.resolve(null);
 		}
-		// v1.795.0 (review of #1427): a done bar moves for a manager by its dates only; a link is a schedule gesture.
+		// v1.796.0 (review of #1427): a done bar moves for a manager by its dates only; a link is a schedule gesture.
 		if (card.finished || pred.finished) {
 			frappe.show_alert({ message: __("A finished task cannot be linked."), indicator: "orange" }, 7);
 			return Promise.resolve(null);
@@ -15800,7 +15800,7 @@ const PPH_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPH_METHODS);
 
-// ====================================================================== PPDW: done work onto old dates (v1.795.0)
+// ====================================================================== PPDW: done work onto old dates (v1.796.0)
 //
 // Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
 // previously done tasks and such to old dates for historical reasons." His picks: the Gantt (a done task's

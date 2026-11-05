@@ -764,7 +764,7 @@
 	font-style: italic;
 }
 
-/* v1.795.0: done work (Display ▸ Show done work): faded like the Gantt's finished bars, with a Done chip.
+/* v1.796.0: done work (Display ▸ Show done work): faded like the Gantt's finished bars, with a Done chip.
    A manager may drag it to an earlier day (pp-movable), so it fades less while it is picked up. */
 .pp-card.pp-done {
 	opacity: 0.6;

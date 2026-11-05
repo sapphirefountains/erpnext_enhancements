@@ -1550,7 +1550,7 @@ class TestWiring(unittest.TestCase):
 		functions = _functions(API_PATH)
 		for name in ("get_planner", "save_task", "add_crew", "swap_crew"):
 			args = functions[name].args
-			# get_planner's all_tasks (P2), google (P5) and done (v1.795.0) come after draft, so a positional
+			# get_planner's all_tasks (P2), google (P5) and done (v1.796.0) come after draft, so a positional
 			# draft still works.
 			last = -4 if name == "get_planner" else -1
 			self.assertEqual(args.args[last].arg, "draft", name)

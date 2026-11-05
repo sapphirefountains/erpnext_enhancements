@@ -341,7 +341,7 @@ def get_planner(start, end, draft=0):
 	visits = [_visit_card(row, today, can_move_visits) for row in _records_between(start, end)]
 	unscheduled = [_visit_card(row, today, can_move_visits) for row in _unscheduled_drafts()]
 	_attach_crews(visits + unscheduled)
-	# v1.795.0 (Nik, 2026-11-04): a manager may move a visit onto a past day as a historical record,
+	# v1.796.0 (Nik, 2026-11-04): a manager may move a visit onto a past day as a historical record,
 	# done, in review, started or not (api/planner_history.move_done_visit).
 	from erpnext_enhancements.api import planner_history
 
@@ -382,7 +382,7 @@ def get_planner(start, end, draft=0):
 		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
 		"can_move_projected": can_move_projected,
-		# v1.795.0: whether this person may put visits and Fountain Move jobs on a past day.
+		# v1.796.0: whether this person may put visits and Fountain Move jobs on a past day.
 		"can_backdate": can_backdate,
 		# Phase 6E: whether "Add visit here" is offered (api/maintenance_actions.create_visit).
 		"can_create_visits": bool(frappe.has_permission("Sapphire Maintenance Record", "create")),
@@ -434,7 +434,7 @@ def move_fountain_move(task, modified, date=None, crew=None, reason=None):
 	from erpnext_enhancements.api import planner_history
 	from erpnext_enhancements.project_enhancements import fountain_move_jobs
 
-	# v1.795.0: a manager may put a move job on a past day, as a record of when it was done.
+	# v1.796.0: a manager may put a move job on a past day, as a record of when it was done.
 	if date and getdate(date) < getdate(nowdate()) and not planner_history.can_backdate():
 		frappe.throw(_("Move jobs can only be moved to today or a later day."))
 	return fountain_move_jobs.move_task(task, modified, date=date, crew=crew, reason=reason)

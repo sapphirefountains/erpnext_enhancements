@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Done work moved onto old dates, on the Project and Maintenance Planners (v1.795.0).
+"""Done work moved onto old dates, on the Project and Maintenance Planners (v1.796.0).
 
 Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
 previously done tasks and such to old dates for historical reasons." He picked, through four questions:

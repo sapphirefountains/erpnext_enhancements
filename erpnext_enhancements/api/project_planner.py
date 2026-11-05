@@ -620,7 +620,7 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1, done=0):
 	``google=0`` prices each person-day's drive padding from the engine's own estimate and the drive
 	time cache, never asking Google: the Lookahead (P5, ``planner_lookahead.get_lookahead``) reads
 	three to six weeks at once, and spec §6 runs it with Google off. Unset, as before.
-	``done=1`` (v1.795.0, Display ▸ Show done work) adds the range's done tasks as ``finished`` cards,
+	``done=1`` (v1.796.0, Display ▸ Show done work) adds the range's done tasks as ``finished`` cards,
 	which a manager may move onto old dates (``planner_history.add_done_work``); the engine's capacity,
 	bookings and conflicts are computed exactly as without it.
 	"""

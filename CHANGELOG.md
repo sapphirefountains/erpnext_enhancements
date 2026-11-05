@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.795.0] - 2026-11-04
+## [1.796.0] - 2026-11-04
 
 ### Added
 - **Planners: managers can move done work onto old dates, as a historical record.** Nik, 2026-11-04:
@@ -80,6 +80,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     stubbed planner modules, the wiring and the pages' pure rules under node. Five existing suites pinned
     exact lines this touched (`get_planner`'s argument list, the pages' `drop`/`load` lines, the tour
     block last); they are updated, not loosened.
+
+## [1.795.0] - 2026-11-04
+
+### Added
+- **The Desk search box (Ctrl+K) lists records first, grouped, with a preview** (Nik, 2026-11-04:
+  "Searching in ERPNext sucks": typing a customer's first name to reach her project or contact
+  info listed DocType names first). What prod (frappe 16.53.0, erpnext 16.52.1) did that
+  afternoon, measured in the box itself: sixteen screen names sat above her Contact, because
+  frappe scores every DocType name with a fuzzy subsequence match (`search_utils.get_doctypes`,
+  `fuzzy_match.js`), so "Drive Link Candidate" scored 200 for that name and "Report Cheques and
+  Deposits Incorrectly cleared" 195 (its letters appear in order), while this app's own live search
+  gave every record a flat index of 150. Her records sat at rows 17 to 36 of a 300px list. That
+  search also ran `LIKE '%<name>%'` over `__global_search` (about 773k rows, mostly File rows) in
+  ~0.46 s and returned rows in table order: a longer name sharing her first letters before her,
+  emails and Files mixed in, her Account at row 31. The index itself held all of her records; the
+  box was the problem.
+  Nik picked the features and record types on 2026-11-04:
+  - **Records first, as you type.** `api/desk_search.search` (POST, read-only, runs as the person
+    typing) reads the name, phone and email columns of Contact and Lead, Customer, Project,
+    Opportunity, Quotation, Sales Order, Sales Invoice, Serial No, Sapphire Maintenance Contract and
+    Record, Supplier and Item, two characters up, 120 ms after the last key. The same queries take
+    1 to 6 ms each on prod (77 ms for Sales Invoice) against the old 0.46 s. Ranking: a document
+    number, then the title is exactly the text, starts with it, a word starts with it, every word
+    starts a word, contains it, a phone match, a match on another field; +8 for a whole-word title
+    match (so "Dana Whitfield" beats "Danae Corp" for "Dana", made-up names) and +5 for open work (an Active
+    project, an unpaid invoice, an enabled account; prod's own status values, measured: Projects
+    use Active, Opportunities keep their pipeline in status and close as Closed Won or Lost).
+  - **Grouped with headings:** People, Accounts, Projects, Opportunities, Quotes/orders/invoices,
+    Fountains and maintenance, Suppliers, Items. Groups are ordered by how well their best row
+    matched, ties in that order, and never by the open bonus: with it, two draft invoices titled
+    with the account's name (open) sat above her closed Opportunities. The first group shows four
+    rows, the rest three, with "See all N" (the group's matches as a filtered list, or the full
+    results for a mixed group).
+  - **A preview line** (a project's account and status, a quote's number, date and amount, an
+    invoice's amount due) and, for people and accounts, **call and email chips** (`tel:`/`mailto:`;
+    a US number reads 801-555-0142 however it was stored).
+  - **Related records** under the top two people and accounts: the account, "4 projects", "4
+    opportunities", each a link (the list opens filtered to the account), counted through
+    `frappe.get_list` so the counts respect permissions.
+  - **Phone, email and document number:** "555-0142" or "+1 801 555 0142" matches stored numbers
+    by digits (`REGEXP_REPLACE`, MariaDB 10.11 on prod), part of an address matches emails
+    (including Contact Email rows), and "707", "PRJ-707", "opp 58", "so 12" or "inv 149" find the
+    document by its name's trailing number (both years' CRM-OPP-…-00058 for "58").
+  - **Recent records on an empty box:** the last records you opened on this browser (kept in
+    localStorage per user, recorded on `form-refresh`), each with "Opened 2 hours ago", above
+    frappe's own pages.
+  - **Phones too:** the same rows; below 768px the chips drop under the title at finger size.
+  Screens (DocType lists, reports, pages, "New …") drop below the records, best three, unless the
+  text names one ("project", "sales invoice"), and knowledge base hits keep coming from the
+  `awesomebar_search` hook, under their own heading.
+  Employees, a "/" key to open search and type filters ("p dana") were offered and left out. ERPNext's
+  own Maintenance Visit and Schedule are not searched: prod has none (the Sapphire Maintenance
+  doctypes replaced them).
+  **Why not the `awesomebar_search` hook** this app already uses for knowledge base articles:
+  `frappe.desk.search._normalize_awesomebar_result` keeps only label, value, index, route,
+  description and type, so the phone, email, related links and headings would never reach the box,
+  and it rides `frappe.call`, which pops a dialog when the server errors.
+  **How it hooks in:** frappe 16.53 has no client extension point for the box's rows.
+  `global_enhancements/desk_search.js` wraps `AwesomeBar.prototype.setup_event_listeners` and decorates
+  that box's Awesomplete (there are two boxes on 16.53, `frappe.app.awesome_bar` from page.js and the
+  Desktop page's own, and the prototype wrap covers both): its `list` setter composes frappe's rows
+  with ours, so frappe's input handler, the hook callback and our fetch all land in the same order;
+  its `item` renderer draws our rows and puts headings on frappe's; capture-phase listeners on the
+  list take clicks on the chips and links before Awesomplete selects the row. Every step falls back
+  to frappe's own list or row on an error. The request is a plain `fetch`; an answer for older text
+  never replaces a newer one.
+  **Enter** opens the highlighted row: once the answer for the text in the box has arrived, that is the
+  best record. Until then (about 150 ms after the last key) "Search for …" leads, so a fast Enter
+  opens the full results as before, and the last answer's records stay in view below it rather than
+  blinking out. An answer for older text never sits on top, where Enter would open a match for what
+  the person typed a moment ago. A row picked with the arrow keys stays picked when a later reply
+  redraws the list (Awesomplete's `evaluate()` puts the highlight back on row 0 at every assignment),
+  and the box forgets its answer when it closes or opens (frappe clears the input with
+  `$input.val("")`, which fires no input event). "Search everything for …" stays in the list, and
+  Ctrl+G opens the full results at any time.
+  **Changed in review, before merge** (independent review of PR #1425):
+  - **POST, not GET.** The text is names, phone numbers and emails, and prod's web tier logs every
+    request line; the request carries it in the body with the CSRF token. It still writes nothing.
+  - **The Error Log survives.** frappe 16.53's `sync_database` rolls back every GET (`app.py`), so
+    the once-an-hour "Desk search: <doctype> not searched" row was never kept while the Redis key
+    that silences it was; `log_error(..., defer_insert=True)` queues it for the scheduler instead.
+  - **Restricted readers find their rows.** The 25-row cap is applied before the permission filter,
+    so someone limited by User Permissions or a permission-query hook saw nothing when the 25 best
+    matches were others'. It now reads up to four pages of 25 while permissions keep fewer than
+    25; for anyone unrestricted the first page is kept whole and it is one query, as before.
+  - **Canceled maintenance visits are left out** (Sapphire Maintenance Record is submittable).
+  - **"See all" on a capped group** opens the list filtered by the text on its title column and says
+    no number, where it said "See all 25+" and listed only the 25 names read.
+  - **New tabs keep their filters.** Related and see-all links carry their filters in the href, the
+    way frappe's router writes them, and a Ctrl/Cmd/Shift click is left to the browser: frappe's own
+    new-tab path kept the filters through localStorage but left `frappe.route_options` set in the
+    current tab for the next list it opened, and a middle click got the bare list.
+  - **Titles are escaped** on the path where frappe's renderer would draw a row (a fallback).
+  - **Rate-limited** to 600 requests a minute per IP (frappe's limiter keys by IP or a form field,
+    not by user, and the office shares one address).
+  **Checked:** the generated SQL ran read-only on prod for that first name, her phone number,
+  "PRJ-707" and "58"; the endpoint ran locally over her real candidate rows (kept out of the repo);
+  and the script ran in the real 16.53 box
+  on prod (injected into one tab, its answer replayed from that run): records first, chips, related
+  links, "See all", Enter opening her Contact, "4 projects" opening the filtered list, Back, recents,
+  and the phone layout; after the review, the same way: "Search for …" leading while an answer was
+  pending, an arrowed pick kept through a redraw, POST only, filtered hrefs, and a reopened box with
+  no stale rows. Not run on a bench: no Frappe integration job exists (see CLAUDE.md).
+
+### Removed
+- **The awesomebar patch in `erpnext_enhancements.js`** that injected `api/search.search_global_docs`
+  hits at a flat index of 150 and boosted "Search for …" to the top. `desk_search.js` replaces it.
+  `api/search.py` stays, no longer called, so a tab opened before this release (still running the old
+  bundle) does not error until it reloads.
 
 ## [1.794.1] - 2026-11-04
 

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Done work moved onto old dates on the planners (v1.795.0, ``api/planner_history.py``).
+"""Done work moved onto old dates on the planners (v1.796.0, ``api/planner_history.py``).
 
 Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
 previously done tasks and such to old dates for historical reasons." He picked: the Project Planner's
@@ -918,7 +918,7 @@ class TestPageWiring(unittest.TestCase):
 			drop.index("this.p6b_drop(source, target)"), drop.index("this.ppdw_drop(source, target)")
 		)
 		self.assertIn("if (this.ppdw_undo(snap)) return;", _method(pp, "\tundo() {"))
-		self.assertIn("this.ppdw_display_item(), // v1.795.0: Show done work", pp)
+		self.assertIn("this.ppdw_display_item(), // v1.796.0: Show done work", pp)
 		self.assertIn("ee_readonly: !(card.backdate || (card.movable && !card.finished)),", pp)
 		self.assertIn(
 			"return this.ppdw_gantt_write(card, changes);", _method(pp, "\tppg_write(task, changes, info) {")
@@ -948,7 +948,7 @@ class TestPageWiring(unittest.TestCase):
 		)
 		# Past the server's limit, the page says some done tasks are not shown.
 		self.assertIn("if (!this.show_done || !this.data || !this.data.done_truncated) return;", block)
-		self.assertIn("this.ppdw_note(); // v1.795.0", _method(pp, "\trender() {"))
+		self.assertIn("this.ppdw_note(); // v1.796.0", _method(pp, "\trender() {"))
 		# A link to or from a done bar is refused on the page as on the server.
 		self.assertIn("if (card.finished || pred.finished) {", _method(pp, "\tppg_link(source, target) {"))
 		# Never through save_task or commit(): no reason, no "Notify crew?", no draft.

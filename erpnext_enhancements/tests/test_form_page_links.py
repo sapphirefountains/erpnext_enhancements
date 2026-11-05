@@ -110,7 +110,7 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn("planned.includes(frm.doc.project_type)", code)
 		self.assertIn('const closed = ["Completed", "Canceled", "Cancelled"];', code)
 		self.assertIn("closed.includes(frm.doc.status)", code)
-		# v1.795.0: a Completed job keeps the button for the managers who may move its done work onto old
+		# v1.796.0: a Completed job keeps the button for the managers who may move its done work onto old
 		# dates (planner_history.BACKDATE_ROLES, the same three roles); a Canceled one never has it.
 		self.assertIn(
 			'const history = frm.doc.status === "Completed" && frappe.user.has_role(["System Manager", "Projects Manager", "Maintenance Supervisor"]);',

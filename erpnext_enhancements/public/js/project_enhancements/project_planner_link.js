@@ -22,7 +22,7 @@
  * to) that is not Completed or Canceled. And only for those whose roles open the page:
  * frappe.boot.page_info lists the Pages a person's roles reach.
  *
- * v1.795.0 (Nik, 2026-11-04): a Completed job gets the button too, for the managers who may move done
+ * v1.796.0 (Nik, 2026-11-04): a Completed job gets the button too, for the managers who may move done
  * work onto old dates (api/planner_history.py BACKDATE_ROLES): its Gantt is where they correct when the
  * work was done. A Canceled job never does.
  *
