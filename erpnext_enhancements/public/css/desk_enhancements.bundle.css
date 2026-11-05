@@ -1901,4 +1901,11 @@ body[data-route^="Form"] .attachment-preview .attachment-preview-count {
     body:has(.modal.show) .ee-quick-bar {
         display: none;
     }
+    /* The Triton button (triton_widget.css: fixed, bottom 16px on a phone, z-index 1040) sat on the
+       bar's fifth slot and covered More (Nik, 2026-11-04, on a phone). While the bar shows it floats
+       16px above it, and drops back when the bar hides for a focused input or a dialog. The guided
+       page keeps its own lift above its footer (guided_entry.bundle.css). */
+    body.ee-quick-bar-on:not(.ee-quick-bar-hidden):not(.modal-open):not(.ge-page-active) .triton-fab {
+        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
 }
