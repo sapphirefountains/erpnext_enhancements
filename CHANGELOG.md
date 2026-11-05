@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.797.0] - 2026-11-05
 
 ### Added
-- **Warehouse Transactions: every stock movement and the person who made it.** Parker, through the
-  feedback form on 2026-11-05: "I would like a page where I can look at all the removals and additions
+- **Warehouse Transactions: every stock movement and the person who made it.** The purchasing lead,
+  through the feedback form on 2026-11-05: "I would like a page where I can look at all the removals and additions
   that have been made to any warehouse… what object was changed, by how much, where it was removed, at
   what time, and by who", filterable by person, item and date range. Nik turned it into two tasks the
   same morning: the report, and a link from the Inventory hub. New report
