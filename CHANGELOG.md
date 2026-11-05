@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.797.1] - 2026-11-05
+
+### Fixed
+- **Tasks Tree: the Assign dialog lists the current assignees for everyone, not only for people who can
+  read User records.** The dialog asked the browser for `User.email` and `full_name`. Outside System
+  Manager, staff hold only Desk User's **Select** on User, and from frappe 16.x Select returns just
+  `name` and the search field (`full_name`); asking for any other field makes `frappe/database/query.py`
+  refuse the whole call ("You do not have permission to access field: User.email"). So the list never
+  rendered, and the user got a permission pop-up instead. It now asks for `name` and `full_name` and
+  filters on `name`, the shape frappe's own `user_query` uses. A User's name is its email
+  (`User.validate` sets `email = name`), so the remove button still gets the address it needs.
+  - **Why now.** On production a broader permission row on User, added in the Desk rather than in this
+    repo (`fixtures/custom_docperm.json` exports only Material Request, Purchase Order and Voice Call
+    Settings), hid the bug from most planners. That row is being withdrawn in the Desk, and without this
+    fix the dialog would have broken for them too. Browser code should treat Select as the only access
+    staff have on User.
+  - `scripts/test_task_tree_manager.js` now fails the build if any browser list of User asks for a field
+    other than `name` and `full_name`, or filters on `email`.
+
 ## [1.796.0] - 2026-11-04
 
 ### Added
