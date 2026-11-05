@@ -1828,8 +1828,9 @@ class TestDisplayRule(unittest.TestCase):
 		tree = ast.parse((Path(__file__).resolve().parents[1] / "api/project_planner.py").read_text(encoding="utf-8"))
 		fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_planner")
 		# P5 added google (the Lookahead reads with Google off); unset, it is on, as before.
-		self.assertEqual([a.arg for a in fn.args.args], ["start", "end", "draft", "all_tasks", "google"])
-		self.assertEqual([ast.literal_eval(d) for d in fn.args.defaults], [0, 0, 1])
+		# v1.796.0 added done (Display ▸ Show done work); unset, no done task is read.
+		self.assertEqual([a.arg for a in fn.args.args], ["start", "end", "draft", "all_tasks", "google", "done"])
+		self.assertEqual([ast.literal_eval(d) for d in fn.args.defaults], [0, 0, 1, 0])
 
 
 # ---------------------------------------------------------------------- routes (Phase 2)

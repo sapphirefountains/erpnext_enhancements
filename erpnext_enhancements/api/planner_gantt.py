@@ -23,6 +23,11 @@ planner's own :func:`project_planner.build_card`. A card is the same shape as ev
   every project, so the page's strip stays whole on this tab.
 * **Finished work stays on the chart, read-only.** Completed tasks are part of a job's history, so
   they draw but never move. Canceled and template tasks are left out.
+  **Except by a manager, by its dates** (v1.796.0, Nik 2026-11-04): a Completed task carries
+  ``backdate`` when the caller may move done work onto old dates (``planner_history``), and the page
+  sends that move to ``planner_history.move_done_task``, not ``save_task``. A done task's crew is who it
+  was assigned to, closed assignments included, and a Completed job's chart shows every task, whatever
+  the D6 rule (``whole_job``), so its history is there to correct.
 * **Each card gains** ``baseline`` (P3's ``custom_baseline_start``/``_end``), ``span_days`` (working
   days, D7), ``parent_task``, ``gantt_parent`` (the group drawn above it, or None) and ``finished``.
 
@@ -33,6 +38,7 @@ fails either check is answered with ``refused``, not raised, so Frappe opens no 
 import frappe
 from frappe.utils import cint, getdate, nowdate
 
+from erpnext_enhancements.api import planner_history
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.api.planner_lookahead import span_days
 from erpnext_enhancements.project_enhancements import crew_availability as engine
@@ -43,6 +49,8 @@ from erpnext_enhancements.project_enhancements.planner_templates import phase_nu
 MAX_TASKS = 1000
 #: Statuses never drawn: a canceled task is gone from the plan, a template is not work.
 LEFT_OUT = ("Canceled", "Cancelled", "Template")
+#: A finished job: its chart shows every task, whatever the D6 rule (v1.796.0).
+COMPLETED_PROJECT = "Completed"
 #: Why a project's chart was not drawn: it does not exist, or the caller may not read it.
 REFUSED_MISSING, REFUSED_FORBIDDEN = "missing", "forbidden"
 
@@ -221,6 +229,19 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 	labels = {p.get("name"): p.get("resource_name") or p.get("name") for p in resources}
 	stored = [name for name in work if not pp.is_draft_ref(name)]
 	crew_rows, todo_users = engine.read_crews(stored)
+	# v1.796.0: a finished job's chart is its history, so every task of it shows (the D6 rule is for
+	# live schedules: the 565 finished jobs predate the phase templates, and it would hide nearly all).
+	whole_job = frappe.db.get_value("Project", project, "status") == COMPLETED_PROJECT
+	backdate = planner_history.can_backdate()
+	# ERPNext closes a task's assignments when it is completed, so a done task's crew is who it was
+	# assigned to, closed or open (planner_history._done_assignees): who did it. Only where done work is
+	# what the chart is for (a finished job, or a manager who may move it): elsewhere a closed assignee
+	# would change what the D6 rule shows everyone else (review of #1427).
+	if whole_job or backdate:
+		done_users = planner_history._done_assignees(
+			[name for name in stored if planner_history.is_done_task(work[name])]
+		)
+		todo_users = dict(todo_users, **done_users)
 
 	def crew_of(name):
 		crew = (
@@ -231,7 +252,7 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		return [dict(m, label=m.get("label") or labels.get(m.get("resource")) or m.get("resource")) for m in crew]
 
 	crews = {name: crew_of(name) for name in work}
-	if all_tasks:
+	if all_tasks or whole_job:
 		hidden = set()
 	else:
 		candidates = [
@@ -278,6 +299,11 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		finished = row.get("status") in engine.FINISHED_STATUSES
 		if finished:
 			card["movable"] = False
+			# v1.796.0: a manager may move a done task onto old dates, by its dates only
+			# (planner_history.move_done_task); the Fountain Move check below takes it back for a move job.
+			card["backdate"] = bool(
+				backdate and planner_history.is_done_task(row) and not row.get("custom_rental_booking")
+			)
 		card["finished"] = finished
 		card["parent_task"] = parents.get(name)
 		card["gantt_parent"] = gantt_parent(name, parents, drawn_names)
@@ -293,6 +319,9 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		if not finished and pp.needs_crew(card, todo_users.get(name)):
 			needs.append(name)
 	fountain_move_jobs.mark_read_only(tasks + unscheduled)
+	for card in tasks + unscheduled:
+		if card.get("fountain_move"):
+			card["backdate"] = False
 	tasks.sort(key=card_sort)
 	unscheduled.sort(key=card_sort)
 
@@ -330,6 +359,9 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		"can_edit": can_edit,
 		"all_tasks": all_tasks,
 		"hidden_tasks": len(hidden),
+		# v1.796.0: a manager may move this chart's done tasks onto old dates; a finished job shows all.
+		"can_backdate": backdate,
+		"whole_job": whole_job,
 		"gantt": {
 			"project": project,
 			"title": mine.get("title") or frappe.db.get_value("Project", project, "project_name") or project,
