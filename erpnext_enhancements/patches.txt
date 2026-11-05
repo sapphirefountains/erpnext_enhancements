@@ -1604,3 +1604,7 @@ erpnext_enhancements.patches.rename_agreement_templates
 # subtask end (task_enhancements/parent_dates.py keeps it from now on). One pass over every existing parent, bottom-up,
 # writing only the date columns that differ (set_value, modified untouched). Logs, never raises, safe twice.
 erpnext_enhancements.patches.sync_parent_task_dates
+# Warehouse Transactions (v1.797.0, TASK-2026-03137): force-import the Inventory Enhancements workspace and the
+# Operations Hub, which now link the new report (a shortcut and a Reports-card link on the first, an Inventory-card
+# link on the second). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
+erpnext_enhancements.patches.warehouse_transactions_hub_links

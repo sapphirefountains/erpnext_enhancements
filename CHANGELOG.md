@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.797.0] - 2026-11-05
+
+### Added
+- **Warehouse Transactions: every stock movement and the person who made it.** Parker, through the
+  feedback form on 2026-11-05: "I would like a page where I can look at all the removals and additions
+  that have been made to any warehouse… what object was changed, by how much, where it was removed, at
+  what time, and by who", filterable by person, item and date range. Nik turned it into two tasks the
+  same morning: the report, and a link from the Inventory hub. New report
+  `inventory_enhancements/report/warehouse_transactions/` at `/desk/query-report/Warehouse Transactions`.
+  - **One row per Stock Ledger Entry.** It shows the date and time, the item code and name, the
+    quantity (positive added, negative taken out), the warehouse, the voucher type and number (a link to
+    the voucher), and the user with their full name. Cards above the table count the movements,
+    additions, removals and people. Newest first.
+  - **Filters.** From and To date are required and default to the last 30 days. Item, Warehouse and
+    User are optional. Picking a store includes every bin under it: each bin is a Warehouse of its own,
+    so the report uses `frappe.db.get_descendants`.
+  - **A Script Report, though the task asked for a Query Report.** It looks and opens the same either
+    way; the difference is optional filters. Frappe 16.53's report view sends only the filters that hold
+    a value (`query_report.js` `get_filter_values`). `Report.execute_query_report` passes that dict
+    straight to `frappe.db.sql(self.query, filters)`, so a `%(item_code)s` placeholder with Item left
+    blank is a missing key and the run fails. A Query Report could only have worked with every filter
+    required.
+  - **The user is the entry's `owner`.** ERPNext writes Stock Ledger Entries when the voucher is
+    submitted, so this is whoever submitted it. On production on 2026-11-05, all 819 entries had the same
+    owner as their voucher (Stock Entry, Stock Reconciliation and Purchase Receipt alike). The Stock Scan
+    and the Count Desk submit as the signed-in user, never as Administrator.
+  - **Canceled entries are left out**: both the original rows and the reversing rows a cancellation
+    writes, as in ERPNext's own Stock Ledger report. Otherwise a canceled move would show as an addition
+    and a removal that never happened.
+  - **Permissions.** Rows come through `frappe.get_list`, so the reader's Stock Ledger Entry permission
+    and any User Permissions apply. Item and full-name lookups use `get_all` for display only. The roles
+    are the ones ERPNext gives its Stock Ledger report: Stock User and Accounts Manager. These are also
+    the two roles with read and report on Stock Ledger Entry, which the report run checks. On production,
+    every enabled staff account already holds Stock User and can already open ERPNext's Stock Ledger,
+    which shows the same movements with their values. So the report exposes nothing new; what it adds is
+    the person.
+- **Where to find it.**
+  - On the **Inventory Enhancements** workspace, which is the Inventory hub's landing page (its desktop
+    tile and sidebar both open on it): a *Warehouse Transactions* shortcut beside Stock Scan and the Count
+    Desk, and a link in its Reports card.
+  - On the **Operations Hub**: a link in its Inventory card, beside Stock Balance and Item Naming Audit.
+  - Both workspace files are stamped 2026-11-05 10:00, past the production rows (2026-10-23 12:00 and
+    2026-10-20 15:00). Workspaces are timestamp-gated on import, so the new patch
+    `warehouse_transactions_hub_links` also force-imports both, the same shape as `count_desk_hub_links`.
+    It logs each failure and cannot raise.
+  - The site-made Inventory Enhancements sidebar (standard 0, not in the repo) is unchanged.
+- **Tests.** `tests/test_warehouse_transactions.py`, its own CI step, with a frappe stub. It checks the
+  report record and roles, and that a blank Item, Warehouse or User adds no condition. It checks the
+  conditions: the default dates, a From Date after the To Date refused, canceled entries skipped, a
+  store covering its bins, User matched on `owner`. It checks that rows are read only through
+  `get_list` (walking the parsed code, since the docstring names `frappe.db.sql`), and that every field
+  read exists on Stock Ledger Entry at ERPNext v16.52.1. Finally it checks the row shape, the
+  summary counts, the JavaScript filters, both hub links and their card counts and stamps, and the
+  patch: registered after model sync, importing both workspaces with `force=True`, never raising.
+  `tests/test_feedback_release_sync.py` lists this release's Refs line in `SHIPPED_REFS`, the first
+  release to use it.
+
+Refs: ER-2026-1330007, TASK-2026-03136, TASK-2026-03137
+
 ## [1.796.0] - 2026-11-04
 
 ### Added

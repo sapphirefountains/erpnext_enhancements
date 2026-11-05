@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"inv_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"inv_sc_scan\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":3}},{\"id\":\"inv_sc_count_desk\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Count Desk\",\"col\":3}},{\"id\":\"inv_sc_labels\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse QR Labels\",\"col\":3}},{\"id\":\"inv_sc_audit\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Scanner Audit\",\"col\":3}},{\"id\":\"inv_sc_session\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Count Session\",\"col\":3}},{\"id\":\"inv_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"inv_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Counts, Masters &amp; Reports</b></span>\",\"col\":12}},{\"id\":\"inv_card_counts\",\"type\":\"card\",\"data\":{\"card_name\":\"Counts\",\"col\":4}},{\"id\":\"inv_card_masters\",\"type\":\"card\",\"data\":{\"card_name\":\"Masters\",\"col\":4}},{\"id\":\"inv_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"inv_card_purchasing\",\"type\":\"card\",\"data\":{\"card_name\":\"Purchasing\",\"col\":4}}]",
+ "content": "[{\"id\":\"inv_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"inv_sc_scan\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":3}},{\"id\":\"inv_sc_count_desk\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Count Desk\",\"col\":3}},{\"id\":\"inv_sc_labels\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse QR Labels\",\"col\":3}},{\"id\":\"inv_sc_audit\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Scanner Audit\",\"col\":3}},{\"id\":\"inv_sc_session\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Count Session\",\"col\":3}},{\"id\":\"inv_sc_wh_txn\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse Transactions\",\"col\":3}},{\"id\":\"inv_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"inv_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Counts, Masters &amp; Reports</b></span>\",\"col\":12}},{\"id\":\"inv_card_counts\",\"type\":\"card\",\"data\":{\"card_name\":\"Counts\",\"col\":4}},{\"id\":\"inv_card_masters\",\"type\":\"card\",\"data\":{\"card_name\":\"Masters\",\"col\":4}},{\"id\":\"inv_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"inv_card_purchasing\",\"type\":\"card\",\"data\":{\"card_name\":\"Purchasing\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -95,7 +95,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 1,
+   "link_count": 2,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -109,6 +109,17 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Item Naming Audit"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Warehouse Transactions",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Warehouse Transactions"
   },
   {
    "hidden": 0,
@@ -140,7 +151,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-23 12:00:00.000000",
+ "modified": "2026-11-05 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Enhancements",
@@ -176,6 +187,11 @@
    "label": "Inventory Count Session",
    "link_to": "Inventory Count Session",
    "type": "DocType"
+  },
+  {
+   "label": "Warehouse Transactions",
+   "link_to": "Warehouse Transactions",
+   "type": "Report"
   }
  ],
  "title": "Inventory Enhancements",

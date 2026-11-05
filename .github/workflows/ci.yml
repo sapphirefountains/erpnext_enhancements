@@ -4084,6 +4084,14 @@ jobs:
       # summary, row key and paste equal the Python's (tests/data/count_desk_vectors.json).
       - name: Count Desk rules, endpoints and page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_count_desk -v
+      # Warehouse Transactions (v1.797.0, TASK-2026-03136/03137): every stock movement and who made it. Fails the
+      # build if a blank Item, Warehouse or User filter adds a condition (why it is a Script Report, not a Query
+      # Report), if canceled entries stop being skipped, if a warehouse stops covering its bins, if rows stop coming
+      # through the permission-checked get_list, if a field read is not on Stock Ledger Entry at ERPNext v16.52.1,
+      # or if the Inventory workspace / Operations Hub links, their card counts, stamps or the force-import patch
+      # drift. Own frappe stub, so its own step; unittest classes.
+      - name: Warehouse Transactions report and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v
       # "Turn on Maintain Stock" (v1.754.0): writes is_stock_item past ERPNext's Item.cant_change, so
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery

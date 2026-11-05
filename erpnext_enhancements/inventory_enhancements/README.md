@@ -47,6 +47,7 @@ model, the pure rules and the label reads.
 | `page/stock_scan/` | `/desk/stock-scan` (v1.751.0): only sends the browser on to the Stock Scan web page at `/stock-scan`, with `location.replace` so Back is not trapped on it. It exists for the Dock rail, whose rows open through `frappe.set_route` and so need a desk route (the field technicians' rail, `setup/dock_profiles.py`). Same roles as the page it leads to (`stock_scan_rules.SCAN_ROLES`), same shape as `workforce/page/time_kiosk/` |
 | `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
+| `report/warehouse_transactions/` | Warehouse Transactions (v1.797.0): every stock movement and the person who made it. See *Warehouse Transactions* below |
 
 ## The count flow
 
@@ -911,6 +912,31 @@ the plan. Phone counts (no `scope`) open on the Count Desk too, and can be poste
 Inventory Enhancements workspace (a shortcut beside Stock Scan, and first in its Counts card), both
 linked by `patches/count_desk_hub_links`, and an *Open in the Count Desk* button on the Inventory
 Count Session form.
+
+## Warehouse Transactions (v1.797.0)
+
+A report of every Stock Ledger Entry: item, quantity (positive added, negative taken out),
+warehouse, date and time, voucher, and the person, with their full name. Filter by From/To date
+(the last 30 days by default), Item, Warehouse and User. Pick a person and it is their history of
+additions and removals. Pick a store and it includes every bin under it. TASK-2026-03136 and -03137.
+
+- **A Script Report, though the task asked for a Query Report.** Frappe 16.53's report view sends
+  only the filters that hold a value. A Query Report passes that dict straight to
+  `frappe.db.sql`, so a `%(item_code)s` placeholder with Item left blank is a missing key and the
+  run fails. Item, Warehouse and User are optional, so the conditions are built in Python.
+- **The person is the entry's `owner`.** ERPNext writes the entry when the voucher is submitted.
+  On production on 2026-11-05, all 819 entries had the same owner as their voucher. The Stock Scan
+  and the Count Desk submit as the signed-in user.
+- **Canceled entries are left out**, both the original rows and their reversals, as in ERPNext's
+  Stock Ledger.
+- **Who.** Rows come through `frappe.get_list`, so Stock Ledger Entry permissions and User
+  Permissions apply. The roles are Stock User and Accounts Manager, as on ERPNext's Stock Ledger
+  report.
+- **Where.** A shortcut and a Reports-card link on the Inventory Enhancements workspace (the
+  Inventory hub's landing page), and the Operations Hub's Inventory card. Both are linked by
+  `patches/warehouse_transactions_hub_links`. The site-made Inventory Enhancements sidebar is not
+  in the repo and is unchanged.
+- **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
 
 ## Item naming
 
