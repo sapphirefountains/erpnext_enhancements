@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.797.1] - 2026-11-05
 
+### Security
+- **Only System Manager can change other people's User records again.** On 2026-05-28 a `Custom DocPerm`
+  row was added on production through Role Permissions Manager. It gave the **Production Team** role read,
+  write, create, delete, report, export, print and email on **User**, which put every other person's
+  account in the hands of everyone holding the role. Nik chose to remove it with a patch rather than by
+  hand in the Desk (2026-11-05), so the removal is versioned.
+  - **The patch, `remove_production_team_user_docperm` (post_model_sync).** Deletes every `Custom DocPerm`
+    row with `parent = 'User'` and `role = 'Production Team'`, at any permlevel, exactly as Role
+    Permissions Manager's Remove does (`frappe.delete_doc(..., ignore_permissions=True, force=True)`, as in
+    `permission_manager.remove`), so the change leaves a Deleted Document and a Permission Log. Then it
+    clears User's cached meta. Production held one such row.
+  - **What stays.** The role itself, its members and everything else it grants. Other roles' rows on User,
+    including System Manager's. Each person's own User record, which frappe shares with its owner on save
+    (`User.share_with_self`) rather than through this row.
+  - **Why a patch is the only step.** The row was never a fixture: `fixtures/custom_docperm.json` exports
+    only Material Request, Purchase Order and Voice Call Settings. This is the "delete" half of the
+    two-step rule with no JSON half. It does nothing on a site where the row is already gone, never
+    raises (a raising patch aborts `bench migrate`, which is the deploy), and is safe twice.
+  - **Guard.** `tests/test_user_docperm_guard.py` (own CI step) fails the build if `custom_docperm.json`
+    ever grants a role other than System Manager read, write, create, delete, import, share, impersonate
+    or any permlevel above 0 on User. It covers the repo only; a row added later in the Desk is invisible
+    to it.
+
 ### Fixed
 - **Tasks Tree: the Assign dialog lists the current assignees for everyone, not only for people who can
   read User records.** The dialog asked the browser for `User.email` and `full_name`. Outside System
@@ -18,11 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered, and the user got a permission pop-up instead. It now asks for `name` and `full_name` and
   filters on `name`, the shape frappe's own `user_query` uses. A User's name is its email
   (`User.validate` sets `email = name`), so the remove button still gets the address it needs.
-  - **Why now.** On production a broader permission row on User, added in the Desk rather than in this
-    repo (`fixtures/custom_docperm.json` exports only Material Request, Purchase Order and Voice Call
-    Settings), hid the bug from most planners. That row is being withdrawn in the Desk, and without this
-    fix the dialog would have broken for them too. Browser code should treat Select as the only access
-    staff have on User.
+  - **Why now.** The Production Team row removed above hid this bug from most planners. Without this fix,
+    the dialog would have broken for them too the moment the row went. Browser code should treat Select
+    as the only access staff have on User.
   - `scripts/test_task_tree_manager.js` now fails the build if any browser list of User asks for a field
     other than `name` and `full_name`, or filters on `email`.
 
