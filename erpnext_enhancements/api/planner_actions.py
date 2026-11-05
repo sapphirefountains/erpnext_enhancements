@@ -2397,6 +2397,12 @@ def add_dependency(task, depends_on, modified, reason=None):
 	if not frappe.db.exists("Task", depends_on):
 		frappe.throw(_("Task {0} was not found.").format(depends_on))
 	frappe.has_permission("Task", "read", doc=depends_on, throw=True)
+	# v1.796.0 (review of #1427): a done task's bar now moves on the Gantt for a manager, by its dates
+	# only (planner_history); a link is a schedule gesture, so neither end of one may be finished.
+	statuses = ((doc.name, doc.get("status")), (depends_on, frappe.db.get_value("Task", depends_on, "status")))
+	for name, status in statuses:
+		if status in engine.FINISHED_STATUSES:
+			frappe.throw(_("{0} is finished, so it cannot be linked here.").format(name))
 	rows = _link_rows([task, depends_on])
 	problem = link_problem(task, depends_on, rows, pp.successors(task))
 	if problem:

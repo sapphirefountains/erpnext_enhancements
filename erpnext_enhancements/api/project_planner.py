@@ -82,7 +82,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
-from erpnext_enhancements.api import planner_open
+from erpnext_enhancements.api import planner_history, planner_open
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 from erpnext_enhancements.project_enhancements import (
 	fountain_move_jobs,
@@ -611,7 +611,7 @@ def _require_planner():
 
 
 @frappe.whitelist()
-def get_planner(start, end, draft=0, all_tasks=0, google=1):
+def get_planner(start, end, draft=0, all_tasks=0, google=1, done=0):
 	"""Everything the planner draws for ``start``..``end`` (inclusive). See the module docstring.
 
 	``draft=1`` (Phase 3B draft mode) overlays the caller's unpublished Draft rows first; see
@@ -620,6 +620,9 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 	``google=0`` prices each person-day's drive padding from the engine's own estimate and the drive
 	time cache, never asking Google: the Lookahead (P5, ``planner_lookahead.get_lookahead``) reads
 	three to six weeks at once, and spec §6 runs it with Google off. Unset, as before.
+	``done=1`` (v1.796.0, Display ▸ Show done work) adds the range's done tasks as ``finished`` cards,
+	which a manager may move onto old dates (``planner_history.add_done_work``); the engine's capacity,
+	bookings and conflicts are computed exactly as without it.
 	"""
 	_require_planner()
 	start, end = getdate(start), getdate(end)
@@ -777,7 +780,11 @@ def get_planner(start, end, draft=0, all_tasks=0, google=1):
 		"hidden_tasks": len(hidden),
 	}
 	result.update(_phase6d().payload_extras(start, end, data["days"]))  # day_notes, block_notes, can_schedule
-	return _with_drafts(result, overlay, start, end) if overlay is not None else result
+	result = _with_drafts(result, overlay, start, end) if overlay is not None else result
+	if cint(given(done)):
+		# Last, so the drafts, the notes and the display rule above never see a done task.
+		planner_history.add_done_work(result, start, end, data, all_tasks=all_tasks)
+	return result
 
 
 def _hidden_by_display_rule(data, unscheduled_rows, crew_rows, todo_users, drafted=()):
