@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.797.0] - 2026-11-05
+
+### Added
+- **Warehouse Transactions: every stock movement and the person who made it.** The purchasing lead,
+  through the feedback form on 2026-11-05: "I would like a page where I can look at all the removals and additions
+  that have been made to any warehouse… what object was changed, by how much, where it was removed, at
+  what time, and by who", filterable by person, item and date range. Nik turned it into two tasks the
+  same morning: the report, and a link from the Inventory hub. New report
+  `inventory_enhancements/report/warehouse_transactions/` at `/desk/query-report/Warehouse Transactions`.
+  - **One row per Stock Ledger Entry:** the date and time, the item code and name, the **Qty Change**
+    (positive added, negative taken out), the **Balance After** (`qty_after_transaction`), the
+    warehouse, the voucher type and number (a link to the voucher), and the user and their full name.
+    Newest first. Cards above the table count ledger lines, the lines adding and removing stock, and
+    the people.
+  - **Filters:** From and To date, required, default the last 30 days; Item, Warehouse and User,
+    optional. Picking a store includes every bin under it: each bin is a Warehouse of its own, so the
+    report uses `frappe.db.get_descendants`.
+  - **A count's change is worked out, because the ledger stores it as 0.**
+    - ERPNext 16.52.1 writes a Stock Reconciliation's entries with `actual_qty = 0` and puts the
+      counted balance in `qty_after_transaction` (`stock_reconciliation.py` `get_sle_for_items`).
+    - ERPNext's own Stock Ledger report derives the change from the balance before
+      (`set_reconciliation_in_out_qty` / `get_qty_before_entry`), and this report does the same. The
+      change is the count's balance minus the `qty_after_transaction` of the previous live entry for
+      that item and warehouse, ordered by `posting_datetime` then `creation`. With no previous entry
+      (a first count) it is 0.
+    - The previous entry can sit before From Date, or belong to someone the User filter hides. So it
+      is read from the whole earlier ledger of the counted items and warehouses, in one `get_list`,
+      not from the report's own rows.
+    - Why it matters: on production on 2026-11-05, 667 of the 819 live entries were reconciliations,
+      all at `actual_qty = 0`. In the default 30 days that was 200 of 335 rows, 57 additions and 143
+      removals, which the first draft of this report showed as 0.
+  - **A Script Report, though the task asked for a Query Report.** It looks and opens the same
+    either way; the difference is optional filters.
+    - Frappe 16.53's report view sends only the filters that hold a value (`query_report.js`
+      `get_filter_values`).
+    - `Report.execute_query_report` passes that dict straight to `frappe.db.sql(self.query, filters)`,
+      so a `%(item_code)s` placeholder with Item left blank is a missing key and the run fails.
+    - A Query Report could only have worked with every filter required.
+  - **The user is the entry's `owner`**, meaning the user who submitted the voucher: ERPNext writes
+    Stock Ledger Entries at submit. On production on 2026-11-05, every live entry's owner was also
+    the owner (creator) of its voucher, so far the person who made each voucher also submitted it.
+    The Stock Scan and the Count Desk submit as the signed-in user, never as Administrator.
+  - **Canceled entries are left out**: both the original rows and the reversing rows a cancellation
+    writes, as in ERPNext's own Stock Ledger report. Otherwise a canceled move would show as an
+    addition and a removal that never happened.
+  - **Lines, not movements.** A transfer between bins, or a repack, is two entries, one out of the
+    source and one into the target. So it is two rows, and it counts once under each of "Lines adding
+    stock" and "Lines removing stock". The cards are labeled as lines for that reason.
+  - **Permissions:**
+    - Every ledger read (the rows and the balances before a count) goes through `frappe.get_list`,
+      so the reader's Stock Ledger Entry permission and any User Permissions apply. Item and
+      full-name lookups use `get_all` for display only.
+    - The roles are the ones ERPNext gives its Stock Ledger report: Stock User and Accounts Manager.
+      These are also the two roles with read and report on Stock Ledger Entry, which the report run
+      checks. Anyone who can open this report can open ERPNext's Stock Ledger, which shows the same
+      movements with their values; what this report adds is the person.
+    - The User column is plain text, not a link. User grants Desk User only `select`, so a link would
+      open onto a permission error for most readers.
+- **Where to find it:**
+  - On the **Inventory Enhancements** workspace, the Inventory hub's landing page (its desktop tile
+    and sidebar both open on it): a *Warehouse Transactions* shortcut beside Stock Scan and the Count
+    Desk, and a link in its Reports card.
+  - On the **Operations Hub**: a link in its Inventory card, beside Stock Balance and Item Naming
+    Audit.
+  - Both workspace files are stamped 2026-11-05 10:00, past the production rows (2026-10-23 12:00 and
+    2026-10-20 15:00). Workspaces are timestamp-gated on import, so the new patch
+    `warehouse_transactions_hub_links` also force-imports both, the same shape as
+    `count_desk_hub_links`.
+  - **Each import runs in its own savepoint.** frappe 16.53's `import_doc` deletes the stored row
+    before it inserts the new one, so a failed insert that was only logged would let migrate commit
+    the delete. A failure now rolls back to the savepoint, which keeps the old workspace.
+    `frappe.flags.in_import`, which `import_doc` leaves set when the insert raises, is restored in a
+    `finally`. The patch logs each failure and cannot raise.
+  - The site-made Inventory Enhancements sidebar (standard 0, not in the repo) is unchanged.
+- **Tests.** `tests/test_warehouse_transactions.py`, its own CI step. Its frappe stub holds an
+  in-memory ledger and applies `get_list`'s filters, ordering and field list. It checks:
+  - the report record and its roles;
+  - that a blank Item, Warehouse or User adds no condition;
+  - the conditions: the default dates, a From Date after the To Date refused, canceled entries
+    skipped, a store covering its bins, User matched on `owner`;
+  - count adjustments: a previous balance before the window, one by someone the User filter hides,
+    a canceled entry ignored, other bins and items kept apart, ties broken by `creation`, two counts
+    in a row, a first count, and a reconciliation that stores its own change;
+  - that every ledger read is a `get_list` on Stock Ledger Entry (walking the parsed code, since the
+    docstring names `frappe.db.sql`), with every field read present at ERPNext v16.52.1;
+  - the row shape, the line counts (a transfer's two legs), the plain-text User column and the
+    JavaScript filters;
+  - both hub links, their card counts and their stamps;
+  - the patch: registered after model sync, `force=True`, one savepoint per workspace, a rollback on
+    failure, the import flag restored, never raising.
+  - `tests/test_feedback_release_sync.py` lists this release's Refs line in `SHIPPED_REFS`, the first
+    release to use it.
+
+Refs: ER-2026-1330007, TASK-2026-03136, TASK-2026-03137
+
 ## [1.796.0] - 2026-11-04
 
 ### Added
