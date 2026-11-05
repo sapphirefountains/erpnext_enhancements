@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.797.1] - 
+## [1.797.1] - 2026-11-05
 
 ### Added
 - **WI-082: receipt, bill and PO capture, scoped.** Nikolas, 2026-11-04, after the Salt Air reality check
