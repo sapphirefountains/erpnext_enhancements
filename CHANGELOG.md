@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.797.3] - 2026-11-06
+
+### Fixed
+- **On a phone, the bottom bar's More button opens the module drawer.** Nikolas, 2026-11-06: "the More
+  button on the bottom of the screen on mobile doesn't work now that we moved the Triton button." The
+  move (v1.794.1) only uncovered it: until then the Triton button sat on top of More, so nobody had tapped
+  More. The button called frappe's `Sidebar.open()` and nothing else, and two things in frappe 16.53 undid
+  that. The tap is a click outside the sidebar, and `Sidebar.setup_click_away` (`ui/sidebar/sidebar.js`)
+  closes an open drawer on any document click whose target is not inside `.body-sidebar, .dock,
+  .sidebar-toggle-btn, .sidebar-panel, .sidebar-collapse-arrow`; the bar is none of those, and the
+  document handler runs after the button's, so the drawer the tap opened was shut by the same tap before
+  it was painted. And on a phone `.body-sidebar` is `position: absolute; height: 100%` of a `fit-content`
+  container (`sidebar.scss`), which is 0 until `Sidebar.set_height` writes `window.innerHeight` on it, and
+  only frappe's own navbar-brand hamburger (`page.js` `setup_main_sidebar_toggle`) calls that, so a bare
+  `open()` on a fresh page load drew a 0px drawer. `sidebar_rail.js` More now does what the hamburger
+  does (`on_more_tap`): the tap stops at the button (`stopPropagation`), then `set_height()`, `open()`,
+  `prevent_scroll()`; an open drawer closes through `close()`; a frappe without the two helpers gets the
+  bare `open()`. Not `toggle_width()`, which `tests/test_frappe_16_50_desk_compat.py` keeps out of this
+  app as the page-head toggle's method. Reproduced on prod in a 660px-wide Chrome window (below frappe's
+  768px phone breakpoint): `sidebar_expanded` flipped true in the button's handler and false again in the
+  document handler of the same click, with nothing covering the button (`elementFromPoint` returned its
+  own icon). Verified with the new handler swapped onto the live button: four open-close cycles, closed by
+  the overlay and by picking a drawer row, each reopening 224px wide and full height with the page behind
+  it frozen. `scripts/test_sidebar_rail.js` (check 16) executes the handler against a stub sidebar;
+  `tests/test_sidebar_rail.py` holds the source.
+
 ## [1.797.2] - 2026-11-05
 
 ### Added
