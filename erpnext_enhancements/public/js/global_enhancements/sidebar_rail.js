@@ -69,7 +69,10 @@
  *    (`page.hide_sidebar`, read directly: on a phone frappe's `page_allows_sidebar()` is always
  *    true because the drawer "can close"), off a page that draws its own bar at the foot of the
  *    screen (`OWN_BOTTOM_BARS`, counted visible and inside the page on screen: the visit wizard's
- *    Next button sits at z-index 5), under a dialog, and while an input has focus.
+ *    Next button sits at z-index 5), under a dialog, and while an input has focus. More opens the
+ *    drawer the way frappe's own hamburger does (`on_more_tap`: the tap stops before frappe's
+ *    click-away handler, `set_height` first, `prevent_scroll` after), because a bare `open()` from
+ *    a tap outside the sidebar is undone by that handler in the same tap (v1.797.3).
  *
  * 9. TRAINING OPENS ON THE COURSE LIST. The dock's Training tile is a Workspace row, and a
  *    Workspace row opens its workspace; the Training hub to Training Course list hop happened 33
@@ -833,10 +836,7 @@
 				.attr("aria-label", text("More, opens the module menu"))
 				.append('<span class="ee-quick-bar-icon">' + ICON_MENU + "</span>")
 				.append($('<span class="ee-quick-bar-label"></span>').text(text("More")))
-				.on("click", () => {
-					const current = sidebar();
-					if (current && typeof current.open === "function") current.open();
-				});
+				.on("click", on_more_tap);
 			$bar.append($more);
 			$("body").addClass("ee-quick-bar-on");
 			paint_bar_active();
@@ -844,6 +844,30 @@
 		} catch (e) {
 			console.warn("sidebar_rail:", e);
 		}
+	}
+
+	// More opens the drawer the way frappe's own navbar-brand toggle does (page.js
+	// setup_main_sidebar_toggle, 16.53): size it, open it, freeze the page behind it. Two things
+	// the bare `open()` it called until v1.797.3 did not do, and the tap did nothing:
+	//  - The tap is a click outside the sidebar. `Sidebar.setup_click_away` closes an open drawer
+	//    on any document click whose target is not in `.body-sidebar, .dock, .sidebar-toggle-btn,
+	//    .sidebar-panel, .sidebar-collapse-arrow`, and this bar is none of those, so the drawer this
+	//    handler opened was shut again by the same tap before it was painted. The tap stops here.
+	//  - On a phone `.body-sidebar` is absolute at `height: 100%` of a `fit-content` container
+	//    (sidebar.scss), which is 0 until `set_height` writes `window.innerHeight` on it. Only the
+	//    navbar-brand toggle called it, so until the person had tapped frappe's hamburger once the
+	//    drawer opened 0px tall. `prevent_scroll` is the toggle's third step: the page behind the
+	//    drawer stops scrolling while it is open (close() undoes it on a phone).
+	// A frappe without either helper gets the bare open(). Not toggle_width(): that is the
+	// page-head toggle's method, which tests/test_frappe_16_50_desk_compat.py keeps out of here.
+	function on_more_tap(event) {
+		if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+		const current = sidebar();
+		if (!current || typeof current.open !== "function") return;
+		if (current.sidebar_expanded && typeof current.close === "function") return current.close();
+		if (typeof current.set_height === "function") current.set_height();
+		current.open();
+		if (typeof current.prevent_scroll === "function") current.prevent_scroll();
 	}
 
 	function paint_bar_active() {
@@ -1045,6 +1069,7 @@
 		redraw_sidebar,
 		safe_route,
 		bar_suppressed,
+		on_more_tap,
 		warn_once,
 		LANDINGS,
 		USAGE_FLOOR,
