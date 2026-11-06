@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.797.2] - 2026-11-05
+
+### Added
+- **WI-082: receipt, bill and PO capture, scoped.** Nikolas, 2026-11-04, after the Salt Air reality check
+  found that prod holds almost no cost actuals for build jobs: scope "a way for Lisa, the technicians and
+  anyone else to upload receipts, supplier invoices and POs, have them read by OCR or AI, filed into
+  Google Drive, and matched to the right Project, Purchase Order, Supplier and phase", as its own project.
+  [`work-items/WI-082-receipt-and-bill-capture.md`](work-items/WI-082-receipt-and-bill-capture.md) is the
+  plan for him to accept or amend; no feature code ships with it.
+  - **What prod said (read-only, 2026-11-04):** 10 Purchase Invoices in the whole table and none dated
+    2026; 247 Purchase Orders in 2026, 153 of them at a grand total of 0; the QuickBooks mirror holds the
+    real volume, 519 vendor bills and 1,695 purchases (1,406 by company card) from January to October;
+    `accounting_intake` has 0 Document Intake rows, its settings say enabled but name no email account or
+    Drive folder, and Triton's extraction endpoint has no Document AI processor deployed; the Stock Scan
+    store-run receipt path (v1.536.0) has 0 rows; 1,213 Suppliers in 36 near-duplicate groups; one Email
+    Account, outgoing only.
+  - **The plan reuses `accounting_intake`** rather than replacing it (dedupe, two approval gates, drafts
+    only, advisory matching, best-effort filing are already right) and names what it lacks: job context
+    on the queue row (project, phase, payer, payment method, a `Needs Attribution` gate for the PM), a
+    kiosk Receipt button for technicians, matching to Project and phase, card purchases posted as paid
+    invoices with a Mode of Payment per card, Drive filing into the project's *Accounting & Legal* folder
+    with a Supplier shortcut and link-only Files back on Project and Supplier, Supplier aliases that learn
+    from corrections, and a sweep for rows a deploy's Redis flush strands. One schema change of note:
+    `custom_phase_number` on Purchase Order Item and Purchase Invoice Item, per the 2026-11-04 decision
+    that purchases carry phase only.
+  - Four phases (foundations S, Lisa's inbox M, technician receipts M, matching and reporting M), twelve
+    open questions for Lisa, the CPA, Nikolas and James, acceptance criteria as queries, and the risk
+    list. No QuickBooks integration of any kind; nothing is ever auto-submitted.
+  - **Nikolas answered all twelve questions on 2026-11-05**, on the plan page where each carried a
+    recommendation; the work item now records them as decisions. Nine follow the recommendation. Three
+    do not: both inbound channels (the mailbox and the Drive scan folder) go live together in Phase 1;
+    every document is opened and approved in full, with no one-click approval at any amount; and source
+    documents are kept permanently. That last one adds a rule to the plan: Frappe deletes a document's
+    attached Files with the document, so rebuilding a standalone draft invoice from its PO re-attaches
+    the source File before the draft is deleted. The kiosk Receipt button works with or without a
+    clock-in, so Phase 2 no longer waits for the crew to use the kiosk for hours. Still open: Lisa's list
+    of company cards, and the CPA's confirmation of the sales-tax and reimbursement answers before
+    go-live.
+
 ## [1.797.1] - 2026-11-05
 
 ### Security
