@@ -63,18 +63,19 @@
 
     <div class="pd-controls dashboard-controls">
 
-        <!-- Priority Overview only: stream chips (counts filled by the script), the pressed
-             tile's filter as a chip with an x (hidden while the tile is Active), Ranked only,
-             Group by stream, and the Columns "..." button at the right end (drawn by the
-             script into #pd-overview-tools). -->
+        <!-- Priority Overview only: stream chips (counts filled by the script; each stream
+             chip toggles, so several can be pressed together and the rows are their union;
+             All clears them), the pressed tile's filter as a chip with an x (hidden while
+             the tile is Active), Ranked only, Group by stream, and the Columns "..." button
+             at the right end (drawn by the script into #pd-overview-tools). -->
         <div class="pd-filters" id="overview-controls">
-            <div class="pd-chips" id="pd-stream-chips" role="group" aria-label="Filter by stream">
-                <button type="button" class="pd-fchip" data-stream="" aria-pressed="true">All <b data-stream-count=""></b></button>
-                <button type="button" class="pd-fchip" data-stream="Design" aria-pressed="false">Design <b data-stream-count="Design"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Build" aria-pressed="false">Build <b data-stream-count="Build"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Service" aria-pressed="false">Service <b data-stream-count="Service"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Events" aria-pressed="false">Events <b data-stream-count="Events"></b></button>
-                <button type="button" class="pd-fchip" data-stream="Internal" aria-pressed="false">Internal <b data-stream-count="Internal"></b></button>
+            <div class="pd-chips" id="pd-stream-chips" role="group" aria-label="Filter by stream; press more than one to combine them">
+                <button type="button" class="pd-fchip" data-stream="" aria-pressed="true" title="Every stream">All <b data-stream-count=""></b></button>
+                <button type="button" class="pd-fchip" data-stream="Design" aria-pressed="false" title="Press to add or remove this stream">Design <b data-stream-count="Design"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Build" aria-pressed="false" title="Press to add or remove this stream">Build <b data-stream-count="Build"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Service" aria-pressed="false" title="Press to add or remove this stream">Service <b data-stream-count="Service"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Events" aria-pressed="false" title="Press to add or remove this stream">Events <b data-stream-count="Events"></b></button>
+                <button type="button" class="pd-fchip" data-stream="Internal" aria-pressed="false" title="Press to add or remove this stream">Internal <b data-stream-count="Internal"></b></button>
             </div>
             <button type="button" class="pd-tile-filter" id="pd-tile-filter" title="Clear this filter" hidden>
                 <span id="pd-tile-filter-label"></span>

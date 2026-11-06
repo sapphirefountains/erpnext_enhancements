@@ -19,8 +19,10 @@
  *                           "Updated N min ago" stays beside the Refresh button;
  *   - Priority Overview   — every active project (client streams and internal), with
  *                           stream chips (All / Design / Build / Service / Events /
- *                           Internal, with counts), a Ranked-only box (company priority
- *                           is a number; off by default) and a Group-by-stream toggle.
+ *                           Internal, with counts; any number of them can be pressed
+ *                           together and the rows are their union, since v1.798.0),
+ *                           a Ranked-only box (company priority is a number; off by
+ *                           default) and a Group-by-stream toggle.
  *                           Flat by company rank by default; grouped, each stream is a
  *                           header row (Build, Design, Service, Events, then Internal)
  *                           ordered by Value Stream Priority. Inline-editable company /
@@ -51,7 +53,7 @@
  * The five tabs are always visible (Mock B, v1.781.0; "View More" is retired). What a
  * person chooses is kept per browser in localStorage, never in frappe user_settings
  * (Redis only, flushed on every deploy): the tab (chb_projects_dashboard_tab_v1), each
- * tab's sort (chb_projects_dashboard_sort_v1), the stream chip, Ranked only and Group by
+ * tab's sort (chb_projects_dashboard_sort_v1), the stream chips, Ranked only and Group by
  * stream (chb_projects_dashboard_overview_v1), plus the columns and widths the shared
  * ColumnSelector / ColumnResizer already keep. The pressed tile is not kept.
  * The band — one slim row since v1.785.0: title, search, Refresh, "+" — carries one "+"
@@ -147,10 +149,13 @@
     let priority_options = { project_priority: [], company_priority: [] };
     let status_options = [];
 
-    // The Priority Overview's filters: the stream chip ("" is All), Ranked only (off by
-    // default: ranked = the company priority is a number) and Group by stream (off by
-    // default: the flat list by company rank). The pressed tile is session state only.
-    const DEFAULT_OVERVIEW = { stream: "", ranked_only: false, group: false };
+    // The Priority Overview's filters: the pressed stream chips (a set; empty is All, and
+    // the rows are the union of what is pressed — Nikolas, 2026-11-06: "being able to
+    // select multiple value streams would be good, rather than just one at a time"),
+    // Ranked only (off by default: ranked = the company priority is a number) and Group by
+    // stream (off by default: the flat list by company rank). The pressed tile is session
+    // state only.
+    const DEFAULT_OVERVIEW = { streams: [], ranked_only: false, group: false };
     let overview = Object.assign({}, DEFAULT_OVERVIEW);
     let tile_filter = "active";
     let last_fetch_at = null;
@@ -162,12 +167,20 @@
     let loaded = false;
     let panel = { kind: "loading" };
 
-    // A remembered chip must be one the bar has (a typo, or a chip a later release removed,
-    // would leave the rows narrowed with nothing pressed, not even All), as load_tab does.
+    // The remembered chips come as `streams` (a list, since v1.798.0) or, from a browser
+    // that last saved before that, as `stream` (one string; "" was All). Either way, only
+    // chips the bar has are kept (a typo, or a chip a later release removed, would leave
+    // the rows narrowed with nothing pressed, not even All), as load_tab does.
+    function parse_streams(saved) {
+        let picked = saved.streams;
+        if (!Array.isArray(picked)) picked = typeof saved.stream === "string" && saved.stream ? [saved.stream] : [];
+        return STREAM_CHIPS.filter((stream) => picked.includes(stream));
+    }
+
     function load_overview() {
         const saved = read_saved(OVERVIEW_KEY);
         if (!saved || typeof saved !== "object") return;
-        if ([""].concat(STREAM_CHIPS).includes(saved.stream)) overview.stream = saved.stream;
+        overview.streams = parse_streams(saved);
         overview.ranked_only = !!saved.ranked_only;
         overview.group = !!saved.group;
     }
@@ -612,15 +625,15 @@
     // A tile narrows the Priority Overview; pressing it from another tab (the Summary, where
     // the tiles live) goes there. The tiles are static markup outside #dashboard-content, so
     // this one binding outlives every re-render of the Summary and the Overview.
-    // The stream chip and Ranked only are cleared first (review round 1 of #1416): they are
+    // The stream chips and Ranked only are cleared first (review round 1 of #1416): they are
     // the remembered values from the last Overview visit, a tab away from the tile, and a
     // "Past expected end 3" that lands on Design + Ranked only shows fewer than 3 rows. The
     // rows then equal the tile's number. Group by stream is a layout, so it stays.
     $root.find('.pd-tile').on('click', function() {
         const key = $(this).attr('data-tile');
         tile_filter = TILE_TESTS[key] ? key : "active";
-        if (overview.stream || overview.ranked_only) {
-            overview.stream = "";
+        if (overview.streams.length || overview.ranked_only) {
+            overview.streams = [];
             overview.ranked_only = false;
             save_overview();
         }
@@ -1653,8 +1666,10 @@
         STREAM_CHIPS.forEach((stream) => {
             $root.find(`[data-stream-count="${stream}"]`).text(String(candidates.filter((p) => stream_of(p) === stream).length));
         });
-        [""].concat(STREAM_CHIPS).forEach((stream) => {
-            $root.find(`.pd-fchip[data-stream="${stream}"]`).attr('aria-pressed', stream === overview.stream ? 'true' : 'false');
+        // All is pressed exactly when no stream is; each stream chip shows its own state.
+        $root.find('.pd-fchip[data-stream=""]').attr('aria-pressed', overview.streams.length ? 'false' : 'true');
+        STREAM_CHIPS.forEach((stream) => {
+            $root.find(`.pd-fchip[data-stream="${stream}"]`).attr('aria-pressed', overview.streams.includes(stream) ? 'true' : 'false');
         });
         $root.find('#pd-ranked-only').prop('checked', overview.ranked_only);
         $root.find('#pd-group-by-stream').prop('checked', overview.group);
@@ -1673,8 +1688,9 @@
             empty_panel(container, __("No active projects."));
             return;
         }
-        const projects_to_show = overview.stream
-            ? candidates.filter((p) => stream_of(p) === overview.stream)
+        // The union of the pressed streams; none pressed is every stream (All).
+        const projects_to_show = overview.streams.length
+            ? candidates.filter((p) => overview.streams.includes(stream_of(p)))
             : candidates.slice();
         if (!projects_to_show.length) {
             empty_panel(container, __("No projects match these filters."));
@@ -1702,8 +1718,18 @@
 
     // ----- PRIORITY OVERVIEW FILTERS: stream chips, Ranked only, Group by stream -----
 
+    // A stream chip toggles its stream in the set, so Build then Service shows both; All
+    // clears the set, and so does unpressing the last stream. The set is kept in the bar's
+    // own order whichever way it was built, so the saved value reads the same either way.
     $root.find('.pd-fchip').on('click', function() {
-        overview.stream = $(this).attr('data-stream') || "";
+        const stream = $(this).attr('data-stream') || "";
+        if (!stream) {
+            overview.streams = [];
+        } else if (overview.streams.includes(stream)) {
+            overview.streams = overview.streams.filter((s) => s !== stream);
+        } else {
+            overview.streams = STREAM_CHIPS.filter((s) => s === stream || overview.streams.includes(s));
+        }
         save_overview();
         if (current_tab === "priority-overview") render_current_tab();
     });

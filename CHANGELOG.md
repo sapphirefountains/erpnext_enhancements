@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.798.0] - 2026-11-06
+
+### Changed
+- **Projects Dashboard: the stream chips combine.** Nikolas, 2026-11-06, as a side project: "On the
+  Projects Dashboard, being able to select multiple value streams would be good, rather than just one at
+  a time." Comparing Build and Service meant two visits. Block files only
+  (`custom_html_blocks/projects_dashboard.{html,js}`, seeded on migrate by `setup/custom_html_blocks.py`);
+  no endpoint, schema, fixture or data change.
+  - **What the filter is.** The Priority Overview's chip row — All / Design / Build / Service / Events /
+    Internal — is the dashboard's value stream filter, and it never reaches the server: the block fetches
+    every project once through `get_project_data` and files each row under a stream in the browser
+    (`stream_of`: an internal `project_type` is Internal, any other type is itself). So the change is to
+    the chips, not to an endpoint, and `get_project_data` still takes no stream argument.
+  - **Each stream chip now toggles.** Build then Service shows the union of the two, both pressed, All
+    not; pressing a pressed chip removes its stream, and unpressing the last one, or pressing All, shows
+    every stream again. Group by stream draws a header row for each pressed stream, in the agreed order.
+    The counts on the chips are unchanged: each is still the whole candidate pool's count for that stream,
+    so the numbers tell you what adding a chip would bring in. A tile press from the Summary still clears
+    the whole set, as it cleared the one chip (review round 1 of #1416). The chips carry tooltips saying
+    they combine, and the row's `aria-label` says so.
+  - **Remembered as a list, and the old string still reads.** `chb_projects_dashboard_overview_v1` now
+    holds `streams` (the pressed chips, in the bar's order whichever way they were pressed) instead of
+    `stream`; a browser that last saved `{stream: "Design"}` reads it as `["Design"]`, `""` as nothing
+    pressed, and a chip the bar does not have is dropped, as before. The key is rewritten in the new shape
+    on the next choice, not on load. A `streams` of the wrong type reads as nothing pressed.
+  - Guarded: `scripts/test_projects_dashboard_toolbar.mjs` runs the real block script and presses the
+    chips (two chips are a union with both pressed; a pressed chip comes off; the last one off is All;
+    All clears a set of three; several remembered streams restore and group; the pre-v1.798.0 one-string
+    state reads, including "" and a retired chip; a list is pruned and a wrong type is nothing pressed),
+    and `tests/test_projects_dashboard_toolbar.py` holds the script to the set (the toggle handler, the
+    union filter, All pressed exactly when the set is empty, the tile press clearing the set, the legacy
+    read) and the markup to its tooltips. Prod, read only, on 2026-11-06: active projects by
+    `project_type` are Service 28, Internal 12, Design 8, Build 8, Overhead 5, no type 5, Group Projects 3,
+    Events 1 — the chips' five streams plus Overhead and Uncategorized, which have no chip and show under
+    All only, as before. Nothing here ran in a browser.
+
 ## [1.797.2] - 2026-11-05
 
 ### Added
