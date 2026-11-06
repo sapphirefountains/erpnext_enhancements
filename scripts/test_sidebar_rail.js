@@ -31,6 +31,10 @@
  *      off one with its own bar on screen, and not off a page whose own bar is merely in the DOM
  *      (a wizard once opened, the board's close bar, the planner's move bar).
  *  15. A missing-anchor canary warns once per key.
+ *  16. More opens the drawer the way frappe's hamburger does (v1.797.3): the tap stops at the button
+ *      (frappe's click-away closes the drawer on any document click outside the sidebar, so a bare
+ *      open() was undone by the same tap), set_height first (the drawer is 0px tall until it runs),
+ *      prevent_scroll after; an open drawer closes; a frappe without the helpers gets the bare open().
  *
  * If a marker no longer resolves this exits 2 rather than passing vacuously.
  */
@@ -426,6 +430,40 @@ async function asyncChecks() {
 		delete world.frappe.container;
 		world.bars_visible = 1;
 		check(world.api.bar_suppressed(page) === false, "no page container to look in: nothing is counted");
+	}
+	// ------------------------------------------------------------ 16. More opens the drawer like frappe's hamburger
+	{
+		const world = makeWorld({ mobile: true });
+		const calls = [];
+		const sb = {
+			sidebar_expanded: false,
+			set_height: () => calls.push("set_height"),
+			open: () => {
+				calls.push("open");
+				sb.sidebar_expanded = true;
+			},
+			close: () => {
+				calls.push("close");
+				sb.sidebar_expanded = false;
+			},
+			prevent_scroll: () => calls.push("prevent_scroll"),
+		};
+		world.frappe.app = { sidebar: sb };
+		let stopped = 0;
+		const event = { stopPropagation: () => (stopped += 1) };
+		world.api.on_more_tap(event);
+		check(stopped === 1, "the tap stops at the button: frappe's click-away closes the drawer on any document click outside the sidebar");
+		check(same(calls, ["set_height", "open", "prevent_scroll"]), "a closed drawer is sized, opened and the page behind it frozen, in the hamburger's order");
+		world.api.on_more_tap(event);
+		check(same(calls.slice(3), ["close"]) && sb.sidebar_expanded === false, "an open drawer closes through frappe's close()");
+		const bare = { sidebar_expanded: false, open: () => calls.push("bare open") };
+		world.frappe.app = { sidebar: bare };
+		world.api.on_more_tap(event);
+		check(calls[calls.length - 1] === "bare open", "a frappe without set_height or prevent_scroll gets the bare open()");
+		world.frappe.app = { sidebar: null };
+		world.api.on_more_tap(event);
+		world.api.on_more_tap(null);
+		check(calls.length === 5 && stopped === 4, "no sidebar: nothing happens; no event: nothing throws");
 	}
 	// ------------------------------------------------------------ 15. the canary
 	{

@@ -109,6 +109,20 @@ class TestShips(unittest.TestCase):
 		self.assertIn('$(page_el).find(OWN_BOTTOM_BARS).filter(":visible").length > 0', src)
 		self.assertNotIn("$(OWN_BOTTOM_BARS)", src)
 
+	def test_more_opens_the_drawer_like_frappes_hamburger(self):
+		"""v1.797.3: a bare open() from a tap outside the sidebar is undone by frappe 16.53's
+		click-away handler in the same tap, and the drawer it opens is 0px tall until set_height
+		has run; the handler does what page.js's navbar-brand toggle does, without toggle_width()
+		(the compat suite keeps that method out of this app). scripts/test_sidebar_rail.js executes it."""
+		src = code(MODULE)
+		self.assertIn('.on("click", on_more_tap)', src)
+		self.assertIn("event.stopPropagation()", src)
+		self.assertIn('if (typeof current.set_height === "function") current.set_height();', src)
+		self.assertIn('if (typeof current.prevent_scroll === "function") current.prevent_scroll();', src)
+		self.assertIn('if (current.sidebar_expanded && typeof current.close === "function") return current.close();', src)
+		self.assertNotIn("toggle_width", src)
+		self.assertIn("on_more_tap", read(HARNESS))
+
 	def test_recent_hrefs_are_desk_paths(self):
 		src = code(MODULE)
 		self.assertIn("safe_route(entry.route)", src)
