@@ -22,10 +22,13 @@
  *     with an x; the x clears it; the tiles' one click binding survives the Summary's
  *     re-render. The Columns button is drawn into the chips row's slot on the Overview and
  *     into the slim strip's slot on Internal and Completed, never into #dashboard-content.
- *   - The stream chips carry counts and narrow the rows; Ranked only keeps the numbered
- *     company ranks; Group by stream draws header rows in the agreed order (Build, Design,
- *     Service, Events, then Internal) and moves the sort to the stream rank. All three are
- *     remembered per browser, in the dashboard's own keys, never frappe user_settings.
+ *   - The stream chips carry counts and narrow the rows; since v1.798.0 each stream chip
+ *     toggles, so several pressed together show their union, unpressing the last one or
+ *     pressing All shows every stream, and a remembered `stream` string from before is
+ *     still honored; Ranked only keeps the numbered company ranks; Group by stream draws
+ *     header rows in the agreed order (Build, Design, Service, Events, then Internal) and
+ *     moves the sort to the stream rank. All three are remembered per browser, in the
+ *     dashboard's own keys, never frappe user_settings.
  *   - The tab chosen is remembered and restored; an unknown saved tab falls back to Priority
  *     Overview; nothing reads the retired View More key.
  *   - Ranks are pills, named values muted text, no hue scale; Budget replaced Spend %;
@@ -507,7 +510,7 @@ await test("a tile pressed on the Summary clears the remembered chip and Ranked 
 	// Review round 1 of #1416: the Overview was left on Design with Ranked only ticked (and
 	// grouped); from the Summary, "Past expected end" must show every past-due project.
 	const run = await runBlock({
-		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: true, group: true }) },
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: ["Design"], ranked_only: true, group: true }) },
 	});
 	assert.deepEqual(rowsOf(drawn(run)), [], "Design + Ranked only leaves nothing on the Overview (Bravo is unranked)");
 	clickTab(run, "summary");
@@ -522,7 +525,7 @@ await test("a tile pressed on the Summary clears the remembered chip and Ranked 
 	assert.equal(run.dom.node("#pd-ranked-only").prop("checked"), false, "Ranked only is off");
 	assert.equal(run.dom.node("#pd-group-by-stream").prop("checked"), true, "grouping is a layout and stays");
 	assert.match(drawn(run, from), /pd-group/, "still grouped");
-	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), { stream: "", ranked_only: false, group: true }, "the reset is remembered");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), { streams: [], ranked_only: false, group: true }, "the reset is remembered");
 	// Active from the Summary: the tile's number and the All chip are one number
 	clickTab(run, "summary");
 	await settle();
@@ -561,7 +564,7 @@ await test("the pressed tile is not remembered; the stream chip, Ranked only and
 	check(run, "#pd-ranked-only", true);
 	check(run, "#pd-group-by-stream", true);
 	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), {
-		stream: "Build",
+		streams: ["Build"],
 		ranked_only: true,
 		group: true,
 	});
@@ -587,6 +590,115 @@ await test("a chip narrows the rows to its stream and is marked pressed", async 
 	assert.deepEqual(rowsOf(drawn(run, from)), ["Bravo Water Wall"]);
 	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "true");
 	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "false");
+});
+
+await test("a second chip adds its stream: the rows are the union, both chips pressed, All not", async () => {
+	// Nikolas, 2026-11-06: "being able to select multiple value streams would be good, rather
+	// than just one at a time". Build then Service: Alpha and Charlie, Bravo (Design) left out.
+	const run = await runBlock();
+	pressChip(run, "Build");
+	const from = mark(run);
+	pressChip(run, "Service");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Alpha Plaza", "Charlie Maintenance"], "Build and Service, by company rank");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Build"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Service"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "false");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "false", "All is not pressed while a stream is");
+	assert.equal(chipCount(run, ""), "4", "the counts are the candidates', not the pressed streams'");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")).streams, ["Build", "Service"], "saved in the bar's order");
+	// pressed the other way round, the same saved value
+	const again = await runBlock();
+	pressChip(again, "Service");
+	pressChip(again, "Build");
+	assert.deepEqual(JSON.parse(again.storage.get("chb_projects_dashboard_overview_v1")).streams, ["Build", "Service"]);
+	// a third, Internal, joins the union
+	const from3 = mark(run);
+	pressChip(run, "Internal");
+	assert.deepEqual(rowsOf(drawn(run, from3)), ["Alpha Plaza", "Delta Shop Tooling", "Charlie Maintenance"]);
+});
+
+await test("pressing a pressed chip removes its stream; the last one off is All again", async () => {
+	const run = await runBlock();
+	pressChip(run, "Build");
+	pressChip(run, "Service");
+	let from = mark(run);
+	pressChip(run, "Build");
+	assert.deepEqual(rowsOf(drawn(run, from)), ["Charlie Maintenance"], "Service alone");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Build"]').attr("aria-pressed"), "false");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Service"]').attr("aria-pressed"), "true");
+	from = mark(run);
+	pressChip(run, "Service");
+	assert.equal(rowsOf(drawn(run, from)).length, 4, "no stream pressed: every active project");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true", "All is pressed again");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")).streams, []);
+});
+
+await test("All clears every pressed stream at once", async () => {
+	const run = await runBlock();
+	pressChip(run, "Design");
+	pressChip(run, "Events");
+	pressChip(run, "Internal");
+	const from = mark(run);
+	pressChip(run, "");
+	assert.equal(rowsOf(drawn(run, from)).length, 4);
+	for (const stream of ["Design", "Build", "Service", "Events", "Internal"]) {
+		assert.equal(run.dom.node(`.pd-fchip[data-stream="${stream}"]`).attr("aria-pressed"), "false", stream);
+	}
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")).streams, []);
+});
+
+await test("several remembered streams are restored as the union, and Group by stream groups only those", async () => {
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: ["Build", "Internal"], ranked_only: false, group: true }) },
+	});
+	const html = drawn(run);
+	assert.deepEqual(rowsOf(html), ["Alpha Plaza", "Delta Shop Tooling"]);
+	const groups = (html.match(/class="pd-group"[^>]*><td colspan="8">([A-Za-z]+)/g) || []).map((m) => m.replace(/.*>/, ""));
+	assert.deepEqual(groups, ["Build", "Internal"], "a header row per pressed stream, in the agreed order");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Build"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Internal"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "false");
+	assert.deepEqual(run.writes, [], "restoring a choice is not a new choice");
+});
+
+await test("a stream remembered before v1.798.0, one string under `stream`, is still honored", async () => {
+	// The key did not change, so a browser that last saved {stream: "Design"} reads it as the
+	// one-element set; "" (All) and a stream with no chip read as nothing pressed. The old
+	// key is rewritten in the new shape on the next choice, not on load.
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: false, group: false }) },
+	});
+	assert.deepEqual(rowsOf(drawn(run)), ["Bravo Water Wall"]);
+	assert.equal(run.dom.node('.pd-fchip[data-stream="Design"]').attr("aria-pressed"), "true");
+	assert.deepEqual(run.writes, []);
+	pressChip(run, "Build");
+	assert.deepEqual(JSON.parse(run.storage.get("chb_projects_dashboard_overview_v1")), { streams: ["Design", "Build"], ranked_only: false, group: false });
+	const all = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "", ranked_only: false, group: false }) },
+	});
+	assert.equal(rowsOf(drawn(all)).length, 4);
+	assert.equal(all.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+	const gone = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Delivery", ranked_only: false, group: false }) },
+	});
+	assert.equal(rowsOf(drawn(gone)).length, 4, "a chip the bar does not have is ignored");
+	assert.equal(gone.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+});
+
+await test("a remembered list is pruned to the chips the bar has, and a value of the wrong type is nothing pressed", async () => {
+	const pruned = await runBlock({
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: ["Delivery", "Service", 7, null], ranked_only: false, group: false }) },
+	});
+	assert.deepEqual(rowsOf(drawn(pruned)), ["Charlie Maintenance"], "Service kept, the rest dropped");
+	assert.deepEqual(pruned.writes, []);
+	for (const bad of ["Service", 3, true, { Service: true }]) {
+		const run = await runBlock({
+			stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: bad, ranked_only: false, group: false }) },
+		});
+		assert.equal(rowsOf(drawn(run)).length, 4, JSON.stringify(bad));
+		assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+	}
 });
 
 await test("Ranked only keeps the numbered company ranks: not a word, not a blank", async () => {
@@ -615,7 +727,7 @@ await test("Group by stream draws header rows in the agreed order and moves the 
 
 await test("a remembered stream, Ranked only and grouping are restored on load, without writing back", async () => {
 	const run = await runBlock({
-		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Design", ranked_only: false, group: true }) },
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: ["Design"], ranked_only: false, group: true }) },
 	});
 	const html = drawn(run);
 	assert.deepEqual(rowsOf(html), ["Bravo Water Wall"]);
@@ -628,7 +740,7 @@ await test("a remembered stream, Ranked only and grouping are restored on load, 
 await test("a remembered chip the bar does not have is ignored, and All stays pressed", async () => {
 	// A typo, or a chip a later release removed: "Delivery" is a stream with no chip.
 	const run = await runBlock({
-		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ stream: "Delivery", ranked_only: false, group: false }) },
+		stored: { chb_projects_dashboard_overview_v1: JSON.stringify({ streams: ["Delivery"], ranked_only: false, group: false }) },
 	});
 	assert.equal(rowsOf(drawn(run)).length, 4, "every active project, not an empty filter");
 	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");

@@ -6,7 +6,9 @@ from the canvas. The shell gained a navy head band (title in the display face, t
 Refresh with "Updated N min ago", the "+" menu, four live tiles), the five tabs are always
 visible ("View More" is retired), and the Priority Overview has stream chips, a Ranked-only box
 and a Group-by-stream toggle. Spend % became Budget. The red-to-green hue scale on priority
-badges went.
+badges went. Since v1.798.0 the stream chips are a set (Nikolas, 2026-11-06: "being able to select
+multiple value streams would be good, rather than just one at a time"): each one toggles, the rows
+are the union, All is the empty set, and the one-string `stream` a browser saved before is still read.
 
 Then, seeing it live the same day: "there is a lot of header space before you even see the
 projects". v1.785.0: the band is one slim row (the PROJECTS eyebrow is gone), the four tiles moved
@@ -319,7 +321,7 @@ class TestPriorityOverviewFilters(unittest.TestCase):
 	def test_ranked_only_and_group_by_stream_start_off_and_are_remembered(self):
 		self.assertRegex(HTML_CODE, r'<input type="checkbox" id="pd-ranked-only">')
 		self.assertRegex(HTML_CODE, r'<input type="checkbox" id="pd-group-by-stream">')
-		self.assertIn('const DEFAULT_OVERVIEW = { stream: "", ranked_only: false, group: false };', JS_CODE)
+		self.assertIn('const DEFAULT_OVERVIEW = { streams: [], ranked_only: false, group: false };', JS_CODE)
 		self.assertIn('const OVERVIEW_KEY = "chb_projects_dashboard_overview_v1"', JS_CODE)
 		self.assertIn("write_saved(OVERVIEW_KEY, overview)", JS_CODE)
 
@@ -354,8 +356,47 @@ class TestPriorityOverviewFilters(unittest.TestCase):
 		self.assertNotIn("state.order", toggle)
 
 	def test_a_remembered_chip_must_be_one_the_bar_has(self):
-		self.assertIn('if ([""].concat(STREAM_CHIPS).includes(saved.stream)) overview.stream = saved.stream;', JS_CODE)
-		self.assertNotIn('typeof saved.stream === "string"', JS_CODE)
+		# The list is pruned to the bar's chips in the bar's order; nothing else is trusted.
+		parse = JS_CODE[JS_CODE.index("function parse_streams(saved)") :]
+		parse = parse[: parse.index("\n    }\n")]
+		self.assertIn("return STREAM_CHIPS.filter((stream) => picked.includes(stream));", parse)
+		self.assertIn("if (!Array.isArray(picked))", parse)
+		self.assertIn("overview.streams = parse_streams(saved);", JS_CODE)
+		self.assertNotIn("overview.stream =", JS_CODE, "the one-string state is gone from the script")
+
+	def test_the_stream_chips_are_a_set_whose_union_is_shown(self):
+		# v1.798.0: a chip toggles its stream; All (data-stream "") empties the set; the rows are
+		# the union; All is pressed exactly when the set is empty.
+		handler = JS_CODE[JS_CODE.index("$root.find('.pd-fchip').on('click'") :]
+		handler = handler[: handler.index("\n    });\n")]
+		self.assertIn("overview.streams = [];", handler)
+		self.assertIn("overview.streams = overview.streams.filter((s) => s !== stream);", handler)
+		self.assertIn("overview.streams = STREAM_CHIPS.filter((s) => s === stream || overview.streams.includes(s));", handler)
+		self.assertIn("candidates.filter((p) => overview.streams.includes(stream_of(p)))", JS_CODE)
+		self.assertNotIn("stream_of(p) === overview.stream", JS_CODE)
+		paint = JS_CODE[JS_CODE.index("function render_stream_chips(candidates)") :]
+		paint = paint[: paint.index("\n    }\n")]
+		self.assertIn(
+			"$root.find('.pd-fchip[data-stream=\"\"]').attr('aria-pressed', overview.streams.length ? 'false' : 'true');",
+			paint,
+		)
+		self.assertIn("overview.streams.includes(stream) ? 'true' : 'false'", paint)
+		# a tile press clears the whole set, as it cleared the one chip
+		tile = JS_CODE[JS_CODE.index("$root.find('.pd-tile').on('click'") :]
+		tile = tile[: tile.index("\n    });\n")]
+		self.assertIn("if (overview.streams.length || overview.ranked_only) {", tile)
+		self.assertIn("overview.streams = [];", tile)
+
+	def test_a_stream_saved_before_the_set_is_still_read(self):
+		# Same localStorage key, so {stream: "Design"} from before v1.798.0 reads as ["Design"];
+		# "" (All) reads as nothing pressed.
+		self.assertIn('typeof saved.stream === "string" && saved.stream ? [saved.stream] : []', JS_CODE)
+		self.assertIn('const OVERVIEW_KEY = "chb_projects_dashboard_overview_v1"', JS_CODE)
+
+	def test_the_chips_say_they_combine(self):
+		self.assertIn('aria-label="Filter by stream; press more than one to combine them"', HTML_CODE)
+		self.assertRegex(HTML_CODE, r'data-stream="" aria-pressed="true" title="Every stream"')
+		self.assertEqual(HTML_CODE.count('title="Press to add or remove this stream"'), 5)
 
 
 class TestSavedView(unittest.TestCase):
@@ -599,7 +640,7 @@ class TestColumnsButton(unittest.TestCase):
 		# chip and box and show fewer rows than its number. Group by stream is a layout and stays.
 		handler = JS_CODE[JS_CODE.index("$root.find('.pd-tile').on('click'") :]
 		handler = handler[: handler.index("\n    });\n")]
-		self.assertIn('overview.stream = "";', handler)
+		self.assertIn("overview.streams = [];", handler)
 		self.assertIn("overview.ranked_only = false;", handler)
 		self.assertIn("save_overview();", handler)
 		self.assertNotIn("overview.group", handler)
