@@ -140,7 +140,9 @@ SPECS = (
 		"title": ("lead_name", "company_name", "title"),
 		"match": ("lead_name", "company_name", "title"),
 		"email": ("email_id",),
-		"phone": ("custom_primary_phone", "mobile_no", "phone", "whatsapp_no"),
+		# custom_primary_phone led this tuple until v1.799.1: hidden by the UI field audit,
+		# 0 of 227 leads ever held one.
+		"phone": ("mobile_no", "phone", "whatsapp_no"),
 		"extra": ("status", "company_name"),
 		# "Opportunity" means it became one, which is now the live record
 		"closed": ("status", ("Converted", "Do Not Contact", "Lost Quotation", "Opportunity")),

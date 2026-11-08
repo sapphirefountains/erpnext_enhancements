@@ -38,7 +38,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 
 | File | Targets | Purpose | Load |
 |---|---|---|---|
-| `account.js` / `employee.js` / `timesheet.js` | those forms | Mount the Comments App | doctype_js |
+| `employee.js` / `timesheet.js` | those forms | Mount the Comments App (`account.js` did the same on the chart-of-accounts Account form until v1.799.1, when the UI field audit hid that form's Comments tab) | doctype_js |
 | `activity_log_numbering.js` | all forms (timeline) | "#N" badges on timeline items | app_include_js |
 | `asset_booking_calendar.js` | Asset Booking calendar | Calendar field-map + `get_events` source | doctype_calendar_js |
 | `comments.js` | forms w/ `custom_comments_field` | Defines `render_comments_app` (Vue notes UI) | app_include_js + doctype_js |

@@ -184,8 +184,9 @@ export const BLOCKS = {
 			},
 		},
 		doctypes: {
-			Opportunity: { fields: ["opportunity_owner", "custom_scope_contributors"] },
-			Project: { fields: ["custom_project_owner", "custom_technical_lead", "custom_scope_contributors"] },
+			// custom_scope_contributors was listed on both until v1.799.1: hidden (UI field audit).
+			Opportunity: { fields: ["opportunity_owner"] },
+			Project: { fields: ["custom_project_owner", "custom_technical_lead"] },
 		},
 	},
 };

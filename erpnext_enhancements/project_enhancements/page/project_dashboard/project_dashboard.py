@@ -532,12 +532,6 @@ def get_task_children(parent_task):
 		"exp_end_date", "progress", "expected_time", "parent_task", "custom_subtask_order",
 		"is_milestone"
 	]
-	# custom_is_recurring is a site-level custom field that may not exist on
-	# every install; only query it when present to avoid a SQL error.
-	has_recurring = frappe.get_meta("Task").has_field("custom_is_recurring")
-	if has_recurring:
-		task_fields.append("custom_is_recurring")
-
 	children = frappe.get_all(
 		"Task",
 		fields=task_fields,
@@ -550,7 +544,6 @@ def get_task_children(parent_task):
 		assignees = _get_assignee_names("Task", child["name"])
 		child["assigned_to"] = ", ".join([d["full_name"] for d in assignees]) if assignees else ""
 		child["has_children"] = frappe.db.exists("Task", {"parent_task": child["name"]})
-		child["custom_is_recurring"] = child.get("custom_is_recurring") or 0
 
 		# Overdue check
 		child["is_overdue"] = (
@@ -675,12 +668,6 @@ def get_project_tasks(project, parent=None):
 			"exp_end_date", "progress", "expected_time", "parent_task", "custom_subtask_order",
 			"is_milestone"
 		]
-		# custom_is_recurring is a site-level custom field that may not exist on
-		# every install; only query it when present to avoid a SQL error.
-		has_recurring = frappe.get_meta("Task").has_field("custom_is_recurring")
-		if has_recurring:
-			task_fields.append("custom_is_recurring")
-
 		filters = {"project": project}
 		if parent:
 			filters["parent_task"] = parent
@@ -700,7 +687,6 @@ def get_project_tasks(project, parent=None):
 			task["assigned_to"] = ", ".join([d["full_name"] for d in assignees]) if assignees else ""
 			task["has_children"] = frappe.db.exists("Task", {"parent_task": task["name"]})
 			task["children"] = [] # Placeholder for consistency
-			task["custom_is_recurring"] = task.get("custom_is_recurring") or 0
 
 		return tasks
 

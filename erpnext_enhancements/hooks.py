@@ -328,7 +328,10 @@ doctype_js = {
 		# user_id, because training records belong to a User.
 		"public/js/training/employee_training.js",
 	],
-	"Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
+	# "Account" (the chart of accounts) carried vue.global.js + comments.js + account.js until
+	# v1.799.1, to mount the Comments App into its custom_comments_field. That tab reached the
+	# chart-of-accounts DocType by mistake on 2026-04-20 along with the Customer's Primary
+	# Contact section; the UI field audit hid all nine fields, so there is nothing to mount.
 	"Customer": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -399,7 +402,9 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/lead.js",
-		"public/js/global_enhancements/primary_contact.js",
+		# primary_contact.js is not listed here since v1.799.1: Lead's primary_contact set
+		# (0 of 227 leads filled) is hidden by the UI field audit, so there is no field
+		# for it to fill.
 	],
 	"Contact": [
 		"public/js/vue.global.js",
@@ -655,7 +660,9 @@ doc_events = {
 		# (all tasks, everyone who could see the calendar) — removed v1.346.0 in
 		# favour of nothing, deliberately: see script_migrations/task.py.
 		"on_update": [
-			"erpnext_enhancements.tasks.generate_next_task",
+			# tasks.generate_next_task (the recurring-task clone) was first here until v1.799.1:
+			# the UI field audit found custom_is_recurring 0 on every one of 8,703 tasks, so the
+			# hook never fired. Its fourteen Task fields are hidden, not deleted.
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			# v1.787.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
 			# (earliest start, latest end), up every ancestor. After this save the parent and, after

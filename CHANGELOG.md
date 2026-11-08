@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.799.1] - 2026-11-08
+
+### Changed
+- **The remaining 129 Custom Fields the UI field audit graded Hide are hidden; nothing is deleted.**
+  PR 2 of the hiding plan in
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) ("Hides in
+  bulk"; PR 1 was v1.799.0, the six Rank fields). Nik's rule, 2026-11-08: no Custom Field is ever
+  deleted; a field nothing uses gets `hidden: 1` and keeps its column and its data. The Merge table
+  of the audit (steps 3 and 4, where data moves first) is untouched by this release.
+  - **How.** 108 of the 129 are fixture-managed: `fixtures/custom_field.json` now carries
+    `hidden: 1` on 80 more records (28 were hidden already: the six Rank fields from v1.799.0 and
+    22 breaks and fields the forms already hid). The other 21 were created on the site by setup
+    code, an old migration or another app and are not in the fixtures, so no JSON edit reaches
+    them; the new patch `hide_audit_code_created_fields` sets `hidden = 1` on each with
+    `frappe.db.set_value` where `frappe.db.exists` finds the row, then clears each doctype's
+    cache. A missing row is a no-op; the patch cannot raise (a patch that raises aborts
+    `bench migrate`, which is the deploy) and is safe to run twice. `water_engineering/setup.py`
+    passes `hidden: 1` for Item `custom_pump_curve`, the one patched field that setup code
+    re-creates on every migrate; without that the next deploy would have unhidden it.
+  - **Per DocType** (fields hidden in this release / by the patch / already hidden before it):
+
+    | DocType | Hide-graded | Fixture, this release | Patch | Hidden before |
+    |---|---|---|---|---|
+    | Task | 14 | 14 | | |
+    | Project | 24 | 16 | | 8 |
+    | Opportunity | 7 | 2 | | 5 |
+    | Customer | 8 | 5 | | 3 |
+    | Supplier | 12 | 9 | | 3 |
+    | Item | 1 | | 1 | |
+    | Account (chart of accounts) | 9 | 2 | 7 | |
+    | Asset | 6 | 6 | | |
+    | Assignment Rule | 2 | | 2 | |
+    | CRM Deal | 1 | | 1 | |
+    | CRM Note | 1 | 1 | | |
+    | Contact | 10 | 7 | | 3 |
+    | Employee | 1 | 1 | | |
+    | Issue | 1 | | | 1 |
+    | Kanban Board | 1 | 1 | | |
+    | Kanban Board Column | 1 | 1 | | |
+    | Lead | 21 | 10 | 7 | 4 |
+    | Purchase Order Item | 1 | 1 | | |
+    | Serial No | 3 | 3 | | |
+    | Supplier Quotation Item | 1 | 1 | | |
+    | ToDo | 1 | | | 1 |
+    | UTM Campaign | 1 | | 1 | |
+    | User | 2 | | 2 | |
+    | **Total** | **129** | **80** | **21** | **28** |
+
+  - **Code that wrote a hidden field stops writing it.** The recurring-task generator
+    (`tasks.generate_next_task` and its two helpers, the Task `on_update` hook) is gone: it read
+    `custom_is_recurring`, which was 0 on all 8,703 tasks, so it never fired, and it was the only
+    writer of `custom_next_task_created`. The Opportunity to Project hand-off
+    (`crm_enhancements/api.py`) no longer copies `custom_estimated_cost` into `custom_project_cost`
+    (the source is hidden; 2 of 855 deals ever held one) nor the `custom_scope_contributors` table
+    (1 row on each side). The data-quality cleanup (`utils/normalize_fields.py`) no longer lists
+    Supplier `custom_phone` / `custom_email_address`, Lead `custom_primary_phone` /
+    `custom_email_address`, Project `custom_primary_phone` / `custom_primary_email_address` (all 0
+    rows) or Contact `custom_home_phone` / `custom_other_phone` / `custom_fax` (12 / 6 / 67 of
+    2,879 contacts, no human edit in 180 days), and `utils/normalize_fixes.py` no longer moves an
+    email found in a supplier's phone field into the hidden `custom_email_address` (it is reported
+    and left where it is). The Customer form (`customer.js`) no longer fills the read-only
+    `custom_leads` table on load.
+  - **Dead display paths go.** The task tree's recurring-task icon and the two `custom_is_recurring`
+    reads behind it (`project_dashboard.py`, `task_tree_manager.js`, `task_tree.css`); the
+    `custom_scope_contributors` entry of the People info block (`form_kit/blocks.py` and its
+    `info_blocks/blocks.js` twin); `account.js` and the chart-of-accounts `doctype_js` entry, which
+    existed only to mount the Comments App into a tab that reached that DocType by mistake on
+    2026-04-20; `primary_contact.js` on Lead, whose `primary_contact` set was never filled.
+    `api/desk_search.py` drops Lead's hidden `custom_primary_phone`, and `api/travel.py` drops
+    Project's hidden `custom_primary_first_name` / `custom_primary_phone` /
+    `custom_primary_email_address` from the job-site fallbacks (0 of 668 projects held any).
+  - **Reads left in place, for the manager to decide.** A hidden field keeps its data and stays
+    readable server-side, so these keep working: the Fountain Designer's fallback to Item's legacy
+    `custom_pump_curve` table (`water_engineering/catalog_reader.py`, `api/designer.py`,
+    `pump_curve_chart.js`); the QuickBooks Time webhook lookups on Employee
+    `custom_quickbooks_user_id` and Project `custom_quickbooks_jobcode_id` (`quickbooks_time/api.py`);
+    and the Desk search's match on Contact `custom_home_phone` / `custom_other_phone`
+    (`api/desk_search.py`), which still finds the 18 contacts that hold one.
+  - **Tests.** `test_hooks_integrity` and `test_planner_doctypes` now assert the recurring-task hook
+    is absent; `test_travel_views` reads the job-site name from `custom_customer_name`;
+    `test_project_creation_progress` drops `custom_scope_contributors` from the copied tables.
+
 ## [1.799.0] - 2026-11-08
 
 ### Changed

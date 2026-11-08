@@ -1613,3 +1613,8 @@ erpnext_enhancements.patches.warehouse_transactions_hub_links
 # the way Role Permissions Manager's Remove does (delete_doc, force), then clears User's cache. Other roles' rows on
 # User and Production Team's rows elsewhere stay. Cannot raise, safe twice.
 erpnext_enhancements.patches.remove_production_team_user_docperm
+# v1.799.1 (UI field audit, PR 2 of the hiding plan; Nik's rule 2026-11-08: hide, never delete): sets hidden = 1 on
+# the 21 Hide-graded Custom Fields that are not in the fixtures (Account's and Lead's primary_contact_* sets, Item
+# custom_pump_curve, Assignment Rule, CRM Deal, UTM Campaign, User twitter/work_environment) with db.set_value, then
+# clears each touched doctype's cache. A missing row is a no-op. No delete_doc, no column dropped. Never raises.
+erpnext_enhancements.patches.hide_audit_code_created_fields

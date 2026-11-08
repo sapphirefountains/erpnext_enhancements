@@ -94,13 +94,17 @@ def create_pump_item_fields():
 				{
 					# The pre-v1.758 place for curve points. Pump Curve records replace it
 					# (one per impeller / speed, with provenance); the readers still fall back
-					# to this table, and it shows only on an Item that still has rows in it.
+					# to this table. Hidden since v1.799.1 (UI field audit: 0 of 1,574 Items
+					# hold a row after migrate_item_pump_curves; Nik's rule is hide, never
+					# delete). create_custom_fields updates the existing row on every migrate,
+					# so the flag has to be here or the next deploy would unhide it.
 					"fieldname": "custom_pump_curve",
 					"label": "Pump Curve (legacy table)",
 					"fieldtype": "Table",
 					"options": "Pump Curve Point",
 					"insert_after": "custom_pump_cut_sheet",
 					"depends_on": "eval:(doc.custom_pump_curve || []).length",
+					"hidden": 1,
 					"description": "Legacy points. A Pump Curve record for this Item takes precedence; enter new curves under Pump Curves below.",
 				},
 				{

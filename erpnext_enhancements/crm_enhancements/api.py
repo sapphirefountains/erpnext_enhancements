@@ -536,7 +536,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				"custom_event_date_time_notes": "custom_event_date_time_notes",
 				"custom_take_down_date_time_notes": "custom_take_down_date_time_notes",
 				"opportunity_amount": "custom_project_dollar_amount",
-				"custom_estimated_cost": "custom_project_cost",
+				# custom_estimated_cost -> custom_project_cost was copied here until v1.799.1:
+				# the source is hidden (UI field audit; 2 of 855 deals ever held one).
 				"party_name": "customer",
 				# Who the deal was actually with. Same fieldname on both sides
 				# (setup/custom_fields.py provisions it for every party doctype),
@@ -581,7 +582,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			child_table_mappings = {
 				"custom_value_stream": "custom_value_stream",
 				"custom_contacts__address_table": "custom_contacts__address_table",
-				"custom_scope_contributors": "custom_scope_contributors",
+				# custom_scope_contributors was copied here until v1.799.1: hidden on both sides
+				# by the UI field audit (1 of 855 deals, 1 of 668 projects held a row).
 				"custom_design_customer_requests": "custom_design_customer_requests",
 				"custom_design_deliverables": "custom_design_deliverables",
 				"custom_build_customer_requests": "custom_build_customer_requests",

@@ -4,7 +4,7 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 
 > The standalone **Hierarchical Task View** desk page was retired in v1.623.0: Frappe v16's TreeView builds its own page and calls `get_tree_nodes`, so the page's data feed never ran and the tree never loaded. The Project Planner covers browsing a project's tasks. `patches/custom_pages_s1_navigation.py` deletes the Page record and every workspace or sidebar row that pointed at it.
 
-> Recurring-task generation is **not** here — it lives in the repo-root [`tasks.py`](../../erpnext_enhancements/tasks.py) (`generate_next_task`, wired via `Task` `on_update`).
+> Recurring-task generation (`tasks.generate_next_task`, a `Task` `on_update` hook) was retired in v1.799.1: the UI field audit found `custom_is_recurring` 0 on all 8,703 tasks, so it never fired. Its fourteen Task fields are hidden, not deleted (`fixtures/custom_field.json`).
 
 ## File map
 
@@ -43,7 +43,7 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 
 - `override_doctype_class` — Task (above).
 - `doctype_js["Task"]` includes `task_enhancements/doctype/task/task.js` (alongside the comments + gantt scripts).
-- `doc_events["Task"]` adds before_save/after_insert/on_update/on_trash handlers from `script_migrations.task` and `tasks.generate_next_task` (separate from the override), and since v1.787.0 the `before_validate` / `on_update` / `after_delete` handlers of `parent_dates.py` (a parent's dates follow its subtasks).
+- `doc_events["Task"]` adds before_save/after_insert/on_update/on_trash handlers from `script_migrations.task` (separate from the override; `tasks.generate_next_task` was among them until v1.799.1), and since v1.787.0 the `before_validate` / `on_update` / `after_delete` handlers of `parent_dates.py` (a parent's dates follow its subtasks).
 - `fixtures`: `Task-custom_comments_tab`/`field` and `Task-custom_create_child_task_btn` Custom Fields.
 
 ## Gotchas
