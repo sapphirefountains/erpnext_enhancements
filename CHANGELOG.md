@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.798.2] - 2026-11-08
+
+### Changed
+- **UI field audit re-graded under Nik's rule (docs only).** Nikolas, 2026-11-08, on the first draft:
+  "Why delete fields and such when there could be data in some fields?" The accepted rule: Remove
+  only when no row holds a value, or the values are not information (defaults written on every row,
+  or values a validator nothing reads compels, which keeps the six Rank fields on Remove); every other
+  field that holds a value becomes Hide (off the form, column and data kept) or Merge (data moved to
+  its better home first, the empty shell removed in a later PR); layout breaks follow their fields.
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) now reads
+  105 Remove (63 data fields, 42 layout/HTML; was 137), 41 Merge (was 27), 24 Hide (was 7), with a
+  "Grading rule" section, a Hide-and-Merge table in the removal plan and a re-ordered PR list. Still
+  removes nothing and changes no behavior.
+
 ## [1.798.1] - 2026-11-08
 
 ### Added
