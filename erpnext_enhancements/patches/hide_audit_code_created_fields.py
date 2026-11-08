@@ -1,4 +1,4 @@
-"""Hide the 21 code-created Custom Fields the UI field audit graded Hide (v1.799.1).
+"""Hide the 16 code-created Custom Fields the UI field audit graded Hide (v1.799.1).
 
 Why
 ---
@@ -7,17 +7,23 @@ Fields Hide. Nik's rule, 2026-11-08: no Custom Field is ever deleted; a field no
 ``hidden: 1`` and keeps its column and its data. 108 of the 129 are fixture-managed, and the
 fixture edit in ``fixtures/custom_field.json`` hides those on the next ``bench migrate``. The
 other 21 were never in the fixtures: setup code, an old migration or another app created them on
-the site, so no JSON edit can reach them. This patch is how they get hidden.
+the site, so no JSON edit can reach them. This patch is how 16 of them get hidden.
+
+The other five are breaks and stay visible: Account's and Lead's ``primary_contact_section``
+(Section Break) and ``primary_contact_col_break`` (Column Break), and User's
+``work_environment`` (Section Break). A Section Break with ``hidden = 1`` hides its whole section
+and a Column Break its whole column (``section.js`` toggles the control on ``df.hidden``), so the
+standard fields that follow the break would vanish with it. Frappe collapses a section or column
+whose own fields are all hidden, so hiding the fields is enough.
 
 Which fields
 ------------
 * **Account** (the chart-of-accounts DocType, not the Customer this site relabels "Account"):
   the Customer's Primary Contact section landed on it by mistake on 2026-04-20. 0 of 392
-  accounts hold a value. ``primary_contact_section``, ``primary_contact``,
-  ``primary_contact_job_title``, ``primary_contact_col_break``, ``primary_contact_phone``,
-  ``primary_contact_email``, ``address_and_contact``. Nothing in ``setup/custom_fields.py``
-  re-creates them (Account is not in its matrix).
-* **Lead**: the same seven, from the 2026-04 contact migration. 0 of 227 leads hold a value, and
+  accounts hold a value. ``primary_contact``, ``primary_contact_job_title``,
+  ``primary_contact_phone``, ``primary_contact_email`` and the ``address_and_contact`` HTML
+  field. Nothing in ``setup/custom_fields.py`` re-creates them (Account is not in its matrix).
+* **Lead**: the same five, from the 2026-04 contact migration. 0 of 227 leads hold a value, and
   Lead is not in the unified-tab matrix either.
 * **Item** ``custom_pump_curve``: the pre-v1.758 place for pump-curve points, 0 of 1,574 rows
   after ``migrate_item_pump_curves`` moved them to Pump Curve records.
@@ -27,7 +33,7 @@ Which fields
   leftovers; Helpdesk is uninstalled and its three rules are disabled.
 * **CRM Deal** ``erpnext_customer``: a frappe CRM leftover whose table no longer exists.
 * **UTM Campaign** ``crm_campaign``: a frappe CRM leftover, 0 rows.
-* **User** ``twitter`` and ``work_environment``: orphans of an uninstalled app, 0 of 48 users.
+* **User** ``twitter``: an orphan of an uninstalled app, 0 of 48 users.
 
 What it does
 ------------
@@ -46,19 +52,16 @@ It never raises. A patch that raises aborts ``bench migrate``, which on this rep
 
 import frappe
 
-#: ``(doctype, fieldname)`` pairs: the Hide-graded Custom Fields that are not in the fixtures.
+#: ``(doctype, fieldname)`` pairs: the Hide-graded Custom Fields that are not in the fixtures,
+#: breaks excluded (see the module docstring).
 FIELDS_TO_HIDE = (
-	("Account", "primary_contact_section"),
 	("Account", "primary_contact"),
 	("Account", "primary_contact_job_title"),
-	("Account", "primary_contact_col_break"),
 	("Account", "primary_contact_phone"),
 	("Account", "primary_contact_email"),
 	("Account", "address_and_contact"),
-	("Lead", "primary_contact_section"),
 	("Lead", "primary_contact"),
 	("Lead", "primary_contact_job_title"),
-	("Lead", "primary_contact_col_break"),
 	("Lead", "primary_contact_phone"),
 	("Lead", "primary_contact_email"),
 	("Lead", "address_and_contact"),
@@ -68,7 +71,6 @@ FIELDS_TO_HIDE = (
 	("CRM Deal", "erpnext_customer"),
 	("UTM Campaign", "crm_campaign"),
 	("User", "twitter"),
-	("User", "work_environment"),
 )
 
 
