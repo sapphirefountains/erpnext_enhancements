@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.798.1] - 2026-11-08
+
+### Added
+- **UI field audit (docs only).** Nikolas, 2026-11-08: "do a full audit of the UI of ERPNext and look for
+  inconsistencies and duplicate fields and unused fields and recommend fields to get rid of. Like the
+  Scope Rank, Schedule Rank, and Budget Rank is never used in practicality."
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) audits every Custom
+  Field on prod (924: the 677 fixture-managed ones plus 247 that exist only on prod), every Property
+  Setter (667) and the 44 own fields of Sapphire Maintenance Record, with a fill rate, the last value
+  edit, 180-day Version counts split by people vs Administrator, repo references and prod consumers
+  (list settings, Kanban cards, charts, Number Cards, Notifications, reports, print formats) per field,
+  all read from prod with `SELECT`s on 2026-11-08. Recommendations: 137 Remove (89 data fields, 48
+  layout/HTML), 27 Merge, 7 Hide, 10 label or option fixes; the rest Keep. Headlines: the six rank
+  fields are written only because `validate_ranks_on_won` refuses Closed Won without them and nothing
+  reads them; Task's recurring-task fields are unused on all 8,703 tasks; four generations of
+  contact/address fields coexist on Project, Customer, Supplier and Lead; Lead duplicates seven standard
+  fields; the chart-of-accounts `Account` doctype carries the Customer's contact tab by mistake; 201 of
+  the prod-only Custom Fields are created by this app's own setup code and are not fixture-managed, and
+  88 Desk-made Property Setters (the 2026-03 rounded-total and barcode passes) are not in the repo.
+  The removal plan follows the fixture-plus-`delete_doc` rule and orders the PRs; **this release
+  removes nothing and changes no behavior.**
+
 ## [1.798.0] - 2026-11-06
 
 ### Changed
