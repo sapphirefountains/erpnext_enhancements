@@ -41,6 +41,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the guided flow's Close step and the board's Closed Won panel. Moving a deal to Closed Won asks for
     nothing beyond the status; the hand-off prompt, the won-date stamp and the hand-off gate's stamps
     run as before.
+## [1.798.4] - 2026-11-08
+
+### Fixed
+- **UI field audit (docs only):** the rules bullet under "How to read the evidence" in
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) repeated the
+  "Layout breaks follow the fields under them" sentence, once in the new hide wording and once in the
+  old "removed with them" wording. The old copy is gone; no other change.
+
+## [1.798.3] - 2026-11-08
+
+### Changed
+- **UI field audit: nothing is deleted (docs only).** Nikolas, 2026-11-08, on the re-graded draft:
+  "I think the ones that aren't used at all should just be hidden rather than deleting something."
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) now has no Remove
+  grade: every field that was Remove is Hide (`hidden: 1` in the fixture record, or a patch that sets
+  `hidden = 1` for the code-created ones; never `delete_doc`), Merge moves the data and then hides the
+  source with no later removal step, and the six Rank fields are hidden while the Closed Won rank gate
+  that forces them (`validate_ranks_on_won`, the migrated client-script functions, the form-kit and
+  board entries, the `direct_mappings` copy and the gate tests) is what goes. Counts: Remove 0,
+  Hide 129 (82 data fields, 47 layout/HTML), Merge 41, Fix 10. The "Removal plan" is now the "Hiding
+  plan" with PR 1 "Hide the six Rank fields and take out the Closed Won rank gate". Still removes
+  nothing and changes no behavior.
+
+## [1.798.2] - 2026-11-08
+
+### Changed
+- **UI field audit re-graded under Nik's rule (docs only).** Nikolas, 2026-11-08, on the first draft:
+  "Why delete fields and such when there could be data in some fields?" The accepted rule: Remove
+  only when no row holds a value, or the values are not information (defaults written on every row,
+  or values a validator nothing reads compels, which keeps the six Rank fields on Remove); every other
+  field that holds a value becomes Hide (off the form, column and data kept) or Merge (data moved to
+  its better home first, the empty shell removed in a later PR); layout breaks follow their fields.
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) now reads
+  105 Remove (63 data fields, 42 layout/HTML; was 137), 41 Merge (was 27), 24 Hide (was 7), with a
+  "Grading rule" section, a Hide-and-Merge table in the removal plan and a re-ordered PR list. Still
+  removes nothing and changes no behavior.
+
+## [1.798.1] - 2026-11-08
+
+### Added
+- **UI field audit (docs only).** Nikolas, 2026-11-08: "do a full audit of the UI of ERPNext and look for
+  inconsistencies and duplicate fields and unused fields and recommend fields to get rid of. Like the
+  Scope Rank, Schedule Rank, and Budget Rank is never used in practicality."
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) audits every Custom
+  Field on prod (924: the 677 fixture-managed ones plus 247 that exist only on prod), every Property
+  Setter (667) and the 44 own fields of Sapphire Maintenance Record, with a fill rate, the last value
+  edit, 180-day Version counts split by people vs Administrator, repo references and prod consumers
+  (list settings, Kanban cards, charts, Number Cards, Notifications, reports, print formats) per field,
+  all read from prod with `SELECT`s on 2026-11-08. Recommendations: 137 Remove (89 data fields, 48
+  layout/HTML), 27 Merge, 7 Hide, 10 label or option fixes; the rest Keep. Headlines: the six rank
+  fields are written only because `validate_ranks_on_won` refuses Closed Won without them and nothing
+  reads them; Task's recurring-task fields are unused on all 8,703 tasks; four generations of
+  contact/address fields coexist on Project, Customer, Supplier and Lead; Lead duplicates seven standard
+  fields; the chart-of-accounts `Account` doctype carries the Customer's contact tab by mistake; 201 of
+  the prod-only Custom Fields are created by this app's own setup code and are not fixture-managed, and
+  88 Desk-made Property Setters (the 2026-03 rounded-total and barcode passes) are not in the repo.
+  The removal plan follows the fixture-plus-`delete_doc` rule and orders the PRs; **this release
+  removes nothing and changes no behavior.**
 
 ## [1.798.0] - 2026-11-06
 
