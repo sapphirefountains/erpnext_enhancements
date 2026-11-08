@@ -390,7 +390,7 @@ class TestTheBoardUnderNode(unittest.TestCase):
 		self.assertNotIn("lost", [s["key"] for s in self.out["forecast"]["stages"]])
 		self.assertEqual(self.out["closed"]["table"], [])
 		self.assertEqual(self.out["deals_names_closed"], [])
-		# A drop on the Closed Won column still asks for the ranks first.
+		# A drop on the Closed Won column still opens the side panel first (it confirms the win).
 		self.assertEqual(self.out["closed"]["drop_on_won"], "close")
 
 	def test_the_filters_narrow_the_closing_columns_too(self):

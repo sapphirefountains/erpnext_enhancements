@@ -557,9 +557,6 @@ SCALARS = (
 	"custom_is_historical",
 	"custom_snoozed_until",
 	"custom_snooze_reason",
-	"custom_scope_rank",
-	"custom_schedule_rank",
-	"custom_budget_rank",
 )
 
 

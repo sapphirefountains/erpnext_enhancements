@@ -331,8 +331,8 @@ under Guided Entry.
   has a **Move** button that opens the same panel, the keyboard's way in. A move between open
   stages or to On Hold saves the status with `form_kit.api.save_step`, carrying the card's
   `modified`; a conflict puts the card back, names who changed the deal and reloads the board, and
-  nothing is overwritten. A drop on **Closed Won or Lost saves nothing by itself**: those need the
-  ranks or the lost reasons, which the side panel collects first (part C, below). Since part C a
+  nothing is overwritten. A drop on **Closed Won or Lost saves nothing by itself**: Lost needs its
+  reasons, which the side panel collects first, and Closed Won is confirmed there (part C, below). Since part C a
   tap on a card opens the deal in the side panel, on a phone too; the Move button opens the move
   panel.
 - **History.** Each view is a route: `/desk/opportunity-board/<stages|streams>`, the phone's
@@ -459,8 +459,9 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   the deal for editing. Closing an edit that saved something offers Undo, except when the edit moved
   the deal into or out of a closing status (Closed Won, Lost, ...): those are undone the way they
   are made (the Closed-Won prompt's No, which refuses once a project exists).
-- **Required fields on a drop** (P6.6): Closed Won asks for the three ranks, Lost for the lost
-  reasons, competitors and detail (the Set as Lost dialog's fields). The move is saved only when the
+- **Required fields on a drop** (P6.6): Lost asks for the lost reasons, competitors and detail (the
+  Set as Lost dialog's fields); Closed Won asks for nothing more since v1.799.0 and the panel only
+  confirms it. The move is saved only when the
   person commits, together with those fields and locked on the card's `modified`; until then the
   card stays put, marked "Moving to …". Cancel, Esc or Back drop what was typed. A refusal keeps the
   panel open with the reason; a conflict asks, with the guided page's chooser. The Closed-Won
@@ -479,11 +480,11 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   The answer is deal by deal; what did not change stays selected, with its reason. The selection
   is kept for the tab (`sessionStorage`, guarded), so a reload on a bulk address finds it.
   - **Closed Won is not a bulk move**, a deliberate departure from P6.7's text (review of #1286). It
-    is not offered, and `bulk_update` refuses it: "Win deals one at a time: each needs its own ranks
-    and hand-off." Each win sends its own "Schedule the hand-off meeting now?" prompt, so twenty would
+    is not offered, and `bulk_update` refuses it: "Win deals one at a time: each needs its own
+    hand-off." Each win sends its own "Schedule the hand-off meeting now?" prompt, so twenty would
     stack with none naming its deal, and v16 treats a prompt closed with Esc or × as No, which
-    un-wins that deal (`project_prompt.revert_won_status`). One set of ranks for many deals is wrong
-    too. Win from the card (a drop, or the move panel), one deal at a time.
+    un-wins that deal (`project_prompt.revert_won_status`). Win from the card (a drop, or the move
+    panel), one deal at a time.
 
 ### Needs attention check
 

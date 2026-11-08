@@ -25,7 +25,7 @@
  *   host.changed(name)            the record changed (a save, an Undo): the page may refresh
  *
  * Moves (P6.6). Nothing reaches the record until the person commits: the panel's save queue is
- * `manual` and keeps no phone copy (editor.js hold_saves), and Closed Won's ranks go in the same
+ * `manual` and keeps no phone copy (editor.js hold_saves), and a `won` gate's fields go in the same
  * save as the status, locked on `modified` like every save. A refused save keeps the panel open with
  * the reason; Cancel (or Back) drops what was typed and the card never moved. Lost runs the record's
  * own Declare Lost (editor.js send_lost) with the fields the Set as Lost dialog asks for.
@@ -628,7 +628,7 @@ export class SidePanel extends RecordEditor {
 			this.step_head($stage, step.title, __("Move to {0}", [__(spec.status)]), step.intro);
 			const $fields = $('<div class="ge-fields"></div>').appendTo($stage);
 			if (fields.length) this.render_fields(step, $fields, true);
-			// A rank the person may not write is drawn read-only; the move could not pass.
+			// A gate field the person may not write is drawn read-only; the move could not pass.
 			if (fields.some((f) => f.read_only)) {
 				$('<p class="ge-readonly-note"></p>').text(__("You cannot change some of these, so you cannot make this move.")).appendTo($stage);
 			}

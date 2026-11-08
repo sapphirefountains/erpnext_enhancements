@@ -20,8 +20,8 @@
  *                   (P5.5's stage default or Sales' override); On Hold is left out of the weighted
  *                   figure; and the deals expected to close this month and next
  *   drops           what a drop on a stage means: save the new status (open stages and On Hold),
- *                   open the side panel's required fields (Closed Won, Lost: they need ranks or
- *                   reasons, P6.6), nothing (its own stage), or refuse
+ *                   open the side panel (Closed Won is confirmed there, Lost needs its reasons,
+ *                   P6.6), nothing (its own stage), or refuse
  *   closed          (v1.688.0) the Closed Won and Lost columns: the deals the server sends as
  *                   `closed` (closed in its last `closed_days` days), kept apart from `deals`, so
  *                   no open total, forecast, table, timeline, attention count or selection includes
@@ -84,7 +84,8 @@ export const NO_STREAM = "";
 export const KINDS = ["open", "parked", "other", "close"];
 export const BOARD_KINDS = ["open", "parked", "other", "close"];
 export const FORECAST_KINDS = ["open", "parked", "other"];
-// What a closing stage's move must carry (the server's `gate`): Closed Won's ranks, or Lost's reasons.
+// What a closing stage's move must carry (the server's `gate`): Lost's reasons; a `won` gate carries
+// no fields and marks the stage won one deal at a time.
 export const GATES = ["won", "lost"];
 
 // The phone layout (one stage at a time, tap to move) is below 768px, the design system's
@@ -1107,8 +1108,8 @@ export function clean_picks(model, picks) {
 
 // The stages a bulk change of stage offers: every board column but an unlisted status, then Lost
 // (which asks for its reasons first, as a drop does). Never Closed Won: each won deal needs its own
-// ranks and its own hand-off prompt, so deals are won one at a time (a deliberate departure from
-// P6.7's text; the server refuses it too, opportunity_board.WIN_ONE_AT_A_TIME).
+// hand-off prompt, so deals are won one at a time (a deliberate departure from P6.7's text; the
+// server refuses it too, opportunity_board.WIN_ONE_AT_A_TIME).
 export function bulk_stages(model) {
 	return ((model || {}).stages || []).filter((s) => s.kind !== "other" && !(s.kind === "close" && s.gate === "won"));
 }

@@ -32,9 +32,9 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     and runs the DocType's own ``method`` with the reasons and competitors as rows of the given
     child DocTypes (``field`` is the row's link column), as the Desk form does.
 ``won``  ``{"status", "status_field"?, "fields": [...]}``
-    What a move into ``status`` must carry besides the status itself (on Opportunity, the three
-    ranks Closed Won is refused without). The board's side panel asks for them before it saves the
-    move (form kit P6.6).
+    What a move into ``status`` must carry besides the status itself. The board's side panel asks
+    for them before it saves the move (form kit P6.6). Optional; Opportunity has none since
+    v1.799.0, so its Closed Won move carries only the status.
 ``quick``  ``{"fields": [...], "fixed"?: {fieldname: value}, "owner_field"?, "stage_field"?, "when"?: {fieldname: "dotted.path"}}``
     The board's quick add (P6.7): only ``fields``, in order, then a create through
     ``create_record`` like step 1. ``fixed`` sets fields step 1 needs that quick add does not ask

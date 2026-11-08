@@ -61,12 +61,6 @@ PROPOSAL = [
 	# The job site only: customer_address is the Billing Address (Nik, 2026-10-13).
 	{"field": "primary_address", "label": "A site address"},
 ]
-CLOSED_WON = [
-	*PROPOSAL,
-	{"field": "custom_scope_rank", "label": "Scope Rank"},
-	{"field": "custom_schedule_rank", "label": "Schedule Rank"},
-	{"field": "custom_budget_rank", "label": "Budget Rank"},
-]
 # Lost can happen at any stage, so it asks for the basics and the reason, not a proposal's
 # amount (owner, 2026-10-13: "Basics + lost reason"). The reason is ERPNext's ``lost_reasons`` table: the app's own ``custom_lost_reason``
 # Select was removed in v1.159.0 (patches/remove_opportunity_lost_reason.py), and
@@ -187,14 +181,8 @@ CONFIG = {
 		"reasons": {"doctype": "Opportunity Lost Reason Detail", "field": "lost_reason"},
 		"competitors": {"doctype": "Competitor Detail", "field": "competitor"},
 	},
-	# Form kit P6.6: what a move into Closed Won must carry besides the status. The board's side panel
-	# asks for these before the move is saved, so a card dropped on Closed Won never ends in a refused
-	# save; they are what script_migrations.opportunity.validate_ranks_on_won refuses Closed Won
-	# without. A move into Lost carries what ``lost`` above asks for instead.
-	"won": {
-		"status": "Closed Won",
-		"fields": ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"],
-	},
+	# No ``won`` entry: a move into Closed Won carries nothing besides the status, so the board's side
+	# panel only confirms it (form kit P6.6). A move into Lost carries what ``lost`` above asks for.
 	# Form kit P6.7: the board's quick add (the "+" on a column) asks only for these, in this order,
 	# and creates through create_record like step 1, with the same client_id. ``fixed`` fills the rest
 	# of what step 1 needs (the account is a Customer), ``owner_field`` is the person adding, when the
@@ -211,15 +199,8 @@ CONFIG = {
 		"owner_field": "opportunity_owner",
 		"stage_field": "status",
 	},
-	# What the form's scripts check as a value is chosen, which the page checks the same way (P4.5).
-	# opportunity_migrated_scripts.js warns when two ranks are the same (the server only checks that
-	# each is 1, 2 or 3), and ERPNext's opportunity.js clears the party when its type changes.
-	"distinct": [
-		{
-			"fields": ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"],
-			"message": "Scope, Schedule and Budget each need their own rank: one 1, one 2 and one 3.",
-		},
-	],
+	# What the form's scripts check as a value is chosen, which the page checks the same way (P4.5):
+	# ERPNext's opportunity.js clears the party when its type changes. No ``distinct`` rule is left.
 	"clears": {"opportunity_from": ["party_name"]},
 	# Every set_query the Opportunity form's scripts set on a field the flow shows, as data the guided
 	# page applies to its own controls (v1.685.0). Nik, 2026-10-14: "the inputs should be the same".
@@ -394,15 +375,9 @@ CONFIG = {
 		{
 			"key": "close",
 			"title": "Close",
-			"intro": (
-				"Where the deal stands: Closed Won needs scope, schedule and budget ranked 1, 2 and 3; "
-				"choosing Lost asks for the reasons."
-			),
+			"intro": "Where the deal stands; choosing Lost asks for the reasons.",
 			"fields": [
 				"status",
-				"custom_scope_rank",
-				"custom_schedule_rank",
-				"custom_budget_rank",
 				"custom_date_closed_won",
 				"custom_stage_changed_on",
 				# Read-only, set by the nightly job (crm_enhancements/historical.py): shown
@@ -452,7 +427,7 @@ CONFIG = {
 			"Needs Analysis": NEEDS_ANALYSIS,
 			"Proposal/Price Quote": PROPOSAL,
 			"Negotiation/Review": PROPOSAL,
-			"Closed Won": CLOSED_WON,
+			"Closed Won": PROPOSAL,
 			"Lost": LOST,
 			"On Hold": QUALIFICATION,
 		},

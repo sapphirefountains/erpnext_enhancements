@@ -1200,8 +1200,8 @@ def _stamp_handoff(doc, skip_reason=None):
 
 	``db_set`` rather than ``save``: these are read-only fields on a document the
 	user may not otherwise be allowed to write, and going through ``save`` would
-	re-run the whole Opportunity validation chain (including the rank gate) for
-	what is a single-fact stamp.
+	re-run the whole Opportunity validation chain for what is a single-fact
+	stamp.
 	"""
 	now = now_datetime()
 	doc.db_set(

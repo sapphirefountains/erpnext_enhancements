@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.799.0] - 2026-11-08
+
+### Changed
+- **The Scope, Schedule and Budget Rank fields are hidden, and Closed Won no longer demands them.**
+  PR 1 of the UI field audit's hiding plan
+  ([`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md), "Nik's example";
+  the audit itself lands with #1433). The six Select fields `custom_scope_rank`,
+  `custom_schedule_rank` and `custom_budget_rank` on Opportunity and on Project are now `hidden: 1`
+  in `fixtures/custom_field.json`, with nothing else about them changed.
+  - **Why they were ever filled.** `script_migrations.opportunity.validate_ranks_on_won` ran on every
+    Opportunity save and refused Closed Won unless all three ranks were 1, 2 or 3 (a Service Call's
+    deal excepted since v1.778.0). So 206 of 855 Opportunities carry a rank, every one of the 40 won in
+    the last 180 days among them, and 97 Projects carry the copy the hand-off made. Nothing downstream
+    read a rank value: no report, chart, Kanban card, Number Card, Notification, print format,
+    dashboard block or page. The Projects Dashboard ranks by `custom_company_priority`, a different
+    field, and it is untouched. The field was filled under compulsion and read by nobody.
+  - **Hidden, not deleted.** Nik, 2026-11-08: "the ones that aren't used at all should just be hidden
+    rather than deleting something". The columns and their values stay; no `delete_doc`, no patch. A
+    hidden field keeps its data and comes back with one fixture change.
+  - **What goes with the gate.** The validator and its `hooks.py` entry; the migrated client script's
+    `reqd` toggle and unique-rank check (`opportunity_migrated_scripts.js` keeps only the value-stream
+    show/hide); the form kit's Closed Won completeness entries (Closed Won now asks for what a Proposal
+    asks for), its `won` entry and `distinct` rule and the three ranks on the Close step
+    (`form_kit/config/opportunity.py`); the three help texts; the hand-off's three `direct_mappings`
+    copies onto the Project (`crm_enhancements/api.py`); and the tests that asserted the gate. The
+    Opportunity board's Closed Won side panel now only confirms the move ("Move this deal to Closed
+    Won"); its "won" gate stays as the marker that wins are one deal at a time, and `bulk_update` still
+    refuses a bulk win, with the message shortened to "Win deals one at a time: each needs its own
+    hand-off." The `won` mechanism in the form kit stays, generic and unused, for a DocType that
+    declares one; `steps.won_conditions({})` is `{}`.
+  - **What a person sees.** The three rank fields are gone from the Opportunity and Project forms,
+    the guided flow's Close step and the board's Closed Won panel. Moving a deal to Closed Won asks for
+    nothing beyond the status; the hand-off prompt, the won-date stamp and the hand-off gate's stamps
+    run as before.
+
 ## [1.798.0] - 2026-11-06
 
 ### Changed
