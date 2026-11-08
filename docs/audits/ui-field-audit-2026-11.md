@@ -16,6 +16,27 @@ and names the PRs in order.
 Evidence was read from prod on 2026-11-08 (frappe 16.53.0, erpnext 16.52.1, this app 1.798.0) with
 read-only `SELECT`s through the ERPNext connector. Nothing on prod was changed.
 
+## Grading rule
+
+The first draft graded 137 fields Remove. Nik's question on reading it (2026-11-08): "Why delete
+fields and such when there could be data in some fields?" He then accepted this rule, and every
+Remove row was re-graded under it:
+
+- **Remove** only when (a) no row holds a value, or (b) the values are not information: defaults
+  written on every row (Task's recurring-task fields, `1` or `Daily` everywhere while
+  `custom_is_recurring` is never ticked), or values filled under compulsion by a validator that
+  nothing reads (the six Rank fields on Opportunity and Project stay Remove; export them anyway).
+- Every other field that was Remove and holds a value on any row becomes **Hide** (field off the
+  form, column and data kept, one fixture change) or **Merge** (when the data has a better home:
+  Project Notes into Comments, Customer `custom_phone` into the primary contact set, and so on).
+  After a Merge's data move, the empty shell may be removed in a later PR, and the plan says so.
+- Empty layout breaks (section, column, tab) stay Remove only when every field under them is
+  removed or they already hold nothing; otherwise they follow their fields (Hide when every field
+  under them is hidden or merged).
+
+Rows changed by the re-grade say "re-graded (Nik, 2026-11-08)" in their Evidence column and keep
+the original reason after "Was Remove".
+
 ## Summary
 
 | Measure | Count |
