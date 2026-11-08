@@ -10,14 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.799.1] - 2026-11-08
 
 ### Changed
-- **The remaining 129 Custom Fields the UI field audit graded Hide are hidden; nothing is deleted.**
+- **128 of the 129 Custom Fields the UI field audit graded Hide are hidden; nothing is deleted.**
   PR 2 of the hiding plan in
   [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) ("Hides in
   bulk"; PR 1 was v1.799.0, the six Rank fields). Nik's rule, 2026-11-08: no Custom Field is ever
   deleted; a field nothing uses gets `hidden: 1` and keeps its column and its data. The Merge table
   of the audit (steps 3 and 4, where data moves first) is untouched by this release.
   - **How.** 108 of the 129 are fixture-managed: `fixtures/custom_field.json` now carries
-    `hidden: 1` on 80 more records (28 were hidden already: the six Rank fields from v1.799.0 and
+    `hidden: 1` on 79 more records (28 were hidden already: the six Rank fields from v1.799.0 and
     22 breaks and fields the forms already hid). The other 21 were created on the site by setup
     code, an old migration or another app and are not in the fixtures, so no JSON edit reaches
     them; the new patch `hide_audit_code_created_fields` sets `hidden = 1` on each with
@@ -47,14 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     | Kanban Board | 1 | 1 | | |
     | Kanban Board Column | 1 | 1 | | |
     | Lead | 21 | 10 | 7 | 4 |
-    | Purchase Order Item | 1 | 1 | | |
+    | Purchase Order Item | 1 | kept visible | | |
     | Serial No | 3 | 3 | | |
     | Supplier Quotation Item | 1 | 1 | | |
     | ToDo | 1 | | | 1 |
     | UTM Campaign | 1 | | 1 | |
     | User | 2 | | 2 | |
-    | **Total** | **129** | **80** | **21** | **28** |
+    | **Total** | **129** | **79** | **21** | **28** |
 
+  - **Kept visible: Purchase Order Item `custom_item_status`**, because a feedback-ER test
+    (`test_po_received_qty_column`, ER-2026-458194) asserts it stays on the row form after it was
+    taken off the grid; the manager will raise it with Nik. So 128 of the 129 Hide-graded fields
+    are hidden.
   - **Code that wrote a hidden field stops writing it.** The recurring-task generator
     (`tasks.generate_next_task` and its two helpers, the Task `on_update` hook) is gone: it read
     `custom_is_recurring`, which was 0 on all 8,703 tasks, so it never fired, and it was the only
