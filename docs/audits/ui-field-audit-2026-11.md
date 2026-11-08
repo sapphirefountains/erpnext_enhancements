@@ -84,10 +84,7 @@ still on record.
   field is empty, holds defaults, or holds data); the rest is Keep. Layout breaks follow the fields
   under them: a break whose fields are all hidden or merged is hidden, a hidden break with nothing
   under it is hidden, and a visible one with nothing custom under it stays (it hosts standard fields
-  moved by a `field_order` setter). Layout breaks follow the fields under them:
-  a section or tab whose every field is removed is removed with them, a hidden section with nothing
-  under it is removed, and a visible one with nothing custom under it stays (it hosts standard
-  fields moved by a `field_order` setter). Every other row carries a hand-written reason.
+  moved by a `field_order` setter). Every other row carries a hand-written reason.
 
 ## Nik's example: Scope Rank, Schedule Rank, Budget Rank
 

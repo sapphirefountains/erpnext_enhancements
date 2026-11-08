@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.798.4] - 2026-11-08
+
+### Fixed
+- **UI field audit (docs only):** the rules bullet under "How to read the evidence" in
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) repeated the
+  "Layout breaks follow the fields under them" sentence, once in the new hide wording and once in the
+  old "removed with them" wording. The old copy is gone; no other change.
+
 ## [1.798.3] - 2026-11-08
 
 ### Changed
