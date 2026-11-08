@@ -1,8 +1,13 @@
 /**
  * Primary contact auto-fill.
  *
- * Targets: the Project, Opportunity, Lead, Supplier and Customer forms.
- * Loaded via: hooks.py `doctype_js` for ALL FIVE of those doctypes.
+ * Targets: the Project, Opportunity, Supplier and Customer forms.
+ * Loaded via: hooks.py `doctype_js` for ALL FOUR of those doctypes.
+ *
+ * Lead was the fifth until v1.799.1. Its primary_contact set (primary_contact,
+ * primary_contact_job_title, primary_contact_phone, primary_contact_email) came from
+ * the 2026-04 contact migration, was never filled on any of the 227 leads, and is
+ * hidden by the UI field audit, so there is nothing on a Lead for this file to fill.
  *
  * When the `primary_contact` link changes, fetches that Contact's title / phone /
  * email and copies them into the read-through fields
@@ -25,7 +30,7 @@
  * Fixing only the registration would have spread defect 2 to four more forms, so
  * both halves land together.
  */
-const primary_contact_doctypes = ['Project', 'Opportunity', 'Lead', 'Supplier', 'Customer'];
+const primary_contact_doctypes = ['Project', 'Opportunity', 'Supplier', 'Customer'];
 
 primary_contact_doctypes.forEach(doctype => {
 	frappe.ui.form.on(doctype, {

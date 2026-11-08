@@ -772,7 +772,6 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		const iconClass = hasChildren ? (isCollapsed ? "fa-caret-right" : "fa-caret-down") + " toggle-child-tasks" : "fa-circle text-extra-muted" ;
 		const statusBadge = this.getStatusBadge(task);
 		const milestoneIcon = task.is_milestone ? `<i class="fa fa-diamond task-milestone-icon mr-1" title="Milestone"></i>` : "";
-		const recurringIcon = task.custom_is_recurring ? `<i class="fa fa-circle task-recurring-icon mr-1" title="Recurring Task"></i>` : "";
 		const isGhost = (this.wrapper.find(".task-name-filter").val() || this.wrapper.find(".task-owner-filter").val()) && !task.is_direct_match;
 
 		const node = $(`
@@ -783,7 +782,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 							${this.readonly ? "" : `<input type="checkbox" class="task-select-cb mr-2" data-task-id="${task.name}" title="${__("Select")}">`}
 							<i class="fa fa-bars task-drag-handle mr-2 text-muted" style="cursor: grab; flex-shrink: 0;"></i>
 							<i class="fa fa-fw ${iconClass}" style="cursor: pointer; flex-shrink: 0; font-size: 10px;"></i>
-							${milestoneIcon}${recurringIcon}<a href="/desk/task/${encodeURIComponent(task.name)}" class="task-name-cell-text" title="${frappe.utils.escape_html(task.subject || "")}">${frappe.utils.escape_html(task.subject || "")}</a>
+							${milestoneIcon}<a href="/desk/task/${encodeURIComponent(task.name)}" class="task-name-cell-text" title="${frappe.utils.escape_html(task.subject || "")}">${frappe.utils.escape_html(task.subject || "")}</a>
 						</div>
 					</div>
 					<div class="task-grid-cell assignee-cell ${this.columnVisibility.owner ? "" : "hidden-column"}" data-column="owner"><a href="#" class="assignee-link">${task.assigned_to || "Unassigned"}</a></div>

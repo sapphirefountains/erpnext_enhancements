@@ -2787,12 +2787,9 @@ META_FIELDS = {
 		"customer",
 		"custom_project_address",
 		"custom_customer__lead_address",
-		"custom_primary_first_name",
 		"custom_customer_name",
-		"custom_primary_phone",
 		"custom_contact_phone",
 		"custom_customer_phone",
-		"custom_primary_email_address",
 		"custom_customer_email",
 	},
 	"Opportunity": {
@@ -3237,7 +3234,7 @@ class TestTripContacts(MoneyAssertions):
 
 		# Its own contact: name, phone and email together, never one person's name over
 		# another's number.
-		project.update(custom_primary_first_name="Jo Super", custom_contact_phone="702-555-0177")
+		project.update(custom_customer_name="Jo Super", custom_contact_phone="702-555-0177")
 		site = travel._trip_contacts(self.doc)["site"]
 		self.assertEqual(
 			site,

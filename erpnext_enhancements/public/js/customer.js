@@ -198,7 +198,9 @@ frappe.ui.form.on("Customer", {
     },
 
     // Source: "Accounts (Customer) Tables"
-    // Populate the related Projects / Opportunities / Leads child tables on load.
+    // Populate the related Projects / Opportunities child tables on load. The Leads table
+    // (custom_leads) was filled here too until v1.799.1; the UI field audit hid it (0 of
+    // 1,722 accounts ever showed a row), so it is no longer written.
     async onload(frm) {
         if (frm.is_new()) {
             return;
@@ -206,11 +208,9 @@ frappe.ui.form.on("Customer", {
 
         const project_table = "custom_projects";
         const opportunity_table = "custom_opportunities";
-        const lead_table = "custom_leads";
 
         frm.clear_table(project_table);
         frm.clear_table(opportunity_table);
-        frm.clear_table(lead_table);
 
         const [projects, opportunities] = await Promise.all([
             frappe.db.get_list("Project", {
@@ -235,15 +235,7 @@ frappe.ui.form.on("Customer", {
             });
         }
 
-        if (frm.doc.lead) {
-            const lead = await frappe.db.get_value("Lead", frm.doc.lead, "lead_name");
-            if (lead && lead.lead_name) {
-                frm.add_child(lead_table, { lead: frm.doc.lead, lead_name: lead.lead_name });
-            }
-        }
-
         frm.refresh_field(project_table);
         frm.refresh_field(opportunity_table);
-        frm.refresh_field(lead_table);
     },
 });

@@ -53,17 +53,11 @@ FIELDS = {
 	"Call Routing Target": _kind(PHONE, "phone_number"),
 	"Company": {**_kind(PHONE, "phone_no", "fax"), **_kind(EMAIL, "email"), **_kind(WEBSITE, "website")},
 	"Competitor": _kind(WEBSITE, "website"),
+	# custom_home_phone, custom_other_phone and custom_fax were phone kinds here until v1.799.1:
+	# the UI field audit hid them (12 / 6 / 67 of 2,879 contacts, no human edit in 180 days), and
+	# a hidden field is not written by the cleanup.
 	"Contact": {
-		**_kind(
-			PHONE,
-			"phone",
-			"mobile_no",
-			"custom_home_phone",
-			"custom_mobile_number",
-			"custom_other_phone",
-			"custom_phone_number",
-			"custom_fax",
-		),
+		**_kind(PHONE, "phone", "mobile_no", "custom_mobile_number", "custom_phone_number"),
 		**_kind(EMAIL, "email_id", "custom_email", "custom_secondary_email_address"),
 		**_kind(TEXT, "first_name", "middle_name", "last_name"),
 	},
@@ -95,7 +89,7 @@ FIELDS = {
 			"fax",
 			"custom_account_phone_number",
 			"custom_contact_phone_number",
-			"custom_primary_phone",
+			# custom_primary_phone and custom_email_address: hidden since v1.799.1 (0 of 227).
 			"primary_contact_phone",
 		),
 		**_kind(
@@ -103,7 +97,6 @@ FIELDS = {
 			"email_id",
 			"custom_account_email",
 			"custom_contact_email",
-			"custom_email_address",
 			"primary_contact_email",
 		),
 		**_kind(WEBSITE, "website", "custom_account_website"),
@@ -125,20 +118,9 @@ FIELDS = {
 	},
 	"Package Dispatch": _kind(PHONE, "recipient_phone"),
 	"Project": {
-		**_kind(
-			PHONE,
-			"custom_contact_phone",
-			"custom_customer_phone",
-			"custom_primary_phone",
-			"primary_contact_phone",
-		),
-		**_kind(
-			EMAIL,
-			"custom_billing_email",
-			"custom_customer_email",
-			"custom_primary_email_address",
-			"primary_contact_email",
-		),
+		# custom_primary_phone and custom_primary_email_address: hidden since v1.799.1 (0 of 668).
+		**_kind(PHONE, "custom_contact_phone", "custom_customer_phone", "primary_contact_phone"),
+		**_kind(EMAIL, "custom_billing_email", "custom_customer_email", "primary_contact_email"),
 	},
 	"Project Contract": {
 		**_kind(PHONE, "contact_phone", "supervisor_phone"),
@@ -151,8 +133,9 @@ FIELDS = {
 	"Rental Booking": _kind(PHONE, "site_contact_phone"),
 	"Sales Partner": _kind(WEBSITE, "partner_website"),
 	"Supplier": {
-		**_kind(PHONE, "custom_phone", "custom_phone_number", "primary_contact_phone"),
-		**_kind(EMAIL, "custom_email", "custom_email_address", "primary_contact_email"),
+		# custom_phone and custom_email_address: hidden since v1.799.1 (0 of 1,214).
+		**_kind(PHONE, "custom_phone_number", "primary_contact_phone"),
+		**_kind(EMAIL, "custom_email", "primary_contact_email"),
 		**_kind(WEBSITE, "website"),
 	},
 	"Travel Settings": {**_kind(PHONE, "travel_desk_phone"), **_kind(EMAIL, "travel_desk_email")},

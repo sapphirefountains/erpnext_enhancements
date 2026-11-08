@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.799.1] - 2026-11-08
+
+### Changed
+- **104 of the 129 Custom Fields the UI field audit graded Hide are hidden; nothing is deleted.**
+  PR 2 of the hiding plan in
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) ("Hides in
+  bulk"; PR 1 was v1.799.0, the six Rank fields). Nik's rule, 2026-11-08: no Custom Field is ever
+  deleted; a field nothing uses gets `hidden: 1` and keeps its column and its data. The Merge table
+  of the audit (steps 3 and 4, where data moves first) is untouched by this release.
+  - **How.** 108 of the 129 are fixture-managed: `fixtures/custom_field.json` now carries
+    `hidden: 1` on 60 more records (28 were hidden already: the six Rank fields from v1.799.0 and
+    22 breaks and fields the forms already hid). The other 21 were created on the site by setup
+    code, an old migration or another app and are not in the fixtures, so no JSON edit reaches
+    them; the new patch `hide_audit_code_created_fields` sets `hidden = 1` on 16 of them with
+    `frappe.db.set_value` where `frappe.db.exists` finds the row, then clears each doctype's
+    cache. The 25 Hide-graded records that stay visible are the 24 layout breaks and one data
+    field, both explained below. A missing row is a no-op; the patch cannot raise (a patch that raises aborts
+    `bench migrate`, which is the deploy) and is safe to run twice. `water_engineering/setup.py`
+    passes `hidden: 1` for Item `custom_pump_curve`, the one patched field that setup code
+    re-creates on every migrate; without that the next deploy would have unhidden it.
+  - **Per DocType** (fields hidden by the fixture in this release / by the patch / already hidden
+    before it / breaks left visible):
+
+    | DocType | Hide-graded | Fixture, this release | Patch | Hidden before | Breaks left visible |
+    |---|---|---|---|---|---|
+    | Task | 14 | 11 | | | 3 |
+    | Project | 24 | 11 | | 8 | 5 |
+    | Opportunity | 7 | 1 | | 5 | 1 |
+    | Customer | 8 | 4 | | 3 | 1 |
+    | Supplier | 12 | 6 | | 3 | 3 |
+    | Item | 1 | | 1 | | |
+    | Account (chart of accounts) | 9 | 1 | 5 | | 3 |
+    | Asset | 6 | 6 | | | |
+    | Assignment Rule | 2 | | 2 | | |
+    | CRM Deal | 1 | | 1 | | |
+    | CRM Note | 1 | 1 | | | |
+    | Contact | 10 | 5 | | 3 | 2 |
+    | Employee | 1 | 1 | | | |
+    | Issue | 1 | | | 1 | |
+    | Kanban Board | 1 | 1 | | | |
+    | Kanban Board Column | 1 | 1 | | | |
+    | Lead | 21 | 7 | 5 | 4 | 5 |
+    | Purchase Order Item | 1 | kept visible | | | |
+    | Serial No | 3 | 3 | | | |
+    | Supplier Quotation Item | 1 | 1 | | | |
+    | ToDo | 1 | | | 1 | |
+    | UTM Campaign | 1 | | 1 | | |
+    | User | 2 | | 1 | | 1 |
+    | **Total** | **129** | **60** | **16** | **28** | **24** |
+
+    104 fields are hidden after this release (60 + 16 + 28); 25 Hide-graded records stay visible
+    (24 breaks and one data field), listed next.
+  - **Breaks left visible (24).** A Section Break with `hidden: 1` hides its whole section and a
+    Column Break its whole column (`section.js` toggles the control on `df.hidden`), so the fields
+    after the break vanish too. Three of the breaks the audit graded Hide sit at position 0 of
+    their doctype's `field_order` Property Setter and hiding them would have blanked the main
+    section of the form: Task `custom_section_break_8wegw` (subject, project, status follow it),
+    Project `custom_section_break_s5jqn` (naming_series, project_name, customer) and Lead
+    `custom_lead_information` (first_name, title, lead_owner). Others sit before fields that must
+    stay: Customer `custom_column_break_z913g` before the Merge-table `custom_primary_*` fields,
+    Project `custom_column_break_vp5qd` before `custom_deliverable1..5`, Supplier
+    `custom_column_break_ncqbr` before `address_html` and `custom_column_break_rrn0r` before
+    `location_map_html`. So no break is hidden by this release at all: Task
+    `custom_automation_settings`, `custom_column_break_zkulk`, `custom_section_break_8wegw`;
+    Project `custom_column_break_8lbte`, `custom_column_break_em6sv`, `custom_column_break_k8xix`,
+    `custom_column_break_vp5qd`, `custom_section_break_s5jqn`; Opportunity
+    `custom_section_break_bqypn`; Customer `custom_column_break_z913g`; Supplier
+    `custom_column_break_ncqbr`, `custom_column_break_rrn0r`, `custom_column_break_ycp3n`; Account
+    `custom_comments_tab`, `primary_contact_section`, `primary_contact_col_break`; Contact
+    `custom_column_break_byvnt`, `custom_comments`; Lead `custom_column_break_gxi32`,
+    `custom_lead_information`, `custom_section_break_qnpv9`, `primary_contact_section`,
+    `primary_contact_col_break`; User `work_environment`. Frappe collapses a section or column
+    whose own fields are all hidden, so the forms lose nothing by it. (Breaks that `main` already
+    had hidden, such as Project `custom_address__contact`, are not touched by this release.)
+  - **Kept visible: Purchase Order Item `custom_item_status`**, because a feedback-ER test
+    (`test_po_received_qty_column`, ER-2026-458194) asserts it stays on the row form after it was
+    taken off the grid; the manager will raise it with Nik.
+  - **Code that wrote a hidden field stops writing it.** The recurring-task generator
+    (`tasks.generate_next_task` and its two helpers, the Task `on_update` hook) is gone: it read
+    `custom_is_recurring`, which was 0 on all 8,703 tasks, so it never fired, and it was the only
+    writer of `custom_next_task_created`. The Opportunity to Project hand-off
+    (`crm_enhancements/api.py`) no longer copies `custom_estimated_cost` into `custom_project_cost`
+    (the source is hidden; 2 of 855 deals ever held one) nor the `custom_scope_contributors` table
+    (1 row on each side). The data-quality cleanup (`utils/normalize_fields.py`) no longer lists
+    Supplier `custom_phone` / `custom_email_address`, Lead `custom_primary_phone` /
+    `custom_email_address`, Project `custom_primary_phone` / `custom_primary_email_address` (all 0
+    rows) or Contact `custom_home_phone` / `custom_other_phone` / `custom_fax` (12 / 6 / 67 of
+    2,879 contacts, no human edit in 180 days), and `utils/normalize_fixes.py` no longer moves an
+    email found in a supplier's phone field into the hidden `custom_email_address` (it is reported
+    and left where it is). The Customer form (`customer.js`) no longer fills the read-only
+    `custom_leads` table on load.
+  - **Dead display paths go.** The task tree's recurring-task icon and the two `custom_is_recurring`
+    reads behind it (`project_dashboard.py`, `task_tree_manager.js`, `task_tree.css`); the
+    `custom_scope_contributors` entry of the People info block (`form_kit/blocks.py` and its
+    `info_blocks/blocks.js` twin); `account.js` and the chart-of-accounts `doctype_js` entry, which
+    existed only to mount the Comments App into a tab that reached that DocType by mistake on
+    2026-04-20; `primary_contact.js` on Lead, whose `primary_contact` set was never filled.
+    `api/desk_search.py` drops Lead's hidden `custom_primary_phone`, and `api/travel.py` drops
+    Project's hidden `custom_primary_first_name` / `custom_primary_phone` /
+    `custom_primary_email_address` from the job-site fallbacks (0 of 668 projects held any).
+  - **Reads left in place, for the manager to decide.** A hidden field keeps its data and stays
+    readable server-side, so these keep working: the Fountain Designer's fallback to Item's legacy
+    `custom_pump_curve` table (`water_engineering/catalog_reader.py`, `api/designer.py`,
+    `pump_curve_chart.js`); the QuickBooks Time webhook lookups on Employee
+    `custom_quickbooks_user_id` and Project `custom_quickbooks_jobcode_id` (`quickbooks_time/api.py`);
+    and the Desk search's match on Contact `custom_home_phone` / `custom_other_phone`
+    (`api/desk_search.py`), which still finds the 18 contacts that hold one.
+  - **Tests.** `test_hooks_integrity` and `test_planner_doctypes` now assert the recurring-task hook
+    is absent; `test_travel_views` reads the job-site name from `custom_customer_name`;
+    `test_project_creation_progress` drops `custom_scope_contributors` from the copied tables.
+
 ## [1.799.0] - 2026-11-08
 
 ### Changed

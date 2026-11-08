@@ -56,8 +56,8 @@ class TestFixtureAndPatchAgree(unittest.TestCase):
 		self.assertEqual(record["read_only"], 1)
 
 	def test_no_copy_so_a_recurring_successor_does_not_inherit_the_link(self):
-		# tasks.create_duplicate_task clones with frappe.copy_doc, which carries every field
-		# that is not no_copy.
+		# Anything that clones a Task with frappe.copy_doc (the recurring-task generator did,
+		# until v1.799.1) carries every field that is not no_copy.
 		self.assertEqual(_fixture_record()["no_copy"], 1)
 
 	def test_no_default(self):

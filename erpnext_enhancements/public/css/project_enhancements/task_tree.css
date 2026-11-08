@@ -296,12 +296,6 @@
 	flex-shrink: 0;
 }
 
-.task-recurring-icon {
-	color: var(--primary);
-	font-size: 9px;
-	flex-shrink: 0;
-}
-
 .task-name-cell-text {
 	display: -webkit-box;
 	-webkit-line-clamp: 2;

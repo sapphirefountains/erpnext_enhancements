@@ -76,7 +76,6 @@ class _Dict(dict):
 TABLES = {
 	"custom_value_stream",
 	"custom_contacts__address_table",
-	"custom_scope_contributors",
 	"custom_design_customer_requests",
 	"custom_design_deliverables",
 	"custom_build_customer_requests",
