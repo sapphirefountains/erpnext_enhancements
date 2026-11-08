@@ -7,35 +7,37 @@ Budget Rank is never used in practicality."
 This document is the audit. It covers every Custom Field and Property Setter Sapphire added or
 changed on the Desk (the repo's fixtures plus what exists on prod and not in the repo), and the own
 fields of Sapphire Maintenance Record, the one custom DocType among the ten most-used. It
-recommends, per field, **Keep**, **Hide**, **Merge into** another field, **Remove** or **Fix
+recommends, per field, **Keep**, **Hide**, **Merge into** another field or **Fix
 label**, each backed by a prod fill rate or a reference count, graded under the rule Nik set on
-2026-11-08 (next section). **It removes nothing.** The removal
-plan at the end follows the repo's two-step rule (fixture change plus a `frappe.delete_doc` patch)
-and names the PRs in order.
+2026-11-08 (next section). **It removes nothing, and under Nik's rule nothing will be removed:** unused fields are hidden,
+not deleted. The hiding plan at the end names the PRs in order.
 
 Evidence was read from prod on 2026-11-08 (frappe 16.53.0, erpnext 16.52.1, this app 1.798.0) with
 read-only `SELECT`s through the ERPNext connector. Nothing on prod was changed.
 
 ## Grading rule
 
-The first draft graded 137 fields Remove. Nik's question on reading it (2026-11-08): "Why delete
-fields and such when there could be data in some fields?" He then accepted this rule, and every
-Remove row was re-graded under it:
+The first draft graded 137 fields Remove. Nik, reading it (2026-11-08): "Why delete fields and such
+when there could be data in some fields?", and then: **"I think the ones that aren't used at all
+should just be hidden rather than deleting something."** The rule this report is graded under:
 
-- **Remove** only when (a) no row holds a value, or (b) the values are not information: defaults
-  written on every row (Task's recurring-task fields, `1` or `Daily` everywhere while
-  `custom_is_recurring` is never ticked), or values filled under compulsion by a validator that
-  nothing reads (the six Rank fields on Opportunity and Project stay Remove; export them anyway).
-- Every other field that was Remove and holds a value on any row becomes **Hide** (field off the
-  form, column and data kept, one fixture change) or **Merge** (when the data has a better home:
-  Project Notes into Comments, Customer `custom_phone` into the primary contact set, and so on).
-  After a Merge's data move, the empty shell may be removed in a later PR, and the plan says so.
-- Empty layout breaks (section, column, tab) stay Remove only when every field under them is
-  removed or they already hold nothing; otherwise they follow their fields (Hide when every field
-  under them is hidden or merged).
+- **No Custom Field is deleted.** There is no Remove grade. A field nothing uses is **Hide**:
+  `hidden: 1` in its fixture record when the field is fixture-managed; for a field the app's own
+  setup code or a patch created (not in fixtures), a one-shot patch that sets `hidden = 1` on the
+  Custom Field document, never `frappe.delete_doc`. Columns and data stay. Empty section, column and
+  tab breaks are hidden the same way.
+- **Merge** stays Merge: move the data to its better home (Project Notes into Comments, Customer
+  `custom_phone` into the primary contact set, Lead's duplicates into the standard Lead fields), then
+  hide the source. The hidden source fields are kept; there is no later removal step.
+- The six Rank fields are hidden too, not removed. What goes is the code that forces them:
+  `validate_ranks_on_won` and its `hooks.py` entry, the migrated client-script rank functions, the
+  form-kit Closed Won rank step and the board panel rank entries, the `direct_mappings` copy in
+  `crm_enhancements/api.py`, and the tests for the gate. The columns stay, so no export is needed.
+- "Not Sapphire's: leave" and "Fix label / options" are unchanged.
 
-Rows changed by the re-grade say "re-graded (Nik, 2026-11-08)" in their Evidence column and keep
-the original reason after "Was Remove".
+Rows the rule changed say "hidden, not removed (Nik, 2026-11-08)" in their Evidence column and keep
+the original reason after "Was Remove", so the usage evidence that would have justified a removal is
+still on record.
 
 ## Summary
 
@@ -46,9 +48,9 @@ the original reason after "Was Remove".
 | of which on prod but not in fixtures | 247 |
 | Sapphire Maintenance Record own fields audited | 44 |
 | Property Setters audited (prod) | 667 |
-| Recommended **Remove** | 105 (63 data fields, 42 layout/HTML) |
-| Recommended **Merge** | 41 |
-| Recommended **Hide** | 24 |
+| Recommended **Remove** | 0 (Nik, 2026-11-08: hide, never delete) |
+| Recommended **Hide** | 129 (82 data fields, 47 layout/HTML) |
+| Recommended **Merge** (data moved, source then hidden) | 41 |
 | Recommended **Fix label / options** | 10 |
 | Not Sapphire's (ERPNext, payments, FAC, framework): leave | 34 |
 | Keep | 754 |
@@ -77,11 +79,12 @@ the original reason after "Was Remove".
   logic was moved into the app (`script_migrations/`, `public/js/**/_migrated_scripts.js`). A field
   referenced only by those disabled scripts counts as unreferenced.
 - **Rules applied where no judgement call was needed**: a field some live code reads or writes is
-  Keep (with "no row holds a value yet" when fill is 0); a field with no live reference and no value
-  on any row is Remove; a field with no live reference that holds a value on any row is Hide, or
-  Merge when the data has a better home (Nik's grading rule above; the only exceptions are defaults
-  written on every row and values compelled by a validator nothing reads, which stay Remove); the
-  rest is Keep. Layout breaks follow the fields under them:
+  Keep (with "no row holds a value yet" when fill is 0); a field with no live reference is Hide, or
+  Merge when its data has a better home (Nik's grading rule above: nothing is deleted, whether the
+  field is empty, holds defaults, or holds data); the rest is Keep. Layout breaks follow the fields
+  under them: a break whose fields are all hidden or merged is hidden, a hidden break with nothing
+  under it is hidden, and a visible one with nothing custom under it stays (it hosts standard fields
+  moved by a `field_order` setter). Layout breaks follow the fields under them:
   a section or tab whose every field is removed is removed with them, a hidden section with nothing
   under it is removed, and a visible one with nothing custom under it stays (it hosts standard
   fields moved by a `field_order` setter). Every other row carries a hand-written reason.
@@ -106,22 +109,21 @@ lists are the only consumers; no report, chart, Kanban card, Number Card, Notifi
 Format, dashboard block or page reads a rank value. The Projects Dashboard ranks by
 `custom_company_priority`, which is a different field.
 
-**Recommendation: Remove all six**, together with the code that exists only for them:
-`validate_ranks_on_won` (and its `hooks.py` entry), the rank functions in
+**Recommendation: Hide all six, and take out the gate that forces them.** The fields stay in the
+database with their values (`hidden: 1` in `fixtures/custom_field.json`); what goes is the code that
+exists only for them: `validate_ranks_on_won` (and its `hooks.py` entry), the rank functions in
 `public/js/crm_enhancements/opportunity_migrated_scripts.js`, the three `CLOSED_WON` entries, the
 `won.fields` list and the `distinct` rule in `form_kit/config/opportunity.py`, the three entries in
 `form_kit/help_text/opportunity.json`, the three `direct_mappings` lines in `crm_enhancements/api.py`,
 and the tests that assert the rank gate (`tests/test_form_kit.py`, `test_opportunity_board_panel.py`,
-`test_opportunity_board_focus.py`, `test_service_calls.py`). Data: 206 Opportunities and 97 Projects
-hold a value; export them to a CSV attached to the removal PR before the patch runs. This is PR 1 of
-the removal plan because it is the clearest case and it unblocks Closed Won without a ritual.
+`test_opportunity_board_focus.py`, `test_service_calls.py`). This is PR 1 of the hiding plan because it
+is the clearest case and it unblocks Closed Won without a ritual.
 
 ## Recommendations by DocType
 
 Recommendation words: **Keep** (used by people or by live code), **Hide** (rarely
 used, keep the data, take it off the form), **Merge into X** (same meaning under two names; move
-the values, then remove), **Remove** (nothing reads it; the removal plan says what to archive),
-**Fix label** (keep, but the label is wrong or inconsistent), **Leave** (not Sapphire's field:
+the values, then hide the source), **Fix label** (keep, but the label is wrong or inconsistent), **Leave** (not Sapphire's field:
 ERPNext, the payments app, Frappe Assistant Core or the Workflow engine created it).
 
 The ten most-used DocTypes come first (by 90-day human edits: Task, Project, Opportunity, Customer,
@@ -130,7 +132,7 @@ the rest alphabetically.
 
 ### Task (8,703 rows on prod)
 
-52 fields: Keep 38, Remove 14.
+52 fields: Hide 14, Keep 38.
 
 Task's one dead feature is recurring tasks: `custom_is_recurring` is unticked on all 8,703 rows, so the `Daily` in `custom_frequency` (2,923 rows) and the `1` in `custom_repeat_every` (required, 8,703 rows) are defaults, not choices. Everything else with a low fill rate is a planner feature that shipped in October (crew, equipment, baselines, customer confirmations, rental logistics) and has live code behind it.
 
@@ -143,7 +145,7 @@ Task's one dead feature is recurring tasks: `custom_is_recurring` is unticked on
 | `custom_child_tasks` | Child Tasks | Section Break |  | - |  |  | none | **Keep** | holds 2 custom field(s) |
 | `custom_create_child_task_btn` | + Create Child Task | Button |  | - |  |  | 1 code | **Keep** | rendered by code (1 files) |
 | `custom_child_tasks_table` | Child Tasks Table | HTML |  | - |  |  | 3 code | **Keep** | rendered by code (3 files) |
-| `custom_section_break_8wegw` |  | Section Break |  | - |  |  | none | **Remove** | unlabeled section with no fields under it |
+| `custom_section_break_8wegw` |  | Section Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: unlabeled section with no fields under it |
 | `custom_locationaddress_of_task` | Location/Address of Task | Link |  | 75/8703 (0.9%) | 2026-10-12 | 0 (0 by people) | 3 code | **Keep** | code reads/writes it (3 files) |
 | `custom_map_placeholder` | Map Placeholder | HTML |  | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
 | `custom_zoho_task_id` | Zoho Task ID | Data | hidden, read-only | 5153/8703 (59%) | 2026-11-03 | 0 (0 by people) | none | **Keep** | hidden import key, 5,153/8,703 |
@@ -170,35 +172,35 @@ Task's one dead feature is recurring tasks: `custom_is_recurring` is unticked on
 | `custom_equipment_section` | Equipment | Section Break |  | - |  |  | setup/patch only | **Keep** | 0/8,703 so far; planner features that write them shipped in October |
 | `custom_equipment` | Vehicles and equipment | Table |  | 0/8703 (0%) |  |  | 5 code | **Keep** | 0/8,703 so far; planner features that write them shipped in October |
 | `custom_baseline_section` | Baseline | Section Break |  | - |  |  | setup/patch only | **Keep** | 0/8,703; the planner's baseline feature writes them |
-| `custom_automation_settings` | Automation Settings | Section Break |  | - |  |  | setup/patch only | **Remove** | every field under it is removed (11) |
+| `custom_automation_settings` | Automation Settings | Section Break |  | - |  |  | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (11) |
 | `custom_baseline_start` | Baseline start | Date | read-only | 0/8703 (0%) |  | 0 (0 by people) | 4 code | **Keep** | 0/8,703; the planner's baseline feature writes them |
 | `custom_baseline_column` |  | Column Break |  | - |  |  | setup/patch only | **Keep** | 0/8,703; the planner's baseline feature writes them |
 | `custom_baseline_end` | Baseline end | Date | read-only | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/8,703; the planner's baseline feature writes them |
-| `custom_is_recurring` | Is Recurring | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 3 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_next_task_created` | Next Task Created | Link | read-only | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_column_break_zkulk` |  | Column Break |  | - |  |  | none | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_frequency` | Frequency | Select |  | 2923/8703 (34%) | 2026-11-08 | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires; values: (empty) 5780, Daily 2923 |
-| `custom_repeat_every` | Repeat Every | Int | required | 8703/8703 (100%) | 2026-11-08 | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_sunday` | Sunday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_monday` | Monday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_tuesday` | Tuesday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_wednesday` | Wednesday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_thursday` | Thursday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_friday` | Friday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
-| `custom_saturday` | Saturday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Remove** | recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_is_recurring` | Is Recurring | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 3 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_next_task_created` | Next Task Created | Link | read-only | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_column_break_zkulk` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_frequency` | Frequency | Select |  | 2923/8703 (34%) | 2026-11-08 | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires; values: (empty) 5780, Daily 2923 |
+| `custom_repeat_every` | Repeat Every | Int | required | 8703/8703 (100%) | 2026-11-08 | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_sunday` | Sunday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_monday` | Monday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_tuesday` | Tuesday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_wednesday` | Wednesday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_thursday` | Thursday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_friday` | Friday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
+| `custom_saturday` | Saturday | Check |  | 0/8703 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: recurring-task feature never used: custom_is_recurring is 0 on all 8,703 tasks, custom_frequency and custom_repeat_every only hold their defaults, the weekday checks are all 0, so tasks.py's next-task hook never fires |
 | `custom_comments` | Comments | Tab Break |  | - |  |  | 1 code | **Keep** | holds 1 custom field(s) |
 | `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Keep** | rendered by code (10 files) |
 
 ### Project (668 rows on prod)
 
-181 fields: Fix 6, Hide 2, Keep 139, Merge 12, Remove 22.
+181 fields: Fix 6, Hide 24, Keep 139, Merge 12.
 
 Project carries the most customization (181 Custom Fields on prod). Three families stand out: the legacy Zoho import fields (ALL-CAPS labels, written once on 2026-10-12 by a migration, read by nothing), three generations of contact/address fields (the hidden `custom_primary_*` set, the hidden ERPNext-style `custom_address_display`/`custom_contact_display` block, and the live unified Contacts & Addresses tab), and the hand-off copy of Opportunity fields (ranks, scope tables, rental dates), which is why many Project fields have values but no human Version rows. `custom_project_priority` and `custom_company_priority` share one option list that mixes ranks (1..30) with job types (Maintenance, Repair Visit, Delivery); see the inconsistencies list.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `primary_address` | Primary Address | Link | not in fixtures | 32/668 (5%) | 2026-11-06 | 23 (23 by people) | 12 code | **Keep** | code reads/writes it (12 files) |
-| `custom_zoho_data` | Zoho Data | Tab Break | hidden | - |  |  | none | **Remove** | hidden tabs with no fields under them |
+| `custom_zoho_data` | Zoho Data | Tab Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden tabs with no fields under them |
 | `custom_master_project` | Master Project | Link |  | 80/668 (12%) | 2026-08-13 | 8 (8 by people) | 8 code | **Keep** | code reads/writes it (8 files) |
 | `custom_project_id` | Project ID | Data | read-only | 220/668 (33%) | 2026-11-06 | 89 (89 by people) | 1 code; prod: Report Builder (Active Projects w/ TL and PM) | **Keep** | used on prod: Report Builder (Active Projects w/ TL and PM) |
 | `custom_value_stream` | Value Stream | Table MultiSelect |  | 138/668 (21%) | 2026-11-06 |  | 21 code | **Keep** | code reads/writes it (21 files) |
@@ -211,9 +213,9 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_project_owner` | Project Manager | Link |  | 466/668 (70%) | 2026-11-06 | 129 (129 by people) | 18 code; prod: Report Builder (Active Projects w/ TL and PM) | **Keep** | used on prod: Report Builder (Active Projects w/ TL and PM) |
 | `custom_technical_lead` | Technical Lead | Link |  | 113/668 (17%) | 2026-11-06 | 143 (143 by people) | 6 code; prod: Report Builder (Active Projects w/ TL and PM) | **Keep** | used on prod: Report Builder (Active Projects w/ TL and PM) |
 | `custom_column_break_l026q` |  | Column Break |  | - |  |  | none | **Keep** | layout |
-| `custom_scope_rank` | Scope Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Remove** | 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 1 57, 2 25, 3 15 |
-| `custom_schedule_rank` | Schedule Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Remove** | 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 3 41, 2 34, 1 22 |
-| `custom_budget_rank` | Budget Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Remove** | 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 3 41, 2 38, 1 18 |
+| `custom_scope_rank` | Scope Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 1 57, 2 25, 3 15 |
+| `custom_schedule_rank` | Schedule Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 3 41, 2 34, 1 22 |
+| `custom_budget_rank` | Budget Rank | Select |  | 97/668 (15%) | 2026-11-06 | 2 (2 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 97/668 rows (14.5%) hold a value and every one came from the Opportunity hand-off copy (crm_enhancements/api.py); 10 Version rows ever, last 2026-07-01; nothing reads them (the Projects Dashboard ranks by custom_company_priority); values: (empty) 571, 3 41, 2 38, 1 18 |
 | `custom_drive_folder_id` | Drive Folder ID | Data | hidden | 260/668 (39%) | 2026-11-06 | 1 (1 by people) | 11 code | **Keep** | code reads/writes it (11 files) |
 | `primary_contact_section` | Primary Contact | Section Break | not in fixtures | - |  |  | 1 code | **Keep** | no custom field under it; hosts moved standard fields |
 | `custom_drive_folder_missing` | Drive Folder Missing | Check | hidden, read-only | 11/668 (2%) | 2026-11-06 | 0 (0 by people) | 5 code | **Keep** | code reads/writes it (5 files) |
@@ -233,21 +235,21 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `section_break_address_list` | Address Directory | Section Break | not in fixtures | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
 | `address_list_html` | Address List HTML | HTML | not in fixtures | - |  |  | 6 code | **Keep** | rendered by code (6 files) |
 | `custom_billing_address` | Billing Address | Link |  | 4/668 (0.6%) | 2026-11-05 | 0 (0 by people) | 4 code | **Keep** | code reads/writes it (4 files) |
-| `custom_primary_contact_field` | Primary Contact | Section Break | hidden | - |  |  | none | **Remove** | every field under it is removed (4) |
-| `custom_primary_first_name` | Full Name | Data |  | 0/668 (0%) |  | 0 (0 by people) | 2 code | **Remove** | 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
-| `custom_primary_role` | Job Title | Data |  | 0/668 (0%) |  | 0 (0 by people) | none | **Remove** | 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
-| `custom_column_break_k8xix` |  | Column Break |  | - |  |  | none | **Remove** | 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
-| `custom_primary_phone` | Phone | Data |  | 0/668 (0%) |  | 0 (0 by people) | 4 code | **Remove** | 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
-| `custom_primary_email_address` | Email Address | Data |  | 0/668 (0%) |  | 0 (0 by people) | 4 code | **Remove** | 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
+| `custom_primary_contact_field` | Primary Contact | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (4) |
+| `custom_primary_first_name` | Full Name | Data |  | 0/668 (0%) |  | 0 (0 by people) | 2 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
+| `custom_primary_role` | Job Title | Data |  | 0/668 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
+| `custom_column_break_k8xix` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
+| `custom_primary_phone` | Phone | Data |  | 0/668 (0%) |  | 0 (0 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
+| `custom_primary_email_address` | Email Address | Data |  | 0/668 (0%) |  | 0 (0 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668 on all four; superseded by the unified Contacts & Addresses tab (primary_contact_*); desk_search.py, travel.py and normalize_fields.py still list them and need the same edit |
 | `custom_contacts__address` |  | Section Break | hidden | - |  |  | none | **Fix label** | hidden, unlabeled section around the Stakeholders table |
 | `custom_contacts__address_table` | Table | Table |  | 32/668 (5%) | 2026-11-03 |  | 1 code | **Fix label** | label is 'Table'; 32/668 projects have stakeholder rows (Project Stakeholder), still written by the hand-off copy |
 | `custom_address__contact` | Address & Contact | Section Break | hidden | - |  |  | none | **Hide** | every field under it is hidden, merged or removed (5); the break goes when the last field does |
-| `custom_address_html` | Address HTML | HTML |  | - |  |  | none | **Remove** | dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
+| `custom_address_html` | Address HTML | HTML |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
 | `custom_customer__lead_address` | Customer / Lead Address | Link |  | 1/668 (0.1%) | 2026-10-12 | 0 (0 by people) | 7 code | **Merge into primary_address** | 1/668; calendar sync, pickup routing and workforce/sites.py read it as a second site-address field |
 | `custom_address_display` | Address Display | Small Text |  | 2/668 (0.3%) | 2026-10-12 | 0 (0 by people) | none | **Merge into primary_address** | re-graded (Nik, 2026-11-08): 2/668 rows hold a value; 2 free-text addresses; link the Address record instead; then remove the empty shell in a later PR. Was Remove: dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
-| `custom_column_break_em6sv` |  | Column Break |  | - |  |  | none | **Remove** | dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
-| `custom_contact_html` | Contact HTML | HTML |  | - |  |  | none | **Remove** | dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
-| `custom_contact_display` | Contact Display | Small Text |  | 0/668 (0%) |  | 0 (0 by people) | none | **Remove** | dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
+| `custom_column_break_em6sv` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
+| `custom_contact_html` | Contact HTML | HTML |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
+| `custom_contact_display` | Contact Display | Small Text |  | 0/668 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: dead copy of ERPNext's address/contact block: 2/0 of 668 filled, HTML never rendered (no code), section hidden |
 | `custom_site_location_section` | Site Location | Section Break |  | - |  |  | setup/patch only | **Keep** | holds 4 custom field(s) |
 | `custom_site_latitude` | Site Latitude | Float |  | 73/668 (11%) | 2026-10-12 | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files) |
 | `custom_site_longitude` | Site Longitude | Float |  | 73/668 (11%) | 2026-10-12 | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files) |
@@ -258,7 +260,7 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_gantt_chart_section` | Gantt Chart | Section Break |  | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
 | `custom_tasks_section` | Tasks Tree | Section Break |  | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
 | `custom_tasks_html` | Tasks Tree View | HTML |  | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
-| `custom_section_break_s5jqn` |  | Section Break |  | - |  |  | none | **Remove** | unlabeled section with no fields under it |
+| `custom_section_break_s5jqn` |  | Section Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: unlabeled section with no fields under it |
 | `custom_section_break_w4acr` | Scope Description | Section Break | hidden | - |  |  | setup/patch only | **Keep** | holds 4 custom field(s) |
 | `custom_general_scope_description` | Detailed Scope Description | Text Editor |  | 319/668 (48%) | 2026-11-06 | 7 (7 by people) | 6 code | **Fix label** | labeled 'Detailed Scope Description' here and 'General Scope Description' on Opportunity for the same copied field |
 | `custom_scope_contributors` | Scope Contributors | Table |  | 1/668 (0.1%) | 2026-10-09 |  | 3 code | **Hide** | re-graded (Nik, 2026-11-08): 1/668 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: 1/668 (and 1/855 on Opportunity); Nik 2026-10-13 kept it hidden; only the hand-off copy and an info block list it |
@@ -323,8 +325,8 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_section_break_nyo2c` | Schedule Notes | Section Break |  | - |  |  | none | **Keep** | holds 1 custom field(s) |
 | `custom_notes_for_scheduling` | Notes for Scheduling | Text Editor |  | 37/668 (6%) | 2026-11-06 | 1 (1 by people) | 4 code | **Keep** | code reads/writes it (4 files) |
 | `custom_budget` | Budget | Tab Break |  | - |  |  | setup/patch only | **Keep** | no custom field under it; hosts moved standard fields |
-| `custom_section_break_kyvkd` |  | Section Break | hidden | - |  |  | none | **Remove** | every field under it is removed (1) |
-| `custom_quickbooks_jobcode_id` | QuickBooks Jobcode ID | Data | read-only | 0/668 (0%) |  | 0 (0 by people) | 1 code | **Remove** | 0/668; QuickBooks Time job-code sync never wrote one (the webhook targets a missing Time Log) |
+| `custom_section_break_kyvkd` |  | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (1) |
+| `custom_quickbooks_jobcode_id` | QuickBooks Jobcode ID | Data | read-only | 0/668 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668; QuickBooks Time job-code sync never wrote one (the webhook targets a missing Time Log) |
 | `custom_customer_payment_section` | Customer Payment | Section Break |  | - |  |  | none | **Keep** | holds 3 custom field(s) |
 | `custom_project_estimated_amount` | Project Estimated Amount | Section Break |  | - |  |  | 1 code | **Keep** | holds 1 custom field(s) |
 | `custom_payment_received` | Payment Received | Check |  | 1/668 (0.1%) | 2026-10-09 | 1 (1 by people) | 3 code | **Keep** | code reads/writes it (3 files) |
@@ -337,7 +339,7 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_billing_email` | Billing Email | Data |  | 0/668 (0%) |  | 0 (0 by people) | 4 code | **Keep** | code reads/writes it (4 files); no row holds a value yet |
 | `custom_project_dollar_amount` | Project Dollar Amount | Currency |  | 81/668 (12%) | 2026-11-06 | 3 (3 by people) | 12 code | **Keep** | code reads/writes it (12 files) |
 | `custom_column_break_dgj8s` |  | Column Break |  | - |  |  | none | **Keep** | layout |
-| `custom_project_spend` | Project Spend | Currency |  | 0/668 (0%) |  | 0 (0 by people) | none | **Remove** | 0/668, no code |
+| `custom_project_spend` | Project Spend | Currency |  | 0/668 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/668, no code |
 | `custom_total_time_elapsed` | Total Time Elapsed | Duration | read-only | 495/668 (74%) | 2026-11-06 | 9 (9 by people) | 4 code; prod: Number Card 'Average Project Completion Time' | **Keep** | used on prod: Number Card 'Average Project Completion Time' |
 | `custom_project_estimated_cost` | Project Estimated Cost | Section Break |  | - |  |  | none | **Keep** | holds 3 custom field(s) |
 | `custom_materials_budget` | Materials Budget | Currency |  | 5/668 (0.7%) | 2026-10-30 | 0 (0 by people) | 5 code | **Keep** | code reads/writes it (5 files) |
@@ -358,7 +360,7 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_process_progress` | Process Progress | HTML |  | - |  |  | 3 code | **Keep** | rendered by code (3 files) |
 | `custom_process_steps` | Process Steps | Table |  | 113/668 (17%) | 2026-11-06 |  | 3 code | **Keep** | code reads/writes it (3 files) |
 | `custom_launch_event` | Launch Meeting Event | Link | read-only | 0/668 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/668; hand-off writes it when a launch meeting is booked |
-| `custom_misc` | Misc | Tab Break | hidden | - |  |  | none | **Remove** | hidden tabs with no fields under them |
+| `custom_misc` | Misc | Tab Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden tabs with no fields under them |
 | `custom_comments` | Comments | Tab Break |  | - |  |  | 1 code | **Keep** | holds 1 custom field(s) |
 | `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Keep** | rendered by code (10 files) |
 | `custom_section_break_unn4x` |  | Section Break |  | - |  |  | none | **Keep** | holds 14 custom field(s) |
@@ -368,20 +370,20 @@ Project carries the most customization (181 Custom Fields on prod). Three famili
 | `custom_customer_email` | CUSTOMER EMAIL | Data |  | 2/668 (0.3%) | 2026-10-12 | 0 (0 by people) | 5 code | **Merge into primary_contact_phone / primary_contact_email** | 6/2/1 of 668; code reads them only as a last-resort fallback (travel.py, project_contract.py, customer_confirmations.py) |
 | `custom_contact_phone` | CONTACT PHONE | Data |  | 1/668 (0.1%) | 2026-10-12 | 0 (0 by people) | 3 code | **Merge into primary_contact_phone / primary_contact_email** | 6/2/1 of 668; code reads them only as a last-resort fallback (travel.py, project_contract.py, customer_confirmations.py) |
 | `custom_zoho_creation_date` | Zoho Creation Date | Datetime | hidden, read-only | 343/668 (51%) | 2026-10-30 | 0 (0 by people) | 2 code | **Keep** | hidden, read-only import keys (343 and 456 of 668); keep for traceability |
-| `custom_column_break_vp5qd` |  | Column Break |  | - |  |  | none | **Remove** | legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
+| `custom_column_break_vp5qd` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
 | `custom_deliverable1` | DELIVERABLE-1 | Small Text |  | 33/668 (5%) | 2026-10-12 | 0 (0 by people) | none | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 33/668 rows hold a value; 33 projects' deliverable text becomes a Comment; then remove the empty shell in a later PR. Was Remove: Zoho import leftovers with ALL-CAPS labels; 33/22/13/7/2 of 668 filled, last write 2026-10-12 (a migration), no code reads them; archive the text to the Comments App first |
 | `custom_deliverable2` | DELIVERABLE-2 | Small Text |  | 22/668 (3%) | 2026-10-12 | 0 (0 by people) | none | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 22/668 rows hold a value; 22 projects; then remove the empty shell in a later PR. Was Remove: Zoho import leftovers with ALL-CAPS labels; 33/22/13/7/2 of 668 filled, last write 2026-10-12 (a migration), no code reads them; archive the text to the Comments App first |
 | `custom_deliverable3` | DELIVERABLE-3 | Small Text |  | 13/668 (2%) | 2026-10-12 | 0 (0 by people) | none | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 13/668 rows hold a value; 13 projects; then remove the empty shell in a later PR. Was Remove: Zoho import leftovers with ALL-CAPS labels; 33/22/13/7/2 of 668 filled, last write 2026-10-12 (a migration), no code reads them; archive the text to the Comments App first |
 | `custom_deliverable4` | DELIVERABLE-4 | Small Text |  | 7/668 (1%) | 2026-10-12 | 0 (0 by people) | none | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 7/668 rows hold a value; 7 projects; then remove the empty shell in a later PR. Was Remove: Zoho import leftovers with ALL-CAPS labels; 33/22/13/7/2 of 668 filled, last write 2026-10-12 (a migration), no code reads them; archive the text to the Comments App first |
 | `custom_deliverable5` | DELIVERABLE-5 | Small Text |  | 2/668 (0.3%) | 2026-10-12 | 0 (0 by people) | none | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 2/668 rows hold a value; 2 projects; then remove the empty shell in a later PR. Was Remove: Zoho import leftovers with ALL-CAPS labels; 33/22/13/7/2 of 668 filled, last write 2026-10-12 (a migration), no code reads them; archive the text to the Comments App first |
-| `custom_column_break_8lbte` |  | Column Break |  | - |  |  | none | **Remove** | legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
+| `custom_column_break_8lbte` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
 | `custom_zoho_projects_id` | Zoho Projects ID | Data | hidden, read-only | 456/668 (68%) | 2026-10-30 | 0 (0 by people) | none | **Keep** | hidden, read-only import keys (343 and 456 of 668); keep for traceability |
-| `custom_notes_html` | Notes HTML | HTML |  | - |  |  | none | **Remove** | legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
+| `custom_notes_html` | Notes HTML | HTML |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
 | `custom_comments_table` | Comments Table | Table | hidden | 124/668 (19%) | 2026-10-12 |  | 1 code | **Merge into Comments (the Comments App)** | re-graded (Nik, 2026-11-08): 124/668 rows hold a value; 124 projects' Project Notes rows become Comments on the project; then remove the empty shell in a later PR. Was Remove: legacy Project Notes table (hidden, 124/668, last write 2026-10-12) replaced by the Comments App; archive the rows as Comments first |
 
 ### Opportunity (855 rows on prod)
 
-117 fields: Fix 2, Hide 3, Keep 104, Merge 4, Remove 4.
+117 fields: Fix 2, Hide 7, Keep 104, Merge 4.
 
 Opportunity has three description fields (`custom_opportunity_summary`, `custom_general_scope_description` and the hidden legacy `custom_description`) and two links to the created Project. 582 of 855 rows are historical imports (`custom_is_historical`), so fill rates on fields added in 2026 should be read against the ~270 live deals. The attribution fields (`custom_utm_*`, `custom_gclid`, landing page, referrer) are 0/855 while `custom_attribution_captured_on` is 34/855: the website capture fires but the visits carried no UTM tags. They are automation fields and stay.
 
@@ -395,9 +397,9 @@ Opportunity has three description fields (`custom_opportunity_summary`, `custom_
 | `custom_opportunity_name` | Opportunity Name | Data | required, list | 855/855 (100%) | 2026-11-08 | 79 (79 by people) | 16 code; prod: two personal Report Builder reports (Closed Won, Sales Past Week) | **Keep** | used on prod: two personal Report Builder reports (Closed Won, Sales Past Week) |
 | `custom_opportunity_summary` | Opportunity Summary | Data |  | 323/855 (38%) | 2026-11-08 | 170 (170 by people) | 5 code | **Keep** | code reads/writes it (5 files) |
 | `custom_lead_source` | Lead Source | Link |  | 827/855 (97%) | 2026-11-08 | 4 (4 by people) | 13 code | **Keep** | code reads/writes it (13 files) |
-| `custom_scope_rank` | Scope Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Remove** | 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 1 125, 2 53, 3 28 |
-| `custom_schedule_rank` | Schedule Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Remove** | 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 3 88, 2 80, 1 38 |
-| `custom_budget_rank` | Budget Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Remove** | 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 3 90, 2 73, 1 43 |
+| `custom_scope_rank` | Scope Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 1 125, 2 53, 3 28 |
+| `custom_schedule_rank` | Schedule Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 3 88, 2 80, 1 38 |
+| `custom_budget_rank` | Budget Rank | Select |  | 206/855 (24%) | 2026-11-08 | 45 (45 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 206/855 filled; every Closed Won since May is ranked only because validate_ranks_on_won refuses the save without them; no report, chart, Kanban or page reads the value; values: (empty) 649, 3 90, 2 73, 1 43 |
 | `custom_date_closed_won` | Date Closed Won | Date | read-only | 119/855 (14%) | 2026-11-07 | 95 (93 by people) | 19 code; prod: a personal Report Builder report (Closed Won) | **Keep** | used on prod: a personal Report Builder report (Closed Won) |
 | `custom_stage_changed_on` | Stage Changed On | Datetime | read-only | 855/855 (100%) | 2026-11-08 | 223 (223 by people) | 7 code | **Keep** | code reads/writes it (7 files) |
 | `custom_is_historical` | Historical (pre-ERPNext) | Check | read-only | 582/855 (68%) | 2026-11-02 | 1 (1 by people) | 6 code; prod: Dashboard Charts and Number Cards filter on it | **Keep** | used on prod: Dashboard Charts and Number Cards filter on it |
@@ -503,11 +505,11 @@ Opportunity has three description fields (`custom_opportunity_summary`, `custom_
 | `custom_launch_deadline` | Project Launch Deadline | Datetime | read-only | 91/855 (11%) | 2026-11-07 | 26 (26 by people) | 2 code | **Keep** | code reads/writes it (2 files) |
 | `custom_handoff_gate_applies` | Hand-Off Gate Applies | Check | read-only | 27/855 (3%) | 2026-11-07 | 27 (27 by people) | 2 code | **Keep** | code reads/writes it (2 files) |
 | `custom_handoff_last_reminded_on` | Hand-Off Last Reminded On | Datetime | hidden, read-only | 10/855 (1%) | 2026-11-04 | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files) |
-| `custom_section_break_bqypn` | Tasks and Events | Section Break |  | - |  |  | none | **Remove** | 'Tasks and Events' section with no fields under it |
+| `custom_section_break_bqypn` | Tasks and Events | Section Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 'Tasks and Events' section with no fields under it |
 
 ### Customer (1,722 rows on prod)
 
-72 fields: Hide 5, Keep 57, Leave 1, Merge 6, Remove 3.
+72 fields: Hide 8, Keep 57, Leave 1, Merge 6.
 
 Customer is relabeled 'Account' on prod. It carries the hidden `custom_primary_*` contact set (0 to 3 rows each) that the unified Contacts & Addresses tab replaced, plus a hidden Read Only `custom_phone` fetch that nothing displays. The Stripe and dunning fields were created by `stripe_payments/setup.py` on migrate and are not in fixtures; one customer has a Stripe id.
 
@@ -557,7 +559,7 @@ Customer is relabeled 'Account' on prod. It carries the hidden `custom_primary_*
 | `location_map_html` | Location Map HTML | HTML | not in fixtures | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
 | `custom_section_break_evswr` | Other Links | Section Break |  | - |  |  | none | **Keep** | read-only link lists maintained by customer.js; they stand in for the hidden Connections tab |
 | `custom_projects` | Projects | Table MultiSelect | read-only | 82/1722 (5%) | 2026-11-07 |  | 1 code | **Keep** | read-only link lists maintained by customer.js; they stand in for the hidden Connections tab |
-| `custom_leads` | Leads | Table MultiSelect | read-only | 0/1722 (0%) |  |  | 1 code | **Remove** | 0/1722 rows in the read-only Leads list |
+| `custom_leads` | Leads | Table MultiSelect | read-only | 0/1722 (0%) |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1722 rows in the read-only Leads list |
 | `custom_column_break_xxa0r` |  | Column Break |  | - |  |  | none | **Keep** | read-only link lists maintained by customer.js; they stand in for the hidden Connections tab |
 | `custom_opportunities` | Opportunities | Table MultiSelect | read-only | 211/1722 (12%) | 2026-11-07 |  | 2 code | **Keep** | read-only link lists maintained by customer.js; they stand in for the hidden Connections tab |
 | `custom_activity_reminder` | Activity Reminder | Section Break |  | - |  |  | none | **Keep** | holds 3 custom field(s) |
@@ -571,11 +573,11 @@ Customer is relabeled 'Account' on prod. It carries the hidden `custom_primary_*
 | `custom_billing_address` | Billing Address | Link |  | 63/1722 (4%) | 2026-11-07 | 0 (0 by people) | 4 code | **Keep** | code reads/writes it (4 files) |
 | `custom_shipping_address` | Shipping Address | Link |  | 25/1722 (1%) | 2026-10-26 | 0 (0 by people) | setup/patch only | **Hide** | re-graded (Nik, 2026-11-08): 25/1722 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: 25/1722, no live code (only the 2026 contact-data migration); the Address Directory lists the addresses |
 | `custom_map_placeholder` | Map Placeholder | HTML |  | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
-| `custom_contacts` | Contacts | Section Break | hidden | - |  |  | none | **Remove** | 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
+| `custom_contacts` | Contacts | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
 | `custom_primary_contact` | Primary Contact | Section Break | hidden | - |  |  | none | **Hide** | every field under it is hidden, merged or removed (4); the break goes when the last field does |
 | `custom_primary_first_name` | Full Name | Data |  | 3/1722 (0.2%) | 2026-06-23 | 0 (0 by people) | 2 code | **Merge into primary_contact** | re-graded (Nik, 2026-11-08): 3/1722 rows hold a value; 3 names; then remove the empty shell in a later PR. Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
 | `custom_primary_position` | Job Title | Data |  | 2/1722 (0.1%) | 2026-04-08 | 0 (0 by people) | none | **Merge into primary_contact_job_title** | re-graded (Nik, 2026-11-08): 2/1722 rows hold a value; 2 titles; then remove the empty shell in a later PR. Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
-| `custom_column_break_z913g` |  | Column Break |  | - |  |  | none | **Remove** | 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
+| `custom_column_break_z913g` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
 | `custom_primary_phone` | Phone | Data |  | 1/1722 (0.1%) | 2026-06-23 | 0 (0 by people) | 4 code | **Merge into primary_contact_phone** | re-graded (Nik, 2026-11-08): 1/1722 rows hold a value; 1 number; then remove the empty shell in a later PR. Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
 | `custom_primary_email_address` | Email Address | Data |  | 1/1722 (0.1%) | 2026-04-08 | 0 (0 by people) | 4 code | **Merge into primary_contact_email** | re-graded (Nik, 2026-11-08): 1/1722 rows hold a value; 1 address; then remove the empty shell in a later PR. Was Remove: 3/2/1/1 of 1722; superseded by primary_contact_* (desk_search.py, travel.py and normalize_fields.py still list them) |
 | `custom_section_break_bhxic` |  | Section Break | hidden | - |  |  | none | **Hide** | every field under it is hidden, merged or removed (1); the break goes when the last field does |
@@ -588,7 +590,7 @@ Customer is relabeled 'Account' on prod. It carries the hidden `custom_primary_*
 
 ### Supplier (1,214 rows on prod)
 
-42 fields: Hide 3, Keep 29, Leave 1, Remove 9.
+42 fields: Hide 12, Keep 29, Leave 1.
 
 Supplier mirrors Customer: a hidden `custom_primary_contact` section with four empty duplicates of the `primary_contact_*` set, a hidden Stakeholders table with 3 rows, and the supplier-group search fields that `setup/supplier_groups.py` creates on migrate (not in fixtures).
 
@@ -613,21 +615,21 @@ Supplier mirrors Customer: a hidden `custom_primary_contact` section with four e
 | `primary_contact_email` | Email Address | Data | not in fixtures | 3/1214 (0.2%) | 2026-08-31 | 4 (4 by people) | 6 code | **Keep** | code reads/writes it (6 files) |
 | `address_and_contact` | Address and Contact | HTML | not in fixtures | - |  |  | 1 code | **Keep** | rendered by code (1 files) |
 | `custom_quality_section` | Quality | Section Break |  | - |  |  | none | **Keep** | 0/1214; quality/scorecard_build.py writes them (subcontractor scorecards, new) |
-| `custom_section_break_gl6o7` |  | Section Break | hidden | - |  |  | none | **Remove** | hidden, unlabeled, empty section |
+| `custom_section_break_gl6o7` |  | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden, unlabeled, empty section |
 | `custom_scorecard_summary` | Latest scorecard | Data | read-only | 0/1214 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/1214; quality/scorecard_build.py writes them (subcontractor scorecards, new) |
 | `custom_scorecard_state` | Measurability | Select | read-only | 0/1214 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/1214; quality/scorecard_build.py writes them (subcontractor scorecards, new); values: (empty) 1214 |
 | `custom_latest_scorecard` | Scorecard | Link | read-only | 0/1214 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/1214; quality/scorecard_build.py writes them (subcontractor scorecards, new) |
-| `custom_column_break_ycp3n` |  | Column Break |  | - |  |  | none | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
+| `custom_column_break_ycp3n` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
 | `location_map_col_break` |  | Column Break | not in fixtures | - |  |  | setup/patch only | **Keep** | layout |
-| `custom_column_break_rrn0r` |  | Column Break |  | - |  |  | none | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
-| `custom_primary_contact` | Primary Contact | Section Break | hidden | - |  |  | none | **Remove** | every field under it is removed (4) |
-| `custom_full_name` | Full Name | Data |  | 0/1214 (0%) |  | 0 (0 by people) | none | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
-| `custom_job_title` | Job Title | Data |  | 0/1214 (0%) |  | 0 (0 by people) | none | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
-| `custom_column_break_ncqbr` |  | Column Break |  | - |  |  | none | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
+| `custom_column_break_rrn0r` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
+| `custom_primary_contact` | Primary Contact | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (4) |
+| `custom_full_name` | Full Name | Data |  | 0/1214 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
+| `custom_job_title` | Job Title | Data |  | 0/1214 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
+| `custom_column_break_ncqbr` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
 | `section_break_address_list` | Address Directory | Section Break | not in fixtures | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
-| `custom_phone` | Phone | Data |  | 0/1214 (0%) |  | 0 (0 by people) | 2 code | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
+| `custom_phone` | Phone | Data |  | 0/1214 (0%) |  | 0 (0 by people) | 2 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
 | `address_list_html` | Address List HTML | HTML | not in fixtures | - |  |  | 6 code | **Keep** | rendered by code (6 files) |
-| `custom_email_address` | Email Address | Data |  | 0/1214 (0%) |  | 0 (0 by people) | 2 code | **Remove** | 0/1214 on all four; superseded by primary_contact_* |
+| `custom_email_address` | Email Address | Data |  | 0/1214 (0%) |  | 0 (0 by people) | 2 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1214 on all four; superseded by primary_contact_* |
 | `custom_addresses` |  | Section Break | hidden | - |  |  | none | **Hide** | every field under it is hidden, merged or removed (1); the break goes when the last field does |
 | `custom_address_list` | Table | Table |  | 3/1214 (0.2%) | 2026-06-12 |  | none | **Hide** | re-graded (Nik, 2026-11-08): 3/1214 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: hidden Stakeholders table, 3/1214 |
 | `contacts_and_addresses_tab` | Contacts & Addresses | Tab Break | not in fixtures | - |  |  | setup/patch only | **Keep** | holds 5 custom field(s) |
@@ -639,7 +641,7 @@ Supplier mirrors Customer: a hidden `custom_primary_contact` section with four e
 
 ### Item (1,574 rows on prod)
 
-82 fields: Fix 1, Keep 73, Merge 7, Remove 1.
+82 fields: Fix 1, Hide 1, Keep 73, Merge 7.
 
 66 of Item's 82 Custom Fields are the aquatic-equipment spec schema that `water_engineering/setup.py` creates on migrate (not in fixtures). The catalog load has filled the pump, light and aerator fields (19 to 392 rows); the heater, filter, meter, VGB and chemical feed fields hold 0 to 3 rows because the catalog has not reached those classes yet, so they are Keep with that caveat. The duplicates are the pump-specific electrical fields (`custom_pump_hp`, `custom_pump_voltage`, `custom_pump_phase`, `custom_pump_fla_amps`) beside the generic `custom_elec_*` set, two Cut Sheet attachments and two pump-curve HTML widgets.
 
@@ -659,7 +661,7 @@ Supplier mirrors Customer: a hidden `custom_primary_contact` section with four e
 | `custom_elec_phase` | Phase | Select | not in fixtures | 2/1574 (0.1%) | 2026-08-28 | 0 (0 by people) | setup/patch only | **Keep** | aquatic-equipment spec schema created by water_engineering/setup.py (2026-08-28); 0 to 3 rows because the catalog load has not reached this equipment class yet; review again when it has; values: (empty) 1572, 1 2 |
 | `custom_elec_watts` | Watts | Float | not in fixtures | 36/1574 (2%) | 2026-11-02 | 0 (0 by people) | 2 code | **Keep** | automation writes it (2 files) |
 | `custom_meter_kind` | Meter Kind | Select | not in fixtures | 3/1574 (0.2%) | 2026-08-28 | 0 (0 by people) | setup/patch only | **Keep** | aquatic-equipment spec schema created by water_engineering/setup.py (2026-08-28); 0 to 3 rows because the catalog load has not reached this equipment class yet; review again when it has; values: (empty) 1571, Flowmeter 1, Thermometer 1, Vacuum 1 |
-| `custom_pump_curve` | Pump Curve (legacy table) | Table | not in fixtures | 0/1574 (0%) |  |  | 3 code | **Remove** | labeled 'legacy table', 0/1574 rows after patches/migrate_item_pump_curves.py moved them |
+| `custom_pump_curve` | Pump Curve (legacy table) | Table | not in fixtures | 0/1574 (0%) |  |  | 3 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: labeled 'legacy table', 0/1574 rows after patches/migrate_item_pump_curves.py moved them |
 | `custom_pump_phase` | Phase | Select | not in fixtures | 127/1574 (8%) | 2026-11-02 | 7 (7 by people) | 1 code | **Merge into custom_elec_phase** | two 'Phase' fields (127 vs 2); values: (empty) 1447, 1 70, 3 57 |
 | `custom_ul_listing` | UL / ETL Listing | Data | not in fixtures | 165/1574 (10%) | 2026-11-02 | 3 (3 by people) | 2 code | **Keep** | automation writes it (2 files) |
 | `custom_heater_fuel` | Heater Fuel | Select | not in fixtures | 2/1574 (0.1%) | 2026-08-28 | 0 (0 by people) | setup/patch only | **Keep** | aquatic-equipment spec schema created by water_engineering/setup.py (2026-08-28); 0 to 3 rows because the catalog load has not reached this equipment class yet; review again when it has; values: (empty) 1572, Electric 1, Gas 1 |
@@ -823,21 +825,21 @@ Own fields of the app's DocType (35 visits on prod, module live since October). 
 
 ### Account (392 rows on prod)
 
-9 fields: Remove 9.
+9 fields: Hide 9.
 
-This is the chart-of-accounts DocType, not the Customer that is relabeled 'Account'. On 2026-04-20 it received the Customer's Primary Contact section, contact widgets and a Comments tab (9 Custom Fields, none in fixtures). 0 of 392 accounts hold a value. Remove all nine.
+This is the chart-of-accounts DocType, not the Customer that is relabeled 'Account'. On 2026-04-20 it received the Customer's Primary Contact section, contact widgets and a Comments tab (9 Custom Fields, none in fixtures). 0 of 392 accounts hold a value. Hide all nine.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_comments_tab` | Comments | Tab Break |  | - |  |  | setup/patch only | **Remove** | every field under it is removed (1) |
-| `primary_contact_section` | Primary Contact | Section Break | not in fixtures | - |  |  | 1 code | **Remove** | every field under it is removed (5) |
-| `primary_contact` | Full Name | Link | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 14 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `primary_contact_job_title` | Job Title | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 3 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `primary_contact_col_break` |  | Column Break | not in fixtures | - |  |  | none | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `primary_contact_phone` | Phone | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 4 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `primary_contact_email` | Email Address | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 6 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `address_and_contact` | Address and Contact | HTML | not in fixtures | - |  |  | 1 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
-| `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Remove** | the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `custom_comments_tab` | Comments | Tab Break |  | - |  |  | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (1) |
+| `primary_contact_section` | Primary Contact | Section Break | not in fixtures | - |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (5) |
+| `primary_contact` | Full Name | Link | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 14 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `primary_contact_job_title` | Job Title | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 3 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `primary_contact_col_break` |  | Column Break | not in fixtures | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `primary_contact_phone` | Phone | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `primary_contact_email` | Email Address | Data | not in fixtures | 0/392 (0%) |  | 0 (0 by people) | 6 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `address_and_contact` | Address and Contact | HTML | not in fixtures | - |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
+| `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: the chart-of-accounts doctype got the Customer ('Account') contact tab by mistake on 2026-04-20: 0/392 filled |
 
 ### Address (905 rows on prod)
 
@@ -860,18 +862,18 @@ This is the chart-of-accounts DocType, not the Customer that is relabeled 'Accou
 
 ### Asset (10 rows on prod)
 
-13 fields: Keep 7, Remove 6.
+13 fields: Hide 6, Keep 7.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `custom_current_event_location` | Current Event Location | Data |  | 0/10 (0%) |  | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files); no row holds a value yet |
 | `custom_map_placeholder` | Map Placeholder | HTML |  | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
-| `custom_pump_make_model` | Pump Make/Model | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
-| `custom_filtration_media_type` | Filtration Media Type | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
-| `custom_water_volume` | Water Volume | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
-| `custom_site_instructions` | Site Instructions | Small Text |  | 0/10 (0%) |  | 0 (0 by people) | 3 code | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
-| `custom_under_warranty` | Under Warranty | Check |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
-| `custom_warranty_expiry_date` | Warranty Expiry Date | Date |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_pump_make_model` | Pump Make/Model | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_filtration_media_type` | Filtration Media Type | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_water_volume` | Water Volume | Data |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_site_instructions` | Site Instructions | Small Text |  | 0/10 (0%) |  | 0 (0 by people) | 3 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_under_warranty` | Under Warranty | Check |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
+| `custom_warranty_expiry_date` | Warranty Expiry Date | Date |  | 0/10 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/10; migrated to Serial No by patches/migrate_assets_to_serial_no.py |
 | `custom_rental_status` | Rental Status | Select | read-only | 10/10 (100%) | 2026-09-14 | 0 (0 by people) | 2 code | **Keep** | code reads/writes it (2 files); values: Available 10 |
 | `custom_rentable` | Available for Event Rental | Check |  | 10/10 (100%) | 2026-09-14 | 0 (0 by people) | 2 code | **Keep** | code reads/writes it (2 files) |
 | `custom_rental_prep_hours` | Rental Prep Hours | Int |  | 0/10 (0%) |  | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files); no row holds a value yet |
@@ -880,12 +882,12 @@ This is the chart-of-accounts DocType, not the Customer that is relabeled 'Accou
 
 ### Assignment Rule (3 rows on prod)
 
-2 fields: Hide 1, Remove 1.
+2 fields: Hide 2.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `assign_condition_json` | Assign Condition JSON | Code | not in fixtures | 3/3 (100%) | 2026-02-07 | 0 (0 by people) | none | **Hide** | re-graded (Nik, 2026-11-08): 3/3 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: Helpdesk app leftovers; Helpdesk is uninstalled and its three rules are disabled |
-| `unassign_condition_json` | Unassign Condition JSON | Code | not in fixtures | 0/3 (0%) |  | 0 (0 by people) | none | **Remove** | Helpdesk app leftovers; Helpdesk is uninstalled and its three rules are disabled |
+| `unassign_condition_json` | Unassign Condition JSON | Code | not in fixtures | 0/3 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: Helpdesk app leftovers; Helpdesk is uninstalled and its three rules are disabled |
 
 ### Batch
 
@@ -898,19 +900,19 @@ This is the chart-of-accounts DocType, not the Customer that is relabeled 'Accou
 
 ### CRM Deal
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `erpnext_customer` | Customer in ERPNext | Data | not in fixtures | n/a |  | n/a | 6 code | **Remove** | frappe CRM leftover; tabCRM Deal no longer exists |
+| `erpnext_customer` | Customer in ERPNext | Data | not in fixtures | n/a |  | n/a | 6 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: frappe CRM leftover; tabCRM Deal no longer exists |
 
 ### CRM Note (1,092 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_attachment` | Attachment | Attach |  | 0/1092 (0%) |  | 0 (0 by people) | none | **Remove** | 0/1092, no code |
+| `custom_attachment` | Attachment | Attach |  | 0/1092 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1092, no code |
 
 ### Call Log (204 rows on prod)
 
@@ -952,7 +954,7 @@ This is the chart-of-accounts DocType, not the Customer that is relabeled 'Accou
 
 ### Contact (2,879 rows on prod)
 
-30 fields: Fix 1, Hide 6, Keep 19, Remove 4.
+30 fields: Fix 1, Hide 10, Keep 19.
 
 The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables with flat fields (`custom_email`, `custom_phone_number`, `custom_mobile_number`) and hid the standard ones with Property Setters; that is a design decision, not a duplicate. The dead weight, hidden under the grading rule because each holds a few values, is the legacy set (`custom_vendor_name`, `custom_full_name_and_title`, `custom_date_of_birth`, `custom_disabled`) and a second, empty Comments tab.
 
@@ -967,16 +969,16 @@ The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables wit
 | `custom_full_name_and_title` | Full Name and Title | Data | hidden, read-only | 1/2879 (0.0%) | 2025-10-19 | 0 (0 by people) | none | **Hide** | re-graded (Nik, 2026-11-08): 1/2879 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: hidden, 1/2879; custom_full_name_and_role (2879/2879) is the live computed title |
 | `custom_account` | Account | Link | list | 1884/2879 (65%) | 2026-11-07 | 31 (22 by people) | 6 code | **Keep** | code reads/writes it (6 files) |
 | `custom_title` | Title | Data |  | 1218/2879 (42%) | 2026-11-07 | 41 (41 by people) | 5 code | **Keep** | code reads/writes it (5 files) |
-| `custom_date_of_birth` | Date of Birth | Date |  | 0/2879 (0%) |  | 0 (0 by people) | none | **Remove** | 0/2879, no code |
+| `custom_date_of_birth` | Date of Birth | Date |  | 0/2879 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/2879, no code |
 | `custom_mobile_number` | Contact Mobile Number | Data | list | 834/2879 (29%) | 2026-11-07 | 12 (10 by people) | 11 code | **Keep** | the app's flat replacements for ERPNext's email_ids/phone_nos tables (hidden by setters); 1769/1400/834 of 2879 |
 | `custom_phone_number` | Phone Number | Data | list | 1400/2879 (49%) | 2026-11-07 | 36 (34 by people) | 18 code | **Keep** | the app's flat replacements for ERPNext's email_ids/phone_nos tables (hidden by setters); 1769/1400/834 of 2879 |
 | `custom_description` | Description | Small Text |  | 262/2879 (9%) | 2026-11-02 | 20 (20 by people) | 2 code | **Keep** | code reads/writes it (2 files) |
 | `custom_comments_tab` | Additional Information | Tab Break |  | - |  |  | setup/patch only | **Fix label** | labeled 'Additional Information' while every other doctype calls the same tab 'Comments' |
 | `is_billing_contact` | Is Billing Contact | Check | not in fixtures | 7/2879 (0.2%) | 2026-10-29 | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files) |
 | `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Keep** | rendered by code (10 files) |
-| `custom_more_information` | More Information | Section Break | hidden | - |  |  | none | **Remove** | hidden empty section |
+| `custom_more_information` | More Information | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden empty section |
 | `custom_zoho_contact_id` | Zoho Contact ID | Data | hidden, read-only | 1433/2879 (50%) | 2026-11-07 | 0 (0 by people) | none | **Keep** | hidden import key, 1433/2879 |
-| `custom_column_break_byvnt` |  | Column Break |  | - |  |  | none | **Remove** | hidden empty section |
+| `custom_column_break_byvnt` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden empty section |
 | `custom_full_name_and_role` | Full Name and Role | Data | read-only | 2879/2879 (100%) | 2026-11-07 | 0 (0 by people) | 3 code | **Keep** | code reads/writes it (3 files) |
 | `custom_home_phone` | Home Phone | Data |  | 12/2879 (0.4%) | 2025-10-19 | 0 (0 by people) | 2 code | **Hide** | 67/12/6 of 2879, no human edit in 180 days; desk search still matches them |
 | `section_break_map` | Location | Section Break | not in fixtures | - |  |  | 2 code | **Keep** | holds 2 custom field(s) |
@@ -985,7 +987,7 @@ The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables wit
 | `location_map_html` | Location Map HTML | HTML | not in fixtures | - |  |  | 2 code | **Keep** | rendered by code (2 files) |
 | `location_map_col_break` |  | Column Break | not in fixtures | - |  |  | setup/patch only | **Keep** | layout |
 | `custom_disabled` | Disabled | Check |  | 1/2879 (0.0%) | 2025-10-28 | 0 (0 by people) | none | **Hide** | re-graded (Nik, 2026-11-08): 1/2879 rows hold a value, so the field leaves the form and the column and data stay. Was Remove: 1/2879, no code |
-| `custom_comments` | Comments | Tab Break |  | - |  |  | 1 code | **Remove** | second 'Comments' tab with nothing under it; the Comments App sits in custom_comments_tab |
+| `custom_comments` | Comments | Tab Break |  | - |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: second 'Comments' tab with nothing under it; the Comments App sits in custom_comments_tab |
 | `section_break_address_list` | Address Directory | Section Break | not in fixtures | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
 | `address_list_html` | Address List HTML | HTML | not in fixtures | - |  |  | 6 code | **Keep** | rendered by code (6 files) |
 
@@ -1033,11 +1035,11 @@ The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables wit
 
 ### Employee (22 rows on prod)
 
-15 fields: Keep 14, Remove 1.
+15 fields: Hide 1, Keep 14.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_quickbooks_user_id` | QuickBooks User ID | Data | read-only | 0/22 (0%) |  | 0 (0 by people) | 1 code | **Remove** | 0/22; the QuickBooks Time integration never mapped a user |
+| `custom_quickbooks_user_id` | QuickBooks User ID | Data | read-only | 0/22 (0%) |  | 0 (0 by people) | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/22; the QuickBooks Time integration never mapped a user |
 | `custom_default_vehicle_warehouse` | Default Vehicle Warehouse | Link |  | 0/22 (0%) |  | 0 (0 by people) | 2 code | **Keep** | code reads/writes it (2 files); no row holds a value yet |
 | `custom_managed_devices_section` | Assigned Devices | Section Break | not in fixtures | - |  |  | setup/patch only | **Keep** | holds 1 custom field(s) |
 | `custom_managed_devices_html` | Assigned Devices | HTML | not in fixtures | - |  |  | 1 code | **Keep** | rendered by code (1 files) |
@@ -1081,11 +1083,11 @@ The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables wit
 
 ### Issue (1 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_zoho_issue_id` | Zoho Issue ID | Data | hidden, read-only | 0/1 (0%) |  | 0 (0 by people) | none | **Remove** | 0/1; Issues are not used |
+| `custom_zoho_issue_id` | Zoho Issue ID | Data | hidden, read-only | 0/1 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/1; Issues are not used |
 
 ### Item Supplier (226 rows on prod)
 
@@ -1115,23 +1117,23 @@ The app deliberately replaced ERPNext's `email_ids`/`phone_nos` child tables wit
 
 ### Kanban Board (13 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_swimlane_field` | Swimlane Field | Data |  | 0/13 (0%) |  | 0 (0 by people) | none | **Remove** | 0/13, no code |
+| `custom_swimlane_field` | Swimlane Field | Data |  | 0/13 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/13, no code |
 
 ### Kanban Board Column (88 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_wip_limit` | WIP Limit | Int |  | 0/88 (0%) |  | 0 (0 by people) | none | **Remove** | 0/88, no code |
+| `custom_wip_limit` | WIP Limit | Int |  | 0/88 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/88, no code |
 
 ### Lead (227 rows on prod)
 
-74 fields: Keep 41, Merge 12, Remove 21.
+74 fields: Hide 21, Keep 41, Merge 12.
 
 Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 days) and the most duplicated: seven `custom_contact_*`/`custom_account_*` fields repeat standard Lead fields (`first_name`, `last_name`, `email_id`, `phone`, `job_title`, `company_name`, `website`), four `custom_primary_*` fields are empty duplicates of those, and the `primary_contact_*` set from the 2026-04 contact migration is 0/227 because `setup/custom_fields.py` never meant to give Lead the unified tab. Nearly every value was written by the Zoho import.
 
@@ -1145,15 +1147,15 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 | `custom_first_response_at` | First Response At | Datetime | read-only | 0/227 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/227; lead triage SLA writes them |
 | `custom_sla_alert` | SLA Alert | Select | read-only | 0/227 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/227; lead triage SLA writes them; values: (empty) 227 |
 | `custom_contact_first_name` | Contact First Name | Data | hidden, list | 178/227 (78%) | 2026-10-06 | 0 (0 by people) | 1 code | **Merge into first_name / last_name** | 178/184 of 227 duplicate the standard name fields |
-| `custom_website_lead_fields` | Website Lead Fields | Section Break | hidden | - |  |  | none | **Remove** | hidden section, 0/227, no code |
-| `custom_website_image_links` | Website Image Links | Text Editor |  | 0/227 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | hidden section, 0/227, no code |
+| `custom_website_lead_fields` | Website Lead Fields | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden section, 0/227, no code |
+| `custom_website_image_links` | Website Image Links | Text Editor |  | 0/227 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: hidden section, 0/227, no code |
 | `custom_address_line_1` | Address Line 1 | Data |  | 7/227 (3%) | 2026-10-06 | 0 (0 by people) | 1 code | **Merge into Address** | 7/1/7 of 227; conversion.py copies them into an Address record |
 | `custom_address_line_2` | Address Line 2 | Data |  | 1/227 (0.4%) | 2025-10-19 | 0 (0 by people) | 1 code | **Merge into Address** | 7/1/7 of 227; conversion.py copies them into an Address record |
 | `custom_postal_code` | Postal Code | Data |  | 7/227 (3%) | 2026-10-06 | 0 (0 by people) | 1 code | **Merge into Address** | 7/1/7 of 227; conversion.py copies them into an Address record |
 | `custom_rental_start_date` | Rental Start Date | Date |  | 0/227 (0%) |  | 0 (0 by people) | 2 code | **Keep** | 0/227; the website rental request writes them |
 | `custom_rental_end_date` | Rental End Date | Date |  | 0/227 (0%) |  | 0 (0 by people) | 2 code | **Keep** | 0/227; the website rental request writes them |
 | `custom_venue_zip_code` | Venue Zip Code | Data |  | 0/227 (0%) |  | 0 (0 by people) | 1 code | **Keep** | 0/227; the website rental request writes them |
-| `custom_product_interested_in` | Product Interested In | Small Text |  | 0/227 (0%) |  | 0 (0 by people) | none | **Remove** | 0/227, no code |
+| `custom_product_interested_in` | Product Interested In | Small Text |  | 0/227 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227, no code |
 | `custom_column_break_uhw2x` |  | Column Break |  | - |  |  | none | **Keep** | layout |
 | `custom_column_break_npwcq` |  | Column Break |  | - |  |  | none | **Keep** | layout |
 | `custom_contact_email` | Contact Email | Data | list | 164/227 (72%) | 2026-10-06 | 0 (0 by people) | 3 code | **Merge into email_id / phone** | 164/157 of 227 duplicate the standard fields |
@@ -1170,10 +1172,10 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 | `custom_account_website` | Account Website | Data |  | 16/227 (7%) | 2025-10-19 | 0 (0 by people) | 2 code | **Merge into website** | 16/227 duplicates the standard website field |
 | `custom_column_break_bf7wx` |  | Column Break |  | - |  |  | none | **Keep** | layout |
 | `custom_account_type` | Account Type | Select |  | 18/227 (8%) | 2026-10-29 | 1 (1 by people) | 1 code | **Keep** | code reads/writes it (1 files); values: (empty) 209, Commercial 13, Residential 5 |
-| `custom_lead_information` | Lead Information | Section Break |  | - |  |  | none | **Remove** | sections and a tab with no fields under them |
+| `custom_lead_information` | Lead Information | Section Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: sections and a tab with no fields under them |
 | `custom_section_break_z3gle` | Lead Details | Section Break |  | - |  |  | none | **Keep** | holds 1 custom field(s) |
 | `custom_lead_details` | Lead Details | Text Editor |  | 38/227 (17%) | 2026-10-06 | 3 (3 by people) | 2 code; prod: Web Form 'contact-us' (unpublished) | **Keep** | used on prod: Web Form 'contact-us' (unpublished) |
-| `custom_section_break_yal3u` |  | Section Break | hidden | - |  |  | none | **Remove** | sections and a tab with no fields under them |
+| `custom_section_break_yal3u` |  | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: sections and a tab with no fields under them |
 | `custom_lead_source_details` | Lead Source Details | Small Text | hidden | 10/227 (4%) | 2026-10-06 | 0 (0 by people) | 1 code | **Keep** | hidden; conversion.py reads it |
 | `custom_lead_source` | Lead Source | Link |  | 225/227 (99%) | 2026-10-06 | 0 (0 by people) | 13 code | **Keep** | code reads/writes it (13 files) |
 | `custom_attribution_section` | Attribution | Section Break |  | - |  |  | 1 code | **Keep** | holds 10 custom field(s) |
@@ -1190,25 +1192,25 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 | `custom_attribution_captured_on` | Attribution Captured On | Datetime | read-only | 0/227 (0%) |  | 0 (0 by people) | 6 code | **Keep** | code reads/writes it (6 files); no row holds a value yet |
 | `custom_zoho_id` | Zoho ID | Data | read-only | 186/227 (82%) | 2026-06-22 | 0 (0 by people) | none | **Keep** | import key, 186/227 |
 | `custom_travel_trip` | Created from Travel Trip | Link | read-only | 0/227 (0%) |  | 0 (0 by people) | 4 code | **Keep** | code reads/writes it (4 files); no row holds a value yet |
-| `primary_contact_section` | Primary Contact | Section Break | not in fixtures | - |  |  | 1 code | **Remove** | every field under it is removed (5) |
-| `primary_contact` | Full Name | Link | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 14 code | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `primary_contact_job_title` | Job Title | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 3 code | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `primary_contact_col_break` |  | Column Break | not in fixtures | - |  |  | none | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `primary_contact_phone` | Phone | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 4 code | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `primary_contact_email` | Email Address | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 6 code | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `address_and_contact` | Address and Contact | HTML | not in fixtures | - |  |  | 1 code | **Remove** | 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
-| `custom_contacts__addresses_personal` | Contacts & Addresses | Tab Break | hidden | - |  |  | none | **Remove** | sections and a tab with no fields under them |
+| `primary_contact_section` | Primary Contact | Section Break | not in fixtures | - |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (5) |
+| `primary_contact` | Full Name | Link | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 14 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `primary_contact_job_title` | Job Title | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 3 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `primary_contact_col_break` |  | Column Break | not in fixtures | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `primary_contact_phone` | Phone | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `primary_contact_email` | Email Address | Data | not in fixtures | 0/227 (0%) |  | 0 (0 by people) | 6 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `address_and_contact` | Address and Contact | HTML | not in fixtures | - |  |  | 1 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227; Lead is not in setup/custom_fields.py's unified-tab matrix, these came from the 2026-04 contact migration |
+| `custom_contacts__addresses_personal` | Contacts & Addresses | Tab Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: sections and a tab with no fields under them |
 | `custom_contact_details` | Contact Details | Section Break |  | - |  |  | none | **Keep** | holds 2 custom field(s) |
 | `custom_contact_link` | Contact Link | Link | hidden, read-only | 178/227 (78%) | 2026-10-06 | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files) |
 | `custom_opportunity` | Opportunity | Link | read-only | 14/227 (6%) | 2026-10-06 | 0 (0 by people) | 20 code | **Keep** | code reads/writes it (20 files) |
-| `custom_primary_contact` | Primary Contact | Section Break | hidden | - |  |  | none | **Remove** | every field under it is removed (4) |
-| `custom_full_name` | Full Name | Data |  | 0/227 (0%) |  | 0 (0 by people) | none | **Remove** | 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
-| `custom_primary_job_title` | Job Title | Data |  | 0/227 (0%) |  | 0 (0 by people) | none | **Remove** | 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
-| `custom_column_break_gxi32` |  | Column Break |  | - |  |  | none | **Remove** | 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
-| `custom_primary_phone` | Phone | Data |  | 0/227 (0%) |  | 0 (0 by people) | 4 code | **Remove** | 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
-| `custom_email_address` | Email Address | Data |  | 0/227 (0%) |  | 0 (0 by people) | 2 code | **Remove** | 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
-| `custom_section_break_qnpv9` |  | Section Break |  | - |  |  | none | **Remove** | every field under it is removed (1) |
-| `custom_custom_table` | Custom Table | Table |  | 0/227 (0%) |  |  | none | **Remove** | 'Custom Table' (Project Stakeholder), 0/227 |
+| `custom_primary_contact` | Primary Contact | Section Break | hidden | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (4) |
+| `custom_full_name` | Full Name | Data |  | 0/227 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
+| `custom_primary_job_title` | Job Title | Data |  | 0/227 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
+| `custom_column_break_gxi32` |  | Column Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
+| `custom_primary_phone` | Phone | Data |  | 0/227 (0%) |  | 0 (0 by people) | 4 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
+| `custom_email_address` | Email Address | Data |  | 0/227 (0%) |  | 0 (0 by people) | 2 code | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/227 on all four; duplicates of the standard lead_name, job_title, phone and email_id |
+| `custom_section_break_qnpv9` |  | Section Break |  | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: every field under it is removed (1) |
+| `custom_custom_table` | Custom Table | Table |  | 0/227 (0%) |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 'Custom Table' (Project Stakeholder), 0/227 |
 | `custom_comments` | Comments | Tab Break |  | - |  |  | 1 code | **Keep** | holds 1 custom field(s) |
 | `custom_comments_field` | Comments App | HTML |  | - |  |  | 10 code | **Keep** | rendered by code (10 files) |
 
@@ -1332,12 +1334,12 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 
 ### Purchase Order Item (700 rows on prod)
 
-3 fields: Keep 2, Remove 1.
+3 fields: Hide 1, Keep 2.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `purchase_links` | Buy | HTML | read-only, list, not in fixtures | - |  |  | 1 code | **Keep** | rendered by code (1 files) |
-| `custom_item_status` | Item Status | Select |  | 0/700 (0%) |  | 0 (0 by people) | setup/patch only | **Remove** | 0/700, no live code; values: (empty) 700 |
+| `custom_item_status` | Item Status | Select |  | 0/700 (0%) |  | 0 (0 by people) | setup/patch only | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/700, no live code; values: (empty) 700 |
 | `custom_budget_category` | Budget Category | Link |  | 0/700 (0%) |  | 0 (0 by people) | 1 code | **Keep** | code reads/writes it (1 files); no row holds a value yet |
 
 ### Purchase Receipt (184 rows on prod)
@@ -1517,11 +1519,11 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 
 ### Supplier Quotation Item (51 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `custom_required_by` | Required By | Date |  | 0/51 (0%) |  | 0 (0 by people) | none | **Remove** | 0/51, no code |
+| `custom_required_by` | Required By | Date |  | 0/51 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: 0/51, no code |
 
 ### Timesheet
 
@@ -1554,23 +1556,23 @@ Lead is the least-used of the party doctypes (227 rows, 11 Version rows in 180 d
 
 ### UTM Campaign (0 rows on prod)
 
-1 fields: Remove 1.
+1 fields: Hide 1.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| `crm_campaign` | Messaging CRM Campagin | Link | not in fixtures | 0 rows |  | 0 (0 by people) | none | **Remove** | frappe CRM leftover, 0 rows |
+| `crm_campaign` | Messaging CRM Campagin | Link | not in fixtures | 0 rows |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: frappe CRM leftover, 0 rows |
 
 ### User (48 rows on prod)
 
-5 fields: Keep 1, Leave 2, Remove 2.
+5 fields: Hide 2, Keep 1, Leave 2.
 
 | Field | Label | Type | Flags | Filled / rows | Last value edit | Versions 180d | Read by | Recommendation | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `assistant_enabled` | Enable Assistant Access | Check | not in fixtures | 44/48 (92%) | 2026-11-06 | 5 (5 by people) | setup/patch only | **Leave (FAC)** | Frappe Assistant Core's field; hooks.py reads it |
 | `cover_image` | Cover Image | Attach Image | not in fixtures | 0/48 (0%) |  | 0 (0 by people) | 4 code | **Leave (other app)** | the training player reads it |
 | `custom_dock_profile` | Dock Profile | Select |  | 3/48 (6%) | 2026-10-29 | 4 (4 by people) | setup/patch only | **Keep** | 3/48; setup/dock_profiles.py and hooks.py apply it to the Desk dock; values: (empty) 45, CEO 1, Management 1, Purchasing 1 |
-| `twitter` | Twitter ID | Data | not in fixtures | 0/48 (0%) |  | 0 (0 by people) | none | **Remove** | orphans from an uninstalled app, 0/48 |
-| `work_environment` | Work Environment | Section Break | not in fixtures | - |  |  | none | **Remove** | orphans from an uninstalled app, 0/48 |
+| `twitter` | Twitter ID | Data | not in fixtures | 0/48 (0%) |  | 0 (0 by people) | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: orphans from an uninstalled app, 0/48 |
+| `work_environment` | Work Environment | Section Break | not in fixtures | - |  |  | none | **Hide** | hidden, not removed (Nik, 2026-11-08). Was Remove: orphans from an uninstalled app, 0/48 |
 
 ### Vehicle Log
 
@@ -1671,13 +1673,13 @@ groups (the per-DocType tables above flag each as "not in fixtures"):
    `add_project_pick_routing_button`, `add_po_approval_stamp_fields`, `add_po_order_stage_field`,
    `add_store_run_receipt_fields`, `add_item_purchase_links`, `add_opportunity_probability_by_hand`,
    `migrate_contact_data`). These are version-controlled but **not fixture-managed**: a Desk edit to
-   one of them is not overwritten by `bench migrate`, and removing one needs `delete_doc`, not a
-   fixture change. Worth a follow-up of its own: move the stable ones into fixtures.
+   one of them is not overwritten by `bench migrate`, and hiding one needs a patch that sets
+   `hidden = 1` (and the creating code to pass `hidden: 1`), not a fixture change. Worth a follow-up of its own: move the stable ones into fixtures.
 2. **Mistakes (9)**: the Primary Contact section, widgets and Comments tab on the chart-of-accounts
-   DocType `Account` (0/392 filled). Remove.
+   DocType `Account` (0/392 filled). Hide.
 3. **Leftovers of uninstalled apps (6)**: Assignment Rule `assign_condition_json` /
    `unassign_condition_json` (Helpdesk), CRM Deal `erpnext_customer` and UTM Campaign `crm_campaign`
-   (frappe CRM; `tabCRM Deal` no longer exists), User `twitter` and `work_environment`. Remove.
+   (frappe CRM; `tabCRM Deal` no longer exists), User `twitter` and `work_environment`. Hide.
 4. **Other installed apps' and ERPNext's own fields (33)**: Web Form payment fields and GoCardless
    Mandate `customer` (payments app), File `fac_pending_chat_attachment` and User `assistant_enabled`
    (Frappe Assistant Core), Print Settings, `exempt_from_sales_tax` on Customer/Quotation/Sales
@@ -1728,7 +1730,7 @@ or confirmed as deliberate site settings. The full list is in the appendix table
 - `tabTask.status` holds 166 rows of `Canceled` (the option) and 14 rows of `Cancelled` (not an
   option any more). Backfill the 14.
 - Project labels in ALL CAPS: PROJECT ADDRESS, CUSTOMER NAME, CUSTOMER PHONE, CUSTOMER EMAIL,
-  CONTACT PHONE, DELIVERABLE-1..5 (all Zoho leftovers; merged, hidden or relabeled above).
+  CONTACT PHONE, DELIVERABLE-1..5 (all Zoho leftovers; merged, hidden or relabeled above, none deleted).
 - `Supplier.custom_supplier_groups_search` label "All Supplier Groups (Search)" and
   `Opportunity.custom_handoff_meeting_on` "Hand-Off Meeting Recorded On" are fine; "Hand-Off" vs
   "Handoff" is consistent (always hyphenated in labels).
@@ -1811,169 +1813,133 @@ a status field that no longer has those columns); the four charts above with imp
 the "Opportunity Scope Schedule Budget Ranking", "Opportunity Status for Rankings Mandatory" and 60
 other disabled Desk scripts that can be deleted now that the app owns the logic.
 
-## Removal plan
+## Hiding plan
 
-Two rules frame every step. First, the repo's two-step deletion: removing a
-record from `fixtures/custom_field.json` only stops managing it; the database row survives until a
-one-shot patch calls `frappe.delete_doc("Custom Field", name)`. Second, `bench migrate` is the
-deploy: a patch that raises aborts the deploy half-way, so each patch guards with
-`frappe.db.exists` and deletes with `ignore_missing=True`, and a Custom Field that no longer exists
-on prod is a no-op, not an error. Dropping a Custom Field drops its column, so values go with it.
-Under Nik's grading rule the Remove set below holds no information: every field is either empty on
-every row or holds only defaults or compelled values. The eight that hold values (the six Ranks,
-Task `custom_frequency` and `custom_repeat_every`) are exported to a CSV attached to the PR before
-the patch runs, as planned.
+Nothing in this plan deletes a Custom Field or a column. **Hide** is `hidden: 1` on the field:
+for a fixture-managed field that is one edit to its record in `fixtures/custom_field.json` (the full
+record, since sync erases omitted properties), applied by `bench migrate`; for a field that setup
+code or a patch created (flagged "not in fixtures" in the tables above) it is a one-shot patch that
+sets `hidden = 1` on the Custom Field document with `frappe.db.set_value` and clears the doctype
+cache, guarded with `frappe.db.exists` so a missing field is a no-op (a patch that raises aborts the
+deploy). Where setup code re-creates a field on every migrate (`setup/custom_fields.py`,
+`water_engineering/setup.py`), the same code must pass `hidden: 1` or it will unhide the field on the
+next deploy. Breaks follow their fields.
 
-The table lists, per DocType, the fields recommended **Remove**, how many rows hold a value, whether
-the field is fixture-managed (fixture change plus patch) or code-created (patch only), and the live
-code that mentions the field and must change in the same PR. Patches are not written here.
+The table lists, per DocType, the fields to hide, how (fixture change, patch, or both) and the live
+code that mentions them, which should stop reading or writing a hidden field in the same PR.
 
-| DocType | Fields to remove | Rows holding a value (archive first) | Fixture change | Code to change |
-|---|---|---|---|---|
-| Task | `custom_section_break_8wegw`, `custom_automation_settings`, `custom_is_recurring`, `custom_next_task_created`, `custom_column_break_zkulk`, `custom_frequency`, `custom_repeat_every`, `custom_sunday`, `custom_monday`, `custom_tuesday`, `custom_wednesday`, `custom_thursday`, `custom_friday`, `custom_saturday` | custom_frequency 2923; custom_repeat_every 8703 | in fixtures | project_enhancements/page/project_dashboard/project_dashboard.py, public/js/project_enhancements/task_tree_manager.js, tasks.py |
-| Project | `custom_zoho_data`, `custom_scope_rank`, `custom_schedule_rank`, `custom_budget_rank`, `custom_primary_contact_field`, `custom_primary_first_name`, `custom_primary_role`, `custom_column_break_k8xix`, `custom_primary_phone`, `custom_primary_email_address`, `custom_address_html`, `custom_column_break_em6sv`, `custom_contact_html`, `custom_contact_display`, `custom_section_break_s5jqn`, `custom_section_break_kyvkd`, `custom_quickbooks_jobcode_id`, `custom_project_spend`, `custom_misc`, `custom_column_break_vp5qd`, `custom_column_break_8lbte`, `custom_notes_html` | custom_scope_rank 97; custom_schedule_rank 97; custom_budget_rank 97 | in fixtures | api/desk_search.py, api/travel.py, crm_enhancements/api.py, public/js/crm_enhancements/opportunity_migrated_scripts.js, quickbooks_time/api.py, utils/normalize_fields.py |
-| Opportunity | `custom_scope_rank`, `custom_schedule_rank`, `custom_budget_rank`, `custom_section_break_bqypn` | custom_scope_rank 206; custom_schedule_rank 206; custom_budget_rank 206 | in fixtures | crm_enhancements/api.py, form_kit/config/opportunity.py, public/js/crm_enhancements/opportunity_migrated_scripts.js, script_migrations/opportunity.py |
-| Customer | `custom_leads`, `custom_contacts`, `custom_column_break_z913g` | none | in fixtures | public/js/customer.js |
-| Supplier | `custom_section_break_gl6o7`, `custom_column_break_ycp3n`, `custom_column_break_rrn0r`, `custom_primary_contact`, `custom_full_name`, `custom_job_title`, `custom_column_break_ncqbr`, `custom_phone`, `custom_email_address` | none | in fixtures | sync_contact.py, utils/normalize_fields.py, utils/normalize_fixes.py |
-| Item | `custom_pump_curve` | none | not in fixtures (delete_doc only) | public/js/water_engineering/pump_curve_chart.js, water_engineering/api/designer.py, water_engineering/catalog_reader.py |
-| Account | `custom_comments_tab`, `primary_contact_section`, `primary_contact`, `primary_contact_job_title`, `primary_contact_col_break`, `primary_contact_phone`, `primary_contact_email`, `address_and_contact`, `custom_comments_field` | none | mixed: drop the fixture rows and delete_doc all | form_kit/blocks.py, form_kit/config/item.py, form_kit/config/opportunity.py, public/js/account.js, public/js/comments_auto.js, public/js/customer.js, public/js/form_kit/ui/record_tools.js, public/js/global_enhancements/contact_address_quick_entry.js, public/js/global_enhancements/unified_tab_controller.js, sync_contact.py and 1 more |
-| Asset | `custom_pump_make_model`, `custom_filtration_media_type`, `custom_water_volume`, `custom_site_instructions`, `custom_under_warranty`, `custom_warranty_expiry_date` | none | in fixtures | sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js |
-| Assignment Rule | `unassign_condition_json` | none | not in fixtures (delete_doc only) | none |
-| CRM Deal | `erpnext_customer` | none | not in fixtures (delete_doc only) | none |
-| CRM Note | `custom_attachment` | none | in fixtures | none |
-| Contact | `custom_date_of_birth`, `custom_more_information`, `custom_column_break_byvnt`, `custom_comments` | none | in fixtures | public/js/global_enhancements/activity_first_tab_only.js |
-| Employee | `custom_quickbooks_user_id` | none | in fixtures | quickbooks_time/api.py |
-| Issue | `custom_zoho_issue_id` | none | in fixtures | none |
-| Kanban Board | `custom_swimlane_field` | none | in fixtures | none |
-| Kanban Board Column | `custom_wip_limit` | none | in fixtures | none |
-| Lead | `custom_website_lead_fields`, `custom_website_image_links`, `custom_product_interested_in`, `custom_lead_information`, `custom_section_break_yal3u`, `primary_contact_section`, `primary_contact`, `primary_contact_job_title`, `primary_contact_col_break`, `primary_contact_phone`, `primary_contact_email`, `address_and_contact`, `custom_contacts__addresses_personal`, `custom_primary_contact`, `custom_full_name`, `custom_primary_job_title`, `custom_column_break_gxi32`, `custom_primary_phone`, `custom_email_address`, `custom_section_break_qnpv9`, `custom_custom_table` | none | mixed: drop the fixture rows and delete_doc all | api/desk_search.py, api/travel.py, crm_enhancements/fountain_move/conversion.py, form_kit/blocks.py, form_kit/config/opportunity.py, public/js/global_enhancements/contact_address_quick_entry.js, public/js/global_enhancements/primary_contact.js, public/js/global_enhancements/unified_tab_controller.js, public/js/info_blocks/blocks.js, public/js/kanban_customization.js and 3 more |
-| Purchase Order Item | `custom_item_status` | none | in fixtures | none |
-| Supplier Quotation Item | `custom_required_by` | none | in fixtures | none |
-| UTM Campaign | `crm_campaign` | none | not in fixtures (delete_doc only) | none |
-| User | `twitter`, `work_environment` | none | not in fixtures (delete_doc only) | none |
+| DocType | Fields to hide | How | Code to change |
+|---|---|---|---|
+| Task | `custom_section_break_8wegw`, `custom_automation_settings`, `custom_is_recurring`, `custom_next_task_created`, `custom_column_break_zkulk`, `custom_frequency`, `custom_repeat_every`, `custom_sunday`, `custom_monday`, `custom_tuesday`, `custom_wednesday`, `custom_thursday`, `custom_friday`, `custom_saturday` | fixture change (14) | project_enhancements/page/project_dashboard/project_dashboard.py, public/js/project_enhancements/task_tree_manager.js, tasks.py |
+| Project | `custom_zoho_data`, `custom_scope_rank`, `custom_schedule_rank`, `custom_budget_rank`, `custom_primary_contact_field`, `custom_primary_first_name`, `custom_primary_role`, `custom_column_break_k8xix`, `custom_primary_phone`, `custom_primary_email_address`, `custom_address__contact`, `custom_address_html`, `custom_column_break_em6sv`, `custom_contact_html`, `custom_contact_display`, `custom_section_break_s5jqn`, `custom_scope_contributors`, `custom_section_break_kyvkd`, `custom_quickbooks_jobcode_id`, `custom_project_spend`, `custom_misc`, `custom_column_break_vp5qd`, `custom_column_break_8lbte`, `custom_notes_html` | fixture change (24) | api/desk_search.py, api/travel.py, crm_enhancements/api.py, form_kit/blocks.py, public/js/crm_enhancements/opportunity_migrated_scripts.js, public/js/info_blocks/blocks.js, quickbooks_time/api.py, utils/normalize_fields.py |
+| Opportunity | `custom_scope_rank`, `custom_schedule_rank`, `custom_budget_rank`, `custom_section_break_ieovn`, `custom_scope_contributors`, `custom_estimated_cost`, `custom_section_break_bqypn` | fixture change (7) | crm_enhancements/api.py, form_kit/blocks.py, form_kit/config/opportunity.py, public/js/crm_enhancements/opportunity_migrated_scripts.js, public/js/info_blocks/blocks.js, script_migrations/opportunity.py |
+| Customer | `custom_parent_account`, `custom_leads`, `custom_shipping_address`, `custom_contacts`, `custom_primary_contact`, `custom_column_break_z913g`, `custom_section_break_bhxic`, `custom_contacts__address_table` | fixture change (8) | crm_enhancements/api.py, public/js/customer.js |
+| Supplier | `custom_our_account_number`, `custom_section_break_gl6o7`, `custom_column_break_ycp3n`, `custom_column_break_rrn0r`, `custom_primary_contact`, `custom_full_name`, `custom_job_title`, `custom_column_break_ncqbr`, `custom_phone`, `custom_email_address`, `custom_addresses`, `custom_address_list` | fixture change (12) | sync_contact.py, utils/normalize_fields.py, utils/normalize_fixes.py |
+| Item | `custom_pump_curve` | patch sets hidden (1) | public/js/water_engineering/pump_curve_chart.js, water_engineering/api/designer.py, water_engineering/catalog_reader.py |
+| Account | `custom_comments_tab`, `primary_contact_section`, `primary_contact`, `primary_contact_job_title`, `primary_contact_col_break`, `primary_contact_phone`, `primary_contact_email`, `address_and_contact`, `custom_comments_field` | fixture change (2); patch sets hidden (7) | form_kit/blocks.py, form_kit/config/item.py, form_kit/config/opportunity.py, public/js/account.js, public/js/comments_auto.js, public/js/customer.js, public/js/form_kit/ui/record_tools.js, public/js/global_enhancements/contact_address_quick_entry.js, public/js/global_enhancements/unified_tab_controller.js, sync_contact.py and 1 more |
+| Asset | `custom_pump_make_model`, `custom_filtration_media_type`, `custom_water_volume`, `custom_site_instructions`, `custom_under_warranty`, `custom_warranty_expiry_date` | fixture change (6) | sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js |
+| Assignment Rule | `assign_condition_json`, `unassign_condition_json` | patch sets hidden (2) | none |
+| CRM Deal | `erpnext_customer` | patch sets hidden (1) | none |
+| CRM Note | `custom_attachment` | fixture change (1) | none |
+| Contact | `custom_vendor_name`, `custom_full_name_and_title`, `custom_date_of_birth`, `custom_more_information`, `custom_column_break_byvnt`, `custom_home_phone`, `custom_other_phone`, `custom_fax`, `custom_disabled`, `custom_comments` | fixture change (10) | api/desk_search.py, public/js/global_enhancements/activity_first_tab_only.js, utils/normalize_fields.py |
+| Employee | `custom_quickbooks_user_id` | fixture change (1) | quickbooks_time/api.py |
+| Issue | `custom_zoho_issue_id` | fixture change (1) | none |
+| Kanban Board | `custom_swimlane_field` | fixture change (1) | none |
+| Kanban Board Column | `custom_wip_limit` | fixture change (1) | none |
+| Lead | `custom_website_lead_fields`, `custom_website_image_links`, `custom_product_interested_in`, `custom_lead_information`, `custom_section_break_yal3u`, `primary_contact_section`, `primary_contact`, `primary_contact_job_title`, `primary_contact_col_break`, `primary_contact_phone`, `primary_contact_email`, `address_and_contact`, `custom_contacts__addresses_personal`, `custom_primary_contact`, `custom_full_name`, `custom_primary_job_title`, `custom_column_break_gxi32`, `custom_primary_phone`, `custom_email_address`, `custom_section_break_qnpv9`, `custom_custom_table` | fixture change (14); patch sets hidden (7) | api/desk_search.py, api/travel.py, crm_enhancements/fountain_move/conversion.py, form_kit/blocks.py, form_kit/config/opportunity.py, public/js/global_enhancements/contact_address_quick_entry.js, public/js/global_enhancements/primary_contact.js, public/js/global_enhancements/unified_tab_controller.js, public/js/info_blocks/blocks.js, public/js/kanban_customization.js and 3 more |
+| Purchase Order Item | `custom_item_status` | fixture change (1) | none |
+| Serial No | `custom_pump_make_model`, `custom_filtration_media_type`, `custom_water_volume` | fixture change (3) | none |
+| Supplier Quotation Item | `custom_required_by` | fixture change (1) | none |
+| ToDo | `custom_start_date` | fixture change (1) | none |
+| UTM Campaign | `crm_campaign` | patch sets hidden (1) | none |
+| User | `twitter`, `work_environment` | patch sets hidden (2) | none |
 
-### Hide and Merge: fields that keep their data
+### Merge: fields whose data moves first
 
-Under the grading rule these fields leave the form but keep their column and values. **Hide** is one
-fixture change per field (`hidden: 1`, the full record in `fixtures/custom_field.json`; sync erases
-omitted properties). **Merge** is a data move first (a one-shot patch or a Data Import that writes
-the value into the target field or record, logged per row), then the source field is hidden, and
-the empty shell may be removed in a later PR once the move is verified on prod. Neither needs a
-`delete_doc` now.
+Each Merge is a data move (a one-shot patch or a Data Import that writes the value into the target
+field or record, logged per row), then the source field is hidden as above. The source stays in the
+database; nothing is deleted.
 
-| DocType | Field | Rows holding a value | Action | Where the data goes |
-|---|---|---|---|---|
-| Project | `custom_customer__lead_address` | 1/668 | Merge | primary_address |
-| Project | `custom_address_display` | 2/668 | Merge | primary_address |
-| Project | `custom_scope_contributors` | 1/668 | Hide | stays in its column |
-| Project | `custom_customer_name` | 118/668 | Merge | customer |
-| Project | `custom_customer_phone` | 6/668 | Merge | primary_contact_phone / primary_contact_email |
-| Project | `custom_customer_email` | 2/668 | Merge | primary_contact_phone / primary_contact_email |
-| Project | `custom_contact_phone` | 1/668 | Merge | primary_contact_phone / primary_contact_email |
-| Project | `custom_deliverable1` | 33/668 | Merge | Comments (the Comments App) |
-| Project | `custom_deliverable2` | 22/668 | Merge | Comments (the Comments App) |
-| Project | `custom_deliverable3` | 13/668 | Merge | Comments (the Comments App) |
-| Project | `custom_deliverable4` | 7/668 | Merge | Comments (the Comments App) |
-| Project | `custom_deliverable5` | 2/668 | Merge | Comments (the Comments App) |
-| Project | `custom_comments_table` | 124/668 | Merge | Comments (the Comments App) |
-| Opportunity | `custom_project` | 16/855 | Merge | custom_created_project |
-| Opportunity | `custom_description` | 288/855 | Merge | custom_general_scope_description |
-| Opportunity | `custom_scope_contributors` | 1/855 | Hide | stays in its column |
-| Opportunity | `custom_estimated_cost` | 2/855 | Hide | stays in its column |
-| Customer | `custom_prospect` | 16/1722 | Merge | custom_account_status |
-| Customer | `custom_parent_account` | 5/1722 | Hide | stays in its column |
-| Customer | `custom_shipping_address` | 25/1722 | Hide | stays in its column |
-| Customer | `custom_primary_first_name` | 3/1722 | Merge | primary_contact |
-| Customer | `custom_primary_position` | 2/1722 | Merge | primary_contact_job_title |
-| Customer | `custom_primary_phone` | 1/1722 | Merge | primary_contact_phone |
-| Customer | `custom_primary_email_address` | 1/1722 | Merge | primary_contact_email |
-| Customer | `custom_contacts__address_table` | 5/1722 | Hide | stays in its column |
-| Customer | `custom_phone` | 520/1722 | Merge | primary_contact_phone |
-| Supplier | `custom_our_account_number` | 1/1214 | Hide | stays in its column |
-| Supplier | `custom_address_list` | 3/1214 | Hide | stays in its column |
-| Item | `custom_pump_hp` | 156/1574 | Merge | custom_elec_hp |
-| Item | `custom_pump_phase` | 127/1574 | Merge | custom_elec_phase |
-| Item | `custom_pump_voltage` | 150/1574 | Merge | custom_elec_voltage |
-| Item | `custom_pump_fla_amps` | 124/1574 | Merge | custom_elec_fla_amps |
-| Item | `custom_pump_cut_sheet` | 0/1574 | Merge | custom_spec_cut_sheet |
-| Item | `custom_purchase_link` | 27/1574 | Merge | Item Supplier.purchase_url |
-| Assignment Rule | `assign_condition_json` | 3/3 | Hide | stays in its column |
-| Contact | `custom_vendor_name` | 3/2879 | Hide | stays in its column |
-| Contact | `custom_full_name_and_title` | 1/2879 | Hide | stays in its column |
-| Contact | `custom_home_phone` | 12/2879 | Hide | stays in its column |
-| Contact | `custom_other_phone` | 6/2879 | Hide | stays in its column |
-| Contact | `custom_fax` | 67/2879 | Hide | stays in its column |
-| Contact | `custom_disabled` | 1/2879 | Hide | stays in its column |
-| Lead | `custom_contact_last_name` | 184/227 | Merge | first_name / last_name |
-| Lead | `custom_contact_first_name` | 178/227 | Merge | first_name / last_name |
-| Lead | `custom_address_line_1` | 7/227 | Merge | Address |
-| Lead | `custom_address_line_2` | 1/227 | Merge | Address |
-| Lead | `custom_postal_code` | 7/227 | Merge | Address |
-| Lead | `custom_contact_email` | 164/227 | Merge | email_id / phone |
-| Lead | `custom_contact_phone_number` | 157/227 | Merge | email_id / phone |
-| Lead | `custom_contact_title` | 175/227 | Merge | job_title |
-| Lead | `custom_account_name` | 180/227 | Merge | company_name |
-| Lead | `custom_account_phone_number` | 2/227 | Merge | phone |
-| Lead | `custom_account_email` | 3/227 | Merge | email_id |
-| Lead | `custom_account_website` | 16/227 | Merge | website |
-| Serial No | `custom_pump_make_model` | 0/41 | Hide | stays in its column |
-| Serial No | `custom_filtration_media_type` | 1/41 | Hide | stays in its column |
-| Serial No | `custom_water_volume` | 0/41 | Hide | stays in its column |
-| ToDo | `custom_start_date` | 14/1970 | Hide | stays in its column |
+| DocType | Field | Rows holding a value | Where the data goes |
+|---|---|---|---|
+| Project | `custom_customer__lead_address` | 1/668 | primary_address |
+| Project | `custom_address_display` | 2/668 | primary_address |
+| Project | `custom_customer_name` | 118/668 | customer |
+| Project | `custom_customer_phone` | 6/668 | primary_contact_phone / primary_contact_email |
+| Project | `custom_customer_email` | 2/668 | primary_contact_phone / primary_contact_email |
+| Project | `custom_contact_phone` | 1/668 | primary_contact_phone / primary_contact_email |
+| Project | `custom_deliverable1` | 33/668 | Comments (the Comments App) |
+| Project | `custom_deliverable2` | 22/668 | Comments (the Comments App) |
+| Project | `custom_deliverable3` | 13/668 | Comments (the Comments App) |
+| Project | `custom_deliverable4` | 7/668 | Comments (the Comments App) |
+| Project | `custom_deliverable5` | 2/668 | Comments (the Comments App) |
+| Project | `custom_comments_table` | 124/668 | Comments (the Comments App) |
+| Opportunity | `custom_project` | 16/855 | custom_created_project |
+| Opportunity | `custom_description` | 288/855 | custom_general_scope_description |
+| Customer | `custom_prospect` | 16/1722 | custom_account_status |
+| Customer | `custom_primary_first_name` | 3/1722 | primary_contact |
+| Customer | `custom_primary_position` | 2/1722 | primary_contact_job_title |
+| Customer | `custom_primary_phone` | 1/1722 | primary_contact_phone |
+| Customer | `custom_primary_email_address` | 1/1722 | primary_contact_email |
+| Customer | `custom_phone` | 520/1722 | primary_contact_phone |
+| Item | `custom_pump_hp` | 156/1574 | custom_elec_hp |
+| Item | `custom_pump_phase` | 127/1574 | custom_elec_phase |
+| Item | `custom_pump_voltage` | 150/1574 | custom_elec_voltage |
+| Item | `custom_pump_fla_amps` | 124/1574 | custom_elec_fla_amps |
+| Item | `custom_pump_cut_sheet` | 0/1574 | custom_spec_cut_sheet |
+| Item | `custom_purchase_link` | 27/1574 | Item Supplier.purchase_url |
+| Lead | `custom_contact_last_name` | 184/227 | first_name / last_name |
+| Lead | `custom_contact_first_name` | 178/227 | first_name / last_name |
+| Lead | `custom_address_line_1` | 7/227 | Address |
+| Lead | `custom_address_line_2` | 1/227 | Address |
+| Lead | `custom_postal_code` | 7/227 | Address |
+| Lead | `custom_contact_email` | 164/227 | email_id / phone |
+| Lead | `custom_contact_phone_number` | 157/227 | email_id / phone |
+| Lead | `custom_contact_title` | 175/227 | job_title |
+| Lead | `custom_account_name` | 180/227 | company_name |
+| Lead | `custom_account_phone_number` | 2/227 | phone |
+| Lead | `custom_account_email` | 3/227 | email_id |
+| Lead | `custom_account_website` | 16/227 | website |
 
 ### Order of PRs
 
-1. **Ranks** (Nik's example): the six rank fields, `validate_ranks_on_won` and its hook, the
-   migrated client-script functions, the form-kit Closed Won step and board panel entries, the
-   `api.py` mapping lines and the four tests. Export 206 Opportunity and 97 Project rank triples.
-2. **Dead features and empty layout** (Remove, nothing to archive): Task recurring-task group (13
-   fields; the `Daily` and `1` values are defaults, exported anyway), Project
-   `custom_quickbooks_jobcode_id` and `custom_project_spend`, Employee `custom_quickbooks_user_id`,
-   Item `custom_pump_curve` (legacy table, 0 rows), the empty `custom_primary_*` sets on Project,
-   Supplier and Lead (0 rows on every field), Lead's `primary_contact_*` set and the `Account`
-   doctype's contact tab (0 rows), the empty sections and tabs on Project, Opportunity, Task, Lead,
-   Contact, Supplier, Address, and the small-doctype fields with no value on any row (Asset's six
-   migrated fields, Kanban Board, Kanban Board Column, CRM Note, Issue, Supplier Quotation Item,
-   Purchase Order Item `custom_item_status`, Customer `custom_leads`, Lead's website and
-   product-interest fields, User `twitter`/`work_environment`, CRM Deal, UTM Campaign).
-3. **Hides** (one fixture PR, no patch): every Hide row in the table above, including the
-   re-graded ones: Customer `custom_parent_account` (5), `custom_shipping_address` (25) and the
-   Stakeholders table (5); Supplier `custom_address_list` (3) and `custom_our_account_number` (1);
-   Opportunity `custom_scope_contributors` (1) and `custom_estimated_cost` (2); Project
-   `custom_scope_contributors` (1); Contact `custom_vendor_name` (3), `custom_full_name_and_title`
-   (1), `custom_disabled` (1), `custom_fax`/`custom_home_phone`/`custom_other_phone`; ToDo
-   `custom_start_date` (14); Serial No's three migrated fields; Assignment Rule
-   `assign_condition_json` (3). The breaks around them follow.
-4. **Merges with a Comments home** (data move, then hide): Project `custom_comments_table` (124
+1. **Hide the six Rank fields and take out the Closed Won rank gate** (Nik's example): `hidden: 1` on
+   the six fixture records; delete `validate_ranks_on_won` and its hook, the migrated client-script
+   rank functions, the form-kit Closed Won rank step and board panel entries, the `direct_mappings`
+   copy and the four tests. MINOR bump: a behavior (the gate) goes away.
+2. **Hides in bulk** (one PR, or one per DocType for the big four): every Hide row in the tables
+   above. Fixture-managed fields by fixture change; the code-created ones (the `Account` doctype's
+   contact tab, Item's legacy pump-curve table, the Lead `primary_contact_*` set, Assignment Rule,
+   CRM Deal, UTM Campaign, User `twitter`/`work_environment`) by a patch that sets `hidden = 1`.
+   Update `api/desk_search.py`, `api/travel.py`, `utils/normalize_fields.py`,
+   `utils/normalize_fixes.py`, `sync_contact.py`, `tasks.py` and `project_dashboard.py` so no live
+   code reads or writes a hidden field, and make `setup/custom_fields.py` and
+   `water_engineering/setup.py` pass `hidden: 1` for the fields they re-create.
+3. **Merges with a Comments home** (data move, then hide): Project `custom_comments_table` (124
    projects' Project Notes rows) and `custom_deliverable1..5` (33/22/13/7/2 projects) become
-   Comments on the project, which the Comments App shows; `custom_notes_html` and the surrounding
-   breaks go with them.
-5. **Merges into the primary contact set and standard fields** (one PR per DocType, data move
-   first, hide second): Customer `custom_phone` (520), `custom_primary_first_name`/`position`/
-   `phone`/`email_address` (3/2/1/1) into `primary_contact_*`; Project `custom_customer_name` into
-   `customer`, `custom_customer_phone`/`email`/`contact_phone` into `primary_contact_*`,
-   `custom_address_display` (2) and `custom_customer__lead_address` (1) into `primary_address`, later
-   `custom_project_address` (79) once the fallbacks in pickup routing and calendar sync read
-   `primary_address`; Lead's standard duplicates (`custom_contact_first_name`, `last_name`, `email`,
-   `phone_number`, `title`, `custom_account_name`, `custom_account_website`,
-   `custom_account_phone_number`, `custom_account_email`, the three address lines) into the standard
-   Lead fields and an Address record, and unhide `company_name`; Opportunity `custom_description`
-   into `custom_general_scope_description` and `custom_project` into `custom_created_project`;
-   Customer `custom_prospect` into `custom_account_status`; Item pump electrical fields into
-   `custom_elec_*`, the cut sheets, the pump-curve widgets, `custom_purchase_link` into Item Supplier
-   `purchase_url`. Update `api/desk_search.py`, `api/travel.py`, `utils/normalize_fields.py`,
-   `utils/normalize_fixes.py` and `sync_contact.py` in the same PRs.
-6. **Shell removal** (later, one PR): once each Merge's data move is verified on prod (row counts
-   match, spot checks pass), the hidden source fields from steps 4 and 5 are removed under the
-   two-step rule. Not before.
-7. **Label and option fixes** ride on any of the above as fixture-only changes.
-8. **Follow-ups outside this audit**: move the 201 code-created Custom Fields into fixtures (or
+   Comments on the project, which the Comments App shows.
+4. **Merges into the primary contact set and standard fields** (one PR per DocType, data move first,
+   hide second): Customer `custom_phone` (520) and `custom_primary_*` (3/2/1/1) into
+   `primary_contact_*`; Project `custom_customer_name` into `customer`,
+   `custom_customer_phone`/`email`/`contact_phone` into `primary_contact_*`, `custom_address_display`
+   and `custom_customer__lead_address` into `primary_address`, later `custom_project_address` (79) once
+   the fallbacks in pickup routing and calendar sync read `primary_address`; Lead's standard duplicates
+   into the standard Lead fields and an Address record, and unhide `company_name`; Opportunity
+   `custom_description` into `custom_general_scope_description` and `custom_project` into
+   `custom_created_project`; Customer `custom_prospect` into `custom_account_status`; Item pump
+   electrical fields into `custom_elec_*`, the cut sheets, the pump-curve widgets,
+   `custom_purchase_link` into Item Supplier `purchase_url`.
+5. **Label and option fixes** ride on any of the above as fixture-only changes.
+6. **Follow-ups outside this audit**: move the 201 code-created Custom Fields into fixtures (or
    document why each stays code-created); capture the 88 Desk-made Property Setters; delete the 62
    disabled Desk scripts and the stale Kanban boards and charts; backfill the 14 `Cancelled` Task
    rows; decide the three stale `project_type` values.
 
-Each PR bumps PATCH (or MINOR where a feature is removed), adds its CHANGELOG entry, runs
-`tests/test_layout_field_order_coverage.py` and the fixture tests, and opens as a draft.
+Each PR bumps PATCH (MINOR for PR 1), adds its CHANGELOG entry, runs
+`tests/test_layout_field_order_coverage.py` and the fixture tests, and opens as a draft. The hidden
+fields are kept; if a later decision does remove one, the repo's two-step rule (fixture change plus
+a `frappe.delete_doc` patch) applies then, and this report's per-field evidence is the record to
+start from.
 
 ## Appendix: how the numbers were produced
 

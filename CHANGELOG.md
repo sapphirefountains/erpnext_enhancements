@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.798.3] - 2026-11-08
+
+### Changed
+- **UI field audit: nothing is deleted (docs only).** Nikolas, 2026-11-08, on the re-graded draft:
+  "I think the ones that aren't used at all should just be hidden rather than deleting something."
+  [`docs/audits/ui-field-audit-2026-11.md`](docs/audits/ui-field-audit-2026-11.md) now has no Remove
+  grade: every field that was Remove is Hide (`hidden: 1` in the fixture record, or a patch that sets
+  `hidden = 1` for the code-created ones; never `delete_doc`), Merge moves the data and then hides the
+  source with no later removal step, and the six Rank fields are hidden while the Closed Won rank gate
+  that forces them (`validate_ranks_on_won`, the migrated client-script functions, the form-kit and
+  board entries, the `direct_mappings` copy and the gate tests) is what goes. Counts: Remove 0,
+  Hide 129 (82 data fields, 47 layout/HTML), Merge 41, Fix 10. The "Removal plan" is now the "Hiding
+  plan" with PR 1 "Hide the six Rank fields and take out the Closed Won rank gate". Still removes
+  nothing and changes no behavior.
+
 ## [1.798.2] - 2026-11-08
 
 ### Changed
