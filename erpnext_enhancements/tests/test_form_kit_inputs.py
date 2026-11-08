@@ -302,14 +302,12 @@ class TestQueriesMirrorTheForm(unittest.TestCase):
 
 
 class TestTheWonFieldsAreRequired(unittest.TestCase):
-	def test_the_won_fields_are_what_the_form_makes_required(self):
+	def test_the_form_makes_nothing_required_by_status_and_the_config_says_the_same(self):
+		"""v1.799.0: the form's scripts no longer set any field ``reqd`` on a status, so the config
+		declares no ``won``; the two must stay in step, as they did when both named fields."""
 		code = _code(MIGRATED.read_text(encoding="utf-8"))
-		body = code[code.index("function set_rank_fields_mandatory(frm) {") :]
-		body = body[: body.index("\n}\n")]
-		fields = re.findall(r'set_df_property\("(\w+)", "reqd", reqd\)', body)
-		status = re.search(r'frm\.doc\.status === "([^"]+)"', body).group(1)
-		self.assertEqual(fields, OPPORTUNITY["won"]["fields"])
-		self.assertEqual(status, OPPORTUNITY["won"]["status"])
+		self.assertEqual(re.findall(r'set_df_property\("(\w+)", "reqd", ', code), [])
+		self.assertNotIn("won", OPPORTUNITY)
 
 
 class TestTheSchema(unittest.TestCase):
@@ -783,7 +781,7 @@ class TestTheEditorUnderNode(unittest.TestCase):
 
 	def test_a_control_that_refuses_its_value_leaves_the_step_listened_to(self):
 		"""v16's read-only or hidden Table MultiSelect rejects a value; before v1.685.0 that left the
-		whole step in `suppress`, so the Close step's status and ranks were never saved."""
+		whole step in `suppress`, so nothing typed on the Close step was saved."""
 		self.assertEqual(self.out["initial"], {"suppress": [], "refreshed": True})
 
 	def test_conditions_do_not_wait_for_the_slowest_field(self):

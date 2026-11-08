@@ -1261,7 +1261,6 @@ doc_events = {
 			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
 			# so the SLA data is already meaningful whenever a switch is flipped.
 			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
-			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",

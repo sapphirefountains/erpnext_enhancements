@@ -522,9 +522,6 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 			# --- All field and table mapping logic remains the same ---
 			direct_mappings = {
-				"custom_scope_rank": "custom_scope_rank",
-				"custom_schedule_rank": "custom_schedule_rank",
-				"custom_budget_rank": "custom_budget_rank",
 				"custom_opportunity_summary": "custom_project_description",
 				"custom_general_scope_description": "custom_general_scope_description",
 				"custom_project_start_date": "custom_project_start_date",

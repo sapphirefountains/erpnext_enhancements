@@ -4,7 +4,7 @@ All three functions are registered in ``hooks.py`` under
 ``doc_events["Opportunity"]["before_save"]`` (alongside
 :func:`erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags`):
   * :func:`stamp_won_date`
-  * :func:`validate_ranks_on_won`
+  * :func:`validate_close_reason`
   * :func:`update_lead_status`
 
 Originally Frappe "Server Script" records stored only in the site DB; now
@@ -38,53 +38,9 @@ def stamp_won_date(doc, method=None):
 		doc.custom_date_closed_won = frappe.utils.today()
 
 
-def validate_ranks_on_won(doc, method=None):
-	"""Source Server Script: "Opportunity Status for Rankings Mandatory Server Script"
-	(Opportunity, Before Save).
-
-	When status is 'Closed Won', Scope/Schedule/Budget rank must each be 1, 2 or 3.
-
-	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03: "skip ranks"): a one-off
-	service client approves on a link and nobody ranks a pump swap. The guard never raises
-	(``service_calls.belongs_to_service_call``), so a site without the table is unchanged.
-	"""
-	if doc.status != "Closed Won":
-		return
-	if _is_service_call_deal(doc):
-		return
-
-	validation_errors = []
-	allowed_ranks = ["1", "2", "3"]
-
-	if frappe.utils.cstr(doc.custom_scope_rank) not in allowed_ranks:
-		validation_errors.append("<b>Scope Rank</b> must be set to 1, 2, or 3.")
-
-	if frappe.utils.cstr(doc.custom_schedule_rank) not in allowed_ranks:
-		validation_errors.append("<b>Schedule Rank</b> must be set to 1, 2, or 3.")
-
-	if frappe.utils.cstr(doc.custom_budget_rank) not in allowed_ranks:
-		validation_errors.append("<b>Budget Rank</b> must be set to 1, 2, or 3.")
-
-	if validation_errors:
-		frappe.throw(
-			"<br>".join(validation_errors),
-			title="Invalid Ranks for 'Closed Won' Status",
-		)
-
-
-def _is_service_call_deal(doc):
-	"""A Service Call's Opportunity, or False; never raises (a before_save hook on every deal)."""
-	try:
-		from erpnext_enhancements.sapphire_maintenance.service_calls import belongs_to_service_call
-
-		return belongs_to_service_call(getattr(doc, "name", None) if not doc.is_new() else None)
-	except Exception:
-		return False
-
-
 def validate_close_reason(doc, method=None):
 	"""Require a Lost Reason when an Opportunity transitions to Lost, so loss
-	analysis has data (mirrors ``validate_ranks_on_won``).
+	analysis has data.
 
 	Enforced on the *transition* only (previous status was not already Lost):
 	editing a historical Lost Opportunity that predates this rule is not

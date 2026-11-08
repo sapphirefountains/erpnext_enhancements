@@ -770,11 +770,10 @@ def set_opportunity_status(opportunity, status, reason=None, lost_reason=None, s
 
 
 def belongs_to_service_call(opportunity):
-	"""Whether ``opportunity`` is a Service Call's deal (Nikolas, 2026-11-03: "skip ranks").
+	"""Whether ``opportunity`` is a Service Call's deal (v1.778.0).
 
-	Read by the Opportunity's Closed Won hooks: ``validate_ranks_on_won`` does not ask a one-off
-	service client for scope, schedule and budget ranks, and ``handoff.stamp_handoff_gate`` does
-	not put a service call under the PRO-0204 hand-off requirements. Never raises: on a fresh
+	Read by the Opportunity's Closed Won hook ``handoff.stamp_handoff_gate``, which does not put a
+	service call under the PRO-0204 hand-off requirements. Never raises: on a fresh
 	site the Service Call table may not exist yet when an Opportunity is saved, and a hook that
 	raises there blocks every deal on the site.
 	"""

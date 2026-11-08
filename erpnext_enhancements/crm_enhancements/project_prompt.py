@@ -78,9 +78,7 @@ def revert_won_status(opportunity_name, previous_status=None):
 
 	Restores the prior status and clears ``custom_date_closed_won``. Refuses if a
 	Project has already been created (nothing to undo, and the link would be
-	orphaned). Because the status is no longer "Closed Won", the rank validation
-	(:func:`...script_migrations.opportunity.validate_ranks_on_won`) becomes a
-	no-op, so a won-without-ranks edge can't block the rollback.
+	orphaned).
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity_name)
 	if not doc.has_permission("write"):

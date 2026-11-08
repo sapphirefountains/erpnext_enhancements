@@ -119,8 +119,9 @@ def _stages():
 	open_stages, parked = _stage_columns()
 	field = frappe.get_meta(DOCTYPE).get_field("status")
 	options = [opt.strip() for opt in ((field.options if field else "") or "").split("\n") if opt.strip()]
-	# ``gate`` (part C, v1.675.0): which required fields a move into the stage needs, which the side
-	# panel asks for before the move is saved: Closed Won's ranks, or Lost's reasons.
+	# ``gate`` (part C, v1.675.0): what a move into the stage needs, which the side panel asks for
+	# before the move is saved: Lost's reasons. A ``won`` gate carries no fields since v1.799.0; it
+	# marks the stage the board wins one deal at a time (:data:`WIN_ONE_AT_A_TIME`).
 	closing = [
 		{"label": label, "kind": "close", "gate": "lost" if label == LOST_STATUS else "won"}
 		for label in options
@@ -394,9 +395,9 @@ MAX_BULK = 100
 MAX_BULK_STAGE = 25
 
 #: Why Closed Won is never a bulk move (a deliberate departure from P6.7's text, review of #1286).
-#: Each won deal needs its own ranks and its own Closed-Won prompt ("Schedule the hand-off meeting
-#: now?"); twenty of those stacked, none naming its deal, and closing one with Esc un-wins it.
-WIN_ONE_AT_A_TIME = "Win deals one at a time: each needs its own ranks and hand-off."
+#: Each won deal needs its own Closed-Won prompt ("Schedule the hand-off meeting now?"); twenty of
+#: those stacked, none naming its deal, and closing one with Esc un-wins it.
+WIN_ONE_AT_A_TIME = "Win deals one at a time: each needs its own hand-off."
 
 #: What a bulk request may do to the selected deals.
 BULK_ACTIONS = ("stage", "owner", "close_date", "snooze")
@@ -508,8 +509,8 @@ def bulk_update(names, action, values=None, modified=None):
 
 	* ``stage``: ``{"status"}``, an open stage, On Hold or Lost, for at most :data:`MAX_BULK_STAGE`
 	  deals; for Lost also ``reasons`` and ``competitors`` (lists of names) and ``detail``. **Closed
-	  Won is refused** (:data:`WIN_ONE_AT_A_TIME`): each won deal needs its own ranks and its own
-	  hand-off prompt, which a bulk move would stack one per deal.
+	  Won is refused** (:data:`WIN_ONE_AT_A_TIME`): each won deal needs its own hand-off prompt,
+	  which a bulk move would stack one per deal.
 	* ``owner``: ``{"owner"}``, an enabled System User. ``close_date``: ``{"date"}``.
 	  ``snooze``: ``{"until", "reason"}`` (a blank ``until`` wakes them).
 

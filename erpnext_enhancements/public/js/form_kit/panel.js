@@ -2,8 +2,8 @@
  * form kit P4.4, P6.6, P6.7: the side panel's decisions, as a pure module (no frappe, no DOM), run
  * under node by tests/test_opportunity_board_panel.py. The panel itself is ./ui/side_panel.js.
  *
- * The panel draws fields the flow has in no single step: a move's required fields (Closed Won's
- * ranks, from the config's `won`) and the board's quick add (the config's `quick`). Both are a step
+ * The panel draws fields the flow has in no single step: a move's required fields (the config's
+ * `won`, when a DocType declares one) and the board's quick add (the config's `quick`). Both are a step
  * of the panel's own, built from the flow's own field definitions, so a field keeps its label, hint,
  * help, options and permission exactly as the guided page shows it.
  */
@@ -32,7 +32,7 @@ export function panel_step(key, title, intro, fields) {
 
 // What moving a record into `status` must carry, from its flow:
 //   { kind: "lost", status }                  the config's `lost` (reasons, competitors, detail)
-//   { kind: "won", status, fieldnames: [...] } the config's `won` (on Opportunity, the ranks)
+//   { kind: "won", status, fieldnames: [...] } the config's `won`, when it names fields
 //   null                                      nothing beyond the status
 export function gate_for(flow, status) {
 	const f = flow || {};
@@ -63,7 +63,7 @@ function blank(value) {
 }
 
 // A gate's fields still blank in `values`: every one is required for the move, whatever its own
-// `reqd` says (Closed Won's ranks are optional on the form until the status is Closed Won).
+// `reqd` says (a `won` field is optional on the form until the status is the won one).
 export function gate_missing(fields, values) {
 	return (fields || []).filter((field) => field && !is_layout(field) && blank((values || {})[field.fieldname]));
 }

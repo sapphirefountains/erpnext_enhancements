@@ -65,8 +65,8 @@
 // the form kit's own save path, form_kit.api.save_step, carrying the card's `modified`: a
 // conflict ({conflict: true}, returned without saving) puts the card back, says who changed it,
 // and reloads the board; nothing is overwritten. A drop on Closed Won or Lost saves nothing by
-// itself: those need the ranks or the lost reasons, so the side panel asks for them (P6.6) and the
-// move is saved with them, in one save locked on `modified`, only when the person commits. Cancel
+// itself: Lost needs its reasons, so the side panel asks for them (P6.6), and Closed Won is confirmed
+// there; the move is saved, in one save locked on `modified`, only when the person commits. Cancel
 // (or Back) leaves the card where it was; it never moved.
 //
 // A card's click (or tap) opens the deal in the side panel (P6.6), as do the table's, the timeline's
@@ -565,7 +565,7 @@ class OpportunityBoard {
 		}
 	}
 
-	// A closing move went through (the panel saved the ranks and the status, or Declare Lost ran): the
+	// A closing move went through (the panel saved the status, or Declare Lost ran): the
 	// deal leaves the open board now, and the refresh that follows confirms it. Closed Won's project
 	// prompt comes from the server, as it does for any save into Closed Won.
 	side_committed(info) {
@@ -1502,7 +1502,7 @@ class OpportunityBoard {
 					: choice.action === "close"
 					? choice.stage.gate === "lost"
 						? __("Asks why it was lost")
-						: __("Asks for the ranks")
+						: __("Confirms the win")
 					: "";
 				return `<button type="button" class="ob-stage-btn ob-stage-btn--${esc(choice.stage.kind)}" data-to="${esc(
 					choice.stage.key
@@ -1876,7 +1876,7 @@ class OpportunityBoard {
 				.join("");
 			// Closed Won is never offered here (kit.bulk_stages): a deliberate departure from P6.7.
 			body = `<p class="ob-panel-intro">${esc(__("Choose the stage they move to."))}</p><div class="ob-panel-stages">${buttons}</div>
-				<p class="ob-panel-intro">${esc(__("Win deals one at a time: each needs its own ranks and hand-off."))}</p>`;
+				<p class="ob-panel-intro">${esc(__("Win deals one at a time: each needs its own hand-off."))}</p>`;
 		} else {
 			const stage = bulk.stage ? this.kit.stage_by_key(this.model, bulk.stage) : null;
 			const intro = {
@@ -1955,8 +1955,8 @@ class OpportunityBoard {
 		}
 	}
 
-	// A deal's flow (any selected one: the ranks' and the lost tables' definitions do not differ by
-	// deal), read once and kept; the Opportunity meta first, for the Table MultiSelect.
+	// A deal's flow (any selected one: the lost tables' definitions do not differ by deal), read once
+	// and kept; the Opportunity meta first, for the Table MultiSelect.
 	bulk_flow_for() {
 		if (this.bulk_flow) return Promise.resolve(this.bulk_flow);
 		const name = (this.picks || [])[0];

@@ -177,19 +177,7 @@
   },
   "status": {
    "hint": "The deal's current stage",
-   "help": "Each stage sets a default probability. Closed Won needs all three ranks, texts the team and asks you to book the hand-off meeting; answering No puts the deal back where it was. Lost opens a dialog that needs at least one lost reason. On Hold has no default probability."
-  },
-  "custom_scope_rank": {
-   "hint": "Rank scope 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
-  },
-  "custom_schedule_rank": {
-   "hint": "Rank schedule 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
-  },
-  "custom_budget_rank": {
-   "hint": "Rank budget 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
+   "help": "Each stage sets a default probability. Closed Won texts the team and asks you to book the hand-off meeting; answering No puts the deal back where it was. Lost opens a dialog that needs at least one lost reason. On Hold has no default probability."
   },
   "custom_date_closed_won": {
    "hint": "Set automatically the day the deal is marked Closed Won",

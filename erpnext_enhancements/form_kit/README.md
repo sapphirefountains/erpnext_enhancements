@@ -162,8 +162,8 @@ shape: a kept save replayed against a record someone else changed comes back as 
 the local copy and asks, rather than overwriting. `save_step` without a `modified` is refused,
 because a save that cannot be checked could overwrite someone silently.
 
-**Errors** are the Desk's own. A failed validation (`frappe.ValidationError`: on Opportunity, Closed
-Won without the three ranks, Lost without a lost reason) or a missing permission
+**Errors** are the Desk's own. A failed validation (`frappe.ValidationError`: on Opportunity, Lost
+without a lost reason) or a missing permission
 (`frappe.PermissionError`) is raised from `insert()`/`save()` exactly as the Contract Builder's
 `save_builder` and the Visit Wizard's `save_visit` raise it: HTTP 417/403 with the message in
 `_server_messages`, which `frappe.call` shows. Nothing is half-saved. A conflict is a return value
@@ -413,7 +413,7 @@ guided page and the side panel alike:
 | a value loaded onto the form is shown as stored, never looked up | `set_initial_values` sets each loaded value without link.js's `validate_link_and_fetch` (a stored disabled account would otherwise raise "did not match any results" on load), refreshes the conditions as each value lands, and listens to a field again only while that very control is on screen |
 | a field the person cannot change (read-only by a condition, hidden by a `depends_on`) keeps the record's value | `field_changed` reads only a control whose status is "Write": v16 reads a 0 in a read-only or hidden control back as blank, which would queue a save nobody made |
 | `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it, and one that cannot be read adds neither (a `depends_on` that cannot be read still shows the field). Conditions read the record as the form's `doc` does, `__islocal` included |
-| `set_df_property(<rank>, "reqd", ...)` on Closed Won (`opportunity_migrated_scripts.js`) | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="Closed Won"` (`steps.won_conditions`); the side panel's move marks them required too |
+| a form's `set_df_property(<field>, "reqd", ...)` once a status is reached | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="<won status>"` (`steps.won_conditions`); the side panel's move marks them required too. Opportunity declares no `won` since v1.799.0 |
 | ERPNext's `set_dynamic_field_label` (party_name labeled with `opportunity_from`) | the config's `label_from`; relabeled as the kind changes, translated as on the form ("Customer" shows as "Accounts") |
 | Ctrl/Cmd+S saves now | the editor's `save_now`: the queue is flushed now, a new record is created, a side panel's move is committed. The guided page's shortcut handler (v1.684.0) calls it; elsewhere frappe's Ctrl+S ends in `frappe.container.page.save_action`, to which each editor adds itself once (`ge_bind_save_key`), so a side panel over a list or board saves too. A dialog keeps the key for itself, as on the form |
 
@@ -597,7 +597,7 @@ Opportunity (decided from prod fill rates, TASK-2026-02773; cumulative):
 | Qualification, On Hold | account, Opportunity Name, a Value Stream, Opportunity Owner, Opportunity Summary, a contact (`primary_contact` or `contact_person`) |
 | Needs Analysis | + Lead Source, Expected Closing Date, Customer Requests for a chosen stream (Design, Build, Service, Events; Products and Delivery have no requests table) |
 | Proposal/Price Quote, Negotiation/Review | + Opportunity Amount above zero, a site address (`primary_address` only: `customer_address` is the Billing Address since v1.633.0) |
-| Closed Won | + Scope, Schedule and Budget Rank |
+| Closed Won | the Proposal list (nothing more since v1.799.0) |
 | Lost | the Qualification list + a lost reason (ERPNext's `lost_reasons` table; the app's `custom_lost_reason` was removed in v1.159.0) |
 
 Rarely filled fields (scope description, requested dates, budget notes, the Events schedule,
