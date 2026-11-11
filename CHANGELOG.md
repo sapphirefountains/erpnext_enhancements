@@ -51,8 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     value, and skipped when there never was one. The reference follows QuickBooks: every field a
     pass looked at and did not flag is settled at what QuickBooks says now, so a change away and
     back is not lost. The comparison also forgives what ERPNext does to a value on save (edge
-    whitespace, markup, a website's scheme, a cent of rounding), which would otherwise raise a flag
-    on every QuickBooks edit to a customer whose website was saved as a bare domain.
+    whitespace, markup, a website's scheme), which would otherwise raise a flag on every QuickBooks
+    edit to a customer whose website was saved as a bare domain. Numbers are compared at the
+    precision the field stores, read from the DocType meta, and exactly when the field's type is
+    not known. There is no blanket tolerance: half a cent is a real change in an exchange rate.
+  - **A stale payload does nothing.** A payload older than the newest one a mapping has seen (its
+    cursor, or the token stored on its flag) never flags, never clears a flag and never moves the
+    cursor. Run Resync replays what an earlier Preview Resync stored; before this check such a
+    replay could clear a flag raised from a newer payload and leave the mapping Clean while
+    QuickBooks said otherwise. Every write of a mapping's cursor is forward-only, the `save_*`
+    helpers of the unlinked paths included.
+  - **A value that did not resolve is flagged, not read as "nothing".** When a payload fails the
+    preflight, a mapped `None` (or a `None` cell in a child table) beside a value the record or the
+    reference holds is flagged `unresolved` with the preflight's reasons attached, and the cursor
+    does not advance. When such a payload has nothing to flag, nothing is written at all.
   - **What a mapper supplies for a create is never flagged and can never be applied to a linked
     record** (`MAPPER_DEFAULTS_ERPNEXT_OWNS`, beside the title and party-group guards that already
     existed). None of it is QuickBooks data:
@@ -75,8 +87,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - *Auto-link.* The matcher could find a record another mapping already links (a customer
       re-created in QuickBooks, two jobs with one PRJ number, a TaxCode named like a linked
       Account), and the auto-link path filled its blank fields and saved it. That is parked for a
-      person now, with no save and no second link. A job consolidated onto its parent Customer
-      does not count as the Customer's own link.
+      person now, with no save and no second link. A mapping marked `deleted` counts as a link
+      for both doors.
+    - *The one named exception.* A job consolidated onto its parent Customer
+      (`match_rule = job_merge_no_project`) is not that Customer's own link. A Customer whose only
+      mapping rows are consolidated jobs still takes its own QuickBooks customer as a first link,
+      blank fields filled and the record saved, as a Customer nothing links does.
+  - **What the strip list costs, on purpose.** `customer_type` / `supplier_type` and `item_code` are
+    partly QuickBooks-derived (from `CompanyName`, from the `Sku`), so a person-to-company change or
+    a SKU change on a linked record is no longer raised. An Account's `is_group` and `account_type`
+    are *not* stripped except for a group with children in ERPNext, and can flag as noise on a CDC
+    payload, which never knows whether an account has children. Use QuickBooks values on a subset
+    settles the unticked fields as declined, so they stay silent until QuickBooks changes them.
 
     This holds for every doctype, for docstatus 0 drafts as well as masters, and for records the
     import created (`match_status = Created`) as much as ones it matched. It holds for the hourly
@@ -143,7 +165,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every answer records the QuickBooks value in `settled_qbo_values`, and a field is not flagged
   again while QuickBooks still says the same thing. Without that, a difference a person chose to
   keep would be raised again every time the QuickBooks record was touched. A review request
-  carries at most 50 rows (`matching.MAX_REVIEW_ITEMS`); the page sends 20.
+  carries at most 50 rows (`matching.MAX_REVIEW_ITEMS`), and so does `decide_matches`; the page
+  sends 20. Keep ERPNext on a row with the old `Conflict` status declines whatever differs from
+  the newest stored payload without showing it, and the page says so before it does.
 - **The Excel export knows the new status.** *QuickBooks changed* is an export filter, a flagged
   row's status reads "(QuickBooks changed)", and the Instructions sheet says the flag is answered
   on the page, not in the file.
@@ -153,7 +177,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does). Neither new column has a `default`: on a normal doctype the `ALTER` would write it into
   all of the roughly 20,000 existing rows.
 - **`tests/test_quickbooks_link_only.py`**, a bench-free pytest suite on its own
-  `python -m pytest` step in `ci.yml`.
+  `python -m pytest` step in `ci.yml`. Besides the single cases it runs a seeded random walk over
+  the real sync and review functions (40 seeds of 250 steps: QuickBooks edits, ERPNext edits,
+  syncs, stale replays, previews, Keep, Use on a subset) and checks after every step that no sync
+  wrote the record, that every mapped field is equal, flagged or accounted for, that a stale
+  payload changed nothing, and that the cursor never moved backwards.
 
 ### Fixed
 - **The "QuickBooks Open Conflicts" number card and the `qbo_conflicts` KPI count the new flag.**

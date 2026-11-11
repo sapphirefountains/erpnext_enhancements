@@ -75,6 +75,7 @@ from erpnext_enhancements.quickbooks_online.core.mapping import (
 	get_mapping,
 	keep_erpnext_values,
 	link_existing_record,
+	number_precisions,
 	preview_existing_matches,
 	refresh_linked_draft,
 	stored_changes,
@@ -139,7 +140,7 @@ SIMILARITY_FLOOR = 55
 #: How many recent master payloads the Unmapped view scans (the old dialog scanned 100).
 UNMAPPED_SCAN_LIMIT = 500
 #: The most rows one review request (Keep ERPNext / Use QuickBooks values / Refresh draft)
-#: may carry. The page sends ``REVIEW_CHUNK`` (20) at a time; this is the server's own
+#: or one ``decide_matches`` request may carry. The page sends ``REVIEW_CHUNK`` (20) at a time; this is the server's own
 #: ceiling, because two of the three save an ERPNext record per row and a request is not
 #: the place for a few hundred of those.
 MAX_REVIEW_ITEMS = 50
@@ -550,6 +551,7 @@ def change_view(row) -> dict | None:
 	note = stored_changes(row)
 	doctype, name = getattr(row, "erpnext_doctype", None), getattr(row, "erpnext_name", None)
 	labels, table_doctypes = _field_labels(doctype) if doctype else ({}, {})
+	precisions = number_precisions(doctype) if doctype else {}
 	live = None
 	if doctype and name and note["fields"]:
 		try:
@@ -572,7 +574,12 @@ def change_view(row) -> dict | None:
 				"baselined": not entry.get("no_baseline"),
 				# True: QuickBooks cleared the field; taking it blanks the ERPNext value.
 				"cleared": bool(entry.get("cleared")),
-				"agrees": bool(live) and _same_for_review(held, entry.get("qbo")),
+				# True: QuickBooks' value did not resolve to an ERPNext record (the flag
+				# carries the preflight issues that say why). It cannot be taken.
+				"unresolved": bool(entry.get("unresolved")),
+				"agrees": bool(live)
+				and not entry.get("unresolved")
+				and _same_for_review(held, entry.get("qbo"), precisions.get(fieldname)),
 			}
 		)
 	tables = []
@@ -1079,7 +1086,13 @@ def decide_many(decisions, *, fill_blanks=False, merge_duplicate=True, user=None
 
 	A decision may carry its own ``fill_blanks``, which wins over the call-level flag: the
 	page's *Link selected* sends each ticked row's own "Fill blank fields" box, so one row
-	asking for the QBO data does not impose it on the rest."""
+	asking for the QBO data does not impose it on the rest.
+
+	A request over ``MAX_REVIEW_ITEMS`` decisions is refused whole, before anything is
+	written (v1.800.0): a link can save a record and merge another away, and the page
+	already sends ``LINK_CHUNK`` (20) at a time."""
+	if len(decisions or []) > MAX_REVIEW_ITEMS:
+		frappe.throw(f"Send at most {MAX_REVIEW_ITEMS} decisions in one request; this one has {len(decisions)}.")
 	results = []
 	for decision in decisions or []:
 		decision = decision or {}

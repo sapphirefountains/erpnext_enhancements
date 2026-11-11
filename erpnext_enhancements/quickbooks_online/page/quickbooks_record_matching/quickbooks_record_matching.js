@@ -1463,10 +1463,15 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 					if (field.cleared) {
 						notes.push(pill(__("cleared in QuickBooks"), "red"));
 					}
+					if (field.unresolved) {
+						// QuickBooks holds a value ERPNext could not resolve (the reasons are
+						// listed above the table). There is nothing to take, so no box.
+						notes.push(pill(__("does not resolve in ERPNext"), "red"));
+					}
 				}
 				return `
 					<tr class="${field.agrees ? "is-agreed" : ""}">
-						<td class="qbo-mt-col-check">${field.agrees ? "" : tick(field.fieldname, field.baselined !== false && !field.cleared)}</td>
+						<td class="qbo-mt-col-check">${field.agrees || field.unresolved ? "" : tick(field.fieldname, field.baselined !== false && !field.cleared)}</td>
 						<td>${esc(field.label)} ${notes.join(" ")}</td>
 						<td>${shown(field.erpnext)}</td>
 						<td>${shown(field.qbo)}</td>
@@ -1625,12 +1630,23 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				verb: __("kept as ERPNext has them"),
 				progress: (from, to, total) => __("Keeping {0}–{1} of {2}…", [from, to, total]),
 			});
-		if (entries.length === 1) {
+		// A row still carrying the old Conflict status shows no differences: the server
+		// compares QuickBooks' newest stored data with the record and declines whatever
+		// differs. That is decided sight unseen, so it is said before it happens.
+		const legacy = entries.filter(({ row }) => !hasChanges(row) && row.conflict_status === "Conflict").length;
+		const unseen = legacy
+			? " " +
+				__(
+					"{0} of them carry the old Conflict flag and show no differences here: whatever QuickBooks' latest data says differently from the ERPNext record is declined without being shown, and is not raised again unless QuickBooks changes it.",
+					[legacy],
+				)
+			: "";
+		if (entries.length === 1 && !legacy) {
 			run();
 			return;
 		}
 		frappe.confirm(
-			__("Keep what ERPNext has on the {0} selected records? Nothing is written to them, and the QuickBooks differences shown now are not raised again.", [entries.length]),
+			__("Keep what ERPNext has on the {0} selected record(s)? Nothing is written to them, and the QuickBooks differences shown now are not raised again.", [entries.length]) + unseen,
 			run,
 		);
 	}

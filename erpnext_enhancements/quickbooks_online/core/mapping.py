@@ -703,13 +703,18 @@ def other_mapping_linking(erpnext_doctype: str, erpnext_name: str, entity_type=N
 	Three callers, one question -- "would this write land on a record a different
 	QuickBooks record already owns the link to?": the auto-link path, a person's Link with
 	*Fill blank fields*, and the promotion of a parent Account.
+
+	**A mapping marked ``deleted`` counts.** ``deleted`` says QuickBooks removed its record;
+	the ERPNext record it names is still one the sync linked, and the linked path itself
+	never asks about the flag. Filtering on ``deleted = 0`` here left exactly those records
+	open to both side doors: promoted as a parent, or auto-linked, filled and saved.
 	"""
 	if not erpnext_doctype or not erpnext_name:
 		return None
 	rows = frappe.get_all(
 		MAPPING_DOCTYPE,
-		filters={"erpnext_doctype": erpnext_doctype, "erpnext_name": erpnext_name, "deleted": 0},
-		fields=["name", "qbo_entity_type", "qbo_id", "match_rule"],
+		filters={"erpnext_doctype": erpnext_doctype, "erpnext_name": erpnext_name},
+		fields=["name", "qbo_entity_type", "qbo_id", "match_rule", "deleted"],
 	)
 	for row in rows or []:
 		if (
@@ -766,29 +771,49 @@ def _review_linked_record(
 	``preflight_issues`` are the reasons QuickBooks' data would not validate as an ERPNext
 	record. On the create path that parks the record. Here the record already exists, so
 	the reasons ride on a flag (a person may still *Keep ERPNext*) and block *Use
-	QuickBooks values* until they are fixed; with nothing to flag they are not a reason to
-	raise one. They used to rewrite the mapping through ``save_manual_review_mapping``,
-	which replaced ``owned_fields`` with the issue list.
+	QuickBooks values* until they are fixed. While there are issues a mapped None is read
+	as "did not resolve" and flagged wherever the record or the reference holds a value;
+	with nothing to flag, nothing is written at all and the cursor stays where it was.
+	They used to rewrite the mapping through ``save_manual_review_mapping``, which replaced
+	``owned_fields`` with the issue list.
+
+	**A stale payload does nothing.** A payload older than the newest one the mapping has
+	seen (its cursor, or the token stored on its flag) returns ``unchanged`` with
+	``stale``. Without that check a Run Resync replaying a stored token-3 payload cleared a
+	flag raised at token 4 and left the mapping Clean while QuickBooks said otherwise.
 	"""
 	_strip_values_erpnext_owns(entity_type, erpnext_doctype, values, doc)
 	result = {"doctype": erpnext_doctype, "name": doc.name}
+	# A payload older than the newest one this mapping has seen is a replay: Run Resync
+	# reading what an earlier Preview Resync stored, a webhook arriving late. It says what
+	# QuickBooks USED to say. It never flags, never clears a flag and never moves the cursor.
+	if _payload_is_stale(mapping, payload):
+		return {"action": "unchanged", **result, "stale": True}
 	moved = _linked_record_needs_a_look(mapping, payload)
 	if not moved and not recheck:
 		return {"action": "unchanged", **result}
 
-	changes = _linked_differences(doc, values, mapping)
 	issues = [str(issue) for issue in (preflight_issues or []) if issue]
+	# With preflight issues a mapped None may be a value that did not resolve rather than
+	# QuickBooks saying nothing, so it is read strictly (see _linked_differences).
+	changes = _linked_differences(doc, values, mapping, unresolved=bool(issues))
 	fields = sorted(changes["fields"]) + sorted(changes["tables"])
-	# Every field that was not flagged has been accounted for: its reference moves on.
-	settled = _settle_unflagged(mapping, erpnext_doctype, values, flagged=fields)
 	if not fields:
-		# Nothing to record when QuickBooks did not move: the cursor is already there.
+		if issues:
+			# QuickBooks' data does not validate and nothing that maps differs. Nothing is
+			# written: the cursor stays (a pass that could not read everything settles
+			# nothing), and a row an earlier failure parked keeps its parked status.
+			return {"action": "unchanged", **result, "issues": issues}
+		# Every field was looked at and none flagged: each reference moves to what
+		# QuickBooks says now. Nothing to record when QuickBooks did not move.
 		if moved and not preview:
-			_advance_mapping_cursor(
-				mapping, payload, erpnext_doctype, values, doc, settled=settled, clear_parked=not issues
-			)
+			settled = _settle_unflagged(mapping, erpnext_doctype, values)
+			_advance_mapping_cursor(mapping, payload, erpnext_doctype, values, doc, settled=settled)
 		return {"action": "unchanged", **result}
 
+	# The fields that were not flagged have been accounted for too -- unless the pass had
+	# issues, in which case only the flag is trusted.
+	settled = None if issues else _settle_unflagged(mapping, erpnext_doctype, values, flagged=fields)
 	if preview:
 		return {"action": "would_flag", **result, "qbo_id": qbo_id, "fields": fields, "issues": issues}
 	_flag_qbo_changed(mapping, payload, changes, issues, settled=settled)
@@ -875,6 +900,96 @@ def _payload_cursor(payload: dict) -> dict:
 	return cursor
 
 
+def _cursor_order(token, updated, other_token, other_updated) -> int | None:
+	"""-1, 0 or 1 as the first (SyncToken, LastUpdatedTime) is older than, the same as or
+	newer than the second; None when the two cannot be compared. Tokens decide when both
+	are whole numbers, as ``_qbo_record_advanced`` reads them; otherwise the times do."""
+	try:
+		left, right = int(str(token)), int(str(other_token))
+	except (TypeError, ValueError):
+		left = right = None
+	if left is not None:
+		return (left > right) - (left < right)
+	if updated and other_updated:
+		try:
+			return (updated > other_updated) - (updated < other_updated)
+		except TypeError:
+			return None
+	return None
+
+
+def _newest_seen(mapping) -> tuple:
+	"""The newest (SyncToken, LastUpdatedTime) this mapping has seen: its cursor, or the
+	payload its flag was raised from -- a flag holds the cursor back on purpose, so the
+	cursor alone understates what has already been read."""
+	newest = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if getattr(mapping, "conflict_status", None) == QBO_CHANGED:
+		note = stored_changes(mapping)
+		flagged = (note.get("sync_token"), parse_qbo_datetime(note.get("last_updated")))
+		if _cursor_order(*flagged, *newest) == 1:
+			newest = flagged
+	return newest
+
+
+def _payload_is_stale(mapping, payload: dict) -> bool:
+	"""True when ``payload`` is older than the newest one the mapping has seen."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	return _cursor_order(token, updated, *_newest_seen(mapping)) == -1
+
+
+def _forward_cursor(mapping, payload: dict) -> dict:
+	"""``_payload_cursor`` unless it would move the stored cursor backwards, in which case
+	nothing. Every write of a mapping's cursor goes through here or ``_stamp_cursor``."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	stored = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if _cursor_order(token, updated, *stored) == -1:
+		return {}
+	return _payload_cursor(payload)
+
+
+def _stamp_cursor(mapping, payload: dict):
+	"""Set a mapping document's cursor from a payload, never backwards. The ``save_*``
+	helpers used to assign both columns from whatever payload they were handed, so a
+	replayed older payload could wind a mapping's cursor back."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	stored = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if _cursor_order(token, updated, *stored) == -1:
+		return
+	mapping.sync_token = token
+	mapping.last_qbo_updated_at = updated
+
+
+#: Field types whose stored value is a rounded number, and the System Settings default
+#: each falls back to when the field names no precision of its own.
+_NUMBER_FIELDTYPES = {"Currency": 0, "Float": 1, "Percent": 1}
+
+
+def number_precisions(doctype) -> dict:
+	"""``{fieldname: decimals}`` for the Currency / Float / Percent fields of a DocType,
+	and ``{table fieldname: {...}}`` for the same fields of each child table. Empty when
+	the meta cannot be read, in which case every number is compared exactly."""
+	try:
+		fields = list(frappe.get_meta(doctype).fields or [])
+	except Exception:
+		return {}
+	defaults = _erpnext_item_precisions()
+	precisions = {}
+	for field in fields:
+		fieldname, fieldtype = getattr(field, "fieldname", None), getattr(field, "fieldtype", None)
+		if not fieldname:
+			continue
+		if fieldtype in _NUMBER_FIELDTYPES:
+			precisions[fieldname] = cint(getattr(field, "precision", None)) or defaults[_NUMBER_FIELDTYPES[fieldtype]]
+		elif fieldtype in ("Table", "Table MultiSelect") and getattr(field, "options", None):
+			child = number_precisions(field.options)
+			if child:
+				precisions[fieldname] = child
+	return precisions
+
+
 def _is_blank(value) -> bool:
 	"""None, an empty string, an empty table, False and a numeric zero all mean "nothing here"."""
 	if value is None or value is False or value == "" or value == []:
@@ -882,18 +997,23 @@ def _is_blank(value) -> bool:
 	return isinstance(value, (int, float)) and value == 0
 
 
-def _same_for_review(current, incoming) -> bool:
+def _same_for_review(current, incoming, precision=None) -> bool:
 	"""True when ``incoming`` is not worth a person's attention against ``current``.
 
 	Looser than ``_values_equal`` on purpose. That one answered "would a save store
 	something different?" and erred toward saving; this one answers "would an accountant
 	call these different?" and a wrong yes costs a person a review. So, beyond what
 	``_values_equal`` already forgives (date objects, ``1`` vs ``1.0``): blank is blank
-	whatever its type; two strings are compared the way ERPNext would have stored them
+	whatever its type, and two strings are compared the way ERPNext would have stored them
 	(``_review_text``: markup and edge whitespace gone, a web address with or without its
-	scheme); and two amounts of 1 or more that agree to the cent are the same amount (a
-	currency field stores ``flt(value, 2)`` of what the mapper sent). Small numbers get no
-	tolerance: an exchange rate of 0.0067 against 0.0071 is a real difference.
+	scheme).
+
+	**Numbers are compared at the precision the field stores, and exactly when that is not
+	known.** ``precision`` is the field's decimals (``number_precisions``): a Currency
+	field that keeps 2 decimals holds 12.35 for a mapped 12.3456, and the two are the same
+	value. There is no blanket tolerance. The first version called any two numbers of 1
+	or more within half a cent equal, whatever the field: an exchange rate moving from 1.32
+	to 1.3245 read as unchanged, and so did a four-decimal unit price.
 	"""
 	if isinstance(current, list) or isinstance(incoming, list):
 		return False
@@ -905,12 +1025,11 @@ def _same_for_review(current, incoming) -> bool:
 		return True
 	if isinstance(current, bool) or isinstance(incoming, bool):
 		return False
-	if isinstance(current, (int, float)) or isinstance(incoming, (int, float)):
+	if isinstance(precision, int) and (isinstance(current, (int, float)) or isinstance(incoming, (int, float))):
 		try:
-			left, right = float(current), float(incoming)
+			return flt(float(current), precision) == flt(float(incoming), precision)
 		except (TypeError, ValueError):
 			return False
-		return max(abs(left), abs(right)) >= 1 and abs(left - right) <= 0.005 + 1e-9
 	return False
 
 
@@ -929,27 +1048,32 @@ def _review_text(value: str) -> str:
 	return text
 
 
-def _same_qbo_value(reference, incoming) -> bool:
+def _same_qbo_value(reference, incoming, precision=None) -> bool:
 	"""True when QuickBooks still says what it said before (``reference``).
 
 	``reference`` was read back from JSON, so ``incoming`` is put through the same round
-	trip before the two are compared; child-table rows are compared whole.
+	trip before the two are compared; child-table rows are compared whole and exactly (a
+	table that differs here is still held against the record cell by cell).
 	"""
 	normalised = json_loads(json_dumps(incoming))
 	if isinstance(reference, list) or isinstance(normalised, list):
 		return reference == normalised
-	return _same_for_review(reference, normalised)
+	return _same_for_review(reference, normalised, precision if isinstance(precision, int) else None)
 
 
-def _table_differences(current_rows, incoming_rows: list) -> list[dict]:
+def _table_differences(current_rows, incoming_rows: list, precisions=None, unresolved=False) -> list[dict]:
 	"""Row-by-row differences between a record's child table and the rows QBO maps to.
 
 	Rows are paired by position, the order the importer wrote them in. Only the keys the
 	mapper supplies are compared, so the columns ERPNext computes for itself never count.
 	A live row is a child Document on a site and a plain namespace in the bench-free
-	suite; both are read by attribute name.
+	suite; both are read by attribute name. ``precisions`` is the child DocType's number
+	precisions. A None cell is "QuickBooks says nothing" and skipped -- unless
+	``unresolved`` (the payload failed the preflight), when a None beside a value the
+	record holds is an account or item that did not resolve, and is a difference.
 	"""
 	current_rows = list(current_rows) if isinstance(current_rows, (list, tuple)) else []
+	precisions = precisions if isinstance(precisions, dict) else {}
 	differences = []
 	for index, incoming in enumerate(incoming_rows):
 		if index >= len(current_rows):
@@ -960,10 +1084,14 @@ def _table_differences(current_rows, incoming_rows: list) -> list[dict]:
 		current = current_rows[index]
 		fields = {}
 		for key, value in incoming.items():
-			if value is None or isinstance(value, (list, dict)):
+			if isinstance(value, (list, dict)):
 				continue
 			held = current.get(key) if isinstance(current, dict) else getattr(current, key, None)
-			if not _same_for_review(held, value):
+			if value is None:
+				if unresolved and not _is_blank(held):
+					fields[key] = {"erpnext": held, "qbo": None}
+				continue
+			if not _same_for_review(held, value, precisions.get(key)):
 				fields[key] = {"erpnext": held, "qbo": value}
 		if fields:
 			differences.append({"row": index + 1, "fields": fields})
@@ -1007,7 +1135,7 @@ def _reference(fieldname: str, settled: dict, baseline: dict):
 	return baseline.get(fieldname, _NO_REFERENCE)
 
 
-def _linked_differences(doc, values: dict, mapping) -> dict:
+def _linked_differences(doc, values: dict, mapping, *, unresolved=False) -> dict:
 	"""``{"fields": {...}, "tables": {...}}``: where the record and the payload disagree.
 
 	**A field with a reference is a difference only when QuickBooks changed it.** The flag
@@ -1031,26 +1159,45 @@ def _linked_differences(doc, values: dict, mapping) -> dict:
 	reference that no longer resolves): flagged with ``cleared`` if the record still holds
 	something.
 
+	**Unless the payload failed the preflight** (``unresolved``). Then a None may be a
+	value QuickBooks does hold and ERPNext could not resolve -- a new ledger or term that
+	is not imported yet -- and reading it as "nothing" lets a real change through with the
+	cursor advanced. So with issues a None is flagged ``unresolved`` wherever the record
+	holds a value and the field has no reference, or the reference held a value; a None
+	cell in a child table likewise, beside a value the record holds. A field whose
+	reference is already blank is still skipped: that None has been seen and answered.
+
 	Each field entry carries ``erpnext_edited`` when the record no longer holds what the
 	last sync stored, i.e. both sides moved. That is what the pre-v1.800.0 code called a
 	conflict; here it is a note for the reviewer, and nothing branches on it.
 	"""
 	settled = _settled_values(mapping)
 	baseline = _owned_baseline(mapping) or {}
+	precisions = number_precisions(getattr(doc, "doctype", None))
 	fields, tables = {}, {}
 	for fieldname, incoming in values.items():
 		reference = _reference(fieldname, settled, baseline)
 		current = doc.get(fieldname)
+		precision = precisions.get(fieldname)
 		if incoming is None:
-			if reference is _NO_REFERENCE or isinstance(reference, list) or _is_blank(reference):
+			if isinstance(reference, list):
 				continue
-			if _is_blank(current):
+			if reference is _NO_REFERENCE:
+				if not unresolved or _is_blank(current):
+					continue
+				entry = {"erpnext": current, "qbo": None, "unresolved": True}
+			elif _is_blank(reference):
 				continue
-			entry = {"erpnext": current, "qbo": None, "cleared": True}
-		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming):
+			elif unresolved:
+				entry = {"erpnext": current, "qbo": None, "unresolved": True}
+			elif _is_blank(current):
+				continue
+			else:
+				entry = {"erpnext": current, "qbo": None, "cleared": True}
+		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming, precision):
 			continue
 		elif isinstance(incoming, list):
-			rows = _table_differences(current, incoming)
+			rows = _table_differences(current, incoming, precision, unresolved)
 			if rows:
 				tables[fieldname] = {
 					"erpnext_rows": len(current) if isinstance(current, (list, tuple)) else 0,
@@ -1062,13 +1209,13 @@ def _linked_differences(doc, values: dict, mapping) -> dict:
 				if reference is _NO_REFERENCE:
 					tables[fieldname]["no_baseline"] = True
 			continue
-		elif _same_for_review(current, incoming):
+		elif _same_for_review(current, incoming, precision):
 			continue
 		else:
 			entry = {"erpnext": current, "qbo": incoming}
 		if reference is _NO_REFERENCE:
 			entry["no_baseline"] = True
-		if fieldname in baseline and not _same_for_review(current, baseline[fieldname]):
+		if fieldname in baseline and not _same_for_review(current, baseline[fieldname], precision):
 			entry["erpnext_edited"] = True
 		fields[fieldname] = entry
 	return {"fields": fields, "tables": tables}
@@ -1087,6 +1234,7 @@ def _settle_unflagged(mapping, erpnext_doctype: str, values: dict, flagged=()) -
 	"""
 	settled = _settled_values(mapping)
 	baseline = _owned_baseline(mapping) or {}
+	precisions = number_precisions(erpnext_doctype)
 	flagged = set(flagged)
 	changed = False
 	for fieldname, incoming in _without_erpnext_owned_party_fields(erpnext_doctype, values).items():
@@ -1097,7 +1245,7 @@ def _settle_unflagged(mapping, erpnext_doctype: str, values: dict, flagged=()) -
 			if reference is _NO_REFERENCE or _is_blank(reference):
 				continue
 			settled[fieldname] = None
-		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming):
+		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming, precisions.get(fieldname)):
 			continue
 		else:
 			settled[fieldname] = json_loads(json_dumps(incoming))
@@ -1105,9 +1253,7 @@ def _settle_unflagged(mapping, erpnext_doctype: str, values: dict, flagged=()) -
 	return settled if changed else None
 
 
-def _advance_mapping_cursor(
-	mapping, payload: dict, erpnext_doctype: str, values: dict, doc, *, settled=None, clear_parked=True
-):
+def _advance_mapping_cursor(mapping, payload: dict, erpnext_doctype: str, values: dict, doc, *, settled=None):
 	"""QuickBooks moved and nothing it changed differs from the record: record that, on
 	the mapping only.
 
@@ -1116,22 +1262,21 @@ def _advance_mapping_cursor(
 	and a flag that no longer holds is cleared, while ``owned_fields`` stays exactly as it
 	was. The one exception is a row whose ``owned_fields`` is a parking note from an
 	earlier failure: the record now agrees with QuickBooks, so the note is out of date and
-	a real snapshot replaces it. ``clear_parked`` is off while QuickBooks' data still fails
-	the preflight: such a row keeps its parked status.
+	a real snapshot replaces it. Never called while QuickBooks' data fails the preflight
+	(such a row keeps its parked status), and the cursor only ever moves forward
+	(``_forward_cursor``): a payload older than the stored cursor writes no token.
 	"""
-	updates = dict(_payload_cursor(payload), last_synced_at=now_datetime(), deleted=0)
+	updates = dict(_forward_cursor(mapping, payload), last_synced_at=now_datetime(), deleted=0)
 	if settled is not None:
 		updates["settled_qbo_values"] = json_dumps(settled)
-	status = getattr(mapping, "conflict_status", None)
-	if status in (QBO_CHANGED, LEGACY_CONFLICT) or (clear_parked and status == "Pending Review"):
+	if getattr(mapping, "conflict_status", None) in (QBO_CHANGED, LEGACY_CONFLICT, "Pending Review"):
 		updates["conflict_status"] = "Clean"
 	if getattr(mapping, "qbo_changes", None):
 		updates["qbo_changes"] = None
-	if clear_parked:
-		if getattr(mapping, "match_status", None) == "Pending Review":
-			updates["match_status"] = "Auto Matched"
-		if _owned_baseline(mapping) is None:
-			updates["owned_fields"] = json_dumps(_owned_snapshot(erpnext_doctype, doc.name, values))
+	if getattr(mapping, "match_status", None) == "Pending Review":
+		updates["match_status"] = "Auto Matched"
+	if _owned_baseline(mapping) is None:
+		updates["owned_fields"] = json_dumps(_owned_snapshot(erpnext_doctype, doc.name, values))
 	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates, update_modified=False)
 
 
@@ -1227,11 +1372,8 @@ def _save_reviewed_record(doc):
 def _resolved_updates(mapping, changes: dict) -> dict:
 	"""Mapping columns every resolved flag sets: the flag off, the cursor at what was shown."""
 	updates = {"conflict_status": "Clean", "qbo_changes": None}
-	if changes.get("sync_token") is not None:
-		updates["sync_token"] = changes.get("sync_token")
-	updated = parse_qbo_datetime(changes.get("last_updated"))
-	if updated:
-		updates["last_qbo_updated_at"] = updated
+	shown = {"SyncToken": changes.get("sync_token"), "MetaData": {"LastUpdatedTime": changes.get("last_updated")}}
+	updates.update(_forward_cursor(mapping, shown))
 	return updates
 
 
@@ -1304,7 +1446,7 @@ def _keep_from_newest_payload(mapping, entity_type: str, qbo_id: str, *, settle:
 	never writes it."""
 	updates = {"conflict_status": "Clean", "qbo_changes": None}
 	payload = _raw_payload_dict(entity_type, qbo_id) or {}
-	updates.update(_payload_cursor(payload))
+	updates.update(_forward_cursor(mapping, payload))
 	kept = []
 	doctype, name = mapping.erpnext_doctype, mapping.erpnext_name
 	if settle and payload and doctype and name and frappe.db.exists(doctype, name):
@@ -1367,6 +1509,7 @@ def use_qbo_values(entity_type: str, qbo_id: str, fields=None) -> dict:
 	flagged = {fieldname: (entry or {}).get("qbo") for fieldname, entry in changes["fields"].items()}
 	flagged.update({fieldname: (entry or {}).get("qbo") for fieldname, entry in changes["tables"].items()})
 	cleared = {fieldname for fieldname, entry in changes["fields"].items() if (entry or {}).get("cleared")}
+	# An ``unresolved`` entry only exists beside preflight issues, which were refused above.
 	if fields is None:
 		# No list given: what the page ticks by default. A field with no baseline may not
 		# have been changed by QuickBooks at all, and taking a cleared one blanks ERPNext's
@@ -1569,8 +1712,7 @@ def save_mapping(
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
 	mapping.erpnext_name = erpnext_name
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.owned_fields = json_dumps(_owned_snapshot(erpnext_doctype, erpnext_name, values))
@@ -1593,8 +1735,7 @@ def save_pending_mapping(entity_type: str, qbo_id: str, payload: dict, erpnext_d
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.conflict_status = "Pending Review"
@@ -1620,8 +1761,7 @@ def save_manual_review_mapping(entity_type: str, qbo_id: str, payload: dict, erp
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.conflict_status = "Pending Review"

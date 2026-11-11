@@ -91,6 +91,7 @@ its *reference*, the last thing QuickBooks is known to have said: the settled va
 | has a reference, and QuickBooks cleared it (a mapped `None`: a term removed, a reference that no longer resolves) | flagged `cleared` if the record still holds a value |
 | has **no** reference (it differed on the day the record was first linked, so the import never wrote it) | compared with the record directly, so it flags on the first pass that looks at it, whichever side changed. Marked `no_baseline`; the page says "never synced before" and leaves it unticked |
 | is a mapped `None` and never had a value | skipped |
+| is a mapped `None`, or a `None` cell in a child table, **and the payload failed the preflight** | flagged `unresolved` wherever the record holds a value and the field has no reference, or the reference held a value. The None may be a value ERPNext could not resolve (a ledger or term not imported yet), and the preflight issues ride on the flag. *Use QuickBooks values* is refused; *Keep ERPNext* settles it |
 
 So "flags only what QuickBooks changed" holds for every field with a reference, which is every
 field of a record the import created and every field that agreed when a record was linked. A field
@@ -103,7 +104,20 @@ the flag. Without that a real change was lost: ERPNext edited to Net 45, QuickBo
 changed".
 
 The comparison (`_same_for_review`) forgives what ERPNext does to a value on save: blank is blank,
-edge whitespace and markup go, a website gains its scheme, and amounts of 1 or more agree to the cent.
+edge whitespace and markup go, a website gains its scheme. **Numbers are compared at the precision
+the field stores** (`number_precisions`, from the DocType meta: a Currency field that keeps 2 decimals
+holds 12.35 for a mapped 12.3456, the same value), child-table cells at the child field's precision,
+and **exactly when the field's type is not known**. There is no blanket tolerance: the first version
+called any two numbers of 1 or more within half a cent equal, so an exchange rate moving from 1.32 to
+1.3245 read as unchanged.
+
+**A stale payload does nothing.** A payload older than the newest one the mapping has seen (its
+cursor, or the token stored on its flag) returns `unchanged` with `stale: true`: it never flags,
+never clears a flag and never moves the cursor. Run Resync replays what an earlier Preview Resync
+stored, and a webhook can arrive late; without the check a token-3 replay cleared a flag raised at
+token 4. Every write of a mapping's cursor is forward-only (`_forward_cursor`, `_stamp_cursor`), the
+`save_*` helpers of the unlinked paths included. When the payload fails the preflight and nothing
+flags, nothing is written at all: the cursor stays and a parked row keeps its status.
 
 A flag is written with `frappe.db.set_value`, never `save_mapping`, so `owned_fields` survives; the
 cursor is held back so a replay re-derives the same flag, and an identical replay writes nothing.
@@ -126,14 +140,36 @@ only read as changed if the constant itself changes, and *Refresh draft* rebuild
 A QuickBooks **job rename** is therefore dropped, with the cursor advanced and no flag: titles are
 ERPNext's.
 
+Three things this table costs, on purpose:
+
+- **`customer_type` / `supplier_type` and `item_code` are partly QuickBooks-derived** (from whether
+  `CompanyName` is filled, and from the `Sku`). Stripping them hides a QuickBooks customer changing
+  from a person to a company, and a SKU change, on a linked record. The alternative was a guess and
+  a rename-that-renames-nothing offered for one-click application.
+- **An Account's `is_group` and `account_type` are not stripped** (only for a group that has children
+  in ERPNext). They are real QuickBooks facts on a full query and unreliable on a CDC payload, which
+  never knows whether an account has children, so a parent Account with no children in ERPNext can
+  flag `is_group` / `account_type` as noise. One Keep ERPNext settles it.
+- **Use QuickBooks values on a subset settles the unticked fields as declined.** They stay silent
+  afterward, until QuickBooks changes them again.
+
 **The two side doors are shut too.** A sync could also save a linked record that is *not* the one it
 is syncing. A new sub-account under a ledger parent promoted that parent to a group
 (`_ensure_group_parent`: `is_group` set, `account_type` cleared, parent saved): where a mapping links
 the parent, the child is parked instead ("make it a group by hand"). And the auto-link path filled
 the blank fields of whatever record the matcher found: where another mapping already links that
 record (a customer re-created in QuickBooks, two jobs with one PRJ number), the new one is parked
-for a person, with no save and no second link. `other_mapping_linking` answers both; a job
-consolidated onto its parent Customer does not count as that Customer's link.
+for a person, with no save and no second link. `other_mapping_linking` answers both, and counts a
+mapping marked `deleted` (QuickBooks removed its record; the ERPNext record is still one the sync
+linked).
+
+**One named exception to "never saves a linked record": the consolidated job.** A QuickBooks job
+with no matching Project is filed under its parent Customer by a mapping row with
+`match_rule = job_merge_no_project`. That row is not the Customer's own link. So a Customer whose
+*only* mapping rows are consolidated jobs still takes its own QuickBooks customer as a first link
+through the auto-link path, with its blank fields filled and the record saved, exactly as for a
+Customer nothing links. Without the exception every Customer that has consolidated jobs would refuse
+its own QuickBooks record.
 `preview=True` reports `would_flag` and writes nothing. A person-started Preview Resync / Run Resync
 passes `recheck=True` and compares even a record QuickBooks has not moved: that is how a standing
 difference (a mapper fix that changes what a draft should hold, a field that has differed since the
@@ -144,12 +180,12 @@ record was first linked) is brought up for review. It still only flags.
 changed* status filter on Masters, and the *QuickBooks changed* choice in the transactions tab's
 select. Each flagged row shows "ERPNext has" (read from the record when the page loads) beside
 "QuickBooks has", field by field. Three POST-only endpoints, each for one row or the ticked rows
-(at most `matching.MAX_REVIEW_ITEMS`, 50, per request; the page sends 20), none of which calls
-QuickBooks or queues a job:
+(at most `matching.MAX_REVIEW_ITEMS`, 50, per request, which also caps `decide_matches`; the page
+sends 20), none of which calls QuickBooks or queues a job:
 
 | Action | Endpoint | What it does |
 |---|---|---|
-| **Keep ERPNext** | `keep_erpnext` | Clears the flag, advances the cursor to what the reviewer saw, records the declined values in `settled_qbo_values`. Writes nothing to the record. Also accepted for a row still carrying the pre-v1.800.0 `Conflict` (the newest stored payload is compared with the record and what differs is settled) and for a **submitted** document the sync parked because QuickBooks changed it (the row is un-parked; a posted document is never updated in place). |
+| **Keep ERPNext** | `keep_erpnext` | Clears the flag, advances the cursor to what the reviewer saw, records the declined values in `settled_qbo_values`. Writes nothing to the record. Also accepted for a row still carrying the pre-v1.800.0 `Conflict` (the newest stored payload is compared with the record and what differs is settled as declined, without being shown: the page says so before it does it) and for a **submitted** document the sync parked because QuickBooks changed it (the row is un-parked; a posted document is never updated in place). |
 | **Use QuickBooks values** | `use_quickbooks_values` | Writes the ticked fields to that one record and saves it; a field QuickBooks cleared is blanked when ticked. With no list it takes what the page ticks by default: not a "never synced before" field and not a cleared one. Refused for a submitted or cancelled document, for a flag whose QuickBooks data failed the preflight, and for a stored name that is not a field of the DocType. An unticked field keeps what ERPNext has and is settled too. |
 | **Refresh draft** | `refresh_drafts` | Rebuilds one docstatus 0 transaction from the newest stored payload. Also offered on a parked transaction that already has a draft, where a sync used to rebuild it. |
 
@@ -157,7 +193,13 @@ Every answer records the QuickBooks value as settled, so a field is not flagged 
 QuickBooks still says the same thing: a standing difference is answered once. The Sync Log counts
 a flag under `conflict_count`; the *QuickBooks Open Conflicts* number card and the `qbo_conflicts`
 KPI count `QuickBooks Changed` and the older `Conflict` together. Tests:
-`tests/test_quickbooks_link_only.py` (its own pytest step in CI).
+`tests/test_quickbooks_link_only.py` (its own pytest step in CI). Besides the single cases it holds a seeded random walk
+(`test_random_walk_keeps_the_link_only_invariant`, 40 seeds of 250 steps) over the real
+`upsert_entity`, `keep_erpnext_values` and `use_qbo_values`: QuickBooks edits, ERPNext edits, syncs,
+replays of older payloads, previews, Keep, Use on a random subset. After every step: no sync wrote
+the record; after a sync that compares, each mapped field equals the record, or is in the flag note,
+or QuickBooks still says what was last accounted for; a stale payload changed nothing; the cursor
+never moved backwards.
 
 **RQ's job timeout is no longer swallowed.** `safe_upsert` caught `JobTimeoutException` like any
 bad record; the run then had no time limit and its log sat in Running until the 11-hour reaper.
