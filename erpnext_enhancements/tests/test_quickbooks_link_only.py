@@ -3156,6 +3156,64 @@ def test_the_check_after_a_write_leaves_out_what_erpnext_composes_for_itself(mon
 	]
 
 
+def test_the_check_after_a_write_does_not_hold_erpnexts_own_arithmetic_against_a_line(monkeypatch):
+	"""ERPNext computes a line's amount as qty times the rate it stored. 3 at 33.33333 is
+	100.00 in QuickBooks and 99.99 here: the quantity and the rate both took, and no rebuild
+	can change the cent. It is not "still differs". A line whose rate did not take keeps
+	its amount in the report, and a table with no qty / rate columns keeps every cell."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	metas = {
+		"Sales Invoice": _typed_meta(
+			[_field("items", "Table", options="Sales Invoice Item"), _field("taxes", "Table", options="Sales Taxes and Charges")]
+		),
+		"Sales Invoice Item": _typed_meta(
+			[_field("qty", "Float"), _field("rate", "Currency", 2), _field("amount", "Currency", 2)]
+		),
+		"Sales Taxes and Charges": _typed_meta([_field("amount", "Currency", 2)]),
+	}
+	monkeypatch.setattr(frappe, "get_meta", lambda doctype: metas[doctype], raising=False)
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		items=[
+			types.SimpleNamespace(qty=3.0, rate=33.33, amount=99.99),
+			types.SimpleNamespace(qty=1.0, rate=250.0, amount=250.0),
+		],
+		taxes=[types.SimpleNamespace(amount=7.01)],
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	values = {
+		"items": [{"qty": 3, "rate": 33.33333, "amount": 100.0}, {"qty": 1, "rate": 0.0, "amount": 0.0}],
+		"taxes": [{"amount": 7.0}],
+	}
+
+	remaining = mapping._differences_after_write("Sales Invoice", doc.name, values)
+
+	assert remaining["tables"]["items"]["rows"] == [
+		{"row": 2, "fields": {"rate": {"erpnext": 250.0, "qbo": 0.0}, "amount": {"erpnext": 250.0, "qbo": 0.0}}}
+	]
+	assert remaining["tables"]["taxes"]["rows"] == [{"row": 1, "fields": {"amount": {"erpnext": 7.01, "qbo": 7.0}}}]
+
+	# Only the rounding left: nothing still differs.
+	doc.items[1] = types.SimpleNamespace(qty=1.0, rate=0.0, amount=0.0)
+	doc.taxes = [types.SimpleNamespace(amount=7.0)]
+	assert mapping._differences_after_write("Sales Invoice", doc.name, values) == {"fields": {}, "tables": {}}
+	# More rounding cents than the note's row cap: still nothing, not "and 5 more rows".
+	doc.items = [types.SimpleNamespace(qty=3.0, rate=33.33, amount=99.99) for _line in range(30)]
+	many = {"items": [{"qty": 3, "rate": 33.33333, "amount": 100.0} for _line in range(30)]}
+	assert mapping.TABLE_DIFF_ROW_CAP < 30
+	assert mapping._differences_after_write("Sales Invoice", doc.name, many) == {"fields": {}, "tables": {}}
+	doc.items[28].rate, doc.items[28].amount = 250.0, 750.0
+	late = mapping._differences_after_write("Sales Invoice", doc.name, many)["tables"]["items"]
+	assert [row["row"] for row in late["rows"]] == [29] and late["more_rows"] == 0
+	# The sync's own comparison is unchanged: it still reports the cent.
+	assert mapping._table_differences(doc.items[:1], values["items"][:1], {"rate": 2, "amount": 2}) == [
+		{"row": 1, "fields": {"amount": {"erpnext": 99.99, "qbo": 100.0}}}
+	]
+
+
 def test_the_page_is_told_which_fields_still_differ_and_never_sent_the_rows(monkeypatch):
 	"""``review_many`` reports a saved-but-differing write as its own outcome, with one
 	short label per field. The stored differences (whole child tables) stay on the server."""

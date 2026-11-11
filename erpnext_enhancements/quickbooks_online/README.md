@@ -205,8 +205,12 @@ from `owned_fields` and `settled_qbo_values`. That is what keeps the flag honest
 saying "QuickBooks said 0, and that was dealt with" would let the next sync skip the table and clear
 the flag while the draft still holds 250. With no reference the field is compared with the record
 on every pass that looks, until the two agree or a person chooses Keep ERPNext (which settles what
-QuickBooks said). Left out of the check, by name (`REWRITTEN_ON_SAVE`): a Payment Entry's
-`remarks`, which ERPNext composes itself on every save.
+QuickBooks said). Left out of the check: a Payment Entry's `remarks`, which ERPNext composes itself
+on every save (`REWRITTEN_ON_SAVE`), and a line's `amount` where its `qty` and `rate` both took
+(`_without_recomputed_amounts`). ERPNext computes the amount from the rate as the field rounds it;
+QuickBooks keeps more decimals, so 3 at 33.33333 is 100.00 there and 99.99 here. A first-time
+create has always produced that cent, the preflight already refuses a total further out than
+rounding explains, and no rebuild can change it. The sync's own comparison still reports it.
 
 **Why it exists: ERPNext reprices a line that carries no `price_list_rate`.** On every save
 `accounts_controller.set_missing_item_details` copies the Item's list price onto a line whose

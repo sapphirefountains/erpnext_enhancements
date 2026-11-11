@@ -176,8 +176,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields, in an orange message where a clean run gets a green one. A field that still differs
   also loses its reference (it leaves `owned_fields` and `settled_qbo_values`), so no later sync
   can read it as settled and clear the flag; it stays until the record agrees or a person
-  chooses Keep ERPNext. One mapped field is left out of the check, by name: a Payment Entry's
-  `remarks`, which ERPNext composes itself on every save (`mapping.REWRITTEN_ON_SAVE`).
+  chooses Keep ERPNext. Two things are left out of the check. A Payment Entry's `remarks`, which
+  ERPNext composes itself on every save (`mapping.REWRITTEN_ON_SAVE`). And a line's `amount` where
+  its quantity and rate both took: ERPNext computes the amount from the rate as the field rounds
+  it, so 3 at 33.33333 is 100.00 in QuickBooks and 99.99 here, the same cent a first-time create
+  has always produced and one no rebuild can change.
 
   Every answer records the QuickBooks value in `settled_qbo_values`, and a field is not flagged
   again while QuickBooks still says the same thing. Without that, a difference a person chose to

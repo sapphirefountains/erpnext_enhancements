@@ -1420,6 +1420,16 @@ def _differences_after_write(erpnext_doctype: str, erpnext_name: str, values: di
 	Left out: the build-only keys, and the fields ERPNext composes for itself on every
 	save (``REWRITTEN_ON_SAVE``). A None in ``values`` is QuickBooks saying nothing and was
 	not written, so it is not checked.
+
+	**A line's ``amount`` is not held against it when its ``qty`` and ``rate`` both took.**
+	ERPNext does not store the amount it is given; it computes ``qty * rate`` from the rate
+	as the field rounds it (``_sales_items``). QuickBooks keeps unit prices to more decimals
+	than a Currency field does, so 3 at 33.33333 is 100.00 there and 99.99 here. That cent
+	is the same one a first-time create has always produced, and the preflight
+	(``_sales_invoice_shortfall``) already refuses a document whose total is further out
+	than rounding explains. Counting it here would leave such a draft flagged after every
+	rebuild, with nothing a rebuild could do about it. Where the quantity or the rate did
+	not take, the amount is reported beside it.
 	"""
 	saved = frappe.get_doc(erpnext_doctype, erpnext_name)
 	rewritten = REWRITTEN_ON_SAVE.get(erpnext_doctype, ())
@@ -1429,10 +1439,50 @@ def _differences_after_write(erpnext_doctype: str, erpnext_name: str, values: di
 		held = saved.get(fieldname)
 		if not _is_blank(held):
 			remaining["fields"][fieldname] = {"erpnext": held, "qbo": None, "cleared": True}
+	precisions = number_precisions(erpnext_doctype)
+	for fieldname in list(remaining["tables"]):
+		entry = remaining["tables"][fieldname]
+		incoming = entry.get("qbo") or []
+		# Every differing row, not the capped list the note stores: a long draft can have
+		# more rounding cents than the cap, and they must not hide behind ``more_rows``.
+		rows = _without_recomputed_amounts(
+			_table_differences(saved.get(fieldname), incoming, precisions.get(fieldname)), incoming
+		)
+		if not rows:
+			del remaining["tables"][fieldname]
+			continue
+		entry["rows"] = rows[:TABLE_DIFF_ROW_CAP]
+		entry["more_rows"] = max(0, len(rows) - TABLE_DIFF_ROW_CAP)
 	for group in ("fields", "tables"):
 		for entry in remaining[group].values():
 			entry.pop("no_baseline", None)
 	return remaining
+
+
+def _without_recomputed_amounts(differences: list, incoming_rows: list) -> list:
+	"""Row differences minus an ``amount`` that differs on a line whose ``qty`` and ``rate``
+	both agree (see ``_differences_after_write``). Only for rows the mapper gave a quantity
+	and a rate: a table with no such columns keeps every cell."""
+	kept = []
+	for difference in differences:
+		fields = difference.get("fields")
+		index = cint(difference.get("row")) - 1
+		incoming = incoming_rows[index] if 0 <= index < len(incoming_rows) else None
+		if (
+			isinstance(fields, dict)
+			and "amount" in fields
+			and isinstance(incoming, dict)
+			and incoming.get("qty") is not None
+			and incoming.get("rate") is not None
+			and "qty" not in fields
+			and "rate" not in fields
+		):
+			fields = {key: value for key, value in fields.items() if key != "amount"}
+			if not fields:
+				continue
+			difference = dict(difference, fields=fields)
+		kept.append(difference)
+	return kept
 
 
 def _still_differs(remaining: dict) -> list:
