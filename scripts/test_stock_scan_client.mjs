@@ -1479,7 +1479,7 @@ async function appBinActions() {
 	let nextBin = null;
 	let release = null;
 	// Job sites (v1.801.0): the place `job_site` answers with, and a sentence it refuses with once.
-	const SITE = { warehouse: "Job Site PRJ-00604 Water Wall - SF", warehouse_name: "Job Site PRJ-00604 Water Wall", job_site: true };
+	const SITE = { warehouse: "Job Site PRJ-90001 Water Wall - SF", warehouse_name: "Job Site PRJ-90001 Water Wall", job_site: true };
 	let siteRefusal = null;
 	const BIN_SAVES = [".move_to", ".unassign", ".send_to_boneyard"];
 	const fetchStub = async (url, init) => {
@@ -1516,7 +1516,7 @@ async function appBinActions() {
 		else if (u.endsWith(".get_item")) message = { ...widget, item_code: body.item_code, warehouse: body.warehouse };
 		else if (u.endsWith(".get_recent")) message = [];
 		else if (u.endsWith(".search_locations")) message = [{ warehouse: "Bin C3 - SF", warehouse_name: "Bin C3", trail: "Shop › Rack C" }];
-		else if (u.endsWith(".search_projects")) message = [{ project: "PRJ-00604", project_name: "Water Wall", customer: "Wadman", status: "Active" }];
+		else if (u.endsWith(".search_projects")) message = [{ project: "PRJ-90001", project_name: "Water Wall", customer: "Example Builders", status: "Active" }];
 		else if (u.endsWith(".job_site")) {
 			if (siteRefusal) {
 				const said = siteRefusal;
@@ -1799,7 +1799,7 @@ async function appBinActions() {
 		check(
 			"job site: the picked job's site is the place; picker closed, sheet open",
 			[U.sheetDepth(), (sent(".job_site").slice(-1)[0] || {}).project, !!t.sheetButton(`Move 5 to ${SITE.warehouse_name}`)],
-			[1, "PRJ-00604", true]
+			[1, "PRJ-90001", true]
 		);
 		check("job site: never offered as the item's bin, though everything is moving", t.homeRow().hidden, true);
 		truthy("job site: says what the move means for the shop and for the job", /leaves the shop's stock/.test(t.sheetText()) && /charged to the job when it is taken there/.test(t.sheetText()), t.sheetText());
@@ -1824,7 +1824,7 @@ async function appBinActions() {
 		await settle();
 
 		// An item opened AT a job site, and an item on a shelf with some out on a job.
-		t = await open(SITES_ON, { warehouse: SITE.warehouse, warehouse_name: SITE.warehouse_name, assigned: false, job_site: { project: "PRJ-00604", project_name: "Water Wall" } });
+		t = await open(SITES_ON, { warehouse: SITE.warehouse, warehouse_name: SITE.warehouse_name, assigned: false, job_site: { project: "PRJ-90001", project_name: "Water Wall" } });
 		truthy("at a job site: the item says whose site it is and what a take does", /Job site for Water Wall\. Parts taken here are charged to this job\./.test(t.app.main.textContent), t.app.main.textContent);
 		check("at a job site: Remove from this bin is not offered (a site is nobody's bin)", !!t.inMain("Remove from this bin"), false);
 		t.inMain("Move to…").click();
@@ -1833,7 +1833,7 @@ async function appBinActions() {
 		await settle();
 		t = await open(SITES_ON, { elsewhere: [{ warehouse: "Stores - SF", warehouse_name: "Stores", on_hand: 3, available: 3, job_site: false }, { ...SITE, on_hand: 4, available: 4 }] });
 		const alsoLines = [...t.app.main.walk()].filter((node) => node.classList && node.classList.contains("ee-ss-also")).map((node) => node.textContent);
-		check("on a shelf: stock out on a job is named apart, never under Also at", alsoLines, ["Also at: Stores (3)", "On job sites, not in the shop: Job Site PRJ-00604 Water Wall (4)"]);
+		check("on a shelf: stock out on a job is named apart, never under Also at", alsoLines, ["Also at: Stores (3)", "On job sites, not in the shop: Job Site PRJ-90001 Water Wall (4)"]);
 
 		// 6. Remove with nothing here: one tap posts unassign; the item leaves the list.
 		t = await open({}, { on_hand: 0, available: 0 });
@@ -2330,16 +2330,16 @@ async function appBinActions() {
 	// ------------------------------------------------------------------ job sites (v1.801.0)
 	{
 		const stores = { warehouse: "Stores - SF", on_hand: 3 };
-		const site = { warehouse: "Job Site PRJ-00604 - SF", on_hand: 4, job_site: true };
+		const site = { warehouse: "Job Site PRJ-90001 - SF", on_hand: 4, job_site: true };
 		const bin = { warehouse: "Bin B2 - SF", on_hand: 1, job_site: false };
 		check("splitPlaces: a job site is never one of the shop's places, order kept", L.splitPlaces([site, stores, bin]), { shop: [stores, bin], sites: [site] });
 		check("splitPlaces: nothing, null and a hole are an empty answer, not a throw", [L.splitPlaces(null), L.splitPlaces(undefined), L.splitPlaces([null])], [
 			{ shop: [], sites: [] }, { shop: [], sites: [] }, { shop: [], sites: [] },
 		]);
-		const job = { project: "PRJ-00100" };
-		check("takeProject: at a job site the take is that site's job, whatever the chip says", L.takeProject({ job_site: { project: "PRJ-00604" } }, job), "PRJ-00604");
-		check("takeProject: ... and with no job picked at all", L.takeProject({ job_site: { project: "PRJ-00604" } }, null), "PRJ-00604");
-		check("takeProject: at a shelf it is the picked job, or none", [L.takeProject({ job_site: null }, job), L.takeProject({}, null), L.takeProject(null, null)], ["PRJ-00100", undefined, undefined]);
+		const job = { project: "PRJ-90100" };
+		check("takeProject: at a job site the take is that site's job, whatever the chip says", L.takeProject({ job_site: { project: "PRJ-90001" } }, job), "PRJ-90001");
+		check("takeProject: ... and with no job picked at all", L.takeProject({ job_site: { project: "PRJ-90001" } }, null), "PRJ-90001");
+		check("takeProject: at a shelf it is the picked job, or none", [L.takeProject({ job_site: null }, job), L.takeProject({}, null), L.takeProject(null, null)], ["PRJ-90100", undefined, undefined]);
 	}
 	const moveTo = { action: "move_to", item_code: "PDT-0008", from_warehouse: "Bin A1 - SF", to_warehouse: "Bin B2 - SF", qty: 3, make_home: 1 };
 	truthy("saveKey: Move to… another place is a different save", L.saveKey(moveTo) !== L.saveKey({ ...moveTo, to_warehouse: "Bin C3 - SF" }));

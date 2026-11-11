@@ -51,9 +51,9 @@ STATE = base.STATE
 COMPANY = base.COMPANY
 FIELD = rules.SITE_FIELD
 GROUP = "Job Sites - SF"
-BUILD = "PRJ-00604"
-SERVICE = "PRJ-00100"
-SITE = "Job Site PRJ-00604 Water Wall - SF"
+BUILD = "PRJ-90001"
+SERVICE = "PRJ-90100"
+SITE = "Job Site PRJ-90001 Water Wall - SF"
 
 _OWN_MODULES = (
 	"erpnext_enhancements.inventory_enhancements.job_sites",
@@ -220,25 +220,25 @@ class TestRules(unittest.TestCase):
 		self.assertEqual(rules.project_types("Build\n Events ,Design\nBuild"), ("Build", "Events", "Design"))
 
 	def test_a_site_is_named_for_its_job(self):
-		self.assertEqual(rules.site_name("PRJ-00604", "Water Wall"), "Job Site PRJ-00604 Water Wall")
+		self.assertEqual(rules.site_name("PRJ-90001", "Water Wall"), "Job Site PRJ-90001 Water Wall")
 
 	def test_a_site_name_never_carries_stray_spaces(self):
 		"""Production has project names ending in two spaces. A trailing space in a docname is
 		invisible in every list and breaks every lookup typed by hand."""
-		self.assertEqual(rules.site_name(" PRJ-00759 ", "Hampton  Inn 1  "), "Job Site PRJ-00759 Hampton Inn 1")
+		self.assertEqual(rules.site_name(" PRJ-90002 ", "Lobby  Fountain 1  "), "Job Site PRJ-90002 Lobby Fountain 1")
 
 	def test_a_site_name_is_safe_as_a_docname_and_in_a_url(self):
 		"""Frappe refuses ``<`` and ``>`` in a name; a slash or a quote breaks routes and labels.
 		The ordinary punctuation of a job's name stays."""
 		self.assertEqual(
-			rules.site_name("PRJ-00597", 'Pool & Runnel Falls - Hess <3/4"> (Phase 2)'),
-			"Job Site PRJ-00597 Pool & Runnel Falls - Hess 3 4 (Phase 2)",
+			rules.site_name("PRJ-90003", 'Pool & Runnel Falls - North <3/4"> (Phase 2)'),
+			"Job Site PRJ-90003 Pool & Runnel Falls - North 3 4 (Phase 2)",
 		)
 
 	def test_a_long_name_is_cut_and_the_id_is_whole(self):
-		name = rules.site_name("PRJ-00597", "Reflection Pool " * 20)
+		name = rules.site_name("PRJ-90003", "Reflection Pool " * 20)
 		self.assertLessEqual(len(name), rules.MAX_SITE_NAME)
-		self.assertTrue(name.startswith("Job Site PRJ-00597 Reflection Pool"))
+		self.assertTrue(name.startswith("Job Site PRJ-90003 Reflection Pool"))
 		self.assertEqual(name, name.rstrip())
 
 	def test_a_job_with_no_name_of_its_own_gets_the_id_once(self):
@@ -281,9 +281,9 @@ class TestRules(unittest.TestCase):
 		)
 
 	def test_a_take_at_a_site_is_the_sites_job(self):
-		self.assertEqual(rules.site_take_project("PRJ-00604", "PRJ-00100"), "PRJ-00604")
-		self.assertEqual(rules.site_take_project("PRJ-00604", None), "PRJ-00604")
-		self.assertEqual(rules.site_take_project(None, "PRJ-00100"), "PRJ-00100")
+		self.assertEqual(rules.site_take_project("PRJ-90001", "PRJ-90100"), "PRJ-90001")
+		self.assertEqual(rules.site_take_project("PRJ-90001", None), "PRJ-90001")
+		self.assertEqual(rules.site_take_project(None, "PRJ-90100"), "PRJ-90100")
 		self.assertIsNone(rules.site_take_project(None, ""))
 
 	def test_a_transfer_carries_the_job_it_goes_to_or_comes_back_from(self):
@@ -340,7 +340,7 @@ class TestEnsureSite(_Base):
 		self.assertEqual(site.name, SITE)
 		self.assertEqual(
 			(row["warehouse_name"], row["parent_warehouse"], row["company"], row["is_group"], row[FIELD]),
-			("Job Site PRJ-00604 Water Wall", GROUP, COMPANY, 0, BUILD),
+			("Job Site PRJ-90001 Water Wall", GROUP, COMPANY, 0, BUILD),
 		)
 
 	def test_it_is_written_past_warehouse_permissions_and_says_so_on_the_project(self):
@@ -429,7 +429,7 @@ class TestEnsureSite(_Base):
 		def racing_insert(self, ignore_permissions=False):
 			if self.doctype == "Warehouse":
 				# The other phone's insert lands first; ours then collides on the name.
-				base._warehouse(SITE, "Job Site PRJ-00604 Water Wall", parent_warehouse=GROUP, **{FIELD: BUILD})
+				base._warehouse(SITE, "Job Site PRJ-90001 Water Wall", parent_warehouse=GROUP, **{FIELD: BUILD})
 				raise FRAPPE.DuplicateEntryError(SITE)
 			return original(self, ignore_permissions=ignore_permissions)
 
@@ -461,7 +461,7 @@ class TestTheEndpoint(_Base):
 		out = scan.job_site(BUILD)
 		self.assertEqual(
 			(out["warehouse"], out["warehouse_name"], out["job_site"], out["project"], out["project_name"], out["created"]),
-			(SITE, "Job Site PRJ-00604 Water Wall", True, BUILD, "Water Wall", True),
+			(SITE, "Job Site PRJ-90001 Water Wall", True, BUILD, "Water Wall", True),
 		)
 		self.assertFalse(scan.job_site(BUILD)["created"])
 
