@@ -98,14 +98,21 @@ def site_map():
 
 def site_warehouses():
 	"""Every warehouse whose stock is on a job site rather than in the shop, as a set of names:
-	each job's site, and any other location directly under the Job Sites group (production's
-	hand-made ``Job Site - SF`` is one: no job of its own, but nothing in it is on a shelf)."""
+	each job's site wherever it sits, and everything under the Job Sites group at any depth.
+
+	The second half covers what has no job of its own: production's hand-made ``Job Site - SF``,
+	and a sub-group somebody adds later ("Out of state", say) with locations inside it. Without
+	it, stock in such a place would read as stock the shop has, on the phone and on the Reorder
+	Board. Found through each warehouse's parent (``job_site_rules.descendants``), not the
+	tree's left and right numbers.
+	"""
 	if not ready():
 		return set()
 	names = set(site_map())
 	parent = group()
 	if parent:
-		names.update(frappe.get_all("Warehouse", filters={"parent_warehouse": parent.name}, pluck="name"))
+		rows = frappe.get_all("Warehouse", fields=["name", "parent_warehouse"])
+		names.update(rules.descendants({row.name: row.parent_warehouse for row in rows}, parent.name))
 	return names
 
 
@@ -130,8 +137,13 @@ def site_info(warehouse):
 def refuse_as_bin(location):
 	"""A job site is never an item's bin: nothing is assigned to it and it is never anybody's
 	home. Stock lists there because it is on hand, and drops off when it is gone. The same
-	rule the boneyard has, for the same reason: neither is a place the shop keeps an item."""
-	if location and site_project(location.name):
+	rule the boneyard has, for the same reason: neither is a place the shop keeps an item.
+
+	Asked of :func:`site_warehouses`, not of the Project field: the hand-made ``Job Site - SF``
+	has no job of its own, and an item given it as a home would be reordered against a shelf
+	that is not in the building.
+	"""
+	if location and location.name in site_warehouses():
 		frappe.throw(
 			_("{0} is a job site. Items are sent there with Move to; nothing is kept there as its bin.").format(
 				location.get("warehouse_name") or location.name
@@ -139,7 +151,29 @@ def refuse_as_bin(location):
 		)
 
 
-def _existing(project):
+def refuse_send(destination):
+	"""Refuse moving stock INTO the site of a finished job, in a sentence.
+
+	``api.stock_scan.job_site`` already refuses a finished job, but a site that exists is also
+	reached by name (Move to…'s *Find a location*), by its label and from the item's "where it
+	is already" list, and those go straight to the transfer. Stock sent there could not be used
+	(a take at the site is charged to the finished job, and refused), only moved back. So every
+	transfer asks this of its destination (``api.stock_scan._transfer_source``).
+
+	Moving stock OUT of a finished job's site is never refused: that is how leftovers come back.
+	"""
+	project = site_project(destination.name) if destination else None
+	if not project:
+		return
+	row = frappe.db.get_value("Project", project, ["name", "project_name", "status"], as_dict=True)
+	if not row:
+		return
+	problem = rules.send_refusal(row.name, row.project_name, row.status, scan_rules.CLOSED_JOB_STATUSES)
+	if problem:
+		frappe.throw(problem)
+
+
+def _existing(project, for_update=False):
 	# The first one made: get_value's default order hands back the newest, and a second
 	# warehouse somebody pointed at the same job in the Desk must not take over from the one
 	# that already holds the stock.
@@ -149,6 +183,7 @@ def _existing(project):
 		["name", "warehouse_name", "disabled", "is_group", "company"],
 		as_dict=True,
 		order_by="creation asc",
+		for_update=for_update,
 	)
 
 
@@ -162,9 +197,21 @@ def ensure_site(project):
 	if not ready():
 		frappe.throw(_("Job sites are being set up. Try again after the update."))
 	name = _name(project)
+	# The job's row is LOCKED here, and the site is then read with a locking read. Two phones
+	# sending to the same job at once would otherwise both find no site and both insert, and
+	# the loser could not recover: under MariaDB's default REPEATABLE READ a plain re-read
+	# after the duplicate-key error still looks at the snapshot the request began with, in
+	# which the winner's warehouse does not exist. With the lock, the second request waits on
+	# this line until the first commits; and a locking read (``for_update``) always sees
+	# committed rows, whatever snapshot the request already holds. Held to the end of the
+	# request, which is one insert long.
 	row = (
 		frappe.db.get_value(
-			"Project", name, ["name", "project_name", "status", "project_type", "company"], as_dict=True
+			"Project",
+			name,
+			["name", "project_name", "status", "project_type", "company"],
+			as_dict=True,
+			for_update=True,
 		)
 		if name
 		else None
@@ -172,7 +219,7 @@ def ensure_site(project):
 	if not row:
 		frappe.throw(_("There is no job {0}.").format(name or _("with that name")))
 
-	site = _existing(row.name)
+	site = _existing(row.name, for_update=True)
 	problem = rules.site_refusal(
 		row.name,
 		row.project_name,
@@ -219,8 +266,10 @@ def ensure_site(project):
 	try:
 		doc.insert(ignore_permissions=True)
 	except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
-		# Two phones sent to the same job at once: the other one made it.
-		site = _existing(row.name)
+		# The lock above makes this unreachable for two sends to one job. Kept for what the lock
+		# does not cover: a site made in the Desk at the same moment, under the same name. Read
+		# with a locking read, for the reason given at the lock.
+		site = _existing(row.name, for_update=True)
 		if not site:
 			raise
 		return site, False

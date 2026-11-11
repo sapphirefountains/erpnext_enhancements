@@ -112,6 +112,49 @@ def site_refusal(
 	return None
 
 
+def send_refusal(project, project_name, status, closed_statuses):
+	"""Why stock cannot be moved INTO a job's site that already exists, or ``None``.
+
+	Only a finished job is refused. A site that exists is not held to the project type (a Stock
+	Manager may have made one on purpose for another kind of job), and a job that has been put
+	on hold still receives. The sentence says what can still be done, because a take at a
+	finished job's site is refused too (its cost has nowhere to go): what is there comes back.
+
+	The other direction is never refused: moving stock OUT of a finished job's site is how its
+	leftovers get back on a shelf.
+	"""
+	if status not in closed_statuses:
+		return None
+	label = _text(project_name) or _text(project)
+	return (
+		f"{label} is {status}, so nothing more is sent to its job site. "
+		"What is already there can be moved back to a shelf."
+	)
+
+
+def descendants(parent_map, root):
+	"""Every warehouse under ``root``, at any depth, as a set of names (``root`` not included).
+
+	``parent_map`` is ``{warehouse: parent_warehouse}``. Walked up each warehouse's own parent
+	chain rather than read from the tree's left and right numbers: those numbers were out of
+	step on production once (two groups at one position), and a parent is the part of a tree
+	nobody can get wrong. A chain that loops, or runs past 64 levels, is not under anything.
+	"""
+	out = set()
+	if not root:
+		return out
+	for name in parent_map or {}:
+		seen = set()
+		parent = parent_map.get(name)
+		while parent and parent not in seen and len(seen) < 64:
+			if parent == root:
+				out.add(name)
+				break
+			seen.add(parent)
+			parent = parent_map.get(parent)
+	return out
+
+
 def site_take_project(site_project, picked_project=None):
 	"""The job a take is charged to. At a job site it is always the site's own job, whatever
 	the page's job chip says: the chip is remembered for a shift, and parts sitting at one

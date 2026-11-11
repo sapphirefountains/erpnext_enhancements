@@ -12,32 +12,40 @@ In this order, each in its own step:
    normal doctype with no default, so every existing warehouse reads empty, which is right:
    none of them is a job's site. Also named in ``hooks.after_install``, because
    ``bench install-app`` writes all of patches.txt to the Patch Log as already run.
-2. **The tree's numbering, only if it is broken.** Production's Warehouse tree has two groups
-   sharing one position (``Service Van - SF`` and ``Customer Rental Locations - SF`` both at
-   lft 24, measured 2026-11-11). Frappe adds a node by shifting those numbers, and reports that
+2. **The tree's numbering, only if it is broken.** Production's Warehouse tree has two empty
+   groups sharing one position. Frappe adds a node by shifting those numbers, and reports that
    filter by a group warehouse read them, so a new group goes into a counted tree or not at
    all. ``rebuild_tree`` renumbers from each warehouse's parent, which is the part that is
-   right. Skipped when no two warehouses share a number.
+   right, so no warehouse changes group. Skipped when no two warehouses share a number.
 3. **The group.** One group Warehouse, ``warehouse_name`` "Job Sites", beside the shop's own
    stock: under the parent of :data:`SHOP_GROUP` (``Inventory - SF``, whose parent is the
    company's root). Beside, not inside, so a reorder rule or a count that covers the shop does
    not cover job sites. Found by ``warehouse_name`` and company, never by docname, and reused.
-   Skipped quietly where the shop group does not exist (a fresh or test site).
+   Skipped where the shop group does not exist (a fresh or test site).
 4. **The setting.** ``Inventory Scanner Settings.job_sites_warehouse`` is filled with the
    group **only where ``tabSingles`` has no row for it**, never over a stored value, an emptied
    one included: a Stock Manager who cleared it switched job sites off on purpose. A Single
    that has never been saved is left alone too (writing its first row would make every other
    field without a row stop reading its declared default).
 5. **The old "Job Site" warehouse comes into the tree.** Production has a leaf called
-   ``Job Site - SF`` with no parent, made by hand on 2026-07-29. It holds no stock and has no
-   ledger rows, and two received purchase-order lines for non-stock items name it as where
-   they were delivered. It is moved under the new group and otherwise left exactly as it is:
-   still enabled, still usable on an order, and with no Project of its own it is not any one
-   job's site. Only a leaf of that name with no parent is touched.
+   ``Job Site - SF`` with no parent, made by hand. It holds no stock and has no ledger rows,
+   and received purchase-order lines for non-stock items name it as where they were delivered.
+   It is moved under the new group and otherwise left exactly as it is: still enabled, still
+   usable on an order, and with no Project of its own it is not any one job's site. Only a leaf
+   of that name with no parent is touched.
 
-Cannot raise -- a patch that raises aborts ``bench migrate``, which on this repo is the deploy.
-Each step logs to the Error Log if it fails and the next one still runs. Safe twice: the second
-run finds the field, a counted tree, the group, the setting's row and nothing to move.
+**It cannot raise, so it must say what it did.** A patch that raises aborts ``bench migrate``,
+which on this repo is the deploy, so a step that fails is caught, logged with its traceback,
+and the next one still runs. But the patch is then recorded in the Patch Log as run, which
+looks exactly like success. So every step answers one of four words (:data:`DONE`,
+:data:`ALREADY`, :data:`SKIPPED`, :data:`FAILED`) with its reason, the whole list is printed
+to the migrate output, and **when any step was skipped or failed, one Error Log row** titled
+:data:`REPORT_TITLE` lists all five with what to do by hand for each one that did not finish.
+A run where every step is done or already done writes no Error Log row: that log alerts
+people, and a clean deploy is not an alert.
+
+Safe twice: the second run finds the field, a counted tree, the group, the setting's row and
+nothing to move, and answers "already" five times.
 """
 
 import frappe
@@ -51,6 +59,40 @@ SETTING = "job_sites_warehouse"
 FIELD = rules.SITE_FIELD
 SAVEPOINT = "add_job_sites_warehouse"
 
+DONE, ALREADY, SKIPPED, FAILED = "done", "already", "skipped", "failed"
+
+#: The one Error Log row a run with a skipped or failed step leaves.
+REPORT_TITLE = "Job sites patch (add_job_sites_warehouse): finish these steps by hand"
+
+RERUN = "bench --site <site> execute erpnext_enhancements.patches.add_job_sites_warehouse.execute"
+
+#: What to do for a step that did not finish, by step. Every one can also be finished by
+#: running the patch again (:data:`RERUN`): it is safe twice.
+RECOVERY = {
+	"field": f"Run the patch again: {RERUN}",
+	"tree": (
+		"Run the patch again, or as a System Manager rebuild the Warehouse tree "
+		"(frappe.utils.nestedset.rebuild_tree_for_doctype with doctype Warehouse)."
+	),
+	"group": (
+		'In the Desk, create a Warehouse named "Job Sites" with Is Group ticked, under the '
+		"company's root warehouse (beside the shop's stock, not inside it)."
+	),
+	"setting": (
+		"Open Inventory Scanner Settings, choose that group in Job Sites Warehouse and save. "
+		'Until it is set, Stock Scan does not offer "A job site".'
+	),
+	"old": 'Open the Warehouse "Job Site", set its Parent Warehouse to the Job Sites group and save.',
+}
+
+STEPS = (
+	("field", "The Warehouse field"),
+	("tree", "The Warehouse tree's numbering"),
+	("group", "The Job Sites group"),
+	("setting", "The setting"),
+	("old", 'The old "Job Site" warehouse'),
+)
+
 
 def _say(text):
 	try:
@@ -59,10 +101,19 @@ def _say(text):
 		pass
 
 
+def _has_field():
+	try:
+		return bool(frappe.db.has_column("Warehouse", FIELD))
+	except Exception:
+		return False
+
+
 def ensure_field():
-	"""Create the Warehouse field. True when the column is there afterwards."""
+	"""Create the Warehouse field. ``(status, detail)``; raises when the column is not there
+	afterwards, which :func:`_step` turns into ``failed``."""
 	from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+	had = _has_field()
 	create_custom_fields(
 		{
 			"Warehouse": [
@@ -89,7 +140,9 @@ def ensure_field():
 		},
 		update=True,
 	)
-	return bool(frappe.db.has_column("Warehouse", FIELD))
+	if not _has_field():
+		raise RuntimeError(f"Warehouse.{FIELD} is not there after create_custom_fields")
+	return (ALREADY if had else DONE), f"Warehouse.{FIELD}"
 
 
 def tree_is_broken():
@@ -102,31 +155,33 @@ def tree_is_broken():
 
 
 def repair_tree():
-	"""Renumber the Warehouse tree when it is broken. True when it was renumbered."""
+	"""Renumber the Warehouse tree when it is broken. ``(status, detail)``."""
 	if not tree_is_broken():
-		return False
+		return ALREADY, "no two warehouses share a position"
 	from frappe.utils.nestedset import rebuild_tree
 
 	rebuild_tree("Warehouse")
-	return True
+	return DONE, "renumbered from each warehouse's parent"
 
 
 def ensure_group():
-	"""The Job Sites group's name, created if missing; ``None`` when there is no shop group."""
+	"""The Job Sites group, created if missing. ``(status, detail, name or None)``."""
 	shop = frappe.db.get_value(
 		"Warehouse", SHOP_GROUP, ["name", "company", "is_group", "parent_warehouse"], as_dict=True
 	)
 	if not shop or not shop.is_group or not shop.company or not shop.parent_warehouse:
-		return None
+		return SKIPPED, f"there is no group warehouse {SHOP_GROUP} with a parent to put it beside", None
 	existing = frappe.db.get_value(
 		"Warehouse",
 		{"warehouse_name": rules.GROUP_NAME, "company": shop.company},
 		["name", "is_group"],
 		as_dict=True,
 	)
-	if existing:
+	if existing and not existing.is_group:
 		# A leaf somebody already called "Job Sites" is theirs: sites are not put under a leaf.
-		return existing.name if existing.is_group else None
+		return SKIPPED, f"{existing.name} exists and is not a group, so it was left alone", None
+	if existing:
+		return ALREADY, existing.name, existing.name
 	doc = frappe.get_doc(
 		{
 			"doctype": "Warehouse",
@@ -137,25 +192,30 @@ def ensure_group():
 		}
 	)
 	doc.insert(ignore_permissions=True)
-	return doc.name
+	return DONE, f"{doc.name}, under {shop.parent_warehouse}", doc.name
 
 
 def fill_setting(group):
-	"""Write ``group`` into the setting where it has no ``tabSingles`` row. True if written."""
-	if not group or not frappe.db.exists("DocType", SETTINGS):
-		return False
+	"""Write ``group`` into the setting where it has no ``tabSingles`` row. ``(status, detail)``."""
+	if not group:
+		return SKIPPED, "there is no Job Sites group to point it at"
+	if not frappe.db.exists("DocType", SETTINGS):
+		return SKIPPED, f"{SETTINGS} is not installed"
 	stored = {row[0] for row in frappe.db.sql("select field from tabSingles where doctype = %s", (SETTINGS,))}
-	if not stored or SETTING in stored:
-		return False
+	if not stored:
+		return SKIPPED, f"{SETTINGS} has never been saved, and its first row is not written by a patch"
+	if SETTING in stored:
+		value = frappe.db.get_single_value(SETTINGS, SETTING)
+		return ALREADY, f"a value is stored ({value or 'blank, which switches job sites off'}); not written over"
 	frappe.db.set_single_value(SETTINGS, SETTING, group)
 	frappe.clear_document_cache(SETTINGS, SETTINGS)
-	return True
+	return DONE, group
 
 
 def adopt_old_warehouse(group):
-	"""Move a parentless leaf called "Job Site" under ``group``. Returns the names moved."""
+	"""Move a parentless leaf called "Job Site" under ``group``. ``(status, detail)``."""
 	if not group:
-		return []
+		return SKIPPED, "there is no Job Sites group to move it under"
 	company = frappe.db.get_value("Warehouse", group, "company")
 	rows = frappe.get_all(
 		"Warehouse",
@@ -170,23 +230,38 @@ def adopt_old_warehouse(group):
 		doc.parent_warehouse = group
 		doc.save(ignore_permissions=True)
 		moved.append(doc.name)
-	return moved
+	if not moved:
+		return ALREADY, f'no leaf called "{OLD_NAME}" is without a parent'
+	return DONE, f"moved {', '.join(moved)} under {group}; still enabled"
 
 
 def _step(label, fn, *args):
+	"""Run one step in its own savepoint. Its answer, or ``(FAILED, …)``: never an exception."""
 	try:
 		frappe.db.savepoint(SAVEPOINT)
 		return fn(*args)
-	except Exception:
+	except Exception as error:
 		try:
 			frappe.db.rollback(save_point=SAVEPOINT)
 		except Exception:
 			pass
+		title = f"Job sites patch: {label} failed"
 		try:
-			frappe.log_error(title=f"Job sites patch: {label} failed", message=frappe.get_traceback())
+			frappe.log_error(title=title, message=frappe.get_traceback())
 		except Exception:
 			pass
-		return None
+		return FAILED, f'{type(error).__name__}: {error} (traceback in the Error Log row "{title}")'
+
+
+def report(outcomes):
+	"""The five steps as text, one line each, with what to do for each one not finished."""
+	lines = []
+	for number, (key, label) in enumerate(STEPS, start=1):
+		status, detail = outcomes.get(key, (SKIPPED, "not reached"))
+		lines.append(f"{number}. {label}: {status}. {detail}")
+		if status in (SKIPPED, FAILED):
+			lines.append(f"   By hand: {RECOVERY[key]}")
+	return "\n".join(lines)
 
 
 def install_field():
@@ -196,16 +271,26 @@ def install_field():
 
 
 def execute():
-	field = _step("creating the Warehouse field", ensure_field)
-	renumbered = _step("renumbering the Warehouse tree", repair_tree)
-	group = _step("creating the Job Sites group", ensure_group)
-	if not group:
-		_say(f"add_job_sites_warehouse: field {'ready' if field else 'missing'}; no Job Sites group; nothing set.")
-		return
-	written = _step("filling the setting", fill_setting, group)
-	moved = _step("moving the old Job Site warehouse", adopt_old_warehouse, group) or []
-	_say(
-		f"add_job_sites_warehouse: field {'ready' if field else 'missing'}; "
-		f"tree {'renumbered' if renumbered else 'left as it was'}; group {group}; "
-		f"setting {'filled' if written else 'left as it was'}; moved {', '.join(moved) or 'nothing'}."
-	)
+	outcomes = {}
+	outcomes["field"] = _step("creating the Warehouse field", ensure_field)
+	outcomes["tree"] = _step("renumbering the Warehouse tree", repair_tree)
+	made = _step("creating the Job Sites group", ensure_group)
+	group = made[2] if len(made) > 2 else None
+	outcomes["group"] = made[:2]
+	outcomes["setting"] = _step("filling the setting", fill_setting, group)
+	outcomes["old"] = _step("moving the old Job Site warehouse", adopt_old_warehouse, group)
+
+	text = report(outcomes)
+	_say("add_job_sites_warehouse:\n" + text)
+	if any(status in (SKIPPED, FAILED) for status, _detail in outcomes.values()):
+		try:
+			frappe.log_error(
+				title=REPORT_TITLE,
+				message=(
+					"The patch is recorded as run, and it did not finish every step. Nothing below "
+					f"is retried by itself.\n\n{text}\n\nEvery step can be finished by running the "
+					f"patch again; it is safe twice:\n{RERUN}"
+				),
+			)
+		except Exception:
+			pass

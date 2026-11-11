@@ -587,14 +587,15 @@ Material Transfer from the shop bin into that job's own leaf Warehouse. Nik's de
 - ERPNext keeps on-hand by item and warehouse (`tabBin`) and has no project there. One shared
   warehouse could never say what is at which site, and a return from one job would hide a shortage
   on another. Negative stock stays refused per site, so nobody can "use" what was never sent.
-- The count is small: 10 Build projects started in 2026, 8 were open on the day, against 222 leaf
-  warehouses already.
+- The count is small: about ten Build projects start a year.
 
 **What a site is.** A Warehouse whose `custom_job_site_project` names a Project. Not its name and
 not its place in the tree: a Stock Manager may rename or move one in the Desk and it stays that
 job's site. Sites are created under the group in `Inventory Scanner Settings.job_sites_warehouse`
-(`Job Sites`, beside `Inventory - SF`), named `Job Site <project id> <project name>`. Anything else
-directly under that group also counts as on a job site (production's hand-made `Job Site - SF`).
+(`Job Sites`, beside `Inventory - SF`), named `Job Site <project id> <project name>`. Everything
+else under that group, at any depth, also counts as on a job site (`site_warehouses`): production's
+hand-made `Job Site - SF`, and any sub-group somebody adds later. It is found through each
+warehouse's parent, not the tree's left and right numbers.
 
 | On the phone | What happens | Voucher |
 |---|---|---|
@@ -609,26 +610,43 @@ inserts with `ignore_permissions` after the page's role gate and after checking 
 create and submit a Stock Entry, and leaves an Info comment on the Project naming who opened it.
 Nothing else here is written that way.
 
+**Two phones at once.** `ensure_site` locks the Project's row (`for_update`) and then reads the site
+with a locking read. Without the lock both requests find no site and both insert, and the loser
+cannot recover by re-reading: under MariaDB's default REPEATABLE READ a plain read still looks at
+the snapshot the request began with. A locking read sees committed rows whatever the snapshot.
+
+**A finished job.** Nothing more is sent to its site, by any door: `job_site` refuses the job, and
+every transfer asks its destination (`job_sites.refuse_send`, in `api.stock_scan._transfer_source`),
+because a site that exists is also reached by name, by its label and from "where it is already". A
+take at the site is refused as well (its cost has nowhere to go). What is there **can still be moved
+back to a shelf**: the check is on the destination only. A job on hold still receives.
+
 **Who gets one.** Jobs whose Project Type is in *Job Site Project Types* (blank means Build). A
 service visit or a small job takes parts with the job picked instead, as before; the refusal says
 so in a sentence. A finished job is refused, and so is a site somebody disabled.
 
 **A site is never an item's bin.** `assign`, *Make … this item's bin* and the Bin Manager's put-on
-are refused for one (`job_sites.refuse_as_bin`), as they are for the Boneyard. `_items_at` lists a
+are refused for one (`job_sites.refuse_as_bin`), as they are for the Boneyard. That is asked of
+`site_warehouses()`, so it covers the warehouses under the group that have no job. `_items_at` lists a
 site's items only while they are on hand or on order: the bin list's "nobody has decided yet"
 clause would keep every item ever sent to a job on its list for good.
 
-**Stock on a job site is not shop stock.** Three readings summed across every warehouse:
+**Stock on a job site is not shop stock, on this app's own screens.** Three readings summed across
+every warehouse:
 
 | Reading | Now |
 |---|---|
 | Stock Scan search, "on hand" | The shop's total (`on_hand_total`); what is out on jobs beside it (`on_job_sites`) |
 | Item card, "Also at" | Shop locations only; job sites on their own line, "On job sites, not in the shop". The store-run "check there before buying more" never names a site |
-| Reorder Board | `job_site_rules.without_sites` takes site stock, and orders headed to a site, out of every group above a site. 29 of production's 53 rules roll up at the company's root. The rules are not changed |
+| Reorder Board, its daily digest and hourly sync | `job_site_rules.without_sites` takes site stock, and orders headed to a site, out of every group above a site. Many of production's rules roll up at the company's root. The rules are not changed |
 
-ERPNext's own screens are not changed. The Item form's stock levels and the Stock Balance and Stock
-Projected Qty reports list each warehouse, so a site shows as its own line; a total across "All
-Warehouses" still includes it. ERPNext's nightly reorder job (off since v1.730.0) would count it too.
+**ERPNext's own screens are not changed, and still count job-site stock unless filtered to
+`Inventory - SF`:**
+
+- Stock Balance and Stock Projected Qty, when run for a group above the sites (or for none);
+- the Item form's stock levels: a site shows as its own line, and the total includes it;
+- the availability figures on Material Request, Production Plan and Work Order;
+- ERPNext's nightly reorder job (switched off here since v1.730.0).
 
 **The ledger.** A transfer moves no value. With no account on the group, a site shares `1410 -
 Stock In Hand` with the shop, so nothing posts until the take. Giving the `Job Sites` group its own
@@ -641,6 +659,14 @@ disable the site), and non-stock items, which never enter stock and so never rea
 
 Before the Warehouse field exists (a fresh bench, a deploy between code and patch) `job_sites.ready()`
 is false, nothing is a job site, and every caller behaves exactly as it did before v1.801.0.
+
+**If the setup patch did not finish.** `patches/add_job_sites_warehouse` cannot raise (that would
+abort the deploy), so it is recorded as run whatever happened. Each of its five steps answers done,
+already, skipped or failed; the list is in the migrate output, and when any step did not finish,
+one Error Log row, "Job sites patch (add_job_sites_warehouse): finish these steps by hand", lists
+all five with what to do. By hand: create a group Warehouse "Job Sites" under the company's root;
+choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
+safe twice.
 
 ### The Bin Manager page (v1.693.0)
 

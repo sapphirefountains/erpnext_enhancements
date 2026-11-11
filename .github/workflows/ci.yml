@@ -4038,7 +4038,9 @@ jobs:
       # fails, material sent to a job could read as stock the shop still has (the search total, "Also at", a
       # reorder rule that rolls up at the company's root), a take at a job's site could be charged to another job
       # or to none, a site could be opened twice or by somebody who cannot post the transfer, an item could be
-      # given a site as its bin, or the setup patch could write over a Stock Manager's setting or abort the deploy.
+      # given a site as its bin, stock could be sent to a finished job's site where it cannot be used, two phones
+      # could fail to agree on one site (the Project row lock), or the setup patch could write over a Stock
+      # Manager's setting, abort the deploy, or skip a step without leaving the one Error Log row that says so.
       # job_site_rules.py runs directly; job_sites.py, api/stock_scan.py and bin_assignments.py run on
       # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
       - name: Job-site warehouses (one per project, out of shop availability) (bench-free)

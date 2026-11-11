@@ -1625,5 +1625,7 @@ erpnext_enhancements.patches.hide_audit_code_created_fields
 # both at 24); create the group "Job Sites" beside Inventory - SF (found by warehouse_name + company; skipped
 # without the shop group); fill Inventory Scanner Settings.job_sites_warehouse ONLY where tabSingles has no row for
 # it (never on a never-saved Single); move the parentless leaf "Job Site" under the group, otherwise untouched
-# (still enabled; two received PO lines name it). Cannot raise, safe twice.
+# (still enabled; received PO lines name it). Cannot raise, safe twice. Each step answers done / already /
+# skipped / failed; when any did not finish, ONE Error Log row "Job sites patch (add_job_sites_warehouse):
+# finish these steps by hand" lists all five with the by-hand fix.
 erpnext_enhancements.patches.add_job_sites_warehouse

@@ -1198,6 +1198,8 @@ def _transfer_source(from_warehouse, location, item, qty):
 		frappe.throw(_("That is this location. Pick where the stock is recorded now."))
 	if source.company != location.company:
 		frappe.throw(_("{0} belongs to {1}, not {2}.").format(source.name, source.company, location.company))
+	# Nothing more goes to the site of a finished job (v1.801.0); coming back from one is fine.
+	job_sites.refuse_send(location)
 	available = _available(item.name, source.name)
 	if qty > available + rules.TOLERANCE:
 		frappe.throw(

@@ -115,6 +115,17 @@ def setUpModule():
 
 	FRAPPE.get_all = get_all
 
+	_ORIGINAL["get_value"] = FRAPPE.db.get_value
+
+	def get_value(doctype, filters, fieldname="name", **kwargs):
+		# The stub has no transactions, so it cannot show isolation. It can show that a lock
+		# was asked for, on which table and in which order.
+		if kwargs.get("for_update"):
+			STATE.setdefault("locks", []).append(doctype)
+		return _ORIGINAL["get_value"](doctype, filters, fieldname, **kwargs)
+
+	FRAPPE.db.get_value = get_value
+
 	_ORIGINAL["sql"] = FRAPPE.db.sql
 
 	def sql(query, values=None, as_dict=False, **kwargs):
@@ -164,6 +175,7 @@ def setUpModule():
 
 def tearDownModule():
 	FRAPPE.get_all = _ORIGINAL["get_all"]
+	FRAPPE.db.get_value = _ORIGINAL["get_value"]
 	FRAPPE.db.sql = _ORIGINAL["sql"]
 	del base.Doc.add_comment
 	for name in _OWN_MODULES:
@@ -324,6 +336,39 @@ class TestRules(unittest.TestCase):
 		projected = {"FIT-1": {"All": 5.0}}
 		self.assertIs(rules.without_sites(projected, set(), {}), projected)
 
+	def test_only_a_finished_job_stops_stock_going_to_its_site(self):
+		closed = scan_rules.CLOSED_JOB_STATUSES
+		for status in sorted(closed):
+			with self.subTest(status=status):
+				said = rules.send_refusal("PRJ-1", "Plaza Fountain", status, closed)
+				self.assertIn("Plaza Fountain", said)
+				self.assertIn(status, said)
+				self.assertIn("moved back to a shelf", said)
+		for status in ("Active", "Client Hold", "Parked", None):
+			with self.subTest(status=status):
+				self.assertIsNone(rules.send_refusal("PRJ-1", "Plaza Fountain", status, closed))
+
+	def test_everything_under_a_group_at_any_depth(self):
+		parents = {
+			"All": None,
+			"Inventory": "All",
+			"Bin A": "Inventory",
+			"Job Sites": "All",
+			"Site 1": "Job Sites",
+			"Out Of State": "Job Sites",
+			"Site 2": "Out Of State",
+			"Yard": "Site 2",
+		}
+		self.assertEqual(rules.descendants(parents, "Job Sites"), {"Site 1", "Out Of State", "Site 2", "Yard"})
+		self.assertEqual(rules.descendants(parents, "Inventory"), {"Bin A"})
+		self.assertEqual(rules.descendants(parents, "Bin A"), set())
+
+	def test_descendants_of_nothing_and_a_tree_that_loops(self):
+		self.assertEqual(rules.descendants({"A": "B"}, None), set())
+		self.assertEqual(rules.descendants(None, "B"), set())
+		looped = {"A": "B", "B": "A", "C": "Root"}
+		self.assertEqual(rules.descendants(looped, "Root"), {"C"})
+
 	def test_places_split_shop_first(self):
 		a, b, c = {"warehouse": "A"}, {"warehouse": "S", "job_site": True}, {"warehouse": "B", "job_site": False}
 		self.assertEqual(rules.split_places([b, a, c]), ([a, c], [b]))
@@ -423,6 +468,35 @@ class TestEnsureSite(_Base):
 		site, created = sites.ensure_site(SERVICE)
 		self.assertEqual((site.name, created), ("Hand Made - SF", False))
 
+	def test_the_jobs_row_is_locked_before_the_site_is_looked_for(self):
+		"""Two phones sending to one job at once. Without the lock both find no site and both
+		insert, and under MariaDB's REPEATABLE READ the loser's re-read is still its own
+		snapshot, so it cannot see the winner's row. The Project lock makes the second wait; the
+		locking read of the Warehouse then sees what the first committed."""
+		STATE["locks"] = []
+		sites.ensure_site(BUILD)
+		self.assertEqual(STATE["locks"][:2], ["Project", "Warehouse"])
+		STATE["locks"] = []
+		sites.ensure_site(BUILD)
+		self.assertEqual(STATE["locks"], ["Project", "Warehouse"], "the second send locks and reads the same way")
+
+	def test_the_duplicate_fallback_reads_with_a_lock_too(self):
+		original = base.Doc.insert
+
+		def racing_insert(self, ignore_permissions=False):
+			if self.doctype == "Warehouse":
+				base._warehouse(SITE, "Job Site PRJ-90001 Water Wall", parent_warehouse=GROUP, **{FIELD: BUILD})
+				raise FRAPPE.DuplicateEntryError(SITE)
+			return original(self, ignore_permissions=ignore_permissions)
+
+		base.Doc.insert = racing_insert
+		STATE["locks"] = []
+		try:
+			sites.ensure_site(BUILD)
+		finally:
+			base.Doc.insert = original
+		self.assertEqual(STATE["locks"], ["Project", "Warehouse", "Warehouse"])
+
 	def test_two_phones_at_once_end_with_one_site(self):
 		original = base.Doc.insert
 
@@ -454,6 +528,18 @@ class TestEnsureSite(_Base):
 		self.assertEqual(sites.site_warehouses(), {name, "Job Site - SF"})
 		self.assertIsNone(sites.site_project("Job Site - SF"))
 		self.assertEqual(sites.site_map(), {name: BUILD})
+
+	def test_a_sub_group_somebody_adds_later_is_still_on_a_job_site(self):
+		name = _open_site()
+		base._warehouse("Out Of State - SF", "Out Of State", is_group=1, parent_warehouse=GROUP)
+		base._warehouse("Laydown Yard - SF", "Laydown Yard", parent_warehouse="Out Of State - SF")
+		self.assertEqual(sites.site_warehouses(), {name, "Out Of State - SF", "Laydown Yard - SF"})
+		self.assertNotIn(BIN_A, sites.site_warehouses())
+
+	def test_a_site_moved_out_of_the_group_is_still_a_site(self):
+		name = _open_site()
+		base._table("Warehouse")[name]["parent_warehouse"] = "Inventory - SF"
+		self.assertEqual(sites.site_warehouses(), {name})
 
 
 class TestTheEndpoint(_Base):
@@ -545,6 +631,64 @@ class TestMoves(_Base):
 		site = _open_site()
 		self.assertRefused(bins.assign, "job site", item_code="PDT-0001", warehouse=site, client_ref=base._ref())
 		self.assertEqual(base._rules_for("PDT-0001", site), [])
+
+	def test_nothing_more_is_sent_to_the_site_of_a_finished_job(self):
+		"""``job_site`` refuses a finished job, but a site that exists is also reached by name,
+		by its label and from "where it is already". Stock sent there could not be used (a take
+		at the site is refused), only moved back."""
+		site = _open_site()
+		base._bin("PDT-0001", BIN_B, actual_qty=3)
+		base._table("Project")[BUILD]["status"] = "Completed"
+		self.assertRefused(
+			bins.move_to, "Water Wall is Completed", "moved back to a shelf",
+			item_code="PDT-0001", from_warehouse=BIN_A, to_warehouse=site, qty=1, client_ref=base._ref(1),
+		)
+		self.assertRefused(
+			scan.move_here, "Water Wall is Completed",
+			item_code="PDT-0001", warehouse=site, from_warehouse=BIN_B, qty=1, client_ref=base._ref(2),
+		)
+		self.assertEqual(base._vouchers("Stock Entry"), [])
+		self.assertEqual(base._table("Stock Scan Log"), {})
+
+	def test_leftovers_still_come_back_from_the_site_of_a_finished_job(self):
+		site = _open_site()
+		base._bin("PDT-0001", site, actual_qty=4)
+		base._table("Project")[BUILD]["status"] = "Completed"
+		bins.move_to("PDT-0001", site, BIN_B, 1, base._ref(1))
+		scan.move_here("PDT-0001", BIN_A, site, 1, base._ref(2))
+		first, second = base._vouchers("Stock Entry")
+		self.assertEqual((first["project"], second["project"]), (BUILD, BUILD))
+		self.assertEqual((first["docstatus"], second["docstatus"]), (1, 1))
+
+	def test_a_job_on_hold_still_receives(self):
+		site = _open_site()
+		base._table("Project")[BUILD]["status"] = "Client Hold"
+		bins.move_to("PDT-0001", BIN_A, site, 1, base._ref())
+		self.assertEqual(len(base._vouchers("Stock Entry")), 1)
+
+	def test_a_hand_made_site_for_another_kind_of_job_still_receives(self):
+		"""A site that exists was decided on, by a Stock Manager in the Desk if not by the
+		project-type rule. Only a finished job closes it to new stock."""
+		base._warehouse("Hand Made - SF", "Hand Made", parent_warehouse=GROUP, **{FIELD: SERVICE})
+		bins.move_to("PDT-0001", BIN_A, "Hand Made - SF", 1, base._ref())
+		(se,) = base._vouchers("Stock Entry")
+		self.assertEqual(se["project"], SERVICE)
+
+	def test_the_hand_made_job_site_warehouse_is_never_an_items_bin_either(self):
+		"""It has no job of its own, so the Project field says nothing about it. It sits under
+		the group, and an item given it as a home would be reordered against a shelf that is not
+		in the building."""
+		base._warehouse("Job Site - SF", "Job Site", parent_warehouse=GROUP)
+		self.assertRefused(bins.assign, "job site", item_code="PDT-0001", warehouse="Job Site - SF", client_ref=base._ref(1))
+		self.assertRefused(
+			bins.move_to, "job site", item_code="PDT-0001", from_warehouse=BIN_A, to_warehouse="Job Site - SF",
+			qty=5, client_ref=base._ref(2), make_home=1,
+		)
+		self.assertEqual(base._rules_for("PDT-0001", "Job Site - SF"), [])
+		self.assertEqual(base._vouchers("Stock Entry"), [])
+		# A plain move there is still a move.
+		bins.move_to("PDT-0001", BIN_A, "Job Site - SF", 1, base._ref(3))
+		self.assertEqual(len(base._vouchers("Stock Entry")), 1)
 
 	def test_a_take_at_a_site_is_charged_to_the_sites_job_whatever_the_page_sent(self):
 		site = _open_site()
@@ -675,7 +819,42 @@ class TestThePatch(_Base):
 			("Job Sites", 1, "All Warehouses - SF", COMPANY),
 		)
 		self.assertEqual(STATE["singles"][("Inventory Scanner Settings", "job_sites_warehouse")], GROUP)
-		self.assertEqual(STATE["errors"], [])
+		self.assertEqual(STATE["errors"], [], "a run that finished every step is not an alert")
+
+	def _report(self):
+		"""The one summary row a run with an unfinished step leaves, as its message."""
+		rows = [message for title, message in STATE["errors"] if title == patch.REPORT_TITLE]
+		self.assertEqual(len(rows), 1, STATE["errors"])
+		return rows[0]
+
+	def test_each_step_answers_done_then_already(self):
+		self.assertEqual(patch.ensure_field()[0], patch.DONE)
+		self.assertEqual(patch.ensure_field()[0], patch.ALREADY)
+		status, _detail, group = patch.ensure_group()
+		self.assertEqual((status, group), (patch.DONE, GROUP))
+		self.assertEqual(patch.ensure_group()[::2], (patch.ALREADY, GROUP))
+		self.assertEqual(patch.fill_setting(group)[0], patch.DONE)
+		self.assertEqual(patch.fill_setting(group)[0], patch.ALREADY)
+		self.assertEqual(patch.adopt_old_warehouse(group)[0], patch.ALREADY)
+		self.assertEqual(patch.repair_tree()[0], patch.ALREADY)
+
+	def test_the_report_names_every_step_and_what_to_do_for_the_unfinished(self):
+		text = patch.report(
+			{
+				"field": (patch.DONE, "Warehouse.custom_job_site_project"),
+				"tree": (patch.ALREADY, "no two warehouses share a position"),
+				"group": (patch.SKIPPED, "there is no group warehouse Inventory - SF"),
+				"setting": (patch.FAILED, "RuntimeError: boom"),
+			}
+		)
+		lines = text.splitlines()
+		self.assertEqual(lines[0], "1. The Warehouse field: done. Warehouse.custom_job_site_project")
+		self.assertIn("3. The Job Sites group: skipped. there is no group warehouse Inventory - SF", lines)
+		self.assertIn("4. The setting: failed. RuntimeError: boom", lines)
+		self.assertIn('5. The old "Job Site" warehouse: skipped. not reached', lines)
+		self.assertEqual(len([line for line in lines if line.strip().startswith("By hand:")]), 3)
+		self.assertIn("Inventory Scanner Settings", text)
+		self.assertIn('create a Warehouse named "Job Sites"', text)
 
 	def test_the_group_sits_beside_the_shops_stock_not_inside_it(self):
 		patch.execute()
@@ -690,6 +869,7 @@ class TestThePatch(_Base):
 		writes = len(STATE["writes"])
 		patch.execute()
 		self.assertEqual(len(STATE["writes"]), writes)
+		self.assertEqual(STATE["errors"], [], "five times already is not an alert either")
 		self.assertEqual(len([w for w in base._table("Warehouse").values() if w["warehouse_name"] == "Job Sites"]), 1)
 
 	def test_a_stored_setting_is_never_written_over_an_emptied_one_included(self):
@@ -705,19 +885,32 @@ class TestThePatch(_Base):
 		patch.execute()
 		self.assertNotIn(("Inventory Scanner Settings", "job_sites_warehouse"), STATE["singles"])
 		self.assertIn(GROUP, base._table("Warehouse"))
+		report = self._report()
+		self.assertIn("4. The setting: skipped.", report)
+		self.assertIn("has never been saved", report)
+		self.assertIn("Open Inventory Scanner Settings, choose that group in Job Sites Warehouse and save", report)
 
 	def test_without_the_shop_group_nothing_is_made(self):
 		del base._table("Warehouse")[patch.SHOP_GROUP]
 		patch.execute()
 		self.assertNotIn(GROUP, base._table("Warehouse"))
 		self.assertNotIn(("Inventory Scanner Settings", "job_sites_warehouse"), STATE["singles"])
-		self.assertEqual(STATE["errors"], [])
+		# Recorded as run, with three steps not done: one row says so, and how to finish each.
+		self.assertEqual([title for title, _ in STATE["errors"]], [patch.REPORT_TITLE])
+		report = self._report()
+		self.assertIn("1. The Warehouse field: done.", report)
+		self.assertIn("3. The Job Sites group: skipped. there is no group warehouse Inventory - SF", report)
+		self.assertIn("4. The setting: skipped.", report)
+		self.assertIn('5. The old "Job Site" warehouse: skipped.', report)
+		self.assertIn('create a Warehouse named "Job Sites"', report)
+		self.assertIn(patch.RERUN, report)
 
 	def test_a_leaf_already_called_job_sites_is_not_taken_over(self):
 		base._warehouse(GROUP, "Job Sites", is_group=0)
 		patch.execute()
 		self.assertEqual(base._table("Warehouse")[GROUP]["is_group"], 0)
 		self.assertNotIn(("Inventory Scanner Settings", "job_sites_warehouse"), STATE["singles"])
+		self.assertIn("exists and is not a group, so it was left alone", self._report())
 
 	def test_the_tree_is_renumbered_only_when_two_warehouses_share_a_number(self):
 		STATE["tree_counts"] = (307, 307)
@@ -745,9 +938,30 @@ class TestThePatch(_Base):
 	def test_a_step_that_fails_is_logged_and_the_rest_still_run(self):
 		STATE["field_fails"] = True
 		patch.execute()  # must not raise: a patch that raises aborts the deploy
-		self.assertEqual([title for title, _ in STATE["errors"]], ["Job sites patch: creating the Warehouse field failed"])
+		self.assertEqual(
+			[title for title, _ in STATE["errors"]],
+			["Job sites patch: creating the Warehouse field failed", patch.REPORT_TITLE],
+		)
 		self.assertIn(GROUP, base._table("Warehouse"))
 		self.assertEqual(STATE["singles"][("Inventory Scanner Settings", "job_sites_warehouse")], GROUP)
+		report = self._report()
+		self.assertIn("1. The Warehouse field: failed. RuntimeError: the column could not be added", report)
+		self.assertIn("3. The Job Sites group: done.", report)
+		self.assertIn("4. The setting: done.", report)
+
+	def test_the_report_itself_cannot_stop_the_deploy(self):
+		STATE["field_fails"] = True
+		original = FRAPPE.log_error
+
+		def boom(*args, **kwargs):
+			raise RuntimeError("the Error Log is not writable")
+
+		FRAPPE.log_error = boom
+		try:
+			patch.execute()
+		finally:
+			FRAPPE.log_error = original
+		self.assertIn(GROUP, base._table("Warehouse"))
 
 	def test_a_fresh_install_gets_the_field_and_cannot_fail(self):
 		patch.install_field()

@@ -353,10 +353,10 @@ def build_board(include_rates=False, now=None):
 		r["on_hand"] = on_hand.get(rules.line_key(r["item_code"], r["warehouse"]), 0.0)
 		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
 	ancestors = read_ancestors()
-	# Stock on a job site is that job's, not the shop's (v1.801.0). 29 of production's 53 rules
-	# roll up at the company's root group (2026-11-11), which a site sits under, so without this
-	# material sent to a job would keep its item off the board while the shelf stood empty. The
-	# rules themselves are left as they are: it is the board's reading that leaves sites out.
+	# Stock on a job site is that job's, not the shop's (v1.801.0). Many of production's rules
+	# roll up at the company's root group, which a site sits under, so without this material
+	# sent to a job would keep its item off the board while the shelf stood empty. The rules
+	# themselves are left as they are: it is the board's reading that leaves sites out.
 	sites = job_sites.site_warehouses()
 	projected_map = site_rules.without_sites(projected_map, sites, ancestors)
 	tracked = read_tracking(rule_rows, ancestors, today, sites)
