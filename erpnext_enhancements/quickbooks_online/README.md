@@ -189,6 +189,41 @@ sends 20), none of which calls QuickBooks or queues a job:
 | **Use QuickBooks values** | `use_quickbooks_values` | Writes the ticked fields to that one record and saves it; a field QuickBooks cleared is blanked when ticked. With no list it takes what the page ticks by default: not a "never synced before" field and not a cleared one. Refused for a submitted or cancelled document, for a flag whose QuickBooks data failed the preflight, and for a stored name that is not a field of the DocType. An unticked field keeps what ERPNext has and is settled too. |
 | **Refresh draft** | `refresh_drafts` | Rebuilds one docstatus 0 transaction from the newest stored payload. Also offered on a parked transaction that already has a draft, where a sync used to rebuild it. |
 
+**A write checks its own result** (`_differences_after_write`). *Refresh draft* and *Use
+QuickBooks values* used to set the values, save, and mark the mapping Clean. But a save is not a
+copy: ERPNext's controllers run in between. So after the save the record is read back and held
+against the same QuickBooks values, field by field and row by row, with no reference to excuse
+anything.
+
+| The saved record | The mapping | The result |
+|---|---|---|
+| holds every value | Clean, a fresh snapshot, the values settled | `action: refreshed` / `applied` |
+| still differs somewhere | `QuickBooks Changed`; `qbo_changes` holds what remains, with `after_write` (`refresh` / `use`) | `action: still_differs`, the fields in `still_differs` and `still_labels` |
+
+The save is kept in both cases; only the claim changes. A field that still differs is also dropped
+from `owned_fields` and `settled_qbo_values`. That is what keeps the flag honest later: a reference
+saying "QuickBooks said 0, and that was dealt with" would let the next sync skip the table and clear
+the flag while the draft still holds 250. With no reference the field is compared with the record
+on every pass that looks, until the two agree or a person chooses Keep ERPNext (which settles what
+QuickBooks said). Left out of the check, by name (`REWRITTEN_ON_SAVE`): a Payment Entry's
+`remarks`, which ERPNext composes itself on every save.
+
+**Why it exists: ERPNext reprices a line that carries no `price_list_rate`.** On every save
+`accounts_controller.set_missing_item_details` copies the Item's list price onto a line whose
+`price_list_rate` is None, and `taxes_and_totals.calculate_item_rate` then runs
+`if has_pricing_rules or not item.rate: item.rate = calculated_rate` (erpnext v16.54.0). A line
+QuickBooks has at 0 came out at list price, on a create as much as on a rebuild, and a rate below
+list as list price less an invented discount. On a buying document it needs no Item Price: with
+none, ERPNext uses the Item's last purchase rate. So every line `_sales_items` and
+`_purchase_items` build carries `price_list_rate` equal to its `rate` (`_priced_line`), and the
+four documents built from item lines set `ignore_pricing_rule`. Both are instructions to ERPNext,
+not QuickBooks data, and are never compared, flagged or settled (`BUILD_ONLY_ROW_FIELDS`,
+`BUILD_ONLY_FIELDS`): a draft holding the Item's list price beside the right rate is not something
+QuickBooks changed, and every snapshot stored before v1.800.0 lacks the key. A bench-free test
+cannot see ERPNext reprice anything, so the check after the write is the one that runs against the
+real controller. **Drafts created at the wrong rate before v1.800.0 are not found by a sync** while
+QuickBooks leaves their lines alone: their reference says "0, as QuickBooks said".
+
 Every answer records the QuickBooks value as settled, so a field is not flagged again while
 QuickBooks still says the same thing: a standing difference is answered once. The Sync Log counts
 a flag under `conflict_count`; the *QuickBooks Open Conflicts* number card and the `qbo_conflicts`

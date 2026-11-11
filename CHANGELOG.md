@@ -136,6 +136,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     one of three ways: compared again on their next sync (they become `QuickBooks Changed` or
     `Clean`), all at once by a person-started Preview Resync and Run Resync, or one by one with
     Keep ERPNext under the *Conflict* filter.
+  - *A document the import creates keeps the rate QuickBooks gave each line.* This changes what a
+    **first-time create** produces, not only a rebuild: see "ERPNext repriced the lines of an
+    imported document" under Fixed. A line QuickBooks has at 0 is created at 0 where it used to be
+    created at the Item's list price, and a line priced below or above list no longer carries a
+    discount or margin QuickBooks never gave. Sales Invoice (from an Invoice or a Sales Receipt),
+    Quotation, Purchase Invoice and Purchase Order.
   - *Link, Link selected and Accept suggestions are POST only* (`decide_match`, `decide_matches`,
     `link_existing_record`). The page already posts.
   - *"Fill blank fields from QBO" is refused when another QuickBooks record already links the
@@ -162,6 +168,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Refresh draft** (`refresh_drafts`): rebuilds one docstatus 0 transaction from the newest
     payload already stored.
 
+  **Refresh draft and Use QuickBooks values check their own result.** After the save the record is
+  read back and held against the same QuickBooks values (`mapping._differences_after_write`). If
+  they are all there, the mapping is Clean, as before. If not, the save is kept but the mapping is
+  not Clean: it is flagged `QuickBooks Changed` with what remains, the result's `action` is
+  `still_differs`, and the page says "saved, but still differ from QuickBooks" and names the
+  fields, in an orange message where a clean run gets a green one. A field that still differs
+  also loses its reference (it leaves `owned_fields` and `settled_qbo_values`), so no later sync
+  can read it as settled and clear the flag; it stays until the record agrees or a person
+  chooses Keep ERPNext. One mapped field is left out of the check, by name: a Payment Entry's
+  `remarks`, which ERPNext composes itself on every save (`mapping.REWRITTEN_ON_SAVE`).
+
   Every answer records the QuickBooks value in `settled_qbo_values`, and a field is not flagged
   again while QuickBooks still says the same thing. Without that, a difference a person chose to
   keep would be raised again every time the QuickBooks record was touched. A review request
@@ -181,9 +198,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the real sync and review functions (40 seeds of 250 steps: QuickBooks edits, ERPNext edits,
   syncs, stale replays, previews, Keep, Use on a subset) and checks after every step that no sync
   wrote the record, that every mapped field is equal, flagged or accounted for, that a stale
-  payload changed nothing, and that the cursor never moved backwards.
+  payload changed nothing, and that the cursor never moved backwards. The stub cannot reprice a
+  line, so the repricing is held two ways: every built line is asserted to carry the key, and a
+  record double whose `save` puts 250 back on a line at 0 must leave the mapping flagged.
 
 ### Fixed
+- **ERPNext repriced the lines of an imported document, and Refresh draft reported success.** Found
+  by the rehearsal of this release on a copy of production, on a draft the hourly sync had created
+  the day before: a Sales Invoice whose QuickBooks invoice has eight lines of one Item at an amount
+  of 0. *Refresh draft* said "1 rebuilt from QuickBooks" and set the mapping Clean, and the draft
+  still had all eight lines at the Item's selling price, its total too high by exactly eight times
+  that price. Two faults, one in each direction:
+  - *The lines.* On every save, ERPNext's `accounts_controller.set_missing_item_details` copies an
+    Item's list price onto any line whose `price_list_rate` **is None**, and
+    `taxes_and_totals.calculate_item_rate` then runs
+    `if has_pricing_rules or not item.rate: item.rate = calculated_rate`. So a line the mapper
+    built at a rate of 0 was billed at list price, and a rate below list was stored as list price
+    less an invented `discount_amount`. Read in erpnext v16.54.0, the version production runs;
+    the same fault was fixed for chemical billing in v1.628.0. On a buying document it needs no
+    Item Price at all: with none, ERPNext takes the Item's last purchase rate. Every line
+    `_sales_items` and `_purchase_items` build now carries `price_list_rate` equal to its `rate`,
+    0 included (`mapping._priced_line`): a falsy list price makes `calculate_item_rate` return
+    before it touches the rate, and an equal one leaves discount and margin at nothing. The four
+    documents built from item lines also set `ignore_pricing_rule`, so a Pricing Rule cannot
+    reprice an import either. Production has no Pricing Rule today (0 rows, read 2026-11-11), so
+    that part is a guard, not a fix.
+  - *The report.* *Refresh draft* and *Use QuickBooks values* trusted their own save. They check
+    it now: see "check their own result" under Added.
+
+  Neither key is QuickBooks data, so neither is ever compared, flagged or settled
+  (`BUILD_ONLY_ROW_FIELDS`, `BUILD_ONLY_FIELDS`). That matters on the day this deploys: every
+  linked transaction's stored rows lack `price_list_rate`, and without the exclusion the first
+  Run Resync would have read each one as changed by QuickBooks. **Drafts already created at the
+  wrong rate are not found by this release**: where QuickBooks has not changed the lines since,
+  their reference still says "0, as QuickBooks said", and a sync does not look further. Refresh
+  draft corrects one when a person runs it. Making them visible is a follow-up.
+- **The differences under a flagged row say which side each value is from when the page is narrow.**
+  Under 900 px every cell of the Record Matching page stacks and every header row is hidden,
+  the differences table's own "ERPNext has / QuickBooks has" header included, so a field was three
+  bare lines: its name, a value, and another value. Each value now carries its label in that
+  layout, and the row lines of a child table ("Rate: 250.0 → 0.0") have a legend in every layout:
+  "ERPNext has → QuickBooks has".
 - **The "QuickBooks Open Conflicts" number card and the `qbo_conflicts` KPI count the new flag.**
   Both counted `conflict_status = 'Conflict'`, which the sync no longer writes, so both would have
   read a falling number and then 0 while flags piled up. They count `Conflict` and

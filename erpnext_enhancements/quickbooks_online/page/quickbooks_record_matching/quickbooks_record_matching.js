@@ -1430,6 +1430,11 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	// ------------------------------------------------------- QuickBooks changed
 	const blank = () => `<span class="qbo-mt-sub">${__("blank")}</span>`;
 	const shown = (value) => (value === "" || value === null || value === undefined ? blank() : esc(value));
+	// Which side a value is from, written beside the value itself. The differences table
+	// has a header row saying so, but under 900px every cell of the page stacks and every
+	// header row is hidden, and a field was then three bare lines: its name, a value, and
+	// another value. CSS shows these only in that layout.
+	const sideLabel = (side) => `<span class="qbo-mt-changes-side">${side === "qbo" ? __("QuickBooks has") : __("ERPNext has")}</span>`;
 
 	/**
 	 * The second table row of a flagged record: what ERPNext has beside what QuickBooks has,
@@ -1438,6 +1443,21 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	 * gets a tick box per field (all ticked) and Use QuickBooks values; a draft transaction
 	 * gets Refresh draft, which rebuilds the whole draft.
 	 */
+	// The sentence over a flagged row's differences. A note left by a person's own write
+	// (changes.after_write) is not QuickBooks changing anything: the draft was rebuilt, or
+	// the values were written, and the saved record still holds something else.
+	function changesHead(changes, scope) {
+		if (changes.after_write === "refresh") {
+			return __("This draft was rebuilt from QuickBooks, and ERPNext still holds different values for the fields below. Correct the draft by hand, or choose Keep ERPNext to accept it as it is.");
+		}
+		if (changes.after_write === "use") {
+			return __("The QuickBooks values were written, and ERPNext still holds different values for the fields below. Correct the record by hand, or choose Keep ERPNext to accept it as it is.");
+		}
+		return scope === "t"
+			? __("QuickBooks changed this transaction. Nothing was written to ERPNext.")
+			: __("QuickBooks changed this record. Nothing was written to ERPNext.");
+	}
+
 	function changesRow(row, index, scope, columns) {
 		const changes = row.changes || {};
 		const perField = scope === "m";
@@ -1473,8 +1493,8 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 					<tr class="${field.agrees ? "is-agreed" : ""}">
 						<td class="qbo-mt-col-check">${field.agrees || field.unresolved ? "" : tick(field.fieldname, field.baselined !== false && !field.cleared)}</td>
 						<td>${esc(field.label)} ${notes.join(" ")}</td>
-						<td>${shown(field.erpnext)}</td>
-						<td>${shown(field.qbo)}</td>
+						<td>${sideLabel("erpnext")}${shown(field.erpnext)}</td>
+						<td>${sideLabel("qbo")}${shown(field.qbo)}</td>
 					</tr>`;
 			})
 			.join("");
@@ -1493,12 +1513,15 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 					})
 					.join("");
 				const more = table.more_rows ? `<div class="qbo-mt-sub">${__("and {0} more rows that differ", [table.more_rows])}</div>` : "";
+				// Each line reads "Rate: 250.0 → 0.0". The legend says which side is which,
+				// in every layout: the arrow alone does not.
+				const legend = lines ? `<div class="qbo-mt-changes-legend">${__("Rows that differ, shown as ERPNext has → QuickBooks has:")}</div>` : "";
 				return `
 					<tr>
 						<td class="qbo-mt-col-check">${tick(table.fieldname, table.baselined !== false)}</td>
 						<td>${esc(table.label)} ${table.baselined === false ? pill(__("never synced before"), "gray") : ""}</td>
-						<td>${__("{0} rows", [table.erpnext_rows])}</td>
-						<td>${__("{0} rows", [table.qbo_rows])}<div class="qbo-mt-sub">${lines}${more}</div></td>
+						<td>${sideLabel("erpnext")}${__("{0} rows", [table.erpnext_rows])}</td>
+						<td>${sideLabel("qbo")}${__("{0} rows", [table.qbo_rows])}<div class="qbo-mt-sub">${legend}${lines}${more}</div></td>
 					</tr>`;
 			})
 			.join("");
@@ -1533,7 +1556,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				<td></td>
 				<td colspan="${columns - 1}">
 					<div class="qbo-mt-changes">
-						<div class="qbo-mt-changes-head">${__("QuickBooks changed this record. Nothing was written to ERPNext.")} ${when}</div>
+						<div class="qbo-mt-changes-head">${esc(changesHead(changes, scope))} ${when}</div>
 						${issues ? `<div>${__("QuickBooks' data does not pass ERPNext's checks, so it cannot be applied:")}${issues}</div>` : ""}
 						${body}
 						<div class="qbo-mt-changes-actions">${buttons.join(" ")}</div>
@@ -1592,21 +1615,33 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 			size: REVIEW_CHUNK,
 			progress,
 			done(results) {
-				const ok = results.filter((r) => r.ok);
+				// Three outcomes, never two. A write that saved but left the record holding
+				// something other than QuickBooks' values is not a success to count with the
+				// rest: the server kept its row flagged, and the page says which fields.
+				const still = results.filter((r) => r.ok && (r.still_differs || []).length);
+				const ok = results.filter((r) => r.ok && !(r.still_differs || []).length);
 				const failed = results.filter((r) => !r.ok);
 				const selection = scope === "t" ? txnSelection : masterSelection;
-				ok.forEach((r) => selection.drop(`${r.entity_type}:${r.qbo_id}`));
-				if (failed.length) {
-					frappe.msgprint({
-						title,
-						message:
-							`${ok.length} ${esc(verb)}; ` +
-							__("{0} failed:", [failed.length]) +
-							"<ul>" +
-							failed.map((r) => `<li>${esc(r.entity_type)} #${esc(r.qbo_id)}: ${esc(r.error || "")}</li>`).join("") +
-							"</ul>",
-						indicator: "orange",
-					});
+				ok.concat(still).forEach((r) => selection.drop(`${r.entity_type}:${r.qbo_id}`));
+				if (failed.length || still.length) {
+					const parts = [`${ok.length} ${esc(verb)}.`];
+					if (still.length) {
+						parts.push(
+							`<p>${__("{0} saved, but still differ from QuickBooks. They stay flagged QuickBooks changed:", [still.length])}</p><ul>` +
+								still
+									.map((r) => `<li>${esc(r.doctype || r.entity_type)} ${esc(r.name || "#" + r.qbo_id)}: ${__("{0} field(s) still differ", [r.still_differs.length])} (${esc((r.still_labels || r.still_differs).join(", "))})</li>`)
+									.join("") +
+								"</ul>",
+						);
+					}
+					if (failed.length) {
+						parts.push(
+							`<p>${__("{0} failed:", [failed.length])}</p><ul>` +
+								failed.map((r) => `<li>${esc(r.entity_type)} #${esc(r.qbo_id)}: ${esc(r.error || "")}</li>`).join("") +
+								"</ul>",
+						);
+					}
+					frappe.msgprint({ title, message: parts.join(""), indicator: "orange" });
 				} else {
 					frappe.show_alert({ message: `${ok.length} ${esc(verb)}.`, indicator: "green" }, 5);
 				}

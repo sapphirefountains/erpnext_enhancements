@@ -613,6 +613,9 @@ def change_view(row) -> dict | None:
 		)
 	return {
 		"detected_at": note.get("detected_at") or None,
+		# "refresh" / "use": the note is what a person's own write left differing
+		# (``mapping._differences_after_write``), not something a sync found.
+		"after_write": note.get("after_write") or None,
 		"fields": fields,
 		"tables": tables,
 		"issues": [str(issue) for issue in note["issues"] if issue],
@@ -1172,24 +1175,55 @@ def keep_erpnext(entity_type, qbo_id, *, user=None) -> dict:
 	return dict(result, action="kept", reviewed_by=user)
 
 
+def _still_differs_view(result: dict) -> dict:
+	"""A write's result for the page: the ``remaining`` differences (which can hold whole
+	child tables) are replaced by ``still_labels``, one short line per field the saved
+	record still holds differently from QuickBooks -- "Items (8 rows)", "Customer"."""
+	result = dict(result)
+	remaining = result.pop("remaining", None) or {}
+	still = list(result.get("still_differs") or [])
+	result["still_differs"] = still
+	if not still:
+		result["still_labels"] = []
+		return result
+	labels = _field_labels(result.get("doctype"))[0] if result.get("doctype") else {}
+	tables = remaining.get("tables") or {}
+	lines = []
+	for fieldname in still:
+		label = labels.get(fieldname) or fieldname
+		if fieldname in tables:
+			entry = tables[fieldname] or {}
+			rows = len(entry.get("rows") or []) + cint(entry.get("more_rows"))
+			label = f"{label} ({rows} row{'' if rows == 1 else 's'})"
+		lines.append(label)
+	result["still_labels"] = lines
+	return result
+
+
 def use_quickbooks_values(entity_type, qbo_id, *, fields=None, user=None) -> dict:
 	"""*Use QuickBooks values* for one flagged mapping: the flagged values (or the ``fields``
-	subset) are written to its one linked record. Refused for a posted document."""
+	subset) are written to its one linked record. Refused for a posted document.
+
+	``action`` is ``applied``, or ``still_differs`` when the saved record does not hold
+	every chosen value as QuickBooks has it: the row stays flagged with what remains."""
 	user = user or frappe.session.user
-	result = use_qbo_values(entity_type, str(qbo_id), fields=fields)
+	result = _still_differs_view(use_qbo_values(entity_type, str(qbo_id), fields=fields))
 	_stamp_reviewed(result["mapping"], user)
 	frappe.db.commit()
-	return dict(result, action="applied", reviewed_by=user)
+	return dict(result, action="still_differs" if result["still_differs"] else "applied", reviewed_by=user)
 
 
 def refresh_draft(entity_type, qbo_id, *, user=None) -> dict:
 	"""*Refresh draft* for one linked draft transaction: rebuilt from the newest stored
-	payload. Refused for anything that is not a docstatus 0 transaction."""
+	payload. Refused for anything that is not a docstatus 0 transaction.
+
+	``action`` is ``refreshed``, or ``still_differs`` when the rebuilt draft, read back,
+	does not hold everything QuickBooks said: it stays rebuilt, and stays flagged."""
 	user = user or frappe.session.user
-	result = refresh_linked_draft(entity_type, str(qbo_id))
+	result = _still_differs_view(refresh_linked_draft(entity_type, str(qbo_id)))
 	_stamp_reviewed(result["mapping"], user)
 	frappe.db.commit()
-	return dict(result, action="refreshed", reviewed_by=user)
+	return dict(result, action="still_differs" if result["still_differs"] else "refreshed", reviewed_by=user)
 
 
 def review_many(items, action, *, user=None) -> list:
@@ -1199,7 +1233,9 @@ def review_many(items, action, *, user=None) -> list:
 
 	Each item is its own decision in its own savepoint: a record ERPNext refuses to save is
 	rolled back and reported with the refusal, its flag exactly as it was, and the rest
-	still run. Nothing here reads QuickBooks or queues a job. A request over
+	still run. A write that saved but left the record differing from QuickBooks is ``ok``
+	with ``action`` ``still_differs`` and the fields in ``still_labels``; its row stays
+	flagged. Nothing here reads QuickBooks or queues a job. A request over
 	``MAX_REVIEW_ITEMS`` rows is refused whole, before anything is written.
 	"""
 	if len(items or []) > MAX_REVIEW_ITEMS:

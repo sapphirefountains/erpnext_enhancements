@@ -508,6 +508,9 @@ def use_quickbooks_values(items):
 	its one linked record. A submitted or cancelled document is refused, as is a flag whose
 	QuickBooks data did not validate. Each item is its own savepoint: a save ERPNext refuses
 	is reported in that item's result and the flag stays. Starts no sync.
+
+	Each write checks its own result: an item whose saved record still differs from
+	QuickBooks comes back with ``action`` ``still_differs`` and stays flagged.
 	"""
 	_require_qbo_operator()
 	return matching.review_many(_review_items(items), matching.use_quickbooks_values)
@@ -520,6 +523,10 @@ def refresh_drafts(items):
 	Rebuilds each docstatus 0 transaction from the newest payload already stored for it.
 	It reads no QuickBooks API; a master record, a posted document and a payload that fails
 	the preflight are each refused in that item's result.
+
+	Each rebuild checks its own result: a draft that, read back, still differs from
+	QuickBooks comes back with ``action`` ``still_differs`` and ``still_labels`` naming the
+	fields. It stays rebuilt and stays flagged ``QuickBooks Changed``; it is never Clean.
 	"""
 	_require_qbo_operator()
 	return matching.review_many(_review_items(items), matching.refresh_draft)

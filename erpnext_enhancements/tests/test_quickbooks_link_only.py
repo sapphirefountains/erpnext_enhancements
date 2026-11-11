@@ -2807,6 +2807,459 @@ def test_docs_and_changelog_explain_the_rule():
 	assert "retry_failed_syncs" in changelog and "QuickBooks Changed" in changelog
 
 
+# ---------------------------------------------------------------------------
+# Rehearsal findings: ERPNext reprices a built line, and a write trusted its own save
+# ---------------------------------------------------------------------------
+#
+# The mirror rehearsal's first Refresh draft rebuilt a Sales Invoice whose QuickBooks
+# invoice has eight zero-amount lines, reported "1 rebuilt from QuickBooks", set the mapping
+# Clean -- and left all eight lines at the Item's selling price, 8 x the price too high.
+# ERPNext v16 fills a line's missing ``price_list_rate`` on save and then replaces a rate of
+# 0 with it. Two things are pinned: every line a mapper builds carries the key, and a
+# person's write checks its own result instead of trusting the save.
+#
+# The stub cannot reprice anything, so the first is an assertion on the key (as
+# ``test_chemical_billing`` does it), and the second uses a record double whose ``save``
+# does to the lines what ERPNext did.
+
+
+ZERO_RATE_LINES = [
+	# Qty 2 at UnitPrice 0: the shape that was repriced.
+	{"Amount": 0, "Description": "included", "{detail}": {"ItemRef": {"value": "11"}, "Qty": 2, "UnitPrice": 0}},
+	# No Qty, no UnitPrice, Amount 0: one unit at nothing.
+	{"Amount": 0, "Description": "courtesy", "{detail}": {"ItemRef": {"value": "11"}}},
+	# Ordinary lines: below and above any list price.
+	{"Amount": 555.0, "Description": "labor", "{detail}": {"ItemRef": {"value": "11"}, "Qty": 3, "UnitPrice": 185}},
+	{"Amount": 6.82, "Description": "chemicals", "{detail}": {"ItemRef": {"value": "11"}}},
+]
+
+
+def _lines(detail_key):
+	return {"Line": [{(detail_key if key == "{detail}" else key): value for key, value in line.items()} for line in ZERO_RATE_LINES]}
+
+
+def _mappers(monkeypatch):
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	monkeypatch.setattr(mapping, "_linked_name", lambda entity, doctype, qbo_id: "SERVICE-CALL" if qbo_id else None)
+	monkeypatch.setattr(mapping, "_txn_currency", lambda payload, settings: ("USD", 1))
+	monkeypatch.setattr(mapping, "_resolve_customer_ref", lambda qbo_id: ("Acme Supply", None))
+	monkeypatch.setattr(mapping, "_company_value", lambda settings, fieldname: "Ledger - MC")
+	monkeypatch.setattr(mapping, "_default_price_list", lambda selling=True: "Standard Selling")
+	monkeypatch.setattr(mapping, "_sales_passthrough_charges", lambda payload: [])
+	monkeypatch.setattr(mapping, "_sales_charges", lambda payload, settings: [])
+	monkeypatch.setattr(mapping, "_purchase_charges", lambda payload, settings: [])
+	monkeypatch.setattr(mapping, "_has_field", lambda doctype, fieldname: False)
+	return mapping
+
+
+@pytest.mark.parametrize(
+	"builder, detail_key",
+	[("_sales_items", "SalesItemLineDetail"), ("_purchase_items", "ItemBasedExpenseLineDetail")],
+)
+def test_every_built_item_line_carries_its_rate_as_the_price_list_rate(monkeypatch, builder, detail_key):
+	"""Sell side and buy side: the repricing is in the controller both share. A line at 0
+	must carry a 0, not a missing key -- ERPNext fills a None and leaves a 0 alone."""
+	mapping = _mappers(monkeypatch)
+
+	items = getattr(mapping, builder)(_lines(detail_key))
+
+	assert [item["rate"] for item in items] == [0, 0, 185, 6.82]
+	for item in items:
+		assert "price_list_rate" in item, item
+		assert item["price_list_rate"] is not None
+		assert item["price_list_rate"] == item["rate"], item
+		assert "discount_amount" not in item and "discount_percentage" not in item, "no discount is invented here either"
+
+
+@pytest.mark.parametrize(
+	"mapper, detail_key, doctype",
+	[
+		("_map_sales_invoice", "SalesItemLineDetail", "Sales Invoice"),
+		("_map_sales_receipt", "SalesItemLineDetail", "Sales Invoice"),
+		("_map_quotation", "SalesItemLineDetail", "Quotation"),
+		("_map_purchase_invoice", "ItemBasedExpenseLineDetail", "Purchase Invoice"),
+		("_map_purchase_order", "ItemBasedExpenseLineDetail", "Purchase Order"),
+	],
+)
+def test_every_document_built_from_item_lines_ignores_pricing_rules(monkeypatch, mapper, detail_key, doctype):
+	"""All five mappers that build item lines: the lines are priced by ``_priced_line`` and
+	the document tells ERPNext not to apply a Pricing Rule to an import."""
+	mapping = _mappers(monkeypatch)
+	payload = dict(_lines(detail_key), Id="900", TxnDate="2026-11-02", CustomerRef={"value": "1"}, VendorRef={"value": "2"})
+
+	mapped_doctype, values = getattr(mapping, mapper)(payload, SETTINGS)
+
+	assert mapped_doctype == doctype
+	assert values["ignore_pricing_rule"] == 1
+	assert len(values["items"]) == 4
+	assert all(item["price_list_rate"] == item["rate"] for item in values["items"])
+
+
+def test_the_build_only_keys_are_never_compared_flagged_or_settled():
+	"""``price_list_rate`` and ``ignore_pricing_rule`` tell ERPNext how to build a document.
+	They are not QuickBooks data: a draft holding the Item's list price beside the same rate,
+	or built before v1.800.0 with pricing rules on, is not something QuickBooks changed."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	assert mapping.BUILD_ONLY_ROW_FIELDS == ("price_list_rate",) and mapping.BUILD_ONLY_FIELDS == ("ignore_pricing_rule",)
+	held = [types.SimpleNamespace(item_code="SERVICE-CALL", qty=1.0, rate=400.0, price_list_rate=250.0)]
+	incoming = [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 400.0, "price_list_rate": 400.0}]
+	assert mapping._table_differences(held, incoming) == []
+	# The rate itself still counts.
+	assert mapping._table_differences(held, [dict(incoming[0], rate=0.0, price_list_rate=0.0)]) == [
+		{"row": 1, "fields": {"rate": {"erpnext": 400.0, "qbo": 0.0}}}
+	]
+	# A snapshot stored before the key existed says the same thing as the rows mapped now.
+	before = [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 400.0}]
+	assert mapping._same_qbo_value(before, incoming)
+	assert not mapping._same_qbo_value(before, [dict(incoming[0], rate=401.0)])
+
+	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00042", customer="Acme Supply", ignore_pricing_rule=0, items=held)
+	values = {"customer": "Acme Supply", "ignore_pricing_rule": 1, "items": incoming}
+	row = _mapping_row(owned_fields=json.dumps({"customer": "Acme Supply", "items": before}))
+	assert mapping._linked_differences(doc, values, row) == {"fields": {}, "tables": {}}
+	assert mapping._linked_differences(doc, values, _mapping_row(owned_fields="{}")) == {"fields": {}, "tables": {}}
+	assert mapping._settle_unflagged(row, "Sales Invoice", values) is None, "nothing to settle: no write"
+	assert mapping._settled_from("Sales Invoice", values) == {"customer": "Acme Supply"}
+
+
+def test_a_linked_draft_built_before_the_key_existed_is_not_flagged_by_a_resync(monkeypatch):
+	"""Through ``upsert_entity``: every linked transaction's stored rows lack
+	``price_list_rate`` on the day this deploys. A resync must not read that as a change,
+	and must not write a mapping row for it."""
+	rows = [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 400.0}]
+	values = {"customer": "Acme Supply", "ignore_pricing_rule": 1, "items": [dict(rows[0], price_list_rate=400.0)]}
+	mapping, writes, doc, _row = _invoice_with_typed_fields(
+		monkeypatch,
+		values=values,
+		record={
+			"customer": "Acme Supply",
+			"ignore_pricing_rule": 0,
+			"items": [types.SimpleNamespace(item_code="SERVICE-CALL", qty=1.0, rate=400.0, price_list_rate=250.0)],
+		},
+		owned={"customer": "Acme Supply", "items": rows},
+	)
+
+	result = mapping.upsert_entity("Invoice", {"Id": "900", "SyncToken": "2"}, SETTINGS, recheck=True)
+
+	assert result["action"] == "unchanged"
+	assert doc.saves == [] and doc.sets == []
+	assert writes["set_value"] == [] and writes["save_mapping"] == []
+
+
+REBUILT_LINES = [
+	{"item_code": "SERVICE-CALL", "qty": 1, "rate": 0.0, "amount": 0.0, "price_list_rate": 0.0},
+	{"item_code": "SERVICE-LABOR", "qty": 2, "rate": 50.0, "amount": 100.0, "price_list_rate": 50.0},
+	{"item_code": "SERVICE-CALL", "qty": 1, "rate": 0.0, "amount": 0.0, "price_list_rate": 0.0},
+]
+OLD_LINES = [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 250.0, "amount": 250.0}]
+
+
+def _rebuilt_draft(monkeypatch, *, reprice):
+	"""A flagged draft and the real ``save_mapping``. With ``reprice`` the record double's
+	``save`` does what ERPNext v16 did on the mirror: a line at 0 comes back at 250."""
+	payload = {"Id": "900", "SyncToken": "4", "MetaData": {"LastUpdatedTime": "2026-11-10T10:20:00-08:00"}}
+	values = {
+		"customer": "Acme Supply",
+		"posting_date": "2026-11-02",
+		"due_date": None,
+		"ignore_pricing_rule": 1,
+		"items": [dict(line) for line in REBUILT_LINES],
+	}
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		docstatus=0,
+		customer="Acme Supply",
+		posting_date="2026-11-02",
+		ignore_pricing_rule=0,
+		items=[types.SimpleNamespace(**line) for line in OLD_LINES],
+	)
+
+	def save(**kwargs):
+		doc.saves.append(kwargs)
+		if reprice:
+			doc.items = [
+				dict(line, rate=250.0, amount=250.0, price_list_rate=250.0) if not line["rate"] else dict(line)
+				for line in doc.items
+			]
+
+	doc.save = save
+	row = _mapping_row(
+		name="QBO-MAP-Invoice-900",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=doc.name,
+		match_status="Created",
+		conflict_status="QuickBooks Changed",
+		sync_token="3",
+		qbo_changes=json.dumps({"sync_token": "4", "fields": {}, "tables": {"items": {"rows": []}}, "issues": []}),
+		owned_fields=json.dumps({"customer": "Acme Supply", "posting_date": "2026-11-02", "items": OLD_LINES}),
+	)
+	row.is_new = lambda: False
+	row.save = lambda **kwargs: None
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	writes = {"set_value": []}
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
+	monkeypatch.setattr(mapping, "_raw_payload_dict", lambda entity_type, qbo_id: dict(payload))
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Sales Invoice", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(frappe, "get_single", lambda doctype: SETTINGS, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: writes["set_value"].append((args, kwargs)), raising=False
+	)
+	return mapping, writes, doc, row, values
+
+
+def test_refresh_draft_that_erpnext_repriced_stays_flagged_with_what_still_differs(monkeypatch):
+	"""The defect itself. The rebuild saved, the saved draft still holds 250 where
+	QuickBooks has 0, and the old code reported success and set the mapping Clean."""
+	mapping, writes, doc, row, _values = _rebuilt_draft(monkeypatch, reprice=True)
+
+	result = mapping.refresh_linked_draft("Invoice", "900")
+
+	assert doc.saves == [{"ignore_permissions": True}], "the rebuild is kept: most of it is right"
+	assert "ignore_pricing_rule" in doc.sets and doc.ignore_pricing_rule == 1
+	assert result["still_differs"] == ["items"]
+	assert result["applied"] == ["customer", "posting_date"], "not the table, and not a build-only key"
+	differing = result["remaining"]["tables"]["items"]["rows"]
+	assert differing == [
+		{"row": 1, "fields": {"rate": {"erpnext": 250.0, "qbo": 0.0}, "amount": {"erpnext": 250.0, "qbo": 0.0}}},
+		{"row": 3, "fields": {"rate": {"erpnext": 250.0, "qbo": 0.0}, "amount": {"erpnext": 250.0, "qbo": 0.0}}},
+	]
+
+	# save_mapping first set it Clean with a fresh snapshot; the last write is the flag.
+	((doctype, name, updates), kwargs), = writes["set_value"]
+	assert (doctype, name) == ("QuickBooks Sync Mapping", row.name) and kwargs == {"update_modified": False}
+	_replay(row, writes)
+	assert row.conflict_status == "QuickBooks Changed", "never Clean on a record that still disagrees"
+	note = json.loads(row.qbo_changes)
+	assert note["after_write"] == "refresh" and note["issues"] == []
+	assert note["sync_token"] == "4", "the payload the draft was rebuilt from"
+	assert note["tables"]["items"]["rows"] == differing
+	assert note["tables"]["items"]["qbo"] == REBUILT_LINES, "Keep ERPNext settles what QuickBooks said"
+	assert "no_baseline" not in note["tables"]["items"]
+	# What still differs has no reference left, so no later pass can call it settled.
+	owned = json.loads(row.owned_fields)
+	assert "items" not in owned and owned["customer"] == "Acme Supply"
+	assert "items" not in json.loads(row.settled_qbo_values or "{}")
+
+
+def test_a_later_sync_cannot_clear_the_flag_a_repriced_rebuild_left(monkeypatch):
+	"""Why the reference is dropped. With the rebuilt rows left in ``owned_fields`` the next
+	pass would read "QuickBooks still says what it said" and skip the table: no difference,
+	flag cleared, draft still 500 too high. With no reference the table is compared with
+	the record."""
+	mapping, writes, doc, row, values = _rebuilt_draft(monkeypatch, reprice=True)
+	mapping.refresh_linked_draft("Invoice", "900")
+	_replay(row, writes)
+
+	again = mapping._linked_differences(doc, values, row)
+	assert sorted(again["tables"]) == ["items"] and again["fields"] == {}
+
+	# The hole: the same comparison with the rows kept as a reference finds nothing.
+	trusting = _mapping_row(owned_fields=json.dumps({"customer": "Acme Supply", "items": REBUILT_LINES}))
+	assert mapping._linked_differences(doc, values, trusting) == {"fields": {}, "tables": {}}
+
+	# Keep ERPNext is the way out: it settles the rows, and then the table is left alone.
+	mapping.keep_erpnext_values("Invoice", "900")
+	_replay(row, writes)
+	assert row.conflict_status == "Clean" and row.qbo_changes is None
+	assert mapping._linked_differences(doc, values, row) == {"fields": {}, "tables": {}}
+
+
+def test_refresh_draft_that_holds_every_value_is_clean(monkeypatch):
+	mapping, writes, doc, row, _values = _rebuilt_draft(monkeypatch, reprice=False)
+
+	result = mapping.refresh_linked_draft("Invoice", "900")
+
+	assert result["still_differs"] == [] and result["remaining"] == {"fields": {}, "tables": {}}
+	assert result["applied"] == ["customer", "items", "posting_date"]
+	assert writes["set_value"] == [], "save_mapping is the only mapping write"
+	assert row.conflict_status == "Clean" and row.qbo_changes is None and row.sync_token == "4"
+	assert json.loads(row.owned_fields)["items"] == REBUILT_LINES
+	assert doc.items == REBUILT_LINES, "each rebuilt line carries its price_list_rate onto the draft"
+
+
+def test_use_quickbooks_values_keeps_the_flag_on_a_value_erpnext_did_not_hold(monkeypatch):
+	"""The same check on the master side. Three values are written; the record's own
+	validation puts one back. That one is not applied, not settled and still flagged."""
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+
+	def save(**kwargs):
+		doc.saves.append(kwargs)
+		doc.payment_terms = "Net 45"
+
+	doc.save = save
+
+	result = mapping.use_qbo_values("Customer", "1", fields=["customer_name", "payment_terms", "tax_id"])
+
+	assert result["applied"] == ["customer_name", "tax_id"] and result["kept"] == []
+	assert result["still_differs"] == ["payment_terms"]
+	((_doctype, _name, updates), _kwargs), = writes["set_value"]
+	assert updates["conflict_status"] == "QuickBooks Changed"
+	note = json.loads(updates["qbo_changes"])
+	assert note["after_write"] == "use" and note["sync_token"] == "6"
+	assert note["fields"] == {"payment_terms": {"erpnext": "Net 45", "qbo": "Net 15"}} and note["tables"] == {}
+	assert json.loads(updates["owned_fields"]) == {"customer_name": "Acme Supply Co", "tax_id": "99-0000001"}
+	assert json.loads(updates["settled_qbo_values"]) == {"customer_name": "Acme Supply Co", "tax_id": "99-0000001"}
+
+
+def test_use_quickbooks_values_keeps_the_flag_on_a_clear_that_did_not_take(monkeypatch):
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+	note = json.loads(row.qbo_changes)
+	note["fields"] = {"payment_terms": {"erpnext": "Net 45", "qbo": None, "cleared": True}}
+	row.qbo_changes = json.dumps(note)
+
+	def save(**kwargs):
+		doc.saves.append(kwargs)
+		doc.payment_terms = "Net 45"
+
+	doc.save = save
+
+	result = mapping.use_qbo_values("Customer", "1", fields=["payment_terms"])
+
+	assert result["applied"] == [] and result["still_differs"] == ["payment_terms"]
+	updates = writes["set_value"][0][0][2]
+	assert updates["conflict_status"] == "QuickBooks Changed"
+	assert json.loads(updates["qbo_changes"])["fields"] == {
+		"payment_terms": {"erpnext": "Net 45", "qbo": None, "cleared": True}
+	}
+
+
+def test_the_check_after_a_write_leaves_out_what_erpnext_composes_for_itself(monkeypatch):
+	"""A Payment Entry writes its own remarks on every save unless ``custom_remarks`` is
+	ticked. That is not the draft disagreeing with QuickBooks, and it must not keep every
+	refreshed Payment Entry flagged. The same text on a Sales Invoice is the mapper's own
+	and is checked."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	assert mapping.REWRITTEN_ON_SAVE == {"Payment Entry": ("remarks",)}
+	doc = _doc(doctype="Payment Entry", name="ACC-PAY-2026-00007", remarks="Amount USD 10 received", paid_amount=10.0)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	values = {"remarks": "Imported from QuickBooks Online payment 7", "paid_amount": 10, "reference_no": None}
+
+	assert mapping._differences_after_write("Payment Entry", doc.name, values) == {"fields": {}, "tables": {}}
+	doc.paid_amount = 12.0
+	assert sorted(mapping._differences_after_write("Payment Entry", doc.name, values)["fields"]) == ["paid_amount"]
+	assert sorted(mapping._differences_after_write("Sales Invoice", doc.name, values)["fields"]) == [
+		"paid_amount",
+		"remarks",
+	]
+
+
+def test_the_page_is_told_which_fields_still_differ_and_never_sent_the_rows(monkeypatch):
+	"""``review_many`` reports a saved-but-differing write as its own outcome, with one
+	short label per field. The stored differences (whole child tables) stay on the server."""
+	matching, frappe, events = _matching(monkeypatch)
+	remaining = {
+		"fields": {"customer": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"}},
+		"tables": {"items": {"rows": [{"row": 1}, {"row": 3}, {"row": 4}], "more_rows": 5, "qbo": REBUILT_LINES}},
+	}
+	monkeypatch.setattr(
+		matching,
+		"refresh_linked_draft",
+		lambda entity_type, qbo_id: {
+			"mapping": "QBO-MAP-Invoice-" + qbo_id,
+			"doctype": "Sales Invoice",
+			"name": "ACC-SINV-2026-00042",
+			"applied": ["posting_date"],
+			"still_differs": ["customer", "items"] if qbo_id == "900" else [],
+			"remaining": remaining if qbo_id == "900" else {"fields": {}, "tables": {}},
+		},
+	)
+	fields = [_field("customer", "Link"), _field("items", "Table", options="Sales Invoice Item")]
+	fields[0].label, fields[1].label = "Customer", "Items"
+	monkeypatch.setattr(frappe, "get_meta", lambda doctype: _typed_meta(fields), raising=False)
+
+	differing, clean = matching.review_many(
+		[{"entity_type": "Invoice", "qbo_id": "900"}, {"entity_type": "Invoice", "qbo_id": "901"}],
+		matching.refresh_draft,
+	)
+
+	assert differing["ok"] is True and differing["action"] == "still_differs"
+	assert differing["still_differs"] == ["customer", "items"]
+	assert differing["still_labels"] == ["Customer", "Items (8 rows)"]
+	assert "remaining" not in differing and "remaining" not in clean
+	assert clean["action"] == "refreshed" and clean["still_differs"] == [] and clean["still_labels"] == []
+	assert events["commit"] == 2, "the rebuild is committed either way; it is the flag that differs"
+
+	monkeypatch.setattr(
+		matching,
+		"use_qbo_values",
+		lambda entity_type, qbo_id, fields=None: {
+			"mapping": "QBO-MAP-Customer-1",
+			"doctype": "Customer",
+			"name": "Acme Supply",
+			"applied": [],
+			"kept": [],
+			"still_differs": ["customer"],
+			"remaining": {"fields": remaining["fields"], "tables": {}},
+		},
+	)
+	(used,) = matching.review_many([{"entity_type": "Customer", "qbo_id": "1"}], matching.use_quickbooks_values)
+	assert used["action"] == "still_differs" and used["still_labels"] == ["Customer"]
+
+
+def test_change_view_says_when_the_note_is_what_a_write_left(monkeypatch):
+	matching, frappe, _events = _matching(monkeypatch)
+	monkeypatch.setattr(frappe.db, "get_value", lambda *args, **kwargs: None, raising=False)
+	row = types.SimpleNamespace(
+		conflict_status="QuickBooks Changed",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name="ACC-SINV-2026-00042",
+		qbo_changes=json.dumps({"after_write": "refresh", "fields": {}, "tables": {"items": {"rows": [], "qbo": []}}}),
+	)
+	assert matching.change_view(row)["after_write"] == "refresh"
+	row.qbo_changes = json.dumps({"fields": {"customer": {"erpnext": "A", "qbo": "B"}}})
+	assert matching.change_view(row)["after_write"] is None
+
+
+def test_the_page_reports_a_write_that_still_differs_and_labels_both_sides():
+	js = _read(PAGE_JS)
+	# Three outcomes: a saved-but-differing write is never counted with the clean ones.
+	review = js[js.index("function runReview({ method, items, scope, title, verb, progress }) {") :]
+	review = review[: review.index("\n\t}\n")]
+	assert "const still = results.filter((r) => r.ok && (r.still_differs || []).length);" in review
+	assert "const ok = results.filter((r) => r.ok && !(r.still_differs || []).length);" in review
+	assert "saved, but still differ from QuickBooks" in review and "field(s) still differ" in review
+	assert "if (failed.length || still.length) {" in review, "no green toast for a draft that still differs"
+	assert "esc((r.still_labels || r.still_differs).join" in review
+	# The refusal ERPNext gives for a draft it will not save carries record and party names.
+	assert "${esc(r.error || \"\")}" in review
+	assert review.count("r.error") == 1, "the one place an error is rendered, and it is escaped"
+	# The note a write left has its own sentence over the differences.
+	assert 'changes.after_write === "refresh"' in js and 'changes.after_write === "use"' in js
+	assert "${esc(changesHead(changes, scope))}" in js
+
+	# Narrow layout: every header row of the page is hidden under 900px, so each value says
+	# which side it is from, and the row lines carry a legend in every layout.
+	assert js.count('${sideLabel("erpnext")}') == 2 and js.count('${sideLabel("qbo")}') == 2
+	assert '<span class="qbo-mt-changes-side">' in js
+	assert '__("Rows that differ, shown as ERPNext has → QuickBooks has:")' in js
+	css = _read(APP / "public" / "css" / "quickbooks_online" / "qbo_matching.css")
+	side = css[css.index(".qbo-mt-changes-side {") :]
+	assert "display: none;" in side[: side.index("}")]
+	narrow = css[css.index("@media (max-width: 900px) {\n\t.qbo-mt-changes-side {") :]
+	assert "display: inline;" in narrow[: narrow.index("}")]
+	assert ".qbo-mt-table thead {\n\t\tdisplay: none;" in css, "the rule that hides the differences table's header too"
+
+
+def test_the_changelog_and_readme_explain_the_repricing_and_the_check():
+	changelog = _read(REPO / "CHANGELOG.md")
+	assert "price_list_rate" in changelog and "still differ" in changelog
+	readme = _read(APP / "quickbooks_online" / "README.md")
+	assert "price_list_rate" in readme and "_differences_after_write" in readme
+
+
 def test_it_is_wired_into_ci_on_a_pytest_step():
 	ci = _read(REPO / ".github" / "workflows" / "ci.yml")
 	assert "python -m pytest erpnext_enhancements/tests/test_quickbooks_link_only.py" in ci

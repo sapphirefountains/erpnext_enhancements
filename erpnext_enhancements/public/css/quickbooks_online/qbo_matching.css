@@ -407,6 +407,28 @@
 	color: var(--text-muted);
 }
 
+/*
+ * Which side a value is from, beside the value. Hidden while the differences table has
+ * its header row; shown in the stacked layout below, where every header row is hidden
+ * and a field would otherwise be three unlabeled lines.
+ */
+.qbo-mt-changes-side {
+	color: var(--text-muted);
+	display: none;
+	font-size: var(--text-xs);
+	margin-right: 6px;
+}
+
+.qbo-mt-changes-legend {
+	font-weight: 600;
+}
+
+@media (max-width: 900px) {
+	.qbo-mt-changes-side {
+		display: inline;
+	}
+}
+
 .qbo-mt-changes-actions {
 	display: flex;
 	flex-wrap: wrap;
