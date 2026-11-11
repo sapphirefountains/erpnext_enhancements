@@ -17,8 +17,10 @@
  *                               tokens), then reload (disconnectQuickBooks()).
  *      * Import All          -> confirm, then `import_all` (runImportAll()).
  *      * Preview Resync      -> `preview_resync`, show a summary, then optionally
- *                               `run_resync` to overwrite QBO-owned fields (previewResync()).
- *      * Retry Failed        -> `retry_failed` (retryFailed()).
+ *                               `run_resync` (previewResync()). Since v1.800.0 a resync
+ *                               creates, links and flags; it never saves over a linked record.
+ *      * Retry Failed        -> `retry_failed` (retryFailed()): a failed CDC sync only. A
+ *                               failed Import All or Resync is started again by a person.
  *      * Record Matching     -> routes to the quickbooks-record-matching page, the
  *                               accountant's review queue. Its predecessor here was a
  *                               dialog that listed only QBO records with NO mapping
@@ -421,15 +423,20 @@ function pollResyncPreview(previewId, attempts) {
 }
 
 function offerRunResync(previewId, summary) {
-	const message = __("Preview {0}: {1} creates, {2} updates, {3} deletes, {4} conflicts, {5} ignored.", [
+	// "updates" stays 0 since v1.800.0: a resync never saves over a linked record. What
+	// QuickBooks changed on one is counted as flagged, and reviewed on the Record Matching page.
+	const message = __("Preview {0}: {1} creates, {2} links, {3} deletes, {4} linked records QuickBooks changed, {5} ignored.", [
 		previewId,
 		summary.created || 0,
-		summary.updated || 0,
+		summary.linked || 0,
 		summary.deleted || 0,
 		summary.conflicts || 0,
 		summary.ignored || 0,
 	]);
-	frappe.confirm(message + "<br>" + __("Run overwrite resync for QuickBooks-owned fields?"), () => {
+	const question = __(
+		"Run the resync? It creates and links what is missing and flags the changed records for review on the Record Matching page. It does not save over any linked record.",
+	);
+	frappe.confirm(message + "<br>" + question, () => {
 		frappe.call({
 			method: "erpnext_enhancements.quickbooks_online.core.api.run_resync",
 			args: { preview_id: previewId },
@@ -442,13 +449,29 @@ function offerRunResync(previewId, summary) {
 	});
 }
 
+// Only a failed CDC sync is retried. A failed Import All or Resync is never restarted from
+// here (v1.800.0): the server names those logs and this says to start the run again.
 function retryFailed() {
 	frappe.call({
 		method: "erpnext_enhancements.quickbooks_online.core.api.retry_failed",
-		callback() {
-			frappe.msgprint(
-				__("Retry started in the background. Progress appears under Recent Sync Logs."),
-			);
+		callback(response) {
+			const result = response.message || {};
+			const waiting = (result.restart_by_hand || []).length;
+			const lines = [];
+			if (result.status === "queued") {
+				lines.push(
+					__("Retrying the failed CDC sync in the background. Progress appears under Recent Sync Logs."),
+				);
+			}
+			if (waiting) {
+				lines.push(
+					__(
+						"{0} failed Import All or Resync run(s) are not retried automatically. To run one again, start it from this page with Import All or Preview Resync.",
+						[waiting],
+					),
+				);
+			}
+			frappe.msgprint(lines.join("<br><br>") || __("Nothing to retry."));
 		},
 	});
 }

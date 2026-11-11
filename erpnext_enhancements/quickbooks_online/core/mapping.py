@@ -6,13 +6,18 @@ every fetched/received QBO record. Responsibilities:
   * Translate a QBO payload into an ERPNext DocType + field values
     (``map_qbo_to_erpnext`` and the ``_map_*`` functions).
   * Decide what to do with it idempotently via the ``QuickBooks Sync Mapping``
-    ledger (``upsert_entity``): update an already-linked record, auto-link an
-    existing ERPNext record by fuzzy match (``find_existing_match`` / ``_match_*``),
-    create a new one, or defer to manual review on missing-required-field or
-    ambiguous-match conditions.
-  * Track ownership of QBO-sourced fields so subsequent syncs can detect
-    user-made conflicts (``detect_conflicts``, ``owned_fields``) and respect them
-    unless an overwrite resync is requested.
+    ledger (``upsert_entity``): auto-link an existing ERPNext record by fuzzy match
+    (``find_existing_match`` / ``_match_*``), create a new one, or defer to manual
+    review on missing-required-field or ambiguous-match conditions.
+  * **Never save over a record a mapping already links (v1.800.0).** Once a record is
+    linked -- matched or created by the import -- a later QuickBooks edit is compared
+    with it and, where the two differ, flagged ``QuickBooks Changed`` on the mapping
+    with the differences stored field by field (``_review_linked_record``). A person
+    resolves the flag on the Record Matching page; ``keep_erpnext_values``,
+    ``use_qbo_values`` and ``refresh_linked_draft`` below are the only code that writes
+    QuickBooks values onto a linked record, each for one record a person chose.
+  * Track what the last sync stored (``owned_fields``), so the review can say which
+    side changed.
 
 The mapping ledger keyed on (qbo_entity_type, qbo_id) is what makes repeated
 imports/webhooks/CDC safe to re-run.
@@ -30,12 +35,84 @@ from erpnext_enhancements.quickbooks_online.core.constants import (
 	DEFAULT_SALES_TAX_ACCOUNT_NUMBER,
 	ENTITY_DOCTYPE_MAP,
 	ERPNEXT_OWNED_PARTY_FIELDS,
+	LEGACY_CONFLICT,
+	QBO_CHANGED,
+	TRANSACTION_ENTITIES,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import (
+	is_rq_job_timeout,
 	json_dumps,
 	json_loads,
 	parse_qbo_datetime,
 )
+
+MAPPING_DOCTYPE = "QuickBooks Sync Mapping"
+
+#: How many differing rows of one child table a flag stores for the reviewer. The full
+#: QuickBooks rows are stored beside them, so *Use QuickBooks values* is never truncated.
+TABLE_DIFF_ROW_CAP = 25
+
+#: What ERPNext owns on a record that already exists, beyond a party's group and territory
+#: (``ERPNEXT_OWNED_PARTY_FIELDS``) and a Project's title. Keyed on (QBO entity type,
+#: ERPNext DocType), because one DocType is fed by more than one mapper. Every field here
+#: is something a mapper supplies so that a *new* record can be inserted, and none of it is
+#: QuickBooks data about an existing one, so for a linked record it is dropped before the
+#: comparison: never flagged, and never applicable from a flag by one click.
+#:
+#: * **Constants.** A job's ``status`` (the first open-like option) and ``company`` (the
+#:   Settings company): applied to existing Projects, those two reopened 338 of them and
+#:   re-pointed 13 to another company. An Item's ``item_group`` ("All Item Groups"),
+#:   ``stock_uom`` ("Nos") and ``is_stock_item`` (0): one "Use QuickBooks values" would
+#:   re-file an Item a person categorised and try to turn a stock item into a non-stock one.
+#:   ``company`` on an Account and a Cost Center. ``enabled`` on a Mode of Payment. Every
+#:   field of a TaxCode's Account but its name: the mapper invents a Tax ledger under the
+#:   Liability root, and a TaxCode matched to an existing Account must not rebuild it.
+#: * **Create-time guesses.** ``customer_type`` / ``supplier_type``: QuickBooks has no such
+#:   field. The mapper picks Company or Individual from whether ``CompanyName`` is filled,
+#:   then resolves that against the site's own options, falling back to the first one.
+#: * **The record's own name.** ``item_code``, ``template_name`` and ``mode_of_payment``
+#:   are what those DocTypes are named by. Setting the field on an existing record renames
+#:   nothing and leaves the field disagreeing with the name.
+#:
+#: Transactions are not listed. Each one the import created has a full baseline, so its
+#: constants (price list, receivable account, ``set_posting_time``) read as unchanged
+#: unless the constant itself changes, and *Refresh draft* rebuilds the whole draft anyway.
+MAPPER_DEFAULTS_ERPNEXT_OWNS = {
+	("Customer", "Project"): ("status", "company"),
+	("Customer", "Customer"): ("customer_type",),
+	("Vendor", "Supplier"): ("supplier_type",),
+	("Item", "Item"): ("item_code", "item_group", "stock_uom", "is_stock_item"),
+	("Account", "Account"): ("company",),
+	("TaxCode", "Account"): ("company", "parent_account", "is_group", "root_type", "account_type"),
+	("Term", "Payment Terms Template"): ("template_name",),
+	("PaymentMethod", "Mode of Payment"): ("mode_of_payment", "enabled"),
+	("Class", "Cost Center"): ("company",),
+}
+
+#: Mapped values that are instructions to ERPNext, not facts from QuickBooks. They are
+#: written when a document is built (a create, a person's *Refresh draft* or *Use
+#: QuickBooks values*) and never compared, flagged or settled.
+#:
+#: * ``price_list_rate`` on every item line, equal to its ``rate``. Without it ERPNext
+#:   v16 fills the line's list price on save (``set_missing_item_details`` fills a None)
+#:   and ``calculate_item_rate`` then replaces a rate of 0 with it, and shows a rate below
+#:   list as list price less a discount QuickBooks never gave. See ``_priced_line``.
+#: * ``ignore_pricing_rule`` on the document: a Pricing Rule must not reprice an import.
+BUILD_ONLY_FIELDS = ("ignore_pricing_rule",)
+BUILD_ONLY_ROW_FIELDS = ("price_list_rate",)
+
+#: Mapped fields ERPNext writes for itself on every save, whatever it is given, so the
+#: check a person's write runs on its own result (``_differences_after_write``) leaves
+#: them out. A Payment Entry composes its own remarks unless ``custom_remarks`` is ticked.
+REWRITTEN_ON_SAVE = {"Payment Entry": ("remarks",)}
+
+#: ``match_rule`` of a QuickBooks job consolidated onto its parent Customer.
+JOB_CONSOLIDATION_RULE = "job_merge_no_project"
+
+_REVIEW_TAG = re.compile(r"<[^>]+>")
+_REVIEW_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
+_NO_REFERENCE = object()
+_CLEAR = object()
 
 
 def get_erpnext_doctype(entity_type: str) -> str | None:
@@ -82,26 +159,50 @@ def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str |
 	return mapper(payload, settings)
 
 
-def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False, preview=False):
+def upsert_entity(
+	entity_type: str, payload: dict, settings, *, overwrite=False, preview=False, recheck=False
+):
 	"""Idempotently create/update/link an ERPNext record from a QBO payload.
 
 	The core decision tree, driven by the (entity_type, qbo_id) mapping ledger:
 
 	  0. Mapping marked ``Ignored``  -> ``ignored``, untouched (unless QBO moved on).
 	  1. No mapper / no Id          -> ``skipped``.
-	  2. Preflight validation fails -> ``manual_review`` (records a pending mapping).
-	  3. Already mapped & exists    -> update it, unless user edits collide with
-	     QBO-owned values and ``overwrite`` is False -> ``conflict``. A value-identical
-	     payload skips the doc.save (-> ``unchanged``) and only refreshes the mapping.
+	  2. Already mapped & exists    -> **never saved** (v1.800.0). QuickBooks has not
+	     moved since the mapping's last sync -> ``unchanged``, nothing written. It has,
+	     and nothing it changed differs from the record -> ``unchanged``, the mapping
+	     cursor advances. It has, and a field it changed differs -> ``flagged``: the
+	     mapping becomes ``QuickBooks Changed`` and the differences are stored for a
+	     person to review.
+	     A submitted document keeps its own path (``manual_review``). See
+	     ``_review_linked_record``.
+	  3. Preflight validation fails -> ``manual_review`` (records a pending mapping).
 	  4. Unmapped but a fuzzy match exists -> auto-link (fill only blank fields);
-	     multiple candidates -> ``manual_review``.
+	     multiple candidates -> ``manual_review``. So does a match that another mapping
+	     already links (v1.800.0): the sync never saves a linked record, this door included.
 	  5. Otherwise                  -> create a new record (after required-field check).
 	     Exception: a QBO job never creates a Project (link-only) -- it consolidates
 	     to its parent Customer, or parks for review when the parent isn't imported.
+	     A new sub-account never promotes a parent Account that a mapping links.
 
 	``preview=True`` computes the would-be action without writing (verbs become
-	create/update/link/delete). ``overwrite=True`` lets QBO win conflicts.
-	Side effects (non-preview): ERPNext doc insert/save and Sync Mapping writes.
+	create/link/delete, and ``would_flag`` for a linked record that differs).
+
+	``recheck=True`` is what a person-started Preview Resync / Run Resync passes: a linked
+	record is compared with the payload **even when QuickBooks has not moved** since the
+	mapping's last sync. That is the one way to surface a standing difference -- a mapper
+	fix that changes what a draft should hold, a field that has differed since the record
+	was first linked -- and it still only flags. Scheduled and CDC syncs never pass it.
+
+	``overwrite`` is accepted and **ignored**. Until v1.800.0 ``overwrite=True`` (Run
+	Resync) let QuickBooks win a conflict and saved over the linked record. It is kept
+	in the signature so an old caller still runs, and so the next reader finds this
+	sentence instead of wiring it back up: no flag on this function may write a linked
+	record. ``tests/test_quickbooks_link_only.py`` runs the linked path with
+	``overwrite=True`` and with ``recheck=True`` and asserts nothing was saved.
+
+	Side effects (non-preview): ERPNext doc insert (create), a save of a record being
+	linked for the first time (auto-link), and Sync Mapping writes.
 	Returns an action dict consumed by ``sync._track_result``.
 	"""
 	erpnext_doctype, values = map_qbo_to_erpnext(entity_type, payload, settings)
@@ -138,40 +239,33 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		}
 
 	# Preflight: only the fields we actually mapped (don't yet enforce all
-	# DocType-required fields -- a later create-time check does that).
+	# DocType-required fields -- a later create-time check does that). Computed here and
+	# acted on below: for a record that is already linked a failing preflight is a note on
+	# the flag, never a reason to rewrite the mapping (see _review_linked_record).
 	preflight_issues = validate_mapped_values(
 		entity_type, erpnext_doctype, values, include_doc_required=False, payload=payload
 	)
-	if preflight_issues:
-		if not preview:
-			save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, preflight_issues)
-		return {
-			"action": "manual_review",
-			"doctype": erpnext_doctype,
-			"qbo_id": qbo_id,
-			"reason": "; ".join(preflight_issues),
-			"issues": preflight_issues,
-		}
 
-	# A child Account can't be written under a ledger parent, so promote the
-	# parent to a group first (no-op for other doctypes / group parents).
-	if not preview:
-		_ensure_group_parent(erpnext_doctype, values)
-
-	# Already-linked path: update the previously synced ERPNext record in place.
+	# Already-linked path: the record is ERPNext's now, and the sync never saves it.
 	# (``mapping`` was read above for the Ignored check; nothing since then writes to it.)
-	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
+	# The mapping must name THIS run's DocType: a QBO id linked to a Customer whose payload
+	# now resolves to a Project is the doctype-flip guard's case further down, even when a
+	# Project happens to carry the Customer's name.
+	if (
+		mapping
+		and mapping.erpnext_name
+		and (getattr(mapping, "erpnext_doctype", None) or erpnext_doctype) == erpnext_doctype
+		and frappe.db.exists(erpnext_doctype, mapping.erpnext_name)
+	):
 		doc = frappe.get_doc(erpnext_doctype, mapping.erpnext_name)
-		# Submitted-document guard (Final Review B6). ERPNext refuses doc.save() on a
-		# docstatus=1 record -- every QBO-mapped field is allow_on_submit=0 -- and the
-		# generic save path swallows the resulting UpdateAfterSubmitError into a
-		# manual-review mapping that OVERWRITES owned_fields, permanently destroying the
-		# conflict-detection baseline. Once the historical backlog is submitted, an
-		# unfiltered re-sync would churn ~15,700 posted docs and lose every snapshot. So
-		# never save a submitted doc: if QBO has not advanced since we synced it there is
-		# nothing to do (-> unchanged); if it genuinely advanced we cannot apply the change
-		# in place, so flag the mapping for a human via frappe.db.set_value (NOT
-		# save_mapping, which would rewrite owned_fields) and park it for manual review.
+		# Submitted-document guard (Final Review B6). A docstatus=1 record is never saved:
+		# if QBO has not advanced since we synced it there is nothing to do (-> unchanged);
+		# if it genuinely advanced the change cannot be applied in place, so flag the mapping
+		# for a human via frappe.db.set_value (NOT save_mapping, which would rewrite
+		# owned_fields and destroy the conflict-detection baseline of ~15,700 posted docs)
+		# and park it for manual review. Since v1.800.0 this runs BEFORE the preflight
+		# parking below, which rewrote owned_fields on a posted document whose new payload
+		# failed validation -- the very loss this guard exists to prevent.
 		# (doc.get(): a submitted-doc double in the bench-free suite has no docstatus attr.)
 		if doc.get("docstatus") == 1:
 			if not _qbo_record_advanced(mapping, payload):
@@ -194,57 +288,36 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 					f"place -- resolve manually (amend/cancel or reconcile)."
 				),
 			}
-		# A QBO job must never re-clobber an existing Project's title with its prefixed
-		# DisplayName; drop it here so it's excluded from conflicts, the write and the snapshot.
-		_protect_existing_project_title(erpnext_doctype, values, doc)
-		# Same shape for a party's group / territory: QuickBooks has no such field, so an
-		# update never carries one -- whatever the record holds, blank included. Re-applying
-		# a default here is what swept 906 Suppliers into whichever Supplier Group was
-		# newest, five times over (see DEFAULT_PARTY_GROUP).
-		_drop_party_groups_on_update(erpnext_doctype, values, doc)
-		conflicts = detect_conflicts(doc, values, mapping)
-		# A conflict = a user changed a QBO-owned field; respect it unless overwriting.
-		if conflicts and not overwrite:
-			if not preview:
-				mapping.conflict_status = "Conflict"
-				mapping.save(ignore_permissions=True)
-			return {"action": "conflict", "doctype": erpnext_doctype, "name": doc.name, "fields": conflicts}
-		if preview:
-			return {"action": "update", "doctype": erpnext_doctype, "name": doc.name, "fields": list(values)}
-		_drop_self_parent_account(erpnext_doctype, values, doc.name)
-		changed = apply_values(doc, values)
-		# The Account group fixups mutate the doc AFTER apply_values, so they must
-		# force the save (today they only fire alongside a real is_group change, but
-		# a skipped save would silently drop their healing if that ever shifts).
-		if _keep_account_as_group(erpnext_doctype, doc):
-			values["is_group"] = 1
-			changed = True
-		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
-			values.pop("account_type", None)
-			changed = True
-		# Save only when a mapped value actually moved. A value-identical re-sync
-		# (full import replay, CDC echo of our own writeback) skips the doc.save --
-		# no modified/modified_by churn, no doc_update realtime event to viewers, no
-		# whole-doc re-validation -- but still refreshes the Sync Mapping below
-		# (SyncToken / LastUpdatedTime cursor, conflict status), which touches only
-		# QBO Sync Mapping. URL healing (_heal_invalid_urls) is save-scoped, so
-		# skipping the save also skips it: healing exists solely to let the save
-		# pass validation, and the next real change still heals before saving.
-		if changed:
-			review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
-			if review:
-				return review
-		# A clean in-place update means this record is synced. If it was previously parked
-		# ("Pending Review" -- e.g. a transient validation failure on an earlier run that
-		# has since been resolved), clear that now-stale flag so it doesn't sit in review
-		# forever; an already-synced match_status is left untouched.
-		mapping_extra = {"conflict_status": "Clean"}
-		if mapping.match_status == "Pending Review":
-			mapping_extra["match_status"] = "Auto Matched"
-		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, **mapping_extra)
-		if not changed:
-			return {"action": "unchanged", "doctype": erpnext_doctype, "name": doc.name}
-		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
+		return _review_linked_record(
+			entity_type,
+			qbo_id,
+			payload,
+			erpnext_doctype,
+			values,
+			mapping,
+			doc,
+			preview=preview,
+			recheck=recheck,
+			preflight_issues=preflight_issues,
+		)
+
+	if preflight_issues:
+		if not preview:
+			save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, preflight_issues)
+		return {
+			"action": "manual_review",
+			"doctype": erpnext_doctype,
+			"qbo_id": qbo_id,
+			"reason": "; ".join(preflight_issues),
+			"issues": preflight_issues,
+		}
+
+	# A child Account can't be written under a ledger parent, so promote the
+	# parent to a group first (no-op for other doctypes / group parents). Below the
+	# linked path on purpose: this saves the PARENT Account, which is itself a linked
+	# record more often than not, and only a create or a first link may ask for that.
+	if not preview:
+		_ensure_group_parent(erpnext_doctype, values)
 
 	# Settled job-consolidation guard. A QBO job the remediation tool consolidated onto
 	# its parent Customer (because it has no matchable Project) must stay consolidated.
@@ -319,6 +392,29 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 				"doctype": erpnext_doctype,
 				"candidates": existing_match["candidates"],
 				"reason": existing_match["reason"],
+			}
+		# The matched record may already be another QuickBooks record's link: a customer
+		# re-created in QuickBooks under the same name, two jobs carrying one PRJ number, a
+		# TaxCode named like a linked Account. Linking here would fill its blank fields and
+		# save it -- a sync saving a linked record, by the side door (v1.800.0). Park it
+		# for a person instead, naming the existing link; no save, no second link.
+		other = other_mapping_linking(erpnext_doctype, existing_match["name"], entity_type, qbo_id)
+		if other:
+			taken_reason = (
+				f"{erpnext_doctype} '{existing_match['name']}' matches this QuickBooks {entity_type} "
+				f"({existing_match['rule']}), but QuickBooks {getattr(other, 'qbo_entity_type', '')} "
+				f"{getattr(other, 'qbo_id', '')} is already linked to it. The sync does not link a second "
+				f"QuickBooks record to a linked record by itself; choose the record on the Record Matching page."
+			)
+			if not preview:
+				save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [taken_reason])
+			return {
+				"action": "manual_review",
+				"doctype": erpnext_doctype,
+				"qbo_id": qbo_id,
+				"candidates": [{"doctype": erpnext_doctype, "name": existing_match["name"]}],
+				"reason": taken_reason,
+				"issues": [taken_reason],
 			}
 		if preview:
 			return {
@@ -492,6 +588,18 @@ def link_existing_record(
 
 	owned_values = {}
 	if apply_qbo_data:
+		# Two QuickBooks records linked to one ERPNext record is allowed (Nik, 2026-10-22:
+		# a warning, not a refusal). Writing the second one's data onto it is not: that
+		# record is already another QuickBooks record's, and its blanks are not this one's
+		# to fill. The link itself goes ahead without "Fill blank fields".
+		other = other_mapping_linking(erpnext_doctype, erpnext_name, entity_type, qbo_id)
+		if other:
+			frappe.throw(
+				f"{erpnext_doctype} {erpnext_name} is already linked to QuickBooks "
+				f"{getattr(other, 'qbo_entity_type', '')} {getattr(other, 'qbo_id', '')}. Link it without "
+				f"'Fill blank fields from QBO': QuickBooks data is not written onto a record another "
+				f"QuickBooks record is linked to."
+			)
 		doc = frappe.get_doc(erpnext_doctype, erpnext_name)
 		owned_values = apply_blank_values(doc, values)
 		doc.save(ignore_permissions=True)
@@ -567,6 +675,8 @@ def mark_deleted(entity_type: str, qbo_id: str, *, preview=False):
 	if mapping:
 		mapping.deleted = 1
 		mapping.conflict_status = "Clean"
+		# A record QuickBooks deleted has nothing left to review.
+		mapping.qbo_changes = None
 		mapping.save(ignore_permissions=True)
 	return {"action": "deleted"}
 
@@ -579,6 +689,1147 @@ def get_mapping(entity_type: str, qbo_id: str):
 		"name",
 	)
 	return frappe.get_doc("QuickBooks Sync Mapping", name) if name else None
+
+
+# ---------------------------------------------------------------------------
+# The already-linked path (v1.800.0): compare, flag, never save.
+#
+# Nik's decision of 2026-10-06 -- "QuickBooks sync links, never overwrites". Until then
+# the sync applied every mapped value to a linked record on every pass and saved it.
+# For a QuickBooks job linked to a Project that meant status, customer and company: one
+# import reopened 338 Projects and re-pointed 13 to another company, and the hourly CDC
+# went on rewriting a Project's customer whenever its job was touched in QuickBooks.
+#
+# Everything from here to ``_owned_snapshot`` is that rule. The sync's half
+# (``_review_linked_record``) writes only the mapping row, and only through
+# ``frappe.db.set_value`` so ``owned_fields`` survives. The person's half
+# (``keep_erpnext_values``, ``use_qbo_values``, ``refresh_linked_draft``) is reached only
+# from the Record Matching page's operator-gated endpoints, one record per decision.
+# ---------------------------------------------------------------------------
+
+
+def other_mapping_linking(erpnext_doctype: str, erpnext_name: str, entity_type=None, qbo_id=None):
+	"""Another live mapping that already links this ERPNext record, or None.
+
+	"Another" means not the mapping for (``entity_type``, ``qbo_id``). A QuickBooks job
+	consolidated onto its parent Customer (``JOB_CONSOLIDATION_RULE``) does not count: that
+	row files the job's transactions under the Customer and says nothing about which
+	QuickBooks customer the Customer *is*, so the Customer's own QuickBooks record must
+	still be able to link to it.
+
+	Three callers, one question -- "would this write land on a record a different
+	QuickBooks record already owns the link to?": the auto-link path, a person's Link with
+	*Fill blank fields*, and the promotion of a parent Account.
+
+	**A mapping marked ``deleted`` counts.** ``deleted`` says QuickBooks removed its record;
+	the ERPNext record it names is still one the sync linked, and the linked path itself
+	never asks about the flag. Filtering on ``deleted = 0`` here left exactly those records
+	open to both side doors: promoted as a parent, or auto-linked, filled and saved.
+	"""
+	if not erpnext_doctype or not erpnext_name:
+		return None
+	rows = frappe.get_all(
+		MAPPING_DOCTYPE,
+		filters={"erpnext_doctype": erpnext_doctype, "erpnext_name": erpnext_name},
+		fields=["name", "qbo_entity_type", "qbo_id", "match_rule", "deleted"],
+	)
+	for row in rows or []:
+		if (
+			entity_type
+			and getattr(row, "qbo_entity_type", None) == entity_type
+			and str(getattr(row, "qbo_id", "")) == str(qbo_id)
+		):
+			continue
+		if getattr(row, "match_rule", None) == JOB_CONSOLIDATION_RULE:
+			continue
+		return row
+	return None
+
+
+def _review_linked_record(
+	entity_type: str,
+	qbo_id: str,
+	payload: dict,
+	erpnext_doctype: str,
+	values: dict,
+	mapping,
+	doc,
+	*,
+	preview=False,
+	recheck=False,
+	preflight_issues=None,
+):
+	"""Compare a QBO payload with the record it is linked to. **Never saves the record.**
+
+	The whole of what a sync may do to a record a mapping already links, drafts included:
+
+	* QuickBooks has not moved since the mapping's last sync -> ``unchanged``, and nothing
+	  at all is written. A person's edit in ERPNext is not QuickBooks' business. (A
+	  person-started resync passes ``recheck`` and is compared anyway: it is how someone
+	  asks for the full comparison after a mapper fix. It flags like any other pass.)
+	* QuickBooks moved and nothing it changed differs from the record -> ``unchanged``;
+	  the mapping's cursor advances and the reference for each field moves to what
+	  QuickBooks now says (``_advance_mapping_cursor``).
+	* QuickBooks moved and a field it changed differs (``_linked_differences`` has the
+	  rule) -> ``flagged``. The mapping becomes ``QuickBooks
+	  Changed`` and ``qbo_changes`` stores, field by field, what ERPNext holds and what
+	  QuickBooks now says. **The cursor does not advance and ``owned_fields`` is not
+	  touched**, the same shape as the submitted-document guard: a replay of the same
+	  payload re-reads it and finds the same flag, and only a person's decision on the
+	  Record Matching page moves the row on.
+
+	``preview`` reports ``would_flag`` and writes nothing.
+
+	The guards that used to keep the update path from damaging a record now decide what is
+	worth a person's attention: what ERPNext owns on an existing record (a Project's title,
+	a party's group, the constants a mapper supplies for a create) is dropped before the
+	comparison, so it is never flagged and could never be applied from a flag.
+
+	``preflight_issues`` are the reasons QuickBooks' data would not validate as an ERPNext
+	record. On the create path that parks the record. Here the record already exists, so
+	the reasons ride on a flag (a person may still *Keep ERPNext*) and block *Use
+	QuickBooks values* until they are fixed. While there are issues a mapped None is read
+	as "did not resolve" and flagged wherever the record or the reference holds a value;
+	with nothing to flag, nothing is written at all and the cursor stays where it was.
+	They used to rewrite the mapping through ``save_manual_review_mapping``, which replaced
+	``owned_fields`` with the issue list.
+
+	**A stale payload does nothing.** A payload older than the newest one the mapping has
+	seen (its cursor, or the token stored on its flag) returns ``unchanged`` with
+	``stale``. Without that check a Run Resync replaying a stored token-3 payload cleared a
+	flag raised at token 4 and left the mapping Clean while QuickBooks said otherwise.
+	"""
+	_strip_values_erpnext_owns(entity_type, erpnext_doctype, values, doc)
+	result = {"doctype": erpnext_doctype, "name": doc.name}
+	# A payload older than the newest one this mapping has seen is a replay: Run Resync
+	# reading what an earlier Preview Resync stored, a webhook arriving late. It says what
+	# QuickBooks USED to say. It never flags, never clears a flag and never moves the cursor.
+	if _payload_is_stale(mapping, payload):
+		return {"action": "unchanged", **result, "stale": True}
+	moved = _linked_record_needs_a_look(mapping, payload)
+	if not moved and not recheck:
+		return {"action": "unchanged", **result}
+
+	issues = [str(issue) for issue in (preflight_issues or []) if issue]
+	# With preflight issues a mapped None may be a value that did not resolve rather than
+	# QuickBooks saying nothing, so it is read strictly (see _linked_differences).
+	changes = _linked_differences(doc, values, mapping, unresolved=bool(issues))
+	fields = sorted(changes["fields"]) + sorted(changes["tables"])
+	if not fields:
+		if issues:
+			# QuickBooks' data does not validate and nothing that maps differs. Nothing is
+			# written: the cursor stays (a pass that could not read everything settles
+			# nothing), and a row an earlier failure parked keeps its parked status.
+			return {"action": "unchanged", **result, "issues": issues}
+		# Every field was looked at and none flagged: each reference moves to what
+		# QuickBooks says now. Nothing to record when QuickBooks did not move.
+		if moved and not preview:
+			settled = _settle_unflagged(mapping, erpnext_doctype, values)
+			_advance_mapping_cursor(mapping, payload, erpnext_doctype, values, doc, settled=settled)
+		return {"action": "unchanged", **result}
+
+	# The fields that were not flagged have been accounted for too -- unless the pass had
+	# issues, in which case only the flag is trusted.
+	settled = None if issues else _settle_unflagged(mapping, erpnext_doctype, values, flagged=fields)
+	if preview:
+		return {"action": "would_flag", **result, "qbo_id": qbo_id, "fields": fields, "issues": issues}
+	_flag_qbo_changed(mapping, payload, changes, issues, settled=settled)
+	return {
+		"action": "flagged",
+		**result,
+		"qbo_id": qbo_id,
+		"fields": fields,
+		"issues": issues,
+		"reason": (
+			f"QuickBooks changed {entity_type} {qbo_id} and it no longer matches {erpnext_doctype} "
+			f"'{doc.name}'. Nothing was written to the record; review it under QuickBooks changed "
+			f"on the Record Matching page."
+		),
+	}
+
+
+def _strip_values_erpnext_owns(entity_type: str, erpnext_doctype: str, values: dict, doc):
+	"""Drop, in place, the mapped values that never reach an existing record.
+
+	The same guards the pre-v1.800.0 update path ran before it wrote, now run before the
+	comparison and again before a person's *Use QuickBooks values* or *Refresh draft*: a
+	Project keeps its title, a party keeps its group and territory, an Account is never its
+	own parent. New in v1.800.0:
+
+	* ``MAPPER_DEFAULTS_ERPNEXT_OWNS``: the constants and create-time guesses a mapper
+	  supplies, and the fields that are the record's own name. None of it is QuickBooks
+	  data about an existing record.
+	* A group Account or Cost Center that has children in ERPNext is never told it is a
+	  ledger. ``is_group`` comes from ``_qbo_has_children``, which only a full query sets,
+	  so every CDC payload of a parent reads as a leaf. ``_keep_account_as_group`` forced
+	  that back on every write; flagging it instead would raise the same flag forever. The
+	  Account Type goes with it: a group has none, and the mapper only sends one for a leaf.
+	"""
+	_protect_existing_project_title(erpnext_doctype, values, doc)
+	_drop_party_groups_on_update(erpnext_doctype, values, doc)
+	for fieldname in MAPPER_DEFAULTS_ERPNEXT_OWNS.get((entity_type, erpnext_doctype), ()):
+		values.pop(fieldname, None)
+	_drop_self_parent_account(erpnext_doctype, values, doc.name)
+	parent_field = {"Account": "parent_account", "Cost Center": "parent_cost_center"}.get(erpnext_doctype)
+	if (
+		parent_field
+		and "is_group" in values
+		and not cint(values.get("is_group"))
+		and cint(doc.get("is_group"))
+		and frappe.db.exists(erpnext_doctype, {parent_field: doc.name})
+	):
+		values.pop("is_group", None)
+		values.pop("account_type", None)
+
+
+def _linked_record_needs_a_look(mapping, payload: dict) -> bool:
+	"""True when a linked record should be compared with this payload at all.
+
+	QuickBooks moving on (``_qbo_record_advanced``) is the ordinary reason. Two more:
+
+	* The mapping is already flagged (``QuickBooks Changed``, or the ``Conflict`` the sync
+	  wrote before v1.800.0). A flag never advances the cursor, so the same payload usually
+	  reads as advanced anyway; this covers the row whose flag was raised with no token
+	  movement, and lets a flag that no longer holds (someone fixed the record by hand)
+	  clear itself on the next pass.
+	* The mapping never recorded a cursor and the payload carries one. "Not advanced" is
+	  the safe answer for the Ignored check, but here it would mean such a row is never
+	  compared, whatever QuickBooks does.
+	"""
+	if _qbo_record_advanced(mapping, payload):
+		return True
+	if getattr(mapping, "conflict_status", None) in (QBO_CHANGED, LEGACY_CONFLICT):
+		return True
+	has_cursor = getattr(mapping, "sync_token", None) not in (None, "") or bool(
+		getattr(mapping, "last_qbo_updated_at", None)
+	)
+	return not has_cursor and bool(_payload_cursor(payload))
+
+
+def _payload_cursor(payload: dict) -> dict:
+	"""The mapping-cursor columns a payload can fill (a missing one never blanks a stored one)."""
+	cursor = {}
+	if payload.get("SyncToken") is not None:
+		cursor["sync_token"] = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	if updated:
+		cursor["last_qbo_updated_at"] = updated
+	return cursor
+
+
+def _cursor_order(token, updated, other_token, other_updated) -> int | None:
+	"""-1, 0 or 1 as the first (SyncToken, LastUpdatedTime) is older than, the same as or
+	newer than the second; None when the two cannot be compared. Tokens decide when both
+	are whole numbers, as ``_qbo_record_advanced`` reads them; otherwise the times do."""
+	try:
+		left, right = int(str(token)), int(str(other_token))
+	except (TypeError, ValueError):
+		left = right = None
+	if left is not None:
+		return (left > right) - (left < right)
+	if updated and other_updated:
+		try:
+			return (updated > other_updated) - (updated < other_updated)
+		except TypeError:
+			return None
+	return None
+
+
+def _newest_seen(mapping) -> tuple:
+	"""The newest (SyncToken, LastUpdatedTime) this mapping has seen: its cursor, or the
+	payload its flag was raised from -- a flag holds the cursor back on purpose, so the
+	cursor alone understates what has already been read."""
+	newest = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if getattr(mapping, "conflict_status", None) == QBO_CHANGED:
+		note = stored_changes(mapping)
+		flagged = (note.get("sync_token"), parse_qbo_datetime(note.get("last_updated")))
+		if _cursor_order(*flagged, *newest) == 1:
+			newest = flagged
+	return newest
+
+
+def _payload_is_stale(mapping, payload: dict) -> bool:
+	"""True when ``payload`` is older than the newest one the mapping has seen."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	return _cursor_order(token, updated, *_newest_seen(mapping)) == -1
+
+
+def _forward_cursor(mapping, payload: dict) -> dict:
+	"""``_payload_cursor`` unless it would move the stored cursor backwards, in which case
+	nothing. Every write of a mapping's cursor goes through here or ``_stamp_cursor``."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	stored = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if _cursor_order(token, updated, *stored) == -1:
+		return {}
+	return _payload_cursor(payload)
+
+
+def _stamp_cursor(mapping, payload: dict):
+	"""Set a mapping document's cursor from a payload, never backwards. The ``save_*``
+	helpers used to assign both columns from whatever payload they were handed, so a
+	replayed older payload could wind a mapping's cursor back."""
+	token = payload.get("SyncToken")
+	updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	stored = (getattr(mapping, "sync_token", None), getattr(mapping, "last_qbo_updated_at", None))
+	if _cursor_order(token, updated, *stored) == -1:
+		return
+	mapping.sync_token = token
+	mapping.last_qbo_updated_at = updated
+
+
+#: Field types whose stored value is a rounded number, and the System Settings default
+#: each falls back to when the field names no precision of its own.
+_NUMBER_FIELDTYPES = {"Currency": 0, "Float": 1, "Percent": 1}
+
+
+def number_precisions(doctype) -> dict:
+	"""``{fieldname: decimals}`` for the Currency / Float / Percent fields of a DocType,
+	and ``{table fieldname: {...}}`` for the same fields of each child table. Empty when
+	the meta cannot be read, in which case every number is compared exactly."""
+	try:
+		fields = list(frappe.get_meta(doctype).fields or [])
+	except Exception:
+		return {}
+	defaults = _erpnext_item_precisions()
+	precisions = {}
+	for field in fields:
+		fieldname, fieldtype = getattr(field, "fieldname", None), getattr(field, "fieldtype", None)
+		if not fieldname:
+			continue
+		if fieldtype in _NUMBER_FIELDTYPES:
+			precisions[fieldname] = cint(getattr(field, "precision", None)) or defaults[_NUMBER_FIELDTYPES[fieldtype]]
+		elif fieldtype in ("Table", "Table MultiSelect") and getattr(field, "options", None):
+			child = number_precisions(field.options)
+			if child:
+				precisions[fieldname] = child
+	return precisions
+
+
+def _is_blank(value) -> bool:
+	"""None, an empty string, an empty table, False and a numeric zero all mean "nothing here"."""
+	if value is None or value is False or value == "" or value == []:
+		return True
+	return isinstance(value, (int, float)) and value == 0
+
+
+def _same_for_review(current, incoming, precision=None) -> bool:
+	"""True when ``incoming`` is not worth a person's attention against ``current``.
+
+	Looser than ``_values_equal`` on purpose. That one answered "would a save store
+	something different?" and erred toward saving; this one answers "would an accountant
+	call these different?" and a wrong yes costs a person a review. So, beyond what
+	``_values_equal`` already forgives (date objects, ``1`` vs ``1.0``): blank is blank
+	whatever its type, and two strings are compared the way ERPNext would have stored them
+	(``_review_text``: markup and edge whitespace gone, a web address with or without its
+	scheme).
+
+	**Numbers are compared at the precision the field stores, and exactly when that is not
+	known.** ``precision`` is the field's decimals (``number_precisions``): a Currency
+	field that keeps 2 decimals holds 12.35 for a mapped 12.3456, and the two are the same
+	value. There is no blanket tolerance. The first version called any two numbers of 1
+	or more within half a cent equal, whatever the field: an exchange rate moving from 1.32
+	to 1.3245 read as unchanged, and so did a four-decimal unit price.
+	"""
+	if isinstance(current, list) or isinstance(incoming, list):
+		return False
+	if _is_blank(current) and _is_blank(incoming):
+		return True
+	if isinstance(current, str) and isinstance(incoming, str):
+		return current.strip() == incoming.strip() or _review_text(current) == _review_text(incoming)
+	if _values_equal(current, incoming):
+		return True
+	if isinstance(current, bool) or isinstance(incoming, bool):
+		return False
+	if isinstance(precision, int) and (isinstance(current, (int, float)) or isinstance(incoming, (int, float))):
+		try:
+			return flt(float(current), precision) == flt(float(incoming), precision)
+		except (TypeError, ValueError):
+			return False
+	return False
+
+
+def _review_text(value: str) -> str:
+	"""A string as ERPNext's own clean-up would leave it, for comparison only.
+
+	What ERPNext does to text between the mapper and the column: an Item description
+	loses its markup, a Data field its edge whitespace, a website gains the scheme it was
+	saved without (``_heal_invalid_urls``). Without this every QuickBooks edit to a
+	customer with a bare-domain website would raise "www.example.com against
+	https://www.example.com" for a person to dismiss.
+	"""
+	text = " ".join(_REVIEW_TAG.sub(" ", value).split())
+	if _REVIEW_SCHEME.match(text) or text.lower().startswith("www."):
+		text = _REVIEW_SCHEME.sub("", text).rstrip("/").lower()
+	return text
+
+
+def _same_qbo_value(reference, incoming, precision=None) -> bool:
+	"""True when QuickBooks still says what it said before (``reference``).
+
+	``reference`` was read back from JSON, so ``incoming`` is put through the same round
+	trip before the two are compared; child-table rows are compared whole and exactly (a
+	table that differs here is still held against the record cell by cell).
+	"""
+	normalised = json_loads(json_dumps(incoming))
+	if isinstance(reference, list) or isinstance(normalised, list):
+		return _rows_qbo_said(reference) == _rows_qbo_said(normalised)
+	return _same_for_review(reference, normalised, precision if isinstance(precision, int) else None)
+
+
+def _rows_qbo_said(rows):
+	"""Child-table rows without the build-only keys (``BUILD_ONLY_ROW_FIELDS``). A snapshot
+	stored before v1.800.0 has no ``price_list_rate`` on its lines and the mapper now
+	sends one; that is not QuickBooks changing the table."""
+	if not isinstance(rows, list):
+		return rows
+	return [
+		{key: value for key, value in row.items() if key not in BUILD_ONLY_ROW_FIELDS} if isinstance(row, dict) else row
+		for row in rows
+	]
+
+
+def _table_differences(current_rows, incoming_rows: list, precisions=None, unresolved=False) -> list[dict]:
+	"""Row-by-row differences between a record's child table and the rows QBO maps to.
+
+	Rows are paired by position, the order the importer wrote them in. Only the keys the
+	mapper supplies are compared, so the columns ERPNext computes for itself never count;
+	nor do the build-only keys (``BUILD_ONLY_ROW_FIELDS``), which are not QuickBooks data.
+	A live row is a child Document on a site and a plain namespace in the bench-free
+	suite; both are read by attribute name. ``precisions`` is the child DocType's number
+	precisions. A None cell is "QuickBooks says nothing" and skipped -- unless
+	``unresolved`` (the payload failed the preflight), when a None beside a value the
+	record holds is an account or item that did not resolve, and is a difference.
+	"""
+	current_rows = list(current_rows) if isinstance(current_rows, (list, tuple)) else []
+	precisions = precisions if isinstance(precisions, dict) else {}
+	differences = []
+	for index, incoming in enumerate(incoming_rows):
+		if index >= len(current_rows):
+			differences.append({"row": index + 1, "only_in": "qbo"})
+			continue
+		if not isinstance(incoming, dict):
+			continue
+		current = current_rows[index]
+		fields = {}
+		for key, value in incoming.items():
+			if isinstance(value, (list, dict)) or key in BUILD_ONLY_ROW_FIELDS:
+				continue
+			held = current.get(key) if isinstance(current, dict) else getattr(current, key, None)
+			if value is None:
+				if unresolved and not _is_blank(held):
+					fields[key] = {"erpnext": held, "qbo": None}
+				continue
+			if not _same_for_review(held, value, precisions.get(key)):
+				fields[key] = {"erpnext": held, "qbo": value}
+		if fields:
+			differences.append({"row": index + 1, "fields": fields})
+	for index in range(len(incoming_rows), len(current_rows)):
+		differences.append({"row": index + 1, "only_in": "erpnext"})
+	return differences
+
+
+def _owned_baseline(mapping) -> dict | None:
+	"""The mapping's snapshot of what the last sync stored, or None when ``owned_fields``
+	is a parking note (``issues`` / ``candidates``) rather than a snapshot."""
+	owned = json_loads(getattr(mapping, "owned_fields", None), default={}) or {}
+	if not isinstance(owned, dict) or "issues" in owned or "candidates" in owned:
+		return None
+	return owned
+
+
+def _settled_values(mapping) -> dict:
+	"""The QuickBooks value last settled for each field of this mapping: applied to the
+	record (by the import, or by a person's *Use QuickBooks values* / *Refresh draft*),
+	declined with *Keep ERPNext*, or seen to agree with the record on a later pass."""
+	settled = json_loads(getattr(mapping, "settled_qbo_values", None), default={}) or {}
+	return settled if isinstance(settled, dict) else {}
+
+
+def _settled_from(erpnext_doctype: str, values: dict) -> dict:
+	"""The scalar part of ``values`` worth remembering as settled. Child tables are left
+	out: ``owned_fields`` already keeps them exactly as mapped, and is read as the fallback."""
+	return {
+		fieldname: value
+		for fieldname, value in _without_erpnext_owned_party_fields(erpnext_doctype, values).items()
+		if value is not None and not isinstance(value, list) and fieldname not in BUILD_ONLY_FIELDS
+	}
+
+
+def _reference(fieldname: str, settled: dict, baseline: dict):
+	"""The last thing QuickBooks is known to have said for a field, or ``_NO_REFERENCE``:
+	the settled value, else what the last sync stored."""
+	if fieldname in settled:
+		return settled[fieldname]
+	return baseline.get(fieldname, _NO_REFERENCE)
+
+
+def _linked_differences(doc, values: dict, mapping, *, unresolved=False) -> dict:
+	"""``{"fields": {...}, "tables": {...}}``: where the record and the payload disagree.
+
+	**A field with a reference is a difference only when QuickBooks changed it.** The flag
+	is called "QuickBooks changed", and a field where QuickBooks still says what it said
+	before is not that, however far ERPNext has moved: an accountant's edit to a draft, a
+	customer renamed here, a description tidied up. So each field is first held against its
+	*reference* (``_reference``): the settled value in ``settled_qbo_values``, else what
+	the last sync stored in ``owned_fields``. Same as the reference: skipped. That is also
+	what makes one *Keep ERPNext* final for a standing difference, and what keeps ERPNext's
+	own clean-up of a value from reading as a change.
+
+	**A field with no reference is compared with the record directly**, and so flags on
+	the first pass that looks at it, whichever side changed. That is every field of a
+	record the import linked to (not created) that differed on the day of the link and was
+	therefore never written. The entry carries ``no_baseline`` so the page can say "never
+	synced before" and leave it unticked: QuickBooks may not have changed it at all.
+
+	**A mapped None is QuickBooks saying nothing.** With no reference, or a blank one,
+	there never was a value and it is skipped, as the update path always skipped it. Where
+	the reference held a value, QuickBooks cleared the field (a payment term removed, a
+	reference that no longer resolves): flagged with ``cleared`` if the record still holds
+	something.
+
+	**Unless the payload failed the preflight** (``unresolved``). Then a None may be a
+	value QuickBooks does hold and ERPNext could not resolve -- a new ledger or term that
+	is not imported yet -- and reading it as "nothing" lets a real change through with the
+	cursor advanced. So with issues a None is flagged ``unresolved`` wherever the record
+	holds a value and the field has no reference, or the reference held a value; a None
+	cell in a child table likewise, beside a value the record holds. A field whose
+	reference is already blank is still skipped: that None has been seen and answered.
+
+	``BUILD_ONLY_FIELDS`` are skipped: they tell ERPNext how to build a document and say
+	nothing about what QuickBooks holds.
+
+	Each field entry carries ``erpnext_edited`` when the record no longer holds what the
+	last sync stored, i.e. both sides moved. That is what the pre-v1.800.0 code called a
+	conflict; here it is a note for the reviewer, and nothing branches on it.
+	"""
+	settled = _settled_values(mapping)
+	baseline = _owned_baseline(mapping) or {}
+	precisions = number_precisions(getattr(doc, "doctype", None))
+	fields, tables = {}, {}
+	for fieldname, incoming in values.items():
+		if fieldname in BUILD_ONLY_FIELDS:
+			continue
+		reference = _reference(fieldname, settled, baseline)
+		current = doc.get(fieldname)
+		precision = precisions.get(fieldname)
+		if incoming is None:
+			if isinstance(reference, list):
+				continue
+			if reference is _NO_REFERENCE:
+				if not unresolved or _is_blank(current):
+					continue
+				entry = {"erpnext": current, "qbo": None, "unresolved": True}
+			elif _is_blank(reference):
+				continue
+			elif unresolved:
+				entry = {"erpnext": current, "qbo": None, "unresolved": True}
+			elif _is_blank(current):
+				continue
+			else:
+				entry = {"erpnext": current, "qbo": None, "cleared": True}
+		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming, precision):
+			continue
+		elif isinstance(incoming, list):
+			rows = _table_differences(current, incoming, precision, unresolved)
+			if rows:
+				tables[fieldname] = {
+					"erpnext_rows": len(current) if isinstance(current, (list, tuple)) else 0,
+					"qbo_rows": len(incoming),
+					"rows": rows[:TABLE_DIFF_ROW_CAP],
+					"more_rows": max(0, len(rows) - TABLE_DIFF_ROW_CAP),
+					"qbo": incoming,
+				}
+				if reference is _NO_REFERENCE:
+					tables[fieldname]["no_baseline"] = True
+			continue
+		elif _same_for_review(current, incoming, precision):
+			continue
+		else:
+			entry = {"erpnext": current, "qbo": incoming}
+		if reference is _NO_REFERENCE:
+			entry["no_baseline"] = True
+		if fieldname in baseline and not _same_for_review(current, baseline[fieldname], precision):
+			entry["erpnext_edited"] = True
+		fields[fieldname] = entry
+	return {"fields": fields, "tables": tables}
+
+
+def _settle_unflagged(mapping, erpnext_doctype: str, values: dict, flagged=()) -> dict | None:
+	"""``settled_qbo_values`` after a pass, or None when the pass changes nothing in it.
+
+	Every mapped field that was looked at and not flagged is settled at what QuickBooks
+	says now. Without this the reference stayed at an old value while the cursor moved on,
+	and a real change was lost: ERPNext is edited from Commercial to Partnership,
+	QuickBooks moves to Partnership too (they agree, the cursor advances), QuickBooks then
+	moves back to Commercial -- which equalled the stale reference, so it read as "QuickBooks
+	did not change it" and was never flagged. A field QuickBooks cleared is settled at
+	None for the same reason. Flagged fields are left for the reviewer's answer.
+	"""
+	settled = _settled_values(mapping)
+	baseline = _owned_baseline(mapping) or {}
+	precisions = number_precisions(erpnext_doctype)
+	flagged = set(flagged)
+	changed = False
+	for fieldname, incoming in _without_erpnext_owned_party_fields(erpnext_doctype, values).items():
+		if fieldname in flagged or fieldname in BUILD_ONLY_FIELDS:
+			continue
+		reference = _reference(fieldname, settled, baseline)
+		if incoming is None:
+			if reference is _NO_REFERENCE or _is_blank(reference):
+				continue
+			settled[fieldname] = None
+		elif reference is not _NO_REFERENCE and _same_qbo_value(reference, incoming, precisions.get(fieldname)):
+			continue
+		else:
+			settled[fieldname] = json_loads(json_dumps(incoming))
+		changed = True
+	return settled if changed else None
+
+
+def _advance_mapping_cursor(mapping, payload: dict, erpnext_doctype: str, values: dict, doc, *, settled=None):
+	"""QuickBooks moved and nothing it changed differs from the record: record that, on
+	the mapping only.
+
+	``frappe.db.set_value``, never ``save_mapping``: the cursor moves, each field's
+	reference moves to what QuickBooks now says (``settled``, from ``_settle_unflagged``),
+	and a flag that no longer holds is cleared, while ``owned_fields`` stays exactly as it
+	was. The one exception is a row whose ``owned_fields`` is a parking note from an
+	earlier failure: the record now agrees with QuickBooks, so the note is out of date and
+	a real snapshot replaces it. Never called while QuickBooks' data fails the preflight
+	(such a row keeps its parked status), and the cursor only ever moves forward
+	(``_forward_cursor``): a payload older than the stored cursor writes no token.
+	"""
+	updates = dict(_forward_cursor(mapping, payload), last_synced_at=now_datetime(), deleted=0)
+	if settled is not None:
+		updates["settled_qbo_values"] = json_dumps(settled)
+	if getattr(mapping, "conflict_status", None) in (QBO_CHANGED, LEGACY_CONFLICT, "Pending Review"):
+		updates["conflict_status"] = "Clean"
+	if getattr(mapping, "qbo_changes", None):
+		updates["qbo_changes"] = None
+	if getattr(mapping, "match_status", None) == "Pending Review":
+		updates["match_status"] = "Auto Matched"
+	if _owned_baseline(mapping) is None:
+		updates["owned_fields"] = json_dumps(_owned_snapshot(erpnext_doctype, doc.name, values))
+	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates, update_modified=False)
+
+
+def _flag_qbo_changed(mapping, payload: dict, changes: dict, issues: list, *, settled=None) -> bool:
+	"""Flag a mapping ``QuickBooks Changed`` and store what QuickBooks now says.
+
+	Writes ``conflict_status`` and ``qbo_changes`` with ``frappe.db.set_value`` -- not
+	``save_mapping``, which would rewrite ``owned_fields`` -- and leaves the cursor where
+	it was, so the flag is re-derived from any replay of the payload. A replay that finds
+	the same differences writes nothing (returns False), so an hourly poll of an unreviewed
+	row does not churn it. The payload's own SyncToken is stored in the note: *Keep
+	ERPNext* advances the cursor to exactly what the reviewer was shown. ``settled``
+	carries the new reference of the fields that were *not* flagged in this pass.
+	"""
+	record = {
+		"sync_token": payload.get("SyncToken"),
+		"last_updated": (payload.get("MetaData") or {}).get("LastUpdatedTime"),
+		"fields": changes["fields"],
+		"tables": changes["tables"],
+		"issues": list(issues or []),
+	}
+	record = json_loads(json_dumps(record))
+	stored = stored_changes(mapping)
+	stored.pop("detected_at", None)
+	same_note = getattr(mapping, "conflict_status", None) == QBO_CHANGED and stored == record
+	if same_note and settled is None:
+		return False
+	updates = {}
+	if not same_note:
+		record["detected_at"] = str(now_datetime() or "")
+		updates.update({"conflict_status": QBO_CHANGED, "qbo_changes": json_dumps(record)})
+	if settled is not None:
+		updates["settled_qbo_values"] = json_dumps(settled)
+	if cint(getattr(mapping, "deleted", 0)):
+		updates["deleted"] = 0
+	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates)
+	return True
+
+
+def stored_changes(mapping) -> dict:
+	"""The ``qbo_changes`` note of a mapping as a dict with every key present."""
+	note = json_loads(getattr(mapping, "qbo_changes", None), default={}) or {}
+	if not isinstance(note, dict):
+		note = {}
+	fields = note.get("fields") if isinstance(note.get("fields"), dict) else {}
+	tables = note.get("tables") if isinstance(note.get("tables"), dict) else {}
+	issues = note.get("issues") if isinstance(note.get("issues"), list) else []
+	return dict(note, fields=fields, tables=tables, issues=issues)
+
+
+def _linked_docstatus(mapping) -> int | None:
+	"""The linked record's docstatus, or None when there is no such record."""
+	doctype, name = getattr(mapping, "erpnext_doctype", None), getattr(mapping, "erpnext_name", None)
+	if not doctype or not name:
+		return None
+	value = frappe.db.get_value(doctype, name, "docstatus")
+	return None if value is None else cint(value)
+
+
+def _linked_doc_for_review(mapping):
+	"""The linked record, loaded for a person's write -- refused unless it is a draft or
+	a master. The submitted-document guard, on the review side: a posted document is
+	never updated in place, whoever asks."""
+	doctype, name = mapping.erpnext_doctype, mapping.erpnext_name
+	if not doctype or not name or not frappe.db.exists(doctype, name):
+		frappe.throw(f"{doctype or 'The record'} {name or ''} no longer exists; link the QuickBooks record again.")
+	doc = frappe.get_doc(doctype, name)
+	docstatus = cint(doc.get("docstatus") or 0)
+	if docstatus == 1:
+		frappe.throw(
+			f"{doctype} {name} is submitted. A posted document cannot be updated in place: amend or "
+			f"cancel it in ERPNext, then choose Keep ERPNext here."
+		)
+	if docstatus == 2:
+		frappe.throw(f"{doctype} {name} is cancelled and cannot be updated. Choose Keep ERPNext.")
+	return doc
+
+
+def _save_reviewed_record(doc):
+	"""Save a record a person chose to update from QuickBooks. A refusal is raised to them.
+
+	Unlike ``_save_or_manual_review`` this never turns a ValidationError into a parked
+	mapping: the person is at the screen, the caller's savepoint undoes the attempt, and
+	the flag stays as it was. ``ignore_links`` and the URL healing are the update path's
+	own allowances for data the sync never set (a stale Link elsewhere on the record, a
+	website saved without a scheme).
+	"""
+	_heal_invalid_urls(doc)
+	doc.flags.ignore_links = True
+	doc.save(ignore_permissions=True)
+
+
+def _differences_after_write(erpnext_doctype: str, erpnext_name: str, values: dict, clears=()) -> dict:
+	"""``{"fields": {...}, "tables": {...}}``: where the record, **read back after a
+	person's write**, still disagrees with the QuickBooks values that write was given.
+
+	*Refresh draft* and *Use QuickBooks values* both used to trust their own save: set the
+	values, save, mark the mapping Clean. But a save is not a copy. ERPNext's controllers
+	run between the two, and the one case found so far (``_priced_line``) put a list price
+	back on eight lines QuickBooks had at 0 while the page reported the draft rebuilt. So
+	the record is loaded again and held against ``values`` directly, field by field and
+	row by row, with the comparison the flag itself uses (``_linked_differences`` with no
+	reference, so nothing is skipped as "QuickBooks did not change it"). ``clears`` are the
+	fields the write blanked; one still holding a value is a difference too.
+
+	Left out: the build-only keys, and the fields ERPNext composes for itself on every
+	save (``REWRITTEN_ON_SAVE``). A None in ``values`` is QuickBooks saying nothing and was
+	not written, so it is not checked.
+
+	**A line's ``amount`` is not held against it when its ``qty`` and ``rate`` both took.**
+	ERPNext does not store the amount it is given; it computes ``qty * rate`` from the rate
+	as the field rounds it (``_sales_items``). QuickBooks keeps unit prices to more decimals
+	than a Currency field does, so 3 at 33.33333 is 100.00 there and 99.99 here. That cent
+	is the same one a first-time create has always produced, and the preflight
+	(``_sales_invoice_shortfall``) already refuses a document whose total is further out
+	than rounding explains. Counting it here would leave such a draft flagged after every
+	rebuild, with nothing a rebuild could do about it. Where the quantity or the rate did
+	not take, the amount is reported beside it.
+	"""
+	saved = frappe.get_doc(erpnext_doctype, erpnext_name)
+	rewritten = REWRITTEN_ON_SAVE.get(erpnext_doctype, ())
+	written = {fieldname: value for fieldname, value in values.items() if fieldname not in rewritten}
+	remaining = _linked_differences(saved, written, None)
+	for fieldname in clears:
+		held = saved.get(fieldname)
+		if not _is_blank(held):
+			remaining["fields"][fieldname] = {"erpnext": held, "qbo": None, "cleared": True}
+	precisions = number_precisions(erpnext_doctype)
+	for fieldname in list(remaining["tables"]):
+		entry = remaining["tables"][fieldname]
+		incoming = entry.get("qbo") or []
+		# Every differing row, not the capped list the note stores: a long draft can have
+		# more rounding cents than the cap, and they must not hide behind ``more_rows``.
+		rows = _without_recomputed_amounts(
+			_table_differences(saved.get(fieldname), incoming, precisions.get(fieldname)), incoming
+		)
+		if not rows:
+			del remaining["tables"][fieldname]
+			continue
+		entry["rows"] = rows[:TABLE_DIFF_ROW_CAP]
+		entry["more_rows"] = max(0, len(rows) - TABLE_DIFF_ROW_CAP)
+	for group in ("fields", "tables"):
+		for entry in remaining[group].values():
+			entry.pop("no_baseline", None)
+	return remaining
+
+
+def _without_recomputed_amounts(differences: list, incoming_rows: list) -> list:
+	"""Row differences minus an ``amount`` that differs on a line whose ``qty`` and ``rate``
+	both agree (see ``_differences_after_write``). Only for rows the mapper gave a quantity
+	and a rate: a table with no such columns keeps every cell."""
+	kept = []
+	for difference in differences:
+		fields = difference.get("fields")
+		index = cint(difference.get("row")) - 1
+		incoming = incoming_rows[index] if 0 <= index < len(incoming_rows) else None
+		if (
+			isinstance(fields, dict)
+			and "amount" in fields
+			and isinstance(incoming, dict)
+			and incoming.get("qty") is not None
+			and incoming.get("rate") is not None
+			and "qty" not in fields
+			and "rate" not in fields
+		):
+			fields = {key: value for key, value in fields.items() if key != "amount"}
+			if not fields:
+				continue
+			difference = dict(difference, fields=fields)
+		kept.append(difference)
+	return kept
+
+
+def _still_differs(remaining: dict) -> list:
+	"""The field names of a ``_differences_after_write`` result, scalars then tables."""
+	return sorted(remaining["fields"]) + sorted(remaining["tables"])
+
+
+def _still_flagged_updates(mapping, shown: dict, remaining: dict, action: str) -> dict:
+	"""Mapping columns for a write that did not bring the record into line: the row stays
+	(or becomes) ``QuickBooks Changed``, and its note is what still differs.
+
+	**Never Clean on a record that disagrees with what QuickBooks said.** The note keeps
+	the token of the payload the write was built from (``shown``) and carries
+	``after_write`` (``"refresh"`` or ``"use"``), which is how the page says "rebuilt, but
+	still differs" instead of "QuickBooks changed this record".
+
+	Each field that still differs also loses its reference -- it is dropped from
+	``owned_fields`` and from ``settled_qbo_values`` -- because a reference that says
+	"QuickBooks said X, and that was dealt with" is exactly what would let the next sync
+	clear the flag while the record still holds something else. With no reference the
+	field is compared with the record on every pass that looks, until the two agree or a
+	person chooses *Keep ERPNext*.
+	"""
+	still = set(_still_differs(remaining))
+	note = {
+		"sync_token": shown.get("sync_token"),
+		"last_updated": shown.get("last_updated"),
+		"fields": remaining["fields"],
+		"tables": remaining["tables"],
+		"issues": [],
+		"after_write": action,
+		"detected_at": str(now_datetime() or ""),
+	}
+	updates = {"conflict_status": QBO_CHANGED, "qbo_changes": json_dumps(note)}
+	owned = _owned_baseline(mapping)
+	if owned is not None:
+		updates["owned_fields"] = json_dumps({key: value for key, value in owned.items() if key not in still})
+	settled = {key: value for key, value in _settled_values(mapping).items() if key not in still}
+	updates["settled_qbo_values"] = json_dumps(settled) if settled else None
+	return updates
+
+
+def _resolved_updates(mapping, changes: dict) -> dict:
+	"""Mapping columns every resolved flag sets: the flag off, the cursor at what was shown."""
+	updates = {"conflict_status": "Clean", "qbo_changes": None}
+	shown = {"SyncToken": changes.get("sync_token"), "MetaData": {"LastUpdatedTime": changes.get("last_updated")}}
+	updates.update(_forward_cursor(mapping, shown))
+	return updates
+
+
+def _status_before_parking(mapping) -> str:
+	"""Best account of how a parked row was linked, for when a person un-parks it. The
+	submitted-document guard overwrote ``match_status`` with Pending Review and left
+	``match_rule`` alone: none means the import created the record, ``manual`` a person
+	linked it, anything else a matcher did."""
+	rule = getattr(mapping, "match_rule", None)
+	if not rule:
+		return "Created"
+	return "Manual Matched" if rule == "manual" else "Auto Matched"
+
+
+def keep_erpnext_values(entity_type: str, qbo_id: str) -> dict:
+	"""*Keep ERPNext*: clear the flag and advance the cursor. **Writes nothing to the record.**
+
+	Three kinds of row can be kept:
+
+	* ``QuickBooks Changed``: the declined values are settled in ``settled_qbo_values`` so
+	  the same difference is not raised again while QuickBooks still says the same thing,
+	  and the cursor moves to the token stored on the flag -- what the reviewer was shown.
+	* ``Conflict``, the status the sync wrote before v1.800.0. There is no note, so the
+	  newest stored payload is compared with the record here (a read) and what differs is
+	  settled the same way.
+	* ``Pending Review`` on a **submitted** document, where the submitted-document guard
+	  parked it: QuickBooks changed a posted document, which cannot be updated in place.
+	  The person has dealt with it in ERPNext (or decided not to); the row is un-parked and
+	  the cursor moves to the newest stored payload.
+
+	Mapping row only, by ``frappe.db.set_value``; ``owned_fields`` is untouched.
+	"""
+	mapping = get_mapping(entity_type, qbo_id)
+	if not mapping:
+		frappe.throw(f"No mapping exists for {entity_type} {qbo_id}.")
+	status = mapping.conflict_status
+	if status == QBO_CHANGED:
+		changes = stored_changes(mapping)
+		settled = _settled_values(mapping)
+		for group in ("fields", "tables"):
+			for fieldname, entry in changes[group].items():
+				settled[fieldname] = (entry or {}).get("qbo")
+		updates = _resolved_updates(mapping, changes)
+		updates["settled_qbo_values"] = json_dumps(settled) if settled else None
+		kept = sorted(changes["fields"]) + sorted(changes["tables"])
+	elif status == LEGACY_CONFLICT:
+		updates, kept = _keep_from_newest_payload(mapping, entity_type, qbo_id, settle=True)
+	elif status == "Pending Review" and _linked_docstatus(mapping) == 1:
+		updates, kept = _keep_from_newest_payload(mapping, entity_type, qbo_id, settle=False)
+		if mapping.match_status == "Pending Review":
+			updates["match_status"] = _status_before_parking(mapping)
+	else:
+		frappe.throw(
+			f"{entity_type} {qbo_id} is not flagged QuickBooks changed (it is {status or 'Clean'}). "
+			f"Refresh the page."
+		)
+	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates, update_modified=False)
+	return {
+		"mapping": mapping.name,
+		"doctype": mapping.erpnext_doctype,
+		"name": mapping.erpnext_name,
+		"kept": kept,
+	}
+
+
+def _keep_from_newest_payload(mapping, entity_type: str, qbo_id: str, *, settle: bool):
+	"""``(updates, kept)`` for a *Keep ERPNext* on a row that carries no ``qbo_changes``
+	note: the cursor moves to the newest stored payload, and with ``settle`` whatever that
+	payload says differently from the record is settled as declined. Reads the record;
+	never writes it."""
+	updates = {"conflict_status": "Clean", "qbo_changes": None}
+	payload = _raw_payload_dict(entity_type, qbo_id) or {}
+	updates.update(_forward_cursor(mapping, payload))
+	kept = []
+	doctype, name = mapping.erpnext_doctype, mapping.erpnext_name
+	if settle and payload and doctype and name and frappe.db.exists(doctype, name):
+		settings = frappe.get_single("QuickBooks Online Settings")
+		mapped_doctype, values = map_qbo_to_erpnext(entity_type, payload, settings)
+		if mapped_doctype == doctype:
+			doc = frappe.get_doc(doctype, name)
+			_strip_values_erpnext_owns(entity_type, doctype, values, doc)
+			changes = _linked_differences(doc, values, mapping)
+			kept = sorted(changes["fields"]) + sorted(changes["tables"])
+			settled = _settle_unflagged(mapping, doctype, values, flagged=kept) or _settled_values(mapping)
+			for group in ("fields", "tables"):
+				for fieldname, entry in changes[group].items():
+					settled[fieldname] = (entry or {}).get("qbo")
+			updates["settled_qbo_values"] = json_dumps(settled) if settled else None
+	return updates, kept
+
+
+def _refuse_fields_the_doctype_lacks(erpnext_doctype: str, fieldnames):
+	"""A flag's field names are stored JSON. Before a person's *Use QuickBooks values*
+	sets any of them, each must be a real field of the DocType: ``meta.has_field`` knows
+	the DocType's own fields and Custom Fields, and not ``name``, ``owner``, ``docstatus``
+	or anything else a stored note has no business writing."""
+	meta = frappe.get_meta(erpnext_doctype)
+	unknown = sorted(fieldname for fieldname in fieldnames if not meta.has_field(fieldname))
+	if unknown:
+		frappe.throw(f"Not a field of {erpnext_doctype}: {', '.join(unknown)}. Nothing was written.")
+
+
+def use_qbo_values(entity_type: str, qbo_id: str, fields=None) -> dict:
+	"""*Use QuickBooks values*: write the flagged values onto the one linked record.
+
+	Only fields the flag stored, and nothing else on the record: the ones named in
+	``fields``, or with no list the ones QuickBooks is known to have changed to a value (a
+	field with no baseline, or one QuickBooks cleared, is taken only when it is named).
+	Every flagged value -- taken or left -- is remembered as settled.
+	A field QuickBooks cleared is blanked when it is chosen. Refused for a submitted or
+	cancelled document, for a flag whose QuickBooks data did not validate (``issues``), for
+	a field the flag does not hold, and for a name that is not a field of the DocType. What
+	ERPNext owns on the record (``_strip_values_erpnext_owns``) is dropped even if a stored
+	note names it. This is the old update path's write -- the same guards,
+	``apply_values``, the Account fixups -- behind a person's decision instead of a
+	scheduler.
+
+	**The write checks its own result** (``_differences_after_write``). A chosen field the
+	saved record does not hold as QuickBooks has it is returned in ``still_differs``, is
+	not counted as applied or settled, and keeps the row flagged with what remains.
+	"""
+	mapping = get_mapping(entity_type, qbo_id)
+	if not mapping:
+		frappe.throw(f"No mapping exists for {entity_type} {qbo_id}.")
+	if mapping.conflict_status != QBO_CHANGED:
+		frappe.throw(
+			f"{entity_type} {qbo_id} is not flagged QuickBooks changed (it is "
+			f"{mapping.conflict_status or 'Clean'}). Refresh the page."
+		)
+	changes = stored_changes(mapping)
+	if changes["issues"]:
+		frappe.throw(
+			"QuickBooks' data for this record does not pass ERPNext's checks: "
+			+ "; ".join(str(issue) for issue in changes["issues"])
+			+ ". Fix the cause and sync the record again, or choose Keep ERPNext."
+		)
+	flagged = {fieldname: (entry or {}).get("qbo") for fieldname, entry in changes["fields"].items()}
+	flagged.update({fieldname: (entry or {}).get("qbo") for fieldname, entry in changes["tables"].items()})
+	cleared = {fieldname for fieldname, entry in changes["fields"].items() if (entry or {}).get("cleared")}
+	# An ``unresolved`` entry only exists beside preflight issues, which were refused above.
+	if fields is None:
+		# No list given: what the page ticks by default. A field with no baseline may not
+		# have been changed by QuickBooks at all, and taking a cleared one blanks ERPNext's
+		# value, so neither is taken unless it is named.
+		chosen = [
+			fieldname
+			for fieldname in flagged
+			if not (changes["fields"].get(fieldname) or changes["tables"].get(fieldname) or {}).get("no_baseline")
+			and fieldname not in cleared
+		]
+	else:
+		chosen = [str(fieldname) for fieldname in fields]
+		unknown = sorted(set(chosen) - set(flagged))
+		if unknown:
+			frappe.throw(f"Not flagged on this record: {', '.join(unknown)}. Refresh the page.")
+	if not chosen:
+		frappe.throw("Tick at least one field to take from QuickBooks, or choose Keep ERPNext.")
+
+	doc = _linked_doc_for_review(mapping)
+	erpnext_doctype = mapping.erpnext_doctype
+	_refuse_fields_the_doctype_lacks(erpnext_doctype, chosen)
+	# One dict through the guards, so a protected field is dropped whether QuickBooks
+	# sends a value for it or a clear. ``_CLEAR`` stands in for the None a clear carries.
+	values = {
+		fieldname: (_CLEAR if fieldname in cleared else flagged[fieldname])
+		for fieldname in chosen
+		if fieldname in cleared or flagged[fieldname] is not None
+	}
+	_strip_values_erpnext_owns(entity_type, erpnext_doctype, values, doc)
+	if not values:
+		frappe.throw(
+			"Nothing on this flag can be written to the record: the flagged fields are ERPNext's own. "
+			"Choose Keep ERPNext."
+		)
+	clears = sorted(fieldname for fieldname, value in values.items() if value is _CLEAR)
+	values = {fieldname: value for fieldname, value in values.items() if value is not _CLEAR}
+	apply_values(doc, values)
+	for fieldname in clears:
+		doc.set(fieldname, None)
+	if _keep_account_as_group(erpnext_doctype, doc):
+		values["is_group"] = 1
+	if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
+		values.pop("account_type", None)
+	_save_reviewed_record(doc)
+
+	# The save is checked, not trusted: a value ERPNext did not keep stays flagged.
+	remaining = _differences_after_write(erpnext_doctype, doc.name, values, clears)
+	still = _still_differs(remaining)
+	applied = sorted((set(values) | set(clears)) - set(still))
+	owned = _owned_baseline(mapping) or {}
+	owned.update(
+		_owned_snapshot(
+			erpnext_doctype,
+			doc.name,
+			{name: value for name, value in dict(values, **{name: None for name in clears}).items() if name not in still},
+		)
+	)
+	# Taken or left, each flagged value has now been answered -- except one ERPNext
+	# refused to hold, which is still an open question.
+	settled = _settled_values(mapping)
+	settled.update({fieldname: value for fieldname, value in flagged.items() if fieldname not in still})
+	declined = sorted(set(flagged) - set(applied) - set(still))
+	updates = _resolved_updates(mapping, changes)
+	updates.update(
+		{
+			"owned_fields": json_dumps(owned),
+			"settled_qbo_values": json_dumps(settled),
+			"last_synced_at": now_datetime(),
+		}
+	)
+	if mapping.match_status == "Pending Review":
+		updates["match_status"] = "Auto Matched"
+	if still:
+		mapping.owned_fields, mapping.settled_qbo_values = updates["owned_fields"], updates["settled_qbo_values"]
+		updates.update(_still_flagged_updates(mapping, changes, remaining, "use"))
+	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates, update_modified=False)
+	return {
+		"mapping": mapping.name,
+		"doctype": erpnext_doctype,
+		"name": doc.name,
+		"applied": applied,
+		"kept": declined,
+		"still_differs": still,
+		"remaining": remaining,
+	}
+
+
+def refresh_linked_draft(entity_type: str, qbo_id: str) -> dict:
+	"""*Refresh draft*: rebuild one draft transaction from the newest stored payload.
+
+	For a docstatus 0 transaction only. Maps the newest ``QuickBooks Raw Payload`` again,
+	refuses if it does not pass the preflight, applies every mapped value (child tables
+	included) and saves, then records a fresh snapshot with ``save_mapping``. It reads no
+	QuickBooks API and touches no other record. Works on a draft that is flagged
+	``QuickBooks Changed`` and on one an earlier run parked (``Pending Review``) -- until
+	v1.800.0 the next import rebuilt those by itself.
+
+	**The rebuild checks its own result.** After the save the draft is read back and held
+	against the same mapped values (``_differences_after_write``). If every one of them
+	is there the mapping is Clean. If not, the draft stays rebuilt -- the save is not
+	undone, most of it is right -- but the mapping is flagged ``QuickBooks Changed`` with
+	what still differs, and the result names those fields in ``still_differs``.
+	"""
+	if entity_type not in TRANSACTION_ENTITIES:
+		frappe.throw(f"Refresh draft is for draft transactions. For a {entity_type}, choose Use QuickBooks values.")
+	mapping = get_mapping(entity_type, qbo_id)
+	if not mapping or not mapping.erpnext_name:
+		frappe.throw(f"{entity_type} {qbo_id} is not linked to an ERPNext draft.")
+	payload = _raw_payload_dict(entity_type, qbo_id)
+	if not payload:
+		frappe.throw("No QuickBooks payload is stored for this record. Sync it first.")
+	settings = frappe.get_single("QuickBooks Online Settings")
+	erpnext_doctype, values = map_qbo_to_erpnext(entity_type, payload, settings)
+	if erpnext_doctype != mapping.erpnext_doctype:
+		frappe.throw(
+			f"{entity_type} {qbo_id} is linked to a {mapping.erpnext_doctype} but QuickBooks' "
+			f"data now maps to a {erpnext_doctype}; it cannot be refreshed in place."
+		)
+	doc = _linked_doc_for_review(mapping)
+	issues = validate_mapped_values(
+		entity_type, erpnext_doctype, values, include_doc_required=False, payload=payload
+	)
+	if issues:
+		frappe.throw(
+			"QuickBooks' data for this transaction does not pass ERPNext's checks: "
+			+ "; ".join(str(issue) for issue in issues)
+		)
+	_strip_values_erpnext_owns(entity_type, erpnext_doctype, values, doc)
+	apply_values(doc, values)
+	_save_reviewed_record(doc)
+	# The save is checked, not trusted (``_differences_after_write``).
+	remaining = _differences_after_write(erpnext_doctype, doc.name, values)
+	still = _still_differs(remaining)
+	extra = {"conflict_status": "Clean"}
+	if mapping.match_status == "Pending Review":
+		extra["match_status"] = "Auto Matched"
+	saved_mapping = save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, **extra)
+	if still:
+		shown = {
+			"sync_token": payload.get("SyncToken"),
+			"last_updated": (payload.get("MetaData") or {}).get("LastUpdatedTime"),
+		}
+		frappe.db.set_value(
+			MAPPING_DOCTYPE,
+			mapping.name,
+			_still_flagged_updates(saved_mapping, shown, remaining, "refresh"),
+			update_modified=False,
+		)
+	return {
+		"mapping": mapping.name,
+		"doctype": erpnext_doctype,
+		"name": doc.name,
+		"applied": sorted(
+			fieldname
+			for fieldname, value in values.items()
+			if value is not None and fieldname not in still and fieldname not in BUILD_ONLY_FIELDS
+		),
+		"still_differs": still,
+		"remaining": remaining,
+	}
 
 
 def _owned_snapshot(erpnext_doctype: str, erpnext_name: str, values: dict) -> dict:
@@ -604,7 +1855,10 @@ def _owned_snapshot(erpnext_doctype: str, erpnext_name: str, values: dict) -> di
 		return values
 	try:
 		doc = frappe.get_doc(erpnext_doctype, erpnext_name)
-	except Exception:
+	except Exception as exc:
+		# RQ's one-shot job timeout must reach the run wrapper (see sync.safe_upsert).
+		if is_rq_job_timeout(exc):
+			raise
 		return values
 	return {
 		fieldname: (value if isinstance(value, list) else doc.get(fieldname))
@@ -636,14 +1890,30 @@ def save_mapping(
 	QBO-sourced values *as ERPNext stored them* (see ``_owned_snapshot``) used later
 	by ``detect_conflicts``. ``**extra`` sets match_status/match_rule/conflict_status
 	etc. Upserts by (entity_type, qbo_id).
+
+	Every caller is a moment the record and the payload were just brought into line (a
+	create, a first link, a person's link or *Refresh draft*), so a stored ``QuickBooks
+	Changed`` note is out of date by definition and is cleared, and ``values`` -- what
+	QuickBooks said and the record now reflects -- join ``settled_qbo_values``, the
+	reference the next comparison reads. Settled values belong to the record they were
+	settled on, and start again when the link moves.
+	**The sync's already-linked path never calls this** -- it would rewrite
+	``owned_fields`` -- and writes its cursor and its flag with ``frappe.db.set_value``.
 	"""
 	mapping = get_mapping(entity_type, qbo_id) or frappe.new_doc("QuickBooks Sync Mapping")
+	same_record = (getattr(mapping, "erpnext_doctype", None), getattr(mapping, "erpnext_name", None)) == (
+		erpnext_doctype,
+		erpnext_name,
+	)
+	settled = _settled_values(mapping) if same_record else {}
+	settled.update(_settled_from(erpnext_doctype, values))
+	mapping.settled_qbo_values = json_dumps(settled) if settled else None
+	mapping.qbo_changes = None
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
 	mapping.erpnext_name = erpnext_name
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.owned_fields = json_dumps(_owned_snapshot(erpnext_doctype, erpnext_name, values))
@@ -666,8 +1936,7 @@ def save_pending_mapping(entity_type: str, qbo_id: str, payload: dict, erpnext_d
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.conflict_status = "Pending Review"
@@ -693,8 +1962,7 @@ def save_manual_review_mapping(entity_type: str, qbo_id: str, payload: dict, erp
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
 	mapping.erpnext_doctype = erpnext_doctype
-	mapping.sync_token = payload.get("SyncToken")
-	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	_stamp_cursor(mapping, payload)
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
 	mapping.conflict_status = "Pending Review"
@@ -791,12 +2059,24 @@ def _blocked_unpromotable_parent(erpnext_doctype: str, values: dict) -> str | No
 		return None
 	# Mirrors Account.check_gle_exists exactly (no is_cancelled filter in v16), so
 	# this blocks on the same condition the controller would throw on.
-	if not frappe.db.get_value("GL Entry", {"account": parent_name}):
-		return None
-	return (
-		f"Parent account {parent_name} is a ledger with posted GL entries and cannot be made a "
-		"group; move this account under a group parent in the chart of accounts first."
-	)
+	if frappe.db.get_value("GL Entry", {"account": parent_name}):
+		return (
+			f"Parent account {parent_name} is a ledger with posted GL entries and cannot be made a "
+			"group; move this account under a group parent in the chart of accounts first."
+		)
+	# The parent is a record the sync has already linked (v1.800.0). Promoting it is a
+	# save of a linked record -- is_group set, account_type cleared -- on behalf of a
+	# different QuickBooks record, on any path a new sub-account arrives by, the hourly
+	# CDC included. A person makes it a group; the child waits.
+	linked = other_mapping_linking("Account", parent_name)
+	if linked:
+		return (
+			f"Parent account {parent_name} is a ledger that QuickBooks "
+			f"{getattr(linked, 'qbo_entity_type', '')} {getattr(linked, 'qbo_id', '')} is linked to, and the "
+			"sync does not change a linked record. Make it a group by hand in the chart of accounts, then "
+			"retry this account."
+		)
+	return None
 
 
 def _blocked_unlinked_project(erpnext_doctype: str, values: dict, include_doc_required: bool) -> str | None:
@@ -1370,8 +2650,10 @@ def _qbo_record_advanced(mapping, payload: dict) -> bool:
 	the record genuinely changed there. When the tokens aren't comparable (either side
 	missing, or non-numeric) fall back to QBO's ``LastUpdatedTime`` cursor. With
 	neither signal available this reports "not advanced", which is the safe answer for
-	its one caller: the Ignored check would otherwise reopen a deliberately closed-out
-	record on every single sync.
+	the Ignored check (it would otherwise reopen a deliberately closed-out record on
+	every single sync) and for the submitted-document guard. The linked path asks
+	``_linked_record_needs_a_look`` instead, which also looks when the mapping never
+	recorded a cursor at all.
 	"""
 	incoming_token = payload.get("SyncToken")
 	stored_token = mapping.sync_token
@@ -1823,6 +3105,7 @@ def _map_sales_invoice(payload, settings):
 		"selling_price_list": _default_price_list(selling=True),
 		"price_list_currency": currency,
 		"plc_conversion_rate": 1,
+		"ignore_pricing_rule": 1,
 		"items": _sales_items(payload),
 		# Always mapped, even when empty, so a re-sync REPLACES the charges table rather
 		# than leaving a stale tax row beside a fresh one -- apply_values rewrites child
@@ -2124,6 +3407,7 @@ def _map_purchase_invoice(payload, settings):
 		"currency": currency,
 		"conversion_rate": rate,
 		"credit_to": _company_value(settings, "default_payable_account"),
+		"ignore_pricing_rule": 1,
 		"items": items,
 		# Always mapped, even when empty, so a re-sync REPLACES the charges table
 		# instead of leaving a stale row beside a fresh one: apply_values rewrites
@@ -2633,6 +3917,7 @@ def _map_quotation(payload, settings):
 		"selling_price_list": _default_price_list(selling=True),
 		"price_list_currency": currency,
 		"plc_conversion_rate": 1,
+		"ignore_pricing_rule": 1,
 		"items": _sales_items(payload),
 	}
 	if project and _has_field("Quotation", "project"):
@@ -2657,6 +3942,7 @@ def _map_purchase_order(payload, settings):
 		"schedule_date": required_by,
 		"currency": currency,
 		"conversion_rate": rate,
+		"ignore_pricing_rule": 1,
 		"items": items,
 	}
 
@@ -2979,8 +4265,8 @@ def _ensure_group_parent(erpnext_doctype: str, values: dict):
 	ledgers, and ERPNext then rejects every child with "Parent account ... can
 	not be a ledger".
 
-	A parent that has been **posted to** is never promoted: ``upsert_entity``
-	preflights that case to manual review before reaching here (see
+	A parent that has been **posted to**, or that **a mapping already links**, is never
+	promoted: ``upsert_entity`` preflights both cases to manual review before reaching here (see
 	``_blocked_unpromotable_parent``, which carries the reasoning). The check is
 	repeated anyway because this is the function that clears ``account_type``,
 	and an account with GL entries is one where clearing it loses real meaning —
@@ -2995,6 +4281,11 @@ def _ensure_group_parent(erpnext_doctype: str, values: dict):
 	if is_group is None or int(is_group):
 		return
 	if frappe.db.get_value("GL Entry", {"account": parent_name}):
+		return
+	# Nor a parent the sync has linked (v1.800.0): the preflight parks that child too
+	# (``_blocked_unpromotable_parent``), and the check is repeated for the same reason
+	# the one above is -- this is the function that would save the linked record.
+	if other_mapping_linking("Account", parent_name):
 		return
 	parent = frappe.get_doc("Account", parent_name)
 	parent.is_group = 1
@@ -3550,6 +4841,9 @@ def _sales_items(payload):
 	``amount`` is carried across for reference only: ERPNext RECOMPUTES it as
 	``qty * rate`` on save, which is why the qty/rate pair has to reproduce QBO's
 	own line amount rather than merely look plausible beside it.
+
+	Every line goes through ``_priced_line``, or ERPNext replaces a rate of 0 with the
+	Item's list price.
 	"""
 	items = []
 	for line in payload.get("Line", []) or []:
@@ -3562,18 +4856,53 @@ def _sales_items(payload):
 		qty, rate = _line_qty_rate(detail, amount)
 		if qty is None:
 			continue
-		row = {
-			"item_code": item_code,
-			"description": line.get("Description") or item_ref.get("name"),
-			"qty": qty,
-			"rate": rate,
-			"amount": amount,
-		}
+		row = _priced_line(
+			{
+				"item_code": item_code,
+				"description": line.get("Description") or item_ref.get("name"),
+				"qty": qty,
+				"rate": rate,
+				"amount": amount,
+			}
+		)
 		cost_center = _line_cost_center(detail)
 		if cost_center:
 			row["cost_center"] = cost_center
 		items.append(row)
 	return items
+
+
+def _priced_line(row: dict) -> dict:
+	"""Give an item line a ``price_list_rate`` equal to its ``rate``, so ERPNext keeps the rate.
+
+	Shared by ``_sales_items`` and ``_purchase_items`` for the reason ``_line_qty_rate`` is
+	one function. Read in erpnext v16.54.0, the version production runs:
+
+	* ``accounts_controller.set_missing_item_details`` runs on every save and copies each
+	  value ``get_item_details`` returns onto a line whose own value **is None**.
+	  ``price_list_rate`` is not one of ``force_item_fields``, so a line that carries one,
+	  0 included, keeps it. A line that carries none gets the Item Price of the document's
+	  price list; on a buying document with no Item Price, the Item's last purchase rate.
+	* ``taxes_and_totals.calculate_item_rate`` then runs
+	  ``if has_pricing_rules or not item.rate: item.rate = calculated_rate``. A line
+	  QuickBooks priced at **0** is billed at the list price. A rate below list is kept, but
+	  stored as list price less an invented ``discount_amount``, and a rate above it as list
+	  price plus a margin.
+	* With ``price_list_rate`` equal to ``rate`` neither happens: a falsy list price makes
+	  ``calculate_item_rate`` return before it touches the rate, and an equal one computes
+	  the same rate and leaves discount and margin at nothing.
+
+	Found on the first *Refresh draft* of the rehearsal: a draft whose QuickBooks invoice
+	has eight zero-amount lines of one Item came back with all eight at the Item's selling
+	price, the total too high by exactly eight times that price, and the mapping marked
+	Clean. The hourly sync had created the draft the same way the day before.
+
+	A bench-free test cannot see ERPNext reprice anything; ``test_quickbooks_link_only``
+	asserts the key on every built line, and ``_differences_after_write`` is the check that
+	runs against the real controller.
+	"""
+	row["price_list_rate"] = row["rate"]
+	return row
 
 
 def _line_qty_rate(detail, amount):
@@ -3774,6 +5103,10 @@ def _purchase_items(payload):
 	path carried its own copy of the ``detail.get("Qty") or 1`` falsy-zero bug that
 	v1.244.0 removed from ``_sales_items``, and the copies are now one function so
 	they cannot drift apart again.
+
+	Every line goes through ``_priced_line`` like the sell side's: the repricing it
+	prevents is in the shared controller, and on the buy side it needs no Item Price at
+	all (ERPNext falls back to the Item's last purchase rate).
 	"""
 	items = []
 	for line in payload.get("Line", []) or []:
@@ -3786,13 +5119,15 @@ def _purchase_items(payload):
 		qty, rate = _line_qty_rate(detail, amount)
 		if qty is None:
 			continue
-		row = {
-			"item_code": item_code,
-			"description": line.get("Description") or item_ref.get("name"),
-			"qty": qty,
-			"rate": rate,
-			"amount": amount,
-		}
+		row = _priced_line(
+			{
+				"item_code": item_code,
+				"description": line.get("Description") or item_ref.get("name"),
+				"qty": qty,
+				"rate": rate,
+				"amount": amount,
+			}
+		)
 		cost_center = _line_cost_center(detail)
 		if cost_center:
 			row["cost_center"] = cost_center

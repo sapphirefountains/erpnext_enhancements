@@ -199,7 +199,12 @@ def _finance_metrics():
 		add(
 			"qbo_conflicts",
 			"QBO Open Conflicts",
-			_scalar("select count(*) from `tabQuickBooks Sync Mapping` where conflict_status='Conflict'"),
+			# 'QuickBooks Changed' is what the sync flags since v1.800.0; 'Conflict' is what
+			# it wrote before. Counting only the old one would read 0 from then on.
+			_scalar(
+				"select count(*) from `tabQuickBooks Sync Mapping`"
+				" where conflict_status in ('Conflict', 'QuickBooks Changed')"
+			),
 			"count",
 			"QuickBooks Sync Mapping",
 			metrics.LOWER,

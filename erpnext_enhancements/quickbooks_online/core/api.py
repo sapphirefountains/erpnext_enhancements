@@ -8,6 +8,11 @@ coercion, then delegate to the implementation modules:
 (link/preview existing matches), ``matching`` (the Record Matching page's queue and
 decisions) and ``webhooks`` (inbound notifications).
 
+Since v1.800.0 three of these are the only way QuickBooks values reach a record the sync
+has already linked: ``keep_erpnext``, ``use_quickbooks_values`` and ``refresh_drafts``.
+Each is POST-only, operator-gated, acts on the mappings it is handed and nothing wider,
+and neither calls QuickBooks nor queues a job.
+
 Access control: the sync engine runs with ``ignore_permissions=True``, so these
 RPC entry points are the *only* access-control boundary. Every privileged
 endpoint therefore calls ``_require_qbo_operator`` first; without it any
@@ -48,7 +53,9 @@ from erpnext_enhancements.quickbooks_online.core.reconcile import (
 	reconcile_transactions as run_reconcile_transactions,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
+	RESTART_BY_HAND_TYPES,
 	create_pending_log,
+	reap_stale_runs,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
 	import_all as run_import_all,
@@ -177,6 +184,10 @@ def import_all():
 	or ``{"status": "already_running"}`` when an import is already in progress.
 	"""
 	_require_qbo_operator()
+	# Fail any orphaned run first. This button is the only way an Import All starts now
+	# (v1.800.0), and the check below reads every Running log as a live run -- so a log
+	# whose worker died would answer "already running" until the hourly reaper got to it.
+	reap_stale_runs()
 	if frappe.db.exists("QuickBooks Sync Log", {"sync_type": "Import All", "status": "Running"}):
 		return {"status": "already_running"}
 	frappe.enqueue(run_import_all, queue="long", timeout=QBO_JOB_TIMEOUT)
@@ -211,16 +222,17 @@ def preview_resync(entity_types=None):
 
 @frappe.whitelist()
 def run_resync(preview_id):
-	"""RPC: enqueue applying a previously generated preview (overwrite resync).
+	"""RPC: enqueue running a previously generated resync preview.
 
 	Replays the preview's stored payloads, which can be a large batch, so it runs
 	on the long queue like ``import_all`` to avoid a gateway timeout. The preview
 	id is validated synchronously for immediate feedback. Returns
-	``{"status": "queued"}``.
+	``{"status": "queued"}``. Since v1.800.0 the run creates, links and flags; it
+	never saves over a linked record (``sync.run_resync``).
 	"""
 	_require_qbo_operator()
 	if not preview_id or not frappe.db.exists("QuickBooks Sync Log", preview_id):
-		frappe.throw("A valid Preview Resync log is required before running overwrite resync.")
+		frappe.throw("A valid Preview Resync log is required before running a resync.")
 	frappe.enqueue(run_run_resync, queue="long", timeout=QBO_JOB_TIMEOUT, preview_id=preview_id)
 	return {"status": "queued"}
 
@@ -234,14 +246,28 @@ def sync_entity(entity_type, qbo_id):
 
 @frappe.whitelist()
 def retry_failed(log_name=None):
-	"""RPC: enqueue re-running failed sync logs (dashboard "Retry Failed").
+	"""RPC: re-run a failed CDC poll in the background (dashboard "Retry Failed").
 
-	Re-running can replay a full import or CDC pass, so it is backgrounded on the
-	long queue like ``import_all``. Returns ``{"status": "queued"}``.
+	Only CDC is retried (v1.800.0). A failed Import All, Run Resync or Preview Resync is
+	never re-run from here: the answer names those logs in ``restart_by_hand`` and the
+	dashboard tells the person to start the run again, which is one click on the same
+	page and goes to the long queue as its own job. Asked for one such log by name, this
+	queues nothing and returns ``{"status": "restart_by_hand", ...}``.
+
+	Otherwise returns ``{"status": "queued", "restart_by_hand": [...]}``; the CDC retry
+	runs on the long queue so a wide catch-up window is not cut at 300 seconds.
 	"""
 	_require_qbo_operator()
+	filters = {"status": "Failed", "sync_type": ["in", sorted(RESTART_BY_HAND_TYPES)]}
+	if log_name:
+		filters["name"] = log_name
+	restart_by_hand = [
+		row.name for row in frappe.get_all("QuickBooks Sync Log", filters=filters, fields=["name"])
+	]
+	if log_name and restart_by_hand:
+		return {"status": "restart_by_hand", "restart_by_hand": restart_by_hand}
 	frappe.enqueue(run_retry_failed, queue="long", timeout=QBO_JOB_TIMEOUT, log_name=log_name)
-	return {"status": "queued"}
+	return {"status": "queued", "restart_by_hand": restart_by_hand}
 
 
 @frappe.whitelist()
@@ -253,9 +279,10 @@ def preview_existing_matches(entity_types=None, limit=100):
 	return run_preview_existing_matches(entity_types=entity_types, limit=int(limit or 100))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_existing_record(entity_type, qbo_id, erpnext_doctype, erpnext_name, apply_qbo_data=0):
-	"""RPC: manually link a QBO entity to a chosen ERPNext record (link dialog)."""
+	"""RPC: manually link a QBO entity to a chosen ERPNext record (link dialog). POST only
+	(v1.800.0): it writes a mapping and, with ``apply_qbo_data``, saves the record."""
 	_require_qbo_operator()
 	return run_link_existing_record(
 		entity_type,
@@ -433,20 +460,79 @@ def get_match_queue(entity_types=None, status=None, search=None, start=0, page_l
 
 
 @frappe.whitelist()
-def get_parked_transactions(entity_types=None, start=0, page_length=50):
-	"""RPC: transactions parked in Pending Review, with the stored reason and the draft
-	if one exists (the Record Matching page's second tab). Read-only; Retry there is
-	``sync_entity``.
+def get_parked_transactions(entity_types=None, start=0, page_length=50, view=None):
+	"""RPC: the Record Matching page's second tab. ``view="parked"`` (the default) lists
+	transactions parked in Pending Review, with the stored reason and the draft if one
+	exists; ``view="changed"`` lists linked transactions flagged QuickBooks Changed, with
+	the differences. Read-only; Retry there is ``sync_entity``.
 	"""
 	_require_qbo_operator()
 	return matching.parked_transactions(
 		entity_types=_entity_list(entity_types),
 		start=frappe.utils.cint(start),
 		page_length=frappe.utils.cint(page_length) or matching.DEFAULT_PAGE_LENGTH,
+		view=view,
 	)
 
 
-@frappe.whitelist()
+def _review_items(items):
+	"""The rows of a review request -- a JSON list (how frappe.call sends an array) or a
+	real list -- of ``{entity_type, qbo_id}`` dicts. Anything else is refused."""
+	if isinstance(items, str):
+		try:
+			items = json.loads(items)
+		except ValueError:
+			items = None
+	if not isinstance(items, list):
+		frappe.throw("items must be a list of {entity_type, qbo_id}.")
+	return items
+
+
+@frappe.whitelist(methods=["POST"])
+def keep_erpnext(items):
+	"""RPC: *Keep ERPNext* for one flagged mapping or a ticked selection (v1.800.0).
+
+	Clears each ``QuickBooks Changed`` flag, advances the mapping cursor to what the
+	reviewer was shown and remembers the declined values. Writes nothing to any ERPNext
+	record. One result per item in order; one failure never stops the rest.
+	"""
+	_require_qbo_operator()
+	return matching.review_many(_review_items(items), matching.keep_erpnext)
+
+
+@frappe.whitelist(methods=["POST"])
+def use_quickbooks_values(items):
+	"""RPC: *Use QuickBooks values* for one flagged mapping or a ticked selection (v1.800.0).
+
+	Writes each mapping's flagged values -- or the ``fields`` subset an item names -- onto
+	its one linked record. A submitted or cancelled document is refused, as is a flag whose
+	QuickBooks data did not validate. Each item is its own savepoint: a save ERPNext refuses
+	is reported in that item's result and the flag stays. Starts no sync.
+
+	Each write checks its own result: an item whose saved record still differs from
+	QuickBooks comes back with ``action`` ``still_differs`` and stays flagged.
+	"""
+	_require_qbo_operator()
+	return matching.review_many(_review_items(items), matching.use_quickbooks_values)
+
+
+@frappe.whitelist(methods=["POST"])
+def refresh_drafts(items):
+	"""RPC: *Refresh draft* for one linked draft transaction or a ticked selection (v1.800.0).
+
+	Rebuilds each docstatus 0 transaction from the newest payload already stored for it.
+	It reads no QuickBooks API; a master record, a posted document and a payload that fails
+	the preflight are each refused in that item's result.
+
+	Each rebuild checks its own result: a draft that, read back, still differs from
+	QuickBooks comes back with ``action`` ``still_differs`` and ``still_labels`` naming the
+	fields. It stays rebuilt and stays flagged ``QuickBooks Changed``; it is never Clean.
+	"""
+	_require_qbo_operator()
+	return matching.review_many(_review_items(items), matching.refresh_draft)
+
+
+@frappe.whitelist(methods=["POST"])
 def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplicate=1):
 	"""RPC: link one QBO record to the chosen ERPNext record (the page's Link button).
 
@@ -465,7 +551,7 @@ def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplica
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decide_matches(decisions, fill_blanks=0, merge_duplicate=1):
 	"""RPC: ``decide_match`` over a list (the page's Accept suggestions and Link selected),
 	one result per decision in order; one failure never stops the rest. A decision's own

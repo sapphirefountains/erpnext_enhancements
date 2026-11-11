@@ -43,6 +43,14 @@ Things this module is careful about:
   right starting value, so there is no backfill patch to get wrong.
 * **The search filter is ``or_filters`` beside ``filters``, and Frappe ANDs the two.** So a
   search never widens the status filter; it narrows within it.
+* **A "QuickBooks changed" row is resolved here and nowhere else (v1.800.0).** The sync no
+  longer saves over a record it has linked; it flags the mapping and stores the differences
+  (``mapping._review_linked_record``). ``keep_erpnext``, ``use_quickbooks_values`` and
+  ``refresh_draft`` below are the three answers a person can give, each for one mapping, each
+  in its own savepoint, each stamping who decided. None of them fetches from QuickBooks or
+  starts a sync. The "ERPNext has" side of the view is read from the record at the moment
+  the page asks, not from the note the sync stored, so a record somebody already corrected
+  by hand shows as agreeing.
 """
 
 from __future__ import annotations
@@ -56,15 +64,22 @@ from frappe.utils import cint, now_datetime
 from erpnext_enhancements.quickbooks_online.core.constants import (
 	ENTITY_DOCTYPE_MAP,
 	MASTER_ENTITIES,
+	QBO_CHANGED,
 	TRANSACTION_ENTITIES,
 )
 from erpnext_enhancements.quickbooks_online.core.mapping import (
 	_display_name,
 	_is_qbo_customer_job,
+	_same_for_review,
 	find_existing_match,
 	get_mapping,
+	keep_erpnext_values,
 	link_existing_record,
+	number_precisions,
 	preview_existing_matches,
+	refresh_linked_draft,
+	stored_changes,
+	use_qbo_values,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import json_loads
 
@@ -105,6 +120,7 @@ ACCOUNT_MERGE_KEYS = ("is_group", "root_type", "company", "account_currency")
 STATUS_FILTERS = (
 	"Needs decision",
 	"Pending Review",
+	QBO_CHANGED,
 	"Conflict",
 	"Auto Matched",
 	"Created",
@@ -123,6 +139,17 @@ SUGGESTION_LIMIT = 5
 SIMILARITY_FLOOR = 55
 #: How many recent master payloads the Unmapped view scans (the old dialog scanned 100).
 UNMAPPED_SCAN_LIMIT = 500
+#: The most rows one review request (Keep ERPNext / Use QuickBooks values / Refresh draft)
+#: or one ``decide_matches`` request may carry. The page sends ``REVIEW_CHUNK`` (20) at a time; this is the server's own
+#: ceiling, because two of the three save an ERPNext record per row and a request is not
+#: the place for a few hundred of those.
+MAX_REVIEW_ITEMS = 50
+#: The two lists the transactions tab shows.
+TXN_VIEW_PARKED = "parked"
+TXN_VIEW_CHANGED = "changed"
+#: A long text value is cut to this many characters in the "ERPNext has / QuickBooks has"
+#: view. The stored note keeps the whole value; this is only what a table cell shows.
+CHANGE_VALUE_DISPLAY_LIMIT = 300
 
 _LEGAL_SUFFIXES = frozenset(
 	{"inc", "incorporated", "llc", "ltd", "limited", "co", "corp", "corporation", "company", "the"}
@@ -470,6 +497,131 @@ def _suggestions(entity_type, payload, target, settings, *, current=None, stored
 	return kept[:SUGGESTION_LIMIT], agrees
 
 
+def _docstatus(doctype, name):
+	"""A record's docstatus as an int, or None when it cannot be read."""
+	try:
+		value = frappe.db.get_value(doctype, name, "docstatus")
+	except Exception:
+		return None
+	return None if value is None else cint(value)
+
+
+def _field_labels(doctype) -> tuple[dict, dict]:
+	"""``({fieldname: label}, {table fieldname: child doctype})`` for one doctype; two empty
+	dicts when the meta cannot be read, in which case the view shows field names."""
+	try:
+		fields = list(frappe.get_meta(doctype).fields or [])
+	except Exception:
+		return {}, {}
+	labels, tables = {}, {}
+	for field in fields:
+		fieldname = getattr(field, "fieldname", None)
+		if not fieldname:
+			continue
+		labels[fieldname] = getattr(field, "label", None) or fieldname
+		if getattr(field, "fieldtype", None) in ("Table", "Table MultiSelect") and getattr(field, "options", None):
+			tables[fieldname] = field.options
+	return labels, tables
+
+
+def _show(value) -> str:
+	"""A stored or live value as the text a table cell shows. Blank is an empty string."""
+	if value is None or value == "":
+		return ""
+	if isinstance(value, bool):
+		return "Yes" if value else "No"
+	text = str(value)
+	if len(text) > CHANGE_VALUE_DISPLAY_LIMIT:
+		text = text[:CHANGE_VALUE_DISPLAY_LIMIT].rstrip() + "…"
+	return text
+
+
+def change_view(row) -> dict | None:
+	"""The "ERPNext has / QuickBooks has" view of one flagged mapping row, or None when the
+	row is not flagged ``QuickBooks Changed``.
+
+	Scalar fields show the record's value **as it is now** (one read of the flagged columns),
+	beside what QuickBooks said when the flag was raised; ``agrees`` marks a field the record
+	has since come to match. Child tables show the row counts and the differing rows the
+	sync stored. ``edited`` marks a field ERPNext had already moved away from what the last
+	sync stored, i.e. both sides changed.
+	"""
+	if getattr(row, "conflict_status", None) != QBO_CHANGED:
+		return None
+	note = stored_changes(row)
+	doctype, name = getattr(row, "erpnext_doctype", None), getattr(row, "erpnext_name", None)
+	labels, table_doctypes = _field_labels(doctype) if doctype else ({}, {})
+	precisions = number_precisions(doctype) if doctype else {}
+	live = None
+	if doctype and name and note["fields"]:
+		try:
+			live = frappe.db.get_value(doctype, name, sorted(note["fields"]), as_dict=True)
+		except Exception:
+			live = None
+	fields = []
+	for fieldname in sorted(note["fields"]):
+		entry = note["fields"][fieldname] or {}
+		held = live.get(fieldname) if live else entry.get("erpnext")
+		fields.append(
+			{
+				"fieldname": fieldname,
+				"label": labels.get(fieldname) or fieldname,
+				"erpnext": _show(held),
+				"qbo": _show(entry.get("qbo")),
+				"edited": bool(entry.get("erpnext_edited")),
+				# False: the sync never wrote or read this field before, so QuickBooks
+				# may not have changed it at all. The page leaves it unticked.
+				"baselined": not entry.get("no_baseline"),
+				# True: QuickBooks cleared the field; taking it blanks the ERPNext value.
+				"cleared": bool(entry.get("cleared")),
+				# True: QuickBooks' value did not resolve to an ERPNext record (the flag
+				# carries the preflight issues that say why). It cannot be taken.
+				"unresolved": bool(entry.get("unresolved")),
+				"agrees": bool(live)
+				and not entry.get("unresolved")
+				and _same_for_review(held, entry.get("qbo"), precisions.get(fieldname)),
+			}
+		)
+	tables = []
+	for fieldname in sorted(note["tables"]):
+		entry = note["tables"][fieldname] or {}
+		child_labels = _field_labels(table_doctypes[fieldname])[0] if fieldname in table_doctypes else {}
+		rows = []
+		for difference in entry.get("rows") or []:
+			if not isinstance(difference, dict):
+				continue
+			cells = [
+				{
+					"fieldname": key,
+					"label": child_labels.get(key) or key,
+					"erpnext": _show((value or {}).get("erpnext")),
+					"qbo": _show((value or {}).get("qbo")),
+				}
+				for key, value in sorted((difference.get("fields") or {}).items())
+			]
+			rows.append({"row": difference.get("row"), "only_in": difference.get("only_in"), "fields": cells})
+		tables.append(
+			{
+				"fieldname": fieldname,
+				"label": labels.get(fieldname) or fieldname,
+				"erpnext_rows": cint(entry.get("erpnext_rows")),
+				"qbo_rows": cint(entry.get("qbo_rows")),
+				"rows": rows,
+				"more_rows": cint(entry.get("more_rows")),
+				"baselined": not entry.get("no_baseline"),
+			}
+		)
+	return {
+		"detected_at": note.get("detected_at") or None,
+		# "refresh" / "use": the note is what a person's own write left differing
+		# (``mapping._differences_after_write``), not something a sync found.
+		"after_write": note.get("after_write") or None,
+		"fields": fields,
+		"tables": tables,
+		"issues": [str(issue) for issue in note["issues"] if issue],
+	}
+
+
 def status_counts(entity_types) -> dict:
 	"""Chip counts for the queue header, from one GROUP BY."""
 	rows = frappe.db.sql(
@@ -484,6 +636,7 @@ def status_counts(entity_types) -> dict:
 		"total": 0,
 		"Needs decision": 0,
 		"Pending Review": 0,
+		QBO_CHANGED: 0,
 		"Conflict": 0,
 		"Auto Matched": 0,
 		"Created": 0,
@@ -497,6 +650,8 @@ def status_counts(entity_types) -> dict:
 			counts[status] += n
 		if row.conflict_status == "Conflict":
 			counts["Conflict"] += n
+		if row.conflict_status == QBO_CHANGED:
+			counts[QBO_CHANGED] += n
 		if cint(row.unreviewed) and status != "Manual Matched":
 			counts["Needs decision"] += n
 	return counts
@@ -538,6 +693,8 @@ def _master_row(row, payload, titles, settings) -> dict:
 		"agrees": agrees,
 		"issues": notes["issues"],
 		"suggestions": suggestions,
+		# What QuickBooks now says against what the record holds; None unless flagged.
+		"changes": change_view(row),
 		"reviewed_by": row.reviewed_by,
 		"reviewed_on": str(row.reviewed_on) if row.reviewed_on else None,
 		# The Excel export's staleness check reads it (matching_excel.row_version).
@@ -565,6 +722,8 @@ def _master_where(entity_types, status, search):
 		params["status"] = status
 	elif status == "Conflict":
 		clauses.append("conflict_status = 'Conflict'")
+	elif status == QBO_CHANGED:
+		clauses.append("conflict_status = 'QuickBooks Changed'")
 	elif status == "Needs decision":
 		clauses.append("reviewed_on is null")
 		# coalesce: a NULL match_status is "not a manual match" too (frappe's != would agree).
@@ -588,8 +747,8 @@ def master_mapping_rows(where, params, *, start=None, page_length=None) -> list:
 		params = dict(params, start=start or 0, page_length=page_length)
 	return frappe.db.sql(
 		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
-		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on,"
-		" modified from `tabQuickBooks Sync Mapping` where "
+		" conflict_status, match_rule, match_confidence, owned_fields, qbo_changes, reviewed_by,"
+		" reviewed_on, modified from `tabQuickBooks Sync Mapping` where "
 		+ where
 		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
 		+ limit,
@@ -704,20 +863,37 @@ def _unmapped_queue(entity_types, start, page_length) -> dict:
 	}
 
 
-def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LENGTH) -> dict:
-	"""Transactions parked in Pending Review (a preflight or save failure), with the stored
-	reason and whatever draft exists, so the accountant can fix the cause and retry."""
+def parked_transactions(
+	entity_types=None, start=0, page_length=DEFAULT_PAGE_LENGTH, view=TXN_VIEW_PARKED
+) -> dict:
+	"""One page of the transactions tab. ``view`` picks which transactions:
+
+	* ``parked`` (the default): parked in Pending Review (a preflight or save failure), with
+	  the stored reason and whatever draft exists, so the accountant can fix the cause and
+	  retry.
+	* ``changed``: linked transactions QuickBooks changed since they were imported
+	  (``QuickBooks Changed``), with the differences, for Keep ERPNext / Refresh draft.
+
+	``changed_total`` is in both answers, so the tab can say how many are waiting on the
+	other view.
+	"""
 	entity_types = [entity for entity in (entity_types or []) if entity in TRANSACTION_ENTITIES] or list(
 		TRANSACTION_ENTITIES
 	)
+	view = TXN_VIEW_CHANGED if view == TXN_VIEW_CHANGED else TXN_VIEW_PARKED
 	start, page_length = _page_args(start, page_length)
-	rows = parked_mapping_rows(entity_types, start=start, page_length=page_length)
-	total = frappe.db.count(MAPPING_DOCTYPE, _parked_filters(entity_types))
+	rows = parked_mapping_rows(entity_types, start=start, page_length=page_length, view=view)
+	total = frappe.db.count(MAPPING_DOCTYPE, _parked_filters(entity_types, view))
 	# Raw SQL for the same reason as _master_where: a string aggregate in get_all's fields
-	# is refused by Frappe 16's query engine.
+	# is refused by Frappe 16's query engine. Both conditions are literals from this module.
+	condition = (
+		"conflict_status = 'QuickBooks Changed'"
+		if view == TXN_VIEW_CHANGED
+		else "match_status = 'Pending Review'"
+	)
 	per_type = frappe.db.sql(
 		"select qbo_entity_type, count(*) as n from `tabQuickBooks Sync Mapping`"
-		" where qbo_entity_type in %(types)s and match_status = 'Pending Review'"
+		" where qbo_entity_type in %(types)s and " + condition + ""
 		" and coalesce(deleted, 0) = 0 group by qbo_entity_type",
 		{"types": tuple(TRANSACTION_ENTITIES)},
 		as_dict=True,
@@ -727,29 +903,41 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 		"total": total,
 		"start": start,
 		"page_length": page_length,
+		"view": view,
 		"counts": {row.qbo_entity_type: cint(row.n) for row in per_type},
+		"changed_total": frappe.db.count(
+			MAPPING_DOCTYPE, _parked_filters(list(TRANSACTION_ENTITIES), TXN_VIEW_CHANGED)
+		),
 	}
 
 
-def _parked_filters(entity_types) -> dict:
-	return {"qbo_entity_type": ["in", entity_types], "match_status": "Pending Review", "deleted": 0}
+def _parked_filters(entity_types, view=TXN_VIEW_PARKED) -> dict:
+	filters = {"qbo_entity_type": ["in", entity_types], "deleted": 0}
+	if view == TXN_VIEW_CHANGED:
+		filters["conflict_status"] = QBO_CHANGED
+	else:
+		filters["match_status"] = "Pending Review"
+	return filters
 
 
-def parked_mapping_rows(entity_types, *, start=0, page_length=None) -> list:
-	"""The parked transactions' mapping rows in the tab's order: one page, or -- with no
-	``page_length`` -- all of them, which is how the Excel export reads them (see
+def parked_mapping_rows(entity_types, *, start=0, page_length=None, view=TXN_VIEW_PARKED) -> list:
+	"""The transactions tab's mapping rows in the tab's order: one page, or -- with no
+	``page_length`` -- all of them, which is how the Excel export reads the parked ones (see
 	``master_mapping_rows``)."""
 	return frappe.get_all(
 		MAPPING_DOCTYPE,
-		filters=_parked_filters(entity_types),
+		filters=_parked_filters(entity_types, view),
 		fields=[
 			"name",
 			"qbo_entity_type",
 			"qbo_id",
 			"erpnext_doctype",
 			"erpnext_name",
+			"match_status",
+			"conflict_status",
 			"match_rule",
 			"owned_fields",
+			"qbo_changes",
 			"last_synced_at",
 			"modified",
 		],
@@ -777,6 +965,12 @@ def build_parked_rows(rows) -> list:
 				"doctype": row.erpnext_doctype,
 				"name": row.erpnext_name,
 				"exists": exists,
+				# 0 draft, 1 submitted, 2 cancelled; None when there is no record. Only a
+				# draft can be refreshed from QuickBooks.
+				"docstatus": _docstatus(row.erpnext_doctype, row.erpnext_name) if exists else None,
+				"match_status": getattr(row, "match_status", None),
+				"conflict_status": getattr(row, "conflict_status", None),
+				"changes": change_view(row),
 				"qbo": describe_transaction(payloads.get((row.qbo_entity_type, str(row.qbo_id)))),
 				"issues": parse_review_notes(row.owned_fields)["issues"],
 				"match_rule": row.match_rule,
@@ -895,7 +1089,13 @@ def decide_many(decisions, *, fill_blanks=False, merge_duplicate=True, user=None
 
 	A decision may carry its own ``fill_blanks``, which wins over the call-level flag: the
 	page's *Link selected* sends each ticked row's own "Fill blank fields" box, so one row
-	asking for the QBO data does not impose it on the rest."""
+	asking for the QBO data does not impose it on the rest.
+
+	A request over ``MAX_REVIEW_ITEMS`` decisions is refused whole, before anything is
+	written (v1.800.0): a link can save a record and merge another away, and the page
+	already sends ``LINK_CHUNK`` (20) at a time."""
+	if len(decisions or []) > MAX_REVIEW_ITEMS:
+		frappe.throw(f"Send at most {MAX_REVIEW_ITEMS} decisions in one request; this one has {len(decisions)}.")
 	results = []
 	for decision in decisions or []:
 		decision = decision or {}
@@ -952,6 +1152,114 @@ def confirm_many(pairs, *, user=None) -> list:
 			result = confirm(entity_type, qbo_id, user=user)
 			results.append(dict(result, entity_type=entity_type, qbo_id=qbo_id, ok=True))
 		except Exception as exc:
+			results.append(
+				{"entity_type": entity_type, "qbo_id": qbo_id, "ok": False, "error": clean_error(exc)}
+			)
+	return results
+
+
+# ---------------------------------------------------------------------------
+# "QuickBooks changed" review (v1.800.0)
+# ---------------------------------------------------------------------------
+
+
+def keep_erpnext(entity_type, qbo_id, *, user=None) -> dict:
+	"""*Keep ERPNext* for one mapping: the flag is cleared, the cursor advances to what the
+	reviewer was shown, and the record is not written. Accepted for a ``QuickBooks Changed``
+	row, a legacy ``Conflict`` row, and a submitted document the sync parked because
+	QuickBooks changed it (``mapping.keep_erpnext_values``)."""
+	user = user or frappe.session.user
+	result = keep_erpnext_values(entity_type, str(qbo_id))
+	_stamp_reviewed(result["mapping"], user)
+	frappe.db.commit()
+	return dict(result, action="kept", reviewed_by=user)
+
+
+def _still_differs_view(result: dict) -> dict:
+	"""A write's result for the page: the ``remaining`` differences (which can hold whole
+	child tables) are replaced by ``still_labels``, one short line per field the saved
+	record still holds differently from QuickBooks -- "Items (8 rows)", "Customer"."""
+	result = dict(result)
+	remaining = result.pop("remaining", None) or {}
+	still = list(result.get("still_differs") or [])
+	result["still_differs"] = still
+	if not still:
+		result["still_labels"] = []
+		return result
+	labels = _field_labels(result.get("doctype"))[0] if result.get("doctype") else {}
+	tables = remaining.get("tables") or {}
+	lines = []
+	for fieldname in still:
+		label = labels.get(fieldname) or fieldname
+		if fieldname in tables:
+			entry = tables[fieldname] or {}
+			rows = len(entry.get("rows") or []) + cint(entry.get("more_rows"))
+			label = f"{label} ({rows} row{'' if rows == 1 else 's'})"
+		lines.append(label)
+	result["still_labels"] = lines
+	return result
+
+
+def use_quickbooks_values(entity_type, qbo_id, *, fields=None, user=None) -> dict:
+	"""*Use QuickBooks values* for one flagged mapping: the flagged values (or the ``fields``
+	subset) are written to its one linked record. Refused for a posted document.
+
+	``action`` is ``applied``, or ``still_differs`` when the saved record does not hold
+	every chosen value as QuickBooks has it: the row stays flagged with what remains."""
+	user = user or frappe.session.user
+	result = _still_differs_view(use_qbo_values(entity_type, str(qbo_id), fields=fields))
+	_stamp_reviewed(result["mapping"], user)
+	frappe.db.commit()
+	return dict(result, action="still_differs" if result["still_differs"] else "applied", reviewed_by=user)
+
+
+def refresh_draft(entity_type, qbo_id, *, user=None) -> dict:
+	"""*Refresh draft* for one linked draft transaction: rebuilt from the newest stored
+	payload. Refused for anything that is not a docstatus 0 transaction.
+
+	``action`` is ``refreshed``, or ``still_differs`` when the rebuilt draft, read back,
+	does not hold everything QuickBooks said: it stays rebuilt, and stays flagged."""
+	user = user or frappe.session.user
+	result = _still_differs_view(refresh_linked_draft(entity_type, str(qbo_id)))
+	_stamp_reviewed(result["mapping"], user)
+	frappe.db.commit()
+	return dict(result, action="still_differs" if result["still_differs"] else "refreshed", reviewed_by=user)
+
+
+def review_many(items, action, *, user=None) -> list:
+	"""Run one review ``action`` (``keep_erpnext`` / ``use_quickbooks_values`` /
+	``refresh_draft``) for each of ``items`` (dicts of entity_type / qbo_id, plus ``fields``
+	for *Use QuickBooks values*), one result per item in order.
+
+	Each item is its own decision in its own savepoint: a record ERPNext refuses to save is
+	rolled back and reported with the refusal, its flag exactly as it was, and the rest
+	still run. A write that saved but left the record differing from QuickBooks is ``ok``
+	with ``action`` ``still_differs`` and the fields in ``still_labels``; its row stays
+	flagged. Nothing here reads QuickBooks or queues a job. A request over
+	``MAX_REVIEW_ITEMS`` rows is refused whole, before anything is written.
+	"""
+	if len(items or []) > MAX_REVIEW_ITEMS:
+		frappe.throw(f"Send at most {MAX_REVIEW_ITEMS} rows in one request; this one has {len(items)}.")
+	results = []
+	for item in items or []:
+		item = item if isinstance(item, dict) else {}
+		entity_type = item.get("entity_type")
+		qbo_id = item.get("qbo_id")
+		try:
+			if not entity_type or not qbo_id:
+				frappe.throw("Each row needs an entity_type and a qbo_id.")
+			frappe.db.savepoint("qbo_review_action")
+			if action is use_quickbooks_values:
+				fields = item.get("fields")
+				result = action(entity_type, qbo_id, fields=fields if isinstance(fields, list) else None, user=user)
+			else:
+				result = action(entity_type, qbo_id, user=user)
+			results.append(dict(result, entity_type=entity_type, qbo_id=qbo_id, ok=True))
+		except Exception as exc:
+			try:
+				frappe.db.rollback(save_point="qbo_review_action")
+			except Exception:
+				frappe.db.rollback()
 			results.append(
 				{"entity_type": entity_type, "qbo_id": qbo_id, "ok": False, "error": clean_error(exc)}
 			)

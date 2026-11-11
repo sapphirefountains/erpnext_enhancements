@@ -1607,6 +1607,10 @@ scheduler_events = {
 		# but it tripped monitoring). Offsets keep the writers apart. Ordered so the
 		# token is refreshed (:00) before CDC pulls (:20) and retries run last (:40).
 		# All three self-throttle/guard internally and no-op while disconnected.
+		# The :40 job reaps orphaned runs and retries a failed CDC poll. It never starts
+		# an Import All or a Run Resync (v1.800.0): until then it restarted a full import
+		# after every failed one, on this 300-second queue, 2 to 6 times a day. And no
+		# job here saves over a record the sync has already linked; CDC flags instead.
 		"0 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed"],
 		"20 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll"],
 		"40 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs"],

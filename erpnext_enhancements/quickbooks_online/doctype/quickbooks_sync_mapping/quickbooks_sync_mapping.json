@@ -16,6 +16,8 @@
   "last_synced_at",
   "deleted",
   "conflict_status",
+  "qbo_changes",
+  "settled_qbo_values",
   "match_status",
   "match_rule",
   "match_confidence",
@@ -75,10 +77,25 @@
   },
   {
    "default": "Clean",
+   "description": "QuickBooks Changed: QuickBooks moved on and no longer agrees with the linked ERPNext record. The sync never applies the difference; a person reviews it on the QuickBooks Record Matching page. Conflict is the status the sync wrote before v1.800.0.",
    "fieldname": "conflict_status",
    "fieldtype": "Select",
    "label": "Conflict Status",
-   "options": "Clean\nConflict\nIgnored\nPending Review"
+   "options": "Clean\nConflict\nQuickBooks Changed\nIgnored\nPending Review"
+  },
+  {
+   "description": "JSON, written by the sync when it flags this row QuickBooks Changed: what QuickBooks now says, field by field, beside what ERPNext held. Cleared when a person resolves the flag.",
+   "fieldname": "qbo_changes",
+   "fieldtype": "Long Text",
+   "label": "QuickBooks Changes",
+   "read_only": 1
+  },
+  {
+   "description": "JSON of the QuickBooks value last settled for each field: applied to the record by the import or by a person, or declined with Keep ERPNext. The sync flags a field only when QuickBooks says something else.",
+   "fieldname": "settled_qbo_values",
+   "fieldtype": "Long Text",
+   "label": "Settled QuickBooks Values",
+   "read_only": 1
   },
   {
    "default": "Not Matched",
@@ -121,7 +138,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 00:00:00.000000",
+ "modified": "2026-11-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "QuickBooks Online",
  "name": "QuickBooks Sync Mapping",
