@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.799.2] - 2026-11-11
+
+### Added
+- **An evaluation of Frappe Pilot for the production server, and a plan; docs only.**
+  [`docs/frappe-pilot-evaluation.md`](docs/frappe-pilot-evaluation.md). Nik asked to bring
+  [frappe/pilot](https://github.com/frappe/pilot) to the ERPNext site "to help visually manage
+  it". No code, fixture, hook or infra file changes, so this release changes nothing on
+  production beyond the version string.
+  - **What Pilot is.** Frappe's new server manager: a `pilot` command line and a browser Admin
+    panel that create and run benches on a server (apps, sites, updates with a safeguard backup
+    and a Restore button, backups, processes, logs, database tools). It replaces `bench`; it is
+    not a Frappe app and adds nothing to the Desk.
+  - **Why it is not going onto production now.** It cannot adopt an existing bench, so using it
+    means building a new VM with it, restoring the site, and rewriting both Cloud Build pipelines
+    and the units under `infra/configs/systemd/`. Its newest release is `v0.0.100-pre-alpha`
+    (2026-11-09), the 13th release in two weeks, and it updates itself daily by default. Its
+    Admin panel carries a Python console, an SQL console, a code editor and "Login as admin", so
+    it must never be reachable from the internet.
+  - **The plan.** Use Frappe's built-in System Health Report today; rehearse Pilot on a throwaway
+    VM with the seven production apps and the sanitized mirror backup (needs Nik's yes);
+    decide on a read-only Server Status page in this app for what the built-in report lacks
+    (versions against upstream, the last deploy and whether its migrate finished, a scheduler
+    heartbeat, the queue, the newest offsite backup); revisit Pilot for the VMs behind a
+    four-condition gate. Five open questions for Nik are at the end of the page.
+  - **Reviewed.** An independent read-only pass checked the page against Pilot's source, and
+    five statements were corrected before this was committed: the default "lite mode" process
+    shape, the screen list, the release count, what the installer does to a host, and the
+    site-config keys.
+  - **One finding worth keeping.** Pilot validates every app on install and on every update, with
+    no override. Six of production's seven apps declare a Frappe range that includes 16.56; the
+    `payments` app would have to be on its `version-16` branch, because its `develop` branch
+    declares Frappe 17.
+
 ## [1.799.1] - 2026-11-08
 
 ### Changed

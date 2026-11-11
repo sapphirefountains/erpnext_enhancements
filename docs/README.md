@@ -47,6 +47,7 @@ anything.
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
 | [workspace-sidebars.md](workspace-sidebars.md) | The `Workspace Sidebar` records, and why Frappe's importable app-level directories may contain nothing but JSON |
 | [pdf-generation.md](pdf-generation.md) | Why PDF generation fails on both backends, and the runbook to fix the host |
+| [frappe-pilot-evaluation.md](frappe-pilot-evaluation.md) | Whether Frappe Pilot (Frappe's new server manager and its Admin panel) fits the production server (2026-11-11): what it is, why it cannot be added to the existing bench, the risks of its Admin panel, and the plan (built-in health screen, an off-production rehearsal, an in-app Server Status page, a gate for revisiting). Evaluation only |
 | [procurement-tracker-map.md](procurement-tracker-map.md) | The Project form's Procurement Tracker: what renders it, the chain SQL underneath, and where its status/quantity arithmetic lives |
 | [stripe_surcharging_compliance.md](stripe_surcharging_compliance.md) | The surcharging compliance checklist gating OD-7 |
 | [migration/](migration/) | Chart-of-accounts design, mapping workbooks, and the per-work-item apply runbooks |
