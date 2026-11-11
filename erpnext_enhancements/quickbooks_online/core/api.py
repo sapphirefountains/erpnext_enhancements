@@ -279,9 +279,10 @@ def preview_existing_matches(entity_types=None, limit=100):
 	return run_preview_existing_matches(entity_types=entity_types, limit=int(limit or 100))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_existing_record(entity_type, qbo_id, erpnext_doctype, erpnext_name, apply_qbo_data=0):
-	"""RPC: manually link a QBO entity to a chosen ERPNext record (link dialog)."""
+	"""RPC: manually link a QBO entity to a chosen ERPNext record (link dialog). POST only
+	(v1.800.0): it writes a mapping and, with ``apply_qbo_data``, saves the record."""
 	_require_qbo_operator()
 	return run_link_existing_record(
 		entity_type,
@@ -524,7 +525,7 @@ def refresh_drafts(items):
 	return matching.review_many(_review_items(items), matching.refresh_draft)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplicate=1):
 	"""RPC: link one QBO record to the chosen ERPNext record (the page's Link button).
 
@@ -543,7 +544,7 @@ def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplica
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decide_matches(decisions, fill_blanks=0, merge_duplicate=1):
 	"""RPC: ``decide_match`` over a list (the page's Accept suggestions and Link selected),
 	one result per decision in order; one failure never stops the rest. A decision's own

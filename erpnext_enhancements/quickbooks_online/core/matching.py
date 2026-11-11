@@ -138,6 +138,11 @@ SUGGESTION_LIMIT = 5
 SIMILARITY_FLOOR = 55
 #: How many recent master payloads the Unmapped view scans (the old dialog scanned 100).
 UNMAPPED_SCAN_LIMIT = 500
+#: The most rows one review request (Keep ERPNext / Use QuickBooks values / Refresh draft)
+#: may carry. The page sends ``REVIEW_CHUNK`` (20) at a time; this is the server's own
+#: ceiling, because two of the three save an ERPNext record per row and a request is not
+#: the place for a few hundred of those.
+MAX_REVIEW_ITEMS = 50
 #: The two lists the transactions tab shows.
 TXN_VIEW_PARKED = "parked"
 TXN_VIEW_CHANGED = "changed"
@@ -562,6 +567,11 @@ def change_view(row) -> dict | None:
 				"erpnext": _show(held),
 				"qbo": _show(entry.get("qbo")),
 				"edited": bool(entry.get("erpnext_edited")),
+				# False: the sync never wrote or read this field before, so QuickBooks
+				# may not have changed it at all. The page leaves it unticked.
+				"baselined": not entry.get("no_baseline"),
+				# True: QuickBooks cleared the field; taking it blanks the ERPNext value.
+				"cleared": bool(entry.get("cleared")),
 				"agrees": bool(live) and _same_for_review(held, entry.get("qbo")),
 			}
 		)
@@ -591,6 +601,7 @@ def change_view(row) -> dict | None:
 				"qbo_rows": cint(entry.get("qbo_rows")),
 				"rows": rows,
 				"more_rows": cint(entry.get("more_rows")),
+				"baselined": not entry.get("no_baseline"),
 			}
 		)
 	return {
@@ -1137,8 +1148,10 @@ def confirm_many(pairs, *, user=None) -> list:
 
 
 def keep_erpnext(entity_type, qbo_id, *, user=None) -> dict:
-	"""*Keep ERPNext* for one flagged mapping: the flag is cleared, the cursor advances to
-	what the reviewer was shown, and the record is not written."""
+	"""*Keep ERPNext* for one mapping: the flag is cleared, the cursor advances to what the
+	reviewer was shown, and the record is not written. Accepted for a ``QuickBooks Changed``
+	row, a legacy ``Conflict`` row, and a submitted document the sync parked because
+	QuickBooks changed it (``mapping.keep_erpnext_values``)."""
 	user = user or frappe.session.user
 	result = keep_erpnext_values(entity_type, str(qbo_id))
 	_stamp_reviewed(result["mapping"], user)
@@ -1173,8 +1186,11 @@ def review_many(items, action, *, user=None) -> list:
 
 	Each item is its own decision in its own savepoint: a record ERPNext refuses to save is
 	rolled back and reported with the refusal, its flag exactly as it was, and the rest
-	still run. Nothing here reads QuickBooks or queues a job.
+	still run. Nothing here reads QuickBooks or queues a job. A request over
+	``MAX_REVIEW_ITEMS`` rows is refused whole, before anything is written.
 	"""
+	if len(items or []) > MAX_REVIEW_ITEMS:
+		frappe.throw(f"Send at most {MAX_REVIEW_ITEMS} rows in one request; this one has {len(items)}.")
 	results = []
 	for item in items or []:
 		item = item if isinstance(item, dict) else {}

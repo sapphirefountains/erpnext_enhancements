@@ -40,19 +40,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       `conflict_status` becomes `QuickBooks Changed` and `qbo_changes` stores, field by field, what
       ERPNext holds and what QuickBooks now says. The record is not saved.
 
-    A field counts only when QuickBooks changed it: each mapped value is first held against the
-    last thing QuickBooks is known to have said (the settled value, else what the last sync
-    stored), and a field where QuickBooks still says the same is skipped however far ERPNext has
-    moved. So an accountant's edit to a draft, or a customer renamed in ERPNext, is never raised as
-    "QuickBooks changed". The comparison also forgives what ERPNext does to a value on save (edge
+    A field that has a reference counts only when QuickBooks changed it: each mapped value is
+    first held against the last thing QuickBooks is known to have said (the settled value, else
+    what the last sync stored), and a field where QuickBooks still says the same is skipped however
+    far ERPNext has moved. So an accountant's edit to a draft, or a customer renamed in ERPNext, is
+    never raised as "QuickBooks changed". A field with **no** reference (it differed on the day the
+    record was first linked, so the import never wrote it) is compared with the record directly and
+    flags on the first pass that looks at it, whichever side changed; it is marked "never synced
+    before" and starts unticked. A field QuickBooks **cleared** is flagged when the reference held a
+    value, and skipped when there never was one. The reference follows QuickBooks: every field a
+    pass looked at and did not flag is settled at what QuickBooks says now, so a change away and
+    back is not lost. The comparison also forgives what ERPNext does to a value on save (edge
     whitespace, markup, a website's scheme, a cent of rounding), which would otherwise raise a flag
     on every QuickBooks edit to a customer whose website was saved as a bare domain.
-  - **A linked Project's status and company are never flagged and can never be applied.** They are
-    not QuickBooks data: the job mapper sets them to a constant (the first open-like status, the
-    Settings company) so a new Project can be inserted. Applied to existing Projects, those two
-    constants are the reopening and the re-pointing. `MAPPER_DEFAULTS_ERPNEXT_OWNS` drops them for
-    a linked record, beside the title guard that already existed, which leaves the customer as the
-    one thing a QuickBooks job can say about a linked Project.
+  - **What a mapper supplies for a create is never flagged and can never be applied to a linked
+    record** (`MAPPER_DEFAULTS_ERPNEXT_OWNS`, beside the title and party-group guards that already
+    existed). None of it is QuickBooks data:
+    - Project: `status`, `company`. Constants (the first open-like status, the Settings company).
+      Applied to existing Projects they are the reopening and the re-pointing. Only the customer
+      can flag a Project. A QuickBooks job rename is dropped too, as before: titles are ERPNext's.
+    - Customer, Supplier: `customer_type`, `supplier_type`. A guess from whether `CompanyName` is
+      filled; QuickBooks has no such field.
+    - Item: `item_code` (the record's name), `item_group`, `stock_uom`, `is_stock_item`. Constants;
+      one click would have re-filed an Item and tried to make a stock item non-stock.
+    - Account from a QuickBooks Account: `company`. From a TaxCode: everything but the name.
+    - Cost Center: `company`. Payment Terms Template: `template_name`. Mode of Payment:
+      `mode_of_payment`, `enabled`.
+    - A group Account or Cost Center with children in ERPNext is never told it is a ledger:
+      `is_group` is only known on a full query, so every CDC payload of a parent reads as a leaf.
+  - **A sync no longer saves a linked record that is not the one it is syncing.** Two doors:
+    - *Parent promotion.* A new sub-account under a ledger parent promoted the parent to a group
+      (`is_group` set, `account_type` cleared, the parent saved), on any path, CDC included. Where
+      a mapping links that parent the child is parked: "make it a group by hand".
+    - *Auto-link.* The matcher could find a record another mapping already links (a customer
+      re-created in QuickBooks, two jobs with one PRJ number, a TaxCode named like a linked
+      Account), and the auto-link path filled its blank fields and saved it. That is parked for a
+      person now, with no save and no second link. A job consolidated onto its parent Customer
+      does not count as the Customer's own link.
 
     This holds for every doctype, for docstatus 0 drafts as well as masters, and for records the
     import created (`match_status = Created`) as much as ones it matched. It holds for the hourly
@@ -86,8 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the parent Account, which is usually a linked record itself. It now runs only for a create or a
     first link. *Use QuickBooks values* does not promote a parent either: ERPNext refuses the save
     and says why.
-  - *`Conflict` is no longer written.* The 73 mappings that carry it on production are compared
-    again on their next sync and become `QuickBooks Changed` or `Clean`.
+  - *`Conflict` is no longer written.* The 73 mappings that carry it on production are resolved
+    one of three ways: compared again on their next sync (they become `QuickBooks Changed` or
+    `Clean`), all at once by a person-started Preview Resync and Run Resync, or one by one with
+    Keep ERPNext under the *Conflict* filter.
+  - *Link, Link selected and Accept suggestions are POST only* (`decide_match`, `decide_matches`,
+    `link_existing_record`). The page already posts.
+  - *"Fill blank fields from QBO" is refused when another QuickBooks record already links the
+    picked record.* The link itself still goes ahead without it (two QuickBooks records on one
+    ERPNext record stays a warning, not a refusal: Nik, 2026-10-22).
 
 ### Added
 - **Review of "QuickBooks changed" records on the QuickBooks Record Matching page.** Roles System
@@ -99,16 +130,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was edited too. Three answers, each for one row or the ticked rows, each a POST-only endpoint
   behind `_require_qbo_operator`, none of which calls QuickBooks or queues a job:
   - **Keep ERPNext** (`keep_erpnext`): clears the flag and advances the mapping cursor to what the
-    reviewer was shown. Writes nothing to the record.
-  - **Use QuickBooks values** (`use_quickbooks_values`): writes the flagged fields, or the ticked
-    subset, to that one record. Refused for a submitted or cancelled document and for a flag whose
-    QuickBooks data failed the preflight.
+    reviewer was shown. Writes nothing to the record. Also offered on a row still carrying the old
+    `Conflict` status, and on a submitted document the sync parked because QuickBooks changed it:
+    the message there said to choose Keep ERPNext, and until now it refused.
+  - **Use QuickBooks values** (`use_quickbooks_values`): writes the ticked fields to that one
+    record. A "never synced before" field and a field QuickBooks cleared start unticked. Refused
+    for a submitted or cancelled document, for a flag whose QuickBooks data failed the preflight,
+    and for a stored field name that is not a field of the DocType.
   - **Refresh draft** (`refresh_drafts`): rebuilds one docstatus 0 transaction from the newest
     payload already stored.
 
   Every answer records the QuickBooks value in `settled_qbo_values`, and a field is not flagged
   again while QuickBooks still says the same thing. Without that, a difference a person chose to
-  keep would be raised again every time the QuickBooks record was touched.
+  keep would be raised again every time the QuickBooks record was touched. A review request
+  carries at most 50 rows (`matching.MAX_REVIEW_ITEMS`); the page sends 20.
+- **The Excel export knows the new status.** *QuickBooks changed* is an export filter, a flagged
+  row's status reads "(QuickBooks changed)", and the Instructions sheet says the flag is answered
+  on the page, not in the file.
 - **`QuickBooks Sync Mapping`: the `QuickBooks Changed` option on `conflict_status`, and two
   read-only Long Text columns, `qbo_changes` and `settled_qbo_values`.** The doctype is this app's
   own, so the change is in its JSON. Adding a Select value freezes nothing (only a removed value

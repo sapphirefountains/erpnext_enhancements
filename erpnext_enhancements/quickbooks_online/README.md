@@ -80,22 +80,60 @@ Run Resync, for any doctype, drafts included, whether the import matched the rec
 | moved | a changed field differs | `flagged` | the mapping: `conflict_status = QuickBooks Changed` and `qbo_changes` |
 | any, record is submitted | (the older guard) | `unchanged` / `manual_review` | as before v1.800.0 |
 
-**A field is a difference only when QuickBooks changed it** (`_linked_differences`). Each mapped
-field is first held against its *reference*, the last thing QuickBooks is known to have said: the
-settled value in `settled_qbo_values`, else what the last sync stored in `owned_fields`. Same as the
-reference: skipped, however far ERPNext has moved (an accountant's edit to a draft, a customer
-renamed here). Different from the reference, or no reference at all (the field differed when the
-record was first linked): compared with the record, and flagged if they differ. The comparison
-(`_same_for_review`) forgives what ERPNext does to a value on save: blank is blank, edge whitespace
-and markup go, a website gains its scheme, and amounts of 1 or more agree to the cent.
+**What counts as a difference** (`_linked_differences`). Each mapped field is first held against
+its *reference*, the last thing QuickBooks is known to have said: the settled value in
+`settled_qbo_values`, else what the last sync stored in `owned_fields`.
+
+| The field | Result |
+|---|---|
+| has a reference, and QuickBooks still says the same | skipped, however far ERPNext has moved (an accountant's edit to a draft, a customer renamed here) |
+| has a reference, and QuickBooks changed it | compared with the record; flagged if they differ |
+| has a reference, and QuickBooks cleared it (a mapped `None`: a term removed, a reference that no longer resolves) | flagged `cleared` if the record still holds a value |
+| has **no** reference (it differed on the day the record was first linked, so the import never wrote it) | compared with the record directly, so it flags on the first pass that looks at it, whichever side changed. Marked `no_baseline`; the page says "never synced before" and leaves it unticked |
+| is a mapped `None` and never had a value | skipped |
+
+So "flags only what QuickBooks changed" holds for every field with a reference, which is every
+field of a record the import created and every field that agreed when a record was linked. A field
+with no reference is the exception, once: its first answer settles it.
+
+**The reference follows QuickBooks.** Every field a pass looked at and did not flag is settled at
+what QuickBooks says now (`_settle_unflagged`), in the same write that advances the cursor or raises
+the flag. Without that a real change was lost: ERPNext edited to Net 45, QuickBooks moves to Net 45
+(they agree), QuickBooks moves back to Net 30, which equalled the stale reference and read as "not
+changed".
+
+The comparison (`_same_for_review`) forgives what ERPNext does to a value on save: blank is blank,
+edge whitespace and markup go, a website gains its scheme, and amounts of 1 or more agree to the cent.
 
 A flag is written with `frappe.db.set_value`, never `save_mapping`, so `owned_fields` survives; the
 cursor is held back so a replay re-derives the same flag, and an identical replay writes nothing.
-A Project's title, **status and company**, a party's group and territory, and an Account's own
-parent are dropped before the comparison (`_strip_values_erpnext_owns`), so they are never flagged
-and can never be applied. For a Project, status and company are constants the mapper supplies so a
-new Project can be inserted (`MAPPER_DEFAULTS_ERPNEXT_OWNS`), not QuickBooks data; the customer is
-the one thing a QuickBooks job can say about a linked Project.
+
+**What ERPNext owns on a linked record is dropped before the comparison**
+(`_strip_values_erpnext_owns`), so it is never flagged and can never be applied:
+
+| Record | Never flagged, never applied | Why |
+|---|---|---|
+| Project (from a QuickBooks job) | `project_name` (when set), `status`, `company` | the title is curated; status and company are constants the mapper supplies for a create. Only `customer` can flag |
+| Customer / Supplier | `customer_group`, `territory`, `supplier_group`, `customer_type`, `supplier_type` | QuickBooks has none of these; the type is a guess from whether `CompanyName` is filled |
+| Item | `item_code`, `item_group`, `stock_uom`, `is_stock_item` | the code is the record's name; the rest are constants ("All Item Groups", "Nos", 0) |
+| Account (from a QuickBooks Account) | `company`; a self-parent; `is_group` and `account_type` when ERPNext has children under it | `is_group` is only known on a full query, so every CDC payload of a parent reads as a leaf |
+| Account (from a TaxCode) | everything but `account_name` | the mapper invents a Tax ledger under the Liability root |
+| Cost Center (from a Class) | `company`; `is_group` when ERPNext has children under it | as for Account |
+| Payment Terms Template, Mode of Payment | `template_name`; `mode_of_payment`, `enabled` | the record's own name; a constant |
+
+Transactions are not in the list: each one the import created has a full baseline, so its constants
+only read as changed if the constant itself changes, and *Refresh draft* rebuilds the whole draft.
+A QuickBooks **job rename** is therefore dropped, with the cursor advanced and no flag: titles are
+ERPNext's.
+
+**The two side doors are shut too.** A sync could also save a linked record that is *not* the one it
+is syncing. A new sub-account under a ledger parent promoted that parent to a group
+(`_ensure_group_parent`: `is_group` set, `account_type` cleared, parent saved): where a mapping links
+the parent, the child is parked instead ("make it a group by hand"). And the auto-link path filled
+the blank fields of whatever record the matcher found: where another mapping already links that
+record (a customer re-created in QuickBooks, two jobs with one PRJ number), the new one is parked
+for a person, with no save and no second link. `other_mapping_linking` answers both; a job
+consolidated onto its parent Customer does not count as that Customer's link.
 `preview=True` reports `would_flag` and writes nothing. A person-started Preview Resync / Run Resync
 passes `recheck=True` and compares even a record QuickBooks has not moved: that is how a standing
 difference (a mapper fix that changes what a draft should hold, a field that has differed since the
@@ -105,13 +143,14 @@ record was first linked) is brought up for review. It still only flags.
 **Review is on the Record Matching page** (System Manager, Accounts Manager): the *QuickBooks
 changed* status filter on Masters, and the *QuickBooks changed* choice in the transactions tab's
 select. Each flagged row shows "ERPNext has" (read from the record when the page loads) beside
-"QuickBooks has", field by field. Three POST-only endpoints, each for one row or the ticked rows,
-none of which calls QuickBooks or queues a job:
+"QuickBooks has", field by field. Three POST-only endpoints, each for one row or the ticked rows
+(at most `matching.MAX_REVIEW_ITEMS`, 50, per request; the page sends 20), none of which calls
+QuickBooks or queues a job:
 
 | Action | Endpoint | What it does |
 |---|---|---|
-| **Keep ERPNext** | `keep_erpnext` | Clears the flag, advances the cursor to what the reviewer saw, records the declined values in `settled_qbo_values`. Writes nothing to the record. |
-| **Use QuickBooks values** | `use_quickbooks_values` | Writes the flagged fields (or the ticked subset) to that one record and saves it. Refused for a submitted or cancelled document and for a flag whose QuickBooks data failed the preflight. An unticked field keeps what ERPNext has and is settled too. |
+| **Keep ERPNext** | `keep_erpnext` | Clears the flag, advances the cursor to what the reviewer saw, records the declined values in `settled_qbo_values`. Writes nothing to the record. Also accepted for a row still carrying the pre-v1.800.0 `Conflict` (the newest stored payload is compared with the record and what differs is settled) and for a **submitted** document the sync parked because QuickBooks changed it (the row is un-parked; a posted document is never updated in place). |
+| **Use QuickBooks values** | `use_quickbooks_values` | Writes the ticked fields to that one record and saves it; a field QuickBooks cleared is blanked when ticked. With no list it takes what the page ticks by default: not a "never synced before" field and not a cleared one. Refused for a submitted or cancelled document, for a flag whose QuickBooks data failed the preflight, and for a stored name that is not a field of the DocType. An unticked field keeps what ERPNext has and is settled too. |
 | **Refresh draft** | `refresh_drafts` | Rebuilds one docstatus 0 transaction from the newest stored payload. Also offered on a parked transaction that already has a draft, where a sync used to rebuild it. |
 
 Every answer records the QuickBooks value as settled, so a field is not flagged again while
@@ -158,7 +197,7 @@ the best one, and per row:
 
 | Action | Endpoint | What it does |
 |---|---|---|
-| **Link** | `decide_match` | `link_existing_record` to the picked record (optionally filling its blank fields from QBO), stamps `reviewed_by`/`reviewed_on`, then applies the merge policy below |
+| **Link** | `decide_match` | `link_existing_record` to the picked record (optionally filling its blank fields from QBO), stamps `reviewed_by`/`reviewed_on`, then applies the merge policy below. POST only, like `decide_matches` and `link_existing_record` (v1.800.0). *Fill blank fields* is refused when another QuickBooks record already links the picked record; the link itself is still allowed (two QuickBooks records on one ERPNext record is a warning, not a refusal: Nik, 2026-10-22) |
 | **Keep** | `confirm_match` | stamps the row reviewed; changes no status (a `Pending Review` row stays pending until its cause is fixed and it is retried) |
 | **Retry** | `sync_entity` | re-syncs a parked row from QBO |
 | **Accept suggestions on this page** | `decide_matches` | Link for every row whose best suggestion clears the threshold; one failure never stops the rest |

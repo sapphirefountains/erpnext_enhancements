@@ -115,6 +115,20 @@ def _mapping_row(**overrides):
 	return types.SimpleNamespace(**row)
 
 
+def _replay(row, writes):
+	"""Carry the mapping writes of the pass just run onto the mapping double, as the
+	database would, so the next pass reads what this one stored."""
+	for (_doctype, _name, updates), _kwargs in writes["set_value"]:
+		for fieldname, value in updates.items():
+			setattr(row, fieldname, value)
+	writes["set_value"].clear()
+
+
+def _meta(*fieldnames):
+	"""A DocType meta double that knows exactly these fields."""
+	return types.SimpleNamespace(has_field=lambda fieldname: fieldname in fieldnames)
+
+
 def _wire(monkeypatch, *, doctype, values, mapping_row, doc, issues=None):
 	"""Point ``upsert_entity`` at one linked record and record every write it attempts."""
 	frappe = install_frappe_stub()
@@ -462,15 +476,15 @@ def test_a_projects_status_company_and_title_are_never_a_difference(monkeypatch)
 def test_a_field_quickbooks_did_not_change_is_not_a_difference(monkeypatch):
 	"""The flag is "QuickBooks changed". A person renamed the customer here and QuickBooks
 	still says what it said at the last sync: not flagged, however far apart the two are.
-	QuickBooks then changes the type as well, a field ERPNext had also edited: flagged, for
-	that field alone, with the note that both sides moved."""
-	synced = {"customer_name": "Acme Supply", "customer_type": "Commercial", "website": "https://www.example.com"}
-	values = {"customer_name": "Acme Supply", "customer_type": "Commercial", "website": "www.example.com"}
+	QuickBooks then changes the payment terms as well, a field ERPNext had also edited:
+	flagged, for that field alone, with the note that both sides moved."""
+	synced = {"customer_name": "Acme Supply", "payment_terms": "Net 30", "website": "https://www.example.com"}
+	values = {"customer_name": "Acme Supply", "payment_terms": "Net 30", "website": "www.example.com"}
 	doc = _doc(
 		doctype="Customer",
 		name="Acme Supply",
 		customer_name="Acme Supply Company (renamed here)",
-		customer_type="Partnership",
+		payment_terms="Net 45",
 		website="https://www.example.com",
 	)
 	row = _mapping_row(
@@ -485,22 +499,91 @@ def test_a_field_quickbooks_did_not_change_is_not_a_difference(monkeypatch):
 	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
 	assert result["action"] == "unchanged", "QuickBooks moved, but changed none of these fields"
 	assert doc.saves == [] and doc.sets == []
-	assert "conflict_status" not in writes["set_value"][0][0][2]
+	updates = writes["set_value"][0][0][2]
+	assert "conflict_status" not in updates and "settled_qbo_values" not in updates
 
-	values["customer_type"] = "Residential"
+	values["payment_terms"] = "Net 15"
 	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "4"}, SETTINGS)
-	assert result["action"] == "flagged" and result["fields"] == ["customer_type"]
+	assert result["action"] == "flagged" and result["fields"] == ["payment_terms"]
 	note = json.loads(writes["set_value"][1][0][2]["qbo_changes"])
-	assert note["fields"] == {
-		"customer_type": {"erpnext": "Partnership", "qbo": "Residential", "erpnext_edited": True}
-	}
-	assert doc.customer_type == "Partnership"
+	assert note["fields"] == {"payment_terms": {"erpnext": "Net 45", "qbo": "Net 15", "erpnext_edited": True}}
+	assert doc.payment_terms == "Net 45"
+
+
+def test_a_change_back_is_flagged_because_the_reference_follows_quickbooks(monkeypatch):
+	"""The lost change, reproduced. The last sync stored Net 30. A person sets ERPNext to
+	Net 45. QuickBooks moves to Net 45 too: they agree, the cursor advances -- and the
+	reference must move to Net 45 with it. QuickBooks then goes back to Net 30. Held against
+	the stale reference that read as "QuickBooks did not change it" and nothing was flagged,
+	with ERPNext left on Net 45."""
+	values = {"customer_name": "Acme Supply", "payment_terms": "Net 45"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply", payment_terms="Net 45")
+	row = _mapping_row(
+		name="QBO-MAP-Customer-1",
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		owned_fields=json.dumps({"customer_name": "Acme Supply", "payment_terms": "Net 30"}),
+		sync_token="2",
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+	assert result["action"] == "unchanged"
+	updates = writes["set_value"][0][0][2]
+	assert updates["sync_token"] == "3"
+	assert json.loads(updates["settled_qbo_values"]) == {"payment_terms": "Net 45"}
+	assert "owned_fields" not in updates
+	_replay(row, writes)
+
+	values["payment_terms"] = "Net 30"
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "4"}, SETTINGS)
+
+	assert result["action"] == "flagged" and result["fields"] == ["payment_terms"]
+	note = json.loads(writes["set_value"][0][0][2]["qbo_changes"])
+	assert note["fields"]["payment_terms"]["erpnext"] == "Net 45"
+	assert note["fields"]["payment_terms"]["qbo"] == "Net 30"
+	assert doc.payment_terms == "Net 45" and doc.saves == []
+
+
+def test_a_field_quickbooks_cleared_is_flagged_and_one_that_never_had_a_value_is_not(monkeypatch):
+	"""A mapped None is QuickBooks saying nothing. Where the reference held a value that is
+	a change -- the payment term was removed, or its reference no longer resolves -- and it
+	used to be skipped while the cursor advanced. Where there never was a value it is still
+	skipped: the mapper sends None for every field QuickBooks does not fill."""
+	values = {"customer_name": "Acme Supply", "payment_terms": None, "tax_id": None, "website": None}
+	doc = _doc(
+		doctype="Customer",
+		name="Acme Supply",
+		customer_name="Acme Supply",
+		payment_terms="Net 30",
+		tax_id="99-0000001",  # typed in ERPNext; QuickBooks never sent one
+		website="",
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Customer-1",
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		owned_fields=json.dumps({"customer_name": "Acme Supply", "payment_terms": "Net 30", "website": "x.example"}),
+		sync_token="2",
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+
+	assert result["action"] == "flagged" and result["fields"] == ["payment_terms"]
+	updates = writes["set_value"][0][0][2]
+	note = json.loads(updates["qbo_changes"])
+	assert note["fields"] == {"payment_terms": {"erpnext": "Net 30", "qbo": None, "cleared": True}}
+	# The website was cleared on both sides: nothing to review, and its reference moves on.
+	assert json.loads(updates["settled_qbo_values"]) == {"website": None}
+	assert doc.saves == [] and doc.payment_terms == "Net 30"
 
 
 def test_a_field_with_no_baseline_is_compared_with_the_record(monkeypatch):
 	"""A record the import linked to (not created) has a baseline only for the fields that
-	agreed at the time. A field that differed then has no reference, so the first time
-	QuickBooks moves it is shown to a person instead of being written, as it used to be."""
+	agreed at the time. A field that differed then has no reference, so the first pass that
+	looks at it shows it to a person instead of writing it, as it used to -- marked
+	``no_baseline``, because QuickBooks may not have changed it at all."""
 	values = {"customer_name": "Acme Supply", "tax_id": "99-0000001"}
 	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply", tax_id="")
 	row = _mapping_row(
@@ -514,8 +597,109 @@ def test_a_field_with_no_baseline_is_compared_with_the_record(monkeypatch):
 	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
 
 	assert result["action"] == "flagged" and result["fields"] == ["tax_id"]
+	note = json.loads(writes["set_value"][0][0][2]["qbo_changes"])
+	assert note["fields"] == {"tax_id": {"erpnext": "", "qbo": "99-0000001", "no_baseline": True}}
 	assert doc.saves == [] and doc.tax_id == ""
 	assert writes["save_mapping"] == []
+
+
+@pytest.mark.parametrize(
+	"entity_type, doctype, mapped, held",
+	[
+		(
+			"Item",
+			"Item",
+			{"item_code": "NOZ-2", "item_name": "Nozzle", "item_group": "All Item Groups", "stock_uom": "Nos", "is_stock_item": 0},
+			{"item_name": "Nozzle", "item_group": "Nozzles", "stock_uom": "Each", "is_stock_item": 1},
+		),
+		(
+			"Customer",
+			"Customer",
+			{"customer_name": "Acme Supply", "customer_type": "Individual"},
+			{"customer_name": "Acme Supply", "customer_type": "Partnership"},
+		),
+		(
+			"Vendor",
+			"Supplier",
+			{"supplier_name": "Acme Steel", "supplier_type": "Individual"},
+			{"supplier_name": "Acme Steel", "supplier_type": "Company"},
+		),
+		(
+			"TaxCode",
+			"Account",
+			{
+				"account_name": "Sales Tax",
+				"company": "Main Co",
+				"parent_account": "Liabilities - MC",
+				"is_group": 0,
+				"root_type": "Liability",
+				"account_type": "Tax",
+			},
+			{"account_name": "Sales Tax", "parent_account": "Duties and Taxes - MC", "root_type": "Liability", "account_type": ""},
+		),
+		(
+			"PaymentMethod",
+			"Mode of Payment",
+			{"mode_of_payment": "Check (renamed)", "enabled": 1, "type": "Cash"},
+			{"mode_of_payment": "Check", "enabled": 0, "type": "Cash"},
+		),
+		(
+			"Term",
+			"Payment Terms Template",
+			{"template_name": "Net 30 (renamed)"},
+			{"template_name": "Net 30"},
+		),
+		("Class", "Cost Center", {"cost_center_name": "Service", "company": "Main Co"}, {"cost_center_name": "Service", "company": "Other Co"}),
+		("Account", "Account", {"account_name": "Tools", "company": "Main Co"}, {"account_name": "Tools", "company": "Other Co"}),
+	],
+)
+def test_mapper_constants_and_guesses_are_never_a_difference(monkeypatch, entity_type, doctype, mapped, held):
+	"""What a mapper supplies so that a NEW record can be inserted is not QuickBooks data
+	about an existing one. With no baseline (a record the import linked to), each of these
+	flagged on the first QuickBooks touch, and one "Use QuickBooks values" would have
+	re-filed an Item under All Item Groups and tried to make a stock item non-stock."""
+	doc = _doc(doctype=doctype, name="REC-1", docstatus=0, **held)
+	row = _mapping_row(erpnext_doctype=doctype, erpnext_name="REC-1", owned_fields="{}", sync_token="2")
+	mapping, _frappe, writes = _wire(monkeypatch, doctype=doctype, values=mapped, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity(entity_type, {"Id": "1", "SyncToken": "3"}, SETTINGS, recheck=True)
+
+	assert result["action"] == "unchanged", result
+	assert doc.saves == [] and doc.sets == []
+	assert all("conflict_status" not in call[0][2] for call in writes["set_value"])
+	owned_by_erpnext = mapping.MAPPER_DEFAULTS_ERPNEXT_OWNS[(entity_type, doctype)]
+	settled = json.loads((writes["set_value"][0][0][2] or {}).get("settled_qbo_values") or "{}")
+	assert not set(settled) & set(owned_by_erpnext), "a stripped field is never even a reference"
+
+
+@pytest.mark.parametrize("doctype, parent_field", [("Account", "parent_account"), ("Cost Center", "parent_cost_center")])
+def test_a_group_with_children_is_never_told_it_is_a_ledger(monkeypatch, doctype, parent_field):
+	"""``is_group`` comes from ``_qbo_has_children``, which only a full query sets, so a CDC
+	payload of a parent always reads as a leaf with an Account Type. On a group that has
+	children in ERPNext neither is a difference."""
+	entity_type = "Account" if doctype == "Account" else "Class"
+	values = {"is_group": 0, "account_type": "Bank"} if doctype == "Account" else {"is_group": 0}
+	doc = _doc(doctype=doctype, name="Parent - MC", is_group=1, account_type=None)
+	row = _mapping_row(
+		erpnext_doctype=doctype,
+		erpnext_name="Parent - MC",
+		owned_fields=json.dumps({"is_group": 1, "account_type": None}),
+		sync_token="2",
+	)
+	mapping, frappe, writes = _wire(monkeypatch, doctype=doctype, values=values, mapping_row=row, doc=doc)
+	asked = []
+
+	def exists(target, name=None):
+		asked.append((target, name))
+		return True
+
+	monkeypatch.setattr(frappe.db, "exists", exists, raising=False)
+
+	result = mapping.upsert_entity(entity_type, {"Id": "1", "SyncToken": "3"}, SETTINGS)
+
+	assert result["action"] == "unchanged"
+	assert (doctype, {parent_field: "Parent - MC"}) in asked
+	assert all("conflict_status" not in call[0][2] for call in writes["set_value"])
 
 
 def test_an_unmoved_payload_is_unchanged_with_no_write_of_any_kind(monkeypatch):
@@ -779,10 +963,24 @@ def test_a_value_a_person_kept_is_not_flagged_again_until_quickbooks_changes_it(
 
 def test_a_failing_preflight_on_a_linked_record_is_a_note_not_a_rewritten_mapping(monkeypatch):
 	"""``save_manual_review_mapping`` replaces ``owned_fields`` with the issue list. For a
-	record that already exists that destroyed the baseline; the issues now ride on the flag."""
-	values = {"customer": "Acme Supply"}
-	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00042", docstatus=0, customer="Acme Supply")
-	row = _mapping_row(erpnext_doctype="Sales Invoice", erpnext_name=doc.name, name="QBO-MAP-Invoice-900")
+	record that already exists that destroyed the baseline; the issues now ride on the flag
+	when there is something to flag, and are not a reason to raise one when there is not."""
+	values = {"customer": "Acme Supply", "posting_date": "2026-11-05"}
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		docstatus=0,
+		customer="Acme Supply",
+		posting_date="2026-11-02",
+	)
+	row = _mapping_row(
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=doc.name,
+		name="QBO-MAP-Invoice-900",
+		match_status="Pending Review",
+		conflict_status="Pending Review",
+		owned_fields=json.dumps({"customer": "Acme Supply", "posting_date": "2026-11-02"}),
+	)
 	mapping, _frappe, writes = _wire(
 		monkeypatch,
 		doctype="Sales Invoice",
@@ -794,11 +992,23 @@ def test_a_failing_preflight_on_a_linked_record_is_a_note_not_a_rewritten_mappin
 
 	result = mapping.upsert_entity("Invoice", {"Id": "900", "SyncToken": "6"}, SETTINGS)
 
-	assert result["action"] == "flagged"
+	assert result["action"] == "flagged" and result["fields"] == ["posting_date"]
 	assert writes["manual_review"] == [] and writes["save_mapping"] == []
 	note = json.loads(writes["set_value"][0][0][2]["qbo_changes"])
 	assert note["issues"] == ["Item reference 42 is not linked to an ERPNext Item"]
 	assert doc.saves == []
+
+	# The same issue with nothing QuickBooks changed: no flag. The cursor advances, and
+	# the row stays parked as it was, because the data still does not validate.
+	values["posting_date"] = "2026-11-02"
+	writes["set_value"].clear()
+	result = mapping.upsert_entity("Invoice", {"Id": "900", "SyncToken": "6"}, SETTINGS)
+
+	assert result["action"] == "unchanged"
+	assert writes["manual_review"] == []
+	updates = writes["set_value"][0][0][2]
+	assert updates["sync_token"] == "6"
+	assert "conflict_status" not in updates and "match_status" not in updates and "owned_fields" not in updates
 
 
 def test_an_unlinked_record_still_parks_on_a_failing_preflight(monkeypatch):
@@ -903,11 +1113,244 @@ def test_the_linked_path_contains_no_write_to_the_record():
 
 
 # ---------------------------------------------------------------------------
+# Part B -- the side doors: a sync saving a linked record OTHER than the one it is syncing
+# ---------------------------------------------------------------------------
+
+
+def _link(entity_type="Account", qbo_id="50", match_rule=None):
+	"""A mapping row, as ``other_mapping_linking`` reads it."""
+	return types.SimpleNamespace(
+		name=f"QBO-MAP-{entity_type}-{qbo_id}", qbo_entity_type=entity_type, qbo_id=qbo_id, match_rule=match_rule
+	)
+
+
+def _new_sub_account(monkeypatch, *, parent_links):
+	"""An unlinked QuickBooks sub-account arriving under a ledger parent that has no GL
+	entries -- the case ``_ensure_group_parent`` promotes. That function and
+	``_blocked_unpromotable_parent`` are NOT stubbed here: they are what is under test."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	values = {
+		"account_name": "Petty Cash 2",
+		"parent_account": "Cash - MC",
+		"is_group": 0,
+		"root_type": "Asset",
+		"account_type": "Cash",
+		"company": "Main Co",
+	}
+	events = {"parked": [], "parent_saves": [], "inserted": [], "save_mapping": []}
+	parent = _doc(doctype="Account", name="Cash - MC", is_group=0, account_type="Cash")
+	parent.save = lambda **kwargs: events["parent_saves"].append((parent.is_group, parent.account_type))
+	child = _doc(doctype="Account", name="Petty Cash 2 - MC")
+	child.insert = lambda **kwargs: events["inserted"].append(child.name)
+
+	def preflight(entity_type, doctype, mapped, **kwargs):
+		issue = mapping._blocked_unpromotable_parent(doctype, mapped)
+		return [issue] if issue else []
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Account" and filters == "Cash - MC" and fieldname == "is_group":
+			return 0
+		return None  # in particular: no GL Entry on the parent
+
+	def get_all(doctype, filters=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("erpnext_name") == "Cash - MC":
+			return list(parent_links)
+		return []
+
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Account", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", preflight)
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: None)
+	monkeypatch.setattr(mapping, "find_existing_match", lambda *args: None)
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: events["parked"].append(args))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: events["save_mapping"].append(args))
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(frappe.db, "get_value", get_value, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: False, raising=False)
+	monkeypatch.setattr(frappe, "get_all", get_all)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: parent, raising=False)
+	monkeypatch.setattr(frappe, "new_doc", lambda doctype: child, raising=False)
+	return mapping, events, parent, values
+
+
+def test_a_new_sub_account_never_promotes_a_parent_the_sync_has_linked(monkeypatch):
+	"""Promoting a ledger parent to a group sets ``is_group``, clears ``account_type`` and
+	saves the parent Account. When that parent is itself a linked record, that is a sync
+	saving a linked record -- reached by any path a new sub-account arrives on, the hourly
+	CDC included. The child is parked for a person instead."""
+	mapping, events, parent, _values = _new_sub_account(monkeypatch, parent_links=[_link("Account", "50")])
+
+	result = mapping.upsert_entity("Account", {"Id": "91", "SyncToken": "0"}, SETTINGS)
+
+	assert result["action"] == "manual_review"
+	assert "QuickBooks Account 50 is linked to" in result["reason"]
+	assert "Make it a group by hand" in result["reason"]
+	assert events["parent_saves"] == [], "the linked parent was saved"
+	assert (parent.is_group, parent.account_type) == (0, "Cash")
+	assert events["inserted"] == [] and events["save_mapping"] == []
+	assert len(events["parked"]) == 1
+
+	# A preview parks nothing and saves nothing.
+	events["parked"].clear()
+	preview = mapping.upsert_entity("Account", {"Id": "91", "SyncToken": "0"}, SETTINGS, preview=True)
+	assert preview["action"] == "manual_review"
+	assert events == {"parked": [], "parent_saves": [], "inserted": [], "save_mapping": []}
+
+
+def test_a_new_sub_account_still_promotes_a_parent_nothing_links(monkeypatch):
+	"""The other half, so the test above cannot pass by ``_ensure_group_parent`` never
+	running: with no mapping on the parent, the first-time create is what it always was."""
+	mapping, events, _parent, _values = _new_sub_account(monkeypatch, parent_links=[])
+
+	result = mapping.upsert_entity("Account", {"Id": "91", "SyncToken": "0"}, SETTINGS)
+
+	assert result["action"] == "created"
+	assert events["parent_saves"] == [(1, None)], "promoted to a group, Account Type cleared"
+	assert events["inserted"] == ["Petty Cash 2 - MC"] and events["parked"] == []
+
+
+def test_ensure_group_parent_refuses_a_linked_parent_even_past_the_preflight(monkeypatch):
+	"""The guard sits next to the write as well as at the gate: called directly, with the
+	preflight out of the picture, the function still does not load or save a linked parent."""
+	mapping, events, _parent, values = _new_sub_account(monkeypatch, parent_links=[_link("TaxCode", "7")])
+
+	mapping._ensure_group_parent("Account", dict(values))
+
+	assert events["parent_saves"] == []
+
+
+def _auto_link(monkeypatch, *, other_links):
+	"""An unmapped QuickBooks customer whose name matches one existing ERPNext Customer."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	values = {"customer_name": "Acme Supply", "tax_id": "99-0000001"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply", tax_id="")
+	events = {"parked": [], "save_mapping": []}
+	match = {"status": "matched", "name": "Acme Supply", "rule": "customer name", "confidence": 90}
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: None)
+	monkeypatch.setattr(mapping, "find_existing_match", lambda *args: dict(match))
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: events["parked"].append(args))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: events["save_mapping"].append((args, kwargs)))
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(mapping, "_heal_invalid_owned_selects", lambda doc, values: [])
+	monkeypatch.setattr(
+		frappe,
+		"get_all",
+		lambda doctype, filters=None, **kwargs: list(other_links) if doctype == "QuickBooks Sync Mapping" else [],
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: False, raising=False)
+	return mapping, events, doc
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_auto_link_never_saves_a_record_another_mapping_already_links(monkeypatch, preview):
+	"""A customer re-created in QuickBooks under the same name, two jobs with one PRJ number,
+	a TaxCode named like a linked Account: the matcher finds the record, and the auto-link
+	path would fill its blank fields and save it. It is another QuickBooks record's link, so
+	the sync parks this one for a person: no save, no second link."""
+	mapping, events, doc = _auto_link(monkeypatch, other_links=[_link("Customer", "12")])
+
+	result = mapping.upsert_entity("Customer", {"Id": "9", "SyncToken": "0"}, SETTINGS, preview=preview)
+
+	assert result["action"] == "manual_review"
+	assert "QuickBooks Customer 12 is already linked to it" in result["reason"]
+	assert result["candidates"] == [{"doctype": "Customer", "name": "Acme Supply"}]
+	assert doc.saves == [] and doc.sets == [] and doc.tax_id == ""
+	assert events["save_mapping"] == []
+	assert len(events["parked"]) == (0 if preview else 1)
+
+
+@pytest.mark.parametrize(
+	"other_links",
+	[
+		[],
+		# A job consolidated onto this Customer files transactions under it; it is not the
+		# Customer's own QuickBooks record, which must still be able to link.
+		[_link("Customer", "301", match_rule="job_merge_no_project")],
+		# The mapping being synced is not "another" mapping.
+		[_link("Customer", "9")],
+	],
+)
+def test_auto_link_still_links_a_record_no_other_quickbooks_record_owns(monkeypatch, other_links):
+	mapping, events, doc = _auto_link(monkeypatch, other_links=other_links)
+
+	result = mapping.upsert_entity("Customer", {"Id": "9", "SyncToken": "0"}, SETTINGS)
+
+	assert result["action"] == "linked" and result["filled_fields"] == ["tax_id"]
+	assert doc.tax_id == "99-0000001" and len(doc.saves) == 1
+	assert len(events["save_mapping"]) == 1 and events["parked"] == []
+
+
+def test_link_with_fill_blanks_is_refused_on_a_record_another_quickbooks_record_links(monkeypatch):
+	"""A person's Link is an explicit action and two QuickBooks records may link one ERPNext
+	record (Nik, 2026-10-22: a warning, not a refusal). What is refused is "Fill blank fields
+	from QBO" onto a record that is already another QuickBooks record's: the link goes ahead
+	without it, and the record is not saved."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply", tax_id="")
+	saved = []
+	monkeypatch.setattr(frappe, "get_single", lambda doctype: SETTINGS, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: True, raising=False)
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe,
+		"get_all",
+		lambda doctype, filters=None, **kwargs: [_link("Customer", "12")] if doctype == "QuickBooks Sync Mapping" else [],
+	)
+	monkeypatch.setattr(
+		mapping,
+		"_latest_raw_payload",
+		lambda entity_type, qbo_id: types.SimpleNamespace(payload=json.dumps({"Id": "9", "SyncToken": "1"})),
+	)
+	monkeypatch.setattr(
+		mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", {"customer_name": "Acme Supply", "tax_id": "99-0000001"})
+	)
+	monkeypatch.setattr(
+		mapping,
+		"save_mapping",
+		lambda *args, **kwargs: saved.append(kwargs) or types.SimpleNamespace(name="QBO-MAP-Customer-9"),
+	)
+
+	with pytest.raises(Exception, match="already linked to QuickBooks Customer 12"):
+		mapping.link_existing_record("Customer", "9", "Customer", "Acme Supply", apply_qbo_data=True)
+	assert doc.saves == [] and doc.sets == [] and saved == []
+
+	name = mapping.link_existing_record("Customer", "9", "Customer", "Acme Supply", apply_qbo_data=False)
+	assert name == "QBO-MAP-Customer-9"
+	assert doc.saves == [] and doc.sets == [], "linking alone never writes the record"
+	assert saved[0]["match_status"] == "Manual Matched"
+
+
+def test_every_endpoint_that_links_or_saves_a_record_is_post_only():
+	"""``decide_match``, ``decide_matches`` and ``link_existing_record`` write a mapping and
+	can save an ERPNext record or merge one away. Like the three review endpoints, none of
+	them answers a GET."""
+	source = _read(CORE / "api.py")
+	functions = {node.name: node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef)}
+	for endpoint in ("decide_match", "decide_matches", "link_existing_record", *REVIEW_ENDPOINTS):
+		decorators = [ast.unparse(decorator) for decorator in functions[endpoint].decorator_list]
+		assert decorators == ["frappe.whitelist(methods=['POST'])"], f"{endpoint}: {decorators}"
+		assert "_require_qbo_operator()" in ast.get_source_segment(source, functions[endpoint])
+	# The page reaches them with frappe.call, whose default is POST; nothing asks for a GET.
+	assert 'type: "GET"' not in _read(PAGE_JS)
+
+
+# ---------------------------------------------------------------------------
 # Part B -- the person's half: Keep ERPNext, Use QuickBooks values, Refresh draft
 # ---------------------------------------------------------------------------
 
 
-FLAGGED_QBO = {"customer_name": "Acme Supply Co", "customer_type": "Residential", "tax_id": "99-0000001"}
+FLAGGED_QBO = {"customer_name": "Acme Supply Co", "payment_terms": "Net 15", "tax_id": "99-0000001"}
+CUSTOMER_FIELDS = ("customer_name", "customer_type", "customer_group", "payment_terms", "tax_id", "website")
+PROJECT_FIELDS = ("project_name", "customer", "company", "status")
 
 
 def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
@@ -918,8 +1361,8 @@ def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
 		"detected_at": "2026-11-03 18:20:05",
 		"fields": {
 			"customer_name": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"},
-			"customer_type": {"erpnext": "Partnership", "qbo": "Residential", "erpnext_edited": True},
-			"tax_id": {"erpnext": "", "qbo": "99-0000001"},
+			"payment_terms": {"erpnext": "Net 45", "qbo": "Net 15", "erpnext_edited": True},
+			"tax_id": {"erpnext": "", "qbo": "99-0000001", "no_baseline": True},
 		},
 		"tables": {},
 		"issues": list(issues or []),
@@ -929,7 +1372,7 @@ def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
 		name="Acme Supply",
 		docstatus=docstatus,
 		customer_name="Acme Supply",
-		customer_type="Partnership",
+		payment_terms="Net 45",
 		tax_id="",
 		customer_group="Commercial",
 	)
@@ -939,7 +1382,7 @@ def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
 		erpnext_name="Acme Supply",
 		conflict_status="QuickBooks Changed",
 		qbo_changes=json.dumps(note),
-		owned_fields=json.dumps({"customer_name": "Acme Supply", "customer_type": "Commercial"}),
+		owned_fields=json.dumps({"customer_name": "Acme Supply", "payment_terms": "Net 30"}),
 		settled_qbo_values=json.dumps(settled) if settled else None,
 	)
 	frappe = install_frappe_stub()
@@ -949,6 +1392,12 @@ def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
 	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
 	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
 	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: writes["save_mapping"].append((args, kwargs)))
+	monkeypatch.setattr(
+		frappe,
+		"get_meta",
+		lambda doctype: _meta(*(PROJECT_FIELDS if doctype == "Project" else CUSTOMER_FIELDS)),
+		raising=False,
+	)
 	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
 	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
 	monkeypatch.setattr(
@@ -967,7 +1416,7 @@ def test_keep_erpnext_clears_the_flag_without_touching_the_record(monkeypatch):
 
 	result = mapping.keep_erpnext_values("Customer", "1")
 
-	assert result["kept"] == ["customer_name", "customer_type", "tax_id"]
+	assert result["kept"] == ["customer_name", "payment_terms", "tax_id"]
 	assert doc.saves == [] and doc.sets == []
 	assert writes["save_mapping"] == []
 	(doctype, name, updates), kwargs = writes["set_value"][0]
@@ -992,14 +1441,14 @@ def test_keep_erpnext_refuses_a_row_that_is_not_flagged(monkeypatch):
 def test_use_quickbooks_values_writes_exactly_the_flagged_fields(monkeypatch):
 	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch)
 
-	result = mapping.use_qbo_values("Customer", "1")
+	result = mapping.use_qbo_values("Customer", "1", fields=["customer_name", "payment_terms", "tax_id"])
 
-	assert sorted(doc.sets) == ["customer_name", "customer_type", "tax_id"], "nothing else on the record is set"
-	assert (doc.customer_name, doc.customer_type, doc.tax_id) == ("Acme Supply Co", "Residential", "99-0000001")
+	assert sorted(doc.sets) == ["customer_name", "payment_terms", "tax_id"], "nothing else on the record is set"
+	assert (doc.customer_name, doc.payment_terms, doc.tax_id) == ("Acme Supply Co", "Net 15", "99-0000001")
 	assert doc.customer_group == "Commercial"
 	assert doc.saves == [{"ignore_permissions": True}]
 	assert doc.flags.ignore_links is True
-	assert result["applied"] == ["customer_name", "customer_type", "tax_id"] and result["kept"] == []
+	assert result["applied"] == ["customer_name", "payment_terms", "tax_id"] and result["kept"] == []
 	updates = writes["set_value"][0][0][2]
 	assert updates["conflict_status"] == "Clean" and updates["qbo_changes"] is None
 	assert updates["sync_token"] == "6"
@@ -1008,19 +1457,93 @@ def test_use_quickbooks_values_writes_exactly_the_flagged_fields(monkeypatch):
 	assert writes["save_mapping"] == []
 
 
+def test_use_quickbooks_values_with_no_list_takes_what_the_page_ticks_by_default(monkeypatch):
+	"""A caller that names no fields gets the page's default: the fields QuickBooks is known
+	to have changed. ``tax_id`` has no baseline here, so it is left, and settled."""
+	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch)
+
+	result = mapping.use_qbo_values("Customer", "1")
+
+	assert sorted(doc.sets) == ["customer_name", "payment_terms"]
+	assert doc.tax_id == ""
+	assert result["applied"] == ["customer_name", "payment_terms"] and result["kept"] == ["tax_id"]
+	assert json.loads(writes["set_value"][0][0][2]["settled_qbo_values"]) == FLAGGED_QBO
+
+
 def test_use_quickbooks_values_takes_only_the_ticked_fields_and_settles_the_rest(monkeypatch):
 	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch)
 
-	result = mapping.use_qbo_values("Customer", "1", fields=["customer_type"])
+	result = mapping.use_qbo_values("Customer", "1", fields=["payment_terms"])
 
-	assert doc.sets == ["customer_type"]
-	assert (doc.customer_name, doc.customer_type, doc.tax_id) == ("Acme Supply", "Residential", "")
-	assert result["applied"] == ["customer_type"] and result["kept"] == ["customer_name", "tax_id"]
+	assert doc.sets == ["payment_terms"]
+	assert (doc.customer_name, doc.payment_terms, doc.tax_id) == ("Acme Supply", "Net 15", "")
+	assert result["applied"] == ["payment_terms"] and result["kept"] == ["customer_name", "tax_id"]
 	updates = writes["set_value"][0][0][2]
 	# Taken or left, every flagged value has been answered and is not raised again.
 	assert json.loads(updates["settled_qbo_values"]) == FLAGGED_QBO
 	# The untouched part of the baseline survives; the applied field is refreshed.
-	assert json.loads(updates["owned_fields"]) == {"customer_name": "Acme Supply", "customer_type": "Residential"}
+	assert json.loads(updates["owned_fields"]) == {"customer_name": "Acme Supply", "payment_terms": "Net 15"}
+
+
+def test_use_quickbooks_values_blanks_a_field_quickbooks_cleared_only_when_it_is_chosen(monkeypatch):
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+	row.qbo_changes = json.dumps(
+		{
+			"sync_token": "6",
+			"fields": {
+				"payment_terms": {"erpnext": "Net 45", "qbo": None, "cleared": True},
+				"customer_name": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"},
+			},
+		}
+	)
+
+	result = mapping.use_qbo_values("Customer", "1", fields=["customer_name"])
+	assert doc.sets == ["customer_name"] and doc.payment_terms == "Net 45"
+	assert result["kept"] == ["payment_terms"]
+	assert json.loads(writes["set_value"][0][0][2]["settled_qbo_values"]) == {
+		"customer_name": "Acme Supply Co",
+		"payment_terms": None,
+	}
+
+	doc.sets.clear()
+	result = mapping.use_qbo_values("Customer", "1", fields=["payment_terms"])
+	assert doc.sets == ["payment_terms"] and doc.payment_terms is None
+	assert result["applied"] == ["payment_terms"]
+	assert json.loads(writes["set_value"][1][0][2]["owned_fields"])["payment_terms"] is None
+
+
+def test_use_quickbooks_values_refuses_a_name_that_is_not_a_field_of_the_doctype(monkeypatch):
+	"""The field names on a flag are stored JSON. A note naming ``docstatus`` or ``owner``,
+	or a field the DocType does not have, sets nothing."""
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+	row.qbo_changes = json.dumps(
+		{
+			"sync_token": "6",
+			"fields": {
+				"customer_name": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"},
+				"docstatus": {"erpnext": 0, "qbo": 1},
+				"owner": {"erpnext": "a@example.com", "qbo": "b@example.com"},
+			},
+		}
+	)
+
+	with pytest.raises(Exception, match="Not a field of Customer: docstatus, owner"):
+		mapping.use_qbo_values("Customer", "1")
+	assert doc.saves == [] and doc.sets == []
+	assert writes["set_value"] == []
+
+	# The field that is real still applies when it is the one chosen.
+	mapping.use_qbo_values("Customer", "1", fields=["customer_name"])
+	assert doc.sets == ["customer_name"]
+
+
+def test_use_quickbooks_values_says_so_when_every_flagged_field_is_erpnexts(monkeypatch):
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+	row.qbo_changes = json.dumps({"sync_token": "6", "fields": {"customer_type": {"erpnext": "Partnership", "qbo": "Individual"}}})
+
+	with pytest.raises(Exception, match="Nothing on this flag can be written"):
+		mapping.use_qbo_values("Customer", "1")
+	assert doc.saves == [] and doc.sets == [] and writes["set_value"] == []
 
 
 def test_use_quickbooks_values_cannot_reopen_or_repoint_a_project(monkeypatch):
@@ -1076,6 +1599,124 @@ def test_use_quickbooks_values_refusals_write_nothing(monkeypatch, kwargs, setup
 		mapping.use_qbo_values("Customer", "1", **kwargs)
 	assert doc.saves == [] and doc.sets == []
 	assert writes["set_value"] == []
+
+
+NEWEST_PAYLOAD = {"Id": "7", "SyncToken": "9", "MetaData": {"LastUpdatedTime": "2026-11-09T10:00:00-08:00"}}
+
+
+def _row_without_a_note(monkeypatch, *, conflict_status, match_status, docstatus, match_rule=None, payload=NEWEST_PAYLOAD):
+	"""A linked Sales Invoice whose mapping carries no ``qbo_changes`` note: parked by the
+	submitted-document guard, or flagged ``Conflict`` before v1.800.0. The newest stored
+	payload moved the posting date."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00007",
+		docstatus=docstatus,
+		customer="Acme Supply",
+		posting_date="2026-11-02",
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Invoice-7",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=doc.name,
+		conflict_status=conflict_status,
+		match_status=match_status,
+		match_rule=match_rule,
+		owned_fields=json.dumps({"customer": "Acme Supply", "posting_date": "2026-11-02"}),
+		sync_token="5",
+	)
+	writes = {"set_value": [], "save_mapping": []}
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
+	monkeypatch.setattr(mapping, "_raw_payload_dict", lambda entity_type, qbo_id: dict(payload) if payload else None)
+	monkeypatch.setattr(
+		mapping,
+		"map_qbo_to_erpnext",
+		lambda *args: ("Sales Invoice", {"customer": "Acme Supply", "posting_date": "2026-11-09"}),
+	)
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: writes["save_mapping"].append(kwargs))
+	monkeypatch.setattr(frappe, "get_single", lambda doctype: SETTINGS, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: docstatus if fieldname == "docstatus" else None,
+		raising=False,
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: writes["set_value"].append((args, kwargs)), raising=False
+	)
+	return mapping, writes, doc, row
+
+
+@pytest.mark.parametrize(
+	"match_rule, restored", [(None, "Created"), ("manual", "Manual Matched"), ("customer name", "Auto Matched")]
+)
+def test_keep_erpnext_un_parks_a_posted_document_quickbooks_changed(monkeypatch, match_rule, restored):
+	"""The submitted-document guard parks a posted document QuickBooks changed, and its
+	message says to resolve it in ERPNext. Until now nothing on the page could then clear
+	the row: Keep ERPNext refused everything but ``QuickBooks Changed``. It un-parks the row,
+	moves the cursor to the newest stored payload and writes nothing to the document."""
+	mapping, writes, doc, row = _row_without_a_note(
+		monkeypatch, conflict_status="Pending Review", match_status="Pending Review", docstatus=1, match_rule=match_rule
+	)
+
+	result = mapping.keep_erpnext_values("Invoice", "7")
+
+	assert doc.saves == [] and doc.sets == [] and writes["save_mapping"] == []
+	(doctype, name, updates), kwargs = writes["set_value"][0]
+	assert (doctype, name) == ("QuickBooks Sync Mapping", row.name)
+	assert updates["conflict_status"] == "Clean" and updates["qbo_changes"] is None
+	assert updates["sync_token"] == "9", "the next sync of the same payload is unchanged"
+	assert updates["match_status"] == restored
+	assert "owned_fields" not in updates and "settled_qbo_values" not in updates
+	assert kwargs == {"update_modified": False}
+	assert result["kept"] == []
+
+
+def test_keep_erpnext_refuses_a_parked_draft(monkeypatch):
+	"""Pending Review on a draft is a parked import with a cause to fix (Retry or Refresh
+	draft). Only the posted case, which can never be refreshed, is Keep ERPNext's."""
+	mapping, writes, _doc_, _row = _row_without_a_note(
+		monkeypatch, conflict_status="Pending Review", match_status="Pending Review", docstatus=0
+	)
+
+	with pytest.raises(Exception, match=re.escape("not flagged QuickBooks changed (it is Pending Review)")):
+		mapping.keep_erpnext_values("Invoice", "7")
+	assert writes["set_value"] == []
+
+
+def test_keep_erpnext_clears_a_legacy_conflict_row_and_settles_what_differs(monkeypatch):
+	"""``Conflict`` is what the sync wrote before v1.800.0, with no note of what differed.
+	Keep ERPNext compares the newest stored payload with the record (a read), settles the
+	difference as declined so it is not raised again, and advances the cursor."""
+	mapping, writes, doc, _row = _row_without_a_note(
+		monkeypatch, conflict_status="Conflict", match_status="Created", docstatus=0
+	)
+
+	result = mapping.keep_erpnext_values("Invoice", "7")
+
+	assert result["kept"] == ["posting_date"]
+	assert doc.saves == [] and doc.sets == [] and doc.posting_date == "2026-11-02"
+	updates = writes["set_value"][0][0][2]
+	assert updates["conflict_status"] == "Clean" and updates["sync_token"] == "9"
+	assert json.loads(updates["settled_qbo_values"]) == {"posting_date": "2026-11-09"}
+	assert "owned_fields" not in updates and "match_status" not in updates
+
+
+def test_keep_erpnext_clears_a_legacy_conflict_row_that_has_no_stored_payload(monkeypatch):
+	mapping, writes, doc, _row = _row_without_a_note(
+		monkeypatch, conflict_status="Conflict", match_status="Created", docstatus=0, payload=None
+	)
+
+	mapping.keep_erpnext_values("Invoice", "7")
+
+	updates = writes["set_value"][0][0][2]
+	assert updates == {"conflict_status": "Clean", "qbo_changes": None}, "nothing to move the cursor to"
+	assert doc.saves == []
 
 
 def _draft_invoice(monkeypatch, *, docstatus=0, issues=None, match_status="Created"):
@@ -1297,6 +1938,8 @@ def test_change_view_shows_what_the_record_holds_now(monkeypatch):
 		"erpnext": "Completed",
 		"qbo": "Open",
 		"edited": True,
+		"baselined": True,
+		"cleared": False,
 		"agrees": False,
 	}
 	table = view["tables"][0]
@@ -1364,6 +2007,67 @@ def test_the_review_actions_never_reach_quickbooks_or_the_queue():
 		for wider in ("enqueue", "QuickBooksClient", "upsert_entity("):
 			assert wider not in code, f"mapping.{name} reaches {wider}"
 	assert "keep_erpnext_values" in matching_source and "use_qbo_values" in matching_source
+
+
+def test_review_many_refuses_an_oversized_request_before_writing_anything(monkeypatch):
+	"""The page sends 20 rows a request. The server has its own ceiling, because two of the
+	three actions save an ERPNext record per row and nothing obliges a caller to be the page."""
+	matching, _frappe, events = _matching(monkeypatch)
+	called = []
+	monkeypatch.setattr(matching, "keep_erpnext_values", lambda *args: called.append(args))
+	items = [{"entity_type": "Customer", "qbo_id": str(n)} for n in range(matching.MAX_REVIEW_ITEMS + 1)]
+
+	with pytest.raises(Exception, match=f"at most {matching.MAX_REVIEW_ITEMS} rows"):
+		matching.review_many(items, matching.keep_erpnext)
+	assert called == [] and events["commit"] == 0 and events["savepoint"] == []
+
+	chunk = re.search(r"const REVIEW_CHUNK = (\d+);", _read(PAGE_JS))
+	assert int(chunk.group(1)) <= matching.MAX_REVIEW_ITEMS, "the page's own chunk must fit under the ceiling"
+
+
+def test_change_view_marks_a_field_with_no_baseline_and_a_field_quickbooks_cleared(monkeypatch):
+	matching, frappe, _events = _matching(monkeypatch)
+	note = {
+		"fields": {
+			"customer_name": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"},
+			"tax_id": {"erpnext": "", "qbo": "99-0000001", "no_baseline": True},
+			"payment_terms": {"erpnext": "Net 30", "qbo": None, "cleared": True},
+		},
+		"tables": {"terms": {"erpnext_rows": 1, "qbo_rows": 1, "rows": [], "qbo": [], "no_baseline": True}},
+	}
+	row = types.SimpleNamespace(
+		conflict_status="QuickBooks Changed",
+		qbo_changes=json.dumps(note),
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+	)
+	monkeypatch.setattr(frappe.db, "get_value", lambda *args, **kwargs: None, raising=False)
+
+	view = matching.change_view(row)
+
+	by_name = {field["fieldname"]: field for field in view["fields"]}
+	assert (by_name["customer_name"]["baselined"], by_name["customer_name"]["cleared"]) == (True, False)
+	assert (by_name["tax_id"]["baselined"], by_name["tax_id"]["cleared"]) == (False, False)
+	assert (by_name["payment_terms"]["baselined"], by_name["payment_terms"]["cleared"]) == (True, True)
+	assert by_name["payment_terms"]["qbo"] == "", "a clear shows as blank"
+	assert view["tables"][0]["baselined"] is False
+
+
+def test_the_page_leaves_never_baselined_and_cleared_fields_unticked():
+	"""One "Use QuickBooks values" click takes what is ticked. A field the sync never wrote
+	or read before may not have been changed by QuickBooks at all, and taking a cleared field
+	blanks the ERPNext value: both start unticked, each with its own label."""
+	js = _read(PAGE_JS)
+	assert "tick(field.fieldname, field.baselined !== false && !field.cleared)" in js
+	assert "tick(table.fieldname, table.baselined !== false)" in js
+	assert '__("never synced before")' in js and '__("cleared in QuickBooks")' in js
+	assert '__("also edited in ERPNext")' in js, "a different note from the no-baseline one"
+	tick = js[js.index("const tick = (fieldname, on) =>") :]
+	tick = tick[: tick.index("const fieldRows")]
+	assert '${on ? "checked" : ""}' in tick
+	# Keep ERPNext is offered on the two kinds of row that carry no differences.
+	assert 'row.conflict_status === "Conflict" || isParkedPosted(row)' in js
+	assert 'row.docstatus === 1 && row.match_status === "Pending Review"' in js
 
 
 # ---------------------------------------------------------------------------

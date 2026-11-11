@@ -959,14 +959,16 @@ def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
 
 	# QuickBooks moves on (SyncToken 4) with one changed value. Until v1.800.0 this saved
 	# the Customer and reported "updated". Now the record is left alone and the mapping is
-	# flagged, by set_value, for a person to review.
+	# flagged, by set_value, for a person to review. (The name, not the type: the type is a
+	# guess the mapper makes for a new Customer, and is never compared on a linked one.)
+	values["customer_name"] = "Acme Supply Co"
 	values["customer_type"] = "Residential"
 	result = mapping.upsert_entity("Customer", dict(payload, SyncToken="4"), settings)
 
 	assert result["action"] == "flagged"
-	assert result["fields"] == ["customer_type"]
+	assert result["fields"] == ["customer_name"]
 	assert doc.saves == []
-	assert doc.customer_type == "Commercial"
+	assert doc.customer_name == "Acme Supply" and doc.customer_type == "Commercial"
 	assert saved_mappings == []
 	assert len(set_values) == 1
 	assert set_values[0][0] == "QuickBooks Sync Mapping"

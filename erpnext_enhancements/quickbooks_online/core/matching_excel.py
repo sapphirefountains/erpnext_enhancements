@@ -106,6 +106,7 @@ EXPORT_STATUSES = (
 	"Needs decision",
 	"All",
 	"Pending Review",
+	"QuickBooks Changed",
 	"Conflict",
 	"Auto Matched",
 	"Created",
@@ -286,6 +287,10 @@ def master_sheet_row(row) -> dict:
 	status = row.get("match_status") or ""
 	if row.get("conflict_status") == "Conflict":
 		status = f"{status} (conflict)" if status else "Conflict"
+	# v1.800.0: the flag a sync raises instead of saving. Without the label these rows read
+	# as plain "Created" / "Auto Matched" in the sheet and their pending review was invisible.
+	if row.get("conflict_status") == "QuickBooks Changed":
+		status = f"{status} (QuickBooks changed)" if status else "QuickBooks changed"
 	linked_title = link.get("title") or ""
 	if link and not link.get("exists"):
 		linked_title = f"{link.get('name')} (no longer exists)"
@@ -380,6 +385,11 @@ def instructions(meta) -> list:
 		"   Retry -- only for rows whose status is 'Pending Review': ERPNext fetches the record from "
 		"QuickBooks again and tries the import again. Fix the reason in 'Why it is parked' first.",
 		"   (blank) -- leave the row as it is.",
+		"",
+		"A status ending in '(QuickBooks changed)' means QuickBooks was edited after the record was "
+		"linked and no longer agrees with ERPNext. Nothing was changed in ERPNext. This file cannot "
+		"answer that: it is reviewed on the QuickBooks Record Matching page (Keep ERPNext, Use QuickBooks "
+		"values or Refresh draft). Keep in this file only marks the link as reviewed.",
 		"",
 		"Link to -- the ERPNext ID to link to. Only used when Decision is Link. It starts out filled with "
 		"the best suggestion; change it if that is not the right one.",
