@@ -5,6 +5,15 @@ changed.** Nik asked to bring [frappe/pilot](https://github.com/frappe/pilot) to
 ERPNext site "to help visually manage it". This page records what Pilot is, whether it fits how
 production is hosted, and the plan.
 
+> **Decision, Nik, 2026-11-11 (after reading this page).** Use Pilot itself, all of it, and do
+> not rebuild parts of it in this app. Parker and James will use it, and later others. Install it
+> now rather than wait for a stable release. The install plan is
+> [`infra/docs/pilot-install-runbook.md`](../infra/docs/pilot-install-runbook.md): a new VM beside
+> production, a quarantined copy of the site restored into Pilot first, then a cutover. That
+> decision replaces the Recommendation below and Steps 3 to 5 of "The plan"; the Server Status
+> page (Step 4) is dropped. The facts and the risks on this page stand, and the runbook is built
+> around them.
+
 "The website" is read here as the ERPNext site, `erp.sapphirefountains.com`. Pilot manages Frappe
 benches and sites and has nothing to offer the public WordPress site, `sapphirefountains.com`.
 
@@ -236,6 +245,11 @@ VM kept until the new one has run a week.
   current setup has no equivalent chore, because `bench` changes rarely.
 
 ## Open questions for Nik
+
+Answered on 2026-11-11: (1) everything Pilot does, used as it is; (2) Parker, James, and later
+others; (3) a separate rehearsal is not wanted, so the runbook makes the first restore onto the
+new VM the test; (4) no Server Status page, build the Pilot install plan instead; (5) yes, and
+now. The questions as asked:
 
 1. **What do you want to see or do "visually"?** Health at a glance; one-click Frappe and ERPNext
    updates with a rollback; backups and restore; logs; database tools; or something about the Desk

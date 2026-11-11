@@ -10,11 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.799.2] - 2026-11-11
 
 ### Added
-- **An evaluation of Frappe Pilot for the production server, and a plan; docs only.**
-  [`docs/frappe-pilot-evaluation.md`](docs/frappe-pilot-evaluation.md). Nik asked to bring
-  [frappe/pilot](https://github.com/frappe/pilot) to the ERPNext site "to help visually manage
-  it". No code, fixture, hook or infra file changes, so this release changes nothing on
-  production beyond the version string.
+- **An evaluation of Frappe Pilot for the production server, and the runbook for installing it;
+  docs only.** [`docs/frappe-pilot-evaluation.md`](docs/frappe-pilot-evaluation.md) and
+  [`infra/docs/pilot-install-runbook.md`](infra/docs/pilot-install-runbook.md). Nik asked to
+  bring [frappe/pilot](https://github.com/frappe/pilot) to the ERPNext site "to help visually
+  manage it". No code, fixture, hook, Terraform or Cloud Build file changes, so this release
+  changes nothing on production beyond the version string.
+  - **Nik's decision, 2026-11-11, after reading the evaluation.** Use Pilot itself, all of it,
+    rather than rebuild parts in this app; Parker and James will use it; install it now. The
+    evaluation had recommended waiting for a stable release. The runbook is the answer to "how",
+    and it keeps production untouched until one cutover step.
+  - **The runbook's shape.** A new VM beside the production VM; Pilot installed from a pinned
+    release with its self-update off; a bench with the seven apps at production's commits; a copy
+    of the site restored with `pause_scheduler` and `mute_emails` set first, because a restored
+    copy holds live credentials for Google, QuickBooks, Twilio, Stripe and Plaid and would
+    otherwise sync and send in duplicate; a checklist; then a cutover in one maintenance window
+    with the old VM kept a week as the way back.
+  - **Four traps the runbook exists to avoid.** (1) Pilot's "new site from backup" takes the
+    database and the two file archives but not the site config, so it does not carry
+    `encryption_key`, and every stored password and API secret would be unreadable; restore into
+    an empty site with all four parts instead. (2) The load balancer's health check is `GET /`
+    with no host name, and Pilot's nginx answers 404 to a host it does not know, so the new VM
+    would be marked unhealthy until the check sends the site's host and probes
+    `/api/method/ping`. (3) Pilot has one Admin password and no roles, so everyone with access
+    can do everything; more than one person gets in through Identity-Aware Proxy on the load
+    balancer, never a public hostname. (4) After the cutover a merge to `main` no longer deploys
+    by itself: updates start from Pilot's Updates screen, and both `app-deploy-prod` and
+    `app-upstream-prod` have to be switched off.
+  - **Nothing in the runbook has been run.** Commands not yet tried on a Sapphire machine are
+    marked *confirm*.
   - **What Pilot is.** Frappe's new server manager: a `pilot` command line and a browser Admin
     panel that create and run benches on a server (apps, sites, updates with a safeguard backup
     and a Restore button, backups, processes, logs, database tools). It replaces `bench`; it is
@@ -25,7 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (2026-11-09), the 13th release in two weeks, and it updates itself daily by default. Its
     Admin panel carries a Python console, an SQL console, a code editor and "Login as admin", so
     it must never be reachable from the internet.
-  - **The plan.** Use Frappe's built-in System Health Report today; rehearse Pilot on a throwaway
+  - **The evaluation's plan, as first written.** Use Frappe's built-in System Health Report
+    today; rehearse Pilot on a throwaway
     VM with the seven production apps and the sanitized mirror backup (needs Nik's yes);
     decide on a read-only Server Status page in this app for what the built-in report lacks
     (versions against upstream, the last deploy and whether its migrate finished, a scheduler
