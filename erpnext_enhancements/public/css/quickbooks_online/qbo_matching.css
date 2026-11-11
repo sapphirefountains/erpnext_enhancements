@@ -5,8 +5,9 @@
  * quickbooks-record-matching): the tab strip, filter toolbar, count chips, the
  * decision table (tick box / QBO record / current link / suggestions / picker /
  * actions), the parked-transactions table, the selection bar that pins to the
- * bottom of the window while a long page scrolls under it, and the row list in the
- * "Link selected" confirmation. Frappe CSS variables throughout so it holds in
+ * bottom of the window while a long page scrolls under it, the row list in the
+ * "Link selected" confirmation, and the "QuickBooks changed" differences block under a
+ * flagged row (v1.800.0). Frappe CSS variables throughout so it holds in
  * both themes; the three score bands are the only literal colours.
  * Loaded via: desk_addons.bundle.scss (see public/README.md).
  */
@@ -347,4 +348,73 @@
 		border-bottom: 1px solid var(--border-color);
 		padding: 8px 0;
 	}
+}
+
+/*
+ * "QuickBooks changed" (v1.800.0): the second table row under a flagged record, holding
+ * the field-by-field "ERPNext has / QuickBooks has" table and its buttons. It belongs to
+ * the row above it, so it carries no top border of its own.
+ */
+.qbo-mt-changes-row > td {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.qbo-mt-changes {
+	background: var(--subtle-fg);
+	border: 1px solid var(--border-color);
+	border-left: 3px solid var(--orange-500);
+	border-radius: var(--border-radius);
+	margin-bottom: 8px;
+	padding: 10px 12px;
+}
+
+.qbo-mt-changes-head {
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.qbo-mt-changes-head .qbo-mt-sub {
+	display: inline;
+	font-weight: 400;
+	margin-left: 6px;
+}
+
+.qbo-mt-changes-table {
+	border-collapse: collapse;
+	margin: 4px 0 8px;
+	width: 100%;
+}
+
+.qbo-mt-changes-table th,
+.qbo-mt-changes-table td {
+	border-top: 1px solid var(--border-color);
+	padding: 5px 8px;
+	text-align: left;
+	vertical-align: top;
+	overflow-wrap: anywhere;
+}
+
+.qbo-mt-changes-table th {
+	border-top: 0;
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.qbo-mt-changes-table tr.is-agreed td {
+	color: var(--text-muted);
+}
+
+.qbo-mt-changes-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+
+.qbo-mt-chip-changed {
+	border-color: var(--orange-500);
+	margin-left: 6px;
 }

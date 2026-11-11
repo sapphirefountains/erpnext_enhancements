@@ -1,0 +1,1458 @@
+"""Bench-free tests for "QuickBooks sync links, never overwrites" (v1.800.0).
+
+Nik's decision of 2026-10-06 has two halves, and this file pins both.
+
+**No self-starting imports.** ``sync.retry_failed`` used to end by running a full Import All
+whenever a failed Import All or Run Resync log existed. The hourly scheduler called it on the
+300-second default queue, where a full import cannot finish, so every run failed and earned
+the next one: 2 to 6 full imports a day. What is held here: ``retry_failed`` never calls
+``import_all`` (by behaviour, and by reading the module for any other caller), a named import
+log answers "start it again by hand" without queuing anything, and RQ's job timeout is no
+longer swallowed by the per-record ``except Exception`` -- the swallow that left a run with no
+time limit and a Sync Log stuck in Running.
+
+**A linked record is never saved by the sync.** The already-linked path used to apply every
+mapped value and save. For a QuickBooks job linked to a Project that is status, customer and
+company; one import reopened 338 Projects and re-pointed 13 to another company. What is held
+here: a linked Project whose job moved to another customer is not saved and its mapping is
+flagged, and its status and company are never even offered; an unmoved payload writes nothing;
+a moved payload that still agrees only advances the cursor; a field QuickBooks did not change
+is not a difference however far ERPNext moved; a linked draft transaction is flagged, not
+saved; a submitted document still takes its own path; ``overwrite=True``, ``recheck=True`` and
+preview change none of that; the flag is written with ``frappe.db.set_value`` and never touches
+``owned_fields``; and the three answers a person can give -- Keep ERPNext, Use QuickBooks
+values, Refresh draft -- do exactly what their names say.
+
+The source checks at the bottom exist because the bench-free stub cannot see a decorator or a
+missing CI step: an endpoint that lost its role gate, a review action reachable by GET, and a
+pytest file that ``python -m unittest`` silently collects nothing from all pass every
+behavioural test above.
+
+Plain pytest functions (``monkeypatch``), so this file needs its own ``python -m pytest`` step
+in ``ci.yml``.
+
+Run: python -m pytest erpnext_enhancements/tests/test_quickbooks_link_only.py -q
+"""
+
+import ast
+import json
+import re
+import types
+from pathlib import Path
+
+import pytest
+
+from erpnext_enhancements.tests.test_quickbooks_online import install_frappe_stub
+
+APP = Path(__file__).resolve().parents[1]
+REPO = APP.parent
+CORE = APP / "quickbooks_online" / "core"
+PAGE_JS = APP / "quickbooks_online" / "page" / "quickbooks_record_matching" / "quickbooks_record_matching.js"
+MAPPING_JSON = (
+	APP / "quickbooks_online" / "doctype" / "quickbooks_sync_mapping" / "quickbooks_sync_mapping.json"
+)
+
+REVIEW_ENDPOINTS = ("keep_erpnext", "use_quickbooks_values", "refresh_drafts")
+SETTINGS = types.SimpleNamespace(company="Main Co")
+
+
+def _read(path):
+	return path.read_text(encoding="utf-8")
+
+
+def _function_source(path, name):
+	source = _read(path)
+	node = next(
+		node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name == name
+	)
+	return ast.get_source_segment(source, node)
+
+
+def _code_only(source):
+	"""``source`` with its docstring and comments removed, so an absence check reads the
+	code and not the prose that explains what the code used to do."""
+	tree = ast.parse(source)
+	for node in ast.walk(tree):
+		if isinstance(node, (ast.FunctionDef, ast.Module)) and ast.get_docstring(node) is not None:
+			node.body = node.body[1:] or [ast.Pass()]
+	return ast.unparse(tree)
+
+
+class JobTimeoutException(Exception):
+	"""Stand-in for ``rq.timeouts.JobTimeoutException``; ``is_rq_job_timeout`` matches the
+	class by name when ``rq`` is not installed, which is the case in CI."""
+
+
+def _doc(**fields):
+	"""A record double that remembers every ``set`` and every ``save``."""
+	doc = types.SimpleNamespace(flags=types.SimpleNamespace(), saves=[], sets=[], **fields)
+	doc.get = lambda fieldname: getattr(doc, fieldname, None)
+
+	def _set(fieldname, value):
+		doc.sets.append(fieldname)
+		setattr(doc, fieldname, value)
+
+	doc.set = _set
+	doc.save = lambda **kwargs: doc.saves.append(kwargs)
+	return doc
+
+
+def _mapping_row(**overrides):
+	row = {
+		"name": "QBO-MAP-Customer-77",
+		"erpnext_doctype": "Project",
+		"erpnext_name": "PRJ-00123",
+		"owned_fields": "{}",
+		"match_status": "Auto Matched",
+		"conflict_status": "Clean",
+		"sync_token": "5",
+		"last_qbo_updated_at": None,
+		"qbo_changes": None,
+		"settled_qbo_values": None,
+		"deleted": 0,
+	}
+	row.update(overrides)
+	return types.SimpleNamespace(**row)
+
+
+def _wire(monkeypatch, *, doctype, values, mapping_row, doc, issues=None):
+	"""Point ``upsert_entity`` at one linked record and record every write it attempts."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	writes = {"set_value": [], "save_mapping": [], "manual_review": [], "group_parent": []}
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: (doctype, dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: list(issues or []))
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: mapping_row)
+	monkeypatch.setattr(mapping, "_ensure_group_parent", lambda *args: writes["group_parent"].append(args))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: writes["save_mapping"].append(kwargs))
+	monkeypatch.setattr(
+		mapping, "save_manual_review_mapping", lambda *args, **kwargs: writes["manual_review"].append(args)
+	)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: writes["set_value"].append((args, kwargs)), raising=False
+	)
+	return mapping, frappe, writes
+
+
+def _project_case(monkeypatch, **mapping_overrides):
+	"""A Project a person finished, linked to a QuickBooks job that someone then moved under
+	another customer. The mapper also sends what it always sends for a job: its DisplayName
+	as the title, the first open-like status, and the Settings company."""
+	values = {
+		"project_name": "PRJ-00123 Renamed In QuickBooks",
+		"customer": "Other Customer",
+		"company": "Other Company",
+		"status": "Open",
+	}
+	doc = _doc(
+		doctype="Project",
+		name="PRJ-00123",
+		docstatus=0,
+		project_name="Courtyard Fountain",
+		customer="First Customer",
+		company="Main Co",
+		status="Completed",
+	)
+	mapping_overrides.setdefault(
+		"owned_fields", json.dumps({"customer": "First Customer", "company": "Main Co", "status": "Open"})
+	)
+	row = _mapping_row(**mapping_overrides)
+	mapping, frappe, writes = _wire(monkeypatch, doctype="Project", values=values, mapping_row=row, doc=doc)
+	return mapping, frappe, writes, doc, row
+
+
+JOB_PAYLOAD = {"Id": "77", "DisplayName": "PRJ-00123 Renamed In QuickBooks", "SyncToken": "6"}
+
+
+# ---------------------------------------------------------------------------
+# Part A -- no self-starting imports
+# ---------------------------------------------------------------------------
+
+
+def _retry_stub(monkeypatch, failed):
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	saved = []
+
+	def get_all(doctype, filters=None, fields=None, **kwargs):
+		filters = filters or {}
+		if filters.get("status") != "Failed":
+			return []  # the reaper's Running/Queued query
+		return [log for log in failed if not filters.get("name") or log.name == filters["name"]]
+
+	def get_doc(doctype, name):
+		doc = types.SimpleNamespace(name=name, retry_count=0)
+		doc.save = lambda **kwargs: saved.append(name)
+		return doc
+
+	monkeypatch.setattr(frappe, "get_all", get_all)
+	monkeypatch.setattr(frappe, "get_doc", get_doc, raising=False)
+	monkeypatch.setattr(sync, "get_settings", lambda: types.SimpleNamespace(retry_limit=3))
+	calls = {"cdc": 0}
+	monkeypatch.setattr(sync, "run_cdc", lambda: calls.__setitem__("cdc", calls["cdc"] + 1))
+
+	def no_import(*args, **kwargs):
+		raise AssertionError("retry_failed started an Import All")
+
+	monkeypatch.setattr(sync, "import_all", no_import)
+	monkeypatch.setattr(sync, "run_resync", no_import)
+	return sync, calls, saved
+
+
+@pytest.mark.parametrize("sync_type", ["Import All", "Run Resync", "Preview Resync"])
+def test_retry_failed_never_starts_an_import(monkeypatch, sync_type):
+	"""The scheduler path with nothing but a failed full run on the books: it used to end
+	in ``import_all()``. Now nothing runs, and the log is not even counted as retried."""
+	failed = [types.SimpleNamespace(name="QBO-SYNC-1", sync_type=sync_type, retry_count=0)]
+	sync, calls, saved = _retry_stub(monkeypatch, failed)
+
+	result = sync.retry_failed()
+
+	assert result == {"cdc": False, "restart_by_hand": ["QBO-SYNC-1"]}
+	assert calls == {"cdc": 0}
+	assert saved == [], "no retry is attempted, so none is counted"
+
+
+def test_retry_failed_still_retries_cdc_once_beside_a_failed_import(monkeypatch):
+	failed = [
+		types.SimpleNamespace(name="QBO-SYNC-1", sync_type="Import All", retry_count=0),
+		types.SimpleNamespace(name="QBO-SYNC-2", sync_type="CDC", retry_count=0),
+		types.SimpleNamespace(name="QBO-SYNC-3", sync_type="CDC", retry_count=1),
+	]
+	sync, calls, saved = _retry_stub(monkeypatch, failed)
+
+	result = sync.retry_failed()
+
+	assert calls == {"cdc": 1}
+	assert saved == ["QBO-SYNC-2", "QBO-SYNC-3"]
+	assert result == {"cdc": True, "restart_by_hand": ["QBO-SYNC-1"]}
+
+
+def test_retry_failed_for_a_named_import_log_runs_nothing(monkeypatch):
+	"""The dashboard's Retry for one named log: CDC still works by name, an import does not."""
+	failed = [
+		types.SimpleNamespace(name="QBO-SYNC-1", sync_type="Import All", retry_count=0),
+		types.SimpleNamespace(name="QBO-SYNC-2", sync_type="CDC", retry_count=0),
+	]
+	sync, calls, saved = _retry_stub(monkeypatch, failed)
+
+	assert sync.retry_failed("QBO-SYNC-1") == {"cdc": False, "restart_by_hand": ["QBO-SYNC-1"]}
+	assert calls == {"cdc": 0} and saved == []
+
+	assert sync.retry_failed("QBO-SYNC-2") == {"cdc": True, "restart_by_hand": []}
+	assert calls == {"cdc": 1} and saved == ["QBO-SYNC-2"]
+
+
+def test_only_the_dashboard_endpoint_can_start_an_import():
+	"""Read the code, not the behaviour: a new caller added next year would pass every test
+	above. In ``sync.py`` nothing calls ``import_all`` or ``run_resync``; ``tasks.py`` (the
+	scheduler's entry points) and ``webhooks.py`` never name them; and no scheduler entry in
+	``hooks.py`` points at either."""
+	for module in ("sync.py", "tasks.py", "webhooks.py"):
+		tree = ast.parse(_read(CORE / module))
+		called = {
+			node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Call)
+		}
+		assert not called & {"import_all", "run_resync", "run_import_all", "run_run_resync"}, module
+	tasks = _code_only(_read(CORE / "tasks.py"))
+	assert "import_all" not in tasks and "run_resync" not in tasks
+	hooks = _read(APP / "hooks.py")
+	assert "quickbooks_online.core.sync.import_all" not in hooks
+	assert "quickbooks_online.core.sync.run_resync" not in hooks
+	assert "quickbooks_online.core.api.import_all" not in hooks
+	# The one remaining caller is the operator-gated endpoint, which queues it as its own job.
+	endpoint = _function_source(CORE / "api.py", "import_all")
+	assert "_require_qbo_operator()" in endpoint
+	assert 'frappe.enqueue(run_import_all, queue="long"' in endpoint
+
+
+def _api(monkeypatch, failed):
+	frappe = install_frappe_stub()
+	enqueued = []
+	monkeypatch.setattr(frappe, "only_for", lambda *args, **kwargs: None, raising=False)
+	monkeypatch.setattr(frappe, "enqueue", lambda method, **kwargs: enqueued.append((method, kwargs)), raising=False)
+
+	def get_all(doctype, filters=None, fields=None, **kwargs):
+		filters = filters or {}
+		types_wanted = set((filters.get("sync_type") or ["in", []])[1])
+		return [
+			log
+			for log in failed
+			if log.sync_type in types_wanted and (not filters.get("name") or log.name == filters["name"])
+		]
+
+	monkeypatch.setattr(frappe, "get_all", get_all)
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	return api, enqueued
+
+
+def test_retry_endpoint_tells_a_named_import_log_to_be_restarted_by_hand(monkeypatch):
+	failed = [
+		types.SimpleNamespace(name="QBO-SYNC-1", sync_type="Import All"),
+		types.SimpleNamespace(name="QBO-SYNC-2", sync_type="CDC"),
+	]
+	api, enqueued = _api(monkeypatch, failed)
+
+	assert api.retry_failed("QBO-SYNC-1") == {"status": "restart_by_hand", "restart_by_hand": ["QBO-SYNC-1"]}
+	assert enqueued == [], "nothing is queued for a failed import"
+
+	assert api.retry_failed("QBO-SYNC-2") == {"status": "queued", "restart_by_hand": []}
+	assert api.retry_failed() == {"status": "queued", "restart_by_hand": ["QBO-SYNC-1"]}
+	assert [call[0] for call in enqueued] == [api.run_retry_failed, api.run_retry_failed]
+	assert enqueued[0][1]["log_name"] == "QBO-SYNC-2" and enqueued[1][1]["log_name"] is None
+
+
+def test_safe_upsert_lets_the_job_timeout_through_after_rolling_back(monkeypatch):
+	"""RQ's timeout is an ``Exception`` raised from a one-shot alarm. Caught as one more bad
+	record, it leaves the run with no time limit; re-raised, the run wrapper fails the log."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	rollbacks = []
+	monkeypatch.setattr(frappe.db, "rollback", lambda save_point=None: rollbacks.append(save_point), raising=False)
+	logged = []
+	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: logged.append(args), raising=False)
+
+	def times_out(*args, **kwargs):
+		raise JobTimeoutException("Task exceeded maximum timeout value (300 seconds)")
+
+	monkeypatch.setattr(sync, "upsert_entity", times_out)
+	with pytest.raises(JobTimeoutException):
+		sync.safe_upsert("Customer", {"Id": "1"}, SETTINGS)
+	assert rollbacks == ["qbo_upsert"], "the half-written record is undone before the timeout travels on"
+	assert logged == [], "a timeout is not a failed record"
+
+	# The retry after a TimestampMismatchError is the same door.
+	calls = {"n": 0}
+
+	def mismatch_then_timeout(*args, **kwargs):
+		calls["n"] += 1
+		if calls["n"] == 1:
+			raise frappe.exceptions.TimestampMismatchError("modified after open")
+		raise JobTimeoutException("300 seconds")
+
+	monkeypatch.setattr(sync, "upsert_entity", mismatch_then_timeout)
+	with pytest.raises(JobTimeoutException):
+		sync.safe_upsert("Customer", {"Id": "1"}, SETTINGS)
+
+	# An ordinary failure is still one failed record, and the batch carries on.
+	monkeypatch.setattr(sync, "upsert_entity", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad record")))
+	assert sync.safe_upsert("Customer", {"Id": "9"}, SETTINGS)["action"] == "failed"
+	assert len(logged) == 1
+
+
+def test_a_timed_out_import_ends_failed_not_running(monkeypatch):
+	"""The whole chain: the timeout lands inside one record's upsert, leaves ``safe_upsert``,
+	and the run wrapper's ``fail_log`` closes the log as Failed before re-raising."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	log = types.SimpleNamespace(name="QBO-SYNC-9", status="Running", failed_count=0)
+	log.save = lambda **kwargs: None
+	failed_with = []
+	monkeypatch.setattr(sync, "get_settings", lambda: types.SimpleNamespace(realm_id="1", save=lambda **k: None))
+	monkeypatch.setattr(sync, "run_in_progress", lambda sync_type: False)
+	monkeypatch.setattr(sync, "start_log", lambda sync_type: log)
+	monkeypatch.setattr(sync, "ordered_entities", lambda entity_types=None: ["Customer"])
+	monkeypatch.setattr(sync, "query_entity_payloads", lambda entity_type, settings=None: iter([{"Id": "1"}]))
+	monkeypatch.setattr(sync, "store_raw_payload", lambda *args, **kwargs: None)
+	monkeypatch.setattr(sync.frappe.db, "commit", lambda: None, raising=False)
+
+	def times_out(*args, **kwargs):
+		raise JobTimeoutException("300 seconds")
+
+	monkeypatch.setattr(sync, "upsert_entity", times_out)
+	monkeypatch.setattr(
+		sync, "fail_log", lambda log, exc: (setattr(log, "status", "Failed"), failed_with.append(type(exc).__name__))
+	)
+
+	with pytest.raises(JobTimeoutException):
+		sync.import_all()
+	assert log.status == "Failed"
+	assert failed_with == ["JobTimeoutException"]
+
+
+def test_is_rq_job_timeout_matches_by_name_and_nothing_else():
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.utils import is_rq_job_timeout
+
+	assert is_rq_job_timeout(JobTimeoutException("x")) is True
+	assert is_rq_job_timeout(ValueError("x")) is False
+	assert is_rq_job_timeout(TimeoutError("a socket timeout is an ordinary failed record")) is False
+
+
+# ---------------------------------------------------------------------------
+# Part B -- the sync's half: compare, flag, never save
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("flags", [{}, {"overwrite": True}, {"recheck": True}, {"overwrite": True, "recheck": True}])
+def test_a_linked_project_whose_job_changed_is_flagged_and_never_saved(monkeypatch, flags):
+	"""The case the rule was written for. QuickBooks moved the job under another customer,
+	and the mapper sends "Open" and the Settings company as it does for every job; the
+	Project is Completed here, under its own company. Nothing reaches the Project --
+	whatever the caller passes: the ``overwrite=True`` Run Resync used to send, and the
+	``recheck=True`` it sends now."""
+	mapping, _frappe, writes, doc, row = _project_case(monkeypatch)
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, **flags)
+
+	assert result["action"] == "flagged"
+	assert result["doctype"] == "Project" and result["name"] == "PRJ-00123"
+	# The customer is the one thing a job can say about a linked Project. Its title, status
+	# and company are dropped before the comparison: never flagged, so never applicable.
+	assert result["fields"] == ["customer"]
+	assert doc.saves == [] and doc.sets == []
+	assert (doc.customer, doc.company, doc.status, doc.project_name) == (
+		"First Customer",
+		"Main Co",
+		"Completed",
+		"Courtyard Fountain",
+	)
+	assert writes["save_mapping"] == [] and writes["manual_review"] == []
+	assert writes["group_parent"] == [], "a linked record never promotes another Account"
+
+	assert len(writes["set_value"]) == 1
+	(doctype, name, updates), _kwargs = writes["set_value"][0]
+	assert (doctype, name) == ("QuickBooks Sync Mapping", row.name)
+	assert updates["conflict_status"] == "QuickBooks Changed"
+	# The submitted-document guard's pattern: owned_fields and the cursor are left alone.
+	assert set(updates) == {"conflict_status", "qbo_changes"}
+	note = json.loads(updates["qbo_changes"])
+	assert note["sync_token"] == "6"
+	assert note["fields"] == {"customer": {"erpnext": "First Customer", "qbo": "Other Customer"}}
+
+
+def test_a_projects_status_company_and_title_are_never_a_difference(monkeypatch):
+	"""The job still sits under the Project's own customer. That the Project is Completed
+	under another company with a curated title, while the mapper says Open, the Settings
+	company and the job's DisplayName, is not QuickBooks changing anything: ``unchanged``,
+	with a fresh baseline or none. This is the write that reopened 338 Projects."""
+	for owned in ({"customer": "First Customer", "status": "Open", "company": "Main Co"}, {}):
+		mapping, _frappe, writes, doc, _row = _project_case(monkeypatch, owned_fields=json.dumps(owned))
+		monkeypatch.setattr(
+			mapping,
+			"map_qbo_to_erpnext",
+			lambda *args: (
+				"Project",
+				{
+					"project_name": "PRJ-00123 Renamed In QuickBooks",
+					"customer": "First Customer",
+					"company": "Other Company",
+					"status": "Open",
+				},
+			),
+		)
+
+		result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, recheck=True)
+
+		assert result == {"action": "unchanged", "doctype": "Project", "name": "PRJ-00123"}
+		assert doc.saves == [] and doc.sets == []
+		assert (doc.status, doc.company, doc.project_name) == ("Completed", "Main Co", "Courtyard Fountain")
+		assert all("conflict_status" not in call[0][2] for call in writes["set_value"])
+
+
+def test_a_field_quickbooks_did_not_change_is_not_a_difference(monkeypatch):
+	"""The flag is "QuickBooks changed". A person renamed the customer here and QuickBooks
+	still says what it said at the last sync: not flagged, however far apart the two are.
+	QuickBooks then changes the type as well, a field ERPNext had also edited: flagged, for
+	that field alone, with the note that both sides moved."""
+	synced = {"customer_name": "Acme Supply", "customer_type": "Commercial", "website": "https://www.example.com"}
+	values = {"customer_name": "Acme Supply", "customer_type": "Commercial", "website": "www.example.com"}
+	doc = _doc(
+		doctype="Customer",
+		name="Acme Supply",
+		customer_name="Acme Supply Company (renamed here)",
+		customer_type="Partnership",
+		website="https://www.example.com",
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Customer-1",
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		owned_fields=json.dumps(synced),
+		sync_token="2",
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+	assert result["action"] == "unchanged", "QuickBooks moved, but changed none of these fields"
+	assert doc.saves == [] and doc.sets == []
+	assert "conflict_status" not in writes["set_value"][0][0][2]
+
+	values["customer_type"] = "Residential"
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "4"}, SETTINGS)
+	assert result["action"] == "flagged" and result["fields"] == ["customer_type"]
+	note = json.loads(writes["set_value"][1][0][2]["qbo_changes"])
+	assert note["fields"] == {
+		"customer_type": {"erpnext": "Partnership", "qbo": "Residential", "erpnext_edited": True}
+	}
+	assert doc.customer_type == "Partnership"
+
+
+def test_a_field_with_no_baseline_is_compared_with_the_record(monkeypatch):
+	"""A record the import linked to (not created) has a baseline only for the fields that
+	agreed at the time. A field that differed then has no reference, so the first time
+	QuickBooks moves it is shown to a person instead of being written, as it used to be."""
+	values = {"customer_name": "Acme Supply", "tax_id": "99-0000001"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply", tax_id="")
+	row = _mapping_row(
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		owned_fields=json.dumps({"customer_name": "Acme Supply"}),
+		sync_token="2",
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+
+	assert result["action"] == "flagged" and result["fields"] == ["tax_id"]
+	assert doc.saves == [] and doc.tax_id == ""
+	assert writes["save_mapping"] == []
+
+
+def test_an_unmoved_payload_is_unchanged_with_no_write_of_any_kind(monkeypatch):
+	"""QuickBooks has not advanced since the mapping's last sync. That ERPNext differs is a
+	person's edit, and not the sync's business: no save, no flag, no mapping write."""
+	mapping, _frappe, writes, doc, _row = _project_case(monkeypatch, sync_token="6")
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+
+	assert result == {"action": "unchanged", "doctype": "Project", "name": "PRJ-00123"}
+	assert doc.saves == [] and doc.sets == []
+	assert writes == {"set_value": [], "save_mapping": [], "manual_review": [], "group_parent": []}
+
+
+def test_a_resync_compares_an_unmoved_record_and_still_only_flags(monkeypatch):
+	"""Run Resync is a person asking for the full comparison, so it looks even when
+	QuickBooks has not moved -- the way to surface a standing difference after a mapper fix.
+	It flags; it does not save. ``overwrite=True`` alone, what Run Resync sent before
+	v1.800.0, is ignored: the unmoved record is simply unchanged."""
+	mapping, _frappe, writes, doc, _row = _project_case(monkeypatch, sync_token="6")
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, overwrite=True)
+	assert result["action"] == "unchanged"
+	assert writes["set_value"] == []
+
+	preview = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, preview=True, recheck=True)
+	assert preview["action"] == "would_flag" and preview["fields"] == ["customer"]
+	assert writes["set_value"] == []
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, recheck=True)
+	assert result["action"] == "flagged"
+	assert doc.saves == [] and doc.sets == []
+	assert writes["save_mapping"] == []
+	assert writes["set_value"][0][0][2]["conflict_status"] == "QuickBooks Changed"
+
+
+def test_a_resync_of_an_unmoved_agreeing_record_writes_nothing(monkeypatch):
+	values = {"customer_name": "Acme Supply"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply")
+	row = _mapping_row(erpnext_doctype="Customer", erpnext_name="Acme Supply", sync_token="3")
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS, recheck=True)
+
+	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme Supply"}
+	assert writes["set_value"] == [] and doc.saves == []
+
+
+def test_the_resync_asks_for_a_recheck_and_never_for_an_overwrite():
+	"""Preview and run must compare the same way, or the preview's count is not what the
+	run flags. Neither passes ``overwrite`` any more."""
+	sync_code = _code_only(_read(CORE / "sync.py"))
+	assert "overwrite" not in sync_code
+	assert "safe_upsert(raw.qbo_entity_type, payload, settings, recheck=True)" in sync_code
+	assert "safe_upsert(entity_type, payload, settings, preview=True, recheck=True)" in sync_code
+	# Import All, CDC and the single-entity sync never recheck: an unmoved record is left alone.
+	assert sync_code.count("recheck=True") == 2
+
+
+def test_a_moved_payload_that_still_agrees_only_advances_the_cursor(monkeypatch):
+	values = {"customer_name": "Acme Supply", "customer_type": "Commercial", "disabled": 0}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply ", customer_type="Commercial")
+	row = _mapping_row(
+		name="QBO-MAP-Customer-1",
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		owned_fields=json.dumps(values),
+		sync_token="2",
+	)
+	mapping, _frappe, writes, = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+
+	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme Supply"}
+	assert doc.saves == [] and doc.sets == []
+	assert writes["save_mapping"] == []
+	(_doctype, _name, updates), kwargs = writes["set_value"][0]
+	assert updates["sync_token"] == "3" and updates["deleted"] == 0
+	assert "conflict_status" not in updates and "owned_fields" not in updates and "qbo_changes" not in updates
+	assert kwargs == {"update_modified": False}
+
+
+def test_a_linked_draft_transaction_is_flagged_not_saved(monkeypatch):
+	"""Drafts are covered: a docstatus 0 Sales Invoice the import created is the accountant's
+	to edit, so a QuickBooks edit to the invoice is shown beside it, row by row."""
+	values = {
+		"customer": "Acme Supply",
+		"posting_date": "2026-11-02",
+		"items": [
+			{"item_code": "SERVICE", "qty": 1, "rate": 120.0},
+			{"item_code": "PARTS", "qty": 2, "rate": 15.0},
+		],
+	}
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		docstatus=0,
+		customer="Acme Supply",
+		posting_date="2026-11-02",
+		items=[types.SimpleNamespace(item_code="SERVICE", qty=1.0, rate=100.0)],
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Invoice-900",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=doc.name,
+		match_status="Created",
+		sync_token="0",
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Sales Invoice", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Invoice", {"Id": "900", "SyncToken": "1"}, SETTINGS)
+
+	assert result["action"] == "flagged" and result["fields"] == ["items"]
+	assert doc.saves == [] and doc.sets == []
+	assert len(doc.items) == 1, "the draft's rows are untouched"
+	assert writes["save_mapping"] == [] and writes["manual_review"] == []
+	note = json.loads(writes["set_value"][0][0][2]["qbo_changes"])
+	table = note["tables"]["items"]
+	assert (table["erpnext_rows"], table["qbo_rows"]) == (1, 2)
+	assert table["rows"] == [
+		{"row": 1, "fields": {"rate": {"erpnext": 100.0, "qbo": 120.0}}},
+		{"row": 2, "only_in": "qbo"},
+	]
+	assert table["qbo"] == values["items"], "the whole QuickBooks table is kept for the reviewer's decision"
+	# Records the import itself created follow the same rule.
+	assert row.match_status == "Created"
+
+
+def test_a_submitted_document_still_takes_the_submitted_document_path(monkeypatch):
+	"""docstatus 1 is the older guard and keeps its own outcome: parked for manual review by
+	set_value, never ``QuickBooks Changed``, never saved. Since v1.800.0 it also wins over a
+	failing preflight, which used to rewrite ``owned_fields`` on a posted document."""
+	values = {"customer": "Other Customer", "posting_date": "2026-11-02"}
+	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00007", docstatus=1, customer="Acme Supply")
+	row = _mapping_row(erpnext_doctype="Sales Invoice", erpnext_name=doc.name, name="QBO-MAP-Invoice-7")
+	mapping, _frappe, writes = _wire(
+		monkeypatch,
+		doctype="Sales Invoice",
+		values=values,
+		mapping_row=row,
+		doc=doc,
+		issues=["Customer reference is not linked"],
+	)
+
+	result = mapping.upsert_entity("Invoice", {"Id": "7", "SyncToken": "6"}, SETTINGS)
+
+	assert result["action"] == "manual_review" and "submitted" in result["reason"]
+	assert doc.saves == [] and doc.sets == []
+	assert writes["save_mapping"] == [] and writes["manual_review"] == []
+	(_doctype, _name, updates), kwargs = writes["set_value"][0]
+	assert updates == {"conflict_status": "Pending Review", "match_status": "Pending Review"}
+	assert kwargs == {"update_modified": False}
+
+	# Unmoved: nothing to do, nothing written.
+	writes["set_value"].clear()
+	result = mapping.upsert_entity("Invoice", {"Id": "7", "SyncToken": "5"}, SETTINGS)
+	assert result == {"action": "unchanged", "doctype": "Sales Invoice", "name": doc.name}
+	assert writes["set_value"] == [] and writes["manual_review"] == []
+
+
+def test_preview_reports_would_flag_and_writes_nothing(monkeypatch):
+	mapping, _frappe, writes, doc, _row = _project_case(monkeypatch)
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS, preview=True)
+
+	assert result["action"] == "would_flag"
+	assert result["fields"] == ["customer"]
+	assert doc.saves == [] and doc.sets == []
+	assert writes == {"set_value": [], "save_mapping": [], "manual_review": [], "group_parent": []}
+
+
+def test_preview_of_an_agreeing_record_does_not_advance_the_cursor(monkeypatch):
+	values = {"customer_name": "Acme Supply"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply")
+	row = _mapping_row(erpnext_doctype="Customer", erpnext_name="Acme Supply", sync_token="2")
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS, preview=True)
+
+	assert result["action"] == "unchanged"
+	assert writes["set_value"] == []
+
+
+def test_a_replay_of_the_same_payload_does_not_rewrite_the_flag(monkeypatch):
+	"""An unreviewed row is polled every hour. The cursor is held back on purpose, so the
+	payload reads as moved each time; the flag must not be rewritten each time too."""
+	mapping, _frappe, writes, _doc_, row = _project_case(monkeypatch)
+
+	mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+	(_doctype, _name, updates), _kwargs = writes["set_value"][0]
+	row.conflict_status = updates["conflict_status"]
+	row.qbo_changes = updates["qbo_changes"]
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "flagged"
+	assert len(writes["set_value"]) == 1, "same differences, no second write"
+
+	# QuickBooks says something new: the note is replaced.
+	later = dict(JOB_PAYLOAD, SyncToken="7")
+	monkeypatch.setattr(
+		mapping, "map_qbo_to_erpnext", lambda *args: ("Project", {"customer": "Third Customer", "status": "Open"})
+	)
+	mapping.upsert_entity("Customer", later, SETTINGS)
+	assert len(writes["set_value"]) == 2
+	assert json.loads(writes["set_value"][1][0][2]["qbo_changes"])["fields"]["customer"]["qbo"] == "Third Customer"
+
+
+def test_a_flag_that_no_longer_holds_clears_itself(monkeypatch):
+	"""Someone fixed the record by hand to match QuickBooks. The next pass finds no
+	difference, clears the flag and its note, and advances the cursor."""
+	values = {"customer_name": "Acme Supply"}
+	doc = _doc(doctype="Customer", name="Acme Supply", customer_name="Acme Supply")
+	row = _mapping_row(
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		sync_token="2",
+		conflict_status="QuickBooks Changed",
+		qbo_changes=json.dumps({"sync_token": "3", "fields": {"customer_name": {"erpnext": "Acme", "qbo": "Acme Supply"}}}),
+	)
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Customer", values=values, mapping_row=row, doc=doc)
+
+	result = mapping.upsert_entity("Customer", {"Id": "1", "SyncToken": "3"}, SETTINGS)
+
+	assert result["action"] == "unchanged"
+	updates = writes["set_value"][0][0][2]
+	assert updates["conflict_status"] == "Clean" and updates["qbo_changes"] is None
+	assert updates["sync_token"] == "3"
+
+
+def test_a_legacy_conflict_row_is_reread_even_when_quickbooks_has_not_moved(monkeypatch):
+	"""Rows flagged ``Conflict`` before v1.800.0 have no note. They are compared on their
+	next sync whatever the token says, and become ``QuickBooks Changed`` or ``Clean``."""
+	mapping, _frappe, writes, doc, _row = _project_case(monkeypatch, sync_token="6", conflict_status="Conflict")
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "flagged"
+	assert doc.saves == []
+	assert writes["set_value"][0][0][2]["conflict_status"] == "QuickBooks Changed"
+
+
+def test_a_value_a_person_kept_is_not_flagged_again_until_quickbooks_changes_it(monkeypatch):
+	"""One Keep ERPNext is final for a standing difference: the declined value is the new
+	reference, and the field is raised again only when QuickBooks says something else."""
+	settled = {"customer": "Other Customer"}
+	mapping, _frappe, writes, doc, _row = _project_case(monkeypatch, settled_qbo_values=json.dumps(settled))
+
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "unchanged", "the standing difference was already answered"
+	assert doc.saves == [] and doc.customer == "First Customer"
+	assert "conflict_status" not in writes["set_value"][0][0][2]
+
+	monkeypatch.setattr(
+		mapping, "map_qbo_to_erpnext", lambda *args: ("Project", {"customer": "Third Customer", "status": "Open"})
+	)
+	result = mapping.upsert_entity("Customer", dict(JOB_PAYLOAD), SETTINGS)
+	assert result["action"] == "flagged" and result["fields"] == ["customer"]
+
+
+def test_a_failing_preflight_on_a_linked_record_is_a_note_not_a_rewritten_mapping(monkeypatch):
+	"""``save_manual_review_mapping`` replaces ``owned_fields`` with the issue list. For a
+	record that already exists that destroyed the baseline; the issues now ride on the flag."""
+	values = {"customer": "Acme Supply"}
+	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00042", docstatus=0, customer="Acme Supply")
+	row = _mapping_row(erpnext_doctype="Sales Invoice", erpnext_name=doc.name, name="QBO-MAP-Invoice-900")
+	mapping, _frappe, writes = _wire(
+		monkeypatch,
+		doctype="Sales Invoice",
+		values=values,
+		mapping_row=row,
+		doc=doc,
+		issues=["Item reference 42 is not linked to an ERPNext Item"],
+	)
+
+	result = mapping.upsert_entity("Invoice", {"Id": "900", "SyncToken": "6"}, SETTINGS)
+
+	assert result["action"] == "flagged"
+	assert writes["manual_review"] == [] and writes["save_mapping"] == []
+	note = json.loads(writes["set_value"][0][0][2]["qbo_changes"])
+	assert note["issues"] == ["Item reference 42 is not linked to an ERPNext Item"]
+	assert doc.saves == []
+
+
+def test_an_unlinked_record_still_parks_on_a_failing_preflight(monkeypatch):
+	"""What a first-time create does is unchanged: no link, failing preflight, parked."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	parked = []
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Sales Invoice", {"customer": None}))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: ["Customer is required"])
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: None)
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: parked.append(args))
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: False, raising=False)
+
+	result = mapping.upsert_entity("Invoice", {"Id": "5", "SyncToken": "0"}, SETTINGS)
+
+	assert result["action"] == "manual_review" and result["issues"] == ["Customer is required"]
+	assert len(parked) == 1
+
+
+def test_a_mapping_to_another_doctype_is_not_the_linked_path(monkeypatch):
+	"""A QBO id linked to a Customer whose payload now resolves to a Project is the
+	doctype-flip guard's case, even when a Project happens to carry the Customer's name."""
+	values = {"project_name": "Courtyard Fountain", "customer": "Acme Supply"}
+	doc = _doc(doctype="Project", name="Acme Supply", customer="Somebody Else")
+	row = _mapping_row(erpnext_doctype="Customer", erpnext_name="Acme Supply", match_status="Created")
+	mapping, _frappe, writes = _wire(monkeypatch, doctype="Project", values=values, mapping_row=row, doc=doc)
+	reviewed = []
+	monkeypatch.setattr(mapping, "_review_linked_record", lambda *args, **kwargs: reviewed.append(args))
+	monkeypatch.setattr(mapping, "_is_qbo_customer_job", lambda payload: False)
+	row.save = lambda **kwargs: None
+
+	result = mapping.upsert_entity("Customer", {"Id": "77", "SyncToken": "6"}, SETTINGS)
+
+	assert reviewed == []
+	assert result["action"] == "manual_review" and "already linked to Customer" in result["reason"]
+	assert doc.saves == []
+
+
+def test_review_comparison_forgives_what_an_accountant_would_not_call_a_difference():
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _same_for_review
+
+	assert _same_for_review(None, "") and _same_for_review(None, 0) and _same_for_review("", False)
+	assert _same_for_review("Acme Supply ", "Acme Supply")
+	# What ERPNext's own clean-up does to a value between the mapper and the column.
+	assert _same_for_review("https://www.example.com/", "www.example.com")
+	assert _same_for_review("<div>Bronze nozzle,  2 in.</div>", "Bronze nozzle, 2 in.")
+	assert not _same_for_review("https://www.example.com", "www.example.org")
+	assert not _same_for_review("Acme Supply", "ACME SUPPLY"), "case is a real difference in a name"
+	assert _same_for_review(1.0, 1) and _same_for_review(1234.5, 1234.504)
+	assert not _same_for_review(1234.5, 1234.51)
+	assert not _same_for_review(0.0067, 0.0071), "a small rate gets no cent tolerance"
+	assert not _same_for_review(0, 1) and not _same_for_review("Open", "Completed")
+	assert not _same_for_review("0123", "123"), "two strings stay strings"
+	assert not _same_for_review(None, "Acme")
+
+
+def test_flagged_and_would_flag_are_counted_on_the_sync_log():
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	log = types.SimpleNamespace(conflict_count=0, updated_count=0)
+	sync._track_result(log, {"action": "flagged"})
+	sync._track_result(log, {"action": "would_flag"})
+	assert log.conflict_count == 2 and log.updated_count == 0
+
+
+def test_the_linked_path_contains_no_write_to_the_record():
+	"""Read the code. ``_review_linked_record`` and everything it calls to decide must hold
+	no way to write the record or to rewrite ``owned_fields`` wholesale, and the linked
+	branch of ``upsert_entity`` must hand over to it without touching the record itself."""
+	writes = ("apply_values(", "apply_blank_values(", ".save(", ".insert(", "save_mapping(", "_save_or_manual_review(")
+	for name in (
+		"_review_linked_record",
+		"_strip_values_erpnext_owns",
+		"_linked_differences",
+		"_table_differences",
+		"_flag_qbo_changed",
+		"_linked_record_needs_a_look",
+	):
+		code = _code_only(_function_source(CORE / "mapping.py", name))
+		for write in writes:
+			assert write not in code, f"{name} contains {write}"
+	upsert = _code_only(_function_source(CORE / "mapping.py", "upsert_entity"))
+	branch = upsert[upsert.index("frappe.db.exists(erpnext_doctype, mapping.erpnext_name)") :]
+	branch = branch[: branch.index("if preflight_issues:")]
+	assert "return _review_linked_record(" in branch
+	for write in writes:
+		assert write not in branch, f"the linked branch of upsert_entity contains {write}"
+	# ``overwrite`` stays in the signature for an old caller and is read nowhere in the body.
+	function = ast.parse(_function_source(CORE / "mapping.py", "upsert_entity")).body[0]
+	assert "overwrite" in [argument.arg for argument in function.args.kwonlyargs]
+	read = [node for node in ast.walk(function) if isinstance(node, ast.Name) and node.id == "overwrite"]
+	assert read == [], "overwrite is accepted and ignored; nothing may branch on it"
+	# ``recheck`` is read once, handed to the function that cannot write the record.
+	read = [node for node in ast.walk(function) if isinstance(node, ast.Name) and node.id == "recheck"]
+	assert len(read) == 1 and "recheck=recheck" in branch
+	# The cursor and the flag are written with set_value, which leaves owned_fields alone.
+	assert "frappe.db.set_value(MAPPING_DOCTYPE" in _function_source(CORE / "mapping.py", "_flag_qbo_changed")
+	assert "frappe.db.set_value(MAPPING_DOCTYPE" in _function_source(CORE / "mapping.py", "_advance_mapping_cursor")
+
+
+# ---------------------------------------------------------------------------
+# Part B -- the person's half: Keep ERPNext, Use QuickBooks values, Refresh draft
+# ---------------------------------------------------------------------------
+
+
+FLAGGED_QBO = {"customer_name": "Acme Supply Co", "customer_type": "Residential", "tax_id": "99-0000001"}
+
+
+def _flagged_customer(monkeypatch, *, docstatus=0, issues=None, settled=None):
+	"""A Customer flagged on three fields. ``docstatus`` stands in for a submittable record."""
+	note = {
+		"sync_token": "6",
+		"last_updated": "2026-11-03T10:20:00-08:00",
+		"detected_at": "2026-11-03 18:20:05",
+		"fields": {
+			"customer_name": {"erpnext": "Acme Supply", "qbo": "Acme Supply Co"},
+			"customer_type": {"erpnext": "Partnership", "qbo": "Residential", "erpnext_edited": True},
+			"tax_id": {"erpnext": "", "qbo": "99-0000001"},
+		},
+		"tables": {},
+		"issues": list(issues or []),
+	}
+	doc = _doc(
+		doctype="Customer",
+		name="Acme Supply",
+		docstatus=docstatus,
+		customer_name="Acme Supply",
+		customer_type="Partnership",
+		tax_id="",
+		customer_group="Commercial",
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Customer-1",
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		conflict_status="QuickBooks Changed",
+		qbo_changes=json.dumps(note),
+		owned_fields=json.dumps({"customer_name": "Acme Supply", "customer_type": "Commercial"}),
+		settled_qbo_values=json.dumps(settled) if settled else None,
+	)
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	writes = {"set_value": [], "save_mapping": []}
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: writes["save_mapping"].append((args, kwargs)))
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: writes["set_value"].append((args, kwargs)), raising=False
+	)
+	return mapping, frappe, writes, doc, row
+
+
+def test_keep_erpnext_clears_the_flag_without_touching_the_record(monkeypatch):
+	mapping, frappe, writes, doc, row = _flagged_customer(monkeypatch, settled={"website": "www.example.com"})
+
+	def no_record(*args, **kwargs):
+		raise AssertionError("Keep ERPNext loaded the ERPNext record")
+
+	monkeypatch.setattr(frappe, "get_doc", no_record, raising=False)
+
+	result = mapping.keep_erpnext_values("Customer", "1")
+
+	assert result["kept"] == ["customer_name", "customer_type", "tax_id"]
+	assert doc.saves == [] and doc.sets == []
+	assert writes["save_mapping"] == []
+	(doctype, name, updates), kwargs = writes["set_value"][0]
+	assert (doctype, name) == ("QuickBooks Sync Mapping", row.name)
+	assert updates["conflict_status"] == "Clean" and updates["qbo_changes"] is None
+	assert updates["sync_token"] == "6", "the cursor advances to what the reviewer was shown"
+	# The declined values become the reference, beside what was settled before.
+	assert json.loads(updates["settled_qbo_values"]) == dict(FLAGGED_QBO, website="www.example.com")
+	assert "owned_fields" not in updates
+	assert kwargs == {"update_modified": False}
+
+
+def test_keep_erpnext_refuses_a_row_that_is_not_flagged(monkeypatch):
+	mapping, _frappe, writes, _doc_, row = _flagged_customer(monkeypatch)
+	row.conflict_status = "Clean"
+
+	with pytest.raises(Exception, match="not flagged QuickBooks changed"):
+		mapping.keep_erpnext_values("Customer", "1")
+	assert writes["set_value"] == []
+
+
+def test_use_quickbooks_values_writes_exactly_the_flagged_fields(monkeypatch):
+	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch)
+
+	result = mapping.use_qbo_values("Customer", "1")
+
+	assert sorted(doc.sets) == ["customer_name", "customer_type", "tax_id"], "nothing else on the record is set"
+	assert (doc.customer_name, doc.customer_type, doc.tax_id) == ("Acme Supply Co", "Residential", "99-0000001")
+	assert doc.customer_group == "Commercial"
+	assert doc.saves == [{"ignore_permissions": True}]
+	assert doc.flags.ignore_links is True
+	assert result["applied"] == ["customer_name", "customer_type", "tax_id"] and result["kept"] == []
+	updates = writes["set_value"][0][0][2]
+	assert updates["conflict_status"] == "Clean" and updates["qbo_changes"] is None
+	assert updates["sync_token"] == "6"
+	assert json.loads(updates["owned_fields"]) == FLAGGED_QBO
+	assert json.loads(updates["settled_qbo_values"]) == FLAGGED_QBO
+	assert writes["save_mapping"] == []
+
+
+def test_use_quickbooks_values_takes_only_the_ticked_fields_and_settles_the_rest(monkeypatch):
+	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch)
+
+	result = mapping.use_qbo_values("Customer", "1", fields=["customer_type"])
+
+	assert doc.sets == ["customer_type"]
+	assert (doc.customer_name, doc.customer_type, doc.tax_id) == ("Acme Supply", "Residential", "")
+	assert result["applied"] == ["customer_type"] and result["kept"] == ["customer_name", "tax_id"]
+	updates = writes["set_value"][0][0][2]
+	# Taken or left, every flagged value has been answered and is not raised again.
+	assert json.loads(updates["settled_qbo_values"]) == FLAGGED_QBO
+	# The untouched part of the baseline survives; the applied field is refreshed.
+	assert json.loads(updates["owned_fields"]) == {"customer_name": "Acme Supply", "customer_type": "Residential"}
+
+
+def test_use_quickbooks_values_cannot_reopen_or_repoint_a_project(monkeypatch):
+	"""Belt and braces. No flag the sync writes holds a Project's status, company or title,
+	but a note is stored JSON; if one ever did, the write still drops them."""
+	mapping, frappe, writes, _customer, row = _flagged_customer(monkeypatch)
+	project = _doc(
+		doctype="Project",
+		name="PRJ-00123",
+		docstatus=0,
+		project_name="Courtyard Fountain",
+		customer="First Customer",
+		company="Main Co",
+		status="Completed",
+	)
+	row.erpnext_doctype, row.erpnext_name = "Project", "PRJ-00123"
+	row.qbo_changes = json.dumps(
+		{
+			"sync_token": "6",
+			"fields": {
+				"customer": {"erpnext": "First Customer", "qbo": "Other Customer"},
+				"status": {"erpnext": "Completed", "qbo": "Open"},
+				"company": {"erpnext": "Main Co", "qbo": "Other Company"},
+				"project_name": {"erpnext": "Courtyard Fountain", "qbo": "PRJ-00123 Renamed"},
+			},
+		}
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: project, raising=False)
+
+	result = mapping.use_qbo_values("Customer", "77")
+
+	assert project.sets == ["customer"] and result["applied"] == ["customer"]
+	assert (project.status, project.company, project.project_name) == ("Completed", "Main Co", "Courtyard Fountain")
+	assert len(writes["set_value"]) == 1
+
+
+@pytest.mark.parametrize(
+	"kwargs, setup, message",
+	[
+		({"fields": ["customer_group"]}, {}, "Not flagged on this record"),
+		({"fields": []}, {}, "Tick at least one field"),
+		({}, {"docstatus": 1}, "is submitted"),
+		({}, {"docstatus": 2}, "is cancelled"),
+		({}, {"issues": ["Customer reference is not linked"]}, "does not pass ERPNext's checks"),
+	],
+)
+def test_use_quickbooks_values_refusals_write_nothing(monkeypatch, kwargs, setup, message):
+	"""The submitted-document guard on the review side, and its neighbours: a posted or
+	cancelled document, a field the flag does not hold, a flag whose data did not validate."""
+	mapping, _frappe, writes, doc, _row = _flagged_customer(monkeypatch, **setup)
+
+	with pytest.raises(Exception, match=re.escape(message)):
+		mapping.use_qbo_values("Customer", "1", **kwargs)
+	assert doc.saves == [] and doc.sets == []
+	assert writes["set_value"] == []
+
+
+def _draft_invoice(monkeypatch, *, docstatus=0, issues=None, match_status="Created"):
+	payload = {"Id": "900", "SyncToken": "4", "MetaData": {"LastUpdatedTime": "2026-11-03T10:20:00-08:00"}}
+	values = {
+		"customer": "Acme Supply",
+		"posting_date": "2026-11-02",
+		"due_date": None,
+		"items": [{"item_code": "SERVICE", "qty": 1, "rate": 120.0}],
+	}
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		docstatus=docstatus,
+		customer="Acme Supply",
+		posting_date="2026-10-30",
+		items=[types.SimpleNamespace(item_code="SERVICE", qty=1.0, rate=100.0)],
+	)
+	row = _mapping_row(
+		name="QBO-MAP-Invoice-900",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name=doc.name,
+		match_status=match_status,
+		conflict_status="QuickBooks Changed",
+	)
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	writes = {"set_value": [], "save_mapping": []}
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
+	monkeypatch.setattr(mapping, "_raw_payload_dict", lambda entity_type, qbo_id: dict(payload))
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Sales Invoice", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: list(issues or []))
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: writes["save_mapping"].append((args, kwargs)))
+	monkeypatch.setattr(frappe, "get_single", lambda doctype: SETTINGS, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name=None: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: writes["set_value"].append((args, kwargs)), raising=False
+	)
+	return mapping, writes, doc, payload
+
+
+def test_refresh_draft_rebuilds_the_one_draft_from_the_stored_payload(monkeypatch):
+	mapping, writes, doc, payload = _draft_invoice(monkeypatch, match_status="Pending Review")
+
+	result = mapping.refresh_linked_draft("Invoice", "900")
+
+	assert sorted(doc.sets) == ["customer", "items", "posting_date"], "a None value is never applied"
+	assert doc.posting_date == "2026-11-02" and doc.items == [{"item_code": "SERVICE", "qty": 1, "rate": 120.0}]
+	assert doc.saves == [{"ignore_permissions": True}]
+	assert result["applied"] == ["customer", "items", "posting_date"]
+	(args, kwargs), = writes["save_mapping"]
+	assert args[:5] == ("Invoice", "900", payload, "Sales Invoice", doc.name)
+	# A parked draft is no longer parked. save_mapping records the rebuilt values as settled.
+	assert kwargs == {"conflict_status": "Clean", "match_status": "Auto Matched"}
+	assert args[5]["posting_date"] == "2026-11-02"
+
+
+@pytest.mark.parametrize(
+	"entity_type, setup, message",
+	[
+		("Invoice", {"docstatus": 1}, "is submitted"),
+		("Invoice", {"issues": ["Item reference 42 is not linked"]}, "does not pass ERPNext's checks"),
+		("Customer", {}, "Refresh draft is for draft transactions"),
+	],
+)
+def test_refresh_draft_refusals_write_nothing(monkeypatch, entity_type, setup, message):
+	mapping, writes, doc, _payload = _draft_invoice(monkeypatch, **setup)
+
+	with pytest.raises(Exception, match=re.escape(message)):
+		mapping.refresh_linked_draft(entity_type, "900")
+	assert doc.saves == [] and doc.sets == []
+	assert writes == {"set_value": [], "save_mapping": []}
+
+
+def test_save_mapping_drops_a_resolved_note_and_settles_what_it_was_given(monkeypatch):
+	"""``save_mapping`` runs when a record and a payload were just brought into line. A note
+	is stale by then, and the values join the reference the next comparison reads (scalars
+	only: a child table is already kept as mapped in ``owned_fields``). Settled values
+	belong to the record they were settled on, and start again when the link moves."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	row = _mapping_row(
+		erpnext_doctype="Customer",
+		erpnext_name="Acme Supply",
+		conflict_status="QuickBooks Changed",
+		qbo_changes='{"fields": {}}',
+		settled_qbo_values='{"tax_id": "99-0000001"}',
+	)
+	row.is_new = lambda: False
+	row.save = lambda **kwargs: None
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: row)
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: False, raising=False)
+	values = {"customer_name": "Acme Supply", "website": None, "customer_group": "Commercial", "items": [{"qty": 1}]}
+
+	mapping.save_mapping("Customer", "1", {"SyncToken": "9"}, "Customer", "Acme Supply", values, conflict_status="Clean")
+	assert row.qbo_changes is None and row.conflict_status == "Clean"
+	assert json.loads(row.settled_qbo_values) == {"tax_id": "99-0000001", "customer_name": "Acme Supply"}
+
+	mapping.save_mapping("Customer", "1", {"SyncToken": "9"}, "Customer", "Acme Supply Inc", {})
+	assert row.settled_qbo_values is None
+
+
+# ---------------------------------------------------------------------------
+# The Record Matching page's engine and endpoints
+# ---------------------------------------------------------------------------
+
+
+def _matching(monkeypatch):
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import matching
+
+	events = {"stamp": [], "commit": 0, "rollback": [], "savepoint": []}
+	monkeypatch.setattr(frappe, "session", types.SimpleNamespace(user="accountant@example.com"), raising=False)
+	monkeypatch.setattr(matching, "_stamp_reviewed", lambda name, user: events["stamp"].append((name, user)))
+	monkeypatch.setattr(frappe.db, "commit", lambda: events.__setitem__("commit", events["commit"] + 1), raising=False)
+	monkeypatch.setattr(frappe.db, "savepoint", lambda name: events["savepoint"].append(name), raising=False)
+	monkeypatch.setattr(frappe.db, "rollback", lambda save_point=None: events["rollback"].append(save_point), raising=False)
+	return matching, frappe, events
+
+
+def test_review_many_gives_one_result_per_row_and_one_failure_never_stops_the_rest(monkeypatch):
+	matching, _frappe, events = _matching(monkeypatch)
+
+	def keep(entity_type, qbo_id):
+		if qbo_id == "2":
+			raise Exception("<p>Customer 2 is not flagged QuickBooks changed</p>")
+		return {"mapping": f"QBO-MAP-{entity_type}-{qbo_id}", "kept": ["customer_name"]}
+
+	monkeypatch.setattr(matching, "keep_erpnext_values", keep)
+	items = [
+		{"entity_type": "Customer", "qbo_id": "1"},
+		{"entity_type": "Customer", "qbo_id": "2"},
+		{"entity_type": "Customer"},
+		{"entity_type": "Customer", "qbo_id": 3},
+	]
+
+	results = matching.review_many(items, matching.keep_erpnext)
+
+	assert [result["ok"] for result in results] == [True, False, False, True]
+	assert results[0]["action"] == "kept" and results[0]["reviewed_by"] == "accountant@example.com"
+	assert results[1]["error"] == "Customer 2 is not flagged QuickBooks changed", "markup stripped"
+	assert "entity_type and a qbo_id" in results[2]["error"]
+	assert events["stamp"] == [
+		("QBO-MAP-Customer-1", "accountant@example.com"),
+		("QBO-MAP-Customer-3", "accountant@example.com"),
+	]
+	assert events["commit"] == 2, "each decision is committed on its own"
+	assert events["rollback"] == ["qbo_review_action", "qbo_review_action"]
+
+
+def test_use_quickbooks_values_passes_each_rows_own_fields(monkeypatch):
+	matching, _frappe, _events = _matching(monkeypatch)
+	seen = []
+
+	def use(entity_type, qbo_id, fields=None):
+		seen.append((qbo_id, fields))
+		return {"mapping": "QBO-MAP-Customer-" + qbo_id, "applied": fields or ["all"], "kept": []}
+
+	monkeypatch.setattr(matching, "use_qbo_values", use)
+
+	results = matching.review_many(
+		[
+			{"entity_type": "Customer", "qbo_id": "1", "fields": ["status"]},
+			{"entity_type": "Customer", "qbo_id": "2"},
+			{"entity_type": "Customer", "qbo_id": "3", "fields": "status"},
+		],
+		matching.use_quickbooks_values,
+	)
+
+	assert seen == [("1", ["status"]), ("2", None), ("3", None)]
+	assert all(result["ok"] and result["action"] == "applied" for result in results)
+
+
+def test_change_view_shows_what_the_record_holds_now(monkeypatch):
+	"""The "ERPNext has" side is read from the record when the page asks. A field somebody
+	already corrected by hand shows as agreeing instead of repeating the stored snapshot."""
+	matching, frappe, _events = _matching(monkeypatch)
+	note = {
+		"detected_at": "2026-11-03 18:20:05",
+		"fields": {
+			"customer": {"erpnext": "First Customer", "qbo": "Other Customer"},
+			"status": {"erpnext": "Completed", "qbo": "Open", "erpnext_edited": True},
+		},
+		"tables": {
+			"items": {
+				"erpnext_rows": 1,
+				"qbo_rows": 2,
+				"rows": [{"row": 1, "fields": {"rate": {"erpnext": 100.0, "qbo": 120.0}}}, {"row": 2, "only_in": "qbo"}],
+				"more_rows": 0,
+				"qbo": [{"rate": 120.0}, {"rate": 15.0}],
+			}
+		},
+		"issues": [],
+	}
+	row = types.SimpleNamespace(
+		conflict_status="QuickBooks Changed",
+		qbo_changes=json.dumps(note),
+		erpnext_doctype="Project",
+		erpnext_name="PRJ-00123",
+	)
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name, fields, as_dict=False: {"customer": "Other Customer", "status": "Completed"},
+		raising=False,
+	)
+
+	view = matching.change_view(row)
+
+	by_name = {field["fieldname"]: field for field in view["fields"]}
+	assert by_name["customer"]["erpnext"] == "Other Customer" and by_name["customer"]["agrees"] is True
+	assert by_name["status"] == {
+		"fieldname": "status",
+		"label": "status",
+		"erpnext": "Completed",
+		"qbo": "Open",
+		"edited": True,
+		"agrees": False,
+	}
+	table = view["tables"][0]
+	assert (table["erpnext_rows"], table["qbo_rows"]) == (1, 2)
+	assert table["rows"][0]["fields"] == [{"fieldname": "rate", "label": "rate", "erpnext": "100.0", "qbo": "120.0"}]
+	assert table["rows"][1]["only_in"] == "qbo"
+	assert "qbo" not in table, "the full QuickBooks rows stay on the server"
+
+	row.conflict_status = "Clean"
+	assert matching.change_view(row) is None
+
+
+def test_the_queue_filters_on_the_flag(monkeypatch):
+	matching, _frappe, _events = _matching(monkeypatch)
+
+	assert "QuickBooks Changed" in matching.STATUS_FILTERS
+	where, params = matching._master_where(["Customer"], "QuickBooks Changed", None)
+	assert "conflict_status = 'QuickBooks Changed'" in where
+	assert params == {"types": ("Customer",)}
+	assert matching._parked_filters(["Invoice"]) == {
+		"qbo_entity_type": ["in", ["Invoice"]],
+		"deleted": 0,
+		"match_status": "Pending Review",
+	}
+	assert matching._parked_filters(["Invoice"], "changed") == {
+		"qbo_entity_type": ["in", ["Invoice"]],
+		"deleted": 0,
+		"conflict_status": "QuickBooks Changed",
+	}
+
+
+def test_every_review_endpoint_is_post_only_gated_and_re_exported():
+	"""The engine saves with ``ignore_permissions``, so the role gate on the endpoint is the
+	only access control there is; and a review action that answers a GET can be triggered
+	by a link."""
+	source = _read(CORE / "api.py")
+	tree = ast.parse(source)
+	functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+	reexport = _read(APP / "quickbooks_online" / "api.py")
+	for endpoint in REVIEW_ENDPOINTS:
+		node = functions[endpoint]
+		decorators = [ast.unparse(decorator) for decorator in node.decorator_list]
+		assert decorators == ["frappe.whitelist(methods=['POST'])"], f"{endpoint}: {decorators}"
+		body = ast.get_source_segment(source, node)
+		calls = [ast.unparse(statement) for statement in node.body if not isinstance(statement.value, ast.Constant)]
+		assert calls[0] == "_require_qbo_operator()", f"{endpoint} does work before the role gate"
+		assert "matching.review_many(" in body
+		for wider in ("enqueue", "run_cdc", "import_all", "sync_entity", "QuickBooksClient"):
+			assert wider not in _code_only(body), f"{endpoint} reaches {wider}"
+		assert endpoint in reexport, f"{endpoint} is not callable at ...quickbooks_online.api.{endpoint}"
+	assert 'QBO_OPERATOR_ROLES = ("System Manager", "Accounts Manager")' in source
+
+
+def test_the_review_actions_never_reach_quickbooks_or_the_queue():
+	"""Keep / Use / Refresh act on one mapping each. None of the code under them may fetch
+	from QuickBooks, queue a job, or call the sync."""
+	matching_source = _read(CORE / "matching.py")
+	for name in ("keep_erpnext", "use_quickbooks_values", "refresh_draft", "review_many"):
+		code = _code_only(_function_source(CORE / "matching.py", name))
+		for wider in ("enqueue", "sync_entity", "import_all", "run_cdc", "QuickBooksClient"):
+			assert wider not in code, f"matching.{name} reaches {wider}"
+	assert "from erpnext_enhancements.quickbooks_online.core.sync" not in matching_source
+	for name in ("keep_erpnext_values", "use_qbo_values", "refresh_linked_draft"):
+		code = _code_only(_function_source(CORE / "mapping.py", name))
+		for wider in ("enqueue", "QuickBooksClient", "upsert_entity("):
+			assert wider not in code, f"mapping.{name} reaches {wider}"
+	assert "keep_erpnext_values" in matching_source and "use_qbo_values" in matching_source
+
+
+# ---------------------------------------------------------------------------
+# Wiring that fails silently when it is wrong
+# ---------------------------------------------------------------------------
+
+
+def test_the_mapping_doctype_carries_the_flag_and_its_two_columns():
+	"""The doctype is this app's own, so the new Select value and the two columns live in
+	its JSON. A value added to a Select is safe (rows are only frozen by a value taken away);
+	no ``default`` on the new columns, because on a normal doctype a default would be written
+	into all ~20,000 existing rows by the ALTER."""
+	mapping = json.loads(_read(MAPPING_JSON))
+	fields = {field["fieldname"]: field for field in mapping["fields"]}
+	options = fields["conflict_status"]["options"].split("\n")
+	assert "QuickBooks Changed" in options
+	for kept in ("Clean", "Conflict", "Ignored", "Pending Review"):
+		assert kept in options, f"{kept} is in use on production rows; removing it freezes them"
+	for fieldname in ("qbo_changes", "settled_qbo_values"):
+		assert fields[fieldname]["fieldtype"] == "Long Text"
+		assert fields[fieldname].get("read_only") == 1
+		assert "default" not in fields[fieldname]
+		assert fieldname in mapping["field_order"]
+	assert len(mapping["field_order"]) == len(mapping["fields"])
+	assert mapping["modified"] >= "2026-11-11", "an un-bumped doctype JSON never re-imports"
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import constants
+
+	assert constants.QBO_CHANGED == "QuickBooks Changed"
+
+
+def test_the_page_offers_the_filter_and_the_three_actions_without_a_new_route():
+	js = _read(PAGE_JS)
+	assert '["QuickBooks Changed", __("QuickBooks changed")]' in js
+	assert 'const QBO_CHANGED = "QuickBooks Changed";' in js
+	for endpoint in REVIEW_ENDPOINTS:
+		assert js.count(f'method: "{endpoint}"') == 1, f"{endpoint} goes through the one chunked runner"
+	assert "view: state.txn.view," in js
+	assert 'data-txn-filter="view"' in js
+	assert "__(\"ERPNext has\")" in js and "__(\"QuickBooks has\")" in js
+	# Review requests are chunked POSTs through frappe.call (POST is its default; none sets a type).
+	chunk = re.search(r"const REVIEW_CHUNK = (\d+);", js)
+	assert chunk and 1 <= int(chunk.group(1)) <= 25
+	assert 'type: "GET"' not in js
+	# The flagged views are filters, not routes: Back and Forward still move between the two
+	# tabs and nothing else (tests/test_quickbooks_matching.py holds the count at 4).
+	assert js.count("frappe.set_route(") == 4
+	assert "history.pushState" not in js and "history.replaceState" not in js
+	view = js[js.index("function showTxnView(view) {") :]
+	view = view[: view.index("\n\t}\n")]
+	assert "set_route" not in view
+	# Every value from the server is escaped before it reaches the DOM.
+	block = js[js.index("function changesRow(row, index, scope, columns) {") : js.index('$root.on("click", "[data-review]"')]
+	assert "shown(field.erpnext)" in block and "shown(field.qbo)" in block
+	assert "esc(field.label)" in block and "esc(issue)" in block
+	assert "const shown = (value) =>" in js and "esc(value));" in js
+
+
+def test_the_open_conflict_counts_include_the_new_flag():
+	"""Two dashboards counted ``conflict_status = 'Conflict'``, which the sync no longer
+	writes. Left alone they would read 0 while flags piled up: the failure that passes."""
+	cards = json.loads(_read(APP / "fixtures" / "number_card.json"))
+	card = next(card for card in cards if card["name"] == "QuickBooks Open Conflicts")
+	assert json.loads(card["filters_json"]) == [
+		["QuickBooks Sync Mapping", "conflict_status", "in", ["Conflict", "QuickBooks Changed"], False]
+	]
+	snapshots = _read(APP / "kpi_dashboards" / "snapshots.py")
+	assert "conflict_status in ('Conflict', 'QuickBooks Changed')" in snapshots
+	assert "conflict_status='Conflict'" not in snapshots
+
+
+def test_the_dashboard_no_longer_promises_an_overwrite_or_a_silent_retry():
+	js = _read(
+		APP / "quickbooks_online" / "page" / "quickbooks_online_dashboard" / "quickbooks_online_dashboard.js"
+	)
+	assert "Run overwrite resync" not in js
+	assert "restart_by_hand" in js
+	assert "It does not save over any linked record." in js
+
+
+def test_docs_and_changelog_explain_the_rule():
+	readme = _read(APP / "quickbooks_online" / "README.md")
+	assert "## The sync links, it never overwrites (v1.800.0)" in readme
+	assert "#the-sync-links-it-never-overwrites-v18000" in readme
+	assert "QuickBooks Changed" in readme
+	changelog = _read(REPO / "CHANGELOG.md")
+	assert "retry_failed_syncs" in changelog and "QuickBooks Changed" in changelog
+
+
+def test_it_is_wired_into_ci_on_a_pytest_step():
+	ci = _read(REPO / ".github" / "workflows" / "ci.yml")
+	assert "python -m pytest erpnext_enhancements/tests/test_quickbooks_link_only.py" in ci

@@ -12,29 +12,29 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
                                     ↑
               Webhooks ────────────┤   (Intuit push, signature-verified)
               CDC poll  ───────────┤   (hourly, cursor-based)
-              Retries   ───────────┘   (hourly, Failed logs)
+              Retries   ───────────┘   (hourly, a failed CDC poll only)
 ```
 
 1. **OAuth2** — `api.start_oauth` mints a one-time CSRF `state` (cached 10 min) and returns Intuit's consent URL; `api.oauth_callback` (guest) validates the state, exchanges the code, and stores tokens. `client.QuickBooksClient` owns the token lifecycle and transparently refreshes on a 401.
 2. **Client** — authenticated REST helpers (`request`, `query`, `get_entity`, `cdc`) against the Sandbox/Production base URL with a pinned `minorversion`.
-3. **Mapping** — `map_qbo_to_erpnext` transforms a QBO payload to an ERPNext DocType + values; `upsert_entity` decides idempotently: update-if-linked → auto-link by fuzzy match → create → defer to manual review. QBO-owned field values are tracked for conflict detection.
+3. **Mapping** — `map_qbo_to_erpnext` transforms a QBO payload to an ERPNext DocType + values; `upsert_entity` decides idempotently: already linked → compare and flag, **never save** (see [The sync links, it never overwrites](#the-sync-links-it-never-overwrites-v18000)) → auto-link by fuzzy match → create → defer to manual review.
 4. **Sync** — `sync.py` orchestrates `import_all`, `preview_resync`/`run_resync`, `sync_entity`, `run_cdc`, `retry_failed`. Each run opens a Sync Log, archives every payload as a Raw Payload, and routes writes through `safe_upsert`.
 5. **Webhooks** — `webhooks.handle_webhook` verifies the Intuit HMAC signature, archives the notification, and enqueues a background `sync_entity` per changed entity.
 6. **CDC poll** — `tasks.cdc_poll` throttles by `cdc_poll_minutes`; `run_cdc` pulls all changes since the `last_cdc_sync` cursor and advances it only on a clean run.
-7. **Retries** — `tasks.retry_failed_syncs` re-runs Failed logs up to `retry_limit`.
+7. **Retries** — `tasks.retry_failed_syncs` fails orphaned runs and re-runs a failed **CDC** poll, up to `retry_limit`. It never starts an Import All or a Run Resync; a person restarts those from the dashboard.
 
 ## File map
 
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`, `start_matching_export`, `get_matching_export_status`, `preview_matching_import`, `apply_matching_import` |
-| `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `confirm_many`, `merge_plan`, `similar_records`, `latest_payloads` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`, `keep_erpnext`, `use_quickbooks_values`, `refresh_drafts`, `start_matching_export`, `get_matching_export_status`, `preview_matching_import`, `apply_matching_import` |
+| `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions, and (v1.800.0) the "QuickBooks changed" view and its three answers -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `confirm_many`, `merge_plan`, `similar_records`, `latest_payloads`, `change_view`, `keep_erpnext`, `use_quickbooks_values`, `refresh_draft`, `review_many` |
 | `core/matching_excel.py` | The Record Matching page's Excel round trip (v1.721.0): the export workbook (background job), the import preview and the re-checked apply -- see [Excel round trip](#excel-round-trip-v17210) | `start_export`, `run_export`, `export_status`, `build_workbook`, `parse_workbook`, `classify_row`, `classify`, `preview`, `apply`, `row_version` |
 | `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`, `download_attachable`), `QuickBooksAPIError`, `QuickBooksDownloadTicketError` |
 | `core/attachments.py` | Mirror QBO `Attachable` files onto their ERPNext docs as private Files (WI-071); self-protecting daily pass, fresh-ticket batching | `sync_attachments`, `reset_attachable`, `DOWNLOAD_URI_BATCH`, `MAX_ATTEMPTS`, `STALE_ATTEMPT_SECONDS`, `SAVE_TIMEOUT_SECONDS` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
-| `core/mapping.py` | Transform / match / idempotent upsert | `map_qbo_to_erpnext`, `upsert_entity`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
+| `core/mapping.py` | Transform / match / idempotent upsert; the compare-and-flag path for linked records and the three review writes | `map_qbo_to_erpnext`, `upsert_entity`, `_review_linked_record`, `keep_erpnext_values`, `use_qbo_values`, `refresh_linked_draft`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
 | `core/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
 | `core/reconcile.py` | Read-only balance/transaction reconciliation (Reports API) | `compare_account_balances`, `reconcile_transactions`, `_parse_trial_balance` |
 | `core/opening_balances.py` | Build a balanced opening Journal Entry from QBO balances | `sync_opening_balances`, `_opening_account_line`, `_party_opening_line`, `_plug_line` |
@@ -46,14 +46,83 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
 | `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh; the Record Matching button routes to the page below |
-| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `confirm_matches` / `sync_entity`; tick boxes, 50–500 rows per page; Export to Excel / Import from Excel |
+| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `confirm_matches` / `sync_entity` / `keep_erpnext` / `use_quickbooks_values` / `refresh_drafts`; tick boxes, 50–500 rows per page; the "QuickBooks changed" filter on each tab; Export to Excel / Import from Excel |
 
 ## Doctypes
 
 - **QuickBooks Online Settings** (Single) — credentials (`client_id`, encrypted `client_secret`, `webhook_verifier_token`, `redirect_uri`), OAuth state (encrypted `access_token`/`refresh_token`, `realm_id`, `token_expires_at`), cursors (`last_full_import`, `last_cdc_sync`, `last_webhook_at`), `status`/`status_message`, and tuning (`environment`, `company`, `sync_enabled`, `cdc_poll_minutes`, `retry_limit`).
-- **QuickBooks Sync Mapping** — the link ledger keyed on (`qbo_entity_type`, `qbo_id`); stores `erpnext_doctype`/`erpnext_name`, `sync_token`, `last_qbo_updated_at`, `deleted`, `conflict_status`, `match_status`/`match_rule`/`match_confidence`, `owned_fields` (JSON of QBO-owned values, for conflict detection), and `reviewed_by`/`reviewed_on` (stamped by the Record Matching page; NULL until a person decides, and deliberately not a `match_status` option because `Created` already says something). `qbo_id` is indexed.
+- **QuickBooks Sync Mapping** — the link ledger keyed on (`qbo_entity_type`, `qbo_id`); stores `erpnext_doctype`/`erpnext_name`, `sync_token`, `last_qbo_updated_at`, `deleted`, `conflict_status` (`Clean` / `QuickBooks Changed` / `Ignored` / `Pending Review`, plus the pre-v1.800.0 `Conflict`), `qbo_changes` (JSON: what QuickBooks now says beside what ERPNext held, written when the sync flags the row) and `settled_qbo_values` (JSON: the QuickBooks value last settled per field, applied or declined; the reference the next comparison reads), `match_status`/`match_rule`/`match_confidence`, `owned_fields` (JSON snapshot of what the last sync stored), and `reviewed_by`/`reviewed_on` (stamped by the Record Matching page; NULL until a person decides, and deliberately not a `match_status` option because `Created` already says something). `qbo_id` is indexed.
 - **QuickBooks Sync Log** — one per run; `sync_type`, `status`, lifecycle timestamps, per-action counters, `retry_count`, `preview_payload`, `error_message`.
 - **QuickBooks Raw Payload** — append-only audit of every fetched/received payload; `source`, entity type/id, `realm_id`, `sync_log` link, `received_at`, verbatim `payload`. ~433k rows on production; `qbo_id` is indexed (v1.474.0) because every newest-payload lookup was a full scan without it.
+
+## The sync links, it never overwrites (v1.800.0)
+
+Nik's decision of 2026-10-06 ("Party links ask instead of guessing; QuickBooks sync links,
+never overwrites"). Two behaviors went away.
+
+**1. No self-starting imports.** `sync.retry_failed` used to end by running a full Import All
+whenever a failed Import All or Run Resync log existed. The scheduler calls it hourly on the
+300-second default queue, where a full import cannot finish, so each run failed and earned the
+next: 2 to 6 full imports a day. Now `retry_failed` retries **CDC only**, once per call. A failed
+Import All / Run Resync / Preview Resync (`sync.RESTART_BY_HAND_TYPES`) is left as it is and named
+in the answer; the dashboard's *Retry Failed* says to start it again, which is one click on the
+same page and runs on the long queue. `api.import_all` reaps stale runs first, so an orphaned
+Running log cannot answer "already running" to the one button that starts an import.
+
+**2. A linked record is never saved by a sync.** Not by the hourly CDC, a webhook, Import All or
+Run Resync, for any doctype, drafts included, whether the import matched the record or created it.
+`upsert_entity` hands a linked record to `mapping._review_linked_record`, which only compares:
+
+| QuickBooks since the mapping's last sync | What QuickBooks changed vs the record | Result | Written |
+|---|---|---|---|
+| has not moved | (not compared) | `unchanged` | nothing |
+| moved | nothing it changed differs | `unchanged` | the mapping's cursor (`sync_token`, `last_qbo_updated_at`) |
+| moved | a changed field differs | `flagged` | the mapping: `conflict_status = QuickBooks Changed` and `qbo_changes` |
+| any, record is submitted | (the older guard) | `unchanged` / `manual_review` | as before v1.800.0 |
+
+**A field is a difference only when QuickBooks changed it** (`_linked_differences`). Each mapped
+field is first held against its *reference*, the last thing QuickBooks is known to have said: the
+settled value in `settled_qbo_values`, else what the last sync stored in `owned_fields`. Same as the
+reference: skipped, however far ERPNext has moved (an accountant's edit to a draft, a customer
+renamed here). Different from the reference, or no reference at all (the field differed when the
+record was first linked): compared with the record, and flagged if they differ. The comparison
+(`_same_for_review`) forgives what ERPNext does to a value on save: blank is blank, edge whitespace
+and markup go, a website gains its scheme, and amounts of 1 or more agree to the cent.
+
+A flag is written with `frappe.db.set_value`, never `save_mapping`, so `owned_fields` survives; the
+cursor is held back so a replay re-derives the same flag, and an identical replay writes nothing.
+A Project's title, **status and company**, a party's group and territory, and an Account's own
+parent are dropped before the comparison (`_strip_values_erpnext_owns`), so they are never flagged
+and can never be applied. For a Project, status and company are constants the mapper supplies so a
+new Project can be inserted (`MAPPER_DEFAULTS_ERPNEXT_OWNS`), not QuickBooks data; the customer is
+the one thing a QuickBooks job can say about a linked Project.
+`preview=True` reports `would_flag` and writes nothing. A person-started Preview Resync / Run Resync
+passes `recheck=True` and compares even a record QuickBooks has not moved: that is how a standing
+difference (a mapper fix that changes what a draft should hold, a field that has differed since the
+record was first linked) is brought up for review. It still only flags.
+`overwrite` is accepted by `upsert_entity` and ignored.
+
+**Review is on the Record Matching page** (System Manager, Accounts Manager): the *QuickBooks
+changed* status filter on Masters, and the *QuickBooks changed* choice in the transactions tab's
+select. Each flagged row shows "ERPNext has" (read from the record when the page loads) beside
+"QuickBooks has", field by field. Three POST-only endpoints, each for one row or the ticked rows,
+none of which calls QuickBooks or queues a job:
+
+| Action | Endpoint | What it does |
+|---|---|---|
+| **Keep ERPNext** | `keep_erpnext` | Clears the flag, advances the cursor to what the reviewer saw, records the declined values in `settled_qbo_values`. Writes nothing to the record. |
+| **Use QuickBooks values** | `use_quickbooks_values` | Writes the flagged fields (or the ticked subset) to that one record and saves it. Refused for a submitted or cancelled document and for a flag whose QuickBooks data failed the preflight. An unticked field keeps what ERPNext has and is settled too. |
+| **Refresh draft** | `refresh_drafts` | Rebuilds one docstatus 0 transaction from the newest stored payload. Also offered on a parked transaction that already has a draft, where a sync used to rebuild it. |
+
+Every answer records the QuickBooks value as settled, so a field is not flagged again while
+QuickBooks still says the same thing: a standing difference is answered once. The Sync Log counts
+a flag under `conflict_count`; the *QuickBooks Open Conflicts* number card and the `qbo_conflicts`
+KPI count `QuickBooks Changed` and the older `Conflict` together. Tests:
+`tests/test_quickbooks_link_only.py` (its own pytest step in CI).
+
+**RQ's job timeout is no longer swallowed.** `safe_upsert` caught `JobTimeoutException` like any
+bad record; the run then had no time limit and its log sat in Running until the 11-hour reaper.
+It is re-raised now (`utils.is_rq_job_timeout`), so a timed-out run ends as Failed at once.
 
 ## Record matching review (v1.474.0)
 
@@ -179,7 +248,7 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
 
 - `tasks.refresh_token_if_needed` (hourly) — refresh the access token if expiring within 10 min (no-op when disconnected). On `invalid_grant` (refresh token revoked/expired — e.g. the user disconnected the app from Intuit's side) it clears the dead tokens and marks the connection Not Connected instead of erroring every run.
 - `tasks.cdc_poll` (hourly) — run CDC if `cdc_poll_minutes` elapsed since `last_cdc_sync`.
-- `tasks.retry_failed_syncs` (hourly) — re-run Failed logs, capped by `retry_limit`.
+- `tasks.retry_failed_syncs` (hourly, :40) — fail orphaned Running/Queued logs, then re-run a failed CDC poll once, capped by `retry_limit`. Never an Import All or a Run Resync (v1.800.0).
 - `tasks.sync_attachments_scheduled` (daily) — mirror new QBO attachments, capped by `max_new=500`; see [Attachment mirroring](#attachment-mirroring-wi-071).
 - `api.quickbooks_webhook` (guest) — Intuit push → `handle_webhook` (verify signature → archive → enqueue `sync_entity`).
 - `api.oauth_callback` (guest) — OAuth2 redirect target.
@@ -216,15 +285,17 @@ OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens
 
 ## Gotchas
 
-- **Idempotency** hinges on the (entity_type, qbo_id) Sync Mapping; re-running import/webhook/CDC is safe. Transactions are never fuzzy-matched (always created); only master entities (Account/Customer/Vendor/Item/TaxCode/Term/PaymentMethod/Class) auto-link.
+- **Idempotency** hinges on the (entity_type, qbo_id) Sync Mapping; re-running import/webhook/CDC is safe, and since v1.800.0 a re-run never saves a record that is already linked. Transactions are never fuzzy-matched (always created); only master entities (Account/Customer/Vendor/Item/TaxCode/Term/PaymentMethod/Class) auto-link.
 - **The Record Matching page's Link action can delete a record, and the rule for when is in `matching.merge_plan`, not in the UI.** Only a record whose mapping said `Created` (the import made it) is ever merged into the chosen record, and only into the same doctype; Projects never. A refused merge leaves the link in place and the duplicate in the queue -- it is reported, not raised. Do not widen the policy from the page.
 - **`preview_existing_matches` lists only QBO records with NO mapping row**, which after Import All is none of them. That is why the dashboard's old "Link Existing Records" dialog read empty on production, and why the Record Matching page exists; the old population is its *Unmapped payloads* filter.
 - **Reconciliation is read-only.** `compare_account_balances` (Trial Balance vs GL) and `reconcile_transactions` (payload total vs document total) never write — they surface discrepancies for you to act on. Run the **QuickBooks Balance Comparison** report after an import.
 - **Opening balances are a draft by default.** `sync_opening_balances` creates one balanced Opening Entry; review it before submitting (pass `auto_submit` to post it). A/R and A/P are broken out per party from QBO's *current* open balances (correct for a present-day cut-over; for a historical cutoff, check the draft against QBO's aging). Stock accounts are excluded — post opening stock via a Stock Reconciliation — and any residual squares off against the company's **Temporary Opening** account.
 - **CDC cursor** advances only on a clean run, so failures reprocess the same window. The first run looks back 24h. `TaxCode` is excluded from CDC (Term/PaymentMethod/Class are included).
-- **Conflict policy:** user edits to QBO-owned fields are preserved unless an overwrite resync (`run_resync`) is run; a preview is required first.
+- **There is no overwrite.** A sync never saves over a linked record, and `run_resync` is no exception: it creates, links and flags. QuickBooks values reach a linked record only through *Use QuickBooks values* or *Refresh draft* on the Record Matching page. `Conflict` is the status the sync wrote before v1.800.0; a row that still carries it is compared again on its next sync and becomes `QuickBooks Changed` or `Clean`.
+- **Retry on a parked transaction creates, it does not rebuild.** `sync_entity` on a transaction that already has an ERPNext record compares and flags like any other sync. The page offers *Refresh draft* on those rows and *Retry* only where no record exists yet.
+- **A mapper fix does not reach existing drafts by itself.** Before v1.800.0 the next Import All or a Run Resync re-saved every draft with the new mapping. Now: Preview Resync, Run Resync (it flags the drafts that differ), then *Refresh drafts* for the ticked rows on the transactions tab.
 - **A party's group / territory is ERPNext's; the importer files a new party into NO group and never writes one on update.** QuickBooks has no supplier group, customer group or territory. Until v1.496.0 `_map_supplier` / `_map_customer` invented one with `frappe.db.get_value(doctype, {"is_group": 0}, "name")` -- and a dict-filtered `get_value` on Frappe 16 orders by `creation` **descending**, so "any leaf" meant "the leaf somebody created most recently"; because the update path re-applied every mapped value on each re-sync, every Supplier Group anyone added became the group of all 911 QBO-linked Suppliers on the next scheduled run (five sweeps between 2026-06-18 and 2026-09-16), and 466 Customers landed in "Government" -- invisibly, since `customer_group` is hidden on the Customer form. Now `constants.DEFAULT_PARTY_GROUP` is `None` (a wrong group is worse than no group -- Nik, 2026-09-22; if a named default is ever wanted it goes there as a NAME, resolved with `frappe.db.exists`), `_drop_party_groups_on_update` strips the three fields from every update whatever the record holds, and `ERPNEXT_OWNED_PARTY_FIELDS` are excluded from the `owned_fields` snapshot and from `detect_conflicts`, so re-grouping or clearing a Supplier is never a conflict and is never undone. The swept Suppliers were restored or cleared by `patches/restore_supplier_groups_after_qbo_sweep` and the swept Customers -- group *and* territory -- by `patches/restore_customer_groups_after_qbo_sweep` (engine: `core/party_group_remediation.py`, dry-run by default; `MIGRATION_NOTES.md` §7). Never resolve a default with an unordered `get_value` -- name it.
-- **Per-record resilience:** batch ops use `safe_upsert`, so one bad record can't abort a run; inline failure notes are capped at 20 (full tracebacks go to the Frappe Error Log).
+- **Per-record resilience:** batch ops use `safe_upsert`, so one bad record can't abort a run; inline failure notes are capped at 20 (full tracebacks go to the Frappe Error Log). RQ's job timeout is the one exception it lets through, so a timed-out run fails instead of running on with no limit.
 - **No rate-limit/backoff handling:** QBO 429/throttling responses aren't specifically handled — any ≥400 (other than 401) raises `QuickBooksAPIError`.
 - **The daily attachment job runs on the `default` queue (300 s RQ timeout), not `long`.** `hooks.py` lists it under `daily`, and v16's `ScheduledJobType.get_queue_name` sends only `*Long`/`Maintenance` frequencies to `long` (1500 s). RQ therefore kills the run after 300 s however many files remain; the attempt marker tolerates that (a young in-flight marker is released, not poisoned) and the next day resumes. Moving it to `daily_long` is the knob if the daily backlog ever outgrows the budget.
 - **`QuickBooks Sync Mapping` rows with `qbo_entity_type = Attachable` are attempt markers, not links** (see [Attachment mirroring](#attachment-mirroring-wi-071)). Deleting one re-enables a file the mirror gave up on — which is the documented reset, so do it knowingly, not as clean-up.

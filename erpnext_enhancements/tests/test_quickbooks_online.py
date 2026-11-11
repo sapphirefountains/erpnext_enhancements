@@ -903,18 +903,21 @@ def test_apply_values_returns_changed_flag():
 
 
 def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
-	"""A value-identical re-sync refreshes the Sync Mapping but never doc.save()s.
+	"""A re-sync of a record QuickBooks has not touched writes nothing at all.
 
-	This is the no-op-save guard: a full import / CDC replay used to re-save 1000+
+	Written as the no-op-save guard: a full import / CDC replay used to re-save 1000+
 	identical Customers per run, churning modified/modified_by and firing doc_update
-	realtime events at anyone viewing them.
+	realtime events at anyone viewing them. Since v1.800.0 the already-linked path never
+	saves the record whatever the payload holds (the second half below, which used to
+	assert ``updated`` and one save), and an unmoved QuickBooks record does not even
+	refresh its mapping. ``tests/test_quickbooks_link_only.py`` holds the rest of the rule.
 	"""
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import mapping
 
 	values = {"customer_name": "Acme Supply", "customer_type": "Commercial"}
-	# What the last sync stored (detect_conflicts' baseline) -- deliberately frozen
-	# so the second, value-moved upsert below reads as QBO moving, not a user edit.
+	# What the last sync stored -- deliberately frozen so the second, value-moved upsert
+	# below reads as QBO moving, not a user edit.
 	owned = json.dumps(values)
 	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", dict(values)))
 	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
@@ -923,11 +926,14 @@ def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
 		mapping,
 		"get_mapping",
 		lambda *args: types.SimpleNamespace(
+			name="QBO-MAP-Customer-1",
 			erpnext_doctype="Customer",
 			erpnext_name="Acme Supply",
 			owned_fields=owned,
 			match_status="Auto Matched",
 			conflict_status="Clean",
+			sync_token="3",
+			last_qbo_updated_at=None,
 		),
 	)
 	doc = _stub_doc(doctype="Customer", name="Acme Supply", **values)
@@ -935,23 +941,37 @@ def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
 	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: doc, raising=False)
 	saved_mappings = []
 	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: saved_mappings.append(kwargs))
+	set_values = []
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: set_values.append(args), raising=False
+	)
 
 	settings = types.SimpleNamespace(company="Sapphire Fountains")
-	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+	payload = {"Id": "1", "DisplayName": "Acme Supply", "SyncToken": "3"}
+	result = mapping.upsert_entity("Customer", payload, settings)
 
 	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme Supply"}
 	assert doc.saves == []  # the whole point: no doc write, no modified churn
-	# The mapping bookkeeping (SyncToken/cursor refresh, conflict status) still ran.
-	assert saved_mappings == [{"conflict_status": "Clean"}]
+	# QuickBooks has not moved since the mapping's last sync, so the mapping is not
+	# written either: not through save_mapping (which rewrites owned_fields), not at all.
+	assert saved_mappings == []
+	assert set_values == []
 
-	# The same payload with one moved value saves and reports "updated".
+	# QuickBooks moves on (SyncToken 4) with one changed value. Until v1.800.0 this saved
+	# the Customer and reported "updated". Now the record is left alone and the mapping is
+	# flagged, by set_value, for a person to review.
 	values["customer_type"] = "Residential"
-	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+	result = mapping.upsert_entity("Customer", dict(payload, SyncToken="4"), settings)
 
-	assert result == {"action": "updated", "doctype": "Customer", "name": "Acme Supply"}
-	assert len(doc.saves) == 1
-	assert doc.customer_type == "Residential"
-	assert len(saved_mappings) == 2
+	assert result["action"] == "flagged"
+	assert result["fields"] == ["customer_type"]
+	assert doc.saves == []
+	assert doc.customer_type == "Commercial"
+	assert saved_mappings == []
+	assert len(set_values) == 1
+	assert set_values[0][0] == "QuickBooks Sync Mapping"
+	assert set_values[0][2]["conflict_status"] == "QuickBooks Changed"
+	assert "owned_fields" not in set_values[0][2] and "sync_token" not in set_values[0][2]
 
 
 def test_upsert_never_saves_a_submitted_document(monkeypatch):
@@ -2749,11 +2769,15 @@ def test_error_snippet_bounds_response_bodies():
 
 
 def test_retry_failed_reruns_each_operation_once(monkeypatch):
-	"""retry_failed re-runs the global CDC/import once per call, not once per failed log.
+	"""retry_failed re-runs CDC once per call, not once per failed log -- and never an import.
 
 	The old behaviour re-ran the global operation once per failed log; since every
 	failed run creates another failed log, N failures spawned N re-runs that spawned
 	more -- the observed storm of hundreds of failed CDC runs.
+
+	Until v1.800.0 the failed Import All log here also earned one ``import_all()``, inline
+	on the scheduler's 300-second queue. It is now reported for a person to restart, and
+	left untouched: no retry is attempted, so no retry is counted.
 	"""
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import sync
@@ -2783,12 +2807,13 @@ def test_retry_failed_reruns_each_operation_once(monkeypatch):
 	monkeypatch.setattr(sync, "run_cdc", lambda: calls.__setitem__("cdc", calls["cdc"] + 1))
 	monkeypatch.setattr(sync, "import_all", lambda: calls.__setitem__("import", calls["import"] + 1))
 
-	sync.retry_failed()
+	result = sync.retry_failed()
 
-	# One CDC + one import, regardless of the five failed CDC logs (no amplification)...
-	assert calls == {"cdc": 1, "import": 1}
-	# ...while every eligible log still records its retry attempt.
-	assert len(saved) == 6
+	# One CDC poll regardless of the five failed CDC logs (no amplification), no import...
+	assert calls == {"cdc": 1, "import": 0}
+	assert result == {"cdc": True, "restart_by_hand": ["IMP-1"]}
+	# ...while every failed CDC log records its retry attempt, and the import log is not touched.
+	assert saved == [f"CDC-{i}" for i in range(5)]
 
 
 def test_retry_failed_skips_logs_past_retry_limit(monkeypatch):
@@ -5214,6 +5239,11 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 	differs from both it and the incoming value -- the exact shape detect_conflicts used to
 	call a conflict. Nothing is written, flagged or re-learned; a BLANK territory stays
 	blank, because a person clearing a group means "no group", not "fill it for me".
+
+	Since v1.800.0 the linked path saves no record at all, so what this pins is narrower
+	and still matters: a differing group is not a *difference*. QuickBooks moves on in
+	every call below (SyncToken 2 against a stored 1), and the result is still "unchanged"
+	-- never ``flagged`` -- with the cursor advanced by set_value and no group in it.
 	"""
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import mapping
@@ -5226,6 +5256,7 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 		mapping,
 		"get_mapping",
 		lambda *args: types.SimpleNamespace(
+			name="QBO-MAP-Vendor-9",
 			erpnext_doctype="Supplier",
 			erpnext_name="Acme Steel",
 			owned_fields=json.dumps(
@@ -5233,6 +5264,8 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 			),
 			match_status="Auto Matched",
 			conflict_status="Clean",
+			sync_token="1",
+			last_qbo_updated_at=None,
 		),
 	)
 	doc = _stub_doc(
@@ -5246,26 +5279,34 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: doc, raising=False)
 	saved = []
 	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: saved.append((args, kwargs)))
+	set_values = []
+	monkeypatch.setattr(
+		frappe.db, "set_value", lambda *args, **kwargs: set_values.append(args), raising=False
+	)
 	settings = types.SimpleNamespace(company="SF")
+	payload = {"Id": "9", "DisplayName": "Acme Steel", "SyncToken": "2"}
 
-	result = mapping.upsert_entity("Vendor", {"Id": "9", "DisplayName": "Acme Steel"}, settings)
+	result = mapping.upsert_entity("Vendor", payload, settings)
 
 	assert result == {"action": "unchanged", "doctype": "Supplier", "name": "Acme Steel"}
 	assert doc.supplier_group == "Plumbing"
 	assert doc.saves == []
-	# Not a conflict, and not re-learned: the mapping refresh carries no supplier_group.
-	assert saved[0][1] == {"conflict_status": "Clean"}
-	assert "supplier_group" not in saved[0][0][5]
+	# Not a difference, and not re-learned: the cursor moves, and that is all that is written.
+	assert saved == []
+	assert len(set_values) == 1
+	assert set_values[0][2]["sync_token"] == "2"
+	assert "conflict_status" not in set_values[0][2]
+	assert "owned_fields" not in set_values[0][2]
 
-	# A preview of the same update does not list the group as a field it would touch.
-	preview = mapping.upsert_entity("Vendor", {"Id": "9", "DisplayName": "Acme Steel"}, settings, preview=True)
-	assert preview["action"] == "update"
-	assert "supplier_group" not in preview["fields"]
+	# A preview of the same pass has nothing to flag, the group least of all.
+	preview = mapping.upsert_entity("Vendor", payload, settings, preview=True)
+	assert preview == {"action": "unchanged", "doctype": "Supplier", "name": "Acme Steel"}
+	assert len(set_values) == 1, "a preview writes nothing"
 
 	# A Supplier a person CLEARED stays cleared: the remediation patch blanks ~640 of them,
 	# and the next cdc_poll must not fill them back in.
 	doc.supplier_group = None
-	result = mapping.upsert_entity("Vendor", {"Id": "9", "DisplayName": "Acme Steel"}, settings)
+	result = mapping.upsert_entity("Vendor", payload, settings)
 	assert result == {"action": "unchanged", "doctype": "Supplier", "name": "Acme Steel"}
 	assert doc.supplier_group is None
 	assert doc.saves == []
@@ -5282,11 +5323,14 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 		mapping,
 		"get_mapping",
 		lambda *args: types.SimpleNamespace(
+			name="QBO-MAP-Customer-8",
 			erpnext_doctype="Customer",
 			erpnext_name="Acme",
 			owned_fields=json.dumps({"customer_name": "Acme", "customer_group": "Government"}),
 			match_status="Auto Matched",
 			conflict_status="Clean",
+			sync_token="1",
+			last_qbo_updated_at=None,
 		),
 	)
 	doc = _stub_doc(
@@ -5299,14 +5343,14 @@ def test_update_path_never_writes_a_group_or_territory(monkeypatch):
 	)
 	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: doc, raising=False)
 
-	result = mapping.upsert_entity("Customer", {"Id": "8", "DisplayName": "Acme"}, settings)
+	result = mapping.upsert_entity("Customer", {"Id": "8", "DisplayName": "Acme", "SyncToken": "2"}, settings)
 
 	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme"}
 	assert doc.customer_group == "Commercial"
 	assert doc.territory == ""
 	assert doc.saves == []
-	assert "customer_group" not in saved[-1][0][5]
-	assert "territory" not in saved[-1][0][5]
+	assert saved == []
+	assert "customer_group" not in set_values[-1][2] and "territory" not in set_values[-1][2]
 
 
 def test_drop_party_groups_on_update_strips_the_fields_whatever_the_record_holds():

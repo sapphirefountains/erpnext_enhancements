@@ -17,6 +17,23 @@
  *    import, with the stored reason, the draft if one exists, and Retry -- per row,
  *    for the ticked rows, or for the whole page.
  *
+ * "QuickBooks changed" (v1.800.0). The sync no longer saves over a record it has linked.
+ * When QuickBooks moves on and no longer agrees with the linked ERPNext record, the sync
+ * flags the mapping and stores the differences, and this page is where a person answers:
+ *
+ *  - On Masters it is one more status filter (and a chip). On the transactions tab it is
+ *    the second choice in the "Showing" select. Neither is a route: like every filter here
+ *    it stays out of history, so Back and Forward still move between the two tabs.
+ *  - A flagged row carries a second table row with the differences, field by field:
+ *    "ERPNext has" (read from the record when the page loads) beside "QuickBooks has".
+ *  - Keep ERPNext clears the flag and writes nothing to the record. Use QuickBooks values
+ *    (masters) writes the ticked fields to that one record. Refresh draft (a docstatus 0
+ *    transaction) rebuilds that one draft from the payload already stored. Each works on
+ *    one row or on the ticked rows, goes to the server REVIEW_CHUNK at a time as a POST,
+ *    and starts no sync.
+ *  - A parked transaction that already has a draft offers Refresh draft where it used to
+ *    offer Retry: a re-sync no longer rebuilds a linked draft.
+ *
  * Things this script is careful about:
  *
  *  - A tick is keyed on entity type + QBO id, and every load drops the ticks of rows
@@ -56,8 +73,9 @@
  *
  * Endpoints (erpnext_enhancements.quickbooks_online.core.api): get_match_queue,
  * decide_match, decide_matches, confirm_match, confirm_matches,
- * get_parked_transactions, sync_entity, start_matching_export,
- * get_matching_export_status, preview_matching_import, apply_matching_import.
+ * get_parked_transactions, sync_entity, keep_erpnext, use_quickbooks_values,
+ * refresh_drafts, start_matching_export, get_matching_export_status,
+ * preview_matching_import, apply_matching_import.
  * Every server-supplied string is escaped before it reaches the DOM.
  */
 frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
@@ -94,6 +112,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		["Needs decision", __("Needs decision")],
 		["All", __("All")],
 		["Pending Review", __("Pending review")],
+		["QuickBooks Changed", __("QuickBooks changed")],
 		["Conflict", __("Conflict")],
 		["Auto Matched", __("Auto matched")],
 		["Created", __("Created by import")],
@@ -114,6 +133,12 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	const LINK_CHUNK = 20;
 	// Rows per confirm_matches request. A keep is one stamped row, so these can be larger.
 	const KEEP_CHUNK = 100;
+	// Keep in sync with constants.QBO_CHANGED: the conflict_status of a flagged mapping.
+	const QBO_CHANGED = "QuickBooks Changed";
+	// Rows per keep_erpnext / use_quickbooks_values / refresh_drafts request. Two of the
+	// three save an ERPNext record per row, so the chunk is small for the same reason
+	// LINK_CHUNK is.
+	const REVIEW_CHUNK = 20;
 
 	function storedPageLength(tab) {
 		try {
@@ -149,6 +174,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		picks: {},
 		fills: new Set(),
 		txn: {
+			// "parked" (Pending Review) or "changed" (flagged QuickBooks changed).
+			view: "parked",
+			changedTotal: 0,
 			entity: "",
 			start: 0,
 			pageLength: storedPageLength("transactions"),
@@ -189,12 +217,18 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 					<button class="btn btn-primary btn-sm" data-action="link-selected" disabled>${__("Link selected")}</button>
 					<button class="btn btn-default btn-sm" data-action="keep-selected" disabled>${__("Keep selected")}</button>
 					<button class="btn btn-default btn-sm" data-action="retry-selected" disabled>${__("Retry selected")}</button>
+					<button class="btn btn-default btn-sm" data-action="keep-erpnext-selected" hidden disabled>${__("Keep ERPNext")}</button>
+					<button class="btn btn-default btn-sm" data-action="use-qbo-selected" hidden disabled>${__("Use QuickBooks values")}</button>
 					<button class="btn btn-default btn-sm" data-action="clear-selected" disabled>${__("Clear")}</button>
 				</div>
 				<div class="qbo-mt-pager"></div>
 			</div>
 			<div class="qbo-mt-panel" data-panel="transactions" hidden>
 				<div class="qbo-mt-toolbar">
+					<select class="form-control input-sm" data-txn-filter="view" title="${__("Showing")}">
+						<option value="parked">${__("Parked on import")}</option>
+						<option value="changed">${__("QuickBooks changed")}</option>
+					</select>
 					<select class="form-control input-sm" data-txn-filter="entity"></select>
 					<select class="form-control input-sm qbo-mt-page-length" data-txn-filter="page-length" title="${__("Rows per page")}">${pageLengthOptions}</select>
 					<span class="qbo-mt-spacer"></span>
@@ -206,6 +240,8 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				<div class="qbo-mt-selbar" data-selbar="transactions" hidden>
 					<span class="qbo-mt-selcount" data-txn-selcount></span>
 					<button class="btn btn-primary btn-sm" data-action="txn-retry-selected" disabled>${__("Retry selected")}</button>
+					<button class="btn btn-default btn-sm" data-action="txn-refresh-selected" hidden disabled>${__("Refresh drafts")}</button>
+					<button class="btn btn-default btn-sm" data-action="txn-keep-erpnext-selected" hidden disabled>${__("Keep ERPNext")}</button>
 					<button class="btn btn-default btn-sm" data-action="txn-clear-selected" disabled>${__("Clear")}</button>
 				</div>
 				<div class="qbo-mt-pager" data-txn-pager></div>
@@ -302,6 +338,27 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		return row.match_status === "Pending Review" && !row.unmapped;
 	}
 
+	// A row the sync flagged "QuickBooks changed" carries the differences.
+	function hasChanges(row) {
+		return Boolean(row.changes);
+	}
+
+	// Use QuickBooks values is refused while QuickBooks' own data fails ERPNext's checks.
+	function canUseValues(row) {
+		return hasChanges(row) && !(row.changes.issues || []).length;
+	}
+
+	// Only a draft (docstatus 0) transaction can be rebuilt from QuickBooks.
+	function canRefreshDraft(row) {
+		return Boolean(row.exists) && row.docstatus === 0;
+	}
+
+	// Retry re-syncs from QuickBooks, which creates a transaction that is not there yet. One
+	// that already has a record is never rebuilt by a sync: its action is Refresh draft.
+	function canRetryTxn(row) {
+		return !row.exists && !hasChanges(row);
+	}
+
 	// A row can be ticked if at least one bulk action applies: Link needs a destination
 	// doctype, Keep and Retry need a mapping row.
 	function canSelect(row) {
@@ -337,6 +394,11 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		withCount($bar.find("[data-action='link-selected']"), __("Link selected"), chosen.filter((row) => row.expected_doctype).length);
 		withCount($bar.find("[data-action='keep-selected']"), __("Keep selected"), chosen.filter((row) => !row.unmapped).length);
 		withCount($bar.find("[data-action='retry-selected']"), __("Retry selected"), chosen.filter(canRetry).length);
+		// The two review buttons only show while a flagged row is ticked.
+		const flagged = chosen.filter(hasChanges);
+		withCount($bar.find("[data-action='keep-erpnext-selected']").prop("hidden", !flagged.length), __("Keep ERPNext"), flagged.length);
+		const usable = flagged.filter(canUseValues).length;
+		withCount($bar.find("[data-action='use-qbo-selected']").prop("hidden", !flagged.length), __("Use QuickBooks values"), usable);
 		$bar.find("[data-action='clear-selected']").prop("disabled", !chosen.length);
 	}
 
@@ -349,7 +411,12 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				? __("{0} of {1} on this page selected", [count, state.txn.rows.length])
 				: __("Tick transactions to retry several at once. Shift-click ticks a range."),
 		);
-		withCount($bar.find("[data-action='txn-retry-selected']"), __("Retry selected"), count);
+		const chosen = txnSelection.chosen().map(({ row }) => row);
+		withCount($bar.find("[data-action='txn-retry-selected']"), __("Retry selected"), chosen.filter(canRetryTxn).length);
+		const drafts = chosen.filter(canRefreshDraft).length;
+		withCount($bar.find("[data-action='txn-refresh-selected']").prop("hidden", !drafts), __("Refresh drafts"), drafts);
+		const flagged = chosen.filter(hasChanges).length;
+		withCount($bar.find("[data-action='txn-keep-erpnext-selected']").prop("hidden", !flagged), __("Keep ERPNext"), flagged);
 		$bar.find("[data-action='txn-clear-selected']").prop("disabled", !count);
 	}
 
@@ -431,6 +498,8 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	$root.on("click", "[data-action='keep-selected']", () => keepSelected());
 	$root.on("click", "[data-action='retry-selected']", () => retrySelected());
 	$root.on("click", "[data-action='clear-selected']", () => masterSelection.clear());
+	$root.on("click", "[data-action='keep-erpnext-selected']", () => keepErpnext(masterSelection.chosen().filter(({ row }) => hasChanges(row)), "m"));
+	$root.on("click", "[data-action='use-qbo-selected']", () => useQuickBooks(masterSelection.chosen().filter(({ row }) => canUseValues(row))));
 	$txnEntity.on("change", () => {
 		state.txn.entity = $txnEntity.val();
 		state.txn.start = 0;
@@ -447,6 +516,24 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	$root.on("click", "[data-action='retry-page']", () => retryPage());
 	$root.on("click", "[data-action='txn-retry-selected']", () => retryTxnSelected());
 	$root.on("click", "[data-action='txn-clear-selected']", () => txnSelection.clear());
+	$root.on("click", "[data-action='txn-keep-erpnext-selected']", () => keepErpnext(txnSelection.chosen().filter(({ row }) => hasChanges(row)), "t"));
+	$root.on("click", "[data-action='txn-refresh-selected']", () =>
+		refreshDrafts(
+			txnSelection
+				.chosen()
+				.map(({ row }) => row)
+				.filter(canRefreshDraft),
+		),
+	);
+	const $txnView = $root.find("[data-txn-filter='view']");
+	function showTxnView(view) {
+		state.txn.view = view === "changed" ? "changed" : "parked";
+		$txnView.val(state.txn.view);
+		state.txn.start = 0;
+		loadTransactions();
+	}
+	$txnView.on("change", () => showTxnView($txnView.val()));
+	$root.on("click", "[data-txn-view]", (event) => showTxnView($(event.currentTarget).attr("data-txn-view")));
 
 	// ------------------------------------------------------------------ masters
 	function load() {
@@ -484,6 +571,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		const chips = [
 			["Needs decision", __("need a decision")],
 			["Pending Review", __("pending review")],
+			["QuickBooks Changed", __("changed in QuickBooks")],
 			["Conflict", __("in conflict")],
 			["Auto Matched", __("auto matched")],
 			["Created", __("created by import")],
@@ -563,6 +651,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				if (row.conflict_status === "Conflict") {
 					statusBits.push(pill(__("conflict"), "red"));
 				}
+				if (row.conflict_status === QBO_CHANGED) {
+					statusBits.push(pill(__("QuickBooks changed"), "orange"));
+				}
 				if (row.agrees) {
 					statusBits.push(`<span class="qbo-mt-agree">${__("name matches")} (${esc(row.agrees)})</span>`);
 				} else if (row.match_rule && row.match_status !== "Pending Review") {
@@ -607,10 +698,11 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 						</td>
 						<td class="qbo-mt-col-actions">
 							<button class="btn btn-xs btn-primary" data-act="link" data-row="${index}">${__("Link")}</button>
-							${row.unmapped ? "" : `<button class="btn btn-xs btn-default" data-act="keep" data-row="${index}">${__("Keep")}</button>`}
+							${row.unmapped || hasChanges(row) ? "" : `<button class="btn btn-xs btn-default" data-act="keep" data-row="${index}">${__("Keep")}</button>`}
 							${canRetry(row) ? `<button class="btn btn-xs btn-default" data-act="retry" data-row="${index}">${__("Retry")}</button>` : ""}
 						</td>
-					</tr>`;
+					</tr>
+					${hasChanges(row) ? changesRow(row, index, "m", 6) : ""}`;
 			})
 			.join("");
 		$body.html(`
@@ -812,9 +904,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 							esc(action),
 							result.reason ? " — " + esc(result.reason) : "",
 						]),
-						indicator: action === "manual_review" || action === "failed" ? "orange" : "green",
+						indicator: action === "manual_review" || action === "failed" || action === "flagged" ? "orange" : "green",
 					},
-					8,
+					action === "flagged" ? 14 : 8,
 				);
 				if (done) {
 					done();
@@ -1118,6 +1210,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				entity_types: state.txn.entity ? [state.txn.entity] : null,
 				start: state.txn.start,
 				page_length: state.txn.pageLength,
+				view: state.txn.view,
 			},
 			callback(response) {
 				if (seq !== txnSeq) {
@@ -1127,6 +1220,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				state.txn.rows = data.rows || [];
 				state.txn.total = data.total || 0;
 				state.txn.counts = data.counts || {};
+				state.txn.changedTotal = data.changed_total || 0;
 				state.txn.served = data.page_length || state.txn.pageLength;
 				txnSelection.prune();
 				renderTransactions();
@@ -1143,15 +1237,22 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 
 	function renderTransactions() {
 		const counts = state.txn.counts;
+		const changedView = state.txn.view === "changed";
+		// From the parked list, one click reaches the transactions QuickBooks changed.
+		const waiting =
+			!changedView && state.txn.changedTotal
+				? `<button class="qbo-mt-chip qbo-mt-chip-changed" data-txn-view="changed"><b>${state.txn.changedTotal}</b> ${__("changed in QuickBooks")}</button>`
+				: "";
 		$root.find("[data-txn-counts]").html(
-			Object.keys(counts)
+			(Object.keys(counts)
 				.sort()
 				.map((type) => `<button class="qbo-mt-chip ${state.txn.entity === type ? "active" : ""}" data-txn-chip="${esc(type)}"><b>${counts[type]}</b> ${esc(type)}</button>`)
-				.join("") || `<span class="qbo-mt-sub">${__("No parked transactions.")}</span>`,
+				.join("") || `<span class="qbo-mt-sub">${changedView ? __("No transaction is flagged QuickBooks changed.") : __("No parked transactions.")}</span>`) + waiting,
 		);
+		$root.find("[data-action='retry-page']").prop("hidden", changedView);
 		const $body = $root.find("[data-txn-body]");
 		if (!state.txn.rows.length) {
-			$body.html(`<div class="qbo-mt-empty">${__("Nothing parked.")}</div>`);
+			$body.html(`<div class="qbo-mt-empty">${changedView ? __("Nothing to review.") : __("Nothing parked.")}</div>`);
 			renderPagerInto($root.find("[data-txn-pager]"), 0, state.txn.served, 0, () => {});
 			return;
 		}
@@ -1165,7 +1266,20 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 						? formLink(row.doctype, row.name, row.name)
 						: `<span class="qbo-mt-missing">${esc(row.name)} ${__("(gone)")}</span>`
 					: `<span class="qbo-mt-sub">${__("no draft")}</span>`;
-				const issues = (row.issues || []).map((i) => `<div class="qbo-mt-issue">${esc(i)}</div>`).join("") || `<div class="qbo-mt-sub">${esc(row.match_rule || "")}</div>`;
+				let issues = (row.issues || []).map((i) => `<div class="qbo-mt-issue">${esc(i)}</div>`).join("") || `<div class="qbo-mt-sub">${esc(row.match_rule || "")}</div>`;
+				if (hasChanges(row)) {
+					issues = `<div>${pill(__("QuickBooks changed"), "orange")}</div>`;
+				}
+				const actions = [];
+				if (canRetryTxn(row)) {
+					actions.push(`<button class="btn btn-xs btn-default" data-txn-retry="${index}">${__("Retry")}</button>`);
+				}
+				if (canRefreshDraft(row) && !hasChanges(row)) {
+					actions.push(`<button class="btn btn-xs btn-default" data-review="refresh" data-scope="t" data-row="${index}">${__("Refresh draft")}</button>`);
+				}
+				if (row.exists && row.docstatus !== 0 && !hasChanges(row)) {
+					actions.push(`<span class="qbo-mt-sub">${row.docstatus === 1 ? __("Posted: resolve it in ERPNext") : __("Cancelled")}</span>`);
+				}
 				return `
 					<tr class="qbo-mt-row ${selected ? "is-selected" : ""}" data-txn-row="${index}" data-row-index="${index}">
 						${checkCell(index, selected, true)}
@@ -1176,10 +1290,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 						</td>
 						<td>${draft}<div class="qbo-mt-sub">${esc(row.doctype || "")}</div></td>
 						<td>${issues}</td>
-						<td class="qbo-mt-col-actions">
-							<button class="btn btn-xs btn-default" data-txn-retry="${index}">${__("Retry")}</button>
-						</td>
-					</tr>`;
+						<td class="qbo-mt-col-actions">${actions.join(" ")}</td>
+					</tr>
+					${hasChanges(row) ? changesRow(row, index, "t", 5) : ""}`;
 			})
 			.join("");
 		$body.html(`
@@ -1189,7 +1302,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 						${checkHeader()}
 						<th>${__("QuickBooks transaction")}</th>
 						<th>${__("ERPNext draft")}</th>
-						<th>${__("Why it parked")}</th>
+						<th>${changedView ? __("Status") : __("Why it parked")}</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -1268,14 +1381,269 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		);
 	}
 
+	// Both leave out a transaction that already has an ERPNext record: a re-sync creates
+	// what is missing and never rebuilds a linked draft (that is Refresh draft).
 	function retryPage() {
-		const rows = state.txn.rows.slice();
-		retryTxnRows(rows, __("Re-sync all {0} parked transactions on this page, one after another?", [rows.length]));
+		const rows = state.txn.rows.filter(canRetryTxn);
+		if (!rows.length) {
+			frappe.msgprint(__("Every transaction on this page already has an ERPNext record. Use Refresh draft on the drafts."));
+			return;
+		}
+		retryTxnRows(rows, __("Re-sync the {0} parked transactions on this page that have no ERPNext record yet, one after another?", [rows.length]));
 	}
 
 	function retryTxnSelected() {
-		const rows = txnSelection.chosen().map(({ row }) => row);
+		const rows = txnSelection
+			.chosen()
+			.map(({ row }) => row)
+			.filter(canRetryTxn);
 		retryTxnRows(rows, __("Re-sync the {0} selected parked transactions, one after another?", [rows.length]));
+	}
+
+	// ------------------------------------------------------- QuickBooks changed
+	const blank = () => `<span class="qbo-mt-sub">${__("blank")}</span>`;
+	const shown = (value) => (value === "" || value === null || value === undefined ? blank() : esc(value));
+
+	/**
+	 * The second table row of a flagged record: what ERPNext has beside what QuickBooks has,
+	 * field by field, and the buttons that answer it. `scope` is "m" (masters) or "t"
+	 * (transactions) and, with the row index, is how a click finds its row again. A master
+	 * gets a tick box per field (all ticked) and Use QuickBooks values; a draft transaction
+	 * gets Refresh draft, which rebuilds the whole draft.
+	 */
+	function changesRow(row, index, scope, columns) {
+		const changes = row.changes || {};
+		const perField = scope === "m";
+		const tick = (fieldname) =>
+			perField
+				? `<input type="checkbox" checked data-use-field="${esc(fieldname)}" data-scope="${scope}" data-row="${index}" aria-label="${__("Take this value from QuickBooks")}" />`
+				: "";
+		const fieldRows = (changes.fields || [])
+			.map((field) => {
+				const notes = [];
+				if (field.agrees) {
+					notes.push(pill(__("agrees now"), "green"));
+				} else if (field.edited) {
+					notes.push(pill(__("also edited in ERPNext"), "orange"));
+				}
+				return `
+					<tr class="${field.agrees ? "is-agreed" : ""}">
+						<td class="qbo-mt-col-check">${field.agrees ? "" : tick(field.fieldname)}</td>
+						<td>${esc(field.label)} ${notes.join(" ")}</td>
+						<td>${shown(field.erpnext)}</td>
+						<td>${shown(field.qbo)}</td>
+					</tr>`;
+			})
+			.join("");
+		const tableRows = (changes.tables || [])
+			.map((table) => {
+				const lines = (table.rows || [])
+					.map((line) => {
+						if (line.only_in === "qbo") {
+							return `<div>${__("Row {0} is only in QuickBooks", [esc(line.row)])}</div>`;
+						}
+						if (line.only_in === "erpnext") {
+							return `<div>${__("Row {0} is only in ERPNext", [esc(line.row)])}</div>`;
+						}
+						const cells = (line.fields || []).map((cell) => `${esc(cell.label)}: ${shown(cell.erpnext)} → ${shown(cell.qbo)}`).join("; ");
+						return `<div>${__("Row {0}", [esc(line.row)])}: ${cells}</div>`;
+					})
+					.join("");
+				const more = table.more_rows ? `<div class="qbo-mt-sub">${__("and {0} more rows that differ", [table.more_rows])}</div>` : "";
+				return `
+					<tr>
+						<td class="qbo-mt-col-check">${tick(table.fieldname)}</td>
+						<td>${esc(table.label)}</td>
+						<td>${__("{0} rows", [table.erpnext_rows])}</td>
+						<td>${__("{0} rows", [table.qbo_rows])}<div class="qbo-mt-sub">${lines}${more}</div></td>
+					</tr>`;
+			})
+			.join("");
+		const issues = (changes.issues || []).map((issue) => `<div class="qbo-mt-issue">${esc(issue)}</div>`).join("");
+		const buttons = [`<button class="btn btn-xs btn-default" data-review="keep" data-scope="${scope}" data-row="${index}">${__("Keep ERPNext")}</button>`];
+		if (perField) {
+			buttons.push(
+				`<button class="btn btn-xs btn-primary" data-review="use" data-scope="${scope}" data-row="${index}" ${canUseValues(row) ? "" : "disabled"}>${__("Use QuickBooks values")}</button>`,
+			);
+		} else if (canRefreshDraft(row)) {
+			buttons.push(`<button class="btn btn-xs btn-primary" data-review="refresh" data-scope="${scope}" data-row="${index}">${__("Refresh draft")}</button>`);
+		} else {
+			buttons.push(`<span class="qbo-mt-sub">${__("Not a draft, so it cannot be refreshed from QuickBooks.")}</span>`);
+		}
+		let when = "";
+		if (changes.detected_at) {
+			try {
+				when = `<span class="qbo-mt-sub">${__("flagged {0}", [esc(frappe.datetime.str_to_user(changes.detected_at))])}</span>`;
+			} catch (e) {
+				when = "";
+			}
+		}
+		const body =
+			fieldRows || tableRows
+				? `<table class="qbo-mt-changes-table">
+						<thead><tr><th></th><th>${__("Field")}</th><th>${__("ERPNext has")}</th><th>${__("QuickBooks has")}</th></tr></thead>
+						<tbody>${fieldRows}${tableRows}</tbody>
+					</table>`
+				: "";
+		return `
+			<tr class="qbo-mt-changes-row">
+				<td></td>
+				<td colspan="${columns - 1}">
+					<div class="qbo-mt-changes">
+						<div class="qbo-mt-changes-head">${__("QuickBooks changed this record. Nothing was written to ERPNext.")} ${when}</div>
+						${issues ? `<div>${__("QuickBooks' data does not pass ERPNext's checks, so it cannot be applied:")}${issues}</div>` : ""}
+						${body}
+						<div class="qbo-mt-changes-actions">${buttons.join(" ")}</div>
+					</div>
+				</td>
+			</tr>`;
+	}
+
+	$root.on("click", "[data-review]", (event) => {
+		const $button = $(event.currentTarget);
+		const scope = $button.attr("data-scope");
+		const index = parseInt($button.attr("data-row"), 10);
+		const row = (scope === "t" ? state.txn.rows : state.rows)[index];
+		if (!row) {
+			return;
+		}
+		const action = $button.attr("data-review");
+		if (action === "keep") {
+			keepErpnext([{ row, index }], scope);
+		} else if (action === "use") {
+			useQuickBooks([{ row, index }]);
+		} else if (action === "refresh") {
+			refreshDrafts([row]);
+		}
+	});
+
+	function reviewItem(row) {
+		return { entity_type: row.entity_type, qbo_id: row.qbo_id };
+	}
+
+	// The fields still ticked on a master row's differences (Use QuickBooks values takes these).
+	function tickedFields(index) {
+		return $root
+			.find(`[data-use-field][data-scope='m'][data-row='${index}']:checked`)
+			.map((_, box) => $(box).attr("data-use-field"))
+			.get();
+	}
+
+	function reloadScope(scope) {
+		if (scope === "t") {
+			loadTransactions();
+		} else {
+			load();
+		}
+	}
+
+	/**
+	 * Send review decisions through the chunked runner, report the tally, forget the ticks
+	 * of the rows that landed and reload. `verb` finishes the sentence "{n} ...".
+	 */
+	function runReview({ method, items, scope, title, verb, progress }) {
+		runInChunks({
+			method,
+			argName: "items",
+			items,
+			size: REVIEW_CHUNK,
+			progress,
+			done(results) {
+				const ok = results.filter((r) => r.ok);
+				const failed = results.filter((r) => !r.ok);
+				const selection = scope === "t" ? txnSelection : masterSelection;
+				ok.forEach((r) => selection.drop(`${r.entity_type}:${r.qbo_id}`));
+				if (failed.length) {
+					frappe.msgprint({
+						title,
+						message:
+							`${ok.length} ${esc(verb)}; ` +
+							__("{0} failed:", [failed.length]) +
+							"<ul>" +
+							failed.map((r) => `<li>${esc(r.entity_type)} #${esc(r.qbo_id)}: ${esc(r.error || "")}</li>`).join("") +
+							"</ul>",
+						indicator: "orange",
+					});
+				} else {
+					frappe.show_alert({ message: `${ok.length} ${esc(verb)}.`, indicator: "green" }, 5);
+				}
+				reloadScope(scope);
+			},
+		});
+	}
+
+	// Keep ERPNext: the flag goes, the record is not written. One row needs no question.
+	function keepErpnext(entries, scope) {
+		if (!entries.length) {
+			return;
+		}
+		const run = () =>
+			runReview({
+				method: "keep_erpnext",
+				items: entries.map(({ row }) => reviewItem(row)),
+				scope,
+				title: __("Keep ERPNext"),
+				verb: __("kept as ERPNext has them"),
+				progress: (from, to, total) => __("Keeping {0}–{1} of {2}…", [from, to, total]),
+			});
+		if (entries.length === 1) {
+			run();
+			return;
+		}
+		frappe.confirm(
+			__("Keep what ERPNext has on the {0} selected records? Nothing is written to them, and the QuickBooks differences shown now are not raised again.", [entries.length]),
+			run,
+		);
+	}
+
+	// Use QuickBooks values: each master row's ticked fields are written to its one record.
+	function useQuickBooks(entries) {
+		const items = [];
+		const lines = [];
+		entries.forEach(({ row, index }) => {
+			const fields = tickedFields(index);
+			if (!fields.length) {
+				return;
+			}
+			items.push(Object.assign(reviewItem(row), { fields }));
+			const link = row.link || {};
+			lines.push(`<li>${esc(link.doctype || row.expected_doctype || "")} ${esc(link.title || link.name || "")}: ${__("{0} field(s)", [fields.length])}</li>`);
+		});
+		if (!items.length) {
+			frappe.msgprint(__("No field is ticked. Tick the values to take from QuickBooks, or choose Keep ERPNext."));
+			return;
+		}
+		frappe.confirm(
+			`<p>${__("Write the ticked QuickBooks values onto {0} ERPNext record(s)? Each record is saved, and an unticked field keeps what ERPNext has.", [items.length])}</p><ul>${lines.join("")}</ul>`,
+			() =>
+				runReview({
+					method: "use_quickbooks_values",
+					items,
+					scope: "m",
+					title: __("Use QuickBooks values"),
+					verb: __("updated from QuickBooks"),
+					progress: (from, to, total) => __("Updating {0}–{1} of {2}…", [from, to, total]),
+				}),
+		);
+	}
+
+	// Refresh draft: rebuild each draft transaction from the payload already stored for it.
+	function refreshDrafts(rows) {
+		if (!rows.length) {
+			return;
+		}
+		frappe.confirm(
+			__("Rebuild {0} draft(s) from QuickBooks' current data? Whatever was edited on these drafts in ERPNext is replaced.", [rows.length]),
+			() =>
+				runReview({
+					method: "refresh_drafts",
+					items: rows.map(reviewItem),
+					scope: "t",
+					title: __("Refresh drafts"),
+					verb: __("rebuilt from QuickBooks"),
+					progress: (from, to, total) => __("Refreshing {0}–{1} of {2}…", [from, to, total]),
+				}),
+		);
 	}
 
 	// ------------------------------------------------------------- excel round trip

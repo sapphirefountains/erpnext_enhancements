@@ -70,6 +70,13 @@ This is the executable counterpart to the analysis in `TASK-2026-01236`: an orde
 
 ## 4. Pre-posting checklist (ordered; each → owner + machine check)
 
+> **Read first (v1.800.0, 2026-11-11).** Steps 4 and 5 below and stage S-B were written when
+> `run_resync` saved QuickBooks' values over every linked draft. It no longer does: a sync never
+> saves over a linked record. A resync now *flags* the drafts that differ, and a person rebuilds
+> them with **Refresh drafts** on the QuickBooks Record Matching page (transactions tab, "QuickBooks
+> changed"). So "resync" in those steps means: Preview Resync, Run Resync, then Refresh drafts for
+> the flagged rows. The retry trap in step 4 is gone too: a Failed log no longer starts an import.
+
 1. §1 backup gate green (test-restored, rehearsed). — Impl. lead.
 2. Ship (recommended) the auto-charge posting-date guard; ship (required-before-resync-on) the `upsert_entity` docstatus guard, with bench-free tests in the correct CI step. — Impl. lead.
 3. `Stripe Payments Settings.enabled=0` confirmed; `STR-CONSENT-2026-00001` not completed; `dunning_enabled` off. — Impl. lead. → §3 B4 checks.

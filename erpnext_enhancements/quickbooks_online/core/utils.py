@@ -138,6 +138,26 @@ def parse_qbo_datetime(value):
 	return parsed
 
 
+def is_rq_job_timeout(exc) -> bool:
+	"""True when ``exc`` is RQ's job-timeout exception, which a batch must never swallow.
+
+	RQ ends an over-long job by raising ``JobTimeoutException`` into it from a one-shot
+	alarm. It subclasses ``Exception``, so a per-record ``except Exception`` catches it
+	like any bad record -- and because the alarm is not re-armed, the rest of the run then
+	has no time limit at all (see ``sync.safe_upsert``). Matched by class when ``rq`` is
+	importable and by name otherwise, so the bench-free suites can raise a stand-in.
+	``core/attachments.py`` carries its own copy for the same reason, written first.
+	"""
+	try:
+		from rq.timeouts import BaseTimeoutException
+
+		if isinstance(exc, BaseTimeoutException):
+			return True
+	except Exception:
+		pass
+	return type(exc).__name__ in ("JobTimeoutException", "BaseTimeoutException")
+
+
 def is_token_expiring(settings, buffer_minutes=5) -> bool:
 	"""True if the OAuth access token is expired or within ``buffer_minutes``.
 

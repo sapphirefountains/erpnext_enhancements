@@ -7,6 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.800.0] - 2026-11-11
+
+### Changed
+- **The QuickBooks sync links, it never overwrites. Two behaviors are gone.** Nik's decision of
+  2026-10-06, "Party links ask instead of guessing; QuickBooks sync links, never overwrites". Both
+  halves ship here; the details are in
+  [`quickbooks_online/README.md`](erpnext_enhancements/quickbooks_online/README.md) under "The sync
+  links, it never overwrites".
+  - **1. No self-starting imports.** `sync.retry_failed()` ended with
+    `if "import" in pending: import_all()`. The hourly `retry_failed_syncs` job called it on the
+    default queue, where RQ ends a job after 300 seconds. A full import of this company cannot
+    finish in 300 seconds, so every run failed, and every failed run earned the next one: a full
+    Import All ran 2 to 6 times a day until the Scheduled Job Type was stopped by hand on
+    production on 2026-10-06. Now `retry_failed` retries a failed **CDC** poll only, once per call,
+    and still reaps orphaned runs first. A failed Import All, Run Resync or Preview Resync is left
+    exactly as it is (no `retry_count` bump, since nothing is attempted) and named in the answer's
+    `restart_by_hand`. The dashboard's *Retry Failed* says so and tells the person to start the run
+    again from the same page, where it goes to the long queue with its 10-hour budget. Asked for one
+    such log by name, the endpoint queues nothing.
+  - **2. A sync never saves over a record it has already linked.** The already-linked path of
+    `mapping.upsert_entity` ran `detect_conflicts`, then `apply_values(doc, values)`, then saved. For
+    a QuickBooks job linked to a Project the mapped values are status, customer and company. That
+    is the write that reopened 338 Projects on 2026-08-19 and re-pointed 13 of them to another
+    company, and the hourly CDC kept doing it one record at a time: PRJ-00778 had its customer
+    rewritten on 2026-11-03 and PRJ-00782 on 2026-11-05, each at 20 past the hour. Now a linked
+    record goes to `mapping._review_linked_record`, which only compares:
+    - QuickBooks has not moved since the mapping's last sync: `unchanged`, and nothing is written.
+    - QuickBooks moved and nothing it changed differs from the record: `unchanged`; the
+      mapping's cursor advances.
+    - QuickBooks moved and a field it changed differs from the record: `flagged`. The mapping's
+      `conflict_status` becomes `QuickBooks Changed` and `qbo_changes` stores, field by field, what
+      ERPNext holds and what QuickBooks now says. The record is not saved.
+
+    A field counts only when QuickBooks changed it: each mapped value is first held against the
+    last thing QuickBooks is known to have said (the settled value, else what the last sync
+    stored), and a field where QuickBooks still says the same is skipped however far ERPNext has
+    moved. So an accountant's edit to a draft, or a customer renamed in ERPNext, is never raised as
+    "QuickBooks changed". The comparison also forgives what ERPNext does to a value on save (edge
+    whitespace, markup, a website's scheme, a cent of rounding), which would otherwise raise a flag
+    on every QuickBooks edit to a customer whose website was saved as a bare domain.
+  - **A linked Project's status and company are never flagged and can never be applied.** They are
+    not QuickBooks data: the job mapper sets them to a constant (the first open-like status, the
+    Settings company) so a new Project can be inserted. Applied to existing Projects, those two
+    constants are the reopening and the re-pointing. `MAPPER_DEFAULTS_ERPNEXT_OWNS` drops them for
+    a linked record, beside the title guard that already existed, which leaves the customer as the
+    one thing a QuickBooks job can say about a linked Project.
+
+    This holds for every doctype, for docstatus 0 drafts as well as masters, and for records the
+    import created (`match_status = Created`) as much as ones it matched. It holds for the hourly
+    CDC, a webhook, the dashboard's single-entity sync, Import All and Run Resync alike.
+  - **`overwrite=True` is not a back door.** `upsert_entity` still accepts `overwrite` and ignores
+    it. Run Resync now passes `recheck=True` instead: a linked record is compared even when
+    QuickBooks has not moved, which is how a person brings a standing difference up for review (a
+    mapper fix that changes what existing drafts should hold, a field that has differed since the
+    record was first linked). It flags; it does not save. Preview Resync passes the same flag, so its count is what the run will
+    flag, and reports each as `would_flag` while writing nothing.
+- **Behavior that changes for operators, beyond the two above.**
+  - *Run Resync no longer rebuilds drafts or resolves conflicts in QuickBooks' favor.* It creates
+    what is missing, links, and flags. `docs/migration/backlog-gl-posting-runbook.md` used it to
+    carry a mapper fix into existing draft invoices (step 5) and to pull payment allocations into
+    draft Payment Entries (stage S-B); that runbook now opens with a note. The replacement is:
+    Preview Resync, Run Resync, then **Refresh drafts** for the flagged rows.
+  - *Import All no longer re-saves drafts.* Each full import used to re-save about 2,800 linked
+    draft transactions, because a child table always read as changed. It now leaves them alone.
+  - *Retry on a parked transaction that already has an ERPNext record no longer rebuilds it.* The
+    Record Matching page offers **Refresh draft** on those rows, and *Retry* only where no record
+    exists yet. *Retry all on this page* and *Retry selected* skip rows that have a record.
+  - *A parked linked record no longer heals itself on the next import.* A record parked by an
+    earlier failed save stays parked until QuickBooks changes it again or a person acts.
+  - *A linked record whose new payload fails the preflight is flagged, not re-parked.* The reasons
+    ride on the flag. `save_manual_review_mapping` used to replace `owned_fields` with the issue
+    list on a record that already existed.
+  - *The submitted-document guard now runs before the preflight parking*, which rewrote
+    `owned_fields` on a posted document whose new payload failed validation: the loss that guard
+    exists to prevent.
+  - *A linked child Account no longer promotes its parent to a group.* `_ensure_group_parent` saves
+    the parent Account, which is usually a linked record itself. It now runs only for a create or a
+    first link. *Use QuickBooks values* does not promote a parent either: ERPNext refuses the save
+    and says why.
+  - *`Conflict` is no longer written.* The 73 mappings that carry it on production are compared
+    again on their next sync and become `QuickBooks Changed` or `Clean`.
+
+### Added
+- **Review of "QuickBooks changed" records on the QuickBooks Record Matching page.** Roles System
+  Manager and Accounts Manager, the page's existing gate. On Masters it is one more status filter
+  and a chip; on the transactions tab it is the second choice in a new select. Neither is a route,
+  so Back and Forward still move between the two tabs and nothing else. A flagged row carries the
+  differences beneath it: "ERPNext has" (read from the record when the page loads, so a record
+  somebody already corrected shows as agreeing) beside "QuickBooks has", with a note where ERPNext
+  was edited too. Three answers, each for one row or the ticked rows, each a POST-only endpoint
+  behind `_require_qbo_operator`, none of which calls QuickBooks or queues a job:
+  - **Keep ERPNext** (`keep_erpnext`): clears the flag and advances the mapping cursor to what the
+    reviewer was shown. Writes nothing to the record.
+  - **Use QuickBooks values** (`use_quickbooks_values`): writes the flagged fields, or the ticked
+    subset, to that one record. Refused for a submitted or cancelled document and for a flag whose
+    QuickBooks data failed the preflight.
+  - **Refresh draft** (`refresh_drafts`): rebuilds one docstatus 0 transaction from the newest
+    payload already stored.
+
+  Every answer records the QuickBooks value in `settled_qbo_values`, and a field is not flagged
+  again while QuickBooks still says the same thing. Without that, a difference a person chose to
+  keep would be raised again every time the QuickBooks record was touched.
+- **`QuickBooks Sync Mapping`: the `QuickBooks Changed` option on `conflict_status`, and two
+  read-only Long Text columns, `qbo_changes` and `settled_qbo_values`.** The doctype is this app's
+  own, so the change is in its JSON. Adding a Select value freezes nothing (only a removed value
+  does). Neither new column has a `default`: on a normal doctype the `ALTER` would write it into
+  all of the roughly 20,000 existing rows.
+- **`tests/test_quickbooks_link_only.py`**, a bench-free pytest suite on its own
+  `python -m pytest` step in `ci.yml`.
+
+### Fixed
+- **The "QuickBooks Open Conflicts" number card and the `qbo_conflicts` KPI count the new flag.**
+  Both counted `conflict_status = 'Conflict'`, which the sync no longer writes, so both would have
+  read a falling number and then 0 while flags piled up. They count `Conflict` and
+  `QuickBooks Changed` together.
+- **A timed-out QuickBooks run ends as Failed instead of sitting in Running.** RQ ends an over-long
+  job by raising `JobTimeoutException` from a one-shot alarm. It subclasses `Exception`, so
+  `sync.safe_upsert`'s per-record `except Exception` caught it like any bad record: the run counted
+  one failed record and carried on with no time limit at all, until the worker's own watchdog
+  killed the process without a word. The Sync Log then sat in Running until the 11-hour reaper
+  failed it, and every Import All in between was refused as "already running". Production still
+  holds one such log from 2026-10-06. `safe_upsert` now re-raises it after the savepoint rollback
+  (`utils.is_rq_job_timeout`), and so does `_owned_snapshot`, so the run wrapper's `fail_log`
+  closes the log as Failed at once.
+- **The Import All button reaps orphaned runs before it checks for a running one.** That check
+  reads every Running log as a live run, and the button is now the only way an import starts.
+- **A mapping linked to one doctype is no longer updated as another.** The already-linked path
+  asked only whether a record of *this run's* doctype existed under the mapped name. A QuickBooks
+  id linked to a Customer whose payload now resolves to a Project could have matched a Project
+  that happened to carry the Customer's name. The mapping's own doctype must now agree; otherwise
+  the doctype-flip guard takes it, as intended.
+
+### Operator steps after deploy
+1. Deploying runs `bench migrate`, which adds the Select option and the two columns. Nothing is
+   backfilled and no patch runs.
+2. The manager un-stops the `retry_failed_syncs` Scheduled Job Type (stopped by hand since
+   2026-10-06). At its next run, at 40 past the hour, it marks the orphaned Import All log from
+   2026-10-06 Failed and starts nothing.
+3. The first CDC runs flag instead of writing. Expect about 5 to 15 flags a day, from the CDC logs
+   of 2026-10-21 to 2026-11-11 (0 to 36 saves and 0 to 4 conflicts a day; each save of a linked
+   record is now at most one flag). They appear under *QuickBooks changed* on the Record Matching
+   page. No ERPNext record's `modified` should move at 20 past the hour as Administrator any more.
+4. Nothing repairs earlier damage. The 338 reopened and 13 re-pointed Projects are as they were.
+
 ## [1.799.1] - 2026-11-08
 
 ### Changed
