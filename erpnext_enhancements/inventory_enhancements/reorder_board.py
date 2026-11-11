@@ -44,6 +44,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, get_url, getdate, now_datetime, nowdate
 
+from erpnext_enhancements.inventory_enhancements import job_site_rules as site_rules
+from erpnext_enhancements.inventory_enhancements import job_sites
 from erpnext_enhancements.inventory_enhancements import reorder_rules as rules
 from erpnext_enhancements.inventory_enhancements.doctype.reorder_watch.reorder_watch import watch_name
 
@@ -237,17 +239,22 @@ def read_ancestors():
 	return rules.ancestor_map(dict(frappe.db.sql("select name, parent_warehouse from `tabWarehouse`")))
 
 
-def read_tracking(rule_rows, ancestors, today):
+def read_tracking(rule_rows, ancestors, today, sites=()):
 	"""The open requests and orders for the rules' items, as :func:`reorder_rules.track_lines`.
 
 	Only lines some rule counts are kept: the rule's warehouse, or any warehouse under its
-	``warehouse_group`` (:func:`reorder_rules.in_scope`).
+	``warehouse_group`` (:func:`reorder_rules.in_scope`). A line headed for a job site
+	(``sites``, v1.801.0) is never one of them: an order delivered to a site restocks that job,
+	not the shelf the rule watches.
 	"""
 	by_item = {}
 	for r in rule_rows:
 		by_item.setdefault(r["item_code"], []).append(r)
+	sites = set(sites or ())
 
 	def counted(item_code, warehouse):
+		if warehouse in sites:
+			return False
 		return any(rules.in_scope(warehouse, r, ancestors) for r in by_item.get(item_code, ()))
 
 	codes = _in(by_item)
@@ -346,7 +353,13 @@ def build_board(include_rates=False, now=None):
 		r["on_hand"] = on_hand.get(rules.line_key(r["item_code"], r["warehouse"]), 0.0)
 		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
 	ancestors = read_ancestors()
-	tracked = read_tracking(rule_rows, ancestors, today)
+	# Stock on a job site is that job's, not the shop's (v1.801.0). 29 of production's 53 rules
+	# roll up at the company's root group (2026-11-11), which a site sits under, so without this
+	# material sent to a job would keep its item off the board while the shelf stood empty. The
+	# rules themselves are left as they are: it is the board's reading that leaves sites out.
+	sites = job_sites.site_warehouses()
+	projected_map = site_rules.without_sites(projected_map, sites, ancestors)
+	tracked = read_tracking(rule_rows, ancestors, today, sites)
 	watches = read_watches()
 	board = rules.assemble(rule_rows, projected_map, tracked, watches, now, ancestors)
 	names = {r["item_code"]: r.get("item_name") for r in rule_rows}

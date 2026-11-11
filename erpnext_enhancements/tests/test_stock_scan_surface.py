@@ -96,7 +96,8 @@ CONTRACT = {
 	"ITEM": ("get_item", {"item_code"}, {"warehouse"}),
 	"SEARCH_ITEMS": ("search_items", {"query"}, {"warehouse"}),
 	"SEARCH_LOCATIONS": ("search_locations", {"query"}, set()),
-	"SEARCH_PROJECTS": ("search_projects", set(), {"query"}),
+	# ``job_sites_only`` (v1.801.0): the Move to… sheet's "A job site" lists only jobs that keep one.
+	"SEARCH_PROJECTS": ("search_projects", set(), {"query", "job_sites_only"}),
 	"TAKE": ("take", {"item_code", "warehouse", "qty", "client_ref"}, {"project", "scanned_code"}),
 	"ADD": (
 		"add",
@@ -128,6 +129,8 @@ CONTRACT = {
 		},
 	),
 	"CHECK_NEW_ITEM": ("check_new_item", {"item_code"}, {"item_name", "item_group", "stock_uom"}),
+	# A job's site warehouse, opened on first use (v1.801.0). The move itself is BIN.MOVE_TO.
+	"JOB_SITE": ("job_site", {"project"}, set()),
 }
 
 #: Keys Frappe consumes from the request before argument binding (``sid``, ``cmd``,
@@ -672,10 +675,10 @@ def _client_sources():
 
 
 class TestEndpointSurface(unittest.TestCase):
-	def test_the_contract_has_thirteen_endpoints_and_they_are_all_whitelisted(self):
+	def test_the_contract_has_fourteen_endpoints_and_they_are_all_whitelisted(self):
 		"""Anti-vacuity for every loop below, and the spec's table, both ways."""
 		endpoints = _whitelisted()
-		self.assertEqual(len(CONTRACT), 13)
+		self.assertEqual(len(CONTRACT), 14)
 		self.assertEqual(
 			set(endpoints),
 			{fn for fn, _req, _opt in CONTRACT.values()},

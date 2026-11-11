@@ -389,6 +389,39 @@ export function makeHomeDefault(qty, onHand) {
 }
 
 // ---------------------------------------------------------------------------
+// Job sites (v1.801.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * The places an item is on hand, split into the shop's and the job sites'. Material sent to a
+ * job sits in that job's own site warehouse (`inventory_enhancements/job_sites.py`), and the
+ * server marks each such place `job_site`. The page names the two apart: stock on a job site
+ * can be brought back, but it is not stock the shop has, and "Also at: Job Site …" under an
+ * empty shelf would send somebody to buy nothing while a job goes short.
+ */
+export function splitPlaces(places) {
+	const shop = [];
+	const sites = [];
+	for (const place of Array.isArray(places) ? places : []) {
+		if (!place) continue;
+		(place.job_site ? sites : shop).push(place);
+	}
+	return { shop, sites };
+}
+
+/**
+ * The job a take is charged to. At a job site it is that site's own job, whatever job the
+ * chip at the top remembers from earlier in the shift; the server applies the same rule
+ * (`job_site_rules.site_take_project`), so this only keeps the page from asking for a job
+ * the take already has. Elsewhere it is the picked job, or none.
+ */
+export function takeProject(item, job) {
+	const site = item && item.job_site;
+	if (site && site.project) return site.project;
+	return job && job.project ? job.project : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Store runs (v1.536.0): "Bought on a store run"
 // ---------------------------------------------------------------------------
 

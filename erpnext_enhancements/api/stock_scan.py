@@ -94,6 +94,8 @@ from frappe.utils import (
 	strip_html,
 )
 
+from erpnext_enhancements.inventory_enhancements import job_site_rules as site_rules
+from erpnext_enhancements.inventory_enhancements import job_sites
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as rules
 from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
 	get_settings,
@@ -256,6 +258,9 @@ def _location_payload(row):
 		"items": items,
 		"truncated": truncated,
 		"can_manage": _can_manage(),
+		# A job's site (v1.801.0): ``{project, project_name}``, else None. The page says whose
+		# site it is, and that parts taken here are charged to that job.
+		"job_site": job_sites.site_info(row.name),
 	}
 
 
@@ -353,6 +358,11 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 		}
 		for item in items
 	]
+	if job_sites.site_project(row.name):
+		# A job site (v1.801.0) is nobody's bin: it lists what is there now, or on its way. The
+		# "nobody has decided yet" clause above would keep every item ever sent to the job on its
+		# list for good, since nothing is ever assigned to a site or taken off one.
+		rows = [r for r in rows if r["on_hand"] > 0 or r["on_order"] > 0]
 	rows.sort(key=lambda r: (r["on_hand"] <= 0, rules.natural_key(r["item_name"])))
 	if limit is None:
 		return rows, False
@@ -416,7 +426,12 @@ def _available(item_code, warehouse):
 
 
 def _elsewhere(item_code, company, exclude=None):
-	"""Where else the item is on hand, most first — the sources a Move can draw from."""
+	"""Where else the item is on hand, most first — the sources a Move can draw from.
+
+	A job site (v1.801.0) is marked ``job_site`` and listed after every shop location: stock
+	there can be brought back, so it is a source, but it is not stock the shop has. The page
+	names it apart ("On job sites") and never counts it as somewhere to look before buying.
+	"""
 	bins = frappe.get_all(
 		"Bin",
 		filters={"item_code": item_code, "actual_qty": [">", 0]},
@@ -433,6 +448,7 @@ def _elsewhere(item_code, company, exclude=None):
 			fields=["name", "warehouse_name", "company", "is_group", "disabled"],
 		)
 	}
+	sites = job_sites.site_warehouses()
 	out = []
 	for row in bins:
 		wh = meta.get(row.warehouse)
@@ -444,9 +460,10 @@ def _elsewhere(item_code, company, exclude=None):
 				"warehouse_name": wh.warehouse_name or row.warehouse,
 				"on_hand": flt(row.actual_qty),
 				"available": flt(row.actual_qty) - flt(row.reserved_stock),
+				"job_site": row.warehouse in sites,
 			}
 		)
-	out.sort(key=lambda r: (-r["on_hand"], rules.natural_key(r["warehouse_name"])))
+	out.sort(key=lambda r: (r["job_site"], -r["on_hand"], rules.natural_key(r["warehouse_name"])))
 	return out
 
 
@@ -602,6 +619,8 @@ def _item_payload(item_code, location=None):
 		"assigned": None,
 		"is_default": None,
 		"undecided": None,
+		# The job whose site this location is (v1.801.0), or None for an ordinary location.
+		"job_site": None,
 		"elsewhere": [],
 		"open_orders": [],
 	}
@@ -614,6 +633,7 @@ def _item_payload(item_code, location=None):
 				"warehouse_name": location.warehouse_name or location.name,
 				"on_hand": on_hand,
 				"available": on_hand - reserved,
+				"job_site": job_sites.site_info(location.name),
 				# Whether the item is on this bin (an enabled Putaway Rule): the page offers
 				# "Take off this bin" or "Put on this bin" by it (v1.689.0).
 				"assigned": bool(
@@ -956,7 +976,11 @@ def _post(se):
 
 @frappe.whitelist(methods=["POST"])
 def take(item_code, warehouse, qty, client_ref, project=None, scanned_code=None):
-	"""Take parts from a location: a submitted Material Issue, optionally charged to a job."""
+	"""Take parts from a location: a submitted Material Issue, optionally charged to a job.
+
+	At a job site (v1.801.0) the take is charged to that site's job whatever job the page sent
+	(``job_site_rules.site_take_project``): this is where the material's cost reaches the job.
+	"""
 	_check_access()
 	ref = _client_ref(client_ref)
 	done = _already_saved(ref)
@@ -967,6 +991,7 @@ def take(item_code, warehouse, qty, client_ref, project=None, scanned_code=None)
 	item = _stock_item(item_code)
 	qty = _checked_qty(qty, item)
 	settings = get_settings()
+	project = site_rules.site_take_project(job_sites.site_project(location.name), project)
 	project = _project(project, location.company, required=cint(settings.get("require_project_for_take")))
 	problem = rules.check_take(
 		qty, _available(item.name, location.name), location.warehouse_name or location.name
@@ -1146,7 +1171,16 @@ def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_cod
 	source = _transfer_source(from_warehouse, location, item, qty)
 	_require("Stock Entry", "create", "submit")
 
-	log = _begin_log(ref, rules.ACTION_MOVE, item, qty, location, scanned_code, from_warehouse=source.name)
+	log = _begin_log(
+		ref,
+		rules.ACTION_MOVE,
+		item,
+		qty,
+		location,
+		scanned_code,
+		from_warehouse=source.name,
+		project=_transfer_project(source, location),
+	)
 	se = _transfer_entry(rules.ACTION_MOVE, item, qty, source, location)
 	_post(se)
 	_finish_log(log, "Stock Entry", se.name)
@@ -1177,15 +1211,29 @@ def _transfer_source(from_warehouse, location, item, qty):
 	return source
 
 
+def _transfer_project(source, location):
+	"""The job a transfer between ``source`` and ``location`` belongs to (v1.801.0): the job
+	whose site the stock is going to, else the one it is coming back from, else ``None`` for a
+	move between two shop locations. On the stock entry it puts the Project on both ledger
+	rows, so the ledger can be read by job; the log row carries the same job."""
+	return site_rules.transfer_project(
+		job_sites.site_project(source.name), job_sites.site_project(location.name)
+	)
+
+
 def _transfer_entry(action, item, qty, source, location):
 	"""The unsaved Material Transfer of ``qty`` from ``source`` into ``location``: the one
 	transfer this app's scan pages build (*Move here*, and *Move To* in ``bin_assignments``).
 	The caller inserts its log row first and then posts it, like every other save."""
 	settings = get_settings()
+	project = _transfer_project(source, location)
 	se = _stock_entry(
 		"Material Transfer",
 		location.company,
-		remarks=rules.remark(action, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name),
+		project=project,
+		remarks=rules.remark(
+			action, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name, project=project
+		),
 	)
 	se.from_warehouse = source.name
 	se.to_warehouse = location.name
@@ -2317,7 +2365,10 @@ def search_items(query, warehouse=None):
 	"""Items whose code or name contains every word typed, or whose barcode is exactly it.
 
 	Stock items first (they are the ones the page can move), then by name. Each carries its
-	quantity at ``warehouse`` when given, and its total on hand across the company.
+	quantity at ``warehouse`` when given, and its total on hand **in the shop**: stock on a job
+	site (v1.801.0) is that job's, so it is left out of ``on_hand_total`` and given apart as
+	``on_job_sites`` (``job_site_rules.shop_and_site_totals``). A person looking for a part
+	must not be told the shop has four when all four are across town.
 	"""
 	_check_access()
 	words = _search_words(query)
@@ -2351,13 +2402,15 @@ def search_items(query, warehouse=None):
 
 	codes = [row.item_code for row in rows]
 	location = _warehouse(warehouse) if cstr(warehouse).strip() else None
-	totals, here = {}, {}
+	sites = job_sites.site_warehouses()
+	by_item, here = {}, {}
 	for bin_row in frappe.get_all(
 		"Bin", filters={"item_code": ["in", codes]}, fields=["item_code", "warehouse", "actual_qty"]
 	):
-		totals[bin_row.item_code] = totals.get(bin_row.item_code, 0.0) + flt(bin_row.actual_qty)
+		by_item.setdefault(bin_row.item_code, []).append((bin_row.warehouse, flt(bin_row.actual_qty)))
 		if location and bin_row.warehouse == location.name:
 			here[bin_row.item_code] = flt(bin_row.actual_qty)
+	totals = {code: site_rules.shop_and_site_totals(bins, sites) for code, bins in by_item.items()}
 	return [
 		{
 			"item_code": row.item_code,
@@ -2365,7 +2418,8 @@ def search_items(query, warehouse=None):
 			"image": row.image or None,
 			"stock_uom": row.stock_uom,
 			"is_stock_item": cint(row.is_stock_item),
-			"on_hand_total": totals.get(row.item_code, 0.0),
+			"on_hand_total": totals.get(row.item_code, (0.0, 0.0))[0],
+			"on_job_sites": totals.get(row.item_code, (0.0, 0.0))[1],
 			"on_hand_here": here.get(row.item_code, 0.0) if location else None,
 		}
 		for row in rows
@@ -2388,19 +2442,27 @@ def search_locations(query):
 	)
 	rows = [row for row in rows if (row.warehouse_type or "") != "Transit"]
 	rows.sort(key=lambda row: rules.natural_key(row.warehouse_name or row.name))
+	# A job's site found by name is still a job site (v1.801.0): Move to… must not offer to make
+	# it the item's bin, which the server would refuse.
+	sites = job_sites.site_warehouses()
 	return [
 		{
 			"warehouse": row.name,
 			"warehouse_name": row.warehouse_name or row.name,
 			"trail": rules.location_trail(_ancestor_names(row)),
+			"job_site": row.name in sites,
 		}
 		for row in rows[:SEARCH_LIMIT]
 	]
 
 
 @frappe.whitelist(methods=["POST"])
-def search_projects(query=None):
+def search_projects(query=None, job_sites_only=0):
 	"""Jobs still in progress that the caller can see, for the take's job picker.
+
+	``job_sites_only`` (v1.801.0) is the Move to… sheet's *A job site*: only jobs of a type that
+	keeps material on site (Inventory Scanner Settings; Build when blank), so the list is the
+	handful of open builds rather than every service visit.
 
 	Every status but the closed ones (``stock_scan_rules.CLOSED_JOB_STATUSES``) — this
 	site's projects are ``Active``, not ERPNext's ``Open``. Active jobs first, then the
@@ -2416,6 +2478,8 @@ def search_projects(query=None):
 	_check_access()
 	words = _search_words(query)
 	filters = [["status", "not in", sorted(rules.CLOSED_JOB_STATUSES)]]
+	if cint(job_sites_only):
+		filters.append(["project_type", "in", list(job_sites.allowed_types())])
 	or_filters = None
 	if words:
 		like = f"%{' '.join(words)}%"
@@ -2440,6 +2504,33 @@ def search_projects(query=None):
 		}
 		for row in rows[:SEARCH_LIMIT]
 	]
+
+
+@frappe.whitelist(methods=["POST"])
+def job_site(project):
+	"""The location a job's material is sent to (v1.801.0): that job's own site warehouse,
+	opened here the first time anyone sends something to the job.
+
+	The Move to… sheet's *A job site* calls this once a job is picked and then moves the stock
+	with the same ``bin_assignments.move_to`` every other destination uses, so the transfer,
+	its log row and its Undo are the ones the page already has. Needs what a move needs (Stock
+	Entry create and submit): somebody who could not post the transfer does not open a site.
+	Refusals are sentences (``job_sites.ensure_site``).
+	"""
+	_check_access()
+	_require("Stock Entry", "create", "submit")
+	site, created = job_sites.ensure_site(project)
+	row = _location(site.name)
+	info = job_sites.site_info(row.name) or {}
+	return {
+		"warehouse": row.name,
+		"warehouse_name": row.warehouse_name or row.name,
+		"trail": rules.location_trail(_ancestor_names(row)),
+		"job_site": True,
+		"project": info.get("project"),
+		"project_name": info.get("project_name"),
+		"created": bool(created),
+	}
 
 
 # ---------------------------------------------------------------------------
@@ -2493,6 +2584,9 @@ def boot_payload(args=None):
 			"browser_history": 0 if cint(settings.get("stock_scan_disable_browser_back")) else 1,
 			# Where "Send to boneyard" moves stock (v1.689.0); None hides the button.
 			"boneyard_warehouse": settings.get("boneyard_warehouse") or None,
+			# Whether Move to… offers "A job site" (v1.801.0): the group is chosen and the
+			# Warehouse field exists. 0 hides it, and the page is as it was.
+			"job_sites": 1 if job_sites.enabled() else 0,
 		},
 		"recent": _recent(),
 		"initial": initial,

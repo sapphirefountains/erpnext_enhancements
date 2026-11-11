@@ -72,6 +72,8 @@ _OWN_MODULES = (
 	"frappe.model.document",
 	"erpnext_enhancements.api.stock_scan",
 	"erpnext_enhancements.inventory_enhancements.bin_assignments",
+	# Imported by both of the above since v1.801.0; it holds a reference to ``frappe`` too.
+	"erpnext_enhancements.inventory_enhancements.job_sites",
 	"erpnext_enhancements.inventory_enhancements.stock_accounts",
 	"erpnext_enhancements.inventory_enhancements.warehouse_labels",
 	"erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings",

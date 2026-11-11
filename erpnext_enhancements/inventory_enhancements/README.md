@@ -28,6 +28,8 @@ model, the pure rules and the label reads.
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
+| `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
+| `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
 | `maintain_stock.py` | Its reads (documents counted, up to three named), the switch (row lock, checks again, `db.set_value`, Comment, cache clear, next steps) and the guards on the switched item's old non-stock receipts: `Purchase Receipt` `before_cancel` and `validate` (returns), `Purchase Invoice` `validate`, and `Landed Cost Voucher` (`validate`, `before_cancel`), `Repost Item Valuation` and `Repost Accounting Ledger` (`validate`), which would rebuild the receipt's ledger from today's flag. A stock item's receipt line with no stock ledger entry may not be canceled, returned, billed or re-costed in ERPNext |
@@ -576,6 +578,70 @@ without `can_manage` rather than fail. A save that takes the item off the bin re
 list without adding a history entry. The list's rows say why an empty item still lists: an
 **on order** or **not assigned** (undecided) badge.
 
+### Job sites (v1.801.0)
+
+Material that leaves the shop for a Build job and waits at the site is **moved, not issued**: a
+Material Transfer from the shop bin into that job's own leaf Warehouse. Nik's decision of
+2026-11-11, one warehouse per project rather than one generic "Job Site", for two measured reasons:
+
+- ERPNext keeps on-hand by item and warehouse (`tabBin`) and has no project there. One shared
+  warehouse could never say what is at which site, and a return from one job would hide a shortage
+  on another. Negative stock stays refused per site, so nobody can "use" what was never sent.
+- The count is small: 10 Build projects started in 2026, 8 were open on the day, against 222 leaf
+  warehouses already.
+
+**What a site is.** A Warehouse whose `custom_job_site_project` names a Project. Not its name and
+not its place in the tree: a Stock Manager may rename or move one in the Desk and it stays that
+job's site. Sites are created under the group in `Inventory Scanner Settings.job_sites_warehouse`
+(`Job Sites`, beside `Inventory - SF`), named `Job Site <project id> <project name>`. Anything else
+directly under that group also counts as on a job site (production's hand-made `Job Site - SF`).
+
+| On the phone | What happens | Voucher |
+|---|---|---|
+| A bin's item → **Move to…** → **A job site** → pick the job | The job's site is opened if it has none (`api.stock_scan.job_site` → `job_sites.ensure_site`), then the ordinary `bin_assignments.move_to` | Material Transfer, the Project on the entry and on both ledger rows; log action `Move To`, its Job filled |
+| The site's own screen (search "Job Site", or the Project's *Job Site* connection → *Open Stock Scan*) | Lists what is there now, or on order to it | none |
+| An item at the site → **−** (take) | Parts used on the job. Always charged to the site's job, whatever job the chip at the top says | Material Issue with that Project: **this is where the cost reaches the job** |
+| An item at the site → **Move to…** → a shelf, or a shelf's item → **Move here from…** the site | Leftovers come back | Material Transfer carrying the job it came back from |
+
+**Why the site may be created by someone who cannot create a Warehouse.** ERPNext gives Warehouse
+create to Stock Manager and Item Manager; the people loading a truck hold Stock User. `ensure_site`
+inserts with `ignore_permissions` after the page's role gate and after checking the caller can
+create and submit a Stock Entry, and leaves an Info comment on the Project naming who opened it.
+Nothing else here is written that way.
+
+**Who gets one.** Jobs whose Project Type is in *Job Site Project Types* (blank means Build). A
+service visit or a small job takes parts with the job picked instead, as before; the refusal says
+so in a sentence. A finished job is refused, and so is a site somebody disabled.
+
+**A site is never an item's bin.** `assign`, *Make … this item's bin* and the Bin Manager's put-on
+are refused for one (`job_sites.refuse_as_bin`), as they are for the Boneyard. `_items_at` lists a
+site's items only while they are on hand or on order: the bin list's "nobody has decided yet"
+clause would keep every item ever sent to a job on its list for good.
+
+**Stock on a job site is not shop stock.** Three readings summed across every warehouse:
+
+| Reading | Now |
+|---|---|
+| Stock Scan search, "on hand" | The shop's total (`on_hand_total`); what is out on jobs beside it (`on_job_sites`) |
+| Item card, "Also at" | Shop locations only; job sites on their own line, "On job sites, not in the shop". The store-run "check there before buying more" never names a site |
+| Reorder Board | `job_site_rules.without_sites` takes site stock, and orders headed to a site, out of every group above a site. 29 of production's 53 rules roll up at the company's root. The rules are not changed |
+
+ERPNext's own screens are not changed. The Item form's stock levels and the Stock Balance and Stock
+Projected Qty reports list each warehouse, so a site shows as its own line; a total across "All
+Warehouses" still includes it. ERPNext's nightly reorder job (off since v1.730.0) would count it too.
+
+**The ledger.** A transfer moves no value. With no account on the group, a site shares `1410 -
+Stock In Hand` with the shop, so nothing posts until the take. Giving the `Job Sites` group its own
+inventory account would make each transfer post between the two asset accounts; that is an
+accounting choice and is not made here. ERPNext's Project "consumed material cost" sums ledger value
+by project over Stock Entries (not Material Receipts): a transfer's two rows cancel, a take counts.
+
+**Not built yet:** the account a job take posts to, a closeout step (use everything left, then
+disable the site), and non-stock items, which never enter stock and so never reach a site.
+
+Before the Warehouse field exists (a fresh bench, a deploy between code and patch) `job_sites.ready()`
+is false, nothing is a job site, and every caller behaves exactly as it did before v1.801.0.
+
 ### The Bin Manager page (v1.693.0)
 
 ER-2026-1320545: a Desk page for a PC, no scanning, separate from `/stock-scan` and calling the
@@ -1121,6 +1187,7 @@ python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Acco
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
+python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_site_rules; sites, moves, takes and totals on test_bin_assignments' stub; the setup patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 node scripts/test_stock_scan_client.mjs

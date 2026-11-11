@@ -70,6 +70,8 @@ import {
 	runOffered,
 	runSummary,
 	saveKey,
+	splitPlaces,
+	takeProject,
 	saveLabel,
 	scanFailure,
 	shortDate,
@@ -849,6 +851,7 @@ export class StockScanApp {
 		const head = v.location || v.stub;
 		append(view, this.backLink(), el("h1", "ee-ss-h1", head.warehouse_name));
 		if (loc && loc.trail) view.appendChild(el("p", "ee-ss-trail", loc.trail));
+		if (loc && loc.job_site) view.appendChild(this.siteNote(loc.job_site));
 		if (!loc) {
 			view.appendChild(el("p", "ee-ss-note ee-ss-loading-note", "Loading what is kept here…"));
 			return view;
@@ -923,6 +926,7 @@ export class StockScanApp {
 			);
 		}
 		view.appendChild(onHand);
+		if (item.job_site) view.appendChild(this.siteNote(item.job_site));
 
 		if (item.blocked) {
 			const notice = el("p", "ee-ss-notice", item.blocked);
@@ -955,10 +959,15 @@ export class StockScanApp {
 			}
 			if (moves.length) view.appendChild(append(el("div", `ee-ss-move-row${moves.length > 1 ? " is-two" : ""}`), ...moves));
 		}
-		if (item.elsewhere && item.elsewhere.length) {
-			const shown = item.elsewhere.slice(0, 3).map((p) => `${p.warehouse_name} (${plain(p.on_hand)})`);
-			const more = item.elsewhere.length > 3 ? `, and ${item.elsewhere.length - 3} more` : "";
-			view.appendChild(el("p", "ee-ss-also", `Also at: ${shown.join(", ")}${more}`));
+		// Stock on a job site is that job's (v1.801.0): named apart, never under "Also at".
+		const places = splitPlaces(item.elsewhere);
+		const placesText = (list) => {
+			const shown = list.slice(0, 3).map((p) => `${p.warehouse_name} (${plain(p.on_hand)})`);
+			return `${shown.join(", ")}${list.length > 3 ? `, and ${list.length - 3} more` : ""}`;
+		};
+		if (places.shop.length) view.appendChild(el("p", "ee-ss-also", `Also at: ${placesText(places.shop)}`));
+		if (places.sites.length) {
+			view.appendChild(el("p", "ee-ss-also ee-ss-also-sites", `On job sites, not in the shop: ${placesText(places.sites)}`));
 		}
 		if (this.canRemove(item)) {
 			view.appendChild(
@@ -983,6 +992,21 @@ export class StockScanApp {
 	/** Where "Send to the Boneyard" moves stock (Inventory Scanner Settings), or null: no button. */
 	boneyard() {
 		return this.settings.boneyard_warehouse || null;
+	}
+
+	/** Whether Move to… offers "A job site" (v1.801.0): the Job Sites warehouse is set up. */
+	jobSites() {
+		return !!Number(this.settings.job_sites);
+	}
+
+	/**
+	 * The line a job's site carries, on its own screen and on an item opened there: whose site
+	 * it is, and what a take here does. `site` is the server's `{project, project_name}`.
+	 */
+	siteNote(site) {
+		const note = el("p", "ee-ss-note ee-ss-site-note", `Job site for ${site.project_name || site.project}. Parts taken here are charged to this job.`);
+		note.setAttribute("role", "note");
+		return note;
 	}
 
 	/**
@@ -1016,6 +1040,8 @@ export class StockScanApp {
 	 */
 	canRemove(item) {
 		if (!this.canManage() || !item || !item.warehouse) return false;
+		// A job site is nobody's bin (v1.801.0): there is nothing to take the item off.
+		if (item.job_site) return false;
 		const stocked = (Number(item.on_hand) || 0) > 0;
 		if (item.blocked && stocked) return false;
 		const why = (row) => !!(row && (row.assigned || row.is_default || row.undecided));
@@ -1085,7 +1111,7 @@ export class StockScanApp {
 		/** The box: shown with `can_manage` once a place is picked, never for the boneyard. */
 		const refreshHome = () => {
 			const r = current();
-			const offered = !!(manage && dest && dest.warehouse !== boneyard);
+			const offered = !!(manage && dest && dest.warehouse !== boneyard && !dest.job_site);
 			homeRow.hidden = !offered;
 			if (!offered) home.checked = false;
 			else if (!touched) home.checked = makeHomeDefault(r.qty, onHand);
@@ -1100,6 +1126,8 @@ export class StockScanApp {
 						: `${item.item_name} comes off ${here}.`;
 			} else if (manage && dest && dest.warehouse === boneyard) {
 				note = "The Boneyard is never an item's bin.";
+			} else if (dest && dest.job_site) {
+				note = "It leaves the shop's stock and waits at the job. It is charged to the job when it is taken there.";
 			}
 			homeNote.textContent = note;
 			homeNote.hidden = !note;
@@ -1127,9 +1155,42 @@ export class StockScanApp {
 				setStatus(`That is ${here}, where it is now. Pick where it goes.`, true);
 				return;
 			}
-			dest = { warehouse: place.warehouse, warehouse_name: place.warehouse_name || place.warehouse, trail: place.trail || "" };
+			dest = {
+				warehouse: place.warehouse,
+				warehouse_name: place.warehouse_name || place.warehouse,
+				trail: place.trail || "",
+				job_site: !!place.job_site,
+			};
 			drawDest();
 			relabel();
+		};
+		/**
+		 * "A job site" (v1.801.0): pick the job, and the server answers with that job's own site
+		 * warehouse, opening it if this is the first thing sent there. From here it is a place
+		 * like any other and the move is the same `BIN.MOVE_TO`.
+		 */
+		const pickSite = () => {
+			if (this.reportBusy() || closed) return;
+			setStatus("");
+			this.pickJob({
+				reason: "job_site",
+				onPick: async (job) => {
+					const mine = ++lookups;
+					setStatus("Opening the job site…");
+					try {
+						const res = await call(M.JOB_SITE, { project: job.project });
+						if (mine !== lookups || closed) return;
+						setStatus("");
+						choose(res);
+					} catch (e) {
+						if (mine !== lookups || closed) return;
+						setStatus("");
+						const text = (e && e.message) || "Could not open that job site. Try again.";
+						if (needsReload(e)) showError(text, RELOAD);
+						else showError(text);
+					}
+				},
+			});
 		};
 		const lookUp = async (code) => {
 			const mine = ++lookups;
@@ -1191,6 +1252,11 @@ export class StockScanApp {
 				button([icon("scan"), el("span", null, "Scan its label")], "ee-ss-btn ee-ss-btn-primary ee-ss-dest-scan", scanDest),
 				button([icon("search"), el("span", null, "Find a location")], "ee-ss-btn ee-ss-btn-outline ee-ss-dest-find", findDest)
 			);
+			// Sending material to a job (v1.801.0). Not from a job site itself: stock there
+			// goes back to a shelf, or is taken.
+			if (this.jobSites() && !item.job_site) {
+				ways.appendChild(button([icon("job"), el("span", null, "A job site")], "ee-ss-btn ee-ss-btn-outline ee-ss-dest-site", pickSite));
+			}
 			fill(destBox, ways, status);
 			// The places the item is recorded already: consolidating into one is the common move.
 			const known = (item.elsewhere || []).filter((p) => p.warehouse && p.warehouse !== item.warehouse);
@@ -1672,7 +1738,9 @@ export class StockScanApp {
 		const qty = Math.abs(this.change);
 		this.expireJob();
 		if (d.verb === "take") {
-			if (Number(this.settings.require_project_for_take) && !this.job) {
+			// At a job site the take is that job's (v1.801.0): no picker, whatever the chip says.
+			const project = takeProject(item, this.job);
+			if (Number(this.settings.require_project_for_take) && !project) {
 				this.pickJob({ reason: "take", then: () => this.save() });
 				return;
 			}
@@ -1681,7 +1749,7 @@ export class StockScanApp {
 				item_code: item.item_code,
 				warehouse: item.warehouse,
 				qty,
-				project: this.job ? this.job.project : undefined,
+				project,
 				scanned_code: v.scannedCode || undefined,
 			});
 			return;
@@ -2236,11 +2304,15 @@ export class StockScanApp {
 	 * Pick the job parts are taken for. `opts.then` continues a take that needed one.
 	 * `opts.reason` "store_run": a store-run line's job, where "No job" is the line's own choice
 	 * ("No job: safety or shop"), so the picker offers jobs only.
+	 * `opts.reason` "job_site" (v1.801.0): Move to…'s "A job site". The pick goes to
+	 * `opts.onPick` and is NOT remembered as the run's job: sending pipe to one job says nothing
+	 * about which job the next take is for. Only jobs that keep material on site are listed.
 	 */
 	pickJob(opts) {
 		if (this.reportBusy()) return;
 		const o = opts || {};
-		const required = o.reason === "take" || o.reason === "store_run";
+		const forSite = o.reason === "job_site";
+		const required = o.reason === "take" || o.reason === "store_run" || forSite;
 		const search = input({ placeholder: "Search jobs", label: "Search jobs", enterkeyhint: "search", type: "search" });
 		const status = el("p", "ee-ss-search-status");
 		status.setAttribute("role", "status");
@@ -2250,6 +2322,11 @@ export class StockScanApp {
 		let timer = null;
 
 		const choose = (job) => {
+			if (forSite) {
+				handle.close("action");
+				if (job && o.onPick) o.onPick(job);
+				return;
+			}
 			this.setJob(job);
 			handle.close("action");
 			if (job && o.then) o.then();
@@ -2265,7 +2342,7 @@ export class StockScanApp {
 			);
 			if (!required) list.appendChild(append(el("li"), none));
 			for (const row of rows) {
-				const current = this.job && this.job.project === row.project;
+				const current = !forSite && this.job && this.job.project === row.project;
 				const b = button(
 					[
 						append(
@@ -2281,7 +2358,11 @@ export class StockScanApp {
 				if (current) b.setAttribute("aria-current", "true");
 				list.appendChild(append(el("li"), b));
 			}
-			if (!rows.length) {
+			if (!rows.length && forSite) {
+				status.textContent = query
+					? `No job that keeps material on site matches "${query}".`
+					: "No open job keeps material on site. To use parts on another job, pick the job at the top and take them.";
+			} else if (!rows.length) {
 				status.textContent = query ? `No job matches "${query}".` : "You can't see any jobs. Ask a manager to give you access.";
 			} else {
 				status.textContent = "";
@@ -2292,7 +2373,7 @@ export class StockScanApp {
 			const mine = ++seq;
 			status.textContent = "Loading jobs…";
 			try {
-				const rows = await call(M.SEARCH_PROJECTS, { query });
+				const rows = await call(M.SEARCH_PROJECTS, forSite ? { query, job_sites_only: 1 } : { query });
 				if (mine === seq) draw(Array.isArray(rows) ? rows : [], query);
 			} catch (e) {
 				if (mine === seq) status.textContent = e.message || "Could not load jobs. Try again.";
@@ -2305,7 +2386,7 @@ export class StockScanApp {
 		});
 
 		handle = sheet({
-			title: o.reason === "store_run" ? "Which job were these bought for?" : required ? "Which job are these parts for?" : "Which job?",
+			title: forSite ? "Which job is it going to?" : o.reason === "store_run" ? "Which job were these bought for?" : required ? "Which job are these parts for?" : "Which job?",
 			full: true,
 			// Do not raise the keyboard over the list: most runs pick a recent job with one tap.
 			initialFocus: "sheet",
@@ -2953,7 +3034,8 @@ export class StockScanApp {
 			fill(hintBox);
 			const it = s.item;
 			if (!it) return;
-			const where = (it.elsewhere || []).filter((p) => Number(p.on_hand) > 0);
+			// Not a job site (v1.801.0): stock there is that job's, not somewhere to look first.
+			const where = splitPlaces(it.elsewhere).shop.filter((p) => Number(p.on_hand) > 0);
 			if (where.length && it.is_stock_item) {
 				const more = where.length > 1 ? `, and ${where.length - 1} more ${where.length === 2 ? "place" : "places"}` : "";
 				hintBox.appendChild(el("p", "ee-ss-notice", `ERPNext shows ${plain(where[0].on_hand)} at ${where[0].warehouse_name}${more}. Check there before buying more.`));
@@ -3470,6 +3552,8 @@ export class StockScanApp {
 			const qty = here ? row.on_hand_here : row.on_hand_total;
 			const sub = append(el("span", "ee-ss-row-sub"), row.item_code);
 			if (!row.is_stock_item) append(sub, " ", el("span", "ee-ss-badge", "not tracked"));
+			// The total is the shop's (v1.801.0); what is out on jobs is said beside it.
+			if (!here && Number(row.on_job_sites) > 0) append(sub, " ", el("span", "ee-ss-badge", `${plain(row.on_job_sites)} on job sites`));
 			return append(
 				el("li"),
 				button(

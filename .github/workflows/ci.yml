@@ -4034,6 +4034,15 @@ jobs:
       # Boneyard patch (once, idempotent, never over a stored setting). Own frappe stub, own step.
       - name: Bin assignments, Putaway Rules, boneyard and counts (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_bin_assignments -v
+      # Job-site warehouses (v1.801.0, the owner's 2026-11-11 decision: one warehouse per Build project). If this
+      # fails, material sent to a job could read as stock the shop still has (the search total, "Also at", a
+      # reorder rule that rolls up at the company's root), a take at a job's site could be charged to another job
+      # or to none, a site could be opened twice or by somebody who cannot post the transfer, an item could be
+      # given a site as its bin, or the setup patch could write over a Stock Manager's setting or abort the deploy.
+      # job_site_rules.py runs directly; job_sites.py, api/stock_scan.py and bin_assignments.py run on
+      # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
+      - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
       # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
       # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
       # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push
