@@ -1640,6 +1640,15 @@ erpnext_enhancements.patches.backfill_triton_widget_mode
 # site whose stored rows are as new as the files. Each import in its own savepoint; a failure is logged and rolled
 # back, never raised. Writes no business data. Safe twice.
 erpnext_enhancements.patches.inventory_reports_hub_links
+# Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
+# return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
+# back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a
+# person's click in the Supplier Return form. (2) Force-imports the Inventory Enhancements workspace, whose Purchasing
+# card gains Supplier Returns and its Money Outstanding report and a shortcut counting returns waiting on money
+# (timestamp-bumped too; this is the belt), in a savepoint so a failed import keeps the old workspace. Both insert-only
+# or idempotent, cannot raise, safe twice, and each prints what it did.
+erpnext_enhancements.patches.seed_supplier_return_request_template
+erpnext_enhancements.patches.supplier_returns_hub_links
 # Certificate of Warranty (v1.808.0, Nik 2026-11-12: "I need this added to the Contract Builder"). Inserts ONE
 # Contract Template, `warranty`, from templates/contracts/certificate_of_warranty.html. seed_contract_templates has
 # already run on every existing site, so the ninth template it now lists never reaches one without this. Insert-only
