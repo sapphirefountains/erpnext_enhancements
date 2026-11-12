@@ -461,12 +461,15 @@ function heldJobs(jobs) {
 
 /**
  * The job a move off the shelf starts on: the one job that holds the item there, or null when
- * none or several do and the person has to say. The server picks the same one when the page
- * sends none (`project_shelf_rules.sole_holder`).
+ * the person has to say. That is when none or several hold it, and also when `exact` is not
+ * true: the jobs then do not account for every unit on the shelf (a count, a move with no job
+ * on it), so hanging what is there on the one job that has a tag would be a guess. The server
+ * applies the same test when the page sends no job (`project_shelf_rules.item_exact`).
  */
-export function soleShelfJob(jobs) {
+export function soleShelfJob(jobs, exact) {
 	const held = heldJobs(jobs);
-	return held.length === 1 ? { project: held[0].project, project_name: held[0].project_name || held[0].project } : null;
+	if (exact !== true || held.length !== 1) return null;
+	return { project: held[0].project, project_name: held[0].project_name || held[0].project };
 }
 
 /** "Water Wall (3), Lobby (2), and 1 more": the jobs that hold an item on the shelf. "" for none. */

@@ -48,10 +48,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     in the order's Receive Items dialog (a new *Put in* column per line, editable), and in the
     document-intake receipt drafts. A scan at a bin in Stock Scan still means "put it here" and
     still wins; each open order line there now says which job it is for.
+  - **An Overhead line never sits on the shelf, and the server holds that, not the form.** After
+    the rename the Company's default warehouse and 774 Item Defaults name the shelf, so ERPNext
+    itself fills the shelf into every new line, Overhead ones included. The form's script corrects
+    that when it runs in time; a duplicated order, one mapped from a Supplier Quotation or a
+    Material Request, and a REST save that sends a warehouse never run it. Shop supplies received
+    onto the shelf would leave the shop's stock under a project that is not a job, and a take
+    there would then demand one. So an Overhead line that names the shelf is moved to the item's
+    own bin on every save of a draft order (`default_line_warehouses`), on a row added to a
+    submitted order with Update Items (`default_new_order_line`, which also gives that row the
+    header's project: ERPNext sets none and the field is mandatory here), and on a receipt saved
+    for the first time, which is the Desk's Create > Purchase Receipt
+    (`default_receipt_warehouses`; never a return, and never when a person has just said where
+    the lines go). Any other warehouse a person picked is left alone.
+  - **On the form, a warehouse picked by hand stays when the line's project changes.** The server
+    tells the form which is which (`keep`): when a line gets its item, ERPNext has just filled the
+    warehouse, so only ERPNext's own values are replaced; when only the project changes, only the
+    rule's own earlier value is. The warehouse field's change event cannot be used for this:
+    ERPNext fires it itself after its item lookup (`transaction.js` at v16.54.0).
   - **The order lines that were already open** all named `Stores`, so after the rename all of them
     name the shelf, Overhead ones included (10 submitted lines on production on 2026-11-12). They
-    are not rewritten. The Receive Items dialog and the intake drafts offer an Overhead line that
-    names the shelf the item's own bin instead, and say so.
+    are not rewritten. The Receive Items dialog, a new receipt and the intake drafts send an
+    Overhead line that names the shelf to the item's own bin instead, and the dialog says so.
   - **Shelf stock is not shop stock.** `project_shelf.not_shop_warehouses()` is every job site
     plus the shelf, the one set every total reads. Stock Scan's search total leaves the shelf out
     and shows it beside the total ("N for jobs"); the item card names it on its own line with its
@@ -64,10 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     carries its order line's project (ERPNext does that; checked at v16.54.0 and on production,
     where 26 of the 28 ledger rows at `Stores` carry one). A take at the shelf must name a job
     whatever *Require a Job for Every Take* says. Stock added there without an order must name
-    one. A move from the shelf to a job site carries that site's job; a move from the shelf to a
-    bin or the Boneyard carries the job it was bought for (the one named, or the only job that
-    holds the item; refused when several or none do and none is named); a move from a bin onto the
-    shelf carries the job it is set aside for. A store run is refused at the shelf, because its
+    one, and **offsets to the Added Without PO account, not to the job's Parts Taken account**:
+    away from the shelf a job on an add means the parts came back from it, but at the shelf it is
+    the job they are set aside for, and crediting it would cancel the charge its later take makes,
+    so the job would carry no cost for parts it used. A move from the shelf to a job site carries
+    that site's job; a move from the shelf to a bin or the Boneyard carries the job it was bought
+    for (the one named, or the only job that holds the item when the tags account for every unit
+    of it; refused otherwise); a move from a bin onto the shelf carries the job it is set aside
+    for. A store run is refused at the shelf, because its
     receipt carries no project on purpose. `move_here`, `bin_assignments.move_to` and
     `send_to_boneyard` take an optional `project` for this.
   - **`project_shelf.shelf_stock(project=None, item_code=None)`** answers both "what is on the
@@ -75,33 +97,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reports and the Procurement Tracker call it, and a test pins its signature and return keys.
     **Its numbers are derived from tags, and it says where they fall short:** a movement with no
     project (a count, a Desk transfer) is listed in `untagged_movements`, the gap between what is
-    on hand and what the tags add up to is in `untagged` per item, a job that has had more taken
-    than it received keeps a negative quantity, and `exact` is true only when none of that is
-    there. Production already has two such rows: 13 units received for a job in September and
-    transferred out with no project.
+    on hand and what the tags add up to is in `untagged` per item, and `exact` is true only when
+    none of that is there.
+  - **A job's figure is never more than is physically on the shelf.** `rows[].qty` is the job's
+    tag balance capped by what is on hand, so it is never negative and an item's rows never add
+    up to more than its on-hand. The uncapped balance is `rows[].tagged` (a negative one is
+    kept), and what the cap took off is `over_tagged`. When tags claim more than is there, what
+    remains goes to the jobs that received most recently first. And "the only job that holds it"
+    is assumed only where an item's tags are exact; otherwise the move asks.
+  - **The 13 units production starts with.** Two items, 6 and 7 units, were received into `Stores`
+    for a Design job in September, put away to two shelf bins on 2026-09-23 by a Desk transfer
+    with no project, and have since been used up: neither has stock anywhere. The ledger at the
+    shelf still tags 13 to that job. The function reports them as `tagged` 13, `qty` 0,
+    `over_tagged` 13, and that job is never offered as holding anything.
   - **The shelf is never an item's bin.** The 774 Item Defaults and 54 enabled Putaway Rules that
     named `Stores` name the shelf after the rename. They are not deleted and not rewritten. The
     shelf's list (`api.stock_scan._items_at`) shows what is there or on its way and nothing else,
     `procurement_project.item_own_bin` skips the shelf, and *Put on this bin* and *Make … this
     item's bin* are refused there. A leftover rule or default goes away when its stock is moved
-    off the shelf with *Make … this item's bin* ticked.
+    off the shelf with *Make … this item's bin* ticked. A new item's bin is never the shelf or a
+    job site (`_quick_item`).
+  - **The stock KPIs say which stock they mean.** *Stocked Items Below Reorder*, *Stocked Items
+    Out of Stock* and *Out-of-Stock Sellable Items* now mean **shop stock** and leave out job
+    sites and the shelf (they summed every bin, so parts on a job site already counted as on
+    hand). *Inventory Stock Value* and *Stock at Placeholder Cost* mean **all stock**, unchanged.
   - **A QR label printed for `Stores` still opens the shelf.**
-  - **The patch cannot raise and says what it did.** Four steps (the rename, the search index,
-    the two settings), each in its own savepoint, each answering done, already, skipped or failed,
-    followed by counts of what now points at the shelf. A clean run writes no Error Log row; a
-    run with a skipped or failed step writes one, "Project Shelf patch
-    (rename_stores_to_project_shelf): finish these steps by hand". It skips a site without the
-    shop group `Inventory - SF`, merges nothing where both names exist, moves no stock, and never
-    writes over a stored setting. On a never-saved Single it writes every declared default before
-    the field, so the others keep reading as they did.
-  - **Not built:** the Bin Manager's moves do not ask for the job (a move off the shelf from
-    there uses the only job that holds the item); moving a part on the shelf from one job to
-    another without it leaving the shelf; and non-stock items, which never reach stock.
+  - **People's saved list filters follow the rename.** Frappe 16.56.0's `rename_doc` means to
+    rewrite a saved filter that names the renamed record, but it searches `__UserSettings` with
+    `LIKE '<old name>'` and no wildcards, which matches nothing. A list somebody last filtered to
+    `Stores - SF` would open on a warehouse that no longer exists and show no rows. The patch
+    replaces the quoted old name with the new one in those rows and drops their cached copies.
+  - **The patch cannot raise and says what it did.** Five steps (the rename, the search index,
+    the saved filters, the two settings), each in its own savepoint, each answering done, already,
+    skipped or failed, followed by counts of what now points at the shelf. A clean run writes no
+    Error Log row; a run with a skipped or failed step writes one, "Project Shelf patch
+    (rename_stores_to_project_shelf): finish these steps by hand". **A site that never had the
+    warehouse is not a failure:** with no shop group `Inventory - SF`, or no `Stores` and no
+    `Project Shelf`, every step answers "not needed here" and no Error Log row is written. It
+    merges nothing where both names exist, moves no stock, and never writes over a stored
+    setting. On a never-saved Single it writes every declared default before the field, so the
+    others keep reading as they did.
+  - **Not built:** the Bin Manager page does not ask for the job yet (`move_to` and
+    `send_to_boneyard` take `project`, and without one the server uses the only job that holds
+    the item when its tags are exact); moving a part on the shelf from one job to another without
+    it leaving the shelf; and non-stock items, which never reach stock.
 
 ### Changed
 - `tests/test_job_sites`, `tests/test_bin_assignments`, `tests/test_stock_scan_surface` and
   `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
   shared set, and the one more branch `receive_items` writes a warehouse in.
+  `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
 
 ## [1.802.2] - 2026-11-12
 

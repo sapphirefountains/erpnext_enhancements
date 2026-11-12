@@ -21,13 +21,20 @@ In this order, each in its own step:
 2. **The search index.** The warehouse is found by name in the Desk's search; the rename
    leaves the old name there until the Warehouse rows are indexed again. Done here, not left
    to a background job, because the deploy clears the job queue.
-3. **The setting.** ``Inventory Scanner Settings.project_shelf_warehouse`` is filled with the
+3. **People's saved list filters.** Each person's last-used filters, sort and columns for a
+   list are one JSON row in ``__UserSettings``. Frappe's rename means to rewrite a filter that
+   names the renamed record, but at v16.56.0 it looks for them with ``data LIKE '<old name>'``
+   and no wildcards, which matches a row that is nothing but the name, so none. A list
+   somebody last filtered to ``Stores - SF`` would open on a warehouse that no longer exists
+   and show nothing. This step replaces the quoted old name with the new one in those rows,
+   and drops their cached copies. It prints how many rows, for which lists, and whose.
+4. **The setting.** ``Inventory Scanner Settings.project_shelf_warehouse`` is filled with the
    shelf **only where ``tabSingles`` has no row for it**, never over a stored value, an emptied
    one included: a Stock Manager who cleared it switched the Project Shelf off on purpose. On a
    Single that has never been saved, every declared default is written first
    (:func:`materialize_defaults`): the first stored row makes every other field stop reading
    its declared default (CLAUDE.md, "code that writes ONE field of a never-saved Single").
-4. **The fallback.** ``overhead_receiving_warehouse`` is filled with ``Inventory Room`` under
+5. **The fallback.** ``overhead_receiving_warehouse`` is filled with ``Inventory Room`` under
    the same rule, where that warehouse exists as an enabled leaf: it is where an Overhead
    purchase lands when its item has no bin yet.
 
@@ -50,8 +57,15 @@ the whole list is printed to the migrate output with the counts, and **when any 
 skipped or failed, one Error Log row** titled :data:`REPORT_TITLE` lists them with what to do
 by hand. A run where every step is done or already done writes no Error Log row.
 
-Safe twice: the second run finds the shelf, an indexed name and both settings' rows, and
-answers "already" (the index step answers "done" again; it is a rebuild).
+**A site with nothing to rename is not a failure.** Where there is no shop group
+``Inventory - SF``, or no warehouse called ``Stores`` and no ``Project Shelf`` either (a fresh
+bench, a test site, any other company's site), every step answers :data:`ABSENT`, the output
+says so in one line each, and **no Error Log row is written**: that log alerts people, and
+"this site never had the warehouse" is not something anyone has to finish by hand.
+
+Safe twice: the second run finds the shelf, an indexed name, no saved filter left to rewrite
+and both settings' rows, and answers "already" (the index step answers "done" again; it is a
+rebuild).
 """
 
 import frappe
@@ -69,6 +83,10 @@ SAVEPOINT = "rename_stores_to_project_shelf"
 
 DONE, ALREADY, SKIPPED, FAILED = "done", "already", "skipped", "failed"
 
+#: A step that had nothing to work on because this site never had the warehouse. Printed, and
+#: never the reason for an Error Log row.
+ABSENT = "not needed here"
+
 #: The one Error Log row a run with a skipped or failed step leaves.
 REPORT_TITLE = "Project Shelf patch (rename_stores_to_project_shelf): finish these steps by hand"
 
@@ -83,6 +101,10 @@ RECOVERY = {
 		'that warehouse\'s Warehouse Name to "Project Shelf".'
 	),
 	"search": "Nothing to do by hand: the name is indexed the next time the warehouse is saved.",
+	"filters": (
+		"Nothing to do by hand. A list that opens empty because it is still filtered to the old "
+		"warehouse name is fixed by clearing that filter once."
+	),
 	"setting": (
 		"Open Inventory Scanner Settings, choose the Project Shelf in Project Shelf Warehouse and save. "
 		"Until it is set, nothing defaults to the shelf and its stock still counts as shop stock."
@@ -97,6 +119,7 @@ RECOVERY = {
 STEPS = (
 	("rename", "The warehouse"),
 	("search", "The search index"),
+	("filters", "People's saved list filters"),
 	("setting", "The Project Shelf setting"),
 	("fallback", "The Overhead receiving setting"),
 )
@@ -128,7 +151,7 @@ def rename_warehouse():
 	"""Rename ``Stores`` to ``Project Shelf``. ``(status, detail, shelf docname or None)``."""
 	company = _company()
 	if not company:
-		return SKIPPED, f"there is no group warehouse {SHOP_GROUP}, so there is no shop to rename a Stores in", None
+		return ABSENT, f"there is no group warehouse {SHOP_GROUP}, so this is not the site with a Stores to rename", None
 	old = _named(OLD_NAME, company)
 	new = _named(NEW_NAME, company)
 	if new and old:
@@ -142,7 +165,7 @@ def rename_warehouse():
 			return SKIPPED, f"{new.name} exists and is a group, so it cannot be the shelf", None
 		return ALREADY, new.name, new.name
 	if not old:
-		return SKIPPED, f'there is no warehouse called "{OLD_NAME}" to rename', None
+		return ABSENT, f'there is no warehouse called "{OLD_NAME}" and none called "{NEW_NAME}"', None
 	if old.is_group:
 		return SKIPPED, f"{old.name} is a group of warehouses, not one place, so it was left alone", None
 
@@ -175,6 +198,38 @@ def rebuild_search(shelf):
 
 	rebuild_for_doctype("Warehouse")
 	return DONE, "Warehouse names indexed again"
+
+
+def rewrite_saved_filters(shelf):
+	"""Point people's saved list filters at the renamed warehouse. ``(status, detail)``.
+
+	The quoted old docname is replaced with the quoted new one in each ``__UserSettings`` row
+	that holds it: a filter value is a JSON string, so the quotes keep a longer name that
+	merely contains the old one from matching. Then the cached copy of each such row is
+	dropped, or the next save from the browser's cache would write the old name back.
+	"""
+	old = rules.former_docname(shelf) if shelf else None
+	if not shelf or not old:
+		return SKIPPED, "there is no Project Shelf whose old name is known"
+	like = f'%"{old}"%'
+	rows = frappe.db.sql("select `user`, `doctype` from `__UserSettings` where `data` like %s", (like,))
+	if not rows:
+		return ALREADY, f"no saved list filter names {old}"
+	frappe.db.sql(
+		"update `__UserSettings` set `data` = replace(`data`, %s, %s) where `data` like %s",
+		(f'"{old}"', f'"{shelf}"', like),
+	)
+	for user, doctype in rows:
+		try:
+			frappe.cache.hdel("_user_settings", f"{doctype}::{user}")
+		except Exception:
+			pass
+	lists = sorted({doctype for _user, doctype in rows})
+	people = sorted({user for user, _doctype in rows})
+	return DONE, (
+		f"{len(rows)} saved list settings now name {shelf}: lists {', '.join(lists)}; "
+		f"people {', '.join(people)}"
+	)
 
 
 def _stored_fields():
@@ -329,22 +384,32 @@ def execute():
 	renamed = _step("renaming the warehouse", rename_warehouse)
 	shelf = renamed[2] if len(renamed) > 2 else None
 	outcomes["rename"] = renamed[:2]
-	outcomes["search"] = _step("indexing the warehouse names", rebuild_search, shelf)
-	outcomes["setting"] = _step(
-		"filling the Project Shelf setting", fill_setting, SETTING, shelf, "there is no Project Shelf to point it at"
-	)
-	fallback = None
-	try:
-		fallback = fallback_warehouse(shelf)
-	except Exception:
+	if renamed[0] == ABSENT:
+		# This site never had the warehouse: nothing follows from a rename that was not needed.
+		for key, _label in STEPS[1:]:
+			outcomes[key] = (ABSENT, "nothing was renamed on this site")
+	else:
+		outcomes["search"] = _step("indexing the warehouse names", rebuild_search, shelf)
+		outcomes["filters"] = _step("rewriting saved list filters", rewrite_saved_filters, shelf)
+		outcomes["setting"] = _step(
+			"filling the Project Shelf setting",
+			fill_setting,
+			SETTING,
+			shelf,
+			"there is no Project Shelf to point it at",
+		)
 		fallback = None
-	outcomes["fallback"] = _step(
-		"filling the Overhead receiving setting",
-		fill_setting,
-		FALLBACK_SETTING,
-		fallback,
-		f'there is no enabled warehouse called "{FALLBACK_NAME}" to point it at',
-	)
+		try:
+			fallback = fallback_warehouse(shelf)
+		except Exception:
+			fallback = None
+		outcomes["fallback"] = _step(
+			"filling the Overhead receiving setting",
+			fill_setting,
+			FALLBACK_SETTING,
+			fallback,
+			f'there is no enabled warehouse called "{FALLBACK_NAME}" to point it at',
+		)
 
 	try:
 		extra = counts(shelf)

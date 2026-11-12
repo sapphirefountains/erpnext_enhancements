@@ -84,16 +84,25 @@ def setUpModule():
 	snapshots._party_naming_pct = lambda doctype: None
 
 
-def _metrics(rules, bins, counts):
-	"""``_operations_metrics`` over these rows: {kpi_key: value}."""
+def _metrics(rules, bins, counts, elsewhere=(), not_shop=()):
+	"""``_operations_metrics`` over these rows: {kpi_key: value}.
+
+	``bins`` are at the shop's ``Bin A``. ``elsewhere`` are ``(item, warehouse, qty)`` rows at any
+	other warehouse, and ``not_shop`` the warehouses whose stock is not the shop's (job sites and
+	the Project Shelf, v1.804.0).
+	"""
 	conn = sqlite_sql.connect(*DDL)
 	conn.executemany("insert into `tabItem Reorder` values (?, 'Item', 'Bin A', ?, ?)", rules)
 	conn.executemany("insert into `tabBin` values (?, 'Bin A', ?, 0, 1)", bins)
+	conn.executemany("insert into `tabBin` values (?, ?, ?, 0, 1)", elsewhere)
 	conn.executemany("insert into `tabStock Ledger Entry` values (?, 'Stock Reconciliation', 0, ?)", counts)
 	FRAPPE.db.sql = sqlite_sql.sql_for(conn, only=("tabItem Reorder", "tabBin", "tabStock Ledger Entry"))
+	original = snapshots._not_shop_warehouses
+	snapshots._not_shop_warehouses = lambda: sorted(not_shop)
 	try:
 		return {row["kpi_key"]: row["value"] for row in snapshots._operations_metrics()["values"]}
 	finally:
+		snapshots._not_shop_warehouses = original
 		conn.close()
 
 
@@ -160,6 +169,41 @@ class TestARuleCountsByExisting(unittest.TestCase):
 		none = _metrics([("NO-RULE", 0, 0)], [("NO-RULE", 0)], [])
 		self.assertNotIn("stocked_items_counted_90", none)  # nothing stocked: no share to publish
 		self.assertEqual((none["stocked_items_out"], none["items_below_reorder"]), (0, 0))
+
+	def test_stock_on_the_project_shelf_or_a_job_site_does_not_stock_the_shop(self):
+		"""v1.804.0: "below reorder" and "out of stock" ask whether the SHOP has the part. Ten on the
+		Project Shelf were bought for a job, and four on a job site are across town."""
+		rules_ = [("PART", 4, 10), ("OTHER", 4, 10)]
+		bins = [("PART", 0), ("OTHER", 9)]
+		elsewhere = [("PART", "Project Shelf - SF", 10), ("PART", "Job Site PRJ-90001 - SF", 4)]
+		every_bin = _metrics(rules_, bins, [], elsewhere)
+		self.assertEqual((every_bin["stocked_items_out"], every_bin["items_below_reorder"]), (0, 0))
+		shop = _metrics(rules_, bins, [], elsewhere, not_shop=("Project Shelf - SF", "Job Site PRJ-90001 - SF"))
+		self.assertEqual((shop["stocked_items_out"], shop["items_below_reorder"]), (1, 1))
+		# Only the shelf left out: the four on the site still count, and four is not below four.
+		shelf_only = _metrics(rules_, bins, [], elsewhere, not_shop=("Project Shelf - SF",))
+		self.assertEqual((shelf_only["stocked_items_out"], shelf_only["items_below_reorder"]), (0, 0))
+
+	def test_the_shop_figure_is_the_every_bin_figure_when_nothing_is_set_up(self):
+		sql, params = snapshots._shop_on_hand_sql("r.parent", [])
+		self.assertEqual((sql, params), (snapshots.ON_HAND_SQL, {}))
+		sql, params = snapshots._shop_on_hand_sql("i.name", ["A - SF", "B's - SF"])
+		self.assertIn("b.warehouse not in (%(ns0)s, %(ns1)s)", sql)
+		self.assertEqual(params, {"ns0": "A - SF", "ns1": "B's - SF"}, "names travel as parameters, never as text")
+
+	def test_which_kpi_means_shop_stock_and_which_means_all_stock(self):
+		import inspect
+
+		source = inspect.getsource(snapshots._operations_metrics)
+		# Shop stock: the two reorder counts (three uses) and the sellable count.
+		self.assertEqual(source.count("shop_on_hand +"), 3)
+		self.assertIn('_shop_on_hand_sql("i.name", not_shop)', source)
+		# All stock: value on the books and placeholder cost are not filtered.
+		self.assertIn('"select sum(stock_value) from `tabBin`"', source)
+		self.assertIn("from `tabBin` where actual_qty > 0 and coalesce(valuation_rate,0) <= 0.01", source)
+
+	def test_reading_the_shelf_never_breaks_the_snapshot(self):
+		self.assertEqual(snapshots._not_shop_warehouses(), [])
 
 	def test_the_four_counts_share_one_definition(self):
 		"""Not four copies that can drift: every query that filters on a rule uses the constant."""

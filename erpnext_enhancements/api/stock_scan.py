@@ -498,6 +498,7 @@ def _elsewhere(item_code, company, exclude=None):
 		if not wh or wh.is_group or wh.disabled or (company and wh.company != company):
 			continue
 		on_shelf = bool(shelf) and row.warehouse == shelf
+		held = project_shelf.holding(item_code) if on_shelf else {"jobs": [], "exact": True}
 		out.append(
 			{
 				"warehouse": row.warehouse,
@@ -506,7 +507,10 @@ def _elsewhere(item_code, company, exclude=None):
 				"available": flt(row.actual_qty) - flt(row.reserved_stock),
 				"job_site": row.warehouse in sites,
 				"project_shelf": on_shelf,
-				"jobs": project_shelf.holders(item_code) if on_shelf else [],
+				"jobs": held["jobs"],
+				# Whether those jobs account for every unit there. False: the page lists
+				# them and picks none for the person.
+				"jobs_exact": bool(held["exact"]),
 			}
 		)
 	out.sort(
@@ -689,10 +693,12 @@ def _item_payload(item_code, location=None):
 		"undecided": None,
 		# The job whose site this location is (v1.801.0), or None for an ordinary location.
 		"job_site": None,
-		# Whether this location is the Project Shelf (v1.804.0), and the jobs that hold the
-		# item there, most first: ``[{project, project_name, qty}]``.
+		# Whether this location is the Project Shelf (v1.804.0), the jobs that hold the item
+		# there, most first (``[{project, project_name, qty}]``, each no more than is there),
+		# and whether those jobs account for every unit of it.
 		"project_shelf": False,
 		"shelf_jobs": [],
+		"shelf_jobs_exact": True,
 		"elsewhere": [],
 		"open_orders": [],
 	}
@@ -740,10 +746,12 @@ def _item_payload(item_code, location=None):
 		if project_shelf.is_shelf(location.name):
 			# Nothing is kept on the Project Shelf as its bin (v1.804.0): the Item Defaults and
 			# Putaway Rules that name it are left over from when it was Stores.
+			held = project_shelf.holding(item.name)
 			payload.update(
 				{
 					"project_shelf": True,
-					"shelf_jobs": project_shelf.holders(item.name),
+					"shelf_jobs": held["jobs"],
+					"shelf_jobs_exact": bool(held["exact"]),
 					"assigned": False,
 					"is_default": False,
 					"undecided": False,
@@ -1221,7 +1229,16 @@ def add(
 	# ERPNext's Project.total_consumed_material_cost counts Material Issue rows only and is
 	# not reduced by a receipt; that figure is hidden on this site's Project form and read by
 	# nothing here, and the ledger by project is right.
-	offset_setting = settings.get("take_expense_account") if project else settings.get("add_offset_account")
+	#
+	# At the Project Shelf (v1.804.0) the job is not where the parts came back FROM: it is the
+	# job they are being set aside FOR, and the page requires one. Crediting the job's Parts
+	# Taken account there would net that job's later take to nothing, so the job would carry no
+	# cost for parts it used, and the Added Without PO account a stock manager reviews would
+	# never see them. So an add at the shelf offsets like found stock, and keeps the job on
+	# the entry, which is what puts it on that job's count on the shelf.
+	offset_setting = settings.get(
+		shelf_rules.add_offset_setting(bool(project), project_shelf.is_shelf(location.name))
+	)
 	_require("Stock Entry", "create", "submit")
 	rate, prompt, typed_cost = _receipt_cost(item, location, rate, qty)
 	if prompt:
@@ -1373,7 +1390,12 @@ def _transfer_project(source, location, item=None, given=None):
 	named = _shelf_job(given, location.company, leaving=source_shelf)
 	holders = []
 	if source_shelf and not destination_site and not named and item:
-		holders = [(job["project"], job["qty"]) for job in project_shelf.holders(item.name)]
+		# The only job that holds the item is used without asking only when the tags account
+		# for every unit of it. Where they do not (a count, an untagged move), part of what is
+		# there has no job on record, and hanging it on the one job that has a tag is a guess.
+		held = project_shelf.holding(item.name)
+		if held["exact"]:
+			holders = [(job["project"], job["qty"]) for job in held["jobs"]]
 	project, problem = shelf_rules.move_project(
 		source_shelf, destination_shelf, source_site, destination_site, named, holders
 	)
@@ -1692,7 +1714,12 @@ def _quick_item(spec, location):
 	item.stock_uom = spec["stock_uom"]
 	item.is_stock_item = 1
 	item.is_purchase_item = 1
-	item.append("item_defaults", {"company": location.company, "default_warehouse": location.name})
+	# Never the Project Shelf or a job site (v1.804.0): neither is anybody's bin. Both callers
+	# refuse those locations before they get here; this keeps a third caller from making the
+	# shelf a new item's home. The row is still added, with the company and no warehouse, so
+	# ERPNext does not copy a default of its own into it.
+	home = None if location.name in project_shelf.not_shop_warehouses() else location.name
+	item.append("item_defaults", {"company": location.company, "default_warehouse": home})
 	item.insert()
 	return item
 

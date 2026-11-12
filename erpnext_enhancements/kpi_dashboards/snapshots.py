@@ -506,7 +506,47 @@ STOCKED_RULE_SQL = "(coalesce(r.warehouse_reorder_level,0) > 0 or coalesce(r.war
 #: What the item has on hand: actual qty summed over every bin. Not the Reorder Board's projected qty
 #: per warehouse or group (which counts open orders), so the KPI and the board differ by design: with
 #: ``<=`` against this figure 30 more prod items counted as below, nearly all with orders already open.
+#:
+#: Kept as the every-bin figure. The three KPIs that ask "does the SHOP have it" no longer use it
+#: (v1.804.0): they use :func:`_shop_on_hand_sql`, which leaves out stock on a job site and on the
+#: Project Shelf.
 ON_HAND_SQL = "coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0)"
+
+
+def _not_shop_warehouses():
+	"""The warehouses whose stock is not the shop's (every job site, and the Project Shelf), as
+	a sorted list. Empty when neither is set up, or when it cannot be read: the KPIs then count
+	every bin, as they did before v1.804.0. Never raises."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		return sorted(project_shelf.not_shop_warehouses())
+	except Exception:
+		return []
+
+
+def _shop_on_hand_sql(item_column, names):
+	"""``(sql, params)``: what the shop has on hand of ``item_column``'s item, as a scalar
+	subquery. Actual qty summed over every bin **except** ``names`` (job sites and the Project
+	Shelf): parts that are across town, or bought for a job and waiting for it, do not stock the
+	shop's shelf. With no ``names`` it is the every-bin figure.
+
+	Which stock KPI means what, since v1.804.0:
+
+	* *Stocked Items Below Reorder*, *Stocked Items Out of Stock*, *Out-of-Stock Sellable
+	  Items*: **shop stock**. They ask whether the shop can supply the part; a reorder rule is
+	  about the shop's shelf, and the Reorder Board already reads it this way.
+	* *Inventory Stock Value*, *Stock at Placeholder Cost*: **all stock**. They are about what
+	  the books carry and whether it is costed, wherever it sits.
+	* *Stocked Items Counted (90d)*: a count anywhere counts, as before.
+	"""
+	params = {f"ns{n}": name for n, name in enumerate(names or ())}
+	exclude = (" and b.warehouse not in (" + ", ".join(f"%({key})s" for key in params) + ")") if params else ""
+	sql = (
+		"coalesce((select sum(b.actual_qty) from `tabBin` b "
+		f"where b.item_code={item_column}{exclude}),0)"
+	)
+	return sql, params
 
 
 def _operations_metrics():
@@ -545,7 +585,10 @@ def _operations_metrics():
 
 	# --- stock levels (moved from Product; "stocked" is any reorder rule since v1.732.0, and a rule
 	#     at level 0 counts as below when the item is out). Quantities are actual qty summed over
-	#     every bin, not the Reorder Board's projected qty per warehouse or group. ---
+	#     the SHOP's bins (v1.804.0: job sites and the Project Shelf are left out, see
+	#     _shop_on_hand_sql), not the Reorder Board's projected qty per warehouse or group. ---
+	not_shop = _not_shop_warehouses()
+	shop_on_hand, shop_params = _shop_on_hand_sql("r.parent", not_shop)
 	if _exists("Item Reorder") and _exists("Bin") and frappe.db.has_column("Item Reorder", "warehouse_reorder_level"):
 		add(
 			"items_below_reorder",
@@ -553,8 +596,9 @@ def _operations_metrics():
 			_scalar(
 				"select count(distinct r.parent) from `tabItem Reorder` r "
 				"where " + STOCKED_RULE_SQL + " and ("
-				+ ON_HAND_SQL + " < coalesce(r.warehouse_reorder_level,0) or "
-				"(coalesce(r.warehouse_reorder_level,0) = 0 and " + ON_HAND_SQL + " <= 0))"
+				+ shop_on_hand + " < coalesce(r.warehouse_reorder_level,0) or "
+				"(coalesce(r.warehouse_reorder_level,0) = 0 and " + shop_on_hand + " <= 0))",
+				shop_params,
 			),
 			"count",
 			"Item Reorder",
@@ -565,8 +609,8 @@ def _operations_metrics():
 			"Stocked Items Out of Stock",
 			_scalar(
 				"select count(distinct r.parent) from `tabItem Reorder` r "
-				"where " + STOCKED_RULE_SQL + " and "
-				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) <= 0"
+				"where " + STOCKED_RULE_SQL + " and " + shop_on_hand + " <= 0",
+				shop_params,
 			),
 			"count",
 			"Item Reorder",
@@ -611,7 +655,8 @@ def _operations_metrics():
 			"Out-of-Stock Sellable Items",
 			_scalar(
 				"select count(*) from `tabItem` i where i.is_sales_item=1 and i.is_stock_item=1 and i.disabled=0 "
-				"and coalesce((select sum(actual_qty) from `tabBin` b where b.item_code=i.name),0) <= 0"
+				"and " + _shop_on_hand_sql("i.name", not_shop)[0] + " <= 0",
+				shop_params,
 			),
 			"count",
 			"Item",

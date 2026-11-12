@@ -698,10 +698,10 @@ is read from **the project on each Stock Ledger row** at the shelf:
 | Movement | The project on its ledger row |
 |---|---|
 | A receipt against a purchase order | The order line's project (ERPNext copies it from the receipt line; checked in `stock_controller.py` at v16.54.0) |
-| Stock added without an order, at the shelf | The job picked. Refused without one |
+| Stock added without an order, at the shelf | The job picked. Refused without one. **It offsets to the Added Without PO account, never to the job's Parts Taken account**: at the shelf the job is who the parts are set aside for, not where they came back from, and crediting it would cancel the charge its later take makes (`project_shelf_rules.add_offset_setting`) |
 | A take at the shelf | The job picked. Refused without one, whatever *Require a Job for Every Take* says |
 | Shelf → a job site | That site's job |
-| Shelf → a bin or the Boneyard (released to the shop) | The job it was bought for: the one the page names, or the only job that holds the item there. Refused when several or none hold it and none is named |
+| Shelf → a bin or the Boneyard (released to the shop) | The job it was bought for: the one the page names, or the only job that holds the item there **when the tags account for every unit of it**. Refused when none is named and several or none hold it, or the item's tags are not exact |
 | A bin → the shelf (set aside) | The job named. Refused without one, and for a finished job |
 | A job site → the shelf | The site's job |
 | A store run | Refused at the shelf: its receipt carries no project on purpose |
@@ -710,17 +710,35 @@ is read from **the project on each Stock Ledger row** at the shelf:
 `project_shelf.shelf_stock(project=None, item_code=None)` adds those rows up, and is **the one
 function that answers both "what is on the shelf for project X" and "which projects have stock on
 the shelf"**. The new reports and the Procurement Tracker call it; its signature and return shape
-are pinned by `tests/test_project_shelf.py`. It returns `rows` (job × item: `qty`, `qty_in`,
-`qty_out`, `last_movement`), `projects`, `untagged`, `untagged_movements` and `exact`.
+are pinned by `tests/test_project_shelf.py`. It returns `rows` (job × item: `qty`, `tagged`,
+`over_tagged`, `qty_in`, `qty_out`, `last_movement`), `projects`, `untagged`, `untagged_movements`
+and `exact`.
+
+**A job's figure is never more than is physically on the shelf.** A tag is a claim, and a claim on
+stock that has left is not stock. `rows[].qty` is the job's tag balance **capped by what is on
+hand** (`project_shelf_rules.allocate`): never negative, and an item's rows never add up to more
+than its on-hand. The uncapped balance is `rows[].tagged`, and what the cap took off is
+`over_tagged`. When the tags claim more than is there, what remains is given to the jobs that
+received most recently first: the newest delivery is the one most likely still there. That is a
+rule for sharing out a shortfall nobody recorded, which is why the uncapped number is always
+beside it.
 
 **Its limits, which every screen that shows the numbers must say.** A movement with no project (a
 count, a transfer made by hand in the Desk) changes what is on the shelf without changing any
-job's number. That drift is reported, never hidden: `untagged` is, per item, what is on hand minus
-what the tags add up to; `untagged_movements` lists each such ledger row, a count's change worked
-out from the balance before it; a job that has had more taken than it received keeps a **negative**
-`qty` (usually parts bought for one job and used on another); and `exact` is true only when none of
-that is there. On the day of the rename production already had two such rows: 13 units received
-for a job in September and transferred out with no project.
+job's tag. That drift is reported, never hidden: `untagged` is, per item, what is on hand minus
+what the tags add up to (and `over_tagged`, the claimed stock that is not there);
+`untagged_movements` lists each such ledger row, a count's change worked out from the balance
+before it; a job that has had more taken than it received keeps a **negative** `tagged` (usually
+parts bought for one job and used on another); and `exact` is true only when none of that is
+there.
+
+**The 13 units production started with.** Two items, 6 and 7 units, were received into `Stores`
+for a Design job on 2026-09-09 and 09-15, put away to two shelf bins on 2026-09-23 by a Material
+Transfer made in the Desk with no project on it, and have since been used up: neither item has
+any stock anywhere. The ledger at the shelf still shows 13 in for that job and 13 out for nobody.
+So the function reports `tagged` 13, `qty` 0, `over_tagged` 13 for that job, and both items under
+`untagged`. Nothing is wrong with the stock; nothing is on the shelf. Because the job holds
+nothing, it is never offered as "the only job that holds it".
 
 **Receiving defaults** (`procurement_project.default_line_warehouse`; the rule is
 `project_shelf_rules.line_warehouse`):
@@ -732,17 +750,38 @@ for a job in September and transferred out with no project.
 | An Overhead project, and the item has no bin yet | `Inventory Scanner Settings.overhead_receiving_warehouse` (`Inventory Room` on production) |
 | No project yet, or no shelf set up | Nothing is decided; the line keeps what it has |
 
-It is a default at the moment a line first has both its item and its project, and it is never
-forced afterwards. Where it is applied:
+It is a default at the moment a line first has both its item and its project. **One thing is not
+a default but a rule the server holds: an Overhead line never sits on the Project Shelf.** ERPNext
+puts it there by itself, because the Company's default warehouse is the shelf since the rename and
+so are hundreds of Item Defaults; shop supplies received there would leave the shop's stock under
+a project that is not a job, and a take would then demand one. So wherever an Overhead line names
+the shelf and the item has somewhere better to go, it is moved, on every path:
 
-- **The Purchase Order form** (`public/js/purchase_order_project.js`): once per line and per
-  (item, project) pair, after ERPNext's own item lookup has come back. A line that was there when
-  the form opened, and a line that came from a Material Request, is never touched. After it is
-  applied the purchaser can pick any other warehouse and it stays.
-- **A save with no form** (`procurement_project.default_line_warehouses`, `before_validate`, and
-  `cascade_project_to_items`): a draft line with no warehouse gets the default; a line whose
-  project the cascade has just filled gets it when its warehouse is one nobody chose (the shelf,
-  or the item's Item Default). A warehouse that is already there is never changed on save.
+- **Every save of a draft order** (`procurement_project.default_line_warehouses`,
+  `before_validate`): a line with no warehouse gets the default, and an Overhead line on the shelf
+  goes to the item's own bin. That covers what the form's script never sees: a duplicated order,
+  one mapped from a Supplier Quotation or a Material Request, a REST or import save that sends a
+  warehouse. Any other warehouse that is already there is left alone. `cascade_project_to_items`
+  also defaults a line whose project it has just filled, when its warehouse is one nobody chose.
+- **A row added to a submitted order with Update Items**
+  (`procurement_project.default_new_order_line`, `before_insert` on Purchase Order Item). ERPNext
+  inserts that row on its own, with no project (mandatory here) and the Company's default
+  warehouse; the hook gives it the header's project and its place by the rule.
+- **A receipt saved for the first time** (`procurement_project.default_receipt_warehouses`,
+  `before_validate` on Purchase Receipt): the Desk's Create > Purchase Receipt copies the order
+  line's warehouse. First save only, so a place the receiver picks afterwards stays; never a
+  return; and never when a person has just said where the lines go (the Receive Items dialog and
+  a scan at a bin set `flags.receiving_places_chosen`).
+- **The Purchase Order form** (`public/js/purchase_order_project.js`) shows the default sooner, as
+  the line is filled in, and nothing depends on it being in time. It asks the server when a
+  line's item or project changes and sets the answer **unless the server says the line's
+  warehouse is a person's pick** (`keep`, `project_shelf_rules.form_may_default`). When a line
+  gets its item, ERPNext has just filled the warehouse itself, so only ERPNext's own values (the
+  shelf, the item's default, the Company's default) are replaced. When only the project changes,
+  only the rule's own earlier value is replaced; a warehouse picked by hand stays, even when it
+  equals the item's default bin. The warehouse field's own change event cannot tell the two apart:
+  ERPNext fires it itself after its item lookup. A line from a Material Request keeps its
+  warehouse.
 - **The order's Receive Items dialog** (`public/js/po_receive_items.js`): a *Put in* column per
   line, opening on `procurement_project.receiving_defaults` and editable. It is the order line's
   own warehouse, except that **an Overhead line that names the shelf is offered the item's own bin
@@ -786,18 +825,35 @@ move out of any bin does.
 **A label printed for `Stores` still opens the shelf** (`project_shelf.former_name`,
 `api.stock_scan._warehouse`), unless a warehouse of that name exists again.
 
+**People's saved list filters.** Frappe's rename means to rewrite a saved filter that names the
+renamed record, but at v16.56.0 it looks for them with `LIKE` and no wildcards and finds none, so
+a list somebody last filtered to `Stores - SF` would open empty. The patch rewrites the quoted old
+name in `__UserSettings` and drops the cached copies.
+
 **If the patch did not finish.** `patches/rename_stores_to_project_shelf` cannot raise (that would
-abort the deploy), so it is recorded as run whatever happened. Each of its four steps answers done,
+abort the deploy), so it is recorded as run whatever happened. Each of its five steps answers done,
 already, skipped or failed; the list and the counts of what now points at the shelf are in the
 migrate output, and when any step did not finish, one Error Log row, "Project Shelf patch
 (rename_stores_to_project_shelf): finish these steps by hand", lists them with what to do. It is
 safe to run again. It moves no stock, rewrites no order line and clears no Item Default or Putaway
-Rule.
+Rule. On a site that never had the warehouse (no `Inventory - SF`, or no `Stores` and no `Project
+Shelf`) every step answers "not needed here" and no Error Log row is written.
 
-**Not built:** the Bin Manager's moves do not ask for the job (a move off the shelf from there uses
-the only job that holds the item, and is refused with a sentence when there are several); a way to
-move a part on the shelf from one job to another without it leaving the shelf; and non-stock items,
-which never enter stock and so never reach the shelf.
+**The stock KPIs** (`kpi_dashboards/snapshots.py`): *Stocked Items Below Reorder*, *Stocked Items
+Out of Stock* and *Out-of-Stock Sellable Items* mean **shop stock** and leave out job sites and the
+shelf; *Inventory Stock Value* and *Stock at Placeholder Cost* mean **all stock**.
+
+**The Bin Manager and the job.** `bin_assignments.move_to` and `send_to_boneyard` take `project`.
+A page that moves stock off the shelf sends the job it was bought for; the choices and whether one
+may be assumed come from `api.stock_scan.get_item(item_code, warehouse=<the shelf>)`:
+`shelf_jobs` (`[{project, project_name, qty}]`) and `shelf_jobs_exact`. With `project` left out,
+the server uses the only job that holds the item when the tags are exact, and otherwise refuses
+with a sentence that says to name one. A move onto the shelf sends the job it is set aside for
+(any open job from `api.stock_scan.search_projects`). The Bin Manager page itself does not ask
+yet.
+
+**Not built:** a way to move a part on the shelf from one job to another without it leaving the
+shelf; and non-stock items, which never enter stock and so never reach the shelf.
 
 ### The Bin Manager page (v1.693.0)
 

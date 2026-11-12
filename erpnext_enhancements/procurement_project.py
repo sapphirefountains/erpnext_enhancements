@@ -27,9 +27,20 @@ from the same project. A line for a job defaults to the Project Shelf; a line fo
 the overhead buckets defaults to the item's own bin, and to the shop's general receiving
 location when the item has no bin yet (:func:`default_line_warehouse`; the rule itself is
 ``inventory_enhancements/project_shelf_rules.line_warehouse``, tested bench-free). It is a
-default, applied when a line first has both its item and its project, and never forced
-afterwards: the purchaser can pick another place on the order, and the person receiving
-can pick another place per line (:func:`receiving_defaults`).
+default, applied when a line first has both its item and its project: the purchaser can
+pick another place on the order, and the person receiving can pick another place per line
+(:func:`receiving_defaults`).
+
+**One thing is held on every save, not just offered: an Overhead line never sits on the
+Project Shelf.** ERPNext itself puts it there (the Company's default warehouse is the shelf
+since the rename, and so are hundreds of Item Defaults), on every path this app's form
+script never sees: a duplicated order, one mapped from a Supplier Quotation or a Material
+Request, a REST save that sends a warehouse, a row added with Update Items, a receipt made
+with Create > Purchase Receipt. Shop supplies received there would leave the shop's stock
+under a project that is not a job. So the order's save (:func:`default_line_warehouses`), a
+row added after submit (:func:`default_new_order_line`) and a new receipt
+(:func:`default_receipt_warehouses`) each move such a line to the item's own bin. The form
+does it sooner so the purchaser sees it; correctness does not depend on the form.
 """
 
 import frappe
@@ -102,7 +113,8 @@ def _usable_warehouses(names, company=None):
 
 def item_own_bin(item_code, company=None):
 	"""The item's own bin, or ``None``: the bin it is assigned to (an enabled Putaway Rule;
-	with several, the one holding the most, then by name), else its Item Default warehouse,
+	with several, the lowest Putaway priority, then the one holding the most, then by name;
+	every rule this app writes has priority 1), else its Item Default warehouse,
 	else the warehouse a reorder rule asks for. The Project Shelf, a job site and the
 	boneyard are never an item's bin and are skipped wherever they appear
 	(``project_shelf_rules.own_bin``).
@@ -187,11 +199,13 @@ def _item_default_warehouse(item_code, company):
 def _default_row_warehouse(doc, row, filled_by_cascade=False):
 	"""Give one draft Purchase Order line its default location, when nobody chose one.
 
-	A line with no location always gets it. A line whose project the cascade has just
+	A line with no location always gets it. **An Overhead line that names the Project
+	Shelf always gets it** (``project_shelf_rules.overhead_on_shelf``): that is never a
+	person's choice, whatever put it there. A line whose project the cascade has just
 	filled gets it too when its location is one nobody chose (the Project Shelf, or the
-	item's Item Default: what ERPNext or a mapper put there). A line that came from a
-	Material Request keeps the request's location: that place was asked for on purpose.
-	Never raises.
+	item's Item Default: what ERPNext or a mapper put there). Otherwise a line that came
+	from a Material Request keeps the request's location, and a location that is already
+	there is left alone. Never raises.
 	"""
 	try:
 		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
@@ -199,11 +213,19 @@ def _default_row_warehouse(doc, row, filled_by_cascade=False):
 		if doc.get("docstatus") or not (row.get("item_code") or "").strip():
 			return
 		current = (row.get("warehouse") or "").strip()
-		if current and (not filled_by_cascade or (row.get("material_request_item") or "").strip()):
-			return
 		company = doc.get("company")
-		if current:
-			automatic = (project_shelf.warehouse(), _item_default_warehouse(row.get("item_code"), company))
+		shelf = project_shelf.warehouse()
+		project = (row.get("project") or "").strip()
+		stranded = bool(
+			current
+			and shelf
+			and current == shelf
+			and project_shelf_rules.overhead_on_shelf(current, bool(project), is_overhead(project), shelf)
+		)
+		if current and not stranded:
+			if not filled_by_cascade or (row.get("material_request_item") or "").strip():
+				return
+			automatic = (shelf, _item_default_warehouse(row.get("item_code"), company))
 			if not project_shelf_rules.may_default(current, automatic):
 				return
 		answer = default_line_warehouse(row.get("item_code"), row.get("project"), company)
@@ -221,35 +243,134 @@ def default_line_warehouses(doc, method=None):
 	where the purchaser can see it and change it. This is the copy for the paths with no
 	form: the REST API, data import, a mapped document. It runs before ERPNext's own
 	``set_missing_values``, which would otherwise fill the blank from the Item Default or
-	the Company's default warehouse. A location that is already there is never changed here.
+	the Company's default warehouse.
+
+	A location that is already there is left alone, **except the one nobody chooses: an
+	Overhead line on the Project Shelf** goes to the item's own bin on every save of a draft.
+	That is the server's own guarantee. Without it the rule held only where the form's script
+	ran in time: a duplicated order, one mapped from a Supplier Quotation or a Material
+	Request, and a REST save that sends a warehouse all arrive with the shelf already filled
+	in by ERPNext, and would save it. When the item has no bin and no fallback is set, there
+	is nowhere better to send it and the line stays as it is.
 	"""
 	if doc.get("docstatus"):
 		return
 	for row in doc.get("items") or []:
-		if not (row.get("warehouse") or "").strip():
-			_default_row_warehouse(doc, row)
+		_default_row_warehouse(doc, row)
+
+
+def _is_new(doc):
+	try:
+		return bool(doc.get("__islocal") or doc.is_new())
+	except Exception:
+		return False
+
+
+def default_new_order_line(doc, method=None):
+	"""``before_insert`` on **Purchase Order Item**: a row added to a submitted order with
+	Update Items.
+
+	ERPNext inserts that row by itself (``accounts_controller.update_child_qty_rate`` at
+	v16.54.0), so the order's ``before_validate`` hooks above never see it. Two things it
+	needs, both of which the order's own save would have given it:
+
+	* **its project**, from the order's header, when it has none. ERPNext's Update Items
+	  sets none, and the field is mandatory here;
+	* **its location by the rule** when it has none, or when it is an Overhead line on the
+	  Project Shelf (ERPNext fills the Company's default warehouse, which is the shelf).
+
+	Rows saved with their order are not inserted on their own and never reach this. Never
+	raises: a row it cannot place is left as ERPNext made it.
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+		if doc.get("parenttype") != "Purchase Order" or not (doc.get("parent") or "").strip():
+			return
+		order = frappe.db.get_value(
+			"Purchase Order", doc.get("parent"), ["project", "company", "docstatus"], as_dict=True
+		)
+		if not order:
+			return
+		if not (doc.get("project") or "").strip() and (order.get("project") or "").strip():
+			doc.project = order.get("project").strip()
+		project = (doc.get("project") or "").strip()
+		current = (doc.get("warehouse") or "").strip()
+		shelf = project_shelf.warehouse()
+		if current and not project_shelf_rules.overhead_on_shelf(
+			current, bool(project), is_overhead(project), shelf
+		):
+			return
+		answer = default_line_warehouse(doc.get("item_code"), project, order.get("company"))
+		if answer.get("warehouse") and answer["warehouse"] != current:
+			doc.warehouse = answer["warehouse"]
+	except Exception:
+		_log("Purchase line location: a row added with Update Items could not be placed")
+
+
+def default_receipt_warehouses(doc, method=None):
+	"""``before_validate`` on **Purchase Receipt**: a receipt saved for the first time puts
+	each order line in its default receiving place (:func:`apply_receiving_defaults`).
+
+	This is the Desk's Create > Purchase Receipt, and any other mapper or API call: the
+	receipt copies the order line's warehouse, and an Overhead line that names the Project
+	Shelf would be received onto it. Only on the first save, so a place the receiver picks
+	afterwards stays. Skipped for a return (stock goes back out of where it is), and for a
+	receipt whose places a person has just chosen: the order's Receive Items dialog and a
+	scan at a bin in Stock Scan say so with ``flags.receiving_places_chosen``. Never raises.
+	"""
+	try:
+		if doc.get("docstatus") or doc.get("is_return") or not _is_new(doc):
+			return
+		if getattr(doc, "flags", None) and doc.flags.get("receiving_places_chosen"):
+			return
+		apply_receiving_defaults(doc)
+	except Exception:
+		_log("Receipt: the default locations could not be applied")
 
 
 #: The most lines one :func:`line_warehouses` call answers. A purchase order has a handful.
 MAX_LINES = 200
 
 
+def _company_default_warehouse(company):
+	try:
+		return frappe.db.get_value("Company", company, "default_warehouse") if company else None
+	except Exception:
+		return None
+
+
 @frappe.whitelist()
 def line_warehouses(rows, company=None):
-	"""The default location for each of a Purchase Order form's lines.
+	"""The default location for each of a Purchase Order form's lines, and whether the form
+	may apply it.
 
-	``rows`` is ``[{"key": <row name>, "item_code": ..., "project": ...}]``; the answer is
-	``{key: {"item_code", "project", "warehouse", "warehouse_name", "reason"}}``. The item and
-	project are echoed so the form can drop an answer for a line that changed while the
-	request was in flight. Reads only. Needs read on Purchase Order: the answer says where an
-	item is kept and whether a project is an overhead bucket.
+	``rows`` is ``[{"key": <row name>, "item_code", "project", "warehouse", "was_item_code",
+	"was_project", "applied"}]``: the line as it is now, the item and project it had before
+	this change (blank for a line that has just got both), and the location the form's rule
+	last set on it, if any. The answer is ``{key: {"item_code", "project", "warehouse",
+	"warehouse_name", "reason", "keep"}}``. The item and project are echoed so the form can
+	drop an answer for a line that changed while the request was in flight.
+
+	**``keep`` true means the line's location is a person's pick and must not be changed**
+	(``project_shelf_rules.form_may_default``): the test is made here, not in the browser,
+	because it needs the item's default bin and the rule's answer for the line's previous
+	project. An Overhead line on the Project Shelf is never kept: the save would move it
+	anyway (:func:`default_line_warehouses`).
+
+	Reads only. Needs read on Purchase Order: the answer says where an item is kept and
+	whether a project is an overhead bucket.
 	"""
+	from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
 	if not frappe.has_permission("Purchase Order", "read"):
 		frappe.throw(frappe._("You need permission to read Purchase Orders."), frappe.PermissionError)
 	if isinstance(rows, str):
 		rows = frappe.parse_json(rows)
 	out = {}
 	names = {}
+	shelf = project_shelf.warehouse()
+	company_default = _company_default_warehouse(company)
 	for raw in (rows or [])[:MAX_LINES]:
 		if not isinstance(raw, dict):
 			continue
@@ -262,12 +383,28 @@ def line_warehouses(rows, company=None):
 		warehouse = answer.get("warehouse")
 		if warehouse and warehouse not in names:
 			names[warehouse] = frappe.db.get_value("Warehouse", warehouse, "warehouse_name") or warehouse
+
+		current = str(raw.get("warehouse") or "").strip()
+		was_item = str(raw.get("was_item_code") or "").strip()
+		was_project = str(raw.get("was_project") or "").strip()
+		first_or_item_changed = not was_item or not was_project or was_item != item_code
+		previous = None
+		if current and not first_or_item_changed:
+			previous = default_line_warehouse(was_item, was_project, company).get("warehouse")
+		automatic = (shelf, _item_default_warehouse(item_code, company), company_default)
+		may = project_shelf_rules.form_may_default(
+			current, first_or_item_changed, automatic, previous, str(raw.get("applied") or "").strip()
+		)
+		stranded = project_shelf_rules.overhead_on_shelf(
+			current, True, answer.get("reason") in ("own_bin", "fallback"), shelf
+		)
 		out[key] = {
 			"item_code": item_code,
 			"project": project,
 			"warehouse": warehouse,
 			"warehouse_name": names.get(warehouse),
 			"reason": answer.get("reason"),
+			"keep": not (may or stranded),
 		}
 	return out
 

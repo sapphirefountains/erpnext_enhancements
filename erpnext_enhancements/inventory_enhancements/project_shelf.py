@@ -181,9 +181,9 @@ def shelf_stock(project=None, item_code=None):
 		{
 			"warehouse": the shelf's warehouse name, or None when there is no shelf,
 			"rows": [{project, project_name, item_code, item_name, stock_uom,
-			          qty, qty_in, qty_out, last_movement}],
+			          qty, tagged, over_tagged, qty_in, qty_out, last_movement}],
 			"projects": [{project, project_name, status, project_type, items, qty}],
-			"untagged": [{item_code, item_name, stock_uom, on_hand, tagged, qty}],
+			"untagged": [{item_code, item_name, stock_uom, on_hand, tagged, qty, over_tagged}],
 			"untagged_movements": [{posting_date, voucher_type, voucher_no, item_code, qty, kind}],
 			"exact": bool,
 		}
@@ -191,8 +191,11 @@ def shelf_stock(project=None, item_code=None):
 	**Limits.** ERPNext keeps on-hand by item and warehouse, with no project. These numbers
 	are derived from the project on each ledger row, so a movement with no project (a count, a
 	transfer made by hand in the Desk) makes them drift. The drift is in ``untagged`` and
-	``untagged_movements`` and is never hidden; ``rows[].qty`` can be negative; and ``exact``
-	is true only when the tags account for every unit. Show one of those beside any total.
+	``untagged_movements`` and is never hidden. ``rows[].qty`` is a job's tag balance **capped
+	by what is physically on the shelf**, so it is never negative and an item's rows never add
+	up to more than its on-hand; the uncapped balance is ``rows[].tagged`` (it can be negative)
+	and what the cap took off is ``over_tagged``. ``exact`` is true only when the tags account
+	for every unit. Show it, or the ``untagged`` list, beside any total.
 
 	Never raises: a failure is logged and the answer is the empty shape with ``exact`` false.
 	Reads the ledger without permission checks, like a report; the caller decides who may see
@@ -263,6 +266,19 @@ def shelf_stock(project=None, item_code=None):
 		out = _empty(shelf)
 		out["exact"] = False
 		return out
+
+
+def holding(item_code, stock=None):
+	"""``{"jobs": [{"project", "project_name", "qty"}], "exact": bool}`` for one item on the
+	shelf: the jobs that hold it (:func:`holders`), and whether the tags account for every
+	unit of it (``project_shelf_rules.item_exact``). ``exact`` false means some of what is
+	there has no job on record, or more is tagged than is there: the jobs are shown, and none
+	is picked for the person."""
+	item_code = _name(item_code)
+	if not item_code:
+		return {"jobs": [], "exact": True}
+	stock = stock if stock is not None else shelf_stock(item_code=item_code)
+	return {"jobs": holders(item_code, stock), "exact": rules.item_exact(stock, item_code)}
 
 
 def holders(item_code, stock=None):

@@ -1055,8 +1055,10 @@ export class StockScanApp {
 	 * question, or hides it for a move that asks nothing; `value()` is the job picked.
 	 *
 	 * "off" lists the jobs that hold the item on the shelf (`jobs`) and starts on the only one
-	 * when there is only one. "onto" starts on the run's job, when one is picked. Either can
-	 * pick any other job; that pick is this move's alone and is not remembered as the run's job.
+	 * when there is only one AND those jobs account for every unit there (`exact`): where they
+	 * do not, part of what is on the shelf has no job on record, so nothing is picked for the
+	 * person. "onto" starts on the run's job, when one is picked. Either can pick any other
+	 * job; that pick is this move's alone and is not remembered as the run's job.
 	 */
 	shelfJobLine(onChange) {
 		const box = el("div", "ee-ss-shelf-job");
@@ -1102,13 +1104,13 @@ export class StockScanApp {
 			node: box,
 			mode: () => mode,
 			value: () => (mode && picked ? picked.project : undefined),
-			set: (nextMode, nextJobs) => {
+			set: (nextMode, nextJobs, exact) => {
 				const held = (Array.isArray(nextJobs) ? nextJobs : []).filter((job) => job && job.project && Number(job.qty) > 0);
 				if (nextMode === mode) return;
 				mode = nextMode || "";
 				jobs = mode === "off" ? held : [];
 				picked = null;
-				if (mode === "off") picked = soleShelfJob(held);
+				if (mode === "off") picked = soleShelfJob(held, exact);
 				else if (mode === "onto" && this.job) picked = { project: this.job.project, project_name: this.job.project_name || this.job.project };
 				draw();
 			},
@@ -1261,7 +1263,7 @@ export class StockScanApp {
 		const relabel = () => {
 			drawGo();
 			refreshHome();
-			jobLine.set(dest ? moveJobMode(item, dest) : "", item.shelf_jobs);
+			jobLine.set(dest ? moveJobMode(item, dest) : "", item.shelf_jobs, item.shelf_jobs_exact);
 			showError("");
 		};
 		const choose = (place) => {
@@ -2316,7 +2318,7 @@ export class StockScanApp {
 			more.setAttribute("aria-label", "One more");
 			// The job the move carries when one end is the Project Shelf (v1.804.0); hidden otherwise.
 			const jobLine = this.shelfJobLine(() => showError(""));
-			jobLine.set(moveJobMode(place, item), place.jobs);
+			jobLine.set(moveJobMode(place, item), place.jobs, place.jobs_exact);
 			fill(
 				body,
 				el("p", "ee-ss-sheet-text", `${placeAmount(place, uom)} there. How many are on this shelf now?`),

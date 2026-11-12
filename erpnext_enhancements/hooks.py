@@ -1082,8 +1082,11 @@ doc_events = {
 			# location gets the project's default place -- the Project Shelf for a job, the
 			# item's own bin for an Overhead project. After the cascade (it needs the project)
 			# and before ERPNext's set_missing_values, which would fill the blank from the Item
-			# Default. Fills blanks only, never raises; the Desk form does the same as the line
-			# is typed (public/js/purchase_order_project.js).
+			# Default. A location that is there is left alone, with one exception held on every
+			# save of a draft: an Overhead line on the Project Shelf goes to the item's own bin
+			# (ERPNext puts it there by itself; the Company's default warehouse is the shelf).
+			# Never raises. The Desk form does the same sooner, as the line is typed
+			# (public/js/purchase_order_project.js); correctness does not depend on it.
 			"erpnext_enhancements.procurement_project.default_line_warehouses",
 			# ER-2026-362239: push the header's expected delivery date into item rows
 			# that have none. NOT the Required By cascade -- ERPNext already does that
@@ -1157,7 +1160,21 @@ doc_events = {
 	# cancel is one). They stand aside during install/migrate/patch/test and for a document
 	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
 	# the ledger; validate catches a return at its first save, before it can be submitted.
+	# The Project Shelf (v1.804.0): a row added to a SUBMITTED order with Update Items. ERPNext
+	# inserts that row on its own (accounts_controller.update_child_qty_rate), so the order's
+	# before_validate hooks never see it, and it arrives with no project (mandatory here) and
+	# the Company's default warehouse, which is the shelf. This gives it the header's project
+	# and its location by the rule. Rows saved with their order never fire it. Never raises.
+	"Purchase Order Item": {
+		"before_insert": "erpnext_enhancements.procurement_project.default_new_order_line",
+	},
 	"Purchase Receipt": {
+		# The Project Shelf (v1.804.0): a receipt saved for the first time puts each order line
+		# in its default receiving place. It is what covers the Desk's Create > Purchase Receipt,
+		# which copies the order line's warehouse: an Overhead line that names the Project Shelf
+		# goes to the item's own bin. First save only, never a return, and never when a person
+		# has just said where the lines go (Receive Items, a scan at a bin). Never raises.
+		"before_validate": "erpnext_enhancements.procurement_project.default_receipt_warehouses",
 		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
 		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
 		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",

@@ -29,15 +29,23 @@
  * to the item's own bin (the rule is the server's, `procurement_project.line_warehouses`).
  * It is a default, not a lock:
  *
- *   - it is applied once per line and per (item, project) pair, the first time the line has
- *     both, and again only if the item or the project changes;
- *   - a line that was already there when the form opened is never touched, and neither is a
- *     line that came from a Material Request, whose warehouse was asked for on purpose;
- *   - after it is applied the purchaser can pick any other warehouse and it stays.
+ *   - it is asked for when a line first has both its item and its project, and again when
+ *     either changes;
+ *   - **a warehouse a person picked by hand stays.** The server says which that is (`keep`):
+ *     when a line gets its item, ERPNext has just filled the warehouse itself, so only one
+ *     of ERPNext's own values (the shelf, the item's default, the Company's default) is
+ *     replaced; when only the project changes, only the rule's own earlier value is
+ *     replaced. This file sends what the rule last set on the line (`applied`) and the item
+ *     and project the line had before, and does not decide anything itself;
+ *   - a line that came from a Material Request keeps the request's warehouse.
  *
  * ERPNext fills the Warehouse from the Item Default when an item is picked, in the same
  * event. Its handler runs after this file's (form-script handlers run before the
  * controller's), so the rule waits for that request to come back before it writes.
+ *
+ * Nothing here is needed for the result to be right. The one thing that must hold, an
+ * Overhead line never saved on the Project Shelf, is enforced by the server on every save
+ * (`procurement_project.default_line_warehouses`). This file only shows it sooner.
  */
 frappe.provide("erpnext_enhancements.procurement");
 
@@ -57,15 +65,21 @@ erpnext_enhancements.procurement.fill_blank_line_projects = function (frm) {
 
 const LINE_WAREHOUSES = "erpnext_enhancements.procurement_project.line_warehouses";
 
-/** What a line's default location depends on; "" until the line has both. */
+/** What a line's default location depends on; null until the line has both. */
 function line_key(row) {
-	return row && row.item_code && row.project ? JSON.stringify([row.item_code, row.project]) : "";
+	return row && row.item_code && row.project ? { item_code: row.item_code, project: row.project } : null;
+}
+
+function same_key(a, b) {
+	return !!a && !!b && a.item_code === b.item_code && a.project === b.project;
 }
 
 /**
- * Treat every line on the form as decided: its location is what it should be, whoever chose
- * it. Called when a document opens and after each save (a save renames new rows, so their
- * memory has to be taken again).
+ * Take every line on the form as it stands: its item and project are the ones its location
+ * was decided for. Called when a document opens and after each save (a save renames new
+ * rows, so their memory has to be taken again). What the rule set before is forgotten with
+ * it; for such a line the server works out the rule's earlier value from the line's
+ * previous project.
  */
 function remember_line_warehouses(frm) {
 	const keys = {};
@@ -74,28 +88,42 @@ function remember_line_warehouses(frm) {
 		if (key) keys[row.name] = key;
 	});
 	frm._ee_line_keys = keys;
+	frm._ee_line_applied = {};
 	frm._ee_line_doc = frm.doc.name;
 }
 
 /**
- * Give each line that has just got its item and project (or changed either) the project's
- * default location. Returns a promise that never rejects: a failed lookup leaves the line as
- * ERPNext filled it, and the server fills a blank one on save.
+ * Ask the server for the default location of each line whose item or project has just
+ * changed, and set it unless the server says the line's location is a person's pick.
+ * Returns a promise that never rejects: a failed lookup leaves the line as it is, and the
+ * server still moves an Overhead line off the Project Shelf on save.
  */
 erpnext_enhancements.procurement.apply_line_warehouses = function (frm) {
 	if (frm.doc.docstatus !== 0) return Promise.resolve();
 	if (frm._ee_line_doc !== frm.doc.name || !frm._ee_line_keys) remember_line_warehouses(frm);
 	const keys = frm._ee_line_keys;
+	const applied = frm._ee_line_applied;
 	const todo = (frm.doc.items || []).filter((row) => {
 		const key = line_key(row);
-		return key && keys[row.name] !== key && !row.material_request_item;
+		return key && !same_key(keys[row.name], key) && !row.material_request_item;
 	});
 	if (!todo.length) return Promise.resolve();
 	return frappe
 		.call({
 			method: LINE_WAREHOUSES,
 			args: {
-				rows: todo.map((row) => ({ key: row.name, item_code: row.item_code, project: row.project })),
+				rows: todo.map((row) => {
+					const was = keys[row.name] || {};
+					return {
+						key: row.name,
+						item_code: row.item_code,
+						project: row.project,
+						warehouse: row.warehouse || "",
+						was_item_code: was.item_code || "",
+						was_project: was.project || "",
+						applied: applied[row.name] || "",
+					};
+				}),
 				company: frm.doc.company,
 			},
 		})
@@ -107,7 +135,10 @@ erpnext_enhancements.procurement.apply_line_warehouses = function (frm) {
 				// The line was removed or changed while the request was out: its next event asks again.
 				if (!live || !answer || answer.item_code !== live.item_code || answer.project !== live.project) return;
 				keys[live.name] = line_key(live);
-				if (answer.warehouse && live.warehouse !== answer.warehouse) {
+				// A place a person picked stays (the server's call), and so does a line the rule has no place for.
+				if (answer.keep || !answer.warehouse) return;
+				applied[live.name] = answer.warehouse;
+				if (live.warehouse !== answer.warehouse) {
 					frappe.model.set_value(live.doctype, live.name, "warehouse", answer.warehouse);
 				}
 			});

@@ -23,14 +23,23 @@ the job it was taken for, and a move onto or off the shelf carries the job it na
 transfer made by hand in the Desk) changes what is on the shelf without changing any job's
 number. Nothing here hides that: the difference between what is on hand and what the tags
 add up to is returned per item (``untagged``), each such movement is listed
-(``untagged_movements``), a job that has had more taken than it received shows as a negative
-number rather than as zero, and ``exact`` is true only when none of that is there.
+(``untagged_movements``), and ``exact`` is true only when none of that is there.
+
+**A job's figure is never more than is physically on the shelf.** A tag is a claim, and a
+claim on stock that has left is not stock. So each job's ``qty`` is its tag balance capped by
+what is on hand (:func:`allocate`), the uncapped balance stays beside it as ``tagged``, and
+what the cap took off is ``over_tagged``. Production had this on the day the shelf was named:
+13 units received for a job in September, moved to bins by a transfer with no project, and
+since used up. The ledger still tags them to that job at the shelf; nothing is there.
 
 **The default location of a purchase line** (:func:`line_warehouse`): a line for a project
 that is not an Overhead project goes to the shelf; a line for an Overhead project (shop
 supplies, replenishment) goes to the item's own bin (:func:`own_bin`), and to the shop's
 general receiving location when the item has no bin yet. It is a default at the moment the
-line gets its project and item. It is never forced afterwards.
+line gets its project and item, with one thing held on every save of a draft: **an Overhead
+line never sits on the shelf** (:func:`overhead_on_shelf`). ERPNext itself puts it there,
+because the Company's default warehouse is the shelf, and stock received there would leave
+the shop's count under a project that is not a job. Everything else a person picks, sticks.
 
 Indentation is tabs (new file).
 """
@@ -133,6 +142,41 @@ def may_default(current, automatic=()):
 	return not current or current in {_name(value) for value in automatic or () if _name(value)}
 
 
+def overhead_on_shelf(current, has_project, overhead, shelf):
+	"""Whether a line is an Overhead line that names the Project Shelf: the one location that
+	is never anybody's choice. ERPNext fills it in by itself (the Company's default warehouse
+	is the shelf, and so are hundreds of Item Defaults), and shop supplies received there
+	would drop out of the shop's stock under a project that is not a job. The order's save,
+	a new receipt and the Receive Items dialog all move such a line to the item's own bin."""
+	shelf = _name(shelf)
+	return bool(shelf and has_project and overhead and _name(current) == shelf)
+
+
+def form_may_default(current, first_or_item_changed, automatic=(), previous=None, applied=None):
+	"""Whether the Purchase Order form may set a line's location by the rule, when the line's
+	item or project has just changed. **A location a person picked by hand stays.**
+
+	* A line with no location: yes.
+	* **The line has its item and project for the first time, or its item changed**
+	  (``first_or_item_changed``): ERPNext has just filled the location itself, from the Item
+	  Default or the Company's default. Yes when it is one of those values (``automatic``:
+	  the shelf, the item's Item Default, the Company's default); a location that is none of
+	  them was typed by a person, and stays.
+	* **Only the project changed**: ERPNext does not touch the location then, so whatever is
+	  there was put there on purpose or by this rule. Yes only when it is the rule's own
+	  value: what the form last set on this line (``applied``), or what the rule gives for the
+	  project the line had before (``previous``, for a line that was already there when the
+	  form opened). Anything else is a hand pick, and stays, even when it happens to equal
+	  the item's default bin.
+	"""
+	current = _name(current)
+	if not current:
+		return True
+	if first_or_item_changed:
+		return current in {_name(value) for value in automatic or () if _name(value)}
+	return current in {_name(value) for value in (applied, previous) if _name(value)}
+
+
 def receiving_warehouse(ordered, has_project, overhead, shelf, own=None, fallback=None):
 	"""``(warehouse, reason, changed)``: where a receipt of one order line goes by default.
 
@@ -164,9 +208,27 @@ def take_needs_job(at_shelf, setting_requires):
 	return bool(at_shelf or setting_requires)
 
 
+def add_offset_setting(has_job, at_shelf):
+	"""Which Inventory Scanner Settings account a no-order add offsets to, as the setting's
+	fieldname.
+
+	Away from the shelf a job on an add means the parts came **back from** that job, so the
+	credit goes to the account a take charges (``take_expense_account``) and the job's cost
+	nets out; with no job it is found stock (``add_offset_account``, the account a stock
+	manager reviews). **At the shelf the job is the one the parts are set aside for**, and the
+	shelf requires one: crediting that job there would cancel the charge its later take makes,
+	so the job would bear nothing for parts it used. At the shelf it is always found stock.
+	"""
+	if has_job and not at_shelf:
+		return "take_expense_account"
+	return "add_offset_account"
+
+
 def sole_holder(holders):
 	"""The one job that holds this item on the shelf, or ``None`` when none or several do.
-	``holders`` is ``[(project, qty), ...]``; only a positive quantity holds anything."""
+	``holders`` is ``[(project, qty), ...]``; only a positive quantity holds anything, and the
+	quantity is the capped one (:func:`allocate`), so a job whose tagged stock has all left
+	is never "the only job that holds it"."""
 	held = [project for project, qty in holders or () if _name(project) and _qty(qty) > TOLERANCE]
 	return held[0] if len(held) == 1 else None
 
@@ -187,7 +249,9 @@ def move_project(
 	* **Shelf to a job site**: that site's job. The parts bought for a job go to its site.
 	* **Shelf to anywhere else** (a bin, the boneyard: the stock is released to the shop): the
 	  job the page names (``given``); with none named, the one job that holds this item on the
-	  shelf (:func:`sole_holder`); with several or none, it is refused and asks.
+	  shelf (:func:`sole_holder`); with several or none, it is refused and asks. The caller
+	  passes ``holders`` only when the item's tags are exact (:func:`item_exact`): where they
+	  are not, some of what is there has no job on record, and nothing is guessed.
 	* **A job site back to the shelf**: the site's job. It is still that job's.
 	* **Anywhere else onto the shelf**: the job named. Stock set aside on the shelf belongs to
 	  a job from the moment it lands, so with none named it is refused and asks.
@@ -264,6 +328,35 @@ def split_places(places):
 # ---------------------------------------------------------------------------
 
 
+def allocate(on_hand, tagged):
+	"""Share what is physically on the shelf among the jobs whose tags claim it.
+
+	``tagged`` is ``[(project, balance, last_in), ...]`` for one item: each job's tag balance
+	(in minus out) and the date it last received any. Returns ``{project: quantity}``, each
+	between 0 and that job's balance, adding up to no more than ``on_hand``.
+
+	When the tags claim no more than is there, every job gets its balance. When they claim
+	more, somebody's parts have left without their tag (an untagged move, a count, a take
+	under another job), and the stock that remains is given to **the jobs that received
+	most recently first**: the newest delivery is the one most likely still on the shelf.
+	It is a rule for sharing out a shortfall nobody recorded, so the uncapped balance is
+	always shown beside it. A job with a zero or negative balance holds nothing.
+	"""
+	left = max(_qty(on_hand), 0.0)
+	claims = [(project, _qty(balance), str(last_in or "")) for project, balance, last_in in tagged or ()]
+	claims = [claim for claim in claims if claim[1] > TOLERANCE]
+	# Newest receipt first. Two jobs that received on the same day are taken in the order of
+	# their ids, so the answer is the same every time it is asked.
+	claims.sort(key=lambda claim: claim[0])
+	claims.sort(key=lambda claim: claim[2], reverse=True)
+	out = {}
+	for project, balance, _last_in in claims:
+		share = min(balance, left)
+		out[project] = share
+		left -= share
+	return out
+
+
 def is_count(row):
 	"""A Stock Reconciliation row that stores no change. ERPNext 16.52.1 and later write a
 	count with ``actual_qty = 0`` and the counted balance in ``qty_after_transaction``."""
@@ -280,16 +373,21 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 
 	Returns ``{"rows", "untagged", "untagged_movements", "exact"}``:
 
-	* ``rows``: one per job and item whose tagged balance is not zero, with ``qty``,
-	  ``qty_in``, ``qty_out`` and ``last_movement``. **A negative ``qty`` is kept**: it means
-	  more left the shelf under that job than came in under it, usually parts bought for one
-	  job and used on another.
-	* ``untagged``: one per item whose on-hand differs from the sum of its jobs' balances.
-	  ``qty`` is on hand minus tagged: positive is stock no job has a claim on, negative is
-	  more claimed than is there.
+	* ``rows``: one per job and item whose tagged balance is not zero. ``qty`` is **what that
+	  job has on the shelf: its tag balance, capped by what is physically there**
+	  (:func:`allocate`), so it is never negative and an item's rows never add up to more
+	  than its on-hand. ``tagged`` is the uncapped balance (``qty_in`` minus ``qty_out``),
+	  and **a negative one is kept**: more left the shelf under that job than came in under
+	  it, usually parts bought for one job and used on another. ``over_tagged`` is
+	  ``tagged`` minus ``qty`` when the cap took something off, else 0. ``last_movement`` is
+	  the date of the job's latest row.
+	* ``untagged``: one per item whose on-hand differs from the sum of its jobs' tag
+	  balances. ``qty`` is on hand minus tagged: positive is stock no job has a claim on,
+	  negative is more claimed than is there. ``over_tagged`` is the claimed stock that is
+	  not there, 0 or more.
 	* ``untagged_movements``: the ledger rows with no project, newest first, at most
 	  ``limit``. A count's change is worked out from the balance before it.
-	* ``exact``: no untagged difference and no negative row.
+	* ``exact``: no untagged difference and no negative balance.
 
 	A count never counts toward a job, whatever its row says: a Stock Reconciliation has no
 	project in ERPNext. ``project`` and ``item_code`` narrow the answer; with ``project``, the
@@ -319,9 +417,12 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 			continue
 		day = str(row.get("posting_date") or "")[:10]
 		if tag:
-			entry = tagged.setdefault((tag, code), {"qty_in": 0.0, "qty_out": 0.0, "last_movement": ""})
+			entry = tagged.setdefault(
+				(tag, code), {"qty_in": 0.0, "qty_out": 0.0, "last_movement": "", "last_in": ""}
+			)
 			if change > 0:
 				entry["qty_in"] += change
+				entry["last_in"] = max(entry["last_in"], day)
 			else:
 				entry["qty_out"] -= change
 			entry["last_movement"] = max(entry["last_movement"], day)
@@ -339,16 +440,26 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 
 	rows = []
 	tagged_by_item = {}
+	claims_by_item = {}
 	for (tag, code), entry in tagged.items():
-		qty = entry["qty_in"] - entry["qty_out"]
-		tagged_by_item[code] = tagged_by_item.get(code, 0.0) + qty
-		if abs(qty) <= TOLERANCE:
+		balance = entry["qty_in"] - entry["qty_out"]
+		tagged_by_item[code] = tagged_by_item.get(code, 0.0) + balance
+		claims_by_item.setdefault(code, []).append((tag, balance, entry["last_in"]))
+	shares = {
+		code: allocate((on_hand or {}).get(code), claims) for code, claims in claims_by_item.items()
+	}
+	for (tag, code), entry in tagged.items():
+		balance = entry["qty_in"] - entry["qty_out"]
+		if abs(balance) <= TOLERANCE:
 			continue
+		share = shares.get(code, {}).get(tag, 0.0)
 		rows.append(
 			{
 				"project": tag,
 				"item_code": code,
-				"qty": qty,
+				"qty": share,
+				"tagged": balance,
+				"over_tagged": max(balance - share, 0.0) if balance > 0 else 0.0,
 				"qty_in": entry["qty_in"],
 				"qty_out": entry["qty_out"],
 				"last_movement": entry["last_movement"],
@@ -369,7 +480,17 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 		have = _qty((on_hand or {}).get(code))
 		claimed = tagged_by_item.get(code, 0.0)
 		if abs(have - claimed) > TOLERANCE:
-			untagged.append({"item_code": code, "on_hand": have, "tagged": claimed, "qty": have - claimed})
+			held = sum(shares.get(code, {}).values())
+			positive = sum(balance for _tag, balance, _last in claims_by_item.get(code, ()) if balance > 0)
+			untagged.append(
+				{
+					"item_code": code,
+					"on_hand": have,
+					"tagged": claimed,
+					"qty": have - claimed,
+					"over_tagged": max(positive - held, 0.0),
+				}
+			)
 
 	if only_project:
 		movements = [m for m in movements if m["item_code"] in codes]
@@ -378,7 +499,7 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 		"rows": rows,
 		"untagged": untagged,
 		"untagged_movements": movements[: max(int(limit or 0), 0)],
-		"exact": not untagged and not any(row["qty"] < -TOLERANCE for row in rows),
+		"exact": not untagged and not any(row["tagged"] < -TOLERANCE for row in rows),
 	}
 
 
@@ -394,8 +515,22 @@ def projects_summary(rows):
 	return [out[name] for name in sorted(out)]
 
 
+def item_exact(summary, item_code):
+	"""Whether the tags account for every unit of one item on the shelf: no gap between its
+	on-hand and its jobs' balances, and no job with a negative balance. Only then is "the one
+	job that holds it" a fact rather than a guess, and only then is it used without asking
+	(``api.stock_scan._transfer_project``). ``summary`` is a :func:`shelf_summary` answer."""
+	code = _name(item_code)
+	if any(row.get("item_code") == code for row in summary.get("untagged") or ()):
+		return False
+	return not any(
+		row.get("item_code") == code and _qty(row.get("tagged")) < -TOLERANCE for row in summary.get("rows") or ()
+	)
+
+
 def holders(rows, item_code):
-	"""``[(project, qty), ...]`` for one item: the jobs that hold it on the shelf, most first."""
+	"""``[(project, qty), ...]`` for one item: the jobs that hold it on the shelf, most first.
+	``qty`` is the capped figure, so a job whose tagged stock has all left is not a holder."""
 	held = [(row["project"], row["qty"]) for row in rows or () if row["item_code"] == item_code and row["qty"] > TOLERANCE]
 	held.sort(key=lambda pair: (-pair[1], pair[0]))
 	return held

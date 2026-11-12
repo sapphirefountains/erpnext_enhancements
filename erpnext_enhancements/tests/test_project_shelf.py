@@ -129,12 +129,27 @@ def setUpModule():
 			return [(r["warehouse"],) for r in rows]
 		if text.startswith("select count(*)") or "from `tabPurchase Order Item` poi" in text:
 			return [STATE.get("count_row", (0, 0, 0))]
+		if "`__UserSettings`" in text:
+			if STATE.get("filters_fail"):
+				raise RuntimeError("the saved filters could not be read")
+			saved = STATE.setdefault("user_settings", [])
+			if text.startswith("select"):
+				needle = values[0].strip("%")
+				return [(row["user"], row["doctype"]) for row in saved if needle in row["data"]]
+			old, new, like = values
+			for row in saved:
+				if like.strip("%") in row["data"]:
+					row["data"] = row["data"].replace(old, new)
+			return []
 		return _ORIGINAL["sql"](query, values, as_dict=as_dict, **kwargs)
 
 	FRAPPE.db.sql = sql
 
 	base.Doc.check_permission = lambda self, ptype=None: STATE.setdefault("checked", []).append(
 		(self.doctype, ptype)
+	)
+	FRAPPE.cache = types.SimpleNamespace(
+		hdel=lambda name, key: STATE.setdefault("cache_dropped", []).append((name, key))
 	)
 
 	# Frappe's rename and its search index, as the patch imports them.
@@ -186,6 +201,7 @@ def setUpModule():
 def tearDownModule():
 	FRAPPE.db.sql = _ORIGINAL["sql"]
 	del base.Doc.check_permission
+	del FRAPPE.cache
 	for name in _OWN_MODULES:
 		sys.modules.pop(name, None)
 	sites_base.tearDownModule()
@@ -287,6 +303,33 @@ class TestWhereALineGoes(unittest.TestCase):
 		self.assertFalse(rules.may_default(BIN_A, (SHELF, ROOM)))
 		self.assertFalse(rules.may_default(BIN_A, ()))
 
+	def test_an_overhead_line_on_the_shelf_is_the_one_place_nobody_chooses(self):
+		self.assertTrue(rules.overhead_on_shelf(SHELF, True, True, SHELF))
+		self.assertFalse(rules.overhead_on_shelf(SHELF, True, False, SHELF), "a job's line belongs there")
+		self.assertFalse(rules.overhead_on_shelf(BIN_A, True, True, SHELF))
+		self.assertFalse(rules.overhead_on_shelf(SHELF, False, True, SHELF))
+		self.assertFalse(rules.overhead_on_shelf(SHELF, True, True, None), "no shelf set up")
+		self.assertFalse(rules.overhead_on_shelf("", True, True, SHELF))
+
+	def test_the_form_replaces_only_what_erpnext_filled_when_a_line_gets_its_item(self):
+		automatic = (SHELF, BIN_A, None)
+		self.assertTrue(rules.form_may_default("", True, automatic))
+		self.assertTrue(rules.form_may_default(SHELF, True, automatic), "the Company's default")
+		self.assertTrue(rules.form_may_default(BIN_A, True, automatic), "the item's default bin")
+		self.assertFalse(rules.form_may_default(BIN_B, True, automatic), "typed by a person before the project")
+		self.assertFalse(rules.form_may_default(BIN_B, True, ()))
+
+	def test_when_only_the_project_changes_a_hand_pick_stays(self):
+		automatic = (SHELF, BIN_A)
+		# The rule's own value from this session, or its value for the project the line had.
+		self.assertTrue(rules.form_may_default(SHELF, False, automatic, previous=None, applied=SHELF))
+		self.assertTrue(rules.form_may_default(BIN_B, False, automatic, previous=BIN_B, applied=None))
+		# A hand pick stays, even when it equals the item's default bin or the shelf.
+		self.assertFalse(rules.form_may_default(BIN_A, False, automatic, previous=SHELF, applied=SHELF))
+		self.assertFalse(rules.form_may_default(SHELF, False, automatic, previous=BIN_B, applied=BIN_B))
+		self.assertFalse(rules.form_may_default(BIN_B, False, automatic))
+		self.assertTrue(rules.form_may_default("", False, automatic))
+
 	def test_a_receipt_goes_where_the_order_line_says(self):
 		self.assertEqual(rules.receiving_warehouse(BIN_A, True, False, SHELF), (BIN_A, rules.REASON_NONE, False))
 		self.assertEqual(rules.receiving_warehouse(SHELF, True, False, SHELF), (SHELF, rules.REASON_SHELF, False))
@@ -323,6 +366,14 @@ class TestWhereALineGoes(unittest.TestCase):
 
 
 class TestWhoseStockAMoveIs(unittest.TestCase):
+	def test_an_add_at_the_shelf_never_credits_the_job(self):
+		"""Away from the shelf a job on an add means the parts came back from it. At the shelf
+		the job is who they are set aside for, and crediting it would cancel its later take."""
+		self.assertEqual(rules.add_offset_setting(True, False), "take_expense_account")
+		self.assertEqual(rules.add_offset_setting(False, False), "add_offset_account")
+		self.assertEqual(rules.add_offset_setting(True, True), "add_offset_account")
+		self.assertEqual(rules.add_offset_setting(False, True), "add_offset_account")
+
 	def test_a_take_at_the_shelf_always_needs_a_job(self):
 		self.assertTrue(rules.take_needs_job(True, 0))
 		self.assertTrue(rules.take_needs_job(False, 1))
@@ -429,6 +480,8 @@ class TestShelfSummary(unittest.TestCase):
 			[(r["project"], r["item_code"], r["qty"], r["qty_in"], r["qty_out"]) for r in out["rows"]],
 			[(JOB_A, "A", 12.0, 12.0, 0.0), (JOB_A, "B", 6.0, 6.0, 0.0), (JOB_B, "A", 18.0, 18.0, 0.0)],
 		)
+		# Nothing is short, so what each job has is what its tags say.
+		self.assertEqual([(r["tagged"], r["over_tagged"]) for r in out["rows"]], [(12.0, 0.0), (6.0, 0.0), (18.0, 0.0)])
 		self.assertEqual(out["untagged"], [])
 		self.assertEqual(out["untagged_movements"], [])
 		self.assertTrue(out["exact"])
@@ -457,8 +510,12 @@ class TestShelfSummary(unittest.TestCase):
 			_row("A", -7, None, "Stock Entry", "MAT-STE-0002", after=0, day="2026-09-23"),
 		]
 		out = rules.shelf_summary(ledger, {"A": 0})
-		self.assertEqual(out["rows"][0]["qty"], 7.0)
-		self.assertEqual(out["untagged"], [{"item_code": "A", "on_hand": 0.0, "tagged": 7.0, "qty": -7.0}])
+		# The tag is still there; the job's figure is what is physically there: nothing.
+		self.assertEqual((out["rows"][0]["qty"], out["rows"][0]["tagged"], out["rows"][0]["over_tagged"]), (0.0, 7.0, 7.0))
+		self.assertEqual(
+			out["untagged"], [{"item_code": "A", "on_hand": 0.0, "tagged": 7.0, "qty": -7.0, "over_tagged": 7.0}]
+		)
+		self.assertEqual(rules.holders(out["rows"], "A"), [], "a job whose parts have left holds nothing")
 		self.assertEqual(
 			out["untagged_movements"],
 			[
@@ -481,8 +538,11 @@ class TestShelfSummary(unittest.TestCase):
 			_row("A", 0, JOB_A, rules.RECONCILIATION, "MAT-RECO-0001", after=8, day="2026-10-20"),
 		]
 		out = rules.shelf_summary(ledger, {"A": 8})
-		self.assertEqual(out["rows"][0]["qty"], 10.0, "a count carries no job, whatever its row says")
-		self.assertEqual(out["untagged"], [{"item_code": "A", "on_hand": 8.0, "tagged": 10.0, "qty": -2.0}])
+		self.assertEqual(out["rows"][0]["tagged"], 10.0, "a count carries no job, whatever its row says")
+		self.assertEqual(out["rows"][0]["qty"], 8.0, "and the job cannot have more than was counted")
+		self.assertEqual(
+			out["untagged"], [{"item_code": "A", "on_hand": 8.0, "tagged": 10.0, "qty": -2.0, "over_tagged": 2.0}]
+		)
 		self.assertEqual((out["untagged_movements"][0]["qty"], out["untagged_movements"][0]["kind"]), (-2.0, rules.KIND_COUNT))
 		self.assertFalse(out["exact"])
 
@@ -504,14 +564,44 @@ class TestShelfSummary(unittest.TestCase):
 			_row("A", -4, JOB_B, "Stock Entry", "MAT-STE-0003", after=0),
 		]
 		out = rules.shelf_summary(ledger, {"A": 0})
-		self.assertEqual([(r["project"], r["qty"]) for r in out["rows"]], [(JOB_A, 4.0), (JOB_B, -4.0)])
+		self.assertEqual([(r["project"], r["tagged"]) for r in out["rows"]], [(JOB_A, 4.0), (JOB_B, -4.0)])
+		# Nothing is on the shelf, so neither job has any: never a negative, never a phantom 4.
+		self.assertEqual([(r["qty"], r["over_tagged"]) for r in out["rows"]], [(0.0, 4.0), (0.0, 0.0)])
 		self.assertEqual(out["untagged"], [], "the tags add up to what is there")
-		self.assertFalse(out["exact"], "but a negative is never exact")
+		self.assertFalse(out["exact"], "but a negative balance is never exact")
 
 	def test_stock_on_hand_that_no_row_explains_is_untagged(self):
 		out = rules.shelf_summary([], {"A": 3, "B": 0})
-		self.assertEqual(out["untagged"], [{"item_code": "A", "on_hand": 3.0, "tagged": 0.0, "qty": 3.0}])
+		self.assertEqual(
+			out["untagged"], [{"item_code": "A", "on_hand": 3.0, "tagged": 0.0, "qty": 3.0, "over_tagged": 0.0}]
+		)
 		self.assertFalse(out["exact"])
+
+	def test_a_jobs_figure_is_never_more_than_is_on_the_shelf(self):
+		"""Two jobs' tags claim 9 and 6 are there: the job that received last keeps its parts."""
+		ledger = [
+			_row("A", 5, JOB_A, after=5, day="2026-09-01"),
+			_row("A", 4, JOB_B, after=9, day="2026-10-01"),
+			_row("A", 0, None, rules.RECONCILIATION, "MAT-RECO-0009", after=6, day="2026-10-20"),
+		]
+		out = rules.shelf_summary(ledger, {"A": 6})
+		by_job = {r["project"]: r for r in out["rows"]}
+		self.assertEqual((by_job[JOB_B]["qty"], by_job[JOB_B]["over_tagged"]), (4.0, 0.0))
+		self.assertEqual((by_job[JOB_A]["qty"], by_job[JOB_A]["tagged"], by_job[JOB_A]["over_tagged"]), (2.0, 5.0, 3.0))
+		self.assertEqual(sum(r["qty"] for r in out["rows"]), 6.0)
+		self.assertEqual(out["untagged"][0]["over_tagged"], 3.0)
+		self.assertEqual(rules.projects_summary(out["rows"])[0]["qty"], 2.0)
+
+	def test_allocate(self):
+		self.assertEqual(rules.allocate(10, [(JOB_A, 3, "2026-09-01"), (JOB_B, 4, "2026-10-01")]), {JOB_A: 3.0, JOB_B: 4.0})
+		self.assertEqual(rules.allocate(5, [(JOB_A, 3, "2026-09-01"), (JOB_B, 4, "2026-10-01")]), {JOB_A: 1.0, JOB_B: 4.0})
+		self.assertEqual(rules.allocate(0, [(JOB_A, 13, "2026-09-15")]), {JOB_A: 0.0})
+		# A negative balance holds nothing and takes nothing; a negative on-hand is none.
+		self.assertEqual(rules.allocate(1, [(JOB_A, 3, "2026-09-01"), (JOB_B, -2, "2026-10-01")]), {JOB_A: 1.0})
+		self.assertEqual(rules.allocate(-4, [(JOB_A, 3, "")]), {JOB_A: 0.0})
+		# The same date is settled by the job's id, the same way every time.
+		self.assertEqual(rules.allocate(2, [(JOB_B, 2, "2026-10-01"), (JOB_A, 2, "2026-10-01")]), {JOB_A: 2.0, JOB_B: 0.0})
+		self.assertEqual(rules.allocate(5, None), {})
 
 	def test_the_project_filter_keeps_that_jobs_rows_and_its_items_gaps(self):
 		ledger = [
@@ -552,6 +642,17 @@ class TestShelfSummary(unittest.TestCase):
 			rules.projects_summary(rows),
 			[{"project": JOB_A, "items": 2, "qty": 10.0}, {"project": JOB_B, "items": 0, "qty": 0.0}],
 		)
+
+	def test_an_items_tags_are_exact_only_when_they_account_for_every_unit(self):
+		clean = rules.shelf_summary([_row("A", 4, JOB_A, after=4)], {"A": 4})
+		self.assertTrue(rules.item_exact(clean, "A"))
+		short = rules.shelf_summary([_row("A", 4, JOB_A, after=4)], {"A": 6})
+		self.assertFalse(rules.item_exact(short, "A"), "two are there with no job on record")
+		self.assertTrue(rules.item_exact(short, "B"), "another item is not affected")
+		crossed = rules.shelf_summary(
+			[_row("A", 4, JOB_A, after=4), _row("A", -1, JOB_B, "Stock Entry", "MAT-STE-0007", after=3)], {"A": 3}
+		)
+		self.assertFalse(rules.item_exact(crossed, "A"), "a negative balance is a guess about whose are left")
 
 	def test_holders_are_the_jobs_with_some_left_most_first(self):
 		rows = [
@@ -664,6 +765,20 @@ class TestTheModule(_Base):
 		self.assertEqual(out["untagged"][0]["item_name"], f"PART, {ITEM}")
 		self.assertFalse(out["exact"])
 
+	def test_a_job_whose_tagged_stock_has_left_is_not_a_holder(self):
+		"""Production on the day of the rename: 13 units received for a job, moved out by a
+		transfer with no project. The tag stays on the ledger; the shelf holds none."""
+		STATE["ledger"] = [
+			_row(ITEM, 7, DONE_JOB, after=7, day="2026-09-15"),
+			_row(ITEM, -7, None, "Stock Entry", "MAT-STE-0002", after=0, day="2026-09-23"),
+		]
+		base._bin(ITEM, SHELF, 0)
+		out = shelf.shelf_stock()
+		self.assertEqual((out["rows"][0]["qty"], out["rows"][0]["tagged"], out["rows"][0]["over_tagged"]), (0.0, 7.0, 7.0))
+		self.assertEqual(out["projects"][0]["qty"], 0.0)
+		self.assertEqual(shelf.holders(ITEM), [])
+		self.assertFalse(out["exact"])
+
 	def test_shelf_stock_never_raises_and_never_calls_a_failure_exact(self):
 		STATE["ledger_fails"] = True
 		out = shelf.shelf_stock()
@@ -680,6 +795,11 @@ class TestTheModule(_Base):
 			],
 		)
 		self.assertEqual(shelf.holders(""), [])
+		self.assertEqual(shelf.holding(ITEM)["exact"], True)
+		base._table("Bin")[f"{ITEM}@{SHELF}"]["actual_qty"] = 9.0
+		held = shelf.holding(ITEM)
+		self.assertEqual((len(held["jobs"]), held["exact"]), (2, False), "one more is there than the tags say")
+		self.assertEqual(shelf.holding(""), {"jobs": [], "exact": True})
 
 
 # --------------------------------------------------------------------------- availability
@@ -808,6 +928,44 @@ class TestTakesAndAdds(_Base):
 		entry = base._vouchers("Stock Entry")[0]
 		self.assertEqual((entry["stock_entry_type"], entry["project"]), ("Material Receipt", JOB_B))
 
+	def _offsets(self, fn):
+		"""Run ``fn`` and return the settings account each entry's other side was resolved from."""
+		STATE["settings"].update(take_expense_account="5200 - Parts Taken - SF", add_offset_account="5300 - Added Without PO - SF")
+		original = scan._difference_account
+		scan._difference_account = lambda company, item_code, configured=None: configured
+		try:
+			fn()
+		finally:
+			scan._difference_account = original
+		return [row["expense_account"] for entry in base._vouchers("Stock Entry") for row in entry["items"]]
+
+	def test_an_add_at_the_shelf_offsets_like_found_stock_and_keeps_the_job(self):
+		"""Credited to the job's Parts Taken account, the job's later take would net to nothing
+		and the job would carry no cost for the parts."""
+		accounts = self._offsets(lambda: scan.add(ITEM, SHELF, 1, base._ref(20), without_po=1, project=JOB_B))
+		self.assertEqual(accounts, ["5300 - Added Without PO - SF"])
+		self.assertEqual(base._vouchers("Stock Entry")[0]["project"], JOB_B)
+
+	def test_a_return_from_a_job_at_an_ordinary_bin_still_credits_the_job(self):
+		accounts = self._offsets(lambda: scan.add(ITEM, BIN_A, 1, base._ref(21), without_po=1, project=JOB_B))
+		self.assertEqual(accounts, ["5200 - Parts Taken - SF"])
+
+	def test_found_stock_at_an_ordinary_bin_still_offsets_to_added_without_po(self):
+		accounts = self._offsets(lambda: scan.add(ITEM, BIN_A, 1, base._ref(22), without_po=1))
+		self.assertEqual(accounts, ["5300 - Added Without PO - SF"])
+
+	def test_a_take_at_the_shelf_still_charges_the_parts_taken_account(self):
+		accounts = self._offsets(lambda: scan.take(ITEM, SHELF, 1, base._ref(23), project=JOB_B))
+		self.assertEqual(accounts, ["5200 - Parts Taken - SF"])
+
+	def test_a_new_items_bin_is_never_the_shelf_or_a_job_site(self):
+		spec = {"item_code": "NEW-0001", "item_name": "VALVE, NEW", "item_group": "Parts", "stock_uom": "Unit"}
+		item = scan._quick_item(spec, scan._warehouse(SHELF))
+		self.assertEqual(item.item_defaults, [{"company": COMPANY, "default_warehouse": None}])
+		spec["item_code"] = "NEW-0002"
+		item = scan._quick_item(spec, scan._warehouse(BIN_A))
+		self.assertEqual(item.item_defaults, [{"company": COMPANY, "default_warehouse": BIN_A}])
+
 	def test_stock_added_to_an_ordinary_bin_still_needs_no_job(self):
 		scan.add(ITEM, BIN_A, 1, base._ref(6), without_po=1)
 		self.assertIsNone(base._vouchers("Stock Entry")[0].get("project"))
@@ -852,6 +1010,20 @@ class TestMoves(_Base):
 		self.assertRefused(
 			bins.move_to, "which job these were bought for", item_code=ITEM, from_warehouse=SHELF, to_warehouse=BIN_B, qty=1, client_ref=base._ref(4)
 		)
+
+	def test_a_job_whose_parts_have_left_is_never_picked_as_the_only_holder(self):
+		"""Ten are tagged to a finished job and gone; four came in later with no job. The move
+		must ask, not hang the four on the job whose ten left."""
+		STATE["ledger"] = [
+			_row(ITEM, 10, DONE_JOB, after=10, day="2026-09-01"),
+			_row(ITEM, -10, None, "Stock Entry", "MAT-STE-0002", after=0, day="2026-09-23"),
+			_row(ITEM, 0, None, rules.RECONCILIATION, "MAT-RECO-0001", after=4, day="2026-10-20"),
+		]
+		base._bin(ITEM, SHELF, 4)
+		self.assertRefused(
+			bins.move_to, "which job these were bought for", item_code=ITEM, from_warehouse=SHELF, to_warehouse=BIN_B, qty=1, client_ref=base._ref(30)
+		)
+		self.assertEqual(base._vouchers("Stock Entry"), [])
 
 	def test_a_finished_jobs_leftovers_can_be_released_to_the_shop(self):
 		_held(ITEM, (DONE_JOB, 4))
@@ -1006,10 +1178,66 @@ class TestPurchaseLines(_Base):
 		procurement.default_line_warehouses(doc)
 		self.assertEqual([row.warehouse for row in doc.items], [SHELF, BIN_B])
 
-	def test_a_location_that_is_there_is_never_changed_on_save(self):
-		doc = _order([{"project": JOB_A, "warehouse": BIN_A}, {"project": OVERHEAD, "warehouse": SHELF}])
+	def test_a_location_a_person_picked_is_never_changed_on_save(self):
+		base._rule(ITEM, BIN_B)
+		doc = _order(
+			[
+				{"project": JOB_A, "warehouse": BIN_A},  # a job's line sent to a bin on purpose
+				{"project": JOB_A, "warehouse": SHELF},
+				{"project": OVERHEAD, "warehouse": BIN_A},  # an Overhead line on a bin that is not its own
+			]
+		)
 		procurement.default_line_warehouses(doc)
-		self.assertEqual([row.warehouse for row in doc.items], [BIN_A, SHELF])
+		self.assertEqual([row.warehouse for row in doc.items], [BIN_A, SHELF, BIN_A])
+
+	def test_an_overhead_line_is_never_saved_on_the_shelf(self):
+		"""ERPNext fills the shelf into every new line (the Company's default warehouse). The
+		form corrects it when its script runs in time; the save corrects it always."""
+		base._rule(ITEM, BIN_B)
+		doc = _order([{"project": OVERHEAD, "warehouse": SHELF}])
+		procurement.default_line_warehouses(doc)
+		self.assertEqual(doc.items[0].warehouse, BIN_B)
+		# And again on the next save, if something put it back.
+		doc.items[0].warehouse = SHELF
+		procurement.default_line_warehouses(doc)
+		self.assertEqual(doc.items[0].warehouse, BIN_B)
+
+	def test_the_paths_the_form_never_sees_are_corrected_on_save(self):
+		base._rule(ITEM, BIN_B)
+		cases = {
+			"a duplicated order": {"project": OVERHEAD, "warehouse": SHELF},
+			"mapped from a Supplier Quotation": {"project": OVERHEAD, "warehouse": SHELF, "supplier_quotation_item": "SQI-1"},
+			"mapped from a Material Request": {"project": OVERHEAD, "warehouse": SHELF, "material_request_item": "MRI-1"},
+			"a REST save that sends a warehouse": {"project": OVERHEAD, "warehouse": SHELF, "rate": 4},
+		}
+		for label, line in cases.items():
+			with self.subTest(label):
+				doc = _order([dict(line)])
+				procurement.cascade_project_to_items(doc)
+				procurement.default_line_warehouses(doc)
+				self.assertEqual(doc.items[0].warehouse, BIN_B)
+
+	def test_an_overhead_line_with_no_bin_goes_to_the_fallback_on_save(self):
+		doc = _order([{"project": OVERHEAD, "warehouse": SHELF}])
+		procurement.default_line_warehouses(doc)
+		self.assertEqual(doc.items[0].warehouse, ROOM)
+
+	def test_an_overhead_line_with_nowhere_better_stays_where_it_is(self):
+		_reset(fallback=False)
+		doc = _order([{"project": OVERHEAD, "warehouse": SHELF}])
+		procurement.default_line_warehouses(doc)
+		self.assertEqual(doc.items[0].warehouse, SHELF)
+		self.assertEqual(STATE["errors"], [])
+
+	def test_the_save_hook_never_raises(self):
+		original = procurement.default_line_warehouse
+		procurement.default_line_warehouse = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		try:
+			doc = _order([{"project": OVERHEAD, "warehouse": SHELF}, {"project": JOB_A, "warehouse": None}])
+			procurement.default_line_warehouses(doc)
+		finally:
+			procurement.default_line_warehouse = original
+		self.assertEqual([row.warehouse for row in doc.items], [SHELF, None])
 
 	def test_a_submitted_order_is_left_alone(self):
 		doc = _order([{"project": JOB_A, "warehouse": None}], docstatus=1)
@@ -1030,10 +1258,17 @@ class TestPurchaseLines(_Base):
 		self.assertEqual((doc.items[0].project, doc.items[0].warehouse), (JOB_A, BIN_A))
 
 	def test_the_cascade_leaves_a_line_that_came_from_a_request(self):
-		base._default(ITEM, SHELF)
+		base._default(ITEM, BIN_A)
+		doc = _order([{"project": "", "warehouse": BIN_A, "material_request_item": "MRI-1"}], project=JOB_A)
+		procurement.cascade_project_to_items(doc)
+		self.assertEqual(doc.items[0].warehouse, BIN_A, "the request asked for that bin on purpose")
+
+	def test_but_not_an_overhead_request_line_on_the_shelf(self):
+		"""A request line's warehouse is usually the Item Default, which is the shelf."""
+		base._rule(ITEM, BIN_B)
 		doc = _order([{"project": "", "warehouse": SHELF, "material_request_item": "MRI-1"}], project=OVERHEAD)
 		procurement.cascade_project_to_items(doc)
-		self.assertEqual(doc.items[0].warehouse, SHELF)
+		self.assertEqual(doc.items[0].warehouse, BIN_B)
 
 	def test_the_cascade_never_touches_a_line_that_has_its_project(self):
 		base._rule(ITEM, BIN_B)
@@ -1066,9 +1301,132 @@ class TestPurchaseLines(_Base):
 		self.assertEqual(sorted(out), ["r1", "r2"])
 		self.assertEqual(
 			out["r1"],
-			{"item_code": ITEM, "project": JOB_A, "warehouse": SHELF, "warehouse_name": "Project Shelf", "reason": "shelf"},
+			{
+				"item_code": ITEM,
+				"project": JOB_A,
+				"warehouse": SHELF,
+				"warehouse_name": "Project Shelf",
+				"reason": "shelf",
+				"keep": False,
+			},
 		)
 		self.assertEqual((out["r2"]["warehouse"], out["r2"]["reason"]), (BIN_B, "own_bin"))
+
+	def _asked(self, **line):
+		row = {"key": "r1", "item_code": ITEM, **line}
+		return procurement.line_warehouses([row], COMPANY)["r1"]
+
+	def test_the_form_is_told_to_keep_a_warehouse_a_person_picked(self):
+		"""The project changes on a line whose warehouse was picked by hand: it stays."""
+		base._rule(ITEM, BIN_B)
+		base._default(ITEM, BIN_A)
+		# The rule set the shelf for the job; the person then picked a bin; now the project changes.
+		picked = self._asked(project=OVERHEAD, warehouse=BIN_A, was_item_code=ITEM, was_project=JOB_A, applied=SHELF)
+		self.assertTrue(picked["keep"], "even though it equals the item's default bin")
+		self.assertEqual(picked["warehouse"], BIN_B, "the default is still answered, for the record")
+		# The rule's own value is replaced: what it set this session, or what it gives for the old project.
+		self.assertFalse(self._asked(project=OVERHEAD, warehouse=SHELF, was_item_code=ITEM, was_project=JOB_A, applied=SHELF)["keep"])
+		self.assertFalse(self._asked(project=JOB_A, warehouse=BIN_B, was_item_code=ITEM, was_project=OVERHEAD)["keep"])
+		# A line already there when the form opened, on a bin that is not the rule's: a hand pick.
+		self.assertTrue(self._asked(project=JOB_B, warehouse=BIN_A, was_item_code=ITEM, was_project=JOB_A)["keep"])
+
+	def test_when_a_line_gets_its_item_only_erpnexts_own_fill_is_replaced(self):
+		base._default(ITEM, BIN_A)
+		base._table("Company")[COMPANY] = {"name": COMPANY, "default_warehouse": SHELF}
+		self.assertFalse(self._asked(project=JOB_A, warehouse=BIN_A)["keep"], "the item's default bin")
+		self.assertFalse(self._asked(project=OVERHEAD, warehouse=SHELF)["keep"], "the Company's default")
+		self.assertFalse(self._asked(project=JOB_A, warehouse="")["keep"])
+		self.assertTrue(self._asked(project=JOB_A, warehouse=BIN_B)["keep"], "typed before the project was set")
+		# A changed item is a fresh fill by ERPNext too.
+		self.assertFalse(self._asked(project=JOB_A, warehouse=BIN_A, was_item_code="OTHER", was_project=JOB_A)["keep"])
+
+	def test_an_overhead_line_on_the_shelf_is_never_kept(self):
+		base._rule(ITEM, BIN_B)
+		answer = self._asked(project=OVERHEAD, warehouse=SHELF, was_item_code=ITEM, was_project=OVERHEAD, applied=BIN_B)
+		self.assertFalse(answer["keep"], "the save would move it anyway")
+
+	def test_the_form_script_sends_what_the_server_needs_and_obeys_keep(self):
+		script = (APP / "public" / "js" / "purchase_order_project.js").read_text(encoding="utf-8")
+		for sent in ("warehouse: row.warehouse", "was_item_code: was.item_code", "was_project: was.project", "applied: applied[row.name]"):
+			self.assertIn(sent, script)
+		self.assertIn("if (answer.keep || !answer.warehouse) return;", script)
+		# The warehouse field's own event is not used to tell a hand pick: ERPNext triggers it
+		# itself after its item lookup (transaction.js at v16.54.0).
+		self.assertNotIn("warehouse: function", script)
+		self.assertNotIn("warehouse(frm", script)
+
+	# --- rows added after submit, and receipts made in the Desk --------------------------------
+
+	def _new_line(self, **values):
+		base._table("Purchase Order")["PUR-ORD-0009"] = {
+			"name": "PUR-ORD-0009",
+			"project": values.pop("header", OVERHEAD),
+			"company": COMPANY,
+			"docstatus": 1,
+		}
+		return base.Doc(
+			"Purchase Order Item",
+			{"parenttype": "Purchase Order", "parent": "PUR-ORD-0009", "item_code": ITEM, **values},
+		)
+
+	def test_a_row_added_with_update_items_gets_the_headers_project_and_its_place(self):
+		"""ERPNext inserts that row itself, with no project and the Company's default warehouse."""
+		base._rule(ITEM, BIN_B)
+		row = self._new_line(warehouse=SHELF)
+		procurement.default_new_order_line(row)
+		self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_B))
+
+	def test_a_job_row_added_with_update_items_keeps_the_place_the_dialog_gave_it(self):
+		row = self._new_line(header=JOB_A, warehouse=BIN_A)
+		procurement.default_new_order_line(row)
+		self.assertEqual((row.project, row.warehouse), (JOB_A, BIN_A))
+		row = self._new_line(header=JOB_A, warehouse=None)
+		procurement.default_new_order_line(row)
+		self.assertEqual(row.warehouse, SHELF)
+
+	def test_a_row_of_another_document_and_a_failure_are_left_alone(self):
+		row = base.Doc("Purchase Order Item", {"parenttype": "Supplier Quotation", "parent": "SQ-1", "item_code": ITEM, "warehouse": SHELF})
+		procurement.default_new_order_line(row)
+		self.assertEqual((row.project, row.warehouse), (None, SHELF))
+		procurement.default_new_order_line(None)
+
+	def _receipt(self, **header):
+		receipt = base.Doc("Purchase Receipt", {"company": COMPANY, "__islocal": 1, **header})
+		receipt.append("items", {"item_code": ITEM, "project": OVERHEAD, "warehouse": SHELF, "purchase_order_item": "row1"})
+		receipt.append("items", {"item_code": ITEM, "project": JOB_A, "warehouse": SHELF, "purchase_order_item": "row2"})
+		return receipt
+
+	def test_a_receipt_made_in_the_desk_moves_its_overhead_line_off_the_shelf_on_first_save(self):
+		base._rule(ITEM, BIN_B)
+		receipt = self._receipt()
+		procurement.default_receipt_warehouses(receipt)
+		self.assertEqual([row.warehouse for row in receipt.items], [BIN_B, SHELF])
+
+	def test_a_saved_receipt_a_return_and_a_receipt_a_person_placed_are_left_alone(self):
+		base._rule(ITEM, BIN_B)
+		for label, receipt in (
+			("already saved", self._receipt(__islocal=0)),
+			("a return", self._receipt(is_return=1)),
+			("submitted", self._receipt(docstatus=1)),
+		):
+			with self.subTest(label):
+				procurement.default_receipt_warehouses(receipt)
+				self.assertEqual([row.warehouse for row in receipt.items], [SHELF, SHELF])
+		placed = self._receipt()
+		placed.flags.receiving_places_chosen = True
+		procurement.default_receipt_warehouses(placed)
+		self.assertEqual([row.warehouse for row in placed.items], [SHELF, SHELF], "a scan at the shelf still wins")
+		procurement.default_receipt_warehouses(None)
+
+	def test_the_new_hooks_are_wired(self):
+		hooks = HOOKS.read_text(encoding="utf-8")
+		self.assertIn('"before_insert": "erpnext_enhancements.procurement_project.default_new_order_line"', hooks)
+		self.assertIn('"before_validate": "erpnext_enhancements.procurement_project.default_receipt_warehouses"', hooks)
+		receive = ast.unparse(
+			next(n for n in ast.walk(ast.parse(RECEIVE.read_text(encoding="utf-8"))) if isinstance(n, ast.FunctionDef) and n.name == "receive_items")
+		)
+		self.assertIn("receipt.flags.receiving_places_chosen = bool(target or places)", receive)
+		self.assertLess(receive.index("receiving_places_chosen"), receive.index("receipt.insert()"))
 
 	def test_the_form_needs_read_on_purchase_orders(self):
 		STATE["perm"] = {("Purchase Order", "read"): False}
@@ -1237,18 +1595,68 @@ class TestThePatch(_Base):
 		del base._table("Warehouse")[ROOM]
 		reports = self._run()
 		self.assertEqual(len(reports), 1)
-		self.assertIn("4. The Overhead receiving setting: skipped", reports[0][1])
+		self.assertIn("5. The Overhead receiving setting: skipped", reports[0][1])
 		self.assertIn("By hand:", reports[0][1])
 		self.assertNotIn((SETTINGS, "overhead_receiving_warehouse"), STATE["singles"])
 		self.assertEqual(STATE["singles"][(SETTINGS, "project_shelf_warehouse")], SHELF)
 
-	def test_a_site_without_the_shop_group_is_skipped_not_renamed(self):
+	def test_a_site_without_the_shop_group_is_left_alone_and_nobody_is_alerted(self):
 		del base._table("Warehouse")["Inventory - SF"]
 		reports = self._run()
+		self.assertEqual(reports, [], "no Error Log row: there is nothing for anyone to finish")
+		self.assertEqual(STATE["errors"], [])
 		self.assertNotIn("renames", STATE)
 		self.assertIn(STORES, base._table("Warehouse"))
-		self.assertIn("1. The warehouse: skipped", reports[0][1])
 		self.assertNotIn((SETTINGS, "project_shelf_warehouse"), STATE["singles"])
+
+	def test_a_site_with_no_stores_at_all_is_left_alone_and_nobody_is_alerted(self):
+		del base._table("Warehouse")[STORES]
+		reports = self._run()
+		self.assertEqual(reports, [])
+		self.assertEqual(STATE["errors"], [])
+		self.assertNotIn("indexed", STATE)
+		self.assertNotIn((SETTINGS, "project_shelf_warehouse"), STATE["singles"])
+
+	def test_the_quiet_run_still_says_what_it_found(self):
+		del base._table("Warehouse")["Inventory - SF"]
+		outcome = patch.rename_warehouse()
+		self.assertEqual(outcome[0], patch.ABSENT)
+		text = patch.report({key: (patch.ABSENT, "nothing was renamed on this site") for key, _label in patch.STEPS})
+		self.assertEqual(text.count("not needed here"), len(patch.STEPS))
+		self.assertNotIn("By hand:", text)
+
+	def test_saved_list_filters_that_named_stores_are_pointed_at_the_shelf(self):
+		"""Frappe's rename looks for them with LIKE and no wildcards, so it rewrites none."""
+		STATE["user_settings"] = [
+			{"user": "pat@example.com", "doctype": "Bin", "data": '{"List":{"filters":[["Bin","warehouse","=","Stores - SF"]]}}'},
+			{"user": "pat@example.com", "doctype": "Item", "data": '{"List":{"filters":[["Item","item_group","=","Parts"]]}}'},
+			{"user": "sam@example.com", "doctype": "Stock Ledger Entry", "data": '{"Report":{"filters":[["Stock Ledger Entry","warehouse","in",["Stores - SF","Bin A1-1-1 - SF"]]]}}'},
+			{"user": "sam@example.com", "doctype": "Warehouse", "data": '{"List":{"filters":[["Warehouse","name","like","%Old Stores - SF%"]]}}'},
+		]
+		reports = self._run()
+		self.assertEqual(reports, [])
+		saved = {(row["user"], row["doctype"]): row["data"] for row in STATE["user_settings"]}
+		self.assertIn('"Project Shelf - SF"', saved[("pat@example.com", "Bin")])
+		self.assertNotIn("Stores - SF", saved[("pat@example.com", "Bin")])
+		self.assertIn('["Project Shelf - SF","Bin A1-1-1 - SF"]', saved[("sam@example.com", "Stock Ledger Entry")])
+		# A row that never named it, and a longer text that only contains it, are untouched.
+		self.assertIn("Parts", saved[("pat@example.com", "Item")])
+		self.assertIn("%Old Stores - SF%", saved[("sam@example.com", "Warehouse")])
+		self.assertEqual(
+			sorted(STATE["cache_dropped"]),
+			[("_user_settings", "Bin::pat@example.com"), ("_user_settings", "Stock Ledger Entry::sam@example.com")],
+		)
+		# Twice is once.
+		before = [dict(row) for row in STATE["user_settings"]]
+		self.assertEqual(patch.rewrite_saved_filters(SHELF)[0], patch.ALREADY)
+		self.assertEqual(STATE["user_settings"], before)
+
+	def test_a_failure_rewriting_saved_filters_undoes_nothing_else(self):
+		STATE["filters_fail"] = True
+		reports = self._run()
+		self.assertIn(SHELF, base._table("Warehouse"))
+		self.assertEqual(STATE["singles"][(SETTINGS, "project_shelf_warehouse")], SHELF)
+		self.assertIn("3. People's saved list filters: failed", reports[0][1])
 
 	def test_nothing_is_merged_when_both_exist(self):
 		base._warehouse(SHELF, "Project Shelf")
@@ -1271,7 +1679,7 @@ class TestThePatch(_Base):
 		self.assertIn("1. The warehouse: failed. RuntimeError: the rename could not finish", reports[0][1])
 		self.assertTrue(any(title == "Project Shelf patch: renaming the warehouse failed" for title, _m in STATE["errors"]))
 		# The later steps ran and said why they had nothing to do.
-		self.assertIn("3. The Project Shelf setting: skipped", reports[0][1])
+		self.assertIn("4. The Project Shelf setting: skipped", reports[0][1])
 		self.assertIn(patch.RERUN, reports[0][1])
 
 	def test_a_failed_index_does_not_undo_the_rename(self):

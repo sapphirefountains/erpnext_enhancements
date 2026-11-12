@@ -1840,7 +1840,7 @@ async function appBinActions() {
 		const WALL = { project: "PRJ-90001", project_name: "Water Wall", qty: 3 };
 		const LOBBY = { project: "PRJ-90002", project_name: "Lobby", qty: 2 };
 		const SHELF_ON = { settings: { boneyard_warehouse: "Boneyard - SF", job_sites: 1, project_shelf_warehouse: SHELF.warehouse, project_shelf_name: SHELF.warehouse_name } };
-		const atShelf = (jobs) => ({ ...SHELF, assigned: false, is_default: true, project_shelf: true, shelf_jobs: jobs });
+		const atShelf = (jobs, exact = true) => ({ ...SHELF, assigned: false, is_default: true, project_shelf: true, shelf_jobs: jobs, shelf_jobs_exact: exact });
 		// An item on a bin, with some of it on the shelf: named apart, with its jobs.
 		t = await open(SHELF_ON, { elsewhere: [{ ...SHELF, on_hand: 5, available: 5, project_shelf: true, jobs: [WALL, LOBBY] }] });
 		const shelfLines = [...t.app.main.walk()].filter((node) => node.classList && node.classList.contains("ee-ss-also")).map((node) => node.textContent);
@@ -1858,6 +1858,17 @@ async function appBinActions() {
 		await settle();
 		let moved = sent(".move_to").slice(-1)[0] || {};
 		check("shelf to a bin: the move carries that job", [sent(".move_to").length - movesBefore, moved.from_warehouse, moved.to_warehouse, moved.project], [1, SHELF.warehouse, "Bin B2 - SF", "PRJ-90001"]);
+
+		// One job has a tag, but the tags do not account for everything there: nothing is picked.
+		t = await open(SHELF_ON, atShelf([WALL], false));
+		movesBefore = sent(".move_to").length;
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		truthy("shelf to a bin, tags not exact: the one tagged job is offered, not assumed", /Pick the job these were bought for\./.test(t.sheetText()) && /Water Wall/.test(t.sheetText()) && sent(".move_to").length === movesBefore, t.sheetText());
+		U.closeAllSheets();
+		await settle();
 
 		// Held for two jobs: nothing is guessed.
 		t = await open(SHELF_ON, atShelf([WALL, LOBBY]));
@@ -2435,8 +2446,9 @@ async function appBinActions() {
 			["off", "onto", "", "", "", ""]
 		);
 		const two = [{ project: "PRJ-90001", project_name: "Water Wall", qty: 3 }, { project: "PRJ-90002", project_name: "Lobby", qty: 2 }];
-		check("soleShelfJob: the only job that holds it, never a guess between two", [L.soleShelfJob([two[0]]), L.soleShelfJob(two), L.soleShelfJob([]), L.soleShelfJob(null)], [{ project: "PRJ-90001", project_name: "Water Wall" }, null, null, null]);
-		check("soleShelfJob: a job with nothing left holds nothing", L.soleShelfJob([two[0], { project: "PRJ-90002", qty: 0 }, { project: "PRJ-90003", qty: -2 }]), { project: "PRJ-90001", project_name: "Water Wall" });
+		check("soleShelfJob: the only job that holds it, never a guess between two", [L.soleShelfJob([two[0]], true), L.soleShelfJob(two, true), L.soleShelfJob([], true), L.soleShelfJob(null, true)], [{ project: "PRJ-90001", project_name: "Water Wall" }, null, null, null]);
+		check("soleShelfJob: a job with nothing left holds nothing", L.soleShelfJob([two[0], { project: "PRJ-90002", qty: 0 }, { project: "PRJ-90003", qty: -2 }], true), { project: "PRJ-90001", project_name: "Water Wall" });
+		check("soleShelfJob: when the jobs do not account for everything there, nothing is picked", [L.soleShelfJob([two[0]], false), L.soleShelfJob([two[0]]), L.soleShelfJob([two[0]], 1)], [null, null, null]);
 		check("shelfJobsText: names and quantities, most first as the server sent them", L.shelfJobsText(two), "Water Wall (3), Lobby (2)");
 		check("shelfJobsText: past the limit it counts the rest; nothing is an empty string", [L.shelfJobsText([...two, { project: "PRJ-90003", qty: 1 }], 2), L.shelfJobsText([]), L.shelfJobsText(undefined)], ["Water Wall (3), Lobby (2), and 1 more", "", ""]);
 	}

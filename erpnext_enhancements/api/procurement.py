@@ -322,6 +322,11 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         }
     )
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
+    # Where these lines go was said by a person (a scan at a bin, or the dialog's Put in column),
+    # so the receipt's own default-place hook stands aside (procurement_project
+    # .default_receipt_warehouses). With neither, that hook places them: an Overhead line that
+    # names the Project Shelf goes to the item's own bin.
+    receipt.flags.receiving_places_chosen = bool(target or places)
     if target:
         receipt.set_warehouse = target
     elif places:
