@@ -92,6 +92,10 @@ frappe.ui.form.on("Project Contract", {
 		// draft still sees it, and the server checks every one of these again.
 		const manages = frappe.user.has_role(["System Manager", "Contract Manager"]);
 		const signable = frm.doc.docstatus === 1 && frm.doc.status !== "Signed" && manages;
+		// A Certificate of Warranty (v1.808.0): only Sapphire signs it, so it is never sent to a
+		// customer for a signature. One issued with no signer named waits here for ink, and
+		// Mark as Signed below records that. The server refuses a send for it either way.
+		const one_sided = frm.doc.template_key === "warranty";
 
 		// The step-by-step builder: the same contract, one part at a time, with the
 		// agreement previewed beside it and sign-here / send at the end.
@@ -103,7 +107,7 @@ frappe.ui.form.on("Project Contract", {
 
 		// Online signing. With the flag off this whole block is inert and the form
 		// is byte-identical to what it was before e-signature shipped.
-		if (signable && frappe.boot.ee_contract_esign) {
+		if (signable && frappe.boot.ee_contract_esign && !one_sided) {
 			render_signature_state(frm);
 			frm.add_custom_button(__("Send for Signature"), () => send_for_signature(frm)).addClass(
 				"btn-primary"
@@ -158,7 +162,7 @@ frappe.ui.form.on("Project Contract", {
 					});
 					d.show();
 				},
-				frappe.boot.ee_contract_esign ? __("Manual") : null
+				frappe.boot.ee_contract_esign && !one_sided ? __("Manual") : null
 			);
 		}
 

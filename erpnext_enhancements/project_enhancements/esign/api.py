@@ -463,6 +463,16 @@ def get_signature_state(project_contract):
 
 
 def _assert_sendable(contract):
+	# A document only Sapphire signs (a Certificate of Warranty) has no customer signature to
+	# ask for. Said plainly here, before the "template has no e-signature block" check below
+	# tells someone to add one.
+	from erpnext_enhancements.project_enhancements.warranty_certificate import is_one_sided
+
+	if is_one_sided(contract.get("template_key")):
+		frappe.throw(
+			_("Only Sapphire signs this document, so it is not sent for a customer's signature."),
+			title=_("Signed by Sapphire Only"),
+		)
 	if contract.docstatus != 1:
 		frappe.throw(
 			_("Submit the contract before sending it for signature."), title=_("Not Submitted")
