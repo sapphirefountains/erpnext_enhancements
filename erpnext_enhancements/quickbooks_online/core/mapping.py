@@ -98,8 +98,18 @@ MAPPER_DEFAULTS_ERPNEXT_OWNS = {
 #:   and ``calculate_item_rate`` then replaces a rate of 0 with it, and shows a rate below
 #:   list as list price less a discount QuickBooks never gave. See ``_priced_line``.
 #: * ``ignore_pricing_rule`` on the document: a Pricing Rule must not reprice an import.
-BUILD_ONLY_FIELDS = ("ignore_pricing_rule",)
+#: * ``price_list_currency`` and ``plc_conversion_rate`` on the document
+#:   (``_price_list_pair``). QuickBooks has no price list. ERPNext derives both from the
+#:   document's Price List on every save (``AccountsController.set_price_list_currency``),
+#:   whatever it is sent. A difference in either is never QuickBooks changing something,
+#:   and no *Use QuickBooks values* or *Refresh draft* could write it away.
+BUILD_ONLY_FIELDS = ("ignore_pricing_rule", "price_list_currency", "plc_conversion_rate")
 BUILD_ONLY_ROW_FIELDS = ("price_list_rate",)
+
+#: How far a line's ``amount`` may sit from QuickBooks' after a person's write and still
+#: be ERPNext's own arithmetic, in units of the last decimal the ``amount`` field stores:
+#: one cent on a two-decimal field. ``_without_recomputed_amounts`` has the rule.
+RECOMPUTED_AMOUNT_UNITS = 1
 
 #: Mapped fields ERPNext writes for itself on every save, whatever it is given, so the
 #: check a person's write runs on its own result (``_differences_after_write``) leaves
@@ -780,6 +790,12 @@ def _review_linked_record(
 
 	``preview`` reports ``would_flag`` and writes nothing.
 
+	**A flag a person's own write left is not this pass's to restate.** *Refresh draft* and
+	*Use QuickBooks values* leave a note marked ``after_write`` when the saved record still
+	differs. Each field that note names is judged here the way the write judged it
+	(``_rejudge_what_a_write_left``), and while any of them still differs the note keeps
+	its mark, whatever else QuickBooks has changed since.
+
 	The guards that used to keep the update path from damaging a record now decide what is
 	worth a person's attention: what ERPNext owns on an existing record (a Project's title,
 	a party's group, the constants a mapper supplies for a create) is dropped before the
@@ -814,6 +830,9 @@ def _review_linked_record(
 	# With preflight issues a mapped None may be a value that did not resolve rather than
 	# QuickBooks saying nothing, so it is read strictly (see _linked_differences).
 	changes = _linked_differences(doc, values, mapping, unresolved=bool(issues))
+	# What a person's own write left differing is judged again by that write's check, and
+	# keeps its mark on the note for as long as any of it is still open.
+	write_left = _rejudge_what_a_write_left(mapping, doc, values, changes, unresolved=bool(issues))
 	fields = sorted(changes["fields"]) + sorted(changes["tables"])
 	if not fields:
 		if issues:
@@ -833,7 +852,7 @@ def _review_linked_record(
 	settled = None if issues else _settle_unflagged(mapping, erpnext_doctype, values, flagged=fields)
 	if preview:
 		return {"action": "would_flag", **result, "qbo_id": qbo_id, "fields": fields, "issues": issues}
-	_flag_qbo_changed(mapping, payload, changes, issues, settled=settled)
+	_flag_qbo_changed(mapping, payload, changes, issues, settled=settled, write_left=write_left)
 	return {
 		"action": "flagged",
 		**result,
@@ -1315,7 +1334,70 @@ def _advance_mapping_cursor(mapping, payload: dict, erpnext_doctype: str, values
 	frappe.db.set_value(MAPPING_DOCTYPE, mapping.name, updates, update_modified=False)
 
 
-def _flag_qbo_changed(mapping, payload: dict, changes: dict, issues: list, *, settled=None) -> bool:
+def _after_write_fields(note: dict) -> list:
+	"""The fields a note marked ``after_write`` says a person's write left differing. A
+	note written by v1.800.0 lists none, and every field it holds is one of them."""
+	named = note.get("after_write_fields")
+	if isinstance(named, list):
+		return [str(fieldname) for fieldname in named]
+	return sorted(note.get("fields") or {}) + sorted(note.get("tables") or {})
+
+
+def _rejudge_what_a_write_left(mapping, doc, values: dict, changes: dict, *, unresolved=False):
+	"""Hold the fields a person's write left differing to that write's own check, in place
+	in ``changes``. Returns ``(action, fields still open)``, or None when the mapping
+	carries no such note or every field of it has come right.
+
+	*Refresh draft* and *Use QuickBooks values* flag the mapping themselves when the saved
+	record still differs (``_still_flagged_updates``), and mark the note ``after_write``.
+	Until v1.801.2 the next sync that looked at the row rewrote that note as an ordinary
+	"QuickBooks changed" one. The page then said QuickBooks had changed a record that a
+	person had just rebuilt from QuickBooks, and "nothing was written". Worse, the sync
+	judged those fields by its own rules, which are not the write's:
+
+	* It counts a line ``amount`` that is one cent off through rounding, which the write
+	  had passed (``_without_recomputed_amounts``). A draft a person then corrected by hand
+	  stayed flagged for the cent.
+	* It skips a field QuickBooks says nothing about once the field has no reference. A
+	  clear that did not take has exactly that shape, so the next pass found nothing and
+	  cleared the flag while the record still held the value.
+
+	So each field the note names is judged as ``_differences_after_write`` judged it: the
+	record against what QuickBooks says now, a table without its recomputed amounts, a
+	clear still open while the record holds a value. A field that has come right drops
+	out, here and from the mark. ``no_baseline`` is removed from the ones that remain:
+	"never synced before" is not what happened to them.
+
+	The mark goes only when the difference does: a person's *Keep ERPNext*, a write that
+	comes back clean, or a pass that finds every one of these fields agreeing (someone
+	corrected the record, or QuickBooks moved to what ERPNext holds).
+	"""
+	if getattr(mapping, "conflict_status", None) != QBO_CHANGED:
+		return None
+	note = stored_changes(mapping)
+	action = note.get("after_write")
+	if not action:
+		return None
+	precisions = number_precisions(getattr(doc, "doctype", None))
+	still_open = []
+	for fieldname in _after_write_fields(note):
+		if fieldname in changes["tables"]:
+			_drop_recomputed_amounts(changes["tables"], fieldname, doc, precisions, unresolved=unresolved)
+		elif fieldname not in changes["fields"] and values.get(fieldname) is None:
+			held = doc.get(fieldname)
+			if (note["fields"].get(fieldname) or {}).get("cleared") and not _is_blank(held):
+				changes["fields"][fieldname] = {"erpnext": held, "qbo": None, "cleared": True}
+		entry = changes["fields"].get(fieldname) or changes["tables"].get(fieldname)
+		if not entry:
+			continue
+		entry.pop("no_baseline", None)
+		still_open.append(fieldname)
+	return (action, still_open) if still_open else None
+
+
+def _flag_qbo_changed(
+	mapping, payload: dict, changes: dict, issues: list, *, settled=None, write_left=None
+) -> bool:
 	"""Flag a mapping ``QuickBooks Changed`` and store what QuickBooks now says.
 
 	Writes ``conflict_status`` and ``qbo_changes`` with ``frappe.db.set_value`` -- not
@@ -1325,6 +1407,11 @@ def _flag_qbo_changed(mapping, payload: dict, changes: dict, issues: list, *, se
 	row does not churn it. The payload's own SyncToken is stored in the note: *Keep
 	ERPNext* advances the cursor to exactly what the reviewer was shown. ``settled``
 	carries the new reference of the fields that were *not* flagged in this pass.
+
+	``write_left`` is ``_rejudge_what_a_write_left``'s answer: the note keeps
+	``after_write`` and names the fields of that write that are still open. An ordinary
+	pass over a row a write left flagged therefore builds the note it already has, and
+	writes nothing.
 	"""
 	record = {
 		"sync_token": payload.get("SyncToken"),
@@ -1333,6 +1420,8 @@ def _flag_qbo_changed(mapping, payload: dict, changes: dict, issues: list, *, se
 		"tables": changes["tables"],
 		"issues": list(issues or []),
 	}
+	if write_left:
+		record["after_write"], record["after_write_fields"] = write_left
 	record = json_loads(json_dumps(record))
 	stored = stored_changes(mapping)
 	stored.pop("detected_at", None)
@@ -1421,15 +1510,14 @@ def _differences_after_write(erpnext_doctype: str, erpnext_name: str, values: di
 	save (``REWRITTEN_ON_SAVE``). A None in ``values`` is QuickBooks saying nothing and was
 	not written, so it is not checked.
 
-	**A line's ``amount`` is not held against it when its ``qty`` and ``rate`` both took.**
-	ERPNext does not store the amount it is given; it computes ``qty * rate`` from the rate
-	as the field rounds it (``_sales_items``). QuickBooks keeps unit prices to more decimals
-	than a Currency field does, so 3 at 33.33333 is 100.00 there and 99.99 here. That cent
-	is the same one a first-time create has always produced, and the preflight
-	(``_sales_invoice_shortfall``) already refuses a document whose total is further out
-	than rounding explains. Counting it here would leave such a draft flagged after every
-	rebuild, with nothing a rebuild could do about it. Where the quantity or the rate did
-	not take, the amount is reported beside it.
+	**A line's ``amount`` is not held against it when its ``qty`` and ``rate`` both took
+	and the two amounts are within a cent** (``_without_recomputed_amounts``, one rule for
+	every DocType). ERPNext does not store the amount it is given; it computes
+	``qty * rate`` from the rate as the field rounds it (``_sales_items``). QuickBooks keeps
+	unit prices to more decimals than a Currency field does, so 3 at 33.33333 is 100.00
+	there and 99.99 here. Counting that cent would leave such a draft flagged after every
+	rebuild, with nothing a rebuild could do about it. Further out than a cent, or where
+	the quantity or the rate did not take, the amount is reported.
 	"""
 	saved = frappe.get_doc(erpnext_doctype, erpnext_name)
 	rewritten = REWRITTEN_ON_SAVE.get(erpnext_doctype, ())
@@ -1441,28 +1529,70 @@ def _differences_after_write(erpnext_doctype: str, erpnext_name: str, values: di
 			remaining["fields"][fieldname] = {"erpnext": held, "qbo": None, "cleared": True}
 	precisions = number_precisions(erpnext_doctype)
 	for fieldname in list(remaining["tables"]):
-		entry = remaining["tables"][fieldname]
-		incoming = entry.get("qbo") or []
-		# Every differing row, not the capped list the note stores: a long draft can have
-		# more rounding cents than the cap, and they must not hide behind ``more_rows``.
-		rows = _without_recomputed_amounts(
-			_table_differences(saved.get(fieldname), incoming, precisions.get(fieldname)), incoming
-		)
-		if not rows:
-			del remaining["tables"][fieldname]
-			continue
-		entry["rows"] = rows[:TABLE_DIFF_ROW_CAP]
-		entry["more_rows"] = max(0, len(rows) - TABLE_DIFF_ROW_CAP)
+		_drop_recomputed_amounts(remaining["tables"], fieldname, saved, precisions)
 	for group in ("fields", "tables"):
 		for entry in remaining[group].values():
 			entry.pop("no_baseline", None)
 	return remaining
 
 
-def _without_recomputed_amounts(differences: list, incoming_rows: list) -> list:
-	"""Row differences minus an ``amount`` that differs on a line whose ``qty`` and ``rate``
-	both agree (see ``_differences_after_write``). Only for rows the mapper gave a quantity
-	and a rate: a table with no such columns keeps every cell."""
+def _drop_recomputed_amounts(tables: dict, fieldname: str, doc, precisions: dict, *, unresolved=False):
+	"""Re-list one flagged table's differing rows without the amounts ERPNext recomputed
+	(``_without_recomputed_amounts``), in place; the table leaves ``tables`` when no row is
+	left. Works from every differing row, not the capped list a note stores: a long draft
+	can have more rounding cents than the cap, and they must not hide behind ``more_rows``.
+	"""
+	entry = tables[fieldname]
+	incoming = entry.get("qbo") or []
+	row_precisions = precisions.get(fieldname) if isinstance(precisions, dict) else None
+	rows = _without_recomputed_amounts(
+		_table_differences(doc.get(fieldname), incoming, row_precisions, unresolved), incoming, row_precisions
+	)
+	if not rows:
+		del tables[fieldname]
+		return
+	entry["rows"] = rows[:TABLE_DIFF_ROW_CAP]
+	entry["more_rows"] = max(0, len(rows) - TABLE_DIFF_ROW_CAP)
+
+
+def _without_recomputed_amounts(differences: list, incoming_rows: list, precisions=None) -> list:
+	"""Row differences minus a line ``amount`` that ERPNext recomputed to within a cent of
+	QuickBooks'. **One rule for every DocType the importer writes**: it reads the row, not
+	the DocType, so a Quotation and a Purchase Order line get what a Sales Invoice and a
+	Purchase Invoice line get.
+
+	**What is tolerated, and how much.** Only the ``amount`` cell, only on a row the mapper
+	gave a ``qty`` and a ``rate``, only when both of those agree with the record, and only
+	when the two amounts are no more than one unit of the last decimal the ``amount``
+	field stores apart (``RECOMPUTED_AMOUNT_UNITS``; one cent at two decimals, and two
+	decimals when the field's precision cannot be read). ERPNext never stores the amount
+	it is given: ``calculate_item_values`` writes ``flt(rate * qty)`` from the rate and
+	quantity as their fields round them. QuickBooks multiplies the unrounded pair. 3 at
+	33.33333 is 100.00 there and 99.99 here, and no write can change that.
+
+	**Why one cent and no more.** It is the allowance the Sales Invoice preflight gives a
+	line (``_sales_rounding_tolerance``). Until v1.801.2 the amount was dropped at any
+	distance, on the ground that the preflight had already refused a total further out
+	than rounding explains. That holds for a Sales Invoice (``_sales_invoice_shortfall``)
+	and a Purchase Invoice (``_purchase_invoice_imbalance``). A Quotation and a Purchase
+	Order have no such preflight, so nothing bounded what was passed over: a quantity of
+	0.6666999, stored as 0.667, moves a line by dollars and the rebuild still read Clean.
+	The bound now lives here, where every DocType meets it. A line that rounding moves by
+	more than a cent stays flagged after a write, and a person's *Keep ERPNext* is the
+	answer to it. **The cent does not grow with the quantity**, on purpose: a unit price
+	rounded by 0.0027 across 100 units is 27 cents out, and that line stays flagged.
+
+	**Why a changed rate is never hidden by it.** ``rate`` and ``qty`` get no tolerance at
+	all: each is compared at the precision its own field stores (``_same_for_review``),
+	and if either differs the row is left exactly as it was found, amount included. The
+	cent is granted to a column ERPNext computes, never to one QuickBooks states. That is
+	the opposite of the blanket half-cent on every number that the second review of #1437
+	removed, under which an exchange rate moving from 1.32 to 1.3245 read as unchanged.
+	"""
+	precisions = precisions if isinstance(precisions, dict) else {}
+	decimals = precisions.get("amount")
+	if not isinstance(decimals, int):
+		decimals = _erpnext_item_precisions()[0]
 	kept = []
 	for difference in differences:
 		fields = difference.get("fields")
@@ -1476,6 +1606,7 @@ def _without_recomputed_amounts(differences: list, incoming_rows: list) -> list:
 			and incoming.get("rate") is not None
 			and "qty" not in fields
 			and "rate" not in fields
+			and _within_recomputed_amount(fields["amount"], decimals)
 		):
 			fields = {key: value for key, value in fields.items() if key != "amount"}
 			if not fields:
@@ -1483,6 +1614,18 @@ def _without_recomputed_amounts(differences: list, incoming_rows: list) -> list:
 			difference = dict(difference, fields=fields)
 		kept.append(difference)
 	return kept
+
+
+def _within_recomputed_amount(cell, decimals: int) -> bool:
+	"""True when a differing ``amount`` cell is within ``RECOMPUTED_AMOUNT_UNITS`` of the
+	field's last stored decimal. Anything that is not two numbers is not."""
+	if not isinstance(cell, dict):
+		return False
+	try:
+		gap = abs(float(cell.get("erpnext")) - float(cell.get("qbo")))
+	except (TypeError, ValueError):
+		return False
+	return flt(gap, decimals) <= flt(RECOMPUTED_AMOUNT_UNITS * 10**-decimals, decimals)
 
 
 def _still_differs(remaining: dict) -> list:
@@ -1497,7 +1640,9 @@ def _still_flagged_updates(mapping, shown: dict, remaining: dict, action: str) -
 	**Never Clean on a record that disagrees with what QuickBooks said.** The note keeps
 	the token of the payload the write was built from (``shown``) and carries
 	``after_write`` (``"refresh"`` or ``"use"``), which is how the page says "rebuilt, but
-	still differs" instead of "QuickBooks changed this record".
+	still differs" instead of "QuickBooks changed this record", and ``after_write_fields``,
+	the fields the write left. A later sync keeps both while any of those fields still
+	differs (``_rejudge_what_a_write_left``).
 
 	Each field that still differs also loses its reference -- it is dropped from
 	``owned_fields`` and from ``settled_qbo_values`` -- because a reference that says
@@ -1514,6 +1659,7 @@ def _still_flagged_updates(mapping, shown: dict, remaining: dict, action: str) -
 		"tables": remaining["tables"],
 		"issues": [],
 		"after_write": action,
+		"after_write_fields": sorted(still),
 		"detected_at": str(now_datetime() or ""),
 	}
 	updates = {"conflict_status": QBO_CHANGED, "qbo_changes": json_dumps(note)}
@@ -3093,6 +3239,8 @@ def _map_sales_invoice(payload, settings):
 	# A job's invoice resolves to the parent Customer + the job's Project (job costing);
 	# a top-level customer's invoice resolves to that Customer with project None.
 	customer, project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
+	price_list = _default_price_list(selling=True)
+	list_currency, list_rate = _price_list_pair(price_list, currency, rate, settings)
 	return "Sales Invoice", {
 		"company": settings.company,
 		"customer": customer,
@@ -3102,9 +3250,9 @@ def _map_sales_invoice(payload, settings):
 		"currency": currency,
 		"conversion_rate": rate,
 		"debit_to": _company_value(settings, "default_receivable_account"),
-		"selling_price_list": _default_price_list(selling=True),
-		"price_list_currency": currency,
-		"plc_conversion_rate": 1,
+		"selling_price_list": price_list,
+		"price_list_currency": list_currency,
+		"plc_conversion_rate": list_rate,
 		"ignore_pricing_rule": 1,
 		"items": _sales_items(payload),
 		# Always mapped, even when empty, so a re-sync REPLACES the charges table rather
@@ -3907,6 +4055,8 @@ def _map_quotation(payload, settings):
 	"""
 	currency, rate = _txn_currency(payload, settings)
 	customer, project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
+	price_list = _default_price_list(selling=True)
+	list_currency, list_rate = _price_list_pair(price_list, currency, rate, settings)
 	values = {
 		"company": settings.company,
 		"quotation_to": "Customer",
@@ -3914,9 +4064,9 @@ def _map_quotation(payload, settings):
 		"transaction_date": payload.get("TxnDate"),
 		"currency": currency,
 		"conversion_rate": rate,
-		"selling_price_list": _default_price_list(selling=True),
-		"price_list_currency": currency,
-		"plc_conversion_rate": 1,
+		"selling_price_list": price_list,
+		"price_list_currency": list_currency,
+		"plc_conversion_rate": list_rate,
 		"ignore_pricing_rule": 1,
 		"items": _sales_items(payload),
 	}
@@ -4123,6 +4273,58 @@ def _default_price_list(selling: bool = True):
 	"""Return an enabled selling/buying Price List name, or None if none exists."""
 	field = "selling" if selling else "buying"
 	return frappe.db.get_value("Price List", {field: 1, "enabled": 1}, "name")
+
+
+def _price_list_pair(price_list, currency, rate, settings):
+	"""``(price_list_currency, plc_conversion_rate)`` for a document built in ``currency``
+	at exchange rate ``rate``, as ERPNext itself would set them for ``price_list``.
+
+	Both mappers that name a Price List (Sales Invoice, Quotation) used to send the
+	document's own currency and a rate of 1. That is right only where the Price List is in
+	the document's currency and that is the company's. Read in erpnext v16.54.0:
+
+	* ``AccountsController.set_price_list_currency`` runs on every save
+	  (``set_missing_values``) and replaces ``price_list_currency`` with the Price List's
+	  own currency. A document in another currency therefore never held what was mapped,
+	  and *Refresh draft* could not come back Clean on it.
+	* The same function sets ``plc_conversion_rate`` to 1 when that currency is the
+	  company's, and otherwise keeps a rate it is given. So a Price List in a foreign
+	  currency, on a document in that currency, kept the mapped 1: "one unit of it is one
+	  unit of company currency". ``get_item_details.get_price_list_rate`` multiplies an
+	  Item Price by that rate for any line that carries no list price, which is every
+	  line a person adds to the draft by hand.
+
+	What ERPNext does **not** do is convert a list price a line already carries. A line's
+	``price_list_rate`` is in the document's currency, ``set_missing_item_details`` leaves a
+	value that is not None alone, and ``calculate_item_values`` only derives
+	``base_price_list_rate`` from it. So the pair ``_priced_line`` sets stays equal through
+	a save in any currency, and this function is about the header alone.
+
+	Three cases, the first being every document on a single-currency site:
+
+	* The Price List is in the company's currency: that currency, 1.
+	* It is in the document's (foreign) currency: that currency, and the document's own
+	  exchange rate, which is what the Desk sets when the two currencies match.
+	* It is in any other currency, neither the company's nor the document's: that
+	  currency and **no rate**. A document in the company's own currency on a foreign Price
+	  List is this case too. QuickBooks states no rate for the list's currency and this
+	  module does not guess one. On a create the preflight parks the document for a missing
+	  ``plc_conversion_rate``, on purpose (the old code sent the document's currency and 1
+	  here, which made ERPNext look a rate up for itself); on *Refresh draft* the draft
+	  keeps the rate it has.
+
+	With no Price List, or one whose currency cannot be read, ERPNext leaves the pair as
+	sent, and the document's own currency is the only one there is to name.
+
+	Both fields are ``BUILD_ONLY_FIELDS``. The buy-side mappers name no Price List:
+	ERPNext takes the supplier's or the Buying Settings default and derives the pair.
+	"""
+	list_currency = (frappe.db.get_value("Price List", price_list, "currency") if price_list else None) or currency
+	if list_currency == _company_currency(settings):
+		return list_currency, 1
+	if list_currency == currency:
+		return list_currency, rate
+	return list_currency, None
 
 
 def _txn_currency(payload, settings):
@@ -4873,33 +5075,41 @@ def _sales_items(payload):
 
 
 def _priced_line(row: dict) -> dict:
-	"""Give an item line a ``price_list_rate`` equal to its ``rate``, so ERPNext keeps the rate.
+	"""Set an item line's ``price_list_rate`` to its ``rate`` and return the line.
 
-	Shared by ``_sales_items`` and ``_purchase_items`` for the reason ``_line_qty_rate`` is
-	one function. Read in erpnext v16.54.0, the version production runs:
+	**What it does.** Nothing else: the one key, on the dict it is given. Every line
+	``_sales_items`` and ``_purchase_items`` build goes through it, so Sales Invoice,
+	Quotation, Purchase Invoice and Purchase Order lines all carry the pair.
 
-	* ``accounts_controller.set_missing_item_details`` runs on every save and copies each
-	  value ``get_item_details`` returns onto a line whose own value **is None**.
-	  ``price_list_rate`` is not one of ``force_item_fields``, so a line that carries one,
-	  0 included, keeps it. A line that carries none gets the Item Price of the document's
-	  price list; on a buying document with no Item Price, the Item's last purchase rate.
-	* ``taxes_and_totals.calculate_item_rate`` then runs
-	  ``if has_pricing_rules or not item.rate: item.rate = calculated_rate``. A line
-	  QuickBooks priced at **0** is billed at the list price. A rate below list is kept, but
-	  stored as list price less an invented ``discount_amount``, and a rate above it as list
-	  price plus a margin.
-	* With ``price_list_rate`` equal to ``rate`` neither happens: a falsy list price makes
-	  ``calculate_item_rate`` return before it touches the rate, and an equal one computes
-	  the same rate and leaves discount and margin at nothing.
+	**Why.** Without the key, ERPNext v16 reprices a line QuickBooks priced at 0. Two
+	upstream functions do it between them, on every save (read at erpnext v16.54.0):
 
-	Found on the first *Refresh draft* of the rehearsal: a draft whose QuickBooks invoice
-	has eight zero-amount lines of one Item came back with all eight at the Item's selling
-	price, the total too high by exactly eight times that price, and the mapping marked
-	Clean. The hourly sync had created the draft the same way the day before.
+	1. ``AccountsController.set_missing_item_details`` (``controllers/accounts_controller.py``)
+	   copies what ``get_item_details`` returns onto each line, but only where the line's
+	   own value **is None**; ``price_list_rate`` is not in ``force_item_fields``. A line
+	   with no list price is given one by ``get_price_list_rate``
+	   (``stock/get_item_details.py``): the Item Price of the document's Price List, or on
+	   a buying document with no Item Price, the Item's last purchase rate.
+	2. ``calculate_taxes_and_totals.calculate_item_rate`` (``controllers/taxes_and_totals.py``)
+	   then runs ``if has_pricing_rules or not item.rate: item.rate = calculated_rate``.
+	   A rate of 0 becomes the list price. A rate below list is kept, but stored as list
+	   price less a ``discount_amount`` QuickBooks never gave; a rate above it, as list
+	   price plus a margin.
 
-	A bench-free test cannot see ERPNext reprice anything; ``test_quickbooks_link_only``
+	With ``price_list_rate`` equal to ``rate`` neither step has anything to do. A 0 is not
+	None, so step 1 leaves it, and step 2 returns at ``if not item.price_list_rate``
+	before it reads the rate. An equal non-zero pair computes the rate it already has,
+	with no discount and no margin.
+
+	**In another currency.** The pair stays equal: a line's list price is in the
+	document's currency, and ERPNext converts only a list price it fetches itself, never
+	one the line carries. The document's ``price_list_currency`` is a separate matter
+	(``_price_list_pair``).
+
+	A bench-free test cannot watch ERPNext reprice anything. ``test_quickbooks_link_only``
 	asserts the key on every built line, and ``_differences_after_write`` is the check that
-	runs against the real controller.
+	runs against the real controller. The changelog entry for v1.800.0 has how this was
+	found.
 	"""
 	row["price_list_rate"] = row["rate"]
 	return row
