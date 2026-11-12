@@ -1,5 +1,5 @@
 """Bench-free tests for the Procurement Tracker's states, its by-item view and "where it is now"
-(v1.806.0).
+(v1.811.0).
 
 Plain pytest functions: ``procurement_overview`` and ``inventory_enhancements.project_stock_rules``
 import only the stdlib and each other, so this needs no Frappe site and no stub. It must run in a

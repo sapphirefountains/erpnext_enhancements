@@ -269,7 +269,7 @@ function openProcurementPrintDialog(project, group) {
 }
 
 /**
- * The Procurement Tracker's Vue app (v1.806.0): two groupings of one job's purchasing, with
+ * The Procurement Tracker's Vue app (v1.811.0): two groupings of one job's purchasing, with
  * filters that live in the address.
  *
  * `pt` is window.sf_procurement_tracker (public/js/procurement_tracker/logic.js): every decision

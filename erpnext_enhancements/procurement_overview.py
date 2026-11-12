@@ -1,4 +1,4 @@
-"""What each Procurement Tracker line is waiting on, and the tracker by item (v1.806.0).
+"""What each Procurement Tracker line is waiting on, and the tracker by item (v1.811.0).
 
 Pure functions, no ``frappe`` import, for the same reason as ``procurement_quantities``:
 ``project_enhancements/__init__.py`` imports ``frappe``, so nothing under it can be tested

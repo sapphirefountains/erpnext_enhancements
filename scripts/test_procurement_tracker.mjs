@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The Procurement Tracker's pure decisions (v1.806.0) under node:
+ * The Procurement Tracker's pure decisions (v1.811.0) under node:
  * public/js/procurement_tracker/logic.js, the module the Project form script draws from.
  *
  *   the address    the view and its filters round-trip through the address's query, other

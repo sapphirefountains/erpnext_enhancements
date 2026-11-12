@@ -21,7 +21,7 @@
  * bm_from), so the page's own "All bins" steps back through it instead of stacking a second picker
  * entry; a bin opened from a link has no tag, and "All bins" then pushes the picker.
  *
- * VIEWS AND FILTERS (v1.806.1). By project, one job, Job sites and Problems are routes too, so
+ * VIEWS AND FILTERS (v1.812.0). By project, one job, Job sites and Problems are routes too, so
  * each is a history entry like the picker and a bin. The picker's FILTERS are not: they are
  * written into the picker's own address in place (env.replace_query), so typing or ticking a
  * filter never adds an entry, and Back from a bin lands on the picker with its filters, read

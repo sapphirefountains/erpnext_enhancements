@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Where a project's material is now, worked out from the stock ledger (v1.806.0). No Frappe:
+"""Where a project's material is now, worked out from the stock ledger (v1.811.0). No Frappe:
 tested bench-free (``tests/test_project_stock.py``).
 
 **The question.** The Procurement Tracker used to show one warehouse per line: where the line

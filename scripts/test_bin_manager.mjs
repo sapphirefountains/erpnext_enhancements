@@ -13,7 +13,7 @@
  *
  * Nik's rule: every screen is its own history entry; dialogs and state panels are not.
  *
- * Since v1.806.1 the page has four tabs (Bins, By project, Job sites, Problems), each a route and so
+ * Since v1.812.0 the page has four tabs (Bins, By project, Job sites, Problems), each a route and so
  * an entry, and the picker has filters, which are NOT entries: they are written into the picker's own
  * address in place, and read back out of it on Back, Forward and a shared link. The second half of
  * this file holds the page to both, against views.js and the real page script.
@@ -135,7 +135,7 @@ function makeServer(options) {
 				return { levels, can_edit: true };
 			}
 			if (name === "get_recent") return [];
-			// The views' reads (v1.806.1, bin_views.py), answered from the fixture.
+			// The views' reads (v1.812.0, bin_views.py), answered from the fixture.
 			if (name === "item_locations") return JSON.parse(JSON.stringify(fixture.item_locations || { item_code: args.item_code, item_name: args.item_code, is_stock_item: true, locations: {} }));
 			if (name === "project_index") return JSON.parse(JSON.stringify(fixture.project_index || []));
 			if (name === "project_view") return JSON.parse(JSON.stringify(fixture.project_view || { project: { project: args.project, project_name: args.project }, shelf: null, site: null, send_refusal: null }));
@@ -1503,7 +1503,7 @@ test("the real page: a role check that throws shows no Reorder Board link and br
 	}
 });
 
-// ------------------------------------------------------------------ views and filters (v1.806.1)
+// ------------------------------------------------------------------ views and filters (v1.812.0)
 
 const SHELF = "Project Shelf - SF";
 const SITE = "Job Site PRJ-90001 Water Wall - SF";

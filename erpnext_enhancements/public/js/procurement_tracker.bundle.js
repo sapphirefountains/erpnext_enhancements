@@ -1,5 +1,5 @@
 /*
- * Procurement Tracker entry point (v1.806.0): the widget's pure decisions
+ * Procurement Tracker entry point (v1.811.0): the widget's pure decisions
  * (public/js/procurement_tracker/logic.js) as one esbuild bundle with a content-hashed name.
  *
  * Loaded only by the Project form script (public/js/project_enhancements.js), never

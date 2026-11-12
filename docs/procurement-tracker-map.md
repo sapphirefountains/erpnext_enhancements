@@ -4,13 +4,13 @@ Orientation for the **Procurement Tracker**, the collapsible procurement tree on
 form's Budget tab.
 
 Written first as the groundwork for four queued changes, then updated once those landed
-(v1.194.0 – v1.197.0). Line references are against that merged state, and **v1.806.0 moved most
+(v1.194.0 – v1.197.0). Line references are against that merged state, and **v1.811.0 moved most
 of them**: the widget's sorting moved into its own module and the renderer was restructured, so
 read a `:123` below as "about there, in the v1.197.0 file". Where a defect it originally
 documented has since been fixed, it says so rather than quietly dropping it — the reasoning is
 usually the part worth keeping.
 
-## v1.806.0: where it is now, filters, and the tracker by item
+## v1.811.0: where it is now, filters, and the tracker by item
 
 Nik, 2026-11-12: *"it'd be nice to see what's where for items. So enhanced filtering and
 formatting of data."* Read this section first; it is the current shape.
@@ -563,12 +563,12 @@ Closed, and worth not reintroducing:
 
 - The Vue app never being unmounted: every `refresh` mounted a new app over the last one's node
   and left the old one alive with its watchers. `render_procurement_tracker` unmounts it first,
-  and mounts on its own node rather than a document-global id (v1.806.0).
+  and mounts on its own node rather than a document-global id (v1.811.0).
 - `v-html` on unescaped data: item codes, names, suppliers and document names reached the DOM
   raw. Every `v-html` now goes through `hl()` → `logic.highlight_html`, which escapes each piece
-  (v1.806.0; `tests/test_project_stock.py` holds the template to it).
+  (v1.811.0; `tests/test_project_stock.py` holds the template to it).
 - A submitted Purchase Receipt with no order behind it (a store run) reading "Not Received" on
-  the receipt that received it (v1.806.0, `_minimal_item_row`).
+  the receipt that received it (v1.811.0, `_minimal_item_row`).
 - The item row inheriting its parent's status (v1.194.0).
 - `ordered_qty` falling back to the requested quantity (v1.194.0).
 - `getStatusColorClass` collapsing partial and complete into one class (v1.194.0).

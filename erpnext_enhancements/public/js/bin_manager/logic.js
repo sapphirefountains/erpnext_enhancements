@@ -7,7 +7,7 @@
  *   routes          /desk/bin-manager is the picker, /desk/bin-manager/<warehouse> one bin. Each is
  *                   its own history entry. ?warehouse=<name> on the bare route (frappe.route_options,
  *                   since v16.50 also in the address) opens that bin in place of the picker.
- *                   Since v1.806.1 three more screens have a route of their own:
+ *                   Since v1.812.0 three more screens have a route of their own:
  *                   /desk/bin-manager/by-project (and /by-project/<project>), /job-sites and
  *                   /problems. What each shows is views.js.
  *   actions         which buttons a row shows, from what the server said the caller may do
@@ -41,7 +41,7 @@ export const READS = {
 	recent: SCAN + "get_recent",
 	search_items: SCAN + "search_items",
 	check_new_item: SCAN + "check_new_item",
-	// The views beyond one bin (v1.806.1, inventory_enhancements/bin_views.py): all reads.
+	// The views beyond one bin (v1.812.0, inventory_enhancements/bin_views.py): all reads.
 	item_locations: VIEWS + "item_locations",
 	project_index: VIEWS + "project_index",
 	project_view: VIEWS + "project_view",

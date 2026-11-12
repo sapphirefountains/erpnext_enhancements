@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for the Bin Manager's views beyond one bin (v1.806.1):
+"""Bench-free tests for the Bin Manager's views beyond one bin (v1.812.0):
 ``inventory_enhancements/bin_views.py``.
 
 The module runs for real on a small in-memory ``frappe`` stub of its own (so this suite has its

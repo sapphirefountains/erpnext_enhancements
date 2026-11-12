@@ -1004,7 +1004,7 @@ def manager_boot():
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
 	* ``item_groups`` / ``uoms`` / ``refuse_from`` -- the quick Item's pick lists and the naming
 	  guard's go-live date, the same ones the store run offers.
-	* Since v1.806.1, what the page's filters and views need (``bin_views.decorate``): on each bin
+	* Since v1.812.0, what the page's filters and views need (``bin_views.decorate``): on each bin
 	  its ``kind`` (shop bin, Project Shelf, job site, boneyard, vehicle), a job site's ``project``
 	  / ``project_name`` / ``customer``, and ``missing_items`` / ``unassigned_items`` /
 	  ``stock_value``; and on the boot ``shelf_warehouse`` / ``shelf_name``, ``job_sites`` and

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.806.1] - 2026-11-12
+## [1.812.0] - 2026-11-12
 
 ### Added
 - **The Bin Manager has filters on its picker and three more views: By project, Job sites and
@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Not run:** nothing here ran on a bench or against production. The page was checked in a
   browser against a stand-in Desk with made-up data.
 
-## [1.806.0] - 2026-11-12
+## [1.811.0] - 2026-11-12
 
 ### Added
 - **The Procurement Tracker says where each item is now, filters by place, status and supplier,

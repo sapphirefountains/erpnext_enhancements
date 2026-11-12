@@ -359,7 +359,7 @@ class TestManagerBoot(_Base):
 		self.assertEqual(names[:2], [BIN_A, BIN_B], "shelf-number order")
 
 	def test_every_bin_says_what_kind_of_place_it_is(self):
-		"""v1.806.1, on the real bin_views over this stub: no Project Shelf and no job sites are
+		"""v1.812.0, on the real bin_views over this stub: no Project Shelf and no job sites are
 		set up here, so every place is a shop bin and the boneyard is the boneyard."""
 		out = base.bins.manager_boot()
 		by = {b["warehouse"]: b for b in out["bins"]}

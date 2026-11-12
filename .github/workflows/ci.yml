@@ -3913,7 +3913,7 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
-      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.806.0).
+      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.811.0).
       # procurement_overview.py and inventory_enhancements/project_stock_rules.py are pure, so this is
       # plain pytest (a unittest step would collect nothing and pass). Fails the build if a place ever
       # shows more than its Bin row holds, if a job's stock at another job's site reads as its own, if a
@@ -4102,7 +4102,7 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
-      # The Bin Manager's views beyond one bin (v1.806.1, inventory_enhancements/bin_views.py): By
+      # The Bin Manager's views beyond one bin (v1.812.0, inventory_enhancements/bin_views.py): By
       # project, Job sites, Problems and the picker's filters. Its own frappe stub with stand-ins for
       # api.stock_scan and job_sites, so its own step. Fails the build if an endpoint reads before the
       # role gate or writes anything, if "unassigned stock" is counted at a job site, the boneyard or

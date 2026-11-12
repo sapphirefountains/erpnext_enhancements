@@ -20,7 +20,7 @@
 //   /desk/bin-manager/<warehouse>   one bin: its items, the actions, and this bin's recent saves
 //   /desk/bin-manager?warehouse=X   a deep link: opens X in place of the picker entry
 //
-// and since v1.806.1 (Nik, 2026-11-12: "more filters and different views... by Project which items
+// and since v1.812.0 (Nik, 2026-11-12: "more filters and different views... by Project which items
 // are at the Job Site"):
 //
 //   /desk/bin-manager/by-project             the jobs with material on the Project Shelf or at a site
@@ -102,7 +102,7 @@ class BinManagerPage {
 		// error"), so both globals are checked; a page without them says so instead of waiting.
 		this.ready = new Promise((resolve) => frappe.require(BM_ASSETS, resolve)).then(() => {
 			this.sf = window.sf_kit && window.sf_kit.state ? window.sf_kit : null;
-			// `views` came with v1.806.1: a copy of the bundle without it cannot draw this page.
+			// `views` came with v1.812.0: a copy of the bundle without it cannot draw this page.
 			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller && window.sf_bin_manager.views ? window.sf_bin_manager : null;
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
@@ -709,7 +709,7 @@ class BinManagerPage {
 			.join("")}</ul>`;
 	}
 
-	// ------------------------------------------------------------------ the views beyond one bin (v1.806.1)
+	// ------------------------------------------------------------------ the views beyond one bin (v1.812.0)
 
 	// The tabs across the top of every screen but a bin and one job. Each is a route, so a tab is one
 	// frappe.set_route and one history entry.
@@ -1313,7 +1313,7 @@ class BinManagerPage {
 		});
 	}
 
-	// "Which job?" in a Move or Send to boneyard dialog (v1.806.1, for the Project Shelf's v1.804.0).
+	// "Which job?" in a Move or Send to boneyard dialog (v1.812.0, for the Project Shelf's v1.804.0).
 	// Everything on the Project Shelf belongs to a job, and whose it is is read from the job on each
 	// stock ledger row, so a move onto or off the shelf has to name one or the shelf's by-project
 	// numbers drift. `rule` says when (logic.shelf_move): "off" lists the jobs that hold the item

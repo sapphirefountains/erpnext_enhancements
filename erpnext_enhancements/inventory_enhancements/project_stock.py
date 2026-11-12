@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Where a project's material is now: the part that reads the database (v1.806.0).
+"""Where a project's material is now: the part that reads the database (v1.811.0).
 
 The rule, and why it is the stock ledger's rows that name the job and not the Bin table, is in
 ``project_stock_rules`` (no Frappe, tested bench-free). This module asks the questions:

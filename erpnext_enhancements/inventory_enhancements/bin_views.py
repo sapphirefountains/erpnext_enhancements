@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Bin Manager's views beyond one bin (v1.806.1): what kind of place each location is, what
+"""The Bin Manager's views beyond one bin (v1.812.0): what kind of place each location is, what
 a project has on the Project Shelf and at its job site, and where the records disagree with the
 shelves.
 

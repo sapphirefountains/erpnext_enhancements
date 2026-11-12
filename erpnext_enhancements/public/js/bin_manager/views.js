@@ -1,5 +1,5 @@
 /*
- * Bin Manager (v1.806.1): the pure decisions behind its filters and its views beyond one bin. No
+ * Bin Manager (v1.812.0): the pure decisions behind its filters and its views beyond one bin. No
  * DOM and no frappe; scripts/test_bin_manager.mjs runs it under node. logic.js keeps the routes
  * and the saves; this file is what a view shows.
  *

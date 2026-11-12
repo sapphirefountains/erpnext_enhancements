@@ -633,7 +633,7 @@ mark {
     background-color: #f0f0f0;
     /* Light grey background for tab look */
     border: 1px solid #c8ccd0;
-    /* Grid lines, quiet enough that the numbers are what the eye lands on (v1.806.0: they
+    /* Grid lines, quiet enough that the numbers are what the eye lands on (v1.811.0: they
        were #666, as dark as the text) */
     padding: 8px 12px;
     color: #333;
@@ -734,7 +734,7 @@ mark {
 }
 
 /* --------------------------------------------------------------------------
-   Procurement Tracker, v1.806.0: the toolbar (two groupings and four filters), the
+   Procurement Tracker, v1.811.0: the toolbar (two groupings and four filters), the
    where-it-is-now column, and three levels that read as three levels.
 
    Every colour here is one of the Desk's own variables with a plain fallback, so the dark
