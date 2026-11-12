@@ -110,6 +110,31 @@ class TestSelectProblems(unittest.TestCase):
             '"Invoiced", "Completed", "Canceled", "Pending Review", "Overdue", "Template".',
         )
 
+    def test_a_new_item_must_say_whether_it_keeps_stock(self):
+        """v1.803.0: a new Item defaults to Maintain Stock on. A person sees the box; an assistant
+        does not, so a create that leaves the field out is refused with what to send."""
+
+        def create(data, doctype="Item"):
+            return _gate._precheck_problems(
+                {"doctype": doctype, "data": data}, lambda name: SimpleNamespace(fields=[]), "create_document"
+            )
+
+        missing = create({"item_code": "TST-LABOR", "item_group": "Services"})
+        self.assertEqual(missing, [_gate.ITEM_STOCK_CHOICE])
+        self.assertIn('"is_stock_item": 0 for labor, a fee', missing[0])
+        self.assertIn('"is_stock_item": 1 for a part', missing[0])
+        # Said on purpose, either way: no problem.
+        self.assertEqual(create({"item_code": "TST-LABOR", "is_stock_item": 0}), [])
+        self.assertEqual(create({"item_code": "TST-PUMP", "is_stock_item": 1}), [])
+        # Only a create, and only an Item.
+        self.assertEqual(create({"task_name": "x"}, doctype="Task"), [])
+        update = _gate._precheck_problems(
+            {"doctype": "Item", "name": "TST-PUMP", "data": {"item_name": "x"}},
+            lambda name: SimpleNamespace(fields=[]),
+            "update_document",
+        )
+        self.assertEqual(update, [])
+
     def test_the_site_spelling_passes(self):
         self.assertEqual(self.problems("Task", {"status": "Canceled"}), [])
 

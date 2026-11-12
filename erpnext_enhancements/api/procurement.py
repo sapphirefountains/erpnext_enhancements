@@ -156,10 +156,12 @@ def _typed_quantities(rows):
     return typed
 
 
-def _typed_prices(rows):
-    """``rows`` as the dialog posts them -> ``{row name: {"rate", "no_charge"}}`` for the rows
-    that carry either. Only an unpriced stock line's answer is ever read
-    (``receipt_price.settle_before_receipt``); a price sent for any other row is ignored."""
+def _typed_prices(rows, no_charge_reason=None):
+    """``rows`` as the dialog posts them -> ``{row name: {"rate", "no_charge", "reason"}}`` for
+    the rows that carry a price or a "no charge". Only an unpriced stock line's answer is ever
+    read (``receipt_price.settle_before_receipt``); a price sent for any other row is ignored.
+    ``no_charge_reason`` is the dialog's one reason for every row marked free; a row's own
+    ``reason`` wins."""
     if isinstance(rows, str):
         rows = frappe.parse_json(rows)
     typed = {}
@@ -168,7 +170,11 @@ def _typed_prices(rows):
             continue
         name = (raw.get("purchase_order_item") or "").strip()
         if name and (raw.get("rate") not in (None, "") or cint(raw.get("no_charge"))):
-            typed[name] = {"rate": raw.get("rate"), "no_charge": cint(raw.get("no_charge"))}
+            typed[name] = {
+                "rate": raw.get("rate"),
+                "no_charge": cint(raw.get("no_charge")),
+                "reason": raw.get("reason") or no_charge_reason or "",
+            }
     return typed
 
 
@@ -219,9 +225,11 @@ def lines_needing_price(purchase_order):
     """The open lines of one order that need a price before they can be received (v1.803.0).
 
     The Receive Items dialog asks when it opens, so it can show a price box on those rows.
-    ``{"lines": [{"purchase_order_item", "idx", "item_code", "item_name", "uom"}], "can_price":
-    bool}``: ``can_price`` is whether this person may put a price on the order. Read on the
-    order is required; nothing is written.
+    ``{"lines": [{"purchase_order_item", "idx", "item_code", "item_name", "uom"}], "can_price",
+    "can_mark_free", "reason_required", "why"}``: whether this person may put a price on the
+    order, whether they may receive a line as no charge and must say why, and, when they may
+    not price, the sentence that says why not and who can. Read on the order is required;
+    nothing is written.
     """
     from erpnext_enhancements.inventory_enhancements import receipt_price
 
@@ -232,14 +240,28 @@ def lines_needing_price(purchase_order):
         for row in po.items
         if flt(row.qty) > flt(row.received_qty) and not cint(row.get("delivered_by_supplier"))
     }
+    from erpnext_enhancements.inventory_enhancements import receipt_price_rules
+
+    block = receipt_price.price_block(po)
     return {
         "lines": receipt_price.needing_price(po, wanted=open_lines),
-        "can_price": receipt_price.may_price(po),
+        "can_price": block is None,
+        "can_mark_free": receipt_price.may_mark_free(po),
+        "reason_required": bool(receipt_price_rules.NO_CHARGE_NEEDS_REASON),
+        "why": receipt_price_rules.block_sentence(block, po.name) if block else "",
     }
 
 
 @frappe.whitelist(methods=["POST"])
-def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remarks=None):
+def receive_items(
+    purchase_order,
+    rows,
+    posting_date=None,
+    warehouse=None,
+    remarks=None,
+    no_charge_reason=None,
+    hold_unpriced=1,
+):
     """Write and submit a Purchase Receipt for what just arrived against one order.
 
     The Receive Items dialog on a submitted Purchase Order (``public/js/po_receive_items.js``,
@@ -292,12 +314,18 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
       it came from a scan and who did it.
     * **A stock item's line with no price is settled before a receipt exists** (v1.803.0;
       ``inventory_enhancements/receipt_price_rules.py`` has the rule and why). A row may carry
-      ``rate`` (what each one cost) or ``no_charge: 1`` (free on purpose). A price goes on the
-      order line through ERPNext's own Update Items, because the receipt's rate must match the
-      order's, and only for a caller who may edit the order. A free line gets ERPNext's
-      ``allow_zero_valuation_rate`` tick on its receipt row. With neither, nothing is received
-      and the message names the lines. The receipt's own ``before_submit`` refusal is the
-      backstop; this is the message.
+      ``rate`` (what each one cost) or ``no_charge: 1`` (free on purpose, with a reason in the
+      row's ``reason`` or in ``no_charge_reason``). A price goes on the order line through
+      ERPNext's own Update Items, because the receipt's rate must match the order's. A free
+      line gets ERPNext's ``allow_zero_valuation_rate`` tick on its receipt row and a Comment
+      on the order. Both only for a person who may price the order.
+    * **A line this person can neither price nor mark free is left unreceived**, not received
+      at $0 and not a reason to refuse the rest: it is dropped from the receipt, purchasing gets
+      a ToDo on the order naming it, and the answer carries ``held``, ``asked`` and a
+      ``message`` for the screen. When every line is held, no receipt is made and
+      ``purchase_receipt`` is ``None``; that is an answer, not an error, so the ToDo is kept.
+      ``hold_unpriced=0`` (the Stock Scan page, which receives one line and has already asked)
+      refuses instead. The receipt's own ``before_submit`` refusal is the backstop for all of it.
     """
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
@@ -339,7 +367,27 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
     from erpnext_enhancements.inventory_enhancements import receipt_price
 
-    free = receipt_price.settle_before_receipt(po, set(wanted), _typed_prices(rows))
+    settled = receipt_price.settle_before_receipt(
+        po, set(wanted), _typed_prices(rows, no_charge_reason), hold=bool(cint(hold_unpriced))
+    )
+    free = settled["free"]
+    for name in settled["held"]:
+        wanted.pop(name, None)
+    held = {
+        "held": [
+            {"purchase_order_item": line["purchase_order_item"], "idx": line["idx"], "item_code": line["item_code"]}
+            for line in settled["held_lines"]
+        ],
+        "asked": settled["asked"],
+        "message": settled["message"],
+    }
+    if not wanted:
+        # Every line was held for a price. Nothing to receive, and nothing to roll back: the
+        # ToDo for purchasing must survive, so this answers instead of raising.
+        return dict(
+            {"purchase_receipt": None, "received": [], "per_received": po.per_received, "status": po.status},
+            **held,
+        )
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
     if target:
         receipt.set_warehouse = target
@@ -366,20 +414,30 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
     if frappe.db.has_column("Purchase Order", "custom_order_stage"):
         fields.append("custom_order_stage")
     after = frappe.db.get_value("Purchase Order", po.name, fields, as_dict=True) or {}
-    return {
-        "purchase_receipt": receipt.name,
-        "received": [
-            {"purchase_order_item": item.purchase_order_item, "item_code": item.item_code, "qty": item.qty}
-            for item in receipt.items
-        ],
-        "per_received": after.get("per_received"),
-        "status": after.get("status"),
-        "order_stage": after.get("custom_order_stage"),
-    }
+    return dict(
+        {
+            "purchase_receipt": receipt.name,
+            "received": [
+                {"purchase_order_item": item.purchase_order_item, "item_code": item.item_code, "qty": item.qty}
+                for item in receipt.items
+            ],
+            "per_received": after.get("per_received"),
+            "status": after.get("status"),
+            "order_stage": after.get("custom_order_stage"),
+        },
+        **held,
+    )
 
 
 def receive_order_line(
-    purchase_order_item, stock_qty, warehouse, item_code=None, remarks=None, rate=None, no_charge=None
+    purchase_order_item,
+    stock_qty,
+    warehouse,
+    item_code=None,
+    remarks=None,
+    rate=None,
+    no_charge=None,
+    no_charge_reason=None,
 ):
     """Receive ONE Purchase Order line, counted in the item's STOCK UOM, into ``warehouse``.
 
@@ -396,8 +454,10 @@ def receive_order_line(
     and refuses a result that is not whole in a whole-number UOM rather than rounding it --
     rounding would receive goods that did not arrive.
 
-    ``rate`` and ``no_charge`` are the receiver's answer for a stock item's line with no price
-    (v1.803.0). ``rate`` is per unit of the **order line's** UOM, the unit the order is priced in.
+    ``rate``, ``no_charge`` and ``no_charge_reason`` are the receiver's answer for a stock
+    item's line with no price (v1.803.0). ``rate`` is per unit of the **order line's** UOM, the
+    unit the order is priced in. A line this person can neither price nor mark free refuses here
+    (``hold_unpriced=0``): the page asked first, and made purchasing's ToDo when it did.
     """
     from erpnext_enhancements.inventory_enhancements.stock_scan_rules import to_order_uom
 
@@ -420,4 +480,6 @@ def receive_order_line(
         [{"purchase_order_item": purchase_order_item, "qty": qty, "rate": rate, "no_charge": no_charge}],
         warehouse=warehouse,
         remarks=remarks,
+        no_charge_reason=no_charge_reason,
+        hold_unpriced=0,
     )

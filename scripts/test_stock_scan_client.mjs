@@ -2013,14 +2013,22 @@ async function appBinActions() {
 		["string", "string", "string", "string", "string"]);
 	check("order price: the refusal names the unit", L.orderPriceProblem("", "Box").problem, "Enter the price per Box.");
 	{
-		const can = L.orderPriceText({ item_name: "Widget", uom: "Box", purchase_order: "PO-0007", can_price: true }, 3);
-		const cannot = L.orderPriceText({ item_code: "PDT-0008", purchase_order: "PO-0007", can_price: false }, 3);
+		const can = L.orderPriceText({ item_name: "Widget", uom: "Box", purchase_order: "PO-0007", can_price: true, can_mark_free: true }, 3);
 		check("order price: the words name the order, the item and ONE unit",
-			[/PO-0007 has no price for Widget/.test(can.lead), can.label, /ONE Box/.test(can.per), /3 you counted/.test(can.note), can.button, can.free],
-			[true, "Price per Box", true, true, "Receive at this price", "It was free"]);
-		check("order price: a person who can't edit the order is told who to ask",
-			[/can't set prices on PO-0007/.test(cannot.cannot), /Ask purchasing/.test(cannot.cannot), /no charge/.test(cannot.note)],
-			[true, true, true]);
+			[/PO-0007 has no price for Widget/.test(can.lead), can.title, can.label, /ONE Box/.test(can.per), /3 you counted/.test(can.note), can.button, can.free, can.stop, can.reasonLabel],
+			[true, "What did one cost?", "Price per Box", true, true, "Receive at this price", "It was free", "Stop", "Why was it free?"]);
+		// A person who can neither price the order nor mark a line free: nothing to enter, nothing to tick.
+		// The server's own sentence says why and who can, and names who it asked.
+		const stuck = L.orderPriceText({
+			item_code: "PDT-0008", purchase_order: "PO-0007", can_price: false, can_mark_free: false,
+			why: "You can receive against PO-0007, but you can't set prices on it. Purchasing can.", asked: ["Test Buyer"],
+		}, 3);
+		check("order price: a person who can't price is told why, who can, and who was asked",
+			[stuck.title, stuck.cannot, /Nothing was received\. Test Buyer has been asked to put the price on the order\./.test(stuck.note), /Set it aside/.test(stuck.note), stuck.stop],
+			["This one can't be received yet", "You can receive against PO-0007, but you can't set prices on it. Purchasing can.", true, true, "OK"]);
+		check("order price: and is never told to mark it free", [/free|no charge/i.test(stuck.note), /free|no charge/i.test(stuck.cannot)], [false, false]);
+		const two = L.orderPriceText({ purchase_order: "PO-0007", can_price: false, can_mark_free: false, asked: ["Test Buyer", "Second Buyer"] }, 1);
+		check("order price: two people asked, or nobody", [/Test Buyer and Second Buyer have been asked/.test(two.note), /Tell purchasing it needs a price\./.test(L.orderPriceText({ can_price: false }, 1).note)], [true, true]);
 	}
 	const T = await load("transport.js");
 	const N = await load("nav.js");

@@ -853,23 +853,43 @@ export function orderPriceProblem(text, uom) {
 	return { rate: Math.round(rate * 1e6) / 1e6 };
 }
 
-/** The words of that question, from the server's payload. */
+/**
+ * The words of that question, from the server's payload. Three people (`receipt_price_rules`): one who
+ * may price the order, one who may only mark the line free, and one who can do neither. For the last
+ * the server has already asked purchasing (`asked`, their names) and the sheet only says so.
+ */
 export function orderPriceText(prompt, qty) {
 	const p = prompt || {};
 	const uom = p.uom || "unit";
 	const name = p.item_name || p.item_code || "this item";
 	const order = p.purchase_order || "the purchase order";
+	const asked = Array.isArray(p.asked) ? p.asked.filter(Boolean) : [];
+	const stuck = !p.can_price && !p.can_mark_free;
+	const who = asked.length > 1 ? `${asked.slice(0, -1).join(", ")} and ${asked[asked.length - 1]}` : asked[0];
+	const askedLine = asked.length
+		? `${who} ${asked.length === 1 ? "has" : "have"} been asked to put the price on the order.`
+		: "Tell purchasing it needs a price.";
+	let note;
+	if (p.can_price) {
+		note = `The price is put on ${order}, and the ${qty === undefined || qty === "" ? "goods are" : `${plain(qty)} you counted are`} received at it.`;
+	} else if (p.can_mark_free) {
+		note = "If it was not free, stop: purchasing has to put the price on the order first.";
+	} else {
+		note = `Nothing was received. ${askedLine} Set it aside and receive it once the order has a price.`;
+	}
 	return {
-		title: "What did one cost?",
+		title: stuck ? "This one can't be received yet" : "What did one cost?",
 		lead: `${order} has no price for ${name}. Stock comes in at the price on the order, so it can't be received without one.`,
 		label: `Price per ${uom}`,
 		per: `Enter what ONE ${uom} cost, not the total. It is on the packing slip or the invoice.`,
-		cannot: `You can't set prices on ${order}. Ask purchasing to put the price on it, then receive this again.`,
-		note: p.can_price
-			? `The price is put on ${order}, and the ${qty === undefined || qty === "" ? "goods are" : `${plain(qty)} you counted are`} received at it.`
-			: "If it was free (a sample or a warranty replacement), you can still receive it as no charge.",
+		cannot: p.why || `You can't set prices on ${order}. Purchasing can.`,
+		reasonLabel: "Why was it free?",
+		reasonHint: "A free sample, a warranty replacement.",
+		reasonMissing: "Say why it was free.",
+		note,
 		button: "Receive at this price",
 		free: "It was free",
+		stop: stuck ? "OK" : "Stop",
 	};
 }
 

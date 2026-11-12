@@ -1179,6 +1179,18 @@ doc_events = {
 	# line of its receipt credited that account, or when it names no receipt, so billing an old
 	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
 	# Purchase Invoice had no doc_events block before this one.
+	# v1.803.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
+	# to bring stock in. ERPNext swaps a typed $0 for the item's last valuation, and refuses when
+	# there is none; but it takes a last valuation of exactly 0 without a word, so an item whose
+	# stock is already valued at nothing could be received again at $0. Refused at submit for a
+	# stock item's incoming row whose Basic Rate is 0 and that is not ticked Allow Zero Valuation
+	# Rate. Every other purpose (issue, transfer, manufacture) is left alone, and so is the Stock
+	# Scan page's own receipt, which always carries a cost above zero. Stock Entry had no
+	# doc_events block before.
+	"Stock Entry": {
+		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+	},
 	# v1.803.0 -- and the price rule above, for an invoice that receives stock itself (Update
 	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {

@@ -25,18 +25,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     QuickBooks import (`_map_item`), the water catalog loaders (`catalog_seed`, the pump and
     equipment seeds) and the Serial No patch already say non-stock, so services and fees from
     QuickBooks stay non-stock. The document intake copies the reviewer's tick, which starts
-    unticked. Only a new Item form, the guided Item flow's first step and an assistant's
-    `create_document` take the new default.
-- **Switch Items to Maintain Stock** (`/desk/maintain-stock-switch`, for Item Managers). Nik: "Go
+    unticked. A test now fails the build if code creates an Item without naming the field.
+  - **A person sees the box wherever they create one.** A new Item form, ERPNext's Item quick
+    entry (the field is in it, read at v16.54.0) and the guided Item flow's first step all show
+    Maintain Stock, now ticked.
+  - **An assistant must say it.** `create_document` for an Item that leaves `is_stock_item` out
+    is refused before a card is made, with what to send: 1 for a part or material, 0 for labor, a
+    fee, freight, rent or any other service. Otherwise a service created by an assistant would
+    quietly become a stock item, and that can't be undone from the form once the item is used.
+- **Switch Items to Maintain Stock** (`/desk/maintain-stock-switch`; for a Stock Manager or an Item
+  Manager who may edit Items, which on production means the Item Managers). Nik: "Go
   in and check every Maintain Stock for every item to Yes or Checked"; decided scope, physical
   items only, with a list he approves. It is a page, not a migrate patch: nothing switches until a
   person presses *Switch N items* and confirms.
   - Every enabled non-stock item is listed as *Will switch*, *Stays non-stock* or *Can't switch
     yet*, with the reason in words. *Stays*: a fixed asset; a name ending in `(deleted)` (an old
-    QuickBooks line); the Service item group; a code starting `SRV-`; a name starting with a value
-    stream and a dash (`BUILD - Consulting`, `Rent - Insurance`); a whole word such as labor, fee,
-    rent, travel, mileage, freight, delivery, deposit, consulting, service, tax or expense. The
-    rule is `maintain_stock_bulk_rules.name_rule`, in that order.
+    QuickBooks line); a placeholder, a copy or an item with no name of its own; the Service item
+    group; the Office item group; a code starting `SRV-`; a name starting with a value stream and
+    a dash (`BUILD - Consulting`, `Rent - Insurance`); a whole word such as labor, fee, rent,
+    travel, freight, deposit, installation, permit, warranty or discount; and a line in the
+    QuickBooks catch-all group that carries no `PDT-` product code. The rule is
+    `maintain_stock_bulk_rules.name_rule`, in that order.
+  - **The first draft of the rule was too generous, and a review against production showed it.**
+    It called all 38 Office items parts (trail mix, hand soap, printer ink, a book), and in the
+    catch-all group two vendor-portal subscriptions, a `00XX` placeholder, a "- copy" item and
+    three items with only a number for a name. A switch can't be undone from the form once the
+    item has a submitted document, so the rule now refuses to guess: nothing whose name does not
+    say what it is switches by rule, and in the catch-all group only a product code does.
+    **Office staying non-stock is the manager's recommended default, pending Nik's answer;**
+    emptying `CONSUMABLE_GROUPS` lets office items switch. Words were added by reading every
+    name on production; "tips", "repair", "winterizing" and "charge" are left out, each because
+    a real part there carries it (nozzle tips, a repair coupling, a winterizing plug).
   - **The rule is a guess from the name, so any line can be changed before applying** (*Your
     choice*: switch it, or keep it non-stock). Production keeps real products in the catch-all
     group the QuickBooks import filed everything under, next to labor lines and "Late fee". The
@@ -100,12 +119,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     through when no invoice updated stock.
 - **A stock item's line with no price can't be received.** A Purchase Receipt line, or a Purchase
   Invoice line when the invoice updates stock, for an item that keeps stock and with a rate under
-  half a cent refuses the submit, naming the row and what to do. ERPNext itself only shows an
-  orange toast (`StockController.check_zero_rate`).
+  half a cent refuses the submit, naming the row and what to do. On a receipt ERPNext itself
+  shows an orange toast (`StockController.check_zero_rate`) and takes the $0; it refuses only
+  when it needs a rate for the item and can find none anywhere ("Valuation Rate ... is
+  required", under perpetual inventory).
   - **One refusal behind every way a receipt is made**, because each ends in the same submit: the
     Purchase Receipt form; the order's Receive Items dialog; Stock Scan and the store-run sheet's
     *Receive on PO*; and the drafts the packing-slip and vendor-bill intake create. A draft still
     saves, with a warning, so the intake keeps working.
+  - **A Desk Stock Entry of type Material Receipt is covered too.** ERPNext replaces a typed $0
+    there with the item's last valuation in that warehouse and refuses when there is none
+    (`StockEntry.set_basic_rate`, `get_valuation_rate`, v16.54.0). But it accepts a last
+    valuation of exactly 0, so an item whose stock is already valued at nothing could be
+    received again at $0 without a word. That row is refused at submit. Stock Scan's own "add
+    without a purchase order" always posts a cost above zero and is unaffected. A Stock
+    Reconciliation is not judged: it states a count.
   - **Free on purpose is ERPNext's own tick, *Allow Zero Valuation Rate***, on the row: a free
     sample, a warranty replacement. No new field.
   - **The price goes on the order line.** Buying Settings keeps *Maintain Same Rate* on with the
@@ -114,14 +142,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Stock Scan page asks "What did one cost?" with *Receive at this price*, *It was free* and
     *Stop*, and posts nothing until answered. Both put the price on the order through ERPNext's
     *Update Items* (`update_child_qty_rate`), which checks write permission on the order and
-    re-runs this app's approval-threshold and requester gates. A person who may not edit the
-    order is told to ask purchasing, and can still mark a line free or receive the rest. A line
-    received as free leaves a Comment on the order saying who and which row, since it changes no
-    price. The order is read again at the moment the price is written, because *Update Items*
-    deletes any row it is not sent.
+    re-runs this app's approval-threshold and requester gates. The order is read again at the
+    moment the price is written, because *Update Items* deletes any row it is not sent.
+  - **Who may price, and who may say "no charge".** Pricing needs write on the order. Marking a
+    line no charge is held to the same people and needs a reason, which goes into a Comment on
+    the order. **Both are the manager's recommended defaults, pending Nik's answer**
+    (`NO_CHARGE_NEEDS_ORDER_WRITE`, `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules`; each is
+    one constant). The first draft let any receiver mark a line free, and its dialog told the
+    people who could not price to do just that, which made the refusal one tap to get past.
+  - **A receiver who can do neither is not stuck and does not get a $0 receipt.** The line is
+    left unreceived, the rest of the delivery is received as usual, and purchasing gets a ToDo on
+    the order naming the rows that need a price: the order's author when they can still price
+    it, otherwise the people who hold PO Creator. The same order is not asked about twice. The
+    dialog and the phone say who was asked, and neither offers that person a price box or a
+    "free" button.
+  - **The person who raised the Material Request cannot price the order it fills**, because
+    *Update Items* re-runs the separation-of-duties gate, which refuses them. They are told that
+    in their own words, and that someone else in purchasing can, and their line is held the same
+    way, instead of being handed a price box that could only fail.
   - **The order still only warns** at submit, as decided on 2026-09-24; its words now say the
     receipt will ask. Returns, internal transfers, non-stock lines and every document already
     submitted are left alone. No rate on an existing receipt is changed.
+- **A switch job that runs out of time leaves its item queued.** The worker's own timeout used to
+  be caught like a failed item and recorded as Refused. It now rolls the item back, leaves it
+  Queued and ends the job; the scheduler starts the next one, which takes it up again.
+- **The Bin is recounted a second time, straight after the switch commits.** The first recount
+  reads the database as it was when the switch began, so a Purchase Receipt for the same item that
+  committed in between left what is on order too high. The second one sees it. What is left: a
+  receipt that began before the commit and finishes after the second recount. That one still
+  corrects itself the next time an order or receipt for that item and warehouse is saved, as
+  before.
 - **What only a bench or production can show.** The tests run the checks, the queue and the job on
   SQLite and on stand-ins for ERPNext, and the screens' decisions under node. Not run anywhere
   before the deploy: ERPNext's real `update_bin_qty` and `update_child_qty_rate`, the job under a

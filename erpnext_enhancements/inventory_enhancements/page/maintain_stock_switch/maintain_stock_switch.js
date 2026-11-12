@@ -183,7 +183,7 @@ class MaintainStockSwitchPage {
 		html.push(
 			`<p class="mss-intro">${this.esc(
 				__(
-					"Every enabled item that keeps no stock is listed here. Parts and materials switch to Maintain Stock, so receiving them adds to stock. Labor, fees, rent, travel, freight, deposits, old QuickBooks lines and fixed assets stay as they are. The suggestion comes from each item's name and group and can be wrong: change any line with Your choice before you switch. Nothing changes until you press Switch."
+					"Every enabled item that keeps no stock is listed here. Parts and materials switch to Maintain Stock, so receiving them adds to stock. Labor, fees, rent, travel, freight, deposits, office supplies, old QuickBooks lines and fixed assets stay as they are, and so does anything whose name does not say what it is. The suggestion comes from each item's name and group and can be wrong: change any line with Your choice before you switch. Once an item is switched and used, it can't be switched back here. Nothing changes until you press Switch."
 				)
 			)}</p>`
 		);

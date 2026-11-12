@@ -471,6 +471,22 @@ def resume_queue():
 		frappe.log_error(frappe.get_traceback(), "Maintain Stock bulk switch: resume failed")
 
 
+def _is_timeout(error):
+	"""Whether ``error`` is the background worker's own time limit (RQ's ``JobTimeoutException``).
+
+	It derives from ``Exception``, so it arrives where a failed item's error does, and must not be
+	mistaken for one.
+	"""
+	try:
+		from rq.timeouts import JobTimeoutException
+
+		if isinstance(error, JobTimeoutException):
+			return True
+	except Exception:
+		pass
+	return type(error).__name__ == "JobTimeoutException"
+
+
 def _switch_one(row):
 	"""Switch one queued item through the single-item switch, and write down what happened."""
 	try:
@@ -494,6 +510,11 @@ def _switch_one(row):
 		return True
 	except Exception as error:
 		frappe.db.rollback()
+		if _is_timeout(error):
+			# The worker's time ran out mid-item. Nothing about the item was refused: it is rolled
+			# back, still Queued and still non-stock. Let the job end; the scheduler starts the
+			# next one, which takes it up again.
+			raise
 		if isinstance(error, frappe.ValidationError):
 			result = bulk_rules.refused_result(error)
 		else:

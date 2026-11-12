@@ -32,7 +32,8 @@ Three parts, each with its reasons:
   not lock the Item row; it reads the flag through ``get_cached_value``. One that commits between
   this transaction's snapshot and its commit is not among the documents the checks counted. The
   window is the length of one request. Nothing in ERPNext offers a lock that would close it short
-  of locking every transaction table.
+  of locking every transaction table. For the Bin there is a second recount straight after the
+  commit (:func:`_recount_after_commit`), which sees a receipt that committed in that window.
 * **The guards** on the item's old receipts. After the switch those lines are a stock item's lines
   that never wrote a stock ledger entry, and every path in ERPNext v16.52.1 that rebuilds a
   receipt's ledger does it from the items that keep stock *now*. So each of these is refused:
@@ -453,6 +454,41 @@ def _recount_bins(item_code, plan):
 		stock_balance.update_bin_qty(item_code, warehouse, {field: readers[field](item_code, warehouse)})
 
 
+def _recount_after_commit(item_code, plan):
+	"""Recount the same Bins once more, right after this transaction commits.
+
+	The first recount reads the database as it was when this transaction began (REPEATABLE READ).
+	A Purchase Receipt for the same item that committed while the switch was running is not in
+	that picture: it moved ``received_qty`` without touching the Bin, because it still saw the
+	item as non-stock, so the Bin's on-order figure would be too high. The second recount, in a
+	fresh transaction, sees it.
+
+	What is left: a receipt that began before the switch committed and commits after this second
+	recount. It still carries the old flag, posts no stock, and leaves on-order too high until the
+	next order or receipt for that item and warehouse recounts it, as ERPNext does on every one.
+
+	A savepoint, not a rollback, on failure: a full rollback inside a commit callback would drop
+	the other callbacks still waiting to run.
+	"""
+	after_commit = getattr(frappe.db, "after_commit", None)
+	if not plan["recount"] or after_commit is None:
+		return
+
+	def again():
+		try:
+			frappe.db.savepoint("maintain_stock_recount")
+			_recount_bins(item_code, plan)
+			frappe.db.commit()
+		except Exception:
+			try:
+				frappe.db.rollback(save_point="maintain_stock_recount")
+			except Exception:
+				pass
+			frappe.log_error(frappe.get_traceback(), "Maintain Stock: recount after commit failed")
+
+	after_commit.add(again)
+
+
 def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 	"""Switch Maintain Stock on after every check passes again. Refuses, in words, when one fails.
 
@@ -482,6 +518,7 @@ def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 	full_name = get_fullname(user)
 	_fill_order_warehouses(item_code, plan, full_name)
 	_recount_bins(item_code, plan)
+	_recount_after_commit(item_code, plan)
 	comment = rules.switch_comment(
 		full_name,
 		format_datetime(now_datetime()),

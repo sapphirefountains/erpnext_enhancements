@@ -13,7 +13,9 @@ Every non-stock item gets one of three outcomes, with the reason in words:
 
 * ``switch``  -- a physical item, and every safety check passes.
 * ``stay``    -- not something that sits on a shelf: labor, a fee, rent, travel, freight, a
-  deposit, an old QuickBooks line, anything in the Service item group, a fixed asset.
+  deposit, an old QuickBooks line, anything in the Service item group, a fixed asset. And
+  anything the rule cannot tell: a placeholder, a copy, an item with no real name, office
+  supplies, a line in the QuickBooks catch-all group that carries no product code.
 * ``blocked`` -- a physical item that one of the safety checks refuses, with that check's words.
 
 **The rule is a guess from the name and the group, and it says so.** Production keeps physical
@@ -27,14 +29,31 @@ ERPNext itself refuses to stock.
 
 1. A fixed asset item.
 2. A name or code ending in ``(deleted)``: QuickBooks marks a deleted product that way.
-3. The Service item group (:data:`SERVICE_GROUPS`).
-4. A code starting with ``SRV-``, the company's service codes (:data:`SERVICE_CODE_PREFIXES`).
-5. A name that starts with a value stream and a dash, such as ``BUILD - Consulting`` or
+3. An item this app itself keeps non-stock on purpose (:data:`RESERVED_NON_STOCK`).
+4. **Nothing says what it is** (:func:`unclear`): a placeholder (``XX`` where digits belong,
+   "test item", "TBD"), a copy (a name ending in ``- copy``), or no name at all (only a number,
+   or a bare code repeated as the name). It may well be a part, but nobody can tell from here,
+   and a switch can't be undone from the form once the item is used.
+5. The Service item group (:data:`SERVICE_GROUPS`).
+6. A group of things bought to be used up, not kept as stock (:data:`CONSUMABLE_GROUPS`:
+   Office). **Pending Nik's answer, 2026-11-12**: the manager's recommended default. To let
+   office items switch, empty that tuple; nothing else changes.
+7. A code starting with ``SRV-``, the company's service codes (:data:`SERVICE_CODE_PREFIXES`).
+8. A name that starts with a value stream and a dash, such as ``BUILD - Consulting`` or
    ``Rent - Insurance``, after any leading code (:data:`STREAM_PREFIXES`). Those are QuickBooks
    billing lines.
-6. A whole word from :data:`SERVICE_WORDS` in the name or code: labor, fee, rent, travel,
-   freight, deposit and their kin. Whole words only: "current" does not match "rent". "Shipping"
-   is left out on purpose: on production it only ever described a label and packing peanuts.
+9. A whole word from :data:`SERVICE_WORDS` in the name or code: labor, fee, rent, travel,
+   freight, deposit, installation, permit, warranty and their kin. Whole words only: "current"
+   does not match "rent".
+10. The QuickBooks catch-all group (:data:`CATCH_ALL_GROUPS`) without a product code
+    (:data:`PRODUCT_CODE_PREFIXES`). The import filed products and services alike there, and a
+    vendor portal's name reads no differently from a part's. A ``PDT-`` code is the one sign
+    that a line there is a product.
+
+**Words left out on purpose, each because production has a part it would catch:** "shipping"
+(a shipping label, packing peanuts), "tips" (nozzle tips), "repair" (a repair coupling),
+"winterizing" (a winterizing plug), "charge" (a charge controller), "cleaner" (a bottle of it).
+"Repairs", "winterization", "surcharge" and "cleaning" are in.
 
 Tabs, per ``CLAUDE.md`` (new file).
 """
@@ -67,6 +86,21 @@ STATUS_REFUSED = "Refused"
 #: Item groups whose items stay non-stock.
 SERVICE_GROUPS = ("Service", "Services")
 
+#: Item groups of things bought to be used, not kept as stock: paper, ink, soap, snacks.
+#: PENDING NIK (2026-11-12): the manager's recommended default. Make this ``()`` to let them switch.
+CONSUMABLE_GROUPS = ("Office",)
+
+#: The group the QuickBooks import filed everything under, products and services alike.
+CATCH_ALL_GROUPS = ("All Item Groups",)
+
+#: Code prefixes that mark a line in a catch-all group as a product.
+PRODUCT_CODE_PREFIXES = ("PDT-",)
+
+#: Items this app keeps non-stock on purpose. "Customer Water Feature" is the one item every
+#: customer feature's Serial No hangs from (``patches/migrate_assets_to_serial_no``); it is a
+#: record, not a part.
+RESERVED_NON_STOCK = ("Customer Water Feature",)
+
 #: Item code prefixes that mark a service line.
 SERVICE_CODE_PREFIXES = ("SRV-",)
 
@@ -93,15 +127,58 @@ SERVICE_WORDS = (
 	"services",
 	"tax",
 	"tariff",
-	"tips",
 	"expense",
 	"software",
 	"subscription",
 	"insurance",
+	# Added after reading every name on production (v1.803.0 review). None of these is in a
+	# part's name there today; each is here so a new service line is caught.
+	"installation",
+	"cleaning",
+	"repairs",
+	"maintenance",
+	"permit",
+	"permits",
+	"discount",
+	"surcharge",
+	"retainer",
+	"warranty",
+	"winterization",
+	"subcontractor",
+	"subcontracted",
+	"misc",
+	"miscellaneous",
+	"design",
+	"programming",
+	"training",
+	"inspection",
+	"license",
+	"membership",
+	"commission",
+	"refund",
+	"credit",
+	"handling",
+	"overtime",
+	"hourly",
+	"lodging",
+	"hotel",
+	"airfare",
+	"postage",
+	"donation",
+	"gratuity",
+	"markup",
+	"allowance",
+	"contingency",
+	"calibration",
+	"disposal",
 )
 
 #: Phrases that mark one, where no single word would.
-SERVICE_PHRASES = ("custom amount",)
+SERVICE_PHRASES = ("custom amount", "per diem")
+
+#: Words and phrases that say an item is a stand-in, not a real one.
+PLACEHOLDER_WORDS = ("placeholder", "tbd", "dummy")
+PLACEHOLDER_PHRASES = ("test item", "do not use")
 
 #: How many items one background job switches before it hands over to the next.
 BATCH_SIZE = 50
@@ -110,6 +187,11 @@ _DELETED = re.compile(r"\(deleted\)\s*$", re.IGNORECASE)
 _LEADING_CODE = re.compile(r"^[A-Za-z]{2,5}-[0-9A-Za-z]{2,6}\s+")
 _STREAM = re.compile(r"^(" + "|".join(STREAM_PREFIXES) + r")\s*-", re.IGNORECASE)
 _WORD = re.compile(r"[a-z]+")
+#: "XX" standing where digits belong, as in ``PDT-00XX``: upper case, straight after a digit, and
+#: ending the code. Not a size ("XX-LARGE") and not a model number ("952XL").
+_XX = re.compile(r"\dX{2,}(?![A-Za-z0-9])")
+#: A name ending in "- copy", "(copy)" or "- copy 2".
+_COPY = re.compile(r"[-(]\s*copy(?:\s*\d+)?\)?\s*$", re.IGNORECASE)
 
 
 def _text(value):
@@ -123,19 +205,59 @@ def _truthy(value):
 		return bool(value)
 
 
+def unclear(item_code, item_name):
+	"""Why nothing says what this item is, or ``None`` when its name is a real one.
+
+	A placeholder, a copy, or an item with no name of its own. Such an item is never switched by
+	the rule: it stays non-stock until a person names it or chooses to switch it.
+	"""
+	code, name = _text(item_code), _text(item_name)
+	text = name or code
+	lowered = f"{name} {code}".lower()
+	# Only when the name is the code and nothing more: a catalog part may carry a wildcard model
+	# number in its name ("... (LR375XXX)"), and that is a real part.
+	if name == code and _XX.search(code):
+		return 'Its code has "XX" where a number belongs, and it has no other name: a placeholder.'
+	for phrase in PLACEHOLDER_PHRASES:
+		if phrase in lowered:
+			return f'Its name has "{phrase}": a placeholder.'
+	words = set(_WORD.findall(lowered))
+	for word in PLACEHOLDER_WORDS:
+		if word in words:
+			return f'Its name has the word "{word}": a placeholder.'
+	if _COPY.search(code) or _COPY.search(name):
+		return 'Its name ends in "copy": a duplicate of another item.'
+	if not re.search(r"[A-Za-z]", text):
+		return "It has no name, only a number, so nothing says what it is."
+	if name == code and " " not in code and re.search(r"\d", code):
+		return "Its name is only its code, so nothing says what it is."
+	return None
+
+
 def name_rule(item_code, item_name, item_group, is_fixed_asset=0):
 	"""``(key, reason)`` for the first rule that says this is not a shelf part, or ``None``.
 
-	``key`` names the rule (``asset``, ``deleted``, ``group``, ``code``, ``stream``, ``word``) so a
-	test and the downloaded list can say which one fired.
+	``key`` names the rule (``asset``, ``deleted``, ``reserved``, ``unclear``, ``group``,
+	``consumable``, ``code``, ``stream``, ``word``, ``catch_all``) so a test and the downloaded
+	list can say which one fired.
 	"""
 	code, name, group = _text(item_code), _text(item_name), _text(item_group)
 	if _truthy(is_fixed_asset):
 		return "asset", "It is a fixed asset item, and ERPNext keeps those non-stock."
 	if _DELETED.search(code) or _DELETED.search(name):
 		return "deleted", 'An old QuickBooks line: its name ends in "(deleted)".'
+	if code in RESERVED_NON_STOCK:
+		return "reserved", "This app uses it as a record, not a part, and needs it non-stock."
+	vague = unclear(code, name)
+	if vague:
+		return "unclear", f"{vague} Choose Switch if it is a part."
 	if group in SERVICE_GROUPS:
 		return "group", f"It is in the {group} item group."
+	if group in CONSUMABLE_GROUPS:
+		return "consumable", (
+			f"It is in the {group} item group: supplies bought to be used, not kept as stock. "
+			"Choose Switch if we do count it."
+		)
 	for prefix in SERVICE_CODE_PREFIXES:
 		if code.upper().startswith(prefix):
 			return "code", f"Its code starts with {prefix}, the service codes."
@@ -153,6 +275,12 @@ def name_rule(item_code, item_name, item_group, is_fixed_asset=0):
 	for word in SERVICE_WORDS:
 		if word in words:
 			return "word", f'Its name has the word "{word}": not a part.'
+	if group in CATCH_ALL_GROUPS and not code.upper().startswith(PRODUCT_CODE_PREFIXES):
+		return "catch_all", (
+			f"It is in {group}, where the QuickBooks import filed products and services alike, and "
+			f"its code is not a product code ({', '.join(PRODUCT_CODE_PREFIXES)}). "
+			"Choose Switch if it is a part."
+		)
 	return None
 
 

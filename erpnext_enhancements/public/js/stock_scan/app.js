@@ -1936,7 +1936,7 @@ export class StockScanApp {
 				// Not a save either (v1.803.0): the order line has no price, a stock item can't be received
 				// without one, and the server has posted nothing. Ask, and send this save again with the answer.
 				this.updateStepper();
-				if (sheetUi) sheetUi.showError("That order line still has no price. Ask purchasing to put it on the order.");
+				if (sheetUi) sheetUi.showError(result.why || "That order line still has no price. Ask purchasing to put it on the order.");
 				else this.askOrderPrice(v, method, args, result, ref);
 				return;
 			}
@@ -2056,16 +2056,23 @@ export class StockScanApp {
 	/**
 	 * "What did one cost?" (v1.803.0). The server answered a receive with `needs_order_price`
 	 * (`isOrderPricePrompt`): the order line is a stock item's and has no price, and the receipt would be
-	 * refused. Three ways on: a price (sent as `order_rate`, per unit of the ORDER's UOM, and put on the
-	 * order by the server), "It was free" (`no_charge`, a sample or a warranty replacement), or Stop,
-	 * which posts nothing. A person who may not edit the order gets no price box, only the last two and
-	 * who to ask. Built like `askUnitCost`: one reference for the life of the sheet, the button off while
-	 * the save is out, a refusal shown inside the sheet. A sheet is already a history marker (nav.js).
+	 * refused. What the sheet offers depends on who is holding the phone, and the server says which:
+	 *   - may price the order (`can_price`): a price box, sent as `order_rate` (per unit of the ORDER's
+	 *     UOM), which the server puts on the order;
+	 *   - may mark a line free (`can_mark_free`): "It was free" with a reason, sent as `no_charge` and
+	 *     `no_charge_reason`;
+	 *   - neither: no box and no button but OK. Nothing is received, and the server has already left
+	 *     purchasing a ToDo (`asked`). This person is never told to mark anything free.
+	 * Stop (or OK) posts nothing. Built like `askUnitCost`: one reference for the life of the sheet, the
+	 * button off while the save is out, a refusal shown inside the sheet. A sheet is already a history
+	 * marker (nav.js).
 	 */
 	askOrderPrice(v, method, args, prompt, ref) {
 		const copy = orderPriceText(prompt, args.qty);
 		const error = errorLine("ee-ss-field-error");
 		const canPrice = !!prompt.can_price;
+		const canFree = !!prompt.can_mark_free;
+		const reasonRequired = prompt.reason_required !== false;
 		let closed = false;
 		let posting = false;
 		const field = input({
@@ -2075,6 +2082,13 @@ export class StockScanApp {
 			enterkeyhint: "done",
 			value: "",
 			label: copy.label,
+		});
+		const reasonField = input({
+			className: "ee-ss-input",
+			type: "text",
+			enterkeyhint: "done",
+			value: "",
+			label: copy.reasonLabel,
 		});
 		const send = (h, btn, extra) => {
 			if (posting) return false;
@@ -2101,9 +2115,20 @@ export class StockScanApp {
 			}
 			return send(h, btn, { order_rate: answer.rate });
 		};
+		const free = (h, btn) => {
+			if (posting) return false;
+			const reason = String(reasonField.value || "").trim();
+			if (reasonRequired && !reason) {
+				error.show(copy.reasonMissing);
+				reasonField.focus();
+				return false;
+			}
+			return send(h, btn, { no_charge: 1, no_charge_reason: reason || undefined });
+		};
 		const body = append(el("div", "ee-ss-cost"), el("p", "ee-ss-sheet-text", copy.lead));
 		if (canPrice) append(body, el("label", "ee-ss-field-label", copy.label), field, el("p", "ee-ss-note", copy.per));
 		else append(body, el("p", "ee-ss-note", copy.cannot));
+		if (canFree) append(body, el("label", "ee-ss-field-label", copy.reasonLabel), reasonField, el("p", "ee-ss-note", copy.reasonHint));
 		append(body, error.node, el("p", "ee-ss-note", copy.note));
 		const h = sheet({
 			title: copy.title,
@@ -2117,8 +2142,10 @@ export class StockScanApp {
 		if (canPrice) {
 			actions.push({ label: copy.button, kind: "add", large: true, close: false, onClick: (handle, btn) => submit(handle, btn) });
 		}
-		actions.push({ label: copy.free, kind: "outline", close: false, onClick: (handle, btn) => send(handle, btn, { no_charge: 1 }) });
-		actions.push({ label: "Stop", kind: "ghost" });
+		if (canFree) {
+			actions.push({ label: copy.free, kind: "outline", close: false, onClick: (handle, btn) => free(handle, btn) });
+		}
+		actions.push({ label: copy.stop, kind: "ghost" });
 		const buttons = h.setActions(actions);
 		if (canPrice) {
 			field.addEventListener("keydown", (event) => {

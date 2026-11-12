@@ -2218,6 +2218,10 @@ class BulkNameRuleTest(unittest.TestCase):
 			("TST-9", "Manual Mileage", "Products", 0, "word"),
 			("TST-10", "Custom Amount", "Products", 0, "word"),
 			("TST-11", "TAX, SALES", "Products", 0, "word"),
+			("TST-12", "STAPLES, STANDARD", "Office", 0, "consumable"),
+			("TST-13", "Test Portal", "All Item Groups", 0, "catch_all"),
+			("900123", "900123", "Products", 0, "unclear"),
+			("Customer Water Feature", "Customer Water Feature", "Products", 0, "reserved"),
 		]
 		for code, name, group, asset, expected in cases:
 			with self.subTest(name):
@@ -2227,15 +2231,143 @@ class BulkNameRuleTest(unittest.TestCase):
 		for code, name, group in (
 			("PDT-9050", "ANEMOMETER, PADDLE, 3-24 VDC", "All Item Groups"),
 			("PDT-9151", 'DECK JET, ADJUSTABLE, 1" NPT, SS', "All Item Groups"),
+			("PDT-9003", "PDT-9003 SPLASH TEST INDUSTRIAL", "All Item Groups"),
 			("TST-20", "PUMP, TEST 150, 24 V", "Pumps"),
 			("TST-21", "ADAPTER, 1 INCH INTERNAL TO NPT EXTERNAL", "Products"),
 			("TST-22", "SENSOR, CURRENT, 20 A", "Electrical"),
 			("TST-23", "LABEL, SHIPPING, BLANK", "Products"),
-			("TST-24", "INK CARTRIDGE, DESIGN JET", "Office"),
 			("TST-25", "PARENT, RENTED-LOOKING, FEEDER", "Products"),
+			# Words left out of the list on purpose, each for a real part.
+			("TST-26", "NOZZLE TIPS, BRASS", "Nozzles"),
+			("TST-27", "COUPLING, REPAIR, PVC, 1 INCH", "Products"),
+			("TST-28", "WINTERIZING PLUG, FOR DECK JET", "Products"),
+			("TST-29", "CONTROLLER, SOLAR CHARGE, 20 A", "Electrical"),
+			# A size and a wildcard model number are not placeholders.
+			("TST-30", "HOODIE, HI VIS, XX-LARGE", "Products"),
+			("Test light kit (LR375XXX)", "LIGHT, TEST FOUNTAIN KIT (LR375XXX)", "Lights"),
+			("TST-31", "CARTRIDGE, INK, 952XL", "Products"),
+			# A name that is the code, but says what it is.
+			("2 POLE TERMINALS", "2 POLE TERMINALS", "Electrical"),
 		):
 			with self.subTest(name):
 				self.assertIsNone(self.rule(code, name, group))
+
+	def test_the_six_names_from_the_brief(self):
+		cases = (
+			("SRV-202", "SRV-202 SERVICE - LABOR SENIOR TECHNICIAN", "All Item Groups", "code"),
+			("TST-40", "SERVICE - LABOR SENIOR TECHNICIAN", "All Item Groups", "stream"),
+			("Late fee", "Late fee", "All Item Groups", "word"),
+			("PDT-0050", "ANEMOMETER, PADDLE, 3-24 VDC", "All Item Groups", None),
+			("SRV-414", "RENT - FOUNTAIN PILLAR", "All Item Groups", "code"),
+			("TST-41", "BUILD -  FOUNTAIN MATERIALS & EQUIPMENT", "All Item Groups", "stream"),
+			("PDT-0003", "PDT-0003 SPLASH WIZARD INDUSTRIAL", "All Item Groups", None),
+		)
+		for code, name, group, expected in cases:
+			with self.subTest(name):
+				self.assertEqual(self.rule(code, name, group), expected)
+
+	def test_office_supplies_stay_until_someone_says_otherwise(self):
+		"""The manager's recommended default, pending Nik: one tuple to empty."""
+		self.assertEqual(bulk_rules.CONSUMABLE_GROUPS, ("Office",))
+		for name in (
+			"TRAIL MIX, MULTIPACK, 15 OZ",
+			"HAND SOAP, LIQUID, PACK OF 6",
+			"TOWEL, PAPER, 2-PLY, 12 ROLLS",
+			"CARTRIDGE, INK, CYAN",
+			"MOUSE, USB WIRED, 3 BUTTON",
+			"INK CARTRIDGE, DESIGN JET",
+		):
+			with self.subTest(name):
+				self.assertEqual(self.rule("TST-50", name, "Office"), "consumable")
+		reason = bulk_rules.name_rule("TST-50", "HAND SOAP", "Office")[1]
+		self.assertIn("Office item group", reason)
+		self.assertIn("Choose Switch if we do count it", reason)
+		# The flip: with the tuple emptied, an office item is judged like any other.
+		kept = bulk_rules.CONSUMABLE_GROUPS
+		bulk_rules.CONSUMABLE_GROUPS = ()
+		try:
+			self.assertIsNone(self.rule("TST-50", "HAND SOAP, LIQUID, PACK OF 6", "Office"))
+		finally:
+			bulk_rules.CONSUMABLE_GROUPS = kept
+
+	def test_a_placeholder_a_copy_and_a_nameless_item_never_switch(self):
+		cases = (
+			("500977", "500977", "only a number"),
+			("501-006", "501-006", "only a number"),
+			("PDT-00051", "PDT-00051", "only its code"),
+			("PDT-00XX", "PDT-00XX", '"XX" where a number belongs'),
+			("PDT-9008 TEST BYPASS, 5HP - copy", "PDT-9008 TEST BYPASS, 5HP - copy", 'ends in "copy"'),
+			("TST-60", "VALVE, BALL (copy)", 'ends in "copy"'),
+			("TST-61", "VALVE, BALL - Copy 2", 'ends in "copy"'),
+			("Test Item-1", "Test Item-1", '"test item"'),
+			("TST-62", "PLACEHOLDER FOR NEW PUMP", '"placeholder"'),
+			("TST-63", "TBD", '"tbd"'),
+			("TST-64", "OLD VALVE DO NOT USE", '"do not use"'),
+		)
+		for group in ("Products", "All Item Groups", "Pumps"):
+			for code, name, says in cases:
+				with self.subTest(name=name, group=group):
+					found = bulk_rules.name_rule(code, name, group)
+					self.assertEqual(found[0], "unclear")
+					self.assertIn(says, found[1])
+					self.assertIn("Choose Switch if it is a part.", found[1])
+		# "COPY PAPER" and "PAPER, COPY" are paper.
+		self.assertIsNone(bulk_rules.unclear("TST-65", "PAPER, COPY, LETTER"))
+		self.assertIsNone(bulk_rules.unclear("TST-66", "COPY PAPER, LETTER"))
+
+	def test_the_catch_all_group_switches_only_what_carries_a_product_code(self):
+		for code, name in (
+			("Test Compliance Portal", "Test Compliance Portal"),
+			("TestVendor", "TestVendor"),
+			("Tips", "Tips"),
+			("LED Fuse Holder", "LED Fuse Holder"),
+		):
+			with self.subTest(name):
+				found = bulk_rules.name_rule(code, name, "All Item Groups")
+				self.assertEqual(found[0], "catch_all")
+				self.assertIn("its code is not a product code (PDT-)", found[1])
+		# The same names anywhere else are judged by their words alone.
+		self.assertIsNone(self.rule("LED Fuse Holder", "LED Fuse Holder", "Electrical"))
+		self.assertIsNone(self.rule("pdt-9050", "ANEMOMETER, PADDLE", "All Item Groups"), "any case")
+
+	def test_the_widened_service_words(self):
+		for name in (
+			"Fountain installation",
+			"Pond cleaning, monthly",
+			"Pump repairs",
+			"Annual maintenance",
+			"City permit",
+			"Returning customer discount",
+			"Fuel surcharge",
+			"Monthly retainer",
+			"Extended warranty, 2 years",
+			"Winterization",
+			"Subcontractor, electrical",
+			"Misc",
+			"Fountain design",
+			"Controller programming",
+			"Operator training",
+			"Annual inspection",
+			"Software license",
+			"Hotel",
+			"Per diem",
+			"Restocking credit",
+			"Shipping and handling",
+		):
+			with self.subTest(name):
+				self.assertEqual(self.rule("TST-70", name, "Products"), "word")
+		self.assertNotIn("tips", bulk_rules.SERVICE_WORDS)
+		self.assertNotIn("repair", bulk_rules.SERVICE_WORDS)
+
+	def test_an_item_this_app_needs_non_stock_is_never_offered(self):
+		found = bulk_rules.name_rule("Customer Water Feature", "Customer Water Feature", "Products")
+		self.assertEqual(found[0], "reserved")
+
+	def test_what_leans_to_stay_and_is_known_to(self):
+		"""These are parts the rule keeps non-stock. A part left non-stock is where it is today,
+		and one click on the page switches it; the test is here so nobody is surprised."""
+		self.assertEqual(self.rule("TST-80", "SERVICE VALVE, 1 INCH", "Plumbing"), "word")
+		self.assertEqual(self.rule("TST-81", "HOSE, DELIVERY, 2 INCH", "Plumbing"), "word")
 
 	def test_the_reason_is_a_sentence_about_this_item(self):
 		self.assertEqual(
@@ -2498,6 +2630,7 @@ class BulkPreviewTest(unittest.TestCase):
 		self.assertEqual(rows[ITEM]["outcome"], "switch")
 		self.assertEqual(rows[FEE]["outcome"], "stay")
 		self.assertIn('the word "fee"', rows[FEE]["reason"])
+		self.assertEqual(rows[FEE]["rule"], "stay")
 		self.assertEqual(rows[OTHER]["outcome"], "blocked")
 		self.assertIn("1 Delivery Note uses it.", rows[OTHER]["reason"])
 		self.assertEqual(data["counts"], {"switch": 1, "stay": 1, "blocked": 1})
@@ -2880,6 +3013,198 @@ class DecisionRowFollowsTheItemTest(unittest.TestCase):
 		for code in (ITEM, OTHER):
 			self.assertEqual(decision_row(code).status, "Switched", code)
 		self.assertEqual(decision_row(OTHER).invoices, 1, "the Delivery Note guard still has its row")
+
+
+class ItemCreatorsSayStockOnPurposeTest(unittest.TestCase):
+	"""New items default to Maintain Stock on (v1.803.0), so code that creates an Item must say
+	which it means. A new creator that leaves the field out fails here, before it can quietly
+	make a labor line a stock item."""
+
+	#: Dict literals with ``"doctype": "Item"`` that are not a creation at all.
+	NOT_A_CREATION = {"api/desk_search.py", "form_kit/config/item.py"}
+
+	def sites(self):
+		dicts, new_docs = [], []
+		for path in sorted(APP.rglob("*.py")):
+			rel = path.relative_to(APP).as_posix()
+			if rel.startswith(("tests/", "patches/")):
+				continue
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+			for node in ast.walk(tree):
+				if isinstance(node, ast.Dict):
+					keys = [k.value if isinstance(k, ast.Constant) else None for k in node.keys]
+					pairs = zip(node.keys, node.values, strict=True)
+					if any(
+						isinstance(k, ast.Constant)
+						and k.value == "doctype"
+						and isinstance(v, ast.Constant)
+						and v.value == "Item"
+						for k, v in pairs
+					):
+						dicts.append((rel, "is_stock_item" in keys, None in keys))
+				elif (
+					isinstance(node, ast.Call)
+					and isinstance(node.func, ast.Attribute)
+					and node.func.attr == "new_doc"
+					and node.args
+					and isinstance(node.args[0], ast.Constant)
+					and node.args[0].value == "Item"
+				):
+					new_docs.append(rel)
+		return dicts, new_docs
+
+	def test_every_item_built_from_a_dict_names_the_field(self):
+		dicts, _new_docs = self.sites()
+		self.assertTrue(dicts)
+		for rel, names_it, spreads in dicts:
+			if rel in self.NOT_A_CREATION:
+				continue
+			with self.subTest(rel):
+				if rel == "water_engineering/catalog_seed.py":
+					# Built from a plan spread into the dict; the plan names the field.
+					self.assertTrue(spreads)
+					source = (APP / rel).read_text(encoding="utf-8")
+					self.assertIn('"is_stock_item": 0,', source[source.index("def _item_plan(") :])
+				else:
+					self.assertTrue(names_it, f"{rel} creates an Item without saying is_stock_item")
+
+	def test_every_item_built_with_new_doc_sets_the_field(self):
+		_dicts, new_docs = self.sites()
+		self.assertEqual(new_docs, ["api/stock_scan.py"])
+		source = _function_source_of(APP / "api" / "stock_scan.py", "_quick_item")
+		self.assertIn("item.is_stock_item = 1", source)
+
+	def test_the_quickbooks_import_still_says_non_stock(self):
+		source = (APP / "quickbooks_online" / "core" / "mapping.py").read_text(encoding="utf-8")
+		mapper = source[source.index("def _map_item(") :]
+		self.assertIn('"is_stock_item": 0,', mapper[: mapper.index("\ndef ")])
+
+	def test_a_person_sees_the_box_wherever_they_create_an_item(self):
+		"""ERPNext's Item quick entry shows Maintain Stock (``allow_in_quick_entry`` on the field,
+		read at v16.54.0), and so does the guided Item flow's first step. Nothing in this app's
+		fixtures hides the box or takes it out of quick entry."""
+		import json
+
+		setters = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+		mine = {
+			row["property"]: row["value"]
+			for row in setters
+			if row.get("doc_type") == "Item" and row.get("field_name") == "is_stock_item"
+		}
+		self.assertEqual(mine.get("default"), "1")
+		for hides in ("hidden", "allow_in_quick_entry", "read_only"):
+			self.assertNotIn(hides, mine)
+		self.assertLessEqual(len(mine["description"]), 90)
+		flow = (APP / "form_kit" / "config" / "item.py").read_text(encoding="utf-8")
+		create = flow[flow.index('"create"') :]
+		self.assertIn('"is_stock_item"', create[: create.index("]")])
+
+	def test_an_assistant_must_say_it_too(self):
+		gate = (APP / "assistant_tools" / "_gate.py").read_text(encoding="utf-8")
+		self.assertIn(
+			'if tool_name == "create_document" and doctype == "Item" and "is_stock_item" not in data:', gate
+		)
+
+
+def _function_source_of(path, name):
+	source = path.read_text(encoding="utf-8")
+	for node in ast.walk(ast.parse(source)):
+		if isinstance(node, ast.FunctionDef) and node.name == name:
+			return ast.get_source_segment(source, node)
+	raise AssertionError(name)
+
+
+class JobTimeoutException(Exception):
+	"""Stands in for rq.timeouts.JobTimeoutException: the same name, and an ``Exception``."""
+
+
+class BulkJobTimeoutTest(unittest.TestCase):
+	def setUp(self):
+		reset_state()
+		bulk_db()
+
+	def test_a_timeout_leaves_the_item_queued_and_ends_the_job(self):
+		bulk.queue_switch()
+		real = ms.turn_on
+
+		def out_of_time(item_code, **kwargs):
+			raise JobTimeoutException("Task exceeded maximum timeout value")
+
+		ms.turn_on = out_of_time
+		try:
+			with self.assertRaises(JobTimeoutException):
+				bulk.process_queue()
+		finally:
+			ms.turn_on = real
+		for code in (ITEM, OTHER):
+			self.assertEqual(decision_row(code).status, "Queued", code)
+		self.assertIn(("rollback",), STATE["calls"])
+		self.assertEqual(STATE["errors"], [], "a timeout is not an item's failure")
+		# The next job, started by the scheduler, takes them up again.
+		bulk.resume_queue()
+		self.assertEqual(len(STATE["enqueued"]), 2)  # the apply's own, and the restart
+		bulk.process_queue()
+		self.assertEqual((stock_flag(ITEM), stock_flag(OTHER)), (1, 1))
+
+	def test_only_the_workers_own_timeout_counts(self):
+		self.assertTrue(bulk._is_timeout(JobTimeoutException("x")))
+		self.assertFalse(bulk._is_timeout(TimeoutError("x")))
+		self.assertFalse(bulk._is_timeout(RuntimeError("JobTimeoutException")))
+
+
+class SecondRecountTest(unittest.TestCase):
+	"""The Bin is recounted once more after the commit, to see a receipt that committed while the
+	switch was running."""
+
+	def setUp(self):
+		reset_state()
+		reset_db()
+		add_warehouse(STORES)
+		self.callbacks = []
+		FRAPPE.db.after_commit = types.SimpleNamespace(add=self.callbacks.append)
+		FRAPPE.db.savepoint = lambda name: STATE["calls"].append(("savepoint", name))
+
+	def tearDown(self):
+		del FRAPPE.db.after_commit
+		del FRAPPE.db.savepoint
+
+	def test_a_second_recount_runs_after_the_commit_and_sees_the_new_figure(self):
+		add_open_po(qty=5, received=0)
+		STATE["ordered"][(ITEM, STORES)] = 5
+		ms.turn_on(ITEM)
+		self.assertEqual(STATE["bins"][(ITEM, STORES)], {"ordered_qty": 5})
+		self.assertEqual(len(self.callbacks), 1, "queued for after the commit, not run yet")
+		# A receipt of 2 committed while the switch was running.
+		STATE["ordered"][(ITEM, STORES)] = 3
+		STATE["calls"].clear()
+		self.callbacks[0]()
+		self.assertEqual(STATE["bins"][(ITEM, STORES)], {"ordered_qty": 3})
+		self.assertIn(("commit",), STATE["calls"], "its own commit: the request's is already done")
+
+	def test_nothing_open_queues_nothing(self):
+		ms.turn_on(ITEM)
+		self.assertEqual(self.callbacks, [])
+
+	def test_a_failure_in_it_is_logged_and_never_a_full_rollback(self):
+		add_open_po()
+		ms.turn_on(ITEM)
+		real = sys.modules["erpnext.stock.stock_balance"].update_bin_qty
+
+		def broken(*args, **kwargs):
+			raise RuntimeError("the database went away")
+
+		rolled = []
+		real_rollback = FRAPPE.db.rollback
+		FRAPPE.db.rollback = lambda **kwargs: rolled.append(kwargs)
+		sys.modules["erpnext.stock.stock_balance"].update_bin_qty = broken
+		try:
+			self.callbacks[0]()
+		finally:
+			sys.modules["erpnext.stock.stock_balance"].update_bin_qty = real
+			FRAPPE.db.rollback = real_rollback
+		self.assertEqual(len(STATE["errors"]), 1)
+		# To the savepoint only: a full rollback here would drop the other commit callbacks.
+		self.assertEqual(rolled, [{"save_point": "maintain_stock_recount"}])
 
 
 BULK_PAGE_DIR = APP / "inventory_enhancements" / "page" / "maintain_stock_switch"

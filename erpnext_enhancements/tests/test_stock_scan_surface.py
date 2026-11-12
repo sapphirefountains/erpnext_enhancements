@@ -102,9 +102,18 @@ CONTRACT = {
 	"ADD": (
 		"add",
 		{"item_code", "warehouse", "qty", "client_ref"},
-		# ``order_rate`` and ``no_charge`` (v1.803.0): the answer to "what did one cost?" when the
-		# order line being received is a stock item's with no price.
-		{"purchase_order_item", "without_po", "project", "scanned_code", "rate", "order_rate", "no_charge"},
+		# ``order_rate``, ``no_charge`` and ``no_charge_reason`` (v1.803.0): the answer to "what did
+		# one cost?" when the order line being received is a stock item's with no price.
+		{
+			"purchase_order_item",
+			"without_po",
+			"project",
+			"scanned_code",
+			"rate",
+			"order_rate",
+			"no_charge",
+			"no_charge_reason",
+		},
 	),
 	"MOVE": (
 		"move_here",
