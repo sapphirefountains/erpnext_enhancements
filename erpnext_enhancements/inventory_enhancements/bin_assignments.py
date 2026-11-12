@@ -92,6 +92,7 @@ from frappe import _
 from frappe.utils import cint, cstr, flt, now_datetime
 
 from erpnext_enhancements.api import stock_scan as scan
+from erpnext_enhancements.inventory_enhancements import job_sites
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as rules
 
 RULE = "Putaway Rule"
@@ -196,6 +197,8 @@ def _assignable_location(warehouse):
 	if not location.company:
 		frappe.throw(_("{0} belongs to no company, so nothing can be put on it.").format(name))
 	_refuse_boneyard(location)
+	# Nor to a job's site (v1.801.0): stock is sent there and used there, never kept there.
+	job_sites.refuse_as_bin(location)
 	return location
 
 
@@ -632,6 +635,11 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	Item Default pointing at it cleared). A partial move keeps the source assigned and says so
 	(``log.source_kept`` and the message). The boneyard is refused as a home before anything is
 	posted. Off by default; the pages tick it when the whole quantity moves.
+
+	**To or from a job's site** (v1.801.0, ``job_sites``) this is the same transfer, and it
+	carries that job: on the stock entry, so both ledger rows name the Project, and on the log
+	row. A site is refused as a home exactly as the boneyard is. The page reaches a site through
+	``api.stock_scan.job_site``, which opens the job's site warehouse the first time.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -648,12 +656,21 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	release, left, defaults = False, 0.0, []
 	if home:
 		_refuse_boneyard(destination)
+		job_sites.refuse_as_bin(destination)
 		require_manage()
 		_check_capacity(item, destination, adding=qty)
 		release, left, defaults = _plan_source(item, source, qty)
 	scan._require("Stock Entry", "create", "submit")
 
-	log = scan._begin_log(ref, rules.ACTION_MOVE_TO, item, qty, destination, from_warehouse=source.name)
+	log = scan._begin_log(
+		ref,
+		rules.ACTION_MOVE_TO,
+		item,
+		qty,
+		destination,
+		from_warehouse=source.name,
+		project=scan._transfer_project(source, destination),
+	)
 	se = scan._transfer_entry(rules.ACTION_MOVE_TO, item, qty, source, destination)
 	scan._post(se)
 	rule, changes = None, []
@@ -731,7 +748,15 @@ def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
 	release, left, defaults = _plan_source(item, source, qty)
 	scan._require("Stock Entry", "create", "submit")
 
-	log = scan._begin_log(ref, rules.ACTION_BONEYARD, item, qty, boneyard, from_warehouse=source.name)
+	log = scan._begin_log(
+		ref,
+		rules.ACTION_BONEYARD,
+		item,
+		qty,
+		boneyard,
+		from_warehouse=source.name,
+		project=scan._transfer_project(source, boneyard),
+	)
 	se = scan._transfer_entry(rules.ACTION_BONEYARD, item, qty, source, boneyard)
 	scan._post(se)
 	changes = _release(item, source, defaults) if release else []

@@ -30,6 +30,8 @@ export const M = {
 	// "Bought on a store run" (v1.536.0): one line of a run, and the quick-item name check.
 	STORE_RUN: "erpnext_enhancements.api.stock_scan.store_run",
 	CHECK_NEW_ITEM: "erpnext_enhancements.api.stock_scan.check_new_item",
+	// A job's site (v1.801.0): the location Move to… sends a job's material to, opened on first use.
+	JOB_SITE: "erpnext_enhancements.api.stock_scan.job_site",
 };
 Object.freeze(M);
 

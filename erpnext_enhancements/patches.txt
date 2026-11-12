@@ -1619,3 +1619,13 @@ erpnext_enhancements.patches.remove_production_team_user_docperm
 # touched doctype's cache. Breaks are left visible (a hidden break hides the fields after it). A missing row is a
 # no-op. No delete_doc, no column dropped. Never raises.
 erpnext_enhancements.patches.hide_audit_code_created_fields
+# Job-site warehouses (v1.801.0, Nik 2026-11-11: one warehouse per Build project). Five steps, each logged and none
+# able to stop the next: create Warehouse.custom_job_site_project (create_custom_fields, is_system_generated);
+# renumber the Warehouse tree ONLY if two warehouses share an lft (prod: Service Van and Customer Rental Locations
+# both at 24); create the group "Job Sites" beside Inventory - SF (found by warehouse_name + company; skipped
+# without the shop group); fill Inventory Scanner Settings.job_sites_warehouse ONLY where tabSingles has no row for
+# it (never on a never-saved Single); move the parentless leaf "Job Site" under the group, otherwise untouched
+# (still enabled; received PO lines name it). Cannot raise, safe twice. Each step answers done / already /
+# skipped / failed; when any did not finish, ONE Error Log row "Job sites patch (add_job_sites_warehouse):
+# finish these steps by hand" lists all five with the by-hand fix.
+erpnext_enhancements.patches.add_job_sites_warehouse

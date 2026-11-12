@@ -21,6 +21,8 @@
   "undo_window_minutes",
   "stock_scan_disable_browser_back",
   "boneyard_warehouse",
+  "job_sites_warehouse",
+  "job_site_project_types",
   "item_naming_section",
   "naming_digest_recipients",
   "reorder_board_section",
@@ -130,6 +132,19 @@
    "options": "Warehouse"
   },
   {
+   "description": "The group warehouse each job's site is created under, beside the shop's own stock. Stock Scan's Move to offers \"A job site\" while this is set: material sent to a job goes to that job's own warehouse here, and is no longer counted as stock the shop has. Blank switches job sites off.",
+   "fieldname": "job_sites_warehouse",
+   "fieldtype": "Link",
+   "label": "Job Sites Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "description": "Which Project Types get a job site, one per line. Blank means Build. Other jobs take parts with the job picked instead.",
+   "fieldname": "job_site_project_types",
+   "fieldtype": "Small Text",
+   "label": "Job Site Project Types"
+  },
+  {
    "description": "New Items are refused only when their code duplicates an existing one or their name is just the code. For everything else the naming rules find on a new Item, a weekly list goes to the addresses below.",
    "fieldname": "item_naming_section",
    "fieldtype": "Section Break",
@@ -158,7 +173,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-22 18:00:00.000000",
+ "modified": "2026-11-11 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",

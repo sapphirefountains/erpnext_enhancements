@@ -804,7 +804,27 @@ def get_dashboard_data(data):
 		{"label": _("Travel"), "items": ["Travel Trip"]}
 	)
 
+	# The job's site warehouse (v1.801.0, inventory_enhancements/job_sites.py): a Warehouse
+	# whose custom_job_site_project is this Project. From there, the Warehouse form's "Open
+	# Stock Scan" shows what is on site. Only once the field exists: the dashboard counts
+	# with a query on that column, and before the patch has run the Project form would fail
+	# to load its connections over a column that is not there.
+	if _job_sites_ready():
+		data["non_standard_fieldnames"]["Warehouse"] = "custom_job_site_project"
+		data["transactions"].append({"label": _("Job Site"), "items": ["Warehouse"]})
+
 	return data
+
+
+def _job_sites_ready():
+	"""Whether Warehouse.custom_job_site_project exists. Never raises: this runs on every
+	Project form load."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import job_sites
+
+		return job_sites.ready()
+	except Exception:
+		return False
 
 
 @frappe.whitelist()

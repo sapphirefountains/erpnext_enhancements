@@ -2517,6 +2517,11 @@ after_install = [
 	# on a fresh site, and without the fields the page keeps the door shut and says "being set
 	# up" for ever. create_custom_fields(update=True): idempotent, and the patch never raises.
 	"erpnext_enhancements.patches.add_store_run_receipt_fields.execute",
+	# Job-site warehouses (v1.801.0): Warehouse.custom_job_site_project, the field that makes a
+	# warehouse a job's site. Same reason once more -- the patch never runs on a fresh site.
+	# Only the field: the group and the setting wait for a real warehouse tree, which a fresh
+	# site does not have (the patch's own steps skip without Inventory - SF). Never raises.
+	"erpnext_enhancements.patches.add_job_sites_warehouse.install_field",
 	# portal hardening (v1.755.0): the same callable as the after_migrate entry below, so a fresh
 	# site does not serve ERPNext's stock web forms tasks, issues and addresses (or their portal
 	# menu rows) until its first migrate. ERPNext installs first, so the forms exist. Never raises.

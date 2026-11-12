@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.801.0] - 2026-11-11
+
+### Added
+- **Job-site warehouses: material sent to a Build job goes to that job's own warehouse, and stops
+  reading as stock the shop has.** Nik's decision of 2026-11-11, after a measured look at how stock
+  leaves today: one warehouse per project, not one generic "Job Site". The module README has the
+  whole design under [Job sites](erpnext_enhancements/inventory_enhancements/README.md#job-sites-v18010).
+  - **Why one per project.** ERPNext keeps on-hand by item and warehouse (`tabBin`) and has no
+    project on that table. One shared warehouse could say "40 fittings are on job sites" and never
+    which site, and a return from one job would hide a shortage on another. Build projects are
+    few (about ten start a year), so the Warehouse tree grows slowly.
+  - **On the phone.** Stock Scan's *Move to…* has a third destination beside *Scan its label* and
+    *Find a location*: **A job site**. Pick the job (only jobs that keep material on site are
+    listed) and the page gets that job's site, opened the first time anything is sent there
+    (`api.stock_scan.job_site`). From there it is the move the page already had: the same
+    `bin_assignments.move_to`, the same log row, the same Undo. A site is named
+    `Job Site <project id> <project name>`, so every list, message and voucher remark says which
+    job without a second lookup.
+  - **What makes a warehouse a job site is one field**, `Warehouse.custom_job_site_project`, not
+    its name or its place in the tree. `inventory_enhancements/job_sites.py` reads and creates
+    sites; `job_site_rules.py` holds every judgement and has no Frappe in it.
+  - **The site is the one thing written past permissions.** The people who load a truck hold Stock
+    User, and ERPNext gives Warehouse create to Stock Manager and Item Manager. So the site is
+    inserted with `ignore_permissions` after the page's own gate and after the check that the
+    person can post the transfer, and it leaves a comment on the Project naming who opened it. The
+    transfer itself still posts as the user.
+  - **Two phones sending to one job at once end with one site.** `ensure_site` locks the Project's
+    row and then reads the site with a locking read. Without the lock both requests find no site
+    and both insert, and the loser cannot recover by re-reading: under MariaDB's default
+    REPEATABLE READ a plain read still looks at the snapshot the request began with, in which the
+    winner's warehouse does not exist. A locking read sees committed rows whatever the snapshot.
+  - **Nothing more is sent to the site of a finished job, and what is there still comes back.**
+    `job_site` refuses a finished job, but a site that exists is also reached by name, by its
+    label and from "where it is already", so every transfer asks its destination
+    (`job_sites.refuse_send`, in `_transfer_source`). Stock sent to a finished job's site could
+    not be used there (a take at the site is charged to that job, and refused), only moved back.
+    A job on hold still receives. A site made by hand in the Desk for another kind of job still
+    receives too: the project-type rule decides who gets a site opened for them, not who may keep
+    one a Stock Manager made on purpose.
+  - **The cost reaches the job when the material is used, not when it leaves the shop.** A
+    transfer moves no value. Both of its ledger rows now carry the Project, so the stock ledger can
+    be read by job, and the two cancel in ERPNext's Project "consumed material cost" (checked in
+    `project.py` at v16.54.0). A **take at a job site is always charged to that site's job**,
+    whatever job the page's chip remembers from earlier in the shift, and that take is where the
+    cost lands. Which account it lands in is unchanged here (the Parts Taken chain, today
+    `5119 - Stock Adjustment`); that choice is the accountants' and is not in this release.
+  - **A site is never an item's bin.** Nothing is assigned to one and "Make … this item's bin" is
+    not offered for one, the rule the Boneyard has. That covers every warehouse under the Job
+    Sites group, the ones with no job of their own included. A site lists what is on hand there
+    now or on order to it; the bin list's "nobody has decided yet" clause would otherwise keep
+    every item ever sent to a job on its list for good.
+  - **Setup is one patch**, `add_job_sites_warehouse`: the Warehouse field, the group `Job Sites`
+    beside `Inventory - SF`, and `Inventory Scanner Settings.job_sites_warehouse` (filled only
+    where the Single has no row for it). Blank switches the feature off and the page is as it was.
+    A second new setting, *Job Site Project Types*, is blank, which means Build.
+  - **The patch cannot stop a deploy, so it says what it did.** A step that fails or is skipped is
+    caught, and the patch is still recorded as run, which looks exactly like success. So each of
+    its five steps answers done, already, skipped or failed with the reason, the list is printed
+    to the migrate output, and when any step did not finish, **one Error Log row** titled "Job
+    sites patch (add_job_sites_warehouse): finish these steps by hand" lists all five with what
+    to do. A clean run writes no row. To finish by hand:
+    - *The group was skipped* (no `Inventory - SF`, or a leaf already called Job Sites): create a
+      Warehouse named "Job Sites" with Is Group ticked, under the company's root warehouse.
+    - *The setting was skipped* (the Single never saved, or no group): open Inventory Scanner
+      Settings, choose that group in *Job Sites Warehouse* and save. Until it is set, Stock Scan
+      does not offer "A job site".
+    - *The old warehouse was not moved*: open the Warehouse "Job Site" and set its Parent
+      Warehouse to the group.
+    - *Anything else*: run the patch again; it is safe twice
+      (`bench --site <site> execute erpnext_enhancements.patches.add_job_sites_warehouse.execute`).
+  - **The Project form** shows its site under Connections (*Job Site*), once the field exists.
+
+### Changed
+- **Stock on a job site is no longer counted as stock the shop has, on this app's own screens.**
+  "On a job site" is every warehouse under the Job Sites group at any depth, and every warehouse
+  with a job in its Project field wherever it sits. Three places summed across every warehouse,
+  and each would have told somebody the shop had parts that were across town:
+  - Stock Scan's **search total** is now the shop's (`on_hand_total`), with what is out on jobs
+    given beside it (`on_job_sites`, shown as "4 on job sites").
+  - The item card's **"Also at"** lists shop locations only. Job sites are named on a line of
+    their own, "On job sites, not in the shop". The store-run sheet's "check there before buying
+    more" never points at a job site.
+  - The **Reorder Board**, with its daily digest and hourly sync, takes job-site stock, and
+    orders on their way to a job site, back out of every group above a site
+    (`job_site_rules.without_sites`). Many of production's reorder rules roll up at the company's
+    root group, which a site sits under, so without this material sent to a job would keep its
+    item off the board while the shelf stood empty. The rules themselves are not changed: it is
+    the board's reading that leaves sites out.
+  - **ERPNext's own screens are not changed and still count job-site stock** unless they are
+    filtered to `Inventory - SF`: Stock Balance and Stock Projected Qty by a group above the
+    sites, the Item form's stock levels (a site shows as its own line, and the total includes
+    it), the availability figures on Material Request, Production Plan and Work Order, and
+    ERPNext's nightly reorder job (switched off here since v1.730.0).
+- **The Warehouse tree is renumbered, once, if it is out of step.** Production has two empty
+  groups sharing one position. Frappe adds a node by shifting those numbers and group-filtered
+  stock reports read them, so the patch runs `rebuild_tree("Warehouse")` before it adds the group,
+  and only when two warehouses share a number. It renumbers from each warehouse's parent, so no
+  warehouse changes group; and with one inventory account for every warehouse, none changes
+  account.
+- **The hand-made `Job Site - SF` warehouse comes into the tree.** It had no parent. It holds no
+  stock and has no ledger rows, and two received purchase-order lines for non-stock items name it.
+  The patch moves it under `Job Sites` and leaves it otherwise as it is: enabled, usable on an
+  order, and no one job's site. Anything directly under the group counts as on a job site.
+
+### Not in this release
+- The account a job take posts to, the account count differences post to, and a closeout rule
+  (use everything left at a site, then close it). These wait on the accountants.
+- Material bought straight to a job as a non-stock item (most of what a build buys today) still
+  never enters stock, so a site shows only the stock-item part of what is there.
+
 ## [1.800.0] - 2026-11-11
 
 ### Changed
